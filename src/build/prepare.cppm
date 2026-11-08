@@ -883,6 +883,11 @@ export struct BuildOverrides {
     std::shared_ptr<const mcpp::runtime::RuntimeBinding>
         inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
+    // THE REQUEST, WHEN THE IDENTITY WAS GIVEN BY THE C LIBRARY (SPEC-016 §5): a
+    // first pass found that the graph or the platform supplies a C library the
+    // selected row does not name, and prepared again for the row that names it.
+    // The report and the lock name this request; `target_triple` is the identity.
+    std::optional<std::string> target_request;
     // --accel: the device backends and architectures this build targets, in
     // the wire form mcpp.pack.abi_tag reads. Overrides `[build] accel`, the
     // same relationship --target has with [toolchain].

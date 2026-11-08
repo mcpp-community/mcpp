@@ -90,7 +90,18 @@ prepare_build(bool print_fingerprint,
         return prepare_build_pass(print_fingerprint, includeDevDeps,
                                   std::move(extraTargets), std::move(overrides));
     auto first = prepare_build_pass(print_fingerprint, includeDevDeps, extraTargets, overrides);
-    if (first) { (void)take_toolchain_restart(); (void)take_platform_restart(); return first; }
+    if (first) {
+        (void)take_toolchain_restart();
+        (void)take_platform_restart();
+        (void)take_target_restart();
+        return first;
+    }
+    if (auto identity = take_target_restart(); identity && !overrides.target_request) {
+        overrides.target_request = overrides.target_triple;
+        overrides.target_triple = std::move(*identity);
+        return prepare_build(print_fingerprint, includeDevDeps, std::move(extraTargets),
+                             std::move(overrides));
+    }
     // A platform that states a target base, fetched by this pass: the next
     // reads its `[platform]` before the base is decided (SPEC-013 §7).
     if (auto root = take_platform_restart(); root && overrides.platform_root.empty()) {

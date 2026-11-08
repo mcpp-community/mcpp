@@ -45,6 +45,7 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
@@ -1040,6 +1041,48 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
     return {};
 }
 
+namespace {
+thread_local std::optional<std::string> g_targetRestart;
+}
+
+std::optional<std::string> take_target_restart() {
+    auto r = std::move(g_targetRestart);
+    g_targetRestart.reset();
+    return r;
+}
+
+static std::expected<void, std::string> cabi_identity(PrepareState& state) {
+    namespace tt = mcpp::toolchain::triple;
+    namespace tsd = mcpp::targetside;
+    auto const& ts = state.resolvedTargetSide;
+    if (ts.cAbi.absent() || !ts.cAbi.fromGraph() || ts.cAbi.interfaceName.empty()) return {};
+    // A native build keeps its identity unless a platform supplies the C
+    // library (SPEC-016 §4.7): the graph's own C library in a native build is
+    // the project's arrangement, reported as such.
+    const bool requested = !state.overrides.target_triple.empty();
+    if (!requested && !state.platform.active) return {};
+    auto id = tt::parse(requested ? state.overrides.target_triple : tt::host_triple().str());
+    if (!id || id->is_freestanding() || id->loader_supplies_os()) return {};
+    if (tsd::c_abi_request_satisfied(id->env.empty() ? tsd::payload_libc_name(id->os, id->env) : id->env,
+                                     ts.cAbi.interfaceName))
+        return {};
+    const std::string env = ts.cAbi.interfaceName == "glibc" ? std::string("gnu") : ts.cAbi.interfaceName;
+    const auto row = std::format("{}-{}-{}", id->arch, id->os, env);
+    if (!mcpp::toolchain::target::find_row(row))
+        return {};
+    if (!state.requestedCAbi.empty() && !state.overrides.target_request) {
+        refusal::record(refusal::Code::TargetCabiConflict);
+        return std::unexpected(std::format(
+            "target '{}' asks for the `{}` C library, and the build links `{}` ({}).\n"
+            "       An identity names the C library it links, so this build is `{}`.\n"
+            "       build it as `--target {}`, or as `--target {}-{}` to let the C library name it.",
+            id->str(), state.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.impl, row, row, id->arch, id->os));
+    }
+    if (state.overrides.target_request) return {};   // the second pass: the row it was given
+    g_targetRestart = row;
+    return std::unexpected(std::string("mcpp:target-restart"));
+}
+
 static std::expected<void, std::string>
 step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -1093,6 +1136,12 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
         // is the same with or without it. Refusing was tried and broke every
         // project spelling the host target `x86_64-linux-gnu` — which is what
         // `mcpp toolchain list` prints, and therefore what people write.
+        // THE IDENTITY FOLLOWS THE C LIBRARY (SPEC-016 §5, I5). A C library the
+        // graph or the platform supplies, under a system whose env names its C
+        // library, and a row that names it: a request that wrote no env is
+        // prepared again for that row; one that wrote another is refused, since
+        // an identity is not replaced and cannot name what is not linked.
+        if (auto conflict = cabi_identity(state); !conflict) return std::unexpected(conflict.error());
         if (auto why = tsd::check_request(state.resolvedTargetSide))
             mcpp::diag::warning("target", *why);
 

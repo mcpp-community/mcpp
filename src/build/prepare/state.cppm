@@ -1257,6 +1257,8 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
 std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.
 std::optional<std::filesystem::path> take_platform_restart();
+// The identity a first pass found the C library names (SPEC-016 §5), taken once.
+std::optional<std::string> take_target_restart();
 std::expected<void, std::string> load_host_platform(PrepareState& state);
 std::string host_platform_choice(const PrepareState& state);
 // The statement and bootstrap spec of a toolchain phase that asked prepare to

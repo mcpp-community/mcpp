@@ -203,6 +203,13 @@ enum class Code {
     // A platform's build program stated a directive outside its phase's
     // vocabulary (build, link, runner, runners).
     PlatformPhaseDirective,
+    // SPEC-016: no provider of the request's candidates serves it here.
+    TargetUnserved,
+    // SPEC-016 §5: the request names a C library the build does not link.
+    TargetCabiConflict,
+    // SPEC-016 §2: a platform defines a row another definition already has
+    // with other facts.
+    TargetRowConflict,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -264,6 +271,9 @@ constexpr std::string_view name(Code c) {
         case Code::PlatformVersionGroup: return "platform-version-group";
         case Code::PlatformPhaseDirective:
                                          return "platform-phase-directive";
+        case Code::TargetUnserved:       return "target-unserved";
+        case Code::TargetCabiConflict:   return "target-cabi-conflict";
+        case Code::TargetRowConflict:    return "target-row-conflict";
         case Code::Other:                return "other";
     }
     return "other";

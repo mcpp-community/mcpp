@@ -38,6 +38,7 @@ import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.target_schema;
 import mcpp.toolchain.target_select;
+import mcpp.toolchain.target_rows;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.home;
@@ -634,7 +635,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
         ctx.req.completedFromVocabulary = ctx.sel.row && ctx.sel.row->triple != ctx.parsed->str();
         auto& choice = state.targetChoice;
         choice = TargetChoice{};
-        choice.request = state.overrides.target_triple;
+        choice.request = state.overrides.target_request.value_or(state.overrides.target_triple);
         choice.identity = ctx.parsed->str();
         choice.candidates = ctx.sel.candidates;
         if (ctx.sel.provider) choice.provider = std::string(ctx.sel.provider->name);
@@ -965,31 +966,44 @@ step1_host_can_serve_check(PrepareState& state, TargetOverrideCtx& ctx) {
     // The escape hatch stays open on purpose: an explicit `[target.X]`
     // toolchain override means the author is supplying the cross toolchain
     // themselves, and mcpp's payload matrix has no standing to refuse it.
+    // THE SELECTION SAYS WHETHER ITS ANSWER IS AVAILABLE HERE (SPEC-016 §4.6):
+    // the candidate it took is the first available one, or, when none is, the
+    // first of all, which this diagnosis refuses unless the graph supplies the
+    // target's system after all (held until the graph is known).
+    const auto chosen = std::ranges::find_if(ctx.sel.candidates, [&](auto const& c) {
+        return c.row == ctx.sel.row && c.provider == ctx.sel.provider;
+    });
+    const bool available = chosen != ctx.sel.candidates.end() ? chosen->available
+                         : (ctx.parsed && mcpp::toolchain::host_can_serve(*ctx.parsed));
     if (ctx.known && ctx.known->tier != "planned" && !ctx.hasToolchainOverride
-        && ctx.parsed
-        && !mcpp::toolchain::host_can_serve(*ctx.parsed)) {
+        && ctx.parsed && !available) {
+        std::string candidates;
+        for (auto const& c : ctx.sel.candidates)
+            candidates += std::format("\n         {:<22} {:<12} priority {:<4} {}", c.row->triple,
+                                      c.provider ? c.provider->name : std::string_view("-"), c.priority,
+                                      c.available ? std::string("available") : c.why);
         std::string servable;
-        for (auto const& info : triple::known_targets()) {
-            auto t = triple::parse(info.canonical);
-            if (!t || info.tier == "planned") continue;
-            if (!mcpp::toolchain::host_can_serve(*t)) continue;
+        for (auto const* r : mcpp::toolchain::target::rows()) {
+            if (r->tier == "planned") continue;
+            auto one = mcpp::toolchain::target::select(r->triple, r->arch, r->os, r->env, true,
+                target_context(state.m->platformOverrides, {}, {}, {}, state.msvc_usable_either_origin));
+            if (one.candidates.empty() || one.fallback || !one.candidates.front().available) continue;
             if (!servable.empty()) servable += ", ";
-            servable += t->str();
+            servable += r->triple;
         }
         state.unservedTargetDiagnosis = std::format(
-            "target '{}' cannot be built on this host.\n"
-            "       No toolchain payload here produces it, and nothing in "
-            "the dependency graph\n"
-            "       supplies its system side.\n"
-            "       this host can build with the payload alone: {}\n"
-            "       To build it anyway, depend on a package that implements "
-            "the target's system\n"
-            "       (its kernel interface and C library), or supply your own "
-            "cross toolchain with\n"
-            "       an explicit [target.{}] toolchain = \"…\" section.",
-            ctx.parsed->str(),
-            servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
-            ctx.parsed->str());
+            "target '{}' cannot be built on this host: no provider of it is available here, and "
+            "nothing in the dependency graph supplies its system side.\n"
+            "       candidates:{}\n"
+            "       this host builds: {}\n"
+            "       To build it anyway: depend on a package that implements the target's system "
+            "(its kernel interface and C library),\n"
+            "       choose a platform that serves it (`--platform <package>`), or supply your own "
+            "cross toolchain with [target.{}] toolchain = \"…\".\n"
+            "       `mcpp why target {}` lists the candidates and why each is or is not available.",
+            ctx.parsed->str(), candidates.empty() ? std::string(" (none)") : candidates,
+            servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable, ctx.parsed->str(),
+            ctx.requestedSpelling);
     }
 }
 
