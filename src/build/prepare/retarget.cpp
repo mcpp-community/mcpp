@@ -24,6 +24,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.gcc;        // the std module source of a paired libstdc++
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.stdmod;
@@ -469,6 +470,52 @@ void step2_row_replacements(PrepareState& state) {
         mcpp::ui::info("Replaces", std::format("`{}` → {} ({})", w,
                        with.empty() ? std::string("nothing") : with, r->origin));
     }
+}
+
+// THE SYSTEM A PAIRED PROVIDER SUPPLIES (SPEC-016 §6). The MinGW-w64 provider
+// pairs with gcc and with llvm; with llvm, the payload its row names is
+// installed as for gcc and becomes clang's sysroot: the C library, libstdc++
+// (whose `bits/std.cc` is the std module) and the GCC runtime.
+std::expected<void, std::string> step2_paired_system(PrepareState& state) {
+    state.tc->pairedSysroot.clear();
+    if (state.pairedSystem.empty() || state.tc->compiler != mcpp::toolchain::CompilerId::Clang) return {};
+    auto spec = mcpp::toolchain::parse_toolchain_spec(state.pairedSystem);
+    auto target = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+    if (!spec || !target) return {};
+    spec->target = *target;
+    const auto pkg = mcpp::toolchain::to_xim_package(*spec);
+    auto cfg = state.get_cfg(true);
+    if (!cfg) return std::unexpected(cfg.error());
+    mcpp::fetcher::Fetcher fetcher(**cfg);
+    mcpp::fetcher::InstallProgressHandler progress;
+    auto payload = fetcher.resolve_xpkg_path(pkg.target(), mcpp::fetcher::PayloadIntent::Use, &progress);
+    if (!payload)
+        return std::unexpected(std::format(
+            "target '{}' with {} takes its system from the {} payload ({}), which is not available: {}",
+            state.tc->targetTriple, state.tc->label(), state.pairedSystem, pkg.target(),
+            payload.error().message));
+    auto& tc = *state.tc;
+    tc.pairedSysroot = payload->root;
+    // The payload's own C++ driver names the target directory its libstdc++
+    // is installed under (`<prefix>/<triple>/include/c++/<version>`).
+    std::filesystem::path gxx;
+    std::error_code dirEc;
+    for (auto const& e : std::filesystem::directory_iterator(payload->root / "bin", dirEc)) {
+        const auto name = e.path().stem().string();
+        if (name.ends_with("-g++") && (gxx.empty() || name < gxx.stem().string())) gxx = e.path();
+    }
+    if (auto src = mcpp::toolchain::gcc::find_std_module_source(gxx, spec->version)) {
+        tc.stdlibId = "libstdc++";
+        tc.stdlibVersion = spec->version;
+        tc.stdModuleSource = *src;
+        std::error_code ec;
+        const auto compat = src->parent_path() / "std.compat.cc";
+        tc.stdCompatSource = std::filesystem::exists(compat, ec) ? compat : std::filesystem::path{};
+        tc.hasImportStd = true;
+    }
+    mcpp::ui::info("Pairs", std::format("{} with the {} payload of {} ({})", tc.label(), state.pairedSystem,
+                                        state.tc->targetTriple, state.targetChoice.provider));
+    return {};
 }
 
 } // namespace mcpp::build

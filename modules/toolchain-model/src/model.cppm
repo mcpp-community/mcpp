@@ -128,6 +128,10 @@ struct Toolchain {
     // SPEC-016 §5.2): `[platform.replace]` and `[target.<selector>.replace]`,
     // merged in their order. Read by every producer of the row's words.
     std::vector<mcpp::toolchain::target::Replacement> rowReplace;
+    // THE PAYLOAD A PAIRED PROVIDER SUPPLIES THE SYSTEM FROM (SPEC-016 §6):
+    // clang aimed at `x86_64-windows-gnu` takes the MinGW-w64 payload as its
+    // sysroot, C library and C++ runtime (libstdc++). Empty otherwise.
+    std::filesystem::path                pairedSysroot;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `TargetSide::cAbi.prebuilt()`, recorded

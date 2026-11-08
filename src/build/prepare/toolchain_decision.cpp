@@ -20,6 +20,7 @@ import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 // For `resolve_version_match` / `list_installed_versions`: a bare compiler
 // family named by the dependency graph resolves to a concrete version through
 // exactly the path `mcpp toolchain default <family>` uses.
@@ -427,7 +428,17 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
             && tc_origin_is_user_explicit(state.tcOrigin) && state.tcSpec.has_value()) {
             auto declared = mcpp::toolchain::parse_toolchain_spec(*state.tcSpec);
             auto rowTc    = mcpp::toolchain::parse_toolchain_spec(state.targetRowPin);
-            if (declared && rowTc && declared->family != rowTc->family) {
+            // A provider that pairs with the declared family supplies the system
+            // with it (SPEC-016 §6): the row's payload becomes that compiler's.
+            const bool paired = declared && rowTc && declared->family != rowTc->family
+                && std::ranges::any_of(mcpp::toolchain::target::providers(), [&](auto const* p) {
+                       return p->name == state.targetChoice.provider
+                           && mcpp::toolchain::target::serves(*p, state.targetRowName)
+                           && std::ranges::find(p->pairs, mcpp::toolchain::family_name(declared->family))
+                                  != p->pairs.end();
+                   });
+            if (paired) state.pairedSystem = state.targetRowPin;
+            else if (declared && rowTc && declared->family != rowTc->family) {
                 refusal::record(refusal::Code::ConventionUnreplaced);
                 return std::unexpected(std::format(
                     "target '{}' takes its C library from the '{}' payload, and "

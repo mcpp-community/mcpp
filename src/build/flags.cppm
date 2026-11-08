@@ -1992,11 +1992,18 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // Not a new condition but the string that names the machine: a mingw
         // g++ has an empty `crossTargetFlag`, so this is the identity for the
         // case the paragraph was written about, and the fix for the other one.
-        f.ld = std::format("{}{}{}{}{}", crossTarget, link_intent_ld,
+        // CLANG PAIRED WITH THE MinGW-w64 PAYLOAD (SPEC-016 §6): the payload
+        // is the sysroot, libstdc++ and libgcc its runtime, lld the linker;
+        // `-pthread` because the payload's threads are winpthreads, which the
+        // clang driver does not add by itself.
+        const std::string paired = plan.toolchain.pairedSysroot.empty() ? std::string{}
+            : " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
+              + " -stdlib=libstdc++ -rtlib=libgcc -fuse-ld=lld -pthread";
+        f.ld = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                            user_ldflags, mingw_stdexp, link_extra);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}{}", crossTarget, link_intent_ld,
+        f.ldC = std::format("{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                             user_ldflags, link_extra);
         return f;
     }

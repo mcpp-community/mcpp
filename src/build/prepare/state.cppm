@@ -354,6 +354,11 @@ struct PrepareState {
     std::string targetPinCandidate;
     bool targetPinIsCapability = false;
     std::string targetRowPin;
+    // A PROVIDER THAT PAIRS WITH THE DECLARED COMPILER SUPPLIES THE SYSTEM
+    // (SPEC-016 §6): the payload the row's own toolchain names (the MinGW-w64
+    // payload of `x86_64-windows-gnu`) is then the declared clang's sysroot and
+    // C++ runtime. Empty when the compiler is the row's own.
+    std::string pairedSystem;
     std::string targetRowName;
     TargetChoice targetChoice;
     // The request names a row no definition knows yet, assumed while the platform
@@ -1268,6 +1273,8 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
 std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
 // The row's defaults the platform and the project replace (SPEC-016 §5.2).
 void step2_row_replacements(PrepareState& state);
+// The system a paired provider supplies to the declared compiler (SPEC-016 §6).
+std::expected<void, std::string> step2_paired_system(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.
 std::optional<std::filesystem::path> take_platform_restart();
 // The identity a first pass found the C library names (SPEC-016 §5), taken once.
