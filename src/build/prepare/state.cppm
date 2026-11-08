@@ -974,6 +974,8 @@ void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
                           const std::string& writtenKey);
+// graph_edges.cpp: defines `PrepareState::computeUsageRequirements`.
+void define_usage_requirements(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 // graph.cpp: takes the link flags package `p` added to the root's pooled list
 // back out of it (a package that serves the build alone; an embedded one).
