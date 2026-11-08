@@ -70,9 +70,9 @@ PY
 echo "ok: one package holds both architectures"
 
 # B
-okrun=$("$MCPP" self env --target "$T" --format json 2>/dev/null \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runner"]["program"])')
-[ -x "$okrun" ] || fail "B: the platform's runner was not located ($okrun)"
+"$MCPP" self env --target "$T" --format json > env.json 2> env.err || fail "B: self env" env.json env.err
+okrun=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["runner"]["program"])' env.json 2>/dev/null)
+[ -x "$okrun" ] || fail "B: the platform's runner was not located ($okrun)" env.json env.err
 PATH="$(dirname "$okrun"):$PATH" "$P/bin/uni" one two > b.log 2>&1 || fail "B: the launcher" b.log
 grep -q "universal 3 args" b.log || fail "B: the image's output through the launcher" b.log
 echo "ok: the launcher runs this machine's image through the runner"
