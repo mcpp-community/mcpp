@@ -531,6 +531,7 @@ PY
 )"
     rm -f "$record"
     while read -r status ms name; do
+        name="${name%$'\r'}"   # Windows' Python ends a printed line with CR LF
         [[ -n "$name" ]] || continue
         TIMINGS+=("$ms $name")
         case "$status" in
