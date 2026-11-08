@@ -1932,6 +1932,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          const mcpp::platform::Resolved*         platform)
 {
     BuildPlan plan;
+    // The artifacts' own compiles of shared sources (mcpp#911 G9), joined to
+    // the plan's units after every link unit is formed.
+    std::vector<CompileUnit> artifactVariants;
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
@@ -3800,6 +3803,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // Also include implementation .cpp/.cc/.cxx/.c units, but EXCLUDE any
         // file registered as another target's entryMain (each binary's main()
         // is exclusive to that binary).
+        // THE ARTIFACT'S OWN COMPILE (mcpp#911 G9): `[targets.<name>.build]`
+        // makes a variant of each of the package's implementation units this
+        // artifact links, under `obj/_variant/<target>/`, with the artifact's flags
+        // after the package's; the entry takes them in place. Module
+        // interfaces are one per package and are not varied.
+        const auto rootPackage = qualified_package_name(manifest);
+        auto vary = [&](CompileUnit& cu) {
+            for (auto const& d : t.buildDefines) {
+                const auto element = mcpp::manifest::flag_element("-D" + d);
+                cu.packageCflags.push_back(element);
+                cu.packageCxxflags.push_back(element);
+            }
+            for (auto const& f : t.buildCflags)   cu.packageCflags.push_back(f);
+            for (auto const& f : t.buildCxxflags) cu.packageCxxflags.push_back(f);
+        };
+        std::vector<CompileUnit> variants;
+        if (t.has_build_variant() && lu.entryMain)
+            for (auto& cu : plan.compileUnits)
+                if (cu.source == *lu.entryMain && cu.packageName == rootPackage) vary(cu);
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
             if (placedInImage.contains(cu.packageName)) continue;
@@ -3813,8 +3835,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // it supplies the entry (gtest-style). Works on every linker — the
             // object is linked directly, never relying on archive member pulling.
             if (entryDefinesMain && depMainSources.contains(cu.source)) continue;
+            if (t.has_build_variant() && cu.packageName == rootPackage && cu.providesModule.empty()) {
+                CompileUnit v = cu;
+                v.object = std::filesystem::path("obj") / "_variant" / sanitize(t.name)
+                         / cu.object.lexically_relative("obj");
+                vary(v);
+                lu.objects.push_back(v.object);
+                variants.push_back(std::move(v));
+                continue;
+            }
             lu.objects.push_back(cu.object);
         }
+        // Added once every link unit is formed: no other artifact links them.
+        for (auto& v : variants) artifactVariants.push_back(std::move(v));
 
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
             || lu.kind == LinkUnit::SharedLibrary) {
@@ -4528,6 +4561,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             });
         }
     }
+    for (auto& v : artifactVariants) plan.compileUnits.push_back(std::move(v));
 
     return plan;
 }

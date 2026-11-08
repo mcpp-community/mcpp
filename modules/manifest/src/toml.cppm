@@ -2187,6 +2187,29 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         read_list("cxxflags",          t.cxxflags);
         read_list("defines",           t.defines);
         read_list("required_features", t.requiredFeatures);
+        // `[targets.<name>.build]`: the artifact's own compile of the
+        // package's translation units it links (mcpp#911 G9).
+        if (auto it = tt.find("build"); it != tt.end()) {
+            if (!it->second.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[targets.{}].build must be a table of cflags, cxxflags and defines", tname)));
+            for (auto const& [bk, bv] : it->second.as_table()) {
+                std::vector<std::string>* dst = bk == "cflags" ? &t.buildCflags
+                                              : bk == "cxxflags" ? &t.buildCxxflags
+                                              : bk == "defines" ? &t.buildDefines : nullptr;
+                if (!dst || !bv.is_array())
+                    return std::unexpected(error(origin, std::format(
+                        "[targets.{}.build].{} is not read: the keys are cflags, cxxflags and defines, "
+                        "each a list", tname, bk)));
+                for (auto const& v : bv.as_array())
+                    if (v.is_string()) dst->push_back(v.as_string());
+            }
+            for (auto const& flag : t.buildCxxflags)
+                if (starts_with_std_flag(flag))
+                    return std::unexpected(error(origin, std::format(
+                        "[targets.{}.build].cxxflags contains '{}'; use [package].standard to "
+                        "configure the C++ language standard", tname, flag)));
+        }
         // `windows_subsystem` / `windows_entry` (#618). A closed set each, so a
         // misspelling is refused by name rather than rendered as nothing.
         auto read_choice = [&](const char* key, std::string& out, bool subsystem)
@@ -2274,7 +2297,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // at the right axis (workspace / features / profile).
         static constexpr std::string_view kKnownTargetKeys[] = {
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
-            "cflags", "cxxflags", "defines", "required_features",
+            "cflags", "cxxflags", "defines", "required_features", "build",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
             "start", "test-protocol", "test-main", "test-guide",
         };

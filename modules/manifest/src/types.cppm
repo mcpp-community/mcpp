@@ -290,6 +290,17 @@ struct Target {
     std::vector<std::string>    cflags;
     std::vector<std::string>    cxxflags;
     std::vector<std::string>    defines;
+    // `[targets.<name>.build]` (mcpp#911 G9): flags and defines of every
+    // translation unit of this package the artifact links -- its entry and the
+    // shared implementation sources -- compiled as the artifact's own variant
+    // where they differ from the package's. A module interface stays one per
+    // package and is not varied.
+    std::vector<std::string>    buildCflags;
+    std::vector<std::string>    buildCxxflags;
+    std::vector<std::string>    buildDefines;
+    bool has_build_variant() const {
+        return !buildCflags.empty() || !buildCxxflags.empty() || !buildDefines.empty();
+    }
     // Build gate: this target is emitted ONLY when every listed feature is
     // active in the current build (otherwise it is silently skipped). Gate
     // only — it does not activate features (use --features / [features].default).
