@@ -249,7 +249,7 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 | 层次 | 范式 |
 |---|---|
 | 目录 | `tests/<类别>/<主题>.cpp`：`unit/`、`cts/`、`e2e/`、`bench/`；目录即类别，数据放在类别之下（`tests/cts/fixtures/`、`tests/bench/tasks/`） |
-| 工程 | 一个类别一个测试程序（mcpp 的 `[test] programs = "directory"`，或成员包的一个程序）；需要服务端负载等外部输入的类别为工作区成员（`tests/cts`、`tests/bench`），其程序与运行器一同进入 `stage/` |
+| 工程 | 单元测试一个文件一个程序（失败定位到文件；W8 的测量表明链接不是瓶颈），或以 `[test] programs = "directory"` 一个目录一个程序；需要服务端负载等外部输入的类别为工作区成员（`tests/cts`、`tests/bench`），其程序与运行器一同进入 `stage/` |
 | 代码 | 一个文件一个主题；一个对象一个被测行为或场景（`UTest`、`CTS`、`E2E`、`Bench`），名字之后写它需要什么（资源、时限、隔离、重试、诊断、度量的界限）；共享的准备是函数体内的局部对象或 `shared<T>`；不写 `main`（mtest 的入口），需要自举子进程的文件写 `main` 并在其末尾 `return run(argc, argv)` |
 | 数据 | 用例的度量以 `metric()` 与 `bench::measure()` 报告；文件以 `produced()` 报告；共享对象的构造、进程的时间线、资源与诊断由 runner 记录；存储在运行之间以 main 的产物延续 |
 | 分析 | `mtest explain`（失败的位置、原因、复现命令、诊断输出）、`mtest analyze`（最慢、波动、失败、基准）、`mtest gate`（集合与策略）、`--report-json` 的时间线、junit；编辑器经静态清单与列举得到同一棵用例树 |
@@ -260,7 +260,7 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 
 ```
 tests/
-  unit/        服务端的单元测试：每个主题一个文件，UTest 对象为被测单元（程序 unit，[test] programs = "directory"）
+  unit/        服务端的单元测试：每个主题一个文件、一个程序，UTest 对象为被测单元
   cts/         成员 mcppls-cts：conformance.cpp 按主题拆为 lsp.cpp、mcpp.cpp、cmake.cpp、xmake.cpp、clients.cpp…，
                Fixture 对象；fixtures/、traceability.json
   bench/       成员 mcppls-bench：startup.cpp（冷/热启动为一个 Bench 对象的两个用例，共享缓存目录）、tokens.cpp、
