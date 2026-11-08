@@ -302,6 +302,10 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 | 父包与其命名空间下的包在同一张表中（`mcpplibs.mtest` 与 `mcpplibs.mtest.gtest`）只能以引号键写出，而 #904 把带引号的点分键列为弃用 | 唯一写法的引号键不报弃用（e2e 1032、docs/05、docs/51） | #906 |
 | mcppls 的日志状态在进程退出时被析构，退出期间写日志的分离线程在 Linux arm64 映像中 SIGSEGV | 日志状态不析构 | mcppls#79 |
 | Linux e2e 的耗时表已过时（重命名的测试按中位数计），一个分片超出 22 分钟 | 由各分片报告重新测得三张耗时表；Linux 改为 8 个分片 | #906 |
+| `mcpp new` 以 mtest 为 dev-dependency 之后，`mcpp build` 与 `mcpp test` 成为两个配置：mtest 经 mcpplibs.os 到达 openkal 的内核接口，配置因此带上 `__OPENKAL__`；dev-dependency 的包含目录进入包自己源文件的命令。结果是被测试的代码与发布的代码命令不同、两个构建目录各编译一遍、构建之后的编译数据库没有测试条目（e2e 77、783 失败），在 build 与 test 之间切换时重编包自己的源文件 | dev-dependency 只到达测试单元（`testBuild`）；只经 dev 边到达的内核接口只给 dev-only 包与测试单元，配置不变；C 库与 C++ 运行时仍属配置。`mcpp dyndep` 不改写未变的输出，规则的 `restat` 由此生效 | #906（docs/08、e2e 1037 K） |
+| 测试计划修剪依赖中定义 `main` 的源文件时覆盖了全部依赖，openkal-musl 的映像入口 `okm_image.c` 声明 `main` 而被去掉，`--target x86_64-openkal` 的测试映像缺少运行时符号（e2e 1033、951） | 只修剪 dev-dependency 及其之下的包 | #906 |
+| mcpp-ide 的发布运行 `startup_failure`：ci.yml 的作业请求 `actions: read`，被调用工作流的权限不能超过调用方 | release.yml 的 `ci` 作业授予 `actions: read` | mcpp-ide#6 |
+| mcpp-plugins 0.21.0 仍精确依赖 mcpplibs.os 0.3.1，与 mcpp、mcppls、mcpp-ide 的 0.4.0 不一致 | 改为 0.4.0 后发布 | mcpp-plugins#52 |
 
 ### 9.2 S7 与 W4 的实现
 
