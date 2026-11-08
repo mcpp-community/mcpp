@@ -328,7 +328,7 @@ W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现�
 | U3 | CLion 2026.2 无 JCEF 的说明不可见 | 第一轮诊断：`visible=false selected=Module Graph`；第二轮记录可见性时间线、窗口类型与自动隐藏 |
 | U4 | xlings 全生态验证的方式 | 已确认：临时目录中重定向 `HOME` 等变量（W1 的验证步骤） |
 | U5 | mcpp-vscode 的归档说明 | 先前约定只在确认后执行 |
-| U6 | mcppls-clangd 的 CHANGELOG 记录哪次对比运行 | 以 win32 与 darwin 均通过的那次为准 |
+| U6 | mcppls-clangd 的 CHANGELOG 记录哪次对比运行 | 已确定（维护者决定）：记录运行 42464678787；darwin-arm64 三次测量均因 runner 离散度无效，以与 0.0.20 的比较放行（darwin 绝对冷启动与处理器时间不高于 0.0.20；本机两版镜像交替四对，各量差异不超过 3%），并在 CHANGELOG 与 performance-policy 中注明；CI 产物经固定的 draft release `ci-artifacts` 供本地分析 |
 | U8 | `os::is_image` 的语义不明确 | 已确定：改名 `is_openkal`，`is_image` 为弃用别名（W3） |
 | U9 | API 生命周期的声明与提示 | 已确定：W7 |
 | U7 | mcpplibs/os#19 的 hosted 行 `effective_user()` 为 1000 而 `id -u` 为 1001 | 已修复（`ee1d71e`）：hosted 安排中 C 库为 openkal-musl，其 `geteuid` 为常量 1000、无 `umask`；Linux 与 macOS 改为内核调用（与描述符、信号相同的 `src/posix/kernel.h`）；`unshare -r` 下旧实现为 1000/0，新实现为 0/0；CI 全部通过 |
