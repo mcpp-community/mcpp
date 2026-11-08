@@ -161,3 +161,58 @@ UTest a_variant_never_writes_through_a_link{"Patch/AVariantNeverWritesThroughALi
 }};
 
 }  // namespace
+
+// THE PATCH ROOT IS THE PACKAGE'S (mcpp#911 G8): a patch names files from the
+// directory of the package's manifest inside its archive; one written from the
+// archive's top, as before, applies as written and is said.
+UTest a_patch_names_files_from_the_package_root{"Patch/APatchNamesFilesFromThePackageRoot", [] {
+    auto base = fresh("root");
+    put(base / "src/pkg-1.0/run/mcpp.toml", "[package]\nname = \"run\"\n");
+    const auto rooted = base / "rooted.patch", topped = base / "topped.patch";
+    put(rooted, "--- a/mcpp.toml\n+++ b/mcpp.toml\n@@ -1,2 +1,3 @@\n [package]\n name = \"run\"\n+version = \"1.0\"\n");
+    put(topped, "--- a/pkg-1.0/run/mcpp.toml\n+++ b/pkg-1.0/run/mcpp.toml\n@@ -1,2 +1,3 @@\n [package]\n name = \"run\"\n+version = \"1.0\"\n");
+    std::vector<std::string> notes;
+    auto r = pt::materialize(base / "src", {rooted.string()}, "d1", base / "v1", "pkg-1.0/run", &notes);
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(eq(get(base / "v1/pkg-1.0/run/mcpp.toml"), "[package]\nname = \"run\"\nversion = \"1.0\"\n"));
+    expect(notes.empty());
+    auto t = pt::materialize(base / "src", {topped.string()}, "d2", base / "v2", "pkg-1.0/run", &notes);
+    if (auto&& failed = expect(fatal(t.has_value())); !failed) failed << t.error();
+    expect(eq(get(base / "v2/pkg-1.0/run/mcpp.toml"), "[package]\nname = \"run\"\nversion = \"1.0\"\n"));
+    expect(fatal(eq(notes.size(), 1u)));
+    expect(ne(notes[0].find("from the archive's top"), std::string::npos)) << notes[0];
+    fs::remove_all(base);
+}};
+
+// `mcpp patch save`: the difference of two trees is a patch that turns the
+// first into the second -- changed, added and removed files, and a last line
+// without a newline.
+UTest the_difference_of_two_trees_is_a_patch_that_makes_one_the_other{"Patch/TheDifferenceOfTwoTreesIsAPatchThatMakesOneTheOther", [] {
+    auto base = fresh("diff");
+    std::string longText;
+    for (int i = 1; i <= 30; ++i) longText += std::format("line {}\n", i);
+    put(base / "before/src/a.c", longText);
+    put(base / "before/gone.txt", "bye\n");
+    put(base / "before/tail.txt", "no newline");
+    std::string changed = longText;
+    changed.replace(changed.find("line 3\n"), 7, "line three\n");
+    changed.replace(changed.find("line 25\n"), 8, "");
+    changed += "line 31\n";
+    put(base / "after/src/a.c", changed);
+    put(base / "after/new/b.h", "#pragma once\n");
+    put(base / "after/tail.txt", "no newline, still");
+    const auto diff = pt::diff_trees(base / "before", base / "after");
+    expect(ne(diff.find("--- a/src/a.c\n+++ b/src/a.c\n"), std::string::npos)) << diff;
+    expect(ne(diff.find("--- /dev/null\n+++ b/new/b.h\n"), std::string::npos)) << diff;
+    expect(ne(diff.find("--- a/gone.txt\n+++ /dev/null\n"), std::string::npos)) << diff;
+    // Applied to a copy of the first tree, it gives the second.
+    fs::copy(base / "before", base / "check", fs::copy_options::recursive);
+    auto r = pt::apply(base / "check", diff, "saved.patch");
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error() << "\n" << diff;
+    expect(eq(get(base / "check/src/a.c"), changed));
+    expect(eq(get(base / "check/new/b.h"), "#pragma once\n"));
+    expect(eq(get(base / "check/tail.txt"), "no newline, still"));
+    expect(!fs::exists(base / "check/gone.txt"));
+    expect(pt::diff_trees(base / "after", base / "check").empty());
+    fs::remove_all(base);
+}};

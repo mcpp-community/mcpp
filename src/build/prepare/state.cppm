@@ -863,7 +863,8 @@ struct PrepareState {
     std::function<std::expected<std::pair<std::filesystem::path, mcpp::manifest::Manifest>,
                                  std::string>(const std::string&, const std::string&,
                                               const std::string&, const std::string&,
-                                              const std::vector<std::string>&, const std::string&)>
+                                              const std::vector<std::string>&, const std::string&,
+                                              const std::string&)>
         loadVersionDepVariant;
 
     std::map<ResolvedKey, ResolvedRecord> resolved;

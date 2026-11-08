@@ -666,6 +666,17 @@ verified source.
   searched for elsewhere and no line ending is converted. Paths in a patch
   carry one leading directory (`a/`, `b/`), which is removed. Renames, copies
   and binary changes are refused.
+- A patch names files from the **package's root**: the directory of the
+  package's resolved manifest inside its archive (`run/` of an archive whose
+  descriptor reads `mcpp = "*/run/mcpp.toml"`), so that one patch applies to
+  every version whose layout is the same. `patch_root = "<dir>"` on the edge
+  names another directory, relative to the package's root and inside its
+  source. A patch written from the archive's top, as before 2026.11.9, applies
+  as written, and the build says so.
+- `mcpp patch edit <dependency>` copies the package's root, as the build reads
+  it (its patches applied), to `target/patch/<dependency>/`; `mcpp patch save
+  <dependency>` writes the change as the edge's next patch,
+  `patches/<name>-<NNNN>.patch`, and adds it to the edge's `patches`.
 - Version and git dependencies may carry patches; a `path` dependency is a tree
   its consumer owns and is refused with them.
 - `mcpp.lock` names the variant and each patch by its path and SHA-256;

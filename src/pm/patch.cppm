@@ -37,10 +37,24 @@ std::expected<void, std::string> apply(const std::filesystem::path& root,
 // The variant's tree: `source` copied to `variant` and the patches applied in
 // order, unless `variant` already holds the result for this digest. Written
 // beside `variant` and renamed into place, so a tree that exists is whole.
+//
+// THE PATCH ROOT IS THE PACKAGE'S (mcpp#911 G8): a patch names files relative
+// to `patchRoot`, the directory of the package's resolved manifest (or the
+// dependency's `patch_root`), relative to `source`. A patch written against
+// `source` itself -- the store's version directory, as before -- still
+// applies there, and `notes` receives that it did.
 std::expected<void, std::string> materialize(const std::filesystem::path& source,
                                              const std::vector<std::string>& patches,
                                              std::string_view digest,
-                                             const std::filesystem::path& variant);
+                                             const std::filesystem::path& variant,
+                                             const std::filesystem::path& patchRoot = {},
+                                             std::vector<std::string>* notes = nullptr);
+
+// THE DIFFERENCE OF TWO TREES AS A PATCH (`mcpp patch save`): a unified diff of
+// every file that differs, is added or is removed under `after` against
+// `before`, the paths relative to the trees (`a/<path>`, `b/<path>`), three
+// lines of context. Empty when the trees are the same.
+std::string diff_trees(const std::filesystem::path& before, const std::filesystem::path& after);
 
 // The directory name of a variant of `version`: `<version>+p<first 12 of the
 // digest>`. Short, because Windows paths have a length.
@@ -303,7 +317,9 @@ std::expected<void, std::string> apply(const fs::path& root, std::string_view te
 std::expected<void, std::string> materialize(const fs::path& source,
                                              const std::vector<std::string>& patches,
                                              std::string_view digest,
-                                             const fs::path& variant) {
+                                             const fs::path& variant,
+                                             const fs::path& patchRoot,
+                                             std::vector<std::string>* notes) {
     const fs::path marker = variant / ".mcpp-variant";
     std::error_code ec;
     if (auto have = read_bytes(marker); have && *have == std::string(digest) + "\n") {
@@ -331,7 +347,24 @@ std::expected<void, std::string> materialize(const fs::path& source,
     for (auto const& p : patches) {
         auto text = read_bytes(p);
         if (!text) { fs::remove_all(work, ec); return std::unexpected(std::format("the patch '{}' cannot be read", p)); }
-        if (auto r = apply(work, *text, fs::path(p).filename().string()); !r) {
+        // The package's root, unless the patch names its first file from the
+        // source's own top and not from there (a patch written before G8).
+        fs::path root = work / patchRoot;
+        if (!patchRoot.empty()) {
+            if (auto parsed = parse(*text); parsed && !parsed->empty()) {
+                const auto& first = parsed->front();
+                const std::string rel = first.oldPath.empty() ? first.newPath : first.oldPath;
+                if (!first.oldPath.empty() && !fs::exists(root / rel, ec) && fs::exists(work / rel, ec)) {
+                    root = work;
+                    if (notes)
+                        notes->push_back(std::format(
+                            "the patch '{}' names its files from the archive's top ('{}'); a patch names "
+                            "them from the package's root ('{}'), and this one is read as written",
+                            fs::path(p).filename().string(), rel, patchRoot.generic_string()));
+                }
+            }
+        }
+        if (auto r = apply(root, *text, fs::path(p).filename().string()); !r) {
             fs::remove_all(work, ec);
             return std::unexpected(std::format("{} (from {})", r.error(), p));
         }
@@ -351,6 +384,134 @@ std::expected<void, std::string> materialize(const fs::path& source,
         return std::unexpected(std::format("the variant '{}' cannot be placed: {}", variant.string(), ec.message()));
     }
     return {};
+}
+
+namespace {
+
+// The lines of a file, without their newlines, and whether the last had one.
+struct text_lines {
+    std::vector<std::string> lines;
+    bool                     lastNewline = true;
+};
+
+text_lines lines_of(const std::string& bytes) {
+    text_lines t;
+    std::size_t at = 0;
+    while (at < bytes.size()) {
+        const auto nl = bytes.find('\n', at);
+        if (nl == std::string::npos) {
+            t.lines.push_back(bytes.substr(at));
+            t.lastNewline = false;
+            break;
+        }
+        t.lines.push_back(bytes.substr(at, nl - at));
+        at = nl + 1;
+    }
+    return t;
+}
+
+// The longest common subsequence of `a` and `b` as pairs of indices, by the
+// table of suffix lengths: files a patch edits are small.
+std::vector<std::pair<std::size_t, std::size_t>> common(const std::vector<std::string>& a,
+                                                         const std::vector<std::string>& b) {
+    const std::size_t n = a.size(), m = b.size();
+    std::vector<std::uint32_t> len((n + 1) * (m + 1), 0);
+    auto at = [&](std::size_t i, std::size_t j) -> std::uint32_t& { return len[i * (m + 1) + j]; };
+    for (std::size_t i = n; i-- > 0;)
+        for (std::size_t j = m; j-- > 0;)
+            at(i, j) = a[i] == b[j] ? at(i + 1, j + 1) + 1 : std::max(at(i + 1, j), at(i, j + 1));
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    std::size_t i = 0, j = 0;
+    while (i < n && j < m) {
+        if (a[i] == b[j]) { out.emplace_back(i++, j++); continue; }
+        if (at(i + 1, j) >= at(i, j + 1)) ++i; else ++j;
+    }
+    return out;
+}
+
+// One file's unified diff; `rel` its path, empty `before`/`after` path for an
+// added or removed file.
+std::string diff_file(const std::string& rel, const std::optional<std::string>& before,
+                      const std::optional<std::string>& after) {
+    const auto a = lines_of(before.value_or(std::string{}));
+    const auto b = lines_of(after.value_or(std::string{}));
+    // The edit script: each entry is (kind, line of a, line of b); ' ', '-', '+'.
+    struct op { char kind; std::size_t ai, bi; };
+    std::vector<op> script;
+    std::size_t i = 0, j = 0;
+    for (auto [ci, cj] : common(a.lines, b.lines)) {
+        while (i < ci) script.push_back({'-', i++, j});
+        while (j < cj) script.push_back({'+', i, j++});
+        script.push_back({' ', i++, j++});
+    }
+    while (i < a.lines.size()) script.push_back({'-', i++, j});
+    while (j < b.lines.size()) script.push_back({'+', i, j++});
+    std::string out = std::format("--- {}\n+++ {}\n", before ? "a/" + rel : std::string("/dev/null"),
+                                  after ? "b/" + rel : std::string("/dev/null"));
+    constexpr std::size_t kContext = 3;
+    std::size_t k = 0;
+    while (k < script.size()) {
+        if (script[k].kind == ' ') { ++k; continue; }
+        // A hunk: from the change back by the context, forward while changes
+        // come within twice the context of each other.
+        std::size_t begin = k >= kContext ? k - kContext : 0;
+        while (begin < k && script[begin].kind != ' ') ++begin;
+        std::size_t end = k, quiet = 0;
+        for (std::size_t q = k; q < script.size(); ++q) {
+            if (script[q].kind == ' ') { if (++quiet > 2 * kContext) break; }
+            else { quiet = 0; end = q; }
+        }
+        const std::size_t stop = std::min(script.size(), end + 1 + kContext);
+        std::size_t oldCount = 0, newCount = 0;
+        for (std::size_t q = begin; q < stop; ++q) {
+            if (script[q].kind != '+') ++oldCount;
+            if (script[q].kind != '-') ++newCount;
+        }
+        const std::size_t oldStart = oldCount ? script[begin].ai + 1 : script[begin].ai;
+        const std::size_t newStart = newCount ? script[begin].bi + 1 : script[begin].bi;
+        out += std::format("@@ -{},{} +{},{} @@\n", oldStart, oldCount, newStart, newCount);
+        for (std::size_t q = begin; q < stop; ++q) {
+            const auto& o = script[q];
+            const bool fromA = o.kind != '+';
+            const auto& text = fromA ? a.lines[o.ai] : b.lines[o.bi];
+            out += o.kind;
+            out += text;
+            out += '\n';
+            const bool last = fromA ? o.ai + 1 == a.lines.size() && !a.lastNewline
+                                    : o.bi + 1 == b.lines.size() && !b.lastNewline;
+            if (last) out += "\\ No newline at end of file\n";
+        }
+        k = stop;
+    }
+    return out;
+}
+
+std::set<std::string> files_under(const fs::path& root) {
+    std::set<std::string> out;
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) return out;
+    for (auto it = fs::recursive_directory_iterator(root, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        auto rel = fs::relative(it->path(), root, ec).generic_string();
+        if (rel == ".mcpp-variant" || rel.starts_with(".mcpp-patch")) continue;
+        out.insert(std::move(rel));
+    }
+    return out;
+}
+
+}  // namespace
+
+std::string diff_trees(const fs::path& before, const fs::path& after) {
+    auto all = files_under(before);
+    all.merge(files_under(after));
+    std::string out;
+    for (auto const& rel : all) {
+        auto a = read_bytes(before / rel);
+        auto b = read_bytes(after / rel);
+        if (a && b && *a == *b) continue;
+        out += diff_file(rel, a, b);
+    }
+    return out;
 }
 
 }  // namespace mcpp::pm::patch

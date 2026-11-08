@@ -610,6 +610,9 @@ export struct BuildContext {
     CompilerChoice                  compilerChoice;
     // WHICH ROW AND WHICH PROVIDER THE REQUEST WAS GIVEN (SPEC-016 §4).
     TargetSelection                 targetSelection;
+    // Each package's root as this build read it, by name and by qualified
+    // name: a patched dependency's is its variant's (`mcpp patch edit`).
+    std::map<std::string, std::filesystem::path> packageRoots;
     // THE SOURCES THIS BUILD USED (mcpp#755), one entry per subject. See
     // SourceDecision.
     std::vector<SourceDecision>     sources;

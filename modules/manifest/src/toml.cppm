@@ -589,6 +589,8 @@ struct DependencyTextEdit {
     std::string              shortName;
     std::string              version;
     std::vector<std::string> features;
+    // The edge's patches, as the manifest writes them (relative to it).
+    std::vector<std::string> patches;
     bool                     dev = false;
 };
 
@@ -2331,7 +2333,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             || k == "backend"  || k == "tools" || k == "artifacts"
             || k == "host-module" || k == "reexport"
             || k == "linkage"
-            || k == "patches" || k == "embed" || k == "exclude";
+            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -2543,6 +2545,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 }
                 spec.patches.push_back(pp.lexically_normal().generic_string());
             }
+        }
+        if (auto it = sub.find("patch_root"); it != sub.end()) {
+            const std::filesystem::path pr = it->second.is_string() ? it->second.as_string() : std::string{};
+            if (!it->second.is_string() || pr.is_absolute())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] patch_root must be a directory relative to the package's root", section, fqName)));
+            spec.patchRoot = pr.lexically_normal().generic_string();
         }
         if (auto it = sub.find("embed"); it != sub.end()) {
             if (!it->second.is_bool())
@@ -5709,18 +5718,27 @@ upsert_dependency_text(std::string_view source,
         }
     }
 
+    for (auto const& p : edit.patches)
+        for (unsigned char ch : p)
+            if (ch < 0x20 || ch == 0x7f || ch == '"' || ch == '\\')
+                return std::unexpected(std::format(
+                    "dependency patch '{}' contains an unsafe TOML character", p));
+    auto quoted_list = [](const std::vector<std::string>& items) {
+        std::string list;
+        for (auto const& item : items) {
+            if (!list.empty()) list += ", ";
+            list += std::format("\"{}\"", item);
+        }
+        return list;
+    };
     std::string value;
-    if (edit.features.empty()) {
+    if (edit.features.empty() && edit.patches.empty()) {
         value = std::format("\"{}\"", edit.version);
     } else {
-        std::string featureList;
-        for (auto const& feature : edit.features) {
-            if (!featureList.empty()) featureList += ", ";
-            featureList += std::format("\"{}\"", feature);
-        }
-        value = std::format(
-            "{{ version = \"{}\", features = [{}] }}",
-            edit.version, featureList);
+        value = std::format("{{ version = \"{}\"", edit.version);
+        if (!edit.features.empty()) value += std::format(", features = [{}]", quoted_list(edit.features));
+        if (!edit.patches.empty()) value += std::format(", patches = [{}]", quoted_list(edit.patches));
+        value += " }";
     }
 
     struct SectionSpan {
@@ -5824,9 +5842,13 @@ upsert_dependency_text(std::string_view source,
     // Retained flat dotted spellings are removed before canonical namespace
     // subtable emission. The parsed identity gate above ensures this edits the
     // exact PackageId, not a short-name substring match.
-    if (!defaultNamespace) {
+    // The default namespace's dotted spelling (`mcpplibs.cmdline = ...`) is
+    // the same package as the bare one and is removed as well.
+    {
+        const std::string dotted = defaultNamespace
+            ? std::format("{}.{}", edit.namespace_, edit.shortName) : spelling;
         if (auto base = find_section(text, baseHeader)) {
-            if (auto legacy = key_line_span(text, *base, spelling)) {
+            if (auto legacy = key_line_span(text, *base, dotted)) {
                 auto eraseEnd = legacy->second;
                 if (eraseEnd < text.size() && text[eraseEnd] == '\n')
                     ++eraseEnd;

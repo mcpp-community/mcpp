@@ -124,6 +124,10 @@ struct DependencySpec {
     // edges only: a `path` dependency is a tree its consumer already owns.
     std::vector<std::string>    patches;
     std::string                 patchesDigest;
+    // `patch_root` (mcpp#911 G8): the directory the patches name their files
+    // from, relative to the package's root (the directory of its resolved
+    // manifest); empty: that root.
+    std::string                 patchRoot;
     // `embed = true`: the dependency's sources (as its description selects
     // them, less `exclude`) are compiled INTO this consumer with the
     // consumer's flags and the dependency's include directories and macros,

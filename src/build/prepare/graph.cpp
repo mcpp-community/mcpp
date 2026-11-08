@@ -1644,9 +1644,15 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 const auto variant = (*cfg)->metaCacheDir / "src"
                     / (key.ns.empty() ? key.shortName : key.ns + "." + key.shortName)
                     / mcpp::pm::patch::variant_dir_name(resolvedGitRev.substr(0, 12), spec.patchesDigest);
+                if (std::filesystem::path(spec.patchRoot).lexically_normal().generic_string().starts_with(".."))
+                    return std::unexpected(std::format(
+                        "dependency '{}': patch_root '{}' leaves the package's source", name, spec.patchRoot));
+                std::vector<std::string> notes;
                 if (auto r = mcpp::pm::patch::materialize(dep_root, spec.patches,
-                                                          spec.patchesDigest, variant); !r)
+                                                          spec.patchesDigest, variant,
+                                                          spec.patchRoot, &notes); !r)
                     return std::unexpected(std::format("dependency '{}': {}", name, r.error()));
+                for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", name, n));
                 dep_root = variant;
             }
         }
@@ -1748,7 +1754,7 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             auto loaded = spec.patches.empty()
                 ? state.loadVersionDep(name, key.ns, key.shortName, spec.version)
                 : state.loadVersionDepVariant(name, key.ns, key.shortName, spec.version,
-                                              spec.patches, spec.patchesDigest);
+                                              spec.patches, spec.patchesDigest, spec.patchRoot);
             if (!loaded) return std::unexpected(loaded.error());
             dep_root     = std::move(loaded->first);
             dep_manifest = std::move(loaded->second);
