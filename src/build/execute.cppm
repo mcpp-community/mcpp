@@ -4127,7 +4127,8 @@ static std::vector<NinjaEdge> ninja_edges_since(const std::filesystem::path& log
 // uses. With no framework, the contract mcpp holds and how to take one.
 inline constexpr std::string_view kTestingDocs =
     "https://github.com/mcpp-community/mcpp/blob/main/docs/08-testing.md";
-inline constexpr std::string_view kMtestRepo = "https://github.com/mcpp-community/mtest";
+using mcpp::build::test_protocol::kMtestRelease;
+using mcpp::build::test_protocol::kMtestRepo;
 
 static void print_test_guide(const BuildContext& ctx, bool json) {
     const auto& frameworks = ctx.plan.testFrameworks;
@@ -4144,14 +4145,14 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
                           {"records", "mcpp test --message-format json"}, {"debug", "mcpp test <test> --print-launch"}}},
             {"docs", kTestingDocs},
         };
-        if (frameworks.empty()) g["suggest"] = {{"dev-dependency", "mcpplibs.mtest = \"0.1.0\""}, {"repo", kMtestRepo}};
+        if (frameworks.empty()) g["suggest"] = {{"dev-dependency", std::format("mcpplibs.mtest = \"{}\"", kMtestRelease)}, {"repo", kMtestRepo}};
         std::println("{}", nlohmann::ordered_json{{"guide", g}}.dump());
         std::fflush(libc::stdout());
         return;
     }
     if (frameworks.empty()) {
         std::println("No test framework: a test is a program under tests/, judged by its exit status.");
-        std::println("A framework of cases (mtest): [dev-dependencies] mcpplibs.mtest = \"0.1.0\"  ({})", kMtestRepo);
+        std::println("A framework of cases (mtest): [dev-dependencies] mcpplibs.mtest = \"{}\"  ({})", kMtestRelease, kMtestRepo);
     } else {
         std::println("Test frameworks:");
         for (auto const& f : frameworks) {
@@ -4515,7 +4516,7 @@ void print_unprovided_test_imports(const BuildPlan& plan, const std::vector<std:
     if (lines.empty()) return;
     std::println("");
     for (auto const& l : lines) std::println("{}", l);
-    std::println("a test's framework is a [dev-dependencies] entry, e.g. mcpplibs.mtest = \"0.1.0\" (docs/08)");
+    std::println("a test's framework is a [dev-dependencies] entry, e.g. mcpplibs.mtest = \"{}\" (docs/08)", kMtestRelease);
 }
 
 // One member's tests, against a build that exists: the per-test builds that

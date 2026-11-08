@@ -16,6 +16,7 @@ import mcpp.pm.resolver;
 import mcpp.scaffold;
 import mcpp.scaffold.project_name;
 import mcpp.ui;
+import mcpp.build.test_protocol;   // the release of mtest the skeleton's tests use
 
 namespace mcpp::scaffold {
 
@@ -323,8 +324,10 @@ std::optional<cxx_names> cxx_names_of(std::string_view qualified) {
 
 // The test framework a skeleton's tests use (docs/08): mtest, whose entry
 // begins a test file that defines no `main`.
-inline constexpr std::string_view kTestDependency =
-    "\n[dev-dependencies]\nmcpplibs.mtest = \"0.1.0\"\n";
+std::string test_dependency() {
+    return std::format("\n[dev-dependencies]\nmcpplibs.mtest = \"{}\"\n",
+                       mcpp::build::test_protocol::kMtestRelease);
+}
 
 export int create_builtin_project(
     const mcpp::scaffold::PortableProjectName& project, builtin kind) {
@@ -367,7 +370,7 @@ export int create_builtin_project(
             // and the GL runtime is closed by the ecosystem (compat.glx-runtime).
             manifest += "\n[dependencies]\nimgui = \"0.0.5\"\n";
         }
-        manifest += kTestDependency;
+        manifest += test_dependency();
         if (auto written = mcpp::scaffold::write_text_file(
                 root / "mcpp.toml", manifest); !written) {
             mcpp::ui::error(written.error());

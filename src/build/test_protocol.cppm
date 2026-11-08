@@ -16,6 +16,11 @@ export namespace mcpp::build::test_protocol {
 // The version this mcpp speaks.
 inline constexpr int kVersion = 1;
 
+// The framework mcpp scaffolds tests with and suggests where a package has
+// none (docs/01, docs/08): mtest, by this release, from its repository.
+inline constexpr std::string_view kMtestRelease = "0.2.0";
+inline constexpr std::string_view kMtestRepo    = "https://github.com/mcpp-community/mtest";
+
 // The protocol's variables, removed from the environment a program inherits
 // so that an outer runner's do not reach a program mcpp starts (P2.2).
 inline constexpr std::array<std::string_view, 7> kVariables = {
