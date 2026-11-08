@@ -28,6 +28,7 @@ import std;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;
 import mcpp.toolchain.builtin_targets;
 
 export namespace mcpp::toolchain::triple {
@@ -153,6 +154,13 @@ struct Triple {
     // would let a caller supply one platform's answer for the other's.
     std::string llvm_triple(std::string_view minPlatformVersion = {}) const {
         if (empty()) return {};
+        // A ROW A PLATFORM DEFINES STATES ITS OWN: `clang-triple`, with
+        // `{version}` the project's minimum system version and
+        // `{version:<default>}` the row's when the project states none.
+        if (auto* d = defined()) {
+            if (d->clangTriple.empty()) return str();
+            return expand_version(d->clangTriple, minPlatformVersion);
+        }
         if (os == "macos") {
             // Apple spells the 64-bit ARM architecture `arm64`, and the OS
             // component carries the deployment target: `arm64-apple-macos14`.
@@ -250,6 +258,12 @@ struct Triple {
     // fallback would otherwise claim ELF for it -- the silent wrong answer this
     // whole axis exists to remove.
     ObjectFormat object_format() const {
+        if (auto* d = defined()) {
+            if (d->objectFormat == "pe") return ObjectFormat::Pe;
+            if (d->objectFormat == "mach-o") return ObjectFormat::MachO;
+            if (d->objectFormat == "wasm") return ObjectFormat::Wasm;
+            return ObjectFormat::Elf;
+        }
         if (os == "windows")                  return ObjectFormat::Pe;
         if (os == "macos" || os == "ios")     return ObjectFormat::MachO;
         if (arch.starts_with("wasm"))         return ObjectFormat::Wasm;
@@ -389,6 +403,7 @@ struct Triple {
     // nothing, unchanged: `cfg(unix)` on bare metal would be false in a way no
     // source could act on.
     std::string family() const {
+        if (auto* d = defined()) return std::string(d->family);
         if (os == "windows") return "windows";
         if (os == "linux" || os == "macos" || os == "ios"
             || os == "emscripten")           return "unix";
@@ -439,6 +454,24 @@ struct Triple {
     // unequal to the same triple derived by `host_triple`, and the first thing
     // that breaks is the `host` tag in `mcpp toolchain list`, which compares
     // exactly those two.
+    // The row a platform defined for this triple, if one did (SPEC-016 §2):
+    // its facts answer where the engine's conventions for a system know none.
+    const mcpp::toolchain::target::Row* defined() const {
+        return mcpp::toolchain::target::defined_row(str());
+    }
+
+    static std::string expand_version(std::string_view pattern, std::string_view version) {
+        std::string out(pattern);
+        const auto at = out.find("{version");
+        if (at == std::string::npos) return out;
+        const auto end = out.find('}', at);
+        if (end == std::string::npos) return out;
+        std::string fallback;
+        if (out[at + 8] == ':') fallback = out.substr(at + 9, end - at - 9);
+        out.replace(at, end - at + 1, version.empty() ? fallback : std::string(version));
+        return out;
+    }
+
     bool operator==(const Triple& o) const {
         return arch == o.arch && os == o.os && env == o.env;
     }
@@ -847,6 +880,17 @@ struct ArtifactNaming {
 // the decision testable from any host (and keeps this module dependency-free).
 inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hostNaming) {
     if (t.empty()) return hostNaming;
+    if (auto* d = t.defined()) {
+        const bool pe = t.is_pe();
+        return ArtifactNaming{
+            .exeSuffix = d->exeSuffix, .libPrefix = "lib",
+            .staticLibExt = ".a",
+            .sharedLibExt = !d->sharedSuffix.empty() ? d->sharedSuffix
+                          : pe ? std::string_view(".dll")
+                          : t.is_mach_o() ? std::string_view(".dylib") : std::string_view(".so"),
+            .sharedNeedsImportLib = pe,
+        };
+    }
 
     if (t.os == "windows") {
         // PE. The static-library convention splits on env, not on os.
@@ -1156,6 +1200,12 @@ std::optional<Triple> parse(std::string_view s) {
         // openkal-musl rather than libSystem). The native identity keeps no env
         // segment; this one names the C library it has.
         if (t.os == "macos" && k == "musl") { t.env = "musl"; t.envExplicit = true; continue; }
+        // A SYSTEM A PLATFORM DEFINES (mcpp#911 G1; SPEC-016 §2): the os and
+        // env words of the rows a platform read in this process states.
+        if (!sawOs && mcpp::toolchain::target::defines_os(k)) { t.os = std::string(k); sawOs = true; continue; }
+        if (sawOs && t.env.empty() && mcpp::toolchain::target::defines_env(t.os, k)) {
+            t.env = std::string(k); t.envExplicit = true; continue;
+        }
         // Unrecognized segment (wasi, …): not in mcpp's target language —
         // treat as unparseable rather than guessing.
         return std::nullopt;

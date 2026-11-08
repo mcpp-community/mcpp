@@ -15,7 +15,7 @@ namespace toml = mcpp::libs::toml;
 namespace {
 
 constexpr std::string_view kRowKeys[] = {
-    "triple", "tier", "note", "standard", "march", "mabi", "code-model", "multilib", "flags",
+    "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
     "link-emulation",
 };
 constexpr std::string_view kProviderKeys[] = {
@@ -90,10 +90,27 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         if (!it->second.is_bool()) throw Failure{std::format("{}: `standard` is not a boolean", where)};
         standard = it->second.as_bool();
     }
+    // The segments of the canonical spelling: `arch-os` or `arch-os-env`.
+    std::vector<std::string> seg;
+    for (std::size_t b = 0;;) {
+        const auto d = triple.find('-', b);
+        seg.push_back(triple.substr(b, d == std::string::npos ? std::string::npos : d - b));
+        if (d == std::string::npos) break;
+        b = d + 1;
+    }
+    if (seg.size() < 2 || seg.size() > 3 || std::ranges::any_of(seg, [](auto const& x) { return x.empty(); }))
+        throw Failure{std::format("{}: a triple is `arch-os` or `arch-os-env`", where)};
+    bool exact = false;
+    if (auto it = t.find("exact"); it != t.end()) {
+        if (!it->second.is_bool()) throw Failure{std::format("{}: `exact` is not a boolean", where)};
+        exact = it->second.as_bool();
+    }
     return std::format(
-        "    {{ .triple = {}, .tier = {}, .note = {}, .standard = {}, .march = {}, .mabi = {}, "
+        "    {{ .triple = {}, .arch = {}, .os = {}, .env = {}, .tier = {}, .note = {}, .standard = {}, "
+        ".exact = {}, .march = {}, .mabi = {}, "
         ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {} }},\n",
-        lit(triple), lit(tier), lit(text(t, "note", where)), standard ? "true" : "false",
+        lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
+        lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
         lit(text(t, "code-model", where)), lit(text(t, "multilib", where)),
         arrays.add(words(t, "flags", where)), lit(text(t, "link-emulation", where)));

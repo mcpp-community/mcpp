@@ -24,6 +24,8 @@
 #   note            the display note of `mcpp toolchain list`
 #   standard        the identity is an industry-standard one; a combination that
 #                   is not (musl on Windows) is mcpp's name for what is produced
+#   exact           only a request that names the row whole reaches it; `arch-os`
+#                   does not
 #   march, mabi, code-model, multilib, flags, link-emulation
 #                   the ISA profile of a bare-metal row: `-march`, `-mabi`,
 #                   `-mcmodel` (empty: the driver's default), the multilib
@@ -284,16 +286,21 @@ march          = "i686"
 link-emulation = "elf_i386"
 
 # ── Android, iOS, the Web, ok images ─────────────────────────────────────────
+#
+# Android is Linux with bionic; `x86_64-linux` asks for a C library of Linux, not
+# for an Android application, so the Android rows are reached by name only.
 
 [[platform.define]]
 triple   = "aarch64-linux-android"
 tier     = "verified"
 standard = true
+exact    = true
 
 [[platform.define]]
 triple   = "x86_64-linux-android"
 tier     = "verified"
 standard = true
+exact    = true
 
 [[platform.define]]
 triple   = "aarch64-ios"

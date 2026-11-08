@@ -19,9 +19,11 @@ export namespace mcpp::toolchain::target {
 // platform defines -- everything a build of an unfamiliar system needs.
 struct Row {
     std::string_view triple;          // canonical `arch-os[-env]`
+    std::string_view arch, os, env;   // its segments
     std::string_view tier;            // verified | preview | planned
     std::string_view note;            // display note
     bool             standard = true; // an industry-standard identity
+    bool             exact = false;   // reached only by a request that names it whole
     std::string_view march;           // -march= of a bare-metal row
     std::string_view mabi;            // -mabi=; empty: none given
     std::string_view codeModel;       // -mcmodel=; empty: the driver's
