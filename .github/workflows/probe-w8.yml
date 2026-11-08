@@ -42,32 +42,38 @@ jobs:
           echo "ran: $(wc -l < members.txt); failed: $(awk -F'\t' '$1 == "fail" || $1 == "timeout"' serial.tsv | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: The same cases by mtest, 1, 2 and 3 at a time
         run: |
-          mkdir -p run && cd run
+          cd tests/e2e
           {
             echo '[discover.e2e]'
-            printf 'globs = [%s]\n' "$(sed 's/.*/"tests\/e2e\/&"/' ../members.txt | paste -sd, -)"
+            echo 'globs = ["[0-9]*.sh"]'
             echo 'command = ["bash", "{path}"]'
             echo 'kind = "e2e"'
             echo 'timeout = "20m"'
           } > mtest.toml
-          ln -s ../tests tests
+          select=(); while read -r m; do select+=(--program "$m"); done < ../../members.txt
           for jobs in 1 2 3; do
             rm -rf .mtest
             start=$(date +%s)
-            MCPP="$CAND" "$MTEST" run --jobs $jobs --json > run-$jobs.json 2> run-$jobs.err || true
+            MCPP="$CAND" "$MTEST" run --jobs $jobs --report-json ../../run-$jobs.json "${select[@]}" > ../../run-$jobs.log 2>&1 || true
             wall=$(( $(date +%s) - start ))
-            python3 - "$jobs" "$wall" run-$jobs.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 - "$jobs" "$wall" ../../run-$jobs.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import json, sys
-          j = json.load(open(sys.argv[3]))
-          bad = [f["case"] for f in j.get("failing", [])]
-          print(f"jobs={sys.argv[1]} wall={sys.argv[2]}s cases={j.get('cases')} failing={len(bad)} {bad[:12]}")
+          try:
+              j = json.load(open(sys.argv[3]))
+          except Exception as e:
+              print(f"jobs={sys.argv[1]} wall={sys.argv[2]}s no record: {e}"); sys.exit(0)
+          cases = j.get("cases", [])
+          bad = [c.get("program") for c in cases if c.get("status") not in ("pass", "flaky")]
+          print(f"jobs={sys.argv[1]} wall={sys.argv[2]}s cases={len(cases)} failing={len(bad)} {bad[:12]}")
           PY
+            tail -3 ../../run-$jobs.log
           done
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: e2e-parallel, path: "serial.log\nserial.tsv\nrun/run-*.json\nrun/run-*.err" }
+        with: { name: e2e-parallel, path: "serial.log\nserial.tsv\nrun-*.json\nrun-*.log" }
 
   unit-programs:
+    if: false   # measured by the run before
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     defaults: { run: { shell: bash } }
@@ -104,6 +110,7 @@ jobs:
         with: { name: unit-programs, path: "${{ runner.temp }}/per-*/test.log" }
 
   target-reuse:
+    if: false   # measured by the run before
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     defaults: { run: { shell: bash } }
