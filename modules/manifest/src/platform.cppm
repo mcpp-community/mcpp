@@ -278,6 +278,11 @@ struct Override {
     Origin      platformOrigin;
     bool        platformSet  = false;
     bool        platformNone = false;   // `platform = "none"`
+    std::string platformBuiltin;        // `platform = "builtin:<name>"`: a built-in provider
+    // `[target.<selector>.priority] <provider> = <n>` (SPEC-016 §4.3): the
+    // priority of a provider for the rows the selector matches.
+    std::map<std::string, int> priority;
+    Origin      priorityOrigin;
     Statement   fields;
 };
 
@@ -307,7 +312,7 @@ inline constexpr std::string_view kHostedKeys[] = { "targets", "toolchain", "lay
 // override a platform. `runner`, `runners`, `toolchain` and `sysroot` are the
 // table's existing keys and keep their parsers.
 inline constexpr std::string_view kOverrideKeys[] = {
-    "platform", "layers", "tools", "carrier", "link",
+    "platform", "priority", "layers", "tools", "carrier", "link",
 };
 
 // The carrier entry of `s` that serves `pair` (`<os>-<arch>`): the first whose
@@ -366,10 +371,12 @@ inline std::string identity(const Override& o) {
     std::string s = o.selector;
     auto add = [&](const Origin& g) { s += std::format("|{}:{}:{}", g.file, g.line, g.key); };
     if (o.platformSet) {
-        s += o.platformNone ? std::string("|none") : "|" + display(o.platform);
+        s += !o.platformBuiltin.empty() ? "|builtin:" + o.platformBuiltin
+           : o.platformNone ? std::string("|none") : "|" + display(o.platform);
         add(o.platformOrigin);
     }
     auto const& f = o.fields;
+    for (auto const& [k, n] : o.priority) s += std::format("|priority:{}={}", k, n);
     for (auto const& [k, e] : f.layers) add(e.origin);
     for (auto const& [k, e] : f.tools) add(e.origin);
     for (auto const& [k, w] : f.runners) add(w.origin);

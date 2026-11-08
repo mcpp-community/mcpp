@@ -686,6 +686,12 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
         if (k == "platform") {
             if (v.is_string() && v.as_string() == "none") {
                 o.platformNone = true;
+            } else if (v.is_string() && v.as_string().starts_with("builtin:")) {
+                // A built-in provider by name (SPEC-016 §4): no platform package.
+                o.platformNone = true;
+                o.platformBuiltin = v.as_string().substr(8);
+                if (o.platformBuiltin.empty())
+                    return std::unexpected(std::format("{}: `builtin:` names no provider", key));
             } else {
                 auto r = ref(v, key, false, false);
                 if (!r) return std::unexpected(r.error());
@@ -693,6 +699,16 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
             }
             o.platformOrigin = at(v, key);
             o.platformSet = true;
+        } else if (k == "priority" && !selector.empty()) {
+            if (!v.is_table())
+                return std::unexpected(std::format(
+                    "{} must be a table of <provider> = <integer>, for example mingw = 200", key));
+            for (auto const& [pk, pv] : v.as_table()) {
+                if (!pv.is_int())
+                    return std::unexpected(std::format("{}.{} must be an integer", key, pk));
+                o.priority[pk] = static_cast<int>(pv.as_int());
+            }
+            o.priorityOrigin = at(v, key);
         } else if (selector.empty()) {
             // `[host]` selects the host graph's platform and nothing else.
             warn(std::format(

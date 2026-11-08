@@ -1098,13 +1098,23 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
 }
 
 inline std::string format_report(const TargetSide& ts, std::string_view targetName,
-                                 bool verbose = false) {
+                                 bool verbose = false, std::string_view request = {},
+                                 std::string_view fallback = {}) {
     // The head carries no verb of its own: the caller supplies one through the
     // status line's own padding, and the layer lines below are indented to sit
-    // under it.
-    std::string head = (ts.llvmTriple.empty() || ts.llvmTriple == targetName)
-        ? std::format("{}", targetName)
-        : std::format("{} → {}", targetName, ts.llvmTriple);
+    // under it. A request that is a pattern reads `<request> → <identity>`
+    // (SPEC-016 §4.5), with the compiler's triple beside it; a selection that
+    // passed over its first candidate says why, on the same line.
+    std::string head;
+    if (!request.empty() && request != targetName) {
+        head = std::format("{} → {}", request, targetName);
+        if (!ts.llvmTriple.empty() && ts.llvmTriple != targetName) head += std::format(" ({})", ts.llvmTriple);
+    } else {
+        head = (ts.llvmTriple.empty() || ts.llvmTriple == targetName)
+            ? std::format("{}", targetName)
+            : std::format("{} → {}", targetName, ts.llvmTriple);
+    }
+    if (!fallback.empty()) head += std::format("; {}", fallback);
 
     // WHEN THE SEGMENT IS NOT A C LIBRARY, SAY WHAT IT IS — HERE, WHERE THE
     // READER IS LOOKING AT IT.

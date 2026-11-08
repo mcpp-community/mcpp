@@ -38,6 +38,9 @@ struct Selection {
     mcpp::manifest::platform::PackageRef ref;
     mcpp::manifest::platform::Origin     origin;
     bool           none = true;
+    // A built-in provider chosen by name (`builtin:<name>`, SPEC-016 §4): no
+    // platform package, and the selection takes that provider alone.
+    std::string    builtin;
     // A host triple selected the platform: only its `[platform.hosted]` part
     // applies (§5.4).
     bool           hosted = false;
@@ -243,6 +246,13 @@ std::expected<Selection, std::string> parse_choice(std::string_view value, mp::O
     Selection s;
     s.origin = std::move(origin);
     if (value == "none") return s;
+    if (value.starts_with("builtin:")) {
+        s.builtin = std::string(value.substr(8));
+        if (s.builtin.empty())
+            return std::unexpected(std::format("{}: `builtin:` names no provider; write builtin:<name> "
+                                               "(`mcpp why target` lists them)", s.origin.key));
+        return s;
+    }
     if (names_a_path(value)) {
         std::string dir(value.starts_with("path:") ? value.substr(5) : value);
         if (dir.starts_with("~"))
@@ -286,6 +296,7 @@ std::expected<Selection, std::string> select_target(const ChoiceInputs& in, cons
         s.origin = chosen->platformOrigin;
         if (s.origin.key.empty())
             s.origin.key = std::format("[target.{}].platform", chosen->selector);
+        s.builtin = chosen->platformBuiltin;
         if (chosen->platformNone) return s;
         s.ref = chosen->platform;
         s.none = false;
@@ -407,8 +418,15 @@ serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::
         if (!p.hosted.targets.set) return true;
         std::string hosts;
         for (auto const& w : p.hosted.targets.value) {
+            // A HOSTED ENTRY NAMES A SYSTEM, AND THE C LIBRARY NAMES THE ENV
+            // (SPEC-016 §2, I5): `x86_64-linux-gnu` in `hosted.targets` serves
+            // the build of that architecture and system whose identity follows
+            // the C library the hosted layers bring (`x86_64-linux-musl` for
+            // openkal-musl), so a platform written before the identity followed
+            // the C library keeps serving the same builds.
             auto pt = mcpp::toolchain::triple::parse(w);
-            if (pt ? pt->str() == t.str() : w == t.str()) return true;
+            if (pt ? (pt->str() == t.str() || (pt->arch == t.arch && pt->os == t.os)) : w == t.str())
+                return true;
             if (!hosts.empty()) hosts += ", ";
             hosts += w;
         }

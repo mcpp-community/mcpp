@@ -30,6 +30,9 @@ import mcpp.project;
 import mcpp.targetside;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.platform;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_select;
 import mcpp.ui;
 import mcpp.version_req;
 import mcpp.pm.resolver;
@@ -143,14 +146,42 @@ platform_selection_for(const mcpp::toolchain::triple::Triple& t, const BuildOver
     if (auto c = mcpp::config::load_or_init(/*quiet=*/true, {}, {},
                                             mcpp::config::Initialization::ReadOnly))
         config = c->platformOverrides;
+    // The built-in default is the platform of the provider the selection takes
+    // for this identity on this host (SPEC-016 §4), not of the row's first.
     std::string column;
-    if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
+    {
+        auto ctx = target_context(project, config, {}, {}, [] { return false; });
+        auto s = mcpp::toolchain::target::select(t.str(), t.arch, t.os, t.env, true, ctx);
+        if (s.provider) column = std::string(s.provider->platform);
+    }
     mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, column };
     if (overrides.platform_choice.empty() && !stated_on_command_line("MCPP_PLATFORM"))
         in.flagKey = "MCPP_PLATFORM";
     auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));
     if (!sel) return std::unexpected(sel.error());
+    if (!sel->builtin.empty()) return "builtin:" + sel->builtin;
     return sel->none ? std::string{} : mp::display(sel->ref);
+}
+
+std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
+                           std::span<const mp::Override> config) {
+    const auto flag = !state.overrides.platform_choice.empty()
+        ? state.overrides.platform_choice
+        : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
+    const auto envKey = target_env_name(t, "PLATFORM");
+    const auto env = mcpp::invocation::get(envKey).value_or("");
+    mcpp::platform::ChoiceInputs in{ flag, env, envKey, project_tables(*state.m), config, {} };
+    auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));
+    if (!sel || sel->origin.tier == mp::Tier::BuiltIn) return {};
+    if (!sel->builtin.empty()) return sel->builtin;
+    if (sel->none) return "none";
+    const auto chosen = known_short_name(sel->ref);
+    for (auto const* p : mcpp::toolchain::target::providers()) {
+        if (p->platform.empty()) continue;
+        auto ref = mp::parse_ref_text(p->platform);
+        if (ref && ref->spec.shortName == chosen) return std::string(p->name);
+    }
+    return {};
 }
 
 cfgpred::Ctx platform_cfg_context(const PrepareState& state) {
@@ -185,8 +216,10 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     auto project = project_tables(*state.m);
     std::vector<mp::Override> config;
     if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->platformOverrides;
+    // The built-in default: the platform of the provider the selection took.
     std::string column;
-    if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
+    if (state.selectedTarget) column = std::string(state.selectedTarget->platform);
+    else if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
     mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, column };
     if (state.overrides.platform_choice.empty() && !stated_on_command_line("MCPP_PLATFORM"))
         in.flagKey = "MCPP_PLATFORM";

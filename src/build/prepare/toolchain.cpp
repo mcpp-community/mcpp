@@ -36,6 +36,8 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_select;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.home;
@@ -518,6 +520,7 @@ struct TargetOverrideCtx {
     std::string requestedSpelling;
     std::optional<mcpp::toolchain::triple::Triple> parsed;
     mcpp::toolchain::triple::RequestResolution req;
+    mcpp::toolchain::target::Selection sel;
     // The `[target.<triple>]` section this request matched, or null. A
     // pointer rather than the map iterator the single-function version held,
     // since iterator validity is not this struct's business to reason about
@@ -582,9 +585,62 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // use. A project wanting the `planned` row keeps its escape hatch by
     // WRITING the segment: `--target aarch64-linux-gnu` skips completion
     // entirely, because a written segment is a request rather than a gap.
+    // THE SECTION THE REQUEST NAMES AS WRITTEN, before the selection: a
+    // `[target.<request>] toolchain` is a declared family the selection keeps.
+    const mcpp::manifest::TargetEntry* written = nullptr;
+    if (auto w = state.m->targetOverrides.find(state.overrides.target_triple);
+        w != state.m->targetOverrides.end())
+        written = &w->second;
+
+    // THE SELECTION (SPEC-016 §4). The request is a pattern; the candidates are
+    // the rows it reaches with the providers that serve them, ordered by
+    // priority, and the first available on this host is the identity.
+    // Explicit choices win: a declared compiler family keeps the providers that
+    // pair with it, and a provider chosen by name (`builtin:<name>`, or the
+    // platform package a provider names) serves alone.
     if (ctx.parsed) {
-        ctx.req    = triple::resolve_request(*ctx.parsed);
-        ctx.parsed = ctx.req.triple;
+        std::string family;
+        auto declared = written && !written->toolchain.empty() ? std::optional<std::string>(written->toolchain)
+                      : (state.tcSpec && (state.tcFromCommandLine || tc_origin_is_user_explicit(state.tcOrigin)))
+                          ? state.tcSpec : std::nullopt;
+        if (declared)
+            if (auto spec = mcpp::toolchain::parse_toolchain_spec(*declared))
+                family = std::string(mcpp::toolchain::family_name(spec->family));
+        std::vector<mcpp::manifest::platform::Override> config;
+        if (auto cfg = state.get_cfg(true); cfg) config = (*cfg)->platformOverrides;
+        const std::string provider = named_provider(state, *ctx.parsed, config);
+        auto sctx = target_context(state.m->platformOverrides, config, family,
+                                   provider == "none" ? std::string{} : provider,
+                                   state.msvc_usable_either_origin);
+        sctx.platformPackages = provider != "none";
+        ctx.sel = mcpp::toolchain::target::select(state.overrides.target_triple, ctx.parsed->arch,
+                                                  ctx.parsed->os, ctx.parsed->env,
+                                                  ctx.parsed->envExplicit, sctx);
+        if (ctx.sel.row) {
+            if (auto chosen = triple::parse(ctx.sel.row->triple)) {
+                chosen->envExplicit = ctx.parsed->envExplicit;
+                ctx.parsed = *chosen;
+            }
+        }
+        // What the gates below ask of the request: the rows of its system, and
+        // of those the ones this mcpp builds.
+        ctx.req = triple::RequestResolution{};
+        ctx.req.triple = *ctx.parsed;
+        for (auto const* r : mcpp::toolchain::target::rows_of(
+                 ctx.parsed->arch, ctx.parsed->os, ctx.parsed->env, ctx.parsed->envExplicit)) {
+            ctx.req.siblings.push_back(r->triple);
+            if (r->tier != "planned") ctx.req.supported.push_back(r->triple);
+        }
+        ctx.req.completedFromVocabulary = ctx.sel.row && ctx.sel.row->triple != ctx.parsed->str();
+        auto& choice = state.targetChoice;
+        choice = TargetChoice{};
+        choice.request = state.overrides.target_triple;
+        choice.identity = ctx.parsed->str();
+        choice.candidates = ctx.sel.candidates;
+        if (ctx.sel.provider) choice.provider = std::string(ctx.sel.provider->name);
+        choice.priority = ctx.sel.priority;
+        choice.fallback = ctx.sel.fallback;
+        if (ctx.sel.fallback && !ctx.sel.candidates.empty()) choice.why = ctx.sel.candidates.front().why;
     }
 
     // [target.X] lookup is spelling-independent: a section keyed
@@ -604,6 +660,20 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
                              && !it->second.toolchain.empty();
 
     ctx.known = ctx.parsed ? triple::find_known_target(*ctx.parsed) : nullptr;
+    // The row with the facts of the provider that serves it here, rather than
+    // of its default provider: the toolchain it pins, the C library it brings,
+    // the linkage and the platform package that implements it.
+    if (ctx.known && ctx.sel.provider && ctx.sel.provider != ctx.known->provider) {
+        auto view = *ctx.known;
+        auto const* p = ctx.sel.provider;
+        view.provider = p;
+        view.pin = p->toolchain;
+        view.sysroot = p->sysroot == "toolchain" ? std::string_view{} : p->sysroot;
+        view.defaultStatic = p->linkage == "static";
+        view.platform = p->platform;
+        state.selectedTarget = view;
+        ctx.known = &*state.selectedTarget;
+    }
 
     return {};
 }

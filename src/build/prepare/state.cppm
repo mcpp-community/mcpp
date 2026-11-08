@@ -42,6 +42,7 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_select;
 import mcpp.toolchain.base;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
@@ -294,6 +295,26 @@ struct BuildProgramBinary {
 // Not copied: copying this by value would copy every dependency-graph and
 // plan structure prepare_build ever builds, silently, at whichever call
 // happened to pass it by value instead of by reference.
+// WHICH ROW AND WHICH PROVIDER A REQUEST WAS GIVEN (SPEC-016 §4), as the report,
+// the machine output, the lock and `mcpp why target` state it.
+struct TargetChoice {
+    std::string request;      // as written: `--target`, `[build] target`, the default
+    std::string identity;     // the row taken
+    std::string provider;     // its provider; empty when no provider serves it
+    int         priority = 0;
+    bool        fallback = false;   // the first candidate was not available here
+    std::string why;          // why the first candidate was not taken
+    std::vector<mcpp::toolchain::target::Candidate> candidates;
+};
+
+// The selection context of a configuration (prepare/target_choice.cpp): this host,
+// MSVC's presence, a declared family, a provider chosen by name, and the
+// priorities `[target.<selector>.priority]` of the project and the machine set.
+mcpp::toolchain::target::Context target_context(std::span<const mcpp::manifest::platform::Override> project,
+                                                std::span<const mcpp::manifest::platform::Override> config,
+                                                std::string family, std::string provider,
+                                                std::function<bool()> msvcInstalled);
+
 struct PrepareState {
     PrepareState(bool print_fingerprint_, bool includeDevDeps_,
                  std::vector<mcpp::manifest::Target> extraTargets_,
@@ -334,6 +355,11 @@ struct PrepareState {
     bool targetPinIsCapability = false;
     std::string targetRowPin;
     std::string targetRowName;
+    TargetChoice targetChoice;
+    // The row of the identity, with the facts of the provider that serves it
+    // (its toolchain, C library, linkage, platform) in place of the default
+    // provider's.
+    std::optional<mcpp::toolchain::triple::TargetInfo> selectedTarget;
     bool tcSpecIsMsvc = false;
     std::optional<std::filesystem::path> root;
     std::optional<mcpp::project::EffectiveManifest> effective;
@@ -1205,6 +1231,12 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
 // The platform through the phases (prepare/platform.cpp).
 mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
 std::expected<void, std::string> step1_select_platform(PrepareState& state);
+// The provider a configuration chose by name, from the explicit platform choices
+// (SPEC-013 §3.1 steps 1-4): `builtin:<name>`, or the provider a chosen platform
+// package implements; "none" for `--platform none`; empty when nothing chose.
+std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
+                           std::span<const mcpp::manifest::platform::Override> config);
+
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);

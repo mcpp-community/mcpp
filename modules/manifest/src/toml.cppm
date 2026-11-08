@@ -4216,6 +4216,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "[target.{}].link must be a table, e.g. [target.{}.link] start = \"<symbol>\"", triple, triple)));
                 platformKeys = true;
             }
+            // The priority of a provider for the rows this selector matches
+            // (SPEC-016 §4.3): data the selection orders candidates by.
+            if (auto it = body.find("priority"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].priority must be a table, e.g. [target.{}.priority] mingw = 200", triple, triple)));
+                platformKeys = true;
+            }
             if (platformKeys || body.contains("runner") || body.contains("runners")) {
                 mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                     &m.schemaWarnings};
@@ -4268,7 +4276,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             static constexpr std::string_view kKnownTargetTables[] = {
                 "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
-                "feature-xlings", "layers", "link", "requires_abi", "runners", "runtime",
+                "feature-xlings", "layers", "link", "priority", "requires_abi", "runners", "runtime",
                 "targets", "tools", "xlings",
             };
             for (auto& [key, value] : body) {

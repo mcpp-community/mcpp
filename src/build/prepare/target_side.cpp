@@ -1312,8 +1312,14 @@ step9_same_os_check_and_report(PrepareState& state) {
                              &state.resolvedTargetSide.cAbi, &state.resolvedTargetSide.cxx })
                 if (l->fromGraph() && injected(l->impl)) l->byPlatform = true;
         }
+        // The request as written and the identity it selected; the identity is
+        // the canonical name the rest of the report and the output directory use.
+        const auto& choice = state.targetChoice;
+        const bool selected = !choice.identity.empty();
         mcpp::ui::info("Target", tsd::format_report(
-            state.resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
+            state.resolvedTargetSide, selected ? choice.identity : reportedTargetName,
+            mcpp::log::is_verbose(), selected ? choice.request : std::string_view{},
+            choice.fallback ? std::string_view(choice.why) : std::string_view{}));
     return {};
 }
 
