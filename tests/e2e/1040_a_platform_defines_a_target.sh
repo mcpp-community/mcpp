@@ -111,6 +111,13 @@ grep -q 'the platform toy-platform 0.1.0 names it `{name}.toy`: the platform.s n
 rm build.mcpp
 echo "  ok  the platform's name of a program stands over a build program's"
 
+# A row a platform defines is packed as a built-in row is (mcpp#911 G10); a static program is not
+# run to learn its closure.
+out=$("$MCPP" pack --target x86_64-toyos 2>&1) || fail "the platform's row was not packed" "$out"
+listing=$(tar tzf target/dist/toyapp-0.1.0-x86_64-toyos.tar.gz)
+grep -q 'bin/toyapp.toy$' <<<"$listing" || fail "the package holds no program" "$listing"
+echo "  ok  the platform's row is packed"
+
 sed -i '/^\[target.x86_64-toyos\]/,/^platform/d' mcpp.toml
 out=$("$MCPP" build --target x86_64-toyos 2>&1 || true)
 grep -q "unknown target 'x86_64-toyos'" <<<"$out" || fail "without the platform the request was not an unknown target" "$out"

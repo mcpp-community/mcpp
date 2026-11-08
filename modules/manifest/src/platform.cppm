@@ -203,11 +203,19 @@ struct Carrier {
 
 // The `<os>-<arch>` vocabulary of `runner.hosts`, `carrier.hosts` and a
 // package's coverage: a system mcpp builds programs for, and an architecture.
+// `<os>-<arch>`: a system's word and an architecture's. The system is any a
+// row names -- the built-in ones and those a platform defines (mcpp#911 G10);
+// so the word is checked for its form here, and for being a system where a
+// pair is used.
 inline bool is_host_pair(std::string_view s) {
     const auto dash = s.find('-');
-    if (dash == std::string_view::npos || dash + 1 == s.size()) return false;
-    const auto os = s.substr(0, dash);
-    return (os == "linux" || os == "macos" || os == "windows")
+    if (dash == 0 || dash == std::string_view::npos || dash + 1 == s.size()) return false;
+    auto word = [](std::string_view w) {
+        return std::ranges::all_of(w, [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        });
+    };
+    return word(s.substr(0, dash)) && word(s.substr(dash + 1))
         && s.find('-', dash + 1) == std::string_view::npos;
 }
 

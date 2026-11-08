@@ -502,8 +502,8 @@ Reader::host_pairs(const toml::Value& v, std::string_view where) const {
     for (auto const& p : *w)
         if (!mcpp::manifest::platform::is_host_pair(p))
             return std::unexpected(std::format(
-                "{}: '{}' is not a system and an architecture; write \"<os>-<arch>\" with "
-                "<os> one of linux, macos, windows, for example \"linux-x86_64\"", where, p));
+                "{}: '{}' is not a system and an architecture; write \"<os>-<arch>\", "
+                "for example \"linux-x86_64\"", where, p));
     return w;
 }
 

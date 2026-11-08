@@ -63,6 +63,8 @@ import mcpp.libs.toml;           // a generated manifest quotes its keys (mcpp#9
 import mcpp.project;              // the effective manifest a build reads
 import mcpp.build.prepare_inputs;  // cfgpred: the target's conditional tables
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;   // the rows of a system a platform defines (G10)
 import mcpp.toolchain.base;
 import mcpp.ui;
 import mcpp.runtime.elf;
@@ -2370,8 +2372,26 @@ std::string hosted_platform_for(const mcpp::platform::Resolved* P, std::string_v
     return std::format("{}@{}", P->package, P->version);
 }
 
+// The platform a row a platform defines is built over, as `--platform` names it.
+std::string platform_ref_of(const mcpp::platform::Resolved& P) {
+    if (!P.selection.ref.spec.path.empty()) return "path:" + P.root.generic_string();
+    return std::format("{}@{}", P.package, P.version);
+}
+
 ProgramRow program_row(std::string_view system, std::string_view arch, bool single,
                        const mcpp::platform::Resolved* P = nullptr) {
+    // A SYSTEM A PLATFORM DEFINES (mcpp#911 G10): its row of that architecture,
+    // built over the platform that defines it, as the platform's carrier and
+    // packs of every other row are.
+    if (system != "linux" && system != "macos" && system != "windows") {
+        if (P && P->active)
+            for (auto const& d : P->fields.defines) {
+                auto t = mcpp::toolchain::triple::parse(d.triple);
+                if (t && t->os == system && t->arch == arch)
+                    return { t->str(), "static", platform_ref_of(*P) };
+            }
+        return { std::format("{}-{}", arch, system), "static", {} };
+    }
     if (system == "linux") {
         const auto triple = std::format("{}-linux-musl", arch);
         return { triple, "static", hosted_platform_for(P, triple) };
@@ -2505,6 +2525,7 @@ bool row_is_built(const ProgramRow& row) {
     if (row.triple.empty()) return true;   // this machine's own row
     auto t = mcpp::toolchain::triple::parse(row.triple);
     if (!t) return false;
+    if (t->defined()) return !row.platform.empty();   // a platform's row, over that platform
     auto* k = mcpp::toolchain::triple::find_known_target(*t);
     return k && k->tier != "planned";
 }
@@ -3140,7 +3161,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                     "       such linker to ask.",
                     mcpp::pack::binfmt::format_name(fmt), plan.binaryName));
             }
-            auto deps = ldd_parse(plan.builtBinary);
+            // AN ELF WITH NO LOADER AND NO NEEDED IMAGE HAS NO CLOSURE, and is
+            // not run to learn so: `ldd` of a static program that is not this
+            // machine's own -- a row a platform defines (mcpp#911 G10) --
+            // executes it.
+            const auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.builtBinary);
+            const bool selfContained = facts && facts->interp.empty() && facts->needed.empty();
+            auto deps = selfContained ? decltype(ldd_parse(plan.builtBinary)){}
+                                      : ldd_parse(plan.builtBinary);
             if (!deps) return std::unexpected(Error{std::format(
                 "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
 
@@ -3434,6 +3462,11 @@ std::vector<std::string> systems_for(const std::vector<std::string>& stated, std
     for (auto const& e : stated) {
         if (e == "all") {
             for (auto os : { "linux", "macos", "windows" }) add(os);
+            // And every system the platforms of this process define a row of
+            // for the architecture (mcpp#911 G10).
+            for (auto const* r : mcpp::toolchain::target::rows())
+                if (r->defined && r->arch == arch && !r->os.empty() && r->os != "none")
+                    add(std::string(r->os));
             continue;
         }
         const auto dash = e.find('-');

@@ -523,9 +523,9 @@ UTest a_carrier_without_hosts_serves_every_pair_and_none_serves_nothing{"Platfor
     expect(eq(mp::carrier_for(none, "linux-x86_64"), nullptr));
 }};
 
-// Host pairs are this mcpp's; a descriptor key is any word, since a platform's
-// rows may read blocks of their own (SPEC-016 §7).
-UTest host_pairs_are_closed_and_descriptor_keys_are_words{"PlatformManifest/HostPairsAreClosedAndDescriptorKeysAreWords", [] {
+// A host pair and a descriptor key are words: a platform's rows may name a
+// system and read descriptor blocks of their own (SPEC-016 §7).
+UTest host_pairs_and_descriptor_keys_are_words{"PlatformManifest/HostPairsAndDescriptorKeysAreWords", [] {
     const auto base = std::string(R"(
 [package]
 name = "p"
@@ -534,7 +534,9 @@ version = "1.0.0"
 targets = ["x86_64-openkal"]
 )");
     expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["linux"] })" "\n"), ""));
-    expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["freebsd-x86_64"] })" "\n"), ""));
+    // A system a platform defines is a host's system as well (mcpp#911 G10).
+    expect(eq(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["freebsd-x86_64"] })" "\n"), ""));
+    expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["Linux-x86_64"] })" "\n"), ""));
     expect(ne(parse_error(base + R"(descriptor_keys = ["mac os"])" "\n").find("macosx"), std::string::npos));
     expect(eq(parse_error(base + R"(descriptor_keys = ["freebsd", "linux"])" "\n"), ""));
     expect(ne(parse_error(base + R"(descriptor_keys = [])" "\n"), ""));
