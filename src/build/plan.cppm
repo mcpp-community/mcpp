@@ -203,6 +203,9 @@ struct LinkUnit {
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
+    // Of a test: the files that are its own (its `main` file and, under
+    // `[test] programs = "directory"`, its directory's others).
+    std::vector<std::filesystem::path> ownSources;
     // `windows_subsystem` / `windows_entry` of the target this unit links
     // (#618), carried as the declared words. Rendering them needs the linker
     // the emitter addresses, which the plan does not know, so the backend does
@@ -1180,6 +1183,27 @@ expand_manifest_include_entry(const std::filesystem::path& root,
         expanded.push_back(std::move(joined));
     }
     return expanded;
+}
+
+// The other translation units of a test program of several files (`[test]
+// programs = "directory"`): each compiled as the program's `main` unit is,
+// with its own imports.
+std::vector<CompileUnit> test_program_units(const CompileUnit& mainUnit, const mcpp::manifest::Target& t,
+                                            const std::filesystem::path& root,
+                                            const mcpp::ExtensionTable& extTable) {
+    std::vector<CompileUnit> out;
+    for (auto const& source : t.testSources) {
+        CompileUnit cu = mainUnit;
+        cu.source = root / source;
+        cu.kind = mcpp::classify(cu.source, extTable);
+        cu.object.clear();
+        const auto scanned = mcpp::modgraph::scan_entry_file(cu.source, cu.packageName, extTable);
+        cu.imports.clear();
+        for (auto const& req : scanned.requires_) cu.imports.push_back(req.logicalName);
+        cu.declaration = scanned.provides ? mcpp::modgraph::ModuleDeclaration::Unknown : scanned.declaration;
+        out.push_back(std::move(cu));
+    }
+    return out;
 }
 
 // A test unit sees its package's own usage and then its dev-dependencies'
@@ -2435,20 +2459,15 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     //    A file a target names as `main` on another row is a beginning too
     //    (design 2026-10-26 §24.3): it is in no image of this row.
     std::set<std::filesystem::path> entryFilesAcrossTargets;
-    for (auto& t : manifest.targets) {
-        if (!t.main.empty()) {
-            entryFilesAcrossTargets.insert(projectRoot / t.main);
-        }
-        for (auto const& other : t.otherMains) entryFilesAcrossTargets.insert(projectRoot / other);
-    }
-    for (auto const& p : packages) {
-        for (auto const& t : p.manifest.targets) {
-            if (!t.main.empty()) {
-                entryFilesAcrossTargets.insert(p.root / t.main);
-            }
-            for (auto const& other : t.otherMains) entryFilesAcrossTargets.insert(p.root / other);
-        }
-    }
+    // A test program's other files are its own as well (`[test] programs`).
+    auto own_files = [&](const std::filesystem::path& root, const mcpp::manifest::Target& t) {
+        if (!t.main.empty()) entryFilesAcrossTargets.insert(root / t.main);
+        for (auto const& other : t.otherMains) entryFilesAcrossTargets.insert(root / other);
+        for (auto const& source : t.testSources) entryFilesAcrossTargets.insert(root / source);
+    };
+    for (auto& t : manifest.targets) own_files(projectRoot, t);
+    for (auto const& p : packages)
+        for (auto const& t : p.manifest.targets) own_files(p.root, t);
 
     struct SharedDepTarget {
         std::size_t                   packageIndex = 0;
@@ -3200,10 +3219,15 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         look(consumer.devDependencies);
         look(consumer.dependencies);
         if (offers.empty()) return std::nullopt;
+        // The program's imports: its `main` file's, and its other files' (`[test] programs`).
         std::vector<std::string> imports;
-        for (auto const& req : mcpp::modgraph::scan_entry_file(*lu.entryMain, qualified_package_name(consumer),
-                                                              rootExtTable).requires_)
-            imports.push_back(req.logicalName);
+        auto const& consumerRoot = consumerIdx == 0 ? projectRoot : packages[consumerIdx].root;
+        std::vector<std::filesystem::path> files{*lu.entryMain};
+        for (auto const& source : t.testSources) files.push_back(consumerRoot / source);
+        for (auto const& file : files)
+            for (auto const& req : mcpp::modgraph::scan_entry_file(file, qualified_package_name(consumer),
+                                                                  rootExtTable).requires_)
+                imports.push_back(req.logicalName);
         std::erase_if(offers, [&](const offer& o) { return offer_fits(o, imports) == fit::other; });
         // An offer the file imports from decides; else every remaining
         // beginning competes.
@@ -3503,6 +3527,15 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 entryObject = main_cu.object;
             }
             lu.objects.push_back(entryObject);
+            if (lu.kind == LinkUnit::TestBinary) lu.ownSources.push_back(main_cu.source);
+            for (auto& extra : test_program_units(main_cu, t, projectRoot, rootExtTable)) {
+                lu.ownSources.push_back(extra.source);
+                extra.object = object_for(extra.source, extra.packageName,
+                                          std::filesystem::relative(extra.source, projectRoot),
+                                          /*owner=*/0).object;
+                lu.objects.push_back(extra.object);
+                plan.compileUnits.push_back(std::move(extra));
+            }
 
             // Per-target entry-scoped flags (issue #131). Applied to the compile
             // unit that actually builds this target's entry — which may be the
@@ -3514,7 +3547,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // to -D on both the C and C++ entry compile.
             if (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty()) {
                 for (auto& cu : plan.compileUnits) {
-                    if (cu.source != main_cu.source) continue;
+                    if (cu.source != main_cu.source
+                        && std::ranges::none_of(t.testSources, [&](auto const& s) { return cu.source == projectRoot / s; }))
+                        continue;
                     for (auto const& d : t.defines) {
                         const auto element = mcpp::manifest::flag_element("-D" + d);
                         cu.packageCflags.push_back(element);
@@ -3522,7 +3557,6 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     }
                     for (auto const& f : t.cflags)   cu.packageCflags.push_back(f);
                     for (auto const& f : t.cxxflags) cu.packageCxxflags.push_back(f);
-                    break;
                 }
             }
         }
@@ -3932,11 +3966,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     entryObject = main_cu.object;
                 }
                 lu.objects.push_back(*entryObject);
+                if (lu.kind == LinkUnit::TestBinary) lu.ownSources.push_back(entry);
+                for (auto const& source : t.testSources) lu.ownSources.push_back(pkg.root / source);
+                if (!t.testSources.empty()) {
+                    auto base = std::ranges::find(plan.compileUnits, entry, &CompileUnit::source);
+                    const CompileUnit entryUnit = *base;
+                    for (auto& extra : test_program_units(entryUnit, t, pkg.root, memberExtTable)) {
+                        extra.object = object_for(extra.source, owner,
+                            std::filesystem::relative(extra.source, pkg.root), mi).object;
+                        lu.objects.push_back(extra.object);
+                        plan.compileUnits.push_back(std::move(extra));
+                    }
+                }
                 // Per-target entry-scoped flags (issue #131), on the unit that
                 // builds this target's entry, as for a root's target.
                 if (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty()) {
                     for (auto& cu : plan.compileUnits) {
-                        if (cu.source != entry) continue;
+                        if (cu.source != entry
+                            && std::ranges::none_of(t.testSources, [&](auto const& s) { return cu.source == pkg.root / s; }))
+                            continue;
                         for (auto const& d : t.defines) {
                             const auto element = mcpp::manifest::flag_element("-D" + d);
                             cu.packageCflags.push_back(element);
@@ -3944,7 +3992,6 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                         }
                         for (auto const& f : t.cflags)   cu.packageCflags.push_back(f);
                         for (auto const& f : t.cxxflags) cu.packageCxxflags.push_back(f);
-                        break;
                     }
                 }
             }

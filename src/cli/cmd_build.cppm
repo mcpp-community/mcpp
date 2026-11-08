@@ -1218,6 +1218,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // The test protocol's cases (docs/08 "Cases").
     if (auto c = parsed.option("case")) to.cases = c->get().values;
     to.listCases = parsed.is_flag_set("cases");
+    if (auto since = parsed.value("since")) to.since = *since;
+    if (auto c = parsed.option("changed")) to.changed = c->get().values;
     to.guide = parsed.is_flag_set("guide");
     if (to.guide && (parsed.is_flag_set("workspace") || parsed.option_or_empty("package").values.size() > 1)) {
         mcpp::ui::error("--guide describes one package's tests; name it with -p");

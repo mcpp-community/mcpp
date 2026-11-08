@@ -55,7 +55,17 @@ the extension, so the default names `tests/unit/test_span.cpp` `unit/test_span`.
 `discover = []` discovers no test. Two files whose names coincide are refused,
 naming both.
 
-A suite compiled from several sources is a package of its own: a workspace
+`[test] programs = "directory"` (2026.11.8.1+) makes the files of one directory
+below a glob's fixed directory one program, named by the directory
+(`tests/unit/*.cpp` is the program `unit`): each file is a translation unit of
+it, its cases are all of theirs, and it begins at the file that defines `main`
+when one does, else as a file that defines none does. Two files of one directory
+that define `main` are refused, naming both; a file directly in the fixed
+directory stays a program of its own. A program of many files is linked once
+where a program per file is linked once per file, which is what a suite of many
+small files spends its build time on.
+
+A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
 
@@ -119,6 +129,25 @@ test's verdict, the output of a test that failed, the `test result` line and, fo
 `Running`) are narration and are written to standard error, so `mcpp test > report.txt`
 collects the report, and `mcpp test 2>&1 | tee test.log` collects both
 ([09 — Commands by scenario](09-commands-by-scenario.md#output-streams)).
+
+### The tests a change affects
+
+`mcpp test --since <commit>` and `--changed <path>` (2026.11.8.1+) build and run
+the tests a change affects, read from the plan before anything is built:
+
+- a test is affected by a change of a file it is built from: its own files, the
+  module units it imports and the units those import in turn, and every unit
+  of its link that belongs to no module;
+- a change of a manifest, a lock, a build program, a header, or a source the
+  plan does not hold affects every test;
+- another file affects the tests whose own files name it (a fixture), and no
+  other test.
+
+`--since` reads the change from git: the paths committed since the commit,
+changed in the working tree, and new and not ignored. `Affected N of M tests`
+states the selection, with what each changed path decided; under
+`--message-format json` an `affected` record lists each test with its reason.
+The selection narrows what a pattern or `-p` names and adds nothing to it.
 
 **A test finds the package's programs by name** (2026.10.27.1+). `mcpp test` builds
 the package's programs first, as `mcpp build` does, and gives each test
@@ -278,7 +307,9 @@ test-protocol = 1
 ```
 
 or when its file carries the marker `mtest-protocol=1`, as a program built
-with mtest's libraries does. mcpp then gives the program the protocol's
+with mtest's libraries does. A program that carries the marker and writes no
+`program` event spoke no protocol: a file of plain `main` linked beside a
+framework's library is one case, judged by its exit status, run and listed. mcpp then gives the program the protocol's
 variables (`MTEST_PROTOCOL`, `MTEST_MODE`, `MTEST_REPORT`, `MTEST_TMPDIR`, and
 `MTEST_SELECT` and `MTEST_SEED` when they apply), reads the report it writes,
 and states each case's result:

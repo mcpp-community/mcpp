@@ -220,6 +220,9 @@ struct Target {
     // Where `main` was stated, for diagnostics: `[targets.app] main`, or a
     // row's header.
     std::string                 mainDeclaredBy;
+    // Of a test program of several files (`[test] programs = "directory"`):
+    // its translation units besides `main`, relative to the package root.
+    std::vector<std::string>    testSources;
     // The files this target names as `main` on OTHER rows (and the one a
     // matching row replaced). Each is a beginning, never an ordinary source
     // of an image, whichever row is built (design 2026-10-26 §24.3).
@@ -2233,6 +2236,10 @@ struct Manifest {
     // image is entered at.
     std::string                 testMainFrom;
     std::string                 testStart;
+    // `[test] programs`: "file" (a test program per discovered file) or
+    // "directory" (the files of one directory below a discover glob's fixed
+    // directory are one program, named by the directory). Empty: "file".
+    std::string                 testPrograms;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended

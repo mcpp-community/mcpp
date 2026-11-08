@@ -2151,6 +2151,7 @@ discover = ["tests/**/*.cpp"]    # the default
 | `windows_long_paths` | `true` or `false` | whether every test program on Windows is long-path aware, in the meaning of the target key of the same name; the default is `false` *(2026.10.16.1+)* |
 | `main` | `{ from = "<dependency>/<entry>" }` | the entry target every test program begins in; each test file is then an ordinary translation unit of its program and defines no `main` (§2.2, `kind = "entry"`) *(2026.10.26.2+)* |
 | `start` | symbol | the symbol every test image is entered at, on a freestanding target (§2.2, `start`) *(2026.10.26.2+)* |
+| `programs` | `"file"` or `"directory"` | `"file"` (the default): every discovered file is a program; `"directory"`: the files of one directory below a glob's fixed directory are one program, named by the directory, beginning at the file that defines `main` when one does *(2026.11.8.1+)* |
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

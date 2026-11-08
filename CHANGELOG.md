@@ -33,6 +33,14 @@
   its entry states (`test-guide`) and its repository, and the commands that
   list, select and explain cases; a failed run points to it and a record
   carries `guide` (the protocol's P2.5; docs/08 "Writing a test"; e2e 1037).
+- `[test] programs = "directory"`: the files of one directory below a discover
+  glob's fixed directory are one test program, named by the directory, so a
+  suite of many files is linked once (docs/08; e2e 1038).
+- `mcpp test --since <commit>` and `--changed <path>` build and run the tests a
+  change affects, read from the plan: a test built from a changed file (its own
+  files, the modules it imports transitively, its units of no module), a test
+  whose files name a changed file; a manifest, lock, build program or header
+  affects every test (docs/08; e2e 1038).
 - `mcpp::context` states the engine's values to the build-program interface in
   one process: every accessor reads the innermost context's values, then the
   environment, so a test of a build program's or a plugin's logic needs no
@@ -61,6 +69,13 @@
   between them compiles nothing again (docs/08; e2e 77, 783, 1037 K). Before,
   a dev-dependency over mcpplibs.os (mtest's) gave the package's sources
   `__OPENKAL__` and made the test a configuration of its own.
+- A program that carries the protocol's marker and writes no `program` event
+  -- a file of plain `main` linked beside mtest's library -- is one case, judged
+  by its exit status, when run and when listed (e2e 1038).
+- A failed test whose file imports a module no package of the build provides
+  names the module and the dev-dependency a framework is.
+- A product an earlier build left where this one places a program's directory,
+  or a directory where it places a program, is removed before the build.
 - `mcpp dyndep` leaves an unchanged output untouched, so a unit whose module
   edges are what they were is not compiled again when the rule's command
   changed (#874).
