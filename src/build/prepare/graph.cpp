@@ -671,8 +671,9 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             // COMPAT(quoted-dotted-dependency-key): one TOML key, read as the selector its dots spell (mcpp#904);
             // not reported where the quoted key is the only spelling of a package beside its parent or child.
             if (!spec.quotingRequired)
-                state.reportCompatUse("quoted-dotted-dependency-key", packageIndexForConsumer(item.consumerDepIndex),
-                                      std::format("{} \"{}\"", spec.declaredIn, name));
+                state.reportCompatUseInstead("quoted-dotted-dependency-key", packageIndexForConsumer(item.consumerDepIndex),
+                                             std::format("{} \"{}\"", spec.declaredIn, name),
+                                             std::format("the key unquoted, `{} = ...`", name));
             spec.candidates = {{
                 .namespace_ = spec.namespace_,
                 .shortName = spec.shortName,

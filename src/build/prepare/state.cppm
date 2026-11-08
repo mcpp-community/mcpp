@@ -755,6 +755,10 @@ struct PrepareState {
     // recorded for `mcpp why compat` either way.
     std::function<void(std::string_view id, std::size_t i, std::string detail)>
         reportCompatUse;
+    // The same, naming what to write instead in the use's own words (the
+    // registry's replacement is an example).
+    std::function<void(std::string_view id, std::size_t i, std::string detail, std::string instead)>
+        reportCompatUseInstead;
     // Whether the manifest of package `i` is one the person running the build
     // can edit (SPEC-008 §4: a diagnostic is given to the package that can act
     // on it).

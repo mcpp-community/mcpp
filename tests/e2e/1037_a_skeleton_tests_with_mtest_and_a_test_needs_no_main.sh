@@ -24,6 +24,9 @@
 #   K. mtest reaches the test units only: the skeleton's `mcpp build` and `mcpp test` share one
 #      build directory, switching between them compiles the program's source once, its command
 #      carries no `__OPENKAL__`, and the compile database holds the test.
+#   L. A dev-dependency's source whose `main` is compiled only under a switch no command defines
+#      (zlib's `#ifdef MAKECRCH`) is linked into a test that has its own `main`; one whose `main`
+#      is in the branch an unknown condition leaves (gtest_main.cc's `#else`) still begins a test.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -188,5 +191,36 @@ for e in json.load(open(sys.argv[1])):
     if e["file"].replace("\\", "/").endswith("kapp/src/main.cpp") and any("__OPENKAL__" in a or "openkal" in a for a in e.get("arguments", [])):
         sys.exit(1)
 PY
+
+# L
+mkdir -p lib-tools/src lapp/tests
+cat > lib-tools/mcpp.toml <<'TOML'
+[package]
+name    = "lib-tools"
+version = "0.1.0"
+
+[build]
+sources = ["src/*.c"]
+TOML
+cat > lib-tools/src/table.c <<'C'
+int table_value(void) { return 7; }
+#ifdef MAKE_TABLE
+#include <stdio.h>
+int main(void) { printf("%d\n", table_value()); return 0; }
+#endif
+C
+cat > lapp/mcpp.toml <<'TOML'
+[package]
+name    = "lapp"
+version = "0.1.0"
+
+[dev-dependencies]
+lib-tools = { path = "../lib-tools" }
+TOML
+printf 'extern "C" int table_value(void);
+int main() { return table_value() == 7 ? 0 : 1; }
+' > lapp/tests/own.cpp
+(cd lapp && "$MCPP" test > ../l.log 2>&1) || fail "L: a source whose main no command compiles was left out of the link" l.log
+grep -q 'own \.\.\. ok' l.log || fail "L: the test did not pass" l.log
 
 echo "PASS: 1037 a skeleton tests with mtest, and a test needs no main"

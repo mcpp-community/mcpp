@@ -31,7 +31,7 @@ printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\n"acme.l
 "$MCPP" build > quoted.log 2>&1 || fail "the quoted key no longer builds" quoted.log
 grep -q '"acme.lib" is deprecated since mcpp 2026.11.8.1 and removed from mcpp 2027.2' quoted.log \
     || fail "no deprecation warning for the quoted key" quoted.log
-grep -q 'mcpplibs.cmdline = "0.0.2"' quoted.log || fail "the warning does not show the unquoted spelling" quoted.log
+grep -q 'Write the key unquoted, `acme.lib = ...` instead' quoted.log || fail "the warning does not show the unquoted spelling of its own key" quoted.log
 "$MCPP" why compat > why.log 2>&1 || true
 grep -q 'quoted-dotted-dependency-key: \[dependencies\] "acme.lib"' why.log || fail "mcpp why compat does not list the use" why.log
 

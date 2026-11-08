@@ -103,6 +103,15 @@
 
 ### Fixed
 
+- A dependency's source whose `main` is compiled only under a switch no command
+  defines -- zlib's `crc32.c` (`#ifdef MAKECRCH`), QuickJS's `libregexp.c`
+  (`#ifdef TEST`) -- is linked into a test that has its own `main`. Which
+  sources begin a program is read from the branches the preprocessor may
+  compile: a name the compiler or platform predefines is unknown, any other is
+  undefined; 2026.11.7.2 left such a source out, and the test's link failed
+  with undefined references (measured in Sunrisepeak/mui, #874; e2e 1037 L).
+- The warning on a quoted dotted dependency key names the key to write,
+  `xrender.graph = ...`, not an example (e2e 1032).
 - A configuration group's lock keeps the entries of the other groups (#903;
   e2e 1027).
 - A project's state directory `.mcpp/` ignores itself in a repository (e2e 1028).

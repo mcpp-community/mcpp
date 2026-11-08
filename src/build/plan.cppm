@@ -1609,6 +1609,204 @@ bool path_is_under_any(const std::filesystem::path&              p,
     return false;
 }
 
+// A preprocessor condition's value as far as a source's text decides it: true,
+// false, or unknown (nullopt). A name the compiler or the platform predefines
+// (one beginning with `_`) is unknown; every other name is not defined, as no
+// command defines the switches a library guards its own tools with (zlib's
+// MAKECRCH, QuickJS's TEST).
+namespace main_scan {
+
+struct Expr {
+    std::string_view text;
+    std::size_t at = 0;
+    bool failed = false;
+
+    void blank() { while (at < text.size() && (text[at] == ' ' || text[at] == '\t')) ++at; }
+    bool take(std::string_view op) {
+        blank();
+        if (text.substr(at, op.size()) != op) return false;
+        at += op.size();
+        return true;
+    }
+    std::string name() {
+        blank();
+        std::size_t from = at;
+        while (at < text.size() && (std::isalnum(static_cast<unsigned char>(text[at])) || text[at] == '_')) ++at;
+        return std::string(text.substr(from, at - from));
+    }
+    static bool reserved(std::string_view n) { return !n.empty() && n.front() == '_'; }
+
+    std::optional<long long> primary() {
+        blank();
+        if (take("(")) {
+            auto v = ternary();
+            if (!take(")")) failed = true;
+            return v;
+        }
+        if (take("!")) {
+            auto v = primary();
+            return v ? std::optional<long long>(!*v) : std::nullopt;
+        }
+        if (take("-")) {
+            auto v = primary();
+            return v ? std::optional<long long>(-*v) : std::nullopt;
+        }
+        if (at < text.size() && std::isdigit(static_cast<unsigned char>(text[at]))) {
+            long long v = 0;
+            const bool hex = text.substr(at, 2) == "0x" || text.substr(at, 2) == "0X";
+            if (hex) at += 2;
+            const auto from = at;
+            while (at < text.size() && std::isxdigit(static_cast<unsigned char>(text[at]))) ++at;
+            std::from_chars(text.data() + from, text.data() + at, v, hex ? 16 : 10);
+            while (at < text.size() && std::isalpha(static_cast<unsigned char>(text[at]))) ++at;   // 1L, 2u
+            return v;
+        }
+        const auto n = name();
+        if (n.empty()) { failed = true; return std::nullopt; }
+        if (n == "defined") {
+            const bool paren = take("(");
+            const auto m = name();
+            if (paren && !take(")")) failed = true;
+            return reserved(m) ? std::nullopt : std::optional<long long>(0);
+        }
+        blank();
+        if (at < text.size() && text[at] == '(') {   // a function-like macro: its value is the macro's
+            int depth = 0;
+            do {
+                depth += text[at] == '(' ? 1 : text[at] == ')' ? -1 : 0;
+                ++at;
+            } while (at < text.size() && depth > 0);
+            return std::nullopt;
+        }
+        return reserved(n) ? std::nullopt : std::optional<long long>(0);
+    }
+    template <class Next, class Apply>
+    std::optional<long long> binary(Next next, std::initializer_list<std::string_view> ops, Apply apply) {
+        auto lhs = next();
+        for (bool more = true; more && !failed;) {
+            more = false;
+            for (auto op : ops) {
+                blank();
+                // `&&` is not `&`, `<=` is not `<`: the longer operators are listed first.
+                if (!take(op)) continue;
+                lhs = apply(op, lhs, next());
+                more = true;
+                break;
+            }
+        }
+        return lhs;
+    }
+    static std::optional<long long> arith(std::string_view op, std::optional<long long> a, std::optional<long long> b) {
+        if (!a || !b) return std::nullopt;
+        if (op == "*") return *a * *b;
+        if (op == "/") return *b ? std::optional<long long>(*a / *b) : std::nullopt;
+        if (op == "+") return *a + *b;
+        if (op == "-") return *a - *b;
+        if (op == "<=") return *a <= *b;
+        if (op == ">=") return *a >= *b;
+        if (op == "<") return *a < *b;
+        if (op == ">") return *a > *b;
+        if (op == "==") return *a == *b;
+        return *a != *b;
+    }
+    std::optional<long long> product() { return binary([&] { return primary(); }, {"*", "/"}, arith); }
+    std::optional<long long> sum() { return binary([&] { return product(); }, {"+", "-"}, arith); }
+    std::optional<long long> relation() { return binary([&] { return sum(); }, {"<=", ">=", "<", ">"}, arith); }
+    std::optional<long long> equality() { return binary([&] { return relation(); }, {"==", "!="}, arith); }
+    std::optional<long long> conjunction() {
+        return binary([&] { return equality(); }, {"&&"}, [](auto, auto a, auto b) -> std::optional<long long> {
+            if ((a && !*a) || (b && !*b)) return 0;
+            if (a && b) return 1;
+            return std::nullopt;
+        });
+    }
+    std::optional<long long> disjunction() {
+        return binary([&] { return conjunction(); }, {"||"}, [](auto, auto a, auto b) -> std::optional<long long> {
+            if ((a && *a) || (b && *b)) return 1;
+            if (a && b) return 0;
+            return std::nullopt;
+        });
+    }
+    std::optional<long long> ternary() {
+        auto c = disjunction();
+        if (!take("?")) return c;
+        auto t = ternary();
+        if (!take(":")) failed = true;
+        auto f = ternary();
+        if (!c) return t == f ? t : std::nullopt;
+        return *c ? t : f;
+    }
+};
+
+// The value of `#if <text>`; unknown when the text is not an expression this reads.
+std::optional<bool> condition(std::string_view text) {
+    Expr e{text};
+    auto v = e.ternary();
+    e.blank();
+    if (e.failed || e.at != text.size() || !v) return std::nullopt;
+    return *v != 0;
+}
+
+// One `#if` group: whether its enclosing region may be compiled, whether a
+// branch of it was taken for certain, and whether one may have been.
+struct Group {
+    bool parent = true;
+    bool certainlyTaken = false;
+    bool current = true;   // the current branch may be compiled
+};
+
+// The code of a source the preprocessor may compile: the lines of branches
+// whose conditions are not false, directives dropped.
+std::string compiled_lines(std::string_view code) {
+    std::string out;
+    std::vector<Group> groups;
+    auto active = [&] { return groups.empty() || (groups.back().parent && groups.back().current); };
+    auto open = [&](std::optional<bool> c) {
+        const bool parent = active();
+        groups.push_back({parent, c.value_or(false), c.value_or(true)});
+    };
+    auto next_branch = [&](std::optional<bool> c) {
+        if (groups.empty()) return;
+        auto& g = groups.back();
+        g.current = !g.certainlyTaken && c.value_or(true);
+        g.certainlyTaken = g.certainlyTaken || c.value_or(false);
+    };
+    std::size_t at = 0;
+    while (at < code.size()) {
+        auto end = code.find('\n', at);
+        if (end == std::string_view::npos) end = code.size();
+        std::string line(code.substr(at, end - at));
+        at = end + 1;
+        while (!line.empty() && line.back() == '\\' && at < code.size()) {   // a continued directive
+            line.pop_back();
+            end = code.find('\n', at);
+            if (end == std::string_view::npos) end = code.size();
+            line += code.substr(at, end - at);
+            at = end + 1;
+        }
+        const auto first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] != '#') {
+            if (active()) out += line + '\n';
+            continue;
+        }
+        Expr d{std::string_view(line).substr(first + 1)};
+        const auto word = d.name();
+        const auto rest = std::string_view(line).substr(first + 1 + d.at);
+        if (word == "if") open(condition(rest));
+        else if (word == "ifdef" || word == "ifndef") {
+            Expr n{rest};
+            const auto m = n.name();
+            std::optional<bool> isDefined = Expr::reserved(m) ? std::nullopt : std::optional<bool>(false);
+            open(word == "ifdef" ? isDefined : (isDefined ? std::optional<bool>(!*isDefined) : std::nullopt));
+        } else if (word == "elif") next_branch(condition(rest));
+        else if (word == "else") next_branch(true);
+        else if (word == "endif" && !groups.empty()) groups.pop_back();
+    }
+    return out;
+}
+
+}  // namespace main_scan
+
 bool source_defines_main(const std::filesystem::path& src) {
     std::ifstream is(src);
     if (!is) return false;
@@ -1648,6 +1846,7 @@ bool source_defines_main(const std::filesystem::path& src) {
             break;
         }
     }
+    code = main_scan::compiled_lines(code);
     auto isws = [](char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
     };
