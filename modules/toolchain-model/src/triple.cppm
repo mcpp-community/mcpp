@@ -27,6 +27,8 @@ export module mcpp.toolchain.triple;
 import std;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.builtin_targets;
 
 export namespace mcpp::toolchain::triple {
 
@@ -286,9 +288,7 @@ struct Triple {
     // because the target decides the payload (see registry.cppm's
     // to_xim_package). If a row ever gains a second toolchain that does NOT
     // ship a sysroot, this has to move onto the toolchain.
-    bool has_own_sysroot() const {
-        return os == "emscripten" || os == "android" || env == "android";
-    }
+    bool has_own_sysroot() const;   // after the table: the row's provider answers
 
     // APPLE, AS ONE QUESTION. `os == "macos"` was the whole of it while macOS
     // was the only Apple row; iOS shares the object format, the linker, the
@@ -377,10 +377,7 @@ struct Triple {
     // serve the row. `-D__BIONIC_CTYPE_INLINE=` and an API level fused onto
     // the triple are the NDK's own requirements, not flags a user can be
     // expected to supply to a different compiler.
-    bool pin_is_capability() const {
-        return is_freestanding() || is_openkal() || (is_pe() && is_musl()) || is_wasm()
-            || is_android();
-    }
+    bool pin_is_capability() const;   // after the table: the row's provider answers
 
     // cfg() `family` dimension: unix | windows.
     //
@@ -490,428 +487,71 @@ struct TargetInfo {
     // another with `[target.<selector>] platform`, a machine in config.toml,
     // one invocation with `--platform`.
     std::string_view platform = {};
+    // The row this view is of, and its default provider (null: none serves it).
+    const mcpp::toolchain::target::Row*      row      = nullptr;
+    const mcpp::toolchain::target::Provider* provider = nullptr;
 };
 
+// THE TABLE IS DATA (design 2026-11-09; SPEC-016). The rows and the providers
+// that serve them are data/builtin.toml, compiled into
+// mcpp.toolchain.builtin_targets by this package's build.mcpp; what this view
+// adds is each row's DEFAULT provider -- the first built-in provider serving it,
+// by priority and then by order -- whose toolchain, C library, linkage and
+// platform are the columns every consumer of the table reads. Which provider a
+// build USES is a selection (mcpp.toolchain.target_select), which also asks
+// whether each candidate is available on the host; this view does not.
+//
 // (note deliberately excludes "static" — the display layer derives that tag
 // from defaultStatic, so listing it here would duplicate it.)
-inline constexpr TargetInfo kKnownTargets[] = {
-    // canonical               tier         note   pin           sysroot                        defaultStatic
-    { "x86_64-linux-gnu",      "verified",  "",    "",           "",                            false },
-    { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", "",                            true  },
-    { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", "",                            true  },
-    { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", "",                            true  },
-    // musl ON WINDOWS. IT EXISTS, AND UNTIL THIS ROW mcpp HAD NO NAME FOR IT.
-    //
-    // LLVM's triple vocabulary offers `gnu` and `msvc` for Windows and both
-    // name an ABI, so a reader concludes there is no third possibility and
-    // calls a musl-based Windows build `-gnu`. The artefact disagrees. Measured
-    // on one built over `openkal-musl`:
-    //
-    //     imports        ntdll, KERNEL32, SHELL32 — no msvcrt, no ucrtbase
-    //     `_Z…` symbols  4507        `?…` symbols  0
-    //
-    // No MinGW C runtime is linked. That is musl on Windows, and calling it
-    // `gnu` put the one thing the C library is not into its identity, its
-    // output directory, its `cfg(env = …)` and its packed ABI tag.
-    //
-    // THE FIX IS A NAME, NOT A MECHANISM, AND THE REASON THE MISTAKE HELD SO
-    // LONG IS WORTH RECORDING. "LLVM cannot spell x86_64-windows-musl" is true
-    // and is about the string handed to CLANG. mcpp's canonical form is a
-    // different string — the build report prints both, either side of an arrow:
-    //
-    //     Target x86_64-windows-gnu → x86_64-w64-windows-gnu
-    //            ^ mcpp's identity    ^ what clang is given
-    //
-    // Letting the compiler's vocabulary bound mcpp's own merged two axes into
-    // one. `llvm_triple()` already sends every non-MSVC Windows target to
-    // `…-w64-windows-gnu`, and that spelling is correct there and stays: it
-    // selects the Itanium C++ ABI, which is the ABI this C library was compiled
-    // for. mcpp's name answers a different question — which C library — and now
-    // it can.
-    //
-    //     mcpp target             → clang                    c-abi
-    //     x86_64-linux-musl       → x86_64-unknown-linux-musl  musl
-    //     x86_64-windows-gnu      → x86_64-w64-windows-gnu     MinGW CRT
-    //     x86_64-windows-musl     → x86_64-w64-windows-gnu     musl
-    //
-    // The last two rows differ in the first column and agree in the second,
-    // which is the whole point.
-    //
-    // THE PIN IS `llvm`, AND IT IS NOT A PREFERENCE. The column names the
-    // payload that supplies this target's C library everywhere else in this
-    // table; here nothing supplies it, and what the column has to prevent is
-    // the OPPOSITE — a global default of gcc being carried onto a target no gcc
-    // can emit. Measured with `mcpp toolchain default gcc@16.1.0`:
-    //
-    //     error: toolchain payload 'xim:musl-gcc@16.1.0' has no known C++
-    //            frontend in …/xim-x-musl-gcc/16.1.0/bin
-    //
-    // — a message about a missing frontend, for a target whose real problem is
-    // that only clang emits it at all. The bare-metal rows carry `llvm` for the
-    // same reason and say so in their own note.
-    //
-    // The C library still comes from the dependency graph. `host_can_serve`
-    // says no for this row on a non-Windows host — correctly, for the prebuilt
-    // system — and that refusal is diagnosed early and RELEASED once the graph
-    // is known (see the long note at prepare.cppm's `unservedTargetDiagnosis`),
-    // so a project whose C library comes from a dependency is not turned away.
-    //
-    // TIER IS `preview`, NOT `verified`. `verified` in this table means an
-    // artefact was built AND RUN. Running a PE on a Linux host needs wine, and
-    // openkal's CI has that step — so this is measurable, and the tier moves
-    // when it has been measured rather than when it seems likely.
-    { "x86_64-windows-musl",   "preview",   "PE",  "llvm@23.1.3","",                            true  },
-    { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
-    { "aarch64-macos",         "verified",  "",    "",           "",                            false },
-    { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
-    // `preview` until the released engine is consumed on a clean ARM64 host
-    // (SPEC-009 §10.7): CI built and ran the native LLVM 23.1.3/glibc default
-    // from source, and the published chain (xlings client, glibc revision 3,
-    // the ARM LLVM resources, the CN mirrors) is what that consumption checks.
-    { "aarch64-linux-gnu",     "preview",   "",    "llvm@23.1.3","",                            false },
-    { "x86_64-macos",          "planned",   "",    "",           "",                            false },
-    // Bare metal. `defaultStatic` is not a preference here — there is no
-    // loader, so there is no other option. The pin is llvm on every host
-    // because clang/lld are cross-compilers by construction: unlike the hosted
-    // rows above, these need no per-host cross payload at all.
-    // ISA profile (-march/-mabi/-mcmodel) lives in mcpp.freestanding.target,
-    // which is the single place that decision is made.
-    // The sysroot column is what keeps a bare-metal PACKAGE from having to
-    // name a libc: the C library is the target's, like the compiler.
-    { "riscv64-none-elf",      "verified",  "bare","llvm@23.1.3","xim:picolibc-riscv@1.8.12",  true  },
-    { "riscv32-none-elf",      "verified",  "bare","llvm@23.1.3","xim:picolibc-riscv@1.8.12",  true  },
-    // AN EMPTY SYSROOT COLUMN, AND IT IS A STATEMENT RATHER THAN AN OMISSION.
-    //
-    // The two rows above name a C library because a project targeting them
-    // ordinarily wants one. This row does not, because there is no aarch64
-    // build of picolibc in the index — and, more to the point, because the
-    // first consumer of this row does not want one. `openarch` is a layer of
-    // machine mechanism: contexts, traps, page-table entries. It references no
-    // C library symbol, and a row that resolved one would make every project
-    // on this target carry a payload it never calls.
-    //
-    // An empty column here means exactly what `[target.<triple>].sysroot = ""`
-    // means in a manifest — the zero-libc tier: no headers on the compile line,
-    // no library directory on the link, and `#include <stdio.h>` does not
-    // resolve. A project that wants a C library on this target says so in its
-    // own manifest, which is also how it would choose a different one.
-    //
-    // The tier is `preview` and not `verified`: `verified` in this table
-    // means an image has been built AND RUN for the row, and running one needs
-    // an emulator. `xim:qemu-arm` provides `qemu-system-aarch64`; until a probe
-    // has actually booted under it, claiming `verified` would be claiming the
-    // measurement rather than reporting it.
-    { "aarch64-none-elf",      "preview",   "bare","llvm@23.1.3","",                            true  },
-    // THIS ROW EXISTS SO THAT A THIRD MACHINE CAN DISAGREE WITH THE FIRST
-    // TWO, WHICH IS THE ONLY THING THAT TELLS AN ABSTRACTION FROM A HABIT.
-    //
-    // riscv64 and aarch64 are both load/store RISC machines with a weak memory
-    // model and a fixed instruction width, so an interface that fits both may
-    // fit because it is right or because they are alike. x86_64 is neither: it
-    // has variable-length instructions, a total-store-order memory model under
-    // which three of openarch's four barriers need no instruction at all, and
-    // an interrupt mechanism that is a table of gates rather than a base
-    // register. What survives all three is an abstraction.
-    //
-    // The tier is `preview` for the same reason aarch64's is, and the reason
-    // is stricter than it sounds: `verified` here means an image was built AND
-    // RUN. `xim:qemu-x86` does not exist yet — the index carries no
-    // `qemu-system-x86_64` — so nothing on this row has booted. Claiming
-    // `verified` would be claiming a measurement that has not been made.
-    //
-    // The sysroot column is empty, the zero-libc tier, for the reason given
-    // above `aarch64-none-elf`: the first consumer is `openarch`, which
-    // references no C library symbol.
-    { "x86_64-none-elf",       "preview",   "bare","llvm@23.1.3","",                            true  },
-    // ── Cortex-M ────────────────────────────────────────────────────────────
-    //
-    // SEVEN ROWS AND NOT ONE, BECAUSE "Cortex-M" IS NOT AN INSTRUCTION SET.
-    //
-    // Every other bare-metal family here is one row per architecture. M-profile
-    // is not: an object built for `thumbv7em` uses instructions a Cortex-M0
-    // does not have, and one built for `thumbv6m` runs on both but leaves the
-    // larger part unused. The two spellings are not a preference a board
-    // expresses — they produce incompatible objects — so they are rows.
-    //
-    // The rule this table states about itself governs: it exists so that
-    // `--target <triple>` ALONE is enough to produce a correct object file. A
-    // single `arm-none-eabi` row plus an `-mcpu` the project remembers would
-    // move a correctness decision out of the table and into every manifest.
-    //
-    // THE `eabi`/`eabihf` SUFFIX IS THE FLOAT ABI, AND CLANG ALREADY READS
-    // IT. Measured on llvm 22.1.8 (`-###`, `-cc1` line): `thumbv7em-none-eabi`
-    // gives `-mfloat-abi soft` and `-none-eabihf` gives `hard`, with no flag
-    // from us. So the ABI needs no entry in the ISA table's `extra` column —
-    // only the FPU does, and only on the soft rows. See `kThumbSoftExtra`.
-    //
-    // `sysroot` IS EMPTY ON EVERY ROW, AND THAT IS THE POINT RATHER THAN A
-    // GAP. The three older bare-metal families name an `xim:` payload here; a C
-    // library for these targets arrives from the DEPENDENCY GRAPH instead
-    // (`mcpp:c-abi=picolibc`, docs/14). A prebuilt payload would have to ship
-    // one multilib per row — seven here — and the `libdir` column would have to
-    // match its layout byte for byte, which is the defect #481 fixed. A source
-    // package is compiled with the consuming target's own flags, so the ABI
-    // agreement holds by construction and there is no multilib at all.
-    //
-    // THE TIER COLUMN RECORDS WHAT WAS RUN, NOT WHAT WAS REASONED. Measured
-    // 2026-09-04 under `xim:qemu-arm@9.2.4-1`: each `verified` row below built
-    // an image that BOOTED on the named machine and printed over semihosting —
-    // thumbv6m on `microbit`, thumbv7m on `mps2-an385`, thumbv7em-eabihf on
-    // `mps2-an386`, thumbv8m.main-eabi on `mps2-an505`. The three `preview`
-    // rows build and link; no emulator run has been recorded for them.
-    { "thumbv6m-none-eabi",    "verified",  "bare","llvm@23.1.3","",                            true  },
-    { "thumbv7m-none-eabi",    "verified",  "bare","llvm@23.1.3","",                            true  },
-    { "thumbv7em-none-eabi",   "preview",   "bare","llvm@23.1.3","",                            true  },
-    { "thumbv7em-none-eabihf", "verified",  "bare","llvm@23.1.3","",                            true  },
-    { "thumbv8m.base-none-eabi","preview",  "bare","llvm@23.1.3","",                            true  },
-    { "thumbv8m.main-none-eabi","verified", "bare","llvm@23.1.3","",                            true  },
-    { "thumbv8m.main-none-eabihf","preview","bare","llvm@23.1.3","",                            true  },
-    // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
-    //
-    // NOT A SECOND SPELLING OF THE M ROWS. A-profile has a memory management
-    // unit and a page-table walker; M-profile has an MPU and no page-table
-    // entry at all. It is the first 32-bit machine in this table on which an
-    // address space can be described, which is precisely the question the
-    // openarch layer has never been able to ask of a 32-bit target.
-    //
-    // `verified` records what was RUN. Measured 2026-09-04 under
-    // `xim:qemu-arm@9.2.4-1`: both rows booted on `-M virt -cpu cortex-a15` and
-    // printed over semihosting. The soft row carries `-mfpu=none` for the
-    // reason `kThumbSoftExtra` gives, measured again on this architecture
-    // rather than carried over from M-profile.
-    //
-    // `sysroot` is empty, the zero-libc tier, exactly as for the M rows: a C
-    // library for these targets arrives from the dependency graph.
-    { "armv7a-none-eabi",      "verified",  "bare","llvm@23.1.3","",                            true  },
-    { "armv7a-none-eabihf",    "verified",  "bare","llvm@23.1.3","",                            true  },
+constexpr const mcpp::toolchain::target::Provider* default_provider_of(std::string_view triple) {
+    const mcpp::toolchain::target::Provider* best = nullptr;
+    for (auto const& p : mcpp::toolchain::builtin::kProviders)
+        if (mcpp::toolchain::target::serves(p, triple) && (!best || p.priority > best->priority))
+            best = &p;
+    return best;
+}
 
-    // ── The three platforms a package cannot add ────────────────────────────
-    //
-    // A package can add a language, a tool, an action, a payload and a
-    // generated module. IT CANNOT ADD A TRIPLE: identity is these three
-    // strings and this table is compiled into the binary, so every layer above
-    // -- the `.apk` step, the `.app` step, the `.html`+`.wasm` step, the
-    // runner, the signing -- waits on a row here and on nothing else in the
-    // engine. Registering the rows is what turns each of those into a plugin
-    // that can be written rather than a plugin that has nowhere to attach.
-    //
-    // ALL FOUR ARE `planned`, WHICH IS A REFUSAL AND NOT A GAP. The tier gate
-    // refuses a planned row with `tier-planned` naming the row, so
-    // `mcpp build --target aarch64-linux-android` says the vocabulary has this
-    // target and nothing is wired yet -- rather than `unknown target`, which
-    // was false, or a build that resolves and produces nothing, which would be
-    // worse than either. What each row still needs is recorded in
-    // .agents/docs/2026-09-11-distribution-plugins-and-platform-decomposition.md
-    // section 3, and it is a payload in every case, never engine work.
-    //
-    // THE PREREQUISITE NOBODY LISTS IS ANSWERED FOR TWO OF THE THREE. mcpp is
-    // module-first, so a row whose toolchain cannot compile a module interface
-    // unit would be worse than its absence. Measured 2026-09-11: `import std`
-    // works on both the NDK's clang 18 and Emscripten's, and neither needs a
-    // fork or a compiler upgrade -- what both need is the generated module
-    // surface their vendor chose not to install (133 files, 620 KB, taken from
-    // the libc++ revision matching `_LIBCPP_VERSION`, which for Emscripten is
-    // NOT the version its clang reports). Apple's half is not measurable on a
-    // Linux host and is the one genuinely open question of the three.
+constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
+    TargetInfo t{ r.triple, r.tier, r.note, {}, {}, false };
+    t.row = &r;
+    t.provider = default_provider_of(r.triple);
+    if (t.provider) {
+        t.pin = t.provider->toolchain;
+        t.sysroot = t.provider->sysroot == "toolchain" ? std::string_view{} : t.provider->sysroot;
+        t.defaultStatic = t.provider->linkage == "static";
+        t.platform = t.provider->platform;
+    }
+    return t;
+}
 
-    // ANDROID IS THE SMALLEST OF THE THREE, and the ranking is the opposite of
-    // the demand ranking. `aarch64` is already an arch, ELF is already the
-    // object format, and Linux is already the OS: what was missing is an `env`
-    // value and a sysroot that points at an NDK. No `pin`, because no cross
-    // payload exists yet -- `xim:android-ndk` is the row's whole remaining
-    // cost, and until it lands `[target.<triple>].sysroot` is the escape hatch
-    // for a machine that has an NDK already.
-    { "aarch64-linux-android", "verified",  "",    "android-ndk@30.0.16248370", "",   false },
-    // The emulator's row, and the one of the pair that could be EXECUTED.
-    //
-    // Not a convenience: x86_64 is what an Android emulator image runs, so a
-    // row for the device without one for the emulator describes a target
-    // nothing can execute. That argument is now measured rather than asserted.
-    // 2026-09-11, linux-x86_64, an API 24 x86_64 system image under the
-    // platform's own emulator with KVM:
-    //
-    //   adb push <the mcpp-built artifact> /data/local/tmp/
-    //   adb shell ./andtest            ->  1-2-3      exit 0
-    //
-    // from `import std;` and no project vocabulary beyond `--target`. So this
-    // row is `verified` while `aarch64-linux-android` is `preview`, and the
-    // difference is execution rather than confidence in the build.
-    //
-    // AND THE DEVICE ROW FOLLOWED, BY A DIFFERENT VEHICLE. Google's emulator
-    // refuses a foreign guest outright -- "QEMU2 emulator does not support
-    // arm64 CPU architecture" -- so the arm64 image needs an arm64 host. The
-    // route that works from an x86_64 one is qemu-user over the system image's
-    // own bionic, and what blocked it was never the route: preparing it needs
-    // four files out of an ext4 partition image, `debugfs` was the tool, and
-    // `xim:e2fsprogs@1.47.3`'s debugfs is a broken build (SIGFPE on every
-    // filesystem-opening command, while dumpe2fs/e2fsck/tune2fs from the same
-    // payload work). `xim:7zip` reads ext4 directly. Measured 2026-09-11:
-    //
-    //   7zz x <system.img> bin/linker64 lib64/lib{c,dl,m,c++}.so
-    //   qemu-aarch64-static -L <root>  <the mcpp-built artifact>
-    //     ->  1-2-3      exit 0
-    //
-    // So both rows are `verified` and the vehicles differ: the platform's own
-    // emulator for x86_64, qemu-user plus the image's bionic for aarch64. A
-    // tier states that an artefact was built and RUN, not which emulator ran
-    // it.
-    //
-    // One linker warning is worth recording because a user will see it and it
-    // is not a defect: `unsupported flags DT_FLAGS_1=0x8000001`. API 24's
-    // bionic linker does not recognise the `DF_1_PIE` bit that lld sets, warns,
-    // and loads the program anyway.
-    { "x86_64-linux-android",  "verified",  "",    "android-ndk@30.0.16248370", "",   false },
-
-    // iOS IS NEXT. `aarch64-macos` is `verified`, so Mach-O, `arm64`, the
-    // linker and the Apple half of the toolchain model all exist; what is
-    // missing is an `os` value and the iPhoneOS SDK.
-    //
-    // THE COMPILER IS OURS AND ONLY THE SDK IS APPLE'S, which is the sentence
-    // that shrank this row from a packaging problem to a located directory.
-    //
-    // `llvm@23.1.3` -- any sufficiently new clang emits arm64 Mach-O for an
-    // iOS deployment target, and the C++ runtime comes from the SDK the way it
-    // does on every Apple platform. `aarch64-macos` is verified on exactly
-    // this split and is the precedent: `xim:llvm` compiles and the SDK is
-    // located. Xcode's own clang would also work and is the wrong default --
-    // it would make the compiler a host dependency where the ecosystem
-    // already has one, and these would be the only Apple rows not using
-    // `xim:llvm`.
-    //
-    // A CONVENTION PIN, NOT A CAPABILITY ONE, which is why
-    // `pin_is_capability()` does not name these rows. It means "this is what
-    // `--target aarch64-ios` resolves when the project says nothing", and a
-    // project may still write `[target.aarch64-ios] toolchain = "..."`. The
-    // capability set is the rows NO other payload can serve, and the
-    // distinction matters for consistency with `aarch64-macos`: the same
-    // constraint (Darwin needs clang) holds there and that row is not a
-    // capability row either.
-    //
-    // THE SDK IS A LICENCE QUESTION AND NOT A PACKAGING ONE, which is why this
-    // row carries no `sysroot`. The NDK is Apache-2.0 and Emscripten is MIT,
-    // both redistributable; the iPhoneOS SDK is neither. The recipe should
-    // reach for the lowest of three tiers its licence allows -- redistribute,
-    // fetch from upstream without a mirror, or locate what the machine already
-    // has -- and say which tier it took, because a consumer reading "locator"
-    // needs to know that is a licence conclusion rather than an unfinished
-    // recipe. `msvc@system` is the shape of the third tier and mcpp already
-    // has it.
-    //
-    // The simulator is deliberately not a row. It has its own SDK and produces
-    // its own object, so folding it in would make two targets share an
-    // identity -- the mistake `x86_64-windows-musl` was added to undo.
-    //
-    // `preview`: BUILT, AND NOT RUN, AND NOTHING HERE CAN RUN IT. Measured
-    // 2026-09-11 on macos-15 (Xcode 16.4, iPhoneOS 18.5,
-    // `ios_deployment_target = "18.0"`):
-    //
-    //   Mach-O 64-bit executable arm64
-    //   LC_BUILD_VERSION  platform 2 (IOS)  minos 18.0  sdk 18.5
-    //
-    // `platform 2` against the simulator rows' `platform 7` is the reading
-    // worth having: a successful build cannot tell them apart, and an artefact
-    // reporting IOSSIMULATOR from this row is one no later step refuses.
-    //
-    // The row keeps `runner` unset and will stay `preview`. An artefact cannot
-    // be run off an iOS device without a signature the developer owns, which
-    // is not something a build tool or a package can supply -- so this is a
-    // tier bounded by a fact about the platform rather than by work not yet
-    // done.
-    { "aarch64-ios",           "preview",   "",    "llvm@23.1.3","",                            false },
-    // THE SIMULATOR'S TWO ROWS. Not a convenience and not a runner: a
-    // simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its own
-    // object, and takes `-mios-simulator-version-min` rather than
-    // `-miphoneos-version-min`. Two targets sharing one identity is what the
-    // device row's own comment objected to, and the objection was to the
-    // absence of these rows rather than to their presence.
-    //
-    // BOTH ARCHES, for the reason the Android pair has both: the simulator runs
-    // the HOST's architecture, so an Apple-silicon machine needs `aarch64` and
-    // an Intel one needs `x86_64`. A single row would describe a simulator half
-    // the machines cannot run.
-    //
-    // BOTH `verified`, AND THE SECOND ONE WAS RUN ON ANOTHER MACHINE.
-    //
-    // `aarch64-ios-sim` was built AND RUN. Measured 2026-09-11 on macos-15
-    // (Xcode 16.4, iPhoneSimulator 18.5, `ios_deployment_target = "18.0"`):
-    //
-    //   artefact  Mach-O 64-bit executable arm64
-    //             LC_BUILD_VERSION  platform 7 (IOSSIMULATOR)  minos 18.0
-    //   run       xcrun simctl spawn <udid> <artefact>  ->  1-2-3
-    //
-    // with no bundle, no signature and no Info.plist -- the measurement that
-    // made `simctl-run` a boot-and-spawn wrapper rather than a bundle builder.
-    //
-    // `x86_64-ios-sim` builds and its artefact is correct -- Mach-O x86_64,
-    // the same `platform 7`, the same floor -- and a SIMULATOR RUNS THE HOST'S
-    // ARCHITECTURE, so the Apple-silicon runner that builds it cannot run it.
-    // ci-macos-ios.yml builds it there and hands the artefact to a
-    // `macos-15-intel` job, which spawns it on that host's simulator and reads
-    // `1-2-3` and status 0 (design 2026-10-23 §2.6, S15). The row can be built
-    // because the SDK carries an x86_64 slice, which is measured; whether the
-    // vendor still sells the hardware is not a property of the row.
-    { "aarch64-ios-sim",       "verified",  "",    "llvm@23.1.3","",                            false },
-    { "x86_64-ios-sim",        "verified",  "",    "llvm@23.1.3","",                            false },
-
-    // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
-    // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os
-    // (`emscripten`), and -- the sharp part -- a new OBJECT FORMAT, which
-    // before `ObjectFormat` existed was not a field at all but a derivation
-    // repeated at every site that needed it. That is why this is
-    // https://github.com/mcpp-community/mcpp/issues/597 and not a table row.
-    //
-    // IT IS NOW ONLY THAT, AND THE STANDARD-LIBRARY HALF IS SIMPLER THAN THIS
-    // COMMENT FIRST SAID. Measured 2026-09-11 against Emscripten 6.0.9:
-    // `em++` compiles and links `import std` with NO additional flags and no
-    // generated surface at all, because the toolchain SHIPS one -- 134 files
-    // -- and `node app.js` printed the expected output.
-    //
-    // The version numbers here were two releases stale, in exactly the
-    // direction the design record warns about: they said llvm 20.1.7 and
-    // `_LIBCPP_VERSION 200100` against clang 22.0.0git. Emscripten 6.0.9
-    // reports `220108` (llvm 22.1.8) and clang 24.0.0git. The rule those
-    // numbers were supporting is unaffected and is the reason to keep them
-    // accurate: the surface must match the LIBRARY, never the compiler, and a
-    // recipe's job is to pin the `_LIBCPP_VERSION` it measured and refuse a
-    // change. A stale number in a comment becomes a stale number in a
-    // diagnostic, and then in somebody's install command.
-    //
-    // `defaultStatic` is true because wasm has no dynamic loader in the sense
-    // the other rows mean: an Emscripten link produces one module plus its
-    // JavaScript, and there is no shared object for a search path to find.
-    //
-    // `verified` ASSERTS THE WHOLE LOOP, and here is what it was measured
-    // against (2026-09-11, Linux x86_64, xim:emsdk 6.0.9):
-    //
-    //   mcpp build --target wasm32-emscripten   on a source that imports std
-    //     -> bin/<name>        65389 bytes   the JavaScript
-    //        bin/<name>.wasm  447183 bytes   the module
-    //   node bin/<name>                       -> 1-2-3
-    //
-    // Reaching it took five engine gates, and each one was found by the
-    // previous one's failure rather than by reading: the payload had to be
-    // chosen by the TARGET (registry.cppm), the frontend found outside `bin/`
-    // (frontendSubdir), the host's header set withheld (has_own_sysroot, in
-    // the shared producer and not at one of its three callers), the C-runtime
-    // group withheld from the LINK MODEL rather than from its two channels,
-    // and -- the same finding a second time -- the COMPILER's own runtime
-    // directories kept off the ARTIFACT's link line. For every row that
-    // predates this one those two are the same directory.
-    { "wasm32-emscripten",     "verified",  "wasm","emsdk@6.0.9","",                            true  },
-    // OK IMAGES (openkal SPEC clause 12; design 2026-10-26 part 2, §8.5). One
-    // artifact per architecture, run by `okrun` on Linux, macOS and Windows of
-    // that architecture. clang emits it from one binary for either row. What
-    // makes it an ok image -- its flags, its link, its note and check, its
-    // name, its runner, its C library and C++ run-time -- is the platform's,
-    // `openkal-platform` (SPEC-013), pinned here. The two architectures the
-    // loader relocates.
-    { "x86_64-openkal",        "verified",   "ok",  "llvm@23.1.3","",                            true,
-      "mcpplibs.openkal-platform@0.24.4" },
-    { "aarch64-openkal",       "verified",   "ok",  "llvm@23.1.3","",                            true,
-      "mcpplibs.openkal-platform@0.24.4" },
-};
+inline constexpr auto kKnownTargets = [] {
+    std::array<TargetInfo, std::size(mcpp::toolchain::builtin::kRows)> out{};
+    for (std::size_t i = 0; i < out.size(); ++i) out[i] = info_of(mcpp::toolchain::builtin::kRows[i]);
+    return out;
+}();
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }
+
+// A PROVIDER WHOSE TOOLCHAIN SHIPS THE WHOLE SYSROOT (`sysroot = "toolchain"`):
+// the Emscripten and Android SDKs, which resolve their sysroot themselves. A
+// triple outside the table answers by its system, as before the table was data.
+inline bool Triple::has_own_sysroot() const {
+    const auto s = str();
+    for (auto const& k : kKnownTargets)
+        if (k.canonical == s) return k.provider && k.provider->sysroot == "toolchain";
+    return os == "emscripten" || os == "android" || env == "android";
+}
+
+// A PIN IS A CAPABILITY WHEN THE PROVIDER PAIRS WITH ONE COMPILER FAMILY ONLY:
+// nothing else emits the target (bare metal, ok images, PE with musl, wasm) or
+// supplies its system (bionic). A provider that pairs with several families
+// (MinGW: gcc and clang) states a convention among them.
+inline bool Triple::pin_is_capability() const {
+    const auto s = str();
+    for (auto const& k : kKnownTargets)
+        if (k.canonical == s) return k.provider && k.provider->pairs.size() == 1;
+    return is_freestanding() || is_openkal() || (is_pe() && is_musl()) || is_wasm() || is_android();
+}
 
 inline const TargetInfo* find_known_target(const Triple& t) {
     auto s = t.str();
@@ -1512,6 +1152,10 @@ std::optional<Triple> parse(std::string_view s) {
         if (t.os == "ios" && (k == "sim" || k == "simulator")) {
             t.env = "sim"; t.envExplicit = true; continue;
         }
+        // musl ON macOS (openkal-platform's hosted part, whose C library is
+        // openkal-musl rather than libSystem). The native identity keeps no env
+        // segment; this one names the C library it has.
+        if (t.os == "macos" && k == "musl") { t.env = "musl"; t.envExplicit = true; continue; }
         // Unrecognized segment (wasi, …): not in mcpp's target language —
         // treat as unparseable rather than guessing.
         return std::nullopt;
@@ -1521,7 +1165,7 @@ std::optional<Triple> parse(std::string_view s) {
     // macOS carries no env segment at all, so nothing was declined there. iOS
     // and Emscripten are the same shape: the platform layer is the whole of the
     // identity past the arch, and there is no C-library axis to decline.
-    if (t.os == "macos" || t.os == "emscripten" || t.os == "openkal"
+    if ((t.os == "macos" && t.env != "musl") || t.os == "emscripten" || t.os == "openkal"
         || (t.os == "ios" && t.env != "sim")) {
         t.env.clear(); t.envExplicit = false;
     }

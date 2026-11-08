@@ -30,3 +30,8 @@ mcpplibs.os = "0.4.0"
 # layers must agree on.
 [dev-dependencies]
 compat.gtest = "1.15.2"
+
+# build.mcpp compiles data/builtin.toml (the built-in target rows and providers)
+# into a module of static tables, with mcpp's own TOML parser.
+[build-dependencies]
+mcpp.libs = { path = "../libs" }

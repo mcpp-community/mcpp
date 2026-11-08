@@ -31,6 +31,7 @@ export module mcpp.freestanding.target;
 
 import std;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.builtin_targets;
 
 export namespace mcpp::freestanding {
 
@@ -82,250 +83,26 @@ struct Spec {
     std::string_view lldEmulation;
 };
 
-// The flags each row's `extra` column points at. Named arrays rather than
-// inline braces because a `span` must refer to storage that outlives it, and a
-// temporary array in an aggregate initialiser does not.
-inline constexpr std::string_view kX86_64NoneExtra[] = {
-    // WITHOUT THIS, EVERY TRAP HANDLER ON THIS TARGET CORRUPTS THE FUNCTION
-    // IT INTERRUPTED, AND NOTHING REPORTS IT.
-    //
-    // The System V x86-64 ABI reserves 128 bytes below `rsp` — the red zone —
-    // which a leaf function may use without adjusting the stack pointer,
-    // because on a hosted system nothing else writes there: the kernel switches
-    // to its own stack for interrupts, and signal frames are placed clear of
-    // it.
-    //
-    // On bare metal nothing does that for you. The processor pushes an
-    // interrupt frame at `rsp` — into the red zone — and the leaf function
-    // resumes to find its locals overwritten. There is no fault and no
-    // diagnostic; the value is simply wrong, and only sometimes, because it
-    // depends on whether an interrupt happened to arrive inside a leaf.
-    //
-    // This is a property of the target rather than of a project, which is why
-    // it is here: there is no bare-metal x86_64 program for which the red zone
-    // is safe. RISC-V and aarch64 have no equivalent, which is why the column
-    // did not exist until this row.
-    "-mno-red-zone",
-};
-
-// THE SOFT-FLOAT M-PROFILE ROWS, AND WHY THE FLOAT ABI IS NOT ENOUGH.
-//
-// `thumbv7em-none-eabi` and `-eabihf` differ in their float ABI, and clang
-// derives that from the triple with no help from us (measured, `-###`:
-// `-mfloat-abi soft` and `hard` respectively). It would be reasonable to stop
-// there. Measured on llvm 22.1.8, that is wrong:
-//
-//     clang --target=thumbv7em-none-eabi -O2 -S   (float a*b+1.0f)
-//         vmul.f32                                ← an FPU instruction
-//
-// The float ABI governs how floating-point values cross a function boundary.
-// It does not govern whether the compiler may USE the FPU inside one, and the
-// `thumbv7em` architecture implies FPv4-SP, so clang emits FPU instructions
-// under either ABI. A plain Cortex-M4 — the part this row exists to serve,
-// since the -eabihf row serves M4F — has no FPU, and the instruction faults.
-//
-// The failure is a hard fault at run time on real silicon, with a clean
-// compile and a clean link. It is the shape this table exists to prevent.
-//
-// `-mfpu=none` restores the property the row's name claims. Measured: the
-// instruction count returns to zero, and the `-eabihf` rows must NOT receive
-// this flag — there it would discard the FPU the row exists to use.
-//
-// EVERY SOFT ROW CARRIES IT, INCLUDING THE ONES WHERE NOTHING WAS MEASURED.
-//
-// Only `thumbv7em-none-eabi` was observed emitting an FPU instruction;
-// `thumbv6m`, `thumbv7m` and `thumbv8m.base` describe architectures with no FPU
-// at all, and `thumbv8m.main-none-eabi` emits none today because its default
-// CPU is `generic`. Applying the flag only where a count was non-zero would
-// make the table record a MEASUREMENT rather than a GUARANTEE, and the rows
-// would then differ for a reason no reader could see.
-//
-// A row states the property it promises. `-mfpu=none` is accepted on all four
-// (measured), costs nothing where there is no FPU, and is what a unit test can
-// quantify over — which is the only place this rule can be stated, since a
-// build of any one row cannot speak for the others.
-inline constexpr std::string_view kThumbSoftExtra[] = {
-    "-mfpu=none",
-};
-
-// AND THE SAME RULE ON A-PROFILE, WHERE IT WAS MEASURED SEPARATELY RATHER
-// THAN ASSUMED TO CARRY OVER.
-//
-// `armv7a-none-eabi` is a different architecture from `thumbv7em`, so the
-// M-profile measurement above says nothing about it. Measured on llvm 22.1.8,
-// the same float multiply:
-//
-//     clang --target=armv7a-none-eabi -march=armv7-a -O2 -S   →  1 vmul/vmla
-//     …the same, with -mfpu=none                              →  0
-//
-// A Cortex-A without a VFP is unusual and permitted, and a Cortex-R more so.
-// The row states the property its name claims, exactly as the M rows do.
-inline constexpr std::string_view kArmSoftExtra[] = {
-    "-mfpu=none",
-};
-
-// THE `libdir` COLUMN WAS EMPTY ON THE LAST TWO ROWS UNTIL 2026-08-21, AND
-// THAT WAS CORRECT UNTIL THE DAY IT WAS NOT.
-//
-// It names the sub-directory of a multilib C library — picolibc's own
-// convention, `<march>/<mabi>` — and those two rows had no C library in the
-// index to point into, so an empty column said something true.
-//
-// `xim:picolibc-aarch64` and `xim:picolibc-x86` now exist. Measured with the
-// column still empty: a project that declares
-// `[target.aarch64-none-elf] sysroot = "xim:picolibc-aarch64@1.8.12"` gets
-// `'stdio.h' file not found` — the package is installed and correct, and the
-// engine cannot find the profile inside it.
-//
-// Filling this does NOT give those targets a C library by default. The
-// column is consulted only when a sysroot has been resolved, and the target
-// TABLE still binds none for these two rows — the zero-libc tier stays the
-// default and the package stays opt-in. This makes the opt-in work; it does not
-// take the opt-out away.
-//
-// Defaults, not the only possibility. `rv64gc/lp64d` is what qemu `virt`
-// runs and what the first BSP targets; a board that needs `rv32imac/ilp32`
-// selects it through its own manifest, not by editing this table. The table
-// exists so that `--target riscv64-none-elf` alone is enough to produce a
-// correct object file — not to enumerate every board.
-inline constexpr Spec kTable[] = {
-    //  triple                march       mabi     mcmodel    libdir
-    { "riscv64-none-elf",   "rv64gc",   "lp64d", "medany", "rv64gc/lp64d"   },
-    { "riscv32-none-elf",   "rv32imac", "ilp32", "medany", "rv32imac/ilp32" },
-    // `aapcs` AND NOT `lp64`. The two RISC-V rows above spell their ABI the
-    // way RISC-V does, and the obvious extrapolation to aarch64 is `lp64` —
-    // which is what LP64 aarch64 actually is, and which clang rejects:
-    //
-    //     error: unknown target ABI 'lp64'
-    //
-    // aarch64's `-mabi` names a procedure call standard rather than a data
-    // model, and the only value it takes for this target is `aapcs`. Measured
-    // rather than reasoned: `-mabi=lp64` compiles on riscv64 and fails here,
-    // so a table filled in by analogy would have been wrong in exactly the
-    // place the analogy is strongest.
-    //
-    // `small` is the code model: it addresses ±4GiB PC-relative, which covers
-    // any single bare-metal image regardless of where the linker script places
-    // it. RISC-V needs `medany` for the corresponding reason — its default
-    // assumes the low 2GiB, and bare-metal RISC-V runs at 0x80000000.
-    //
-    // THE LIBDIR COLUMN IS EMPTY, AND THAT IS THE ROW'S CHARACTER. It names
-    // a C library's multilib directory, and this target's row in the target
-    // table resolves no C library: `aarch64-none-elf` is the zero-libc tier.
-    // The engine reads this column only when a sysroot exists, so an invented
-    // value would be a value nothing could ever check.
-    { "aarch64-none-elf",   "armv8-a",  "aapcs", "small",  "armv8-a/aapcs"  },
-    // `x86-64` WITH A HYPHEN, WHICH IS THE ONE PLACE THIS TRIPLE'S TWO
-    // SPELLINGS DIVERGE. The triple segment is `x86_64` with an underscore and
-    // the `-march` value is `x86-64` with a hyphen; deriving one from the other
-    // is a substitution that looks harmless and produces `unknown target CPU`.
-    //
-    // `x86-64` is the baseline, not a modern microarchitecture level. A row
-    // that named `x86-64-v3` would produce images that fault on hardware and
-    // emulators older than roughly 2015, for a target whose whole audience is
-    // people who do not control what they run on. A project that knows its
-    // machine raises it in its own manifest.
-    //
-    // `sysv` is the only ABI this target has, and unlike aarch64's `aapcs` it
-    // is also the driver's default. It is written out because this table is the
-    // place the decision is made, not the place it is inherited.
-    //
-    // `small` places code and data in the low 2 GiB, which is where a
-    // `-kernel` image loaded by an emulator runs. A higher-half kernel — one
-    // linked at 0xFFFFFFFF80000000 — selects `-mcmodel=kernel` in its own
-    // manifest; that is a linker-script decision and cannot be a default,
-    // because the two are wrong for each other rather than merely suboptimal.
-    //
-    // THE LIBDIR IS EMPTY FOR THE SAME REASON aarch64's IS: this row
-    // resolves no C library, so a value here could never be checked.
-    { "x86_64-none-elf",    "x86-64",   "sysv",  "small",  "x86-64/sysv", kX86_64NoneExtra,
-      "elf_x86_64" },
-    // ── Cortex-M ────────────────────────────────────────────────────────────
-    //
-    // `mcmodel` is EMPTY on every row: 32-bit ARM has no `-mcmodel` axis, and
-    // `compile_flags` already omits the flag when this column is empty.
-    //
-    // `lldEmulation` is EMPTY on every row, and that was measured rather than
-    // assumed. clang has a BareMetal toolchain for arm, so these triples reach
-    // `ld.lld` through the driver exactly as the riscv and aarch64 rows do —
-    // the x86_64 row's problem does not recur here. Verified end to end: a
-    // freestanding thumb object links under `ld.lld` and boots under QEMU.
-    //
-    // `libdir` IS THE TRIPLE HERE, NOT `<march>/<mabi>` LIKE EVERY OTHER
-    // ROW, AND THE DIFFERENCE IS AN ABI SUBSTITUTION THAT NOTHING REPORTS.
-    //
-    // The column names the sub-directory a multilib C library uses, and on
-    // riscv `<march>/<mabi>` separates every profile because `mabi` there IS
-    // the float ABI — `lp64d` and `lp64` are different values. On ARM `mabi`
-    // names the PROCEDURE CALL STANDARD and is `aapcs` for both variants, while
-    // the float ABI lives in this triple's `eabi`/`eabihf` suffix. So
-    // `armv7e-m/aapcs` would name ONE directory for two incompatible libraries.
-    //
-    // Measured while building `xim:picolibc-arm`: under the sibling convention
-    // the seven profiles collapsed into five directories and
-    // `armv7e-m/aapcs/libc.a` came out carrying `Tag_ABI_HardFP_use` — the
-    // hard-float build, sitting exactly where a soft-float program would find
-    // it. Nothing failed at build time.
-    //
-    // Filling this does NOT give these rows a C library by default: the
-    // column is read only once a sysroot has been resolved, and the target
-    // table still binds none. The zero-libc tier stays the default and
-    // `[target.<triple>] sysroot = "xim:picolibc-arm@1.8.12"` is the opt-in.
-    // This makes the opt-in work; it does not take the opt-out away.
-    //
-    // `-mabi=aapcs`, matching the aarch64 row and for the same reason: on
-    // ARM `-mabi` names a procedure call standard, not a data model.
-    //  triple                     march         mabi     mcmodel libdir  extra
-    { "thumbv6m-none-eabi",      "armv6-m",    "aapcs", "", "thumbv6m-none-eabi", kThumbSoftExtra },
-    { "thumbv7m-none-eabi",      "armv7-m",    "aapcs", "", "thumbv7m-none-eabi", kThumbSoftExtra },
-    { "thumbv7em-none-eabi",     "armv7e-m",   "aapcs", "", "thumbv7em-none-eabi", kThumbSoftExtra },
-    { "thumbv7em-none-eabihf",   "armv7e-m",   "aapcs", "", "thumbv7em-none-eabihf" },
-    { "thumbv8m.base-none-eabi", "armv8-m.base","aapcs","", "thumbv8m.base-none-eabi", kThumbSoftExtra },
-    { "thumbv8m.main-none-eabi", "armv8-m.main","aapcs","", "thumbv8m.main-none-eabi", kThumbSoftExtra },
-    { "thumbv8m.main-none-eabihf","armv8-m.main","aapcs","", "thumbv8m.main-none-eabihf" },
-    // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
-    //
-    // THE FIRST 32-BIT MACHINE WITH A MEMORY MANAGEMENT UNIT, AND THAT IS
-    // WHY IT IS HERE RATHER THAN BEING A SECOND SPELLING OF THE M ROWS.
-    //
-    // Every other 32-bit row in this table is M-profile: an MPU that describes
-    // regions by base and limit, and no page-table entry at all. A-profile has
-    // a real MMU with a page-table walker, so it is the first target on which
-    // an address-space abstraction has to answer what a 32-bit machine's entry
-    // looks like — short descriptors are 32 bits wide, long (LPAE) ones 64.
-    // That question cannot be asked on a machine with no entries.
-    //
-    // `mcmodel` and `libdir` are empty for the reasons the M rows give.
-    // `lldEmulation` is empty because clang's BareMetal toolchain covers arm:
-    // measured, the driver reaches `ld.lld` and the x86_64 row's problem does
-    // not recur.
-    //
-    // THE TIER IS `verified` AND THE MEASUREMENT IS NAMED. 2026-09-04 under
-    // `xim:qemu-arm@9.2.4-1`: both rows built an image that BOOTED on
-    // `-M virt -cpu cortex-a15`, printed over semihosting and reported its exit
-    // status.
-    //
-    // AND THE SEMIHOSTING EXIT CALL IS NOT SPELLED THE WAY M-PROFILE SPELLS
-    // IT. `SYS_EXIT` (0x18) on AArch32 takes the reason code in `r1` directly;
-    // the `{reason, code}` block every Cortex-M board here passes is
-    // `SYS_EXIT_EXTENDED` (0x20), which exists because a 32-bit `r1` cannot
-    // carry both. Passing the block to 0x18 prints correctly and then reports
-    // the WRONG exit status — measured: a program exiting 0 reported 1. That is
-    // a board fact rather than a target fact, recorded here because it is where
-    // the next person to write such a board will look.
-    //
-    // `libdir` IS THE TRIPLE HERE TOO, AND FOR THE SAME REASON AS THE
-    // M ROWS — even though no package carries an A-profile multilib yet.
-    //
-    // The column is a CONVENTION about where a sysroot puts a profile, not a
-    // claim that one exists: it is read only after a sysroot has been resolved,
-    // and an absent directory is skipped. Leaving it empty would leave the next
-    // A-profile payload free to choose `<march>/<mabi>` — which maps these two
-    // incompatible libraries onto one directory, exactly as it did for
-    // `armv7e-m` when `xim:picolibc-arm` was first built.
-    { "armv7a-none-eabi",        "armv7-a",    "aapcs", "", "armv7a-none-eabi", kArmSoftExtra },
-    { "armv7a-none-eabihf",      "armv7-a",    "aapcs", "", "armv7a-none-eabihf" },
-};
+// THE ROWS ARE DATA (design 2026-11-09; SPEC-016): each bare-metal row of
+// modules/toolchain-model/data/builtin.toml states its ISA profile --
+// `march`, `mabi`, `code-model`, `multilib`, `flags`, `link-emulation` -- with
+// the measurements behind each value beside it. This table is that data in the
+// shape the bare-metal code reads; a row with no `march` is not a bare-metal row.
+inline constexpr auto kTable = [] {
+    constexpr auto& rows = mcpp::toolchain::builtin::kRows;
+    constexpr std::size_t n = [] {
+        std::size_t c = 0;
+        for (auto const& r : mcpp::toolchain::builtin::kRows) c += r.march.empty() ? 0 : 1;
+        return c;
+    }();
+    std::array<Spec, n> out{};
+    std::size_t i = 0;
+    for (auto const& r : rows) {
+        if (r.march.empty()) continue;
+        out[i++] = Spec{ r.triple, r.march, r.mabi, r.codeModel, r.multilib, r.flags, r.linkEmulation };
+    }
+    return out;
+}();
 
 // The single read point. Returns nullopt for anything that is not a known
 // bare-metal target — including hosted triples, so a caller can use this as
@@ -360,7 +137,8 @@ inline std::vector<std::string> compile_flags(const Spec& s,
                                               bool targetCxxRuntime = false) {
     std::vector<std::string> out;
     out.emplace_back(std::string("-march=") + std::string(s.march));
-    out.emplace_back(std::string("-mabi=")  + std::string(s.mabi));
+    if (!s.mabi.empty())
+        out.emplace_back(std::string("-mabi=")  + std::string(s.mabi));
     if (!s.mcmodel.empty())
         out.emplace_back(std::string("-mcmodel=") + std::string(s.mcmodel));
     // Whatever the three columns above could not say. Emitted before
