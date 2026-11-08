@@ -1254,6 +1254,10 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
+// The capabilities packages require and nothing provides: each takes the
+// default its package states for the target (mcpp#911 G7). True when one was
+// added to the walk.
+std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
 std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
                                                               const std::string& name,

@@ -2425,7 +2425,11 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
         auto pushed = step4b_apply_platform(state);
         if (!pushed) return std::unexpected(pushed.error());
         if (auto r = step4b_check_platform_versions(state); !r) return r;
-        if (!*pushed) break;
+        // AND A PACKAGE'S OWN DEFAULTS AFTER THE PLATFORM'S LAYERS (mcpp#911
+        // G7): graph > platform > default.
+        auto defaulted = step4b_capability_defaults(state);
+        if (!defaulted) return std::unexpected(defaulted.error());
+        if (!*pushed && !*defaulted) break;
         if (auto r = drain(); !r) return r;
     }
     if (auto r = step4b_check_platform_versions(state); !r) return r;

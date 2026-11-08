@@ -3881,6 +3881,25 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         if (!ov) return std::unexpected(error(origin, ov.error()));
         m.hostPlatform = std::move(*ov);
     }
+    // [defaults."<capability>"] — the provider of a required capability when
+    // nothing else provides it (mcpp#911 G7): `<selector> = "<package>@<version>"`
+    // or a dependency table, the selector a target selector (`linux`,
+    // `cfg(os = "freebsd")`, a triple, `*`).
+    if (auto* dt = doc->get_table("defaults")) {
+        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                            &m.schemaWarnings};
+        for (auto const& [cap, body] : *dt) {
+            if (!body.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[defaults.\"{}\"] must be a table of <target selector> = <package>, for example "
+                    "linux = \"openkal-linux@^0.25\"", cap), body.position));
+            for (auto const& [sel, v] : body.as_table()) {
+                auto r = rd.ref(v, std::format("[defaults.\"{}\"].{}", cap, toml_header_key(sel)), false, false);
+                if (!r) return std::unexpected(error(origin, r.error(), v.position));
+                m.capabilityDefaults.push_back({ cap, sel, std::move(*r), v.position.line });
+            }
+        }
+    }
 
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {

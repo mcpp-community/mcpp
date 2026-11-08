@@ -662,6 +662,73 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
     return pushed;
 }
 
+// THE CAPABILITY SLOTS OF ORDINARY PACKAGES (mcpp#911 G7; SPEC-002 §3.6). A
+// package that requires a capability (`requires = ["mcpp:kernel-abi=openkal"]`)
+// and states its default providers (`[defaults."mcpp:kernel-abi=openkal"] linux
+// = "openkal-linux@^0.25"`) takes the default for the target only when no
+// package of the graph provides the capability -- the consumer's choice, or
+// the platform's layer, added in the rounds before. The default is the
+// package's dependency, walked like one.
+std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state) {
+    std::set<std::string> provided;
+    for (auto const& p : state.packages)
+        for (auto const& c : p.manifest.provides) provided.insert(c);
+    const auto ctx = platform_cfg_context(state);
+    const auto matches = matcher(ctx);
+    bool pushed = false;
+    for (std::size_t i = 0; i < state.packages.size(); ++i) {
+        auto const& pm = state.packages[i].manifest;
+        if (pm.capabilityDefaults.empty()) continue;
+        // A selector that names the target wins over `*`, which is the default
+        // of every other target.
+        std::vector<const mcpp::manifest::Manifest::CapabilityDefault*> order;
+        for (auto const& d : pm.capabilityDefaults) if (d.selector != "*") order.push_back(&d);
+        for (auto const& d : pm.capabilityDefaults) if (d.selector == "*") order.push_back(&d);
+        std::set<std::string> done;
+        for (auto const* dp : order) {
+            auto const& d = *dp;
+            if (done.contains(d.capability) || provided.contains(d.capability)) continue;
+            if (std::ranges::find(pm.requires_, d.capability) == pm.requires_.end()) continue;
+            if (d.selector != "*" && !matches(d.selector)) continue;
+            done.insert(d.capability);
+            const auto key = item_key(d.ref);
+            const auto mark = std::format("default:{}:{}", pm.package.name, d.capability);
+            if (key.empty() || state.platformInjected.contains(mark)) continue;
+            WorkItem item;
+            item.name = key;
+            item.spec = d.ref.spec;
+            if (item.spec.shortName.empty()) item.spec.shortName = known_short_name(d.ref);
+            if (item.spec.namespace_.empty()) {
+                item.spec.namespace_ = std::string(mcpp::pm::kDefaultNamespace);
+                item.spec.namespaceOmitted = true;
+            }
+            if (item.spec.candidates.empty())
+                item.spec.candidates = {{ .namespace_ = item.spec.namespace_,
+                                          .shortName = item.spec.shortName }};
+            item.spec.declaredIn = std::format("{}'s default for {} ({})", pm.package.name,
+                                               d.capability, d.selector);
+            item.requestedBy = std::format("{} (default for {})", pm.package.name, d.capability);
+            item.originalConstraint = item.spec.version;
+            item.consumerDepIndex = i == 0 ? kMainConsumer : i - 1;
+            item.resolveRoot = i == 0 ? std::filesystem::path{} : state.packages[i].root;
+            // The package declares it, as it would by hand: the readers of its
+            // edges (the link's closure among them) see it.
+            if (i == 0) state.m->dependencies[key] = item.spec;
+            else {
+                state.packages[i].manifest.dependencies[key] = item.spec;
+                if (i - 1 < state.dep_manifests.size() && state.dep_manifests[i - 1])
+                    state.dep_manifests[i - 1]->dependencies[key] = item.spec;
+            }
+            state.platformInjected.insert(mark);
+            mcpp::ui::info("Default", std::format("{} for {} of {} ({})", mp::display(d.ref),
+                                                  d.capability, pm.package.name, d.selector));
+            state.worklist.push_back(std::move(item));
+            pushed = true;
+        }
+    }
+    return pushed;
+}
+
 // THE PLATFORM'S VERSION GROUP IS A CONSTRAINT (SPEC-013 §7.5): a request of
 // one of its members, by version, resolves to the group's version when the
 // request admits it, and is refused naming both when it does not. A package

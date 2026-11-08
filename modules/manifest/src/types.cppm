@@ -2301,6 +2301,17 @@ struct Manifest {
     // alone: one image has one C library (openkal's boundary). Unioned from
     // `[package]` and every matching `[target.<sel>]`, as `requires_` is.
     std::vector<std::string>                        privateRequires;
+    // `[defaults."<capability>"] <selector> = <package>` (mcpp#911 G7; SPEC-002
+    // §3.6): the provider of a capability this package requires when neither
+    // the graph nor the platform provides it, per target selector. The layer
+    // mechanism of the platform, for any package: graph > platform > default.
+    struct CapabilityDefault {
+        std::string                                 capability;
+        std::string                                 selector;
+        mcpp::manifest::platform::PackageRef        ref;
+        int                                         line = 0;
+    };
+    std::vector<CapabilityDefault>                  capabilityDefaults;
     // `requires_abi = { threads = true, exceptions = true }` at package
     // level, and per feature. A statement that the ARTEFACT's ABI has a
     // switch on, compared at resolution with the root's
