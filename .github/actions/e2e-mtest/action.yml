@@ -14,11 +14,11 @@ inputs:
   version:
     description: the mtest release
     required: false
-    default: '0.2.0'
+    default: '0.3.0'
   sha256:
     description: sha256 of mtest-<version>-openkal-bundle-all.tar.gz
     required: false
-    default: '283e8752d1aa009c95ed9399247ab93a46a3f734c7c1cf7b7af8ca1b5de0070b'
+    default: '0d17fdfe1ad4f48706528a4a20c57e645a6d1b6dbc1e0820ef1966af97f50cbf'
   token:
     description: a token that reads this repository's actions
     required: false
