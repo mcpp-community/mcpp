@@ -1,0 +1,141 @@
+name: "probe: W8 parameters"
+
+# Temporary: the three measurements W8 sets its parameters by (design
+# 2026-11-08 W8): e2e cases of one shard run 1, 2 and 3 at a time by mtest;
+# the unit tests as a program per file and as a program per directory; and the
+# edges a build runs again over a target/ taken over from another checkout.
+# It prints and never asserts.
+
+on:
+  pull_request:
+
+env:
+  XLINGS_NON_INTERACTIVE: '1'
+  MTEST_REF: release/0.2.0
+
+jobs:
+  e2e-parallel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: The candidate mcpp and the mtest engine of the pending release
+        run: |
+          "$MCPP" build 2>&1 | tail -2
+          cand=$(find "$PWD/target" -path '*/bin/mcpp' -type f | head -1)
+          mkdir -p "$RUNNER_TEMP/cand" && cp "$cand" "$RUNNER_TEMP/cand/mcpp"
+          echo "CAND=$RUNNER_TEMP/cand/mcpp" >> "$GITHUB_ENV"
+          git clone -q --depth 1 --branch "$MTEST_REF" https://github.com/mcpp-community/mtest.git "$RUNNER_TEMP/mtest"
+          (cd "$RUNNER_TEMP/mtest" && "$RUNNER_TEMP/cand/mcpp" build -p mtest.mtest 2>&1 | tail -1)
+          echo "MTEST=$(find "$RUNNER_TEMP/mtest/target" -type f -name mtest -path '*/bin/mtest.mtest/*' | head -1)" >> "$GITHUB_ENV"
+      - name: Shard 1 of 8, serial, by the harness
+        id: serial
+        run: |
+          start=$(date +%s)
+          E2E_SHARD=1/8 E2E_TIMINGS=tests/e2e/timings/linux.tsv E2E_REPORT=$PWD/serial.tsv MCPP="$CAND" \
+            bash tests/e2e/run_all.sh > serial.log 2>&1 || true
+          echo "wall=$(( $(date +%s) - start ))" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -m1 "Detected capabilities" serial.log | tee caps.txt
+          awk -F'\t' '$1 != "skip" { print $2 }' serial.tsv > members.txt
+          echo "ran: $(wc -l < members.txt); failed: $(awk -F'\t' '$1 == "fail" || $1 == "timeout"' serial.tsv | wc -l)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The same cases by mtest, 1, 2 and 3 at a time
+        run: |
+          mkdir -p run && cd run
+          {
+            echo '[discover.e2e]'
+            printf 'globs = [%s]\n' "$(sed 's/.*/"tests\/e2e\/&"/' ../members.txt | paste -sd, -)"
+            echo 'command = ["bash", "{path}"]'
+            echo 'kind = "e2e"'
+            echo 'timeout = "20m"'
+          } > mtest.toml
+          ln -s ../tests tests
+          for jobs in 1 2 3; do
+            rm -rf .mtest
+            start=$(date +%s)
+            MCPP="$CAND" "$MTEST" run --jobs $jobs --json > run-$jobs.json 2> run-$jobs.err || true
+            wall=$(( $(date +%s) - start ))
+            python3 - "$jobs" "$wall" run-$jobs.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          j = json.load(open(sys.argv[3]))
+          bad = [f["case"] for f in j.get("failing", [])]
+          print(f"jobs={sys.argv[1]} wall={sys.argv[2]}s cases={j.get('cases')} failing={len(bad)} {bad[:12]}")
+          PY
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: e2e-parallel, path: "serial.log\nserial.tsv\nrun/run-*.json\nrun/run-*.err" }
+
+  unit-programs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: The candidate mcpp
+        run: |
+          "$MCPP" build 2>&1 | tail -2
+          cand=$(find "$PWD/target" -path '*/bin/mcpp' -type f | head -1)
+          mkdir -p "$RUNNER_TEMP/cand" && cp "$cand" "$RUNNER_TEMP/cand/mcpp"
+          echo "CAND=$RUNNER_TEMP/cand/mcpp" >> "$GITHUB_ENV"
+      - name: A program per file, from nothing
+        run: |
+          git worktree add -q "$RUNNER_TEMP/per-file" HEAD
+          cd "$RUNNER_TEMP/per-file"
+          start=$(date +%s)
+          "$CAND" test > test.log 2>&1 || echo "exit $?"
+          echo "per file: wall=$(( $(date +%s) - start ))s $(grep -m1 'test result' test.log)" | tee -a "$GITHUB_STEP_SUMMARY"
+          bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" target | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: A program per directory, from nothing
+        run: |
+          git worktree add -q "$RUNNER_TEMP/per-dir" HEAD
+          cd "$RUNNER_TEMP/per-dir"
+          sed -i 's/^\[test\]$/[test]\nprograms = "directory"/' mcpp.toml
+          grep -A2 '^\[test\]' mcpp.toml
+          start=$(date +%s)
+          "$CAND" test > test.log 2>&1 || echo "exit $?"
+          echo "per directory: wall=$(( $(date +%s) - start ))s $(grep -m1 'test result' test.log)" | tee -a "$GITHUB_STEP_SUMMARY"
+          bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" target | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -E '\.\.\. (ok|FAIL)' test.log | head -20 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: unit-programs, path: "${{ runner.temp }}/per-*/test.log" }
+
+  target-reuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - name: The candidate mcpp
+        run: |
+          "$MCPP" build 2>&1 | tail -2
+          cand=$(find "$PWD/target" -path '*/bin/mcpp' -type f | head -1)
+          mkdir -p "$RUNNER_TEMP/cand" && cp "$cand" "$RUNNER_TEMP/cand/mcpp"
+          echo "CAND=$RUNNER_TEMP/cand/mcpp" >> "$GITHUB_ENV"
+      - name: A build, then a test of the same checkout
+        run: |
+          git worktree add -q "$RUNNER_TEMP/a" HEAD
+          cd "$RUNNER_TEMP/a"
+          "$CAND" build > build.log 2>&1
+          base=$(mktemp); bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" --count target > "$base"
+          "$CAND" test --no-run > test.log 2>&1 || true
+          echo "test after build, same checkout: $(bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" target "$base") of $(grep -c . target/*/*/compile_commands.json | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          base=$(mktemp); bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" --count target > "$base"
+          "$CAND" build > build2.log 2>&1
+          echo "build again, same checkout: $(bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" target "$base")" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The target/ of that checkout in another
+        run: |
+          git worktree add -q "$RUNNER_TEMP/b" HEAD
+          cp -a "$RUNNER_TEMP/a/target" "$RUNNER_TEMP/b/target"
+          cd "$RUNNER_TEMP/b"
+          base=$(mktemp); bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" --count target > "$base"
+          "$CAND" build > build.log 2>&1
+          echo "build in another checkout over its target/: $(bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" target "$base")" | tee -a "$GITHUB_STEP_SUMMARY"
+          touch -d '2 days ago' $(git ls-files src | head -400) 2>/dev/null || true
+          base=$(mktemp); bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" --count target > "$base"
+          "$CAND" build > build2.log 2>&1
+          echo "and again: $(bash "$GITHUB_WORKSPACE/.github/probe/ninja-edges.sh" target "$base")" | tee -a "$GITHUB_STEP_SUMMARY"
