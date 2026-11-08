@@ -52,6 +52,18 @@
   of the platform and runs it on Linux, macOS and Windows (e2e 1033, required on
   each host by `tests/e2e/host-requirements.tsv`). docs/24 states the two roles,
   an image as a release form and a native row as a build target.
+- A dev-dependency reaches the test units and nothing else of its package: its
+  include directories and definitions are given to the files under `tests/`,
+  and a kernel interface only a dev-dependency reaches is given to the
+  dev-dependencies and the test units. The package's own sources compile under
+  `mcpp test` with the commands `mcpp build` gives them, so `mcpp build` and
+  `mcpp test` share one build directory and one compile database and switching
+  between them compiles nothing again (docs/08; e2e 77, 783, 1037 K). Before,
+  a dev-dependency over mcpplibs.os (mtest's) gave the package's sources
+  `__OPENKAL__` and made the test a configuration of its own.
+- `mcpp dyndep` leaves an unchanged output untouched, so a unit whose module
+  edges are what they were is not compiled again when the rule's command
+  changed (#874).
 - The low-space warning's threshold is the larger of 2 GiB and 1.25 times what
   the configuration's last build wrote (#874; e2e 1030).
 - mcpp's own dependencies are named by identity in one table, each by one

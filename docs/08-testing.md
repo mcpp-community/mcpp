@@ -162,6 +162,18 @@ else: it is not in the artifact, and a consumer of the package never sees it.
 That is the difference between a test's dependency and the package's own, and it
 is why a test framework does not become part of what a library ships.
 
+A dev-dependency reaches the test units and nothing else of the package
+(2026.11.8.1+). Its include directories and interface definitions are given to
+the files under `tests/`; the package's own sources are compiled under
+`mcpp test` with the commands `mcpp build` gives them, so the code under test is
+the code that ships, and `mcpp build` and `mcpp test` share one build directory
+and one compile database. A kernel interface that only a dev-dependency reaches
+(`mcpplibs.mtest` over `mcpplibs.os` reaches openkal's) is given to the
+dev-dependencies and the test units alone: they see `__OPENKAL__` and openkal's
+headers, and the package's own sources do not. A C library or a C++ runtime that
+a dev-dependency supplies is a property of every object a test links, and it
+remains the configuration's.
+
 [`examples/11-features`](../examples/11-features/) declares one and uses it.
 
 ## Testing on a target this machine cannot run

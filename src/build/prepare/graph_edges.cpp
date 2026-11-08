@@ -85,11 +85,13 @@ void recordDependencyEdge(
         // one consumer is two edges and two instances (mcpp#797, R2): merging
         // them made the build-program request read as "not in the target".
         const auto visibility = parseVisibility(spec.visibility);
+        const bool devTable = !buildTable && spec.declaredIn.ends_with("dev-dependencies]");
         auto same = [&](const DependencyEdge& edge) {
             return edge.consumerPackageIndex == consumerPackageIndex
                 && edge.dependencyPackageIndex == dependencyPackageIndex
                 && edge.visibility == visibility
-                && edge.buildTable == buildTable;
+                && edge.buildTable == buildTable
+                && edge.devTable == devTable;
         };
         auto it = std::find_if(state.dependencyEdges.begin(), state.dependencyEdges.end(), same);
         if (it != state.dependencyEdges.end()) {
@@ -126,6 +128,7 @@ void recordDependencyEdge(
             .requestedTools = spec.tools,
             .requestedArtifacts = spec.artifacts,
             .buildTable = buildTable,
+            .devTable = devTable,
             .wantsLibrary = wantsLibrary,
             .reexport = spec.reexport,
             .embed = spec.embed,

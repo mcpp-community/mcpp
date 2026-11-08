@@ -390,7 +390,8 @@ mcpp index status     # local state: state, age and revision
 gtest = "1.15.2"
 ```
 
-`mcpp build` 忽略这些依赖；`mcpp test` 解析并使用它们。`mcpp test` 自动
+`mcpp build` 忽略这些依赖；`mcpp test` 解析并使用它们，且只用于测试单元：包自己的源文件
+在 `mcpp test` 下与 `mcpp build` 下编译方式相同（2026.11.8.1+，见 [08](08-testing.md)）。`mcpp test` 自动
 发现 `tests/**/*.cpp` 并把它们编译为测试二进制。运行器与框架无关：每个文件
 是一个独立的二进制，由退出码判定 —— 裸 `main`、gtest（经 `[dev-dependencies]`
 加 `gtest_main`）或任何其他框架，行为完全一致，`-- args` 会转发给每一个测试

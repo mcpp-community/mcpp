@@ -231,12 +231,37 @@ PackageInstances package_instances(const PrepareState& state) {
     return out;
 }
 
+// The packages the shipped graph reaches: the root's and the selected
+// members' ordinary edges and theirs, no `[build-dependencies]` and no
+// `[dev-dependencies]` edge. A target instance outside it serves the tests only.
+static std::vector<bool> shipped_packages(const PrepareState& state) {
+    const auto n = state.packages.size();
+    std::vector<bool> shipped(n, false);
+    std::vector<std::size_t> stack;
+    for (std::size_t i = 0; i < n; ++i)
+        if (i == 0 || state.packages[i].selectedMember) { shipped[i] = true; stack.push_back(i); }
+    while (!stack.empty()) {
+        const auto p = stack.back();
+        stack.pop_back();
+        for (auto const& e : state.dependencyEdges) {
+            if (e.consumerPackageIndex != p || e.buildTable || e.devTable) continue;
+            const auto d = e.dependencyPackageIndex;
+            if (d >= n || shipped[d]) continue;
+            shipped[d] = true;
+            stack.push_back(d);
+        }
+    }
+    return shipped;
+}
+
 static void step6_instances(PrepareState& state) {
     const auto n = state.packages.size();
     if (n == 0) return;
     const auto [target, host] = package_instances(state);
+    const auto shipped = shipped_packages(state);
     for (std::size_t d = 1; d < n; ++d) {
         state.packages[d].hostInstance = host[d];
+        state.packages[d].devOnly = target[d] && !shipped[d];
         // A package no edge mentions is a bookkeeping gap, not a build
         // dependency: it keeps its target instance.
         state.packages[d].buildTimeOnly = !target[d] && host[d];

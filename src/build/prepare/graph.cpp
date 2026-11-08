@@ -2269,6 +2269,22 @@ step4b_define_provisioning_closures(PrepareState& state) {
                 if (edge.dependencyPackageIndex > 0
                     && state.isProgramOnlyPackage(dependency.manifest)) continue;
 
+                // A dev-dependency serves the consumer's tests: its usage
+                // reaches the test units and neither the consumer's own
+                // sources nor the consumer's users, so those sources compile
+                // under `mcpp test` as under `mcpp build`.
+                if (edge.devTable) {
+                    auto& tests = consumer.testBuild;
+                    changed = state.appendUniquePaths(tests.includeDirs, dependency.publicUsage.includeDirs)
+                              || changed;
+                    changed = state.appendUniquePaths(tests.includeDirsAfter,
+                                                      dependency.publicUsage.includeDirsAfter)
+                              || changed;
+                    changed = state.appendUniqueFlags(tests.cflags, dependency.publicUsage.cflags) || changed;
+                    changed = state.appendUniqueFlags(tests.cxxflags, dependency.publicUsage.cxxflags) || changed;
+                    continue;
+                }
+
                 if (edge.visibility == mcpp::modgraph::DependencyVisibility::Private
                     || edge.visibility == mcpp::modgraph::DependencyVisibility::Public) {
                     changed = state.appendUniquePaths(consumer.privateBuild.includeDirs,

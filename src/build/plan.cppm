@@ -1182,6 +1182,19 @@ expand_manifest_include_entry(const std::filesystem::path& root,
     return expanded;
 }
 
+// A test unit sees its package's own usage and then its dev-dependencies'
+// (`PackageRoot::testBuild`); the package's other units see the first only.
+void with_test_usage(CompileUnit& cu, const mcpp::modgraph::PackageRoot& pkg) {
+    auto add = [](auto& to, auto const& from) {
+        for (auto const& x : from)
+            if (std::ranges::find(to, x) == to.end()) to.push_back(x);
+    };
+    add(cu.localIncludeDirs, pkg.testBuild.includeDirs);
+    add(cu.localIncludeDirsAfter, pkg.testBuild.includeDirsAfter);
+    add(cu.packageCflags, pkg.testBuild.cflags);
+    add(cu.packageCxxflags, pkg.testBuild.cxxflags);
+}
+
 std::vector<std::filesystem::path>
 local_include_dirs_for_manifest(const std::filesystem::path& root,
                                 const mcpp::manifest::Manifest& manifest)
@@ -2532,12 +2545,17 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
     std::set<std::filesystem::path> depEntryMainSources;
-    // Every dependency's source that defines `main`, a direct dev-dependency's
-    // or one beneath it (gtest_main.cc of compat.gtest beneath a GoogleTest
-    // adapter): none is linked into a program that has a beginning of its own.
-    // Asked in a plan of tests only: a build links no dev-dependency.
+    // Every source beneath the dev-dependencies that defines `main`, a direct
+    // dev-dependency's or one beneath it (gtest_main.cc of compat.gtest beneath
+    // a GoogleTest adapter): none is linked into a program that has a beginning
+    // of its own. Only the tests' packages: a C library's start-up file names
+    // `main` and belongs to every program.
+    std::set<std::string> devOnlyPackages;
+    for (auto const& p : packages)
+        if (p.devOnly) devOnlyPackages.insert(qualified_package_name(p.manifest));
+    std::set<std::string> testPackages = devDepPackages;
+    testPackages.insert(devOnlyPackages.begin(), devOnlyPackages.end());
     std::set<std::filesystem::path> depMainSources;
-    const auto rootPackage = qualified_package_name(manifest);
     auto has_tests = [](const mcpp::manifest::Manifest& m) {
         return std::ranges::any_of(m.targets, [](auto const& t) {
             return t.kind == mcpp::manifest::Target::TestBinary;
@@ -2547,7 +2565,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return p.selectedMember && has_tests(p.manifest);
     });
     for (auto& cu : plan.compileUnits) {
-        if (!testPlan || cu.packageName == rootPackage || !is_implementation_source(cu.kind)) continue;
+        if (!testPlan || !testPackages.contains(cu.packageName) || !is_implementation_source(cu.kind)) continue;
         if (!source_defines_main(cu.source)) continue;
         depMainSources.insert(cu.source);
         if (devDepPackages.contains(cu.packageName)) depEntryMainSources.insert(cu.source);
@@ -3433,6 +3451,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 main_cu.localIncludeDirsAfter = packages[0].privateBuild.includeDirsAfter;
                 main_cu.packageCflags = packages[0].privateBuild.cflags;
                 main_cu.packageCxxflags = packages[0].privateBuild.cxxflags;
+                if (lu.kind == LinkUnit::TestBinary) with_test_usage(main_cu, packages[0]);
             } else {
                 main_cu.localIncludeDirs = local_include_dirs_for_manifest(projectRoot, manifest);
                 main_cu.localIncludeDirsAfter =
@@ -3892,6 +3911,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                         main_cu.localIncludeDirsAfter = pkg.privateBuild.includeDirsAfter;
                         main_cu.packageCflags         = pkg.privateBuild.cflags;
                         main_cu.packageCxxflags       = pkg.privateBuild.cxxflags;
+                        if (lu.kind == LinkUnit::TestBinary) with_test_usage(main_cu, pkg);
                     } else {
                         main_cu.localIncludeDirs = local_include_dirs_for_manifest(pkg.root, pkg.manifest);
                         main_cu.localIncludeDirsAfter =
@@ -3963,10 +3983,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 if (!is_implementation_source(cu.kind)) continue;
                 if (lu.entryMain && cu.source == *lu.entryMain) continue;
                 if (entryFilesAcrossTargets.contains(cu.source)) continue;
-                // A dependency's own main-providing object (gtest_main.o, a
-                // dev-dependency's or one beneath it) only for a test with no
-                // main of its own, as for a root.
-                if (entryDefinesMain && cu.packageName != qualified_package_name(pkg.manifest)
+                // A main-providing object beneath the dev-dependencies
+                // (gtest_main.o) only for a test with no main of its own, as
+                // for a root.
+                if (entryDefinesMain && (ownDevDeps.contains(cu.packageName) || devOnlyPackages.contains(cu.packageName))
                     && source_defines_main(cu.source)) continue;
                 lu.objects.push_back(cu.object);
             }

@@ -150,6 +150,11 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // On an ordinary edge the library is what the edge means, and the
         // field is not read.
         bool buildTable = false;
+        // `devTable`: the declaration is in a `[dev-dependencies]` table of the
+        // root or a selected member. The dependency serves the consumer's
+        // tests: its usage reaches the test units (`PackageRoot::testBuild`),
+        // not the consumer's own sources.
+        bool devTable = false;
         bool wantsLibrary = false;
         bool reexport = false;
         // `embed = true` and its `exclude` (design 2026-11-02 §14.1): the
@@ -903,6 +908,10 @@ struct PrepareState {
     std::vector<mcpp::targetside::Island> cxxIslands;
     std::optional<std::size_t> cxxLayerProviderIndex;
     bool targetSideResolved = false;
+    // The kernel interface is supplied by a package only the tests reach
+    // (`PackageRoot::devOnly`): it serves the dev-only packages and the test
+    // units, and the configuration of the shipped graph keeps none.
+    bool kernelAbiForTestsOnly = false;
     mcpp::modgraph::UsageRequirements targetSideUsage;
     // The same, with the engine's predefines and the realised C environment:
     // what the build's contract states (BuildPlan::contractTargetSide).

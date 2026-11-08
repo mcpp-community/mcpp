@@ -21,10 +21,14 @@
 #   I. A test links a dev-dependency that is a shared library (mtest's C ABI) by its library.
 #   J. In a workspace, a member's test begins by the member's own dev-dependencies: another
 #      member's dev-dependency that defines `main` is no beginning of it.
+#   K. mtest reaches the test units only: the skeleton's `mcpp build` and `mcpp test` share one
+#      build directory, switching between them compiles the program's source once, its command
+#      carries no `__OPENKAL__`, and the compile database holds the test.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
+PY=python3; command -v python3 >/dev/null 2>&1 || PY=python
 
 cd "$TMP"
 
@@ -169,5 +173,20 @@ printf '[package]\nname    = "two"\nversion = "0.1.0"\n\n[dev-dependencies]\nfw 
 printf 'extern "C++" int run_cases() { return 0; }\n' > wsj/two/tests/begun.cpp
 (cd wsj && "$MCPP" test --workspace > ../j.log 2>&1) || fail "J: a member's test took another member's beginning" j.log
 grep -q "began at hdr" j.log && grep -q "fw main" j.log || fail "J: each member's test did not begin at its own" j.log
+
+# K
+"$MCPP" new kapp > k.log 2>&1 || fail "K: mcpp new" k.log
+(cd kapp && "$MCPP" build && "$MCPP" test && "$MCPP" build && "$MCPP" test) > k-run.log 2>&1 || fail "K: build and test" k-run.log
+set -- kapp/target/*/*/build.ninja
+[ $# = 1 ] || fail "K: build and test are $# configurations" k-run.log
+dir=$(dirname "$1")
+[ "$(grep -cE 'obj/main\.(o|obj)	' "$dir/.ninja_log")" = 1 ] || fail "K: the program's source was compiled again" "$dir/.ninja_log"
+grep -q 'test_smoke' "$dir/compile_commands.json" || fail "K: the compile database has no test" "$dir/compile_commands.json"
+$PY - "$dir/compile_commands.json" <<'PY' || fail "K: the program's source sees the dev-dependency" "$dir/compile_commands.json"
+import json, sys
+for e in json.load(open(sys.argv[1])):
+    if e["file"].replace("\\", "/").endswith("kapp/src/main.cpp") and any("__OPENKAL__" in a or "openkal" in a for a in e.get("arguments", [])):
+        sys.exit(1)
+PY
 
 echo "PASS: 1037 a skeleton tests with mtest, and a test needs no main"
