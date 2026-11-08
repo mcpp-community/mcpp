@@ -31,7 +31,9 @@ export module mcpp.toolchain.stdmod;
 
 import std;
 import mcpp.home;
-import mcpp.home.files;   // mark_used
+import mcpp.home.files;   // mark_used, FileLock
+import mcpp.build.dirlock;
+import mcpp.ui;
 import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.build.command_line;
@@ -473,6 +475,24 @@ std::expected<StdModule, StdModError> ensure_built(
     const auto& compatCommands = desc.compatCommands;
     const auto& metadata       = derivation->metadata;
     auto metaPath = metadata_path(sm.cacheDir);
+    // ONE BUILDER PER ENTRY. The entry is shared by every build of this home, and two
+    // processes that found it missing compiled into the same files at once: the
+    // second clang read a std.pcm the first was rewriting (SIGBUS), and a build
+    // went on with no std.o. The check and the build happen under the entry's
+    // lock, so a second process waits and then finds the entry built.
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(sm.cacheDir, ec);
+    }
+    namespace dirlock = mcpp::build::dirlock;
+    auto entryLock = mcpp::home::FileLock::acquire(
+        sm.cacheDir, ".mcpp-build.lock", dirlock::owner_record(), std::chrono::milliseconds(300),
+        [&](std::string_view record) {
+            const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                                 std::chrono::system_clock::now().time_since_epoch()).count();
+            mcpp::ui::status("Waiting", std::format("for the std module, compiled by {}",
+                                                    dirlock::describe(dirlock::parse_holder(record), now)));
+        });
     bool std_cached = std::filesystem::exists(sm.bmiPath)
                    && std::filesystem::exists(sm.objectPath)
                    && metadata_matches(metaPath, metadata);

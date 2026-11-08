@@ -105,6 +105,13 @@
 
 ### Fixed
 
+- Two builds that find a std module missing compile it once. The std module of a
+  toolchain and flag set is one entry of the home's build cache, and two
+  processes that found it missing compiled into the same files at once: one
+  compiler read a BMI the other was rewriting (a bus error) or found its
+  output gone, and a build went on with no std object. The entry is built
+  under its own lock; a second build waits, naming the first, and finds it
+  built (e2e 1039).
 - A dependency's source whose `main` is compiled only under a switch no command
   defines -- zlib's `crc32.c` (`#ifdef MAKECRCH`), QuickJS's `libregexp.c`
   (`#ifdef TEST`) -- is linked into a test that has its own `main`. Which
