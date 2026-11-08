@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc unix-shell
+# resources: machine
 # A tool declared under `[feature-xlings.<f>]` is answerable through
 # `mcpp::xpkg_dir` when that feature is active.
 #

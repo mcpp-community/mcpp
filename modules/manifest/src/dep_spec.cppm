@@ -149,6 +149,10 @@ struct DependencySpec {
 
     bool                        inheritWorkspace = false;  // .workspace = true
     bool                        legacyDottedKey = false;   // parsed from legacy "ns.name" flat key
+    // The quoted key cannot be written otherwise: a package and a package of
+    // its namespace in one table (`mcpplibs.mtest`, `mcpplibs.mtest.gtest`),
+    // whose unquoted keys would make one name both a value and a table.
+    bool                        quotingRequired = false;
     // One-release migration marker for the former unquoted dotted-selector
     // search (`capi.lua` tried mcpplibs.capi before capi). New exact selectors
     // written as namespace subtables never set this bit.

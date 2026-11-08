@@ -1,10 +1,10 @@
 name: ci-linux-e2e
 
 # The e2e suite (tests/e2e/run_all.sh) on Linux, called by ci.yml beside
-# ci-linux.yml after the Linux build. Six shards, assigned by measured
-# duration (tests/e2e/timings/linux.tsv, rule R4 of the 2026-10-02 CI record):
-# the table holds about 72 minutes of tests (2026-10-30, with the target-set
-# and packaging tests of 2026.10.30.1), about 12 a shard,
+# ci-linux.yml after the Linux build. Eight shards, divided by mtest by the
+# measured history of main's stores (design 2026-11-08 W8; rule R4 of the
+# 2026-10-02 CI record): about 94 minutes of tests (2026-11-08), about 12 a
+# shard one test at a time and about 6 two at a time,
 # each running the one binary build.yml produced (use-built-mcpp, rule R1).
 # Each shard writes a per-test report that the e2e-coverage job of ci.yml reads
 # (rule R5).
@@ -17,16 +17,21 @@ on:
 
 jobs:
   e2e:
-    name: e2e ${{ matrix.shard }}/6 (linux x86_64, self-host)
+    name: e2e ${{ matrix.shard }}/8 (linux x86_64, self-host)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
-      E2E_SHARD: ${{ matrix.shard }}/6
-      E2E_TIMINGS: tests/e2e/timings/linux.tsv
+      E2E_SHARD: ${{ matrix.shard }}/8
+      # By mtest (design 2026-11-08 W8; .github/actions/e2e-mtest): parts by
+      # the measured history of main's stores, two tests at a time (measured on
+      # one Linux shard: 220 s against 424 s one at a time, three no faster),
+      # and on a pull request the tests its change affects.
+      E2E_JOBS: '2'
+      E2E_SET: ${{ github.event_name == 'pull_request' && 'pr' || '' }}
       E2E_REPORT: ${{ github.workspace }}/e2e-report-linux-${{ matrix.shard }}.tsv
       MCPP_HOME: /home/runner/.mcpp
       # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
@@ -79,6 +84,10 @@ jobs:
           XLINGS_HOME="$MCPP_HOME/registry" "$MCPP_VENDORED_XLINGS" install \
               mcpplibs:cmdline@0.0.1 mcpplibs:cmdline@0.0.2 -y
 
+      - uses: ./.github/actions/e2e-mtest
+        with:
+          host: linux
+
       - name: E2E suite
         # About twice the shard's budget of ten minutes (R4): reached only by a
         # hang. The per-test 600 s limit in run_all.sh names the test that hung.
@@ -97,6 +106,18 @@ jobs:
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
           "$MCPP" self config
           bash tests/e2e/run_all.sh
+
+      # The shard's store: main's are the history the next runs divide the suite by.
+      - name: Upload the shard's store
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-store-linux-${{ matrix.shard }}
+          path: tests/e2e/.mtest
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
       # One file, no glob: the report the e2e-coverage job of ci.yml reads.
       - name: Upload the shard's report

@@ -1,0 +1,448 @@
+---
+subject: ecosystem
+status: active
+---
+
+# 生态顶层方案：#885 收尾之后的工作流、原则与依赖
+
+**日期：** 2026-11-08
+**状态：** 第六版，实施中（T1–T5、U1 已确认；第 8 节为实施计划，第 9 节为实施记录）
+**范围：** mcpp、mcpplibs.os、openkal、mcpp-plugins、mcppls、mcppls-clangd、mcpp-ide、mcpp-index、xim-pkgindex、mtest
+
+本文是生态层面的顶层方案。它汇总三份设计与三个新 issue，给出贯穿各仓库的原则、全部工作流及其依赖、尚未收敛的事项，并从全局与生态的视角审查。各项的细节以所引设计为准。
+
+| 文档 | 内容 |
+|---|---|
+| [2026-11-07-ecosystem-885-closeout-design.md](2026-11-07-ecosystem-885-closeout-design.md) | #885 收尾：D1–D20（mcpp 2026.11.7.1/.2、openkal 级联、IDE、mcppls、插件） |
+| [2026-11-08-ecosystem-885-supplement-design.md](2026-11-08-ecosystem-885-supplement-design.md) | 补充：S1 目标角色、S2/S3 平台判断与映像中的平台事实、S4 系统接口、S5 依赖书写、S6 对比运行、S7 测试协议 |
+| [mtest .agents/docs/2026-11-08-mtest-design.md](https://github.com/mcpp-community/mtest/blob/main/.agents/docs/2026-11-08-mtest-design.md) | 通用测试系统 mtest |
+| mcpp#903 | 锁文件的 `targets` 随命令变化 |
+| mcpp#904 | mcpp 本体的依赖书写 |
+| mcpp#905 | GCC 16 模块：内联函数体经由 mcpplibs.os 时导入方失败（upstream-bug，已有规避） |
+| mcpp#874 | 工作区的 `target/` 占用与 `mcpp test --workspace` 的重复编译（开放；主体已在 2026.10.31.3 实现，待在报告者的工作区验证） |
+
+## 1. 贯穿生态的原则
+
+| 编号 | 原则 | 出处 |
+|---|---|---|
+| P1 | **核心只定契约，实现在包中。** 构建插件、平台、测试协议皆如此：mcpp 给出规范与运行器一侧，具体实现属于包 | 既有原则；S7、mtest §2 |
+| P2 | **两种角色，不分等级。** 生态应用以 ok 映像为唯一发布形态；原生目标是完整支持的构建目标 | S1 |
+| P3 | **系统经由模块。** 源文件与测试不包含系统头文件、不含预处理平台分支；操作系统经由 mcpplibs.os，C 库经由 `std` 与 mcpplibs.mwrap.libc；原始 POSIX/Win32 不进入 os | S4 |
+| P4 | **平台判断分两种。** `is_<平台>` 表示原生构建（编译期）；`can_run_on` 与 `host()` 表示运行平台（编译期能否、运行时是否）；发布映像的应用在自身的检查中禁止 `is_<平台>` | S2、S3 |
+| P5 | **平台事实在 os 中，openkal 不收录产品特性。** 映像中的平台事实由 os 经可移植通道回答；热路径确有需要时以可选接口 `openkal.host` 扩展 | S3、附录 A.3 |
+| P6 | **依赖一张表、身份键、精确版本、一种拼写** | S5 |
+| P7 | **政策由工具执行。** 测量的有效性、能否重复、能否重试，由工具依声明判定，不依赖记忆 | S6；mtest §4.4 |
+| P8 | **面向 Agent 的输出。** 结构化、带 Schema 与版本、简短、给出复现命令 | mtest §6 |
+| P9 | **自身是自身的用户。** mtest 以自身测试自身；生态的应用以映像测试，与发布物一致 | mtest §9；D18 |
+| P10 | **每个仓库每个版本一个 PR；确定的事项不拆到以后；编译器缺陷以 mcpp 的 upstream-bug issue 记录并在实现中规避** | 既有原则 |
+| P11 | **底层与基础设施的变动符合规范，并经严格审查。** openkal 家族、openkal-platform、mcpplibs.os、mwrap 包装、okrun 与 okld 的每一处变动，对应其规范条款（openkal SPEC、mcpp SPEC），说明兼容性，经下游使用者的候选验证；mtest 落地后，规范一致性套件、接口面变化检测与审查记录成为它们的发布门禁 | mtest §3.2 |
+| P12 | **一个仓库多个组件时，版本按系列表达，CI 按组件触发。** `X.Y` 为系列，由服务端（或后端）与全部插件共享；`Z` 为各组件自己的补丁号。改动所属的组件由一张声明的表判定，只运行该组件及依赖它的组件的检查；未声明的路径按全部组件处理 | W6；mcpp-ide 1.2.0 的版本规则 |
+
+## 2. 工作流
+
+### W1 #885 本轮（进行中）
+
+| 仓库 | 版本 / PR | 状态 | 阻塞 |
+|---|---|---|---|
+| mcpp | 2026.11.7.2 | 已发布、镜像、入索引 | — |
+| mcppls-clangd | 0.0.21（#18） | PR CI 通过；对比运行 `42395068307` 验证 win32 原生 zlib（`zs.lib`）；映像改用 compat.zlib-ng（本地提交，待索引发布后推送） | W5：compat.zlib-ng 2.3.3 已合入索引（mcpp-index#727），待发布 |
+| mcppls | 0.0.21（#79） | #80 修复、头文件清零、过渡日志、依赖改写、mcpp 2026.11.7.2；CI 除 ux-xlings 外通过（U4-cold 冷阶段仅 2 轮，引擎占比 0.88，按无效测量重跑） | 引擎锁需 clangd 0.0.21 发布；W6 的采用时机（T5） |
+| mcpp-ide | 1.2.0（#5） | 测试模块、`check-sources`、CLion 公开 API；CI 除 CLion 2026.2.4.1 外通过 | U3：窗口在动作后为 `visible=false`、所选内容为 Module Graph；测试已改为记录窗口可见性的时间线与窗口类型（`d5ced7a`） |
+| mcpp-plugins | 0.21.0（#52） | S4 完成（`8d0afd7`、`6305d89`、`e77b920`）；本地 52 个用例与各消费者通过；CI 全部通过 | — |
+| mcpp-index | — | #727（compat.zlib-ng 2.3.3）已合入；其余待 plugins 0.21.0 发布后的更新 | plugins 发布 |
+| xim-pkgindex | — | 待 mcppls、mcpp-ide 发布后的 bump | 各自发布 |
+
+收尾：生态级全局审查 → 各 PR squash 合入 → 发布与 GitCode 镜像 → 索引 → xlings 全生态验证 → 以 speak-agent 关闭 issue（#896、#897、#839、#840、#843、#803、mcppls-clangd#17、#887、#885 总账）与综合汇报。
+
+**xlings 全生态验证（T2 已确认）。** 在一个新建的临时目录中进行，与本机的全局环境隔离：
+- 环境：`HOME`、`XLINGS_HOME`、`MCPP_HOME` 与 `XDG_DATA_HOME`、`XDG_CONFIG_HOME`、`XDG_CACHE_HOME`、`XDG_STATE_HOME` 指向该目录之下；`env -u` 去除会话中的 `XLINGS_PROJECT_DIR`、`XLINGS_ACTIVE_SUBOS`、`XLINGS_SUBOS_MODE`、`XLINGS_SUBOS_LIB`、`XLINGS_BIN`、`XLINGS_SHIM_DEPTH`；工作目录为中性目录；不使用 shim。
+- 步骤：`xlings update`；不带版本安装 `mcpp`、`mcppls`、`mcpp-ide`、`mcpp-ide-nvim`（必须解析到新版本，GLOBAL 与 CN 两个镜像各一次）；以安装的 mcpp 新建项目并 `build`、`run`、`run --print-launch`（第二次走快路径）、`test`、`--target x86_64-openkal` 的构建与运行；mcppls 的 `--version` 与一次 `diagnostics`；mcpp-ide 后端以 okrun 启动并完成初始化握手；nvim 插件在无界面模式下载入。
+- 记录：每一步的版本、耗时与结果写入一份报告，附在 #885 的总账中。
+
+### W2 mcpp 下一版本
+
+| 项 | 来源 |
+|---|---|
+| 锁文件 `targets` 只随所规划的配置变化 | #903 |
+| mcpp 本体依赖改写；带引号的点分键给出改写提示；`examples/02-with-deps`；源文件检查（头文件、预处理分支） | #904、S4、S5 |
+| 目标角色写入 docs/24 与 docs/35；openkal 两行按 tier 定义评估为 `verified`。评估所见：mcpp 自身的 CI 只在 Linux 上运行映像（942、960、961、964 声明 `llvm`，而只有 Linux 分片提供它），不满足 docs/21 对 `verified` 的定义。为此新增测试 1033（以平台的全部层构建本机架构的映像并运行、测试，另一架构只构建），并由 `tests/e2e/host-requirements.tsv` 与 `check_e2e_coverage.py` 要求它在 Linux、macOS、Windows 上通过 | S1 |
+| 测试协议的运行器一侧；`[test]` 的协议声明；`mcpp.core` 的上下文注入；受影响选择所需的构建图查询；`mcpp new` 默认使用 mtest | S7、mtest §11 |
+| GCC 16 模块缺陷的跟踪与精简复现 | #905 |
+| 构建在项目根目录写下 `.mcpp/compiler-runs/<hash>/`（编译生成的锁，`src/build/schedule/detach_codegen.cppm`，有意置于 `target/` 之外以免被 clean 删除），而该目录不被版本控制忽略：os 0.4.0 的 PR 曾误提交其中的锁文件。mcpp 创建 `.mcpp/` 时在其中写入内容为 `*` 的 `.gitignore`，使目录自我忽略 | 本轮发现 |
+| 工作区的空间与重用：在报告者的工作区（Sunrisepeak/mui，112 个成员）以当前 mcpp 复测，按 issue 的表格给出各区域大小、一次 `mcpp test --workspace` 中重复构建的边数与时间、宿主工具每个键的变体数；与 issue 的期望逐条对照，未实现的部分在本版本实现：`[workspace] target-budget`（或等价的环境变量）、低空间警告以"上一次构建该配置写入的字节数"为阈值（当前为固定的 2 GiB）、std 模块构建的收集。后者在本机已复现：`~/.mcpp/build-cache/v1/std` 有 159 份构建（4.9 GiB，最早 2026-11-01），`mcpp cache prune --older-than 2d` 与 `cache gc --older-than 2d` 均未收集任何一份（gc 只覆盖包与宿主工具）。复测数据与差距写入 issue 后关闭 | #874 |
+
+### W3 mcpplibs.os 0.4.0
+
+`can_run_on`、`on<P>`（泛型 lambda）、R5 修订（平台模块在能回答的地方定义）、映像中的平台事实实现（`linux::translator`、`windows::elevated`、`windows::on_dev_drive`、`posix::effective_user`；`macos::translated` 恒为 `false`）、文档中的写法选择；os 的 CI 以映像在三个系统上运行这些函数。只增加接口。随后 mcppls 与 mcpp-ide 迁移，Dev Drive 提示与 PRoot 识别在映像中恢复。
+
+**`is_image` 改名为 `is_openkal`（本轮讨论确定）。** `os::is_image` 的含义是"本构建以 openkal 目标构建，产物为 ok 映像"，即 `PLATFORM == platform::openkal`，并不是"内核层为 openkal"（os 的全部构建都在 openkal 之上）。原名有两处不清楚：
+- 它是 `is_<平台>` 家族中唯一不以枚举值命名的成员（`is_linux` 对应 `platform::linux`，而 `is_image` 对应 `platform::openkal`），而 mcpp 清单对同一事实写作 `cfg(os = "openkal")`；
+- "image" 单独出现时可指容器或磁盘映像。
+
+处理：
+- os 0.4.0 以 `is_openkal` 为正式名，定义为 `PLATFORM == platform::openkal`，注释写明"以 openkal 目标构建，即 ok 映像（openkal SPEC clause 12），不是'在 openkal 之上'"；
+- `is_image` 保留为 `[[deprecated("use is_openkal")]]` 的别名，现有用户（mcppls `workspace.cpp:708`）得到迁移提示而不中断，在 mcppls 迁移到 os 0.4.0 时改写；
+- README、CHANGELOG 与 `checks/discarded` 的两层写法示例同步改名。
+
+### W4 mtest
+
+`mcpp-community/mtest`（包 `mcpplibs.mtest`）：规范、引擎（ok 映像）、C++ 模块原生库、适配、C ABI 报告库（`libmtest.okso`）、宿主集成、前端；以自身测试自身；首批迁移五个项目；目标为 PR CI 墙钟中位数减半、发布 CI 关键路径缩短 30%。
+
+### W5 映像中的 deflate（已确认，实施中）
+
+探针确认了原因。darwin-arm64 上映像相对原生（链接 macOS 带 NEON 的 libz）的热启动处理器时间比值，四对逐一为：以 compat.zlib 构建 1.332、1.236、1.214、1.252（运行 `42369457883`）；不带 zlib 构建 0.973、1.050、1.107、1.088（运行 `42386660489`）。两组不相交，差距远大于 0.03 的离散界，故差距来自分片的解压。
+
+实现为 mcpp-index 的 `compat.zlib-ng` 2.3.3（#727）：zlib 兼容形态，即 CMake 的 `WITH_RUNTIME_CPU_DETECTION=OFF` 构建，各函数在编译期绑定到架构基线保证的实现，aarch64 为 NEON（inflate_fast、adler32、chunkmemset、slide_hash、compare256、longest_match），x86_64 为 SSE2。映像无法询问处理器（openkal 不提供处理器特性），所以只构建基线之内的路径。Armv8 的 CRC32 指令不属于 aarch64 基线，需要整个程序的编译选项或运行时检测，因此不构建；它只影响 gzip 流，LLVM 写的 zlib 流以 adler32 校验。Q6 所说的"CRC"据此限定为不启用。验证：
+- 索引 CI 的四条工作区腿（Linux GCC、Linux LLVM、macOS arm64、Windows）通过；
+- 本地 `x86_64-openkal` 测试通过；
+- `aarch64-openkal` 构建中 `inflate` 调用 `inflate_fast_neon`；
+- 测试读取 madler zlib 写出的流。
+
+mcppls-clangd 的映像依赖改为 `compat.zlib-ng = "2.3.3"`，对比运行给出结论后写入 CHANGELOG。
+
+### W6 mcppls 的组件版本与按目录的 CI（T5 已确认：并入本轮；已实现）
+
+**实现记录。**
+- mcppls #79：`fd87271` 版本与系列检查（devtools `--series`/`--bump`/`--print --component`；`mcppls.base.series` 与 `initialize` 的拒绝；VS Code、CLion 的启动前检查；Zed 发送 `initializationOptions.plugin`）；`b0f1c18`、`9f51d1b` 发布（资产注明组件，`release check --component/--from`，`release.yml` 的 `component` 输入与组件标签，发布器按标签筛选）；`fcfd472`、`0a4f140` CI（`.github/components.tsv` 的 `@core`/`@flag`，`changes.sh` 与其用例，`server-digest` 标记与借用运行，`invariants` 与 `ci` 汇总作业）。
+- mcpp-ide #5：`91b1437`，同一分类脚本，`@core backend`，`backend-digest` 标记，`checks` 与 `ci` 汇总作业。
+- 两个仓库的 `main` 均无分支保护规则，`ci` 作为唯一必需检查在启用保护时设置。
+
+**借用的实现选择。** 设计稿写的是以 Actions 缓存保存负载。实现改为借用 main 运行的产物：main 在构建负载之后上传名为 `server-digest-<摘要>` 的标记产物；插件 PR 按名称查询标记，得到该运行的 id，插件作业以 `run-id` 下载其 payload、stage 与 kit（payload action 已有此能力，夜间运行即以此测试 PR 的字节）。这样不复制数据，也不受缓存容量限制。mcppls 的产物保留 7 天；mcpp-ide 的后端产物保留 90 天。
+
+**现状。** mcppls 的服务端与全部插件共用一个版本（`mcpp.toml` 的 `0.0.21`，`version --check` 使 VS Code、CLion、Zed、Claude Code 插件与之相同），每个 PR 都运行整个 CI。#79 的一次运行用时约 3 小时（`42385557959`，15:16–18:18），其中服务端、负载、kit、一致性与 ux 占大部分。CLion 或 Zed 的修复只改动 `editors/<插件>/`，也要重建服务端与负载，并等待全部检查。mcpp-ide 已采用系列版本（README "Versions"），但 CI 同样不按组件区分。
+
+**版本（P12）。** 版本为 `X.Y.Z`：
+- `X.Y` 为系列，由服务端与全部插件共享；`Z` 为各组件自己的补丁号。
+- 组件为：服务端（`mcppls`：单文件程序、映像、xlings 包），以及插件 VS Code、CLion、Zed、Claude Code。Neovim 插件与 Copilot CLI 的配置片段没有版本，随系列发布。
+- 系列发布的标签为 `vX.Y.0`，发布全部组件。组件补丁的标签为 `server-vX.Y.Z`、`vscode-vX.Y.Z`、`clion-vX.Y.Z`、`zed-vX.Y.Z`、`claude-code-vX.Y.Z`，只发布该组件。
+- 兼容规则：插件接受同一系列的任何服务端，拒绝其他系列，并在提示中给出两个版本与匹配的安装命令。VS Code 与 CLion 内带负载，只有在用户指定服务端路径时才会出现不匹配；Zed 与 Neovim 在 `PATH` 上找到 `mcppls` 时检查系列。插件补丁内带其系列中最新的服务端补丁，所带服务端的版本记录在包内并显示于状态报告。
+- 引擎（mcppls-clangd）保持自己的版本，服务端以精确版本锁定它；服务端补丁可以改变这一锁定。
+- 工具：`mcppls-devtools version` 支持 `--series X.Y`（全部组件置为 `X.Y.0`）与 `--bump <组件>`（只增加该组件的 `Z`）；`--check` 检查全部组件同一 `X.Y`、二进制报告的常量与 `mcpp.toml` 一致。各组件的 `Z` 各自递增，所以每个市场（VS Code Marketplace、Open VSX、JetBrains、Zed）看到的版本都只增不减。
+- 发布：`packaging/release.manifest.json` 为每项资产注明所属组件。系列发布检查全部资产，组件发布只检查该组件的资产；CHANGELOG 的组件补丁小节写在系列小节之下，并注明组件。
+- 迁移：mcppls 的第 N 次发布 `0.0.N` 对应系列 `0.N`。`0.0.21` 以 `0.21.0` 发布，比 0.0.20 大，在各市场中合法；下一系列为 `0.22.0`。
+
+**CI（P12）。**
+- **组件表。** 仓库根的一张表声明组件与路径：
+  - 服务端：`src/**`、`modules/**`、`mcpp.toml`、`mcpp.lock`、`vendor/**`、`packaging/**`、`conformance/**`、`tests/**`；
+  - 各插件：`editors/vscode/**`、`editors/clion/**`、`editors/zed/**`、`editors/nvim/**`，Agent 集成为 `editors/{claude-code,copilot-cli,agents}/**`；
+  - 文档：`docs/**`、`*.md`；
+  - `.github/**`，以及表中未列出的路径，按全部组件处理。
+- **分类。** 第一个作业按表把改动的文件分到组件，输出每个组件是否受影响。分类有自己的单元测试（以文件列表为输入的样例），与 mcpp 的 `classify_changes.py` 相同。
+- **依赖传递。** 服务端受影响时运行全部作业，因为插件以新的服务端测试。只有插件受影响时，只运行该插件的构建与端到端测试，以及版本与仓库不变量的检查；只有文档受影响时，只运行文档检查。
+- **负载的重用。** 负载以服务端输入的内容摘要为键，存入 Actions 缓存；main 的运行写入，PR 可读。只改插件的 PR 按摘要取回与 main 相同的负载，不重建服务端。缓存未命中则照常构建，结果正确，只是变慢。重用以内容摘要证明负载相同，与分类是否正确无关。
+- **全量运行的场合。** 推送到 main、手动触发、夜间与发布运行全部作业，不做分类，使 main 的缓存保持有效、覆盖保持完整。
+- **汇总作业。** 一个汇总作业作为分支保护的唯一必需检查：分类要求的作业全部成功、其余作业是因分类而跳过时，汇总作业成功。
+- **性能政策。** 政策（P7）不变：被跳过的测量不算通过；发布前的对比运行仍是全量。
+
+**mcpp-ide。** 版本规则已经如此。它的 CI 以同一张表的形式区分后端（`src/**`、`protocol/**`、`spec/**`、`webui/**`、`testsupport/**`、`tests/**`、`mcpp.toml`）与 `mide-plugins/<插件>/**`，并以同样的方式重用后端的映像包。
+
+**审查。**
+
+| 视角 | 所见 | 处理 |
+|---|---|---|
+| 兼容性 | 市场、xlings 与 mcpp-ide 对版本的依赖 | `0.21.0` 比已发布的全部版本都大；xim 按 SemVer 比较，`mcppls@0.21.0` 是新的最高版本；mcpp-ide 的 CLion 插件以插件 id 依赖 mcppls 的 CLion 插件，不约束版本 |
+| 稳定性 | 重用的负载可能与源码不符 | 缓存键为服务端全部输入的内容摘要，加上 `.github/versions.env` 与运行器系统；负载内记录其摘要，测试开始时核对 |
+| 稳定性 | 分类漏掉一个依赖，插件 PR 就会在旧服务端上通过 | 未声明的路径按全部组件处理；main 每次推送全量运行，漏判在合入后的第一次运行中暴露；组件表的覆盖由一项检查保证：仓库中的每个文件至少属于一个组件 |
+| 用户体验 | 系列不匹配 | 插件给出两个版本与安装命令，不静默降级 |
+| 一致性 | mcppls 与 mcpp-ide 的规则 | 同一原则（P12）、同样的标签形式与汇总作业；两者的组件表各自声明 |
+| 测试覆盖 | 只改插件的 PR 不运行一致性与 ux | 这两组只测服务端与负载，而负载与 main 相同（由摘要证明）；插件自身的端到端测试照常运行 |
+
+**预期。** 只改插件的 PR 不再构建服务端、负载与 kit，也不运行一致性与 ux，墙钟从约 3 小时降到该插件作业的时间（CLion 约 10 分钟，Zed 与 VS Code 约 20–30 分钟）。实施后以 mtest 的 CI 汇总测量（W4 §10.2）。
+
+### W7 API 的生命周期（讨论确定）
+
+**现状。** C++ 的 `[[deprecated("…")]]` 已使编译器在每个使用处警告，并随模块的 BMI 传递。它缺少四样东西：
+- 版本信息：自哪一版弃用、哪一版移除、以什么替代；
+- 汇总：依赖内部的使用同样告警，信息噪声大，`-Werror` 下直接失败；
+- 机器可读的数据：IDE、Agent 与 `mcpp update` 无从知道升级会破坏什么；
+- 更多等级：没有"实验性"一级，也无法表达整个包的弃用。
+
+mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表、docs/51、带替代写法的警告、`mcpp why compat`、`--strict`，以及到期即失败的测试。W7 把它推广到包与包的 API。
+
+**设计**（清单优先、核心最小：核心给出契约，编译器做编译器的事）：
+1. **声明级，源码为唯一来源。** 使用标准属性，并约定 mcpp 能识别的消息语法：`[[deprecated("since 0.4.0, removed in 0.6.0: use is_openkal")]]`。编译器照常告警；mcpp 已有的模块扫描读取结构化数据。数据不写两份，因而不会漂移。
+2. **包级与模块级，在清单中。**
+   - `[package] status = "experimental" | "stable" | "deprecated"`，可带 `replaced-by`；
+   - `[lib]` 下的模块可各自声明 `status`；
+   - 实验性 API 需要使用方显式允许（`allow-experimental = ["<包>"]`）。
+3. **构建时的使用方体验。**
+   - 依赖内部的弃用告警不再重复；
+   - 使用方自身代码的使用在构建末尾汇总一次（"3 处使用了 mcpplibs.os 的 2 个弃用 API，0.6.0 移除；`mcpp why deprecated`"）；
+   - `--strict` 下转为错误；
+   - 诊断以编译器的结构化格式读取（GCC JSON、Clang 与 MSVC 的 SARIF），不做文本匹配。
+4. **升级时。** `mcpp update` 或锁文件的变化跨过移除版本时，在构建失败之前列出将被移除的 API 与替代。
+5. **库作者的发布门禁。**
+   - `mcpp publish` 在到达移除版本而声明仍在时拒绝；
+   - 移除版本不晚于弃用版本时拒绝；
+   - 移除一个此前未弃用的导出声明时拒绝（以模块扫描得到的导出清单与上一个已发布版本比较）；
+   - 发布说明可由数据生成。
+6. **数据的消费方。** `--message-format json`、`mcpp why deprecated`，以及 mcppls 中的删除线与"改用 X"的快速修复。
+7. **mcpp 自身。** `kDeprecations` 改为同一机制的一个使用者，docs/51 的表与检查保持不变。
+
+归属：mcpp 下一版本之后的独立版本，规范写入新 SPEC 与 docs/05、docs/51；W3 的 `is_openkal` 别名是它的第一个使用者。
+
+### W8 测试迁移到 mtest 与 CI 时间（T6 已确认；并入本轮）
+
+**测量（2026-11-08）。** mcpp 一次 PR 74 个作业、627 runner 分钟、墙钟 56 分钟；关键路径为 mcpp 构建（约 13 分钟）之后的 Linux 单元测试（43 分钟；16 核本机 6 分钟，构建占 210 秒）。e2e 720 个脚本在 Linux 累计约 94 分钟，按提交的耗时表分片，分片内串行（本轮一张过时的表使一个分片超时）。mcppls 一次 PR 88 个作业、446 runner 分钟、墙钟 92 分钟，关键路径为服务端与负载（约 70 分钟）之后的 stability。mtest 引擎已有 `--changed`（由程序的 `sources` 与用例的 `file:` 产物选择）、历史耗时、`resources` 互斥、`--failed`、`bisect`、`hot` 与 `path`。
+
+**设计。**
+
+| 仓库 | 内容 |
+|---|---|
+| mcpp | e2e 为 mtest 的 set：每个脚本一个用例，`# requires:` 为标签，`tests/e2e/host-requirements.tsv` 为 set 的过滤，独占点（`MCPP_HOME`、网络、端口）为 `resources`；分片按存储的历史耗时以最长优先分配，分片内按资源并行，耗时表不再提交。`mcpp test --changed <base>` 由构建图选择测试：测试记录的 `sources` 与传递导入覆盖变更即受影响。测试程序合成选项：一个目录的测试文件为一个程序，链接数随之减少。e2e 的覆盖映射：main 上定期以插桩的 mcpp 运行全部，得到用例到源文件的映射，存为用例的 `file:` 产物；PR 选择与变更相交的用例和冒烟集，无映射或映射过期的用例视为受影响。CI：PR 运行受影响集与冒烟集，main 与发布运行全部；单元测试按历史耗时分到多台机器 |
+| mcppls | 一致性与 ux 场景为 mtest 用例；性能与稳定性测量声明 `serial:perf`，不与其他用例并行；失败只重跑失败项（`--failed`）；与 W6 的组件表与负载借用一致 |
+| mtest | 静态用例清单与清单属性：`mcpplibs.mtest.manifest` 从源文本读出 `"name"_test` 字面量、属性、命名套件与嵌套用例，`mtest list --static` 不构建而列出；属性写在 `[cases]` 或宿主 mcpp.toml 的 `[package.metadata.mtest.cases]`，优先于程序的列举。不采用构建插件：mcpp 保存工具的 `[package.metadata]`，引擎与编辑器读同一份文本，不必每次构建运行构建程序。覆盖映射（`mtest-coverage/1`：用例、源文件、提交与时间，由 GCC 的 `.gcda` 计数测得）；`[discover.<name>]` 组与 `--shard`；存储以 main 的产物在运行之间共享 |
+
+**判据。** 既有 e2e 保持一个脚本一个用例；新增与改动的 e2e 以 Bash 适配的 `mtest_case` 写出各判据，失败定位到判据并可由 `--case` 单独运行。
+
+**探针（先行）。** 一个临时 PR 测三项后定参数：分片内 2–3 路并行的墙钟与 runner 分钟；按目录合成测试程序后单元测试的时间；以 main 的 `target/` 复用时实际重跑的边数（本轮之前测得 830 条边全部重跑，其时 build 与 test 尚为两个配置）。
+
+**探针结果（#909）。**
+
+| 项 | 测得 | 决定 |
+|---|---|---|
+| 分片内并行（Linux 一个分片 81 个测试） | 一次一个 424 s；两个 220、310、384、395 s；三个 225 s。两个并行时 955 失败两次（`self env --target x86_64-openkal --format json` 的答复缺 `data`，测试已改为留下该答复） | `E2E_JOBS = 2`，三个无收益 |
+| build 之后的 test（mcpp 自身，release） | 同一检出内 test 重编 637 个目标：`trim_paths` 不作用于测试，测试是另一个配置 | `trim_paths` 作用于被测代码，测试程序自己的文件保留路径；build 与 test 为同一配置，重编 0 个 |
+| 另一检出接手 `target/` | 975 条边、255 个目标重跑（检出使源文件的时间晚于目标）；源文件时间回拨后 0 条 | 不缓存 `target/`：仓库缓存的 10 GB 上限已由 bootstrap 的缓存占用（R3），收益只在源文件时间被恢复时成立 |
+| 按目录合成单元测试程序（mcpp 的 165 个单元测试，4 核 runner，冷构建） | 每文件一个程序：墙钟 2506 s，其中构建 1590 s、运行 20 s；每目录一个程序：2455 s，构建 1504 s、运行 50 s。链接不是瓶颈，编译是 | mcpp 自身保持每文件一个程序（失败定位到测试文件）；`[test] programs = "directory"` 作为选项保留。单元测试的关键路径改由 `--since` 缩短：PR 只构建受影响的测试 |
+
+### W9 用例的类型、作用域与 mtest 的布局（并入本轮）
+
+**问题。** mtest 0.2.0 的属性只能写在单个用例上：`suite` 只有名字与函数体，一个一致性文件的每个用例都写 `[kind::cts]`，一组独占机器的用例只能逐个写 `[resource{"machine"}]` 或退回 `mtest.toml` 的 `[cases."glob"]`。各类别的模块（`mtest.cts`、`mtest.e2e`、`mtest.bench`）只提供函数，与类别无关：bench 用例漏写 `[kind::bench]` 即按 unit 计。共享的准备只能写在套件体内，而套件体在列举时也运行，昂贵的准备因此在 `list` 与未选中时发生。静态清单只读 `kind` 与 `tag`。用例没有自己的时限。mcppls 的一致性以 131 个目录与 6 张 CI 清单表达，变体、平台、资源与分组分散在 ci.yml、脚本与 `mtest.toml` 中。
+
+**原则。** 代码即测试，也是测试的配置：每个最小用例在代码中声明它是什么、需要什么、如何运行，runner 据此列举、选择、调度与复用，并记录所做的（资源、时间、共享对象、诊断）。`mtest.toml` 是可选的声明方式，词汇与代码的属性相同，用于不能修改源码的程序；两者冲突时以代码为准。
+
+**设计（mtest 0.3.0，mtest#4）。**
+
+| 项 | 内容 |
+|---|---|
+| 对象即用例 | `mtest::Suite` 为通用形式，`mtest::UTest`、`mtest::CTS`、`mtest::E2E`、`mtest::Bench` 以类型表示类别；对象取名字、属性与函数体。创建对象只记录配置；runner 将其列为一个用例，按属性调度，选中时运行函数体。函数体声明的用例在其名下、继承其属性并可单独选择；函数体的其他语句（其用例共享的准备）只在其中某个用例运行时执行。因此一个对象可以是单个测试、一组测试或二者兼有，一个文件中的多个对象各自受控。只因其下的用例被选中而运行的对象是该用例的作用域，只在其自身语句失败时报告（P3.4）。`suite` 保留为 0.2 的写法 |
+| 作用域属性 | `tag`、`clause`、`resource`、`artifact` 取并集，`isolate` 向内传递；`kind`、`skip_if`、`expect_failure`、`known_gap`、`timeout`、`retries`、`diagnose` 取最内层 |
+| 运行方式的属性 | `timeout{}`（按用例终止进程）、`isolate{}`（独立进程）、`retries{n}`（失败后单独重跑，之后通过为 flaky）、`diagnose{.env, .limit}`（失败后以该环境再运行一次并保存输出，不作判定，`mtest explain` 指出其位置）；`Bench` 默认持有 `machine` |
+| 共享与追踪 | `shared<T>`：第一个使用它的用例运行时构造，至多一次，随函数体结束析构；`fixture` 事件记录由哪个用例构造及耗时。`--report-json` 的 `timeline` 记录每个进程的开始、耗时、状态与持有的资源 |
+| 协议 | 版本 1 内只增字段（P9.2）：P3.3 的 `timeout`、`isolation`、`retries`、`diagnose`，未声明类别的用例取其程序的类别；P3.4 的 `begin` 可带 `kind`、`tags`、`clauses`，以及作用域规则；P5.2 的 `fixture` |
+| 类别的次序 | 代码的声明（类型或 `kind::`）、`mtest.toml`、程序所在目录（`tests/unit`、`tests/e2e`、`tests/cts`、`tests/bench`，docs/layout.md）、unit；`mtest list`、`list --static`、`run` 给出相同的类别 |
+| `mtest.toml` | `[cases."glob"]` 取库的属性词汇：`kind`、`tags`、`clauses`、`resources`、`artifacts`、`timeout`、`isolation`、`retries`、`diagnose`、`skip`、`expect_fail`；程序声明的优先，列表取并集（0.2 中文件优先） |
+| 静态清单 | 独立的包 `mcpplibs.mtest.manifest`：读测试的工具（引擎、编辑器）依赖它而不链接测试程序的库。识别对象类型、文件自己从中派生的类型（`class Fixture : public CTS`）、对象的属性与 `resource`、`clause`、`artifact`；运行时才可判断的（`skip_if` 的条件、时限、派生类型在构造中添加的属性）留给程序的列举 |
+| 适配器 | Bash（`--timeout`、`--isolate`、`--retries`、`--diagnose-env`、`--diagnose-timeout`）与 C ABI 表达相同的属性，未声明类别时不再写出 unit |
+
+**宿主与编辑器。** mcpp（#906）：`mcpp new` 的骨架以 `UTest` 写出；`--case` 在列举的用例之下选择其声明的用例（P3.4）——不含通配符的名字原样传给程序，含通配符的模式运行该列举的用例整体（`test_protocol::selection`，e2e 1038 F）。mcpp-ide 后端 1.2.1：mtest 的用例以 `mcpplibs.mtest.manifest` 读出，删去后端自己的读取，0.3 的对象在构建前即可见。
+
+**mcppls 的一致性（#79）。**
+
+- 一致性为工作区成员 `tests/cts`（程序 `mcppls-cts`，与运行器一同进入 `stage/`）：一个 fixture 或一个变体为一个 `Fixture` 对象（`CTS` 的派生类型，带服务端日志的 `diagnose`），名字中 `@` 之后为客户端变体，平台以自定义属性 `on{...}`（标签 `on:<平台>`），计时的 fixture 以 `resource{"machine"}`；用例以 `mcppls-conformance run` 运行其 fixture，读取其度量文件，每个未通过的检查为一个 `expect` 失败，带检查的编号与原因。运行器保持为单个 fixture 的命令行，服务端模块不链接测试库。
+- 用例 `the cases and the fixtures agree` 以静态清单读 `conformance.cpp`：每个用例命名一个存在的 fixture；检查限定答复时间（`answer-within`、`within-ms`、`within-seconds`、`within`、`budget`、`initialize-within`，或 stress、typing、tokens-latency）的 fixture，其用例未持有 `machine` 即失败并说明。
+- fixture 移至 `tests/cts/fixtures`；`scenario.json` 保留 fixture 自身的内容（项目、prepare、`requires-mcpp`、`requires-cmake`、检查序列）；变体、资源、平台与分组只在代码中。`requires-cmake` 使 prepare 步骤先找到所需的 CMake，服务端保持主机的 PATH，`msvc-bdb.env` 不再需要。
+- 单元测试移至 `tests/unit`，以 mtest 写出（`mcppls-testing` 删除，各成员的测试同样迁移）：仓库中只有一套测试框架。
+- CI：一致性矩阵的每一行为 `mtest run --isolate --jobs 2 --tag on:<平台> [--shard i/2]`；行内其余步骤（工具链、xmake、mcpp 的数据库校验）读 `mtest plan` 给出的该行用例；首次运行导入 main 上一次成功运行的该平台各部分的存储，两个部分以相同的历史划分；第二次尝试只重跑失败的用例。`mtest.toml`、`.github/scripts/run-fixture.sh` 与 6 张清单表删除。以特定条件运行单个 fixture 的作业（共享缓存的冷热启动、PRoot、发布的负载）直接调用运行器。
+
+**依赖。** mtest 0.3.0 → mcpp-index（#732 增加 `mcpplibs.mtest`、`.manifest`、`.gtest`、`.capi` 0.3.0 的条目）→ mcpp `kMtestRelease = "0.3.0"`（#906）、mcppls #79、mcpp-ide 后端 1.2.1。mcppls 的运行器模块化与目录迁移不依赖新接口，在 mtest 的 CI 期间进行。
+
+**判据。** 既有的 mtest 程序不改即构建并给出相同的列举；同一用例的静态清单与运行时列举的类别、资源一致（mtest 的测试比较二者）；mcppls 的一致性在 CI 中只由代码与 fixture 目录描述，仓库中不再有用例的清单文件。
+
+### W10 mtest 的范式与 mcppls 的测试树（并入本轮）
+
+**要求。** mcppls 的单元测试、一致性与基准收敛到 `tests/`，全面以 mtest 写出；代码树、语义表达、可读性、性能、功能、数据与分析均超过原有的自建形式；mtest 本身给出一个范式：开发者以最少的代码写出用例，自然得到选择、调度、记录与分析；基于 mtest 的测试从目录、工程到代码都带有可辨认的 mtest 特征。
+
+**mtest 的范式（mtest docs/layout.md、lib/docs/writing-tests.md）。**
+
+| 层次 | 范式 |
+|---|---|
+| 目录 | `tests/<类别>/<主题>.cpp`：`unit/`、`cts/`、`e2e/`、`bench/`；目录即类别，数据放在类别之下（`tests/cts/fixtures/`、`tests/bench/tasks/`） |
+| 工程 | 单元测试一个文件一个程序（失败定位到文件；W8 的测量表明链接不是瓶颈），或以 `[test] programs = "directory"` 一个目录一个程序；需要服务端负载等外部输入的类别为工作区成员（`tests/cts`、`tests/bench`），其程序与运行器一同进入 `stage/` |
+| 代码 | 一个文件一个主题；一个对象一个被测行为或场景（`UTest`、`CTS`、`E2E`、`Bench`），名字之后写它需要什么（资源、时限、隔离、重试、诊断、度量的界限）；共享的准备是函数体内的局部对象或 `shared<T>`；不写 `main`（mtest 的入口），需要自举子进程的文件写 `main` 并在其末尾 `return run(argc, argv)` |
+| 数据 | 用例的度量以 `metric()` 与 `bench::measure()` 报告；文件以 `produced()` 报告；共享对象的构造、进程的时间线、资源与诊断由 runner 记录；存储在运行之间以 main 的产物延续 |
+| 分析 | `mtest explain`（失败的位置、原因、复现命令、诊断输出）、`mtest analyze`（最慢、波动、失败、基准）、`mtest gate`（集合与策略）、`--report-json` 的时间线、junit；编辑器经静态清单与列举得到同一棵用例树 |
+
+**mtest 0.4.0 补足的能力。** 原有形式中由脚本判定的界限（启动时间、令牌延迟、评审的精确率与召回率）改为代码中的声明：属性 `at_most{"ready", 15}` 与 `at_least{"recall", 0.9}`（度量名与上界或下界，单位由度量给出）随用例列出（P6.5：`case` 事件与列举的 `bounds`），库在用例结束时判定，未报告或越界的度量使用例失败，失败信息给出度量与界限；`mtest.toml` 的 `[cases]` 以同名键声明，由引擎判定；与基线的比值仍由策略（P6.2）判定。度量在存储中逐次保留，`mtest analyze trend` 给出各度量跨运行的值、界限与余量。
+
+**mcppls 的测试树。**
+
+```
+tests/
+  unit/        服务端的单元测试：每个主题一个文件、一个程序，UTest 对象为被测单元；自举子进程的文件写 main
+  cts/         成员 mcppls-cts：cts.cppm（套件类型 Fixture）与按主题的用例文件 mcpp.cpp、targets.cpp、cmake.cpp、
+               xmake.cpp、inferred.cpp、engine.cpp、editing.cpp；一个夹具或其变体一行（@polling、@plain、@vscode、
+               @neovim、@zed、@warm 第二次会话复用第一次的缓存、@linked 经符号链接到达工作区）；fixtures/、traceability.json
+  bench/       成员 mcppls-bench：startup.cpp（冷/热启动，首次跳转以 at_most 界定；release 标签的五次中位数与
+               Windows 大型模块工程）、tokens.cpp、review.cpp（每个审查夹具一个用例，规则的精确率与召回率以
+               at_least 界定）、tasks.cpp（任务数据的检验为 UTest，代理运行为 Bench，未指定代理时 skip）、
+               ux.cpp（真实项目的各阶段为用例）；tasks/、review/ 为数据
+  harness/     成员 mcppls-harness：用例驱动服务端的方式（mcppls.harness：一致性运行器的会话与判定、环境约定），
+               以及基准的任务、补丁、审查与代理运行模块，连同其单元测试
+```
+
+`tools/bench/` 与 `mcppls-devtools bench` 的子命令移入 `tests/bench` 与 `tests/harness`；devtools 不再有 bench，
+`measure summary` 删除。CI 的冷/热启动、审查夹具、缓存模型、符号链接工作区等附加步骤成为用例；`bench-validate`
+作业改为三平台的 `bench` 作业（`mtest run --tag on:<平台> --exclude-tag release --exclude-tag ux`），release-checks
+的性能作业运行 `--tag 'on:<平台>&release'`，`ux` 作业与 nightly 的 ux-systems 运行 `--case <场景>`；各作业保存存储并
+取 main 上一次的存储，`mtest analyze trend` 在步骤摘要中给出各度量的历史与界限。运行器的 `--navigation-budget` 与
+`timing_evidence.py` 删除，界限由用例声明。nightly 的 ux 轮次（候选与基线交替 A B B A、重复编辑阶段、双核轮次）是
+校准预算与比较发布的实验，其统计（分布、合并离散度下的劣化判定）由 `measure budgets`、`measure compare` 在度量文件上
+给出，不属于用例的判定。
+
+实现中补足的 mtest 0.4.1：用例体不得返回值（编译期拒绝，由 `main` 改写为对象时的 `return 1;` 暴露）；静态清单跨文件
+读取项目的套件类型（`types_of`，`list --static` 先读项目全部 C++ 源文件）；标签选择 `a&b` 表示同时具有两个标签。
+mcpp 2026.11.8.1 补足：既是依赖又是开发依赖的框架只提供一次测试入口。mcpp-ide 1.2.1 以项目 tests/ 中声明的套件类型
+读取用例。
+
+**与原有形式的比较（判据）。**
+
+| 维度 | 原有形式 | mtest 形式 |
+|---|---|---|
+| 代码树 | 测试散在 `tests/`、`conformance/`、`tools/bench/`、`modules/testing/` 与 devtools | `tests/{unit,cts,bench}`，一个类别一处 |
+| 语义表达 | `main` 中按顺序执行的 `_test`；fixture 的元数据在 CI 清单与脚本中 | 对象即用例，类型即类别，需要什么写在名字之后 |
+| 可读性与清晰 | 用例的平台、资源、客户端变体与预算需读 ci.yml 与 Python | 一个对象一行，平台、资源、变体、界限都在代码中 |
+| 性能 | 一致性逐个串行；基准每作业重建 | 按资源并行、按历史分片、失败用例单独重跑 |
+| 功能 | 以退出码判定；无列举、无按用例选择、无重试与诊断 | 列举、选择、隔离、时限、重试、诊断、共享对象、时间线 |
+| 数据 | 各自的 JSON 文件，格式各异 | 协议事件与存储，度量、产物、时间线统一 |
+| 分析 | 人读日志；预算由脚本比较 | `explain`、`analyze`、`gate`、junit、编辑器用例树 |
+
+判据：mcppls 仓库中不再有测试框架、用例清单或预算脚本的自建实现；`mtest list` 列出全部用例且与静态清单一致；CI 的一致性、单元、基准作业均经 mtest 运行并保存存储。
+
+## 3. 依赖
+
+```
+W1:  clangd-0.0.21 ──(engine lock)──▶ mcppls-0.0.21 ──▶ xim bump(mcppls)
+       ▲   ▲                                              
+       │   └── W5 deflate (若探针确认)                     
+       └── win32 zlib 验证                                 
+     plugins-0.21.0 ──▶ mcpp-index ──▶ close #887
+     mcpp-ide-1.2.0 ──▶ xim bump(mcpp-ide, mcpp-ide-nvim)
+     全部发布 ──▶ xlings 全生态验证 ──▶ issue 关闭与汇报
+
+W2 (mcpp next) ──┬─▶ W4 mtest 的 mcpp 集成与 `mcpp new` 模板
+                 └─▶ #903/#904 后，生态清单与锁不再需要手工修正
+W3 (os 0.4.0) ──▶ mcppls / mcpp-ide 迁移（S2 写法、检查禁止 is_<平台>）
+W4 (mtest)   ──▶ 首批五个项目迁移 ──▶ CI 时间目标的测量
+```
+
+W2、W3、W4 互不阻塞，可在 W1 的 CI 等待期间并行设计与实现；W4 的 mcpp 集成依赖 W2 的协议运行器。
+
+## 4. 尚未收敛的事项
+
+| 编号 | 事项 | 状态 |
+|---|---|---|
+| U1 | Q5：`is_<平台>` 与两层判断并存 | 已确认 |
+| U2 | darwin 比值超限的原因与修法 | 已确认为 zlib；W5 实施中 |
+| U3 | CLion 2026.2 无 JCEF 的说明不可见 | 第一轮诊断：`visible=false selected=Module Graph`；第二轮记录可见性时间线、窗口类型与自动隐藏 |
+| U4 | xlings 全生态验证的方式 | 已确认：临时目录中重定向 `HOME` 等变量（W1 的验证步骤） |
+| U5 | mcpp-vscode 的归档说明 | 先前约定只在确认后执行 |
+| U6 | mcppls-clangd 的 CHANGELOG 记录哪次对比运行 | 已确定（维护者决定）：记录运行 42464678787；darwin-arm64 三次测量均因 runner 离散度无效，以与 0.0.20 的比较放行（darwin 绝对冷启动与处理器时间不高于 0.0.20；本机两版镜像交替四对，各量差异不超过 3%），并在 CHANGELOG 与 performance-policy 中注明；CI 产物经固定的 draft release `ci-artifacts` 供本地分析 |
+| U8 | `os::is_image` 的语义不明确 | 已确定：改名 `is_openkal`，`is_image` 为弃用别名（W3） |
+| U9 | API 生命周期的声明与提示 | 已确定：W7 |
+| U7 | mcpplibs/os#19 的 hosted 行 `effective_user()` 为 1000 而 `id -u` 为 1001 | 已修复（`ee1d71e`）：hosted 安排中 C 库为 openkal-musl，其 `geteuid` 为常量 1000、无 `umask`；Linux 与 macOS 改为内核调用（与描述符、信号相同的 `src/posix/kernel.h`）；`unshare -r` 下旧实现为 1000/0，新实现为 0/0；CI 全部通过 |
+
+## 5. 全局与生态视角的审查
+
+| 视角 | 审查所见 | 处理 |
+|---|---|---|
+| 一致性 | 原则 P3–P6 刚在四个应用仓库落地，mcpp 本体与 os 尚未（mcpp 仍有带引号的键与 `"=0.3.1"`；os 依赖 openkal 用范围） | W2 统一 mcpp 本体；os 的 openkal 范围由平台版本组给出精确性（D12），在 os 文档中写明，不改为精确版本以免与组冲突 |
+| 一致性 | 生态有四套测试方式与三套自写测试工具 | W4 收敛为 mtest；迁移在各项目的版本 PR 中整体完成，不保留双套 |
+| 架构 | 平台判断、平台事实、系统接口三条规则分属 os、应用检查与插件文档 | 规则的权威文本在 os 文档（P4、P5）与 mcpp docs（P3）；各仓库的检查引用同一文本 |
+| 架构 | mtest 的通用性可能被 mcpp 的需求带偏 | 规范与引擎不引用 mcpp 的概念；mcpp 是宿主适配之一 |
+| 稳定性 | GCC 16 的模块缺陷已多次出现（#905；早先的 BMI 次序、MSVC 的 path 迭代器） | 规避写入插件开发规则（"经由 os 的函数不内联"）；W4 的 mtest 引擎同样遵循；#905 跟踪上游 |
+| 稳定性 | 映像为唯一发布形态，任何映像特有的缺陷都直接到达全部用户 | 测试以映像在三个系统上运行（D18）；对比运行在发布前度量映像与原生的差距（S6）；P7 使政策不被绕过 |
+| 性能 | 映像相对原生的冷启动与解压差距（F6） | 上限不放宽；W5 在映像中提供与系统 libz 相当的 deflate |
+| 兼容性与无感升级 | os 0.4.0、mcpp 下一版本、mtest 的引入都触及生态的公共写法 | 只增加接口；精确版本使升级显式；L0 使现有测试无须改动；mcpp 的现有 `mcpp test` 行为保持 |
+| 跨平台 | Windows 的进程启动开销影响 mtest 的隔离与 os 的可移植通道 | 隔离按声明；平台事实的查询结果缓存、只在调用时发生、移出启动关键路径 |
+| 用户体验 | 映像用户在 W3 之前失去 Dev Drive 提示与 PRoot 识别 | mcppls 0.0.21 在日志与文档中说明；W3 后恢复 |
+| Agent 可操作性 | 本轮 CI 的观察依赖手工轮询与日志检索 | W4 的 `mtest ci`、`mtest explain` 直接针对此项；在此之前，各 PR 的失败以结构化产物（如 CLion 的诊断文件）保存 |
+| 测试覆盖 | 映像中的平台事实、插件的 os 接入、IDE 的无 JCEF 路径都是本轮才被测试覆盖的路径 | os 的映像测试（W3）；插件 CI 的源文件检查与各消费者；CLion 两个版本的产物诊断 |
+| 过程 | 本轮出现过违反性能政策的重跑与未确认即发布的上游 issue | 已记录；P7 使前者由工具阻止；后者已有规则（只在 mcpp 内以 upstream-bug 记录） |
+| 范围 | W2–W4 的范围大于 #885 | 三者各有独立设计与评审，不并入 W1；W1 只包含已确定的修复与收尾 |
+
+## 6. 第二轮审查（多视角）
+
+| 视角 | 审查所见 | 处理 |
+|---|---|---|
+| 依赖 | W5 的条件尚未判定：探针若排除 zlib，darwin 的修法未知，W1 的关键路径因此不确定 | 探针结果出来即判定：确认则实施 W5；排除则按冷启动的装载与页错误继续定位（冷启动 `page_faults` 比值 2.74–2.87），不放宽上限，并以新的探针缩小范围 |
+| 依赖 | mcppls 0.0.21 依赖 clangd 0.0.21 的引擎锁，clangd 的阻塞会传递给 mcppls 与其 xim bump | 两者的其余部分先完成并通过 CI；锁的更新是最后一个提交 |
+| 一致性 | #874 的主体在 2026.10.31.3 已实现，issue 仍开放，生态无人复测 | W2 以报告者的工作区复测并关闭；复测需要 10–25 GB，在 CI 运行器上进行（本机的磁盘余量不足，见下） |
+| 资源 | 本机磁盘在本轮中一度只余 4 GB（`/tmp` 100%）。清理了已完成的临时目录（探针、已推送的 mwrap 仓库、研究目录中的构建产物）、各工作树只保留最近一次构建、`cache gc --older-than 2d`（2.6 GiB）与两天前的 std 构建（约 4.3 GiB），回到约 21 GB；其他会话的项目未触及 | 继续遵守"一次一个重任务"；大的复测（#874、对比运行）放在 CI；W4 的 mtest 存储设保留期 |
+| 稳定性 | 验证环境若泄漏会话的 shim 变量，会把旧版本误判为索引问题 | W1 的验证步骤明确 `env -u` 的变量与中性工作目录 |
+| 用户体验 | 验证只在 Linux 上进行，Windows 与 macOS 的安装路径没有真实覆盖 | 发布 CI 的 `ci-fresh-install` 覆盖三个系统；本机验证补 Linux 的完整链路与两个镜像 |
+| 测试覆盖 | 本轮的修复（插件的 os 接入、IDE 的 `check-sources`、mcppls 的 #80）只在各自 CI 中验证 | 全局审查时按仓库核对：每项修复有对应的测试或检查，并在 PR 描述中列出 |
+| 过程 | 主工作树曾被一条命令置为分离 HEAD（已恢复到 `main` 并快进） | 只在专用工作树中执行检出类命令 |
+
+## 7. 待审查的问题
+
+- **T4** 已确认：#874 归属本方案（W2），方案确定后与其他未收敛事项一并重新拆分实施计划。
+- **T5** 已确认：W6 并入本轮，mcppls #79 以 `0.21.0` 发布，mcpp-ide #5 加入 CI 分类，各一次发布。原问题：W6 的采用时机。建议并入本轮：mcppls #79 以 `0.21.0` 发布（版本规则、devtools、发布清单、插件的系列检查、组件表与 CI 分类、负载重用），mcpp-ide #5 加入同样的 CI 分类。这符合"确定的事项不拆到以后"，代价是两个 PR 再增加一轮 CI。另一做法是作为 mcppls 0.22.0 与 mcpp-ide 1.3.0 的内容，本轮保持 `0.0.21`。
+
+- **T6** 已确认：W8 并入本轮，以追加提交进入 mcpp #906、mcppls #79，mtest 以 0.2.0（mtest#3）发布；既有 e2e 不改写，新增与改动的 e2e 以 `mtest_case` 写判据；PR 运行受影响集与冒烟集，main 与发布运行全部；参数由先行的探针测定。方案见 W8。
+
+## 8. 实施计划
+
+### 8.1 每个仓库每个版本一个 PR
+
+| 仓库 | 版本 | PR / 分支 | 内容 | 工作流 |
+|---|---|---|---|---|
+| mcppls-clangd | 0.0.21 | #18 | 现有内容；win32 zlib；W5（若探针确认）；CHANGELOG 记录对比运行 | W1、W5 |
+| mcppls | 0.0.21 | #79 | 现有内容；引擎锁为 clangd 0.0.21（最后一个提交） | W1 |
+| mcpp-ide | 1.2.0 | #5 | 现有内容；CLion 无 JCEF 测试 | W1 |
+| mcpp-plugins | 0.21.0 | #52 | 现有内容（CI 已通过） | W1 |
+| mcpp-index | — | 一个 PR | plugins 0.21.0；W5 的 deflate 包（若需要）；mcpplibs.os 0.4.0；mcpplibs.mtest 0.1.0 | W1、W3、W4、W5 |
+| mcpplibs/os | 0.4.0 | `release/0.4.0` | S2（`can_run_on`、`on<P>`）、S3（R5 修订与映像中的平台事实）、文档、映像测试 | W3 |
+| mcpp-community/mtest | 0.1.0 | 新仓库 | 规范 v1、C++ 库（unit、bench、cts、e2e）、引擎（运行、存储、查询、explain、plan、ci、拓扑导出）、C ABI 报告库、GoogleTest 与脚本适配；自身以 mtest 测试；ok 映像发布 | W4 |
+| mcpp | 2026.11.8.1 | #906（草稿）`release/2026.11.8.1` | #903、#904（含源文件检查）、S1 文档与 tier 评估、#874 的复测与剩余期望、S7 的协议运行器与 `mcpp.core` 上下文注入与构建图查询、`mcpp new` 默认使用 mtest、三份设计文档 | W2 |
+| xim-pkgindex | — | 各发布的 bump PR | mcpp、mcppls、mcpp-ide、mcpp-ide-nvim | 各工作流 |
+| mtest | 0.2.0 | mtest#3 | W8 的 mtest 部分；mcpp #906 与 mcppls #79 的 W8 部分以追加提交进入；探针 #909 先行 | W8 |
+| mtest | 0.4.0 | `release/0.4.0` | W10：`at_most`/`at_least` 与 P6.5、`analyze trend`、范式文档（已发布）；mcppls #79 随之更新 | W10 |
+| mtest | 0.3.0 | mtest#4 | W9：对象即用例、类型即类别、作用域属性、运行方式的属性、`shared<T>` 与追踪、P3.3/P3.4/P5.2、`mtest.toml` 的同一词汇、静态清单、布局；mcpp-index #732、mcpp #906、mcppls #79 随之更新 | W9 |
+
+首批迁移（mcppls、mcpp-ide、mcpp-plugins、mcppls-clangd 迁移到 os 0.4.0 与 mtest）是这些项目各自的下一个版本，依赖 os 0.4.0 与 mtest 0.1.0 的发布；迁移前以 mtest 的 CI 汇总测量正式基线（W4 §10.2）。
+
+### 8.2 依赖与波次
+
+```
+波次 1（进行中）  plugins 0.21.0 ─▶ index ─▶ close #887
+                 mcpp-ide 1.2.0 ─▶ xim bump
+                 clangd 0.0.21 ◀─ W5（条件）◀─ darwin 探针
+                    └─▶ mcppls 0.0.21 ─▶ xim bump
+波次 2（与波次 1 并行）
+                 os 0.4.0 ─────────────┐
+                 mtest 0.1.0 ──────────┼─▶ index ─▶ mcpp 2026.11.8.1（`mcpp new` 模板引用已发布的 mtest）
+                 mcpp 2026.11.8.1 的其余部分（#903、#904、S1、#874、S7 运行器）可先行实现
+波次 3            基线测量 ─▶ 首批迁移（各项目下一版本）─▶ 迁移后测量（M3）
+收尾              各波次发布 ─▶ xlings 全生态验证 ─▶ issue 关闭 ─▶ 汇报
+```
+
+### 8.3 次序约束
+
+- mtest 0.1.0 以已发布的 mcpp 2026.11.7.2 构建与测试（L0 与其自身引擎），不依赖 mcpp 2026.11.8.1；mcpp 2026.11.8.1 的协议运行器以 mtest 规范 v1 为准，两者在同一波次设计。
+- os 0.4.0 只增加接口；mtest 引擎使用其 `can_run_on` 与 `host()`，因此 mtest 0.1.0 依赖 os 0.4.0 的发布。
+- 每次发布后：取消 main CI、发布、GitCode 镜像（本地 gtc）、重新触发 main CI、索引或 bump PR 合入、CDN 生效后再进行依赖它的发布。
+
+## 9. 实施记录（第六版）
+
+### 9.1 新的发现与处理
+
+| 发现 | 处理 | 版本 |
+|---|---|---|
+| Windows 的线程以 x87 双精度（控制字 0x027F）开始，okrun 进入映像时未建立 System V 的浮点初始状态；映像中 openkal-musl 的 `strtod("0.4")` 得到 `0x1.99999999998p-2`，mtest 一致性套件 P6.1 只在 Windows 失败 | SPEC 12.2 增加"浮点状态"一行、12.3 写明 loader 的义务；okrun 在入口、初始化与终结函数和每个上下文中建立该状态，openkal-bind 的调用在其中进行并恢复调用方的状态；`fpstate` 与 `bind` 示例在四个系统上检验 | openkal#63、openkal-image 0.5.3、openkal-platform 0.24.4、okrun 0.5.3（xim） |
+| 平台组发布一个新成员后，早于 2026.11.7.1 的 mcpp 按范围取最新成员再以版本组拒绝（os 与 clangd 的 CI 用 2026.11.5.1） | 生态 CI 使用 mcpp 2026.11.7.2（在版本组内解析） | os#19、clangd#18、mcpp-index#730 |
+| mcpp 的三个原有缺陷：依赖的 entry 导入 `std` 时 std 模块不构建；有起点的测试仍链接 dev-dependency 之下的 `gtest_main.cc`；共享库形式的 dev-dependency 不链接 | 均在 mcpp 2026.11.8.1 修复（e2e 1037） | #906 |
+| 父包与其命名空间下的包在同一张表中（`mcpplibs.mtest` 与 `mcpplibs.mtest.gtest`）只能以引号键写出，而 #904 把带引号的点分键列为弃用 | 唯一写法的引号键不报弃用（e2e 1032、docs/05、docs/51） | #906 |
+| mcppls 的日志状态在进程退出时被析构，退出期间写日志的分离线程在 Linux arm64 映像中 SIGSEGV | 日志状态不析构 | mcppls#79 |
+| Linux e2e 的耗时表已过时（重命名的测试按中位数计），一个分片超出 22 分钟 | 由各分片报告重新测得三张耗时表；Linux 改为 8 个分片 | #906 |
+| `mcpp new` 以 mtest 为 dev-dependency 之后，`mcpp build` 与 `mcpp test` 成为两个配置：mtest 经 mcpplibs.os 到达 openkal 的内核接口，配置因此带上 `__OPENKAL__`；dev-dependency 的包含目录进入包自己源文件的命令。结果是被测试的代码与发布的代码命令不同、两个构建目录各编译一遍、构建之后的编译数据库没有测试条目（e2e 77、783 失败），在 build 与 test 之间切换时重编包自己的源文件 | dev-dependency 只到达测试单元（`testBuild`）；只经 dev 边到达的内核接口只给 dev-only 包与测试单元，配置不变；C 库与 C++ 运行时仍属配置。`mcpp dyndep` 不改写未变的输出，规则的 `restat` 由此生效 | #906（docs/08、e2e 1037 K） |
+| 测试计划修剪依赖中定义 `main` 的源文件时覆盖了全部依赖，openkal-musl 的映像入口 `okm_image.c` 声明 `main` 而被去掉，`--target x86_64-openkal` 的测试映像缺少运行时符号（e2e 1033、951） | 只修剪 dev-dependency 及其之下的包 | #906 |
+| mcpp-ide 的发布运行 `startup_failure`：ci.yml 的作业请求 `actions: read`，被调用工作流的权限不能超过调用方 | release.yml 的 `ci` 作业授予 `actions: read` | mcpp-ide#6 |
+| mcpp-plugins 0.21.0 仍精确依赖 mcpplibs.os 0.3.1，与 mcpp、mcppls、mcpp-ide 的 0.4.0 不一致 | 改为 0.4.0 后发布 | mcpp-plugins#52 |
+
+### 9.2 S7 与 W4 的实现
+
+- **mcpp 2026.11.8.1（#906）**：
+  - 测试协议运行器：`mcpp test` 的用例记录、`--case`、`--cases`、`--seed`；未实现协议的程序收不到协议变量；`--no-run` 的记录带程序与源文件；特性 `test-protocol`。
+  - 入口键 `test-protocol`、`test-main`、`test-guide`：不定义 `main` 的测试以提供 `test-main` 的入口为起点，由文件的导入在多个提供方之间选择；`gtest_main.cc` 照旧作为测试起点。
+  - `mcpp test --guide`：列出测试框架及其指南与仓库，以及用例相关的命令；失败的运行指向它（协议 P2.5）。
+  - `mcpp::context`；`mcpp new` 的测试使用 mtest，`--template lib` 生成模块、它导出的分区及分区的实现。
+- **mtest 0.1.0**：已发布（mcpp-community/mtest#1）；引擎以 ok 映像的通用包发布（xim `mtest`）；`mcpplibs.mtest`、`.gtest`、`.capi` 进入 mcpp-index；协议增加 P2.5（指南）。
+- **mcpp-ide 1.2.0（#5）**：实现协议的程序由 `mcpp test --cases` 列出、由 `--case` 运行，结果取自 mcpp 的记录；mtest 的用例在构建前即由源码中的 `"name"_test` 字面量给出；未实现协议的框架仍按 `spec/test-frameworks.json`。
+- **已确认**：mtest 构建插件的语法糖（静态用例清单与清单属性优先，其余能力各自定稿），归入 W8 的 mtest 一项。
+
+### 9.3 W3 的完成
+
+mcpplibs.os 0.4.0 已发布并进入 mcpp-index；mcppls、mcpp-ide、mtest 与 mcpp 迁移到 0.4.0。mcppls 的映像经 `os::on<P>` 询问 Dev Drive 与 PRoot，此前映像对二者均不作判断。
+

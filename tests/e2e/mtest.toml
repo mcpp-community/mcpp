@@ -1,0 +1,19 @@
+# The e2e tests as mtest programs (design 2026-11-08 W8; run_all.sh with E2E_MTEST). Each script is
+# a program run by bash, whose one case is judged by its exit status. Line 2's `# requires:` gives
+# its capabilities as tags (`requires:gcc`), which a machine that lacks one excludes; a
+# `# resources:` line gives what it holds while it runs (`machine`: nothing else runs beside it).
+# The store keeps each run, and its history gives the parts of `--shard` and the order of a run.
+
+[project]
+store = ".mtest"
+
+[discover.e2e]
+globs          = ["[0-9]*.sh"]
+command        = ["bash", "{path}"]
+kind           = "e2e"
+# A script is level 0, whatever its text says: several name the protocol's marker in their comments,
+# and a script told the protocol's variables would pass them to what it runs.
+level          = 0
+timeout        = "10m"
+tags_from      = { "# requires:" = "requires:" }
+resources_from = ["# resources:"]

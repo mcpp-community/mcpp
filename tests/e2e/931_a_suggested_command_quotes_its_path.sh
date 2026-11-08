@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: unix-shell fresh-sandbox
+# resources: machine
 # A command printed for a person to paste quotes the paths in it (mcpp#832,
 # R1). A home under `/tmp/mc probe` printed
 # `mcpp self init --force --home /tmp/mc probe/home`, which selects `/tmp/mc`

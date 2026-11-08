@@ -509,8 +509,8 @@ docs/22。
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `x86_64-openkal` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `aarch64-openkal` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `x86_64-openkal` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `aarch64-openkal` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 
 `载荷` 这里有工具链 payload 产出它 · `图` 没有 payload，但依赖能供给
 system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台自己的 ·
@@ -552,6 +552,13 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 模拟器会直接拒绝异构 guest（`QEMU2 emulator does not support arm64 CPU
 architecture`）。一个档位断言的是产物**被构建并运行**过；它不断言是
 哪个模拟器运行的。
+
+**两个 `*-openkal` 行都是 `verified`（2026.11.8.1）。** 每台宿主构建两行，每个系统运行
+自身架构的映像：Linux 与 Windows x86_64 运行 `x86_64-openkal`，macOS arm64 运行
+`aarch64-openkal`，映像带平台的 C 库与 C++ 运行时（`import std`）。测试 1033 完成这件事，
+`tests/e2e/host-requirements.tsv` 要求它在 Linux、macOS 与 Windows 上通过，因此一旦某个
+系统不再运行映像，CI 即失败。此前这两行的运行测试声明了 `llvm`，而只有 Linux 分片提供它，
+mcpp 自身的 CI 只在 Linux 上运行映像。
 
 在这两行上，`kind = "app"` 链接成一个共享库而不是可执行文件（见
 [04 §2.2](04-mcpp-toml.md)）——由 `application_form` 对

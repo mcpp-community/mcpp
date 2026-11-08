@@ -16,5 +16,5 @@ version     = "0.1.0"
 description = "Algorithms over index-addressed directed graphs: topological order, levels, closure"
 license     = "Apache-2.0"
 
-[dev-dependencies.compat]
-gtest = "1.15.2"
+[dev-dependencies]
+compat.gtest = "1.15.2"

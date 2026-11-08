@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc
+# resources: machine
 # 99_msvc_native_build.sh — native cl.exe builds (0.0.90):
 #   - toolchain default msvc → new → build → run (import std via std.ixx/.ifc)
 #   - a named module (.cppm through /interface /TP + /ifcOutput)

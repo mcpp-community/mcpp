@@ -50,6 +50,8 @@ cat > mcpp.toml <<'EOF'
 name    = "gasmix"
 version = "0.1.0"
 EOF
+# The skeleton's test is mtest's; this manifest names no dev-dependency.
+rm -f tests/test_smoke.cpp
 
 "$MCPP" build > build.log 2>&1 || { cat build.log; echo "build failed"; exit 1; }
 

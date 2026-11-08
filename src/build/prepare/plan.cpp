@@ -462,8 +462,11 @@ static std::expected<void, std::string> step13_make_plan(PrepareState& state, Bu
     if (!ctx.plan.trimMap.empty()) {
         const auto n = state.packages.size();
         std::vector<std::vector<std::size_t>> deps(n);
+        // Not along a dev edge: a dev-dependency reaches the test units, which
+        // keep their paths, so the package's own map is the one `mcpp build`
+        // gives it and its commands are the same under `mcpp test`.
         for (auto const& e : state.dependencyEdges)
-            if (e.consumerPackageIndex < n && e.dependencyPackageIndex < n)
+            if (e.consumerPackageIndex < n && e.dependencyPackageIndex < n && !e.devTable)
                 deps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
         for (std::size_t i = 0; i < n; ++i) {
             std::vector<char> closure(n, 0);

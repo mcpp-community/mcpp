@@ -2,7 +2,7 @@ name: ci-macos-e2e
 
 # The e2e suite on macOS ARM64, called by ci.yml beside ci-macos.yml after the
 # macOS build. Three shards, assigned by measured duration
-# (tests/e2e/timings/macos.tsv, rule R4 of the 2026-10-02 CI record), each
+# (by mtest, from the measured history of main's stores; rule R4 of the 2026-10-02 CI record), each
 # running the one binary build.yml produced (use-built-mcpp, rule R1), and
 # each writing the per-test report the e2e-coverage job of ci.yml reads.
 #
@@ -55,7 +55,9 @@ jobs:
       # 721 installs the large NDK in its own bounded step below. Running it in
       # the ordinary shard duplicates the download and can fail before linking.
       E2E_EXCLUDE: 721_*.sh
-      E2E_TIMINGS: tests/e2e/timings/macos.tsv
+      # By mtest (design 2026-11-08 W8; .github/actions/e2e-mtest), as on Linux.
+      E2E_JOBS: '2'
+      E2E_SET: ${{ github.event_name == 'pull_request' && 'pr' || '' }}
       E2E_REPORT: ${{ github.workspace }}/e2e-report-${{ matrix.image == 'macos-15' && 'macos' || matrix.image }}-${{ matrix.shard }}.tsv
     # NOTE: no MCPP_VERBOSE — the e2e suite asserts mcpp's default quiet
     # output (tests 48/53).
@@ -75,6 +77,10 @@ jobs:
       - uses: ./.github/actions/use-built-mcpp
         with:
           host: macos-arm64
+
+      - uses: ./.github/actions/e2e-mtest
+        with:
+          host: ${{ matrix.image == 'macos-15' && 'macos' || matrix.image }}
 
       - name: E2E suite
         # Twice a shard's budget of about nine minutes (R4); the per-test 600 s
@@ -97,6 +103,18 @@ jobs:
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
           set -o pipefail
           bash tests/e2e/run_all.sh 2>&1 | tee "$RUNNER_TEMP/e2e-suite.log"
+
+      # The shard's store: main's are the history the next runs divide the suite by.
+      - name: Upload the shard's store
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-store-${{ matrix.image == 'macos-15' && 'macos' || matrix.image }}-${{ matrix.shard }}
+          path: tests/e2e/.mtest
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
       # One file, no glob: the report the e2e-coverage job of ci.yml reads. A
       # glob upload once hung a macOS job for ten minutes, and cancelling it lost

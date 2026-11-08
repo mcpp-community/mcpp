@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc xlings-msvc python3
+# resources: machine
 # 239_msvc_managed_toolset.sh — `xim:msvc@<toolset>`: the package the manifest
 # names is the one that compiles, regardless of what this machine has.
 #

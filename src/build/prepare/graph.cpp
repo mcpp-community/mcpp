@@ -668,6 +668,12 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
         mcpp::pm::compat::normalize_nested_namespace(
             spec.namespace_, spec.shortName, spec.legacyDottedKey);
         if (spec.legacyDottedKey) {
+            // COMPAT(quoted-dotted-dependency-key): one TOML key, read as the selector its dots spell (mcpp#904);
+            // not reported where the quoted key is the only spelling of a package beside its parent or child.
+            if (!spec.quotingRequired)
+                state.reportCompatUseInstead("quoted-dotted-dependency-key", packageIndexForConsumer(item.consumerDepIndex),
+                                             std::format("{} \"{}\"", spec.declaredIn, name),
+                                             std::format("the key unquoted, `{} = ...`", name));
             spec.candidates = {{
                 .namespace_ = spec.namespace_,
                 .shortName = spec.shortName,
@@ -2244,66 +2250,7 @@ step4b_define_provisioning_closures(PrepareState& state) {
     }
 
 
-    state.computeUsageRequirements = [&] {
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (auto const& edge : state.dependencyEdges) {
-                if (edge.consumerPackageIndex >= state.packages.size()
-                    || edge.dependencyPackageIndex >= state.packages.size()) {
-                    continue;
-                }
-                auto& consumer = state.packages[edge.consumerPackageIndex];
-                auto const& dependency = state.packages[edge.dependencyPackageIndex];
-                // A build dependency serves the build program, which is planned
-                // in its own graph: its include directories and interface
-                // defines do not reach this consumer's target compile (mcpp#797).
-                if (edge.buildTable) continue;
-                // A package of programs publishes no usage requirements to its
-                // consumers (#649 E6): nothing of it is compiled or linked here.
-                if (edge.dependencyPackageIndex > 0
-                    && state.isProgramOnlyPackage(dependency.manifest)) continue;
-
-                if (edge.visibility == mcpp::modgraph::DependencyVisibility::Private
-                    || edge.visibility == mcpp::modgraph::DependencyVisibility::Public) {
-                    changed = state.appendUniquePaths(consumer.privateBuild.includeDirs,
-                                                dependency.publicUsage.includeDirs)
-                              || changed;
-                    // #249: after-dirs ride the same edges but keep their
-                    // after-ness — consumers receive them as -idirafter,
-                    // never upgraded to -I.
-                    changed = state.appendUniquePaths(consumer.privateBuild.includeDirsAfter,
-                                                dependency.publicUsage.includeDirsAfter)
-                              || changed;
-                    // Interface defines (a dependency's active-feature `defines`)
-                    // ride the same edges as include dirs: they must reach the
-                    // consumer's own TUs so header-only switches like
-                    // EIGEN_USE_BLAS take effect where the headers are used.
-                    changed = state.appendUniqueFlags(consumer.privateBuild.cflags,
-                                                dependency.publicUsage.cflags)
-                              || changed;
-                    changed = state.appendUniqueFlags(consumer.privateBuild.cxxflags,
-                                                dependency.publicUsage.cxxflags)
-                              || changed;
-                }
-                if (edge.visibility == mcpp::modgraph::DependencyVisibility::Public
-                    || edge.visibility == mcpp::modgraph::DependencyVisibility::Interface) {
-                    changed = state.appendUniquePaths(consumer.publicUsage.includeDirs,
-                                                dependency.publicUsage.includeDirs)
-                              || changed;
-                    changed = state.appendUniquePaths(consumer.publicUsage.includeDirsAfter,
-                                                dependency.publicUsage.includeDirsAfter)
-                              || changed;
-                    changed = state.appendUniqueFlags(consumer.publicUsage.cflags,
-                                                dependency.publicUsage.cflags)
-                              || changed;
-                    changed = state.appendUniqueFlags(consumer.publicUsage.cxxflags,
-                                                dependency.publicUsage.cxxflags)
-                              || changed;
-                }
-            }
-        }
-    };
+    define_usage_requirements(state);
 
     return {};
 }

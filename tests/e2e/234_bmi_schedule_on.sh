@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # `bmi_schedule = "on"` end to end, and the token leak that used to hang it.
+# resources: machine
 source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
 # The split schedule reorders the module graph: a BMI edge that exits as soon as
@@ -39,7 +40,7 @@ fi
 #     line 77: target/.../bin/mcpp: No such file or directory
 # reported as "the build with bmi_schedule=on failed". The normalisation used to
 # live inside the `if`, so it ran only when the test found the binary itself.
-case "$MCPP" in /*) ;; *) MCPP="$_root/$MCPP" ;; esac
+case "$MCPP" in /*|?:[/\\]*) ;; *) MCPP="$_root/$MCPP" ;; esac
 [ -x "$MCPP" ] || { echo "FAIL: MCPP=$MCPP is not executable"; exit 1; }
 export MCPP
 

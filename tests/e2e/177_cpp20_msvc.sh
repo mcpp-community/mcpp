@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc
+# resources: machine
 # 177_cpp20_msvc.sh — standard = "c++20" on native cl.exe.
 #
 # This is the hard assertion behind the review decision to let MSVC answer 20

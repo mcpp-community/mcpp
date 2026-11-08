@@ -114,6 +114,14 @@ MCPP=<fresh-mcpp-binary> bash tests/e2e/02_new_build_run.sh
 地方都不会跑**，它的绿色什么都不说明——新增脚本时要核对确有 job 供给
 它所要的能力。
 
+**CI 由 [mtest](https://github.com/mcpp-community/mtest) 运行它们**（2026.11.8.1+）：
+`tests/e2e/mtest.toml` 使每个脚本成为一个程序，`# requires:` 行是它的标签，`# resources:`
+行是它运行时占有的资源（`machine`：没有别的脚本与它并行；改动共享 home 配置的脚本这样声明）。
+`run_all.sh` 在 `E2E_MTEST=<mtest>` 下经由它运行整套：`E2E_SHARD` 按存储（`tests/e2e/.mtest`，
+CI 取自 main 的上一次运行）中测得的历史划分，`E2E_JOBS` 同时运行多少个脚本，`E2E_SET=pr`
+按夜间的覆盖映射（`.github/workflows/e2e-coverage.yml`）运行变更影响的脚本。在 `tests/e2e`
+中执行 `mtest explain` 可得知脚本在哪里失败以及如何再次运行。
+
 ## 写一条真的在测东西的判据
 
 本仓库最可迁移的一条规则，也是被跳过时会静默失效的那一条：

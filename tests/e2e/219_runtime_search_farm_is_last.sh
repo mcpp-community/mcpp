@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: gcc elf python3
+# resources: machine
 # 219_runtime_search_farm_is_last.sh — the run-time search closure, and the one
 # invariant in it.
 #

@@ -150,6 +150,11 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // On an ordinary edge the library is what the edge means, and the
         // field is not read.
         bool buildTable = false;
+        // `devTable`: the declaration is in a `[dev-dependencies]` table of the
+        // root or a selected member. The dependency serves the consumer's
+        // tests: its usage reaches the test units (`PackageRoot::testBuild`),
+        // not the consumer's own sources.
+        bool devTable = false;
         bool wantsLibrary = false;
         bool reexport = false;
         // `embed = true` and its `exclude` (design 2026-11-02 §14.1): the
@@ -750,6 +755,10 @@ struct PrepareState {
     // recorded for `mcpp why compat` either way.
     std::function<void(std::string_view id, std::size_t i, std::string detail)>
         reportCompatUse;
+    // The same, naming what to write instead in the use's own words (the
+    // registry's replacement is an example).
+    std::function<void(std::string_view id, std::size_t i, std::string detail, std::string instead)>
+        reportCompatUseInstead;
     // Whether the manifest of package `i` is one the person running the build
     // can edit (SPEC-008 §4: a diagnostic is given to the package that can act
     // on it).
@@ -903,6 +912,10 @@ struct PrepareState {
     std::vector<mcpp::targetside::Island> cxxIslands;
     std::optional<std::size_t> cxxLayerProviderIndex;
     bool targetSideResolved = false;
+    // The kernel interface is supplied by a package only the tests reach
+    // (`PackageRoot::devOnly`): it serves the dev-only packages and the test
+    // units, and the configuration of the shipped graph keeps none.
+    bool kernelAbiForTestsOnly = false;
     mcpp::modgraph::UsageRequirements targetSideUsage;
     // The same, with the engine's predefines and the realised C environment:
     // what the build's contract states (BuildPlan::contractTargetSide).
@@ -956,12 +969,17 @@ std::expected<void, std::string> phase1_toolchain_spec_and_axes(PrepareState& st
 std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& state);
 std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state);
 std::expected<void, std::string> phase4a_graph_load(PrepareState& state);
+// graph_edges.cpp: the package index of a work item's consumer
+// (`WorkItem::consumerDepIndex`).
+std::size_t packageIndexForConsumer(std::size_t consumerDepIndex);
 // graph_edges.cpp: the edge one request adds to the graph, or the one it
 // merges with.
 void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
                           const std::string& writtenKey);
+// graph_edges.cpp: defines `PrepareState::computeUsageRequirements`.
+void define_usage_requirements(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 // graph.cpp: takes the link flags package `p` added to the root's pooled list
 // back out of it (a package that serves the build alone; an embedded one).

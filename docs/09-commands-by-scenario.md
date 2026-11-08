@@ -99,7 +99,11 @@ default 30, `0` turns it off) is removed. A hit marks an entry used. A `path`
 host tool's entry is replaced when its tree changes: the entry built from the
 same tree under the previous stamp is removed as the new one is written
 (2026.10.31.3+). Before a build, mcpp warns when the file system it writes to
-has less than 2 GiB free.
+has less free space than the larger of 2 GiB and 1.25 times what the
+configuration's last build wrote (recorded in `<output>/.mcpp-written`); the
+warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc
+--older-than` collect `std` module entries by age as well; `gc --max-size`
+budgets packages and host tools, not `std` modules (2026.11.8.1+).
 
 ## The versions a package publishes
 

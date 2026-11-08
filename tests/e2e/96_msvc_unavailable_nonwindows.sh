@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: unix-shell
+# resources: machine
 # 96_msvc_unavailable_nonwindows.sh — msvc@system is Windows-only:
 #   - `toolchain default/install msvc` fail with a host error (no network,
 #     no sandbox mutation)
