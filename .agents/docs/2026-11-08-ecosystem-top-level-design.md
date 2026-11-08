@@ -260,15 +260,31 @@ mcpp 对自身清单键已有完整的同类机制：`kDeprecations` 注册表�
 
 ```
 tests/
-  unit/        服务端的单元测试：每个主题一个文件、一个程序，UTest 对象为被测单元
-  cts/         成员 mcppls-cts：conformance.cpp 按主题拆为 lsp.cpp、mcpp.cpp、cmake.cpp、xmake.cpp、clients.cpp…，
-               Fixture 对象；fixtures/、traceability.json
-  bench/       成员 mcppls-bench：startup.cpp（冷/热启动为一个 Bench 对象的两个用例，共享缓存目录）、tokens.cpp、
-               review.cpp（评审的精确率与召回率为度量，界限以 bound 声明）、tasks.cpp（任务数据的检验为 UTest，
-               代理运行为 Bench，需 API 凭据时 skip_if）；tasks/、review/ 为数据
+  unit/        服务端的单元测试：每个主题一个文件、一个程序，UTest 对象为被测单元；自举子进程的文件写 main
+  cts/         成员 mcppls-cts：cts.cppm（套件类型 Fixture）与按主题的用例文件 mcpp.cpp、targets.cpp、cmake.cpp、
+               xmake.cpp、inferred.cpp、engine.cpp、editing.cpp；一个夹具或其变体一行（@polling、@plain、@vscode、
+               @neovim、@zed、@warm 第二次会话复用第一次的缓存、@linked 经符号链接到达工作区）；fixtures/、traceability.json
+  bench/       成员 mcppls-bench：startup.cpp（冷/热启动，首次跳转以 at_most 界定；release 标签的五次中位数与
+               Windows 大型模块工程）、tokens.cpp、review.cpp（每个审查夹具一个用例，规则的精确率与召回率以
+               at_least 界定）、tasks.cpp（任务数据的检验为 UTest，代理运行为 Bench，未指定代理时 skip）、
+               ux.cpp（真实项目的各阶段为用例）；tasks/、review/ 为数据
+  harness/     成员 mcppls-harness：用例驱动服务端的方式（mcppls.harness：一致性运行器的会话与判定、环境约定），
+               以及基准的任务、补丁、审查与代理运行模块，连同其单元测试
 ```
 
-`tools/bench/` 与 `mcppls-devtools bench` 的五个子命令（约 1600 行）移入 `tests/bench`；devtools 不再有 bench。CI 的 timing、tokens、bench-validate 作业与 nightly 的 ux 预算改为 `mtest run --kind bench`，判定由界限（`at_most`、`at_least`）与策略给出，`timing_evidence.py` 等判定脚本删除。
+`tools/bench/` 与 `mcppls-devtools bench` 的子命令移入 `tests/bench` 与 `tests/harness`；devtools 不再有 bench，
+`measure summary` 删除。CI 的冷/热启动、审查夹具、缓存模型、符号链接工作区等附加步骤成为用例；`bench-validate`
+作业改为三平台的 `bench` 作业（`mtest run --tag on:<平台> --exclude-tag release --exclude-tag ux`），release-checks
+的性能作业运行 `--tag 'on:<平台>&release'`，`ux` 作业与 nightly 的 ux-systems 运行 `--case <场景>`；各作业保存存储并
+取 main 上一次的存储，`mtest analyze trend` 在步骤摘要中给出各度量的历史与界限。运行器的 `--navigation-budget` 与
+`timing_evidence.py` 删除，界限由用例声明。nightly 的 ux 轮次（候选与基线交替 A B B A、重复编辑阶段、双核轮次）是
+校准预算与比较发布的实验，其统计（分布、合并离散度下的劣化判定）由 `measure budgets`、`measure compare` 在度量文件上
+给出，不属于用例的判定。
+
+实现中补足的 mtest 0.4.1：用例体不得返回值（编译期拒绝，由 `main` 改写为对象时的 `return 1;` 暴露）；静态清单跨文件
+读取项目的套件类型（`types_of`，`list --static` 先读项目全部 C++ 源文件）；标签选择 `a&b` 表示同时具有两个标签。
+mcpp 2026.11.8.1 补足：既是依赖又是开发依赖的框架只提供一次测试入口。mcpp-ide 1.2.1 以项目 tests/ 中声明的套件类型
+读取用例。
 
 **与原有形式的比较（判据）。**
 
