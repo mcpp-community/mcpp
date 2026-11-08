@@ -669,6 +669,7 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
     const auto work = std::filesystem::weakly_canonical(
         target.filename() == "target" ? target.parent_path() : spelled.parent_path(), ec);
     if (ec) return std::unexpected("cannot identify the compiler-run work directory");
+    mcpp::home::mark_project_state(work / ".mcpp");
     state->root = work / ".mcpp" / "compiler-runs"
         / mcpp::toolchain::hash_string(mcpp::home::spelling(canonical));
     std::filesystem::create_directories(state->root, ec);

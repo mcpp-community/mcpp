@@ -40,6 +40,8 @@ cd "$TMP"
 # ── the board-support package (same shape as 131) ───────────────────────────
 "$MCPP" new board > /dev/null
 cd board
+# The scaffold's tests use mtest; this test's do not.
+perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
 rm -f src/main.cpp tests/*.cpp 2>/dev/null || true
 
 cat > mcpp.toml <<'EOF'
@@ -100,6 +102,8 @@ EOF
 cd "$TMP"
 "$MCPP" new fw > /dev/null
 cd fw
+# The scaffold's tests use mtest; this test's do not.
+perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
 rm -f tests/*.cpp 2>/dev/null || true
 
 cat > src/main.cpp <<'EOF'

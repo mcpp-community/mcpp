@@ -150,6 +150,11 @@ struct PackageRoot {
     UsageRequirements               privateBuild;
     UsageRequirements               publicUsage;
     UsageRequirements               linkUsage;
+    // What the package's TESTS see beyond `privateBuild`: the public usage of
+    // its `[dev-dependencies]`, under `mcpp test`. A dev-dependency reaches the
+    // test units and never the package's own sources, so those compile under
+    // `mcpp test` as under `mcpp build` (docs/08 "Dev-dependencies").
+    UsageRequirements               testBuild;
     bool                            usageResolved = false;
     // No TARGET INSTANCE (mcpp#797): no chain of ordinary edges reaches it
     // from the root. It is resolved here -- one version per package, and its
@@ -159,6 +164,11 @@ struct PackageRoot {
     // A BUILD-PROGRAM INSTANCE: reached through a `[build-dependencies]` edge
     // and then any edges. A package may have both instances (mcpp#797, R2).
     bool                            hostInstance = false;
+    // A TEST-ONLY INSTANCE: reached from the root and the selected members
+    // only through a `[dev-dependencies]` edge. A target-side layer it supplies
+    // serves the tests and does not change the configuration of the shipped
+    // graph (docs/08 "Dev-dependencies").
+    bool                            devOnly = false;
     // A selected workspace member that the plan builds (workspace design
     // 2026-09-29 §15), and the directory below `bin/` its products are placed
     // in (empty: `bin/` itself). False on the plan's root and on every

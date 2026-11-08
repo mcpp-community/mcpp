@@ -429,6 +429,24 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
         // about whether `kal_*` may be called from it.
         if (state.tc) state.tc->kernelAbiIsOpenkal =
             state.resolvedTargetSide.kernelAbi.interfaceName == "openkal";
+        // A KERNEL INTERFACE ONLY THE TESTS REACH. A dev-dependency that
+        // reaches the layer (mcpplibs.mtest over mcpplibs.os) serves the tests;
+        // the package's own sources compile under `mcpp test` as under `mcpp
+        // build`, so the configuration -- its fingerprint and the units of the
+        // shipped graph -- does not take the layer, and `__OPENKAL__` and the
+        // layer's headers reach the dev-only packages and the test units
+        // (docs/08 "Dev-dependencies"). A layer of the C environment or the
+        // C++ runtime is a property of every object a test links and stays
+        // the configuration's.
+        if (state.tc && state.tc->kernelAbiIsOpenkal && state.resolvedTargetSide.kernelAbi.fromGraph()) {
+            auto it = gather.byLayer.find(static_cast<int>(tsd::CapLayer::KernelAbi));
+            if (it != gather.byLayer.end() && !it->second.empty()
+                && it->second.front().index < state.packages.size()
+                && state.packages[it->second.front().index].devOnly) {
+                state.kernelAbiForTestsOnly = true;
+                state.tc->kernelAbiIsOpenkal = false;
+            }
+        }
 
         // [c-abi] REALISATION — design §3.2-§3.4. Everything below is
         // skipped, and every command line unchanged, for the graph this
@@ -669,6 +687,20 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
     return {};
 }
 
+// What a layer only the tests reach gives: the dev-only packages' own units and
+// the test units of the root and the selected members (`testBuild`).
+static void for_tests(PrepareState& state, const mcpp::modgraph::UsageRequirements& usage) {
+    for (std::size_t i = 0; i < state.packages.size(); ++i) {
+        auto& p = state.packages[i];
+        auto& to = p.devOnly ? p.privateBuild : p.testBuild;
+        if (!p.devOnly && i != 0 && !p.selectedMember) continue;
+        state.appendUniquePaths(to.includeDirs, usage.includeDirs);
+        state.appendUniquePaths(to.includeDirsAfter, usage.includeDirsAfter);
+        state.appendUniqueFlags(to.cflags, usage.cflags);
+        state.appendUniqueFlags(to.cxxflags, usage.cxxflags);
+    }
+}
+
 static std::expected<void, std::string>
 step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -722,7 +754,11 @@ step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gathe
                 }
             };
             note_layer(tsd::CapLayer::CompilerRuntime, state.resolvedTargetSide.compilerRuntime);
-            note_layer(tsd::CapLayer::KernelAbi,       state.resolvedTargetSide.kernelAbi);
+            if (!state.kernelAbiForTestsOnly)
+                note_layer(tsd::CapLayer::KernelAbi, state.resolvedTargetSide.kernelAbi);
+            else if (auto it = gather.byLayer.find(static_cast<int>(tsd::CapLayer::KernelAbi));
+                     it != gather.byLayer.end() && !it->second.empty())
+                for_tests(state, state.packages[it->second.front().index].publicUsage);
             note_layer(tsd::CapLayer::CAbi,            state.resolvedTargetSide.cAbi);
             note_layer(tsd::CapLayer::CxxAbi,          state.resolvedTargetSide.cxx);
 
@@ -821,6 +857,15 @@ step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gathe
             for (auto& p : state.packages) {
                 state.appendUniqueFlags(p.privateBuild.cflags,   engineDefines);
                 state.appendUniqueFlags(p.privateBuild.cxxflags, engineDefines);
+            }
+            if (state.kernelAbiForTestsOnly) {
+                mcpp::modgraph::UsageRequirements kernel;
+                for (auto const& d : mcpp::toolchain::predefines::define_tokens(targetOs, true))
+                    if (std::ranges::find(engineDefines, d) == engineDefines.end()) {
+                        kernel.cflags.push_back(d);
+                        kernel.cxxflags.push_back(d);
+                    }
+                for_tests(state, kernel);
             }
         }
 

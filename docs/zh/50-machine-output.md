@@ -209,6 +209,7 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `pkg-format-list` | 2026.10.31.1（语义自 2026.10.30.1） | `--pkg-format tar,okb` 写出一棵树的各个容器（SPEC-014 §5.4） | IDE 的打包界面 |
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` 打印一个测试的 `mcpp.launch`（见下） | 调试测试的 IDE |
 | `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` 先流式输出构建事件，再输出 `mcpp.launch` 信封（见下） | IDE 的运行，边构建边显示 |
+| `test-protocol` | 2026.11.8.1 | 实现测试协议的测试程序，其用例在 `mcpp test --message-format json` 的记录中被列出（`--cases`）、选择（`--case`）并报告（§8） | IDE 的测试树、从编辑器运行一个用例 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -464,7 +465,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（2026.11.7.2 起为 `mcpplibs.openkal-platform@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
+（2026.11.8.1 起为 `mcpplibs.openkal-platform@0.24.4`，2026.11.7.2 为 `@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标
@@ -701,7 +702,8 @@ mcpp pack [target] [--pkg-format <f>] [--target <triple>...] --message-format js
 mcpp test [pattern] [--workspace] --message-format json
 ```
 
-这条流早于 §2 的信封，也不被它包裹：它是 NDJSON，每个测试结束时一条记录，随后
+这条流早于 §2 的信封，也不被它包裹：它是 NDJSON，每个测试结束时一条记录（`--no-run` 与 `--cases`
+时每个测试构建完成时一条，2026.11.8.1 起），随后
 每个成员一条汇总记录。`--workspace` 运行以一条 `workspace_summary` 记录
 结束。对多个成员的测试会在每个组的第一条测试记录之前增加一条 `group_build` 记录。
 §7 的保证对它同样成立 —— 字段只增不减，字段含义永不改变 —— 下表是
@@ -721,6 +723,12 @@ mcpp test [pattern] [--workspace] --message-format json
 | `timed_out` | 被 `--timeout` 杀掉时为 `true`（`run_fail`） |
 | `compile_output`、`run_output` | 捕获到的诊断输出 |
 | `reason` | 仅 `not_run` 时：一句话说明原因；其余情况为 `""` |
+| `protocol` | 程序实现的测试协议版本，或 `null` *（2026.11.8.1+，[08](08-testing.md#用例测试协议)）* |
+| `cases` | 实现协议并运行过的程序：每个用例的 `id`、`status`（`pass`、`fail`、`skip`、`xfail`、`xpass`、`invalid`）、`duration_ms`、有原因时的 `reason`，以及 `failures`（`file`、`line`、`message`，陈述时还有 `expected` 与 `actual`） *（2026.11.8.1+）* |
+| `missing` | 选择中命名而程序没有对应用例的标识 *（2026.11.8.1+）* |
+| `listed` | `--cases` 时：每个用例的 `id`、`name`、`file`、`line`，陈述时还有 `kind`、`tags`、`expect` *（2026.11.8.1+）* |
+| `guide` | 测试所用框架陈述了指南时，该指南文件 *（2026.11.8.1+）* |
+| `program`、`sources` | 构建而未运行的测试（`--no-run`、`--cases`）：程序，以及它由之编译的文件（它自己的与它链接的库的），供按改动选择测试的运行器使用 *（2026.11.8.1+）* |
 
 汇总记录，`{"summary": {...}}`：
 
@@ -799,6 +807,10 @@ mcpp test [pattern] [--workspace] --message-format json
 路径都可能包含空格。一棵由不打包任何东西的 mode（`system`、`static`）暂存
 出的树不带 `needs` 行，由更早版本的 mcpp 暂存出的树同样不带；自行放置库的
 读者应当读取这些行，而不是从 `lib/` 下的文件推断闭包。
+
+`mcpp test --guide --message-format json` *（2026.11.8.1+）* 输出一个对象 `{"guide": {...}}`：`frameworks`
+（每项 `package`、`version`、`entry`、`protocol` 或 `null`、`guide` 或 `null`、`repo`）、`commands`（`list`、
+`one`、`records`、`debug`）、`docs`，以及包没有框架时的 `suggest`（mtest 的 dev-dependency 写法与仓库）。
 
 ## 9. 构建事件流与结果记录 *（mcpp 2026.10.26.1+）*
 
@@ -911,7 +923,7 @@ mcpp test <name> --print-launch [-- <参数>]
 
 对一个测试作同样的描述（特性 `test-launch`，2026.10.31.2）：`<name>` 指定的测试按 `mcpp test`
 的方式构建，并按 `mcpp test` 启动它的方式描述——它的运行器、运行所加的环境、`--` 之后的参数——`data`
-另以 `test` 给出测试名。多个测试名包含该模式时取名字完全相同的那个；仍指向多个测试时拒绝，`--list`、
+另以 `test` 给出测试名，以 `protocol` 给出程序实现的测试协议或 `null`（2026.11.8.1+）。多个测试名包含该模式时取名字完全相同的那个；仍指向多个测试时拒绝，`--list`、
 `--no-run`、`--archive`、`--message-format json`、多条腿与多个成员同样拒绝。调试器启动信封描述的程序。
 
 ## 10. 拒绝副作用 —— `--deny` *（mcpp 2026.10.26.1+）*

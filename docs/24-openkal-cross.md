@@ -440,6 +440,30 @@ anything compiles, saying where the layer was switched off.
 requirements note would be refused by every loader; the refusal
 (`platform-tool-absent`) names the package that builds it.
 
+### Two Roles, No Ranking (mcpp 2026.11.8.1)
+
+The image rows and the native rows are not tiers of one another; they play two
+roles.
+
+- **A release form.** A program that needs only files, processes, the network
+  and a terminal can ship one image per architecture as its only release, and
+  test that image on every real system. The ecosystem's applications do:
+  mcppls-clangd, mcppls and the mcpp-ide backend.
+- **A build target.** The native rows (`*-linux-gnu`, `*-linux-musl`,
+  `*-windows-msvc`, `aarch64-macos`, Android, iOS, `wasm32-emscripten`,
+  `*-none-elf`) are fully supported targets with the same guarantees. Only a
+  native row serves:
+  - a program released per system that calls system interfaces chosen at
+    compile time (mcpp itself);
+  - a library, which is compiled into its consumer for the consumer's target;
+  - a program that links a system's or a vendor's library (Qt, Vulkan or Metal,
+    CUDA or SYCL, Android's `native_activity`, an iOS application);
+  - a platform no image reaches (Android, iOS, the Web, bare metal).
+
+Both image rows are `verified` ([21](21-the-target-triple.md)): every host
+builds them, and Linux, macOS and Windows each run the image of their
+architecture in mcpp's CI.
+
 ### An Image Of Another Architecture (mcpp 2026.10.29.1)
 
 `okrun` runs an image of its own architecture (`host = "same-arch"`). On a

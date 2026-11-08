@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: windows msvc
+# resources: machine
 # 180_msvc_build_mcpp.sh — build.mcpp works under a native MSVC toolchain
 #
 # `MSVC x build.mcpp` was an empty cell in the CI matrix, and the feature was

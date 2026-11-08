@@ -7,6 +7,7 @@ import mcpp.manifest;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.scanner;
 import mcpp.project;
+import mcpp.build.plan;   // source_defines_main
 
 export namespace mcpp::build {
 
@@ -86,6 +87,45 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         globHits.emplace_back(hits.begin(), hits.end());
     }
 
+    // `[test] programs = "directory"`: the files of one directory below a
+    // glob's fixed directory are one program, named by the directory; its
+    // `main` is the file that defines one, else the first, and the others
+    // are its translation units. Two files of one directory that define
+    // `main` are two beginnings of one program and are refused. A file
+    // directly in the fixed directory stays a program of its own.
+    std::map<std::filesystem::path, std::vector<std::filesystem::path>> sourcesOf;
+    if (packageManifest && packageManifest->testPrograms == "directory") {
+        std::map<std::pair<std::filesystem::path, std::filesystem::path>, std::vector<std::filesystem::path>> groups;
+        for (auto const& [file, base] : testFiles) {
+            const auto dir = file.parent_path();
+            if (dir.lexically_normal() == base.lexically_normal()) continue;
+            groups[{dir, base}].push_back(file);
+        }
+        std::set<std::filesystem::path> grouped;
+        std::vector<std::pair<std::filesystem::path, std::filesystem::path>> merged;
+        for (auto& [key, files] : groups) {
+            std::vector<std::filesystem::path> mains;
+            std::ranges::copy_if(files, std::back_inserter(mains), source_defines_main);
+            if (mains.size() > 1)
+                return std::unexpected(std::format(
+                    "[test] programs = \"directory\": '{}' and '{}' both define `main`, and the files of "
+                    "'{}' are one program with one beginning",
+                    mains[0].lexically_relative(packageRoot).generic_string(),
+                    mains[1].lexically_relative(packageRoot).generic_string(),
+                    key.first.lexically_relative(packageRoot).generic_string()));
+            const auto main = mains.empty() ? files.front() : mains.front();
+            for (auto const& f : files) {
+                grouped.insert(f);
+                if (f != main) sourcesOf[main].push_back(f);
+            }
+            // The directory names the program: the main file's name is replaced
+            // by the directory's when the name is formed below.
+            merged.emplace_back(main, key.second);
+        }
+        std::erase_if(testFiles, [&](auto const& fb) { return grouped.contains(fb.first); });
+        testFiles.insert(testFiles.end(), merged.begin(), merged.end());
+    }
+
     result.targets.reserve(testFiles.size());
     std::map<std::string, std::filesystem::path> seenNames;
     for (auto const& [file, discoverBase] : testFiles) {
@@ -108,7 +148,11 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         auto mainRelative = lexical_relative(packageRoot, "package root");
         if (!mainRelative) return std::unexpected(mainRelative.error());
 
-        auto name = testRelative->replace_extension("").generic_string();
+        const auto merged = sourcesOf.find(file);
+        const bool directoryProgram = packageManifest && packageManifest->testPrograms == "directory"
+            && file.parent_path().lexically_normal() != discoverBase.lexically_normal();
+        auto name = directoryProgram ? testRelative->parent_path().generic_string()
+                                     : testRelative->replace_extension("").generic_string();
         if (auto [it, fresh] = seenNames.emplace(name, *mainRelative); !fresh) {
             return std::unexpected(std::format(
                 "duplicate test name '{}': '{}' and '{}' map to the same name "
@@ -121,6 +165,9 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         target.name = name;
         target.kind = mcpp::manifest::Target::TestBinary;
         target.main = mainRelative->string();
+        if (merged != sourcesOf.end())
+            for (auto const& f : merged->second)
+                target.testSources.push_back(f.lexically_relative(packageRoot).string());
         if (packageManifest) {
             target.windowsCodePage = packageManifest->testWindowsCodePage;
             target.windowsLongPaths = packageManifest->testWindowsLongPaths;

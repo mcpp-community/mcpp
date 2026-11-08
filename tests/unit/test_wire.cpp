@@ -150,6 +150,7 @@ TEST(WireProtocol, NamesTheFeaturesAClientGatesOn) {
     EXPECT_NE(std::ranges::find(names, "pkg-format-list"), names.end());
     EXPECT_NE(std::ranges::find(names, "test-launch"), names.end());
     EXPECT_NE(std::ranges::find(names, "launch-stream"), names.end());
+    EXPECT_NE(std::ranges::find(names, "test-protocol"), names.end());
 }
 
 TEST(WireProtocol, IsItselfSelfIdentifying) {

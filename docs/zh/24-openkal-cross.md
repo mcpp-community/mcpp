@@ -383,6 +383,25 @@ OS 0.3 使用 OpenKal 0.24 依赖组。保留 OS 0.2.9 的工程显式选择匹�
 **缺少 `okld` 是拒绝而非警告。** 没有需求 note 的映像会被每个加载器拒绝；拒绝（`platform-tool-absent`）
 指名构建它的包。
 
+### 两种角色，不分等级（mcpp 2026.11.8.1）
+
+映像行与原生行不是彼此的等级，而是两种角色。
+
+- **发布形态。** 只需要文件、进程、网络与终端的程序，可以把每种架构一份映像作为唯一的
+  发布物，并在每个真实系统上测试这份映像。生态的应用即如此：mcppls-clangd、mcppls 与
+  mcpp-ide 的后端。
+- **构建目标。** 原生行（`*-linux-gnu`、`*-linux-musl`、`*-windows-msvc`、`aarch64-macos`、
+  Android、iOS、`wasm32-emscripten`、`*-none-elf`）是完整支持的目标，保证与映像相同。
+  只有原生行适用于：
+  - 按系统发布、以编译期选择调用系统接口的程序（mcpp 本身）；
+  - 库，它随使用者的目标编译进使用者；
+  - 链接系统或厂商库的程序（Qt、Vulkan 或 Metal、CUDA 或 SYCL、Android 的
+    `native_activity`、iOS 应用）；
+  - 映像不覆盖的平台（Android、iOS、Web、裸机）。
+
+两个映像行都是 `verified`（[21](21-the-target-triple.md)）：每台宿主都构建它们，Linux、
+macOS 与 Windows 在 mcpp 的 CI 中各自运行本架构的映像。
+
 ### 另一架构的映像（mcpp 2026.10.29.1）
 
 `okrun` 运行其自身架构的映像（`host = "same-arch"`）。在另一架构的机器上，`mcpp run` 与 `mcpp test`

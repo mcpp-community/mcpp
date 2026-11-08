@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires:
+# resources: machine
 # 170_bmi_staging_no_cascade.sh — mcpp#311: the std BMI staging edge.
 #
 # Two invariants, both regressions that shipped:

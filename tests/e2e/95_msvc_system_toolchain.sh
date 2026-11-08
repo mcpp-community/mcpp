@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc
+# resources: machine
 # 95_msvc_system_toolchain.sh — msvc@system detection & selection (Windows):
 #   - `toolchain default msvc` locates + identifies the system MSVC and
 #     persists the stable spec msvc@system

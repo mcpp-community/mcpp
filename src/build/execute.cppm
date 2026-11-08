@@ -15,6 +15,8 @@ import mcpp.pack.pipeline;         // #622 A10: build_and_pack, for `run --forma
 import mcpp.pack.compress;         // the test archive's tar (SPEC-015 §4)
 import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
+import mcpp.build.test_protocol;   // the runner's side of the test protocol (docs/08 "Cases")
+import mcpp.build.test_impact;     // the tests a change affects (docs/08)
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
@@ -1767,16 +1769,26 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         std::filesystem::remove_all(ctx.outputDir, ec);
     }
     // Said before the build rather than as a link that fails for want of
-    // space (mcpp#874: `final link failed: No space left on device`).
+    // space (mcpp#874: `final link failed: No space left on device`). The
+    // threshold is what this configuration's last build took from the file
+    // system (`.mcpp-written`, the free space before it less the free space
+    // after it), a quarter more, and never less than 2 GiB: a workspace whose
+    // build writes 20 GB is told before it starts, not at its link.
+    std::uintmax_t freeBefore = 0;
     {
         std::error_code sec;
-        const auto free = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
-        if (!sec && free < (2ull << 30))
+        freeBefore = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
+        std::uintmax_t lastWritten = 0;
+        if (std::ifstream in(ctx.outputDir / ".mcpp-written"); in) in >> lastWritten;
+        const std::uintmax_t threshold = std::max<std::uintmax_t>(2ull << 30, lastWritten + lastWritten / 4);
+        if (!sec && freeBefore < threshold)
             mcpp::ui::warning(std::format(
-                "{} free where this build writes ({}). `mcpp clean --stale` removes the build "
-                "directories no configuration uses, and `mcpp cache gc --older-than 30d` the "
-                "cache entries none has used",
-                mcpp::bmi_cache::human_bytes(free), ctx.outputDir.parent_path().string()));
+                "{} free where this build writes ({}), and its last build took {}. `mcpp clean "
+                "--stale` removes the build directories no configuration uses, and `mcpp cache gc "
+                "--older-than 30d` the cache entries none has used",
+                mcpp::bmi_cache::human_bytes(freeBefore), ctx.outputDir.parent_path().string(),
+                mcpp::bmi_cache::human_bytes(lastWritten)));
+        if (sec) freeBefore = 0;
     }
 
     // The generated `*link:` spec lives in the output directory, and the line
@@ -1929,6 +1941,13 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     mcpp::build::progress::finished(
         ctx.profile, mcpp::build::profile_descriptor(ctx.plan.manifest.buildConfig));
     report_freestanding_size(ctx);
+    // What this build took from the file system, for the next one's warning.
+    if (freeBefore) {
+        std::error_code sec;
+        const auto freeAfter = std::filesystem::space(ctx.outputDir.parent_path(), sec).available;
+        if (!sec && freeAfter < freeBefore)
+            std::ofstream(ctx.outputDir / ".mcpp-written", std::ios::trunc) << (freeBefore - freeAfter) << '\n';
+    }
     mcpp::bmi_cache::collect_unused_entries();
     return 0;
 }
@@ -3832,6 +3851,10 @@ export enum class TestMessageFormat { Human, Json };
 
 export struct TestOptions {
     std::string        filter;   // substring match on the path-based test name; empty = all
+    // `--since <commit>` and `--changed <path>`: only the tests the change
+    // affects (docs/08 "The tests a change affects").
+    std::string              since;
+    std::vector<std::string> changed;
     TestMessageFormat  format = TestMessageFormat::Human;
     bool               list = false;   // enumerate only, no build/run
     // `--no-runner`: run the test binaries directly, ignoring a declared
@@ -3884,6 +3907,20 @@ export struct TestOptions {
     // written to it, with what each needs beside it. Without: nothing is
     // built, and the tests it holds run here.
     std::filesystem::path archive;
+    // THE CASES OF A PROGRAM THAT IMPLEMENTS THE TEST PROTOCOL (docs/08
+    // "Cases"; mtest spec/protocol.md). `--case PATTERN` runs, of each such
+    // program, the cases a pattern matches, and no program that has none or
+    // does not implement the protocol; `--cases` builds the tests and lists
+    // each program's cases instead of running them; `--seed N` is the seed a
+    // case's randomness takes (MTEST_SEED).
+    std::vector<std::string>      cases;
+    bool                          listCases = false;
+    // `--guide`: how this package's tests are written and run -- its test
+    // frameworks, each with its guide and repository, and the commands that
+    // list, select and explain cases -- for a person or an agent about to
+    // write a test (docs/08 "Writing a test"). Plans; builds and runs nothing.
+    bool                          guide = false;
+    std::optional<std::uint64_t>  seed;
 };
 
 // What one member's `run_tests` actually did. `--workspace` fans out over
@@ -3987,6 +4024,16 @@ struct TestResult {
     // its link edge and its main unit's compile edge in `.ninja_log`, 0 when
     // neither was rebuilt (`build_ms`, 2026.10.1.1+).
     long long   buildMs = 0;
+    // The test protocol the program implements (0: none), and what its report
+    // said: each case's result, or its listing under `--cases`.
+    int                                 protocol = 0;
+    mcpp::build::test_protocol::Report  report;
+    // The program and the files it is compiled from, for a test built and not
+    // run (`--no-run`): what a runner that selects by change reads (docs/50).
+    std::string                         program;
+    std::vector<std::string>            sources;
+    // The guide of the framework the test is written with, when known.
+    std::string                         guide;
 };
 
 // Streaming NDJSON: one record per test, emitted as it finishes — a
@@ -3998,18 +4045,36 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
                    : r.status == TestResult::St::NotRun ? "not_run"
                    : r.status == TestResult::St::Built ? "built"
                                                         : "run_fail";
-    std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
-        ? std::to_string(r.exitCode - 128) : "null";
-    std::println("{{\"member\":\"{}\",\"test\":\"{}\",\"status\":\"{}\","
-                 "\"exit_code\":{},\"signal\":{},"
-                 "\"duration_ms\":{},\"timed_out\":{},"
-                 "\"compile_output\":\"{}\",\"run_output\":\"{}\","
-                 "\"reason\":\"{}\",\"build_ms\":{}}}",
-                 test_json_escape(memberName),
-                 test_json_escape(r.name), st, r.exitCode, signal, r.durationMs,
-                 r.timedOut ? "true" : "false",
-                 test_json_escape(r.compileOutput), test_json_escape(r.runOutput),
-                 test_json_escape(r.reason), r.buildMs);
+    nlohmann::ordered_json record = {
+        {"member", memberName},
+        {"test", r.name},
+        {"status", st},
+        {"exit_code", r.exitCode},
+        {"signal", (r.exitCode > 128 && r.exitCode < 128 + 65) ? nlohmann::ordered_json(r.exitCode - 128)
+                                                              : nlohmann::ordered_json(nullptr)},
+        {"duration_ms", r.durationMs},
+        {"timed_out", r.timedOut},
+        {"compile_output", r.compileOutput},
+        {"run_output", r.runOutput},
+        {"reason", r.reason},
+        {"build_ms", r.buildMs},
+        // The test protocol (docs/50 §8, 2026.11.8.1+): the version the
+        // program implements, or null; its cases' results; the identifiers a
+        // selection named and the program does not have; its listing.
+        {"protocol", r.protocol ? nlohmann::ordered_json(r.protocol) : nlohmann::ordered_json(nullptr)},
+    };
+    if (r.protocol) {
+        if (!r.report.listed.empty())
+            record["listed"] = mcpp::build::test_protocol::listing_json(r.report);
+        if (!r.report.cases.empty()) record["cases"] = mcpp::build::test_protocol::cases_json(r.report);
+        if (!r.report.missing.empty()) record["missing"] = r.report.missing;
+    }
+    if (!r.program.empty()) {
+        record["program"] = r.program;
+        record["sources"] = r.sources;
+    }
+    if (!r.guide.empty()) record["guide"] = r.guide;
+    std::println("{}", record.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
     std::fflush(libc::stdout());
 }
 
@@ -4057,12 +4122,62 @@ static std::vector<NinjaEdge> ninja_edges_since(const std::filesystem::path& log
     return edges;
 }
 
+// HOW THIS PACKAGE'S TESTS ARE WRITTEN (`mcpp test --guide`, docs/08): its
+// test frameworks with their guides, and the commands a writer of a test
+// uses. With no framework, the contract mcpp holds and how to take one.
+inline constexpr std::string_view kTestingDocs =
+    "https://github.com/mcpp-community/mcpp/blob/main/docs/08-testing.md";
+using mcpp::build::test_protocol::kMtestRelease;
+using mcpp::build::test_protocol::kMtestRepo;
+
+static void print_test_guide(const BuildContext& ctx, bool json) {
+    const auto& frameworks = ctx.plan.testFrameworks;
+    if (json) {
+        nlohmann::ordered_json list = nlohmann::ordered_json::array();
+        for (auto const& f : frameworks)
+            list.push_back({{"package", f.package}, {"version", f.version}, {"entry", f.entry},
+                            {"protocol", f.protocol ? nlohmann::ordered_json(f.protocol) : nlohmann::ordered_json(nullptr)},
+                            {"guide", f.guide.empty() ? nlohmann::ordered_json(nullptr) : nlohmann::ordered_json(f.guide)},
+                            {"repo", f.repo}});
+        nlohmann::ordered_json g = {
+            {"frameworks", list},
+            {"commands", {{"list", "mcpp test --cases"}, {"one", "mcpp test <test> --case <id>"},
+                          {"records", "mcpp test --message-format json"}, {"debug", "mcpp test <test> --print-launch"}}},
+            {"docs", kTestingDocs},
+        };
+        if (frameworks.empty()) g["suggest"] = {{"dev-dependency", std::format("mcpplibs.mtest = \"{}\"", kMtestRelease)}, {"repo", kMtestRepo}};
+        std::println("{}", nlohmann::ordered_json{{"guide", g}}.dump());
+        std::fflush(libc::stdout());
+        return;
+    }
+    if (frameworks.empty()) {
+        std::println("No test framework: a test is a program under tests/, judged by its exit status.");
+        std::println("A framework of cases (mtest): [dev-dependencies] mcpplibs.mtest = \"{}\"  ({})", kMtestRelease, kMtestRepo);
+    } else {
+        std::println("Test frameworks:");
+        for (auto const& f : frameworks) {
+            std::println("  {} {} ({}{})", f.package, f.version, f.entry,
+                         f.protocol ? std::format(", test protocol {}", f.protocol) : std::string{});
+            if (!f.guide.empty()) std::println("    guide  {}", f.guide);
+            if (!f.repo.empty()) std::println("    repo   {}", f.repo);
+        }
+    }
+    std::println("Commands:");
+    std::println("  mcpp test --cases                  each test's cases");
+    std::println("  mcpp test <test> --case <id>       the cases an identifier or a pattern names");
+    std::println("  mcpp test --message-format json    each case's result, a failure's place and both sides");
+    std::println("  mcpp test <test> --print-launch    how the test starts, for a debugger");
+    std::println("Testing in mcpp: {}", kTestingDocs);
+}
+
 // A planned test build, and what the tests run against it need: the plan, the
 // backend that drives it, how long planning and the build took, and how the
 // test binaries are executed. One per configuration group of a `mcpp test`
 // over several members; `run_tests` holds one for its one member.
 struct TestBuild {
     std::optional<BuildContext>              ctx;
+    // The tests a change affects (`--since`, `--changed`); none: every test.
+    std::optional<std::set<std::string>>     affected;
     std::unique_ptr<Backend>                 backend;
     long long                                prepareMs = 0;
     // Phase A, the bulk pass, and any attribution drive.
@@ -4073,6 +4188,10 @@ struct TestBuild {
     // MCPP_BIN_<NAME> for each program of the package, built before the
     // tests (L5).
     std::vector<std::pair<std::string, std::string>> programEnv;
+    // In a workspace plan, the same per member (the member's package name):
+    // a member's tests are told its own programs, and two members may each
+    // have a program of one name.
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> memberProgramEnv;
 
     // How the test binaries are executed, resolved once for the build
     // (#544): every test of one build shares a target.
@@ -4248,6 +4367,39 @@ static std::optional<BuildError> test_phase_a(TestBuild& tb, const TestOptions& 
 //    is non-zero the loop runs as before and each failure still names its
 //    own test.
 // `keep` says which test binaries are goals.
+// `--since`/`--changed`: the tests of this plan the change affects, told
+// before they are built (docs/08). 2 when the change cannot be read.
+static int select_by_change(TestBuild& tb, const TestOptions& testOpts, bool json) {
+    if (testOpts.since.empty() && testOpts.changed.empty()) return 0;
+    std::vector<std::string> paths = testOpts.changed;
+    if (!testOpts.since.empty()) {
+        auto since = mcpp::build::test_impact::changed_since(tb.ctx->projectRoot, testOpts.since);
+        if (!since) {
+            mcpp::ui::error(std::format("--since {}: {}", testOpts.since, since.error()));
+            return 2;
+        }
+        paths.insert(paths.end(), since->begin(), since->end());
+    }
+    for (auto& p : paths) std::ranges::replace(p, '\\', '/');
+    const auto a = mcpp::build::test_impact::affected_tests(tb.ctx->plan, paths);
+    tb.affected.emplace();
+    for (auto const& [name, _] : a.tests) tb.affected->insert(name);
+    std::size_t total = 0;
+    for (auto const& lu : tb.ctx->plan.linkUnits) total += lu.kind == LinkUnit::TestBinary;
+    if (json) {
+        std::string tests;
+        for (auto const& [name, why] : a.tests)
+            tests += std::format("{}{{\"test\":\"{}\",\"why\":\"{}\"}}", tests.empty() ? "" : ",",
+                                 test_json_escape(name), test_json_escape(why));
+        std::println("{{\"affected\":[{}],\"of\":{},\"changed\":{}}}", tests, total, paths.size());
+    } else {
+        mcpp::ui::info("Affected", std::format("{} of {} test{} by {} changed path{}", a.tests.size(), total,
+                                                total == 1 ? "" : "s", paths.size(), paths.size() == 1 ? "" : "s"));
+        for (auto const& n : a.notes) mcpp::ui::plain(std::format("    {}", n));
+    }
+    return 0;
+}
+
 template <class Keep>
 static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
     auto* ctx = &*tb.ctx;
@@ -4257,7 +4409,7 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
     bulk.keepGoing = true;
     bulk.buildTimeoutSecs = static_cast<unsigned>(testOpts.buildTimeoutSecs);
     for (auto& lu : ctx->plan.linkUnits)
-        if (keep(lu))
+        if (keep(lu) && (!tb.affected || tb.affected->contains(lu.targetName)))
             bulk.ninjaTargets.push_back(lu.output.generic_string());
     if (!bulk.ninjaTargets.empty()) {
         auto tBulk = std::chrono::steady_clock::now();
@@ -4337,6 +4489,36 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
     }
 }
 
+// A failed test whose file imports a module no package of this build provides:
+// the compiler says only that the module was not built. A test's framework is a
+// `[dev-dependencies]` entry (docs/08), which a manifest written over the
+// skeleton's leaves out.
+void print_unprovided_test_imports(const BuildPlan& plan, const std::vector<std::string>& failures) {
+    auto primary = [](std::string_view n) { return std::string(n.substr(0, n.find(':'))); };
+    std::set<std::string> provided{"std", "std.compat"};
+    std::map<std::filesystem::path, const CompileUnit*> unitOf;
+    for (auto const& cu : plan.compileUnits) {
+        if (!cu.providesModule.empty()) provided.insert(primary(cu.providesModule));
+        unitOf.emplace(cu.source, &cu);
+    }
+    std::vector<std::string> lines;
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::TestBinary || !lu.entryMain
+            || std::ranges::find(failures, lu.targetName) == failures.end())
+            continue;
+        auto it = unitOf.find(*lu.entryMain);
+        if (it == unitOf.end()) continue;
+        for (auto const& name : it->second->imports)
+            if (!name.empty() && name.front() != '<' && name.front() != '"' && !provided.contains(primary(name)))
+                lines.push_back(std::format("{} imports '{}', which no package of this build provides",
+                                            lu.entryMain->filename().generic_string(), primary(name)));
+    }
+    if (lines.empty()) return;
+    std::println("");
+    for (auto const& l : lines) std::println("{}", l);
+    std::println("a test's framework is a [dev-dependencies] entry, e.g. mcpplibs.mtest = \"{}\" (docs/08)", kMtestRelease);
+}
+
 // One member's tests, against a build that exists: the per-test builds that
 // the bulk pass did not answer, then the runs, then the member's summary.
 // `owner` is the member's package name in the plan, which picks its test
@@ -4366,6 +4548,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
         return lu.kind == mcpp::build::LinkUnit::TestBinary
             && (owner.empty() || lu.memberOf == owner)
+            && (!tb.affected || tb.affected->contains(lu.targetName))
             && (testOpts.filter.empty()
                 || lu.targetName.find(testOpts.filter) != std::string::npos);
     };
@@ -4439,6 +4622,14 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::vector<std::pair<std::string, std::string>> env;
         long long buildMs = 0;   // this test's own edges in .ninja_log
         std::filesystem::path program;   // the test's own artifact
+        // The test protocol the program implements (0: none, P1.1), and the
+        // files of its run under it: the report, the selection, the cases'
+        // directory (docs/08 "Cases").
+        int protocol = 0;
+        std::filesystem::path protocolDir;
+        std::optional<std::filesystem::path> select;
+        std::vector<std::string> sources;
+        std::string guide;   // its framework's guide (docs/08 "Writing a test")
     };
     std::vector<Runnable> runnable;
 
@@ -4449,6 +4640,34 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // the terminal interleaves them line by line, which does not just look
     // untidy — it makes a failing assertion unattributable, and the whole
     // reason the per-test loop exists is attribution.
+
+    // A run of a program under the protocol: its directory emptied, the
+    // variables of `mode` (P2.1), the report beside them.
+    auto protocol_run = [&](const Runnable& r, std::string_view mode) {
+        std::error_code ec;
+        const auto reportName = mode == "list" ? "list.ndjson" : "report.ndjson";
+        std::filesystem::remove(r.protocolDir / reportName, ec);
+        std::filesystem::remove_all(r.protocolDir / "tmp", ec);
+        std::filesystem::create_directories(r.protocolDir / "tmp", ec);
+        return mcpp::build::test_protocol::variables(mode, r.protocolDir / reportName,
+                                                     mode == "list" ? std::nullopt : r.select,
+                                                     r.protocolDir / "tmp", testOpts.seed);
+    };
+    auto print_failed_cases = [](const mcpp::build::test_protocol::Report& report) {
+        for (const auto& c : report.cases) {
+            if (c.status != "fail" && c.status != "xpass") continue;
+            if (c.failures.empty()) {
+                mcpp::ui::plain(std::format("    case {} {}{}", c.id,
+                    c.status == "xpass" ? "passed, expected to fail" : "failed",
+                    c.reason.empty() ? std::string{} : ": " + c.reason));
+                continue;
+            }
+            const auto& f = c.failures.front();
+            mcpp::ui::plain(std::format("    case {} failed at {}:{}: {}", c.id, f.file, f.line, f.message));
+        }
+        for (const auto& id : report.missing)
+            mcpp::ui::plain(std::format("    case {}: the program has no such case", id));
+    };
 
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
@@ -4521,19 +4740,50 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 int spawnErr = 0;
                 std::string spawnDetail;
                 std::string runOutput;
-                if (capture) {
-                    auto rr = mcpp::run::capture_exec_deadline(
-                        r.argv, r.env, deadline, &timedOut, {}, &spawnErr);
-                    exitCode  = rr.exit_code;
+                // The protocol's variables reach a program that implements
+                // it, stated for this run, and no other program (P1.2, P2.2).
+                mcpp::run::Options runOpts;
+                runOpts.env = r.env;
+                runOpts.input = mcpp::run::Input::inherit;
+                runOpts.streams = capture ? mcpp::run::Streams::merged : mcpp::run::Streams::inherit;
+                runOpts.total = deadline;
+                runOpts.report_spawn_failure = false;
+                if (r.protocol) {
+                    for (auto& kv : protocol_run(r, "run")) runOpts.env.push_back(std::move(kv));
+                } else {
+                    for (auto v : mcpp::build::test_protocol::kVariables) runOpts.unset.emplace_back(v);
+                }
+                if (!capture) mcpp::ui::status("Running", std::format("bin/{}", r.name));
+                {
+                    auto rr = mcpp::run::execute(r.argv, runOpts);
+                    exitCode = rr.exit_code;
+                    timedOut = rr.timed_out;
+                    spawnErr = rr.spawn_error;
                     runOutput = std::move(rr.output);
                     spawnDetail = std::move(rr.spawn_detail);
-                } else {
-                    mcpp::ui::status("Running", std::format("bin/{}", r.name));
-                    exitCode = mcpp::run::run_exec_deadline(
-                        r.argv, r.env, deadline, &timedOut, &spawnErr);
                 }
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - tStart).count();
+                // What the program reported of its cases (P5); a report whose
+                // cases failed is a failure though the program exited zero
+                // (P5.5).
+                mcpp::build::test_protocol::Report report;
+                std::string casesNote;
+                int spoken = r.protocol;
+                if (r.protocol && spawnErr == 0) {
+                    report = mcpp::build::test_protocol::read_report(r.protocolDir / "report.ndjson", exitCode);
+                    std::error_code ec;
+                    std::filesystem::remove_all(r.protocolDir / "tmp", ec);
+                    if (!report.spoke && !timedOut) {
+                        // The marker without the protocol: one case, its exit status.
+                        report = {};
+                        spoken = 0;
+                    } else {
+                        casesNote = std::format(", {} case{}", report.cases.size(),
+                                                report.cases.size() == 1 ? "" : "s");
+                        if (exitCode == 0 && !timedOut && report.failed()) exitCode = 1;
+                    }
+                }
 
                 std::scoped_lock lock(reportMutex);
                 if (spawnErr != 0) {
@@ -4573,22 +4823,29 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                                        runOutput, ms, true, {}, r.buildMs});
                 } else if (exitCode == 0) {
                     if (!json) mcpp::ui::plain(std::format(
-                        "{} ... ok ({:.2f}s)", r.name, static_cast<double>(ms) / 1000.0));
+                        "{} ... ok ({:.2f}s{})", r.name, static_cast<double>(ms) / 1000.0, casesNote));
                     results.push_back({r.name, TestResult::St::Pass, 0, {},
                                        runOutput, ms, false, {}, r.buildMs});
                 } else {
                     if (!json) mcpp::ui::plain(std::format(
-                        "{} ... FAIL (exit {}, {:.2f}s)", r.name, exitCode,
-                        static_cast<double>(ms) / 1000.0));
+                        "{} ... FAIL (exit {}, {:.2f}s{})", r.name, exitCode,
+                        static_cast<double>(ms) / 1000.0, casesNote));
                     results.push_back({r.name, TestResult::St::RunFail, exitCode, {},
                                        runOutput, ms, false, {}, r.buildMs});
                 }
+                results.back().protocol = spoken;
+                results.back().report = std::move(report);
+                results.back().guide = r.guide;
                 // The captured output belongs directly under its own line, or
                 // it is attributable to nothing.
                 if (!json && capture && !runOutput.empty()) {
                     std::fputs(runOutput.c_str(), libc::stdout());
                     if (runOutput.back() != '\n') std::fputc('\n', libc::stdout());
                 }
+                // Of a failing program that reports its cases, the ones that
+                // failed, each with its first failure's place.
+                if (!json && results.back().status == TestResult::St::RunFail)
+                    print_failed_cases(results.back().report);
                 std::fflush(libc::stdout());
                 emit_json(results.back());
             }
@@ -4621,6 +4878,47 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     read_edges();
     std::map<std::filesystem::path, std::filesystem::path> objectOf;
     for (auto& cu : ctx->plan.compileUnits) objectOf[cu.source] = cu.object;
+    // The files a test program is compiled from (docs/50 §8 `sources`): the
+    // sources of its objects, and of the objects of each static library it
+    // links. What a runner that selects tests by change reads.
+    std::map<std::filesystem::path, std::filesystem::path> sourceOf;
+    for (auto& cu : ctx->plan.compileUnits) sourceOf[cu.object] = cu.source;
+    std::map<std::filesystem::path, const mcpp::build::LinkUnit*> archiveOf;
+    for (auto& unit : ctx->plan.linkUnits)
+        if (unit.kind == mcpp::build::LinkUnit::StaticLibrary) archiveOf[unit.output] = &unit;
+    auto sources_of = [&](const mcpp::build::LinkUnit& unit) {
+        std::set<std::string> files;
+        auto add_objects = [&](const std::vector<std::filesystem::path>& objects) {
+            for (auto& o : objects)
+                if (auto it = sourceOf.find(o); it != sourceOf.end())
+                    files.insert(it->second.generic_string());
+        };
+        add_objects(unit.objects);
+        for (auto& input : unit.implicitInputs)
+            if (auto a = archiveOf.find(input); a != archiveOf.end()) add_objects(a->second->objects);
+        return std::vector<std::string>(files.begin(), files.end());
+    };
+    // The guide of the framework a test is written with: its entry's package,
+    // else -- a protocol program with its own `main` -- the graph's one
+    // framework that states a guide.
+    auto guide_of = [&](const mcpp::build::LinkUnit& unit, int protocol) {
+        std::vector<const mcpp::build::TestFramework*> guided;
+        for (auto const& f : ctx->plan.testFrameworks) {
+            if (f.guide.empty()) continue;
+            if (!unit.testFramework.empty() && f.package == unit.testFramework) return f.guide;
+            guided.push_back(&f);
+        }
+        return unit.testFramework.empty() && protocol && guided.size() == 1 ? guided.front()->guide
+                                                                            : std::string{};
+    };
+    // Where a protocol program's report, selection and case directory are:
+    // one directory per test under the configuration's output.
+    auto protocol_dir = [&](std::string_view testName) {
+        std::string leaf(testName);
+        for (auto& ch : leaf)
+            if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '.') ch = '_';
+        return ctx->outputDir / "test-protocol" / leaf;
+    };
 
     for (auto& lu : ctx->plan.linkUnits) {
         if (!filter_match(lu)) continue;
@@ -4665,6 +4963,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             }
             results.push_back({lu.targetName, TestResult::St::CompileFail, 0,
                                b.error().diagnosticOutput, {}, test_ms()});
+            results.back().guide = guide_of(lu, lu.testProtocol);
             emit_json(results.back());
             continue;
         }
@@ -4691,8 +4990,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // A GL test that cannot find a driver fails the same way a GL program
         // does, so it must be told the same things.
         for (auto& kv : subosEnv) childEnv.push_back(kv);
-        // ...and where the package's own programs are (L5).
+        // ...and where the package's own programs are (L5): a workspace
+        // member's, for a test of that member.
         for (auto& kv : tb.programEnv) childEnv.push_back(kv);
+        if (auto mp = tb.memberProgramEnv.find(lu.memberOf); mp != tb.memberProgramEnv.end())
+            for (auto& kv : mp->second) childEnv.push_back(kv);
         // ...and, through a runner, the files the test carries with it, as
         // `mcpp run` hands them over (see `runtime_files_for`). Written here,
         // in the single-threaded pass, one list per test program.
@@ -4730,6 +5032,18 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 
         runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),
                             buildMsOfTest, exe});
+        // The protocol it implements: what its entry states, else the marker
+        // its file carries (P2.3). A version this mcpp does not speak runs as
+        // a program that implements none.
+        auto& added = runnable.back();
+        const int version = lu.testProtocol ? lu.testProtocol
+                                            : mcpp::build::test_protocol::marker_version(exe);
+        if (version == mcpp::build::test_protocol::kVersion) {
+            added.protocol = version;
+            added.protocolDir = protocol_dir(lu.targetName);
+        }
+        added.sources = sources_of(lu);
+        added.guide = guide_of(lu, version);
     }
     // `mcpp test <name> --print-launch` (design 2026-10-30 part 2 §7.4): the one test the pattern
     // names, built, described as `mcpp run --print-launch` describes a program -- the `mcpp.launch`
@@ -4760,6 +5074,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         env.data = mcpp::build::result::to_json(launch);
         env.data["program"] = chosen->program.generic_string();
         env.data["test"] = chosen->name;
+        // The test protocol the program implements, or null (docs/08 "Cases"):
+        // a debugger that starts it states the variables it wants.
+        env.data["protocol"] = chosen->protocol ? nlohmann::json(chosen->protocol) : nlohmann::json(nullptr);
         env.data["configuration"] = launch_configuration(*ctx);
         emit_launch(env);
         return 0;
@@ -4771,10 +5088,92 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // `runnable` compiled and linked; a test that did not is already a
     // `CompileFail` in `results` and keeps that status, so this path reports
     // what was built without also reporting anything about what it does.
+    auto built_result = [&](const Runnable& r) {
+        TestResult t{r.name, TestResult::St::Built, 0, {}, {}, 0, false, {}, r.buildMs};
+        t.protocol = r.protocol;
+        t.guide = r.guide;
+        t.program = r.program.generic_string();
+        t.sources = r.sources;
+        return t;
+    };
     if (testOpts.noRun || tb.builtNotRunHere) {
-        for (auto& r : runnable)
-            results.push_back({r.name, TestResult::St::Built, 0, {}, {}, 0,
-                               false, {}, r.buildMs});
+        for (auto& r : runnable) {
+            results.push_back(built_result(r));
+            emit_json(results.back());
+        }
+    } else if (testOpts.listCases || !testOpts.cases.empty()) {
+        // THE CASES (P3): each protocol program lists its cases without
+        // running one. `--cases` reports the listings; `--case` runs, of each
+        // program, the cases its patterns match (P4), and no program with
+        // none or that implements no protocol.
+        std::vector<Runnable> selected;
+        int notSelected = 0;
+        for (auto& r : runnable) {
+            if (!r.protocol) {
+                if (testOpts.listCases) {
+                    results.push_back(built_result(r));
+                    if (!json) mcpp::ui::plain(std::format("{}: one case, its exit status (no test protocol)", r.name));
+                    emit_json(results.back());
+                } else {
+                    ++notSelected;
+                }
+                continue;
+            }
+            mcpp::run::Options listOpts;
+            listOpts.env = r.env;
+            for (auto& kv : protocol_run(r, "list")) listOpts.env.push_back(std::move(kv));
+            listOpts.streams = mcpp::run::Streams::merged;
+            listOpts.total = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
+            listOpts.report_spawn_failure = false;
+            auto listed = mcpp::run::execute(r.argv, listOpts);
+            auto report = mcpp::build::test_protocol::read_report(r.protocolDir / "list.ndjson", listed.exit_code);
+            if (listed.exit_code == 0 && listed.spawn_error == 0 && !report.spoke) {
+                // The marker without the protocol (a file of plain `main` beside a
+                // framework's library): one case, as a program of no protocol.
+                r.protocol = 0;
+                if (testOpts.listCases) {
+                    results.push_back(built_result(r));
+                    if (!json) mcpp::ui::plain(std::format("{}: one case, its exit status (no test protocol)", r.name));
+                    emit_json(results.back());
+                } else {
+                    ++notSelected;
+                }
+                continue;
+            }
+            if (listed.exit_code != 0 || listed.spawn_error != 0 || !report.done) {
+                if (!json) mcpp::ui::plain(std::format("{} ... FAIL (listing its cases: exit {})", r.name, listed.exit_code));
+                if (!json && !listed.output.empty()) mcpp::ui::plain(listed.output);
+                results.push_back({r.name, TestResult::St::RunFail, listed.exit_code, {}, listed.output, 0, listed.timed_out,
+                                   {}, r.buildMs});
+                results.back().protocol = r.protocol;
+                emit_json(results.back());
+                continue;
+            }
+            if (testOpts.listCases) {
+                results.push_back(built_result(r));
+                if (!json) {
+                    mcpp::ui::plain(std::format("{}: {} case{}", r.name, report.listed.size(),
+                                                report.listed.size() == 1 ? "" : "s"));
+                    for (const auto& c : report.listed)
+                        mcpp::ui::plain(std::format("    {}  {}:{}", c.id, c.file, c.line));
+                }
+                results.back().report = std::move(report);
+                emit_json(results.back());
+                continue;
+            }
+            std::string lines;
+            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases))
+                lines += id + "\n";
+            if (lines.empty()) { ++notSelected; continue; }
+            r.select = r.protocolDir / "select.txt";
+            std::ofstream(*r.select, std::ios::binary) << lines;
+            selected.push_back(std::move(r));
+        }
+        if (!json && notSelected && !testOpts.listCases)
+            mcpp::ui::info("note", std::format(
+                "--case: {} test program{} with no matching case, or implementing no test protocol, did not run",
+                notSelected, notSelected == 1 ? "" : "s"));
+        if (!testOpts.listCases) run_tests_now(selected);
     } else {
         // THE FULL REASON, ONCE (SPEC-013 §18, criterion 7). It carries the key
         // that changes it (`run_under`); it was recorded silently and the
@@ -4868,6 +5267,15 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         for (auto& n : failures) std::println("    {}", n);
         // (Each compile failure's diagnostics already printed inline under its
         // FAIL line in Phase B — the summary stays a compact name list.)
+        print_unprovided_test_imports(ctx->plan, failures);
+        // Where to read how these tests are written (docs/08).
+        if (!ctx->plan.testFrameworks.empty()) {
+            std::string names;
+            for (auto const& f : ctx->plan.testFrameworks)
+                names += std::format("{}{} {}", names.empty() ? "" : ", ", f.package, f.version);
+            std::println("");
+            std::println("how these tests are written: mcpp test --guide ({})", names);
+        }
     }
     return rc;
 }
@@ -5226,6 +5634,7 @@ export int run_tests(std::span<const std::string> passthrough,
     TestBuild tb;
     tb.programEnv = std::move(programEnv);
     tb.ctx.emplace(std::move(*prepared));
+    if (int rc = select_by_change(tb, testOpts, json)) return rc;
     tb.backend = mcpp::build::make_ninja_backend();
     tb.ninjaLog = tb.ctx->outputDir / ".ninja_log";
     {
@@ -5255,6 +5664,11 @@ export int run_tests(std::span<const std::string> passthrough,
             mcpp::ui::error(std::format("no tests match '{}'", testOpts.filter));
             return 2;
         }
+    }
+
+    if (testOpts.guide) {
+        print_test_guide(*ctx, json);
+        return 0;
     }
 
     // 4. "Compiling test_X (test)" lines for the test binaries.
@@ -5390,6 +5804,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
                                       discovered->targets, std::move(o));
         if (!prepared) { if (int rc = refused(prepared.error())) return rc; continue; }
         leg->tb.ctx.emplace(std::move(*prepared));
+        if (int rc = select_by_change(leg->tb, testOpts, json)) return rc;
         leg->tb.backend = mcpp::build::make_ninja_backend();
         leg->tb.ninjaLog = leg->tb.ctx->outputDir / ".ninja_log";
         std::error_code ec;
@@ -5613,6 +6028,8 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         tb->prepareMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - t0).count();
         tb->ctx.emplace(std::move(*prepared));
+        if (select_by_change(*tb, testOpts, json) != 0)
+            return std::unexpected(std::format("--since {}: the change could not be read", testOpts.since));
         tb->backend = mcpp::build::make_ninja_backend();
         tb->ninjaLog = tb->ctx->outputDir / ".ninja_log";
         std::error_code ec;
@@ -5721,6 +6138,47 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
                     slots[i].packageOutput = a->diagnosticOutput;
                     slots[i].packageOutputShown = true;
                 }
+        }
+        // EACH MEMBER'S PROGRAMS, BUILT BEFORE ITS TESTS AND NAMED TO THEM (L5),
+        // as for one package. A workspace's test plan holds a member's test
+        // programs only, so its own programs are built by the member's plan;
+        // without this a member's test found no MCPP_BIN_<NAME> under
+        // `--workspace` and found it under `-p` (found by mtest's conformance
+        // suite).
+        for (auto i : who) {
+            if (slots[i].packageFailed || slots[i].session < 0) continue;
+            auto m = mcpp::manifest::load(wsRoot / members[i].path / "mcpp.toml", {.insideWorkspace = true});
+            if (!m || std::ranges::none_of(m->targets, [](auto const& t) {
+                    return t.kind == mcpp::manifest::Target::Binary
+                        || t.kind == mcpp::manifest::Target::Application; }))
+                continue;
+            BuildOverrides po = base;
+            po.package_filter.clear();
+            po.project_root = wsRoot;
+            po.will_run = false;
+            po.workspace_members = { members[i].path };
+            po.workspace_request = { members[i].path };
+            po.member_targets.clear();
+            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, std::move(po));
+            if (!binCtx) {
+                slots[i].packageFailed = true;
+                slots[i].packageOutput = binCtx.error();
+                continue;
+            }
+            if (run_build_plan(*binCtx, mcpp::log::is_verbose(), false, base.target_triple) != 0) {
+                slots[i].packageFailed = true;
+                slots[i].packageOutput = std::format("the programs of member '{}' did not build", members[i].path);
+                continue;
+            }
+            auto& env = tb.memberProgramEnv[slots[i].owner];
+            for (auto const& lu : binCtx->plan.linkUnits) {
+                if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
+                std::string key = "MCPP_BIN_";
+                for (char c : lu.targetName)
+                    key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+                         : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+                env.emplace_back(std::move(key), (binCtx->outputDir / lu.output).lexically_normal().string());
+            }
         }
         // The test goals of the members that can run.
         std::set<std::string> runnable;
@@ -5954,14 +6412,70 @@ export std::int64_t configured_keep_days() {
             days = doc->get_int("build.keep_days").value_or(days);
     return days;
 }
+// `[build] target_budget` (mcpp#874): the bytes a project's `target/` may hold,
+// from the project's mcpp.toml (the workspace root's), else config.toml; none
+// when neither states one. `"20GiB"`, `"500MiB"`, or a number of bytes.
+std::optional<std::uintmax_t> target_budget(const std::filesystem::path& root) {
+    for (auto const& file : {root / "mcpp.toml", mcpp::home::root() / "config.toml"}) {
+        std::error_code ec;
+        if (!std::filesystem::exists(file, ec)) continue;
+        auto doc = mcpp::libs::toml::parse_file(file);
+        if (!doc) continue;
+        if (auto v = doc->get_string("build.target_budget"))
+            if (auto n = mcpp::bmi_cache::parse_size(*v)) return n;
+    }
+    return std::nullopt;
+}
+
+std::uintmax_t tree_bytes(const std::filesystem::path& dir) {
+    std::uintmax_t total = 0;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
+        std::error_code fe;
+        if (it->is_regular_file(fe) && !it->is_symlink(fe)) total += it->file_size(fe);
+    }
+    return total;
+}
+
+// OVER BUDGET, AFTER EVERY BUILD: the directories no configuration uses go at
+// once, whatever their age; if the ones in use still exceed the budget, the
+// build says so and names the largest. Only when a budget is stated: the
+// measurement walks target/.
+void keep_target_budget(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    const auto budget = target_budget(root);
+    std::error_code ec;
+    if (!budget || !fs::is_directory(root / "target", ec)) return;
+    if (tree_bytes(root / "target") <= *budget) return;
+    clean_stale(false, 0, true);
+    const auto now = tree_bytes(root / "target");
+    if (now <= *budget) return;
+    std::vector<std::pair<std::uintmax_t, std::string>> dirs;
+    for (fs::directory_iterator t(root / "target", ec), end; t != end; t.increment(ec)) {
+        if (!t->is_directory() || t->path().filename().string().starts_with(".")) continue;
+        std::error_code fec;
+        for (fs::directory_iterator f(t->path(), fec), fend; f != fend; f.increment(fec))
+            if (f->is_directory())
+                dirs.emplace_back(tree_bytes(f->path()), f->path().lexically_relative(root).generic_string());
+    }
+    std::ranges::sort(dirs, std::greater{});
+    std::string largest;
+    for (std::size_t i = 0; i < dirs.size() && i < 3; ++i)
+        largest += std::format("{}{} ({})", i ? ", " : "", dirs[i].second, mcpp::bmi_cache::human_bytes(dirs[i].first));
+    mcpp::ui::warning(std::format(
+        "target/ holds {}, over [build] target_budget = {}, in configurations still in use: {}",
+        mcpp::bmi_cache::human_bytes(now), mcpp::bmi_cache::human_bytes(*budget), largest));
+}
+
 export void sweep_after_build() {
     namespace fs = std::filesystem;
     const std::int64_t days = configured_keep_days();
     std::error_code ec;
-    if (days <= 0) return;
     auto root = mcpp::project::find_manifest_root(fs::current_path());
     if (!root) return;
     if (auto ws = mcpp::project::find_workspace_root(*root); !ws.empty()) root = ws;
+    keep_target_budget(*root);
+    if (days <= 0) return;
     const auto stamp = *root / "target" / ".mcpp-swept";
     if (fs::exists(stamp, ec)) {
         const auto age = std::chrono::duration_cast<std::chrono::hours>(
@@ -6233,8 +6747,11 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                      target.string(), kept, kept == 1 ? "y" : "ies", window()));
     } else {
         if (quiet)
-            mcpp::ui::status("Swept", std::format("{} build director{} no configuration used for {} days ({}; [build] keep_days in config.toml)",
-                removed, removed == 1 ? "y" : "ies", keepWithinSecs / 86400, mcpp::bmi_cache::human_bytes(bytes)));
+            mcpp::ui::status("Swept", keepWithinSecs == 0
+                ? std::format("{} build director{} no configuration uses ({}; over [build] target_budget)",
+                              removed, removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes))
+                : std::format("{} build director{} no configuration used for {} days ({}; [build] keep_days in config.toml)",
+                              removed, removed == 1 ? "y" : "ies", keepWithinSecs / 86400, mcpp::bmi_cache::human_bytes(bytes)));
         line(std::format("{} {} director{} ({})", dryRun ? "Would remove" : "Removed", removed,
                      removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes)));
     }

@@ -220,6 +220,9 @@ struct Target {
     // Where `main` was stated, for diagnostics: `[targets.app] main`, or a
     // row's header.
     std::string                 mainDeclaredBy;
+    // Of a test program of several files (`[test] programs = "directory"`):
+    // its translation units besides `main`, relative to the package root.
+    std::vector<std::string>    testSources;
     // The files this target names as `main` on OTHER rows (and the one a
     // matching row replaced). Each is a beginning, never an ordinary source
     // of an image, whichever row is built (design 2026-10-26 §24.3).
@@ -229,6 +232,17 @@ struct Target {
     // as an artifact target is: a program that selects it is refused, naming
     // the features (design 2026-10-26 §24.4 item 3).
     std::vector<std::string>    inactiveFeatures;
+    // Of an entry target: `test-protocol = 1`, the version of the mtest test
+    // protocol a test program that begins here implements (mtest
+    // spec/protocol.md P2.3, docs/08); 0 when the entry states none.
+    int                         testProtocol = 0;
+    // Of an entry target: `test-main = true`, the beginning of a test program
+    // of a package that depends on this one and whose file defines no `main`
+    // (docs/08), without `[test] main`.
+    bool                        testMain = false;
+    // Of an entry target: `test-guide = "<file>"`, the package's guide to
+    // writing its tests, relative to the package root (`mcpp test --guide`).
+    std::string                 testGuide;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --
@@ -2222,6 +2236,10 @@ struct Manifest {
     // image is entered at.
     std::string                 testMainFrom;
     std::string                 testStart;
+    // `[test] programs`: "file" (a test program per discovered file) or
+    // "directory" (the files of one directory below a discover glob's fixed
+    // directory are one program, named by the directory). Empty: "file".
+    std::string                 testPrograms;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended

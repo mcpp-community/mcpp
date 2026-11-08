@@ -882,12 +882,16 @@ bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
     // packages whose targets make_plan compiles are the root and, in a
     // workspace plan, every selected member (a member whose only sources are
     // its tests is the case the root alone misses).
+    // A dependency's entry targets too: an entry is compiled into the program
+    // that begins at it (a test framework's `main`), and it is in no package
+    // scan, so its `import std` was seen by nothing that builds the std module.
     auto targets_import_std = [&](const mcpp::manifest::Manifest& m,
-                                  const std::filesystem::path& root) {
+                                  const std::filesystem::path& root, bool entriesOnly = false) {
         const auto extTable = mcpp::extension_table_for(m.buildConfig.moduleExtensions,
                                                         m.buildConfig.deviceExtensions);
         for (auto& t : m.targets) {
             if (t.main.empty()) continue;
+            if (entriesOnly && t.kind != mcpp::manifest::Target::Entry) continue;
             const auto entry = mcpp::modgraph::scan_entry_file(root / t.main,
                                                                m.package.name, extTable);
             for (auto const& req : entry.requires_)
@@ -897,7 +901,7 @@ bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
     };
     if (targets_import_std(manifest, projectRoot)) return true;
     for (auto const& pkg : packages)
-        if (pkg.selectedMember && targets_import_std(pkg.manifest, pkg.root)) return true;
+        if (targets_import_std(pkg.manifest, pkg.root, /*entriesOnly=*/!pkg.selectedMember)) return true;
     return false;
 }
 

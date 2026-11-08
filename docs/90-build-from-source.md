@@ -114,6 +114,17 @@ the ones in use. A script that requires a capability no CI job provides **never
 runs anywhere**, and its greenness means nothing — check that some job supplies
 what a new script asks for.
 
+**CI runs them by [mtest](https://github.com/mcpp-community/mtest)** (2026.11.8.1+):
+`tests/e2e/mtest.toml` makes each script a program, its `# requires:` line its
+tags and a `# resources:` line what it holds while it runs (`machine`: nothing
+runs beside it; a script that changes the shared home's configuration says so).
+`run_all.sh` with `E2E_MTEST=<mtest>` runs the suite through it: `E2E_SHARD`
+divides by the measured history of the store (`tests/e2e/.mtest`, which CI takes
+from main's last run), `E2E_JOBS` runs that many scripts at once, and
+`E2E_SET=pr` runs the scripts a change affects by the nightly coverage map
+(`.github/workflows/e2e-coverage.yml`). `mtest explain` in `tests/e2e` says where
+a script failed and how to run it again.
+
 ## Writing a check that measures something
 
 The most transferable rule in this repository, and the one that fails silently

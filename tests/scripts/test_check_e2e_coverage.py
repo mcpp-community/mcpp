@@ -77,6 +77,27 @@ class E2ECoverage(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("STALE EXCEPTION: 30_excused.sh is excused but ran on macos", r.stdout)
 
+    def test_a_test_required_on_hosts_must_pass_on_each(self) -> None:
+        (self.root / "tests" / "e2e" / "host-requirements.tsv").write_text(
+            "# test\thosts\treason\n10_runs.sh\tlinux macos windows\tverified rows\n")
+        (self.reports / "e2e-report-macos-1.tsv").write_text("pass\t10_runs.sh\t10\t\n")
+        (self.reports / "e2e-report-windows-1.tsv").write_text(
+            "skip\t10_runs.sh\t0\tmissing capability: llvm\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("REQUIRED ON HOST: 10_runs.sh did not pass on windows (windows: missing capability: llvm)",
+                      r.stdout)
+        self.assertNotIn("did not pass on linux", r.stdout)
+        self.assertNotIn("did not pass on macos", r.stdout)
+        (self.reports / "e2e-report-windows-1.tsv").write_text("pass\t10_runs.sh\t10\t\n")
+        self.assertEqual(self.run_check().returncode, 0)
+
+    def test_a_host_requirement_for_a_missing_test_fails(self) -> None:
+        (self.root / "tests" / "e2e" / "host-requirements.tsv").write_text("99_gone.sh\tlinux\tx\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("STALE EXCEPTION: 99_gone.sh is required on hosts but does not exist", r.stdout)
+
     def test_an_exception_for_a_missing_test_fails(self) -> None:
         with (self.root / "tests" / "e2e" / "coverage-exceptions.tsv").open("a") as f:
             f.write("99_gone.sh\tremoved\n")

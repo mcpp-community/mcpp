@@ -55,6 +55,8 @@ inline constexpr KeyClass kKeyRegistry[] = {
     {"build", "cache",                   KeyScope::Configuration, KeyMerge::Scalar,  false, false},
     {"build", "cflags",                  KeyScope::Package,       KeyMerge::List,    true,  true },
     {"build", "compile_commands",        KeyScope::Metadata,      KeyMerge::Scalar,  false, false},
+    // The bytes target/ may hold (mcpp#874); read by the sweep after a build.
+    {"build", "target_budget",           KeyScope::Metadata,      KeyMerge::Scalar,  false, false},
     {"build", "cxxflags",                KeyScope::Package,       KeyMerge::List,    true,  true },
     {"build", "cxx_runtime",             KeyScope::Configuration, KeyMerge::Scalar,  true,  false},
     {"build", "default-profile",         KeyScope::Configuration, KeyMerge::Scalar,  false, false},

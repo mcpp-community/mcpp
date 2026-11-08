@@ -1,0 +1,92 @@
+name: e2e-mtest
+description: >
+  mtest for the e2e suite (design 2026-11-08 W8; tests/e2e/mtest.toml): the
+  release this action pins, its sha256 checked, and the stores main's last
+  successful CI run kept for this host, taken into tests/e2e/.mtest so that
+  `--shard` divides the suite by measured time and a run orders its tests
+  longest first. Exports E2E_MTEST for run_all.sh. A run with no store of main
+  divides by count, and its own store becomes the next run's history.
+
+inputs:
+  host:
+    description: the host's name in the stores' artifact names (linux, macos, windows)
+    required: true
+  version:
+    description: the mtest release
+    required: false
+    default: '0.2.0'
+  sha256:
+    description: sha256 of mtest-<version>-openkal-bundle-all.tar.gz
+    required: false
+    default: '283e8752d1aa009c95ed9399247ab93a46a3f734c7c1cf7b7af8ca1b5de0070b'
+  token:
+    description: a token that reads this repository's actions
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: mtest
+      shell: bash
+      env:
+        MTEST_VERSION: ${{ inputs.version }}
+        MTEST_SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        archive="mtest-$MTEST_VERSION-openkal-bundle-all.tar.gz"
+        temp="$RUNNER_TEMP"; python=python3
+        if [ "$RUNNER_OS" = Windows ]; then temp=$(cygpath -u "$RUNNER_TEMP"); python=python; fi
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$temp/$archive" \
+          "https://github.com/mcpp-community/mtest/releases/download/v$MTEST_VERSION/$archive"
+        actual=$("$python" -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$temp/$archive")
+        [ "$actual" = "$MTEST_SHA256" ] || { echo "::error::$archive: sha256 $actual, the action pins $MTEST_SHA256"; exit 1; }
+        mkdir -p "$temp/mtest" && tar xzf "$temp/$archive" -C "$temp/mtest"
+        launcher="$temp/mtest/mtest-$MTEST_VERSION-openkal-bundle-all/bin/mtest"
+        [ "$RUNNER_OS" = Windows ] && launcher="$launcher.exe"
+        "$launcher" --version
+        echo "E2E_MTEST=$launcher" >> "$GITHUB_ENV"
+    # The pull request's change, for the `pr` set: the base's tip and HEAD's
+    # parents, so that `git diff <base>...HEAD` has its merge base. When they
+    # cannot be fetched, mtest selects every test and says why.
+    - name: The base of the change
+      if: github.base_ref != ''
+      shell: bash
+      run: |
+        git fetch --no-tags --depth=1 origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}" || true
+        git fetch --no-tags --deepen=1 origin || true
+    - name: The stores of main's last CI run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        HOST: ${{ inputs.host }}
+      run: |
+        set -euo pipefail
+        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        if [ -z "$run" ]; then echo "no successful run of main: the suite is divided by count"; exit 0; fi
+        rm -rf "$RUNNER_TEMP/e2e-stores"
+        if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -p "e2e-store-$HOST-*" -D "$RUNNER_TEMP/e2e-stores" 2>/dev/null; then
+          echo "main's run $run kept no store for $HOST: the suite is divided by count"; exit 0
+        fi
+        for store in "$RUNNER_TEMP"/e2e-stores/*/; do
+          (cd tests/e2e && "$E2E_MTEST" store import --from "$store")
+        done
+        echo "history of main's run $run: $(ls "$RUNNER_TEMP/e2e-stores" | wc -l) store(s)"
+    # The coverage map of the last nightly measurement (e2e-coverage.yml), on
+    # the host it was measured on: the sources each test's run executed there.
+    # Another host's own sources (src/native/windows/...) run on no Linux test,
+    # so its suite has no map and every test of it is affected.
+    - name: The coverage map
+      if: inputs.host == 'linux'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow e2e-coverage.yml --status success --limit 1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        if [ -z "$run" ]; then echo "no coverage map: every test is affected"; exit 0; fi
+        rm -rf "$RUNNER_TEMP/e2e-coverage"
+        gh run download "$run" -R "$GITHUB_REPOSITORY" -n e2e-coverage-linux -D "$RUNNER_TEMP/e2e-coverage" || exit 0
+        (cd tests/e2e && "$E2E_MTEST" coverage import --from "$RUNNER_TEMP/e2e-coverage/coverage.json")

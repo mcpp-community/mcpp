@@ -53,6 +53,19 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 
 </details>
 
+带点的加引号键 `"mcpplibs.cmdline" = "0.0.2"` 是一个名字中含点的 TOML 键。
+mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自 2026.11.8.1 起，
+2027.2 起移除；docs/51），并给出替代它的不加引号的键：
+`mcpplibs.cmdline = "0.0.2"`。
+同一张表中的一个包与其命名空间下的包（`mcpplibs.mtest` 与 `mcpplibs.mtest.gtest`）不能都不加引号——一个名字
+会既是值又是表——因此其中一个的加引号键就是这对包的写法，不属于弃用：
+
+```toml
+[dev-dependencies]
+mcpplibs.mtest         = "0.2.0"
+"mcpplibs.mtest.gtest" = "0.2.0"
+```
+
 ```toml
 # Path dependency (local development)
 [dependencies]
@@ -377,7 +390,8 @@ mcpp index status     # local state: state, age and revision
 gtest = "1.15.2"
 ```
 
-`mcpp build` 忽略这些依赖；`mcpp test` 解析并使用它们。`mcpp test` 自动
+`mcpp build` 忽略这些依赖；`mcpp test` 解析并使用它们，且只用于测试单元：包自己的源文件
+在 `mcpp test` 下与 `mcpp build` 下编译方式相同（2026.11.8.1+，见 [08](08-testing.md)）。`mcpp test` 自动
 发现 `tests/**/*.cpp` 并把它们编译为测试二进制。运行器与框架无关：每个文件
 是一个独立的二进制，由退出码判定 —— 裸 `main`、gtest（经 `[dev-dependencies]`
 加 `gtest_main`）或任何其他框架，行为完全一致，`-- args` 会转发给每一个测试

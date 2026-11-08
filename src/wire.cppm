@@ -260,11 +260,12 @@ inline nlohmann::json to_json(const Diagnostic& in) {
 // exist, which a client turns something on or off by. A name is added when a
 // client gates on it, is never renamed and never removed; docs/50 names the
 // release that added it and the client that reads it.
-inline constexpr std::array<std::string_view, 4> kFeatures{{
+inline constexpr std::array<std::string_view, 5> kFeatures{{
     "target-sets",       // SPEC-015 §1: `--target openkal` is the set's legs (an IDE's target picker)
     "pkg-format-list",   // SPEC-014 §5.4: `--pkg-format tar,okb` writes each container (an IDE's pack form)
     "test-launch",       // docs/50 §6: `mcpp test <name> --print-launch` (an IDE debugging a test)
     "launch-stream",     // docs/50 §6: `mcpp run --print-launch --message-format json` (an IDE's Run)
+    "test-protocol",     // docs/08 "Cases": a test program's cases, listed, selected and reported (an IDE's test tree)
 }};
 
 // The same list as JSON: `--protocol-version` and every envelope's `mcpp` field

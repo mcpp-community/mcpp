@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# check_include_regions.sh — headers are included only where a system has no
-# module for what is needed (design 2026-11-07 D10).
+# check_include_regions.sh — headers are included, and the preprocessor
+# chooses, only where a system has no module for what is needed (design
+# 2026-11-07 D10; design 2026-11-08 S4).
 #
 # mcpp imports the standard library (`import std`), its dependencies as modules
 # (nlohmann.json, mcpplibs.os, the mwrap wrappers of zlib, zstd, xz and of the
@@ -9,6 +10,11 @@
 # each in the source file of its system (src/native/<system>/lock.cpp). A
 # directive anywhere else is a header a module should provide: depend on the
 # package that wraps it, or wrap it (mcpp-index docs/mwrap.md).
+#
+# The same holds for a conditional directive (`#if`, `#ifdef`, `#ifndef`,
+# `#elif`) and a macro definition (`#define`): a platform is chosen by
+# `if constexpr` over mcpplibs.os and by the per-system sources of mcpp.toml,
+# never by the preprocessor.
 #
 # Text that only looks like a directive is not one: a raw string (the source
 # mcpp writes for a launcher or a template) and a comment are skipped. Tests
@@ -20,10 +26,11 @@ import re, sys
 from pathlib import Path
 
 ALLOWED = {Path("src/native/posix/lock.cpp"), Path("src/native/windows/lock.cpp")}
+DIRECTIVE = re.compile(r'#\s*(include|if|ifdef|ifndef|elif|elifdef|elifndef|define)\b')
 RAW = re.compile(r'(?:u8|u|U|L)?R"([^()\\ ]{0,16})\(')
 
 def directives(text):
-    """Line numbers of `#include` directives outside comments and raw strings."""
+    """(line, directive) of each preprocessor directive outside comments and raw strings."""
     out, i, n, line = [], 0, len(text), 1
     at_line_start = True
     while i < n:
@@ -45,7 +52,8 @@ def directives(text):
                 j += 2 if text[j] == '\\' else 1
             i = j + 1; at_line_start = False; continue
         if at_line_start and c == '#':
-            if re.match(r'#\s*include\b', text[i:]): out.append(line)
+            d = DIRECTIVE.match(text, i)
+            if d: out.append((line, d.group(1)))
         if not c.isspace(): at_line_start = False
         i += 1
     return out
@@ -54,8 +62,9 @@ bad = 0
 for path in sorted(list(Path("src").rglob("*.cpp*")) + list(Path("modules").rglob("*.cpp*"))):
     if "tests" in path.parts or "test" in path.parts or path in ALLOWED:
         continue
-    for line in directives(path.read_text(encoding="utf-8", errors="replace")):
-        print(f"{path}:{line}: #include outside the system lock files; import a module instead")
+    for line, d in directives(path.read_text(encoding="utf-8", errors="replace")):
+        hint = "import a module instead" if d == "include" else "choose with if constexpr or a per-system source"
+        print(f"{path}:{line}: #{d} outside the system lock files; {hint}")
         bad += 1
 for path in ALLOWED:
     if not path.exists():

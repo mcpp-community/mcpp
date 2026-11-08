@@ -53,7 +53,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     // `--template` exact package SPEC:
-    //   builtin registry (frozen: bin; gui = transitional alias), else a
+    //   builtin registry (bin, lib; gui = transitional alias), else a
     //   package template: [ns.]pkg | [ns.]pkg:tmpl | [ns.]pkg@ver:tmpl.
     std::string tmpl = "bin";
     if (auto t = parsed.value("template")) tmpl = *t;
@@ -62,7 +62,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "--template gui is deprecated; use `--template imgui` "
             "(the template then ships with — and version-tracks — the library)");
     }
-    if (tmpl != "bin" && tmpl != "gui") {
+    if (tmpl != "bin" && tmpl != "gui" && tmpl != "lib") {
         auto spec = mcpp::scaffold::parse_template_spec(tmpl);
         if (!spec) {
             mcpp::ui::error(spec.error().message);
@@ -78,7 +78,8 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return mcpp::scaffold::new_from_package_template(*project, *spec);
     }
     return mcpp::scaffold::create_builtin_project(
-        *project, /*gui=*/tmpl == "gui");
+        *project, tmpl == "lib" ? mcpp::scaffold::builtin::lib
+                  : tmpl == "gui" ? mcpp::scaffold::builtin::gui : mcpp::scaffold::builtin::bin);
 }
 
 } // namespace mcpp::cli

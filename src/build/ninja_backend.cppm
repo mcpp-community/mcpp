@@ -1537,6 +1537,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // A unit's own flags: its package's, then its package's `trim_paths` map
     // (mcpp#844), so that nothing outside the package's closure reaches it.
     auto unit_trim = [&](const CompileUnit& cu) -> std::string_view {
+        if (cu.testUnit) return {};   // a test's own file keeps its paths
         auto it = flags.trimByPackage.find(cu.packageName);
         return it == flags.trimByPackage.end() ? std::string_view{} : std::string_view(it->second);
     };
@@ -4748,6 +4749,23 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         std::filesystem::create_directories(plan.outputDir / "obj", sec);
         write_file(plan.outputDir / "obj" / "mcpp_ios_init.c",
                    mcpp::build::dist::stream_init_shim_source());
+    }
+
+    // A program's directory that an earlier build left as a file: a test
+    // named `e2e` before a later `e2e/c` (`[test] programs` changed, or a file
+    // became a directory). The file is a product this plan no longer makes,
+    // and ninja cannot write below it.
+    for (auto const& lu : plan.linkUnits) {
+        std::error_code fec;
+        // And the other way: a program where an earlier build placed others below it.
+        if (!lu.output.empty() && std::filesystem::is_directory(plan.outputDir / lu.output, fec))
+            std::filesystem::remove_all(plan.outputDir / lu.output, fec);
+        for (auto dir = (plan.outputDir / lu.output).parent_path();
+             dir != plan.outputDir && dir.has_relative_path(); dir = dir.parent_path())
+            if (std::filesystem::is_regular_file(dir, fec)) {
+                std::filesystem::remove(dir, fec);
+                break;
+            }
     }
 
     if (opts.dryRun) {

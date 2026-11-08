@@ -1378,6 +1378,23 @@ These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any
 `rerun-if-env-changed` declaration.
 
+### Testing a program's logic: `mcpp::context` (mcpp 2026.11.8.1+)
+
+Every typed reader reads through one function: within a `mcpp::context`, the
+values the context states, the innermost first; a name it does not state from
+the context around it, then from the environment. A test of a build program's
+or a plugin's logic states the engine's values in its own process instead of
+changing its environment:
+
+```cpp
+mcpp::context engine({{"MCPP_TARGET_OS", "windows"}, {"MCPP_FEATURE_FAST", "1"}});
+expect(choose_flags() == "/O2");
+```
+
+A context belongs to the thread that made it and ends with its scope. It holds
+up to 64 values and does not copy the strings it names, which outlive it
+(literals do).
+
 ### Text is UTF-8 in both directions (mcpp 2026.9.26.1+)
 
 Every path and value mcpp passes to the program is UTF-8, and mcpp reads every

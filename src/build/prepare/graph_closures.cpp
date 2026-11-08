@@ -107,7 +107,8 @@ void step4b_define_lookup_closures(PrepareState& state) {
         return !mcpp::build::path_is_under_any(pkg.root, state.storeRoots)
             && !mcpp::build::path_is_under_any(pkg.root, std::vector{mcpp::home::root()});
     };
-    state.reportCompatUse = [&](std::string_view id, std::size_t i, std::string detail) {
+    state.reportCompatUseInstead = [&](std::string_view id, std::size_t i, std::string detail,
+                                       std::string instead) {
         auto const* d = mcpp::pm::compat::find_deprecation(id);
         if (!d) return;
         const bool warn = state.editablePackage(i);
@@ -119,7 +120,10 @@ void step4b_define_lookup_closures(PrepareState& state) {
         if (!warn) return;
         mcpp::diag::warning(d->domain, std::format(
             "{}: {} is {}. Write {} instead.", where, detail, mcpp::pm::compat::deprecation_clause(*d),
-            d->canonical));
+            instead.empty() ? std::string(d->canonical) : instead));
+    };
+    state.reportCompatUse = [&](std::string_view id, std::size_t i, std::string detail) {
+        state.reportCompatUseInstead(id, i, std::move(detail), {});
     };
 
 

@@ -246,6 +246,7 @@ envelope says when either has changed since.
 | `pkg-format-list` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--pkg-format tar,okb` writes each container of one tree (SPEC-014 §5.4) | an IDE's pack form |
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
 | `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` streams the build's events, then the `mcpp.launch` envelope (below) | an IDE's Run, showing the build as it goes |
+| `test-protocol` | 2026.11.8.1 | a test program that implements the test protocol has its cases listed (`--cases`), selected (`--case`) and reported in the records of `mcpp test --message-format json` (§8) | an IDE's test tree, a case run from the editor |
 
 ### How a tool runs mcpp for a project
 
@@ -528,7 +529,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.24.3` from 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -790,7 +791,8 @@ mcpp test [pattern] [--workspace] --message-format json
 ```
 
 This stream predates the envelope of §2 and is not wrapped in it: it is NDJSON,
-one record per test as each finishes, then one summary record per member. A
+one record per test as each finishes (under `--no-run` and `--cases`, as each is
+built; from 2026.11.8.1), then one summary record per member. A
 `--workspace` run ends with one `workspace_summary` record. A test over several
 members adds one `group_build` record per group, before the group's first test
 record. The §7 guarantees apply to it — fields are added and never removed, and
@@ -811,6 +813,12 @@ Per test:
 | `timed_out` | `true` when `--timeout` killed it (`run_fail`) |
 | `compile_output`, `run_output` | captured diagnostics |
 | `reason` | `not_run` only: why, in one sentence; `""` otherwise |
+| `protocol` | the version of the test protocol the program implements, or `null` *(2026.11.8.1+, [08](08-testing.md#cases-the-test-protocol))* |
+| `cases` | a program that implements it and ran: each case's `id`, `status` (`pass`, `fail`, `skip`, `xfail`, `xpass`, `invalid`), `duration_ms`, `reason` when there is one, and `failures` (`file`, `line`, `message`, `expected` and `actual` when stated) *(2026.11.8.1+)* |
+| `missing` | the identifiers a selection named that the program has no case for *(2026.11.8.1+)* |
+| `listed` | under `--cases`: each case's `id`, `name`, `file`, `line`, and `kind`, `tags`, `expect` when stated *(2026.11.8.1+)* |
+| `guide` | the guide of the framework the test is written with, a file, when its framework states one *(2026.11.8.1+)* |
+| `program`, `sources` | a test built and not run (`--no-run`, `--cases`): the program, and the files it is compiled from -- its own and those of the libraries it links -- for a runner that selects tests by change *(2026.11.8.1+)* |
 
 Summary record, `{"summary": {...}}`:
 
@@ -902,6 +910,12 @@ A tree staged by a mode that bundles nothing (`system`, `static`) carries no
 `needs` lines, and neither does a tree staged by an earlier mcpp; a reader that
 places libraries itself reads these lines rather than inferring the closure from
 the files under `lib/`.
+
+`mcpp test --guide --message-format json` *(2026.11.8.1+)* prints one object,
+`{"guide": {...}}`: `frameworks` (each `package`, `version`, `entry`, `protocol`
+or `null`, `guide` or `null`, `repo`), `commands` (`list`, `one`, `records`,
+`debug`), `docs`, and `suggest` (the dev-dependency line and repository of mtest)
+when the package has no framework.
 
 ## 9. The build stream and the result record *(mcpp 2026.10.26.1+)*
 
@@ -1030,7 +1044,8 @@ mcpp test <name> --print-launch [-- <arguments>]
 The same for one test (feature `test-launch`, 2026.10.31.2): the test `<name>` names is
 built as `mcpp test` builds it and described as `mcpp test` would start it --
 its runner, the environment the run adds, and the arguments after `--` -- with
-`test` in `data` naming it. A name that several tests contain is resolved to
+`test` in `data` naming it and `protocol` stating the test protocol the program
+implements, or `null` (2026.11.8.1+). A name that several tests contain is resolved to
 the one named exactly; a pattern that names several is refused, as are
 `--list`, `--no-run`, `--archive`, `--message-format json`, several legs and
 several members. A debugger starts what the envelope describes.

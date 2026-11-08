@@ -4,6 +4,131 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.8.1] - 2026-11-08
+
+### Added
+
+- `mcpp test` runs the runner's side of the mtest test protocol, version 1
+  (docs/08 "Cases"). A test program whose entry states `test-protocol = 1`, or
+  whose file carries the marker `mtest-protocol=1`, is told the protocol's
+  variables and reports its cases: the record names the protocol and each
+  case's result and failures, a case a crash left open failed, and a failing
+  program's report names its failed cases with their places. `--case PATTERN`
+  runs the matching cases -- a name below a listed case selects the case that
+  case declares, which is reported when it runs (P3.4), and a pattern below it
+  runs the listed case whole --, `--cases` lists them, `--seed N` states the seed. A
+  program that implements no protocol is one case and receives none of the
+  variables. `--no-run` records each built test with its program and the files
+  it is compiled from; `--print-launch` states the protocol; the feature
+  `test-protocol` names all of it (e2e 1035).
+- `mcpp new` scaffolds tests with mtest 0.3.0: the skeleton's test is a file of
+  mtest's cases with no `main` (`UTest smoke{"...", [] { ... }}`: an object is a
+  case, its type its kind), with the dev-dependency `mcpplibs.mtest`, and
+  `--template lib` scaffolds a library -- a module, a partition it exports and
+  the partition's implementation, named after the package -- with its test
+  (docs/01; e2e 1037).
+- An entry with `test-main = true` begins a test file that defines no `main`.
+  The file's imports choose among offers, so in one package a file of mtest's
+  cases and a file of GoogleTest's begin each at its own; a dev-dependency's
+  source that defines `main` (`gtest_main.cc`) begins a test as before, and two
+  beginnings left for one test are refused, naming them (docs/08; e2e 1037).
+- `mcpp test --guide` names the package's test frameworks, each with the guide
+  its entry states (`test-guide`) and its repository, and the commands that
+  list, select and explain cases; a failed run points to it and a record
+  carries `guide` (the protocol's P2.5; docs/08 "Writing a test"; e2e 1037).
+- `[test] programs = "directory"`: the files of one directory below a discover
+  glob's fixed directory are one test program, named by the directory, so a
+  suite of many files is linked once (docs/08; e2e 1038).
+- `mcpp test --since <commit>` and `--changed <path>` build and run the tests a
+  change affects, read from the plan: a test built from a changed file (its own
+  files, the modules it imports transitively, its units of no module), a test
+  whose files name a changed file; a manifest, lock, build program or header
+  affects every test (docs/08; e2e 1038).
+- `mcpp::context` states the engine's values to the build-program interface in
+  one process: every accessor reads the innermost context's values, then the
+  environment, so a test of a build program's or a plugin's logic needs no
+  change of its environment (docs/30; e2e 1036).
+- `[build] target_budget` keeps `target/` within a size: after a build or a test
+  run, the directories no configuration records as current are removed whatever
+  their age, and a build whose directories in use exceed it names the three
+  largest (#874; e2e 1031).
+
+### Changed
+
+- The built-in platform of the two ok-image targets is openkal-platform 0.24.4,
+  whose okrun enters an image in its convention's floating-point state (openkal
+  SPEC 12.2): on Windows a thread began with the x87 at double precision, under
+  which an image's C library read a decimal number otherwise.
+- Both openkal rows are `verified`: mcpp's CI builds an ok image over every layer
+  of the platform and runs it on Linux, macOS and Windows (e2e 1033, required on
+  each host by `tests/e2e/host-requirements.tsv`). docs/24 states the two roles,
+  an image as a release form and a native row as a build target.
+- A dev-dependency reaches the test units and nothing else of its package: its
+  include directories and definitions are given to the files under `tests/`,
+  and a kernel interface only a dev-dependency reaches is given to the
+  dev-dependencies and the test units. The package's own sources compile under
+  `mcpp test` with the commands `mcpp build` gives them, so `mcpp build` and
+  `mcpp test` share one build directory and one compile database and switching
+  between them compiles nothing again (docs/08; e2e 77, 783, 1037 K). Before,
+  a dev-dependency over mcpplibs.os (mtest's) gave the package's sources
+  `__OPENKAL__` and made the test a configuration of its own.
+- A program that carries the protocol's marker and writes no `program` event
+  -- a file of plain `main` linked beside mtest's library -- is one case, judged
+  by its exit status, when run and when listed (e2e 1038).
+- A failed test whose file imports a module no package of the build provides
+  names the module and the dev-dependency a framework is.
+- A product an earlier build left where this one places a program's directory,
+  or a directory where it places a program, is removed before the build.
+- `trim_paths` applies to what `mcpp test` compiles as it does to what `mcpp
+  build` compiles, but for a test program's own files, which keep their paths:
+  under a shipping profile (`release`, mcpp's own default) build and test are
+  one configuration, where a test compiled the whole graph again in a
+  configuration of its own (637 of mcpp's objects; docs/04; e2e 1038 E).
+- `mcpp dyndep` leaves an unchanged output untouched, so a unit whose module
+  edges are what they were is not compiled again when the rule's command
+  changed (#874).
+- The low-space warning's threshold is the larger of 2 GiB and 1.25 times what
+  the configuration's last build wrote (#874; e2e 1030).
+- mcpp's own dependencies are named by identity in one table, each by one
+  spelling of an exact release (#904), and so are those of the launchers `mcpp
+  pack` generates; mcpp, its modules and the launchers name mcpplibs.os 0.4.0.
+
+### Deprecated
+
+- A quoted dotted dependency key (`"mcpplibs.cmdline" = "0.0.2"`) is the reading
+  `quoted-dotted-dependency-key`, reported with the unquoted key that replaces
+  it; removed in 2027.2. A quoted key that is the only spelling of a package
+  beside its parent or a child of its namespace in one table (`mcpplibs.mtest`
+  and `"mcpplibs.mtest.gtest"`) is not deprecated (#904; e2e 1032).
+
+### Fixed
+
+- A dependency's source whose `main` is compiled only under a switch no command
+  defines -- zlib's `crc32.c` (`#ifdef MAKECRCH`), QuickJS's `libregexp.c`
+  (`#ifdef TEST`) -- is linked into a test that has its own `main`. Which
+  sources begin a program is read from the branches the preprocessor may
+  compile: a name the compiler or platform predefines is unknown, any other is
+  undefined; 2026.11.7.2 left such a source out, and the test's link failed
+  with undefined references (measured in Sunrisepeak/mui, #874; e2e 1037 L).
+- The warning on a quoted dotted dependency key names the key to write,
+  `xrender.graph = ...`, not an example (e2e 1032).
+- A configuration group's lock keeps the entries of the other groups (#903;
+  e2e 1027).
+- A project's state directory `.mcpp/` ignores itself in a repository (e2e 1028).
+- `mcpp cache prune --older-than` and `cache gc --older-than` collect a std
+  module unused for that long (#874; e2e 1029).
+- A test that has a beginning -- its own `main`, `[test] main` or an offered
+  entry -- links no dependency's source that defines `main`, a direct
+  dev-dependency's or one beneath it: `gtest_main.cc` of compat.gtest beneath
+  the GoogleTest adapter was linked beside the adapter's `main` (e2e 1037).
+- A test links its package's dev-dependency that is a shared library by the
+  library, as a dependency is; mtest's C ABI was left unresolved (e2e 1037).
+- A dependency's entry that imports `std` builds the std module for the
+  program that begins at it, though nothing else of the graph imports it; the
+  entry failed with "failed to read compiled module" (e2e 1037).
+- Under `--workspace`, a member's test finds the member's programs as
+  `MCPP_BIN_<NAME>`, as under `-p` (e2e 1034).
+
 ## [2026.11.7.2] - 2026-11-07
 
 ### Changed
