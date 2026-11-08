@@ -3411,11 +3411,15 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             || source_defines_main(*lu.entryMain))
             return std::nullopt;
         std::vector<offer> offers;
+        // A package is one provider however many tables name it (a dependency that is also a
+        // dev-dependency offers its beginning once).
+        std::set<std::size_t> providers{consumerIdx};
         auto look = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& deps) {
             for (auto const& [depName, spec] : deps) {
                 auto const names = dependency_name_candidates(depName, spec);
                 auto hit = std::ranges::find_if(names, [&](auto const& n) { return packageIndexByName.contains(n); });
-                if (hit != names.end()) test_main_entries(packageIndexByName.at(*hit), depName, offers);
+                if (hit != names.end() && providers.insert(packageIndexByName.at(*hit)).second)
+                    test_main_entries(packageIndexByName.at(*hit), depName, offers);
             }
         };
         test_main_entries(consumerIdx, consumer.package.name, offers);

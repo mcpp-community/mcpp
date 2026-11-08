@@ -9,7 +9,8 @@
 #      test, a file of mtest's cases with no `main`, passes as one protocol case.
 #   B. The program's skeleton test passes as one protocol case.
 #   C. An entry with `test-main = true` begins a dependent's test that defines no `main`; a test that
-#      defines one keeps it; the package's own entry begins its own tests.
+#      defines one keeps it; the package's own entry begins its own tests; a framework that is a
+#      dependency as well as a dev-dependency offers its beginning once.
 #   D. Two offers are refused, naming both; `[test] main` chooses one.
 #   E. A library whose name has a part that does not begin with a letter is refused.
 #   F. In one package, a test that imports a framework's module begins at that framework's entry,
@@ -80,6 +81,10 @@ printf 'import std;\nint main() { std::println("own main"); return 0; }\n' > app
 (cd app && "$MCPP" test > ../c.log 2>&1) || fail "C: the dependent's tests" c.log
 grep -q 'begun \.\.\. ok' c.log && grep -q 'own \.\.\. ok' c.log || fail "C: a test did not run" c.log
 (cd fw && "$MCPP" test > ../c-own.log 2>&1) || fail "C: the framework's own test" c-own.log
+cp app/mcpp.toml app/mcpp.toml.c
+printf '\n[dependencies]\nfw = { path = "../fw" }\n' >> app/mcpp.toml
+(cd app && "$MCPP" test > ../c-both.log 2>&1) || fail "C: a framework named in two tables offered twice" c-both.log
+mv app/mcpp.toml.c app/mcpp.toml
 
 # D: a second framework offers too.
 cp -R fw fw2

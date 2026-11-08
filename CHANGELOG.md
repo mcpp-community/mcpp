@@ -31,7 +31,9 @@
   The file's imports choose among offers, so in one package a file of mtest's
   cases and a file of GoogleTest's begin each at its own; a dev-dependency's
   source that defines `main` (`gtest_main.cc`) begins a test as before, and two
-  beginnings left for one test are refused, naming them (docs/08; e2e 1037).
+  beginnings left for one test are refused, naming them; a framework that is
+  a dependency as well as a dev-dependency offers its beginning once
+  (docs/08; e2e 1037).
 - `mcpp test --guide` names the package's test frameworks, each with the guide
   its entry states (`test-guide`) and its repository, and the commands that
   list, select and explain cases; a failed run points to it and a record
