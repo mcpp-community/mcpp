@@ -1233,6 +1233,10 @@ struct PackageInstances {
     std::vector<bool> host;
 };
 PackageInstances package_instances(const PrepareState& state);
+// The kernel-abi provider's stated interfaces for the build program of package
+// `i`, ';'-joined (E13): empty unless the package requires the layer and the
+// provider of the same instance (target or build program) states a list.
+std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i);
 // The platform's fields a package's build program stated (protocol 17), at the
 // build-program tier of the build's platform statement, named after `who`.
 void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,

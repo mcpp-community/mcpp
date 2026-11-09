@@ -1125,6 +1125,10 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
             refusal::record(refusal::Code::LayerRequirement);
             return std::unexpected(*why);
         }
+        if (auto why = tsd::check_layer_cycle(state.resolvedTargetSide, gather.requirements)) {
+            refusal::record(refusal::Code::LayerCycle);
+            return std::unexpected(*why);
+        }
         // The islands: packages whose private C++ requirement the graph's C++
         // layer does not meet. Verified where their objects and the image
         // exist (phase 13 and after the link), not here.

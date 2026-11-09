@@ -193,6 +193,41 @@ void merge_program_platform(PrepareState& state, mcpp::manifest::platform::State
         mcpp::platform::merge(state.programPlatform, stated);
 }
 
+namespace {
+bool names_layer(const std::vector<std::string>& entries, std::string_view layer) {
+    for (auto const& e : entries) {
+        std::string_view v = e;
+        if (v.starts_with(layer) && (v.size() == layer.size() || v[layer.size()] == '=')) return true;
+    }
+    return false;
+}
+} // namespace
+
+std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i) {
+    constexpr std::string_view layer = "mcpp:kernel-abi";
+    if (i >= state.packages.size()) return {};
+    const auto& m = state.packages[i].manifest;
+    if (!names_layer(m.requires_, layer) && !names_layer(m.privateRequires, layer)) return {};
+    // The provider of the instance the requiring package is built in: a graph
+    // may hold the target's implementation and the build programs' one.
+    const auto inst = package_instances(state);
+    const bool target = i < inst.target.size() && inst.target[i];
+    for (std::size_t p = 0; p < state.packages.size(); ++p) {
+        const auto& pm = state.packages[p].manifest;
+        if (!names_layer(pm.provides, layer)) continue;
+        const bool same = target ? (p < inst.target.size() && inst.target[p])
+                                 : (p < inst.host.size() && inst.host[p]);
+        if (!same) continue;
+        std::string joined;
+        for (auto const& name : pm.kernelAbiProvidesInterfaces) {
+            if (!joined.empty()) joined += ';';
+            joined += name;
+        }
+        return joined;
+    }
+    return {};
+}
+
 PackageInstances package_instances(const PrepareState& state) {
     const auto n = state.packages.size();
     PackageInstances out{ std::vector<bool>(n, false), std::vector<bool>(n, false) };
@@ -1857,6 +1892,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = state.resolvedTargetCanonical;
             bpEnv.targetProvider = state.targetChoice.provider;
+            bpEnv.kernelAbiInterfaces = kernel_abi_interfaces_for(state, i);
             // Everything the engine already knows and a build program would
             // otherwise hardcode: the payload ROOT (not the driver), the
             // target's C library, which compiler and which C++ standard

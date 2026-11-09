@@ -93,6 +93,14 @@ struct BuildProgramEnv {
     // The provider the selection gave the identity (SPEC-016 §4): `openkal`,
     // `musl-gcc`, `msvc`, ...; "" for the host's own build.
     std::string targetProvider;
+    // THE INTERFACES OF THE KERNEL-ABI LAYER THIS PACKAGE BUILDS AGAINST
+    // (mcpp#911 follow-up, design 2026-11-10 E13): the resolved provider's
+    // `[kernel-abi] provides-interfaces`, joined by ';'. Given only to a
+    // package that requires the layer (`requires = ["mcpp:kernel-abi=..."]`);
+    // empty when the package does not, or when the provider states no list
+    // (unknown -- every implementation provides the core interfaces, so an
+    // empty value never means "none").
+    std::string kernelAbiInterfaces;
     // The resolved toolchain's payload root and the target's own C library
     // root. Both exist so a package can ASK instead of DECLARE — see
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
@@ -682,6 +690,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // link and a package should supply nothing.
     e.emplace_back("MCPP_TARGET_REQUESTED", env.targetTriple);
     e.emplace_back("MCPP_TARGET_PROVIDER", env.targetProvider);
+    e.emplace_back("MCPP_KERNEL_ABI_INTERFACES", env.kernelAbiInterfaces);
     // Convenience splits of the resolved target (Cargo CARGO_CFG_TARGET_*
     // parity): parsed ONCE, in install_hook_env, through the canonical triple parser so every
     // build.mcpp stops hand-splitting MCPP_TARGET. MCPP_TARGET_ENV is "" when

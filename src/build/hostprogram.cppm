@@ -544,6 +544,11 @@ inline const char* target_env()                   { return env_or("MCPP_TARGET_E
 // The provider of the target's identity (SPEC-016 §4): `openkal`, `musl-gcc`, ...;
 // "" for the host's own build.
 inline const char* target_provider()              { return env_or("MCPP_TARGET_PROVIDER"); }
+// The interfaces the kernel-abi layer's provider states it provides
+// (`[kernel-abi] provides-interfaces`), joined by ';', for a package that
+// requires the layer; "" when unknown -- the provider states no list, or the
+// package does not require the layer. A runner of images binds exactly these.
+inline const char* kernel_abi_interfaces()        { return env_or("MCPP_KERNEL_ABI_INTERFACES"); }
 inline const char* host()                         { return env_or("MCPP_HOST"); }
 inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
 // The device axis of this build: `cuda12.9+{sm_89} ptx>=89`, or "" when the
