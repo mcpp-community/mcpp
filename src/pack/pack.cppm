@@ -3114,6 +3114,20 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         // at the end, which must see the final images (after the search-path edits).
         std::vector<std::pair<std::filesystem::path, std::filesystem::path>> bundledCopies;
         std::string bundledLoader;
+        // `--mode static` PROMISES A PROGRAM WITH NO CLOSURE, and the file is
+        // asked rather than the request believed (design 2026-11-10 E7; a
+        // FreeBSD program was packed dynamic under the `-static` name). An ELF
+        // that names a loader or a shared library is refused here.
+        if (plan.opts.mode == Mode::Static
+            && mcpp::pack::binfmt::identify(plan.builtBinary).format == mcpp::pack::binfmt::Format::Elf)
+            if (auto f = mcpp::runtime::elf::inspect_elf_runtime(plan.builtBinary);
+                f && (!f->interp.empty() || !f->needed.empty()))
+                return std::unexpected(Error{std::format(
+                    "--mode static: {} is dynamically linked (it names {}), so it is not a static "
+                    "program.\n"
+                    "       This target links it dynamically whatever the linkage asked; pack it with "
+                    "a mode that states its closure (--mode vendored).",
+                    plan.binaryName, !f->interp.empty() ? "a loader" : "shared libraries")});
         if (plan.opts.mode != Mode::Static) {
             // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
             // `$ORIGIN`.
@@ -3167,7 +3181,33 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             // executes it.
             const auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.builtBinary);
             const bool selfContained = facts && facts->interp.empty() && facts->needed.empty();
+            // AN ARTIFACT FOR ANOTHER SYSTEM IS NOT RUN TO LEARN ITS CLOSURE
+            // (design 2026-11-10 E7; mcpp#911 N8: `ldd` of a FreeBSD program
+            // exited 127). Its DT_NEEDED names are read from the file: a
+            // library this build produced, found beside the program, travels
+            // with it; every other name is the target system's.
+            const bool foreignSystem = [&] {
+                auto t = mcpp::toolchain::triple::parse(plan.triple);
+                return t && t->c_library_by_platform()
+                    && t->execution_system() != mcpp::toolchain::triple::host_triple().os;
+            }();
+            std::vector<std::string> targetSystemNames;
+            auto foreign_closure = [&]() -> std::expected<LddClosure, std::string> {
+                LddClosure c;
+                if (!facts) return c;
+                const auto bin = plan.builtBinary.parent_path();
+                for (auto const& name : facts->needed) {
+                    std::error_code ec;
+                    std::filesystem::path found;
+                    for (auto const& dir : {bin, bin.parent_path() / "lib"})
+                        if (std::filesystem::is_regular_file(dir / name, ec)) { found = dir / name; break; }
+                    if (!found.empty()) c.found.push_back({name, found});
+                    else targetSystemNames.push_back(name);
+                }
+                return c;
+            };
             auto deps = selfContained ? decltype(ldd_parse(plan.builtBinary)){}
+                      : foreignSystem ? foreign_closure()
                                       : ldd_parse(plan.builtBinary);
             if (!deps) return std::unexpected(Error{std::format(
                 "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
@@ -3189,6 +3229,8 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             // tree. A mode that bundles nothing states no closure, as on every
             // other row.
             const bool bundling = plan.opts.mode != Mode::None;
+            for (auto const& name : targetSystemNames)
+                if (bundling) needs.push_back({name, ClosureNeed::Kind::Platform, {}});
             std::vector<ResolvedDep> toBundle;
             for (auto& d : deps->found) {
                 if (skipped_by_mode(d.soname)) {

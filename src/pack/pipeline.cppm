@@ -1677,6 +1677,10 @@ PackOutcome run_pack(PackRun run) {
         base.target_triple = std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch);
     else
         base.target_triple = run.opts.targetTriple;
+    // `--mode static` IS A STATIC PROGRAM, on a named target as on the host's
+    // musl row (design 2026-11-10 E7; mcpp#911 N8: a FreeBSD program was packed
+    // dynamic under the `-static` name). The program's own linkage, as `--static`.
+    if (run.opts.mode == mcpp::pack::Mode::Static) base.force_static = true;
     // The linkage axis (SPEC-014 §1): the whole graph's dependency linkage for
     // this build.
     if (run.opts.linkage == mcpp::pack::Linkage::Static) base.dependency_linkage = "static";

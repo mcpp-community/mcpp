@@ -616,8 +616,11 @@ bool target_supports_full_static(std::string_view targetTriple, bool hostCapabil
     if (t->is_mach_o()) return false;
 
     // Linux ELF — glibc or musl, native or cross. This is the line that was
-    // previously gated on the HOST being Linux.
-    return t->os == "linux";
+    // previously gated on the HOST being Linux. And an ELF system whose C
+    // library a platform describes (FreeBSD's base holds libc.a): a static
+    // linkage there is a static program (design 2026-11-10 E7; `--mode static`
+    // packed a dynamic one, mcpp#911 N8).
+    return t->os == "linux" || t->c_library_by_platform();
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {
