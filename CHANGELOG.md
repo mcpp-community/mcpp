@@ -4,6 +4,72 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.10.1] - 2026-11-10
+
+### Added
+
+- **Base packages (SPEC-002 §2.5).** A sysroot states what it holds beside its
+  C library: a `mcpp.toml` at its top whose `provides` names its layers and
+  whose `[base]` table names, per architecture, the directory that is the
+  sysroot (`roots`), the C++ headers (`include-dirs`), the C++ libraries of a
+  dynamic and a static link (`libs`), the std module sources
+  (`std-module`, `std-compat-module`, `std-module-flags`) and the compiler
+  runtime's directory (`compiler-runtime-dir`). The build takes those layers
+  from the base, reports them as `prebuilt` with the base's name and version,
+  and keeps the toolchain payload's C++ runtime out. The index carries two:
+  `xim:freebsd-sysroot@14.5` and `xim:mingw-w64-sysroot@20261104`.
+- **Windows GNU-ABI rows from every host (mcpp#913).** The `mingw-llvm`
+  provider serves `x86_64-windows-gnu` and the new `aarch64-windows-gnu` with
+  clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on
+  UCRT, libc++, libunwind, compiler-rt), below the gcc payload where that
+  exists; `import std` included, static by default. A provider's sysroot
+  package is the base statement of last resort; a MinGW row takes a base
+  package by name or path.
+- FreeBSD's identities are built-in rows: `x86_64-freebsd` and
+  `aarch64-freebsd` (the system's own ABI, served by a platform that names a
+  base) and their `-musl` counterparts (planned). A row's `clang-triple` is
+  data; built-in rows' systems are words of the language.
+- The 32-bit hosted identities `i686-linux-musl`, `i686-linux-gnu` and
+  `i686-openkal` are planned rows: refused as planned, not as unknown.
+- Build programs of a package that requires `mcpp:kernel-abi` read the
+  resolved provider's `provides-interfaces` (`mcpp::kernel_abi_interfaces()`,
+  `MCPP_KERNEL_ABI_INTERFACES`, `;`-joined; empty is unknown).
+- The suppliers of the layers may not require one another in a circle; the
+  build is refused before compiling, naming each package, the layer it
+  supplies and the one it requires (`layer-cycle`, SPEC-002 §3.8).
+
+### Changed
+
+- Programs that share an entry source keep their own flags: the entry is
+  compiled once per program whose `[targets.<name>]` or
+  `[targets.<name>.build]` flags differ (`obj/_entry/<name>/`; mcpp#911 N1).
+- A row a platform defines, and a built-in row no built-in provider serves, is
+  read as a built-in row: its `march` and `link-emulation` reach the compile
+  and an ld.lld link; nothing the toolchain payload built for its own host
+  (libc++ headers, runtime directories, the host's `-L` and RPATH) reaches it;
+  the host loader's closure and symbol checks apply only to rows that run on
+  this machine (mcpp#911 N2, N3, N4, N7).
+- An artifact for another system is packed from the closure its file names
+  (`DT_NEEDED`): a library this build produced travels, other names are the
+  target system's; `--mode static` links a static program on such a row and
+  refuses to pack a dynamic one under the `-static` name (mcpp#911 N8).
+- The unserved-target diagnosis names a spelling the parser accepts:
+  `[toolchain] <host> = { path, prefix }` (mcpp#913).
+
+### Fixed
+
+- A GNU-ABI Windows row finds its resource compiler in the paired payload or
+  uses `llvm-rc`, and a quoted `"winres.h"` is the toolchain's header, not a
+  generated input.
+- `patches` on a git dependency that is a workspace member is applied in a
+  copy of the whole repository, so the member's edges to its siblings hold
+  (mcpp#911 N5).
+- `[platform.link] flags` on a platform that links through the compiler are
+  named in a warning instead of being dropped (mcpp#911 N6).
+- A `[scan_overrides]` glob whose files exist but take no part in this build
+  (a feature that is off, a target's `!` rule) is kept for the builds that
+  compile them; a glob matching no file is still refused (mcpp#902).
+
 ## [2026.11.9.1] - 2026-11-09
 
 ### Added
