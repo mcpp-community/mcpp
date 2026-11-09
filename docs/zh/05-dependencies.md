@@ -583,8 +583,16 @@ updater = { path = "../updater", artifacts = ["updater"] }
   `mcpp = "*/run/mcpp.toml"` 时为归档中的 `run/`），因而布局相同的各版本可共用一个补丁。边上的
   `patch_root = "<dir>"` 另指一个目录，相对包根，且在包的源码之内。2026.11.9 之前以归档顶层为起点写的
   补丁按原写法应用，构建给出说明。
-- `mcpp patch edit <依赖>` 把构建所读的包根（已应用其补丁）复制到 `target/patch/<依赖>/`；
-  `mcpp patch save <依赖>` 把改动写为该边的下一个补丁 `patches/<名>-<NNNN>.patch`，并加入边的 `patches`。
+- `mcpp why deps` 报告每个依赖在构建中所读的包根（已应用其补丁）。补丁即 git 对该目录树的一份副本写出的差异：
+
+  ```sh
+  cp -R <包根> /tmp/zlib && cd /tmp/zlib
+  git init -q && git add -A && git commit -qm base
+  # 修改之后
+  git diff > <项目>/patches/0001-fix.patch
+  ```
+
+  并由边的 `patches` 列出。再一个补丁以同样方式从打补丁后的构建所报告的包根写出，列在前者之后。
 - 版本依赖与 git 依赖可以带补丁；`path` 依赖是使用者自己拥有的源码树，带补丁时被拒绝。
 - `mcpp.lock` 记录变体，以及每个补丁的路径与 SHA-256；`mcpp emit sbom` 把它们写作组件的 pedigree。
 - 一个程序只持有一个包的一个变体。同一配置中的两个程序（工作区的成员）可以各用自己的变体；一个

@@ -528,10 +528,13 @@ other's rows.
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `aarch64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
+| `x86_64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 | `x86_64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `i686-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |

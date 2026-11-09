@@ -39,9 +39,9 @@
   provider of a capability it requires, taken when neither the graph nor the
   platform provides it (G7).
 - A patch names files from the package's root; `patch_root` names another
-  directory. `mcpp patch edit <dependency>` and `mcpp patch save <dependency>`
-  edit a dependency's sources and save the change as the edge's next patch
-  (G8).
+  directory, and a patch written from the archive's top applies as before.
+  `mcpp why deps` reports each dependency's root, from which `git diff` writes
+  a patch (G8).
 - `[targets.<name>.build]` compiles the shared sources an artifact links with
   its own defines and flags, as the artifact's variant (G9).
 - A row a platform defines is packed and carries as a built-in row does;
@@ -53,11 +53,18 @@
   its cases (`[test] split = "file" | "case" | "none"`), and a test keeps what
   it reaches: units are compiled with one section per function and per object
   and tests link with `--gc-sections` (`[test] link = "objects"` keeps every
-  object whole). mcpp's own unit tests are one program per directory: 166
+  object whole); a protocol marker nothing references is read from the objects
+  the test was linked from. A run is kept in the mtest store's form under
+  `target/mtest` (`[test] store`), which `mtest report`, `analyze` and `graph`
+  read. mcpp's own unit tests are one program per directory: 166
   programs of 32 MB became one of 37 MB, run as 166 processes.
 - clang pairs with the MinGW-w64 payload for `x86_64-windows-gnu`: the payload
   is clang's sysroot and libstdc++ its C++ library, `import std` included.
-- `mcpp new --template platform` and `mcpp check platform`.
+- `mcpp new --template platform`. Reading a platform's manifest refuses a
+  definition of a built-in row and a row defined twice, and warns of a provider
+  that serves no row and of two providers at one priority for one identity;
+  `mcpp why platform` lists the rows a platform defines and the identities it
+  serves, with their providers and priorities.
 - `mcpp pack --all-programs` ships every program of a package.
 - A git reference that names no tag, rev or branch follows the remote's
   default branch; `--platform git+<url>[#tag=|rev=|branch=]`.
@@ -71,8 +78,9 @@
   identities; `aarch64-linux` on an x86_64 host is `aarch64-linux-musl`. An
   identity written whole is not replaced.
 - The identity follows the C library: a project whose graph supplies musl
-  builds `x86_64-linux` as `x86_64-linux-musl`; an explicit identity that
-  disagrees with the graph's C library is refused (`target-cabi-conflict`).
+  builds `x86_64-linux` as `x86_64-linux-musl`; an explicit identity is the
+  project's spelling and is kept, and a disagreement with the graph's C library
+  is reported.
 - A git dependency names at most one of rev, tag and branch.
 - `mcpp pack` with several programs packs the one named after the package and
   names the others, and refuses when none is so named.

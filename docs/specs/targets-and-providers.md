@@ -87,7 +87,8 @@
 `[platform.hosted]` 是两种简写。
 
 - 已解析平台定义的 os 与 env 为解析器接受的词；`cfg(os = …)` 按定义的行求值。
-- 与内置行同名的定义被忽略；`mcpp check platform` 报告它为错误。
+- 读取平台清单时按行检查其语句：与内置行同名的定义、同一行的两次定义**必须**被拒绝；不服务任何行的提供者、以同一优先级
+  服务同一身份的两个提供者为警告，按清单警告的规则只在平台自身的构建中给出。
 - 平台定义的行不取宿主载荷的 C 库：除非平台或项目声明 sysroot，该行没有 C 库。
 - 首次遇到只在索引中的平台时，请求以临时行进入第一次准备，平台取得后重新准备。
 
@@ -102,7 +103,8 @@
 
 - 状态行：`Target <请求> → <身份>`；回落时附原因。
 - `mcpp why target [--format json]` 写出请求、身份、提供者、优先级、回落原因与按序的候选；`mcpp why flags [<unit>]` 写出每个
-  参数及其来源层（行、平台、工具链、包、引擎）。
+  参数及其来源层（行、平台、工具链、包、引擎）；`mcpp why platform` 写出平台定义的行与所服务的身份，各附提供者与优先级
+  （根包是平台包时为其自身，否则为目标所选的平台）。
 - 构建记录与 `plan` 事件的 `configuration.target` 为 `{request, identity, provider, priority, fallback}`；本机构建为 `null`。
 - 构建程序读 `MCPP_TARGET_PROVIDER`（`mcpp::target_provider()`）。
 - `mcpp.lock` 以 `[target."<request>"] identity, provider` 记录每个请求得到的身份；`--locked` 下选择另一身份的构建被拒绝，

@@ -1779,6 +1779,11 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
         // resolution.json only: the graph document a build program reads is
         // part of its re-run key, and must not change with when it is asked.
         if (!forBuildProgram) {
+            // The package's root as the build reads it (its patches applied):
+            // the tree a patch of it is written from (docs/05).
+            std::error_code ec;
+            entry["manifest_dir"] = std::filesystem::absolute(state.packages[i].root, ec)
+                                        .lexically_normal().generic_string();
             static const std::vector<std::string> none;
             // A member's program keeps its cache in the project (step 9).
             const bool member = state.m->package.virtualRoot && i != 0

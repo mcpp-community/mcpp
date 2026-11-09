@@ -67,6 +67,12 @@ discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
 的全部函数（mcpp 自身的单元测试：每个由 32 MB 降至 14 MB）。静态构造是回收的根。
 `[test] link = "objects"` 保留每个目标文件的全部内容。
 
+一次运行以 mtest 存储的形式保存（2026.11.9.1+）：`target/mtest/` 中有 `runs/<id>/run.json`，
+`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例），`cases.ndjson`
+每个用例一行，`index.ndjson` 列出各次运行。`mtest report`、`analyze` 与 `graph --store target/mtest`
+像读取 mtest 自身的运行一样读取它们：报告、最慢的用例与运行的调度。`[test] store = "<dir>"`
+另指一个目录，相对项目；`"none"` 不保存。
+
 由自身多个源文件编译而成的测试套件也可以是一个包：一个工作区成员，它的
 `[build] sources` 承载整套套件，其唯一的测试程序驱动套件，用
 `mcpp test -p <member>` 选中。
@@ -269,7 +275,8 @@ main          = "src/main.cpp"
 test-protocol = 1
 ```
 
-程序文件中带有标记 `mtest-protocol=1` 时同样如此，以 mtest 的库构建的程序即带有该标记。
+程序文件中带有标记 `mtest-protocol=1` 时同样如此，以 mtest 的库构建的程序即带有该标记；只保留可达部分的测试，
+其链接所用的目标文件带有该标记也算在内，因此无人引用的标记（0.5.1 之前的 mtest）不会在链接时丢失。
 带有标记却没有写出 `program` 事件的程序没有使用协议：与框架的库链接在一起的普通 `main`
 文件是一个用例，按退出状态判定，运行与列出时都是如此。
 mcpp 随之把协议的变量（`MTEST_PROTOCOL`、`MTEST_MODE`、`MTEST_REPORT`、`MTEST_TMPDIR`，

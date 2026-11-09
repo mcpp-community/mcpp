@@ -2188,11 +2188,6 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.runtimeBinding = state.targetRuntimeBinding ? *state.targetRuntimeBinding
                                                     : state.runtimeBindingSnapshot;
     ctx.runUnder = state.runUnder;
-    for (auto const& p : state.packages) {
-        ctx.packageRoots.try_emplace(p.manifest.package.name, p.root);
-        if (!p.manifest.package.namespace_.empty())
-            ctx.packageRoots.try_emplace(p.manifest.package.namespace_ + "." + p.manifest.package.name, p.root);
-    }
     {
         auto const& c = state.targetChoice;
         auto& s = ctx.targetSelection;

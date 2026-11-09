@@ -312,9 +312,14 @@ built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
 shorthands of a provider.
 
 `mcpp new <name> --template platform` writes a platform package defining
-`<arch>-<name>`; `mcpp check platform [dir]` reads one as the engine does --
-its rows, its providers and the identities it serves with their priorities --
-and refuses a row that redefines a built-in one.
+`<arch>-<name>`. Reading a platform's manifest checks its statement against the
+rows: a definition of a built-in row, or a row defined twice, is an error
+wherever the platform is read; a provider that serves no row, and two providers
+that serve one identity at one priority, are warnings of the platform's own
+build. `mcpp why platform` lists the rows the platform defines and the
+identities it serves, each with its provider and priority: in the platform's
+directory its own, in a project the one its target selects (`--target`;
+`--format json`).
 
 ## Inspecting a configuration
 

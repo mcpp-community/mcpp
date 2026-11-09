@@ -4056,6 +4056,12 @@ struct TestResult {
     // said: each case's result, or its listing under `--cases`.
     int                                 protocol = 0;
     mcpp::build::test_protocol::Report  report;
+    // Where it ran in the run's schedule, for the mtest store (P12): its start
+    // after the command began, the worker that ran it, and the cases it
+    // selected (a program run as a process per file of its cases).
+    long long                           startedMs = -1;
+    int                                 worker = -1;
+    std::vector<std::string>            select;
     // The program and the files it is compiled from, for a test built and not
     // run (`--no-run`): what a runner that selects by change reads (docs/50).
     std::string                         program;
@@ -4063,6 +4069,75 @@ struct TestResult {
     // The guide of the framework the test is written with, when known.
     std::string                         guide;
 };
+
+// THE RUN IN THE MTEST STORE (mtest spec P12; design 2026-11-09 §17.3): the
+// run's record, a line per process of a program and a line per case, so that
+// `mtest report|analyze|graph --store <dir>` read `mcpp test`'s runs as the
+// engine's own. Written whole into `runs/<id>/` and then appended to the index.
+void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestResult>& results,
+                       std::chrono::system_clock::time_point started, long long ms, int jobs,
+                       std::string_view selection) {
+    namespace fs = std::filesystem;
+    using nlohmann::json;
+    const auto finished = std::chrono::system_clock::now();
+    auto iso = [](std::chrono::system_clock::time_point t) {
+        return std::format("{:%Y-%m-%dT%H:%M:%SZ}", std::chrono::floor<std::chrono::seconds>(t));
+    };
+    static std::atomic<unsigned> serial{0};
+    const auto id = std::format("{:%Y%m%dT%H%M%S}-{:04x}", std::chrono::floor<std::chrono::seconds>(started),
+                                (std::random_device{}() ^ serial++) & 0xffff);
+    const auto runDir = dir / "runs" / id;
+    std::error_code ec;
+    fs::create_directories(runDir, ec);
+    if (ec) return;
+    auto status_of = [](const TestResult& t) {
+        switch (t.status) {
+            case TestResult::St::Pass:        return "pass";
+            case TestResult::St::RunFail:     return "fail";
+            case TestResult::St::CompileFail: return "build-fail";
+            case TestResult::St::NotRun:      return "not-run";
+            case TestResult::St::Built:       return "built";
+        }
+        return "fail";
+    };
+    std::map<std::string, int> counts;
+    bool failed = false;
+    {
+        std::ofstream programs(runDir / "programs.ndjson", std::ios::binary);
+        std::ofstream cases(runDir / "cases.ndjson", std::ios::binary);
+        for (auto const& t : results) {
+            failed |= t.status == TestResult::St::RunFail || t.status == TestResult::St::CompileFail;
+            json p{{"name", t.name}, {"argv", json::array({t.program.empty() ? t.name : t.program})},
+                   {"status", status_of(t)}, {"exit", t.exitCode}, {"ms", t.durationMs},
+                   {"started_ms", t.startedMs}, {"worker", t.worker}, {"select", t.select},
+                   {"resources", json::array()}, {"fixtures", json::array()}};
+            if (t.buildMs > 0) p["build_ms"] = t.buildMs;
+            programs << p.dump() << "\n";
+            if (t.report.cases.empty()) {
+                ++counts[status_of(t)];
+                continue;
+            }
+            for (auto const& c : t.report.cases) {
+                ++counts[c.status];
+                json f = json::array();
+                for (auto const& x : c.failures)
+                    f.push_back({{"file", x.file}, {"line", x.line}, {"message", x.message}});
+                cases << json{{"program", t.name}, {"id", c.id}, {"status", c.status}, {"ms", c.ms},
+                              {"reason", c.reason}, {"failures", f}}.dump() << "\n";
+            }
+        }
+    }
+    json run{{"schema", "mtest.run/1"}, {"id", id}, {"started", iso(started)}, {"finished", iso(finished)},
+             {"status", failed ? "fail" : "pass"},
+             {"system", std::string(mcpplibs::os::name(mcpplibs::os::PLATFORM))},
+             {"arch", std::string(mcpplibs::os::name(mcpplibs::os::ARCH))}, {"machine", ""}, {"commit", ""},
+             {"set", "mcpp test"}, {"selection", std::string(selection)},
+             {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", "off"},
+             {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
+    { std::ofstream(runDir / "run.json", std::ios::binary) << run.dump(2) << "\n"; }
+    std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << run.dump() << "\n";
+}
+
 
 // Streaming NDJSON: one record per test, emitted as it finishes — a
 // consumer (e.g. the d2x provider) sees progress live, and a crash
@@ -4562,6 +4637,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     auto* ctx = &*tb.ctx;
     auto& backend = tb.backend;
     const auto tLoop = std::chrono::steady_clock::now();
+    const auto testStartedWall = std::chrono::system_clock::now();
     if (tb.runnerFatal) return tb.runnerFatal;
     const auto& runnerChoice = tb.runnerChoice;
     auto& runnerTmpl = tb.runnerTmpl;
@@ -4742,11 +4818,22 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::atomic<std::size_t> next{0};
         std::mutex reportMutex;
 
-        auto worker = [&] {
+        auto worker = [&](int workerId) {
             for (;;) {
                 std::size_t i = next.fetch_add(1);
                 if (i >= list.size()) return;
                 auto& r = list[i];
+                // The schedule, recorded with the result (the mtest store).
+                const auto stamp_schedule = [&, startedAt = std::chrono::steady_clock::now()] {
+                    auto& t = results.back();
+                    t.startedMs = std::chrono::duration_cast<std::chrono::milliseconds>(startedAt - tLoop).count();
+                    t.worker = workerId;
+                    if (r.select) {
+                        std::ifstream in(*r.select);
+                        for (std::string line; std::getline(in, line);)
+                            if (!line.empty()) t.select.push_back(line);
+                    }
+                };
 
                 // Stamped HERE, immediately before the exec — not when the
                 // test was queued.
@@ -4851,6 +4938,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (!json) mcpp::ui::plain(std::format("{} ... not run", r.name));
                     results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, ms, false,
                                        reason, r.buildMs});
+                    stamp_schedule();
                     std::fflush(libc::stdout());
                     emit_json(results.back());
                     continue;
@@ -4874,6 +4962,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 results.back().protocol = spoken;
                 results.back().report = std::move(report);
+                stamp_schedule();
                 results.back().guide = r.guide;
                 // The captured output belongs directly under its own line, or
                 // it is attributable to nothing.
@@ -4891,11 +4980,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         };
 
         if (workers <= 1) {
-            worker();
+            worker(0);
         } else {
             std::vector<std::thread> pool;
             pool.reserve(static_cast<std::size_t>(workers));
-            for (int w = 0; w < workers; ++w) pool.emplace_back(worker);
+            for (int w = 0; w < workers; ++w) pool.emplace_back(worker, w);
             for (auto& t : pool) t.join();
         }
         // WALL time of the phase, not the sum of the per-test durations: with
@@ -4957,6 +5046,25 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         for (auto& ch : leaf)
             if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '.') ch = '_';
         return ctx->outputDir / "test-protocol" / leaf;
+    };
+    // THE MARKER OF THE OBJECTS A TEST WAS LINKED FROM (P2.3). A test keeps what
+    // it reaches, and a framework whose marker nothing references (mtest before
+    // 0.5.1) loses it at the link; its object still carries it, and the program
+    // is then read as it was before the link dropped anything. Each object is
+    // read once per run.
+    std::map<std::filesystem::path, int> objectMarkers;
+    auto marker_of_objects = [&](const mcpp::build::LinkUnit& lu) {
+        const bool collected = std::ranges::any_of(lu.linkFlags, [](std::string_view f) {
+            return f == "-Wl,--gc-sections" || f == "-Wl,-dead_strip";
+        });
+        if (!collected) return 0;
+        for (auto const& o : lu.objects) {
+            const auto path = o.is_absolute() ? o : ctx->outputDir / o;
+            auto [it, fresh] = objectMarkers.try_emplace(path, 0);
+            if (fresh) it->second = mcpp::build::test_protocol::marker_version(path);
+            if (it->second == mcpp::build::test_protocol::kVersion) return it->second;
+        }
+        return 0;
     };
 
     for (auto& lu : ctx->plan.linkUnits) {
@@ -5075,8 +5183,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // its file carries (P2.3). A version this mcpp does not speak runs as
         // a program that implements none.
         auto& added = runnable.back();
-        const int version = lu.testProtocol ? lu.testProtocol
-                                            : mcpp::build::test_protocol::marker_version(exe);
+        int version = lu.testProtocol ? lu.testProtocol
+                                      : mcpp::build::test_protocol::marker_version(exe);
+        if (version == 0) version = marker_of_objects(lu);
         if (version == mcpp::build::test_protocol::kVersion) {
             added.protocol = version;
             added.protocolDir = protocol_dir(lu.targetName);
@@ -5276,6 +5385,13 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             runnable = std::move(expanded);
         }
         run_tests_now(runnable);
+        // The run, kept in the mtest store's form (`[test] store`).
+        if (const auto& st = ctx->manifest.testStore; st != "none" && !results.empty())
+            write_mtest_store(st.empty() ? ctx->projectRoot / "target" / "mtest" : ctx->projectRoot / st, results,
+                              testStartedWall,
+                              std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - tLoop).count(),
+                              runJobs, testOpts.filter);
     }
     summary.elapsedMs = carriedMs + std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - tLoop).count();

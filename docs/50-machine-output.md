@@ -513,6 +513,22 @@ carries `status` (`ok` or `refused`) and:
 | `mcpp.why.build-programs` | `graphs[]` | one entry per build programs' graph: `workspace` (its directory) and `programs[]`, each `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | one entry per use of a deprecated reading: `{id, where, detail, warned, since, floor, canonical, docs}`; `warned` is false in a manifest the build does not edit |
 
+### `mcpp.why.target`, `mcpp.why.flags` and `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
+
+```
+mcpp why target   [--target <t>] --format json
+mcpp why flags    [<unit>] [--target <t>] --format json
+mcpp why platform [--target <t>] --format json
+```
+
+`data` carries `status` and:
+
+| kind | field | content |
+|---|---|---|
+| `mcpp.why.target` | `target` | `{request, identity, provider, priority, fallback, why, candidates[]}`, each candidate `{identity, provider, priority, available, why}` (SPEC-016 §7) |
+| `mcpp.why.flags` | `flags` | `{identity, units[], link[]}`: each unit `{file, package, words[]}`, each word `{word, layer, detail}`, the layer one of compiler, row, platform, toolchain, package, engine |
+| `mcpp.why.platform` | `platform` | `{package, version, defines[], serves[], warnings[]}`, each served `{identity, provider, priority}`; `null` when the build uses no platform package |
+
 `engineModules` in `mcpp.env` is the directory of the engine interface package
 of this mcpp version, which a build program's graph depends on (30 —
 `build.mcpp`); it exists once a build program has been compiled.

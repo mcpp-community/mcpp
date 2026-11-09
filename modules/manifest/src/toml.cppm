@@ -7,6 +7,7 @@ import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
+import mcpp.manifest.platform_providers;
 import mcpp.targetside;
 import std;
 import mcpp.invocation;
@@ -589,8 +590,6 @@ struct DependencyTextEdit {
     std::string              shortName;
     std::string              version;
     std::vector<std::string> features;
-    // The edge's patches, as the manifest writes them (relative to it).
-    std::vector<std::string> patches;
     bool                     dev = false;
 };
 
@@ -3704,6 +3703,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testPrograms = value.as_string();
                 continue;
             }
+            if (key == "store") {
+                if (!value.is_string() || value.as_string().empty())
+                    return std::unexpected(error(origin,
+                        "[test] store is a directory relative to the project, or \"none\""));
+                m.testStore = value.as_string();
+                continue;
+            }
             if (key == "split") {
                 if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "case"
                                            && value.as_string() != "none"))
@@ -3724,7 +3730,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, link, main, programs, split, start, windows_code_page, windows_long_paths.", key));
+                    "discover, link, main, programs, split, start, store, windows_code_page, windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -3923,6 +3929,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             return std::unexpected(error(origin,
                 "[platform] names the targets it serves: targets = [\"<triple>\", ...], or its "
                 "providers: [[platform.provider]] serves = [...]"));
+        // The rows it defines and the providers it states, checked against the
+        // rows as the engine reads them (SPEC-016 §5).
+        auto findings = mcpp::manifest::platform::check_statement(
+            *st, mcpp::manifest::platform::platform_name(m.package.name));
+        if (!findings.errors.empty())
+            return std::unexpected(error(origin, findings.errors.front()));
+        for (auto& w : findings.warnings) m.schemaWarnings.push_back(std::move(w));
         m.platform = std::move(*st);
         m.platformDeclared = true;
     }
@@ -5754,11 +5767,6 @@ upsert_dependency_text(std::string_view source,
         }
     }
 
-    for (auto const& p : edit.patches)
-        for (unsigned char ch : p)
-            if (ch < 0x20 || ch == 0x7f || ch == '"' || ch == '\\')
-                return std::unexpected(std::format(
-                    "dependency patch '{}' contains an unsafe TOML character", p));
     auto quoted_list = [](const std::vector<std::string>& items) {
         std::string list;
         for (auto const& item : items) {
@@ -5768,13 +5776,11 @@ upsert_dependency_text(std::string_view source,
         return list;
     };
     std::string value;
-    if (edit.features.empty() && edit.patches.empty()) {
+    if (edit.features.empty()) {
         value = std::format("\"{}\"", edit.version);
     } else {
-        value = std::format("{{ version = \"{}\"", edit.version);
-        if (!edit.features.empty()) value += std::format(", features = [{}]", quoted_list(edit.features));
-        if (!edit.patches.empty()) value += std::format(", patches = [{}]", quoted_list(edit.patches));
-        value += " }";
+        value = std::format("{{ version = \"{}\", features = [{}] }}", edit.version,
+                            quoted_list(edit.features));
     }
 
     struct SectionSpan {

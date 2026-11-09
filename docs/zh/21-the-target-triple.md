@@ -487,10 +487,13 @@ docs/22。
 | `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `aarch64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
+| `x86_64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `x86_64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `i686-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |

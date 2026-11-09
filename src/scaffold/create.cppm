@@ -304,7 +304,7 @@ export enum class builtin { bin, gui, lib };
 
 // `mcpp new --template platform` (SPEC-016 §2, §3): a platform package that
 // defines one row, `<arch>-<name>`, and the provider that serves it, with the
-// llvm the built-in bare-metal rows pin. `mcpp check platform` reads it.
+// llvm the built-in bare-metal rows pin. `mcpp why platform` lists what it serves.
 export int create_platform_project(const mcpp::scaffold::PortableProjectName& project);
 
 // What a project's library is named in C++: its module, the qualified name
@@ -644,7 +644,7 @@ driver = "compiler"
     }
     mcpp::ui::line(std::format("Created platform package '{}' at {}, defining {}", project.qualifiedName,
                                tx.final_path().string(), triple));
-    mcpp::ui::line(std::format("Next: cd {} && mcpp check platform", project.directoryName));
+    mcpp::ui::line(std::format("Next: cd {} && mcpp why platform", project.directoryName));
     return 0;
 }
 

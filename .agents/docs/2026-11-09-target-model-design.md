@@ -118,7 +118,7 @@ Emscripten SDK。openkal-platform 的 hosted 部分为提供者，服务 `*-linu
 |---|---|
 | G6 描述符 | 源码制品一份、与目标无关；预编译 payload 按身份的轴匹配，含 `any` 与回落；`linux`、`macosx`、`windows`、`openkal`、`none` 块作为轴组合的别名读取，已有索引条目不变；`descriptor_keys` 照旧可读，不再必需 |
 | G7 能力槽 | SPEC-002 的层机制推广到普通包：`requires` 加按系统的默认提供者；解析顺序为依赖图 > 平台 > 默认值。openkal-run 的清单随之改写 |
-| G8 补丁根 | 包根（解析后的清单所在目录）或显式 `patch_root`；`mcpp patch edit/save` |
+| G8 补丁根 | 包根（解析后的清单所在目录）或显式 `patch_root`；`mcpp why deps` 报告包根，补丁由 `git diff` 写出 |
 | G9 按产物的编译变体 | `[targets.X.build] defines/cflags/cxxflags` 作用于该产物链接的本包翻译单元，在 `obj/_variant/<X>/` 编译变体；`[targets.X] defines/flags` 维持只作用于入口；模块接口每包一个，不做变体 |
 | G10 载体与打包 | 任何已解析平台能构建的行，按平台声明作载体或打包的系统 |
 | G11 执行宿主 | 运行器协议：传输、运行、输出流、退出码，由 runner 包实现（VM、ssh、设备）；无运行器的异系统产物为「已构建，未运行」 |
@@ -200,7 +200,7 @@ Emscripten SDK。openkal-platform 的 hosted 部分为提供者，服务 `*-linu
 | 应用开发者 | 不必学新概念 | 「行」「提供者」「优先级」是实现与平台作者的概念 | R3：用户文档只用「请求的 target」「构建的 target」「提供者」三个词；「行」「priority」只出现在 SPEC-016 与平台作者文档 |
 | 应用开发者、平台开发者 | 指定用谁 | 「选一个提供者」现在有 `platform`、`toolchain`、`--platform none` 三种写法，语义交叠 | R4：内置提供者有名字（如 `builtin:msvc`、`builtin:mingw`、`builtin:glibc`）；`platform` 选择一个提供者，名字或包引用皆可；`--platform none` 表示不用平台包、只用内置提供者，含义不变；`toolchain` 只选编译器族与版本，与提供者按 `pairs` 配对。不新增键或标志 |
 | 库开发者 | 条件依赖与预编译 payload 按 target 匹配 | Q5 使依赖图供给 C 库的项目身份改变，以 `cfg(env = "gnu")` 写的条件可能不再成立 | R5：CHANGELOG 与 docs/22 写出迁移：按 C 库写的条件应以实际 C 库为准；`mcpp why target` 显示 `cfg` 求值所用的身份 |
-| 平台开发者 | 用最少的键写出一个平台 | `[platform]` 与 `[platform.hosted]` 是两个特例的提供者，第三个提供者没有写法 | R6：一般形式 `[[platform.provider]]`（`serves`、`priority`、`toolchain`、`layers`、`link`、`hosted`、`execution`、`pairs`）；`[platform]` 与 `[platform.hosted]` 为其两种简写，照旧可读。`mcpp new --template platform` 生成一个最小平台；`mcpp check platform` 校验 schema、行与提供者的一致、`priority` 冲突，并列出它服务的身份 |
+| 平台开发者 | 用最少的键写出一个平台 | `[platform]` 与 `[platform.hosted]` 是两个特例的提供者，第三个提供者没有写法 | R6：一般形式 `[[platform.provider]]`（`serves`、`priority`、`toolchain`、`layers`、`link`、`hosted`、`execution`、`pairs`）；`[platform]` 与 `[platform.hosted]` 为其两种简写，照旧可读。`mcpp new --template platform` 生成一个最小平台；读取平台清单时校验行与提供者的一致与 `priority` 冲突；`mcpp why platform` 列出它服务的身份 |
 | 构建插件开发者 | 构建程序读到的 target 与引擎一致 | `mcpp::target_os()` 等访问器的文档以封闭集合描述取值；新系统的 os 值须照样流过 | R7：访问器返回身份的轴（字符串，取值由行定义）；新增 `mcpp::target_provider()`（`MCPP_TARGET_PROVIDER`）；docs/30 的取值表改为「由行定义，内置行为……」 |
 | agent | 可脚本化、确定、可解释 | 构建的机器输出只有身份，没有请求与提供者；拒绝没有稳定的代码 | R8：机器输出的 target 记录为 `{request, identity, provider, priority, fallback}`；选择的拒绝有稳定代码（`target-unserved`、`target-ambiguous` 等，进 SPEC-016 的拒绝码表）；文档建议自动化写完整身份 |
 | mcpp 开发者 | 迁移不引入回归，代码不再散落 | 原生约定由代码移为数据是一次大改 | 第 9 节的等价性快照为合入条件；选择逻辑集中于一个模块，旧的代理条件（目标表 pin、`toolchain_decision` 的拒绝、三元组补全中的推断）随迁移删除，不保留双轨 |
@@ -370,7 +370,7 @@ mcpp 的单元测试（`tests/unit/` 166 个文件，以及各成员的 `modules
 | A1 | mcpp | 行与内置提供者为数据（build.mcpp 编入静态表）、等价性快照 | — （已完成） |
 | A2 | mcpp | 选择：行的登记、开放的 os 与 env、`select`、prepare 接入（pin、平台、可服务判断、报告） | A1（进行中） |
 | A3 | mcpp | 身份取实际 C 库（重新准备）、显式身份与图冲突的拒绝 | A2 |
-| A4 | mcpp | `[[platform.define]]`、`[[platform.provider]]` 的读取与登记；`[platform]`、`[platform.hosted]` 为简写；`mcpp check platform`、`mcpp new --template platform` | A2 |
+| A4 | mcpp | `[[platform.define]]`、`[[platform.provider]]` 的读取与登记；`[platform]`、`[platform.hosted]` 为简写；清单读取时的语句校验、`mcpp why platform`、`mcpp new --template platform` | A2 |
 | A5 | mcpp | llvm 配 mingw 载荷 | A2 |
 | A6 | mcpp | #911 G2–G11、B1–B3 | A4 |
 | A7 | mcpp | 统一的包引用（`git+`、缺省分支、`builtin:`）；SPEC-001 修订 | — |
@@ -399,5 +399,6 @@ mcpp 的单元测试（`tests/unit/` 166 个文件，以及各成员的 `modules
 | 拒绝码 | 沿用 `host-cannot-serve`、`unknown-target`、`tier-planned` | 不新增与既有码同义的 `target-unserved` 等 |
 | B2 | 只约束构建程序的 `artifact-name` | 项目与本机对产物名的陈述是显式选择，照常生效 |
 | G9 | 新表 `[targets.X.build]` | 现有键的作用范围不变，升级无感 |
-| G8 `mcpp patch edit/save` | 保留 | 补丁是核心功能，编辑流程与之同属（同 pnpm 的 `patch`/`patch-commit`） |
+| G8 `mcpp patch edit/save` | 不采纳 | 核心保留的是补丁契约（`patches`、包根、`patch_root`）；编辑与生成是通用工具的事：`mcpp why deps` 报告包根，`git diff` 写出补丁，无功能缺口 |
+| `mcpp check platform` | 不采纳，并入清单读取与 `mcpp why platform` | 一级子命令须有独立的场景；平台语句的校验在读取清单时进行，作者与使用者在构建中即得到；所服务的身份属来源解释，与 `why target`、`why flags` 同族 |
 | 测试程序 | 按目录组成为可选（`[test] programs`）；`[test] split` 按文件分进程为缺省；测试只保留可达部分（`--gc-sections`） | 缺省不改变既有工程的程序划分与命名；按文件分进程同时保留隔离与并行 |

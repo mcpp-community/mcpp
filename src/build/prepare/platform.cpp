@@ -237,23 +237,9 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         auto r = b.platform.empty() ? std::nullopt : std::optional(mp::parse_ref_text(b.platform));
         return r && *r && (*r)->spec.shortName == shortName;
     });
-    for (auto const& p : s.providers)
-        provider(p.name.empty() ? name : p.name, p.serves, p.priority,
-                 p.toolchain.empty() ? s.toolchain.value : p.toolchain, p.hosts, p.pairs, p.sysroot,
-                 p.linkage);
-    if (s.targets.set && !builtin)
-        provider(name, s.targets.value, s.prioritySet ? s.priority : 100, s.toolchain.value, {}, {}, {}, {});
-    // A HOSTED ENTRY NAMES A SYSTEM; THE C LIBRARY NAMES THE ENV (I5): it serves
-    // every identity of that architecture and system.
-    if (s.hosted.set && !builtin) {
-        std::vector<std::string> serves;
-        for (auto const& w : s.hosted.targets.value)
-            if (auto t = mcpp::toolchain::triple::parse(w))
-                serves.push_back(std::format("{}-{}-*", t->arch, t->os)), serves.push_back(std::format("{}-{}", t->arch, t->os));
-        if (!s.hosted.targets.set) serves = {"*-*-*"};
-        provider(name, serves, s.prioritySet ? s.priority - 50 : 50,
-                 s.hosted.toolchain.set ? s.hosted.toolchain.value : s.toolchain.value, {}, {}, {}, {});
-    }
+    for (auto const& p : mp::stated_providers(s, name))
+        if (!p.shorthand || !builtin)
+            provider(p.name, p.serves, p.priority, p.toolchain, p.hosts, p.pairs, p.sysroot, p.linkage);
     target::define(std::move(set));
 }
 

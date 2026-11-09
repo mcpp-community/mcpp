@@ -127,7 +127,7 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (topic == "build-programs" || topic == "compat")
             return mcpp::doctor::why_build_programs_or_compat_json(
                 topic, parsed.option_or_empty("features").value());
-        if (topic == "target" || topic == "flags")
+        if (topic == "target" || topic == "flags" || topic == "platform")
             return mcpp::doctor::why_target_or_flags_json(
                 topic, parsed.option_or_empty("target").value(), parsed.positional(1),
                 parsed.option_or_empty("features").value());

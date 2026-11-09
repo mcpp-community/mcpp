@@ -680,10 +680,19 @@ verified source.
   names another directory, relative to the package's root and inside its
   source. A patch written from the archive's top, as before 2026.11.9, applies
   as written, and the build says so.
-- `mcpp patch edit <dependency>` copies the package's root, as the build reads
-  it (its patches applied), to `target/patch/<dependency>/`; `mcpp patch save
-  <dependency>` writes the change as the edge's next patch,
-  `patches/<name>-<NNNN>.patch`, and adds it to the edge's `patches`.
+- `mcpp why deps` reports each dependency's root as the build reads it (its
+  patches applied). A patch is the difference git writes from a copy of that
+  tree:
+
+  ```sh
+  cp -R <root> /tmp/zlib && cd /tmp/zlib
+  git init -q && git add -A && git commit -qm base
+  # edit, then
+  git diff > <project>/patches/0001-fix.patch
+  ```
+
+  and the edge lists it in `patches`. A further patch is written the same way
+  from the root the patched build reports, and is listed after the first.
 - Version and git dependencies may carry patches; a `path` dependency is a tree
   its consumer owns and is refused with them.
 - `mcpp.lock` names the variant and each patch by its path and SHA-256;

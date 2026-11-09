@@ -79,6 +79,14 @@ every function (mcpp's own unit tests: 32 MB each to 14 MB). Static
 constructors are the collection's roots. `[test] link = "objects"` keeps every
 object whole.
 
+A run is kept in the form of the mtest store (2026.11.9.1+): `target/mtest/`
+holds `runs/<id>/run.json`, a line per process in `programs.ndjson` (its
+status, duration, start, worker and selected cases) and a line per case in
+`cases.ndjson`, and `index.ndjson` lists the runs. `mtest report`, `analyze`
+and `graph --store target/mtest` read them as mtest's own runs: the report, the
+slowest cases and the run's schedule. `[test] store = "<dir>"` names another
+directory, relative to the project; `"none"` keeps nothing.
+
 A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
@@ -321,7 +329,9 @@ test-protocol = 1
 ```
 
 or when its file carries the marker `mtest-protocol=1`, as a program built
-with mtest's libraries does. A program that carries the marker and writes no
+with mtest's libraries does; of a test that keeps what it reaches, an object it
+was linked from carrying the marker counts as well, so a marker nothing
+references (mtest before 0.5.1) is not lost at the link. A program that carries the marker and writes no
 `program` event spoke no protocol: a file of plain `main` linked beside a
 framework's library is one case, judged by its exit status, run and listed. mcpp then gives the program the protocol's
 variables (`MTEST_PROTOCOL`, `MTEST_MODE`, `MTEST_REPORT`, `MTEST_TMPDIR`, and

@@ -3,7 +3,7 @@
 // the interface's importers: with them imported by the interface, GCC 16.1
 // ended with an internal compiler error (a segmentation fault) at
 // `import mcpp.cli;` in main.cpp, which imports the interface through
-// mcpp.doctor (measured 2026-11-09).
+// mcpp.doctor (measured 2026-11-09; mcpp#848).
 module mcpp.build.flag_origins;
 
 import std;

@@ -595,3 +595,65 @@ UTest a_repository_reference_has_a_string_form{"PlatformManifest/ARepositoryRefe
     expect(!mp::parse_ref_text("git+https://example.org/x.git#sha=1").has_value());
     expect(!mp::parse_ref_text("git+").has_value());
 }};
+
+// A PLATFORM'S STATEMENT IS CHECKED AGAINST THE ROWS AS IT IS READ (SPEC-016 §5):
+// a definition of a built-in row and a row defined twice are errors; a provider
+// that serves no row and a tie of priorities are warnings; the served
+// identities are ordered by identity, then priority, then provider.
+UTest a_platform_statement_is_checked_against_the_rows{"PlatformManifest/AStatementIsCheckedAgainstTheRows", [] {
+    constexpr std::string_view kHead = R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@23.1.3"
+)";
+    auto redefined = parse_error(std::string(kHead) + R"(
+[[platform.define]]
+triple = "x86_64-linux-gnu"
+
+[[platform.provider]]
+serves = ["x86_64-linux-gnu"]
+)");
+    if (auto&& failed = expect(ne(redefined.find("'x86_64-linux-gnu' is a built-in row"), std::string::npos)); !failed)
+        failed << redefined;
+    auto twice = parse_error(std::string(kHead) + R"(
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.provider]]
+serves = ["x86_64-toy"]
+)");
+    if (auto&& failed = expect(ne(twice.find("'x86_64-toy' is defined twice"), std::string::npos)); !failed)
+        failed << twice;
+
+    auto m = parse(std::string(kHead) + R"(
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.provider]]
+serves = ["x86_64-toy"]
+
+[[platform.provider]]
+name   = "second"
+serves = ["*-toy"]
+
+[[platform.provider]]
+name   = "nothing"
+serves = ["riscv64-nosuch"]
+)");
+    auto has = [&](std::string_view s) {
+        return std::ranges::any_of(m.schemaWarnings, [&](auto const& w) { return w.find(s) != std::string::npos; });
+    };
+    expect(has("'nothing' serves no row"));
+    expect(has("'x86_64-toy' is served by 'second' and 'toy' at priority 100"));
+    auto served = mp::served_identities(m.platform, "toy");
+    expect(fatal(eq(served.size(), std::size_t{2})));
+    expect(eq(served[0].identity, "x86_64-toy"));
+    expect(eq(served[0].provider, "second"));
+    expect(eq(served[1].provider, "toy"));
+}};

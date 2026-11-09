@@ -450,6 +450,22 @@ mcpp why compat --format json
 | `mcpp.why.build-programs` | `graphs[]` | 每张构建程序图一项：`workspace`（其目录）与 `programs[]`，每个程序为 `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | 每次使用弃用读法一项：`{id, where, detail, warned, since, floor, canonical, docs}`；在构建不编辑的清单中 `warned` 为 false |
 
+### `mcpp.why.target`、`mcpp.why.flags` 与 `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
+
+```
+mcpp why target   [--target <t>] --format json
+mcpp why flags    [<unit>] [--target <t>] --format json
+mcpp why platform [--target <t>] --format json
+```
+
+`data` 带 `status`，以及：
+
+| kind | 字段 | 内容 |
+|---|---|---|
+| `mcpp.why.target` | `target` | `{request, identity, provider, priority, fallback, why, candidates[]}`，每个候选 `{identity, provider, priority, available, why}`（SPEC-016 §7） |
+| `mcpp.why.flags` | `flags` | `{identity, units[], link[]}`：每个单元 `{file, package, words[]}`，每个参数 `{word, layer, detail}`，层为 compiler、row、platform、toolchain、package、engine 之一 |
+| `mcpp.why.platform` | `platform` | `{package, version, defines[], serves[], warnings[]}`，每个所服务的身份 `{identity, provider, priority}`；构建不用平台包时为 `null` |
+
 `mcpp.env` 的 `engineModules` 是本版本 mcpp 的引擎接口包的目录，构建程序图依赖它（30 ——
 `build.mcpp`）；第一次编译构建程序之后它才存在。
 

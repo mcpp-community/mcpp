@@ -2260,6 +2260,10 @@ struct Manifest {
     // the protocol is run -- "file" (the default: a process per file of its
     // cases), "case" (a process per case) or "none" (one process).
     std::string                 testSplit;
+    // `[test] store` (design 2026-11-09 §17.3): the directory `mcpp test`
+    // writes its runs to in the mtest store's form (mtest P12), relative to the
+    // project; empty: `target/mtest`; "none": no store.
+    std::string                 testStore;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended
