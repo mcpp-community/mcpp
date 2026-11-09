@@ -64,7 +64,21 @@ XL="$XL_HOME/.xlings/subos/default/bin/xlings${EXE}"
   echo "FAIL: no xlings at $XL_HOME/.xlings/subos/default/bin nor on PATH" >&2
   exit 1; }
 
-"$XL" install -y -u -g >&2
+# THE INDEX MAY BE OLDER THAN THE PIN. A job's xlings comes from the cache with
+# the index of when the cache was saved, and xlings keeps that index when its
+# refresh fails: an anonymous download of the index from GitHub answered 504
+# during GitHub's incident of 2026-11-09 ("timeouts due to surge in anonymous
+# users"), and the pin, published after the cache, was "not found". Each failed
+# attempt refreshes the index and waits; the last two take it by git, which
+# xlings otherwise declines for an index its release artifact manages.
+for attempt in 1 2 3 4 5; do
+  if "$XL" install -y -u -g >&2; then break; fi
+  [ "$attempt" = 5 ] && { echo "FAIL: the pinned mcpp could not be installed" >&2; exit 1; }
+  sleep $(( attempt * 15 ))
+  if [ "$attempt" -ge 3 ]; then XLINGS_INDEX_SOURCE=git "$XL" update >&2 || true
+  else "$XL" update >&2 || true
+  fi
+done
 
 MCPP="$XL_HOME/.xlings/subos/default/bin/mcpp${EXE}"
 [ -x "$MCPP" ] || { echo "FAIL: no mcpp at $MCPP after install" >&2; exit 1; }
