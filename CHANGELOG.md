@@ -69,6 +69,9 @@
   `mcpp why platform` lists the rows a platform defines and the identities it
   serves, with their providers and priorities.
 - `mcpp pack --all-programs` ships every program of a package.
+- The package being built stands for itself in its own graph: a test framework
+  that uses the package under test (mtest and mcpplibs.os) is built against it,
+  and the root's `[dev-dependencies]` close no cycle of packages.
 - A git reference that names no tag, rev or branch follows the remote's
   default branch; `--platform git+<url>[#tag=|rev=|branch=]`.
 

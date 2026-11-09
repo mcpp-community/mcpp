@@ -1728,9 +1728,15 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
         // below walks `mcpp::graph::topological_order` — dependencies before
         // dependents — instead of recursing, with an explicit cycle check up
         // front standing in for the old in-progress guard.
+        // The root's own `[dev-dependencies]` serve its tests, not its
+        // library, which a framework that uses the package under test reaches
+        // (step4b_names_the_root): the root's key does not fold them in.
+        auto serves_root_tests = [](const auto& e) {
+            return e.consumerPackageIndex == 0 && e.devTable;
+        };
         mcpp::graph::AdjacencyList pkgDeps(state.packages.size());
         for (auto& e : state.dependencyEdges)
-            if (e.consumerPackageIndex < pkgDeps.size())
+            if (e.consumerPackageIndex < pkgDeps.size() && !serves_root_tests(e))
                 pkgDeps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
         // An import a declared edge already covers adds nothing. One that a
         // declared path runs the other way is a module this build generates
@@ -1796,7 +1802,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 && state.dep_cache_identities[idx - 1].sourceKind == "version";
             if (!selfIsIndex) localTaint[idx] = 1;
             for (auto& e : state.dependencyEdges) {
-                if (e.consumerPackageIndex != idx) continue;
+                if (e.consumerPackageIndex != idx || serves_root_tests(e)) continue;
                 // `idx`'s dependencies precede it in `keyOrder`, so their
                 // keys and taint are already folded in below.
                 auto const& up = pkgKeys[e.dependencyPackageIndex];

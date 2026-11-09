@@ -454,6 +454,16 @@ gtest = "1.15.2"
 
 `mcpp build` ignores these; `mcpp test` resolves and uses them, for the test units only: the package's own sources compile under `mcpp test` as under `mcpp build` (2026.11.8.1+, [08](08-testing.md#tests-that-reach-packages-the-artifact-does-not)). `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. The runner is framework-agnostic: each file is an independent binary judged by exit code — a bare `main`, gtest (via `[dev-dependencies]` + `gtest_main`), or any other framework all work identically, and `-- args` are forwarded to every test binary (e.g. `-- --gtest_filter=...`). Note: synthesized test target names may contain `/` (`tests/00-a/0.cpp` → `00-a/0`), unlike `[targets.*]` names — the two namespaces are intentionally separate (test targets never enter the manifest or publishing). Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
 
+**The package being built stands for itself in its own graph** (2026.11.9.1+).
+A dependency reached through the package's `[dev-dependencies]` may name the
+package being built: a library tested with a framework that itself uses the
+library (`mcpplibs.os` under mtest). The
+edge is the package itself, whatever version it asked for, and a version it did
+not ask for is said; a second copy would provide every module of the package
+twice in one program, and what is under test is the package as it is here. The
+root's `[dev-dependencies]` serve its tests only, so the framework reaches the
+library without a cycle of packages.
+
 ## `[build-dependencies]` — Build-Time Dependencies (mcpp 2026.8.29.1+)
 
 ```toml
