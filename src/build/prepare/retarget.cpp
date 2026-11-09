@@ -142,7 +142,8 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
               // the final triple would also change what every OTHER clang cross
               // target gets, and those are measured as they stand; the claim
               // being made here is only the one the gate already states.
-              if (want->has_own_sysroot()) state.tc->linkRuntimeDirs.clear();
+              if (want->has_own_sysroot() || want->c_library_by_platform())
+                  state.tc->linkRuntimeDirs.clear();
 
               // And the flag that says it to the driver — for a HOSTED target
               // only. Freestanding already emits its own `--target`, together

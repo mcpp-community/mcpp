@@ -942,6 +942,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         hopt.appleSdkCxxHeaders = plan.toolchain.base.apple.cxxHeaders;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+        // The machine description of a row a platform defines (E1, SPEC-016 §2.1).
+        if (auto spec = mcpp::freestanding::hosted_spec(plan.toolchain.targetTriple))
+            for (auto const& w : mcpp::freestanding::row_words(*spec))
+                compile_toolchain_flags += " " + w;
         for (auto const& w : mcpp::toolchain::apple_float_macro_words(plan.toolchain))
             compile_toolchain_flags += " " + ninja_command_word(w);
     } else {
@@ -2611,6 +2615,9 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (p.fields.link.driver.value == "lld") {
             f.ldDriver = mcpp::freestanding::resolve_lld_any(plan.toolchain.binaryPath);
             f.ld  = words(p.fields.link.flags.value) + words(p.flags.ldflags) + user_ldflags;
+            // The row's emulation first, as for a bare-metal row (E1).
+            if (auto spec = mcpp::freestanding::hosted_spec(plan.toolchain.targetTriple))
+                for (auto const& w : mcpp::freestanding::row_link_words(*spec)) f.ld = " " + w + f.ld;
             // `lld` and `lld-link` are the same program, which chooses its
             // flavour from its name or from `-flavor`; a payload that ships
             // one of them and not `ld.lld` is asked for the ELF linker

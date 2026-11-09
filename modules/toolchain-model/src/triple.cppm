@@ -303,6 +303,12 @@ struct Triple {
     // to_xim_package). If a row ever gains a second toolchain that does NOT
     // ship a sysroot, this has to move onto the toolchain.
     bool has_own_sysroot() const;   // after the table: the row's provider answers
+    // A TARGET WHOSE C LIBRARY A PLATFORM DESCRIBES (SPEC-016 §5; design
+    // 2026-11-10 E1): a row a platform defines, or a built-in row that no
+    // built-in provider serves. Nothing the toolchain payload carries for its
+    // own host -- its libc++ build, its runtime directories, the host's loader
+    // -- belongs to such a target; what does is the platform's sysroot or base.
+    bool c_library_by_platform() const;
 
     // APPLE, AS ONE QUESTION. `os == "macos"` was the whole of it while macOS
     // was the only Apple row; iOS shares the object format, the linker, the
@@ -459,6 +465,13 @@ struct Triple {
     const mcpp::toolchain::target::Row* defined() const {
         return mcpp::toolchain::target::defined_row(str());
     }
+    // THE SYSTEM THE ROW'S ARTIFACTS RUN ON (SPEC-016 §6): its `execution`,
+    // built-in or defined, else its own system.
+    std::string execution_system() const {
+        if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->execution.empty())
+            return std::string(r->execution);
+        return os;
+    }
 
     static std::string expand_version(std::string_view pattern, std::string_view version) {
         std::string out(pattern);
@@ -573,6 +586,14 @@ inline bool Triple::has_own_sysroot() const {
     for (auto const& k : kKnownTargets)
         if (k.canonical == s) return k.provider && k.provider->sysroot == "toolchain";
     return os == "emscripten" || os == "android" || env == "android";
+}
+
+inline bool Triple::c_library_by_platform() const {
+    const auto s = str();
+    if (mcpp::toolchain::target::defined_row(s)) return true;
+    for (auto const& k : kKnownTargets)
+        if (k.canonical == s) return k.provider == nullptr;
+    return false;
 }
 
 // A PIN IS A CAPABILITY WHEN THE PROVIDER PAIRS WITH ONE COMPILER FAMILY ONLY:

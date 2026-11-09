@@ -406,7 +406,9 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     // function had put its directory on the link dirs. The compiler's own
     // needs are `compilerRuntimeDirs`, which this does not touch and which
     // still gets them.
-    if (auto tt = triple::parse(targetTriple); tt && tt->has_own_sysroot())
+    // Nor a target whose C library a platform describes (E1): these are the
+    // payload's directories for its own host.
+    if (auto tt = triple::parse(targetTriple); tt && (tt->has_own_sysroot() || tt->c_library_by_platform()))
         return dirs;
 
     auto root = compilerBin.parent_path().parent_path();

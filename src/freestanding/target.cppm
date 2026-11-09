@@ -32,6 +32,7 @@ export module mcpp.freestanding.target;
 import std;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.builtin_targets;
+import mcpp.toolchain.target_rows;
 
 export namespace mcpp::freestanding {
 
@@ -104,6 +105,18 @@ inline constexpr auto kTable = [] {
     return out;
 }();
 
+// THE MACHINE DESCRIPTION OF A ROW A PLATFORM DEFINES (SPEC-016 §2.1; design
+// 2026-11-10 E1, mcpp#911 N7). The engine uses it as written, as it uses a
+// built-in row's: the defined `i386-svr4` row's `march = "i386"` and
+// `link-emulation = "elf_i386"` were read and then reached no command line,
+// because the table above is compiled from the built-in rows alone. A defined
+// row lives in the registry for the rest of the process, so the views stay valid.
+inline std::optional<Spec> defined_spec(std::string_view triple) {
+    auto const* d = mcpp::toolchain::target::defined_row(triple);
+    if (!d || d->march.empty()) return std::nullopt;
+    return Spec{ d->triple, d->march, d->mabi, d->codeModel, d->multilib, d->flags, d->linkEmulation };
+}
+
 // The single read point. Returns nullopt for anything that is not a known
 // bare-metal target — including hosted triples, so a caller can use this as
 // "is this a target I know how to build freestanding".
@@ -112,7 +125,17 @@ inline std::optional<Spec> resolve(const mcpp::toolchain::triple::Triple& t) {
     const std::string s = t.str();
     for (const auto& row : kTable)
         if (row.triple == s) return row;
-    return std::nullopt;
+    return defined_spec(s);
+}
+
+// The machine description of a row with an operating system under it: only a
+// row a platform defines can state one (every built-in hosted row leaves it to
+// the compiler's defaults), and it reaches each compile as the bare-metal row's
+// does, and the link when the platform links with `ld.lld` itself.
+inline std::optional<Spec> hosted_spec(std::string_view triple) {
+    auto t = mcpp::toolchain::triple::parse(triple);
+    if (!t || t->is_freestanding()) return std::nullopt;
+    return defined_spec(t->str());
 }
 
 inline std::optional<Spec> resolve(std::string_view triple) {
