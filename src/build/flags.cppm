@@ -1213,6 +1213,13 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // `/LTCG` on the link and the archive; before, it was not spelled at all,
     // and a build with `lto = true` reported `+ lto` while doing none.
     if (prof.lto) opt_flag += isMsvcDialect ? " /GL" : " -flto";
+    // ONE SECTION PER FUNCTION AND PER OBJECT (design 2026-11-09 §17.2), so
+    // that a link that keeps what it reaches (a test, `--gc-sections`) drops
+    // the rest of an object a module initializer pulls in. Measured on mcpp's
+    // unit tests: with whole objects the collection kept 15 of 17 MB of code.
+    // The freestanding prefix states it for its own units; cl.exe's `/Gy` is
+    // its default under optimisation.
+    if (!isMsvcDialect && !isFreestandingTarget) opt_flag += " -ffunction-sections -fdata-sections";
     // `ndebug` (design 2026-10-23 §15.4): the profiles that produce what is
     // shipped define NDEBUG for every unit of the graph, as CMake's Release,
     // Meson's `b_ndebug=if-release` and Cargo's release do.

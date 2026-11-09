@@ -3704,10 +3704,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testPrograms = value.as_string();
                 continue;
             }
+            if (key == "link") {
+                if (!value.is_string() || (value.as_string() != "used" && value.as_string() != "objects"))
+                    return std::unexpected(error(origin,
+                        "[test] link is \"used\" (the linker keeps what a test reaches, the default) or "
+                        "\"objects\" (every object whole)"));
+                m.testLink = value.as_string();
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, main, programs, start, windows_code_page, windows_long_paths.", key));
+                    "discover, link, main, programs, start, windows_code_page, windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();

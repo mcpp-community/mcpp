@@ -2039,6 +2039,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // than link.exe does, so "which compiler binary" is the wrong question.
         return targetOs == "windows" && mcpp::toolchain::is_msvc_target(tc);
     }();
+    // A TEST KEEPS WHAT IT REACHES (design 2026-11-09 §17.2): every object of
+    // the package is on its link line, and a test of one module used to carry
+    // all of them -- 32 MB for each of mcpp's 166 unit tests. The linker drops
+    // the sections nothing references; static constructors are its roots, so
+    // a case that registers itself stays. `[test] link = "objects"` keeps
+    // every object whole. ELF and Mach-O through the compiler driver; MSVC's
+    // link.exe, a freestanding image and wasm keep their own link lines.
+    auto keep_what_tests_reach = [&](LinkUnit& lu, const mcpp::manifest::Manifest& owner) {
+        if (owner.testLink == "objects" || msvcTarget || targetTriple.is_freestanding()) return;
+        if (!targetTriple.empty() && targetTriple.str().starts_with("wasm")) return;
+        const bool macho = targetTriple.empty() ? bool(mcpplibs::os::is_macos) : targetTriple.is_mach_o();
+        lu.linkFlags.push_back(macho ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
+    };
 
     bool experimentalStd = false;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
@@ -3601,6 +3614,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.kind   = LinkUnit::TestBinary;
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
+            keep_what_tests_reach(lu, manifest);
         } else if (t.kind == mcpp::manifest::Target::Application
                    && mcpp::toolchain::triple::application_form(targetTriple)
                       == mcpp::toolchain::triple::ApplicationForm::SharedObject) {
@@ -4153,6 +4167,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                           : place(target_output(t, naming));
                 lu.windowsSubsystem = t.windowsSubsystem;
                 lu.windowsEntry     = t.windowsEntry;
+                if (lu.kind == LinkUnit::TestBinary) keep_what_tests_reach(lu, pkg.manifest);
             }
             lu.loaderTagFlag = loader_tag_flag(lu.kind);
             for (auto const& other : plan.linkUnits)

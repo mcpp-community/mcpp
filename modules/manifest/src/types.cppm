@@ -2251,6 +2251,11 @@ struct Manifest {
     // "directory" (the files of one directory below a discover glob's fixed
     // directory are one program, named by the directory). Empty: "file".
     std::string                 testPrograms;
+    // `[test] link` (design 2026-11-09 §17.2): "used" (the default) -- the
+    // linker keeps what a test reaches (`--gc-sections`, `-dead_strip`), so a
+    // test of one module does not carry the package's every function --, or
+    // "objects", every object whole.
+    std::string                 testLink;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended
