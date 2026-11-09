@@ -84,8 +84,11 @@ object whole.
 
 A run is kept in the form of the mtest store (2026.11.9.1+): `target/mtest/`
 holds `runs/<id>/run.json`, a line per process in `programs.ndjson` (its
-status, duration, start, worker and selected cases) and a line per case in
-`cases.ndjson`, and `index.ndjson` lists the runs. `mtest store import --from
+status, duration, start, worker and selected cases, and the program's `usage` when it reported
+one) and a line per case in `cases.ndjson` (its kind, tags, start after the run began, failures
+with their expected and actual values, metrics and bounds, 2026.11.10.1+), and `index.ndjson`
+lists the runs. A `Bench` case's measurements are therefore in the store, and `mtest analyze
+trend` shows them beside their bounds over the runs `mcpp test` kept. `mtest store import --from
 target/mtest` takes them into mtest's store, and an `mtest.toml` whose
 `[project] store` is `target/mtest` reads them where they are; `mtest report`,
 `analyze` and `graph` then read them as mtest's own runs (the Markdown report,
@@ -326,7 +329,8 @@ then serialises those tests. A project never has to remember `-j1`.
 A test program may consist of cases. mcpp does not provide a framework for
 them; it implements the runner's side of a protocol that frameworks implement:
 the [mtest test protocol](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md),
-version 1 (mcpp 2026.11.8.1+). A program implements it when its entry states it,
+version 1 (mcpp 2026.11.8.1+), whatever framework or language a program is written with
+([SPEC-017](specs/test-runner.md)). A program implements it when its entry states it,
 
 ```toml
 [targets.main]

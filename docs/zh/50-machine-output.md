@@ -210,6 +210,9 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` 打印一个测试的 `mcpp.launch`（见下） | 调试测试的 IDE |
 | `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` 先流式输出构建事件，再输出 `mcpp.launch` 信封（见下） | IDE 的运行，边构建边显示 |
 | `test-protocol` | 2026.11.8.1 | 实现测试协议的测试程序，其用例在 `mcpp test --message-format json` 的记录中被列出（`--cases`）、选择（`--case`）并报告（§8） | IDE 的测试树、从编辑器运行一个用例 |
+| `test-parts` | 2026.11.10.1 | 在 `test-protocol` 之上：以多个进程运行的程序（`[test] split`）在 `--cases` 下写出其各部分（`parts`），各部分的记录写出 `part_of`（§8） | IDE 的测试树 |
+| `test-case-stream` | 2026.11.10.1 | 在 `test-protocol` 之上：每个用例开始与结束时各有一条 `case` 记录，先于其程序的记录（§8） | IDE 的实时结果 |
+| `test-metrics` | 2026.11.10.1 | 在 `test-protocol` 之上：用例的 `kind`、`tags`、`metrics`、`bounds` 与程序的 `usage`，出现在记录与 `mcpp test` 保存的运行中（mtest 规范 P6、P10.2、P12；§8） | IDE 的指标、界限与趋势 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -746,6 +749,24 @@ mcpp test [pattern] [--workspace] --message-format json
 | `listed` | `--cases` 时：每个用例的 `id`、`name`、`file`、`line`，陈述时还有 `kind`、`tags`、`expect` *（2026.11.8.1+）* |
 | `guide` | 测试所用框架陈述了指南时，该指南文件 *（2026.11.8.1+）* |
 | `program`、`sources` | 构建而未运行的测试（`--no-run`、`--cases`）：程序，以及它由之编译的文件（它自己的与它链接的库的），供按改动选择测试的运行器使用 *（2026.11.8.1+）* |
+| `parts` | `--cases` 时，运行会分成多个进程的程序（`[test] split = "file"`，用例分布在其多个文件中）：每部分的 `name`（`<test>/<文件主名>`，与运行的记录同名）与 `file` *（2026.11.10.1+，`test-parts`）* |
+| `part_of` | 一个部分的记录：它所属的程序 *（2026.11.10.1+，`test-parts`）* |
+| `usage` | 程序报告的机器使用（P10.2）：`user_ms`、`sys_ms`，陈述时还有 `peak_bytes`、`read_bytes`、`written_bytes` *（2026.11.10.1+，`test-metrics`）* |
+
+程序陈述时，`cases` 中的用例还有 `kind`、`tags`、`metrics`（`name`、`value`、`unit`，陈述时还有 `samples`、
+`better`、`precision`）与 `bounds`（`metric`、`max`、`min`）；`listed` 的条目有 `bounds`
+*（2026.11.10.1+，`test-metrics`）*。
+
+**用例的实时记录** *（2026.11.10.1+，`test-case-stream`）*。程序运行时即读取其报告，每个用例的开始与结束
+各成一条记录，先于程序的记录；程序的记录仍带全部用例：
+
+```json
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"begin","t_ms":12}}
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"end","status":"pass","duration_ms":3.1}}
+```
+
+`t_ms` 从运行开始计，与存储中的 `started_ms` 相同。`end` 记录带 `cases` 中用例的各字段。程序结束时没有某用例的
+`end`，该用例停留在已开始；其程序的记录写明它失败（协议 P5.4）。
 
 汇总记录，`{"summary": {...}}`：
 

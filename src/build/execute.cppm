@@ -4061,6 +4061,11 @@ struct TestResult {
     // said: each case's result, or its listing under `--cases`.
     int                                 protocol = 0;
     mcpp::build::test_protocol::Report  report;
+    // The program this record is a part of (`[test] split`), empty for a
+    // program run whole (feature `test-parts`).
+    std::string                         partOf;
+    // The parts a listing (`--cases`) divides the program into: name and file.
+    std::vector<std::pair<std::string, std::string>> parts;
     // Where it ran in the run's schedule, for the mtest store (P12): its start
     // after the command began, the worker that ran it, and the cases it
     // selected (a program run as a process per file of its cases).
@@ -4117,6 +4122,11 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                    {"started_ms", t.startedMs}, {"worker", t.worker}, {"select", t.select},
                    {"resources", json::array()}, {"fixtures", json::array()}};
             if (t.buildMs > 0) p["build_ms"] = t.buildMs;
+            if (t.report.usage.set) {
+                auto u = mcpp::build::test_protocol::usage_json(t.report.usage);
+                u["source"] = "program";
+                p["usage"] = std::move(u);
+            }
             programs << p.dump() << "\n";
             if (t.report.cases.empty()) {
                 ++counts[status_of(t)];
@@ -4125,10 +4135,30 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
             for (auto const& c : t.report.cases) {
                 ++counts[c.status];
                 json f = json::array();
-                for (auto const& x : c.failures)
-                    f.push_back({{"file", x.file}, {"line", x.line}, {"message", x.message}});
-                cases << json{{"program", t.name}, {"id", c.id}, {"status", c.status}, {"ms", c.ms},
-                              {"reason", c.reason}, {"failures", f}}.dump() << "\n";
+                for (auto const& x : c.failures) {
+                    json one{{"file", x.file}, {"line", x.line}, {"message", x.message}};
+                    if (!x.expected.empty() || !x.actual.empty()) {
+                        one["expected"] = x.expected;
+                        one["actual"] = x.actual;
+                    }
+                    f.push_back(std::move(one));
+                }
+                // P12: the case's kind, tags, start after the run began (its
+                // program's start and the `begin` event's time in it), metrics
+                // and bounds.
+                json line{{"program", t.name}, {"id", c.id}, {"status", c.status}, {"ms", c.ms},
+                          {"reason", c.reason}, {"failures", f}};
+                if (!c.kind.empty()) line["kind"] = c.kind;
+                if (!c.tags.empty()) line["tags"] = c.tags;
+                if (c.t >= 0 && t.startedMs >= 0)
+                    line["started_ms"] = static_cast<long long>(t.startedMs + c.t);
+                if (!c.metrics.empty()) {
+                    json ms = json::array();
+                    for (auto const& m : c.metrics) ms.push_back(mcpp::build::test_protocol::metric_json(m));
+                    line["metrics"] = std::move(ms);
+                }
+                if (!c.bounds.empty()) line["bounds"] = mcpp::build::test_protocol::bounds_json(c.bounds);
+                cases << line.dump() << "\n";
             }
         }
     }
@@ -4172,7 +4202,14 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
         // selection named and the program does not have; its listing.
         {"protocol", r.protocol ? nlohmann::ordered_json(r.protocol) : nlohmann::ordered_json(nullptr)},
     };
+    if (!r.partOf.empty()) record["part_of"] = r.partOf;
+    if (!r.parts.empty()) {
+        auto parts = nlohmann::ordered_json::array();
+        for (auto const& [name, file] : r.parts) parts.push_back({{"name", name}, {"file", file}});
+        record["parts"] = std::move(parts);
+    }
     if (r.protocol) {
+        if (r.report.usage.set) record["usage"] = mcpp::build::test_protocol::usage_json(r.report.usage);
         if (!r.report.listed.empty())
             record["listed"] = mcpp::build::test_protocol::listing_json(r.report);
         if (!r.report.cases.empty()) record["cases"] = mcpp::build::test_protocol::cases_json(r.report);
@@ -4311,6 +4348,8 @@ struct TestRunnable {
     // The files that are the test's own: a program of one file has no other
     // file to run its cases in, and is not listed to be split by file.
     std::size_t ownFiles = 1;
+    // The program a part belongs to, when the run divides it (`[test] split`).
+    std::string partOf;
 };
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
@@ -4876,6 +4915,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     auto& t = results.back();
                     t.startedMs = std::chrono::duration_cast<std::chrono::milliseconds>(startedAt - tLoop).count();
                     t.worker = workerId;
+                    t.partOf = r.partOf;
                     if (r.select) {
                         std::ifstream in(*r.select);
                         for (std::string line; std::getline(in, line);)
@@ -4929,8 +4969,48 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     for (auto v : mcpp::build::test_protocol::kVariables) runOpts.unset.emplace_back(v);
                 }
                 if (!capture) mcpp::ui::status("Running", std::format("bin/{}", r.name));
+                // THE CASES AS THEY HAPPEN (feature `test-case-stream`): the
+                // report is NDJSON the program appends event by event (P5.1),
+                // so under `--message-format json` it is read while the program
+                // runs and each case's beginning and end is a record of its own,
+                // before the program's record. The program's record is unchanged.
+                namespace tp = mcpp::build::test_protocol;
+                tp::ReportReader reader;
+                const auto reportFile = r.protocolDir / "report.ndjson";
+                const long long programStartMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(tStart - tLoop).count();
+                auto stream_changes = [&] {
+                    for (auto const& ch : reader.poll(reportFile)) {
+                        auto const& c = reader.report().cases[ch.index];
+                        nlohmann::ordered_json body = {{"member", memberName}, {"test", r.name}, {"id", c.id},
+                                                       {"event", ch.ended ? "end" : "begin"}};
+                        if (!ch.ended) {
+                            if (c.t >= 0) body["t_ms"] = static_cast<long long>(programStartMs + c.t);
+                        } else {
+                            const auto one = tp::case_json(c);
+                            for (auto it = one.begin(); it != one.end(); ++it)
+                                if (it.key() != "id") body[it.key()] = *it;
+                        }
+                        std::scoped_lock lock(reportMutex);
+                        std::println("{}", nlohmann::ordered_json{{"case", std::move(body)}}.dump(
+                                               -1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
+                        std::fflush(libc::stdout());
+                    }
+                };
+                const bool streamCases = json && r.protocol;
                 {
+                    std::jthread watcher;
+                    if (streamCases)
+                        watcher = std::jthread([&](std::stop_token stop) {
+                            while (!stop.stop_requested()) {
+                                stream_changes();
+                                // A tenth of a second: a case is stated as it ends, at a
+                                // cost of one read of the new bytes per tick.
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            }
+                        });
                     auto rr = mcpp::run::execute(r.argv, runOpts);
+                    if (watcher.joinable()) { watcher.request_stop(); watcher.join(); }
                     exitCode = rr.exit_code;
                     timedOut = rr.timed_out;
                     spawnErr = rr.spawn_error;
@@ -4946,7 +5026,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 std::string casesNote;
                 int spoken = r.protocol;
                 if (r.protocol && spawnErr == 0) {
-                    report = mcpp::build::test_protocol::read_report(r.protocolDir / "report.ndjson", exitCode);
+                    // What the watcher did not reach yet, then the report as
+                    // `read_report` closes it (P5.4).
+                    if (streamCases) stream_changes(); else reader.poll(reportFile);
+                    report = reader.finish(exitCode);
                     std::error_code ec;
                     std::filesystem::remove_all(r.protocolDir / "tmp", ec);
                     if (!report.spoke && !timedOut) {
@@ -5336,6 +5419,20 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             }
             if (testOpts.listCases) {
                 results.push_back(built_result(r));
+                // THE PARTS A RUN DIVIDES IT INTO (feature `test-parts`): under
+                // `[test] split = "file"` a program of several files with cases
+                // in several of them runs as one process per file, each named
+                // `<program>/<file stem>` as the run's records name it.
+                const auto split = ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
+                if (split == "file" && r.ownFiles >= 2) {
+                    std::set<std::string> files;
+                    for (const auto& c : report.listed)
+                        if (!c.file.empty()) files.insert(c.file);
+                    if (files.size() >= 2)
+                        for (const auto& f : files)
+                            results.back().parts.emplace_back(
+                                std::format("{}/{}", r.name, std::filesystem::path(f).stem().generic_string()), f);
+                }
                 if (!json) {
                     mcpp::ui::plain(std::format("{}: {} case{}", r.name, report.listed.size(),
                                                 report.listed.size() == 1 ? "" : "s"));
@@ -5412,6 +5509,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     const auto label = split == "case" ? key
                                      : std::filesystem::path(key).stem().generic_string();
                     part.name = std::format("{}/{}", r.name, label);
+                    part.partOf = r.name;
                     if (!whole && part.name.find(testOpts.filter) == std::string::npos) continue;
                     part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
                     std::error_code ec;

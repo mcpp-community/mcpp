@@ -247,6 +247,9 @@ envelope says when either has changed since.
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
 | `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` streams the build's events, then the `mcpp.launch` envelope (below) | an IDE's Run, showing the build as it goes |
 | `test-protocol` | 2026.11.8.1 | a test program that implements the test protocol has its cases listed (`--cases`), selected (`--case`) and reported in the records of `mcpp test --message-format json` (§8) | an IDE's test tree, a case run from the editor |
+| `test-parts` | 2026.11.10.1 | with `test-protocol`: a program run as several processes (`[test] split`) names its parts under `--cases` (`parts`) and in each part's record (`part_of`) (§8) | an IDE's test tree |
+| `test-case-stream` | 2026.11.10.1 | with `test-protocol`: a `case` record as each case begins and ends, before its program's record (§8) | an IDE's live results |
+| `test-metrics` | 2026.11.10.1 | with `test-protocol`: the cases' `kind`, `tags`, `metrics` and `bounds`, the program's `usage`, in the records and in the run `mcpp test` keeps (mtest spec P6, P10.2, P12; §8) | an IDE's metrics, bounds and trends |
 
 ### How a tool runs mcpp for a project
 
@@ -836,6 +839,26 @@ Per test:
 | `listed` | under `--cases`: each case's `id`, `name`, `file`, `line`, and `kind`, `tags`, `expect` when stated *(2026.11.8.1+)* |
 | `guide` | the guide of the framework the test is written with, a file, when its framework states one *(2026.11.8.1+)* |
 | `program`, `sources` | a test built and not run (`--no-run`, `--cases`): the program, and the files it is compiled from -- its own and those of the libraries it links -- for a runner that selects tests by change *(2026.11.8.1+)* |
+| `parts` | under `--cases`, a program a run divides into processes (`[test] split = "file"`, cases in several of its files): each part's `name` (`<test>/<file stem>`, as the run's records name it) and `file` *(2026.11.10.1+, `test-parts`)* |
+| `part_of` | the record of a part: the program it is a part of *(2026.11.10.1+, `test-parts`)* |
+| `usage` | the program's use of the machine, as it reported it (P10.2): `user_ms`, `sys_ms`, and `peak_bytes`, `read_bytes`, `written_bytes` when stated *(2026.11.10.1+, `test-metrics`)* |
+
+A case in `cases` also has, when the program stated them, `kind`, `tags`, `metrics` (`name`,
+`value`, `unit`, and `samples`, `better`, `precision` when stated) and `bounds` (`metric`, `max`,
+`min`); an entry of `listed` has `bounds` *(2026.11.10.1+, `test-metrics`)*.
+
+**Cases as they happen** *(2026.11.10.1+, `test-case-stream`)*. A program's report is read while
+it runs, and each case's beginning and end is a record of its own, before the program's record,
+which still carries every case:
+
+```json
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"begin","t_ms":12}}
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"end","status":"pass","duration_ms":3.1}}
+```
+
+`t_ms` counts from the start of the run, as the store's `started_ms` does. The `end` record has
+the fields of a case in `cases`. A program that ends without a case's `end` leaves that case
+begun; its program's record states it failed (protocol P5.4).
 
 Summary record, `{"summary": {...}}`:
 

@@ -37,6 +37,15 @@
 - Build programs of a package that requires `mcpp:kernel-abi` read the
   resolved provider's `provides-interfaces` (`mcpp::kernel_abi_interfaces()`,
   `MCPP_KERNEL_ABI_INTERFACES`, `;`-joined; empty is unknown).
+- `mcpp test` states what its programs report as they report it (mcpp#917):
+  a `case` record as each case begins and ends, before the program's record
+  (feature `test-case-stream`); the parts a program runs as, under `--cases`
+  (`parts`) and in each part's record (`part_of`, feature `test-parts`); the
+  cases' `kind`, `tags`, `metrics` and `bounds` and the program's `usage`, in
+  the records and in the run kept under `target/mtest` with the case's start
+  and its failures' expected and actual values (feature `test-metrics`; mtest
+  spec P6, P10.2, P12). A `Bench` case's measurements reach `mtest analyze
+  trend`.
 - The suppliers of the layers may not require one another in a circle; the
   build is refused before compiling, naming each package, the layer it
   supplies and the one it requires (`layer-cycle`, SPEC-002 §3.8).
