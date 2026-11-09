@@ -68,6 +68,97 @@ bool graph_supplies_system(const PrepareState& state) {
 
 }  // namespace
 
+// OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
+// NOTHING IN ITS PLACE IS NOT, AND UNTIL THIS BLOCK IT LOOKED THE SAME.
+//
+// A hosted row's pin names the payload that supplies the target's C
+// library. A project may name a different compiler — that is the escape
+// hatch the whole convention/capability distinction exists to protect —
+// and the ordinary reason to do so is that its dependency graph supplies
+// the C library instead. `examples/06-openkal-cross` is exactly that:
+// `llvm@22.1.8` plus `openkal-llvm-runtime`, and `graphSuppliesSystem`
+// is true there.
+//
+// WITH NEITHER, THE BUILD USED TO RUN ANYWAY AND FAIL SOMEWHERE ELSE.
+// Measured 2026-08-26 on Linux, `[toolchain] default = "llvm@22.1.8"`
+// and no dependencies:
+//
+//   --target x86_64-linux-musl
+//     hermetic link check failed … crtbeginT.o (bare name)
+//   --target x86_64-windows-gnu
+//     hermetic link check failed …
+//     /usr/lib/gcc/x86_64-w64-mingw32/13-win32/crtbegin.o (outside)
+//
+// Both are accurate about the symptom and silent about the decision:
+// clang is retargetable and brings no C library, so it reached for a
+// gcc installation — one that does not exist under the payload prefix
+// in the first case, and that belongs to the HOST in the second. There
+// is no llvm payload supplying either target's C library today.
+//
+// THE REFUSAL IS DECIDED HERE BECAUSE ONLY HERE ARE BOTH HALVES
+// KNOWN. The row is read a thousand lines earlier and the graph does
+// not exist then; `host_can_serve` is family-agnostic and would answer
+// "yes, some payload here produces it" — the same shape as the family
+// this release is about, a predicate answering a question narrower than
+// the one it is asked.
+static std::expected<void, std::string> decide_convention(PrepareState& state, bool graphSuppliesSystem) {
+    if (!state.targetRowPin.empty() && !graphSuppliesSystem
+        && tc_origin_is_user_explicit(state.tcOrigin) && state.tcSpec.has_value()) {
+        auto declared = mcpp::toolchain::parse_toolchain_spec(*state.tcSpec);
+        auto rowTc    = mcpp::toolchain::parse_toolchain_spec(state.targetRowPin);
+        // A provider that pairs with the declared family supplies the system
+        // with it (SPEC-016 §6): the row's payload becomes that compiler's.
+        const bool paired = declared && rowTc && declared->family != rowTc->family
+            && std::ranges::any_of(mcpp::toolchain::target::providers(), [&](auto const* p) {
+                   return p->name == state.targetChoice.provider
+                       && mcpp::toolchain::target::serves(*p, state.targetRowName)
+                       && std::ranges::find(p->pairs, mcpp::toolchain::family_name(declared->family))
+                              != p->pairs.end();
+               });
+        // A PAIRED PROVIDER THIS HOST DOES NOT HAVE SUPPLIES NOTHING. The
+        // selection took it as the first candidate of all, none being
+        // available (§4.6); with the toolchain stated, the diagnosis of an
+        // unserved target was not composed, and the payload's install
+        // failed as an unnamed refusal (target matrix, linux-aarch64).
+        auto const& choice = state.targetChoice;
+        const bool pairedHere = std::ranges::any_of(choice.candidates, [&](auto const& k) {
+            return k.available && k.provider && k.provider->name == choice.provider
+                && k.row && k.row->triple == choice.identity;
+        });
+        if (paired && !pairedHere) {
+            refusal::record(refusal::Code::HostCannotServe);
+            return std::unexpected(std::format(
+                "target '{}' with {} takes its system from the '{}' provider's {} payload, "
+                "which this host does not have.\n"
+                "       `mcpp why target --target {}` lists the providers of the target and "
+                "where each is available; depend on a package that implements the "
+                "target's system to build it here.",
+                state.targetRowName, *state.tcSpec, choice.provider, state.targetRowPin,
+                state.targetRowName));
+        }
+        if (paired) state.pairedSystem = state.targetRowPin;
+        else if (declared && rowTc && declared->family != rowTc->family) {
+            refusal::record(refusal::Code::ConventionUnreplaced);
+            return std::unexpected(std::format(
+                "target '{}' takes its C library from the '{}' payload, and "
+                "'{}' has none here.\n"
+                "       The row's toolchain is a convention, so naming your "
+                "own compiler overrides it —\n"
+                "       but the convention is what supplies this target's "
+                "headers and C library, and\n"
+                "       nothing in the dependency graph supplies them "
+                "instead.\n"
+                "       depend on a package that implements the target's C "
+                "library (openkal-musl and\n"
+                "       openkal-llvm-runtime are the ones in the index), or "
+                "remove the `[toolchain]`\n"
+                "       line so `{}` is used for this target.",
+                state.targetRowName, state.targetRowPin, *state.tcSpec, state.targetRowPin));
+        }
+    }
+    return {};
+}
+
 std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& state) {
 
     // ─── The toolchain, resolved now that the graph exists ──────────────────
@@ -392,93 +483,7 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
                 }
             }
         }
-        // OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
-        // NOTHING IN ITS PLACE IS NOT, AND UNTIL THIS BLOCK IT LOOKED THE SAME.
-        //
-        // A hosted row's pin names the payload that supplies the target's C
-        // library. A project may name a different compiler — that is the escape
-        // hatch the whole convention/capability distinction exists to protect —
-        // and the ordinary reason to do so is that its dependency graph supplies
-        // the C library instead. `examples/06-openkal-cross` is exactly that:
-        // `llvm@22.1.8` plus `openkal-llvm-runtime`, and `graphSuppliesSystem`
-        // is true there.
-        //
-        // WITH NEITHER, THE BUILD USED TO RUN ANYWAY AND FAIL SOMEWHERE ELSE.
-        // Measured 2026-08-26 on Linux, `[toolchain] default = "llvm@22.1.8"`
-        // and no dependencies:
-        //
-        //   --target x86_64-linux-musl
-        //     hermetic link check failed … crtbeginT.o (bare name)
-        //   --target x86_64-windows-gnu
-        //     hermetic link check failed …
-        //     /usr/lib/gcc/x86_64-w64-mingw32/13-win32/crtbegin.o (outside)
-        //
-        // Both are accurate about the symptom and silent about the decision:
-        // clang is retargetable and brings no C library, so it reached for a
-        // gcc installation — one that does not exist under the payload prefix
-        // in the first case, and that belongs to the HOST in the second. There
-        // is no llvm payload supplying either target's C library today.
-        //
-        // THE REFUSAL IS DECIDED HERE BECAUSE ONLY HERE ARE BOTH HALVES
-        // KNOWN. The row is read a thousand lines earlier and the graph does
-        // not exist then; `host_can_serve` is family-agnostic and would answer
-        // "yes, some payload here produces it" — the same shape as the family
-        // this release is about, a predicate answering a question narrower than
-        // the one it is asked.
-        if (!state.targetRowPin.empty() && !graphSuppliesSystem
-            && tc_origin_is_user_explicit(state.tcOrigin) && state.tcSpec.has_value()) {
-            auto declared = mcpp::toolchain::parse_toolchain_spec(*state.tcSpec);
-            auto rowTc    = mcpp::toolchain::parse_toolchain_spec(state.targetRowPin);
-            // A provider that pairs with the declared family supplies the system
-            // with it (SPEC-016 §6): the row's payload becomes that compiler's.
-            const bool paired = declared && rowTc && declared->family != rowTc->family
-                && std::ranges::any_of(mcpp::toolchain::target::providers(), [&](auto const* p) {
-                       return p->name == state.targetChoice.provider
-                           && mcpp::toolchain::target::serves(*p, state.targetRowName)
-                           && std::ranges::find(p->pairs, mcpp::toolchain::family_name(declared->family))
-                                  != p->pairs.end();
-                   });
-            // A PAIRED PROVIDER THIS HOST DOES NOT HAVE SUPPLIES NOTHING. The
-            // selection took it as the first candidate of all, none being
-            // available (§4.6); with the toolchain stated, the diagnosis of an
-            // unserved target was not composed, and the payload's install
-            // failed as an unnamed refusal (target matrix, linux-aarch64).
-            auto const& choice = state.targetChoice;
-            const bool pairedHere = std::ranges::any_of(choice.candidates, [&](auto const& k) {
-                return k.available && k.provider && k.provider->name == choice.provider
-                    && k.row && k.row->triple == choice.identity;
-            });
-            if (paired && !pairedHere) {
-                refusal::record(refusal::Code::HostCannotServe);
-                return std::unexpected(std::format(
-                    "target '{}' with {} takes its system from the '{}' provider's {} payload, "
-                    "which this host does not have.\n"
-                    "       `mcpp why target --target {}` lists the providers of the target and "
-                    "where each is available; depend on a package that implements the "
-                    "target's system to build it here.",
-                    state.targetRowName, *state.tcSpec, choice.provider, state.targetRowPin,
-                    state.targetRowName));
-            }
-            if (paired) state.pairedSystem = state.targetRowPin;
-            else if (declared && rowTc && declared->family != rowTc->family) {
-                refusal::record(refusal::Code::ConventionUnreplaced);
-                return std::unexpected(std::format(
-                    "target '{}' takes its C library from the '{}' payload, and "
-                    "'{}' has none here.\n"
-                    "       The row's toolchain is a convention, so naming your "
-                    "own compiler overrides it —\n"
-                    "       but the convention is what supplies this target's "
-                    "headers and C library, and\n"
-                    "       nothing in the dependency graph supplies them "
-                    "instead.\n"
-                    "       depend on a package that implements the target's C "
-                    "library (openkal-musl and\n"
-                    "       openkal-llvm-runtime are the ones in the index), or "
-                    "remove the `[toolchain]`\n"
-                    "       line so `{}` is used for this target.",
-                    state.targetRowName, state.targetRowPin, *state.tcSpec, state.targetRowPin));
-            }
-        }
+        if (auto r = decide_convention(state, graphSuppliesSystem); !r) return r;
         if (auto r = state.resolve_target_toolchain(); !r)
             return std::unexpected(r.error());
     }
