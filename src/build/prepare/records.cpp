@@ -101,6 +101,34 @@ static std::string lock_identity(const mcpp::lockfile::LockedPackage& p) {
     return p.namespace_ + "\x1f" + lock_short_name(p);
 }
 
+// THE IDENTITY THIS CONFIGURATION'S REQUEST WAS GIVEN (SPEC-016 §4.5), into
+// `lock`, and the other requests' as the lock had them. Returns what the lock
+// had for this request.
+static std::optional<mcpp::lockfile::LockedTarget> lock_targets(const PrepareState& state,
+                                                                mcpp::lockfile::Lockfile& lock) {
+    std::optional<mcpp::lockfile::LockedTarget> priorTarget;
+    auto const& c = state.targetChoice;
+    if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock"))
+        for (auto const& t : prior->targets) {
+            if (!c.request.empty() && t.request == c.request) priorTarget = t;
+            else lock.targets.push_back(t);
+        }
+    if (!c.request.empty()) lock.targets.push_back({ c.request, c.identity, c.provider });
+    std::ranges::sort(lock.targets, {}, &mcpp::lockfile::LockedTarget::request);
+    return priorTarget;
+}
+
+// The drift line of a request the lock gave another identity, if it did.
+static std::optional<std::string> target_drift(const PrepareState& state,
+                                               const std::optional<mcpp::lockfile::LockedTarget>& prior) {
+    auto const& c = state.targetChoice;
+    if (!prior || prior->identity == c.identity) return std::nullopt;
+    return std::format("target {}: {} ({}) -> {} ({}){}", c.request, prior->identity,
+                       prior->provider.empty() ? "the platform's" : prior->provider,
+                       c.identity, c.provider.empty() ? "the platform's" : c.provider,
+                       c.why.empty() ? std::string{} : "; " + c.why);
+}
+
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx) {
     // Write/update mcpp.lock for any version-based deps that succeeded.
     // Path deps are intentionally NOT locked — their source is local filesystem.
@@ -413,19 +441,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         }
         // One order whichever configuration wrote the file last: by identity.
         std::ranges::stable_sort(lock.packages, {}, [](auto const& p) { return lock_identity(p); });
-        // THE IDENTITY THIS CONFIGURATION'S REQUEST WAS GIVEN (SPEC-016 §4.5),
-        // and the other requests' as the lock had them.
-        std::optional<mcpp::lockfile::LockedTarget> priorTarget;
-        {
-            auto const& c = state.targetChoice;
-            if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock"))
-                for (auto const& t : prior->targets) {
-                    if (!c.request.empty() && t.request == c.request) priorTarget = t;
-                    else lock.targets.push_back(t);
-                }
-            if (!c.request.empty()) lock.targets.push_back({ c.request, c.identity, c.provider });
-            std::ranges::sort(lock.targets, {}, &mcpp::lockfile::LockedTarget::request);
-        }
+        const auto priorTarget = lock_targets(state, lock);
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = state.workRoot / "mcpp.lock";
             // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
@@ -459,12 +475,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                 for (auto const& p : prior->packages) was[key(p)] = p.version;
                 for (auto const& p : lock.packages)    now[key(p)] = p.version;
                 std::vector<std::string> drift;
-                if (auto const& c = state.targetChoice; priorTarget && priorTarget->identity != c.identity)
-                    drift.push_back(std::format(
-                        "target {}: {} ({}) -> {} ({}){}", c.request, priorTarget->identity,
-                        priorTarget->provider.empty() ? "the platform's" : priorTarget->provider,
-                        c.identity, c.provider.empty() ? "the platform's" : c.provider,
-                        c.why.empty() ? std::string{} : "; " + c.why));
+                if (auto d = target_drift(state, priorTarget)) drift.push_back(std::move(*d));
                 for (auto const& [k, v] : now) {
                     auto it = was.find(k);
                     if (it == was.end())      drift.push_back(k + " " + v + " (not in the lock)");
