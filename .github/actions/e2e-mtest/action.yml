@@ -14,11 +14,11 @@ inputs:
   version:
     description: the mtest release
     required: false
-    default: '0.4.0'
+    default: '0.5.2'
   sha256:
     description: sha256 of mtest-<version>-openkal-bundle-all.tar.gz
     required: false
-    default: 'b62e4ac7cd76b20dbdc48a5d041d377444e8815ee7a4ff1e7686145d13acc925'
+    default: 'be443f8c546b3f4628dcd3f1eb6f45b4d698a7f805232f966349faf8250863c6'
   token:
     description: a token that reads this repository's actions
     required: false
@@ -27,18 +27,33 @@ inputs:
 runs:
   using: composite
   steps:
+    # The bundle is a release's fixed bytes: kept once per version, so that a
+    # job downloads it only when no job before it did.
+    - name: The mtest bundle, kept
+      id: bundle
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/mtest-bundle
+        key: mtest-bundle-${{ inputs.version }}-${{ inputs.sha256 }}
     - name: mtest
       shell: bash
       env:
         MTEST_VERSION: ${{ inputs.version }}
         MTEST_SHA256: ${{ inputs.sha256 }}
+        GITHUB_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
         archive="mtest-$MTEST_VERSION-openkal-bundle-all.tar.gz"
         temp="$RUNNER_TEMP"; python=python3
         if [ "$RUNNER_OS" = Windows ]; then temp=$(cygpath -u "$RUNNER_TEMP"); python=python; fi
-        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$temp/$archive" \
-          "https://github.com/mcpp-community/mtest/releases/download/v$MTEST_VERSION/$archive"
+        mkdir -p "$temp/mtest-bundle"
+        if [ ! -s "$temp/mtest-bundle/$archive" ]; then
+          # Retried, and by the API's address when the web's fails (fetch_release.sh).
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/mcpp-community/mtest/releases/download/v$MTEST_VERSION/$archive" \
+            "$temp/mtest-bundle/$archive"
+        fi
+        cp "$temp/mtest-bundle/$archive" "$temp/$archive"
         actual=$("$python" -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$temp/$archive")
         [ "$actual" = "$MTEST_SHA256" ] || { echo "::error::$archive: sha256 $actual, the action pins $MTEST_SHA256"; exit 1; }
         mkdir -p "$temp/mtest" && tar xzf "$temp/$archive" -C "$temp/mtest"
