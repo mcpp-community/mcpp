@@ -1730,7 +1730,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
         // front standing in for the old in-progress guard.
         // The root's own `[dev-dependencies]` serve its tests, not its
         // library, which a framework that uses the package under test reaches
-        // (step4b_names_the_root): the root's key does not fold them in.
+        // (names_the_root, graph_edges.cpp): the root's key does not fold them in.
         auto serves_root_tests = [](const auto& e) {
             return e.consumerPackageIndex == 0 && e.devTable;
         };

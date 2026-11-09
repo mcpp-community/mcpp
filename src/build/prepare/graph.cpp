@@ -824,28 +824,6 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
     return {};
 }
 
-// THE PACKAGE BEING BUILT STANDS FOR ITSELF IN ITS TESTS' GRAPH. A dependency
-// reached through its `[dev-dependencies]` may name it: a library tested with a
-// framework that itself uses the library (mcpplibs.os under mtest). A second
-// copy from the index would provide every module of the package twice in one
-// program, and what is under test is the package as it is here; so the edge is
-// the root's, whatever version it asked for, and a version it did not ask for
-// is said. Outside the tests' graph such an edge is a cycle, refused as one.
-static bool step4b_names_the_root(PrepareState& state, const WorklistItemCtx& ctx) {
-    const auto& item = ctx.item;
-    const auto& root = state.m->package;
-    if (!item.devOnly || item.consumerDepIndex == kMainConsumer || root.virtualRoot || !ctx.key.variant.empty()
-        || ctx.key.shortName != root.name || ctx.key.ns != root.namespace_)
-        return false;
-    recordDependencyEdge(state, item.consumerDepIndex, 0, item.spec, item.fromBuildTable, item.name);
-    if (!item.originalConstraint.empty() && item.originalConstraint != root.version
-        && item.originalConstraint != "*")
-        mcpp::ui::note(std::format(
-            "{} asks for {} {}; it is the package being built, {}, which stands for itself",
-            item.requestedBy, state.qualifiedKey(ctx.key), item.originalConstraint, root.version));
-    return true;
-}
-
 static std::expected<void, std::string>
 step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                std::map<ResolvedKey, ResolvedRecord>::iterator it) {
@@ -2126,7 +2104,7 @@ static std::expected<void, std::string> step4b_cycle_check(PrepareState& state) 
     // build-only ones included, as the key walk counts them -- but the root's
     // own `[dev-dependencies]`: they serve its tests, which no package
     // depends on, so a framework that uses the package under test reaches its
-    // library and not back through the tests (step4b_names_the_root).
+    // library and not back through the tests (names_the_root, graph_edges.cpp).
     {
         mcpp::graph::AdjacencyList deps(state.packages.size());
         for (auto const& e : state.dependencyEdges) {
@@ -2465,7 +2443,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
 
             if (auto r = step4b_resolve_identity(state, ctx); !r)
                 return std::unexpected(r.error());
-            if (step4b_names_the_root(state, ctx)) continue;
+            if (names_the_root(state, ctx.item, ctx.key)) continue;
 
             if (auto it = state.resolved.find(ctx.key); it != state.resolved.end()) {
                 if (auto r = step4b_handle_already_resolved(state, ctx, it); !r)

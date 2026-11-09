@@ -1013,6 +1013,10 @@ void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
                           const std::string& writtenKey);
+// graph_edges.cpp: the package being built stands for itself in its tests'
+// graph -- an edge reached through its `[dev-dependencies]` naming it is its
+// own, recorded here; true when the request is so answered.
+bool names_the_root(PrepareState& state, const WorkItem& item, const ResolvedKey& key);
 // graph_edges.cpp: defines `PrepareState::computeUsageRequirements`.
 void define_usage_requirements(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);

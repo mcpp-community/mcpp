@@ -72,7 +72,8 @@ cases** (2026.11.9.1+): mcpp lists the cases of a program of several files, and
 each file's run selects its own (P4) and is scheduled across the workers as a program is, named
 `<program>/<file>` -- the isolation and the parallelism of a program per file,
 with one link. `[test] split = "case"` gives each case its own process, and
-`"none"` runs the program once.
+`"none"` runs the program once. A pattern names a program or a part of one as
+the run names it: `mcpp test unit/test_home` (or `home`) runs that file's part.
 
 A test program keeps what it reaches (2026.11.9.1+): units are compiled with one
 section per function and per object, and a test links with `--gc-sections`

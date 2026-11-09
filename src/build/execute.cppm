@@ -4283,6 +4283,15 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
 // backend that drives it, how long planning and the build took, and how the
 // test binaries are executed. One per configuration group of a `mcpp test`
 // over several members; `run_tests` holds one for its one member.
+// WHETHER A PATTERN NAMES A TEST: its program, or a part of one run as a
+// process per file of its cases (`<program>/<file>'), as the run names them.
+static bool test_matches(const LinkUnit& lu, std::string_view filter) {
+    if (filter.empty() || lu.targetName.find(filter) != std::string::npos) return true;
+    return std::ranges::any_of(lu.ownSources, [&](const std::filesystem::path& f) {
+        return std::format("{}/{}", lu.targetName, f.stem().generic_string()).find(filter) != std::string::npos;
+    });
+}
+
 // A TEST PROGRAM TO RUN: built by this command, or read from an archive.
 struct TestRunnable {
     std::string name;
@@ -4708,8 +4717,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         return lu.kind == mcpp::build::LinkUnit::TestBinary
             && (owner.empty() || lu.memberOf == owner)
             && (!tb.affected || tb.affected->contains(lu.targetName))
-            && (testOpts.filter.empty()
-                || lu.targetName.find(testOpts.filter) != std::string::npos);
+            && test_matches(lu, testOpts.filter);
     };
     std::vector<TestResult> results;
     auto emit_json = [&](const TestResult& r) {
@@ -5397,11 +5405,14 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // The largest first, so the longest work starts first.
                 std::ranges::stable_sort(ordered, std::greater{}, [](auto const& g) { return g.second.size(); });
                 std::size_t n = 0;
+                // A pattern that named a part, not its program, keeps that part.
+                const bool whole = testOpts.filter.empty() || r.name.find(testOpts.filter) != std::string::npos;
                 for (auto& [key, ids] : ordered) {
                     Runnable part = r;
                     const auto label = split == "case" ? key
                                      : std::filesystem::path(key).stem().generic_string();
                     part.name = std::format("{}/{}", r.name, label);
+                    if (!whole && part.name.find(testOpts.filter) == std::string::npos) continue;
                     part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
                     std::error_code ec;
                     std::filesystem::create_directories(part.protocolDir, ec);
@@ -5554,7 +5565,7 @@ int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
         leg.triple = l.triple;
         for (auto const& lu : l.ctx->plan.linkUnits) {
             if (lu.kind != LinkUnit::TestBinary) continue;
-            if (!o.filter.empty() && lu.targetName.find(o.filter) == std::string::npos) continue;
+            if (!test_matches(lu, o.filter)) continue;
             const auto exe = l.ctx->outputDir / lu.output;
             if (!fs::is_regular_file(exe, ec)) continue;
             ta::Test t{lu.targetName, ta::test_dest(l.triple, lu.targetName, exe.filename().string()), {},
@@ -5882,8 +5893,7 @@ export int run_tests(std::span<const std::string> passthrough,
     // filtered run must not clobber it down to one entry).
     auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
         return lu.kind == mcpp::build::LinkUnit::TestBinary
-            && (testOpts.filter.empty()
-                || lu.targetName.find(testOpts.filter) != std::string::npos);
+            && test_matches(lu, testOpts.filter);
     };
     if (!testOpts.filter.empty()) {
         bool any = false;
@@ -6053,8 +6063,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
 
     auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
         return lu.kind == mcpp::build::LinkUnit::TestBinary
-            && (testOpts.filter.empty()
-                || lu.targetName.find(testOpts.filter) != std::string::npos);
+            && test_matches(lu, testOpts.filter);
     };
 
     // ── built at the same time, a thread per leg ──
@@ -6225,9 +6234,16 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         indexOf[members[i].path] = i;
         if (!members[i].error.empty()) { slots[i].error = members[i].error; continue; }
         if (members[i].targets.empty()) { slots[i].note = members[i].noTests; continue; }
-        if (!testOpts.filter.empty()
-            && std::ranges::none_of(members[i].targets, [&](auto const& t) {
-                   return t.name.find(testOpts.filter) != std::string::npos; })) {
+        // As `test_matches' asks of a planned test: the program, or a part of it.
+        auto names_it = [&](const mcpp::manifest::Target& t) {
+            if (t.name.find(testOpts.filter) != std::string::npos) return true;
+            auto part = [&](const std::string& f) {
+                return std::format("{}/{}", t.name, std::filesystem::path(f).stem().generic_string())
+                    .find(testOpts.filter) != std::string::npos;
+            };
+            return part(t.main) || std::ranges::any_of(t.testSources, part);
+        };
+        if (!testOpts.filter.empty() && std::ranges::none_of(members[i].targets, names_it)) {
             slots[i].noMatch = true;
             continue;
         }
@@ -6420,8 +6436,7 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         test_bulk(tb, testOpts, [&](const mcpp::build::LinkUnit& lu) {
             return lu.kind == mcpp::build::LinkUnit::TestBinary
                 && runnable.contains(lu.memberOf)
-                && (testOpts.filter.empty()
-                    || lu.targetName.find(testOpts.filter) != std::string::npos);
+                && test_matches(lu, testOpts.filter);
         });
         if (!runnable.empty()) test_resolve_runner(tb, testOpts, json);
     }

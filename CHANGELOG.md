@@ -59,7 +59,8 @@
   `mtest report`, `analyze` and `graph`. The tests of an archive run by the
   same runner (`mcpp test --archive`): their protocol, recorded in
   `mcpp-tests.json`, a process per file of their cases, the workers and the
-  store. mcpp's own unit tests are one program per directory: 166
+  store. A pattern names a part as the run names it (`mcpp test unit/test_home`).
+  mcpp's own unit tests are one program per directory: 166
   programs of 32 MB became one of 37 MB, run as 166 processes.
 - clang pairs with the MinGW-w64 payload for `x86_64-windows-gnu`: the payload
   is clang's sysroot and libstdc++ its C++ library, `import std` included.

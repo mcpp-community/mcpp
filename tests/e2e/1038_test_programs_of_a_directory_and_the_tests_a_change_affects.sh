@@ -54,6 +54,10 @@ printf '\n[test]\nprograms = "directory"\n' >> mcpp.toml
 # A program that speaks the protocol runs as a process per file of its cases (`split = "file"`).
 grep -q 'unit/a \.\.\. ok (.*1 case)' a.log && grep -q 'unit/b \.\.\. ok (.*1 case)' a.log \
     || fail "A: unit does not run as a process per file" a.log
+# A pattern names a part as the run names it.
+"$MCPP" test unit/b > a-part.log 2>&1 || fail "A: a part named by its pattern" a-part.log
+grep -q 'unit/b \.\.\. ok' a-part.log && ! grep -q 'unit/a \.\.\.' a-part.log \
+    || fail "A: the pattern of a part did not run that part alone" a-part.log
 printf 'split = "none"\n' >> mcpp.toml
 "$MCPP" test > a.log 2>&1 || fail "A: the directory programs, run once" a.log
 grep -q 'unit \.\.\. ok (.*2 cases)' a.log || fail "A: unit is not one program of two cases" a.log

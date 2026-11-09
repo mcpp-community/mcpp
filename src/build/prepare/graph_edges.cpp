@@ -10,6 +10,7 @@ import std;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.pm.dep_spec;
+import mcpp.ui;
 
 namespace mcpp::build {
 
@@ -135,6 +136,28 @@ void recordDependencyEdge(
             .exclude = spec.exclude,
         });
 }
+
+// THE PACKAGE BEING BUILT STANDS FOR ITSELF IN ITS TESTS' GRAPH. A dependency
+// reached through its `[dev-dependencies]` may name it: a library tested with a
+// framework that itself uses the library (mcpplibs.os under mtest). A second
+// copy from the index would provide every module of the package twice in one
+// program, and what is under test is the package as it is here; so the edge is
+// the root's, whatever version it asked for, and a version it did not ask for
+// is said. Outside the tests' graph such an edge is a cycle, refused as one.
+bool names_the_root(PrepareState& state, const WorkItem& item, const ResolvedKey& key) {
+    const auto& root = state.m->package;
+    if (!item.devOnly || item.consumerDepIndex == kMainConsumer || root.virtualRoot || !key.variant.empty()
+        || key.shortName != root.name || key.ns != root.namespace_)
+        return false;
+    recordDependencyEdge(state, item.consumerDepIndex, 0, item.spec, item.fromBuildTable, item.name);
+    if (!item.originalConstraint.empty() && item.originalConstraint != root.version
+        && item.originalConstraint != "*")
+        mcpp::ui::note(std::format(
+            "{} asks for {} {}; it is the package being built, {}, which stands for itself",
+            item.requestedBy, state.qualifiedKey(key), item.originalConstraint, root.version));
+    return true;
+}
+
 
 // The usage requirements every edge carries to its consumer: a dependency's
 // public usage reaches the consumer's own units (Private, Public), its users
