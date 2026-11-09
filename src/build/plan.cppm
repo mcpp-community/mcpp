@@ -4569,16 +4569,36 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // unit's objects, a workspace's member archives held its closure: 11 433
     // members for 2 666 objects, 5.3 GB (mcpp#874). An object that is not a
     // compile unit's -- an `object` action's -- is the package's own and stays.
-    {
-        std::map<std::filesystem::path, std::string> ownerOfObject;
-        for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
-        for (auto& lu : plan.linkUnits) {
-            if (lu.kind != LinkUnit::StaticLibrary) continue;
-            std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
-                auto it = ownerOfObject.find(o);
-                return it != ownerOfObject.end() && it->second != lu.package;
-            });
-        }
+    std::map<std::filesystem::path, std::string> ownerOfObject;
+    for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
+    for (auto& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::StaticLibrary) continue;
+        std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
+            auto it = ownerOfObject.find(o);
+            return it != ownerOfObject.end() && it->second != lu.package;
+        });
+    }
+    // THE C LIBRARY LEADS A MACH-O IMAGE. This format's loader runs an image's
+    // initialisers before its entry, in link order, so a C library of the
+    // graph (`mcpp:c-abi`, openkal-musl) is brought up by an initialiser of
+    // its own (openkal-musl's port/src/mach/early_init.c). Linked after the
+    // program's objects, it came too late: the registration of a test, a
+    // global constructor that allocates, stopped in an allocator not yet
+    // started (mcpplibs/os#22, hosted macOS). Its objects precede every other
+    // package's, in their own order, as a C runtime's start objects do on ELF.
+    if (targetTriple.is_mach_o()) {
+        std::set<std::string> cLibraries;
+        for (auto const& pkg : packages)
+            if (std::ranges::any_of(pkg.manifest.provides,
+                                    [](const std::string& p) { return p.starts_with("mcpp:c-abi"); }))
+                cLibraries.insert(qualified_package_name(pkg.manifest));
+        auto of_c_library = [&](const std::filesystem::path& o) {
+            auto it = ownerOfObject.find(o);
+            return it != ownerOfObject.end() && cLibraries.contains(it->second);
+        };
+        if (!cLibraries.empty())
+            for (auto& lu : plan.linkUnits)
+                if (lu.kind != LinkUnit::StaticLibrary) std::ranges::stable_partition(lu.objects, of_c_library);
     }
     for (auto& v : artifactVariants) plan.compileUnits.push_back(std::move(v));
 

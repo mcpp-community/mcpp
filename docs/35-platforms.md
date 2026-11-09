@@ -160,6 +160,12 @@ On Windows the arrangement is the GNU ABI's row (`--target x86_64-windows-gnu`);
 a triple outside `[platform.hosted] targets` is refused, naming the row of the
 same system and architecture that it serves.
 
+A C library of the graph (`mcpp:c-abi`) leads a Mach-O image's link
+(2026.11.9.1+). The loader of that format runs an image's initialisers before
+its entry, in link order, and the C library is brought up by an initialiser of
+its own; with its objects first, it is up before any global constructor of the
+program runs, as a C runtime's start objects precede a program on ELF.
+
 ## The version group
 
 `[platform.versions]` names one version of each package of a family. From mcpp

@@ -114,6 +114,11 @@
   `unaffected`, and the check that every script runs somewhere accepts them
   for that run; with main's coverage map in place, it had read them as
   uncovered. A shard the set gives no script is not a failure of mtest.
+- A C library of the graph (`mcpp:c-abi`, openkal-musl) leads a Mach-O image's
+  link. The loader runs initialisers in link order before the entry, and the
+  program's objects came first: a global constructor that allocated (an mtest
+  case's registration) stopped in openkal-musl's allocator before the library
+  was up, on hosted macOS (e2e 1053).
 - e2e 298 picks a row whose compiler on this host is its convention's: a macOS
   host serves `aarch64-linux-musl` through openkal-platform, whose compiler is
   llvm, and there llvm alone overrides nothing.
