@@ -395,11 +395,12 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `x86_64-windows-msvc` | `msvc@system`（探测 VS/BuildTools）或 llvm ¹（*有 Visual Studio 时的 Windows 默认*） | verified |
 | `x86_64-windows-musl` | llvm 23；带 musl C 库的 PE，gcc 无法产出；系统部分由依赖图提供 | preview |
 | `aarch64-macos`       | llvm（*macOS 默认*） | verified |
+| `aarch64-macos-musl` · `x86_64-macos-musl` | llvm 23；带 musl C 库的 Mach-O，系统部分由依赖图提供，任意宿主可构建（*非 macOS 宿主上的 `aarch64-macos`*） | preview |
 | `riscv64-none-elf` · `riscv32-none-elf` | llvm 23；裸机，`xim:picolibc-riscv` ² | verified |
 | `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 23；Cortex-M0/M0+/M1、Cortex-M3 ² | verified |
 | `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 23；Cortex-M4F/M7F 硬浮点，Cortex-M33/M55 软浮点 ² | verified |
 | `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 23；Cortex-A 32 位，第一个带 MMU 的目标 ² | verified |
-| `aarch64-none-elf` · `x86_64-none-elf` | llvm 23；裸机，默认不带 C 库 ² | preview |
+| `aarch64-none-elf` · `x86_64-none-elf` · `i686-none-elf` | llvm 23；裸机，默认不带 C 库 ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23；Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
 | `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
 | `riscv64-linux-musl` · `x86_64-macos` | — | planned |

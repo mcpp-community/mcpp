@@ -8,6 +8,7 @@
 #
 # Criteria: a run is one record of the index with its counts; each process states its status,
 # duration, start and worker; each case its program and status; a second run is a second record;
+# the tests of an archive run as the build's do -- their cases reported, the run stored;
 # `store = "none"` adds none; `store = "<dir>"` writes there.
 set -e
 TMP=$(mktemp -d)
@@ -40,9 +41,14 @@ echo "  ok  a run is kept with its processes and cases"
 
 "$MCPP" test > ../t2.log 2>&1 || fail "the second run failed" ../t2.log
 [ "$(wc -l < target/mtest/index.ndjson | tr -d ' ')" = 2 ] || fail "a second run is not a second record" target/mtest/index.ndjson
+"$MCPP" test --no-run --archive ../tests.tar.gz > ../a1.log 2>&1 || fail "the archive was not written" ../a1.log
+"$MCPP" test --archive ../tests.tar.gz > ../a2.log 2>&1 || fail "the archive's tests failed" ../a2.log
+grep -q 'test_smoke \.\.\. ok (.*1 case)' ../a2.log || fail "an archived protocol program does not report its case" ../a2.log
+[ "$(wc -l < target/mtest/index.ndjson | tr -d ' ')" = 3 ] || fail "the archive's run is not stored" target/mtest/index.ndjson
+echo "  ok  an archive's tests run as the build's: their case reported, the run stored"
 printf '\n[test]\nstore = "none"\n' >> mcpp.toml
 "$MCPP" test > ../t3.log 2>&1 || fail "the third run failed" ../t3.log
-[ "$(wc -l < target/mtest/index.ndjson | tr -d ' ')" = 2 ] || fail "store = none kept a run" target/mtest/index.ndjson
+[ "$(wc -l < target/mtest/index.ndjson | tr -d ' ')" = 3 ] || fail "store = none kept a run" target/mtest/index.ndjson
 sed -i.bak 's|^store = "none"$|store = "out/test-runs"|' mcpp.toml
 "$MCPP" test > ../t4.log 2>&1 || fail "the fourth run failed" ../t4.log
 [ -f out/test-runs/index.ndjson ] || fail "store = <dir> did not write there" ../t4.log

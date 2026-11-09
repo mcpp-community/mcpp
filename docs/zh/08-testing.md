@@ -57,7 +57,7 @@ discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
 目录中的文件仍各自是一个程序。多文件的程序只链接一次，而每文件一个程序时每个文件链接
 一次，后者正是由许多小文件组成的套件在构建上花费的时间。
 
-使用测试协议的程序**按其用例所在文件各起一个进程**运行（2026.11.9.1+）：mcpp 先列出用例，
+使用测试协议的程序**按其用例所在文件各起一个进程**运行（2026.11.9.1+）：mcpp 先列出多文件程序的用例，
 每个文件的那次运行只选取自己的用例（P4），像一个程序一样在各工作线程间调度，名为
 `<程序>/<文件>`——兼得每文件一个程序的隔离与并行，而只链接一次。`[test] split = "case"`
 使每个用例一个进程，`"none"` 只运行一次。
@@ -69,9 +69,10 @@ discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
 
 一次运行以 mtest 存储的形式保存（2026.11.9.1+）：`target/mtest/` 中有 `runs/<id>/run.json`，
 `programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例），`cases.ndjson`
-每个用例一行，`index.ndjson` 列出各次运行。`mtest report`、`analyze` 与 `graph --store target/mtest`
-像读取 mtest 自身的运行一样读取它们：报告、最慢的用例与运行的调度。`[test] store = "<dir>"`
-另指一个目录，相对项目；`"none"` 不保存。
+每个用例一行，`index.ndjson` 列出各次运行。`mtest store import --from target/mtest` 把它们取入 mtest 的存储，
+`[project] store` 为 `target/mtest` 的 `mtest.toml` 则就地读取；`mtest report`、`analyze` 与 `graph` 随之像读取
+mtest 自身的运行一样读取它们（Markdown 报告、最慢的用例、关键路径与调度）。在 CI 中 `commit` 与 `group` 取
+`GITHUB_SHA` 与 `GITHUB_RUN_ID`。`[test] store = "<dir>"` 另指一个目录，相对项目；`"none"` 不保存。
 
 由自身多个源文件编译而成的测试套件也可以是一个包：一个工作区成员，它的
 `[build] sources` 承载整套套件，其唯一的测试程序驱动套件，用
@@ -247,8 +248,9 @@ mcpp test --target openkal --no-run --archive tests.tar.gz   # 构建各腿的�
 mcpp test --archive tests.tar.gz                             # 在检出中运行本机能到达的部分
 ```
 
-归档含各腿的测试程序与 `mcpp-tests.json`（每个测试的腿、参数与工作目录）。读取
-时不构建；测试在检出中经本机的运行器或系统运行，报告与 `mcpp test` 相同。有测试
+归档含各腿的测试程序与 `mcpp-tests.json`（每个测试的腿、参数、工作目录与所实现的测试协议）。读取
+时不构建；测试在检出中经本机的运行器或系统，由 `mcpp test` 自身的运行器运行：用例、按用例所在文件分进程、
+工作线程与存储（2026.11.9.1+）。有测试
 失败时退出码为 1，一个测试都没运行的归档也是 1。本机到达不了的腿报告为未运行
 （[SPEC-015 §4](../specs/target-sets.md)）。归档是 tar，压缩方式由文件名决定：`.tar.gz`（或
 `.tgz`）、`.tar.zst`、`.tar.xz` 或 `.tar`；其他名称在构建前即被拒绝。

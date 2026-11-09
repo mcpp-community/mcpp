@@ -55,8 +55,11 @@
   and tests link with `--gc-sections` (`[test] link = "objects"` keeps every
   object whole); a protocol marker nothing references is read from the objects
   the test was linked from. A run is kept in the mtest store's form under
-  `target/mtest` (`[test] store`), which `mtest report`, `analyze` and `graph`
-  read. mcpp's own unit tests are one program per directory: 166
+  `target/mtest` (`[test] store`), which `mtest store import` takes in for
+  `mtest report`, `analyze` and `graph`. The tests of an archive run by the
+  same runner (`mcpp test --archive`): their protocol, recorded in
+  `mcpp-tests.json`, a process per file of their cases, the workers and the
+  store. mcpp's own unit tests are one program per directory: 166
   programs of 32 MB became one of 37 MB, run as 166 processes.
 - clang pairs with the MinGW-w64 payload for `x86_64-windows-gnu`: the payload
   is clang's sysroot and libstdc++ its C++ library, `import std` included.
