@@ -17,6 +17,8 @@ import mcpp.scaffold;
 import mcpp.scaffold.project_name;
 import mcpp.ui;
 import mcpp.build.test_protocol;   // the release of mtest the skeleton's tests use
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;   // the llvm a platform skeleton pins, as the built-in rows do
 
 namespace mcpp::scaffold {
 
@@ -300,6 +302,11 @@ export int new_from_package_template(
 // gui alias) and a library (lib).
 export enum class builtin { bin, gui, lib };
 
+// `mcpp new --template platform` (SPEC-016 §2, §3): a platform package that
+// defines one row, `<arch>-<name>`, and the provider that serves it, with the
+// llvm the built-in bare-metal rows pin. `mcpp check platform` reads it.
+export int create_platform_project(const mcpp::scaffold::PortableProjectName& project);
+
 // What a project's library is named in C++: its module, the qualified name
 // with `-` written `_` (`acme.my-lib` -> `acme.my_lib`), and its namespace
 // (`acme::my_lib`). Empty when a component does not begin with a letter or
@@ -561,6 +568,83 @@ UTest greeting{"hello greets by name", [] {
     mcpp::ui::line(lib ? std::format("Next: cd {} && mcpp build && mcpp test", project.directoryName)
                        : std::format("Next: cd {} && mcpp build && mcpp run  (or `mcpp test`)",
                                      project.directoryName));
+    return 0;
+}
+
+int create_platform_project(const mcpp::scaffold::PortableProjectName& project) {
+    // The system's word: the package's name, letters and digits.
+    std::string os;
+    for (char c : project.name)
+        if (std::isalnum(static_cast<unsigned char>(c))) os += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (os.empty() || !std::isalpha(static_cast<unsigned char>(os.front()))) os = "example";
+    std::string llvm;
+    for (auto const* p : mcpp::toolchain::target::providers())
+        if (p->toolchain.starts_with("llvm@")) { llvm = std::string(p->toolchain); break; }
+    const std::string arch(mcpp::toolchain::platform::host_arch);
+    const std::string triple = std::format("{}-{}", arch, os);
+
+    auto transaction = mcpp::scaffold::ScaffoldTransaction::begin(
+        std::filesystem::current_path(), project.directoryName);
+    if (!transaction) {
+        mcpp::ui::error(transaction.error());
+        return 1;
+    }
+    auto tx = std::move(*transaction);
+    const auto& root = tx.staging_path();
+    const std::string manifest = std::format(R"(# A platform (SPEC-016): the rows it defines and the provider that serves them.
+# A project selects it for a target with [target.<triple>] platform = {{ path = "..." }}.
+[package]
+name    = "{0}"
+version = "0.1.0"
+description = "The platform of {1}"
+
+[platform]
+toolchain = "{2}"
+
+# The row: the system's triple, what the compiler is told, the object format,
+# and the system its programs run on.
+[[platform.define]]
+triple        = "{1}"
+clang-triple  = "{3}-unknown-none-elf"
+object-format = "elf"
+execution     = "{4}"
+
+[[platform.provider]]
+serves = ["{1}"]
+
+[platform.build]
+cflags = ["-ffreestanding"]
+
+[platform.link]
+driver = "compiler"
+
+# What the platform provides for the target side; `false`: nothing yet.
+[platform.layers]
+"kernel-abi"       = false
+"c-abi"            = false
+"c++-abi"          = false
+"compiler-runtime" = false
+)", project.qualifiedName, triple, llvm, arch, os);
+    if (auto written = mcpp::scaffold::write_text_file(root / "mcpp.toml", manifest); !written) {
+        mcpp::ui::error(written.error());
+        return 1;
+    }
+    if (auto written = mcpp::scaffold::write_text_file(root / ".gitignore", "target/\n.mcpp/\n"); !written) {
+        mcpp::ui::error(written.error());
+        return 1;
+    }
+    auto generated = mcpp::manifest::load(root / "mcpp.toml");
+    if (!generated) {
+        mcpp::ui::error(std::format("generated manifest validation failed: {}", generated.error().format()));
+        return 1;
+    }
+    if (auto committed = tx.commit(); !committed) {
+        mcpp::ui::error(committed.error());
+        return 1;
+    }
+    mcpp::ui::line(std::format("Created platform package '{}' at {}, defining {}", project.qualifiedName,
+                               tx.final_path().string(), triple));
+    mcpp::ui::line(std::format("Next: cd {} && mcpp check platform", project.directoryName));
     return 0;
 }
 

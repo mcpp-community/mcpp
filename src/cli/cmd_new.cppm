@@ -62,6 +62,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "--template gui is deprecated; use `--template imgui` "
             "(the template then ships with — and version-tracks — the library)");
     }
+    if (tmpl == "platform") return mcpp::scaffold::create_platform_project(*project);
     if (tmpl != "bin" && tmpl != "gui" && tmpl != "lib") {
         auto spec = mcpp::scaffold::parse_template_spec(tmpl);
         if (!spec) {

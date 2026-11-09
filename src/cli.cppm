@@ -20,6 +20,7 @@ import mcpplibs.cmdline;
 import mcpp.cli.cmd_build;
 import mcpp.cli.cmd_cache;
 import mcpp.cli.cmd_patch;
+import mcpp.cli.cmd_check;
 import mcpp.cli.cmd_new;
 import mcpp.cli.cmd_publish;
 import mcpp.cli.cmd_xpkg;
@@ -77,6 +78,7 @@ void print_usage() {
     std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
     std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
     std::println("  mcpp patch edit|save <dependency>    Edit a dependency's sources; save the change as its patch");
+    std::println("  mcpp check platform [dir]            Check a platform package's rows, providers and served targets");
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
     std::println("  mcpp search <keyword>                Search packages in registries");
     std::println("  mcpp publish [--dry-run]             Publish package to default registry");
@@ -682,7 +684,7 @@ int run(int argc, char** argv) {
             // (cmd_new validates presence for project creation itself).
             .arg(cl::Arg("name").help("Package directory name"))
             .option(cl::Option("template").short_name('t').takes_value().value_name("SPEC")
-                .help("bin (default) | lib | [ns.]pkg[@ver][:template] — exact package template"))
+                .help("bin (default) | lib | platform | [ns.]pkg[@ver][:template] — exact package template"))
             .option(cl::Option("list-templates").takes_value().value_name("PKG")
                 .help("List templates from exact [ns.]pkg[@ver]"))
             .action(wrap_rc(cmd_new)))
@@ -1223,6 +1225,16 @@ int run(int argc, char** argv) {
                 .option(cl::Option("target").takes_value().help(
                     "Remove the payload for <triple> instead of the host one")))
             .action(wrap_rc(cmd_toolchain_any)))
+        .subcommand(cl::App("check")
+            .description("Check a package's statement as the engine reads it")
+            .subcommand(cl::App("platform")
+                .description("Check a platform package: its rows, its providers and the identities it serves")
+                .arg(cl::Arg("dir").help("The platform package's directory (default: this one)")))
+            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
+                return dispatch_sub("check", p, {
+                    {"platform", cmd_check_platform},
+                });
+            })))
         .subcommand(cl::App("patch")
             .description("Edit a dependency's sources and save the change as its patch")
             .subcommand(cl::App("edit")
@@ -1940,7 +1952,7 @@ int run(int argc, char** argv) {
             static constexpr std::array known = std::to_array<std::string_view>({
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
-                "toolchain", "cache", "patch", "index", "self", "explain",
+                "toolchain", "cache", "patch", "check", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
                 "place-dlls", "link-output", "platform-step",
                 "bmi-compile", "bmi-supervise", "bmi-await",
