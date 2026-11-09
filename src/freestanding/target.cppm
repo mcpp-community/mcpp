@@ -32,7 +32,6 @@ export module mcpp.freestanding.target;
 import std;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.builtin_targets;
-import mcpp.toolchain.target_schema;
 
 export namespace mcpp::freestanding {
 
@@ -134,9 +133,8 @@ inline std::optional<Spec> resolve(std::string_view triple) {
 // case and named it as the point at which the exception/RTTI pair stops being
 // unconditional; the caller answers it from the capability the graph declares,
 // so the answer is the graph's rather than a guess about the target.
-// THE ROW'S OWN WORDS: its machine description, which a platform or a project
-// may replace (SPEC-016 §5.2); everything `compile_flags` adds after them is the
-// engine's convention.
+// THE ROW'S OWN WORDS: its machine description; everything `compile_flags` adds
+// after them is the engine's convention (`mcpp why flags` tells them apart).
 inline std::vector<std::string> row_words(const Spec& s) {
     std::vector<std::string> out;
     out.emplace_back(std::string("-march=") + std::string(s.march));
@@ -159,9 +157,8 @@ inline std::vector<std::string> row_link_words(const Spec& s) {
 
 inline std::vector<std::string> compile_flags(const Spec& s,
                                               bool targetCxxRuntime = false,
-                                              bool hostedC = false,
-                                              std::span<const mcpp::toolchain::target::Replacement> replace = {}) {
-    std::vector<std::string> out = mcpp::toolchain::target::replaced(row_words(s), replace);
+                                              bool hostedC = false) {
+    std::vector<std::string> out = row_words(s);
     // ONE SECTION PER FUNCTION, SO THE LINKER CAN DROP WHAT NOTHING CALLS.
     //
     // These two flags do nothing on their own; they are the half of

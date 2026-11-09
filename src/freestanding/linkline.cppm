@@ -32,7 +32,6 @@ export module mcpp.freestanding.linkline;
 
 import std;
 import mcpp.freestanding.target;
-import mcpp.toolchain.target_schema;
 
 export namespace mcpp::freestanding {
 
@@ -45,20 +44,16 @@ export namespace mcpp::freestanding {
 // wanted. Omit it and the build silently produces host objects — measured, and
 // the exact shape of the E1 defect this work exists to close.
 inline std::string compile_prefix(const Spec& s, bool targetCxxRuntime = false,
-                                  bool hostedC = false,
-                                  std::span<const mcpp::toolchain::target::Replacement> replace = {}) {
+                                  bool hostedC = false) {
     std::string out;
     out += " --target=" + std::string(s.triple);
-    for (auto const& f : compile_flags(s, targetCxxRuntime, hostedC, replace)) { out += ' '; out += f; }
+    for (auto const& f : compile_flags(s, targetCxxRuntime, hostedC)) { out += ' '; out += f; }
     return out;
 }
 
 // Assembly goes through the C driver, which needs the same target selection
 // but none of the C++ dialect flags.
-inline std::string assemble_prefix(const Spec& s,
-                                   std::span<const mcpp::toolchain::target::Replacement> replace = {}) {
-    return compile_prefix(s, false, false, replace);
-}
+inline std::string assemble_prefix(const Spec& s) { return compile_prefix(s); }
 
 // What the link line must NOT do, spelled as flags:
 //   -nostdlib      no C runtime, no default libraries
@@ -83,8 +78,7 @@ struct LinkInputs {
 
 inline std::string link_flags(const Spec& s, const LinkInputs& in,
                               const std::function<std::string(
-                                  const std::filesystem::path&)>& esc,
-                              std::span<const mcpp::toolchain::target::Replacement> replace = {})
+                                  const std::filesystem::path&)>& esc)
 {
     std::string out;
     out += " --target=" + std::string(s.triple);
@@ -94,7 +88,7 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
     // two flags the argument governs — `-fno-exceptions`, `-fno-rtti` — say
     // nothing to a linker. Passing it would change no byte of the output while
     // suggesting it does.
-    for (auto const& f : compile_flags(s, false, false, replace)) { out += ' '; out += f; }
+    for (auto const& f : compile_flags(s)) { out += ' '; out += f; }
     out += " -nostdlib -nostartfiles -static";
     // The link half of the pair set in mcpp.freestanding.target's
     // `compile_flags`. Routed through the driver, hence `-Wl,`.
@@ -131,11 +125,10 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
 // a link that silently drops symbols is not the same link.
 inline std::string link_flags_direct(const Spec& s, const LinkInputs& in,
                                      const std::function<std::string(
-                                         const std::filesystem::path&)>& esc,
-                                     std::span<const mcpp::toolchain::target::Replacement> replace = {})
+                                         const std::filesystem::path&)>& esc)
 {
     std::string out;
-    for (auto const& w : mcpp::toolchain::target::replaced(row_link_words(s), replace)) {
+    for (auto const& w : row_link_words(s)) {
         out += ' ';
         out += w;
     }

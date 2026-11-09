@@ -46,10 +46,6 @@ struct Reader {
     std::expected<void, std::string>
     link(const mcpp::libs::toml::Table& t, std::string_view where, Link& out) const;
 
-    // `replace = { "<word>" = "<word>" | ["<word>", ...] | [] }`.
-    std::expected<void, std::string>
-    replace(const mcpp::libs::toml::Value& v, std::string_view where, std::vector<Replacement>& out) const;
-
     // One entry of `link.inputs`: `{ file = "..." }` or `{ from = [...], as = "..." }`.
     std::expected<LinkInput, std::string>
     link_input(const mcpp::libs::toml::Value& e, std::string_view key) const;
@@ -317,27 +313,6 @@ Reader::flags(const toml::Table& t, std::string_view where, Flags& out,
         auto s = strings(v, key);
         if (!s) return std::unexpected(s.error());
         dst->insert(dst->end(), s->begin(), s->end());
-    }
-    return {};
-}
-
-std::expected<void, std::string>
-Reader::replace(const toml::Value& v, std::string_view where, std::vector<Replacement>& out) const {
-    if (!v.is_table())
-        return std::unexpected(std::format(
-            "{} must be a table of <row word> = <words>, for example \"-mcmodel=small\" = []", where));
-    for (auto const& [word, with] : v.as_table()) {
-        const auto key = std::format("{}.\"{}\"", where, word);
-        Replacement r{ word, {}, at(with, key) };
-        if (with.is_string()) {
-            if (!with.as_string().empty()) r.with.push_back(with.as_string());
-        } else {
-            auto w = strings(with, key);
-            if (!w) return std::unexpected(w.error());
-            r.with = std::move(*w);
-        }
-        std::erase_if(out, [&](const Replacement& e) { return e.word == r.word; });
-        out.push_back(std::move(r));
     }
     return {};
 }
@@ -754,8 +729,6 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
             if (!v.is_table()) return std::unexpected(std::format("{} must be a table", key));
             if (auto r = link(v.as_table(), "[platform.link]", s.link); !r)
                 return std::unexpected(r.error());
-        } else if (k == "replace") {
-            if (auto r = replace(v, "[platform.replace]", s.replace); !r) return std::unexpected(r.error());
         } else if (k == "versions") {
             if (!v.is_table())
                 return std::unexpected(std::format("{} must be a table of <package> = \"<version>\"", key));
@@ -868,8 +841,7 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
         } else if (k == "link") {
             if (!v.is_table()) return std::unexpected(std::format("{} must be a table", key));
             if (auto r = link(v.as_table(), key, o.fields.link); !r) return std::unexpected(r.error());
-        } else if (k == "replace") {
-            if (auto r = replace(v, key, o.fields.replace); !r) return std::unexpected(r.error());
+
         } else if (k == "runner") {
             auto r = runner(v, key);
             if (!r) return std::unexpected(r.error());

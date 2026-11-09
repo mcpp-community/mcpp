@@ -580,40 +580,6 @@ UTest a_newer_release_is_named_only_for_the_default{"PlatformDefault/ANewerRelea
     expect(!mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "", "x"));
 }};
 
-// THE ROW'S DEFAULTS ARE REPLACED BY NAME (SPEC-016 §5.2): `[platform.replace]`
-// and `[target.<selector>.replace]` read a word, a list or nothing, and a later
-// statement's replacement of the same word stands.
-UTest a_replacement_names_a_row_word{"PlatformManifest/AReplacementNamesARowWord", [] {
-    auto m = parse(R"(
-[package]
-name = "p"
-version = "1.0.0"
-
-[platform]
-targets = ["x86_64-none-elf"]
-[platform.replace]
-"-mcmodel=small" = []
-"-march=x86-64"  = "-march=i686"
-
-[target.x86_64-none-elf.replace]
-"-march=x86-64"  = ["-march=pentium4", "-mtune=generic"]
-)");
-    for (auto const& w : m.schemaWarnings) expect(false) << "unexpected warning: " << w;
-    auto const& r = m.platform.replace;
-    expect(fatal(eq(r.size(), 2u)));
-    auto removed = std::ranges::find(r, std::string("-mcmodel=small"), &mp::Replacement::word);
-    expect(fatal(removed != r.end()));
-    expect(removed->with.empty());
-    expect(fatal(eq(m.platformOverrides.size(), 1u)));
-    auto merged = m.platform;
-    pf::merge(merged, m.platformOverrides[0].fields);
-    auto march = std::ranges::find(merged.replace, std::string("-march=x86-64"), &mp::Replacement::word);
-    expect(fatal(march != merged.replace.end()));
-    expect(eq(march->with, (std::vector<std::string>{"-march=pentium4", "-mtune=generic"})));
-    expect(eq(march->origin.tier, mp::Tier::Manifest));
-    expect(eq(merged.replace.size(), 2u));
-}};
-
 // THE STRING FORM OF A REPOSITORY (SPEC-016 §8): `git+<url>` with at most one of
 // tag, rev, branch after `#`; none is the remote's default branch.
 UTest a_repository_reference_has_a_string_form{"PlatformManifest/ARepositoryReferenceHasAStringForm", [] {

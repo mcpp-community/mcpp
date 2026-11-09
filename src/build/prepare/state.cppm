@@ -1276,8 +1276,6 @@ std::vector<std::string> platform_unit_cxxflags(const PrepareState& state);
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
 // retarget.cpp: a retargetable driver told its target, sysroot and multilib.
 std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
-// The row's defaults the platform and the project replace (SPEC-016 §5.2).
-void step2_row_replacements(PrepareState& state);
 // The system a paired provider supplies to the declared compiler (SPEC-016 §6).
 std::expected<void, std::string> step2_paired_system(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.

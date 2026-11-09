@@ -6,7 +6,6 @@ import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
 import mcpp.freestanding.runner;
 import mcpp.toolchain.triple;
-import mcpp.toolchain.target_schema;
 import mcpp.provider.xlings;
 import mcpp.build.build_program;
 
@@ -714,25 +713,4 @@ UTest arm32_soft_and_hard_variants_name_different_libdirs{"FreestandingTarget/Ar
     // assert nothing, and the property would be untested rather than held.
     expect(gt(pairs, 0)) << "no architecture carries both float ABIs; the check "
                            "above quantified over nothing";
-}};
-
-// THE ROW'S WORDS ARE REPLACED, THE ENGINE'S CONVENTIONS ARE NOT (SPEC-016 §5.2).
-UTest a_replacement_changes_the_rows_words_only{"FreestandingTarget/AReplacementChangesTheRowsWordsOnly", [] {
-    auto s = resolve("x86_64-none-elf");
-    expect(fatal(s.has_value()));
-    const std::vector<mcpp::toolchain::target::Replacement> r{
-        { "-mcmodel=small", {}, "mcpp.toml:3" },
-        { "-march=x86-64", { "-march=i686" }, "mcpp.toml:4" },
-        { "-ffreestanding", {}, "mcpp.toml:5" },   // a convention: not the row's
-        { "-m elf_x86_64", { "-m elf_i386" }, "mcpp.toml:6" },
-    };
-    auto f = compile_flags(*s, false, false, r);
-    expect(std::ranges::find(f, std::string("-mcmodel=small")) == f.end());
-    expect(std::ranges::find(f, std::string("-march=i686")) != f.end());
-    expect(std::ranges::find(f, std::string("-mno-red-zone")) != f.end());
-    expect(std::ranges::find(f, std::string("-ffreestanding")) != f.end());
-    const auto esc = [](const std::filesystem::path& p) { return p.generic_string(); };
-    const auto direct = mcpp::freestanding::link_flags_direct(*s, {}, esc, r);
-    expect(ne(direct.find(" -m elf_i386 "), std::string::npos)) << direct;
-    expect(eq(direct.find("elf_x86_64"), std::string::npos)) << direct;
 }};

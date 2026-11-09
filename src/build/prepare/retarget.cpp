@@ -430,48 +430,6 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
       return {};
 }
 
-// THE ROW'S DEFAULTS, AS THE PLATFORM AND THE PROJECT REPLACE THEM (mcpp#911
-// G2; SPEC-016 §5.2). `[platform.replace]` and `[target.<selector>.replace]`,
-// merged in the order of the statement every reader uses; each names a word
-// the row gives. One that meets no word of the row is reported with the
-// row's words, since a replacement that does nothing is a mistake the build
-// cannot otherwise show; each one that applies is reported with its origin.
-void step2_row_replacements(PrepareState& state) {
-    namespace ts = mcpp::toolchain::target;
-    state.tc->rowReplace.clear();
-    const auto stmt = platform_statement(state);
-    if (stmt.replace.empty()) return;
-    for (auto const& r : stmt.replace) {
-        auto origin = mcpp::platform::origin_text(r.origin);
-        if (r.origin.tier == mcpp::manifest::platform::Tier::Platform && state.platform.active)
-            origin = state.platform.display();
-        state.tc->rowReplace.push_back(ts::Replacement{ r.word, r.with, std::move(origin) });
-    }
-    std::vector<std::string> words;
-    if (auto spec = mcpp::freestanding::resolve(state.tc->targetTriple)) {
-        words = mcpp::freestanding::row_words(*spec);
-        for (auto& w : mcpp::freestanding::row_link_words(*spec)) words.push_back(std::move(w));
-    }
-    std::set<std::string> met;
-    (void)ts::replaced(words, state.tc->rowReplace, &met);
-    std::string given;
-    for (auto const& w : words) given += std::format("{}`{}`", given.empty() ? "" : ", ", w);
-    for (auto const& r : state.tc->rowReplace)
-        if (!met.contains(r.word))
-            mcpp::diag::warning("target/replace", std::format(
-                "{} replaces `{}`, which the row {} does not give (ignored); its words are {}",
-                r.origin, r.word, state.tc->targetTriple, given.empty() ? std::string("none") : given));
-    // In the row's order, as the command line has them.
-    for (auto const& w : words) {
-        auto r = std::ranges::find(state.tc->rowReplace, w, &ts::Replacement::word);
-        if (r == state.tc->rowReplace.end()) continue;
-        std::string with;
-        for (auto const& x : r->with) with += std::format("{}`{}`", with.empty() ? "" : " ", x);
-        mcpp::ui::info("Replaces", std::format("`{}` → {} ({})", w,
-                       with.empty() ? std::string("nothing") : with, r->origin));
-    }
-}
-
 // THE SYSTEM A PAIRED PROVIDER SUPPLIES (SPEC-016 §6). The MinGW-w64 provider
 // pairs with gcc and with llvm; with llvm, the payload its row names is
 // installed as for gcc and becomes clang's sysroot: the C library, libstdc++

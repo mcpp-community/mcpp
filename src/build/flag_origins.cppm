@@ -8,8 +8,7 @@
 // package's by construction. The configuration's flags are one string the
 // engine composes from the row, the platform, the toolchain and its own
 // conventions, and a word of it is attributed to the first of these that
-// gives it: the row's machine description (after the replacements stated for
-// it), the platform's `[platform.build]` and `[platform.link]`, a path inside
+// gives it: the row's machine description, the platform's `[platform.build]` and `[platform.link]`, a path inside
 // the toolchain's payload, and otherwise the engine. A word two layers give
 // is the first one's.
 
@@ -23,7 +22,7 @@ export namespace mcpp::build {
 
 struct FlagWord {
     std::string word;
-    std::string layer;    // compiler | row | replace | platform | toolchain | package | engine
+    std::string layer;    // compiler | row | platform | toolchain | package | engine
     std::string detail;   // the row, the statement, the package, the toolchain
 };
 

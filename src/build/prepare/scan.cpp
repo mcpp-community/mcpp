@@ -589,8 +589,7 @@ step11_package_std_module_source(PrepareState& state) {
         if (auto fs = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             fs && fs->is_freestanding()) {
             if (auto spec = mcpp::freestanding::resolve(*fs))
-                flags += mcpp::freestanding::compile_prefix(*spec, true, state.tc->hostedC,
-                                                            state.tc->rowReplace);
+                flags += mcpp::freestanding::compile_prefix(*spec, true, state.tc->hostedC);
         } else if (!state.tc->crossTargetFlag.empty()) {
             // `crossTargetFlag` and not `targetTriple`. The triple is mcpp's
             // vocabulary (`aarch64-macos`); the flag carries the spelling a

@@ -15,7 +15,6 @@ import mcpp.build.compile_commands;
 import mcpp.manifest.flag_words;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
-import mcpp.toolchain.target_schema;
 import mcpp.freestanding.target;
 import mcpp.platform;
 
@@ -23,7 +22,6 @@ namespace mcpp::build {
 
 namespace {
 
-namespace ts = mcpp::toolchain::target;
 
 // The options whose value is the next word: one word of the explanation.
 constexpr std::string_view kTakesValue[] = {
@@ -46,9 +44,8 @@ std::vector<std::string> joined(const std::vector<std::string>& tokens) {
 }
 
 struct Layers {
-    // The row's words as the line has them, each with the replacement it
-    // came from (null: the row's own).
-    std::map<std::string, const ts::Replacement*> row;
+    // The row's machine description, as the line has it.
+    std::set<std::string>                         row;
     std::string                                   rowName;
     std::set<std::string>                         platform;
     std::string                                   platformName;
@@ -63,11 +60,7 @@ Layers layers_of(const BuildPlan& plan) {
     if (auto spec = mcpp::freestanding::resolve(tc.targetTriple)) {
         auto words = mcpp::freestanding::row_words(*spec);
         for (auto& w : mcpp::freestanding::row_link_words(*spec)) words.push_back(std::move(w));
-        for (auto const& w : words) {
-            auto r = std::ranges::find(tc.rowReplace, w, &ts::Replacement::word);
-            if (r == tc.rowReplace.end()) { l.row.emplace(w, nullptr); continue; }
-            for (auto const& x : r->with) l.row.emplace(x, &*r);
-        }
+        l.row.insert(words.begin(), words.end());
     }
     if (plan.platform.active) {
         l.platformName = plan.platform.display();
@@ -85,10 +78,7 @@ Layers layers_of(const BuildPlan& plan) {
 }
 
 FlagWord attribute(const Layers& l, const std::string& w) {
-    if (auto r = l.row.find(w); r != l.row.end()) {
-        if (!r->second) return { w, "row", l.rowName };
-        return { w, "replace", std::format("{}, in place of `{}`", r->second->origin, r->second->word) };
-    }
+    if (l.row.contains(w)) return { w, "row", l.rowName };
     if (l.platform.contains(w)) return { w, "platform", l.platformName };
     for (auto const& root : l.toolchainRoots) {
         auto generic = w;

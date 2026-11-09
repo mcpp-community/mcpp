@@ -23,16 +23,14 @@
   the systems and C libraries the resolved platforms define (mcpp#911 G1).
 - `mcpp why target` lists a request's candidates with their priorities and
   availability; `mcpp why flags [<unit>]` lists each word of a unit's command
-  line and of the link line with the layer that gave it (row, replacement,
-  platform, toolchain, package, engine). Both take `--format json`. The build
+  line and of the link line with the layer that gave it (row, platform,
+  toolchain, package, engine; mcpp#911 G2). A row's defaults are not replaced
+  in place: a platform whose machine differs defines its own row (G1). Both take `--format json`. The build
   record and the `plan` event carry `{request, identity, provider, priority,
   fallback}`; build programs read `mcpp::target_provider()`
   (`MCPP_TARGET_PROVIDER`).
 - `mcpp.lock` records `[target."<request>"]` with the identity and the
   provider; `--locked` refuses a build that selects another identity.
-- `[platform.replace]` and `[target.<selector>.replace]` replace the row's
-  defaults (`-march=`, `-mabi=`, `-mcmodel=`, its flags, `-m <emulation>`) by
-  name; a replacement that meets no word of the row is reported (mcpp#911 G2).
 - A sysroot or a provider that states a hosted C environment turns off
   `-ffreestanding` (G3); a platform's `link.driver = "compiler"` links any row
   (G4); an artifact for another system is not judged by this machine's loader

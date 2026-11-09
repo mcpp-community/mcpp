@@ -21,6 +21,7 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 // For `resolve_version_match` / `list_installed_versions`: a bare compiler
 // family named by the dependency graph resolves to a concrete version through
 // exactly the path `mcpp toolchain default <family>` uses.

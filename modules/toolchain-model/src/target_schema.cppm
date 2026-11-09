@@ -104,39 +104,5 @@ constexpr bool available_on(const Provider& p, std::string_view host, std::strin
     return false;
 }
 
-// A WORD OF A ROW'S DEFAULTS AND THE WORDS THAT STAND IN ITS PLACE (SPEC-016
-// §5.2). A row's defaults are its machine description: `-march=`, `-mabi=`,
-// `-mcmodel=`, its `flags`, and `-m <emulation>` of a link by ld.lld itself. A
-// platform or a project replaces one by naming it as the row gives it; `with`
-// empty removes it. The engine's conventions are not replaced, only added to.
-// `origin` names the statement, for the reports.
-struct Replacement {
-    std::string              word;
-    std::vector<std::string> with;
-    std::string              origin;
-};
-
-// `words` with each replacement applied, in order. `met`, when given, receives
-// the words of the replacements that met a word of the list.
-std::vector<std::string> replaced(std::span<const std::string> words,
-                                  std::span<const Replacement> replace,
-                                  std::set<std::string>* met = nullptr);
-
 } // namespace mcpp::toolchain::target
 
-namespace mcpp::toolchain::target {
-
-std::vector<std::string> replaced(std::span<const std::string> words,
-                                  std::span<const Replacement> replace,
-                                  std::set<std::string>* met) {
-    std::vector<std::string> out;
-    for (auto const& w : words) {
-        auto r = std::ranges::find(replace, w, &Replacement::word);
-        if (r == replace.end()) { out.push_back(w); continue; }
-        if (met) met->insert(w);
-        out.insert(out.end(), r->with.begin(), r->with.end());
-    }
-    return out;
-}
-
-} // namespace mcpp::toolchain::target
