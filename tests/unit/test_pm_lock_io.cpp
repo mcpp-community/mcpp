@@ -216,6 +216,25 @@ TEST(PmLockIo, UpdatingALinkedLockKeepsTheLinkAndUpdatesItsTarget) {
 
 // An entry names the configurations that resolve it, and reads back as written
 // (SPEC-013 §15.1); a lock written before the field reads with none.
+TEST(PmLockIo, TheShortNameIsTheSameWhicheverWayTheManifestSpelledIt) {
+    auto entry = [](std::string name, std::string ns) {
+        mcpp::pm::LockedPackage p;
+        p.name = std::move(name);
+        p.namespace_ = std::move(ns);
+        return p;
+    };
+    EXPECT_EQ(mcpp::pm::short_name(entry("cmdline", "mcpplibs")), "cmdline");
+    EXPECT_EQ(mcpp::pm::short_name(entry("mcpplibs.cmdline", "mcpplibs")), "cmdline");
+    // A variant keeps its digest: it is another library.
+    EXPECT_EQ(mcpp::pm::short_name(entry("compat.zlib+pabc", "compat")), "zlib+pabc");
+    // Only the entry's own namespace is a prefix.
+    EXPECT_EQ(mcpp::pm::short_name(entry("other.zlib", "compat")), "other.zlib");
+    // A git entry has no namespace, and is its own short name.
+    EXPECT_EQ(mcpp::pm::short_name(entry("acme.tool", "")), "acme.tool");
+    // The namespace alone is not a prefix of anything.
+    EXPECT_EQ(mcpp::pm::short_name(entry("compat.", "compat")), "compat.");
+}
+
 TEST(PmLockIo, TargetsRoundTrip) {
     const auto dir = std::filesystem::temp_directory_path() / std::format("mcpp-lock-{}",
         std::chrono::steady_clock::now().time_since_epoch().count());

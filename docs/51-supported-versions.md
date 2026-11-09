@@ -111,6 +111,11 @@ resolution:
 mcpp emit sbom -o sbom.json
 ```
 
+A component's `name`, `group` and `purl` state the package's identity, whichever
+way the manifest that declared it spelled it: `cmdline` and `mcpplibs.cmdline`
+are both `pkg:mcpp/mcpplibs/cmdline@<version>`. A variant keeps its digest in
+the name, and a purl percent-encodes its segments, so `+` is written `%2B`.
+
 It reads `mcpp.lock` rather than resolving again, because a document describing
 a different graph from the one that was built is worse than no document. A
 component whose licence mcpp does not know is emitted as `NOASSERTION` rather
