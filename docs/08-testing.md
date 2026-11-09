@@ -65,6 +65,20 @@ directory stays a program of its own. A program of many files is linked once
 where a program per file is linked once per file, which is what a suite of many
 small files spends its build time on.
 
+A program that speaks the test protocol runs as **one process per file of its
+cases** (2026.11.9.1+): mcpp lists the cases, and each file's run selects its
+own (P4) and is scheduled across the workers as a program is, named
+`<program>/<file>` -- the isolation and the parallelism of a program per file,
+with one link. `[test] split = "case"` gives each case its own process, and
+`"none"` runs the program once.
+
+A test program keeps what it reaches (2026.11.9.1+): units are compiled with one
+section per function and per object, and a test links with `--gc-sections`
+(`-dead_strip` on Mach-O), so a test of one module does not carry its package's
+every function (mcpp's own unit tests: 32 MB each to 14 MB). Static
+constructors are the collection's roots. `[test] link = "objects"` keeps every
+object whole.
+
 A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.

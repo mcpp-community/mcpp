@@ -51,6 +51,12 @@
   another system is built, not run, until a runner -- a runner package's tool
   -- or an execution host states how it runs (G11).
 - The row `i686-none-elf` (G12).
+- A test program that speaks the test protocol runs as one process per file of
+  its cases (`[test] split = "file" | "case" | "none"`), and a test keeps what
+  it reaches: units are compiled with one section per function and per object
+  and tests link with `--gc-sections` (`[test] link = "objects"` keeps every
+  object whole). mcpp's own unit tests are one program per directory: 166
+  programs of 32 MB became one of 37 MB, run as 166 processes.
 - clang pairs with the MinGW-w64 payload for `x86_64-windows-gnu`: the payload
   is clang's sysroot and libstdc++ its C++ library, `import std` included.
 - `mcpp new --template platform` and `mcpp check platform`.
@@ -72,8 +78,8 @@
 - A git dependency names at most one of rev, tag and branch.
 - `mcpp pack` with several programs packs the one named after the package and
   names the others, and refuses when none is so named.
-- mcpp's own unit tests are mtest cases (mtest 0.5.0, mcpplibs.os 0.4.1); a
-  skeleton's tests use mtest 0.5.0.
+- mcpp's own unit tests are mtest cases (mtest 0.5.1, mcpplibs.os 0.4.1); a
+  skeleton's tests use mtest 0.5.1.
 
 ### Fixed
 

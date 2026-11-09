@@ -18,7 +18,7 @@ inline constexpr int kVersion = 1;
 
 // The framework mcpp scaffolds tests with and suggests where a package has
 // none (docs/01, docs/08): mtest, by this release, from its repository.
-inline constexpr std::string_view kMtestRelease = "0.5.0";
+inline constexpr std::string_view kMtestRelease = "0.5.1";
 inline constexpr std::string_view kMtestRepo    = "https://github.com/mcpp-community/mtest";
 
 // The protocol's variables, removed from the environment a program inherits
@@ -30,7 +30,9 @@ inline constexpr std::array<std::string_view, 7> kVariables = {
 
 // The version the marker in a program's file states (P2.3): the bytes
 // `mtest-protocol=` and a version followed by a byte that is not a digit; 0
-// when the file carries none or cannot be read.
+// when the file carries none or cannot be read. A file may carry the bytes as
+// data too (a test of a runner holds `mtest-protocol=12` among its cases), so
+// the version this runner speaks is taken wherever it occurs, else the first.
 int marker_version(const std::filesystem::path& program);
 
 // What a program's case is, as its listing states it (P3.3).
@@ -124,6 +126,7 @@ int marker_version(const std::filesystem::path& program) {
     constexpr std::size_t block = 1 << 20;
     std::string window;
     std::vector<char> buffer(block);
+    int first = 0;
     while (in) {
         in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto got = static_cast<std::size_t>(in.gcount());
@@ -138,12 +141,13 @@ int marker_version(const std::filesystem::path& program) {
             if (end == at + marker.size()) continue;
             int version = 0;
             std::from_chars(window.data() + at + marker.size(), window.data() + end, version);
-            if (version > 0) return version;
+            if (version == kVersion) return version;
+            if (version > 0 && first == 0) first = version;
         }
         const std::size_t keep = marker.size() + 8;
         if (window.size() > keep) window.erase(0, window.size() - keep);
     }
-    return 0;
+    return first;
 }
 
 bool Report::failed() const {

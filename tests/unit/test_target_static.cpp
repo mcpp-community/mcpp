@@ -63,7 +63,7 @@ UTest pe_targets_defer_to_contract_table{"TargetSupportsFullStatic/PeTargetsDefe
 // ── Host target (empty triple) ──────────────────────────────────────────────
 // Empty means "build for this machine", so the host capability IS the answer.
 // This is the one case where the host constant remains correct.
-UTest empty_triple_falls_back_to_host{"TargetSupportsFullStatic/EmptyTripleFallsBackToHost", [] {
+UTest static_empty_triple_falls_back_to_host{"TargetSupportsFullStatic/EmptyTripleFallsBackToHost", [] {
     expect(bool(tc::target_supports_full_static("", true)));
     expect(!tc::target_supports_full_static("", false));
 }};

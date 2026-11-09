@@ -5221,6 +5221,60 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         if (!json && !invocationNotRunReason.empty() && !runnable.empty()
             && !std::exchange(tb.invocationReasonPrinted, true))
             mcpp::ui::warning(invocationNotRunReason);
+        // A PROGRAM OF SEVERAL FILES RUNS AS SEVERAL PROCESSES (design
+        // 2026-11-09 §17.3): one per file of its cases, each selecting them
+        // (P4), scheduled across the workers as the programs are -- the
+        // parallelism and the isolation of a program per file, with one link.
+        // `[test] split = "case"` gives each case its own process; "none" runs
+        // the program once.
+        const auto split = ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
+        if (invocationNotRunReason.empty() && split != "none") {
+            std::vector<Runnable> expanded;
+            for (auto& r : runnable) {
+                if (!r.protocol) {
+                    expanded.push_back(std::move(r));
+                    continue;
+                }
+                mcpp::run::Options listOpts;
+                listOpts.env = r.env;
+                state_protocol(r, "list", listOpts);
+                listOpts.streams = mcpp::run::Streams::merged;
+                listOpts.total = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
+                listOpts.report_spawn_failure = false;
+                auto listed = mcpp::run::execute(r.argv, listOpts);
+                auto report = mcpp::build::test_protocol::read_report(r.protocolDir / "list.ndjson", listed.exit_code);
+                if (listed.exit_code != 0 || !report.done || report.listed.empty()) {
+                    expanded.push_back(std::move(r));   // its run reports what is wrong
+                    continue;
+                }
+                std::map<std::string, std::vector<std::string>> groups;
+                for (auto const& c : report.listed)
+                    groups[split == "case" ? c.id : (c.file.empty() ? std::string("-") : c.file)].push_back(c.id);
+                if (groups.size() < 2) {
+                    expanded.push_back(std::move(r));
+                    continue;
+                }
+                std::vector<std::pair<std::string, std::vector<std::string>>> ordered(groups.begin(), groups.end());
+                // The largest first, so the longest work starts first.
+                std::ranges::stable_sort(ordered, std::greater{}, [](auto const& g) { return g.second.size(); });
+                std::size_t n = 0;
+                for (auto& [key, ids] : ordered) {
+                    Runnable part = r;
+                    const auto label = split == "case" ? key
+                                     : std::filesystem::path(key).stem().generic_string();
+                    part.name = std::format("{}/{}", r.name, label);
+                    part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
+                    std::error_code ec;
+                    std::filesystem::create_directories(part.protocolDir, ec);
+                    std::string lines;
+                    for (auto const& id : ids) lines += id + "\n";
+                    part.select = part.protocolDir / "select.txt";
+                    std::ofstream(*part.select, std::ios::binary) << lines;
+                    expanded.push_back(std::move(part));
+                }
+            }
+            runnable = std::move(expanded);
+        }
         run_tests_now(runnable);
     }
     summary.elapsedMs = carriedMs + std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -42,7 +42,7 @@ UTest parses_arm64_and_four_component_versions{"MsvcBanner/ParsesArm64AndFourCom
     expect(eq(r->second, "arm64"));
 }};
 
-UTest rejects_garbage{"MsvcBanner/RejectsGarbage", [] {
+UTest msvc_rejects_garbage{"MsvcBanner/RejectsGarbage", [] {
     expect(!(msvc::parse_cl_banner("").has_value()));
     expect(!(msvc::parse_cl_banner("bash: cl: command not found").has_value()));
     // A bare two-component number is not a cl version.

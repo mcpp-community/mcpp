@@ -29,7 +29,7 @@ mcpplibs.os = "0.4.1"
 # state its contract in isolation; the root `tests/unit/` states the facts two
 # layers must agree on.
 [dev-dependencies]
-mcpplibs.mtest = "0.5.0"
+mcpplibs.mtest = "0.5.1"
 
 # build.mcpp compiles data/builtin.toml (the built-in target rows and providers)
 # into a module of static tables, with mcpp's own TOML parser.

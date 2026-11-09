@@ -2256,6 +2256,10 @@ struct Manifest {
     // test of one module does not carry the package's every function --, or
     // "objects", every object whole.
     std::string                 testLink;
+    // `[test] split` (design 2026-11-09 §17.3): how a test program that speaks
+    // the protocol is run -- "file" (the default: a process per file of its
+    // cases), "case" (a process per case) or "none" (one process).
+    std::string                 testSplit;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended

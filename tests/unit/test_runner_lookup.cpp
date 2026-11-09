@@ -150,6 +150,6 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
 
 #else
 
-UTest windows_covered_by_integration{"RunnerLookup/WindowsCoveredByIntegration", [] { /* passes */; }};
+UTest runner_lookup_windows_covered_by_integration{"RunnerLookup/WindowsCoveredByIntegration", [] { /* passes */; }};
 
 #endif
