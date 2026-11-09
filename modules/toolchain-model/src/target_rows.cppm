@@ -135,6 +135,11 @@ const Row* find_row(std::string_view triple) {
 }
 
 bool defines_os(std::string_view os) {
+    // The built-in rows' systems are words of the language too (design
+    // 2026-11-10 E4): a system the data names -- FreeBSD -- needs no word in
+    // the parser's code.
+    for (auto const& b : mcpp::toolchain::builtin::kRows)
+        if (b.os == os) return true;
     auto& r = registry();
     std::lock_guard g(r.lock);
     for (auto const& s : r.sets)
@@ -144,6 +149,8 @@ bool defines_os(std::string_view os) {
 }
 
 bool defines_env(std::string_view os, std::string_view env) {
+    for (auto const& b : mcpp::toolchain::builtin::kRows)
+        if (b.os == os && b.env == env) return true;
     auto& r = registry();
     std::lock_guard g(r.lock);
     for (auto const& s : r.sets)

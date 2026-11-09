@@ -75,3 +75,25 @@ UTest the32_bit_x86_question_has_one_answer{"TripleVocabulary/The32BitX86Questio
     expect(eq(tr::parse("i586-linux-gnu")->nasm_format(), "elf32"));
     expect(eq(tr::parse("x86-windows-msvc")->nasm_format(), "win32"));
 }};
+
+UTest a_system_the_rows_name_is_a_word_of_the_language{"TripleVocabulary/ASystemTheRowsNameIsAWordOfTheLanguage", [] {
+    // The FreeBSD rows are data (design 2026-11-10 E4): their system is a word
+    // the parser accepts without one in its code, and their compiler triple is
+    // the one the data states.
+    auto native = tr::parse("x86_64-freebsd");
+    expect(fatal(native.has_value()));
+    expect(eq(native->os, "freebsd"));
+    expect(eq(native->llvm_triple(), "x86_64-unknown-freebsd14.0"));
+    auto musl = tr::parse("aarch64-freebsd-musl");
+    expect(fatal(musl.has_value()));
+    expect(eq(musl->env, "musl"));
+    expect(eq(musl->llvm_triple(), "aarch64-unknown-freebsd14.0"));
+}};
+
+UTest a_row_no_built_in_provider_serves_is_a_platforms{"TripleVocabulary/ARowNoBuiltInProviderServesIsAPlatforms", [] {
+    // E1: nothing of the toolchain payload's host side belongs to a row whose
+    // C library a platform describes; the host's own rows keep their payload.
+    expect(tr::parse("x86_64-freebsd")->c_library_by_platform());
+    expect(!tr::parse("x86_64-linux-gnu")->c_library_by_platform());
+    expect(!tr::parse("x86_64-openkal")->c_library_by_platform());
+}};

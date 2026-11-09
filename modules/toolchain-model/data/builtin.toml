@@ -26,6 +26,8 @@
 #                   is not (musl on Windows) is mcpp's name for what is produced
 #   exact           only a request that names the row whole reaches it; `arch-os`
 #                   does not
+#   clang-triple    the triple the compiler is given, when the system's spelling
+#                   is not derived from the identity (`x86_64-unknown-freebsd14.0`)
 #   march, mabi, code-model, multilib, flags, link-emulation
 #                   the ISA profile of a bare-metal row: `-march`, `-mabi`,
 #                   `-mcmodel` (empty: the driver's default), the multilib
@@ -127,6 +129,40 @@ standard = true
 triple   = "x86_64-macos-musl"
 tier     = "preview"
 standard = false
+
+# ── FreeBSD ──────────────────────────────────────────────────────────────────
+#
+# Two identities per architecture, as macOS has (design 2026-11-10 E4). The
+# system's own ABI -- libc, libc++ over libcxxrt -- is served by a platform that
+# states the system's sysroot; no built-in provider serves it, and a request is
+# refused naming that until a platform is selected. The musl identity is
+# openkal-platform's hosted part over openkal-freebsd, planned until that
+# implementation is released. 14.0 is the release the triple names: a program
+# built for it runs on every later 14.x and, through the kernel's
+# COMPAT_FREEBSD14, on 15.
+[[platform.define]]
+triple       = "x86_64-freebsd"
+tier         = "preview"
+standard     = true
+clang-triple = "x86_64-unknown-freebsd14.0"
+
+[[platform.define]]
+triple       = "aarch64-freebsd"
+tier         = "preview"
+standard     = true
+clang-triple = "aarch64-unknown-freebsd14.0"
+
+[[platform.define]]
+triple       = "x86_64-freebsd-musl"
+tier         = "planned"
+standard     = false
+clang-triple = "x86_64-unknown-freebsd14.0"
+
+[[platform.define]]
+triple       = "aarch64-freebsd-musl"
+tier         = "planned"
+standard     = false
+clang-triple = "aarch64-unknown-freebsd14.0"
 
 # ── Bare metal ───────────────────────────────────────────────────────────────
 #

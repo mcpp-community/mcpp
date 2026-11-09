@@ -1337,6 +1337,18 @@ step9_same_os_check_and_report(PrepareState& state) {
             if (want && got && !want->os.empty() && !got->os.empty()
                 && want->os != got->os && !okImage && !stated) {
                 refusal::record(refusal::Code::OsMismatch);
+                // A row no built-in provider serves is a platform's to serve
+                // (E4): the remedy is the platform, not a toolchain.
+                if (want->c_library_by_platform())
+                    return std::unexpected(std::format(
+                        "target '{}' is served by a platform, and none is selected for it.\n"
+                        "       Its C library and C++ run-time are the system's own, which a "
+                        "platform package states\n"
+                        "       (a sysroot and the layers over it). Select one with\n"
+                        "           [target.{}]\n"
+                        "           platform = \"<package>@<version>\"   # or {{ path = \"...\" }}\n"
+                        "       `mcpp why target --target {}` lists the candidates.",
+                        reportedTargetName, reportedTargetName, reportedTargetName));
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"
                     "       Those are different operating systems, so nothing "

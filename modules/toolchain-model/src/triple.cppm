@@ -154,13 +154,14 @@ struct Triple {
     // would let a caller supply one platform's answer for the other's.
     std::string llvm_triple(std::string_view minPlatformVersion = {}) const {
         if (empty()) return {};
-        // A ROW A PLATFORM DEFINES STATES ITS OWN: `clang-triple`, with
-        // `{version}` the project's minimum system version and
-        // `{version:<default>}` the row's when the project states none.
-        if (auto* d = defined()) {
-            if (d->clangTriple.empty()) return str();
-            return expand_version(d->clangTriple, minPlatformVersion);
-        }
+        // A ROW THAT STATES ITS OWN -- one a platform defines, or a built-in
+        // row whose data carries `clang-triple` (design 2026-11-10 E4: the
+        // FreeBSD rows) -- is taken as written, with `{version}` the project's
+        // minimum system version and `{version:<default>}` the row's when the
+        // project states none.
+        if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->clangTriple.empty())
+            return expand_version(r->clangTriple, minPlatformVersion);
+        if (defined()) return str();
         if (os == "macos") {
             // Apple spells the 64-bit ARM architecture `arm64`, and the OS
             // component carries the deployment target: `arm64-apple-macos14`.
@@ -1340,7 +1341,10 @@ std::expected<Wanted, std::string> wanted_of(std::string_view spelling) {
 
 bool is_set_spelling(std::string_view spelling) {
     const auto w = first_segment(spelling);
-    return std::ranges::find(kSystemWords, w) != std::end(kSystemWords);
+    // A system the rows name -- built-in data or a platform's -- is a set word
+    // as the listed ones are (`freebsd`, design 2026-11-10 E4).
+    return std::ranges::find(kSystemWords, w) != std::end(kSystemWords)
+        || mcpp::toolchain::target::defines_os(w);
 }
 
 std::expected<Expansion, std::string> expand_set(std::string_view spelling,

@@ -16,7 +16,7 @@ namespace {
 
 constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
-    "link-emulation",
+    "link-emulation", "clang-triple",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
@@ -108,12 +108,13 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
     return std::format(
         "    {{ .triple = {}, .arch = {}, .os = {}, .env = {}, .tier = {}, .note = {}, .standard = {}, "
         ".exact = {}, .march = {}, .mabi = {}, "
-        ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {} }},\n",
+        ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
         lit(text(t, "code-model", where)), lit(text(t, "multilib", where)),
-        arrays.add(words(t, "flags", where)), lit(text(t, "link-emulation", where)));
+        arrays.add(words(t, "flags", where)), lit(text(t, "link-emulation", where)),
+        lit(text(t, "clang-triple", where)));
 }
 
 std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {
