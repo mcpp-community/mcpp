@@ -455,6 +455,22 @@ struct Resolution {
     // Content identity: enters the runtime contract and so the fingerprint.
     // Empty for the ecosystem default, whose identity is the contract itself.
     std::string            identity;
+    // A BASE PACKAGE (design 2026-11-10 E5; SPEC-002 §2.4): a base whose own
+    // `mcpp.toml` states, beside its C library, the C++ run-time and the
+    // compiler run-time it holds. One package is then the whole target side of
+    // a system: its root is the sysroot, and its C++ headers, libraries and
+    // std module stand where the toolchain payload's would.
+    struct Layers {
+        std::string ref;                              // `freebsd-sysroot@14.5`
+        std::string cAbi;                             // from `provides`, e.g. `freebsd-libc`
+        std::string cxx;                              // `libc++`; empty: none
+        std::string compilerRuntime;                  // `libgcc`; empty: none
+        std::vector<std::filesystem::path> cxxIncludes;   // absolute
+        std::vector<std::string> libsDynamic, libsStatic;
+        std::filesystem::path stdModule, stdCompatModule; // absolute; empty: none
+        std::vector<std::string> stdModuleFlags;          // `std-module-flags`
+    };
+    Layers                 layers;
 
     bool stated() const { return form != Form::Default; }
 };

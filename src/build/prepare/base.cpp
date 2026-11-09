@@ -28,6 +28,7 @@ import mcpp.toolchain.base_probe;
 import mcpp.toolchain.triple;
 import mcpp.ui;
 import mcpp.invocation;
+import mcpp.libs.toml;
 
 namespace mcpp::build {
 
@@ -211,6 +212,66 @@ std::vector<std::string> driver_base(const mcpp::toolchain::Toolchain& tc) {
     return v;
 }
 
+// A BASE PACKAGE'S OWN STATEMENT (design 2026-11-10 E5): `<dir>/mcpp.toml` with a
+// `[base]` table names, per architecture, the directory that is the sysroot and
+// the layers the base holds beside its C library. Absent: an ordinary base.
+std::expected<std::optional<fs::path>, std::string>
+read_base_package(const fs::path& dir, std::string_view arch, tb::Resolution::Layers& out) {
+    std::error_code ec;
+    const auto manifest = dir / "mcpp.toml";
+    if (!fs::is_regular_file(manifest, ec)) return std::optional<fs::path>{};
+    std::ifstream in(manifest, std::ios::binary);
+    std::string text{std::istreambuf_iterator<char>(in), {}};
+    auto doc = mcpp::libs::toml::parse(text);
+    if (!doc) return std::unexpected(std::format("{}: {}", manifest.string(), doc.error().message));
+    auto const* base = doc->get_table("base");
+    if (!base) return std::optional<fs::path>{};
+    auto str = [](const mcpp::libs::toml::Table* t, std::string_view k) -> std::string {
+        if (!t) return {};
+        auto it = t->find(k);
+        return it != t->end() && it->second.is_string() ? it->second.as_string() : std::string{};
+    };
+    auto words = [](const mcpp::libs::toml::Table* t, std::string_view k) {
+        std::vector<std::string> v;
+        if (!t) return v;
+        if (auto it = t->find(k); it != t->end() && it->second.is_array())
+            for (auto const& e : it->second.as_array())
+                if (e.is_string()) v.push_back(e.as_string());
+        return v;
+    };
+    auto const* pkg = doc->get_table("package");
+    out.ref = std::format("{}@{}", str(pkg, "name"), str(pkg, "version"));
+    for (auto const& p : words(pkg, "provides")) {
+        auto take = [&](std::string_view layer, std::string& into) {
+            const auto k = std::string("mcpp:") + std::string(layer) + "=";
+            if (p.starts_with(k)) into = p.substr(k.size());
+        };
+        take("c-abi", out.cAbi);
+        take("c++-abi", out.cxx);
+        take("compiler-runtime", out.compilerRuntime);
+    }
+    auto const* roots = base->find("roots") != base->end() && base->find("roots")->second.is_table()
+        ? &base->find("roots")->second.as_table() : nullptr;
+    const auto rootName = str(roots, arch);
+    if (rootName.empty()) {
+        std::string have;
+        if (roots) for (auto const& [k, v] : *roots) have += (have.empty() ? "" : ", ") + k;
+        return std::unexpected(std::format(
+            "{} is a base for {}, not for {}: `[base] roots` names no `{}`",
+            out.ref, have.empty() ? std::string("no architecture") : have, arch, arch));
+    }
+    const auto root = dir / rootName;
+    for (auto const& d : words(base, "include-dirs")) out.cxxIncludes.push_back(root / d);
+    auto const* libs = base->find("libs") != base->end() && base->find("libs")->second.is_table()
+        ? &base->find("libs")->second.as_table() : nullptr;
+    out.libsDynamic = words(libs, "dynamic");
+    out.libsStatic  = words(libs, "static");
+    if (auto m = str(base, "std-module"); !m.empty()) out.stdModule = root / m;
+    if (auto m = str(base, "std-compat-module"); !m.empty()) out.stdCompatModule = root / m;
+    out.stdModuleFlags = words(base, "std-module-flags");
+    return std::optional<fs::path>{root};
+}
+
 bool provides_c_abi(const tb::Statement& s, std::string* impl) {
     for (auto const& p : s.provides) {
         constexpr std::string_view k = "mcpp:c-abi=";
@@ -360,6 +421,13 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
                                                    tt->str(), stmt->text, p.error()));
         dir = *p;
     }
+    tc.base.layers = {};
+    if (auto b = read_base_package(dir, tt->arch, tc.base.layers); !b) {
+        refusal::record(refusal::Code::TargetBase);
+        return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text, b.error()));
+    } else if (*b) {
+        dir = **b;
+    }
     const auto ecosystemLinux = tc.base.payload ? tc.base.payload->linuxInclude : fs::path{};
     const bool native = tt->os == "linux" && tt->arch == mcpp::toolchain::platform::host_arch
                         && mcpplibs::os::is_linux;
@@ -394,7 +462,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     } else {
         auto m = tb::measure_gnu(driver_base(tc), *tt, dir,
                                  mcpp::toolchain::is_clang(tc), probeDir);
-        if (!m.cAbiFound && !provides_c_abi(*stmt, &impl)) {
+        if (!m.cAbiFound && !provides_c_abi(*stmt, &impl) && tc.base.layers.cAbi.empty()) {
             refusal::record(refusal::Code::TargetBase);
             return std::unexpected(std::format(
                 "[target.{}].sysroot = {} ({}): {} supplies no C library the compiler can find "
@@ -427,6 +495,18 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         if (native && !ecosystemLinux.empty()
             && !fs::exists(dir / "usr" / "include" / "linux" / "limits.h", ec))
             tc.base.addedIncludes.push_back(ecosystemLinux);
+    }
+    // A base package's own `provides` is its declaration, as a statement's is.
+    if (tc.base.libc.empty() && !tc.base.layers.cAbi.empty()) tc.base.libc = tc.base.layers.cAbi;
+    // ITS C++ RUN-TIME STANDS WHERE THE PAYLOAD'S WOULD (E5): the std module is
+    // the base's, or there is none -- the payload's module was built from
+    // another release of the library than the base's headers.
+    if (!tc.base.layers.cxx.empty()) {
+        tc.stdlibId = tc.base.layers.cxx;
+        if (!tc.base.layers.stdModule.empty() && fs::is_regular_file(tc.base.layers.stdModule, ec))
+            tc.set_std_modules(tc.base.layers.stdModule, tc.base.layers.stdCompatModule);
+        else
+            tc.clear_std_modules();
     }
     // A declaration checks a measurement and stands in for one that cannot be
     // made (§3.4).

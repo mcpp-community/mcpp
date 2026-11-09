@@ -1617,7 +1617,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // (`llvm.libcxx` on the iOS rows, mcpp#630), and asking the C library
         // there answered "payload" and linked the SDK's `-lc++` under objects
         // compiled against the package's headers.
-        mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph() && !graphLibstdcxx;
+        // A base package's C++ run-time is not the toolchain's either (design
+        // 2026-11-10 E5): its libraries are on the link by name, and the
+        // payload's archives, built for the payload's host, are not.
+        mi.graphCxxRuntime = (plan.targetSide.cxx.fromGraph() && !graphLibstdcxx)
+            || !plan.toolchain.base.layers.cxx.empty();
 
         // AND THE DRIVER'S HALF, WHICH IS ASKED FIRST (#634 A6).
         //
@@ -2641,6 +2645,19 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             const auto t = " -T " + escape_path(p.fields.link.script.value);
             f.ld  += t;
             f.ldC += t;
+        }
+    }
+
+    // A BASE PACKAGE'S C++ RUN-TIME (design 2026-11-10 E5): the libraries the
+    // base names for the link's form, found in the base through its sysroot,
+    // in place of the driver's own choice, which names the toolchain's.
+    if (auto const& L = plan.toolchain.base.layers; !L.cxx.empty()) {
+        const bool staticLink = f.linkage == "static" || f.ld.find(" -static") != std::string::npos;
+        auto const& libs = staticLink ? L.libsStatic : L.libsDynamic;
+        if (!libs.empty()) {
+            std::string words = " -nostdlib++";
+            for (auto const& l : libs) words += " -l" + l;
+            f.ld += words;
         }
     }
 

@@ -410,6 +410,13 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     // a platform defined (2026-11-10): the payload's `include/c++/v1` reached C
     // units (`'__config_site' file not found`), and its `lib/<host triple>`
     // reached the link and the artifact's RPATH.
+    // A BASE PACKAGE'S C++ HEADERS STAND WHERE THE PAYLOAD'S WOULD (E5), so
+    // every reader of this model -- a unit, the std module, a build program --
+    // compiles against the library the base links.
+    if (!tc.base.layers.cxx.empty()) {
+        dm.cxxIncludes = tc.base.layers.cxxIncludes;
+        return dm;
+    }
     if (auto t = mcpp::toolchain::triple::parse(tc.targetTriple); t && t->c_library_by_platform())
         return dm;
     auto libcxxInclude = dm.llvmRoot / "include" / "c++" / "v1";

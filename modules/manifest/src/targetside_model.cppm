@@ -632,6 +632,12 @@ struct Inputs {
     // configured for, at a version its runtime accepts (measured by the base
     // resolution's floor check).
     bool        sysrootFitsPayloadCxx = false;
+    // A BASE PACKAGE (design 2026-11-10 E5): the base states the C++ run-time
+    // and the compiler run-time it holds, beside its C library.
+    std::string baseRef;                  // `freebsd-sysroot@14.5`
+    std::string baseCxx;                  // `libc++`; empty: the base holds none
+    std::string baseCompilerRuntime;      // `libgcc`; empty: none
+    bool        baseHasStdModule = false;
 
     // What the payload would contribute, for display only.
     std::string payloadSystemRef;
@@ -725,6 +731,8 @@ inline TargetSide resolve(const Inputs& in) {
         ts.compilerRuntime = { Origin::Graph,
                                in.compilerRuntime->display_interface(),
                                in.compilerRuntime->id(), false };
+    else if (!in.baseCompilerRuntime.empty())
+        ts.compilerRuntime = { Origin::Xpkg, in.baseCompilerRuntime, in.baseRef, false };
     else if (in.payloadCompilerRuntimeAbsent || in.loaderTarget)
         // The runtime routines of a program its loader runs are its own (a
         // C++ run-time package, or the program): the payload's are built for
@@ -771,6 +779,9 @@ inline TargetSide resolve(const Inputs& in) {
     if (in.cxxAbi)
         ts.cxx = { Origin::Graph, in.cxxAbi->display_interface(), in.cxxAbi->id(),
                    !in.cxxAbi->hasStdModule };
+    else if (!in.baseCxx.empty())
+        // The base's own C++ run-time, configured for the C library beside it.
+        ts.cxx = { Origin::Xpkg, in.baseCxx, in.baseRef, !in.baseHasStdModule };
     else if (ts.cAbi.origin == Origin::Payload
              || (ts.cAbi.origin == Origin::Xpkg && in.sysrootFitsPayloadCxx))
         // THE LAYERING RULE, AS STRUCTURE RATHER THAN AS A LATER CHECK.

@@ -324,6 +324,12 @@ step9_gather_target_side_candidates(PrepareState& state) {
             }
             in.payloadLibcRef      = state.tc->base.package;
             in.payloadCxxInterface = state.tc->stdlibId;
+            if (auto const& L = state.tc->base.layers; !L.cxx.empty() || !L.compilerRuntime.empty()) {
+                in.baseRef = L.ref;
+                in.baseCxx = L.cxx;
+                in.baseCompilerRuntime = L.compilerRuntime;
+                in.baseHasStdModule = !L.stdModule.empty();
+            }
             // The compiler is a layer, and it is the one layer no package can
             // supply. It enters here so that a requirement has something to be
             // checked against and so the report can show the whole stack.
