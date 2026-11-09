@@ -104,6 +104,15 @@ jobs:
           set -o pipefail
           bash tests/e2e/run_all.sh 2>&1 | tee "$RUNNER_TEMP/e2e-suite.log"
 
+      # The shard's run as Markdown in the job's summary (mtest report).
+      - name: The shard's report
+        if: always()
+        shell: bash
+        run: |
+          [ -n "${E2E_MTEST:-}" ] || exit 0
+          (cd tests/e2e && "$E2E_MTEST" report --format md --group "$GITHUB_RUN_ID") >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::no e2e run of this workflow run in the store"
+
       # The shard's store: main's are the history the next runs divide the suite by.
       - name: Upload the shard's store
         if: always()

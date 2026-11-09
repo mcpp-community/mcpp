@@ -301,6 +301,13 @@ jobs:
         run: |
           "$MCPP_FRESH" test ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
+      # The run `mcpp test` kept (target/mtest): this job's report in its
+      # summary, and the store for the workflow run's report (ci.yml test-report).
+      - uses: ./.github/actions/test-report
+        if: always()
+        with:
+          name: mtest-unit-macos
+
       # WS8: this host's row of docs/01 and docs/20 is checked against the
       # one answer the resolver gives (`self env --format json`).
       - name: The documented default toolchain is this host's answer
