@@ -126,7 +126,9 @@ runs beside it; a script that changes the shared home's configuration says so).
 divides by the measured history of the store (`tests/e2e/.mtest`, which CI takes
 from main's last run), `E2E_JOBS` runs that many scripts at once, and
 `E2E_SET=pr` runs the scripts a change affects by the nightly coverage map
-(`.github/workflows/e2e-coverage.yml`). `mtest explain` in `tests/e2e` says where
+(`.github/workflows/e2e-coverage.yml`); a script the set leaves out is reported
+`unaffected`, which the check that every script runs somewhere (rule R5) accepts
+for that run, main's full runs being its coverage. `mtest explain` in `tests/e2e` says where
 a script failed and how to run it again.
 
 ## Writing a check that measures something

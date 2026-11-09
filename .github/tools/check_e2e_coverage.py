@@ -18,6 +18,10 @@ It reads the per-test reports the shards write (`E2E_REPORT` of run_all.sh, one
 under tests/e2e:
 
   ran        some report says pass, fail or timeout;
+  unaffected no report ran it, and a run narrowed to a set (`E2E_SET`, the
+             `pr` set of a pull request) says the change does not affect it:
+             the full runs of main are its coverage, and this run's claim is
+             about the tests the change reaches;
   job        no report ran it, but a workflow names it outside a comment, as a
              whole token: by file name, by name without `.sh`, or by its number
              as an `E2E_ONLY` pattern such as `239_*.sh`. A dedicated job runs it
@@ -34,7 +38,8 @@ Some claims need a test to pass on particular hosts, not on some host: docs/21
 calls a target row `verified` when CI builds and runs its artefact, and the
 `*-openkal` rows claim that for every system. tests/e2e/host-requirements.tsv
 lists such a test with the hosts its result must come from; a listed test that
-did not pass on one of them, or that does not exist, fails the check.
+did not pass on one of them, or that does not exist, fails the check; one a
+set left out on that host as unaffected meets it for that run.
 
 With --timings-out DIR it writes `<host>.tsv`, the measured duration of every
 test that ran, merged across that host's shards, in the format run_all.sh reads
@@ -133,6 +138,7 @@ def main() -> int:
     ran: dict[str, set[str]] = defaultdict(set)
     passed: dict[str, set[str]] = defaultdict(set)
     skipped: dict[str, set[str]] = defaultdict(set)
+    unaffected: dict[str, set[str]] = defaultdict(set)
     shard_ms: dict[tuple[str, int], int] = defaultdict(int)
     timings: dict[str, dict[str, int]] = defaultdict(dict)
     reports = 0
@@ -146,6 +152,8 @@ def main() -> int:
             timings[host][test] = ms
         elif status == "skip":
             skipped[test].add(f"{host}: {detail}")
+        elif status == "unaffected":
+            unaffected[test].add(host)
     if reports == 0:
         print(f"no report under {args.reports}: nothing can be said about coverage")
         return 1
@@ -157,6 +165,8 @@ def main() -> int:
             counts["ran"] += 1
             if test in exceptions:
                 stale.append(f"{test} is excused but ran on {', '.join(sorted(ran[test]))}")
+        elif test in unaffected:
+            counts["unaffected"] += 1
         elif named_by_a_workflow(test, workflows):
             counts["job"] += 1
         elif test in exceptions:
@@ -171,13 +181,14 @@ def main() -> int:
         if test not in tests:
             stale.append(f"{test} is required on hosts but does not exist")
             continue
-        for host in sorted(hosts - passed[test]):
+        for host in sorted(hosts - passed[test] - unaffected[test]):
             why = [d for d in skipped[test] if d.startswith(f"{host}: ")]
             unmet.append(f"{test} did not pass on {host}"
                          f"{' (' + '; '.join(why) + ')' if why else (' (it ran and did not pass)' if host in ran[test] else ' (no report of it there)')}")
 
-    print(f"{len(tests)} tests: {counts['ran']} ran on a shard, {counts['job']} run by a "
-          f"dedicated job, {counts['excused']} excused, {len(uncovered)} uncovered")
+    print(f"{len(tests)} tests: {counts['ran']} ran on a shard, {counts['unaffected']} unaffected by "
+          f"the change, {counts['job']} run by a dedicated job, {counts['excused']} excused, "
+          f"{len(uncovered)} uncovered")
     for (host, shard), ms in sorted(shard_ms.items()):
         print(f"  {host} shard {shard}: {ms / 60000:.1f} min of tests")
     for line in uncovered:

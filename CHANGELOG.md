@@ -110,6 +110,13 @@
   naming both; the two programs were a file and a directory of one path.
 - The repository's stray empty `.edited` is removed; e2e 859 fails naming the
   missing record rather than writing one in the working directory.
+- CI: a pull request's e2e shards report the scripts the `pr` set leaves out as
+  `unaffected`, and the check that every script runs somewhere accepts them
+  for that run; with main's coverage map in place, it had read them as
+  uncovered. A shard the set gives no script is not a failure of mtest.
+- e2e 298 picks a row whose compiler on this host is its convention's: a macOS
+  host serves `aarch64-linux-musl` through openkal-platform, whose compiler is
+  llvm, and there llvm alone overrides nothing.
 
 ## [2026.11.8.1] - 2026-11-08
 
