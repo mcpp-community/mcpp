@@ -1578,7 +1578,10 @@ module graph directly. The declaration is **audited every build**: the
 compiler's own P1689 scan of the file (the `.ddi` dyndep input) is compared
 against it, and any divergence fails that compile edge with both sides
 printed — a stale declaration cannot silently corrupt the graph. An override
-glob that matches no source file is an error.
+glob that matches no file of the package is an error. A glob whose files exist
+and take no part in this build — a feature that is off, a `!` rule of a
+`[target.<selector>.build]` — is not: the declaration describes those files for
+the builds that compile them (2026.11.10.1+, mcpp#902).
 
 The same key exists in xpkg descriptors (index packages):
 
