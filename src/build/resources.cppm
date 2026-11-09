@@ -95,6 +95,14 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
 
 std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple);
 
+// The toolchain's Windows header directories, which a resource script reaches
+// with `#include "winres.h"` as well as with angle brackets: the INCLUDE an
+// MSVC backend states, and on a GNU-ABI row the paired payload's
+// `<arch>-w64-mingw32/include` (design 2026-11-10 E3). One list for the
+// compile's `/I` and for the scan of what the script reads.
+std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
+                                                        std::string_view dialectId);
+
 // Split a Windows environment list (PATH, INCLUDE, LIB) into its entries.
 //
 // `;` is the ONLY separator, and that is not a simplification. Every value that
@@ -194,6 +202,24 @@ bool is_llvm_windres(const std::filesystem::path& p) {
     std::error_code ec;
     const auto real = std::filesystem::canonical(p, ec);
     return !ec && named(real);
+}
+
+std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
+                                                        std::string_view dialectId) {
+    std::vector<std::filesystem::path> out;
+    for (auto const& ev : tc.envOverrides) {
+        if (ev.key != "INCLUDE") continue;
+        for (auto dir : split_env_list(ev.value)) out.emplace_back(std::string(dir));
+    }
+    if (dialectId != "msvc" && !tc.pairedSysroot.empty()) {
+        std::error_code ec;
+        for (auto const& entry : std::filesystem::directory_iterator(tc.pairedSysroot, ec))
+            if (auto inc = entry.path() / "include";
+                entry.path().filename().string().ends_with("-w64-mingw32")
+                && std::filesystem::is_directory(inc, ec))
+                out.push_back(inc);
+    }
+    return out;
 }
 
 std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple) {
@@ -315,6 +341,21 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
         if (auto p = probe_dir(root / tc.targetTriple / "bin", names))
             return RcTool{*p, "gnu", is_llvm_windres(*p)};
     }
+    // THE PAYLOAD A PROVIDER PAIRS WITH THE COMPILER (SPEC-016 §6) CARRIES ITS
+    // OWN BINUTILS: clang with the MinGW-w64 payload found no windres beside
+    // clang and refused, while the payload's `bin/` held one (design
+    // 2026-11-10 E3, mcpp#911 N9).
+    if (!tc.pairedSysroot.empty())
+        if (auto p = probe_dir(tc.pairedSysroot / "bin", names))
+            return RcTool{*p, "gnu", is_llvm_windres(*p)};
+    // AND A CLANG ALWAYS HAS llvm-rc BESIDE IT. It writes a `.res`, which
+    // `ld.lld` links on a GNU-ABI Windows target as `lld-link` does (measured
+    // 2026-11-10: a VERSIONINFO linked into a PE by `clang
+    // --target=x86_64-w64-mingw32 -fuse-ld=lld m.c a.res`); so a target with no
+    // windres -- an openkal Windows row, any host without a MinGW payload --
+    // compiles its resources with the compiler's own tool.
+    if (tc.compiler == mcpp::toolchain::CompilerId::Clang)
+        if (auto p = probe_dir(compilerDir, {"llvm-rc"})) return RcTool{*p, "msvc"};
     return std::nullopt;
 }
 

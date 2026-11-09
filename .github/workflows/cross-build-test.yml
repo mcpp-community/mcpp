@@ -367,6 +367,13 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/1044_clang_pairs_with_the_mingw_payload.sh
 
+      # E3 (design 2026-11-10): the same pairing compiles `[resources]` with the
+      # payload's windres, and reads a quoted "winres.h" from the payload's headers.
+      - name: "e2e: resources on the clang + MinGW pairing"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/1058_a_gnu_abi_windows_row_compiles_its_resources.sh
+
       # mcpp#365. This is the only job with a MinGW cross toolchain, so it is
       # the only place the GNU half of resource compilation (windres -O coff,
       # because GNU ld cannot consume a .res) can run at all — the Linux e2e

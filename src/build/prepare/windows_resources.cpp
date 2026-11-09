@@ -80,11 +80,13 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
     const auto  dialectId = mcpp::toolchain::dialect_for(*state.tc).id;
-    const bool msvcStyle = (dialectId == "msvc");
 
     // Lazy + hard failure, exactly like nasm: a dropped resource
     // surfaces as "where did my icon go", which is unattributable.
     auto tool = rsrc::find_rc_tool(*state.tc, dialectId);
+    // The TOOL's style decides the spelling and the output (`.res` or a COFF
+    // object), not the dialect: clang on a GNU-ABI row may compile with llvm-rc.
+    const bool msvcStyle = tool ? tool->style == "msvc" : dialectId == "msvc";
     if (!tool) {
         return std::unexpected(std::format(
             "[resources] needs a Windows resource compiler for the "
@@ -113,15 +115,9 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     // plan with one package states them once.
     const std::string ip = msvcStyle ? "/I" : "-I";
     std::vector<std::string> systemIncludes;
-    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos) {
-        for (auto const& ev : state.tc->envOverrides) {
-            if (ev.key != "INCLUDE") continue;
-            // Shared splitter: `;` only. See rsrc::split_env_list --
-            // the drive colon is not a separator.
-            for (auto dir : rsrc::split_env_list(ev.value))
-                systemIncludes.push_back(ip + std::string(dir));
-        }
-    }
+    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos)
+        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId))
+            systemIncludes.push_back(ip + dir.string());
     for (auto& ru : ctx.plan.resourceUnits) {
         if (auto target = rsrc::coff_target_flag(*tool, state.tc->targetTriple);
             !target.empty())
@@ -193,7 +189,10 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
     const auto  dialectId = mcpp::toolchain::dialect_for(*state.tc).id;
-    const bool msvcStyle = (dialectId == "msvc");
+    // The output is the tool's (`.res` from rc.exe/llvm-rc, a COFF object from
+    // windres), found as the compile step below finds it (E3).
+    const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
+    const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
@@ -375,7 +374,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
 
                 // Author-written scripts: compiled once, linked into every image.
                 for (auto const& rcSrc : peUnits.empty() ? decltype(scriptFiles){} : scriptFiles) {
-                    auto scan = rsrc::scan_rc(rcSrc, rcIncludes);
+                    // The script's own directories, then the toolchain's: a
+                    // quoted `"winres.h"` is the toolchain's header, not a file
+                    // a build action produces (E3).
+                    auto scanIncludes = rcIncludes;
+                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId))
+                        scanIncludes.push_back(d);
+                    auto scan = rsrc::scan_rc(rcSrc, scanIncludes);
                     if (scan.versionInfoNamedByString) {
                         // The mcpp#365 silent failure, caught on the way in. A
                         // degradation rather than a warning: the impact is exactly
