@@ -2552,9 +2552,24 @@ std::optional<std::string> unbuilt_carrier(const mcpp::platform::Resolved& platf
                                            std::string_view system, std::string_view arch,
                                            bool single) {
     const auto row = program_row(system, arch, single, &platform);
-    if (row_is_built(row)) return std::nullopt;
-    return std::format("{}'s carrier is built as a program of {}-{} ({}), and this mcpp builds "
-                       "no program for that row", platform.display(), system, arch, row.triple);
+    if (!row_is_built(row))
+        return std::format("{}'s carrier is built as a program of {}-{} ({}), and this mcpp builds "
+                           "no program for that row", platform.display(), system, arch, row.triple);
+    // A CARRIER THAT NAMES NO HOSTS EXISTS WHERE THE PLATFORM'S RUNNER DOES: it is
+    // the runner's program with an image inside, and `runner.hosts` states where
+    // the platform's programs exist. A row this mcpp builds is not thereby a
+    // system the platform implements (aarch64-windows-gnu builds; openkal-windows
+    // is an x86_64 implementation).
+    const auto pair = std::format("{}-{}", system, arch);
+    auto const* c = platform.active ? mcpp::manifest::platform::carrier_for(platform.fields, pair) : nullptr;
+    auto const& run = platform.fields.runner;
+    if (c && c->hosts.empty() && run.hostsSet && !std::ranges::contains(run.hosts, pair)) {
+        std::string hosts;
+        for (auto const& h : run.hosts) hosts += (hosts.empty() ? "" : ", ") + h;
+        return std::format("{}'s carrier states no hosts, and its runner exists for {}, not {} "
+                           "(runner.hosts)", platform.display(), hosts, pair);
+    }
+    return std::nullopt;
 }
 
 std::expected<std::filesystem::path, Error>
@@ -2745,11 +2760,10 @@ run_loaded(const Plan& plan)
                     // A row this mcpp builds no program for (a planned
                     // target, `x86_64-macos`) carries no runner: said, and
                     // the package's metadata lists the systems it carries.
-                    if (!row_is_built(program_row(system, leg.arch, false, &plan.platform))) {
+                    if (auto why = unbuilt_carrier(plan.platform, system, leg.arch, false)) {
                         mcpp::ui::warning(std::format(
-                            "no runner for {}-{} in the package: this mcpp builds no program for "
-                            "that system and architecture; the launcher there looks for `{}` on PATH",
-                            system, leg.arch, launch.loader));
+                            "no runner for {}-{} in the package: {}; the launcher there looks for "
+                            "`{}` on PATH", system, leg.arch, *why, launch.loader));
                         continue;
                     }
                     auto packed = carrier_build(plan, { {}, {}, launch.loader, system, leg.arch, false });
@@ -3529,6 +3543,9 @@ std::vector<SingleFileRow> single_file_rows(const Plan& plan) {
             if (all)
                 if (auto row = unbuilt_row(system, arch); !row.empty())
                     r.skipped = std::format("no carrier row: this mcpp builds no program for {}", row);
+            if (all && r.skipped.empty() && plan.platform.active)
+                if (auto why = detail::unbuilt_carrier(plan.platform, system, arch, true))
+                    r.skipped = *why;
             rows.push_back(std::move(r));
         }
     return rows;

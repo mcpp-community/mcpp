@@ -1237,6 +1237,9 @@ PackageInstances package_instances(const PrepareState& state);
 // `i`, ';'-joined (E13): empty unless the package requires the layer and the
 // provider of the same instance (target or build program) states a list.
 std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i);
+// Whether the dependency graph supplies the target's system: a C library on
+// any target, a kernel interface where the target has no system of its own.
+bool graph_supplies_system(const PrepareState& state);
 // The platform's fields a package's build program stated (protocol 17), at the
 // build-program tier of the build's platform statement, named after `who`.
 void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,

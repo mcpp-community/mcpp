@@ -131,7 +131,7 @@ choices:
 | `--compress zstd` or `xz` with `--pkg-format zip` | `--compress gzip` (DEFLATE) or `none`, or `--pkg-format tar` |
 | `--compress gzip` or `xz` with `--pkg-format single-file` | `--compress zstd[:<level>]` or `none`: the launcher decompresses zstd |
 | `--systems` on anything but a self-contained tree of images or a single file of an image | `--mode self-contained`, or `--pkg-format single-file`; `[pack] systems` that does not fit is noted and left aside |
-| an image's single file for a system named whose row this mcpp builds no program for (`x86_64-macos`, `aarch64-windows-gnu`) | `--systems` naming the pairs that are built; `--systems all` takes those and says the rest |
+| an image's single file for a system named whose row this mcpp builds no program for (`x86_64-macos`), or for which the platform's carrier does not exist (its runner's `hosts`, when the carrier names none) | `--systems` naming the pairs that are built; `--systems all` takes those and says the rest |
 | more than one file (a package per leg, several single files) with `-o` naming one file | `-o <directory>/` |
 | several images of a platform that states no `runner`, not as single files | one pack per target, or `--pkg-format single-file` |
 | `--target` outside the platform's targets | a target the platform serves |
@@ -850,8 +850,11 @@ Each runner is built on its row (`<arch>-linux-musl`, `<arch>-macos`,
 `<arch>-windows-gnu`) over the platform's hosted arrangement, so the same
 program results whichever machine packs, with no SDK or C run-time of that
 system; a Linux runner is static. A row this mcpp builds no program for
-(`x86_64-macos`, planned; `aarch64-windows-gnu`, not in its table) is left out
-with a warning. An image built on a Windows host is not the bytes of one built
+(`x86_64-macos`, planned), or a system the platform's carrier does not exist for,
+is left out with a warning: a carrier that names no `hosts` is the runner's
+program and exists where the runner does (`runner.hosts`; openkal-platform's
+names no `windows-aarch64`, so `aarch64-windows-gnu`, a row this mcpp builds,
+gets no runner from it). An image built on a Windows host is not the bytes of one built
 elsewhere (#850): pack trees on Linux or macOS.
 
 **Where it runs.** The pack writes `runs_on` into `mcpp-package.json` and says

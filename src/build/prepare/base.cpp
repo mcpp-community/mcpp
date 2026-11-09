@@ -190,7 +190,10 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
     //    only where the row's base is rendered from one (gnu-sysroot,
     //    driver-internal); a bare-metal row's C library stays the row's
     //    (`effective_sysroot`).
-    {
+    //    An engine default yields to a dependency graph that supplies the
+    //    system (a C library composed over a kernel interface), as the row's
+    //    toolchain convention does: a base would be a second C library.
+    if (!graph_supplies_system(state)) {
         const auto address = tb::row_base(t).address;
         const auto identity = state.targetChoice.identity.empty() ? key : state.targetChoice.identity;
         for (auto const* p : mcpp::toolchain::target::providers()) {
