@@ -165,7 +165,7 @@ members = [
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
-mcpplibs.mtest = "0.5.1"
+mcpplibs.mtest = "0.5.2"
 
 # Everything else uses M5.0 conventions:
 # - target        = mcpp (kind=bin inferred from src/main.cpp)

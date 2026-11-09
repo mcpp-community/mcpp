@@ -92,8 +92,8 @@
 - `mcpp pack` with several programs packs the one named after the package,
   else the first by name as before, and names the others with
   `mcpp pack <program>` and `--all-programs`.
-- mcpp's own unit tests are mtest cases (mtest 0.5.1, mcpplibs.os 0.4.1); a
-  skeleton's tests use mtest 0.5.1.
+- mcpp's own unit tests are mtest cases (mtest 0.5.2, mcpplibs.os 0.4.1); a
+  skeleton's tests use mtest 0.5.2.
 
 ### Fixed
 
