@@ -937,7 +937,7 @@ inline std::string android_abi(const Triple& t) {
 // a claim nothing can yet check; the unit test asserts every known row's
 // `platform_name` is a member.
 inline constexpr std::string_view kPlatformNames[] = {
-    "linux", "macos", "windows", "ios", "android", "emscripten", "openkal",
+    "linux", "macos", "windows", "ios", "android", "emscripten", "openkal", "freebsd",
 };
 
 inline std::string platform_name(const Triple& t) {

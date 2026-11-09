@@ -74,7 +74,7 @@ UTest linux_fills_gnu_and_leaves_android_out{"TargetSet/LinuxFillsGnuAndLeavesAn
 UTest windows_fills_gnu{"TargetSet/WindowsFillsGnu", [] {
     auto e = ts::expand_set("windows", column_platform);
     if (auto&& failed = expect(fatal(e.has_value())); !failed) failed << e.error();
-    expect(eq(e->members, (std::vector<std::string>{"x86_64-windows-gnu"})));
+    expect(eq(e->members, (std::vector<std::string>{"x86_64-windows-gnu", "aarch64-windows-gnu"})));
 }};
 
 UTest android_is_the_linux_android_rows{"TargetSet/AndroidIsTheLinuxAndroidRows", [] {

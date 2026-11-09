@@ -1969,10 +1969,10 @@ platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 
 Declares the platforms the package supports (a CI matrix hint, shown via `mcpp why`).
 The vocabulary is fixed by mcpp (which owns the target/triple system):
-`linux | macos | windows | ios | android | emscripten` (mcpp 2026.9.12.3+;
+`linux | macos | windows | ios | android | emscripten | openkal | freebsd` (mcpp 2026.9.12.3+;
 `ios`, `android` and `emscripten` are new members of a vocabulary that was
-`linux | macos | windows` before); unknown values produce a warning, and an
-error under `--strict`.
+`linux | macos | windows` before, and `freebsd` is a member from 2026.11.10.1); unknown
+values produce a warning, and an error under `--strict`.
 
 A platform name is a target triple's `os`, except that an `env` naming a
 platform of its own wins. Android rows have `os = "linux"` and

@@ -1794,9 +1794,9 @@ platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 
 声明这个包支持的平台（一条 CI 矩阵提示，经 `mcpp why` 展示）。词汇由
 mcpp（拥有 target/triple 体系的一方）固定：
-`linux | macos | windows | ios | android | emscripten`
+`linux | macos | windows | ios | android | emscripten | openkal | freebsd`
 （mcpp 2026.9.12.3+；`ios`、`android` 与 `emscripten` 是这套此前只有
-`linux | macos | windows` 的词汇新增的成员）；未知取值会产生警告，
+`linux | macos | windows` 的词汇新增的成员，`freebsd` 自 2026.11.10.1 起是其成员）；未知取值会产生警告，
 `--strict` 下是错误。
 
 一个平台名就是目标三元组的 `os`，除非一个自己命名了平台的 `env`

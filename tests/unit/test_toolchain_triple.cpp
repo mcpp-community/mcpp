@@ -764,6 +764,11 @@ UTest exactly_these_rows_have_a_capability_pin{"Triple/ExactlyTheseRowsHaveACapa
         "aarch64-linux-android", "x86_64-linux-android",
         // Ok images: clang and lld emit them on every host, as for bare metal.
         "x86_64-openkal", "aarch64-openkal",
+        // The GNU-ABI Windows row only the MinGW-w64 base package serves, beside
+        // llvm (design 2026-11-10 E9).
+        "aarch64-windows-gnu",
+        // Planned 32-bit rows that openkal-platform's patterns reach (E11).
+        "i686-linux-musl", "i686-openkal",
     };
     expect(eq(capability, expected));
 
