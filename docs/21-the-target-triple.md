@@ -523,13 +523,17 @@ other's rows.
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
-| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | — | payload |
+| `i686-linux-musl`, `i686-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | base | payload |
+| `aarch64-windows-gnu` | preview | `llvm@23.1.3` | base | base | base | base |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | graph | graph | graph | payload |
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
 | `aarch64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
 | `x86_64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
+| `x86_64-freebsd`, `aarch64-freebsd` | preview | — | platform | platform | platform | platform |
+| `x86_64-freebsd-musl`, `aarch64-freebsd-musl` | planned | — | planned | planned | planned | planned |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
@@ -552,11 +556,14 @@ other's rows.
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 | `x86_64-openkal` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-openkal` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `i686-openkal` | planned | — | planned | planned | planned | planned |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a
 dependency can supply the system · `system` located on the machine, not
-installed by mcpp · `SDK` the platform's own · `—` unreachable from this host
-· `planned` registered in the vocabulary, nothing wired yet.
+installed by mcpp · `SDK` the platform's own · `base` a base package the provider
+names, installed from the index (2026.11.10.1+) · `platform` served by a platform the
+project selects · `—` unreachable from this host · `planned` registered in the
+vocabulary, nothing wired yet.
 
 ### The rule behind the columns
 
@@ -564,7 +571,9 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 |---|---|---|
 | `*-linux-musl` | Linux (any arch), Windows (same arch only) | the musl payloads are self-contained |
 | `*-linux-gnu` | Linux, same arch only | additionally needs the host-native `xim:glibc` / `xim:linux-headers` |
-| `x86_64-windows-gnu` | Linux, Windows | one identity, host-split at the distribution layer |
+| `x86_64-windows-gnu` | Linux and Windows by the gcc payload; every host by the MinGW-w64 base package | one identity, host-split at the distribution layer; the `mingw-llvm` provider serves it with clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on UCRT, libc++, compiler-rt) where no gcc payload exists |
+| `aarch64-windows-gnu` | every host | the MinGW-w64 base package alone; no gcc payload targets it |
+| `*-freebsd` | every host, through a platform | the rows are built-in; a platform names the FreeBSD base package (`xim:freebsd-sysroot`) and is selected with `[target.<row>] platform`; without one the request is refused naming that line |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |

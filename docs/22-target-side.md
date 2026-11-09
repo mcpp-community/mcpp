@@ -1033,7 +1033,7 @@ did not match.
 
 ## Diagnostics
 
-Four conditions are reported by the engine rather than by a compiler.
+Five conditions are reported by the engine rather than by a compiler.
 
 | Condition | Report |
 |---|---|
@@ -1041,6 +1041,7 @@ Four conditions are reported by the engine rather than by a compiler.
 | two packages supply one layer | names both, and how each entered the graph |
 | a layer has no supplier | names the layer, and the capability to depend on |
 | the payload's C++ runtime sits above a foreign C library | names both, and the two ways out |
+| the suppliers of the layers require one another in a circle (2026.11.10.1+) | names each package, the layer it supplies and the layer it requires; `layer-cycle` |
 
 A message from a compiler or a linker about a target-side combination
 indicates a missing diagnostic. The engine knows the combination is untenable
@@ -1272,6 +1273,45 @@ also takes `{ path = "<dir>" }` (2026.10.24.1+): an unpacked Visual Studio tree
 or clang's `/winsysroot` layout, whose `Windows Kits/10` is used when present.
 Any other value on such a row is rejected. See
 [20 — Clang on the MSVC ABI](20-toolchains.md#clang-on-the-msvc-abi-the-toolset-is-the-sysroot).
+
+#### Base packages: a sysroot that states its layers (2026.11.10.1+)
+
+A sysroot can say what it holds beside its C library. A **base package** carries a
+`mcpp.toml` at its top whose `provides` names the layers it supplies and whose
+`[base]` table says where they stand:
+
+```toml
+[package]
+name     = "freebsd-sysroot"
+version  = "14.5"
+provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
+            "hosted-standard-library"]
+
+[base]
+roots             = { x86_64 = "amd64", aarch64 = "arm64" }   # the sysroot of each architecture
+include-dirs      = ["usr/include/c++/v1"]                    # relative to that sysroot
+libs              = { dynamic = ["c++"], static = ["c++", "cxxrt"] }
+std-module        = "usr/share/libc++/v1/std.cppm"
+std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
+std-module-flags  = ["-D__fenv_static="]
+# compiler-runtime-dir = "compiler-rt"                        # a resource directory of the link
+```
+
+Named as any sysroot is (`sysroot = "xim:freebsd-sysroot@14.5"`, `{ path = "…" }`, or a
+platform's `sysroot`), the base answers the layers it states:
+
+- the report shows them as `prebuilt`, with the base's `<name>@<version>`;
+- the C++ headers, the `std` module and the C++ libraries of the link are the base's; the
+  toolchain payload's C++ runtime and its archives, built for the payload's own host, take no
+  part. A base that states no `std-module` leaves the build without `import std`;
+- `roots` maps an architecture to the directory that is the sysroot (`"."` for the package
+  itself); a base asked for an architecture it lacks is refused, naming those it has.
+
+Two base packages are in the index: `xim:freebsd-sysroot` (FreeBSD's base system for amd64 and
+arm64, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
+MinGW-w64 on UCRT, libc++, libunwind and compiler-rt for x86_64 and aarch64). On a
+`*-windows-gnu` row the latter is clang's sysroot; the `mingw-llvm` provider names it, so every
+host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)).
 
 A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and

@@ -744,6 +744,22 @@ the loader reads it from that path on every machine, whatever the tree carries.
 `kind = "lib"` / `"shared"` target is packaged by the library route, which is
 unaffected.
 
+### An ELF program for another system: the closure read from the file (2026.11.10.1+)
+
+A program for a row whose execution system is not the packing host's — a FreeBSD
+program packed on Linux, or a row a platform defines — is not handed to the host's
+loader, which would describe the host or fail (`ldd` exited 127 on a FreeBSD
+program). Its closure is read from the file's `DT_NEEDED`:
+
+| Name | Treatment |
+|---|---|
+| a shared library this build produced, beside the program (`bin/`, `../lib/`) | staged with the program |
+| any other name | the target system's; recorded as a platform need and not staged |
+
+`--mode static` links a fully static program on such a row as on a native one, and
+the file is read before it is packed: a program that names a loader or a shared
+library is refused, naming them, rather than packed under the `-static` name.
+
 ### ok images (`<arch>-openkal`): the image, or a program that carries it
 
 An ok image runs through `okrun` on every system of its architecture (see

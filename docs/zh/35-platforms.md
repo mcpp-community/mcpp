@@ -244,22 +244,48 @@ seal   = [["okld", "note", "{}"], ["okld", "place", "{}"], ["okld", "check", "{}
 
 ```toml
 [[platform.define]]
-triple        = "x86_64-freebsd"
-clang-triple  = "x86_64-unknown-freebsd14.1"
+triple        = "x86_64-haiku"
+clang-triple  = "x86_64-unknown-haiku"
 object-format = "elf"
 family        = "unix"
-execution     = "freebsd"          # 其程序运行的系统
+execution     = "haiku"            # 其程序运行的系统
 
 [[platform.provider]]
-serves   = ["x86_64-freebsd"]      # 模式：`*` 代表任一段
+serves   = ["x86_64-haiku"]        # 模式：`*` 代表任一段
 priority = 100
 hosted   = true                    # C 环境有 `main`
 ```
 
-选中该平台（`[target.x86_64-freebsd] platform = {...}` 或 `--platform`）后，`--target x86_64-freebsd` 构建到
-`target/x86_64-freebsd/`，`cfg(os = "freebsd")` 成立；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
+选中该平台（`[target.x86_64-haiku] platform = {...}` 或 `--platform`）后，`--target x86_64-haiku` 构建到
+`target/x86_64-haiku/`，`cfg(os = "haiku")` 成立；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
 未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
 提供者的两种简写。
+
+**定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`
+标为 `row`）；工具链载荷为其自身宿主构建的东西——libc++ 头文件、运行时目录、宿主的 `-L` 与 RPATH——不进入该行；本机加载器的
+闭包与符号检查只在该行的执行系统为本机时进行。没有内置提供者服务的内置行同样如此。
+
+**内置行已命名的系统由平台服务，而非定义（2026.11.10.1+）。** FreeBSD 的行是内置的（`x86_64-freebsd`、`aarch64-freebsd`）；
+服务它们的平台陈述提供者与基座，再次定义它们是错误：
+
+```toml
+[platform]
+toolchain = "llvm@23.1.3"
+sysroot   = "xim:freebsd-sysroot@14.5"    # 基座包（[22](22-target-side.md)）
+
+[[platform.provider]]
+serves = ["x86_64-freebsd", "aarch64-freebsd"]
+hosted = true
+
+[platform.build]
+ldflags = ["-pthread"]
+
+[platform.link]
+driver = "compiler"
+```
+
+**`[platform.link] flags` 是给 ld.lld 的词（2026.11.10.1+）。** `driver` 为 `"compiler"` 的平台不把它们交给任何程序，构建
+会说明这一点，并指名 `[platform.build] ldflags`——后者的词进入编译器的链接。
 
 `mcpp new <名> --template platform` 生成一个定义 `<arch>-<名>` 的平台包。读取平台清单时按行检查其语句：定义内置行、
 同一行定义两次是错误，无论平台在何处被读取；不服务任何行的提供者、以同一优先级服务同一身份的两个提供者是平台自身构建的
