@@ -117,7 +117,8 @@ rerun 3 c.log
 grep -q "T859 value two" c.log || fail "C: the program took the compile made before the header changed" c.log
 
 # D
-rec=$(ls $HOST/*/programs.json | head -1)
+rec=$(ls $HOST/*/programs.json 2>/dev/null | head -1)
+[ -n "$rec" ] || fail "D: no build programs' record under $HOST" c.log
 sed 's/"identity": "[0-9a-f]*"/"identity": "0000000000000000"/' "$rec" > "$rec.edited" && mv "$rec.edited" "$rec"
 rerun 4 d.log
 [ "$(compiled d.log)" = 1 ] || fail "D: a record that disagrees was used without compiling" d.log

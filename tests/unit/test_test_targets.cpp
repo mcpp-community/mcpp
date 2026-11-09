@@ -223,3 +223,32 @@ UTest broken_manifest_still_returns_inventory{"TestTargets/BrokenManifestStillRe
 }};
 
 } // namespace
+
+// A test's name is the path of its program: a directory program `unit` and a
+// program `unit/own` below it would be a file and a directory of one path.
+UTest a_name_that_is_another_s_directory_is_refused{"TestTargets/ANameThatIsAnothersDirectoryIsRefused", [] {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+programs = "directory"
+)");
+    write_file(tmp.path / "tests/unit/a.cpp", "int main() {}\n");
+    write_file(tmp.path / "tests/unit/b.cpp", "int b() { return 0; }\n");
+    write_file(tmp.path / "tests/unit/own/c.cpp", "int main() {}\n");
+    write_file(tmp.path / "tests/unit-x/d.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    expect(fatal(!result.has_value()));
+    if (auto&& failed = expect(result.error().find("test 'unit'") != std::string::npos
+                               && result.error().find("test 'unit/own'") != std::string::npos);
+        !failed)
+        failed << result.error();
+
+    std::filesystem::rename(tmp.path / "tests/unit/own", tmp.path / "tests/own");
+    auto moved = mcpp::build::discover_test_targets(tmp.path, {});
+    if (auto&& failed = expect(fatal(moved.has_value())); !failed) failed << moved.error();
+    expect(eq(moved->targets.size(), 3u));
+}};

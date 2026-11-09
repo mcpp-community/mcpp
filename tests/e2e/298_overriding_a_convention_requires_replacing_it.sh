@@ -82,10 +82,14 @@ fail=0
 # change.
 hostArch="$("$MCPP" toolchain list --format json 2>/dev/null \
             | jq -r '.data.host // "" | split("-")[0]' | tr -d '\r')"
+# A ROW WHOSE PAYLOAD llvm PAIRS WITH IS NOT ONE. The MinGW-w64 payload is
+# clang's sysroot as well as gcc's (SPEC-016 §3, e2e 1044): `x86_64-windows-gnu`
+# with llvm alone is served, not overridden, and is left out here.
 pick() {
     "$MCPP" toolchain list --format json 2>/dev/null \
       | jq -r --arg a "$1" '[.data.targets[]
                              | select(.pin | startswith("gcc"))
+                             | select(.target != "x86_64-windows-gnu")
                              | select(.status != "planned")
                              | select($a == "" or (.target | startswith($a + "-")))
                              | .target][0] // empty' | tr -d '\r'

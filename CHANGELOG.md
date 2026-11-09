@@ -97,6 +97,14 @@
   the conflict is reported (B2).
 - `mcpp pack` no longer packs one program of several without a word (B3).
 - A static ELF is not run to learn its closure.
+- A build program under a cross `--target` whose `[target.<t>] toolchain`
+  names the target's compiler is compiled by the spec that section replaced,
+  as under a row's pin: mcpp's own tree, built on Windows for
+  `x86_64-linux-musl`, compiled its build program with the musl cross gcc.
+- A test name that is another's directory (`unit` and `unit/own`) is refused,
+  naming both; the two programs were a file and a directory of one path.
+- The repository's stray empty `.edited` is removed; e2e 859 fails naming the
+  missing record rather than writing one in the working directory.
 
 ## [2026.11.8.1] - 2026-11-08
 

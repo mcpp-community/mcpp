@@ -121,10 +121,16 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
         if (!state.bootstrapSpec.empty()) return state.bootstrapSpec;
         if (!state.tcSpec) return {};
         if (state.overrides.target_triple.empty()) return *state.tcSpec;
-        return (state.tcOrigin == TcOrigin::TargetPin && state.hostSpecBeforeRowPin.has_value()
-                && !state.hostSpecBeforeRowPin->empty() && *state.hostSpecBeforeRowPin != "system")
-            ? *state.hostSpecBeforeRowPin
-            : (state.tcOrigin == TcOrigin::TargetPin ? state.native_first_run_spec() : *state.tcSpec);
+        // The target's own choice -- a row's pin or a `[target.<t>] toolchain`
+        // -- is not the host's: the spec it replaced is. A pin that replaced
+        // nothing gives the native default (#622); a section that replaced
+        // nothing names the only compiler the project states.
+        const bool targetChose = state.tcOrigin == TcOrigin::TargetPin
+                              || state.tcOrigin == TcOrigin::TargetSection;
+        if (targetChose && state.hostSpecBeforeRowPin.has_value() && !state.hostSpecBeforeRowPin->empty()
+            && *state.hostSpecBeforeRowPin != "system")
+            return *state.hostSpecBeforeRowPin;
+        return state.tcOrigin == TcOrigin::TargetPin ? state.native_first_run_spec() : *state.tcSpec;
     };
     state.host_tc_for_build_program = [&]() -> std::expected<
             std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>, std::string> {

@@ -550,6 +550,12 @@ static void step1_apply_target_section(PrepareState& state,
                 : state.overrides.target_triple,
             state.m->sourcePath.filename().string()));
     if (!e.toolchain.empty() && !state.tcFromCommandLine && !state.tcFromConsumer) {
+        // A CROSS TARGET'S SECTION NAMES THE TARGET'S COMPILER, NOT THE HOST'S:
+        // the spec it replaced is what the build program resolves, as a row's
+        // pin's is (`[target.x86_64-linux-musl] toolchain = "gcc@16.1.0"` on a
+        // Windows host whose `[toolchain] windows` is llvm).
+        if (!state.overrides.target_triple.empty() && state.tcSpec && *state.tcSpec != e.toolchain)
+            state.hostSpecBeforeRowPin = *state.tcSpec;
         state.tcSpec   = e.toolchain;
         state.tcOrigin = TcOrigin::TargetSection;
     }

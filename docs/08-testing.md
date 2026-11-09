@@ -61,7 +61,9 @@ below a glob's fixed directory one program, named by the directory
 it, its cases are all of theirs, and it begins at the file that defines `main`
 when one does, else as a file that defines none does. Two files of one directory
 that define `main` are refused, naming both; a file directly in the fixed
-directory stays a program of its own. A program of many files is linked once
+directory stays a program of its own. A test's name is the path of its program,
+so a name that is another's directory (`unit` and `unit/own`) is refused,
+naming both (2026.11.9.1+). A program of many files is linked once
 where a program per file is linked once per file, which is what a suite of many
 small files spends its build time on.
 
