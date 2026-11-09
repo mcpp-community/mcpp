@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-014 |
 | 标题 | 打包与分发:链接、闭包、容器三个维度与构建腿,腿的合并,暂存树与包元数据,运行覆盖、单文件、容器列表、签名、压缩、合并与分发描述 |
-| 状态 | 评审中 v2.1 |
+| 状态 | 评审中 v2.2 |
 | 版本 | 2.1 |
-| 最后修改 | 2026-10-31 |
-| 对应实现 | mcpp >= 2026.10.31.1 |
+| 最后修改 | 2026-11-10 |
+| 对应实现 | mcpp >= 2026.10.31.1;v2.2 条款 mcpp >= 2026.11.10.1 |
 | 相关设计文档 | `.agents/docs/2026-10-30-ecosystem-part2-ide-and-language-service-design.md`(§19.6)、`.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
 | 相关 issue | mcpp#847、mcpp#849、mcpp#860 |
 | 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、运行器、载体)、[SPEC-015](target-sets.md)(目标集合与腿) |
@@ -57,6 +57,13 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 `--mode static` 是 `--linkage static --mode self-contained` 的简写:原生目标上为全静态程序;openkal 目标上为每个架构
 一个静态 `.oke` 加运行器的树。把映像嵌入一个程序(载体携带映像,SPEC-013 §11 的 M3)只属于单文件(§5.2):
 `--linkage static --pkg-format single-file`。
+
+**另一系统的产物(v2.2)。** 行的执行系统不是本机系统时(SPEC-016 §6),闭包**必须**从产物文件读取(ELF 的
+`DT_NEEDED`),**禁止**运行本机加载器:本构建产出、位于程序旁(`bin`、`../lib`)的库随包携带,其余名字属于目标系统,
+记为平台需求。C 库由平台或基座包描述的行支持全静态链接。
+
+**静态的核对(v2.2)。** `--mode static` 的原生程序**必须**以全静态方式链接;打包前读取产物文件,带解释器或共享库需求的
+程序**必须**被拒绝并写出其需求,不以 `-static` 的名字打包。
 
 `[pack] default_mode` 接受规范名 `system`、`vendored`、`self-contained`、`static` 与别名 `bundle-project`、`bundle-all`。
 
@@ -478,3 +485,4 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 | 1.3 | 2026-10-29 | mcpp 2026.10.29.1:§0 ok 映像与 Web;§1.2 单腿 `self-contained` 包的载体为映像架构的程序;§1.5、§5.2 WebAssembly 目标上的单文件被拒绝;§4.5 单腿 `self-contained` ok 映像包的 `systems` 记录其载体;§6 `--list-formats` 规划所选目标;§8 单腿包按其程序运行的系统与架构描述(系统的三元组,或 ok 映像的载体),程序不是任何系统的程序的被拒绝;判据 8、9(e2e 961、962)。 |
 | 2.0 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4、§13):§1.4 腿只是命令命名的目标(目标集合按 SPEC-015 展开),腿按目标的种类与平台合并,原生程序每腿一个包,`-o <目录>/`;删除通用包与 `[platform] universal`、`[pack] universal`、`--no-universal` 的作用(迁移见 §2、docs/51);§1.2、§4.2 声明运行器的平台的映像只有一种布局(树),M3 只属于单文件,`--mode static` 为静态树;§4.3 Windows 启动器为引擎的程序,不再生成 `.cmd`,启动器为派生文件;§4.4 `--systems` 接受 `<os>`、`<os>-<arch>`、`all` 与 `[pack] systems`;§4.6 合并重新生成启动器、合并 `runs_on`、树以平台名命名;§4.7 运行覆盖 `runs_on` 与 `Runs on`、未覆盖的摘要,空覆盖被拒绝;§5.2 单文件覆盖腿 × 系统;§5.4 容器列表;§7 签名含 Windows 启动器;§8 条目按 `runs_on` 描述;§9 `pkgFormats`、`runsOn`;判据 3、4、7、9 改写,判据 10–13(e2e 983–987)。 |
 | 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;§4.3 macOS 上带 quarantine 标记的运行器;判据 14(e2e 992)。 |
+| 2.2 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E7,mcpp#911 N8):§1.2 另一系统的产物从文件读取闭包,不运行本机加载器;`--mode static` 链接全静态程序并在打包前核对。 |

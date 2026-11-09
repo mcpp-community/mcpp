@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.10 |
-| 最后修改 | 2026-10-23 |
+| 状态 | 草案 v0.11 |
+| 最后修改 | 2026-11-10 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
 | 相关设计文档 | `.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md` |
 | 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755、mcpp#832 |
@@ -245,7 +245,7 @@ GCC 以 xlings subos 为 `--sysroot`,没有可用 subos 而退回载荷布局时
 | 覆盖 | `--sysroot`;`MCPP_TARGET_<三元组>_SYSROOT`;`MCPP_SYSROOT`。空值视为未设置,`none` 表示 `""` |
 | 工程 | `mcpp.toml` 的 `[target.<三元组>].sysroot`;其次 `[toolchain] { path, sysroot }` 或工具链阶段的陈述 |
 | 机器默认 | `~/.mcpp/config.toml`,其次系统级 `config.toml` 的 `[target.<三元组>].sysroot` |
-| 引擎默认 | 目标表该行的 `sysroot` 列,或生态的缺省基座 |
+| 引擎默认 | 所选提供者的 `sysroot` 列(为包且该行地址为 gnu-sysroot 或 driver-internal 时,按工程陈述的同一规则解析,v0.11),或生态的缺省基座 |
 
 宿主图(构建程序与宿主工具的子构建)**禁止**读取目标基座。一个工程写明的目录不存在时,诊断**必须**给出文件与
 行号、解析后的绝对路径,以及让它存在的三种办法(生态包、仓库内相对路径、团队约定的路径)和本机覆盖的写法。
@@ -409,6 +409,7 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | v0.7 | 2026-10-09 | 随 mcpp 2026.10.8.1:新增 §3.8,使用受管 C 库的构建不隐式搜索宿主的系统头文件;需要时由项目显式写出。 |
 | v0.8 | 2026-10-16 | 随 mcpp 2026.10.16.1:§4.3 改为「安装后不改写」,载荷只由提供者写入;工具链运行在提供者按 home 的运行库钉版本绑定的运行库上。 |
 | v0.10 | 2026-10-23 | 随 mcpp 2026.10.24.1:§1 定义目标基座与执行宿主;新增 §3.9 目标基座(一次解析、四档写法与优先级、测量与声明、不写入、运行时语义)、§3.10 自备输入、§3.11 核心知识判据;§2.2.1 工具链阶段可陈述 `spec` 与 `sysroot`,`spec` 与路径专属键同时出现时拒绝;§3.1 补全读者名单;§3.3 增加主体 `sysroot` 与 `run_under`;§3.5 clang 行接受 `{ path }`;§4.3 要求被陈述的 gnu-sysroot 基座把 `--sysroot` 交给链接器;新增附录 A。 |
+| v0.11 | 2026-11-10 | 随 mcpp 2026.11.10.1:§3.9.2 引擎默认档为所选提供者的 `sysroot` 列,为包时按工程陈述的规则解析;附录 A 的 `*-windows-gnu` 接受基座包与 `{ path }`,新增 `*-freebsd` 行(基座包见 SPEC-002 §2.5)。 |
 | v0.9 | 2026-10-17 | 随 mcpp 2026.10.17.1:新增 §4.7,已安装的修订在构建中继续使用,`floor` 决定是否必须替换,`toolchain install` 取当前修订;§6.4 doctor 只读,报告构建实际使用的工具链与包 home 的一致性。 |
 
 ---
@@ -423,7 +424,9 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | `*-macos` | MacOSX SDK | kernel-abi、c-abi、C++ 头文件、frameworks | apple-isysroot | floor | `macosx@system`、`macosx@<版本>`、`{ path }` | `macosx@system` |
 | `*-ios`、`*-ios-sim` | iPhoneOS / iPhoneSimulator SDK | 同上 | apple-isysroot | floor | `iphoneos@…` / `iphonesimulator@…`、`{ path }` | 对应的 `@system` |
 | `*-windows-msvc` | VC toolset 加 Windows SDK | c++-abi、compiler-runtime、c-abi(UCRT)、kernel-abi | msvc-roots | UCRT 为 floor | `msvc@system`、`msvc@<版本>`、`xim:msvc@…`、`{ path }`(仅 clang) | `msvc@system` |
-| `*-windows-gnu`、`*-android`、`wasm32-emscripten` | SDK 工具链内建 | 视 SDK 而定 | driver-internal | floor 或 none | 生态包与 `""` 沿用既有含义,不接受新写法 | 工具链携带 |
+| `*-windows-gnu` | MinGW-w64 工具链内建;或 MinGW-w64 基座包(`xim:mingw-w64-sysroot`,SPEC-002 §2.5) | kernel-abi、c-abi;基座包另供 c++-abi、compiler-runtime | driver-internal;基座包为 clang 的 sysroot | none | 基座包(生态包)、`{ path }`、`""`(v0.11) | 所选提供者的 `sysroot` 列(`mingw-llvm`),否则工具链携带 |
+| `*-freebsd` | FreeBSD 基座包(`xim:freebsd-sysroot`) | kernel-abi、c-abi、c++-abi、compiler-runtime | gnu-sysroot | floor | 生态包、`{ path }`、`""` | 平台的 `sysroot` |
+| `*-android`、`wasm32-emscripten` | SDK 工具链内建 | 视 SDK 而定 | driver-internal | floor 或 none | 生态包与 `""` 沿用既有含义,不接受新写法 | 工具链携带 |
 
 Apple 行能否构建由 SDK 中是否有该架构的切片决定(`libSystem.tbd` 的 `targets`),实现**必须**在缺少切片时
 点名拒绝;与厂商的硬件路线无关。

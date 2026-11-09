@@ -568,6 +568,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `os-mismatch` | 请求的三元组与解析出的三元组命名不同的系统 |
 | `layer-requirement` | 某个包要求的层，解析结果没有提供 |
 | `layer-ordering` | 五个层无法叠加 |
+| `layer-cycle` | 供给各层的包相互需要成环（写在 C 库之上的 kernel-abi 位于写在 kernel-abi 之上的 C 库之下）；消息写出每个包、它供给的层与它需要的层，并以方括号带出该记号 *（2026.11.10.1+）* |
 | `exclusive-capability` | 一项能力有多个提供者，其中至少一个声明了独占 |
 | `version-floor-unmet` | 某个包对机器的要求，高于机器被声明拥有的水平 |
 | `accel-mismatch` | 一条 `[build] sources` 条目被约束到本次构建未覆盖的设备集合 |

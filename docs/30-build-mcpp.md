@@ -1346,6 +1346,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TARGET_ARCH` *(0.0.100+)* | `mcpp::target_arch()` | the target's arch segment (GNU spelling: `x86_64`, `aarch64`, …) |
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
 | `MCPP_TARGET_PROVIDER` *(2026.11.9.1+)* | `mcpp::target_provider()` | the provider the selection gave the target's identity (`openkal`, `musl-gcc`, `msvc`, ...; SPEC-016 §4); empty string for the host's own build |
+| `MCPP_KERNEL_ABI_INTERFACES` *(2026.11.10.1+)* | `mcpp::kernel_abi_interfaces()` | for a package that states `requires = ["mcpp:kernel-abi=..."]`: the `provides-interfaces` of the resolved kernel-abi provider, joined by `;` (`openkal.fs;openkal.process;...`). Always set; empty when the provider states no list or the package states no such requirement, which a program reads as "unknown" and answers by binding every interface |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |

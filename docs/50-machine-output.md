@@ -639,6 +639,7 @@ a program classifying the outcome reads `reason`:
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |
 | `layer-ordering` | the five layers do not stack |
+| `layer-cycle` | the packages that supply the layers require one another in a circle (a kernel-abi written above a C library under a C library written above a kernel-abi); the message names each package, the layer it supplies and the layer it requires, and carries the token in brackets *(2026.11.10.1+)* |
 | `exclusive-capability` | two packages provide one capability and at least one declared it exclusive |
 | `version-floor-unmet` | a package requires more of the machine than the machine was declared to have |
 | `accel-mismatch` | a `[build] sources` entry is constrained to a device set this build does not cover |
