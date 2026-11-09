@@ -119,6 +119,11 @@
   program's objects came first: a global constructor that allocated (an mtest
   case's registration) stopped in openkal-musl's allocator before the library
   was up, on hosted macOS (e2e 1053).
+- `x86_64-windows-gnu` with llvm on a host the MinGW-w64 payload does not
+  serve (linux-aarch64, macOS) is refused as `host-cannot-serve`, as with gcc;
+  the paired payload's failed install was an unnamed refusal.
+- The target matrix's expected table states the cells the target model
+  changes, measured on the four hosts; e2e 1044 runs in the job that has wine.
 - e2e 298 picks a row whose compiler on this host is its convention's: a macOS
   host serves `aarch64-linux-musl` through openkal-platform, whose compiler is
   llvm, and there llvm alone overrides nothing.

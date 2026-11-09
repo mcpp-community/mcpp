@@ -438,6 +438,27 @@ std::expected<void, std::string> phase5_toolchain_after_graph(PrepareState& stat
                            && std::ranges::find(p->pairs, mcpp::toolchain::family_name(declared->family))
                                   != p->pairs.end();
                    });
+            // A PAIRED PROVIDER THIS HOST DOES NOT HAVE SUPPLIES NOTHING. The
+            // selection took it as the first candidate of all, none being
+            // available (§4.6); with the toolchain stated, the diagnosis of an
+            // unserved target was not composed, and the payload's install
+            // failed as an unnamed refusal (target matrix, linux-aarch64).
+            auto const& choice = state.targetChoice;
+            const bool pairedHere = std::ranges::any_of(choice.candidates, [&](auto const& k) {
+                return k.available && k.provider && k.provider->name == choice.provider
+                    && k.row && k.row->triple == choice.identity;
+            });
+            if (paired && !pairedHere) {
+                refusal::record(refusal::Code::HostCannotServe);
+                return std::unexpected(std::format(
+                    "target '{}' with {} takes its system from the '{}' provider's {} payload, "
+                    "which this host does not have.\n"
+                    "       `mcpp why target --target {}` lists the providers of the target and "
+                    "where each is available; depend on a package that implements the "
+                    "target's system to build it here.",
+                    state.targetRowName, *state.tcSpec, choice.provider, state.targetRowPin,
+                    state.targetRowName));
+            }
             if (paired) state.pairedSystem = state.targetRowPin;
             else if (declared && rowTc && declared->family != rowTc->family) {
                 refusal::record(refusal::Code::ConventionUnreplaced);
