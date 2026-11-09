@@ -4,6 +4,85 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.9.1] - 2026-11-09
+
+### Added
+
+- **Targets and providers (SPEC-016).** A target request is a pattern: the
+  rows it reaches, each with the providers that serve it, are ordered by
+  priority, then by row, then by provider name, and the first one available on
+  this host is taken; the build reports the request, the identity and, when the
+  first candidate is not available, why. The built-in rows and providers are
+  data (`modules/toolchain-model/data/builtin.toml`, compiled in by the
+  package's build program). `[target.<selector>.priority] <provider> = <n>`
+  changes the order; `platform = "builtin:<name>"` chooses a built-in provider.
+- A platform package defines rows and providers: `[[platform.define]]` (triple,
+  clang-triple, object format, family, execution, ...) and
+  `[[platform.provider]]` (serves, priority, hosts, pairs, toolchain, layers,
+  link, hosted). `cfg(os = ...)` answers by a defined row; the parser accepts
+  the systems and C libraries the resolved platforms define (mcpp#911 G1).
+- `mcpp why target` lists a request's candidates with their priorities and
+  availability; `mcpp why flags [<unit>]` lists each word of a unit's command
+  line and of the link line with the layer that gave it (row, replacement,
+  platform, toolchain, package, engine). Both take `--format json`. The build
+  record and the `plan` event carry `{request, identity, provider, priority,
+  fallback}`; build programs read `mcpp::target_provider()`
+  (`MCPP_TARGET_PROVIDER`).
+- `mcpp.lock` records `[target."<request>"]` with the identity and the
+  provider; `--locked` refuses a build that selects another identity.
+- `[platform.replace]` and `[target.<selector>.replace]` replace the row's
+  defaults (`-march=`, `-mabi=`, `-mcmodel=`, its flags, `-m <emulation>`) by
+  name; a replacement that meets no word of the row is reported (mcpp#911 G2).
+- A sysroot or a provider that states a hosted C environment turns off
+  `-ffreestanding` (G3); a platform's `link.driver = "compiler"` links any row
+  (G4); an artifact for another system is not judged by this machine's loader
+  (G5); a target-independent source artifact serves every target (G6).
+- `[defaults."<capability>"] <selector> = <package>`: a package's default
+  provider of a capability it requires, taken when neither the graph nor the
+  platform provides it (G7).
+- A patch names files from the package's root; `patch_root` names another
+  directory. `mcpp patch edit <dependency>` and `mcpp patch save <dependency>`
+  edit a dependency's sources and save the change as the edge's next patch
+  (G8).
+- `[targets.<name>.build]` compiles the shared sources an artifact links with
+  its own defines and flags, as the artifact's variant (G9).
+- A row a platform defines is packed and carries as a built-in row does;
+  `--systems all` adds the systems the platforms define (G10). An artifact for
+  another system is built, not run, until a runner -- a runner package's tool
+  -- or an execution host states how it runs (G11).
+- The row `i686-none-elf` (G12).
+- clang pairs with the MinGW-w64 payload for `x86_64-windows-gnu`: the payload
+  is clang's sysroot and libstdc++ its C++ library, `import std` included.
+- `mcpp new --template platform` and `mcpp check platform`.
+- `mcpp pack --all-programs` ships every program of a package.
+- A git reference that names no tag, rev or branch follows the remote's
+  default branch; `--platform git+<url>[#tag=|rev=|branch=]`.
+
+### Changed
+
+- A request that names only a system takes the first available identity of
+  that system: `x86_64-windows` on a host without MSVC is
+  `x86_64-windows-musl` (openkal-platform), no longer `x86_64-windows-gnu`;
+  `aarch64-macos` and `x86_64-macos` on another host are the `-musl`
+  identities; `aarch64-linux` on an x86_64 host is `aarch64-linux-musl`. An
+  identity written whole is not replaced.
+- The identity follows the C library: a project whose graph supplies musl
+  builds `x86_64-linux` as `x86_64-linux-musl`; an explicit identity that
+  disagrees with the graph's C library is refused (`target-cabi-conflict`).
+- A git dependency names at most one of rev, tag and branch.
+- `mcpp pack` with several programs packs the one named after the package and
+  names the others, and refuses when none is so named.
+- mcpp's own unit tests are mtest cases (mtest 0.5.0, mcpplibs.os 0.4.1); a
+  skeleton's tests use mtest 0.5.0.
+
+### Fixed
+
+- A manifest `mcpp pack` generates quotes a target name with a dot (B1).
+- A platform's artifact names stand over a build program's `artifact-name`;
+  the conflict is reported (B2).
+- `mcpp pack` no longer packs one program of several without a word (B3).
+- A static ELF is not run to learn its closure.
+
 ## [2026.11.8.1] - 2026-11-08
 
 ### Added
