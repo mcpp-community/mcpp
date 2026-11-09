@@ -92,14 +92,14 @@ hostArch="$("$MCPP" toolchain list --format json 2>/dev/null \
 # openkal-platform, whose compiler is llvm, on a macOS host. There llvm alone is
 # the row's own service, and nothing was removed. The compiler the selection
 # takes with no compiler stated is that service, so a candidate counts only
-# where it is not llvm.
+# where it is not llvm (`compiler.family` names the driver's family: `clang`).
 mkdir -p "$work/neutral"
 printf '[package]\nname    = "neutral"\nversion = "0.1.0"\n' > "$work/neutral/mcpp.toml"
 served_by_its_convention() {
     local fam
     fam="$(cd "$work/neutral" && "$MCPP" why toolchain --target "$1" --format json 2>/dev/null \
              | jq -r '.data.compiler.family // ""' | tr -d '\r')"
-    [ -n "$fam" ] && [ "$fam" != llvm ]
+    [ -n "$fam" ] && [ "$fam" != llvm ] && [ "$fam" != clang ]
 }
 pick() {
     local t
@@ -110,8 +110,9 @@ pick() {
                                         | select(.status != "planned")
                                         | select($a == "" or (.target | startswith($a + "-")))
                                         | .target] | unique[]' | tr -d '\r'); do
-        served_by_its_convention "$t" && { echo "$t"; return; }
+        served_by_its_convention "$t" && { echo "$t"; return 0; }
     done
+    return 0
 }
 pinned="$(pick "$hostArch")"
 [ -n "$pinned" ] || pinned="$(pick "")"
