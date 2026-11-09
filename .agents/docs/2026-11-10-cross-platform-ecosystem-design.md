@@ -600,9 +600,13 @@ openkal 家族（K5、K6，openkal 0.25.0）与 mcpplibs/os 0.4.3 的实施记�
   PR 描述同时引用两次运行。迁移保留每一条断言，不能迁移的测试在 PR 中点名。
 - **mcpp 自身。** e2e 已经经 `tests/e2e/mtest.toml` 作为 mtest 的 level 0 程序运行。功能提交在 CI 通过后：
   1. 新增的 e2e（1054–1064）与其余脚本一样由 mtest 发现与报告；
-  2. bench 迁移为 mtest 的 Bench 对象，结果进入 mtest 的存储；
+  2. bench 的引擎比较仍是手动运行的标准集；mcpp 自身的开销（无事构建、`why flags`、改一个接口后的重建）
+     是 `bench/tests/engine.cpp` 的 mtest Bench 用例，由 Linux 单元测试 job 运行，指标进入 mtest 的存储；
   3. CI 以 mtest 优化：按存储中历史耗时分片（`--shard`）、按失败历史排序、每个 job 写 `mtest report --format md` 到摘要、
      一次 `mtest ci report` 汇总全部 job。
+  4. CI 的组合 action：`mtest`（按 `.github/versions.env` 的 `MTEST_VERSION` 安装并导出 `MTEST`）、
+     `e2e-mtest`（e2e 的存储与分片）、`test-report`（把一个 job 中 `mcpp test` 的存储合并、写摘要、上传）；
+     ci.yml 的 `test-report` job 以运行号为组生成整个工作流运行的报告。
 - **openkal 家族。** 实现的测试改写为 mtest 的 UTest；一致性套件以 mtest 的测试协议报告；CI 用组合 action `mtest` 与
   `test-report`，`MTEST_VERSION` 固定在 `.github/versions.env`。
 - **宿主依赖（P9）。** mtest、wine、qemu 与虚拟机镜像都取自 xpkg。

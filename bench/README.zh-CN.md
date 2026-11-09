@@ -116,6 +116,12 @@ BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
 
 **发版前运行一次标准集;任何声称影响性能的改动之后同样运行一次。**
 
+CI 保留的是 mcpp 自身开销的历史。`bench/tests/engine.cpp` 中的 mtest Bench 用例在一个小的模块
+工程上计时被测的 mcpp（`MCPP`）：无事可做的构建、`mcpp why flags`、修改一个接口之后的重建。
+Linux 的单元测试 job 运行它们（`cd bench && mcpp test`），每项开销连同其样本作为指标进入
+mtest 的存储，`mtest analyze trend` 与工作流运行的报告据此给出它的历史走势。这些是同一 runner
+上的趋势，不是引擎之间的比较；公开的数字仍只出自上面的标准集。
+
 ---
 
 > 本文是英文版 [`README.md`](README.md) 的对照翻译。两份内容一致；如有出入，
