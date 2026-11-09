@@ -1684,23 +1684,15 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                     return std::unexpected(std::format(
                         "dependency '{}': patch_root '{}' leaves the package's source", name, spec.patchRoot));
                 std::vector<std::string> notes;
-                // A MEMBER IS PATCHED IN A COPY OF ITS WHOLE CLONE (design
-                // 2026-11-10 E6, mcpp#911 N5): its `path` edges to the other
-                // members (`openkal-ld = { path = "../ld" }`) keep their
-                // targets. The patch still names files from the member's root.
+                // A MEMBER IS PATCHED IN A COPY OF ITS WHOLE CLONE, so its `path` edges keep
+                // their targets (design 2026-11-10 E6); `+repo` keeps it apart from an older copy.
                 const bool member = !gitMember.empty();
-                const auto source = member ? gitMemberCloneRoot : dep_root;
-                // The copy holds the repository, not the member, and is named
-                // apart from a member-only copy an earlier mcpp made.
-                const auto tree = member
-                    ? variant.parent_path() / (variant.filename().string() + "+repo")
-                    : variant;
+                const auto tree = member ? variant.parent_path() / (variant.filename().string() + "+repo") : variant;
                 const auto patchRoot = member
                     ? (std::filesystem::path(gitMember) / spec.patchRoot).lexically_normal().generic_string()
                     : spec.patchRoot;
-                if (auto r = mcpp::pm::patch::materialize(source, spec.patches,
-                                                          spec.patchesDigest, tree,
-                                                          patchRoot, &notes); !r)
+                if (auto r = mcpp::pm::patch::materialize(member ? gitMemberCloneRoot : dep_root, spec.patches,
+                                                          spec.patchesDigest, tree, patchRoot, &notes); !r)
                     return std::unexpected(std::format("dependency '{}': {}", name, r.error()));
                 for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", name, n));
                 dep_root = member ? tree / gitMember : tree;
