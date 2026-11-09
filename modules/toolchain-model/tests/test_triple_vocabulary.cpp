@@ -97,3 +97,15 @@ UTest a_row_no_built_in_provider_serves_is_a_platforms{"TripleVocabulary/ARowNoB
     expect(!tr::parse("x86_64-linux-gnu")->c_library_by_platform());
     expect(!tr::parse("x86_64-openkal")->c_library_by_platform());
 }};
+
+UTest thirty_two_bit_hosted_rows_are_registered_intent{"TripleVocabulary/ThirtyTwoBitHostedRowsAreRegisteredIntent", [] {
+    // E11: the 32-bit hosted identities are words of the language and planned
+    // rows, so a request is refused as planned rather than as unknown.
+    for (auto s : {"i686-linux-musl", "i686-linux-gnu", "i686-openkal"}) {
+        auto t = tr::parse(s);
+        expect(t.has_value());
+        auto const* k = tr::find_known_target(*t);
+        expect(k != nullptr);
+        if (k) expect(k->tier == "planned");
+    }
+}};
