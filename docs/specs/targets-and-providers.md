@@ -76,9 +76,10 @@
   Emscripten SDK、裸机、openkal-platform（ok 映像，及 `*-linux-musl`、`*-windows-musl`、`*-macos-musl` 的 hosted 部分）。
 - 与声明的编译器族配对的提供者提供系统：例如 llvm 与 MinGW-w64 配对时，该提供者的载荷是 clang 的 sysroot、C 库与 C++ 运行时
   （libstdc++）。
-- **提供者的 sysroot 为包时，它是该行基座陈述的最后一级（v1.1）。** 行的基座由 sysroot 陈述决定的（gnu-sysroot、
-  driver-internal），在项目、本机与平台都未陈述时，取所选提供者的 `sysroot` 包（SPEC-006 §3.9.2 的引擎默认档），按项目陈述的同一规则解析；
-  包是基座包时按 SPEC-002 §2.5 读取。
+- **所选提供者的 sysroot 是该身份的基座陈述（v1.1）。** 行的基座由 sysroot 陈述决定的（gnu-sysroot、
+  driver-internal），在项目与本机都未陈述时，先取所选提供者的 `sysroot`（包，或相对平台清单的 `{ path = "<目录>" }`），
+  再取平台的 `sysroot`（SPEC-006 §3.9.2 的引擎默认档），按项目陈述的同一规则解析；是基座包时按 SPEC-002 §2.5 读取。
+  平台由此为每个身份指名自己的基座。
 - **`mingw-llvm`（v1.1）。** 以基座包 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind、
   compiler-rt）与 llvm 服务 `x86_64-windows-gnu` 与 `aarch64-windows-gnu`，在任一宿主可得，优先级 5，低于有 gcc 载荷之处的
   MinGW-w64 提供者。基座是 clang 的 sysroot；其 libc++ 的模块源码是 std 模块；编译器运行时取自基座所指的目录；静态链接取基座的

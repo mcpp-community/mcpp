@@ -112,23 +112,25 @@ mcpp:<层名>[=<实现名>]
 
 ### 2.5 基座包 已实现(mcpp >= 2026.11.10.1)
 
-预制目录**可以**在其顶层以 `mcpp.toml` 陈述它是基座包:`[package]` 的 `provides` 声明它供给的层
-(`mcpp:c-abi=…`、`mcpp:c++-abi=…`、`mcpp:compiler-runtime=…`)与 `hosted-standard-library`;`[base]` 声明各层所在:
+在 sysroot 的位置被指名(工程、本机配置、平台或提供者的 `sysroot`)、且根目录带 `mcpp.toml` 的预制目录是**基座包**。
+它按普通包读取,不带角色标记:
 
-| 键 | 类型 | 含义 |
-|---|---|---|
-| `roots` | 表 | 架构(mcpp 的拼写)到作为 sysroot 的子目录;`"."` 为包目录本身 |
-| `include-dirs` | 路径数组 | C++ 库的头文件目录,相对 sysroot |
-| `libs` | 表 `{ dynamic, static }` | 按链接形态链接的 C++ 库名 |
-| `std-module`、`std-compat-module` | 路径 | `std` 与 `std.compat` 的模块源,相对 sysroot |
-| `std-module-flags` | 字符串数组 | 编译这两个模块源所需的 flag |
-| `compiler-runtime-dir` | 路径 | 编译器运行时所在的资源目录,相对 sysroot;链接从此处取编译器运行时 |
+- `[package] provides` 回答它供给的层(`mcpp:c-abi=…`、`mcpp:c++-abi=…`、`mcpp:compiler-runtime=…`)与
+  `hosted-standard-library`;这些层的来源为 `prebuilt`,报告附基座包的 `<名>@<版本>`。
+- `[build]` 的键与依赖图中供给者的含义相同,路径相对包根,**包根即 sysroot**:
 
-- `roots` 不含所请求的架构时,引擎**必须**拒绝并写出基座所含的架构。
-- 基座包声明的层的来源为 `prebuilt`,实现名取 `provides`,报告附基座包的 `<名>@<版本>`。
+| 键 | 含义 |
+|---|---|
+| `include_dirs` | C++ 库的头文件目录(规则二:`-nostdinc++` 之后加入) |
+| `ldflags` | 链接的 C++ 库;供给 c++-abi 时引擎加 `-nostdlib++`,不再由驱动选择工具链的 C++ 库 |
+| `std-module`、`std-compat-module`、`std-module-flags` | §2.3 |
+| `compiler_runtime_dir` | 编译器运行时所在的目录;clang 读作资源目录(`-resource-dir`),gcc 经 `-B` 读取 |
+
+- 一个基座包是一个身份的 sysroot。驱动能在一个根内区分架构的系统(MinGW-w64),一个包可以服务该系统的全部身份;
+  否则每个身份一个包,平台以各提供者的 `sysroot` 为各身份指名(SPEC-016 §3)。
 - 基座声明 `c++-abi` 时,C++ 头文件、`std` 模块与链接的 C++ 库**必须**取自基座;工具链载荷的 C++ 运行时及为其宿主
   构建的归档**禁止**进入该构建。基座未给出 `std-module` 时,该构建没有 `std` 模块。
-- 基座的 `provides` 是声明(§2.4):测量回答不了 C 库时,`mcpp:c-abi` 回答它。
+- `provides` 是声明(§2.4):测量回答不了 C 库时,`mcpp:c-abi` 回答它。
 - driver-internal 的 MinGW-w64 行上,基座包是 clang 的 sysroot;静态链接取基座的归档而非其导入库(SPEC-016 §3)。
 
 ---
@@ -381,5 +383,5 @@ hosted 与否是 C 环境的一个声明:提供 `hosted-standard-library` 的 sy
 | v1.3 | 2026-10-26 | 随 mcpp 2026.10.26.1:§2.2 增加 `requires` 的对象形式与 `visibility`、`[target.<选择器>] requires`;新增 §7 一个进程一套 C++ 运行时(U/I/H、孤岛条件、外来运行时按类型识别、依赖图供给的 libstdc++)(mcpp#838)。 |
 | v1.4 | 2026-11-03 | 随 mcpp 2026.11.3.1:§2.2 选择器引用层的 `requires` 在层解析之后检查(此前未检查即被丢弃)。 |
 | v1.5 | 2026-11-09 | 随 mcpp 2026.11.9.1:§3.4 身份随 C 库;新增 §3.6 能力的缺省提供者、§3.7 C 环境的声明(mcpp#911 G3、G7)。 |
-| v1.6 | 2026-11-10 | 随 mcpp 2026.11.10.1:新增 §2.5 基座包(`[base]` 的 roots、头文件、库、std 模块与编译器运行时目录)与 §3.8 层供给者的需求不成环(`layer-cycle`)。 |
+| v1.6 | 2026-11-10 | 随 mcpp 2026.11.10.1:新增 §2.5 基座包(按普通包读取:`provides` 回答层,`[build]` 陈述层,包根即 sysroot;新键 `compiler_runtime_dir`)与 §3.8 层供给者的需求不成环(`layer-cycle`)。 |
 | v1.2 | 2026-10-23 | 随 mcpp 2026.10.24.1:§1.3 `prebuilt` 放宽为被点名、按内容识别的预制目录;§2.4 改为由测量回答、`provides` 声明或核对,标为已实现;规则一增加基座是一个供给者与 c-abi 独占律;规则二增加基座上的编译器运行库与可测量的下限;规则三增加可叠加层;新增 §6 目标侧执行(组合、运行器契约、物理边界)。 |

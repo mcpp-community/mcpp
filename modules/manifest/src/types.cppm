@@ -882,6 +882,10 @@ inline std::string effective_c_standard(std::string_view declared) {
 }
 
 struct BuildConfig : BuildInputs {
+    // `[build] compiler_runtime_dir`: the directory, relative to the package
+    // root, that holds the compiler runtime a `compiler-runtime` supplier
+    // provides (design 2026-11-10 E5). Empty: none stated.
+    std::string compilerRuntimeDir;
     // THE LINK FLAGS OF THE GRAPH, NOT OF THE ROOT PACKAGE (2026.10.5.2).
     //
     // The profile's `ldflags` and the words `[target.<selector>.abi]` renders

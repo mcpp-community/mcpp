@@ -279,7 +279,7 @@ X1 的清单：`provides` 为 c-abi（UCRT 上的 MinGW-w64）、c++-abi（libc+
 
 | # | 包（业界通用名） | 权威来源 | 变换 | 许可档 |
 |---|---|---|---|---|
-| **X1** | `mingw-w64-sysroot` | mingw-w64 是 Win32 头文件与 crt 的权威上游，但只发布源码。用 clang 构建好的成品，以 **llvm-mingw**（Martin Storsjö，LLVM 中 MinGW 支持的维护者）为来源：20261104 版基于 LLVM 23.1.5，构建脚本开启了 `LIBCXX_INSTALL_MODULES`，自带 std 模块 | 包根即 sysroot，服务 `x86_64-windows-gnu` 与 `aarch64-windows-gnu`：`include/`（共用头文件，含 `c++/v1`）、`<arch>-w64-mingw32/{lib,bin}`、`compiler-rt/lib/windows/`、`share/libc++/v1/`；不含宿主程序，一个归档服务所有宿主；UCRT 变体；22 MB | mingw-w64（ZPL 等）与 LLVM（Apache-2.0 + 例外），可再分发 |
+| **X1** | `mingw-w64-sysroot` | mingw-w64 是 Win32 头文件与 crt 的权威上游，但只发布源码。用 clang 构建好的成品，以 **llvm-mingw**（Martin Storsjö，LLVM 中 MinGW 支持的维护者）为来源：20261104 版基于 LLVM 23.1.5，构建脚本开启了 `LIBCXX_INSTALL_MODULES`，自带 std 模块 | 包根即 sysroot，服务 `x86_64-windows-gnu` 与 `aarch64-windows-gnu`：`include/`（共用头文件，含 `c++/v1`）、`<arch>-w64-mingw32/{lib,bin}`、`compiler-rt/lib/windows/`、`share/libc++/v1/`；不含宿主程序，一个归档服务所有宿主；UCRT 变体；22 MB；以打包修订版 `20261104-1` 发布 | mingw-w64（ZPL 等）与 LLVM（Apache-2.0 + 例外），可再分发 |
 | X2 | `x86_64-freebsd-sysroot`、`aarch64-freebsd-sysroot` | FreeBSD 官方发布的 `base.txz`（download.freebsd.org，摘要与发布的 MANIFEST 一致） | 每个身份一个包，包根即 sysroot：`usr/include`、共享库、`ld-elf.so.1`、crt 与 C 库、C++ 运行时、编译器运行时及其所需库的静态归档；去掉 FreeBSD 自身的工具链（`usr/lib/clang`、`libprivate*`）；加上由 libcxx 21.1.8 官方源码生成的 std 模块源 | BSD，可再分发 |
 | ~~X3~~ | ~~`libcxx-modules`~~ | — | 取消（第四版）：std 模块源随基座生成，见 E5 第 6 条 | — |
 | X4 | `openbsd-sysroot` 等 | 各系统官方发布物 | 同 X2 | 各自评估 |

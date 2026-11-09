@@ -530,7 +530,7 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 | `*-linux-gnu` | Linux，且仅同架构 | 还需要本机架构的 `xim:glibc` / `xim:linux-headers` |
 | `x86_64-windows-gnu` | Linux 与 Windows 经 gcc 载荷；每一台宿主经 MinGW-w64 基座包 | 一个身份，只在分发层按宿主拆分；没有 gcc 载荷之处，`mingw-llvm` 提供者以 clang 与 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、compiler-rt）服务它 |
 | `aarch64-windows-gnu` | 每一台宿主 | 只由 MinGW-w64 基座包服务；没有 gcc 载荷以它为目标 |
-| `*-freebsd` | 每一台宿主，经平台 | 行是内置的；平台指名 FreeBSD 基座包（`xim:freebsd-sysroot`），以 `[target.<行>] platform` 选择；未选平台时请求被拒绝并写出这一行 |
+| `*-freebsd` | 每一台宿主，经平台 | 行是内置的；平台为每个身份指名 FreeBSD 基座包（`xim:x86_64-freebsd-sysroot`、`xim:aarch64-freebsd-sysroot`），以 `[target.<行>] platform` 选择；未选平台时请求被拒绝并写出这一行 |
 | `x86_64-windows-msvc` | Windows | MSVC 是在机器上被找到的 |
 | `x86_64-windows-musl` | payload 只在 Windows 上；图则任意宿主 | 没有 gcc 能发出 PE + musl，且 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器自己的 |

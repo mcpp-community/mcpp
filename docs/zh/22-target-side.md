@@ -1073,38 +1073,41 @@ sysroot = ""                          # no C library at all
 
 #### 基座包：陈述其各层的 sysroot（2026.11.10.1+）
 
-一个 sysroot 可以说出它在 C 库之外还有什么。**基座包**在顶层带一个 `mcpp.toml`：`provides` 写出它供给的层，
-`[base]` 写出各层所在：
+一个 sysroot 可以说出它在 C 库之外还有什么。**基座包**是根目录带普通包清单的 sysroot：`provides` 写出它供给的层，
+`[build]` 用任何层供给者都使用的键陈述这些层，路径相对包根，包根即 sysroot：
 
 ```toml
 [package]
-name     = "freebsd-sysroot"
+name     = "x86_64-freebsd-sysroot"
 version  = "14.5"
 provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
             "hosted-standard-library"]
 
-[base]
-roots             = { x86_64 = "amd64", aarch64 = "arm64" }   # 每个架构的 sysroot
-include-dirs      = ["usr/include/c++/v1"]                    # 相对该 sysroot
-libs              = { dynamic = ["c++"], static = ["c++", "cxxrt"] }
+[build]
+include_dirs      = ["usr/include/c++/v1"]   # C++ 库的头文件
+ldflags           = ["-lc++", "-lcxxrt"]     # 链接的 C++ 库
 std-module        = "usr/share/libc++/v1/std.cppm"
 std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
 std-module-flags  = ["-D__fenv_static="]
-# compiler-runtime-dir = "compiler-rt"                        # 链接所用的资源目录
+# compiler_runtime_dir = "compiler-rt"       # 编译器运行时所在的目录
 ```
 
-与任何 sysroot 一样被指名（`sysroot = "xim:freebsd-sysroot@14.5"`、`{ path = "…" }` 或平台的 `sysroot`）时，基座回答
-它陈述的各层：
+与任何 sysroot 一样被指名（`sysroot = "xim:x86_64-freebsd-sysroot@14.5"`、`{ path = "…" }`、平台或提供者的
+`sysroot`）时，基座回答它陈述的各层：
 
 - 报告把这些层标为 `prebuilt`，并附基座的 `<名>@<版本>`；
 - C++ 头文件、`std` 模块与链接的 C++ 库取自基座；工具链载荷为其自身宿主构建的 C++ 运行时及其归档不参与。基座未给出
   `std-module` 时，该构建没有 `import std`；
-- `roots` 把架构映射到作为 sysroot 的目录（`"."` 为包本身）；请求基座不含的架构时被拒绝，并写出它所含的架构。
+- `compiler_runtime_dir`（`[build]` 的键，2026.11.10.1+）指名编译器运行时所在的目录：clang 读作资源目录，gcc 经 `-B`
+  读取。
 
-索引中有两个基座包：`xim:freebsd-sysroot`（FreeBSD 的基本系统，amd64 与 arm64，附 libc++ 的模块源码）与
-`xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind 与 compiler-rt，x86_64 与 aarch64）。
-在 `*-windows-gnu` 行上后者是 clang 的 sysroot；`mingw-llvm` 提供者指名它，因此每一台宿主都能构建 GNU ABI 的 Windows 行
-（[21](21-the-target-triple.md)）。
+一个基座包是一个身份的 sysroot。平台以各提供者的 `sysroot` 为每个身份指名自己的基座（[35](35-platforms.md)）；驱动能在
+一个根内区分架构的系统（MinGW-w64）由一个包服务。
+
+索引中有 `xim:x86_64-freebsd-sysroot` 与 `xim:aarch64-freebsd-sysroot`（FreeBSD 的基本系统，附 libc++ 的模块源码），
+以及 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind 与 compiler-rt，x86_64 与
+aarch64）。在 `*-windows-gnu` 行上后者是 clang 的 sysroot；`mingw-llvm` 提供者指名它，因此每一台宿主都能构建 GNU ABI 的
+Windows 行（[21](21-the-target-triple.md)）。
 
 构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**：`mcpp::target_libc()`
 返回该包的名字，`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的

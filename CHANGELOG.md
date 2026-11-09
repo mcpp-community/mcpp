@@ -8,16 +8,19 @@
 
 ### Added
 
-- **Base packages (SPEC-002 §2.5).** A sysroot states what it holds beside its
-  C library: a `mcpp.toml` at its top whose `provides` names its layers and
-  whose `[base]` table names, per architecture, the directory that is the
-  sysroot (`roots`), the C++ headers (`include-dirs`), the C++ libraries of a
-  dynamic and a static link (`libs`), the std module sources
-  (`std-module`, `std-compat-module`, `std-module-flags`) and the compiler
-  runtime's directory (`compiler-runtime-dir`). The build takes those layers
-  from the base, reports them as `prebuilt` with the base's name and version,
-  and keeps the toolchain payload's C++ runtime out. The index carries two:
-  `xim:freebsd-sysroot@14.5` and `xim:mingw-w64-sysroot@20261104`.
+- **Base packages (SPEC-002 §2.5).** A sysroot whose root carries a package
+  manifest is read as any package is: its `provides` answers its layers and
+  its `[build]` keys state them -- `include_dirs` the C++ library's headers,
+  `ldflags` its libraries, `std-module`, `std-compat-module` and
+  `std-module-flags` its std module, and the new `compiler_runtime_dir` the
+  directory of its compiler runtime (`-resource-dir` for clang, `-B` for gcc)
+  -- with paths relative to the package root, which is the sysroot. The build
+  takes those layers from the base, reports them as `prebuilt` with the base's
+  name and version, and keeps the toolchain payload's C++ runtime out. A
+  provider's `sysroot` (a package, or `{ path }` in a platform) is its
+  identity's base, ahead of the platform's own, so a platform gives each
+  identity its own base. The index carries `xim:x86_64-freebsd-sysroot@14.5`,
+  `xim:aarch64-freebsd-sysroot@14.5` and `xim:mingw-w64-sysroot@20261104-1`.
 - **Windows GNU-ABI rows from every host (mcpp#913).** The `mingw-llvm`
   provider serves `x86_64-windows-gnu` and the new `aarch64-windows-gnu` with
   clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on

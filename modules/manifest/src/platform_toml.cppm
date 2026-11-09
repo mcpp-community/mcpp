@@ -605,9 +605,23 @@ std::expected<ProviderSpec, std::string> Reader::provider(const toml::Table& t, 
     p.origin = Origin{ tier, file.generic_string(), 0, std::string(where) };
     for (auto const& [k, v] : t) {
         const auto key = std::format("{}.{}", where, k);
-        if (k == "name" || k == "toolchain" || k == "sysroot" || k == "linkage" || k == "execution"
+        // A provider's base, as the platform's own (`[platform] sysroot`): a
+        // package, or `{ path = "<dir>" }` relative to the platform's manifest.
+        if (k == "sysroot" && v.is_table()) {
+            std::string path;
+            for (auto const& [sk, sv] : v.as_table()) {
+                if (sk == "path" && sv.is_string()) path = sv.as_string();
+                else warn(std::format("{}: '{}' is not a key of a provider's sysroot table (ignored); "
+                                      "the key is path", key, sk));
+            }
+            if (path.empty()) return std::unexpected(std::format("{} is a table without `path`", key));
+            p.sysroot = "path:" + absolute(path).generic_string();
+        } else if (k == "name" || k == "toolchain" || k == "sysroot" || k == "linkage" || k == "execution"
             || k == "base") {
-            if (!v.is_string()) return std::unexpected(std::format("{} must be a string", key));
+            if (!v.is_string())
+                return std::unexpected(k == "sysroot"
+                    ? std::format("{} must be a string or {{ path = \"<dir>\" }}", key)
+                    : std::format("{} must be a string", key));
             (k == "name" ? p.name : k == "toolchain" ? p.toolchain : k == "sysroot" ? p.sysroot
              : k == "linkage" ? p.linkage : k == "base" ? p.base : p.execution) = v.as_string();
         } else if (k == "serves" || k == "hosts" || k == "pairs") {

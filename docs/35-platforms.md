@@ -326,16 +326,23 @@ this machine's. The same holds for a built-in row no built-in provider serves.
 
 **A system the built-in rows name is served, not defined (2026.11.10.1+).**
 FreeBSD's rows are built-in (`x86_64-freebsd`, `aarch64-freebsd`); a platform that
-serves them states a provider and a base, and defining them again is an error:
+serves them states a provider and a base for each, and defining them again is an error.
+A provider's `sysroot` (a package, or `{ path = "<dir>" }` relative to the platform's
+manifest) is that identity's base, ahead of the platform's own `sysroot`:
 
 ```toml
 [platform]
 toolchain = "llvm@23.1.3"
-sysroot   = "xim:freebsd-sysroot@14.5"    # a base package ([22](22-target-side.md))
 
 [[platform.provider]]
-serves = ["x86_64-freebsd", "aarch64-freebsd"]
-hosted = true
+serves  = ["x86_64-freebsd"]
+sysroot = "xim:x86_64-freebsd-sysroot@14.5"     # a base package ([22](22-target-side.md))
+hosted  = true
+
+[[platform.provider]]
+serves  = ["aarch64-freebsd"]
+sysroot = "xim:aarch64-freebsd-sysroot@14.5"
+hosted  = true
 
 [platform.build]
 ldflags = ["-pthread"]

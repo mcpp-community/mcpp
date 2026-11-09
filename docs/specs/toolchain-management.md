@@ -245,7 +245,7 @@ GCC 以 xlings subos 为 `--sysroot`,没有可用 subos 而退回载荷布局时
 | 覆盖 | `--sysroot`;`MCPP_TARGET_<三元组>_SYSROOT`;`MCPP_SYSROOT`。空值视为未设置,`none` 表示 `""` |
 | 工程 | `mcpp.toml` 的 `[target.<三元组>].sysroot`;其次 `[toolchain] { path, sysroot }` 或工具链阶段的陈述 |
 | 机器默认 | `~/.mcpp/config.toml`,其次系统级 `config.toml` 的 `[target.<三元组>].sysroot` |
-| 引擎默认 | 所选提供者的 `sysroot` 列(为包且该行地址为 gnu-sysroot 或 driver-internal 时,按工程陈述的同一规则解析,v0.11),或生态的缺省基座 |
+| 引擎默认 | 所选提供者的 `sysroot`(包或 `{ path }`,该行地址为 gnu-sysroot 或 driver-internal 时,按工程陈述的同一规则解析,v0.11),其次平台的 `sysroot`,或目标表该行的 `sysroot` 列 |
 
 宿主图(构建程序与宿主工具的子构建)**禁止**读取目标基座。一个工程写明的目录不存在时,诊断**必须**给出文件与
 行号、解析后的绝对路径,以及让它存在的三种办法(生态包、仓库内相对路径、团队约定的路径)和本机覆盖的写法。
@@ -425,7 +425,7 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | `*-ios`、`*-ios-sim` | iPhoneOS / iPhoneSimulator SDK | 同上 | apple-isysroot | floor | `iphoneos@…` / `iphonesimulator@…`、`{ path }` | 对应的 `@system` |
 | `*-windows-msvc` | VC toolset 加 Windows SDK | c++-abi、compiler-runtime、c-abi(UCRT)、kernel-abi | msvc-roots | UCRT 为 floor | `msvc@system`、`msvc@<版本>`、`xim:msvc@…`、`{ path }`(仅 clang) | `msvc@system` |
 | `*-windows-gnu` | MinGW-w64 工具链内建;或 MinGW-w64 基座包(`xim:mingw-w64-sysroot`,SPEC-002 §2.5) | kernel-abi、c-abi;基座包另供 c++-abi、compiler-runtime | driver-internal;基座包为 clang 的 sysroot | none | 基座包(生态包)、`{ path }`、`""`(v0.11) | 所选提供者的 `sysroot` 列(`mingw-llvm`),否则工具链携带 |
-| `*-freebsd` | FreeBSD 基座包(`xim:freebsd-sysroot`) | kernel-abi、c-abi、c++-abi、compiler-runtime | gnu-sysroot | floor | 生态包、`{ path }`、`""` | 平台的 `sysroot` |
+| `*-freebsd` | FreeBSD 基座包(`xim:<arch>-freebsd-sysroot`,每个身份一个) | kernel-abi、c-abi、c++-abi、compiler-runtime | gnu-sysroot | floor | 生态包、`{ path }`、`""` | 平台的 `sysroot` |
 | `*-android`、`wasm32-emscripten` | SDK 工具链内建 | 视 SDK 而定 | driver-internal | floor 或 none | 生态包与 `""` 沿用既有含义,不接受新写法 | 工具链携带 |
 
 Apple 行能否构建由 SDK 中是否有该架构的切片决定(`libSystem.tbd` 的 `targets`),实现**必须**在缺少切片时

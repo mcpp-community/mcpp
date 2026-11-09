@@ -1276,40 +1276,44 @@ Any other value on such a row is rejected. See
 
 #### Base packages: a sysroot that states its layers (2026.11.10.1+)
 
-A sysroot can say what it holds beside its C library. A **base package** carries a
-`mcpp.toml` at its top whose `provides` names the layers it supplies and whose
-`[base]` table says where they stand:
+A sysroot can say what it holds beside its C library. A **base package** is a sysroot whose root
+carries an ordinary package manifest: `provides` names the layers it supplies, and `[build]`
+states them with the keys any layer supplier uses, relative to the package root, which is the
+sysroot:
 
 ```toml
 [package]
-name     = "freebsd-sysroot"
+name     = "x86_64-freebsd-sysroot"
 version  = "14.5"
 provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
             "hosted-standard-library"]
 
-[base]
-roots             = { x86_64 = "amd64", aarch64 = "arm64" }   # the sysroot of each architecture
-include-dirs      = ["usr/include/c++/v1"]                    # relative to that sysroot
-libs              = { dynamic = ["c++"], static = ["c++", "cxxrt"] }
+[build]
+include_dirs      = ["usr/include/c++/v1"]   # the C++ library's headers
+ldflags           = ["-lc++", "-lcxxrt"]     # the C++ libraries the link names
 std-module        = "usr/share/libc++/v1/std.cppm"
 std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
 std-module-flags  = ["-D__fenv_static="]
-# compiler-runtime-dir = "compiler-rt"                        # a resource directory of the link
+# compiler_runtime_dir = "compiler-rt"       # where the compiler runtime stands
 ```
 
-Named as any sysroot is (`sysroot = "xim:freebsd-sysroot@14.5"`, `{ path = "…" }`, or a
-platform's `sysroot`), the base answers the layers it states:
+Named as any sysroot is (`sysroot = "xim:x86_64-freebsd-sysroot@14.5"`, `{ path = "…" }`, a
+platform's or a provider's `sysroot`), the base answers the layers it states:
 
 - the report shows them as `prebuilt`, with the base's `<name>@<version>`;
 - the C++ headers, the `std` module and the C++ libraries of the link are the base's; the
   toolchain payload's C++ runtime and its archives, built for the payload's own host, take no
   part. A base that states no `std-module` leaves the build without `import std`;
-- `roots` maps an architecture to the directory that is the sysroot (`"."` for the package
-  itself); a base asked for an architecture it lacks is refused, naming those it has.
+- `compiler_runtime_dir` (a `[build]` key, 2026.11.10.1+) names the directory of the compiler
+  runtime: clang reads it as its resource directory, gcc through `-B`.
 
-Two base packages are in the index: `xim:freebsd-sysroot` (FreeBSD's base system for amd64 and
-arm64, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
-MinGW-w64 on UCRT, libc++, libunwind and compiler-rt for x86_64 and aarch64). On a
+A base package is the sysroot of one identity. A platform gives each identity its own base
+through each provider's `sysroot` ([35](35-platforms.md)); a system whose driver tells its
+architectures apart inside one root (MinGW-w64) is served by one package.
+
+The index carries `xim:x86_64-freebsd-sysroot` and `xim:aarch64-freebsd-sysroot` (FreeBSD's base
+system, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
+MinGW-w64 on UCRT, libc++, libunwind and compiler-rt, for x86_64 and aarch64). On a
 `*-windows-gnu` row the latter is clang's sysroot; the `mingw-llvm` provider names it, so every
 host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)).
 

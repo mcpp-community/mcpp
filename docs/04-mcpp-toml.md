@@ -597,6 +597,7 @@ c_standard   = "c11"              # Standard for this package's C sources (defau
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
+compiler_runtime_dir = "compiler-rt" # A compiler-runtime supplier: where its runtime stands (2026.11.10.1+; docs/22)
 defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU of this package; keyed by name (§ below)
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed

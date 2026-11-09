@@ -573,7 +573,7 @@ vocabulary, nothing wired yet.
 | `*-linux-gnu` | Linux, same arch only | additionally needs the host-native `xim:glibc` / `xim:linux-headers` |
 | `x86_64-windows-gnu` | Linux and Windows by the gcc payload; every host by the MinGW-w64 base package | one identity, host-split at the distribution layer; the `mingw-llvm` provider serves it with clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on UCRT, libc++, compiler-rt) where no gcc payload exists |
 | `aarch64-windows-gnu` | every host | the MinGW-w64 base package alone; no gcc payload targets it |
-| `*-freebsd` | every host, through a platform | the rows are built-in; a platform names the FreeBSD base package (`xim:freebsd-sysroot`) and is selected with `[target.<row>] platform`; without one the request is refused naming that line |
+| `*-freebsd` | every host, through a platform | the rows are built-in; a platform names each identity's FreeBSD base package (`xim:x86_64-freebsd-sysroot`, `xim:aarch64-freebsd-sysroot`) and is selected with `[target.<row>] platform`; without one the request is refused naming that line |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |

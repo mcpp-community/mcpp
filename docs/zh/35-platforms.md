@@ -266,16 +266,22 @@ hosted   = true                    # C 环境有 `main`
 闭包与符号检查只在该行的执行系统为本机时进行。没有内置提供者服务的内置行同样如此。
 
 **内置行已命名的系统由平台服务，而非定义（2026.11.10.1+）。** FreeBSD 的行是内置的（`x86_64-freebsd`、`aarch64-freebsd`）；
-服务它们的平台陈述提供者与基座，再次定义它们是错误：
+服务它们的平台为每个身份陈述提供者与基座，再次定义它们是错误。提供者的 `sysroot`（包，或相对平台清单的
+`{ path = "<目录>" }`）是该身份的基座，先于平台自己的 `sysroot`：
 
 ```toml
 [platform]
 toolchain = "llvm@23.1.3"
-sysroot   = "xim:freebsd-sysroot@14.5"    # 基座包（[22](22-target-side.md)）
 
 [[platform.provider]]
-serves = ["x86_64-freebsd", "aarch64-freebsd"]
-hosted = true
+serves  = ["x86_64-freebsd"]
+sysroot = "xim:x86_64-freebsd-sysroot@14.5"     # 基座包（[22](22-target-side.md)）
+hosted  = true
+
+[[platform.provider]]
+serves  = ["aarch64-freebsd"]
+sysroot = "xim:aarch64-freebsd-sysroot@14.5"
+hosted  = true
 
 [platform.build]
 ldflags = ["-pthread"]

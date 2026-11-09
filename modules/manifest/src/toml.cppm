@@ -2963,6 +2963,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
 
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
+    if (auto v = doc->get_string("build.compiler_runtime_dir")) m.buildConfig.compilerRuntimeDir = *v;
     // #336 — [build] cxx_runtime. Two spellings for one field, cargo-style:
     //   cxx_runtime = "host-coupled"                                  (all roles)
     //   cxx_runtime = { default = "...", tests = "...", shared = "..." }
