@@ -537,19 +537,14 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
             break;
         }
     }
-    // SEVERAL PROGRAMS ARE NOT PACKED BY A GUESS (mcpp#911 B3): the program
-    // named after the package is the package's, and the others are said; with
-    // none so named, the command names one or ships them all.
+    // SEVERAL PROGRAMS ARE NOT PACKED WITHOUT A WORD (mcpp#911 B3): the
+    // program named after the package is the package's; with none so named,
+    // the first by name, as before. Either way the others are said, with the
+    // two ways to choose otherwise.
     std::vector<const mcpp::build::LinkUnit*> programs;
     for (auto const& lu : ctx.plan.linkUnits)
         if (is_program_link_unit(lu)) programs.push_back(&lu);
-    std::string names;
-    for (auto const* lu : programs) names += (names.empty() ? "" : ", ") + lu->targetName;
-    if (mainBinary.empty() && programs.size() > 1 && !opts.allPrograms)
-        return Refusal{2, about(run, m, std::format(
-            "the package has several programs ({}) and none is named after it\n"
-            "  name one: mcpp pack <program>\n  or ship them together: mcpp pack --all-programs",
-            names))};
+    const bool named = !mainBinary.empty();
     if (mainBinary.empty() && !programs.empty()) {
         mainBinary = ctx.outputDir / programs.front()->output;
         chosenLu = programs.front();
@@ -561,8 +556,10 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         for (auto const* lu : programs)
             if (lu != chosenLu) others += (others.empty() ? "" : ", ") + lu->targetName;
         mcpp::ui::note(std::format(
-            "packing {}, the program named after the package; its other programs are not packed "
-            "({}): `mcpp pack --all-programs` ships them beside it", chosenLu->targetName, others));
+            "packing {}, {}; its other programs are not packed ({}): `mcpp pack <program>` names "
+            "another, `mcpp pack --all-programs` ships them beside it", chosenLu->targetName,
+            named ? "the program named after the package" : "the first by name, as none is named after the package",
+            others));
     }
     // Passed to `make_plan` rather than re-derived from the file: `make_plan`
     // has only `mainBinary` and would otherwise have to ask the triple and

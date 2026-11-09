@@ -4,12 +4,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 1043 -- several programs are packed as stated, and a program whose name has a dot is packed
 # (mcpp#911 B1, B3).
 #
-# A package with several programs and none named after it is not packed by a guess: `mcpp pack`
-# refuses and names the two forms, `mcpp pack <program>` and `mcpp pack --all-programs`. With
-# one named after the package, that one is packed and the others are said. A manifest `mcpp pack`
+# A package with several programs is not packed without a word: the one named after the package,
+# else the first by name, is packed, and the others are said with the two ways to choose
+# otherwise, `mcpp pack <program>` and `mcpp pack --all-programs`. A manifest `mcpp pack`
 # generates quotes a target name with a dot (`COMMAND.COM`), so the generated project parses.
 #
-# Criteria: the refusal lists the programs; `--all-programs` ships both under bin/; a single-file
+# Criteria: with none named after the package the first by name is packed and the others are said;
+# `--all-programs` ships both under bin/; a single-file
 # pack of `COMMAND.COM` builds its launcher and the file runs with the program's exit status.
 set -e
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
@@ -32,11 +33,13 @@ echo 'int main() { return 0; }' > "$t/src/alpha.cpp"
 echo 'int main() { return 3; }' > "$t/src/command.cpp"
 cd "$t"
 
-set +e; out=$("$MCPP" pack 2>&1); rc=$?; set -e
-[ "$rc" != 0 ] || fail "several programs were packed by a guess" "$out"
-grep -q "several programs (COMMAND.COM, alpha) and none is named after it" <<<"$out" || fail "the refusal does not list the programs" "$out"
-grep -q "mcpp pack --all-programs" <<<"$out" || fail "the refusal does not name --all-programs" "$out"
-echo "  ok  several programs, none named after the package: refused with both forms"
+out=$("$MCPP" pack 2>&1) || fail "several programs, none named after the package, were not packed" "$out"
+grep -q "packing COMMAND.COM, the first by name, as none is named after the package" <<<"$out" \
+    || fail "the program packed is not said" "$out"
+grep -q "(alpha)" <<<"$out" && grep -q "mcpp pack --all-programs" <<<"$out" \
+    || fail "the others and the ways to choose are not said" "$out"
+rm -rf target/dist
+echo "  ok  several programs, none named after the package: the first by name, the others said"
 
 out=$("$MCPP" pack --all-programs 2>&1) || fail "--all-programs did not pack" "$out"
 listing=$(tar tzf target/dist/multi-0.1.0-*.tar.gz)

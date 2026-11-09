@@ -89,8 +89,9 @@
   project's spelling and is kept, and a disagreement with the graph's C library
   is reported.
 - A git dependency names at most one of rev, tag and branch.
-- `mcpp pack` with several programs packs the one named after the package and
-  names the others, and refuses when none is so named.
+- `mcpp pack` with several programs packs the one named after the package,
+  else the first by name as before, and names the others with
+  `mcpp pack <program>` and `--all-programs`.
 - mcpp's own unit tests are mtest cases (mtest 0.5.1, mcpplibs.os 0.4.1); a
   skeleton's tests use mtest 0.5.1.
 
