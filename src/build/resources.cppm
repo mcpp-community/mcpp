@@ -213,6 +213,10 @@ std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::To
     }
     if (dialectId != "msvc" && !tc.pairedSysroot.empty()) {
         std::error_code ec;
+        // A base package keeps the headers of every architecture in one
+        // `<root>/include` (E9); a gcc payload under `<triple>/include`.
+        if (std::filesystem::is_directory(tc.pairedSysroot / "include", ec))
+            out.push_back(tc.pairedSysroot / "include");
         for (auto const& entry : std::filesystem::directory_iterator(tc.pairedSysroot, ec))
             if (auto inc = entry.path() / "include";
                 entry.path().filename().string().ends_with("-w64-mingw32")

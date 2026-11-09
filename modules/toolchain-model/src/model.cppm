@@ -125,7 +125,9 @@ struct Toolchain {
     bool                                hostedC = false;
     // THE PAYLOAD A PAIRED PROVIDER SUPPLIES THE SYSTEM FROM (SPEC-016 §6):
     // clang aimed at `x86_64-windows-gnu` takes the MinGW-w64 payload as its
-    // sysroot, C library and C++ runtime (libstdc++). Empty otherwise.
+    // sysroot, C library and C++ runtime (libstdc++). A base package on that
+    // row is the same root with the run-times its layers state (E9: libc++,
+    // compiler-rt; `base.layers.cxx` says which). Empty otherwise.
     std::filesystem::path                pairedSysroot;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED

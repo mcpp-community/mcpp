@@ -1962,6 +1962,22 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     if (compressDebug) link_extra += " -gz=zlib";
     if (prof.strip) link_extra += " -s";
 
+    // A BASE PACKAGE'S C++ RUN-TIME (design 2026-11-10 E5): the libraries the
+    // base names for the link's form, found in the base through its sysroot,
+    // in place of the driver's own choice, which names the toolchain's.
+    auto base_cxx_libs = [&](const std::string& ld) {
+        std::string words;
+        if (auto const& L = plan.toolchain.base.layers; !L.cxx.empty()) {
+            const bool staticLink = f.linkage == "static" || ld.find(" -static") != std::string::npos;
+            auto const& libs = staticLink ? L.libsStatic : L.libsDynamic;
+            if (!libs.empty()) {
+                words = " -nostdlib++";
+                for (auto const& l : libs) words += " -l" + l;
+            }
+        }
+        return words;
+    };
+
     // MinGW PE link — keyed on the TARGET (is_mingw_target), NOT the host: a
     // Linux-hosted cross build produces exactly the same PE link as a native
     // Windows MinGW build (host≠target). No rpath/loader/payload model. Static
@@ -2011,15 +2027,31 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // is the sysroot, libstdc++ and libgcc its runtime, lld the linker;
         // `-pthread` because the payload's threads are winpthreads, which the
         // clang driver does not add by itself.
+        // A BASE PACKAGE THERE (E9) states libc++, libunwind and compiler-rt;
+        // the compiler runtime is read from the directory the base names
+        // (`compiler-runtime-dir`), a resource directory of the link only,
+        // since the payload's own holds no runtime for this target.
+        auto const& layers = plan.toolchain.base.layers;
         const std::string paired = plan.toolchain.pairedSysroot.empty() ? std::string{}
+            : layers.cxx == "libc++"
+            ? " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
+              + " -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -fuse-ld=lld"
+              + (layers.compilerRuntimeDir.empty() ? std::string{}
+                 : " -resource-dir=" + ninjaEsc(layers.compilerRuntimeDir))
             : " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
               + " -stdlib=libstdc++ -rtlib=libgcc -fuse-ld=lld -pthread";
         f.ld = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                            user_ldflags, mingw_stdexp, link_extra);
+        // A static link over a base takes its archives, not the import
+        // libraries beside them (`libc++.dll.a`), which lld prefers otherwise.
+        const std::string baseStatic =
+            !plan.toolchain.pairedSysroot.empty() && !layers.cxx.empty() && f.linkage == "static"
+            ? " -static" : "";
+        f.ld += baseStatic + base_cxx_libs(f.ld + baseStatic);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}{}{}", crossTarget, paired, link_intent_ld,
-                            user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
+                            user_ldflags, link_extra, baseStatic);
         return f;
     }
 
@@ -2648,18 +2680,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         }
     }
 
-    // A BASE PACKAGE'S C++ RUN-TIME (design 2026-11-10 E5): the libraries the
-    // base names for the link's form, found in the base through its sysroot,
-    // in place of the driver's own choice, which names the toolchain's.
-    if (auto const& L = plan.toolchain.base.layers; !L.cxx.empty()) {
-        const bool staticLink = f.linkage == "static" || f.ld.find(" -static") != std::string::npos;
-        auto const& libs = staticLink ? L.libsStatic : L.libsDynamic;
-        if (!libs.empty()) {
-            std::string words = " -nostdlib++";
-            for (auto const& l : libs) words += " -l" + l;
-            f.ld += words;
-        }
-    }
+    // A BASE PACKAGE'S C++ RUN-TIME (design 2026-11-10 E5).
+    f.ld += base_cxx_libs(f.ld);
 
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY
     // SHAPE HAS BUILT ITS LINE.

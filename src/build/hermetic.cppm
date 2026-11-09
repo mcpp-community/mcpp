@@ -164,6 +164,7 @@ std::expected<void, std::string> verify_hermetic_link(
             if (auto upstream = mcpp::provider::store_of(real)) allowed.push_back(*upstream);
     }
     if (!tc.base.root.empty()) allowed.push_back(tc.base.root);
+    if (!tc.pairedSysroot.empty()) allowed.push_back(tc.pairedSysroot);
 
     if (auto e = mcpp::invocation::get("MCPP_ALLOW_HOST_LIBS"); e && e->front() != '0')
         allowHostLibs = true;

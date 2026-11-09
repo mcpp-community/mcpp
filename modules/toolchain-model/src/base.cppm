@@ -227,9 +227,11 @@ inline RowBase row_base(const triple::Triple& t) {
         return {Address::MsvcRoots, static_cast<std::uint8_t>(pkg | loc | path), "msvc",
                 "\"msvc@system\", \"msvc@<toolset>\", \"xim:msvc@<toolset>\" or, for clang, "
                 "{ path = \"<dir>\" }"};
+    // A MinGW-w64 toolchain carries its own system, and a base package
+    // (`xim:mingw-w64-sysroot@<v>`, or its directory) is one for clang (E9).
     if (t.os == "windows")
-        return {Address::DriverInternal, static_cast<std::uint8_t>(pkg | empty), {},
-                "a package or \"\": the MinGW toolchain carries its own system"};
+        return {Address::DriverInternal, static_cast<std::uint8_t>(pkg | path | empty), {},
+                "a base package (\"xim:mingw-w64-sysroot@<version>\"), { path = \"<dir>\" } or \"\""};
     if (t.os == "linux" && t.is_musl())
         return {Address::GnuSysroot, static_cast<std::uint8_t>(pkg | loc | path | empty), "musl",
                 "a package, \"musl@system\", { path = \"<dir>\" } or \"\""};
@@ -469,6 +471,7 @@ struct Resolution {
         std::vector<std::string> libsDynamic, libsStatic;
         std::filesystem::path stdModule, stdCompatModule; // absolute; empty: none
         std::vector<std::string> stdModuleFlags;          // `std-module-flags`
+        std::filesystem::path compilerRuntimeDir;         // `compiler-runtime-dir`, absolute
     };
     Layers                 layers;
 

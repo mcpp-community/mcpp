@@ -191,6 +191,17 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
         if (s) s->provides = state.platformData.sysrootProvides;
         return settle(std::move(s));
     }
+    // 5. The provider that serves the row here, when its `sysroot` is a package
+    //    on a row whose base is rendered from a statement (E9): the base a
+    //    provider names is resolved as a project's would be.
+    if (auto const* k = state.selectedTarget ? &*state.selectedTarget
+                                             : mcpp::toolchain::triple::find_known_target(t);
+        k && k->provider && k->sysroot.starts_with("xim:")) {
+        const auto address = tb::row_base(t).address;
+        if (address == tb::Address::GnuSysroot || address == tb::Address::DriverInternal)
+            return settle(stamped(tb::parse_text(std::string(k->sysroot)), "provider", {}, 0,
+                                  std::format("the provider '{}' of {}", k->provider->name, key)));
+    }
     return settle(tb::Statement{});
 }
 
@@ -260,7 +271,9 @@ read_base_package(const fs::path& dir, std::string_view arch, tb::Resolution::La
             "{} is a base for {}, not for {}: `[base] roots` names no `{}`",
             out.ref, have.empty() ? std::string("no architecture") : have, arch, arch));
     }
-    const auto root = dir / rootName;
+    // `"."`: the package's own directory is the sysroot, for every architecture
+    // it names (a MinGW-w64 base keeps one tree per architecture under it).
+    const auto root = rootName == "." ? dir : dir / rootName;
     for (auto const& d : words(base, "include-dirs")) out.cxxIncludes.push_back(root / d);
     auto const* libs = base->find("libs") != base->end() && base->find("libs")->second.is_table()
         ? &base->find("libs")->second.as_table() : nullptr;
@@ -269,6 +282,7 @@ read_base_package(const fs::path& dir, std::string_view arch, tb::Resolution::La
     if (auto m = str(base, "std-module"); !m.empty()) out.stdModule = root / m;
     if (auto m = str(base, "std-compat-module"); !m.empty()) out.stdCompatModule = root / m;
     out.stdModuleFlags = words(base, "std-module-flags");
+    if (auto d = str(base, "compiler-runtime-dir"); !d.empty()) out.compilerRuntimeDir = root / d;
     return std::optional<fs::path>{root};
 }
 
@@ -396,6 +410,45 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         record_identity(tc.base.package, {tc.base.multilibInclude, tc.base.multilibLib});
         record_source(state, std::move(d));
         return {};
+    }
+    // A BASE PACKAGE ON A ROW WHOSE DRIVER RESOLVES ITS OWN SYSTEM (E9): the
+    // MinGW-w64 rows. The base is the driver's sysroot as the paired payload
+    // is, with the run-times its layers state; nothing is measured, the
+    // package's statement is the declaration (§3.4).
+    if (row.address == tb::Address::DriverInternal
+        && (stmt->form == tb::Form::Package || stmt->form == tb::Form::Path)) {
+        fs::path dir = stmt->form == tb::Form::Path ? fs::path(stmt->path) : fs::path{};
+        if (stmt->form == tb::Form::Package) {
+            auto p = package_dir(state, stmt->text);
+            if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
+                                                       tt->str(), stmt->text, p.error()));
+            dir = *p;
+        }
+        tc.base.layers = {};
+        auto b = read_base_package(dir, tt->arch, tc.base.layers);
+        if (!b) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text,
+                                               b.error()));
+        }
+        if (*b && mcpp::toolchain::is_mingw_target(tc)) {
+            tc.pairedSysroot = **b;
+            tc.base.runtime = tb::Runtime::None;
+            tc.base.libc = tc.base.layers.cAbi;
+            if (!tc.base.layers.cxx.empty()) {
+                tc.stdlibId = tc.base.layers.cxx;
+                std::error_code ec;
+                if (!tc.base.layers.stdModule.empty() && fs::is_regular_file(tc.base.layers.stdModule, ec))
+                    tc.set_std_modules(tc.base.layers.stdModule, tc.base.layers.stdCompatModule);
+                else
+                    tc.clear_std_modules();
+            }
+            d.detail = std::format("{} ({})", tc.base.libc, tc.base.layers.ref);
+            record_identity(tc.base.layers.ref, {dir / "mcpp.toml"});
+            record_source(state, std::move(d));
+            return {};
+        }
+        tc.base.layers = {};
     }
     if (row.address != tb::Address::GnuSysroot || stmt->form == tb::Form::Empty) {
         // The empty form, and a package on a row whose SDK resolves its own

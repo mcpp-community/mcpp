@@ -412,10 +412,12 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // A PAIRED PROVIDER'S PAYLOAD IS THE SYSTEM (SPEC-016 §6): its sysroot
     // holds the C library, libstdc++ and the GCC runtime, and the driver
     // finds them there once it is told the sysroot and the C++ library.
+    // A base package there (E9) holds libc++ instead, which the driver finds
+    // in the same root once told the library.
     if (bypassCfg && !tc.pairedSysroot.empty()) {
         out.push_back("--no-default-config");
         out.push_back("--sysroot=" + esc(tc.pairedSysroot));
-        out.push_back("-stdlib=libstdc++");
+        out.push_back(tc.base.layers.cxx == "libc++" ? "-stdlib=libc++" : "-stdlib=libstdc++");
     } else if (bypassCfg && !graphSuppliesTarget && cxxFromPayload) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
