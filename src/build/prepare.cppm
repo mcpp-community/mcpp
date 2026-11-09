@@ -458,6 +458,22 @@ export struct BuildProgramGraph {
     std::map<std::string, std::string>    programOf;
 };
 
+// One candidate of a request's selection, and the selection (SPEC-016 §4), for
+// `mcpp why target` and the machine output. `request` empty: the build is the
+// host's own, which no selection decides.
+export struct TargetCandidate {
+    std::string identity, provider, why;
+    int         priority = 0;
+    bool        available = false;
+};
+
+export struct TargetSelection {
+    std::string                  request, identity, provider, why;
+    int                          priority = 0;
+    bool                         fallback = false;
+    std::vector<TargetCandidate> candidates;
+};
+
 export struct BuildContext {
     // The build programs' graphs this prepare planned to describe them
     // (`plan_only`; empty otherwise).
@@ -592,6 +608,8 @@ export struct BuildContext {
         std::string replaced;    // the spec displaced, when one was
     };
     CompilerChoice                  compilerChoice;
+    // WHICH ROW AND WHICH PROVIDER THE REQUEST WAS GIVEN (SPEC-016 §4).
+    TargetSelection                 targetSelection;
     // THE SOURCES THIS BUILD USED (mcpp#755), one entry per subject. See
     // SourceDecision.
     std::vector<SourceDecision>     sources;
@@ -883,6 +901,11 @@ export struct BuildOverrides {
     std::shared_ptr<const mcpp::runtime::RuntimeBinding>
         inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
+    // THE REQUEST, WHEN THE IDENTITY WAS GIVEN BY THE C LIBRARY (SPEC-016 §5): a
+    // first pass found that the graph or the platform supplies a C library the
+    // selected row does not name, and prepared again for the row that names it.
+    // The report and the lock name this request; `target_triple` is the identity.
+    std::optional<std::string> target_request;
     // --accel: the device backends and architectures this build targets, in
     // the wire form mcpp.pack.abi_tag reads. Overrides `[build] accel`, the
     // same relationship --target has with [toolchain].

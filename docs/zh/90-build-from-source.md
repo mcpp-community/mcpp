@@ -83,18 +83,21 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 156 C++ tests, discovered by `mcpp test`
-└── e2e/                  649 shell scripts against a real binary
+├── unit/                 166 个 mtest 用例文件，组成一个测试程序（`[test] programs = "directory"`）
+└── e2e/                  711 shell scripts against a real binary
 ```
 
 ## 测试组织
 
 两层，回答的是不同的问题。
 
-**单元测试**（`tests/unit/`，156 个文件）是 `mcpp test` 发现的 C++
-程序。它们检验一个模块的契约，不需要二进制、也不需要文件系统状态。
+**单元测试**（`tests/unit/`，166 个文件，以及各成员的 `modules/<name>/tests/`）是 `mcpp test`
+发现的 C++ 程序。它们检验一个模块的契约，不需要二进制、也不需要文件系统状态。每个文件由
+[mtest](https://github.com/mcpp-community/mtest) 的用例组成：一个对象 `UTest name{"Suite/Case", [] { ... }};`
+即一个用例，文件不写 `main`（`mcpp test --guide`）。`mcpp test --case 'TargetSelect/*'` 运行模式所指的用例；
+`mcpp test -p <成员>` 运行一个成员的用例。这些文件组成一个程序，只链接一次，按文件各起一个进程运行。
 
-**端到端测试**（`tests/e2e/NN_<name>.sh`，649 个文件）拿真实的 `mcpp`
+**端到端测试**（`tests/e2e/NN_<name>.sh`，721 个文件）拿真实的 `mcpp`
 二进制跑真实工程。`run_all.sh` 是 CI 的入口。`mcpp test` **不**运行它们。
 
 ```bash
@@ -119,7 +122,8 @@ MCPP=<fresh-mcpp-binary> bash tests/e2e/02_new_build_run.sh
 行是它运行时占有的资源（`machine`：没有别的脚本与它并行；改动共享 home 配置的脚本这样声明）。
 `run_all.sh` 在 `E2E_MTEST=<mtest>` 下经由它运行整套：`E2E_SHARD` 按存储（`tests/e2e/.mtest`，
 CI 取自 main 的上一次运行）中测得的历史划分，`E2E_JOBS` 同时运行多少个脚本，`E2E_SET=pr`
-按夜间的覆盖映射（`.github/workflows/e2e-coverage.yml`）运行变更影响的脚本。在 `tests/e2e`
+按夜间的覆盖映射（`.github/workflows/e2e-coverage.yml`）运行变更影响的脚本；集合留下的脚本报告为
+`unaffected`，「每个脚本都在某处运行」的检查（规则 R5）对该次运行接受它，其覆盖由 main 的完整运行承担。在 `tests/e2e`
 中执行 `mtest explain` 可得知脚本在哪里失败以及如何再次运行。
 
 ## 写一条真的在测东西的判据

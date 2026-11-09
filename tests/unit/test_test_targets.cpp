@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.test_targets;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -30,7 +32,7 @@ void write_manifest(const std::filesystem::path& root, std::string_view body) {
     write_file(root / "mcpp.toml", body);
 }
 
-TEST(TestTargets, NestedNamesUseTestsRelativePath) {
+UTest nested_names_use_tests_relative_path{"TestTargets/NestedNamesUseTestsRelativePath", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -39,14 +41,13 @@ version = "0.1.0"
     write_file(tmp.path / "tests/tagged/nested/smoke.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(result->targets[0].name, "tagged/nested/smoke");
-    EXPECT_EQ(std::filesystem::path(result->targets[0].main),
-              std::filesystem::path("tests") / "tagged" / "nested" / "smoke.cpp");
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].name, "tagged/nested/smoke"));
+    expect(eq(std::filesystem::path(result->targets[0].main), std::filesystem::path("tests") / "tagged" / "nested" / "smoke.cpp"));
+}};
 
-TEST(TestTargets, GlobFlagsBecomePerTargetFlags) {
+UTest glob_flags_become_per_target_flags{"TestTargets/GlobFlagsBecomePerTargetFlags", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -58,14 +59,14 @@ flags = [{ glob = "tests/**/*.cpp", defines = ["TEST_FEATURE"], cflags = ["-Wall
     write_file(tmp.path / "tests/main.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(result->targets[0].defines, std::vector<std::string>{"TEST_FEATURE"});
-    EXPECT_EQ(result->targets[0].cflags, std::vector<std::string>{"-Wall"});
-    EXPECT_EQ(result->targets[0].cxxflags, std::vector<std::string>{"-Wextra"});
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].defines, std::vector<std::string>{"TEST_FEATURE"}));
+    expect(eq(result->targets[0].cflags, std::vector<std::string>{"-Wall"}));
+    expect(eq(result->targets[0].cxxflags, std::vector<std::string>{"-Wextra"}));
+}};
 
-TEST(TestTargets, PackageFilterScopesWorkspaceMember) {
+UTest package_filter_scopes_workspace_member{"TestTargets/PackageFilterScopesWorkspaceMember", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([workspace]
 members = ["a", "b"]
@@ -82,14 +83,13 @@ version = "0.1.0"
     write_file(tmp.path / "b/tests/main.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, "a");
-    ASSERT_TRUE(result.has_value()) << result.error();
-    ASSERT_EQ(result->packageRoot, tmp.path / "a");
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(std::filesystem::path(result->targets[0].main),
-              std::filesystem::path("tests") / "main.cpp");
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(fatal(eq(result->packageRoot, tmp.path / "a")));
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(std::filesystem::path(result->targets[0].main), std::filesystem::path("tests") / "main.cpp"));
+}};
 
-TEST(TestTargets, DirectorySymlinkKeepsLexicalPackageBoundary) {
+UTest directory_symlink_keeps_lexical_package_boundary{"TestTargets/DirectorySymlinkKeepsLexicalPackageBoundary", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -102,19 +102,18 @@ version = "0.1.0"
     std::error_code ec;
     std::filesystem::create_directory_symlink(
         outside.path, tmp.path / "tests/vendor", ec);
-    if (ec) GTEST_SKIP() << "directory symlink unavailable: " << ec.message();
+    if (ec) skip([&] { std::ostringstream text; text << "directory symlink unavailable: " << ec.message(); return text.str(); }());
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(result->targets[0].name, "vendor/external");
-    EXPECT_EQ(std::filesystem::path(result->targets[0].main),
-              std::filesystem::path("tests") / "vendor" / "external.cpp");
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].name, "vendor/external"));
+    expect(eq(std::filesystem::path(result->targets[0].main), std::filesystem::path("tests") / "vendor" / "external.cpp"));
+}};
 
 // `[test] discover` (#634 A5): names are relative to the fixed directory of
 // the glob that found the file, `main` stays relative to the package root.
-TEST(TestTargets, DiscoverNamesAreRelativeToTheGlobsDirectory) {
+UTest discover_names_are_relative_to_the_globs_directory{"TestTargets/DiscoverNamesAreRelativeToTheGlobsDirectory", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -127,17 +126,16 @@ discover = ["checks/**/*.cpp"]
     write_file(tmp.path / "tests/ignored.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    EXPECT_TRUE(result->discoverDeclared);
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(result->targets[0].name, "deep/a");
-    EXPECT_EQ(std::filesystem::path(result->targets[0].main),
-              std::filesystem::path("checks") / "deep" / "a.cpp");
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(bool(result->discoverDeclared));
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].name, "deep/a"));
+    expect(eq(std::filesystem::path(result->targets[0].main), std::filesystem::path("checks") / "deep" / "a.cpp"));
+}};
 
 // An exclusion removes a file whichever positive glob found it, and a glob
 // with no fixed directory names files relative to the package root.
-TEST(TestTargets, DiscoverExclusionsApplyAcrossGlobs) {
+UTest discover_exclusions_apply_across_globs{"TestTargets/DiscoverExclusionsApplyAcrossGlobs", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -151,13 +149,13 @@ discover = ["tests/**/*.cpp", "*_check.cpp", "!tests/fixtures/**"]
     write_file(tmp.path / "root_check.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
     std::set<std::string> names;
     for (auto const& t : result->targets) names.insert(t.name);
-    EXPECT_EQ(names, (std::set<std::string>{"kept", "root_check"}));
-}
+    expect(eq(names, (std::set<std::string>{"kept", "root_check"})));
+}};
 
-TEST(TestTargets, AnEmptyDiscoverFindsNothing) {
+UTest an_empty_discover_finds_nothing{"TestTargets/AnEmptyDiscoverFindsNothing", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -169,13 +167,13 @@ discover = []
     write_file(tmp.path / "tests/main.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    EXPECT_TRUE(result->discoverDeclared);
-    EXPECT_TRUE(result->discover.empty());
-    EXPECT_TRUE(result->targets.empty());
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(bool(result->discoverDeclared));
+    expect(result->discover.empty());
+    expect(result->targets.empty());
+}};
 
-TEST(TestTargets, TwoFilesWithOneNameAreRefusedNamingBoth) {
+UTest two_files_with_one_name_are_refused_naming_both{"TestTargets/TwoFilesWithOneNameAreRefusedNamingBoth", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -188,14 +186,14 @@ discover = ["tests/*.cpp", "checks/*.cpp"]
     write_file(tmp.path / "checks/same.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_FALSE(result.has_value());
-    EXPECT_NE(result.error().find("duplicate test name 'same'"), std::string::npos) << result.error();
-    EXPECT_NE(result.error().find("tests/same.cpp"), std::string::npos) << result.error();
-    EXPECT_NE(result.error().find("checks/same.cpp"), std::string::npos) << result.error();
-}
+    expect(fatal(!result.has_value()));
+    if (auto&& failed = expect(ne(result.error().find("duplicate test name 'same'"), std::string::npos)); !failed) failed << result.error();
+    if (auto&& failed = expect(ne(result.error().find("tests/same.cpp"), std::string::npos)); !failed) failed << result.error();
+    if (auto&& failed = expect(ne(result.error().find("checks/same.cpp"), std::string::npos)); !failed) failed << result.error();
+}};
 
 // Without the key the set, and every name, is the one earlier releases gave.
-TEST(TestTargets, WithoutDiscoverTheDefaultIsTestsGlob) {
+UTest without_discover_the_default_is_tests_glob{"TestTargets/WithoutDiscoverTheDefaultIsTestsGlob", [] {
     Tmp tmp;
     write_manifest(tmp.path, R"([package]
 name = "demo"
@@ -205,23 +203,52 @@ version = "0.1.0"
     write_file(tmp.path / "checks/b.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    EXPECT_FALSE(result->discoverDeclared);
-    EXPECT_EQ(result->discover, std::vector<std::string>{"tests/**/*.cpp"});
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(result->targets[0].name, "unit/a");
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(!result->discoverDeclared);
+    expect(eq(result->discover, std::vector<std::string>{"tests/**/*.cpp"}));
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].name, "unit/a"));
+}};
 
-TEST(TestTargets, BrokenManifestStillReturnsInventory) {
+UTest broken_manifest_still_returns_inventory{"TestTargets/BrokenManifestStillReturnsInventory", [] {
     Tmp tmp;
     write_file(tmp.path / "mcpp.toml", "this is not valid TOML\n");
     write_file(tmp.path / "tests/main.cpp", "int main() {}\n");
 
     auto result = mcpp::build::discover_test_targets(tmp.path, {});
-    ASSERT_TRUE(result.has_value()) << result.error();
-    ASSERT_EQ(result->packageRoot, tmp.path);
-    ASSERT_EQ(result->targets.size(), 1u);
-    EXPECT_EQ(result->targets[0].name, "main");
-}
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(fatal(eq(result->packageRoot, tmp.path)));
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].name, "main"));
+}};
 
 } // namespace
+
+// A test's name is the path of its program: a directory program `unit` and a
+// program `unit/own` below it would be a file and a directory of one path.
+UTest a_name_that_is_another_s_directory_is_refused{"TestTargets/ANameThatIsAnothersDirectoryIsRefused", [] {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+programs = "directory"
+)");
+    write_file(tmp.path / "tests/unit/a.cpp", "int main() {}\n");
+    write_file(tmp.path / "tests/unit/b.cpp", "int b() { return 0; }\n");
+    write_file(tmp.path / "tests/unit/own/c.cpp", "int main() {}\n");
+    write_file(tmp.path / "tests/unit-x/d.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    expect(fatal(!result.has_value()));
+    if (auto&& failed = expect(result.error().find("test 'unit'") != std::string::npos
+                               && result.error().find("test 'unit/own'") != std::string::npos);
+        !failed)
+        failed << result.error();
+
+    std::filesystem::rename(tmp.path / "tests/unit/own", tmp.path / "tests/own");
+    auto moved = mcpp::build::discover_test_targets(tmp.path, {});
+    if (auto&& failed = expect(fatal(moved.has_value())); !failed) failed << moved.error();
+    expect(eq(moved->targets.size(), 3u));
+}};

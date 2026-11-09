@@ -137,6 +137,10 @@ platform = "openkal-platform@0.24.0"
 Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[platform.hosted] targets` 之外的
 三元组被拒绝,消息给出它所服务的同系统同架构的行。
 
+图中的 C 库(`mcpp:c-abi`)位于 Mach-O 映像链接的最前(2026.11.9.1+)。该格式的加载器在入口之前按链接顺序运行
+映像的初始化函数,而 C 库由它自己的一个初始化函数启动;其目标文件在前,C 库便在程序的任何全局构造函数运行之前
+就绪,如同 ELF 上 C 运行时的启动目标文件位于程序之前。
+
 ## 版本组
 
 `[platform.versions]` 为一个家族列出每个包的一个版本。从 mcpp 2026.11.7.1 起由版本组选择版本:平台是依赖图解析的
@@ -233,6 +237,34 @@ seal   = [["okld", "note", "{}"], ["okld", "place", "{}"], ["okld", "check", "{}
 开发期间,工程以 `--platform path:<dir>` 或 `platform = { path = "<dir>" }` 选择工作树。在平台包中执行
 `mcpp test` 而不给 `--target` 时,以该包为平台为其每个 `targets` 构建测试,运行本机架构的那些与给出了执行宿主的
 那些(2026.10.29.1+),其余报告为已构建、未运行。
+
+## 定义目标与提供者（2026.11.9.1+）
+
+平台可以服务内置行未命名的系统。`[[platform.define]]` 陈述行，`[[platform.provider]]` 陈述服务它的提供者：
+
+```toml
+[[platform.define]]
+triple        = "x86_64-freebsd"
+clang-triple  = "x86_64-unknown-freebsd14.1"
+object-format = "elf"
+family        = "unix"
+execution     = "freebsd"          # 其程序运行的系统
+
+[[platform.provider]]
+serves   = ["x86_64-freebsd"]      # 模式：`*` 代表任一段
+priority = 100
+hosted   = true                    # C 环境有 `main`
+```
+
+选中该平台（`[target.x86_64-freebsd] platform = {...}` 或 `--platform`）后，`--target x86_64-freebsd` 构建到
+`target/x86_64-freebsd/`，`cfg(os = "freebsd")` 成立；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
+未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
+提供者的两种简写。
+
+`mcpp new <名> --template platform` 生成一个定义 `<arch>-<名>` 的平台包。读取平台清单时按行检查其语句：定义内置行、
+同一行定义两次是错误，无论平台在何处被读取；不服务任何行的提供者、以同一优先级服务同一身份的两个提供者是平台自身构建的
+警告。`mcpp why platform` 列出平台定义的行与所服务的身份，各附提供者与优先级：在平台目录中是其自身，在项目中是其目标所选
+的平台（`--target`；`--format json`）。
 
 ## 查看一个配置
 

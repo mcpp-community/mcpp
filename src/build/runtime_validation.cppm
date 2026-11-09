@@ -684,6 +684,19 @@ ValidationReport validate_changed_artifacts(
         record_without_rules(plan, before);
         return report;
     }
+    // THE ARTIFACT'S OWN SYSTEM DECIDES (mcpp#911 G5): a row a platform defines
+    // states where its artifacts run, and an artifact for another system is
+    // judged by that system's loader, not this machine's. Its closure is not
+    // checked here, and the build says so rather than calling it a defect.
+    if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple); tt)
+        if (auto const* d = tt->defined(); d && d->execution != "linux") {
+            if (!before.empty())
+                mcpp::ui::info("note", std::format(
+                    "the artifacts are for {}, not this machine: their runtime closure is not "
+                    "checked here", d->execution.empty() ? tt->os : std::string(d->execution)));
+            record_without_rules(plan, before);
+            return report;
+        }
 
     auto doc = read_cache(plan.outputDir);
     bool changedCache = false;

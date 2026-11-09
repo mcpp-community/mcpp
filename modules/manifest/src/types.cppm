@@ -290,6 +290,17 @@ struct Target {
     std::vector<std::string>    cflags;
     std::vector<std::string>    cxxflags;
     std::vector<std::string>    defines;
+    // `[targets.<name>.build]` (mcpp#911 G9): flags and defines of every
+    // translation unit of this package the artifact links -- its entry and the
+    // shared implementation sources -- compiled as the artifact's own variant
+    // where they differ from the package's. A module interface stays one per
+    // package and is not varied.
+    std::vector<std::string>    buildCflags;
+    std::vector<std::string>    buildCxxflags;
+    std::vector<std::string>    buildDefines;
+    bool has_build_variant() const {
+        return !buildCflags.empty() || !buildCxxflags.empty() || !buildDefines.empty();
+    }
     // Build gate: this target is emitted ONLY when every listed feature is
     // active in the current build (otherwise it is silently skipped). Gate
     // only — it does not activate features (use --features / [features].default).
@@ -2240,6 +2251,19 @@ struct Manifest {
     // "directory" (the files of one directory below a discover glob's fixed
     // directory are one program, named by the directory). Empty: "file".
     std::string                 testPrograms;
+    // `[test] link` (design 2026-11-09 §17.2): "used" (the default) -- the
+    // linker keeps what a test reaches (`--gc-sections`, `-dead_strip`), so a
+    // test of one module does not carry the package's every function --, or
+    // "objects", every object whole.
+    std::string                 testLink;
+    // `[test] split` (design 2026-11-09 §17.3): how a test program that speaks
+    // the protocol is run -- "file" (the default: a process per file of its
+    // cases), "case" (a process per case) or "none" (one process).
+    std::string                 testSplit;
+    // `[test] store` (design 2026-11-09 §17.3): the directory `mcpp test`
+    // writes its runs to in the mtest store's form (mtest P12), relative to the
+    // project; empty: `target/mtest`; "none": no store.
+    std::string                 testStore;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended
@@ -2301,6 +2325,17 @@ struct Manifest {
     // alone: one image has one C library (openkal's boundary). Unioned from
     // `[package]` and every matching `[target.<sel>]`, as `requires_` is.
     std::vector<std::string>                        privateRequires;
+    // `[defaults."<capability>"] <selector> = <package>` (mcpp#911 G7; SPEC-002
+    // §3.6): the provider of a capability this package requires when neither
+    // the graph nor the platform provides it, per target selector. The layer
+    // mechanism of the platform, for any package: graph > platform > default.
+    struct CapabilityDefault {
+        std::string                                 capability;
+        std::string                                 selector;
+        mcpp::manifest::platform::PackageRef        ref;
+        int                                         line = 0;
+    };
+    std::vector<CapabilityDefault>                  capabilityDefaults;
     // `requires_abi = { threads = true, exceptions = true }` at package
     // level, and per feature. A statement that the ARTEFACT's ABI has a
     // switch on, compared at resolution with the root's

@@ -216,9 +216,11 @@ dependency graph:
       requested by huxdemo.comp@0.1.0 as 'fw' in [dependencies]
       linked static (default)
       instances: target
+      root: /work/fw
 ```
 
-`instances` states whether the package is compiled for the target, for the
+`root` is the package's root as the build reads it, a patched dependency's
+being its variant's (2026.11.9.1+; docs/05). `instances` states whether the package is compiled for the target, for the
 build programs, or for both (2026.10.11.1+). `mcpp why build-programs` lists the
 build programs' graphs: each program, the libraries it uses, the identity it
 was compiled from and its binary. `mcpp why compat` lists every use of a
@@ -227,8 +229,14 @@ deprecated reading with the release that removes it (51 — Supported Versions).
 The same graph is recorded under `graph` in
 `target/<triple>/<fp>/resolution.json`, one entry per package with the root
 first: `package` (canonical identity, namespace, name, version, source),
-`root`, `requested_by` (`requester`, `key`, `table`), and, for a library,
-`link` (`form`, `reason`).
+`root`, `requested_by` (`requester`, `key`, `table`), `manifest_dir` (the
+package's root), and, for a library, `link` (`form`, `reason`).
+
+`mcpp why target` lists a request's candidates in order (docs/21), `mcpp why
+flags [<unit>]` each word of a unit's command line with the layer that gave it,
+and `mcpp why platform` the rows a platform defines and the identities it
+serves (docs/35); the last two are not part of the report without a topic
+(2026.11.9.1+).
 
 The topic is `toolchain`, `runtime`, `deps` or `runners`, and all four report
 when none is named. `--target` and `--toolchain` turn the report into a query
@@ -765,7 +773,7 @@ mcpp is involved and its documentation will not help.
 ## Current limitations
 
 - `mcpp why --format json` is defined for the `toolchain`, `sources`, `tool`,
-  `payload`, `build-programs` and `compat` topics. The other topics report
+  `payload`, `build-programs`, `compat`, `target`, `flags` and `platform` topics. The other topics report
   `'<topic>' has no machine-readable shape yet` and exit non-zero.
 - `mcpp search` matches a substring; there is no field selector, and no way to
   restrict a search to one namespace.

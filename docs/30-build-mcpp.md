@@ -1345,6 +1345,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TARGET_OS` *(0.0.100+)* | `mcpp::target_os()` | the target's OS segment (`linux`/`macos`/`windows`) — no need to hand-split `MCPP_TARGET` |
 | `MCPP_TARGET_ARCH` *(0.0.100+)* | `mcpp::target_arch()` | the target's arch segment (GNU spelling: `x86_64`, `aarch64`, …) |
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
+| `MCPP_TARGET_PROVIDER` *(2026.11.9.1+)* | `mcpp::target_provider()` | the provider the selection gave the target's identity (`openkal`, `musl-gcc`, `msvc`, ...; SPEC-016 §4); empty string for the host's own build |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |

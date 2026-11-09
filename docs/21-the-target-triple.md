@@ -146,40 +146,43 @@ A `.js` file carries no shebang, so an emsdk payload installed before its
 descriptor gained a `runner` field needs the index refresh
 [chapter 20](20-toolchains.md) describes before `mcpp run` finds one.
 
-## Declining The Third Segment
+## Declining The Third Segment: A Request Names A System (2026.11.9.1+)
 
-`<arch>-<os>` is a complete target on every platform:
+A target written whole is an **identity**: the output directory, the cache key
+and the subject of a `cfg()` predicate. A target that names only `<arch>-<os>`
+is a **request**: it reaches every identity of that system, and the build takes
+the first one whose **provider** -- the toolchain and the target side that
+serve it -- is available on this machine (SPEC-016 §4).
 
 ```bash
-mcpp build --target x86_64-linux      # = x86_64-linux-gnu
-mcpp build --target x86_64-windows    # = x86_64-windows-gnu
+mcpp build --target x86_64-linux      # x86_64-linux-gnu on Linux; -musl where no glibc payload is
+mcpp build --target x86_64-windows    # -msvc with MSVC installed, else -musl (openkal-platform)
+mcpp build --target aarch64-macos     # the Apple identity on macOS, else aarch64-macos-musl
 mcpp build --target riscv64-none      # = riscv64-none-elf
-mcpp build --target aarch64-linux     # = aarch64-linux-gnu
-mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
-Declining it changes no identity. The output directory, the cache key and the
-subject of a `cfg()` predicate are all the canonical form, so the two spellings
-share one fingerprint and the second build is a cache hit rather than a second
-full build.
+The candidates are ordered by the providers' priorities (data the engine ships:
+a system's own toolchain and C library first, openkal-platform next, other
+conventions after), then by the rows' order. The report says which identity
+was taken, and why when the first candidate is not available here:
 
-What differs is the record of what was asked for. A triple serves as an
-identity, which must be total, and as a request, which must be able to say
-nothing; mcpp keeps both, filling the segment for the identity while recording
-that the fill was a fill.
+```text
+      Target x86_64-windows → x86_64-windows-musl
+             msvc is not available on linux-x86_64
+```
 
-### The completion is chosen from the vocabulary, not from a fixed word
+`mcpp why target [--target <t>]` lists the candidates in order with their
+priorities and availability (`--format json` for scripts). A project changes
+the order with `[target.<selector>.priority] <provider> = <n>`, or chooses a
+built-in provider by name with `platform = "builtin:<name>"`. A written
+identity is never replaced: `--target x86_64-linux-gnu` builds that identity or
+is refused naming what is missing. `mcpp.lock` records the identity each
+request was given, and `--locked` refuses a build that selects another.
 
-A request with an omitted environment segment is completed against the
-known-target table. A supported lexical default takes precedence; otherwise,
-a unique supported sibling is selected. If none is supported, the lexical
-form is retained and the diagnostic names the registered siblings. An
-ambiguous request lists the supported candidates.
-
-`aarch64-linux` selects `aarch64-linux-gnu`. The native Linux ARM64 payload
-uses LLVM 23.1.3 and glibc. `aarch64-linux-musl` remains the explicit spelling
-for a static musl artifact. A written environment segment is retained.
-
+When the dependency graph supplies the C library (`mcpp:c-abi`) and the request
+names none, the identity is the C library's: `x86_64-linux` over a graph's musl
+builds `x86_64-linux-musl`. A written segment the graph contradicts is reported
+and kept.
 
 ### The Spelling To Use
 
@@ -525,10 +528,13 @@ other's rows.
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `aarch64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
+| `x86_64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 | `x86_64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `i686-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |

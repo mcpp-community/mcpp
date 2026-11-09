@@ -45,7 +45,7 @@ class Case:
             self.out.parent.symlink_to(cache, target_is_directory=True)
         self.out.mkdir(parents=True)
         self.env = os.environ.copy()
-        self.env.update(GTEST_FILTER="DetachLifetime.SubprocessDriver",
+        self.env.update(MTEST_PROTOCOL="",
                         MCPP_TEST_LIFETIME_ROLE="root", MCPP_TEST_LIFETIME_KIND=kind,
                         MCPP_TEST_LIFETIME_OUTPUT=str(self.out))
         self.env.update(extra)

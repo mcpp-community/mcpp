@@ -478,6 +478,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 |---|---|
 | `defines` | 预处理宏（`name` 或 `name=value`）；在 C 与 C++ 两种入口编译上都脱糖为 `-D<x>`。 |
 | `cxxflags` / `cflags` | 这个目标专用的额外编译旗标。**不要**把 `-std=...` 写在这里——用 `[package].standard`。 |
+| `build` *(2026.11.9.1+)* | 一个表 `[targets.<name>.build]`，含 `defines`、`cxxflags`、`cflags`：本包中该目标链接的每个翻译单元的参数，即其入口与共享的实现源文件。与包的参数不同处，这些单元编译为该目标自己的变体（`obj/_variant/<name>/`）；其他目标照旧链接包的目标文件。模块接口每包一个，不做变体。 |
 | `required_features` | 只有当构建中**每一个**列出的 feature 都被激活时，这个目标才会被产出；否则被静默跳过。它只是一道闸——不会激活 feature（用 `--features` / `[features].default`）。**一个例外，但它不是第二条规则：** 当这个目标作为 host 工具被请求时（`tools = [...]`，§2.14），这个目标就是被**请求**的那一个，于是它的 `required_features` 变成子构建的**输入**。同一个字段、同一个含义——只是解析的方向反过来了。 |
 | `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。入口目标陈述其翻译单元定义的函数，由选择它的程序继承。 |
@@ -1970,6 +1971,9 @@ discover = ["tests/**/*.cpp"]    # the default
 | `main` | `{ from = "<依赖>/<入口>" }` | 每个测试程序的起点所在的入口目标；测试文件随之成为程序的普通翻译单元，不定义 `main`（§2.2，`kind = "entry"`） *(2026.10.26.2+)* |
 | `start` | 符号 | 独立目标上每个测试镜像的入口符号（§2.2，`start`） *(2026.10.26.2+)* |
 | `programs` | `"file"` 或 `"directory"` | `"file"`（默认）：每个被发现的文件是一个程序；`"directory"`：glob 固定目录之下同一目录的文件是一个程序，以目录命名，有文件定义 `main` 时以它为起点 *(2026.11.8.1+)* |
+| `split` | `"file"`、`"case"` 或 `"none"` | 使用测试协议的程序的运行方式：按用例所在文件各一个进程（默认）、每个用例一个进程，或只运行一次 *(2026.11.9.1+)* |
+| `link` | `"used"` 或 `"objects"` | `"used"`（默认）：测试只链接它用到的部分（`--gc-sections`、`-dead_strip`）；`"objects"`：保留每个目标文件的全部内容 *(2026.11.9.1+)* |
+| `store` | 目录或 `"none"` | 运行以 mtest 存储的形式保存的位置，相对项目；默认 `target/mtest`；`"none"` 不保存 *(2026.11.9.1+)* |
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个

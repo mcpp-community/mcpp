@@ -82,18 +82,42 @@ fail=0
 # change.
 hostArch="$("$MCPP" toolchain list --format json 2>/dev/null \
             | jq -r '.data.host // "" | split("-")[0]' | tr -d '\r')"
+# A ROW WHOSE PAYLOAD llvm PAIRS WITH IS NOT ONE. The MinGW-w64 payload is
+# clang's sysroot as well as gcc's (SPEC-016 §3, e2e 1044): `x86_64-windows-gnu`
+# with llvm alone is served, not overridden, and is left out here.
+#
+# AND A ROW IS OVERRIDDEN ONLY WHERE ITS CONVENTION IS WHAT SERVES IT HERE. Since
+# 2026.11.9.1 a row is served by a provider chosen per host (SPEC-016 §4):
+# `aarch64-linux-musl` takes the musl cross payload on a Linux host and
+# openkal-platform, whose compiler is llvm, on a macOS host. There llvm alone is
+# the row's own service, and nothing was removed. The compiler the selection
+# takes with no compiler stated is that service, so a candidate counts only
+# where it is not llvm (`compiler.family` names the driver's family: `clang`).
+mkdir -p "$work/neutral"
+printf '[package]\nname    = "neutral"\nversion = "0.1.0"\n' > "$work/neutral/mcpp.toml"
+served_by_its_convention() {
+    local fam
+    fam="$(cd "$work/neutral" && "$MCPP" why toolchain --target "$1" --format json 2>/dev/null \
+             | jq -r '.data.compiler.family // ""' | tr -d '\r')"
+    [ -n "$fam" ] && [ "$fam" != llvm ] && [ "$fam" != clang ]
+}
 pick() {
-    "$MCPP" toolchain list --format json 2>/dev/null \
-      | jq -r --arg a "$1" '[.data.targets[]
-                             | select(.pin | startswith("gcc"))
-                             | select(.status != "planned")
-                             | select($a == "" or (.target | startswith($a + "-")))
-                             | .target][0] // empty' | tr -d '\r'
+    local t
+    for t in $("$MCPP" toolchain list --format json 2>/dev/null \
+                 | jq -r --arg a "$1" '[.data.targets[]
+                                        | select(.pin | startswith("gcc"))
+                                        | select(.target != "x86_64-windows-gnu")
+                                        | select(.status != "planned")
+                                        | select($a == "" or (.target | startswith($a + "-")))
+                                        | .target] | unique[]' | tr -d '\r'); do
+        served_by_its_convention "$t" && { echo "$t"; return 0; }
+    done
+    return 0
 }
 pinned="$(pick "$hostArch")"
 [ -n "$pinned" ] || pinned="$(pick "")"
 if [ -z "$pinned" ]; then
-    echo "SKIP: no target row here pins a non-llvm toolchain"
+    echo "SKIP: no target row here is served by a non-llvm convention"
     exit 0
 fi
 

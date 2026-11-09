@@ -90,6 +90,9 @@ struct BuildProgramEnv {
     // refused (#766).
     bool sealedPackage = false;
     std::string targetTriple;               // resolved canonical triple; "" = host
+    // The provider the selection gave the identity (SPEC-016 §4): `openkal`,
+    // `musl-gcc`, `msvc`, ...; "" for the host's own build.
+    std::string targetProvider;
     // The resolved toolchain's payload root and the target's own C library
     // root. Both exist so a package can ASK instead of DECLARE — see
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
@@ -678,6 +681,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // it has no graph-supplied target side, so the system is always on the
     // link and a package should supply nothing.
     e.emplace_back("MCPP_TARGET_REQUESTED", env.targetTriple);
+    e.emplace_back("MCPP_TARGET_PROVIDER", env.targetProvider);
     // Convenience splits of the resolved target (Cargo CARGO_CFG_TARGET_*
     // parity): parsed ONCE, in install_hook_env, through the canonical triple parser so every
     // build.mcpp stops hand-splitting MCPP_TARGET. MCPP_TARGET_ENV is "" when

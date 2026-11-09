@@ -499,25 +499,34 @@ fi
 # the smoke and regression sets; a test the map does not know is affected).
 # E2E_ONLY and E2E_EXCLUDE select as below. Each result is reported as the
 # serial run reports it.
+# The selection common to a run and its listings, in MTEST_SELECTION: this
+# machine's capabilities, E2E_ONLY and E2E_EXCLUDE.
+MTEST_SELECTION=()
+for cap in "${KNOWN_CAPS[@]}"; do
+    [[ " ${CAPS[*]} " == *" $cap "* ]] || MTEST_SELECTION+=(--exclude-tag "requires:$cap")
+done
+[[ -n "${E2E_ONLY:-}" ]] && MTEST_SELECTION+=(--program "$E2E_ONLY")
+[[ -n "${E2E_EXCLUDE:-}" ]] && MTEST_SELECTION+=(--exclude-program "$E2E_EXCLUDE")
 run_by_mtest() {
-    local args=(run --jobs "${E2E_JOBS:-1}" --timeout "${E2E_TEST_TIMEOUT}s" --report-json "$1")
-    local cap
-    for cap in "${KNOWN_CAPS[@]}"; do
-        [[ " ${CAPS[*]} " == *" $cap "* ]] || args+=(--exclude-tag "requires:$cap")
-    done
+    local args=(run --jobs "${E2E_JOBS:-1}" --timeout "${E2E_TEST_TIMEOUT}s" --report-json "$1"
+                ${MTEST_SELECTION[@]+"${MTEST_SELECTION[@]}"})
     (( SHARD_TOTAL > 1 )) && args+=(--shard "$SHARD_IDX/$SHARD_TOTAL")
     [[ -n "${E2E_SET:-}" ]] && args+=(--set "$E2E_SET")
     # E2E_COVERAGE: the run measures the coverage map ([coverage] of mtest.toml).
     [[ -n "${E2E_COVERAGE:-}" ]] && args+=(--coverage)
-    [[ -n "${E2E_ONLY:-}" ]] && args+=(--program "$E2E_ONLY")
-    [[ -n "${E2E_EXCLUDE:-}" ]] && args+=(--exclude-program "$E2E_EXCLUDE")
     (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" "${args[@]}")
 }
+# The programs of a listing, one per line; the arguments narrow it.
+mtest_programs() {
+    (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" list --json ${MTEST_SELECTION[@]+"${MTEST_SELECTION[@]}"} "$@") \
+      | "$py" -c 'import json, sys
+for u in json.load(sys.stdin).get("units", []): print(u["program"])' | tr -d '\r'
+}
 if [[ -n "${E2E_MTEST:-}" ]]; then
+    py=python3; command -v python3 >/dev/null 2>&1 || py=python
     record="$(mktemp)"
     run_by_mtest "$record" || true
     # One `<status> <ms> <name>` line per case of the run's record.
-    py=python3; command -v python3 >/dev/null 2>&1 || py=python
     results="$("$py" - "$record" <<'PY'
 import json, sys
 try:
@@ -541,9 +550,28 @@ PY
             *) ((FAIL++)); FAILED_TESTS+=("$name"); report fail "$name" "$ms" "failed" ;;
         esac
     done <<<"$results"
+    # A SET LEAVES OUT WHAT THE CHANGE DOES NOT AFFECT, AND THE REPORT SAYS SO.
+    # The coverage check (rule R5) reads a test no report ran as uncovered; one
+    # the set left out is `unaffected`: the full runs of main cover it. Every
+    # shard lists the same programs, the shard being the set's own division.
+    if [[ -n "${E2E_SET:-}" && -n "${E2E_REPORT:-}" ]]; then
+        inSet=" $(mtest_programs --set "$E2E_SET" | tr '\n' ' ') "
+        while read -r name; do
+            [[ -n "$name" && "$inSet" != *" $name "* ]] || continue
+            report unaffected "$name" 0 "not in the set '$E2E_SET'"
+        done < <(mtest_programs)
+    fi
+    # A run the set gave nothing ran nothing; any other empty run is mtest's
+    # failure.
     if [[ $((PASS + FAIL)) -eq 0 ]]; then
-        echo "FATAL: mtest reported no case (E2E_MTEST=$E2E_MTEST)"
-        exit 1
+        part=(); (( SHARD_TOTAL > 1 )) && part=(--shard "$SHARD_IDX/$SHARD_TOTAL")
+        if [[ -n "${E2E_SET:-}" ]] \
+           && [[ -z "$(mtest_programs --set "$E2E_SET" ${part[@]+"${part[@]}"})" ]]; then
+            echo "The set '$E2E_SET' gives this run no test."
+        else
+            echo "FATAL: mtest reported no case (E2E_MTEST=$E2E_MTEST)"
+            exit 1
+        fi
     fi
 fi
 

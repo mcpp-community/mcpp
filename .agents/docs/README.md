@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-355 records.
+356 records.
 
 ## By subject
 
@@ -138,6 +138,10 @@ Records that declare one. Everything else is listed by date below.
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [`__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复](2026-09-20-cxa-thread-atexit-finding.md) — landed
 
+### target-model
+
+- [目标与提供者：统一的目标模型（结合 mcpp#911）](2026-11-09-target-model-design.md) — active
+
 ### targets
 
 - [A verified Web run that asked the host for node](2026-09-12-a-verified-web-run-that-asked-the-host-for-node.md) — landed
@@ -179,6 +183,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [目标与提供者：统一的目标模型（结合 mcpp#911）](2026-11-09-target-model-design.md) — active
 - [生态顶层方案：#885 收尾之后的工作流、原则与依赖](2026-11-08-ecosystem-top-level-design.md) — active
 - [#885 收尾补充方案：目标角色、平台事实、系统接口与版本书写](2026-11-08-ecosystem-885-supplement-design.md) — active
 - [生态 #885 收尾设计：核心、插件、openkal、语言服务与编辑器的一轮闭合](2026-11-07-ecosystem-885-closeout-design.md) — active

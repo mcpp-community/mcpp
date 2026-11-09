@@ -1472,6 +1472,42 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             const std::string lockKey = rootDeclared ? name
                 : mcpp::pm::compat::qualified_name(
                       spec.namespace_, spec.shortName.empty() ? name : spec.shortName);
+            // THE DEFAULT BRANCH (SPEC-001 §5): a git reference that names no
+            // `tag`, `rev` or `branch` follows the remote's default branch,
+            // whose name the remote announces (`git ls-remote --symref`); the
+            // lock's entry for the same remote answers it offline. A remote
+            // that announces none is tried for `main`, then `master`.
+            if (spec.gitRefKind == "branch" && spec.gitRev.empty()) {
+                if (auto it = state.gitLockAnchors.find(lockKey);
+                    it != state.gitLockAnchors.end() && it->second.url == spec.git
+                    && it->second.refKind == "branch" && !it->second.ref.empty())
+                    spec.gitRev = it->second.ref;
+                else if (offline)
+                    return refuse_offline("`git ls-remote`",
+                        "its default branch is resolved from the remote, and mcpp.lock records none",
+                        "resolve");
+                else {
+                    auto head = run_with_network_retry({ "git", "ls-remote", "--symref", spec.git, "HEAD" });
+                    if (head.exit_code == 0)
+                        if (auto p = head.output.find("ref: refs/heads/"); p != std::string::npos) {
+                            const auto from = p + 16;
+                            const auto end = head.output.find_first_of("\t \r\n", from);
+                            spec.gitRev = head.output.substr(from, end == std::string::npos ? end : end - from);
+                        }
+                    for (auto candidate : { "main", "master" }) {
+                        if (!spec.gitRev.empty()) break;
+                        auto r = run_with_network_retry({ "git", "ls-remote", spec.git,
+                                                          std::format("refs/heads/{}", candidate) });
+                        if (r.exit_code == 0 && !r.output.empty()) spec.gitRev = candidate;
+                    }
+                    if (spec.gitRev.empty())
+                        return std::unexpected(std::format(
+                            "git dependency '{}': '{}' announces no default branch and has neither "
+                            "`main` nor `master`; name one with tag, rev or branch", name, spec.git));
+                    mcpp::ui::info("Resolved", std::format("{}: the default branch of {} is {}",
+                                                           name, spec.git, spec.gitRev));
+                }
+            }
             if (spec.gitRefKind == "branch") {
                 auto it = state.gitLockAnchors.find(lockKey);
                 if (it != state.gitLockAnchors.end()
@@ -1644,9 +1680,15 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 const auto variant = (*cfg)->metaCacheDir / "src"
                     / (key.ns.empty() ? key.shortName : key.ns + "." + key.shortName)
                     / mcpp::pm::patch::variant_dir_name(resolvedGitRev.substr(0, 12), spec.patchesDigest);
+                if (std::filesystem::path(spec.patchRoot).lexically_normal().generic_string().starts_with(".."))
+                    return std::unexpected(std::format(
+                        "dependency '{}': patch_root '{}' leaves the package's source", name, spec.patchRoot));
+                std::vector<std::string> notes;
                 if (auto r = mcpp::pm::patch::materialize(dep_root, spec.patches,
-                                                          spec.patchesDigest, variant); !r)
+                                                          spec.patchesDigest, variant,
+                                                          spec.patchRoot, &notes); !r)
                     return std::unexpected(std::format("dependency '{}': {}", name, r.error()));
+                for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", name, n));
                 dep_root = variant;
             }
         }
@@ -1748,7 +1790,7 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             auto loaded = spec.patches.empty()
                 ? state.loadVersionDep(name, key.ns, key.shortName, spec.version)
                 : state.loadVersionDepVariant(name, key.ns, key.shortName, spec.version,
-                                              spec.patches, spec.patchesDigest);
+                                              spec.patches, spec.patchesDigest, spec.patchRoot);
             if (!loaded) return std::unexpected(loaded.error());
             dep_root     = std::move(loaded->first);
             dep_manifest = std::move(loaded->second);
@@ -2059,11 +2101,15 @@ static std::expected<void, std::string> step4b_cycle_check(PrepareState& state) 
     // IS RESOLVED (#649 E6). The build-cache key walk was the only reader that
     // noticed, and it runs for the global cache only, so the same manifest was
     // refused by default and built under `--cache=local`. Every edge counts,
-    // build-only ones included, as the key walk counts them.
+    // build-only ones included, as the key walk counts them -- but the root's
+    // own `[dev-dependencies]`: they serve its tests, which no package
+    // depends on, so a framework that uses the package under test reaches its
+    // library and not back through the tests (names_the_root, graph_edges.cpp).
     {
         mcpp::graph::AdjacencyList deps(state.packages.size());
         for (auto const& e : state.dependencyEdges) {
             if (e.consumerPackageIndex >= deps.size()) continue;
+            if (e.consumerPackageIndex == 0 && e.devTable) continue;
             if (e.dependencyPackageIndex >= state.packages.size()) continue;
             deps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
         }
@@ -2397,6 +2443,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
 
             if (auto r = step4b_resolve_identity(state, ctx); !r)
                 return std::unexpected(r.error());
+            if (names_the_root(state, ctx.item, ctx.key)) continue;
 
             if (auto it = state.resolved.find(ctx.key); it != state.resolved.end()) {
                 if (auto r = step4b_handle_already_resolved(state, ctx, it); !r)
@@ -2425,7 +2472,11 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
         auto pushed = step4b_apply_platform(state);
         if (!pushed) return std::unexpected(pushed.error());
         if (auto r = step4b_check_platform_versions(state); !r) return r;
-        if (!*pushed) break;
+        // AND A PACKAGE'S OWN DEFAULTS AFTER THE PLATFORM'S LAYERS (mcpp#911
+        // G7): graph > platform > default.
+        auto defaulted = step4b_capability_defaults(state);
+        if (!defaulted) return std::unexpected(defaulted.error());
+        if (!*pushed && !*defaulted) break;
         if (auto r = drain(); !r) return r;
     }
     if (auto r = step4b_check_platform_versions(state); !r) return r;

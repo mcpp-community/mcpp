@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fixture tests for .github/tools/check_e2e_coverage.py (rule R5).
 
-A test that ran, a test a workflow names, and a test the exceptions excuse are
-covered; a test that is none of these fails the check, and so does an exception
+A test that ran, a test a set left out as unaffected, a test a workflow names,
+and a test the exceptions excuse are covered; a test that is none of these fails the check, and so does an exception
 for a test that ran or that does not exist.
 """
 
@@ -46,7 +46,7 @@ class E2ECoverage(unittest.TestCase):
     def test_ran_named_and_excused_tests_are_covered(self) -> None:
         r = self.run_check()
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn("1 ran on a shard, 2 run by a dedicated job, 1 excused, 0 uncovered", r.stdout)
+        self.assertIn("1 ran on a shard, 0 unaffected by the change, 2 run by a dedicated job, 1 excused, 0 uncovered", r.stdout)
 
     def test_a_name_in_a_comment_or_inside_a_longer_name_does_not_count(self) -> None:
         e2e = self.root / "tests" / "e2e"
@@ -70,6 +70,23 @@ class E2ECoverage(unittest.TestCase):
         r = self.run_check()
         self.assertEqual(r.returncode, 1)
         self.assertIn("UNCOVERED: 50_nowhere.sh: linux: missing capability: llvm", r.stdout)
+
+    def test_a_test_a_set_left_out_is_unaffected_and_meets_its_host(self) -> None:
+        e2e = self.root / "tests" / "e2e"
+        (e2e / "50_untouched.sh").write_text("# x\n# requires: unix-shell\n")
+        (e2e / "host-requirements.tsv").write_text("50_untouched.sh\tlinux\tverified rows\n")
+        (self.reports / "e2e-report-linux-2.tsv").write_text(
+            "unaffected\t50_untouched.sh\t0\tnot in the set 'pr'\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("1 unaffected by the change", r.stdout)
+        # Another host's unaffected report does not meet a requirement of linux.
+        (self.reports / "e2e-report-linux-2.tsv").unlink()
+        (self.reports / "e2e-report-macos-1.tsv").write_text(
+            "unaffected\t50_untouched.sh\t0\tnot in the set 'pr'\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("REQUIRED ON HOST: 50_untouched.sh did not pass on linux", r.stdout)
 
     def test_an_exception_for_a_test_that_ran_fails(self) -> None:
         (self.reports / "e2e-report-macos-1.tsv").write_text("pass\t30_excused.sh\t10\t\n")

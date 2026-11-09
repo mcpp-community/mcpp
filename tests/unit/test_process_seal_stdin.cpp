@@ -12,13 +12,15 @@
 // wait for as long as the pipe is open, and the copy with it; the outer test
 // bounds that wait.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.run;
 import mcpp.invocation;
 import mcpplibs.os.platform;
 import mcpplibs.os.process;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -40,9 +42,9 @@ std::optional<std::string> child_mode() { return mcpp::invocation::get("MCPP_TES
 
 // The copy started by the test below: starts the reader through the launcher
 // it is named, with this process's input the pipe nobody writes.
-TEST(ProcessSealStdin, Child) {
+UTest process_seal_stdin_child{"ProcessSealStdin/Child", [] {
     const auto mode = child_mode();
-    if (!mode) GTEST_SKIP() << "run by AProgramReadsAnEmptyInput";
+    if (!mode) skip("run by AProgramReadsAnEmptyInput");
     if (*mode == "execute") {
         (void)mcpp::run::execute(reader(), { .streams = mcpp::run::Streams::discard });
     } else if (*mode == "stream") {
@@ -53,26 +55,26 @@ TEST(ProcessSealStdin, Child) {
     } else if (*mode == "shell") {
         (void)mcpp::run::capture_shell(os::is_windows ? "more >nul 2>&1" : "cat >/dev/null");
     }
-}
+}};
 
-TEST(ProcessSealStdin, AProgramReadsAnEmptyInput) {
-    if (child_mode()) GTEST_SKIP();
+UTest a_program_reads_an_empty_input{"ProcessSealStdin/AProgramReadsAnEmptyInput", [] {
+    if (child_mode()) skip("");
     for (std::string mode : { "execute", "stream", "probe", "shell" }) {
         os::process::spawn_options o;
         o.program = mcpp::invocation::self_exe_path();
-        o.args = { "--gtest_filter=ProcessSealStdin.Child" };
-        o.env = { { "MCPP_TEST_STDIN_CHILD", mode } };
+        o.args = { "ProcessSealStdin/Child" };
+        o.env = { { "MCPP_TEST_STDIN_CHILD", mode }, { "MTEST_PROTOCOL", "" } };
         o.in = os::process::stdio::pipe;   // held open, never written
         o.out = o.err = os::process::stdio::null;
         o.own_unit = true;
         auto p = os::process::process::spawn(o);
-        ASSERT_TRUE(p) << mode;
+        expect(fatal(bool(p))) << mode;
         auto w = p->wait_for(kMaxSealed);
         if (!w || !w->has_value()) {
             p->end_unit();
             p->kill();
-            FAIL() << mode << ": the started program waited on mcpp's input";
+            fail([&] { std::ostringstream text; text << mode << ": the started program waited on mcpp's input"; return text.str(); }());
         }
-        EXPECT_TRUE((*w)->success()) << mode;
+        expect(bool((*w)->success())) << mode;
     }
-}
+}};

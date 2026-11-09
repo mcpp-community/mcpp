@@ -61,9 +61,37 @@ below a glob's fixed directory one program, named by the directory
 it, its cases are all of theirs, and it begins at the file that defines `main`
 when one does, else as a file that defines none does. Two files of one directory
 that define `main` are refused, naming both; a file directly in the fixed
-directory stays a program of its own. A program of many files is linked once
+directory stays a program of its own. A test's name is the path of its program,
+so a name that is another's directory (`unit` and `unit/own`) is refused,
+naming both (2026.11.9.1+). A program of many files is linked once
 where a program per file is linked once per file, which is what a suite of many
 small files spends its build time on.
+
+A program that speaks the test protocol runs as **one process per file of its
+cases** (2026.11.9.1+): mcpp lists the cases of a program of several files, and
+each file's run selects its own (P4) and is scheduled across the workers as a program is, named
+`<program>/<file>` -- the isolation and the parallelism of a program per file,
+with one link. `[test] split = "case"` gives each case its own process, and
+`"none"` runs the program once. A pattern names a program or a part of one as
+the run names it: `mcpp test unit/test_home` (or `home`) runs that file's part.
+
+A test program keeps what it reaches (2026.11.9.1+): units are compiled with one
+section per function and per object, and a test links with `--gc-sections`
+(`-dead_strip` on Mach-O), so a test of one module does not carry its package's
+every function (mcpp's own unit tests: 32 MB each to 14 MB). Static
+constructors are the collection's roots. `[test] link = "objects"` keeps every
+object whole.
+
+A run is kept in the form of the mtest store (2026.11.9.1+): `target/mtest/`
+holds `runs/<id>/run.json`, a line per process in `programs.ndjson` (its
+status, duration, start, worker and selected cases) and a line per case in
+`cases.ndjson`, and `index.ndjson` lists the runs. `mtest store import --from
+target/mtest` takes them into mtest's store, and an `mtest.toml` whose
+`[project] store` is `target/mtest` reads them where they are; `mtest report`,
+`analyze` and `graph` then read them as mtest's own runs (the Markdown report,
+the slowest cases, the critical path and the schedule). In CI, `commit` and
+`group` are `GITHUB_SHA` and `GITHUB_RUN_ID`. `[test] store = "<dir>"` names
+another directory, relative to the project; `"none"` keeps nothing.
 
 A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
@@ -275,9 +303,10 @@ mcpp test --archive tests.tar.gz                             # in a checkout: ru
 ```
 
 The archive holds each leg's test programs and `mcpp-tests.json`, which names
-each test's leg, arguments and working directory. Reading it builds nothing;
-the tests run in the checkout, through this machine's runner or system, and the
-report is `mcpp test`'s. A failed test exits 1, and so does an archive of which
+each test's leg, arguments, working directory and the test protocol it
+implements. Reading it builds nothing; the tests run in the checkout, through
+this machine's runner or system, by `mcpp test`'s own runner: its cases, a
+process per file of them, the workers and the store (2026.11.9.1+). A failed test exits 1, and so does an archive of which
 no test ran. Legs this machine does not reach are reported as not run
 ([SPEC-015 §4](specs/target-sets.md)). The archive is a tar compressed as its
 name states: `.tar.gz` (or `.tgz`), `.tar.zst`, `.tar.xz` or `.tar`; another
@@ -307,7 +336,9 @@ test-protocol = 1
 ```
 
 or when its file carries the marker `mtest-protocol=1`, as a program built
-with mtest's libraries does. A program that carries the marker and writes no
+with mtest's libraries does; of a test that keeps what it reaches, an object it
+was linked from carrying the marker counts as well, so a marker nothing
+references (mtest before 0.5.1) is not lost at the link. A program that carries the marker and writes no
 `program` event spoke no protocol: a file of plain `main` linked beside a
 framework's library is one case, judged by its exit status, run and listed. mcpp then gives the program the protocol's
 variables (`MTEST_PROTOCOL`, `MTEST_MODE`, `MTEST_REPORT`, `MTEST_TMPDIR`, and

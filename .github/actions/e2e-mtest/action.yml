@@ -1,7 +1,7 @@
 name: e2e-mtest
 description: >
   mtest for the e2e suite (design 2026-11-08 W8; tests/e2e/mtest.toml): the
-  release this action pins, its sha256 checked, and the stores main's last
+  release this action pins, installed by xlings, and the stores main's last
   successful CI run kept for this host, taken into tests/e2e/.mtest so that
   `--shard` divides the suite by measured time and a run orders its tests
   longest first. Exports E2E_MTEST for run_all.sh. A run with no store of main
@@ -12,13 +12,13 @@ inputs:
     description: the host's name in the stores' artifact names (linux, macos, windows)
     required: true
   version:
-    description: the mtest release
+    description: the mtest release, an xlings package (xim:mtest), whose sha256 the index states
     required: false
-    default: '0.4.0'
+    default: '0.5.2'
   sha256:
-    description: sha256 of mtest-<version>-openkal-bundle-all.tar.gz
+    description: sha256 of mtest-<version>-openkal-bundle-all.tar.gz, for the release taken when xlings cannot install it
     required: false
-    default: 'b62e4ac7cd76b20dbdc48a5d041d377444e8815ee7a4ff1e7686145d13acc925'
+    default: 'be443f8c546b3f4628dcd3f1eb6f45b4d698a7f805232f966349faf8250863c6'
   token:
     description: a token that reads this repository's actions
     required: false
@@ -27,24 +27,41 @@ inputs:
 runs:
   using: composite
   steps:
+    # THE ENGINE IS AN XLINGS PACKAGE (xim:mtest), installed as the job installs
+    # mcpp, verified by the index's sha256, and kept in the job's xlings cache:
+    # by the configured mirror (GLOBAL), then by CN (GitCode first), each with a
+    # refreshed index; else the release bundle itself (fetch_release.sh: the
+    # web address, then the API's), checked against the pinned sha256.
     - name: mtest
       shell: bash
       env:
         MTEST_VERSION: ${{ inputs.version }}
         MTEST_SHA256: ${{ inputs.sha256 }}
+        GITHUB_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
-        archive="mtest-$MTEST_VERSION-openkal-bundle-all.tar.gz"
-        temp="$RUNNER_TEMP"; python=python3
-        if [ "$RUNNER_OS" = Windows ]; then temp=$(cygpath -u "$RUNNER_TEMP"); python=python; fi
-        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$temp/$archive" \
-          "https://github.com/mcpp-community/mtest/releases/download/v$MTEST_VERSION/$archive"
-        actual=$("$python" -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$temp/$archive")
-        [ "$actual" = "$MTEST_SHA256" ] || { echo "::error::$archive: sha256 $actual, the action pins $MTEST_SHA256"; exit 1; }
-        mkdir -p "$temp/mtest" && tar xzf "$temp/$archive" -C "$temp/mtest"
-        launcher="$temp/mtest/mtest-$MTEST_VERSION-openkal-bundle-all/bin/mtest"
-        [ "$RUNNER_OS" = Windows ] && launcher="$launcher.exe"
-        "$launcher" --version
+        launcher=""
+        for mirror in GLOBAL CN; do
+          xlings config --mirror "$mirror" > /dev/null 2>&1 || true
+          xlings update > /dev/null 2>&1 || true
+          if xlings install "mtest@$MTEST_VERSION" -y; then launcher=$(command -v mtest); break; fi
+        done
+        xlings config --mirror GLOBAL > /dev/null 2>&1 || true
+        if [ -z "$launcher" ]; then
+          echo "::warning::xlings could not install mtest $MTEST_VERSION; taking the release itself"
+          archive="mtest-$MTEST_VERSION-openkal-bundle-all.tar.gz"
+          temp="$RUNNER_TEMP"; python=python3
+          if [ "$RUNNER_OS" = Windows ]; then temp=$(cygpath -u "$RUNNER_TEMP"); python=python; fi
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/mcpp-community/mtest/releases/download/v$MTEST_VERSION/$archive" "$temp/$archive"
+          actual=$("$python" -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$temp/$archive")
+          [ "$actual" = "$MTEST_SHA256" ] || { echo "::error::$archive: sha256 $actual, the action pins $MTEST_SHA256"; exit 1; }
+          mkdir -p "$temp/mtest" && tar xzf "$temp/$archive" -C "$temp/mtest"
+          launcher="$temp/mtest/mtest-$MTEST_VERSION-openkal-bundle-all/bin/mtest"
+          [ "$RUNNER_OS" = Windows ] && launcher="$launcher.exe"
+        fi
+        "$launcher" --version | grep -qF "$MTEST_VERSION" \
+          || { echo "::error::the mtest at $launcher is not $MTEST_VERSION: $("$launcher" --version)"; exit 1; }
         echo "E2E_MTEST=$launcher" >> "$GITHUB_ENV"
     # The pull request's change, for the `pr` set: the base's tip and HEAD's
     # parents, so that `git diff <base>...HEAD` has its merge base. When they

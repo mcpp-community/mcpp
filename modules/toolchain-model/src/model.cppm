@@ -118,6 +118,15 @@ struct Toolchain {
     // and run-time type information off for every unit — right when nothing can
     // throw, and wrong when something can.
     bool                                targetCxxRuntime = false;
+    // THE C ENVIRONMENT IS HOSTED (mcpp#911 G3): a sysroot that provides
+    // `hosted-standard-library`, or a platform provider that states `hosted =
+    // true`, gives a bare-metal row a C library with `main`; `-ffreestanding` is
+    // then not added and `main` is not treated as freestanding.
+    bool                                hostedC = false;
+    // THE PAYLOAD A PAIRED PROVIDER SUPPLIES THE SYSTEM FROM (SPEC-016 §6):
+    // clang aimed at `x86_64-windows-gnu` takes the MinGW-w64 payload as its
+    // sysroot, C library and C++ runtime (libstdc++). Empty otherwise.
+    std::filesystem::path                pairedSysroot;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `TargetSide::cAbi.prebuilt()`, recorded

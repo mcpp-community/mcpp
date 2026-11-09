@@ -24,6 +24,7 @@ export import mcpp.manifest.flag_words;
 export import mcpp.manifest.cfg_selector;
 export import mcpp.manifest.platform;
 export import mcpp.manifest.platform_toml;
+export import mcpp.manifest.platform_providers;
 export import mcpp.manifest.key_registry;
 export import mcpp.pm.compat.workspace_position;
 export import mcpp.pm.compat.registry;

@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.polyglot;
+
+using namespace mcpplibs::mtest;
 
 // A polyglot file's layout (SPEC-014 §5.3). The PE half is asserted end to
 // end by e2e 992, against the carriers a pack makes; what is asserted here is
@@ -28,52 +30,52 @@ std::uint64_t number_after(std::string_view text, std::string_view key) {
 
 }  // namespace
 
-TEST(PackPolyglot, WithoutWindowsTheFileIsAScriptAndEachProgramLiesWhereItsLineSays) {
+UTest without_windows_the_file_is_a_script_and_each_program_lies_where_its_line_says{"PackPolyglot/WithoutWindowsTheFileIsAScriptAndEachProgramLiesWhereItsLineSays", [] {
     const std::string linux64(1000, 'L'), mac(777, 'M');
     auto file = pg::assemble("app", { program("linux", "x86_64", linux64), program("macos", "aarch64", mac) });
-    ASSERT_TRUE(file.has_value()) << file.error();
-    EXPECT_TRUE(file->starts_with("#!/bin/sh\no=$0;"));
-    EXPECT_TRUE(pg::is_polyglot(*file));
+    if (auto&& failed = expect(fatal(file.has_value())); !failed) failed << file.error();
+    expect(file->starts_with("#!/bin/sh\no=$0;"));
+    expect(pg::is_polyglot(*file));
 
     // The head names the script: `tail -c +<at+1>` and `head -c <length>`.
     const auto at = number_after(*file, "tail -c +") - 1;
     const auto length = number_after(*file, "|head -c ");
-    ASSERT_EQ(at + length, file->size());
+    expect(fatal(eq(at + length, file->size())));
     const std::string_view script = std::string_view(*file).substr(at);
-    EXPECT_TRUE(script.starts_with("# mcpp polyglot"));
-    EXPECT_NE(script.find("n='app'"), std::string_view::npos);
-    EXPECT_EQ(script.find("MINGW*"), std::string_view::npos) << "no Windows program, no MSYS line";
+    expect(script.starts_with("# mcpp polyglot"));
+    expect(ne(script.find("n='app'"), std::string_view::npos));
+    expect(eq(script.find("MINGW*"), std::string_view::npos)) << "no Windows program, no MSYS line";
 
     for (auto [key, bytes] : { std::pair{std::string_view("k=linux-x86_64 a="), std::string_view(linux64)},
                                std::pair{std::string_view("k=macos-aarch64 a="), std::string_view(mac)} }) {
         const auto line = script.find(key);
-        ASSERT_NE(line, std::string_view::npos) << key;
+        expect(fatal(ne(line, std::string_view::npos))) << key;
         const auto off = number_after(script.substr(line), key);
         const auto len = number_after(script.substr(line), " b=");
-        EXPECT_EQ(len, bytes.size()) << key;
-        EXPECT_EQ(std::string_view(*file).substr(off, len), bytes) << key;
+        expect(eq(len, bytes.size())) << key;
+        expect(eq(std::string_view(*file).substr(off, len), bytes)) << key;
     }
     // `uname` spells an architecture two ways on some systems.
-    EXPECT_NE(script.find("Linux-x86_64|Linux-amd64)"), std::string_view::npos);
-    EXPECT_NE(script.find("Darwin-aarch64|Darwin-arm64)"), std::string_view::npos);
-}
+    expect(ne(script.find("Linux-x86_64|Linux-amd64)"), std::string_view::npos));
+    expect(ne(script.find("Darwin-aarch64|Darwin-arm64)"), std::string_view::npos));
+}};
 
-TEST(PackPolyglot, RefusesWhatItCannotLayOut) {
-    EXPECT_FALSE(pg::assemble("app", {}).has_value());
-    EXPECT_FALSE(pg::assemble("a'b", { program("linux", "x86_64", "x") }).has_value())
+UTest refuses_what_it_cannot_lay_out{"PackPolyglot/RefusesWhatItCannotLayOut", [] {
+    expect(!(pg::assemble("app", {}).has_value()));
+    expect(!(pg::assemble("a'b", { program("linux", "x86_64", "x") }).has_value()))
         << "the name is quoted in the script";
-    EXPECT_FALSE(pg::assemble("app", { program("freebsd", "x86_64", "x") }).has_value());
+    expect(!(pg::assemble("app", { program("freebsd", "x86_64", "x") }).has_value()));
     auto notPe = pg::assemble("app", { program("windows", "x86_64", std::string(256, 'x')) });
-    ASSERT_FALSE(notPe.has_value());
-    EXPECT_NE(notPe.error().find("no PE"), std::string::npos) << notPe.error();
+    expect(fatal(!notPe.has_value()));
+    if (auto&& failed = expect(ne(notPe.error().find("no PE"), std::string::npos)); !failed) failed << notPe.error();
     auto twoWindows = pg::assemble("app", { program("windows", "x86_64", "MZ"), program("windows", "aarch64", "MZ") });
-    ASSERT_FALSE(twoWindows.has_value());
-    EXPECT_NE(twoWindows.error().find("one Windows program"), std::string::npos) << twoWindows.error();
-}
+    expect(fatal(!twoWindows.has_value()));
+    if (auto&& failed = expect(ne(twoWindows.error().find("one Windows program"), std::string::npos)); !failed) failed << twoWindows.error();
+}};
 
-TEST(PackPolyglot, RecognisesItsOwnHeadsOnly) {
-    EXPECT_TRUE(pg::is_polyglot("MZqFpD='\n   "));
-    EXPECT_FALSE(pg::is_polyglot("MZ\x90\x00"));
-    EXPECT_FALSE(pg::is_polyglot("#!/bin/sh\necho hi\n"));
-    EXPECT_FALSE(pg::is_polyglot(""));
-}
+UTest recognises_its_own_heads_only{"PackPolyglot/RecognisesItsOwnHeadsOnly", [] {
+    expect(pg::is_polyglot("MZqFpD='\n   "));
+    expect(!pg::is_polyglot("MZ\x90\x00"));
+    expect(!pg::is_polyglot("#!/bin/sh\necho hi\n"));
+    expect(!pg::is_polyglot(""));
+}};

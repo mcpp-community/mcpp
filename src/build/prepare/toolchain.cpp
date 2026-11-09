@@ -36,6 +36,9 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_select;
+import mcpp.toolchain.target_rows;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.home;
@@ -518,6 +521,7 @@ struct TargetOverrideCtx {
     std::string requestedSpelling;
     std::optional<mcpp::toolchain::triple::Triple> parsed;
     mcpp::toolchain::triple::RequestResolution req;
+    mcpp::toolchain::target::Selection sel;
     // The `[target.<triple>]` section this request matched, or null. A
     // pointer rather than the map iterator the single-function version held,
     // since iterator validity is not this struct's business to reason about
@@ -546,6 +550,12 @@ static void step1_apply_target_section(PrepareState& state,
                 : state.overrides.target_triple,
             state.m->sourcePath.filename().string()));
     if (!e.toolchain.empty() && !state.tcFromCommandLine && !state.tcFromConsumer) {
+        // A CROSS TARGET'S SECTION NAMES THE TARGET'S COMPILER, NOT THE HOST'S:
+        // the spec it replaced is what the build program resolves, as a row's
+        // pin's is (`[target.x86_64-linux-musl] toolchain = "gcc@16.1.0"` on a
+        // Windows host whose `[toolchain] windows` is llvm).
+        if (!state.overrides.target_triple.empty() && state.tcSpec && *state.tcSpec != e.toolchain)
+            state.hostSpecBeforeRowPin = *state.tcSpec;
         state.tcSpec   = e.toolchain;
         state.tcOrigin = TcOrigin::TargetSection;
     }
@@ -566,6 +576,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // registered but not yet supported", a string the reader never typed
     // and cannot find in their own command.
     ctx.requestedSpelling = state.overrides.target_triple;
+    define_early_platform(state);
     ctx.parsed = triple::parse(state.overrides.target_triple);
 
     // THE REQUEST IS COMPLETED FROM THE VOCABULARY BEFORE ANYTHING
@@ -575,16 +586,69 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // `parse` fills a missing env segment lexically so the identity stays
     // total — `x86_64-linux` IS `x86_64-linux-gnu`, and a unit test says so.
     // Every gate below then asked about the filled value instead of about
-    // the request. See `triple::resolve_request` for the two measurements.
+    // the request. The selection (mcpp.toolchain.target_select) now answers it.
     //
     // The lookup that follows keys on `parsed->str()`, so completing after
     // it would match sections against a triple this build is not going to
     // use. A project wanting the `planned` row keeps its escape hatch by
     // WRITING the segment: `--target aarch64-linux-gnu` skips completion
     // entirely, because a written segment is a request rather than a gap.
+    // THE SECTION THE REQUEST NAMES AS WRITTEN, before the selection: a
+    // `[target.<request>] toolchain` is a declared family the selection keeps.
+    const mcpp::manifest::TargetEntry* written = nullptr;
+    if (auto w = state.m->targetOverrides.find(state.overrides.target_triple);
+        w != state.m->targetOverrides.end())
+        written = &w->second;
+
+    // THE SELECTION (SPEC-016 §4). The request is a pattern; the candidates are
+    // the rows it reaches with the providers that serve them, ordered by
+    // priority, and the first available on this host is the identity.
+    // Explicit choices win: a declared compiler family keeps the providers that
+    // pair with it, and a provider chosen by name (`builtin:<name>`, or the
+    // platform package a provider names) serves alone.
     if (ctx.parsed) {
-        ctx.req    = triple::resolve_request(*ctx.parsed);
-        ctx.parsed = ctx.req.triple;
+        std::string family;
+        auto declared = written && !written->toolchain.empty() ? std::optional<std::string>(written->toolchain)
+                      : (state.tcSpec && (state.tcFromCommandLine || tc_origin_is_user_explicit(state.tcOrigin)))
+                          ? state.tcSpec : std::nullopt;
+        if (declared)
+            if (auto spec = mcpp::toolchain::parse_toolchain_spec(*declared))
+                family = std::string(mcpp::toolchain::family_name(spec->family));
+        std::vector<mcpp::manifest::platform::Override> config;
+        if (auto cfg = state.get_cfg(true); cfg) config = (*cfg)->platformOverrides;
+        const std::string provider = named_provider(state, *ctx.parsed, config);
+        auto sctx = target_context(state.m->platformOverrides, config, family,
+                                   provider == "none" ? std::string{} : provider,
+                                   state.msvc_usable_either_origin);
+        sctx.platformPackages = provider != "none";
+        ctx.sel = mcpp::toolchain::target::select(state.overrides.target_triple, ctx.parsed->arch,
+                                                  ctx.parsed->os, ctx.parsed->env,
+                                                  ctx.parsed->envExplicit, sctx);
+        if (ctx.sel.row) {
+            if (auto chosen = triple::parse(ctx.sel.row->triple)) {
+                chosen->envExplicit = ctx.parsed->envExplicit;
+                ctx.parsed = *chosen;
+            }
+        }
+        // What the gates below ask of the request: the rows of its system, and
+        // of those the ones this mcpp builds.
+        ctx.req = triple::RequestResolution{};
+        ctx.req.triple = *ctx.parsed;
+        for (auto const* r : mcpp::toolchain::target::rows_of(
+                 ctx.parsed->arch, ctx.parsed->os, ctx.parsed->env, ctx.parsed->envExplicit)) {
+            ctx.req.siblings.push_back(r->triple);
+            if (r->tier != "planned") ctx.req.supported.push_back(r->triple);
+        }
+        ctx.req.completedFromVocabulary = ctx.sel.row && ctx.sel.row->triple != ctx.parsed->str();
+        auto& choice = state.targetChoice;
+        choice = TargetChoice{};
+        choice.request = state.overrides.target_request.value_or(state.overrides.target_triple);
+        choice.identity = ctx.parsed->str();
+        choice.candidates = ctx.sel.candidates;
+        if (ctx.sel.provider) choice.provider = std::string(ctx.sel.provider->name);
+        choice.priority = ctx.sel.priority;
+        choice.fallback = ctx.sel.fallback;
+        if (ctx.sel.fallback && !ctx.sel.candidates.empty()) choice.why = ctx.sel.candidates.front().why;
     }
 
     // [target.X] lookup is spelling-independent: a section keyed
@@ -604,6 +668,20 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
                              && !it->second.toolchain.empty();
 
     ctx.known = ctx.parsed ? triple::find_known_target(*ctx.parsed) : nullptr;
+    // The row with the facts of the provider that serves it here, rather than
+    // of its default provider: the toolchain it pins, the C library it brings,
+    // the linkage and the platform package that implements it.
+    if (ctx.known && ctx.sel.provider && ctx.sel.provider != ctx.known->provider) {
+        auto view = *ctx.known;
+        auto const* p = ctx.sel.provider;
+        view.provider = p;
+        view.pin = p->toolchain;
+        view.sysroot = p->sysroot == "toolchain" ? std::string_view{} : p->sysroot;
+        view.defaultStatic = p->linkage == "static";
+        view.platform = p->platform;
+        state.selectedTarget = view;
+        ctx.known = &*state.selectedTarget;
+    }
 
     return {};
 }
@@ -634,7 +712,9 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
             "       Name one of them.",
             ctx.requestedSpelling, opts));
     }
-    if (!ctx.known && !ctx.hasExplicitSection) {
+    // A row a platform defines is known to this build by its definition
+    // (SPEC-016 §2), whether or not the project writes a section for it.
+    if (!ctx.known && !ctx.hasExplicitSection && !(ctx.parsed && ctx.parsed->defined())) {
         // "UNKNOWN" IS A CLAIM ABOUT THE VOCABULARY, AND IT WAS FALSE FOR
         // A WHOLE arch+os FAMILY.
         //
@@ -895,31 +975,44 @@ step1_host_can_serve_check(PrepareState& state, TargetOverrideCtx& ctx) {
     // The escape hatch stays open on purpose: an explicit `[target.X]`
     // toolchain override means the author is supplying the cross toolchain
     // themselves, and mcpp's payload matrix has no standing to refuse it.
+    // THE SELECTION SAYS WHETHER ITS ANSWER IS AVAILABLE HERE (SPEC-016 §4.6):
+    // the candidate it took is the first available one, or, when none is, the
+    // first of all, which this diagnosis refuses unless the graph supplies the
+    // target's system after all (held until the graph is known).
+    const auto chosen = std::ranges::find_if(ctx.sel.candidates, [&](auto const& c) {
+        return c.row == ctx.sel.row && c.provider == ctx.sel.provider;
+    });
+    const bool available = chosen != ctx.sel.candidates.end() ? chosen->available
+                         : (ctx.parsed && mcpp::toolchain::host_can_serve(*ctx.parsed));
     if (ctx.known && ctx.known->tier != "planned" && !ctx.hasToolchainOverride
-        && ctx.parsed
-        && !mcpp::toolchain::host_can_serve(*ctx.parsed)) {
+        && ctx.parsed && !available) {
+        std::string candidates;
+        for (auto const& c : ctx.sel.candidates)
+            candidates += std::format("\n         {:<22} {:<12} priority {:<4} {}", c.row->triple,
+                                      c.provider ? c.provider->name : std::string_view("-"), c.priority,
+                                      c.available ? std::string("available") : c.why);
         std::string servable;
-        for (auto const& info : triple::known_targets()) {
-            auto t = triple::parse(info.canonical);
-            if (!t || info.tier == "planned") continue;
-            if (!mcpp::toolchain::host_can_serve(*t)) continue;
+        for (auto const* r : mcpp::toolchain::target::rows()) {
+            if (r->tier == "planned") continue;
+            auto one = mcpp::toolchain::target::select(r->triple, r->arch, r->os, r->env, true,
+                target_context(state.m->platformOverrides, {}, {}, {}, state.msvc_usable_either_origin));
+            if (one.candidates.empty() || one.fallback || !one.candidates.front().available) continue;
             if (!servable.empty()) servable += ", ";
-            servable += t->str();
+            servable += r->triple;
         }
         state.unservedTargetDiagnosis = std::format(
-            "target '{}' cannot be built on this host.\n"
-            "       No toolchain payload here produces it, and nothing in "
-            "the dependency graph\n"
-            "       supplies its system side.\n"
-            "       this host can build with the payload alone: {}\n"
-            "       To build it anyway, depend on a package that implements "
-            "the target's system\n"
-            "       (its kernel interface and C library), or supply your own "
-            "cross toolchain with\n"
-            "       an explicit [target.{}] toolchain = \"…\" section.",
-            ctx.parsed->str(),
-            servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
-            ctx.parsed->str());
+            "target '{}' cannot be built on this host: no provider of it is available here, and "
+            "nothing in the dependency graph supplies its system side.\n"
+            "       candidates:{}\n"
+            "       this host builds: {}\n"
+            "       To build it anyway: depend on a package that implements the target's system "
+            "(its kernel interface and C library),\n"
+            "       choose a platform that serves it (`--platform <package>`), or supply your own "
+            "cross toolchain with [target.{}] toolchain = \"…\".\n"
+            "       `mcpp why target {}` lists the candidates and why each is or is not available.",
+            ctx.parsed->str(), candidates.empty() ? std::string(" (none)") : candidates,
+            servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable, ctx.parsed->str(),
+            ctx.requestedSpelling);
     }
 }
 
@@ -1244,9 +1337,16 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // The descriptor blocks the target reads (design 2026-10-29 §5.1): the
     // row's own, or those the platform states when it was read early (a
     // platform fetched in the first pass restarts the prepare so that it is).
-    state.targetPlatform = state.platformEarly && state.platformData.descriptorKeys.set
-        ? mcpp::toolchain::platform::TargetPlatform::with_keys(state.platformData.descriptorKeys.value)
-        : mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
+    state.targetPlatform = [&] {
+        if (state.platformEarly && state.platformData.descriptorKeys.set)
+            return mcpp::toolchain::platform::TargetPlatform::with_keys(state.platformData.descriptorKeys.value);
+        // A row a platform defines names its own blocks (SPEC-016 §2).
+        if (auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple))
+            if (auto* d = t->defined(); d && !d->descriptorKeys.empty())
+                return mcpp::toolchain::platform::TargetPlatform::with_keys(
+                    std::vector<std::string>(d->descriptorKeys.begin(), d->descriptorKeys.end()));
+        return mcpp::toolchain::platform::TargetPlatform::for_os(state.cfgCtx().os);
+    }();
 
     // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the
@@ -2200,6 +2300,7 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
       if (auto r = step2_detect_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_apply_local_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_retarget_for_retargetable_driver(state); !r) return std::unexpected(r.error());
+      if (auto r = step2_paired_system(state); !r) return std::unexpected(r.error());
       if (auto r = step2_bind_msvc_toolset(state); !r) return std::unexpected(r.error());
       if (auto r = step2_resolve_base(state); !r) return std::unexpected(r.error());
       if (auto r = step2_resolve_run_under(state); !r) return std::unexpected(r.error());

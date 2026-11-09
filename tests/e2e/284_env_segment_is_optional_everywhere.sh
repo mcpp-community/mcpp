@@ -92,7 +92,19 @@ check_pair() {
 
 rc=0
 check_pair x86_64-linux    x86_64-linux-gnu    || rc=1
-check_pair x86_64-windows  x86_64-windows-gnu  || rc=1
+# `x86_64-windows` IS A PATTERN (SPEC-016 §4): its candidates are the MSVC, the
+# musl (openkal-platform) and the MinGW identities in that order of priority, and
+# the identity is the first available here -- MSVC on a Windows host that has it,
+# the musl identity elsewhere. Whichever it is, it is one identity, one directory.
+win=x86_64-windows-musl
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+    [ -f "$VSWHERE" ] && "$VSWHERE" -latest -products '*' \
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath \
+        2>/dev/null | grep -q . && win=x86_64-windows-msvc ;;
+esac
+check_pair x86_64-windows  "$win"              || rc=1
 check_pair riscv64-none    riscv64-none-elf    || rc=1
 
 [ "$rc" = 0 ] || exit 1
@@ -100,21 +112,12 @@ echo "OK: the env segment is optional on every platform, and declining it change
 
 # ── The Windows C-library axis has a name of its own ─────────────────────────
 #
-# `x86_64-windows-musl` is a target mcpp names and LLVM cannot. Measured on
-# llvm ${LLVM_VERSION}, handing `windows` with a `musl` environment to clang is not a
-# diagnostic but an ICE inside the COFF writer:
-#
-#     #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
-#
-# so mcpp's canonical form and the triple passed to the compiler must be
-# different strings — which they already are, either side of the arrow in the
-# build report.
-#
-# THE ASSERTION IS THAT IT IS A KNOWN TARGET WITH A CORRECT DIAGNOSIS, NOT
-# THAT IT BUILDS. This project names no dependency, so nothing supplies the
-# target side and the build cannot succeed — correctly. What is under test is
-# that mcpp recognises the name and says the true thing about it, rather than
-# `unknown target`, which is what it said before the row existed.
+# `x86_64-windows-musl` is a target mcpp names and LLVM cannot: clang is given
+# `x86_64-w64-windows-gnu`, the Itanium C++ ABI the C library was compiled for,
+# and mcpp's identity names the C library. Its provider is openkal-platform's
+# hosted part (SPEC-016 §3), so naming it is enough to build it: the platform
+# brings openkal-musl and the LLVM run-time, and pins clang -- the one family
+# that emits it. A project names no dependency for it.
 out="$("$MCPP" build --target x86_64-windows-musl 2>&1 || true)"
 
 case "$out" in
@@ -124,32 +127,17 @@ case "$out" in
 esac
 
 case "$out" in
-  *"nothing in the dependency graph"*)
-    echo "  ok  x86_64-windows-musl is known, and the refusal names the real reason" ;;
+  *"Platform openkal-platform"*"built-in, hosted"*)
+    echo "  ok  x86_64-windows-musl is served by openkal-platform's hosted part" ;;
   *)
-    echo "FAIL: the refusal did not name the missing supplier"
-    printf '%s\n' "$out" | grep -m2 -iE 'error|Target'
+    echo "FAIL: the build was not served by openkal-platform"
+    printf '%s\n' "$out" | grep -m3 -iE 'error|Target|Platform'
     exit 1 ;;
 esac
 
-# AND THE PIN IS ASSERTED, BECAUSE THE PIN IS WHAT THE ROW IS FOR.
-#
-# The row names `llvm` not as a preference but because a global default of gcc
-# would otherwise be carried onto a target no gcc can emit, and the error would
-# then be about a missing C++ frontend in a musl-gcc payload — a true sentence
-# about the wrong subject. So the toolchain line has to show the pin winning,
-# and it has to show mcpp's own name being what was asked for:
-#
-#     Resolved llvm@${LLVM_VERSION} → x86_64-windows-musl → …/xim-x-llvm/${LLVM_VERSION}/bin/clang++
-#              target default for x86_64-windows-musl, replacing your gcc@16.1.0
-#
-# THIS WAS WRITTEN WITH AN `*) : ;;` FALLBACK, WHICH MADE IT UNFAILABLE.
-# A branch that accepts anything is not a check, and this file's whole subject
-# is a name that used to be accepted by nothing. The fallback is gone; if the
-# report's phrasing changes, this is meant to go red and be updated.
 case "$out" in
-  *"→ x86_64-windows-musl →"*)
-    echo "  ok  the toolchain line carries mcpp's own name" ;;
+  *"→ x86_64-windows-musl →"*"llvm"*|*"llvm"*"→ x86_64-windows-musl →"*)
+    echo "  ok  the toolchain line carries mcpp's own name, and clang" ;;
   *)
     echo "FAIL: the toolchain line did not carry mcpp's own name for the target"
     printf '%s\n' "$out" | grep -m2 -i 'resolv'
@@ -157,12 +145,12 @@ case "$out" in
 esac
 
 case "$out" in
-  *"llvm@${LLVM_VERSION}"*)
-    echo "  ok  the row's pin decided the toolchain" ;;
+  *"Target x86_64-windows-musl → x86_64-w64-windows-gnu"*)
+    echo "  ok  the compiler is given the Itanium triple" ;;
   *)
-    echo "FAIL: the target table's pin did not decide the toolchain"
-    printf '%s\n' "$out" | grep -m2 -i 'resolv'
+    echo "FAIL: the report does not show the compiler's triple"
+    printf '%s\n' "$out" | grep -m2 'Target'
     exit 1 ;;
 esac
 
-echo "OK: mcpp names a C library LLVM cannot spell, and diagnoses it honestly"
+echo "OK: mcpp names a C library LLVM cannot spell, and its provider builds it"

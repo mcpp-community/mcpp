@@ -297,6 +297,27 @@ The check runs before compilation begins. The combination it rejects otherwise
 fails inside the runtime's own headers, in a message naming a file the reader
 has never opened and no decision mcpp made.
 
+### Default providers (2026.11.9.1+)
+
+A package that requires a capability states the providers it takes when nothing
+else provides it, per target (SPEC-002 §3.6):
+
+```toml
+[package]
+requires = ["mcpp:kernel-abi=openkal"]
+
+[defaults."mcpp:kernel-abi=openkal"]
+linux   = "openkal-linux@^0.25"
+macos   = "openkal-macos@^0.25"
+"*"     = "openkal-posix@^0.25"
+```
+
+A provider in the graph -- the consumer's dependency, or the package the
+platform adds for its layer -- is used instead; otherwise the default whose
+selector matches the target joins the graph as the package's dependency, and
+the build reports it (`Default ... for ... of ...`). A selector that names the
+target wins over `*`.
+
 The same statement is the recipe for a package whose install hook compiles a
 static library from source. The library is compiled against one C++ standard
 library and cannot be linked into a program that uses another, and the store

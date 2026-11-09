@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.manifest;
 import mcpp.build.prepare;
+
+using namespace mcpplibs::mtest;
 
 // SPEC-004 §4 — the tool plane has TWO resolution axes, and this file is the
 // measurement that tells them apart.
@@ -50,7 +52,7 @@ bool has(const std::vector<std::string>& v, std::string_view a) {
 // leg had already merged would report the union and pass either way.
 mcpp::manifest::Manifest merged_for(std::string_view triple) {
     auto m = mcpp::manifest::parse_string(kSrc);
-    EXPECT_TRUE(m.has_value());
+    expect(m.has_value());
     if (!m) return {};
     mcpp::build::merge_conditional_config(*m, cfgpred::context_for(triple));
     return *m;
@@ -58,33 +60,33 @@ mcpp::manifest::Manifest merged_for(std::string_view triple) {
 
 } // namespace
 
-TEST(TargetXlingsAxis, SelectorDecidesWhichEntriesApply) {
+UTest selector_decides_which_entries_apply{"TargetXlingsAxis/SelectorDecidesWhichEntriesApply", [] {
     auto lin = merged_for("x86_64-unknown-linux-gnu");
     auto win = merged_for("x86_64-pc-windows-gnu");
 
     // The host axis is the SAME on both legs. It is not conditional on the
     // target and must not become so: `xim:dpcpp` is a compiler that runs here
     // no matter what it is asked to emit.
-    EXPECT_TRUE(has(lin.xlings.deps, "xim:hosttool@1.0.0"));
-    EXPECT_TRUE(has(win.xlings.deps, "xim:hosttool@1.0.0"));
+    expect(bool(has(lin.xlings.deps, "xim:hosttool@1.0.0")));
+    expect(bool(has(win.xlings.deps, "xim:hosttool@1.0.0")));
 
     // The target axis follows the target, and nothing else in this test does.
-    EXPECT_TRUE (has(lin.xlings.deps, "xim:linuxonly@9.9.9"));
-    EXPECT_FALSE(has(lin.xlings.deps, "xim:winonly@8.8.8"));
-    EXPECT_TRUE (has(win.xlings.deps, "xim:winonly@8.8.8"));
-    EXPECT_FALSE(has(win.xlings.deps, "xim:linuxonly@9.9.9"));
+    expect(bool(has(lin.xlings.deps, "xim:linuxonly@9.9.9")));
+    expect(!has(lin.xlings.deps, "xim:winonly@8.8.8"));
+    expect(bool(has(win.xlings.deps, "xim:winonly@8.8.8")));
+    expect(!has(win.xlings.deps, "xim:linuxonly@9.9.9"));
 
     // The pin reaches the materialised resolution layer, keyed the way the
     // host axis keys it. An entry installed without its pin resolves to
     // whatever the machine already has, which is a different package on a
     // different day.
     auto pin = win.xlings.workspace.find("winonly");
-    ASSERT_NE(pin, win.xlings.workspace.end());
-    EXPECT_EQ(pin->second, "xim:8.8.8");
-    EXPECT_FALSE(win.xlings.workspace.contains("linuxonly"));
-}
+    expect(fatal(ne(pin, win.xlings.workspace.end())));
+    expect(eq(pin->second, "xim:8.8.8"));
+    expect(!win.xlings.workspace.contains("linuxonly"));
+}};
 
-TEST(TargetXlingsAxis, GateAndSelectorCompose) {
+UTest gate_and_selector_compose{"TargetXlingsAxis/GateAndSelectorCompose", [] {
     // `[target.<sel>.feature-xlings.<f>]` is a gate INSIDE a condition, the
     // same composition `[target.<sel>.feature-deps.<f>]` already had (#359).
     // The feature is registered unconditionally — whether the target matches
@@ -94,19 +96,19 @@ TEST(TargetXlingsAxis, GateAndSelectorCompose) {
     auto lin = merged_for("x86_64-unknown-linux-gnu");
     auto win = merged_for("x86_64-pc-windows-gnu");
 
-    EXPECT_TRUE(lin.featuresMap.contains("gate"));
-    EXPECT_TRUE(win.featuresMap.contains("gate"));
+    expect(lin.featuresMap.contains("gate"));
+    expect(win.featuresMap.contains("gate"));
 
     auto lg = lin.xlings.featureDeps.find("gate");
-    EXPECT_TRUE(lg == lin.xlings.featureDeps.end() || lg->second.empty());
+    expect(lg == lin.xlings.featureDeps.end() || lg->second.empty());
 
     auto wg = win.xlings.featureDeps.find("gate");
-    ASSERT_NE(wg, win.xlings.featureDeps.end());
-    EXPECT_TRUE(has(wg->second, "xim:gatedwin@7.7.7"));
-    EXPECT_EQ(win.xlings.featurePins.at("xim:gatedwin@7.7.7"), "xim:7.7.7");
-}
+    expect(fatal(ne(wg, win.xlings.featureDeps.end())));
+    expect(bool(has(wg->second, "xim:gatedwin@7.7.7")));
+    expect(eq(win.xlings.featurePins.at("xim:gatedwin@7.7.7"), "xim:7.7.7"));
+}};
 
-TEST(TargetXlingsAxis, ConditionWrittenTwiceIsRefused) {
+UTest condition_written_twice_is_refused{"TargetXlingsAxis/ConditionWrittenTwiceIsRefused", [] {
     // Platform keys inside a value under a selector say a second time what the
     // selector already said. Refused rather than resolved: two statements of
     // one fact can disagree, and whichever one loses does so in silence.
@@ -118,16 +120,16 @@ version = "0.1.0"
 [target.'cfg(os = "linux")'.xlings.workspace]
 "xim:tool" = { linux = "1.0.0", macosx = "2.0.0" }
 )");
-    ASSERT_FALSE(m.has_value());
+    expect(fatal(!m.has_value()));
     auto msg = m.error().format();
-    EXPECT_NE(msg.find("xim:tool"), std::string::npos) << msg;
-    EXPECT_NE(msg.find("platform keys"), std::string::npos) << msg;
+    expect(ne(msg.find("xim:tool"), std::string::npos)) << msg;
+    expect(ne(msg.find("platform keys"), std::string::npos)) << msg;
     // The message must name the OUTER selector, because that is the half the
     // author has to delete, and it is not the half they are looking at.
-    EXPECT_NE(msg.find("cfg(os = \"linux\")"), std::string::npos) << msg;
-}
+    expect(ne(msg.find("cfg(os = \"linux\")"), std::string::npos)) << msg;
+}};
 
-TEST(TargetXlingsAxis, SubosIsNotConditionalOnATarget) {
+UTest subos_is_not_conditional_on_a_target{"TargetXlingsAxis/SubosIsNotConditionalOnATarget", [] {
     // A project has one environment, not one per target. Refused rather than
     // ignored: a silently dropped environment is the failure #531 was filed
     // for.
@@ -139,12 +141,12 @@ version = "0.1.0"
 [target.'cfg(os = "linux")'.xlings]
 subos = "3"
 )");
-    ASSERT_FALSE(m.has_value());
+    expect(fatal(!m.has_value()));
     auto msg = m.error().format();
-    EXPECT_NE(msg.find("subos"), std::string::npos) << msg;
-}
+    expect(ne(msg.find("subos"), std::string::npos)) << msg;
+}};
 
-TEST(TargetXlingsAxis, HostAxisKeepsItsPlatformKeys) {
+UTest host_axis_keeps_its_platform_keys{"TargetXlingsAxis/HostAxisKeepsItsPlatformKeys", [] {
     // V4, at unit scale: the existing spelling is untouched. The value object
     // under a TOP-LEVEL `[xlings]` entry is not legacy — it is how the host
     // axis is written, and it stays resolved against the host.
@@ -156,27 +158,27 @@ version = "0.1.0"
 [xlings.workspace]
 "xim:tool" = { linux = "1.0.0", macosx = "2.0.0", windows = "3.0.0", default = "4.0.0" }
 )");
-    ASSERT_TRUE(m.has_value());
+    expect(fatal(m.has_value()));
     const auto& pin = m->xlings.workspace.at("tool");
 #if defined(__linux__)
-    EXPECT_EQ(pin, "xim:1.0.0");
-    EXPECT_TRUE(has(m->xlings.deps, "xim:tool@1.0.0"));
+    expect(eq(pin, "xim:1.0.0"));
+    expect(bool(has(m->xlings.deps, "xim:tool@1.0.0")));
 #elif defined(__APPLE__)
-    EXPECT_EQ(pin, "xim:2.0.0");
-    EXPECT_TRUE(has(m->xlings.deps, "xim:tool@2.0.0"));
+    expect(eq(pin, "xim:2.0.0"));
+    expect(bool(has(m->xlings.deps, "xim:tool@2.0.0")));
 #elif defined(_WIN32)
-    EXPECT_EQ(pin, "xim:3.0.0");
-    EXPECT_TRUE(has(m->xlings.deps, "xim:tool@3.0.0"));
+    expect(eq(pin, "xim:3.0.0"));
+    expect(bool(has(m->xlings.deps, "xim:tool@3.0.0")));
 #else
-    EXPECT_EQ(pin, "xim:4.0.0");
-    EXPECT_TRUE(has(m->xlings.deps, "xim:tool@4.0.0"));
+    expect(eq(pin, "xim:4.0.0"));
+    expect(bool(has(m->xlings.deps, "xim:tool@4.0.0")));
 #endif
     // And it is NOT reported as a conditional section: the host axis resolves
     // at parse time and leaves nothing for the merge to do.
-    EXPECT_TRUE(m->conditionalConfigs.empty());
-}
+    expect(m->conditionalConfigs.empty());
+}};
 
-TEST(TargetXlingsAxis, BothAxesNamingOnePackageResolveToOneInstall) {
+UTest both_axes_naming_one_package_resolve_to_one_install{"TargetXlingsAxis/BothAxesNamingOnePackageResolveToOneInstall", [] {
     // `xim:glibc` and `xim:glibc@2.40` are two addresses for ONE install.
     // Keeping both would ask xlings for the same package at two versions, and
     // that is not a build that fails — it is a build whose environment depends
@@ -192,19 +194,19 @@ version = "0.1.0"
 [target.'cfg(os = "linux")'.xlings.workspace]
 "xim:glibc" = "2.40"
 )");
-    ASSERT_TRUE(m.has_value());
+    expect(fatal(m.has_value()));
     mcpp::build::merge_conditional_config(
         *m, cfgpred::context_for("x86_64-unknown-linux-gnu"));
 
     auto named = std::ranges::count_if(m->xlings.deps, [](const std::string& a) {
         return mcpp::manifest::parse_address(a).target == "glibc";
     });
-    EXPECT_EQ(named, 1);
-    EXPECT_TRUE(has(m->xlings.deps, "xim:glibc@2.40"));
-    EXPECT_EQ(m->xlings.workspace.at("glibc"), "xim:2.40");
-}
+    expect(eq(named, 1));
+    expect(bool(has(m->xlings.deps, "xim:glibc@2.40")));
+    expect(eq(m->xlings.workspace.at("glibc"), "xim:2.40"));
+}};
 
-TEST(TargetXlingsAxis, ABareTripleSelectorIsASelectorToo) {
+UTest a_bare_triple_selector_is_a_selector_too{"TargetXlingsAxis/ABareTripleSelectorIsASelectorToo", [] {
     // `[target.<triple>.xlings.workspace]` is the other spelling of a selector,
     // and it was reached by the same dispatcher rather than by the
     // `[target.<triple>]` handler that owns `toolchain` and `runner`. Asserted
@@ -219,14 +221,14 @@ version = "0.1.0"
 "xim:tool" = "1.0.0"
 )";
     auto lin = mcpp::manifest::parse_string(src);
-    ASSERT_TRUE(lin.has_value());
+    expect(fatal(lin.has_value()));
     mcpp::build::merge_conditional_config(
         *lin, cfgpred::context_for("x86_64-unknown-linux-gnu"));
-    EXPECT_TRUE(has(lin->xlings.deps, "xim:tool@1.0.0"));
+    expect(bool(has(lin->xlings.deps, "xim:tool@1.0.0")));
 
     auto other = mcpp::manifest::parse_string(src);
-    ASSERT_TRUE(other.has_value());
+    expect(fatal(other.has_value()));
     mcpp::build::merge_conditional_config(
         *other, cfgpred::context_for("aarch64-unknown-linux-gnu"));
-    EXPECT_FALSE(has(other->xlings.deps, "xim:tool@1.0.0"));
-}
+    expect(!has(other->xlings.deps, "xim:tool@1.0.0"));
+}};

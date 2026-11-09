@@ -64,9 +64,46 @@ XL="$XL_HOME/.xlings/subos/default/bin/xlings${EXE}"
   echo "FAIL: no xlings at $XL_HOME/.xlings/subos/default/bin nor on PATH" >&2
   exit 1; }
 
-"$XL" install -y -u -g >&2
+PIN=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' "$REPO_DIR/.xlings.json" \
+      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
 
+# XLINGS FIRST, ITS MIRRORS IN TURN, THE RELEASE LAST. A job's xlings comes from
+# the cache with the index of when the cache was saved, and xlings keeps that
+# index when its refresh fails: during GitHub's incident of 2026-11-09
+# ("timeouts due to surge in anonymous users") the anonymous download of the
+# index answered 504 and a pin published after the cache was "not found".
+#   1-2  the configured mirror (GLOBAL), the index refreshed before the second;
+#   3-4  the CN mirror (GitCode first, GitHub after), refreshed; the fourth by
+#        git, which xlings otherwise declines for an artifact-managed index;
+#   then the release itself (install.sh: GitHub, then GitCode, sha256 checked).
 MCPP="$XL_HOME/.xlings/subos/default/bin/mcpp${EXE}"
+installed=no
+for attempt in 1 2 3 4; do
+  case "$attempt" in
+    2) "$XL" update >&2 || true ;;
+    3) "$XL" config --mirror CN >&2 || true; "$XL" update >&2 || true ;;
+    4) XLINGS_INDEX_SOURCE=git "$XL" update >&2 || true ;;
+  esac
+  if "$XL" install -y -u -g >&2; then installed=yes; break; fi
+  sleep $(( attempt * 10 ))
+done
+"$XL" config --mirror GLOBAL >&2 || true
+if [ "$installed" = no ]; then
+  echo "::warning::xlings could not install mcpp $PIN; taking the release itself" >&2
+  prefix="${RUNNER_TEMP:-$(mktemp -d)}/mcpp-release-$PIN"
+  if [ -n "$EXE" ]; then
+    zip="mcpp-$PIN-windows-x86_64.zip"
+    mkdir -p "$prefix"
+    bash "$REPO_DIR/.github/tools/fetch_release.sh" \
+      "https://github.com/mcpp-community/mcpp/releases/download/v$PIN/$zip" "$prefix/$zip" >&2
+    (cd "$prefix" && unzip -qo "$zip" && rm -f "$zip")
+    MCPP=$(find "$prefix" -type f -name "mcpp.exe" -path '*/bin/*' | head -1)
+  else
+    MCPP_VERSION="$PIN" MCPP_PREFIX="$prefix" MCPP_NO_PATH=1 bash "$REPO_DIR/install.sh" >&2
+    MCPP="$prefix/bin/mcpp"
+  fi
+  [ -z "${GITHUB_PATH:-}" ] || dirname "$MCPP" >> "$GITHUB_PATH"
+fi
 [ -x "$MCPP" ] || { echo "FAIL: no mcpp at $MCPP after install" >&2; exit 1; }
 
 # Assert the outcome rather than trust it. This is the ONLY place the pin is
@@ -84,8 +121,6 @@ MCPP="$XL_HOME/.xlings/subos/default/bin/mcpp${EXE}"
 # — it just silently truncates it to "2026.7.27" on both sides, so the
 # comparison below would accept any release of that day and this guard would
 # quietly stop guarding.
-PIN=$(grep -oE '"mcpp"[[:space:]]*:[[:space:]]*"[^"]+"' "$REPO_DIR/.xlings.json" \
-      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
 GOT=$("$MCPP" --version 2>/dev/null | head -1 \
       | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
 # Exact comparison: a substring match would let a pin of 0.0.10 be satisfied by

@@ -11,14 +11,16 @@
 // `mcpp build --release` followed by a bare `mcpp build` reported success in
 // 0.00s and left the release artifacts in place.
 
-#include <gtest/gtest.h>
 #include <cstdlib>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.invocation;
 import mcpp.build.prepare;
 import mcpp.manifest;
 import mcpplibs.os.platform;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -45,49 +47,48 @@ private:
 
 // ── resolve_profile_name: the ONE rule, shared with the fast paths ───────────
 
-TEST(BuildProfile, OverrideBeatsManifestDefault) {
+UTest override_beats_manifest_default{"BuildProfile/OverrideBeatsManifestDefault", [] {
     auto m = base();
     m.buildConfig.defaultProfile = "release";
-    EXPECT_EQ(mcpp::build::resolve_profile_name(m, "dev"), "dev");
-}
+    expect(eq(mcpp::build::resolve_profile_name(m, "dev"), "dev"));
+}};
 
-TEST(BuildProfile, ManifestDefaultBeatsGlobalDefault) {
+UTest manifest_default_beats_global_default{"BuildProfile/ManifestDefaultBeatsGlobalDefault", [] {
     auto m = base();
     m.buildConfig.defaultProfile = "release";
-    EXPECT_EQ(mcpp::build::resolve_profile_name(m, ""), "release");
-}
+    expect(eq(mcpp::build::resolve_profile_name(m, ""), "release"));
+}};
 
-TEST(BuildProfile, GlobalDefaultIsDev) {
-    EXPECT_EQ(mcpp::build::resolve_profile_name(base(), ""), "dev");
-}
+UTest global_default_is_dev{"BuildProfile/GlobalDefaultIsDev", [] {
+    expect(eq(mcpp::build::resolve_profile_name(base(), ""), "dev"));
+}};
 
-TEST(BuildProfile, CustomProfileNamePassesThrough) {
-    EXPECT_EQ(mcpp::build::resolve_profile_name(base(), "contracts"), "contracts");
-}
+UTest custom_profile_name_passes_through{"BuildProfile/CustomProfileNamePassesThrough", [] {
+    expect(eq(mcpp::build::resolve_profile_name(base(), "contracts"), "contracts"));
+}};
 
 // ── the fingerprint invariant ────────────────────────────────────────────────
 
-TEST(BuildProfile, OptLevelIsInTheCanonicalFlags) {
+UTest opt_level_is_in_the_canonical_flags{"BuildProfile/OptLevelIsInTheCanonicalFlags", [] {
     auto a = base();
     auto b = base(); b.buildConfig.optLevel = "0";
-    EXPECT_NE(mcpp::build::canonical_configuration_flags(a),
-              mcpp::build::canonical_configuration_flags(b));
-}
+    expect(ne(mcpp::build::canonical_configuration_flags(a), mcpp::build::canonical_configuration_flags(b)));
+}};
 
-TEST(BuildProfile, DebugLtoStripAreInTheCanonicalFlags) {
+UTest debug_lto_strip_are_in_the_canonical_flags{"BuildProfile/DebugLtoStripAreInTheCanonicalFlags", [] {
     auto ref = mcpp::build::canonical_configuration_flags(base());
     { auto m = base(); m.buildConfig.debug = true;
-      EXPECT_NE(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(ne(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.lto = true;
-      EXPECT_NE(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(ne(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.strip = true;
-      EXPECT_NE(mcpp::build::canonical_configuration_flags(m), ref); }
-}
+      expect(ne(mcpp::build::canonical_configuration_flags(m), ref)); }
+}};
 
 // The exact shape the three built-in profiles resolve to (prepare_build's
 // profile block). Asserting on the flag string rather than on a fingerprint hex
 // keeps the failure legible when someone adds a knob and forgets to serialize it.
-TEST(BuildProfile, BuiltInProfilesProduceDistinctCanonicalFlags) {
+UTest built_in_profiles_produce_distinct_canonical_flags{"BuildProfile/BuiltInProfilesProduceDistinctCanonicalFlags", [] {
     auto dev = base();
     dev.buildConfig.optLevel = "0";
     dev.buildConfig.debug    = true;
@@ -103,35 +104,35 @@ TEST(BuildProfile, BuiltInProfilesProduceDistinctCanonicalFlags) {
     auto frelease = mcpp::build::canonical_configuration_flags(release);
     auto fdist    = mcpp::build::canonical_configuration_flags(dist);
 
-    EXPECT_NE(fdev, frelease);
-    EXPECT_NE(frelease, fdist);
-    EXPECT_NE(fdev, fdist);
-}
+    expect(ne(fdev, frelease));
+    expect(ne(frelease, fdist));
+    expect(ne(fdev, fdist));
+}};
 
-TEST(BuildProfile, CanonicalFlagsStillCoverTheNonProfileKnobs) {
+UTest canonical_flags_still_cover_the_non_profile_knobs{"BuildProfile/CanonicalFlagsStillCoverTheNonProfileKnobs", [] {
     auto ref = mcpp::build::canonical_configuration_flags(base());
     { auto m = base(); m.package.standard = "c++26";
-      EXPECT_NE(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(ne(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.dialectCxxflags = {"-freflection"};
-      EXPECT_NE(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(ne(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.dependencyLinkage = "shared";
-      EXPECT_NE(mcpp::build::canonical_configuration_flags(m), ref); }
-}
+      expect(ne(mcpp::build::canonical_configuration_flags(m), ref)); }
+}};
 
 // Workspace design 2026-09-29 §3: a package's own flags are attributes of its
 // node, not inputs of the configuration, so editing them keeps the build
 // directory and ninja rebuilds the edges whose commands changed.
-TEST(BuildProfile, PackageFlagsAreNotInTheConfiguration) {
+UTest package_flags_are_not_in_the_configuration{"BuildProfile/PackageFlagsAreNotInTheConfiguration", [] {
     auto ref = mcpp::build::canonical_configuration_flags(base());
     { auto m = base(); m.buildConfig.cxxflags = {"-DFOO"};
-      EXPECT_EQ(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(eq(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.cflags = {"-DBAR"};
-      EXPECT_EQ(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(eq(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.ldflags = {"-lm"};
-      EXPECT_EQ(mcpp::build::canonical_configuration_flags(m), ref); }
+      expect(eq(mcpp::build::canonical_configuration_flags(m), ref)); }
     { auto m = base(); m.buildConfig.cStandard = "c17";
-      EXPECT_EQ(mcpp::build::canonical_configuration_flags(m), ref); }
-}
+      expect(eq(mcpp::build::canonical_configuration_flags(m), ref)); }
+}};
 
 // ── macos_deployment_target: TARGET-keyed, not HOST-keyed (mcpp#685) ────────
 //
@@ -147,7 +148,7 @@ TEST(BuildProfile, PackageFlagsAreNotInTheConfiguration) {
 // `TargetIsMacosFoldsDeploymentTargetIntoTheFingerprint` on any non-Apple CI
 // runner.
 
-TEST(BuildProfile, NonMacosTargetIgnoresDeploymentTargetInTheFingerprint) {
+UTest non_macos_target_ignores_deployment_target_in_the_fingerprint{"BuildProfile/NonMacosTargetIgnoresDeploymentTargetInTheFingerprint", [] {
     ScopedDeploymentTargetEnv noEnv(nullptr);
     auto ref = base();
     auto changed = base(); changed.buildConfig.macosDeploymentTarget = "11.0";
@@ -155,18 +156,15 @@ TEST(BuildProfile, NonMacosTargetIgnoresDeploymentTargetInTheFingerprint) {
     // one building for something other than macOS) must not see the
     // fingerprint move just because the manifest names a macOS floor it will
     // never apply.
-    EXPECT_EQ(mcpp::build::canonical_configuration_flags(ref),
-              mcpp::build::canonical_configuration_flags(changed));
-    EXPECT_EQ(mcpp::build::canonical_configuration_flags(ref, /*targetIsMacos=*/false),
-              mcpp::build::canonical_configuration_flags(changed, /*targetIsMacos=*/false));
-}
+    expect(eq(mcpp::build::canonical_configuration_flags(ref), mcpp::build::canonical_configuration_flags(changed)));
+    expect(eq(mcpp::build::canonical_configuration_flags(ref, /*targetIsMacos=*/false), mcpp::build::canonical_configuration_flags(changed, /*targetIsMacos=*/false)));
+}};
 
-TEST(BuildProfile, TargetIsMacosFoldsDeploymentTargetIntoTheFingerprint) {
+UTest target_is_macos_folds_deployment_target_into_the_fingerprint{"BuildProfile/TargetIsMacosFoldsDeploymentTargetIntoTheFingerprint", [] {
     ScopedDeploymentTargetEnv noEnv(nullptr);
     auto ref = base();
     auto changed = base(); changed.buildConfig.macosDeploymentTarget = "11.0";
-    EXPECT_NE(mcpp::build::canonical_configuration_flags(ref, /*targetIsMacos=*/true),
-              mcpp::build::canonical_configuration_flags(changed, /*targetIsMacos=*/true));
+    expect(ne(mcpp::build::canonical_configuration_flags(ref, /*targetIsMacos=*/true), mcpp::build::canonical_configuration_flags(changed, /*targetIsMacos=*/true)));
 
     // AND THE ENV OVERRIDE, folded the same way `deployment_target` resolves
     // it: with MACOSX_DEPLOYMENT_TARGET set, the manifest value stops
@@ -175,31 +173,30 @@ TEST(BuildProfile, TargetIsMacosFoldsDeploymentTargetIntoTheFingerprint) {
     ScopedDeploymentTargetEnv env("12.3");
     auto manifestA = base(); manifestA.buildConfig.macosDeploymentTarget = "11.0";
     auto manifestB = base(); manifestB.buildConfig.macosDeploymentTarget = "13.0";
-    EXPECT_EQ(mcpp::build::canonical_configuration_flags(manifestA, /*targetIsMacos=*/true),
-              mcpp::build::canonical_configuration_flags(manifestB, /*targetIsMacos=*/true));
-}
+    expect(eq(mcpp::build::canonical_configuration_flags(manifestA, /*targetIsMacos=*/true), mcpp::build::canonical_configuration_flags(manifestB, /*targetIsMacos=*/true)));
+}};
 
 // ── cache-mode parsing ──────────────────────────────────────────────────────
 
-TEST(BuildProfile, CacheModeParsesTheThreeModes) {
+UTest cache_mode_parses_the_three_modes{"BuildProfile/CacheModeParsesTheThreeModes", [] {
     using mcpp::build::CacheMode;
-    EXPECT_EQ(mcpp::build::parse_cache_mode("global"), CacheMode::Global);
-    EXPECT_EQ(mcpp::build::parse_cache_mode("local"),  CacheMode::Local);
-    EXPECT_EQ(mcpp::build::parse_cache_mode("off"),    CacheMode::Off);
+    expect(eq(mcpp::build::parse_cache_mode("global"), CacheMode::Global));
+    expect(eq(mcpp::build::parse_cache_mode("local"), CacheMode::Local));
+    expect(eq(mcpp::build::parse_cache_mode("off"), CacheMode::Off));
     // `none` accepted as a synonym for off; anything else is refused rather
     // than silently meaning "global", which would be the worst default for a
     // typo to land on.
-    EXPECT_EQ(mcpp::build::parse_cache_mode("none"),   CacheMode::Off);
-    EXPECT_FALSE(mcpp::build::parse_cache_mode("on").has_value());
-    EXPECT_FALSE(mcpp::build::parse_cache_mode("").has_value());
-    EXPECT_FALSE(mcpp::build::parse_cache_mode("GLOBAL").has_value());
-}
+    expect(eq(mcpp::build::parse_cache_mode("none"), CacheMode::Off));
+    expect(!(mcpp::build::parse_cache_mode("on").has_value()));
+    expect(!(mcpp::build::parse_cache_mode("").has_value()));
+    expect(!(mcpp::build::parse_cache_mode("GLOBAL").has_value()));
+}};
 
-TEST(BuildProfile, CacheModeNameRoundTrips) {
+UTest cache_mode_name_round_trips{"BuildProfile/CacheModeNameRoundTrips", [] {
     using mcpp::build::CacheMode;
     for (auto m : {CacheMode::Global, CacheMode::Local, CacheMode::Off})
-        EXPECT_EQ(mcpp::build::parse_cache_mode(mcpp::build::cache_mode_name(m)), m);
-}
+        expect(eq(mcpp::build::parse_cache_mode(mcpp::build::cache_mode_name(m)), m));
+}};
 
 // ── cache-mode resolution ───────────────────────────────────────────────────
 // Same shape as resolve_profile_name and for the same reason: the fast paths
@@ -208,48 +205,44 @@ TEST(BuildProfile, CacheModeNameRoundTrips) {
 // edges reading the cache) got replayed for a request that asked for `local` —
 // and ruling the cache out is `local`'s entire purpose.
 
-TEST(BuildProfile, CacheModeOverrideBeatsManifest) {
+UTest cache_mode_override_beats_manifest{"BuildProfile/CacheModeOverrideBeatsManifest", [] {
     auto m = base();
     m.buildConfig.cacheMode = "local";
-    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, "global"),
-              mcpp::build::CacheMode::Global);
-}
+    expect(eq(mcpp::build::resolve_cache_mode(m, "global"), mcpp::build::CacheMode::Global));
+}};
 
-TEST(BuildProfile, CacheModeManifestBeatsDefault) {
+UTest cache_mode_manifest_beats_default{"BuildProfile/CacheModeManifestBeatsDefault", [] {
     auto m = base();
     m.buildConfig.cacheMode = "off";
-    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, ""), mcpp::build::CacheMode::Off);
-}
+    expect(eq(mcpp::build::resolve_cache_mode(m, ""), mcpp::build::CacheMode::Off));
+}};
 
-TEST(BuildProfile, CacheModeDefaultsToGlobal) {
-    EXPECT_EQ(mcpp::build::resolve_cache_mode(base(), ""),
-              mcpp::build::CacheMode::Global);
-}
+UTest cache_mode_defaults_to_global{"BuildProfile/CacheModeDefaultsToGlobal", [] {
+    expect(eq(mcpp::build::resolve_cache_mode(base(), ""), mcpp::build::CacheMode::Global));
+}};
 
 // An unparseable value must not silently mean "global" at THIS level either: it
 // falls through to the next source, and prepare_build reports it separately.
-TEST(BuildProfile, UnknownManifestCacheModeFallsThroughToDefault) {
+UTest unknown_manifest_cache_mode_falls_through_to_default{"BuildProfile/UnknownManifestCacheModeFallsThroughToDefault", [] {
     auto m = base();
     m.buildConfig.cacheMode = "bogus";
-    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, ""),
-              mcpp::build::CacheMode::Global);
+    expect(eq(mcpp::build::resolve_cache_mode(m, ""), mcpp::build::CacheMode::Global));
     // ...and an unparseable override does not shadow a valid manifest value.
     m.buildConfig.cacheMode = "local";
-    EXPECT_EQ(mcpp::build::resolve_cache_mode(m, "bogus"),
-              mcpp::build::CacheMode::Local);
-}
+    expect(eq(mcpp::build::resolve_cache_mode(m, "bogus"), mcpp::build::CacheMode::Local));
+}};
 
 // ── #649 E9: the override the command line states, one rule for every verb ───
 //
 // `build` preferred `--profile` over the shorthands and `run` preferred the
 // shorthands, so one command line built two profiles. Every verb now reads this.
-TEST(BuildProfile, ProfileOptionBeatsTheShorthands) {
-    EXPECT_EQ(mcpp::build::profile_override_from_flags("dev", true, false), "dev");
-    EXPECT_EQ(mcpp::build::profile_override_from_flags("release", false, true), "release");
-}
+UTest profile_option_beats_the_shorthands{"BuildProfile/ProfileOptionBeatsTheShorthands", [] {
+    expect(eq(mcpp::build::profile_override_from_flags("dev", true, false), "dev"));
+    expect(eq(mcpp::build::profile_override_from_flags("release", false, true), "release"));
+}};
 
-TEST(BuildProfile, ShorthandsNameTheirProfile) {
-    EXPECT_EQ(mcpp::build::profile_override_from_flags("", true, false), "release");
-    EXPECT_EQ(mcpp::build::profile_override_from_flags("", false, true), "dev");
-    EXPECT_EQ(mcpp::build::profile_override_from_flags("", false, false), "");
-}
+UTest shorthands_name_their_profile{"BuildProfile/ShorthandsNameTheirProfile", [] {
+    expect(eq(mcpp::build::profile_override_from_flags("", true, false), "release"));
+    expect(eq(mcpp::build::profile_override_from_flags("", false, true), "dev"));
+    expect(eq(mcpp::build::profile_override_from_flags("", false, false), ""));
+}};

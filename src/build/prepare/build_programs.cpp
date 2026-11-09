@@ -95,6 +95,7 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = state.resolvedTargetCanonical;
+        bpEnv.targetProvider = state.targetChoice.provider;
         // Everything the engine already knows and a build program would
         // otherwise hardcode: the payload ROOT (not the driver), the target's
         // C library, which compiler and which C++ standard library resolved,
@@ -512,6 +513,7 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
         auto& pkg = state.packages[i];
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = state.resolvedTargetCanonical;
+        bpEnv.targetProvider = state.targetChoice.provider;
         fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr,
                               state.cfg_opt ? &*state.cfg_opt : nullptr);
         apply_graph_cxx_abi(bpEnv, state.packages);

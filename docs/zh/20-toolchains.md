@@ -285,6 +285,13 @@ OS：
 归档顶着 MSVC 的名字，MSVC 拿不去用。若有脚本按 `*.lib` 收集
 `windows-gnu` 构建的产物，现在要改成 `*.a`。
 
+
+### clang 配 MinGW-w64 载荷（2026.11.9.1+）
+
+MinGW-w64 提供者与 gcc、llvm 配对。声明 llvm 时（`--toolchain llvm@<v>` 或 `[target.x86_64-windows-gnu] toolchain`），
+该载荷按 gcc 的方式安装，并成为 clang 的 sysroot：其 C 库、libstdc++（`bits/std.cc` 即 std 模块，`import std` 可用）与 GCC
+运行库，由 lld 链接。构建报告 `Pairs clang ... with the gcc@<v> payload`。
+
 ## Windows 上产出 Linux ELF(`x86_64-linux-musl`，无需 WSL)
 
 上一节的镜像：一台 Windows 机器直接产出**完全静态的 Linux 二进制**，不需要

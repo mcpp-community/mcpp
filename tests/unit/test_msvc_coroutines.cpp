@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.msvc_coroutines;
+
+using namespace mcpplibs::mtest;
 
 // The note a failed compile gets when clang does not support coroutines on the
 // MSVC ABI it targets (LLVM 23.1.3 Part 3, D1). The outputs below are copied
@@ -61,74 +63,74 @@ std::string with_standard(std::string_view message, std::string_view from, std::
     return s;
 }
 
-TEST(MsvcCoroutines, StdModuleMessageWithoutDiagnosticsGetsTheNote) {
+UTest std_module_message_without_diagnostics_gets_the_note{"MsvcCoroutines/StdModuleMessageWithoutDiagnosticsGetsTheNote", [] {
     auto note = co::std_module_advice(kStdModuleMessage, answering(false));
-    ASSERT_FALSE(note.empty());
-    EXPECT_NE(note.find("<generator>"), std::string::npos);
-    EXPECT_NE(note.find("standard = \"c++20\""), std::string::npos);
-    EXPECT_NE(note.find("[target.i686-windows-msvc]"), std::string::npos);
-}
+    expect(fatal(!note.empty()));
+    expect(ne(note.find("<generator>"), std::string::npos));
+    expect(ne(note.find("standard = \"c++20\""), std::string::npos));
+    expect(ne(note.find("[target.i686-windows-msvc]"), std::string::npos));
+}};
 
-TEST(MsvcCoroutines, StdModuleBelowCxx23IsNotThisFailure) {
+UTest std_module_below_cxx23_is_not_this_failure{"MsvcCoroutines/StdModuleBelowCxx23IsNotThisFailure", [] {
     int calls = 0;
     auto cxx20 = with_standard(kStdModuleMessage, "-std=c++23", "-std=c++20");
-    EXPECT_TRUE(co::std_module_advice(cxx20, answering(false, &calls)).empty());
-    EXPECT_EQ(calls, 0);
+    expect(co::std_module_advice(cxx20, answering(false, &calls)).empty());
+    expect(eq(calls, 0));
     for (auto spelling : {"-std=c++2b", "-std=c++26", "-std=gnu++23"}) {
         auto later = with_standard(kStdModuleMessage, "-std=c++23", spelling);
-        EXPECT_FALSE(co::std_module_advice(later, answering(false)).empty()) << spelling;
+        expect(!(co::std_module_advice(later, answering(false)).empty())) << spelling;
     }
-}
+}};
 
-TEST(MsvcCoroutines, StdModuleOfLibcxxIsNotThisFailure) {
+UTest std_module_of_libcxx_is_not_this_failure{"MsvcCoroutines/StdModuleOfLibcxxIsNotThisFailure", [] {
     int calls = 0;
     auto libcxx = with_standard(kStdModuleMessage, "modules\\std.ixx", "share\\libc++\\v1\\std.cppm");
-    EXPECT_TRUE(co::std_module_advice(libcxx, answering(false, &calls)).empty());
-    EXPECT_EQ(calls, 0);
-}
+    expect(co::std_module_advice(libcxx, answering(false, &calls)).empty());
+    expect(eq(calls, 0));
+}};
 
-TEST(MsvcCoroutines, StdModuleOnACompilerThatPredefinesTheMacroGetsNoNote) {
-    EXPECT_TRUE(co::std_module_advice(kStdModuleMessage, answering(true)).empty());
-}
+UTest std_module_on_a_compiler_that_predefines_the_macro_gets_no_note{"MsvcCoroutines/StdModuleOnACompilerThatPredefinesTheMacroGetsNoNote", [] {
+    expect(co::std_module_advice(kStdModuleMessage, answering(true)).empty());
+}};
 
-TEST(MsvcCoroutines, StdModuleFailureIsTheGeneratorSymptom) {
-    EXPECT_EQ(co::symptom_in(kStdModuleFailure), co::Symptom::StdModuleGenerator);
+UTest std_module_failure_is_the_generator_symptom{"MsvcCoroutines/StdModuleFailureIsTheGeneratorSymptom", [] {
+    expect(eq(co::symptom_in(kStdModuleFailure), co::Symptom::StdModuleGenerator));
     auto cmd = co::failed_command_in(kStdModuleFailure);
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_TRUE(cmd->compiler.ends_with("clang++.exe"));
-    EXPECT_EQ(cmd->target, "i686-pc-windows-msvc");
-    EXPECT_EQ(cmd->standard, "c++23");
-}
+    expect(fatal(cmd.has_value()));
+    expect(cmd->compiler.ends_with("clang++.exe"));
+    expect(eq(cmd->target, "i686-pc-windows-msvc"));
+    expect(eq(cmd->standard, "c++23"));
+}};
 
-TEST(MsvcCoroutines, StdModuleNoteOffersCxx20FirstAndLlvm22Optionally) {
+UTest std_module_note_offers_cxx20_first_and_llvm22_optionally{"MsvcCoroutines/StdModuleNoteOffersCxx20FirstAndLlvm22Optionally", [] {
     auto note = co::advice(kStdModuleFailure, answering(false));
-    ASSERT_FALSE(note.empty());
-    EXPECT_NE(note.find("clang 23.1.3 does not support C++20 coroutines"), std::string::npos);
-    EXPECT_NE(note.find("<generator>"), std::string::npos);
+    expect(fatal(!note.empty()));
+    expect(ne(note.find("clang 23.1.3 does not support C++20 coroutines"), std::string::npos));
+    expect(ne(note.find("<generator>"), std::string::npos));
     const auto cxx20 = note.find("standard = \"c++20\"");
     const auto llvm22 = note.find("toolchain = \"llvm@22.1.8\"");
-    ASSERT_NE(cxx20, std::string::npos);
-    ASSERT_NE(llvm22, std::string::npos);
-    EXPECT_LT(cxx20, llvm22);
+    expect(fatal(ne(cxx20, std::string::npos)));
+    expect(fatal(ne(llvm22, std::string::npos)));
+    expect(lt(cxx20, llvm22));
     // The section uses mcpp's spelling of the target.
-    EXPECT_NE(note.find("[target.i686-windows-msvc]"), std::string::npos);
-    EXPECT_NE(note.find("Defining __cpp_impl_coroutine yourself is not a fix"), std::string::npos);
-}
+    expect(ne(note.find("[target.i686-windows-msvc]"), std::string::npos));
+    expect(ne(note.find("Defining __cpp_impl_coroutine yourself is not a fix"), std::string::npos));
+}};
 
-TEST(MsvcCoroutines, CoroutineUseNoteDoesNotOfferCxx20) {
-    EXPECT_EQ(co::symptom_in(kCoroutineUseFailure), co::Symptom::CoroutineUse);
+UTest coroutine_use_note_does_not_offer_cxx20{"MsvcCoroutines/CoroutineUseNoteDoesNotOfferCxx20", [] {
+    expect(eq(co::symptom_in(kCoroutineUseFailure), co::Symptom::CoroutineUse));
     auto cmd = co::failed_command_in(kCoroutineUseFailure);
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_EQ(cmd->standard, "c++20");
+    expect(fatal(cmd.has_value()));
+    expect(eq(cmd->standard, "c++20"));
     auto note = co::advice(kCoroutineUseFailure, answering(false));
-    ASSERT_FALSE(note.empty());
-    EXPECT_NE(note.find("Code that uses coroutines"), std::string::npos);
-    EXPECT_EQ(note.find("c++20\""), std::string::npos);
-    EXPECT_NE(note.find("llvm@22.1.8"), std::string::npos);
-}
+    expect(fatal(!note.empty()));
+    expect(ne(note.find("Code that uses coroutines"), std::string::npos));
+    expect(eq(note.find("c++20\""), std::string::npos));
+    expect(ne(note.find("llvm@22.1.8"), std::string::npos));
+}};
 
 // A compile run through the capped executor names its compiler after `--`.
-TEST(MsvcCoroutines, CoroutineUseThroughTheCappedExecutorGetsTheNote) {
+UTest coroutine_use_through_the_capped_executor_gets_the_note{"MsvcCoroutines/CoroutineUseThroughTheCappedExecutorGetsTheNote", [] {
     constexpr std::string_view failure =
         "FAILED: obj/main.o \n"
         "C:/mcpp/bin/mcpp.exe __compiler-cap --sem .mcpp-sched --output obj/main.o --depfile obj/main.o.d -- "
@@ -137,55 +139,55 @@ TEST(MsvcCoroutines, CoroutineUseThroughTheCappedExecutorGetsTheNote) {
         "D:/a/_temp/src/main.cpp:2:71: error: use of undeclared identifier 'std'\n"
         "D:/a/_temp/src/main.cpp:3:9: error: std::coroutine_traits type was not found; include <coroutine> before defining a coroutine\n";
     auto cmd = co::failed_command_in(failure);
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_TRUE(cmd->compiler.ends_with("clang++.exe"));
-    EXPECT_EQ(cmd->target, "i686-pc-windows-msvc");
-    EXPECT_FALSE(co::advice(failure, answering(false)).empty());
-}
+    expect(fatal(cmd.has_value()));
+    expect(cmd->compiler.ends_with("clang++.exe"));
+    expect(eq(cmd->target, "i686-pc-windows-msvc"));
+    expect(!(co::advice(failure, answering(false)).empty()));
+}};
 
-TEST(MsvcCoroutines, CompilerThatPredefinesTheMacroGetsNoNote) {
-    EXPECT_TRUE(co::advice(kStdModuleFailure, answering(true)).empty());
-}
+UTest compiler_that_predefines_the_macro_gets_no_note{"MsvcCoroutines/CompilerThatPredefinesTheMacroGetsNoNote", [] {
+    expect(co::advice(kStdModuleFailure, answering(true)).empty());
+}};
 
-TEST(MsvcCoroutines, ProbeFailureGetsNoNote) {
+UTest probe_failure_gets_no_note{"MsvcCoroutines/ProbeFailureGetsNoNote", [] {
     co::ProbeFn none = [](const co::FailedCommand&) -> std::optional<co::Probe> {
         return std::nullopt;
     };
-    EXPECT_TRUE(co::advice(kStdModuleFailure, none).empty());
-}
+    expect(co::advice(kStdModuleFailure, none).empty());
+}};
 
-TEST(MsvcCoroutines, UnrelatedFailureDoesNotRunTheProbe) {
+UTest unrelated_failure_does_not_run_the_probe{"MsvcCoroutines/UnrelatedFailureDoesNotRunTheProbe", [] {
     int calls = 0;
     std::string other =
         "FAILED: obj/main.o \n"
         "clang++.exe -std=c++23 --target=i686-pc-windows-msvc -c main.cpp\n"
         "main.cpp:1:10: fatal error: 'missing.h' file not found\n";
-    EXPECT_TRUE(co::advice(other, answering(false, &calls)).empty());
-    EXPECT_EQ(calls, 0);
-}
+    expect(co::advice(other, answering(false, &calls)).empty());
+    expect(eq(calls, 0));
+}};
 
-TEST(MsvcCoroutines, NonMsvcTargetDoesNotRunTheProbe) {
+UTest non_msvc_target_does_not_run_the_probe{"MsvcCoroutines/NonMsvcTargetDoesNotRunTheProbe", [] {
     int calls = 0;
     std::string gnu =
         "FAILED: obj/main.o \n"
         "clang++ -std=c++20 --target=i686-pc-windows-gnu -c main.cpp\n"
         "main.cpp:3:9: error: std::coroutine_traits type was not found\n";
-    EXPECT_TRUE(co::advice(gnu, answering(false, &calls)).empty());
-    EXPECT_EQ(calls, 0);
-}
+    expect(co::advice(gnu, answering(false, &calls)).empty());
+    expect(eq(calls, 0));
+}};
 
-TEST(MsvcCoroutines, OutputWithoutACommandGetsNoNote) {
+UTest output_without_a_command_gets_no_note{"MsvcCoroutines/OutputWithoutACommandGetsNoNote", [] {
     std::string bare =
         "main.cpp:3:9: error: std::coroutine_traits type was not found\n";
-    EXPECT_TRUE(co::advice(bare, answering(false)).empty());
-}
+    expect(co::advice(bare, answering(false)).empty());
+}};
 
-TEST(MsvcCoroutines, NoteWithoutVersionNamesTheCompilerGenerically) {
+UTest note_without_version_names_the_compiler_generically{"MsvcCoroutines/NoteWithoutVersionNamesTheCompilerGenerically", [] {
     co::ProbeFn unversioned = [](const co::FailedCommand&) -> std::optional<co::Probe> {
         return co::Probe{false, ""};
     };
     auto note = co::advice(kStdModuleFailure, unversioned);
-    EXPECT_NE(note.find("this clang does not support"), std::string::npos);
-}
+    expect(ne(note.find("this clang does not support"), std::string::npos));
+}};
 
 } // namespace

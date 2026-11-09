@@ -541,6 +541,9 @@ inline const char* target()                       { return env_or("MCPP_TARGET")
 inline const char* target_os()                    { return env_or("MCPP_TARGET_OS"); }
 inline const char* target_arch()                  { return env_or("MCPP_TARGET_ARCH"); }
 inline const char* target_env()                   { return env_or("MCPP_TARGET_ENV"); }
+// The provider of the target's identity (SPEC-016 §4): `openkal`, `musl-gcc`, ...;
+// "" for the host's own build.
+inline const char* target_provider()              { return env_or("MCPP_TARGET_PROVIDER"); }
 inline const char* host()                         { return env_or("MCPP_HOST"); }
 inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
 // The device axis of this build: `cuda12.9+{sm_89} ptx>=89`, or "" when the

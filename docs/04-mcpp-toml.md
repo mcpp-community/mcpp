@@ -506,6 +506,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 |---|---|
 | `defines` | Preprocessor macros (`name` or `name=value`); desugar to `-D<x>` on both the C and C++ entry compile. |
 | `cxxflags` / `cflags` | Extra compile flags for this target. Do **not** put `-std=...` here — use `[package].standard`. |
+| `build` *(2026.11.9.1+)* | A table, `[targets.<name>.build]` with `defines`, `cxxflags` and `cflags`: the flags of every translation unit of this package the target links — its entry and the shared implementation sources. Where they differ from the package's, the units are compiled as the target's own variant (`obj/_variant/<name>/`); the other targets link the package's objects. A module interface is one per package and is not varied. |
 | `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. An entry target states the function its translation unit defines, and the program that selects it inherits it. |
@@ -519,7 +520,8 @@ required_features = ["gui"]                   # only built when feature `gui` is
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
 > target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
-> are compiled once and linked into every target (mcpp's compile-once model). They are the right
+> are compiled once and linked into every target (mcpp's compile-once model); the shared sources
+> of one target take its own flags through `[targets.<name>.build]`. They are the right
 > tool when the flag only needs to affect a single binary's (or test's) own entry — for example a
 > per-test contract evaluation semantic (`-fcontract-evaluation-semantic=observe`) for a test whose
 > `main` exercises the violation, a feature macro the entry alone reads, or a local warning
@@ -2154,6 +2156,9 @@ discover = ["tests/**/*.cpp"]    # the default
 | `main` | `{ from = "<dependency>/<entry>" }` | the entry target every test program begins in; each test file is then an ordinary translation unit of its program and defines no `main` (§2.2, `kind = "entry"`) *(2026.10.26.2+)* |
 | `start` | symbol | the symbol every test image is entered at, on a freestanding target (§2.2, `start`) *(2026.10.26.2+)* |
 | `programs` | `"file"` or `"directory"` | `"file"` (the default): every discovered file is a program; `"directory"`: the files of one directory below a glob's fixed directory are one program, named by the directory, beginning at the file that defines `main` when one does *(2026.11.8.1+)* |
+| `split` | `"file"`, `"case"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, or once *(2026.11.9.1+)* |
+| `link` | `"used"` or `"objects"` | `"used"` (the default): a test links what it reaches (`--gc-sections`, `-dead_strip`); `"objects"`: every object whole *(2026.11.9.1+)* |
+| `store` | directory or `"none"` | where a run is kept in the mtest store's form, relative to the project; the default is `target/mtest`; `"none"` keeps nothing *(2026.11.9.1+)* |
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

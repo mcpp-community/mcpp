@@ -1588,6 +1588,36 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
 }
 
 
+// The root's own `[dev-dependencies]` serve its tests, not its library, which a
+// framework that uses the package under test reaches (names_the_root,
+// graph_edges.cpp): the root's key does not fold them in.
+static bool serves_root_tests(const DependencyEdge& e) {
+    return e.consumerPackageIndex == 0 && e.devTable;
+}
+
+// The package graph the keys fold along: the declared edges, and the imports no
+// declared edge covers. An import a declared edge already covers adds nothing.
+// One that a declared path runs the other way is a module this build generates
+// for the importer below its consumer's root, filed under the consumer by its
+// path (e2e 849): not an upstream, and left out of `importedFrom` rather than
+// closing a cycle.
+static mcpp::graph::AdjacencyList key_graph(const PrepareState& state,
+                                            std::vector<std::set<std::size_t>>& importedFrom) {
+    mcpp::graph::AdjacencyList pkgDeps(state.packages.size());
+    for (auto& e : state.dependencyEdges)
+        if (e.consumerPackageIndex < pkgDeps.size() && !serves_root_tests(e))
+            pkgDeps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
+    for (std::size_t p = 0; p < importedFrom.size(); ++p)
+        std::erase_if(importedFrom[p], [&](std::size_t q) {
+            if (std::ranges::find(pkgDeps[p], q) != pkgDeps[p].end()) return true;
+            const auto above = mcpp::graph::closure(pkgDeps, std::array{q}, /*include_roots=*/false);
+            return std::ranges::find(above, p) != above.end();
+        });
+    for (std::size_t p = 0; p < importedFrom.size(); ++p)
+        pkgDeps[p].insert(pkgDeps[p].end(), importedFrom[p].begin(), importedFrom[p].end());
+    return pkgDeps;
+}
+
 static std::expected<void, std::string> step13_dependency_cache(PrepareState& state, BuildContext& ctx) {
     // ─── Global dependency cache: per-package keys, hit → stage edges ──
     //
@@ -1728,24 +1758,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
         // below walks `mcpp::graph::topological_order` — dependencies before
         // dependents — instead of recursing, with an explicit cycle check up
         // front standing in for the old in-progress guard.
-        mcpp::graph::AdjacencyList pkgDeps(state.packages.size());
-        for (auto& e : state.dependencyEdges)
-            if (e.consumerPackageIndex < pkgDeps.size())
-                pkgDeps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
-        // An import a declared edge already covers adds nothing. One that a
-        // declared path runs the other way is a module this build generates
-        // for the importer below its consumer's root, filed under the
-        // consumer by its path (e2e 849): not an upstream, and left out
-        // rather than closing a cycle.
-        for (std::size_t p = 0; p < importedFrom.size(); ++p)
-            std::erase_if(importedFrom[p], [&](std::size_t q) {
-                if (std::ranges::find(pkgDeps[p], q) != pkgDeps[p].end()) return true;
-                const auto above = mcpp::graph::closure(pkgDeps, std::array{q}, /*include_roots=*/false);
-                return std::ranges::find(above, p) != above.end();
-            });
-        for (std::size_t p = 0; p < importedFrom.size(); ++p)
-            pkgDeps[p].insert(pkgDeps[p].end(), importedFrom[p].begin(), importedFrom[p].end());
-        auto keyOrder = mcpp::graph::topological_order(pkgDeps);
+        auto keyOrder = mcpp::graph::topological_order(key_graph(state, importedFrom));
         if (!keyOrder) {
             keyCycleError = std::format(
                 "dependency cycle through package '{}' while computing "
@@ -1796,7 +1809,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 && state.dep_cache_identities[idx - 1].sourceKind == "version";
             if (!selfIsIndex) localTaint[idx] = 1;
             for (auto& e : state.dependencyEdges) {
-                if (e.consumerPackageIndex != idx) continue;
+                if (e.consumerPackageIndex != idx || serves_root_tests(e)) continue;
                 // `idx`'s dependencies precede it in `keyOrder`, so their
                 // keys and taint are already folded in below.
                 auto const& up = pkgKeys[e.dependencyPackageIndex];
@@ -2188,6 +2201,20 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.runtimeBinding = state.targetRuntimeBinding ? *state.targetRuntimeBinding
                                                     : state.runtimeBindingSnapshot;
     ctx.runUnder = state.runUnder;
+    {
+        auto const& c = state.targetChoice;
+        auto& s = ctx.targetSelection;
+        s.request = c.request;
+        s.identity = c.identity.empty() ? state.tc->targetTriple : c.identity;
+        s.provider = c.provider;
+        s.priority = c.priority;
+        s.fallback = c.fallback;
+        s.why = c.why;
+        for (auto const& k : c.candidates)
+            s.candidates.push_back({ k.row ? std::string(k.row->triple) : std::string{},
+                                     k.provider ? std::string(k.provider->name) : std::string{},
+                                     k.why, k.priority, k.available });
+    }
     if (!state.runUnder.empty()) {
         auto const& o = state.runUnderOrigin;
         ctx.runUnderOrigin = o.originKind == "env" ? o.originKey

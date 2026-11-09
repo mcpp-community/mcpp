@@ -494,7 +494,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     if (auto ft = mcpp::toolchain::triple::parse(tc.targetTriple))
         if (auto spec = mcpp::freestanding::resolve(*ft))
             b.targetImpliedFlags =
-                mcpp::freestanding::compile_flags(*spec, tc.targetCxxRuntime);
+                mcpp::freestanding::compile_flags(*spec, tc.targetCxxRuntime, tc.hostedC);
     b.stdlibId        = tc.stdlibId;
     b.stdlibVersion   = tc.stdlibVersion;
 

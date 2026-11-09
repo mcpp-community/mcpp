@@ -59,9 +59,12 @@ import mcpp.run;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.manifest;
+import mcpp.libs.toml;           // a generated manifest quotes its keys (mcpp#911 B1)
 import mcpp.project;              // the effective manifest a build reads
 import mcpp.build.prepare_inputs;  // cfgpred: the target's conditional tables
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;   // the rows of a system a platform defines (G10)
 import mcpp.toolchain.base;
 import mcpp.ui;
 import mcpp.runtime.elf;
@@ -250,6 +253,9 @@ struct Options {
     // the value `mcpp build --features` takes, carried as that string so the
     // parser that reads it stays the build's own (#641).
     std::string                     features;
+    // `--all-programs` (mcpp#911 B3): every program of the package, the
+    // chosen one and the others beside it.
+    bool                                 allPrograms = false;
 };
 
 // The strip decision for this run: `--strip`/`--no-strip` > `[pack] strip` >
@@ -652,6 +658,23 @@ std::optional<Mode> parse_mode(std::string_view s) {
 }
 
 namespace detail {
+
+// A single file is written where an earlier pack of another format staged its
+// tree under the same name (`<name>-<version>-<triple>`, beside its
+// `.stage-manifest`): that tree is this command's own output and is replaced.
+// Any other directory there is refused rather than removed.
+inline std::string clear_staged_tree(const std::filesystem::path& out) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(out, ec)) return {};
+    const auto manifest = mcpp::pack::stage_manifest_path(out);
+    if (!std::filesystem::exists(manifest, ec))
+        return std::format("cannot write {}: a directory of that name is there, and no pack staged it",
+                           out.string());
+    std::filesystem::remove_all(out, ec);
+    if (!ec) std::filesystem::remove(manifest, ec);
+    return ec ? std::format("cannot replace the staged tree {}: {}", out.string(), ec.message())
+              : std::string();
+}
 
 // Helpers below are kept in a NAMED (non-exported) sub-namespace rather
 // than an anonymous one. Anonymous namespaces inside a module become
@@ -2349,8 +2372,26 @@ std::string hosted_platform_for(const mcpp::platform::Resolved* P, std::string_v
     return std::format("{}@{}", P->package, P->version);
 }
 
+// The platform a row a platform defines is built over, as `--platform` names it.
+std::string platform_ref_of(const mcpp::platform::Resolved& P) {
+    if (!P.selection.ref.spec.path.empty()) return "path:" + P.root.generic_string();
+    return std::format("{}@{}", P.package, P.version);
+}
+
 ProgramRow program_row(std::string_view system, std::string_view arch, bool single,
                        const mcpp::platform::Resolved* P = nullptr) {
+    // A SYSTEM A PLATFORM DEFINES (mcpp#911 G10): its row of that architecture,
+    // built over the platform that defines it, as the platform's carrier and
+    // packs of every other row are.
+    if (system != "linux" && system != "macos" && system != "windows") {
+        if (P && P->active)
+            for (auto const& d : P->fields.defines) {
+                auto t = mcpp::toolchain::triple::parse(d.triple);
+                if (t && t->os == system && t->arch == arch)
+                    return { t->str(), "static", platform_ref_of(*P) };
+            }
+        return { std::format("{}-{}", arch, system), "static", {} };
+    }
     if (system == "linux") {
         const auto triple = std::format("{}-linux-musl", arch);
         return { triple, "static", hosted_platform_for(P, triple) };
@@ -2484,6 +2525,7 @@ bool row_is_built(const ProgramRow& row) {
     if (row.triple.empty()) return true;   // this machine's own row
     auto t = mcpp::toolchain::triple::parse(row.triple);
     if (!t) return false;
+    if (t->defined()) return !row.platform.empty();   // a platform's row, over that platform
     auto* k = mcpp::toolchain::triple::find_known_target(*t);
     return k && k->tier != "planned";
 }
@@ -2564,7 +2606,8 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
         plan.binaryName, b.system, b.arch,
         b.carried.empty() ? "runs the image it is given" : "carries it and runs it",
         plan.platform.display(), b.stem,
-        plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion, b.stem,
+        plan.packageVersion.empty() ? "0.0.0" : plan.packageVersion,
+        mcpp::libs::toml::escape_string(b.stem),
         dependency_entry(c.package),
         static_row_pin(row, plan.platform.fields.toolchain.set ? plan.platform.fields.toolchain.value
                                                                : std::string()));
@@ -3118,7 +3161,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                     "       such linker to ask.",
                     mcpp::pack::binfmt::format_name(fmt), plan.binaryName));
             }
-            auto deps = ldd_parse(plan.builtBinary);
+            // AN ELF WITH NO LOADER AND NO NEEDED IMAGE HAS NO CLOSURE, and is
+            // not run to learn so: `ldd` of a static program that is not this
+            // machine's own -- a row a platform defines (mcpp#911 G10) --
+            // executes it.
+            const auto facts = mcpp::runtime::elf::inspect_elf_runtime(plan.builtBinary);
+            const bool selfContained = facts && facts->interp.empty() && facts->needed.empty();
+            auto deps = selfContained ? decltype(ldd_parse(plan.builtBinary)){}
+                                      : ldd_parse(plan.builtBinary);
             if (!deps) return std::unexpected(Error{std::format(
                 "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
 
@@ -3412,6 +3462,11 @@ std::vector<std::string> systems_for(const std::vector<std::string>& stated, std
     for (auto const& e : stated) {
         if (e == "all") {
             for (auto os : { "linux", "macos", "windows" }) add(os);
+            // And every system the platforms of this process define a row of
+            // for the architecture (mcpp#911 G10).
+            for (auto const* r : mcpp::toolchain::target::rows())
+                if (r->defined && r->arch == arch && !r->os.empty() && r->os != "none")
+                    add(std::string(r->os));
             continue;
         }
         const auto dash = e.find('-');
@@ -3599,6 +3654,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             }
             const auto out = output_for(std::format("{}-{}", f.system, f.arch), suffix);
             fs::create_directories(out.parent_path(), ec);
+            if (auto e = detail::clear_staged_tree(out); !e.empty()) return std::unexpected(Error{e});
             fs::copy_file(program, out, fs::copy_options::overwrite_existing, ec);
             if (ec) return std::unexpected(Error{std::format("cannot write {}: {}", out.string(), ec.message())});
             written.push_back(out);
@@ -3673,6 +3729,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
         const auto program = *packed / (stem + suffix);
         const auto out = output_for(t ? t->str() : plan.triple, suffix);
         fs::create_directories(out.parent_path(), ec);
+        if (auto e = detail::clear_staged_tree(out); !e.empty()) return std::unexpected(Error{e});
         fs::copy_file(program, out, fs::copy_options::overwrite_existing, ec);
         if (ec) return std::unexpected(Error{std::format("cannot write {}: {}", out.string(), ec.message())});
         written.push_back(out);

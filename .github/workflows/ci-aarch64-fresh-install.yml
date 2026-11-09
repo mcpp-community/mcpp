@@ -342,7 +342,7 @@ jobs:
             mkdir -p "$evidence/$(dirname "$relative")"
             cp "$binary" "$evidence/$relative"
             readelf -aW "$binary" > "$evidence/$relative.readelf.txt"
-          done < <(find target/aarch64-linux-gnu -type f -path '*/bin/unit/test_elf_runtime' -print0)
+          done < <(find target/aarch64-linux-gnu -type f -path '*/bin/unit' -print0)
           while IFS= read -r -d '' plan; do
             relative="${plan#target/}"
             mkdir -p "$evidence/$(dirname "$relative")"

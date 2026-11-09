@@ -67,9 +67,22 @@ struct LockedGitSource {
 
 std::optional<LockedGitSource> parse_git_source(std::string_view source);
 
+// THE IDENTITY A REQUEST WAS GIVEN (SPEC-016 §4.5): `[target."<request>"]`
+// with the identity and its provider. A request that names a pattern
+// (`x86_64-windows`) may select another identity on another machine; the
+// record says which one this project's builds used, and `--locked` refuses a
+// build that selects another. Written for every configuration a request
+// selected, kept for the others; absent in a lock written before the table.
+struct LockedTarget {
+    std::string request;
+    std::string identity;
+    std::string provider;
+};
+
 struct Lockfile {
     int                                 schemaVersion = 2;
     std::vector<LockedIndex>            indices;
+    std::vector<LockedTarget>           targets;
     std::vector<LockedPackage>          packages;
 };
 
@@ -137,6 +150,18 @@ std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
         }
     }
 
+    if (auto* tgt = doc->get_table("target")) {
+        for (auto& [k, v] : *tgt) {
+            if (!v.is_table()) continue;
+            auto& tt = v.as_table();
+            LockedTarget lt;
+            lt.request = k;
+            if (auto it = tt.find("identity"); it != tt.end() && it->second.is_string()) lt.identity = it->second.as_string();
+            if (auto it = tt.find("provider"); it != tt.end() && it->second.is_string()) lt.provider = it->second.as_string();
+            if (!lt.identity.empty()) lock.targets.push_back(std::move(lt));
+        }
+    }
+
     // [[package]] arrays are not in our minimal parser. We use [package.<name>] instead.
     // Or just iterate the root looking for top-level "package" table that contains a list.
     // For simplicity in M2: accept either format with top-level array of tables described
@@ -198,6 +223,12 @@ std::string serialize(const Lockfile& lock) {
         out += std::format("\n[indices.\"{}\"]\n", idx.name);
         out += std::format("url = {}\n", t::escape_string(idx.url));
         out += std::format("rev = {}\n", t::escape_string(idx.rev));
+    }
+
+    for (auto& tg : lock.targets) {
+        out += std::format("\n[target.{}]\n", t::escape_string(tg.request));
+        out += std::format("identity = {}\n", t::escape_string(tg.identity));
+        if (!tg.provider.empty()) out += std::format("provider = {}\n", t::escape_string(tg.provider));
     }
 
     // Blank line before packages if we had indices or just after version.

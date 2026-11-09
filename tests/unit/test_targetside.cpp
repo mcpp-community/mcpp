@@ -12,10 +12,12 @@
 // from inside a 7000-line translation unit and had zero test coverage, because
 // asserting it required running a whole build. Nothing here runs a build.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.targetside;
+
+using namespace mcpplibs::mtest;
 
 namespace ts = mcpp::targetside;
 
@@ -48,70 +50,70 @@ ts::Provider provider(std::string name, std::string version,
 
 // ── The capability grammar ───────────────────────────────────────────────────
 
-TEST(TargetSideCapability, ThreeLayerNamesAreAccepted) {
+UTest three_layer_names_are_accepted{"TargetSideCapability/ThreeLayerNamesAreAccepted", [] {
     for (auto [entry, layer] : std::initializer_list<
              std::pair<std::string_view, ts::CapLayer>>{
              {"mcpp:kernel-abi", ts::CapLayer::KernelAbi},
              {"mcpp:c-abi",      ts::CapLayer::CAbi},
              {"mcpp:c++-abi",    ts::CapLayer::CxxAbi}}) {
         auto r = ts::parse_capability(entry);
-        ASSERT_TRUE(r.has_value()) << entry;
-        ASSERT_TRUE(r->has_value()) << entry;
-        EXPECT_EQ((*r)->layer, layer) << entry;
-        EXPECT_TRUE((*r)->interfaceName.empty()) << entry;
+        expect(fatal(r.has_value())) << entry;
+        expect(fatal(r->has_value())) << entry;
+        expect(eq((*r)->layer, layer)) << entry;
+        expect((*r)->interfaceName.empty()) << entry;
     }
-}
+}};
 
-TEST(TargetSideCapability, InterfaceNameIsCarriedByTheDeclaration) {
+UTest interface_name_is_carried_by_the_declaration{"TargetSideCapability/InterfaceNameIsCarriedByTheDeclaration", [] {
     auto r = ts::parse_capability("mcpp:kernel-abi=openkal");
-    ASSERT_TRUE(r.has_value());
-    ASSERT_TRUE(r->has_value());
-    EXPECT_EQ((*r)->layer, ts::CapLayer::KernelAbi);
-    EXPECT_EQ((*r)->interfaceName, "openkal");
-}
+    expect(fatal(r.has_value()));
+    expect(fatal(r->has_value()));
+    expect(eq((*r)->layer, ts::CapLayer::KernelAbi));
+    expect(eq((*r)->interfaceName, "openkal"));
+}};
 
 // The engine must not reject names it does not own. `provides` serves the
 // feature system too, and a closed set over the whole array would break the
 // allocator selection that already ships.
-TEST(TargetSideCapability, NamesOutsideTheReservedPrefixPassThrough) {
+UTest names_outside_the_reserved_prefix_pass_through{"TargetSideCapability/NamesOutsideTheReservedPrefixPassThrough", [] {
     for (std::string_view entry : {"freestanding-allocator",
                                    "hosted-standard-library",
                                    "anything-a-package-invents"}) {
         auto r = ts::parse_capability(entry);
-        ASSERT_TRUE(r.has_value()) << entry;
-        EXPECT_FALSE(r->has_value()) << entry;
+        expect(fatal(r.has_value())) << entry;
+        expect(!r->has_value()) << entry;
     }
-}
+}};
 
 // And the point of having a prefix at all: inside it, a typo is an error rather
 // than a silently disabled behaviour.
-TEST(TargetSideCapability, UnknownNameInsideTheReservedPrefixIsAnError) {
+UTest unknown_name_inside_the_reserved_prefix_is_an_error{"TargetSideCapability/UnknownNameInsideTheReservedPrefixIsAnError", [] {
     for (std::string_view entry : {"mcpp:kernel_abi",   // underscore, not hyphen
                                    "mcpp:cabi",
                                    "mcpp:c++abi",
                                    "mcpp:target-system"}) {
         auto r = ts::parse_capability(entry);
-        EXPECT_FALSE(r.has_value()) << entry;
+        expect(!r.has_value()) << entry;
         if (!r.has_value())
-            EXPECT_NE(r.error().find("mcpp:kernel-abi"), std::string::npos)
+            expect(ne(r.error().find("mcpp:kernel-abi"), std::string::npos))
                 << "the diagnostic must list the layers that do exist";
     }
-}
+}};
 
 // ── The resolution table ─────────────────────────────────────────────────────
 
-TEST(TargetSideResolve, TraditionalStackTakesEveryLayerFromThePayload) {
+UTest traditional_stack_takes_every_layer_from_the_payload{"TargetSideResolve/TraditionalStackTakesEveryLayerFromThePayload", [] {
     auto r = ts::resolve(payload_linux());
-    EXPECT_EQ(r.kernelAbi.origin, ts::Origin::Payload);
-    EXPECT_EQ(r.cAbi.origin,      ts::Origin::Payload);
-    EXPECT_EQ(r.cxx.origin,       ts::Origin::Payload);
-    EXPECT_EQ(r.kernelAbi.interfaceName, "linux");
-    EXPECT_EQ(r.cAbi.interfaceName,      "glibc");
-    EXPECT_EQ(r.cxx.interfaceName,       "libc++");
-    EXPECT_FALSE(r.system_from_graph());
-}
+    expect(eq(r.kernelAbi.origin, ts::Origin::Payload));
+    expect(eq(r.cAbi.origin, ts::Origin::Payload));
+    expect(eq(r.cxx.origin, ts::Origin::Payload));
+    expect(eq(r.kernelAbi.interfaceName, "linux"));
+    expect(eq(r.cAbi.interfaceName, "glibc"));
+    expect(eq(r.cxx.interfaceName, "libc++"));
+    expect(!r.system_from_graph());
+}};
 
-TEST(TargetSideResolve, OpenkalCxxTakesEveryLayerFromTheGraph) {
+UTest openkal_cxx_takes_every_layer_from_the_graph{"TargetSideResolve/OpenkalCxxTakesEveryLayerFromTheGraph", [] {
     auto in = payload_linux();
     in.llvmTriple = "arm64-apple-macos14.0";
     in.targetOs   = "macos";
@@ -120,14 +122,14 @@ TEST(TargetSideResolve, OpenkalCxxTakesEveryLayerFromTheGraph) {
     in.cxxAbi     = provider("openkal-llvm-runtime", "0.1.0", "libc++", /*stdModule=*/true);
 
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.kernelAbi.origin, ts::Origin::Graph);
-    EXPECT_EQ(r.cAbi.origin,      ts::Origin::Graph);
-    EXPECT_EQ(r.cxx.origin,       ts::Origin::Graph);
-    EXPECT_EQ(r.kernelAbi.impl, "openkal-macos@0.3.1");
-    EXPECT_EQ(r.cAbi.impl,      "openkal-musl@0.3.1");
-    EXPECT_FALSE(r.cxx.subset) << "a package that declares a std module supplies the whole library";
-    EXPECT_TRUE(r.system_from_graph());
-}
+    expect(eq(r.kernelAbi.origin, ts::Origin::Graph));
+    expect(eq(r.cAbi.origin, ts::Origin::Graph));
+    expect(eq(r.cxx.origin, ts::Origin::Graph));
+    expect(eq(r.kernelAbi.impl, "openkal-macos@0.3.1"));
+    expect(eq(r.cAbi.impl, "openkal-musl@0.3.1"));
+    expect(!r.cxx.subset) << "a package that declares a std module supplies the whole library";
+    expect(bool(r.system_from_graph()));
+}};
 
 // THE CASE THAT WAS UNREPRESENTABLE, AND THE MEASURED DEFECT.
 //
@@ -136,7 +138,7 @@ TEST(TargetSideResolve, OpenkalCxxTakesEveryLayerFromTheGraph) {
 // read as "the target side is not from the graph", the payload's own libc++
 // stayed on the link line, and a macOS cross ended in
 // `libc++.so: unhandled file type`.
-TEST(TargetSideResolve, PureCOverOpenkalStillHasItsSystemFromTheGraph) {
+UTest pure_c_over_openkal_still_has_its_system_from_the_graph{"TargetSideResolve/PureCOverOpenkalStillHasItsSystemFromTheGraph", [] {
     auto in = payload_linux();
     in.llvmTriple = "arm64-apple-macos14.0";
     in.targetOs   = "macos";
@@ -145,47 +147,47 @@ TEST(TargetSideResolve, PureCOverOpenkalStillHasItsSystemFromTheGraph) {
     // no cxxAbi provider
 
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.cxx.origin, ts::Origin::None)
+    expect(eq(r.cxx.origin, ts::Origin::None))
         << "a C program needs no C++ runtime, and that is not a failure to find one";
-    EXPECT_TRUE(r.system_from_graph())
+    expect(bool(r.system_from_graph()))
         << "the system still comes from the graph, which is the whole defect";
-    EXPECT_NE(r.cxx.origin, ts::Origin::Payload)
+    expect(ne(r.cxx.origin, ts::Origin::Payload))
         << "the payload's C++ runtime must not be selected over a graph C library";
-}
+}};
 
 // Only the platform implementation, and nothing above it.
-TEST(TargetSideResolve, RawOpenkalHasOnlyAKernelAbi) {
+UTest raw_openkal_has_only_a_kernel_abi{"TargetSideResolve/RawOpenkalHasOnlyAKernelAbi", [] {
     auto in = payload_linux();
     in.kernelAbi           = provider("openkal-linux", "0.5.1", "openkal");
     in.sysrootDeclaredEmpty = true;
 
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.kernelAbi.origin, ts::Origin::Graph);
-    EXPECT_TRUE(r.cAbi.absent());
-    EXPECT_TRUE(r.cxx.absent());
-}
+    expect(eq(r.kernelAbi.origin, ts::Origin::Graph));
+    expect(bool(r.cAbi.absent()));
+    expect(bool(r.cxx.absent()));
+}};
 
-TEST(TargetSideResolve, BareMetalWithPicolibcHasNoKernelAbi) {
+UTest bare_metal_with_picolibc_has_no_kernel_abi{"TargetSideResolve/BareMetalWithPicolibcHasNoKernelAbi", [] {
     ts::Inputs in;
     in.llvmTriple          = "riscv64-none-elf";
     in.freestandingTarget  = true;
     in.sysrootXpkg         = "xim:picolibc-riscv@1.8.12";
 
     auto r = ts::resolve(in);
-    EXPECT_TRUE(r.kernelAbi.absent())
+    expect(bool(r.kernelAbi.absent()))
         << "a bare machine has no kernel, and saying so is the information";
-    EXPECT_EQ(r.cAbi.origin,        ts::Origin::Xpkg);
+    expect(eq(r.cAbi.origin, ts::Origin::Xpkg));
     // The package name, not a prettier form of it. Stripping the `-riscv`
     // suffix would mean the engine knows how this ecosystem names its
     // packages, which is exactly the knowledge this design keeps out of it.
-    EXPECT_EQ(r.cAbi.interfaceName, "picolibc-riscv");
-    EXPECT_EQ(r.cAbi.impl,          "xim:picolibc-riscv@1.8.12");
-    EXPECT_TRUE(r.cxx.absent());
-    EXPECT_FALSE(r.system_from_graph());
-}
+    expect(eq(r.cAbi.interfaceName, "picolibc-riscv"));
+    expect(eq(r.cAbi.impl, "xim:picolibc-riscv@1.8.12"));
+    expect(bool(r.cxx.absent()));
+    expect(!r.system_from_graph());
+}};
 
 // THE MIXED CASE. It already ships, and no single boolean can express it.
-TEST(TargetSideResolve, PrebuiltCLibraryUnderAGraphSuppliedCxxSubset) {
+UTest prebuilt_c_library_under_a_graph_supplied_cxx_subset{"TargetSideResolve/PrebuiltCLibraryUnderAGraphSuppliedCxxSubset", [] {
     ts::Inputs in;
     in.llvmTriple         = "riscv64-none-elf";
     in.freestandingTarget = true;
@@ -193,33 +195,33 @@ TEST(TargetSideResolve, PrebuiltCLibraryUnderAGraphSuppliedCxxSubset) {
     in.cxxAbi             = provider("std-freestanding", "0.5.0", "freestanding subset");
 
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.cAbi.origin, ts::Origin::Xpkg)  << "prebuilt";
-    EXPECT_EQ(r.cxx.origin,  ts::Origin::Graph) << "composed at build time";
-    EXPECT_TRUE(r.cxx.subset) << "no std module declared, so the library is a subset";
-}
+    expect(eq(r.cAbi.origin, ts::Origin::Xpkg))  << "prebuilt";
+    expect(eq(r.cxx.origin, ts::Origin::Graph)) << "composed at build time";
+    expect(bool(r.cxx.subset)) << "no std module declared, so the library is a subset";
+}};
 
 // A hosted target whose C library is the payload's (a located SDK, or glibc)
 // while a package supplies the whole standard library: the iOS rows over
 // `llvm.libcxx` (mcpp#630). The C++ layer is the graph's and is not a subset,
 // and the C library stays the payload's; nothing about one decides the other.
-TEST(TargetSideResolve, PrebuiltCLibraryUnderAGraphSuppliedLibcxx) {
+UTest prebuilt_c_library_under_a_graph_supplied_libcxx{"TargetSideResolve/PrebuiltCLibraryUnderAGraphSuppliedLibcxx", [] {
     auto in = payload_linux();
     in.cxxAbi = provider("libcxx", "22.1.8.1", "libc++", /*stdModule=*/true);
 
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.cAbi.origin, ts::Origin::Payload) << "the SDK's or glibc's, prebuilt";
-    EXPECT_TRUE(r.cAbi.prebuilt());
-    EXPECT_EQ(r.cxx.origin, ts::Origin::Graph);
-    EXPECT_TRUE(r.cxx.fromGraph());
-    EXPECT_FALSE(r.cxx.subset) << "a std module is declared, so this is the whole library";
-    EXPECT_FALSE(r.system_from_graph()) << "the system is still the payload's";
-}
+    expect(eq(r.cAbi.origin, ts::Origin::Payload)) << "the SDK's or glibc's, prebuilt";
+    expect(bool(r.cAbi.prebuilt()));
+    expect(eq(r.cxx.origin, ts::Origin::Graph));
+    expect(bool(r.cxx.fromGraph()));
+    expect(!r.cxx.subset) << "a std module is declared, so this is the whole library";
+    expect(!r.system_from_graph()) << "the system is still the payload's";
+}};
 
 // The payload has no compiler runtime for this platform and the graph
 // declares none: the layer is absent, and the report says so rather than
 // naming the compiler's family for an archive that does not exist. With a
 // graph provider the same input resolves to the graph.
-TEST(TargetSideResolve, APayloadWithoutACompilerRuntimeForThePlatform) {
+UTest a_payload_without_a_compiler_runtime_for_the_platform{"TargetSideResolve/APayloadWithoutACompilerRuntimeForThePlatform", [] {
     auto in = payload_linux();
     in.llvmTriple = "arm64-apple-ios18.0-simulator";
     in.targetOs   = "ios";
@@ -228,72 +230,72 @@ TEST(TargetSideResolve, APayloadWithoutACompilerRuntimeForThePlatform) {
     in.payloadCompilerRuntimeAbsent = true;
 
     auto absent = ts::resolve(in);
-    EXPECT_TRUE(absent.compilerRuntime.absent());
+    expect(bool(absent.compilerRuntime.absent()));
 
     in.compilerRuntime = provider("compiler-rt-builtins", "22.1.8.3", "compiler-rt");
     auto supplied = ts::resolve(in);
-    EXPECT_EQ(supplied.compilerRuntime.origin, ts::Origin::Graph);
-    EXPECT_FALSE(supplied.compilerRuntime.absent());
+    expect(eq(supplied.compilerRuntime.origin, ts::Origin::Graph));
+    expect(!supplied.compilerRuntime.absent());
 
     // Negative direction: a payload that has the archive reports its own.
     in.compilerRuntime.reset();
     in.payloadCompilerRuntimeAbsent = false;
     auto own = ts::resolve(in);
-    EXPECT_EQ(own.compilerRuntime.origin, ts::Origin::Payload);
-}
+    expect(eq(own.compilerRuntime.origin, ts::Origin::Payload));
+}};
 
-TEST(TargetSideResolve, ZeroLibcTierHasNothingAtAll) {
+UTest zero_libc_tier_has_nothing_at_all{"TargetSideResolve/ZeroLibcTierHasNothingAtAll", [] {
     ts::Inputs in;
     in.llvmTriple           = "x86_64-none-elf";
     in.freestandingTarget   = true;
     in.sysrootDeclaredEmpty = true;
 
     auto r = ts::resolve(in);
-    EXPECT_TRUE(r.kernelAbi.absent());
-    EXPECT_TRUE(r.cAbi.absent());
-    EXPECT_TRUE(r.cxx.absent());
-}
+    expect(bool(r.kernelAbi.absent()));
+    expect(bool(r.cAbi.absent()));
+    expect(bool(r.cxx.absent()));
+}};
 
 // ── The layering rule ────────────────────────────────────────────────────────
 //
 // An implementation must have been configured for the layer beneath it. The
 // resolver enforces it by construction; this asserts that the construction
 // really does, rather than that a later check catches it.
-TEST(TargetSideResolve, PayloadCxxIsNotSelectedOverANonPayloadCLibrary) {
+UTest payload_cxx_is_not_selected_over_a_non_payload_c_library{"TargetSideResolve/PayloadCxxIsNotSelectedOverANonPayloadCLibrary", [] {
     for (auto make : std::initializer_list<std::function<ts::Inputs()>>{
              [] { auto in = payload_linux(); in.sysrootXpkg = "xim:picolibc-riscv@1.8.12"; return in; },
              [] { auto in = payload_linux();
                   in.cAbi = provider("openkal-musl", "0.3.1", "musl"); return in; }}) {
         auto r = ts::resolve(make());
-        EXPECT_NE(r.cxx.origin, ts::Origin::Payload);
-        EXPECT_EQ(ts::check_layering(r), std::nullopt)
+        expect(ne(r.cxx.origin, ts::Origin::Payload));
+        expect(eq(ts::check_layering(r), std::nullopt))
             << "the default path must not be able to construct the violation";
     }
-}
+}};
 
-TEST(TargetSideResolve, TheLayeringRuleIsStatedForTheOverridePath) {
+UTest the_layering_rule_is_stated_for_the_override_path{"TargetSideResolve/TheLayeringRuleIsStatedForTheOverridePath", [] {
     ts::TargetSide bad;
     bad.cAbi = { ts::Origin::Graph,   "musl",   "openkal-musl@0.3.1", false };
     bad.cxx  = { ts::Origin::Payload, "libc++", "xim-x-llvm@22.1.8",  false };
 
     auto why = ts::check_layering(bad);
-    ASSERT_TRUE(why.has_value());
-    EXPECT_NE(why->find("never configured for this one"), std::string::npos)
+    expect(fatal(why.has_value()));
+    expect(ne(why->find("never configured for this one"), std::string::npos))
         << "the diagnostic must state the reason, not merely the combination";
-}
+}};
 
 // ── The report ───────────────────────────────────────────────────────────────
 
-TEST(TargetSideReport, ShowsTheTranslatedTripleWhenItDiffers) {
+UTest shows_the_translated_triple_when_it_differs{"TargetSideReport/ShowsTheTranslatedTripleWhenItDiffers", [] {
     auto in = payload_linux();
     in.llvmTriple = "arm64-apple-macos14.0";
     auto text = ts::format_report(ts::resolve(in), "aarch64-macos");
-    EXPECT_NE(text.find("aarch64-macos → arm64-apple-macos14.0"), std::string::npos)
+    expect(ne(text.find("aarch64-macos → arm64-apple-macos14.0"), std::string::npos))
         << "the translation is load bearing: the untranslated form emits a Mach-O "
            "whose MinVersion carries no platform";
-}
+}};
 
-TEST(TargetSideReport, AbsentLayersReadAsADashRatherThanBeingOmitted) {
+UTest absent_layers_read_as_a_dash_rather_than_being_omitted{"TargetSideReport/AbsentLayersReadAsADashRatherThanBeingOmitted", [] {
     ts::Inputs in;
     in.llvmTriple           = "x86_64-none-elf";
     in.freestandingTarget   = true;
@@ -301,38 +303,38 @@ TEST(TargetSideReport, AbsentLayersReadAsADashRatherThanBeingOmitted) {
     in.compilerFamily       = "llvm";
     auto text = ts::format_report(ts::resolve(in), "x86_64-none-elf",
                                   /*verbose=*/true);
-    EXPECT_NE(text.find("kernel-abi"), std::string::npos);
-    EXPECT_NE(text.find("c-abi"), std::string::npos);
-    EXPECT_NE(text.find("c++-abi"), std::string::npos);
-    EXPECT_NE(text.find("—"), std::string::npos);
-}
+    expect(ne(text.find("kernel-abi"), std::string::npos));
+    expect(ne(text.find("c-abi"), std::string::npos));
+    expect(ne(text.find("c++-abi"), std::string::npos));
+    expect(ne(text.find("—"), std::string::npos));
+}};
 
-TEST(TargetSideReport, NamesInterfaceAndImplementationSeparately) {
+UTest names_interface_and_implementation_separately{"TargetSideReport/NamesInterfaceAndImplementationSeparately", [] {
     auto in = payload_linux();
     in.kernelAbi = provider("openkal-opensbi", "0.1.0", "openkal");
     auto text = ts::format_report(ts::resolve(in), "riscv64-none-elf");
-    EXPECT_NE(text.find("openkal"), std::string::npos);
-    EXPECT_NE(text.find("openkal-opensbi@0.1.0"), std::string::npos)
+    expect(ne(text.find("openkal"), std::string::npos));
+    expect(ne(text.find("openkal-opensbi@0.1.0"), std::string::npos))
         << "four packages answer to one interface name; collapsing them would "
            "hide why one source reaches four machines";
-    EXPECT_NE(text.find("graph"), std::string::npos);
-}
+    expect(ne(text.find("graph"), std::string::npos));
+}};
 
 // ── What earns a line ────────────────────────────────────────────────────────
 //
 // A zero-configuration build resolves every layer from one compiler payload,
 // and five lines reading `(payload)` answer a question nobody asked. What earns
 // a line is a layer that came from somewhere else.
-TEST(TargetSideReport, AZeroConfigurationBuildPrintsOnlyTheTarget) {
+UTest a_zero_configuration_build_prints_only_the_target{"TargetSideReport/AZeroConfigurationBuildPrintsOnlyTheTarget", [] {
     auto in = payload_linux();
     in.compilerFamily  = "llvm";
     in.compilerVersion = "22.1.8";
     auto text = ts::format_report(ts::resolve(in), "x86_64-linux-gnu");
-    EXPECT_EQ(text.find('\n'), std::string::npos)
+    expect(eq(text.find('\n'), std::string::npos))
         << "every layer came from the payload, so none of them is news:\n" << text;
-}
+}};
 
-TEST(TargetSideReport, VerbosePrintsAllFiveIncludingThePayloadOnes) {
+UTest verbose_prints_all_five_including_the_payload_ones{"TargetSideReport/VerbosePrintsAllFiveIncludingThePayloadOnes", [] {
     auto in = payload_linux();
     in.compilerFamily  = "llvm";
     in.compilerVersion = "22.1.8";
@@ -340,34 +342,34 @@ TEST(TargetSideReport, VerbosePrintsAllFiveIncludingThePayloadOnes) {
                                   /*verbose=*/true);
     for (auto* label : {"compiler", "compiler-runtime", "kernel-abi", "c-abi",
                         "c++-abi"})
-        EXPECT_NE(text.find(label), std::string::npos) << label;
-}
+        expect(ne(text.find(label), std::string::npos)) << label;
+}};
 
 // An absent layer is a statement, and whether the stack is shown at all must not
 // depend on where that statement sits among the rows. A bare-metal build has an
 // absent kernel interface ABOVE a prebuilt C library; deciding per row swallowed
 // the first and printed the second.
-TEST(TargetSideReport, AnAbsentLayerAboveAPrintedOneIsStillPrinted) {
+UTest an_absent_layer_above_a_printed_one_is_still_printed{"TargetSideReport/AnAbsentLayerAboveAPrintedOneIsStillPrinted", [] {
     ts::Inputs in;
     in.llvmTriple         = "riscv64-none-elf";
     in.freestandingTarget = true;
     in.compilerFamily     = "llvm";
     in.sysrootXpkg        = "xim:picolibc-riscv@1.8.12";
     auto text = ts::format_report(ts::resolve(in), "riscv64-none-elf");
-    EXPECT_NE(text.find("c-abi"), std::string::npos) << text;
-    EXPECT_NE(text.find("kernel-abi"), std::string::npos)
+    expect(ne(text.find("c-abi"), std::string::npos)) << text;
+    expect(ne(text.find("kernel-abi"), std::string::npos))
         << "the kernel interface is absent, which is the information:\n" << text;
-}
+}};
 
-TEST(TargetSideReport, OnlyTheLayersThatCameFromElsewhereEarnALine) {
+UTest only_the_layers_that_came_from_elsewhere_earn_a_line{"TargetSideReport/OnlyTheLayersThatCameFromElsewhereEarnALine", [] {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
     in.cxxAbi = provider("openkal-llvm-runtime", "0.1.1", "libc++");
     auto text = ts::format_report(ts::resolve(in), "x86_64-linux-gnu");
-    EXPECT_NE(text.find("c++-abi"), std::string::npos);
-    EXPECT_EQ(text.find("kernel-abi"), std::string::npos)
+    expect(ne(text.find("c++-abi"), std::string::npos));
+    expect(eq(text.find("kernel-abi"), std::string::npos))
         << "the kernel interface is the payload's, which is not news";
-}
+}};
 
 // ── The five layers ──────────────────────────────────────────────────────────
 
@@ -375,81 +377,81 @@ TEST(TargetSideReport, OnlyTheLayersThatCameFromElsewhereEarnALine) {
 // one. macOS has none, and falling back to `glibc` named a library that does not
 // exist on the platform — invisible while the report printed only the layers a
 // build had something to say about.
-TEST(TargetSideResolve, ThePayloadCLibraryIsNamedForItsPlatform) {
+UTest the_payload_c_library_is_named_for_its_platform{"TargetSideResolve/ThePayloadCLibraryIsNamedForItsPlatform", [] {
     auto mac = payload_linux();
     mac.targetOs  = "macos";
     mac.targetEnv = "";
-    EXPECT_EQ(ts::resolve(mac).cAbi.interfaceName, "libSystem");
+    expect(eq(ts::resolve(mac).cAbi.interfaceName, "libSystem"));
 
     auto win = payload_linux();
     win.targetOs  = "windows";
     win.targetEnv = "";
-    EXPECT_EQ(ts::resolve(win).cAbi.interfaceName, "ucrt");
+    expect(eq(ts::resolve(win).cAbi.interfaceName, "ucrt"));
 
     // #540: the layer names the LIBRARY, never the triple's env segment. `musl`
     // is both spellings at once and hid the difference; `gnu` is not the name of
     // any C library, and on Windows it does not even mean the same one.
-    EXPECT_EQ(ts::resolve(payload_linux()).cAbi.interfaceName, "glibc")
+    expect(eq(ts::resolve(payload_linux()).cAbi.interfaceName, "glibc"))
         << "the env segment `gnu` asks for a C library; the layer answers glibc";
 
     auto winGnu = payload_linux();
     winGnu.targetOs  = "windows";
     winGnu.targetEnv = "gnu";
-    EXPECT_EQ(ts::resolve(winGnu).cAbi.interfaceName, "ucrt")
+    expect(eq(ts::resolve(winGnu).cAbi.interfaceName, "ucrt"))
         << "on Windows `-gnu` names the MinGW toolchain flavour, not glibc";
 
     auto musl = payload_linux();
     musl.targetEnv = "musl";
-    EXPECT_EQ(ts::resolve(musl).cAbi.interfaceName, "musl")
+    expect(eq(ts::resolve(musl).cAbi.interfaceName, "musl"))
         << "the one env segment that IS a C library name is unchanged";
-}
+}};
 
 // The rename above must not turn every ordinary `-gnu` build into a reported
 // request mismatch: the request keeps the triple's spelling by definition
 // (docs/specs/target-side.md §3.4) and the answer now names the library.
-TEST(TargetSideResolve, TheEnvRequestIsSatisfiedByTheLibraryItNames) {
-    EXPECT_TRUE(ts::c_abi_request_satisfied("gnu",   "glibc"));
-    EXPECT_TRUE(ts::c_abi_request_satisfied("gnu",   "ucrt"));
-    EXPECT_TRUE(ts::c_abi_request_satisfied("musl",  "musl"));
-    EXPECT_TRUE(ts::c_abi_request_satisfied("glibc", "gnu"));
-    EXPECT_FALSE(ts::c_abi_request_satisfied("gnu",  "musl"));
-    EXPECT_FALSE(ts::c_abi_request_satisfied("musl", "glibc"));
-}
+UTest the_env_request_is_satisfied_by_the_library_it_names{"TargetSideResolve/TheEnvRequestIsSatisfiedByTheLibraryItNames", [] {
+    expect(bool(ts::c_abi_request_satisfied("gnu",   "glibc")));
+    expect(bool(ts::c_abi_request_satisfied("gnu",   "ucrt")));
+    expect(bool(ts::c_abi_request_satisfied("musl",  "musl")));
+    expect(bool(ts::c_abi_request_satisfied("glibc", "gnu")));
+    expect(!ts::c_abi_request_satisfied("gnu",  "musl"));
+    expect(!ts::c_abi_request_satisfied("musl", "glibc"));
+}};
 
-TEST(TargetSideResolve, TheCompilerIsALayerAndItIsAlwaysThePayloads) {
+UTest the_compiler_is_a_layer_and_it_is_always_the_payloads{"TargetSideResolve/TheCompilerIsALayerAndItIsAlwaysThePayloads", [] {
     auto in = payload_linux();
     in.compilerFamily  = "gcc";
     in.compilerVersion = "16.1.0";
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.compiler.origin, ts::Origin::Payload);
-    EXPECT_EQ(r.compiler.interfaceName, "gcc");
-    EXPECT_EQ(r.compiler.impl, "16.1.0");
-}
+    expect(eq(r.compiler.origin, ts::Origin::Payload));
+    expect(eq(r.compiler.interfaceName, "gcc"));
+    expect(eq(r.compiler.impl, "16.1.0"));
+}};
 
 // The builtins are what a PURE C PROGRAM needs. A package supplies them only
 // when the payload's own are wrong for the target; absent from the graph means
 // the payload's, not absent.
-TEST(TargetSideResolve, TheCompilerRuntimeDefaultsToTheCompilersOwn) {
+UTest the_compiler_runtime_defaults_to_the_compilers_own{"TargetSideResolve/TheCompilerRuntimeDefaultsToTheCompilersOwn", [] {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
     auto r = ts::resolve(in);
-    EXPECT_EQ(r.compilerRuntime.origin, ts::Origin::Payload);
-    EXPECT_EQ(r.compilerRuntime.interfaceName, "llvm");
+    expect(eq(r.compilerRuntime.origin, ts::Origin::Payload));
+    expect(eq(r.compilerRuntime.interfaceName, "llvm"));
 
     in.compilerRuntime = provider("openkal-llvm-runtime", "0.1.1", "compiler-rt");
     auto g = ts::resolve(in);
-    EXPECT_EQ(g.compilerRuntime.origin, ts::Origin::Graph);
-    EXPECT_EQ(g.compilerRuntime.interfaceName, "compiler-rt");
-}
+    expect(eq(g.compilerRuntime.origin, ts::Origin::Graph));
+    expect(eq(g.compilerRuntime.interfaceName, "compiler-rt"));
+}};
 
-TEST(TargetSideCapability, TheCompilerIsALayerNoPackageMaySupply) {
-    EXPECT_FALSE(ts::layer_is_suppliable_by_package(ts::CapLayer::Compiler));
+UTest the_compiler_is_a_layer_no_package_may_supply{"TargetSideCapability/TheCompilerIsALayerNoPackageMaySupply", [] {
+    expect(!ts::layer_is_suppliable_by_package(ts::CapLayer::Compiler));
     for (auto l : {ts::CapLayer::CompilerRuntime, ts::CapLayer::KernelAbi,
                    ts::CapLayer::CAbi, ts::CapLayer::CxxAbi})
-        EXPECT_TRUE(ts::layer_is_suppliable_by_package(l));
-}
+        expect(ts::layer_is_suppliable_by_package(l));
+}};
 
-TEST(TargetSideCapability, TheGrammarKnowsAllFiveLayers) {
+UTest the_grammar_knows_all_five_layers{"TargetSideCapability/TheGrammarKnowsAllFiveLayers", [] {
     struct Row { const char* entry; ts::CapLayer layer; const char* iface; };
     for (auto const& row : std::initializer_list<Row>{
              {"mcpp:compiler=llvm",              ts::CapLayer::Compiler,        "llvm"},
@@ -458,22 +460,22 @@ TEST(TargetSideCapability, TheGrammarKnowsAllFiveLayers) {
              {"mcpp:c-abi=musl",                 ts::CapLayer::CAbi,            "musl"},
              {"mcpp:c++-abi=libc++",             ts::CapLayer::CxxAbi,          "libc++"}}) {
         auto parsed = ts::parse_capability(row.entry);
-        ASSERT_TRUE(parsed.has_value()) << row.entry;
-        ASSERT_TRUE(parsed->has_value()) << row.entry;
-        EXPECT_EQ((*parsed)->layer, row.layer) << row.entry;
-        EXPECT_EQ((*parsed)->interfaceName, row.iface) << row.entry;
+        expect(fatal(parsed.has_value())) << row.entry;
+        expect(fatal(parsed->has_value())) << row.entry;
+        expect(eq((*parsed)->layer, row.layer)) << row.entry;
+        expect(eq((*parsed)->interfaceName, row.iface)) << row.entry;
     }
     // Outside the reserved prefix the feature system owns the name.
     auto own = ts::parse_capability("freestanding-allocator");
-    ASSERT_TRUE(own.has_value());
-    EXPECT_FALSE(own->has_value());
+    expect(fatal(own.has_value()));
+    expect(!own->has_value());
     // Inside it, a misspelling is an error rather than a silently dead check.
-    EXPECT_FALSE(ts::parse_capability("mcpp:c_abi=musl").has_value());
-}
+    expect(!(ts::parse_capability("mcpp:c_abi=musl").has_value()));
+}};
 
 // ── The triple is a request; the target side is the fact ────────────────────
 
-TEST(TargetSideRequest, AFilledEnvSegmentStatesNothing) {
+UTest a_filled_env_segment_states_nothing{"TargetSideRequest/AFilledEnvSegmentStatesNothing", [] {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
     in.cAbi = provider("openkal-musl", "0.3.3", "musl");
@@ -481,14 +483,14 @@ TEST(TargetSideRequest, AFilledEnvSegmentStatesNothing) {
     // `--target x86_64-linux` — the project declined to name a C library, so
     // the parser's fill must not become a claim it can be held to.
     in.requestedCAbi.clear();
-    EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
-}
+    expect(eq(ts::check_request(ts::resolve(in)), std::nullopt));
+}};
 
 // REPORTED, NOT REFUSED. The graph supplies the C library either way, so the
 // segment is ignored rather than violated and the artifact is identical with or
 // without it. Refusing was tried and broke every project spelling the host
 // target `x86_64-linux-gnu` — which is what `mcpp toolchain list` prints.
-TEST(TargetSideRequest, AWrittenEnvSegmentThatDisagreesIsReported) {
+UTest a_written_env_segment_that_disagrees_is_reported{"TargetSideRequest/AWrittenEnvSegmentThatDisagreesIsReported", [] {
     auto in = payload_linux();
     in.compilerFamily     = "llvm";
     in.cAbi               = provider("openkal-musl", "0.3.3", "musl");
@@ -496,23 +498,23 @@ TEST(TargetSideRequest, AWrittenEnvSegmentThatDisagreesIsReported) {
     in.requestFreeTarget  = "x86_64-linux";
     in.envAxis            = ts::EnvAxis::CLibrary;
     auto why = ts::check_request(ts::resolve(in));
-    ASSERT_TRUE(why.has_value());
-    EXPECT_NE(why->find("`gnu`"), std::string::npos);
-    EXPECT_NE(why->find("musl"), std::string::npos);
-    EXPECT_NE(why->find("--target x86_64-linux"), std::string::npos)
+    expect(fatal(why.has_value()));
+    expect(ne(why->find("`gnu`"), std::string::npos));
+    expect(ne(why->find("musl"), std::string::npos));
+    expect(ne(why->find("--target x86_64-linux"), std::string::npos))
         << "telling someone their target name is wrong is only useful once "
            "there is a right one to give them";
-}
+}};
 
-TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {
+UTest a_prebuilt_c_library_is_what_the_request_selected{"TargetSideRequest/APrebuiltCLibraryIsWhatTheRequestSelected", [] {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
     in.requestedCAbi  = "musl";
     in.envAxis        = ts::EnvAxis::CLibrary;
     // No graph supplier: the payload's C library IS the request's answer, so
     // there is nothing to contradict even when the names differ.
-    EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
-}
+    expect(eq(ts::check_request(ts::resolve(in)), std::nullopt));
+}};
 
 // On Windows the same segment names the OBJECT ABI — `gnu` is PE with the
 // GNU ABI, `msvc` is PE with Microsoft's — and both are compatible with more
@@ -527,7 +529,7 @@ TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {
 // C library replaces. The second half is a name/fact disagreement of exactly
 // the shape this function reports, and it went unreported — while the identical
 // shape on Linux warned.
-TEST(TargetSideRequest, TheObjectAbiAxisReportsTheCLibraryHalfToo) {
+UTest the_object_abi_axis_reports_the_c_library_half_too{"TargetSideRequest/TheObjectAbiAxisReportsTheCLibraryHalfToo", [] {
     auto in = payload_linux();
     in.targetOs          = "windows";
     in.compilerFamily    = "llvm";
@@ -537,18 +539,18 @@ TEST(TargetSideRequest, TheObjectAbiAxisReportsTheCLibraryHalfToo) {
     in.envAxis           = ts::EnvAxis::ObjectAbi;
 
     auto why = ts::check_request(ts::resolve(in));
-    ASSERT_NE(why, std::nullopt);
-    EXPECT_NE(why->find("musl"), std::string::npos) << *why;
+    expect(fatal(ne(why, std::nullopt)));
+    if (auto&& failed = expect(ne(why->find("musl"), std::string::npos)); !failed) failed << *why;
     // And it says the ABI half was honoured, so the reader does not conclude
     // the object ABI changed as well.
-    EXPECT_NE(why->find("object ABI"), std::string::npos) << *why;
-    EXPECT_NE(why->find("--target x86_64-windows"), std::string::npos) << *why;
-}
+    expect(ne(why->find("object ABI"), std::string::npos)) << *why;
+    if (auto&& failed = expect(ne(why->find("--target x86_64-windows"), std::string::npos)); !failed) failed << *why;
+}};
 
 // The object-FORMAT axis stays exempt, and not for symmetry: `elf` names no C
 // library on any platform, so "asks for the `elf` C ABI" would be nonsense
 // rather than merely noisy.
-TEST(TargetSideRequest, TheObjectFormatAxisStaysExempt) {
+UTest the_object_format_axis_stays_exempt{"TargetSideRequest/TheObjectFormatAxisStaysExempt", [] {
     auto in = payload_linux();
     in.targetOs          = "none";
     in.compilerFamily    = "llvm";
@@ -556,8 +558,8 @@ TEST(TargetSideRequest, TheObjectFormatAxisStaysExempt) {
     in.requestedCAbi     = "elf";
     in.requestFreeTarget = "riscv64-none";
     in.envAxis           = ts::EnvAxis::ObjectFormat;
-    EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
-}
+    expect(eq(ts::check_request(ts::resolve(in)), std::nullopt));
+}};
 
 // AND WHEN IT DOES NOT NAME ONE, THE REPORT SAYS WHAT IT DOES NAME.
 //
@@ -568,7 +570,7 @@ TEST(TargetSideRequest, TheObjectFormatAxisStaysExempt) {
 // THE GLOSS IS NOW THE OBJECT-FORMAT AXIS ALONE. The object-ABI axis warns
 // instead (see `TheObjectAbiAxisReportsTheCLibraryHalfToo`), and leaving both
 // in place would state one finding twice — once as an aside, once as a warning.
-TEST(TargetSideReport, TheObjectAbiAxisIsNoLongerGlossed) {
+UTest the_object_abi_axis_is_no_longer_glossed{"TargetSideReport/TheObjectAbiAxisIsNoLongerGlossed", [] {
     auto in = payload_linux();
     in.targetOs          = "windows";
     in.compilerFamily    = "llvm";
@@ -578,12 +580,12 @@ TEST(TargetSideReport, TheObjectAbiAxisIsNoLongerGlossed) {
     in.envAxis           = ts::EnvAxis::ObjectAbi;
 
     auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
-    EXPECT_EQ(r.find("not a C library"), std::string::npos) << r;
-}
+    expect(eq(r.find("not a C library"), std::string::npos)) << r;
+}};
 
 // A bare-metal target's segment names the object FORMAT, and the same gloss
 // applies with a different noun. One enum, three platforms, no `#if`.
-TEST(TargetSideReport, OnBareMetalTheSegmentNamesTheObjectFormat) {
+UTest on_bare_metal_the_segment_names_the_object_format{"TargetSideReport/OnBareMetalTheSegmentNamesTheObjectFormat", [] {
     auto in = payload_linux();
     in.targetOs          = "none";
     in.compilerFamily    = "llvm";
@@ -593,16 +595,15 @@ TEST(TargetSideReport, OnBareMetalTheSegmentNamesTheObjectFormat) {
     in.envAxis           = ts::EnvAxis::ObjectFormat;
 
     auto r = ts::format_report(ts::resolve(in), "riscv64-none-elf");
-    EXPECT_NE(r.find("elf selects the object format, not a C library"),
-              std::string::npos) << r;
-}
+    expect(ne(r.find("elf selects the object format, not a C library"), std::string::npos)) << r;
+}};
 
 // AND IT DOES NOT FIRE WHEN THE C LIBRARY CAME FROM A PAYLOAD.
 //
 // A payload C library IS what the triple selected — the triple is how it was
 // selected — so `gnu → ucrt` follows visibly and a gloss would be noise on
 // every ordinary Windows build.
-TEST(TargetSideReport, NoGlossWhenTheTripleItselfChoseTheCLibrary) {
+UTest no_gloss_when_the_triple_itself_chose_the_c_library{"TargetSideReport/NoGlossWhenTheTripleItselfChoseTheCLibrary", [] {
     auto in = payload_linux();
     in.targetOs          = "windows";
     in.compilerFamily    = "llvm";
@@ -612,13 +613,13 @@ TEST(TargetSideReport, NoGlossWhenTheTripleItselfChoseTheCLibrary) {
     // cAbi left as the payload's — not from the graph.
 
     auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
-    EXPECT_EQ(r.find("not a C library"), std::string::npos) << r;
-}
+    expect(eq(r.find("not a C library"), std::string::npos)) << r;
+}};
 
 // On Linux the segment DOES name a C library, so there is nothing to gloss —
 // the disagreement is reported as a warning instead, which is a different
 // mechanism and must not double up.
-TEST(TargetSideReport, NoGlossWhereTheSegmentNamesACLibrary) {
+UTest no_gloss_where_the_segment_names_ac_library{"TargetSideReport/NoGlossWhereTheSegmentNamesACLibrary", [] {
     auto in = payload_linux();
     in.compilerFamily    = "llvm";
     in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
@@ -627,13 +628,13 @@ TEST(TargetSideReport, NoGlossWhereTheSegmentNamesACLibrary) {
     in.envAxis           = ts::EnvAxis::CLibrary;
 
     auto r = ts::format_report(ts::resolve(in), "x86_64-linux-gnu");
-    EXPECT_EQ(r.find("not a C library"), std::string::npos) << r;
-    EXPECT_NE(ts::check_request(ts::resolve(in)), std::nullopt);
-}
+    expect(eq(r.find("not a C library"), std::string::npos)) << r;
+    expect(ne(ts::check_request(ts::resolve(in)), std::nullopt));
+}};
 
 // ── Rule two: declared requirements ──────────────────────────────────────────
 
-TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {
+UTest a_requirement_is_checked_against_what_resolved{"TargetSideRequirements/ARequirementIsCheckedAgainstWhatResolved", [] {
     auto in = payload_linux();
     in.compilerFamily = "gcc";
     in.cxxAbi = provider("acme-runtime", "0.1.0", "libc++");
@@ -642,9 +643,9 @@ TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {
     std::vector<ts::Requirement> reqs{
         {"acme-runtime@0.1.0", ts::CapLayer::Compiler, "llvm"}};
     auto why = ts::check_requirements(r, reqs);
-    ASSERT_TRUE(why.has_value());
-    EXPECT_NE(why->find("requires the compiler to be `llvm`"), std::string::npos);
-    EXPECT_NE(why->find("default = \"llvm\""), std::string::npos)
+    expect(fatal(why.has_value()));
+    expect(ne(why->find("requires the compiler to be `llvm`"), std::string::npos));
+    expect(ne(why->find("default = \"llvm\""), std::string::npos))
         << "a diagnostic that names no next step is a diagnostic the reader "
            "must still go and research";
     // AND THE STEP IT NAMES MUST NOT BE A GLOBAL ONE. Until 2026.8.26.2 the
@@ -653,22 +654,22 @@ TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {
     // asked. mcpp now applies the graph's requirement itself wherever its own
     // answer was revisable, so a global change is both unnecessary and, in the
     // only case that still reaches here, ineffective.
-    EXPECT_EQ(why->find("mcpp toolchain default"), std::string::npos)
+    expect(eq(why->find("mcpp toolchain default"), std::string::npos))
         << "the remedy must stay inside the project that has the problem";
 
     // With the caller naming where the compiler was stated, the advice points
     // at that statement instead of at the generic pair of spellings.
     auto stated = ts::check_requirements(r, reqs, "[toolchain] in mcpp.toml");
-    ASSERT_TRUE(stated.has_value());
-    EXPECT_NE(stated->find("[toolchain] in mcpp.toml"), std::string::npos);
-    EXPECT_NE(stated->find("remove it"), std::string::npos)
+    expect(fatal(stated.has_value()));
+    expect(ne(stated->find("[toolchain] in mcpp.toml"), std::string::npos));
+    expect(ne(stated->find("remove it"), std::string::npos))
         << "removing the statement is what lets mcpp take the graph's compiler";
 
     in.compilerFamily = "llvm";
-    EXPECT_EQ(ts::check_requirements(ts::resolve(in), reqs), std::nullopt);
-}
+    expect(eq(ts::check_requirements(ts::resolve(in), reqs), std::nullopt));
+}};
 
-TEST(TargetSideRequirements, AnUnsuppliedLayerIsNamedAsSuch) {
+UTest an_unsupplied_layer_is_named_as_such{"TargetSideRequirements/AnUnsuppliedLayerIsNamedAsSuch", [] {
     auto in = payload_linux();
     in.compilerFamily       = "llvm";
     in.freestandingTarget   = true;
@@ -676,28 +677,28 @@ TEST(TargetSideRequirements, AnUnsuppliedLayerIsNamedAsSuch) {
     std::vector<ts::Requirement> reqs{
         {"acme-board@0.1.0", ts::CapLayer::CAbi, "picolibc"}};
     auto why = ts::check_requirements(ts::resolve(in), reqs);
-    ASSERT_TRUE(why.has_value());
-    EXPECT_NE(why->find("nothing supplies that layer"), std::string::npos);
-    EXPECT_NE(why->find("mcpp:c-abi=picolibc"), std::string::npos);
-}
+    expect(fatal(why.has_value()));
+    expect(ne(why->find("nothing supplies that layer"), std::string::npos));
+    expect(ne(why->find("mcpp:c-abi=picolibc"), std::string::npos));
+}};
 
 // ── Rule one: one supplier per layer ─────────────────────────────────────────
 
-TEST(TargetSideConflict, TwoSuppliersAreNamedTogetherWithHowEachArrived) {
+UTest two_suppliers_are_named_together_with_how_each_arrived{"TargetSideConflict/TwoSuppliersAreNamedTogetherWithHowEachArrived", [] {
     ts::Conflict c;
     c.layer     = ts::CapLayer::CAbi;
     c.first     = "mcpplibs/openkal-musl@0.3.3";
     c.firstVia  = "a transitive dependency";
     c.second    = "acme/tinylibc@0.2.0";
     auto text = ts::format_conflict(c);
-    EXPECT_NE(text.find("openkal-musl@0.3.3"), std::string::npos);
-    EXPECT_NE(text.find("tinylibc@0.2.0"), std::string::npos);
-    EXPECT_NE(text.find("a transitive dependency"), std::string::npos);
-    EXPECT_NE(text.find("a direct dependency"), std::string::npos);
-    EXPECT_NE(text.find("choice rather than a contribution"), std::string::npos)
+    expect(ne(text.find("openkal-musl@0.3.3"), std::string::npos));
+    expect(ne(text.find("tinylibc@0.2.0"), std::string::npos));
+    expect(ne(text.find("a transitive dependency"), std::string::npos));
+    expect(ne(text.find("a direct dependency"), std::string::npos));
+    expect(ne(text.find("choice rather than a contribution"), std::string::npos))
         << "the reason matters: choosing wrong does not fail the link, it "
            "produces a program that runs and occasionally does not";
-}
+}};
 
 // ── Which layer decides the payload's C-library flags ───────────────────────
 //
@@ -733,38 +734,38 @@ mcpp::targetside::TargetSide side_with(mcpp::targetside::Origin cAbiOrigin,
 }
 }
 
-TEST(TargetSideCLibrary, ThePayloadsCLibraryIsPrebuilt) {
+UTest the_payloads_c_library_is_prebuilt{"TargetSideCLibrary/ThePayloadsCLibraryIsPrebuilt", [] {
     // The shape that failed: the graph supplies the kernel interface and the C
     // library is still the payload's, so the payload's flags must survive.
-    EXPECT_TRUE(side_with(mcpp::targetside::Origin::Payload).cAbi.prebuilt());
-}
+    expect(bool(side_with(mcpp::targetside::Origin::Payload).cAbi.prebuilt()));
+}};
 
-TEST(TargetSideCLibrary, AnXpkgSysrootIsPrebuiltToo) {
+UTest an_xpkg_sysroot_is_prebuilt_too{"TargetSideCLibrary/AnXpkgSysrootIsPrebuiltToo", [] {
     // The value a hand-written `fromGraph() || absent()` was silent about. A
     // sysroot from an xpkg is a directory that existed before resolution, like
     // a payload and unlike a package.
-    EXPECT_TRUE(side_with(mcpp::targetside::Origin::Xpkg).cAbi.prebuilt());
-}
+    expect(bool(side_with(mcpp::targetside::Origin::Xpkg).cAbi.prebuilt()));
+}};
 
-TEST(TargetSideCLibrary, AGraphBuiltCLibraryIsNotPrebuilt) {
-    EXPECT_FALSE(side_with(mcpp::targetside::Origin::Graph).cAbi.prebuilt());
-}
+UTest a_graph_built_c_library_is_not_prebuilt{"TargetSideCLibrary/AGraphBuiltCLibraryIsNotPrebuilt", [] {
+    expect(!(side_with(mcpp::targetside::Origin::Graph).cAbi.prebuilt()));
+}};
 
-TEST(TargetSideCLibrary, NoCLibraryIsNotPrebuilt) {
+UTest no_c_library_is_not_prebuilt{"TargetSideCLibrary/NoCLibraryIsNotPrebuilt", [] {
     // Nothing to reach, and the link line adds `-nostdlib -static` for it.
-    EXPECT_FALSE(side_with(mcpp::targetside::Origin::None).cAbi.prebuilt());
-    EXPECT_TRUE(side_with(mcpp::targetside::Origin::None).cAbi.absent());
-}
+    expect(!(side_with(mcpp::targetside::Origin::None).cAbi.prebuilt()));
+    expect(bool(side_with(mcpp::targetside::Origin::None).cAbi.absent()));
+}};
 
-TEST(TargetSideCLibrary, TheKernelInterfaceDoesNotDecideIt) {
+UTest the_kernel_interface_does_not_decide_it{"TargetSideCLibrary/TheKernelInterfaceDoesNotDecideIt", [] {
     // The defect itself, as an assertion: every kernel-interface origin leaves
     // the answer to the C-ABI layer alone.
     using namespace mcpp::targetside;
     for (auto k : { Origin::Payload, Origin::Xpkg, Origin::Graph, Origin::None }) {
-        EXPECT_TRUE(side_with(Origin::Payload, k).cAbi.prebuilt());
-        EXPECT_FALSE(side_with(Origin::Graph,  k).cAbi.prebuilt());
+        expect(bool(side_with(Origin::Payload, k).cAbi.prebuilt()));
+        expect(!(side_with(Origin::Graph,  k).cAbi.prebuilt()));
     }
-}
+}};
 
 // ── interfaces_not_provided — the whole of the engine's participation ───────
 //
@@ -774,23 +775,23 @@ TEST(TargetSideCLibrary, TheKernelInterfaceDoesNotDecideIt) {
 // member of either set; these tests use openkal's real names in one place and
 // an invented one in another, and the function behaves identically.
 
-TEST(TargetSideInterfaces, EveryRequiredInterfaceProvidedYieldsNoGap) {
+UTest every_required_interface_provided_yields_no_gap{"TargetSideInterfaces/EveryRequiredInterfaceProvidedYieldsNoGap", [] {
     std::vector<std::string> required{"openkal.fs", "openkal.stream"};
     std::vector<std::string> provided{"openkal.abort", "openkal.stream",
                                       "openkal.memory", "openkal.fs"};
-    EXPECT_TRUE(mcpp::targetside::interfaces_not_provided(required, provided)
+    expect(mcpp::targetside::interfaces_not_provided(required, provided)
                     .empty());
-}
+}};
 
-TEST(TargetSideInterfaces, AMissingInterfaceIsReportedByName) {
+UTest a_missing_interface_is_reported_by_name{"TargetSideInterfaces/AMissingInterfaceIsReportedByName", [] {
     std::vector<std::string> required{"openkal.fs", "openkal.net"};
     std::vector<std::string> provided{"openkal.fs"};
     auto gap = mcpp::targetside::interfaces_not_provided(required, provided);
-    ASSERT_EQ(gap.size(), 1u);
-    EXPECT_EQ(gap[0], "openkal.net");
-}
+    expect(fatal(eq(gap.size(), 1u)));
+    expect(eq(gap[0], "openkal.net"));
+}};
 
-TEST(TargetSideInterfaces, ANameThisEngineHasNeverHeardOfBehavesTheSame) {
+UTest a_name_this_engine_has_never_heard_of_behaves_the_same{"TargetSideInterfaces/ANameThisEngineHasNeverHeardOfBehavesTheSame", [] {
     // The point of the opaque strings: a specification may add an interface
     // without a release of this engine, and a name that does not exist is
     // missing for the same reason a name that does exist and is not provided
@@ -798,18 +799,17 @@ TEST(TargetSideInterfaces, ANameThisEngineHasNeverHeardOfBehavesTheSame) {
     std::vector<std::string> required{"openkal.event", "some.other.spec/iface"};
     std::vector<std::string> provided{"openkal.fs"};
     auto gap = mcpp::targetside::interfaces_not_provided(required, provided);
-    ASSERT_EQ(gap.size(), 2u);
-    EXPECT_EQ(gap[0], "openkal.event");
-    EXPECT_EQ(gap[1], "some.other.spec/iface");
-}
+    expect(fatal(eq(gap.size(), 2u)));
+    expect(eq(gap[0], "openkal.event"));
+    expect(eq(gap[1], "some.other.spec/iface"));
+}};
 
-TEST(TargetSideInterfaces, RequiringNothingIsNeverAGap) {
-    EXPECT_TRUE(mcpp::targetside::interfaces_not_provided({}, {}).empty());
-    EXPECT_TRUE(
-        mcpp::targetside::interfaces_not_provided({}, {"openkal.fs"}).empty());
-}
+UTest requiring_nothing_is_never_a_gap{"TargetSideInterfaces/RequiringNothingIsNeverAGap", [] {
+    expect(mcpp::targetside::interfaces_not_provided({}, {}).empty());
+    expect(mcpp::targetside::interfaces_not_provided({}, {"openkal.fs"}).empty());
+}};
 
-TEST(TargetSideInterfaces, ProvidingNothingMakesEveryRequirementAGap) {
+UTest providing_nothing_makes_every_requirement_a_gap{"TargetSideInterfaces/ProvidingNothingMakesEveryRequirementAGap", [] {
     // The shape a graph takes when the provider predates the key. The caller
     // (mcpp.build.prepare) does not reach this function in that case — a
     // provider that states nothing is not a provider that provides nothing —
@@ -817,5 +817,5 @@ TEST(TargetSideInterfaces, ProvidingNothingMakesEveryRequirementAGap) {
     // the caller's and does not migrate here by accident.
     std::vector<std::string> required{"openkal.fs"};
     auto gap = mcpp::targetside::interfaces_not_provided(required, {});
-    ASSERT_EQ(gap.size(), 1u);
-}
+    expect(fatal(eq(gap.size(), 1u)));
+}};

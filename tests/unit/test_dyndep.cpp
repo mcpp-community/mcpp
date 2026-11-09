@@ -1,18 +1,20 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.dyndep;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::dyndep;
 
-TEST(Dyndep, BmiBasenameSanitizes) {
-    EXPECT_EQ(bmi_basename("foo"),         "foo.gcm");
-    EXPECT_EQ(bmi_basename("foo.bar"),     "foo.bar.gcm");
-    EXPECT_EQ(bmi_basename("foo:impl"),    "foo-impl.gcm");
-    EXPECT_EQ(bmi_basename("a.b:c"),       "a.b-c.gcm");
-}
+UTest bmi_basename_sanitizes{"Dyndep/BmiBasenameSanitizes", [] {
+    expect(eq(bmi_basename("foo"), "foo.gcm"));
+    expect(eq(bmi_basename("foo.bar"), "foo.bar.gcm"));
+    expect(eq(bmi_basename("foo:impl"), "foo-impl.gcm"));
+    expect(eq(bmi_basename("a.b:c"), "a.b-c.gcm"));
+}};
 
-TEST(Dyndep, ParseDdiPickProvidesRequires) {
+UTest parse_ddi_pick_provides_requires{"Dyndep/ParseDdiPickProvidesRequires", [] {
     constexpr const char* body = R"({
 "rules": [
 {
@@ -23,16 +25,16 @@ TEST(Dyndep, ParseDdiPickProvidesRequires) {
 ]
 })";
     auto u = parse_ddi(body);
-    ASSERT_TRUE(u) << u.error();
-    EXPECT_EQ(u->primaryOutput.string(), "obj/foo.m.o");
-    ASSERT_EQ(u->provides.size(), 1u);
-    EXPECT_EQ(u->provides[0], "foo");
-    ASSERT_EQ(u->requires_.size(), 2u);
-    EXPECT_EQ(u->requires_[0], "std");
-    EXPECT_EQ(u->requires_[1], "foo:impl");
-}
+    if (auto&& failed = expect(fatal(bool(u))); !failed) failed << u.error();
+    expect(eq(u->primaryOutput.string(), "obj/foo.m.o"));
+    expect(fatal(eq(u->provides.size(), 1u)));
+    expect(eq(u->provides[0], "foo"));
+    expect(fatal(eq(u->requires_.size(), 2u)));
+    expect(eq(u->requires_[0], "std"));
+    expect(eq(u->requires_[1], "foo:impl"));
+}};
 
-TEST(Dyndep, EmitDyndepBasic) {
+UTest emit_dyndep_basic{"Dyndep/EmitDyndepBasic", [] {
     std::vector<UnitInfo> units = {
         { "obj/lib-greet.m.o", {"myapp.lib:greet"}, {"std"} },
         { "obj/lib.m.o",        {"myapp.lib"},        {"myapp.lib:greet", "std"} },
@@ -41,44 +43,42 @@ TEST(Dyndep, EmitDyndepBasic) {
     auto body = emit_dyndep(units, /*stdImports=*/{});
 
     // Header
-    EXPECT_NE(body.find("ninja_dyndep_version = 1"), std::string::npos);
+    expect(ne(body.find("ninja_dyndep_version = 1"), std::string::npos));
     // Entry per unit, with implicit inputs only (no implicit outputs — those
     // are declared statically in build.ninja).
-    EXPECT_NE(body.find(
-        "build obj/lib-greet.m.o: dyndep | gcm.cache/std.gcm"), std::string::npos);
-    EXPECT_NE(body.find(
-        "build obj/lib.m.o: dyndep | gcm.cache/myapp.lib-greet.gcm gcm.cache/std.gcm"),
-        std::string::npos);
-    EXPECT_NE(body.find(
-        "build obj/main.o: dyndep | gcm.cache/myapp.lib.gcm gcm.cache/std.gcm"),
-        std::string::npos);
+    expect(ne(body.find(
+        "build obj/lib-greet.m.o: dyndep | gcm.cache/std.gcm"), std::string::npos));
+    expect(ne(body.find(
+        "build obj/lib.m.o: dyndep | gcm.cache/myapp.lib-greet.gcm gcm.cache/std.gcm"), std::string::npos));
+    expect(ne(body.find(
+        "build obj/main.o: dyndep | gcm.cache/myapp.lib.gcm gcm.cache/std.gcm"), std::string::npos));
     // Each entry must end with restat = 1.
     int restat_count = 0;
     for (std::size_t pos = 0; (pos = body.find("restat = 1", pos)) != std::string::npos; ++pos)
         ++restat_count;
-    EXPECT_EQ(restat_count, 3);
-}
+    expect(eq(restat_count, 3));
+}};
 
-TEST(Dyndep, EmitDyndepNoRequires) {
+UTest emit_dyndep_no_requires{"Dyndep/EmitDyndepNoRequires", [] {
     std::vector<UnitInfo> units = {
         { "obj/leaf.m.o", {"leaf"}, {} },
     };
     auto body = emit_dyndep(units, {});
     // No '|' implicit-deps section when requires is empty.
-    EXPECT_NE(body.find("build obj/leaf.m.o: dyndep\n"), std::string::npos);
-}
+    expect(ne(body.find("build obj/leaf.m.o: dyndep\n"), std::string::npos));
+}};
 
-TEST(Dyndep, EmitDyndepSelfProvideFiltered) {
+UTest emit_dyndep_self_provide_filtered{"Dyndep/EmitDyndepSelfProvideFiltered", [] {
     // Defensive: even if a unit lists its own provides in requires
     // (shouldn't happen but be robust), we don't emit a self-loop.
     std::vector<UnitInfo> units = {
         { "obj/foo.m.o", {"foo"}, {"foo", "std"} },
     };
     auto body = emit_dyndep(units, {});
-    EXPECT_NE(body.find(
-        "build obj/foo.m.o: dyndep | gcm.cache/std.gcm\n"), std::string::npos);
-    EXPECT_EQ(body.find("gcm.cache/foo.gcm"), std::string::npos);
-}
+    expect(ne(body.find(
+        "build obj/foo.m.o: dyndep | gcm.cache/std.gcm\n"), std::string::npos));
+    expect(eq(body.find("gcm.cache/foo.gcm"), std::string::npos));
+}};
 
 // Two-phase (clang): one source, two edges — a BMI edge and an object edge —
 // and BOTH parse the same imports, so both need the same implicit inputs.
@@ -86,7 +86,7 @@ TEST(Dyndep, EmitDyndepSelfProvideFiltered) {
 // command's `-o`), and an edge with no record is not a warning: ninja refuses
 // the whole graph with "'…pcm' not mentioned in its dyndep file", naming the
 // edge rather than the missing record.
-TEST(Dyndep, SplitModuleEmitsARecordForBothEdges) {
+UTest split_module_emits_a_record_for_both_edges{"Dyndep/SplitModuleEmitsARecordForBothEdges", [] {
     std::vector<UnitInfo> units = {
         { "obj/lib.m.o", {"myapp.lib"}, {"std"} },
     };
@@ -96,16 +96,14 @@ TEST(Dyndep, SplitModuleEmitsARecordForBothEdges) {
     opts.splitModuleEdges = true;
     auto body = emit_dyndep(units, {}, opts);
 
-    EXPECT_NE(body.find("build pcm.cache/myapp.lib.pcm: dyndep | pcm.cache/std.pcm\n"),
-              std::string::npos) << body;
-    EXPECT_NE(body.find("build obj/lib.m.o: dyndep | pcm.cache/std.pcm\n"),
-              std::string::npos) << body;
-}
+    expect(ne(body.find("build pcm.cache/myapp.lib.pcm: dyndep | pcm.cache/std.pcm\n"), std::string::npos)) << body;
+    expect(ne(body.find("build obj/lib.m.o: dyndep | pcm.cache/std.pcm\n"), std::string::npos)) << body;
+}};
 
 // A unit that provides nothing is NOT split — there is only one edge, so a
 // second record would name something nobody declared. Same failure text as the
 // missing-record case, from the opposite mistake.
-TEST(Dyndep, SplitModuleLeavesNonProvidingUnitsAlone) {
+UTest split_module_leaves_non_providing_units_alone{"Dyndep/SplitModuleLeavesNonProvidingUnitsAlone", [] {
     std::vector<UnitInfo> units = {
         { "obj/main.o", {}, {"myapp.lib"} },
     };
@@ -119,15 +117,14 @@ TEST(Dyndep, SplitModuleLeavesNonProvidingUnitsAlone) {
     for (auto pos = body.find("build "); pos != std::string::npos;
          pos = body.find("build ", pos + 1))
         ++records;
-    EXPECT_EQ(records, 1u) << body;
-    EXPECT_NE(body.find("build obj/main.o: dyndep | gcm.cache/myapp.lib.gcm\n"),
-              std::string::npos) << body;
-}
+    expect(eq(records, 1u)) << body;
+    expect(ne(body.find("build obj/main.o: dyndep | gcm.cache/myapp.lib.gcm\n"), std::string::npos)) << body;
+}};
 
 // The single-unit path is what ninja actually runs (one .ddi → one .dd), and it
 // used to be a separate hand-written copy of the loop above. Pinned together so
 // a change to one shape cannot silently leave the other behind.
-TEST(Dyndep, SplitModuleSingleFileMatchesTheBatchShape) {
+UTest split_module_single_file_matches_the_batch_shape{"Dyndep/SplitModuleSingleFileMatchesTheBatchShape", [] {
     auto tmp = std::filesystem::temp_directory_path()
              / std::format("mcpp_dyndep_split_{}", std::random_device{}());
     std::filesystem::create_directories(tmp);
@@ -141,15 +138,15 @@ TEST(Dyndep, SplitModuleSingleFileMatchesTheBatchShape) {
     opts.splitModuleEdges = true;
 
     auto single = emit_dyndep_single(p, opts);
-    ASSERT_TRUE(single) << single.error();
+    if (auto&& failed = expect(fatal(bool(single))); !failed) failed << single.error();
 
     std::vector<UnitInfo> units = { { "obj/lib.m.o", {"myapp.lib"}, {"std"} } };
-    EXPECT_EQ(*single, emit_dyndep(units, {}, opts));
+    expect(eq(*single, emit_dyndep(units, {}, opts)));
 
     std::filesystem::remove_all(tmp);
-}
+}};
 
-TEST(Dyndep, EmitDyndepFromFiles) {
+UTest dyndep_emit_dyndep_from_files{"Dyndep/EmitDyndepFromFiles", [] {
     auto tmp = std::filesystem::temp_directory_path()
              / std::format("mcpp_dyndep_test_{}", std::random_device{}());
     std::filesystem::create_directories(tmp);
@@ -166,54 +163,54 @@ TEST(Dyndep, EmitDyndepFromFiles) {
 })";
 
     auto body = emit_dyndep_from_files({a, b}, {});
-    ASSERT_TRUE(body) << body.error();
-    EXPECT_NE(body->find("build obj/a.m.o: dyndep\n"), std::string::npos);
-    EXPECT_NE(body->find(
-        "build obj/b.m.o: dyndep | gcm.cache/a.gcm\n"), std::string::npos);
+    if (auto&& failed = expect(fatal(bool(body))); !failed) failed << body.error();
+    expect(ne(body->find("build obj/a.m.o: dyndep\n"), std::string::npos));
+    expect(ne(body->find(
+        "build obj/b.m.o: dyndep | gcm.cache/a.gcm\n"), std::string::npos));
 
     std::filesystem::remove_all(tmp);
-}
+}};
 
 // ── plan-vs-ddi reconciliation (scan_overrides auditor) ──
 
-TEST(VerifyUnitExpectations, MatchPasses) {
+UTest match_passes{"VerifyUnitExpectations/MatchPasses", [] {
     mcpp::dyndep::UnitInfo u;
     u.primaryOutput = "obj/fmt.o";
     u.provides = {"fmt"};
     u.requires_ = {"std"};
     auto err = mcpp::dyndep::verify_unit_expectations(u, "fmt", {"std"});
-    EXPECT_FALSE(err.has_value()) << *err;
-}
+    if (auto&& failed = expect(!err.has_value()); !failed) failed << *err;
+}};
 
-TEST(VerifyUnitExpectations, DivergenceReportsBothSides) {
+UTest divergence_reports_both_sides{"VerifyUnitExpectations/DivergenceReportsBothSides", [] {
     mcpp::dyndep::UnitInfo u;
     u.primaryOutput = "obj/fmt.o";
     u.provides = {"fmt"};
     u.requires_ = {"std"};
     auto err = mcpp::dyndep::verify_unit_expectations(u, "fmt", {});
-    ASSERT_TRUE(err.has_value());
-    EXPECT_NE(err->find("divergence"), std::string::npos);
-    EXPECT_NE(err->find("planned"), std::string::npos);
-    EXPECT_NE(err->find("std"), std::string::npos);
-}
+    expect(fatal(err.has_value()));
+    expect(ne(err->find("divergence"), std::string::npos));
+    expect(ne(err->find("planned"), std::string::npos));
+    expect(ne(err->find("std"), std::string::npos));
+}};
 
-TEST(VerifyUnitExpectations, ExpectNoneMatchesEmptyUnit) {
+UTest expect_none_matches_empty_unit{"VerifyUnitExpectations/ExpectNoneMatchesEmptyUnit", [] {
     mcpp::dyndep::UnitInfo u;
     u.primaryOutput = "obj/plain.o";
     auto err = mcpp::dyndep::verify_unit_expectations(u, std::nullopt, {});
-    EXPECT_FALSE(err.has_value());
-}
+    expect(!err.has_value());
+}};
 
 // GCC's map names its repository with `$root`, and every relative path after
 // it lies below that directory: the dyndep step must name the BMI the compiler
 // reads, or ninja orders the compile before the BMI exists.
-TEST(Dyndep, ParseModuleMapRootedAtTheBmiDirectory) {
+UTest parse_module_map_rooted_at_the_bmi_directory{"Dyndep/ParseModuleMapRootedAtTheBmiDirectory", [] {
     auto m = parse_module_map("$root gcm.cache\na a.gcm\ndep.m dep/dep.m.gcm\nstd std.gcm\n");
-    EXPECT_EQ(m.size(), 3u);
-    EXPECT_FALSE(m.contains("$root"));
-    EXPECT_EQ(m.at("a"), "gcm.cache/a.gcm");
-    EXPECT_EQ(m.at("dep.m"), "gcm.cache/dep/dep.m.gcm");
+    expect(eq(m.size(), 3u));
+    expect(!m.contains("$root"));
+    expect(eq(m.at("a"), "gcm.cache/a.gcm"));
+    expect(eq(m.at("dep.m"), "gcm.cache/dep/dep.m.gcm"));
     // Without `$root` (clang's and MSVC's maps) a path is taken as written.
     auto plain = parse_module_map("m pcm.cache/core/m.pcm\n");
-    EXPECT_EQ(plain.at("m"), "pcm.cache/core/m.pcm");
-}
+    expect(eq(plain.at("m"), "pcm.cache/core/m.pcm"));
+}};

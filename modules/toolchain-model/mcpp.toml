@@ -23,10 +23,15 @@ license     = "Apache-2.0"
 mcpp.invocation = { path = "../invocation" }
 mcpp.versioning = { path = "../versioning" }
 
-mcpplibs.os = "0.4.0"
+mcpplibs.os = "0.4.1"
 
 # Subsystem-level tests. They see only this package, which is what lets them
 # state its contract in isolation; the root `tests/unit/` states the facts two
 # layers must agree on.
 [dev-dependencies]
-compat.gtest = "1.15.2"
+mcpplibs.mtest = "0.5.2"
+
+# build.mcpp compiles data/builtin.toml (the built-in target rows and providers)
+# into a module of static tables, with mcpp's own TOML parser.
+[build-dependencies]
+mcpp.libs = { path = "../libs" }

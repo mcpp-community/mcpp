@@ -42,6 +42,7 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_select;
 import mcpp.toolchain.base;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
@@ -294,6 +295,26 @@ struct BuildProgramBinary {
 // Not copied: copying this by value would copy every dependency-graph and
 // plan structure prepare_build ever builds, silently, at whichever call
 // happened to pass it by value instead of by reference.
+// WHICH ROW AND WHICH PROVIDER A REQUEST WAS GIVEN (SPEC-016 §4), as the report,
+// the machine output, the lock and `mcpp why target` state it.
+struct TargetChoice {
+    std::string request;      // as written: `--target`, `[build] target`, the default
+    std::string identity;     // the row taken
+    std::string provider;     // its provider; empty when no provider serves it
+    int         priority = 0;
+    bool        fallback = false;   // the first candidate was not available here
+    std::string why;          // why the first candidate was not taken
+    std::vector<mcpp::toolchain::target::Candidate> candidates;
+};
+
+// The selection context of a configuration (prepare/target_choice.cpp): this host,
+// MSVC's presence, a declared family, a provider chosen by name, and the
+// priorities `[target.<selector>.priority]` of the project and the machine set.
+mcpp::toolchain::target::Context target_context(std::span<const mcpp::manifest::platform::Override> project,
+                                                std::span<const mcpp::manifest::platform::Override> config,
+                                                std::string family, std::string provider,
+                                                std::function<bool()> msvcInstalled);
+
 struct PrepareState {
     PrepareState(bool print_fingerprint_, bool includeDevDeps_,
                  std::vector<mcpp::manifest::Target> extraTargets_,
@@ -333,7 +354,20 @@ struct PrepareState {
     std::string targetPinCandidate;
     bool targetPinIsCapability = false;
     std::string targetRowPin;
+    // A PROVIDER THAT PAIRS WITH THE DECLARED COMPILER SUPPLIES THE SYSTEM
+    // (SPEC-016 §6): the payload the row's own toolchain names (the MinGW-w64
+    // payload of `x86_64-windows-gnu`) is then the declared clang's sysroot and
+    // C++ runtime. Empty when the compiler is the row's own.
+    std::string pairedSystem;
     std::string targetRowName;
+    TargetChoice targetChoice;
+    // The request names a row no definition knows yet, assumed while the platform
+    // chosen for it is fetched (mcpp#911 G1).
+    bool provisionalTarget = false;
+    // The row of the identity, with the facts of the provider that serves it
+    // (its toolchain, C library, linkage, platform) in place of the default
+    // provider's.
+    std::optional<mcpp::toolchain::triple::TargetInfo> selectedTarget;
     bool tcSpecIsMsvc = false;
     std::optional<std::filesystem::path> root;
     std::optional<mcpp::project::EffectiveManifest> effective;
@@ -829,7 +863,8 @@ struct PrepareState {
     std::function<std::expected<std::pair<std::filesystem::path, mcpp::manifest::Manifest>,
                                  std::string>(const std::string&, const std::string&,
                                               const std::string&, const std::string&,
-                                              const std::vector<std::string>&, const std::string&)>
+                                              const std::vector<std::string>&, const std::string&,
+                                              const std::string&)>
         loadVersionDepVariant;
 
     std::map<ResolvedKey, ResolvedRecord> resolved;
@@ -978,6 +1013,10 @@ void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
                           const std::string& writtenKey);
+// graph_edges.cpp: the package being built stands for itself in its tests'
+// graph -- an edge reached through its `[dev-dependencies]` naming it is its
+// own, recorded here; true when the request is so answered.
+bool names_the_root(PrepareState& state, const WorkItem& item, const ResolvedKey& key);
 // graph_edges.cpp: defines `PrepareState::computeUsageRequirements`.
 void define_usage_requirements(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
@@ -1205,8 +1244,25 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
 // The platform through the phases (prepare/platform.cpp).
 mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
 std::expected<void, std::string> step1_select_platform(PrepareState& state);
+// The provider a configuration chose by name, from the explicit platform choices
+// (SPEC-013 §3.1 steps 1-4): `builtin:<name>`, or the provider a chosen platform
+// package implements; "none" for `--platform none`; empty when nothing chose.
+// Registers a platform package's rows and providers (SPEC-016 §2, §3).
+void define_platform(const mcpp::manifest::platform::Statement& s, std::string_view shortName,
+                     std::string_view ref);
+// Before the request is parsed: the definitions of a platform chosen for it whose
+// manifest is on this machine (a directory, or the second pass's root); and a
+// provisional row for a request only a chosen platform can define.
+void define_early_platform(PrepareState& state);
+std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
+                           std::span<const mcpp::manifest::platform::Override> config);
+
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
+// The capabilities packages require and nothing provides: each takes the
+// default its package states for the target (mcpp#911 G7). True when one was
+// added to the walk.
+std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
 std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
                                                               const std::string& name,
@@ -1218,13 +1274,18 @@ void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);
 // The platform's statement and the compile words it states for a unit of C++,
 // as they stand now (the std module's are asked for before step 13).
-mcpp::manifest::platform::Statement platform_statement(const PrepareState& state);
+mcpp::manifest::platform::Statement platform_statement(const PrepareState& state,
+                                                       std::vector<std::string>* conflicts = nullptr);
 std::vector<std::string> platform_unit_cxxflags(const PrepareState& state);
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
 // retarget.cpp: a retargetable driver told its target, sysroot and multilib.
 std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
+// The system a paired provider supplies to the declared compiler (SPEC-016 §6).
+std::expected<void, std::string> step2_paired_system(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.
 std::optional<std::filesystem::path> take_platform_restart();
+// The identity a first pass found the C library names (SPEC-016 §5), taken once.
+std::optional<std::string> take_target_restart();
 std::expected<void, std::string> load_host_platform(PrepareState& state);
 std::string host_platform_choice(const PrepareState& state);
 // The statement and bootstrap spec of a toolchain phase that asked prepare to

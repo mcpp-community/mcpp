@@ -107,6 +107,7 @@ runs:
       env:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         REPO_DIR="$(pwd)"
         # Always install the pinned version — the cache may hold an older
@@ -231,6 +232,7 @@ runs:
       env:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         REPO_DIR="$(pwd)"
         # FAST PATH: see the unix leg for the reasoning. The cost on Windows is

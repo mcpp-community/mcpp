@@ -1932,6 +1932,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          const mcpp::platform::Resolved*         platform)
 {
     BuildPlan plan;
+    // The artifacts' own compiles of shared sources (mcpp#911 G9), joined to
+    // the plan's units after every link unit is formed.
+    std::vector<CompileUnit> artifactVariants;
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
@@ -2036,6 +2039,23 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // than link.exe does, so "which compiler binary" is the wrong question.
         return targetOs == "windows" && mcpp::toolchain::is_msvc_target(tc);
     }();
+    // A TEST KEEPS WHAT IT REACHES (design 2026-11-09 §17.2): every object of
+    // the package is on its link line, and a test of one module used to carry
+    // all of them -- 32 MB for each of mcpp's 166 unit tests. The linker drops
+    // the sections nothing references; static constructors are its roots, so
+    // a case that registers itself stays. `[test] link = "objects"` keeps
+    // every object whole. ELF and Mach-O through the compiler driver; MSVC's
+    // link.exe, a freestanding image, a platform's ld.lld and wasm keep their
+    // own link lines.
+    auto keep_what_tests_reach = [&](LinkUnit& lu, const mcpp::manifest::Manifest& owner) {
+        if (owner.testLink == "objects" || msvcTarget || targetTriple.is_freestanding()) return;
+        // A platform that links with ld.lld itself states its own link line
+        // (an ok image collects its sections there already).
+        if (platform && platform->active && platform->fields.link.driver.value == "lld") return;
+        if (!targetTriple.empty() && targetTriple.str().starts_with("wasm")) return;
+        const bool macho = targetTriple.empty() ? bool(mcpplibs::os::is_macos) : targetTriple.is_mach_o();
+        lu.linkFlags.push_back(macho ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
+    };
 
     bool experimentalStd = false;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
@@ -3598,6 +3618,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.kind   = LinkUnit::TestBinary;
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
+            keep_what_tests_reach(lu, manifest);
         } else if (t.kind == mcpp::manifest::Target::Application
                    && mcpp::toolchain::triple::application_form(targetTriple)
                       == mcpp::toolchain::triple::ApplicationForm::SharedObject) {
@@ -3800,6 +3821,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // Also include implementation .cpp/.cc/.cxx/.c units, but EXCLUDE any
         // file registered as another target's entryMain (each binary's main()
         // is exclusive to that binary).
+        // THE ARTIFACT'S OWN COMPILE (mcpp#911 G9): `[targets.<name>.build]`
+        // makes a variant of each of the package's implementation units this
+        // artifact links, under `obj/_variant/<target>/`, with the artifact's flags
+        // after the package's; the entry takes them in place. Module
+        // interfaces are one per package and are not varied.
+        const auto rootPackage = qualified_package_name(manifest);
+        auto vary = [&](CompileUnit& cu) {
+            for (auto const& d : t.buildDefines) {
+                const auto element = mcpp::manifest::flag_element("-D" + d);
+                cu.packageCflags.push_back(element);
+                cu.packageCxxflags.push_back(element);
+            }
+            for (auto const& f : t.buildCflags)   cu.packageCflags.push_back(f);
+            for (auto const& f : t.buildCxxflags) cu.packageCxxflags.push_back(f);
+        };
+        std::vector<CompileUnit> variants;
+        if (t.has_build_variant() && lu.entryMain)
+            for (auto& cu : plan.compileUnits)
+                if (cu.source == *lu.entryMain && cu.packageName == rootPackage) vary(cu);
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
             if (placedInImage.contains(cu.packageName)) continue;
@@ -3813,8 +3853,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // it supplies the entry (gtest-style). Works on every linker — the
             // object is linked directly, never relying on archive member pulling.
             if (entryDefinesMain && depMainSources.contains(cu.source)) continue;
+            if (t.has_build_variant() && cu.packageName == rootPackage && cu.providesModule.empty()) {
+                CompileUnit v = cu;
+                v.object = std::filesystem::path("obj") / "_variant" / sanitize(t.name)
+                         / cu.object.lexically_relative("obj");
+                vary(v);
+                lu.objects.push_back(v.object);
+                variants.push_back(std::move(v));
+                continue;
+            }
             lu.objects.push_back(cu.object);
         }
+        // Added once every link unit is formed: no other artifact links them.
+        for (auto& v : variants) artifactVariants.push_back(std::move(v));
 
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
             || lu.kind == LinkUnit::SharedLibrary) {
@@ -4120,6 +4171,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                           : place(target_output(t, naming));
                 lu.windowsSubsystem = t.windowsSubsystem;
                 lu.windowsEntry     = t.windowsEntry;
+                if (lu.kind == LinkUnit::TestBinary) keep_what_tests_reach(lu, pkg.manifest);
             }
             lu.loaderTagFlag = loader_tag_flag(lu.kind);
             for (auto const& other : plan.linkUnits)
@@ -4517,17 +4569,38 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // unit's objects, a workspace's member archives held its closure: 11 433
     // members for 2 666 objects, 5.3 GB (mcpp#874). An object that is not a
     // compile unit's -- an `object` action's -- is the package's own and stays.
-    {
-        std::map<std::filesystem::path, std::string> ownerOfObject;
-        for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
-        for (auto& lu : plan.linkUnits) {
-            if (lu.kind != LinkUnit::StaticLibrary) continue;
-            std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
-                auto it = ownerOfObject.find(o);
-                return it != ownerOfObject.end() && it->second != lu.package;
-            });
-        }
+    std::map<std::filesystem::path, std::string> ownerOfObject;
+    for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
+    for (auto& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::StaticLibrary) continue;
+        std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
+            auto it = ownerOfObject.find(o);
+            return it != ownerOfObject.end() && it->second != lu.package;
+        });
     }
+    // THE C LIBRARY LEADS A MACH-O IMAGE. This format's loader runs an image's
+    // initialisers before its entry, in link order, so a C library of the
+    // graph (`mcpp:c-abi`, openkal-musl) is brought up by an initialiser of
+    // its own (openkal-musl's port/src/mach/early_init.c). Linked after the
+    // program's objects, it came too late: the registration of a test, a
+    // global constructor that allocates, stopped in an allocator not yet
+    // started (mcpplibs/os#22, hosted macOS). Its objects precede every other
+    // package's, in their own order, as a C runtime's start objects do on ELF.
+    if (targetTriple.is_mach_o()) {
+        std::set<std::string> cLibraries;
+        for (auto const& pkg : packages)
+            if (std::ranges::any_of(pkg.manifest.provides,
+                                    [](const std::string& p) { return p.starts_with("mcpp:c-abi"); }))
+                cLibraries.insert(qualified_package_name(pkg.manifest));
+        auto of_c_library = [&](const std::filesystem::path& o) {
+            auto it = ownerOfObject.find(o);
+            return it != ownerOfObject.end() && cLibraries.contains(it->second);
+        };
+        if (!cLibraries.empty())
+            for (auto& lu : plan.linkUnits)
+                if (lu.kind != LinkUnit::StaticLibrary) std::ranges::stable_partition(lu.objects, of_c_library);
+    }
+    for (auto& v : artifactVariants) plan.compileUnits.push_back(std::move(v));
 
     return plan;
 }

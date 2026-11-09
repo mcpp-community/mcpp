@@ -62,8 +62,8 @@ mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自
 
 ```toml
 [dev-dependencies]
-mcpplibs.mtest         = "0.4.0"
-"mcpplibs.mtest.gtest" = "0.4.0"
+mcpplibs.mtest         = "0.5.2"
+"mcpplibs.mtest.gtest" = "0.5.2"
 ```
 
 ```toml
@@ -73,7 +73,7 @@ mylib = { path = "../mylib" }
 ```
 
 ```toml
-# Git dependency — pick exactly one of tag / branch / rev
+# Git dependency — tag / branch / rev 至多一个；都不写即远端的缺省分支
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
@@ -93,6 +93,10 @@ widget = { version = "1.0", backend = "glfw_opengl3" }  # Sugar for: features=["
 
 构建记录相同的解析结果时，`mcpp.lock` 保留原内容与修改时间（2026.10.21.1+）。
 仅 LF 与 CRLF 行结束形式不同不会触发改写。这不跳过依赖解析，也不改变锁定范围。
+
+不写 `tag`、`branch`、`rev` 的 git 依赖跟随远端的缺省分支，分支名取远端的通告（`main`、`master`、`trunk` 等；
+2026.11.9.1+），此后按 `branch` 处理并以 commit 锁定。命令行上的平台与工具使用相同的字符串形式：
+`--platform git+https://example.org/acme/acme-platform.git#tag=v1`。
 
 **Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 已经指向历史中的一个固定点，而
 `branch` 是会移动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,
@@ -403,6 +407,11 @@ gtest = "1.15.2"
 错误），`mcpp test <pattern>` 与 `--message-format json` 分别提供过滤与
 机器可读输出。
 
+**正在构建的包在其自身的依赖图中代表它自己**（2026.11.9.1+）。经包的 `[dev-dependencies]` 到达的依赖可以指名正在构建的包：用一个本身使用
+该库的测试框架测试该库（mtest 下的 `mcpplibs.os`）。这条边即该包自身，无论它要求哪个版本，未要求的版本会被说明；
+第二份副本会在一个程序中把包的每个模块提供两次，而受测的是此处的这个包。根的 `[dev-dependencies]` 只服务它的测试，
+因此框架到达该库而不形成包的环。
+
 ## `[build-dependencies]` —— 构建期依赖（mcpp 2026.8.29.1+）
 
 ```toml
@@ -575,6 +584,20 @@ updater = { path = "../updater", artifacts = ["updater"] }
 - 应用器是 mcpp 自己的，而且是精确的：一个 hunk 只在其头部所写的位置应用，每一行上下文与每一行
   删除都必须逐字节相符，否则构建被拒绝，并指出补丁、文件、hunk 与行号。不在别处查找，不转换换行。
   补丁中的路径带一级前导目录（`a/`、`b/`），应用时去掉。改名、复制与二进制改动被拒绝。
+- 补丁中的文件以**包根**为起点：包解析得到的清单在归档中所在的目录（描述符写
+  `mcpp = "*/run/mcpp.toml"` 时为归档中的 `run/`），因而布局相同的各版本可共用一个补丁。边上的
+  `patch_root = "<dir>"` 另指一个目录，相对包根，且在包的源码之内。2026.11.9 之前以归档顶层为起点写的
+  补丁按原写法应用，构建给出说明。
+- `mcpp why deps` 报告每个依赖在构建中所读的包根（已应用其补丁）。补丁即 git 对该目录树的一份副本写出的差异：
+
+  ```sh
+  cp -R <包根> /tmp/zlib && cd /tmp/zlib
+  git init -q && git add -A && git commit -qm base
+  # 修改之后
+  git diff > <项目>/patches/0001-fix.patch
+  ```
+
+  并由边的 `patches` 列出。再一个补丁以同样方式从打补丁后的构建所报告的包根写出，列在前者之后。
 - 版本依赖与 git 依赖可以带补丁；`path` 依赖是使用者自己拥有的源码树，带补丁时被拒绝。
 - `mcpp.lock` 记录变体，以及每个补丁的路径与 SHA-256；`mcpp emit sbom` 把它们写作组件的 pedigree。
 - 一个程序只持有一个包的一个变体。同一配置中的两个程序（工作区的成员）可以各用自己的变体；一个

@@ -160,6 +160,12 @@ On Windows the arrangement is the GNU ABI's row (`--target x86_64-windows-gnu`);
 a triple outside `[platform.hosted] targets` is refused, naming the row of the
 same system and architecture that it serves.
 
+A C library of the graph (`mcpp:c-abi`) leads a Mach-O image's link
+(2026.11.9.1+). The loader of that format runs an image's initialisers before
+its entry, in link order, and the C library is brought up by an initialiser of
+its own; with its objects first, it is up before any global constructor of the
+program runs, as a C runtime's start objects precede a program on ELF.
+
 ## The version group
 
 `[platform.versions]` names one version of each package of a family. From mcpp
@@ -283,6 +289,43 @@ platform package, with no `--target`, builds its tests for each of its
 `targets` with the package as the platform, runs those of this machine's
 architecture and those an execution host is named for (2026.10.29.1+), and
 reports the others as built and not run.
+
+## Defining targets and providers (2026.11.9.1+)
+
+A platform may serve a system no built-in row names. `[[platform.define]]`
+states the row, `[[platform.provider]]` the provider that serves it:
+
+```toml
+[[platform.define]]
+triple        = "x86_64-freebsd"
+clang-triple  = "x86_64-unknown-freebsd14.1"
+object-format = "elf"
+family        = "unix"
+execution     = "freebsd"          # the system its programs run on
+
+[[platform.provider]]
+serves   = ["x86_64-freebsd"]      # patterns: `*` is any one segment
+priority = 100
+hosted   = true                    # the C environment has `main`
+```
+
+With the platform selected (`[target.x86_64-freebsd] platform = {...}` or
+`--platform`), `--target x86_64-freebsd` builds into `target/x86_64-freebsd/`,
+`cfg(os = "freebsd")` holds, and a program whose system is not this machine's
+is built, not run, until a runner states how it runs (docs/41). The row's
+machine description is the platform's: a target whose machine differs from a
+built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
+shorthands of a provider.
+
+`mcpp new <name> --template platform` writes a platform package defining
+`<arch>-<name>`. Reading a platform's manifest checks its statement against the
+rows: a definition of a built-in row, or a row defined twice, is an error
+wherever the platform is read; a provider that serves no row, and two providers
+that serve one identity at one priority, are warnings of the platform's own
+build. `mcpp why platform` lists the rows the platform defines and the
+identities it serves, each with its provider and priority: in the platform's
+directory its own, in a project the one its target selects (`--target`;
+`--format json`).
 
 ## Inspecting a configuration
 

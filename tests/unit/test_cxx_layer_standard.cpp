@@ -9,15 +9,17 @@
 // the plan are assertions on the compile edge, the scan edge and both build
 // databases.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.plan;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.source_kind;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::build;
 
@@ -130,7 +132,7 @@ std::map<std::string, std::vector<std::string>> plan_flags(const Fixture& f) {
     auto plan = make_plan(root, clangLike(), {}, graph, topo, packages,
                           projectRoot, projectRoot / "target" / "t",
                           {}, {}, {});
-    EXPECT_TRUE(plan.has_value()) << (plan ? "" : plan.error());
+    if (auto&& failed = expect(plan.has_value()); !failed) failed << (plan ? "" : plan.error());
     std::map<std::string, std::vector<std::string>> out;
     if (!plan) return out;
     for (auto const& cu : plan->compileUnits)
@@ -144,73 +146,73 @@ bool has(const std::vector<std::string>& v, std::string_view flag) {
 
 } // namespace
 
-TEST(CxxLayerStandard, ProviderImplementationUnitGetsTheStatedLevel) {
+UTest provider_implementation_unit_gets_the_stated_level{"CxxLayerStandard/ProviderImplementationUnitGetsTheStatedLevel", [] {
     auto flags = plan_flags(Fixture{});
-    ASSERT_TRUE(flags.contains("new.cpp"));
-    ASSERT_FALSE(flags["new.cpp"].empty());
-    EXPECT_EQ(flags["new.cpp"].back(), "-std=c++23");
-}
+    expect(fatal(flags.contains("new.cpp")));
+    expect(fatal(!(flags["new.cpp"].empty())));
+    expect(eq(flags["new.cpp"].back(), "-std=c++23"));
+}};
 
-TEST(CxxLayerStandard, UnitsThatTouchAModuleKeepTheGraphLevel) {
+UTest units_that_touch_a_module_keep_the_graph_level{"CxxLayerStandard/UnitsThatTouchAModuleKeepTheGraphLevel", [] {
     auto flags = plan_flags(Fixture{});
-    EXPECT_FALSE(has(flags["iface.cppm"], "-std=c++23"));      // provides a module
-    EXPECT_FALSE(has(flags["importer.cpp"], "-std=c++23"));    // imports std
-    EXPECT_FALSE(has(flags["iface_impl.cpp"], "-std=c++23"));  // `module M;`
-    EXPECT_FALSE(has(flags["c_part.c"], "-std=c++23"));        // not C++
-}
+    expect(!has(flags["iface.cppm"], "-std=c++23"));      // provides a module
+    expect(!has(flags["importer.cpp"], "-std=c++23"));    // imports std
+    expect(!has(flags["iface_impl.cpp"], "-std=c++23"));  // `module M;`
+    expect(!has(flags["c_part.c"], "-std=c++23"));        // not C++
+}};
 
-TEST(CxxLayerStandard, OtherPackagesKeepTheOneStandardRule) {
+UTest other_packages_keep_the_one_standard_rule{"CxxLayerStandard/OtherPackagesKeepTheOneStandardRule", [] {
     auto flags = plan_flags(Fixture{});
-    EXPECT_FALSE(has(flags["plain.cpp"], "-std=c++23"));
-    EXPECT_FALSE(has(flags["app.cpp"], "-std=c++23"));
-}
+    expect(!has(flags["plain.cpp"], "-std=c++23"));
+    expect(!has(flags["app.cpp"], "-std=c++23"));
+}};
 
-TEST(CxxLayerStandard, AProviderThatStatesNothingIsUnchanged) {
+UTest a_provider_that_states_nothing_is_unchanged{"CxxLayerStandard/AProviderThatStatesNothingIsUnchanged", [] {
     Fixture f;
     f.providerStandard.clear();
     auto flags = plan_flags(f);
     for (auto const& [file, v] : flags)
         for (auto const& flag : v)
-            EXPECT_FALSE(flag.starts_with("-std=")) << file << ": " << flag;
-}
+            expect(!flag.starts_with("-std=")) << file << ": " << flag;
+}};
 
-TEST(CxxLayerStandard, OnlyTheCurrentLayerSpellingIsEnough) {
+UTest only_the_current_layer_spelling_is_enough{"CxxLayerStandard/OnlyTheCurrentLayerSpellingIsEnough", [] {
     Fixture f;
     f.providerProvides = {"mcpp:c++-abi=libc++"};
     auto flags = plan_flags(f);
-    ASSERT_FALSE(flags["new.cpp"].empty());
-    EXPECT_EQ(flags["new.cpp"].back(), "-std=c++23");
-}
+    expect(fatal(!(flags["new.cpp"].empty())));
+    expect(eq(flags["new.cpp"].back(), "-std=c++23"));
+}};
 
-TEST(CxxLayerStandard, AStatedStandardWithoutTheLayerIsNotAnException) {
+UTest a_stated_standard_without_the_layer_is_not_an_exception{"CxxLayerStandard/AStatedStandardWithoutTheLayerIsNotAnException", [] {
     Fixture f;
     f.providerProvides.clear();
     auto flags = plan_flags(f);
-    EXPECT_FALSE(has(flags["new.cpp"], "-std=c++23"));
-}
+    expect(!has(flags["new.cpp"], "-std=c++23"));
+}};
 
-TEST(CxxLayerStandard, TheLevelIsExactlyTheStatedOneUnderAHigherGraph) {
+UTest the_level_is_exactly_the_stated_one_under_a_higher_graph{"CxxLayerStandard/TheLevelIsExactlyTheStatedOneUnderAHigherGraph", [] {
     Fixture f;
     f.graphStandard = "c++26";
     auto flags = plan_flags(f);
-    ASSERT_FALSE(flags["new.cpp"].empty());
-    EXPECT_EQ(flags["new.cpp"].back(), "-std=c++23");
-}
+    expect(fatal(!(flags["new.cpp"].empty())));
+    expect(eq(flags["new.cpp"].back(), "-std=c++23"));
+}};
 
-TEST(CxxLayerStandard, TheSameLevelAsTheGraphAddsNothing) {
+UTest the_same_level_as_the_graph_adds_nothing{"CxxLayerStandard/TheSameLevelAsTheGraphAddsNothing", [] {
     Fixture f;
     f.graphStandard = "c++23";
     auto flags = plan_flags(f);
-    EXPECT_FALSE(has(flags["new.cpp"], "-std=c++23"));
-}
+    expect(!has(flags["new.cpp"], "-std=c++23"));
+}};
 
-TEST(CxxLayerStandard, ThePredicateNamesEitherSpellingOfTheLayer) {
+UTest the_predicate_names_either_spelling_of_the_layer{"CxxLayerStandard/ThePredicateNamesEitherSpellingOfTheLayer", [] {
     mcpp::manifest::Manifest m;
-    EXPECT_FALSE(mcpp::manifest::provides_cxx_layer(m));
+    expect(!mcpp::manifest::provides_cxx_layer(m));
     m.provides = {"hosted-standard-library"};
-    EXPECT_TRUE(mcpp::manifest::provides_cxx_layer(m));
+    expect(bool(mcpp::manifest::provides_cxx_layer(m)));
     m.provides = {"mcpp:c++-abi=libc++"};
-    EXPECT_TRUE(mcpp::manifest::provides_cxx_layer(m));
+    expect(bool(mcpp::manifest::provides_cxx_layer(m)));
     m.provides = {"mcpp:c-abi=musl"};
-    EXPECT_FALSE(mcpp::manifest::provides_cxx_layer(m));
-}
+    expect(!mcpp::manifest::provides_cxx_layer(m));
+}};

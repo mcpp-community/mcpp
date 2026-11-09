@@ -1,11 +1,13 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpplibs.os.platform;
 import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
 import mcpp.build.symbol_provision;
+
+using namespace mcpplibs::mtest;
 
 namespace elf = mcpp::runtime::elf;
 namespace runtime = mcpp::runtime;
@@ -198,7 +200,7 @@ elf::ElfRuntimeFacts facts(std::filesystem::path path,
     return out;
 }
 
-TEST(RuntimePayload, ExactBindingWinsRegardlessOfDirectoryOrder) {
+UTest exact_binding_wins_regardless_of_directory_order{"RuntimePayload/ExactBindingWinsRegardlessOfDirectoryOrder", [] {
     Tmp t;
     auto root = t.path / "xim-x-glibc";
     std::filesystem::create_directories(root / "2.39" / "lib64");
@@ -207,11 +209,11 @@ TEST(RuntimePayload, ExactBindingWinsRegardlessOfDirectoryOrder) {
     std::ofstream(root / "2.44" / "lib64" / "ld-linux-x86-64.so.2") << "x";
 
     auto selected = tc::select_glibc_payload_lib(root, "glibc@2.44");
-    ASSERT_TRUE(selected.has_value()) << selected.error();
-    EXPECT_EQ(*selected, root / "2.44" / "lib64");
-}
+    if (auto&& failed = expect(fatal(selected.has_value())); !failed) failed << selected.error();
+    expect(eq(*selected, root / "2.44" / "lib64"));
+}};
 
-TEST(RuntimePayload, MissingOrMalformedBindingIsAnError) {
+UTest missing_or_malformed_binding_is_an_error{"RuntimePayload/MissingOrMalformedBindingIsAnError", [] {
     Tmp t;
     auto root = t.path / "xim-x-glibc";
     std::filesystem::create_directories(root / "2.39" / "lib64");
@@ -219,46 +221,42 @@ TEST(RuntimePayload, MissingOrMalformedBindingIsAnError) {
 
     for (auto id : {"", "glibc", "glibc@2.44", "musl@1.2.5", "glibc@../2.39"}) {
         auto selected = tc::select_glibc_payload_lib(root, id);
-        EXPECT_FALSE(selected.has_value()) << id;
-        if (!selected) EXPECT_FALSE(selected.error().empty());
+        expect(!selected.has_value()) << id;
+        if (!selected) expect(!(selected.error().empty()));
     }
-}
+}};
 
-TEST(ElfRuntime, ParsesProgramDynamicAndGnuVersionTablesInternally) {
+UTest parses_program_dynamic_and_gnu_version_tables_internally{"ElfRuntime/ParsesProgramDynamicAndGnuVersionTablesInternally", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF table inspection is exercised on native Linux";
+        skip("ELF table inspection is exercised on native Linux");
     Tmp t;
     auto parsed = elf::inspect_elf_runtime(write_elf_fixture(t.path / "fixture"));
-    ASSERT_TRUE(parsed.has_value()) << parsed.error();
-    EXPECT_EQ(parsed->interp,
-              "/store/glibc/2.44/lib64/ld-linux-x86-64.so.2");
-    EXPECT_EQ(parsed->runpaths,
-              (std::vector<std::string>{"/host/z", "/host/a"}));
-    EXPECT_EQ(parsed->needed, (std::vector<std::string>{"libc.so.6"}));
-    EXPECT_EQ(parsed->requiredGlibcVersions,
-              (std::vector<std::string>{"GLIBC_2.40"}));
-    EXPECT_EQ(parsed->definedGlibcVersions,
-              (std::vector<std::string>{"GLIBC_2.44"}));
-}
+    if (auto&& failed = expect(fatal(parsed.has_value())); !failed) failed << parsed.error();
+    expect(eq(parsed->interp, "/store/glibc/2.44/lib64/ld-linux-x86-64.so.2"));
+    expect(eq(parsed->runpaths, (std::vector<std::string>{"/host/z", "/host/a"})));
+    expect(eq(parsed->needed, (std::vector<std::string>{"libc.so.6"})));
+    expect(eq(parsed->requiredGlibcVersions, (std::vector<std::string>{"GLIBC_2.40"})));
+    expect(eq(parsed->definedGlibcVersions, (std::vector<std::string>{"GLIBC_2.44"})));
+}};
 
-TEST(ElfRuntime, RejectsUnsupportedOrTruncatedElfWithoutGuessing) {
+UTest rejects_unsupported_or_truncated_elf_without_guessing{"ElfRuntime/RejectsUnsupportedOrTruncatedElfWithoutGuessing", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF table inspection is exercised on native Linux";
+        skip("ELF table inspection is exercised on native Linux");
     Tmp t;
     std::ofstream(t.path / "text") << "not an ELF";
     auto text = elf::inspect_elf_runtime(t.path / "text");
-    EXPECT_FALSE(text.has_value());
+    expect(!text.has_value());
 
     std::ofstream tiny(t.path / "tiny", std::ios::binary);
     tiny.write("\177ELF\2\1", 6);
     tiny.close();
     auto truncated = elf::inspect_elf_runtime(t.path / "tiny");
-    EXPECT_FALSE(truncated.has_value());
-}
+    expect(!truncated.has_value());
+}};
 
-TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
+UTest reuses_an_already_loaded_soname_across_dependency_runpaths{"ElfRuntime/ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto payload = t.path / "store";
     auto glibc39 = payload / "2.39" / "lib64";
@@ -286,12 +284,11 @@ TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
     });
 
     auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
-    ASSERT_TRUE(resolution.unresolved.empty());
-    ASSERT_EQ(resolution.resolvedLibcs.size(), 1u)
+    expect(fatal(resolution.unresolved.empty()));
+    expect(fatal(eq(resolution.resolvedLibcs.size(), 1u)))
         << "a later dependency must reuse the process-global libc SONAME";
-    EXPECT_EQ(resolution.resolvedLibcs.front(),
-              std::filesystem::weakly_canonical(glibc44 / "libc.so.6"));
-}
+    expect(eq(resolution.resolvedLibcs.front(), std::filesystem::weakly_canonical(glibc44 / "libc.so.6")));
+}};
 
 // DT_RPATH REACHES THE WHOLE CHAIN; DT_RUNPATH REACHES ONE OBJECT.
 //
@@ -304,9 +301,9 @@ TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
 // build naming eight libraries, and the artifact it had just linked resolved
 // seven of them -- failing only on the one that belongs to a driver the
 // machine does not have.
-TEST(ElfRuntime, ADependencyInheritsTheExecutablesRpath) {
+UTest a_dependency_inherits_the_executables_rpath{"ElfRuntime/ADependencyInheritsTheExecutablesRpath", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto payload = t.path / "store";
     auto glibc = payload / "2.44" / "lib64";
@@ -328,18 +325,18 @@ TEST(ElfRuntime, ADependencyInheritsTheExecutablesRpath) {
     });
 
     auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
-    EXPECT_TRUE(resolution.unresolvedSonames.empty())
+    expect(resolution.unresolvedSonames.empty())
         << "unresolved: " << (resolution.unresolvedSonames.empty()
                               ? std::string{} : resolution.unresolvedSonames.front());
-}
+}};
 
 // …and the suppression, which is the half that makes the rule a rule. An
 // object carrying DT_RUNPATH uses no RPATH at all -- its own or inherited --
 // so a test with only the leg above would also pass on an implementation that
 // inherited unconditionally.
-TEST(ElfRuntime, ADependencyWithItsOwnRunpathDoesNotInheritOne) {
+UTest a_dependency_with_its_own_runpath_does_not_inherit_one{"ElfRuntime/ADependencyWithItsOwnRunpathDoesNotInheritOne", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto payload = t.path / "store";
     auto glibc = payload / "2.44" / "lib64";
@@ -363,13 +360,13 @@ TEST(ElfRuntime, ADependencyWithItsOwnRunpathDoesNotInheritOne) {
     });
 
     auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
-    ASSERT_EQ(resolution.unresolvedSonames.size(), 1u);
-    EXPECT_EQ(resolution.unresolvedSonames.front(), "libdeep.so");
-}
+    expect(fatal(eq(resolution.unresolvedSonames.size(), 1u)));
+    expect(eq(resolution.unresolvedSonames.front(), "libdeep.so"));
+}};
 
-TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
+UTest rule_b_rejects_interpreter_and_libc_from_different_payloads{"RuntimePhysics/RuleBRejectsInterpreterAndLibcFromDifferentPayloads", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -380,13 +377,13 @@ TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
     r.objects.push_back(facts(r.artifact.resolvedLibc, {}, {"GLIBC_2.39"}));
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::ProvenMismatch);
-    EXPECT_NE(verdict.explain().find("rule B"), std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::ProvenMismatch));
+    expect(ne(verdict.explain().find("rule B"), std::string::npos));
+}};
 
-TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
+UTest rule_b_accepts_same_selected_payload{"RuntimePhysics/RuleBAcceptsSameSelectedPayload", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -397,12 +394,12 @@ TEST(RuntimePhysics, RuleBAcceptsSameSelectedPayload) {
     r.objects.push_back(facts(r.artifact.resolvedLibc, {}, {"GLIBC_2.39", "GLIBC_2.44"}));
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Pass));
+}};
 
-TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
+UTest rule_b_rejects_two_libcs_across_the_resolved_closure{"RuntimePhysics/RuleBRejectsTwoLibcsAcrossTheResolvedClosure", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -416,14 +413,13 @@ TEST(RuntimePhysics, RuleBRejectsTwoLibcsAcrossTheResolvedClosure) {
     r.objects.push_back(facts(r.artifact.resolvedLibc, {}, {"GLIBC_2.44"}));
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::ProvenMismatch);
-    EXPECT_NE(verdict.explain().find("more than one libc payload"),
-              std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::ProvenMismatch));
+    expect(ne(verdict.explain().find("more than one libc payload"), std::string::npos));
+}};
 
-TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
+UTest rule_a_rejects_required_floor_above_selected_libc_exports{"RuntimePhysics/RuleARejectsRequiredFloorAboveSelectedLibcExports", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store", "2.39");
     elf::RuntimeResolution r;
@@ -435,14 +431,14 @@ TEST(RuntimePhysics, RuleARejectsRequiredFloorAboveSelectedLibcExports) {
     r.objects.push_back(facts("/lib64/libtinfo.so.6", {"GLIBC_2.42"}));
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::ProvenMismatch);
-    EXPECT_NE(verdict.explain().find("rule A"), std::string::npos);
-    EXPECT_NE(verdict.explain().find("libtinfo.so.6"), std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::ProvenMismatch));
+    expect(ne(verdict.explain().find("rule A"), std::string::npos));
+    expect(ne(verdict.explain().find("libtinfo.so.6"), std::string::npos));
+}};
 
-TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
+UTest rule_a_accepts_equal_or_lower_floor{"RuntimePhysics/RuleAAcceptsEqualOrLowerFloor", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -454,8 +450,8 @@ TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
     r.objects.push_back(facts("/host/lib.so", {"GLIBC_2.39", "GLIBC_2.44"}));
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Pass));
+}};
 
 // UNDER A HERMETIC BINDING, "not found" IS A MEASUREMENT.
 //
@@ -465,12 +461,12 @@ TEST(RuntimePhysics, RuleAAcceptsEqualOrLowerFloor) {
 // the loader will give, and the program cannot start. Filing that under
 // `inconclusive` reports a proven failure as an absence of one, and it is how a
 // GL program that exited 127 was shipped as `validation: pass`.
-TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
+UTest unresolved_needed_under_hermetic_binding_is_proven{"RuntimePhysics/UnresolvedNeededUnderHermeticBindingIsProven", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
-    ASSERT_TRUE(b.hermetic()) << "this test's premise is a private loader";
+    expect(fatal(bool(b.hermetic()))) << "this test's premise is a private loader";
     elf::RuntimeResolution r;
     r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
@@ -480,11 +476,11 @@ TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
     r.unresolvedSonames = {"libgpu-driver.so"};   // a NEEDED nothing provides
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Unresolvable);
-    EXPECT_TRUE(verdict.blocking())
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Unresolvable));
+    expect(bool(verdict.blocking()))
         << "a proven-unstartable artifact must fail the build, not warn";
-    EXPECT_NE(verdict.explain().find("libgpu-driver.so"), std::string::npos);
-}
+    expect(ne(verdict.explain().find("libgpu-driver.so"), std::string::npos));
+}};
 
 // `allow_host_libs` opts out of BOTH phases, or it means two different things.
 //
@@ -494,9 +490,9 @@ TEST(RuntimePhysics, UnresolvedNeededUnderHermeticBindingIsProven) {
 // the library is installed somewhere the private loader does look. It reports;
 // it does not block. (Without this, e2e 206's deliberate host-DSO control
 // failed its own build.)
-TEST(RuntimePhysics, AllowHostLibsDowngradesTheProofToAReport) {
+UTest allow_host_libs_downgrades_the_proof_to_a_report{"RuntimePhysics/AllowHostLibsDowngradesTheProofToAReport", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -509,17 +505,17 @@ TEST(RuntimePhysics, AllowHostLibsDowngradesTheProofToAReport) {
 
     auto blocked = elf::validate_runtime_artifact(r.artifact.artifact, b, r,
                                                   /*hostLibsAllowed=*/false);
-    EXPECT_EQ(blocked.status, elf::RuntimeVerdict::Status::Unresolvable);
-    EXPECT_TRUE(blocked.blocking());
+    expect(eq(blocked.status, elf::RuntimeVerdict::Status::Unresolvable));
+    expect(bool(blocked.blocking()));
 
     auto reported = elf::validate_runtime_artifact(r.artifact.artifact, b, r,
                                                    /*hostLibsAllowed=*/true);
-    EXPECT_EQ(reported.status, elf::RuntimeVerdict::Status::Inconclusive);
-    EXPECT_FALSE(reported.blocking());
-    EXPECT_NE(reported.explain().find("libtinfo.so.6"), std::string::npos);
-    EXPECT_NE(reported.explain().find("allow_host_libs"), std::string::npos)
+    expect(eq(reported.status, elf::RuntimeVerdict::Status::Inconclusive));
+    expect(!reported.blocking());
+    expect(ne(reported.explain().find("libtinfo.so.6"), std::string::npos));
+    expect(ne(reported.explain().find("allow_host_libs"), std::string::npos))
         << "a downgraded verdict must say what downgraded it";
-}
+}};
 
 // THE ARTIFACT'S FORMAT DECIDES, NOT THE BINDING'S.
 //
@@ -527,12 +523,12 @@ TEST(RuntimePhysics, AllowHostLibsDowngradesTheProofToAReport) {
 // private loader, therefore hermetic — while producing a PE. The parse failure
 // ("not an ELF file") landed in `unresolved`, and the artifact was failed for a
 // missing shared library it could not possibly have. CI caught it; this pins it.
-TEST(RuntimePhysics, CrossBuiltNonElfArtifactIsNotJudgedByElfRules) {
+UTest cross_built_non_elf_artifact_is_not_judged_by_elf_rules{"RuntimePhysics/CrossBuiltNonElfArtifactIsNotJudgedByElfRules", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
-    ASSERT_TRUE(b.hermetic());
+    expect(fatal(bool(b.hermetic())));
     elf::RuntimeResolution r;
     r.artifactIsElf = true;
     r.artifact = facts(t.path / "crosswin.exe");
@@ -541,18 +537,18 @@ TEST(RuntimePhysics, CrossBuiltNonElfArtifactIsNotJudgedByElfRules) {
     // and crucially NO unresolvedSonames — nothing was ever looked for.
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
-    EXPECT_FALSE(verdict.blocking());
-    EXPECT_NE(verdict.explain().find("not ELF"), std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Pass));
+    expect(!verdict.blocking());
+    expect(ne(verdict.explain().find("not ELF"), std::string::npos));
+}};
 
 // The narrower half of the same conflation. Even on a genuine ELF, "I could not
 // read one of the objects" or "I stopped after 512" are statements about the
 // CHECK — a check that could not look has proven nothing, so it stays
 // inconclusive no matter how hermetic the binding is.
-TEST(RuntimePhysics, UnreadableObjectIsInconclusiveEvenWhenHermetic) {
+UTest unreadable_object_is_inconclusive_even_when_hermetic{"RuntimePhysics/UnreadableObjectIsInconclusiveEvenWhenHermetic", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -564,21 +560,21 @@ TEST(RuntimePhysics, UnreadableObjectIsInconclusiveEvenWhenHermetic) {
     // no unresolvedSonames: it WAS found, it just could not be parsed
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
-    EXPECT_FALSE(verdict.blocking());
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Inconclusive));
+    expect(!verdict.blocking());
+}};
 
 // The other side of the same line. Without a private loader the artifact runs
 // under the HOST's, which also consults `ld.so.cache` — something mcpp
 // deliberately does not parse. There, unresolved really is unknown, and
 // claiming otherwise would fail builds that work.
-TEST(RuntimePhysics, UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive) {
+UTest unresolved_needed_without_a_private_loader_stays_inconclusive{"RuntimePhysics/UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     b.loader.reset();                       // host runtime: gcc@system and friends
-    ASSERT_FALSE(b.hermetic());
+    expect(fatal(!b.hermetic()));
     elf::RuntimeResolution r;
     r.artifactIsElf = true;
     r.artifact = facts(t.path / "app");
@@ -586,18 +582,18 @@ TEST(RuntimePhysics, UnresolvedNeededWithoutAPrivateLoaderStaysInconclusive) {
     r.unresolved = {"libgpu-driver.so"};
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
-    EXPECT_FALSE(verdict.blocking());
-    EXPECT_NE(verdict.explain().find("libgpu-driver.so"), std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Inconclusive));
+    expect(!verdict.blocking());
+    expect(ne(verdict.explain().find("libgpu-driver.so"), std::string::npos));
+}};
 
 // An undeclared SubOS on Linux is not "some other runtime" — it is a runtime
 // nobody described, and the two must not print the same sentence. Reporting the
 // second as the first sends the reader looking for a runtime they did not
 // select, and quietly counts "unknown" as "fine".
-TEST(RuntimePhysics, UndeclaredBindingIsInconclusiveNotNotApplicable) {
+UTest undeclared_binding_is_inconclusive_not_not_applicable{"RuntimePhysics/UndeclaredBindingIsInconclusiveNotNotApplicable", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto b = binding_for(t.path / "store");
     b.declared = false;
@@ -608,14 +604,13 @@ TEST(RuntimePhysics, UndeclaredBindingIsInconclusiveNotNotApplicable) {
     r.artifact = facts(t.path / "app");
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Inconclusive);
-    EXPECT_NE(verdict.explain().find("does not describe its runtime"),
-              std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Inconclusive));
+    expect(ne(verdict.explain().find("does not describe its runtime"), std::string::npos));
+}};
 
-TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
+UTest non_linux_validator_is_a_typed_noop{"RuntimePhysics/NonLinuxValidatorIsATypedNoop", [] {
     if constexpr (mcpplibs::os::is_linux)
-        GTEST_SKIP() << "the non-Linux boundary is exercised on native runners";
+        skip("the non-Linux boundary is exercised on native runners");
     Tmp t;
     auto b = binding_for(t.path / "store");
     elf::RuntimeResolution r;
@@ -625,9 +620,9 @@ TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
     r.unresolved = {"libgpu-driver.so"};
 
     auto verdict = elf::validate_runtime_artifact(r.artifact.artifact, b, r);
-    EXPECT_EQ(verdict.status, elf::RuntimeVerdict::Status::Pass);
-    EXPECT_NE(verdict.explain().find("non-Linux"), std::string::npos);
-}
+    expect(eq(verdict.status, elf::RuntimeVerdict::Status::Pass));
+    expect(ne(verdict.explain().find("non-Linux"), std::string::npos));
+}};
 
 } // namespace
 
@@ -638,46 +633,46 @@ TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
 // the RULE is right about what a linker actually produces — and the rule was
 // wrong twice before it was measured.
 
-TEST(ElfRuntime, ReadsThisBinarysOwnDynamicSymbols) {
+UTest reads_this_binarys_own_dynamic_symbols{"ElfRuntime/ReadsThisBinarysOwnDynamicSymbols", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF dynamic symbol tables only exist on Linux here";
+        skip("ELF dynamic symbol tables only exist on Linux here");
 
     auto self = std::filesystem::path("/proc/self/exe");
-    if (!std::filesystem::exists(self)) GTEST_SKIP() << "no /proc/self/exe";
+    if (!std::filesystem::exists(self)) skip("no /proc/self/exe");
 
     auto symbols = elf::inspect_dynamic_symbols(self);
-    ASSERT_TRUE(symbols.has_value()) << symbols.error();
+    if (auto&& failed = expect(fatal(symbols.has_value())); !failed) failed << symbols.error();
     if (!symbols->present)
-        GTEST_SKIP() << "this test binary is statically linked";
+        skip("this test binary is statically linked");
 
     // The DENOMINATOR has to be real. `exported = 0` out of an unread table
     // is the reading this whole area exists to make impossible.
-    EXPECT_GT(symbols->total, 0u);
-    EXPECT_TRUE(symbols->copyRelocationsKnown)
+    expect(gt(symbols->total, 0u));
+    expect(bool(symbols->copyRelocationsKnown))
         << "x86_64/aarch64/riscv64 must all be in the COPY relocation table";
-}
+}};
 
-TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
+UTest this_binary_exports_nothing_of_its_own{"ElfRuntime/ThisBinaryExportsNothingOfItsOwn", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF dynamic symbol tables only exist on Linux here";
+        skip("ELF dynamic symbol tables only exist on Linux here");
 
     auto self = std::filesystem::path("/proc/self/exe");
-    if (!std::filesystem::exists(self)) GTEST_SKIP() << "no /proc/self/exe";
+    if (!std::filesystem::exists(self)) skip("no /proc/self/exe");
 
     auto facts = elf::inspect_elf_runtime(self);
-    ASSERT_TRUE(facts.has_value()) << facts.error();
+    if (auto&& failed = expect(fatal(facts.has_value())); !failed) failed << facts.error();
     // PT_INTERP, not the ELF type: a PIE executable is ET_DYN exactly like
     // a shared library, and whether this binary is PIE is the payload
     // compiler's default rather than mcpp's decision.
     if (facts->interp.empty())
-        GTEST_SKIP() << "statically linked: no loader, so no flat namespace";
+        skip("statically linked: no loader, so no flat namespace");
 
     auto symbols = elf::inspect_dynamic_symbols(self);
-    ASSERT_TRUE(symbols.has_value()) << symbols.error();
-    ASSERT_TRUE(symbols->present);
+    if (auto&& failed = expect(fatal(symbols.has_value())); !failed) failed << symbols.error();
+    expect(fatal(bool(symbols->present)));
 
     auto exported = mcpp::build::symbol_provision::exported_definitions(*symbols);
-    ASSERT_TRUE(exported.has_value());
+    expect(fatal(exported.has_value()));
 
     // Measured on every mcpp binary: the only defined entries are glibc's
     // copy relocations (environ, __environ, stdout, stderr,
@@ -686,14 +681,13 @@ TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
     // name-keyed filter reports it in every executable ever built.
     std::vector<std::string> names;
     for (auto const& e : *exported) names.push_back(e.name);
-    EXPECT_TRUE(names.empty())
-        << "an ordinary mcpp-linked test binary must export nothing of its "
+    if (auto&& failed = expect(names.empty()); !failed) failed << "an ordinary mcpp-linked test binary must export nothing of its "
            "own; got: " << [&] {
                std::string s;
                for (auto const& n : names) { s += n; s += ' '; }
                return s;
            }();
-}
+}};
 
 // THE SURFACE A DEPENDENCY PUBLISHES FOR dlopen, WHICH NO ARTIFACT WALK REACHES.
 //
@@ -708,9 +702,9 @@ TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
 // legitimately holds host-driver links that dangle on a machine with no
 // driver, and a check that failed there would turn a correct CPU-only
 // configuration into a failed build.
-TEST(DlopenSurface, SeparatesAPackagingGapFromAMachineWithoutTheDriver) {
+UTest separates_a_packaging_gap_from_a_machine_without_the_driver{"DlopenSurface/SeparatesAPackagingGapFromAMachineWithoutTheDriver", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto payload = t.path / "store";
     auto glibc = payload / "2.44" / "lib64";
@@ -738,11 +732,11 @@ TEST(DlopenSurface, SeparatesAPackagingGapFromAMachineWithoutTheDriver) {
 
     // BOTH DENOMINATORS. A surface that failed to build enumerates nothing and
     // every per-member assertion below then passes.
-    EXPECT_EQ(report.members, 4u);
-    EXPECT_EQ(report.walked, 3u) << "the dangling entry is not read, and the "
+    expect(eq(report.members, 4u));
+    expect(eq(report.walked, 3u)) << "the dangling entry is not read, and the "
                                     "other three are";
 
-    ASSERT_EQ(report.findings.size(), 2u);
+    expect(fatal(eq(report.findings.size(), 2u)));
     // Asserted as FIELDS, not as a substring of a message whose wording is
     // free to improve.
     const elf::DlopenSurfaceFinding* gap = nullptr;
@@ -751,22 +745,22 @@ TEST(DlopenSurface, SeparatesAPackagingGapFromAMachineWithoutTheDriver) {
         if (f.soname == "libabsent.so.7") gap = &f;
         if (f.soname == "libdriver.so.1") machine = &f;
     }
-    ASSERT_NE(gap, nullptr);
-    ASSERT_NE(machine, nullptr);
-    EXPECT_FALSE(gap->dangling) << "nothing on the surface answers this name";
-    EXPECT_EQ(gap->member.filename(), "libgap.so.1");
-    EXPECT_TRUE(machine->dangling)
+    expect(fatal(ne(gap, nullptr)));
+    expect(fatal(ne(machine, nullptr)));
+    expect(!gap->dangling) << "nothing on the surface answers this name";
+    expect(eq(gap->member.filename(), "libgap.so.1"));
+    expect(bool(machine->dangling))
         << "the surface carries the entry; the target is the machine's answer";
-}
+}};
 
 // ONE LIBRARY, NOT ITS TWO NAMES.
 //
 // A farm links `libfoo.so.N` and `libfoo.so.N.M.P` to one file. Walking the
 // entries reports every finding twice and calls thirteen libraries twenty-six,
 // which is what the first published record did.
-TEST(DlopenSurface, CountsALibraryOnceWhenTwoNamesLinkToIt) {
+UTest counts_a_library_once_when_two_names_link_to_it{"DlopenSurface/CountsALibraryOnceWhenTwoNamesLinkToIt", [] {
     if constexpr (!mcpplibs::os::is_linux)
-        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+        skip("ELF/glibc runtime physics only apply on Linux");
     Tmp t;
     auto payload = t.path / "store";
     auto glibc = payload / "2.44" / "lib64";
@@ -784,9 +778,9 @@ TEST(DlopenSurface, CountsALibraryOnceWhenTwoNamesLinkToIt) {
     std::vector<std::filesystem::path> search{farm, glibc};
     auto report = elf::inspect_dlopen_surface(dirs, binding_for(payload), search);
 
-    EXPECT_EQ(report.members, 1u);
-    EXPECT_EQ(report.walked, 1u);
-    ASSERT_EQ(report.findings.size(), 1u);
+    expect(eq(report.members, 1u));
+    expect(eq(report.walked, 1u));
+    expect(fatal(eq(report.findings.size(), 1u)));
     // The SHORTEST name is kept: it is the one a dlopen asks for.
-    EXPECT_EQ(report.findings.front().member.filename(), "libtwo.so.1");
-}
+    expect(eq(report.findings.front().member.filename(), "libtwo.so.1"));
+}};

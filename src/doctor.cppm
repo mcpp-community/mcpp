@@ -16,6 +16,7 @@ import mcpp.build.refusal;
 import mcpp.targetside;
 import mcpp.wire;
 import mcpp.build.plan;
+import mcpp.build.flag_origins;
 import mcpp.build.runtime_validation;
 import mcpp.config;
 import mcpp.fallback.probe_sysroot;
@@ -1173,6 +1174,8 @@ int print_stored_runtime_resolution() {
 //
 // It builds nothing. `prepare_build` stops before any compile, which is also
 // why the target matrix can afford to ask it for every cell.
+nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx);
+
 export int why_toolchain_json(std::string_view target, std::string_view tcSpec) {
     mcpp::build::BuildOverrides ov;
     ov.target_triple = std::string(target);
@@ -1281,6 +1284,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
             {"replaced",   ctx->compilerChoice.replaced},
         }},
     };
+    data["target"] = target_selection_json(*ctx);
     data["triple"] = {
         {"requested", std::string(target)},
         {"toolchain", tc.targetTriple},
@@ -1508,6 +1512,83 @@ nlohmann::json compat_uses_json() {
     return uses;
 }
 
+// The selection of a request (SPEC-016 §4) as the machine output states it.
+nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx) {
+    auto const& s = ctx.targetSelection;
+    auto candidates = nlohmann::json::array();
+    for (auto const& c : s.candidates)
+        candidates.push_back({ {"identity", c.identity}, {"provider", c.provider},
+                               {"priority", c.priority}, {"available", c.available}, {"why", c.why} });
+    return { {"request", s.request}, {"identity", s.identity}, {"provider", s.provider},
+             {"priority", s.priority}, {"fallback", s.fallback}, {"why", s.why},
+             {"candidates", candidates} };
+}
+
+// THE PLATFORM AT HAND (SPEC-016 §5): the root package's own statement when it
+// is a platform package, else the platform the build uses for its target.
+struct PlatformAtHand {
+    std::string name, version;
+    const mcpp::manifest::platform::Statement* statement = nullptr;
+};
+
+PlatformAtHand platform_at_hand(const mcpp::build::BuildContext& ctx) {
+    if (ctx.manifest.platformDeclared)
+        return { ctx.manifest.package.name, ctx.manifest.package.version, &ctx.manifest.platform };
+    if (ctx.plan.platform.active) {
+        auto const& p = ctx.plan.platform;
+        auto dot = p.package.rfind('.');
+        return { dot == std::string::npos ? p.package : p.package.substr(dot + 1), p.version, &p.fields };
+    }
+    return {};
+}
+
+nlohmann::json platform_json(const mcpp::build::BuildContext& ctx) {
+    namespace mp = mcpp::manifest::platform;
+    const auto at = platform_at_hand(ctx);
+    if (!at.statement) return nullptr;
+    const auto name = mp::platform_name(at.name);
+    auto rows = nlohmann::json::array();
+    for (auto const& d : at.statement->defines) rows.push_back(d.triple);
+    auto served = nlohmann::json::array();
+    for (auto const& s : mp::served_identities(*at.statement, name))
+        served.push_back({ {"identity", s.identity}, {"provider", s.provider}, {"priority", s.priority} });
+    const auto f = mp::check_statement(*at.statement, name);
+    return { {"package", at.name}, {"version", at.version}, {"defines", rows}, {"serves", served},
+             {"warnings", f.warnings} };
+}
+
+// `mcpp why target|flags|platform --format json`.
+export int why_target_or_flags_json(std::string_view topic, std::string_view target,
+                                    std::string_view unit, const std::string& features) {
+    const bool wasQuiet = mcpp::ui::is_quiet();
+    mcpp::ui::set_quiet(true);
+    struct QuietGuard {
+        bool prev;
+        ~QuietGuard() { mcpp::ui::set_quiet(prev); }
+    } quietGuard{wasQuiet};
+    mcpp::build::BuildOverrides ov;
+    ov.features = features;
+    ov.target_triple = std::string(target);
+    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                          /*includeDevDeps=*/false, {}, ov);
+    nlohmann::json data;
+    std::vector<mcpp::wire::Diagnostic> diags;
+    data["status"] = ctx ? "ok" : "refused";
+    if (!ctx)
+        diags.push_back({.code = "prepare.failed", .severity = mcpp::wire::Severity::Error,
+                         .message = ctx.error()});
+    else if (topic == "target") data["target"] = target_selection_json(*ctx);
+    else if (topic == "platform") data["platform"] = platform_json(*ctx);
+    else data["flags"] = mcpp::build::flag_origins_json(mcpp::build::flag_origins(ctx->plan, unit));
+    mcpp::wire::emit({
+        .kind        = std::format("mcpp.why.{}", topic),
+        .effects     = { mcpp::wire::Effect::ReadProject },
+        .data        = data,
+        .diagnostics = diags,
+    });
+    return ctx ? 0 : 2;
+}
+
 export int why_build_programs_or_compat_json(std::string_view topic, const std::string& features) {
     const bool wasQuiet = mcpp::ui::is_quiet();
     mcpp::ui::set_quiet(true);
@@ -1537,16 +1618,16 @@ export int why_build_programs_or_compat_json(std::string_view topic, const std::
 }
 
 export int why_report(const std::string& topic, const std::string& features,
-                      const std::string& subject = {}) {
+                      const std::string& subject = {}, const std::string& target = {}) {
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
-        "all", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool", "payload",
-        "build-programs", "compat",
+        "all", "target", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool",
+        "payload", "build-programs", "compat", "flags", "platform",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
         std::println(libc::stderr(), "error: '{}' is not a topic of `mcpp why`; the topics are "
-                     "toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
-                     "payload <ns:name>, build-programs and compat", topic);
+                     "target, toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
+                     "payload <ns:name>, build-programs, compat, flags [<unit>] and platform", topic);
         return 2;
     }
 
@@ -1560,10 +1641,69 @@ export int why_report(const std::string& topic, const std::string& features,
     // visible only in the `resolution.json` of that build.
     mcpp::build::BuildOverrides ov;
     ov.features = features;
+    ov.target_triple = target;
     auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
                                           /*includeDevDeps=*/false, {}, ov);
     if (!ctx) { std::println(libc::stderr(), "error: {}", ctx.error()); return 2; }
     auto& tc   = ctx->tc;
+
+    // THE SELECTION (SPEC-016 §4): the request, the identity and provider it
+    // was given, and every candidate in the order the rule took them.
+    if (all || topic == "target") {
+        auto const& s = ctx->targetSelection;
+        if (s.request.empty()) {
+            std::println("target: {}  (the host's own build; no request to select for)", s.identity);
+        } else {
+            std::println("target: {} → {}", s.request, s.identity);
+            std::println("  provider: {}{}", s.provider.empty() ? std::string("(the platform's)") : s.provider,
+                         s.provider.empty() ? std::string{} : std::format("  (priority {})", s.priority));
+            if (s.fallback) std::println("  fallback: {}", s.why);
+            if (!s.candidates.empty()) std::println("  candidates, in order:");
+            for (auto const& c : s.candidates) {
+                const bool taken = c.identity == s.identity && c.provider == s.provider;
+                std::println("    {:<26} {:<14} {:>4}  {}", c.identity,
+                             c.provider.empty() ? std::string("(platform)") : c.provider, c.priority,
+                             taken ? std::string("taken")
+                                   : c.available ? std::string("available") : "not available: " + c.why);
+            }
+        }
+    }
+    // THE PLATFORM'S ROWS AND THE IDENTITIES IT SERVES (SPEC-016 §5), each with
+    // the provider and its priority.
+    if (topic == "platform") {
+        namespace mp = mcpp::manifest::platform;
+        const auto at = platform_at_hand(*ctx);
+        if (!at.statement) {
+            std::println("platform: none  (the build of {} uses no platform package)", ctx->targetSelection.identity);
+            return 0;
+        }
+        const auto name = mp::platform_name(at.name);
+        std::println("platform: {} {}", at.name, at.version);
+        for (auto const& d : at.statement->defines) std::println("  defines {}", d.triple);
+        for (auto const& s : mp::served_identities(*at.statement, name))
+            std::println("  serves  {:<28} {:<20} priority {}", s.identity, s.provider, s.priority);
+        for (auto const& w : mp::check_statement(*at.statement, name).warnings)
+            std::println("  warning: {}", w);
+        return 0;
+    }
+    // EVERY WORD OF A UNIT'S COMMAND LINE AND WHO GAVE IT (mcpp#911 G2).
+    if (topic == "flags") {
+        const auto o = mcpp::build::flag_origins(ctx->plan, subject);
+        if (o.units.empty())
+            std::println("flags: no unit {}", subject.empty() ? std::string("of the root package")
+                                                          : std::format("ends with '{}'", subject));
+        for (auto const& u : o.units) {
+            std::println("flags of {} (package {}, for {}):", u.file, u.package, o.identity);
+            for (auto const& w : u.words)
+                std::println("  {:<9} {}{}", w.layer, w.word,
+                             w.detail.empty() ? std::string{} : std::format("   [{}]", w.detail));
+        }
+        std::println("link flags (for {}):", o.identity);
+        for (auto const& w : o.link)
+            std::println("  {:<9} {}{}", w.layer, w.word,
+                         w.detail.empty() ? std::string{} : std::format("   [{}]", w.detail));
+        return 0;
+    }
 
     if (all || topic == "toolchain") {
         const auto prof = mcpp::toolchain::abi_profile(tc);
@@ -1734,6 +1874,8 @@ export int why_report(const std::string& topic, const std::string& features,
                             list += (list.empty() ? "" : ", ") + x.get<std::string>();
                         std::println("      instances: {}", list);
                     }
+                    if (!entry.value("root", false) && entry.contains("manifest_dir"))
+                        std::println("      root: {}", entry.value("manifest_dir", std::string{}));
                     // A package with no target instance is linked into nothing here.
                     const auto inst = entry.value("instances", nlohmann::json::array());
                     const bool linked = !inst.is_array() || inst.empty()

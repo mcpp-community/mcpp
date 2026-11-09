@@ -5,7 +5,8 @@
 #
 # Criteria:
 #   A. `[test] programs = "directory"`: the files of a directory below `tests/` are one program,
-#      named by the directory, whose cases are all of theirs; a directory whose file defines `main`
+#      named by the directory, whose cases are all of theirs, run as a process per file of its cases
+#      and, under `split = "none"`, once; a directory whose file defines `main`
 #      begins there; two files of one directory that define `main` are refused, naming both.
 #   B. A program built from a file of plain `main` that links a framework's library (it carries the
 #      protocol's marker and speaks none) is one case, judged by its exit status, run and listed.
@@ -50,6 +51,15 @@ printf 'data\n' > tests/data/f.txt
 # A
 printf '\n[test]\nprograms = "directory"\n' >> mcpp.toml
 "$MCPP" test > a.log 2>&1 || fail "A: the directory programs" a.log
+# A program that speaks the protocol runs as a process per file of its cases (`split = "file"`).
+grep -q 'unit/a \.\.\. ok (.*1 case)' a.log && grep -q 'unit/b \.\.\. ok (.*1 case)' a.log \
+    || fail "A: unit does not run as a process per file" a.log
+# A pattern names a part as the run names it.
+"$MCPP" test unit/b > a-part.log 2>&1 || fail "A: a part named by its pattern" a-part.log
+grep -q 'unit/b \.\.\. ok' a-part.log && ! grep -q 'unit/a \.\.\.' a-part.log \
+    || fail "A: the pattern of a part did not run that part alone" a-part.log
+printf 'split = "none"\n' >> mcpp.toml
+"$MCPP" test > a.log 2>&1 || fail "A: the directory programs, run once" a.log
 grep -q 'unit \.\.\. ok (.*2 cases)' a.log || fail "A: unit is not one program of two cases" a.log
 grep -q '^e2e \.\.\. ok' a.log || fail "A: the directory of a file with main" a.log
 "$MCPP" test --cases > a-cases.log 2>&1 || fail "A: --cases" a-cases.log

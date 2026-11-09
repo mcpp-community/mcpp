@@ -191,11 +191,19 @@ struct Carrier {
 
 // The `<os>-<arch>` vocabulary of `runner.hosts`, `carrier.hosts` and a
 // package's coverage: a system mcpp builds programs for, and an architecture.
+// `<os>-<arch>`: a system's word and an architecture's. The system is any a
+// row names -- the built-in ones and those a platform defines (mcpp#911 G10);
+// so the word is checked for its form here, and for being a system where a
+// pair is used.
 inline bool is_host_pair(std::string_view s) {
     const auto dash = s.find('-');
-    if (dash == std::string_view::npos || dash + 1 == s.size()) return false;
-    const auto os = s.substr(0, dash);
-    return (os == "linux" || os == "macos" || os == "windows")
+    if (dash == 0 || dash == std::string_view::npos || dash + 1 == s.size()) return false;
+    auto word = [](std::string_view w) {
+        return std::ranges::all_of(w, [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        });
+    };
+    return word(s.substr(0, dash)) && word(s.substr(dash + 1))
         && s.find('-', dash + 1) == std::string_view::npos;
 }
 
@@ -228,6 +236,40 @@ struct Hosted {
 };
 
 // Everything one source states about a platform, in the seven groups of §4.
+// A ROW A PLATFORM DEFINES (`[[platform.define]]`, SPEC-016 §2): an identity the
+// engine's table does not have, with the facts a build of it needs.
+struct RowSpec {
+    std::string triple;
+    std::string tier = "preview", note, clangTriple, objectFormat = "elf", family, dataModel,
+                exeSuffix, sharedSuffix, loader, execution;
+    std::string march, mabi, codeModel, multilib, linkEmulation;
+    std::vector<std::string> flags, descriptorKeys;
+    bool standard = true, exact = false;
+    Origin origin;
+};
+
+// A PROVIDER (`[[platform.provider]]`, SPEC-016 §3): the identities it serves and
+// the part of the platform's statement that applies to them. `[platform]` is the
+// provider of `targets`, and `[platform.hosted]` the hosted provider of its
+// `targets`; both remain their shorthands.
+struct ProviderSpec {
+    std::string name;
+    std::vector<std::string> serves, hosts{"*"}, pairs;
+    int priority = 100;
+    std::string toolchain, sysroot, linkage;
+    // `platform`: the platform's own statement applies, with this provider's in
+    // its place; `none`: only what the provider states, and the version group --
+    // the form `[platform.hosted]` is the shorthand of.
+    std::string base = "platform";
+    // The C environment (G3): hosted (a C library with `main`), or freestanding;
+    // unset: hosted where a C library is present.
+    std::optional<bool> hosted;
+    std::map<std::string, LayerEntry> layers;
+    Link link;
+    std::string execution;
+    Origin origin;
+};
+
 struct Statement {
     // [platform]
     Words                         targets;
@@ -260,13 +302,22 @@ struct Statement {
     // [platform.hosted]
     Hosted                        hosted;
 
+    // SPEC-016: the rows the platform defines, its providers, and the priority of
+    // the provider `[platform]` itself is.
+    // The C environment the provider that applies states (G3); unset: unstated.
+    std::optional<bool>           cHosted;
+    std::vector<RowSpec>          defines;
+    std::vector<ProviderSpec>     providers;
+    int                           priority = 100;
+    bool                          prioritySet = false;
+
     bool empty() const {
         return !targets.set && !toolchain.set && !sysroot.set && !runner.set
             && runners.empty() && carriers.empty() && !descriptorKeys.set && !plugin.set && !universal.set && layers.empty()
             && tools.empty() && build.empty() && buildCfg.empty()
             && !link.driver.set && !link.flags.set && !link.start.set && !link.script.set
             && !link.inputsSet && !link.exe.set && !link.shared.set && !link.sealSet
-            && versions.empty() && !hosted.set;
+            && versions.empty() && !hosted.set && defines.empty() && providers.empty();
     }
 };
 
@@ -278,6 +329,11 @@ struct Override {
     Origin      platformOrigin;
     bool        platformSet  = false;
     bool        platformNone = false;   // `platform = "none"`
+    std::string platformBuiltin;        // `platform = "builtin:<name>"`: a built-in provider
+    // `[target.<selector>.priority] <provider> = <n>` (SPEC-016 §4.3): the
+    // priority of a provider for the rows the selector matches.
+    std::map<std::string, int> priority;
+    Origin      priorityOrigin;
     Statement   fields;
 };
 
@@ -296,6 +352,16 @@ constexpr bool is_layer(std::string_view k) {
 inline constexpr std::string_view kPlatformKeys[] = {
     "targets", "toolchain", "sysroot", "runner", "runners", "carrier", "plugin",
     "universal", "descriptor_keys", "layers", "tools", "build", "link", "versions", "hosted",
+    "define", "provider", "priority",
+};
+inline constexpr std::string_view kDefineKeys[] = {
+    "triple", "tier", "note", "standard", "exact", "clang-triple", "object-format", "family",
+    "data-model", "exe-suffix", "shared-suffix", "loader", "execution", "march", "mabi",
+    "code-model", "multilib", "flags", "link-emulation", "descriptor-keys",
+};
+inline constexpr std::string_view kProviderKeys[] = {
+    "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
+    "hosted", "layers", "link", "execution",
 };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
@@ -307,7 +373,7 @@ inline constexpr std::string_view kHostedKeys[] = { "targets", "toolchain", "lay
 // override a platform. `runner`, `runners`, `toolchain` and `sysroot` are the
 // table's existing keys and keep their parsers.
 inline constexpr std::string_view kOverrideKeys[] = {
-    "platform", "layers", "tools", "carrier", "link",
+    "platform", "priority", "layers", "tools", "carrier", "link",
 };
 
 // The carrier entry of `s` that serves `pair` (`<os>-<arch>`): the first whose
@@ -323,8 +389,31 @@ inline const Carrier* carrier_for(const Statement& s, std::string_view pair) {
 
 // `"[<namespace>.]<name>@<version>"` -> the ref; the error names what is
 // missing. `none` is not a ref; callers test for it first.
+// THE STRING FORM OF A REFERENCE (SPEC-016 §8, SPEC-001 §5): `[<ns>.]<name>@<version>`,
+// or `git+<url>[#tag=<t>|rev=<r>|branch=<b>]` -- no fragment is the remote's
+// default branch. A path is read by the caller, which knows the directory.
 inline std::expected<PackageRef, std::string> parse_ref_text(std::string_view text) {
     PackageRef r;
+    if (text.starts_with("git+")) {
+        auto rest = text.substr(4);
+        const auto hash = rest.find('#');
+        r.spec.git = std::string(rest.substr(0, hash));
+        if (r.spec.git.empty())
+            return std::unexpected(std::format("'{}' names no repository after `git+`", text));
+        r.spec.gitRefKind = "branch";   // the default branch, resolved when it is fetched
+        if (hash != std::string_view::npos) {
+            const auto frag = rest.substr(hash + 1);
+            const auto eq = frag.find('=');
+            const auto kind = frag.substr(0, eq);
+            if (eq == std::string_view::npos || eq + 1 == frag.size()
+                || (kind != "tag" && kind != "rev" && kind != "branch"))
+                return std::unexpected(std::format(
+                    "'{}': after `#` write tag=<tag>, rev=<commit> or branch=<branch>", text));
+            r.spec.gitRefKind = std::string(kind);
+            r.spec.gitRev = std::string(frag.substr(eq + 1));
+        }
+        return r;
+    }
     const auto at = text.rfind('@');
     if (at == std::string_view::npos || at == 0 || at + 1 == text.size())
         return std::unexpected(std::format(
@@ -366,10 +455,12 @@ inline std::string identity(const Override& o) {
     std::string s = o.selector;
     auto add = [&](const Origin& g) { s += std::format("|{}:{}:{}", g.file, g.line, g.key); };
     if (o.platformSet) {
-        s += o.platformNone ? std::string("|none") : "|" + display(o.platform);
+        s += !o.platformBuiltin.empty() ? "|builtin:" + o.platformBuiltin
+           : o.platformNone ? std::string("|none") : "|" + display(o.platform);
         add(o.platformOrigin);
     }
     auto const& f = o.fields;
+    for (auto const& [k, n] : o.priority) s += std::format("|priority:{}={}", k, n);
     for (auto const& [k, e] : f.layers) add(e.origin);
     for (auto const& [k, e] : f.tools) add(e.origin);
     for (auto const& [k, w] : f.runners) add(w.origin);

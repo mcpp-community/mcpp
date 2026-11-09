@@ -1057,6 +1057,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             mcpp::build::BuildProgramEnv hookEnv;
             fill_target_build_env(hookEnv, *state.m, state.tc ? &*state.tc : nullptr, state.cfg_opt ? &*state.cfg_opt : nullptr);
             hookEnv.targetTriple = state.overrides.target_triple;
+            hookEnv.targetProvider = state.targetChoice.provider;
             // Six names, fixed by install_hook_env; one guard each.
             const auto hookVars = mcpp::build::install_hook_env(hookEnv);
             mcpp::invocation::ScopedEnv hookVar0(hookVars.at(0).first, hookVars.at(0).second);
@@ -1378,7 +1379,8 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state) {
                                       const std::string& shortName,
                                       const std::string& version,
                                       const std::vector<std::string>& patches,
-                                      const std::string& digest)
+                                      const std::string& digest,
+                                      const std::string& patchRoot)
         -> std::expected<LoadedDep, std::string>
     {
         auto cfg = state.get_cfg(true);
@@ -1403,8 +1405,32 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state) {
         const auto qualified = ns.empty() ? shortName : ns + "." + shortName;
         const auto variant = (*cfg)->metaCacheDir / "src" / qualified
                            / mcpp::pm::patch::variant_dir_name(exact, digest);
-        if (auto r = mcpp::pm::patch::materialize(*ctx.installed, patches, digest, variant); !r)
+        // THE PATCH ROOT IS THE PACKAGE'S (mcpp#911 G8): the directory of the
+        // manifest its descriptor names, inside the archive, and the edge's
+        // `patch_root` below it.
+        std::filesystem::path packageRoot;
+        if (!ctx.luaContent) ctx.luaContent = step4a_read_lua_content(state, ctx);
+        if (ctx.luaContent) {
+            const auto field = mcpp::manifest::extract_mcpp_field(*ctx.luaContent);
+            std::vector<std::filesystem::path> found;
+            if (field.kind == mcpp::manifest::McppField::StringPath)
+                found = mcpp::modgraph::expand_glob(*ctx.installed, field.value);
+            else if (field.kind != mcpp::manifest::McppField::TableBody)
+                for (auto pat : { "mcpp.toml", "*/mcpp.toml" })
+                    if (found = mcpp::modgraph::expand_glob(*ctx.installed, pat); !found.empty()) break;
+            if (found.size() == 1)
+                packageRoot = std::filesystem::relative(found.front().parent_path(), *ctx.installed);
+        }
+        if (packageRoot == ".") packageRoot.clear();
+        const auto patchAt = (packageRoot / patchRoot).lexically_normal();
+        if (patchAt.generic_string().starts_with(".."))
+            return std::unexpected(std::format(
+                "dependency '{}': patch_root '{}' leaves the package's source", depName, patchRoot));
+        std::vector<std::string> notes;
+        if (auto r = mcpp::pm::patch::materialize(*ctx.installed, patches, digest, variant,
+                                                  patchAt == "." ? std::filesystem::path{} : patchAt, &notes); !r)
             return std::unexpected(std::format("dependency '{}': {}", depName, r.error()));
+        for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", depName, n));
         ctx.installed = variant;
         return step4a_load_version_dep_read_manifest(state, ctx);
     };

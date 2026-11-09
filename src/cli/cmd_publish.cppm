@@ -874,6 +874,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         parsed.value("profile").value_or(""),
         parsed.is_flag_set("release"), parsed.is_flag_set("dev"));
     if (parsed.is_flag_set("no-strip")) opts.strip = false;
+    if (parsed.is_flag_set("all-programs")) opts.allPrograms = true;
     if (auto v = parsed.value("debug-symbols")) opts.debugSymbols = *v;
     if (auto v = parsed.value("features")) opts.features = *v;
 

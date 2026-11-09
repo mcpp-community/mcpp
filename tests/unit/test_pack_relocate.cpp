@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.relocate;
 import mcpp.pack.strip;
+
+using namespace mcpplibs::mtest;
 
 // mcpp.pack.relocate / mcpp.pack.strip — the two halves of "the build machine
 // does not travel", tested where CI cannot otherwise reach them.
@@ -157,7 +159,7 @@ constexpr std::uint64_t kNull = 0, kNeeded = 1, kStrtab = 5, kSoname = 14,
 
 // ── the ELF editor ──────────────────────────────────────────────────────
 
-TEST(PackRelocate, RemovesRunpathFromElf64LittleEndian) {
+UTest removes_runpath_from_elf64_little_endian{"PackRelocate/RemovesRunpathFromElf64LittleEndian", [] {
     auto e = make_elf(/*wide=*/true, /*little=*/true,
         { {kNeeded, 0}, {kStrtab, 0}, {kRunpath, 0}, {kSoname, 0}, {kNull, 0} },
         { "libc.so.6", "/home/builder/.mcpp/store/lib64", "libfoo.so.1" },
@@ -166,29 +168,29 @@ TEST(PackRelocate, RemovesRunpathFromElf64LittleEndian) {
     auto path = write_temp(e.bytes, "elf64le.so");
 
     auto r = mcpp::pack::relocate::strip_search_paths(path);
-    ASSERT_TRUE(r.has_value()) << (r ? "" : r.error());
-    EXPECT_EQ(r->outcome, mcpp::pack::relocate::Outcome::Removed);
-    ASSERT_EQ(r->paths.size(), 1u);
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << (r ? "" : r.error());
+    expect(eq(r->outcome, mcpp::pack::relocate::Outcome::Removed));
+    expect(fatal(eq(r->paths.size(), 1u)));
     // The report names what was dropped — a log line that says only "removed"
     // cannot tell a stale store path from `$ORIGIN`.
-    EXPECT_EQ(r->paths[0], "/home/builder/.mcpp/store/lib64");
+    expect(eq(r->paths[0], "/home/builder/.mcpp/store/lib64"));
 
     std::ifstream in(path, std::ios::binary);
     std::string after{ std::istreambuf_iterator<char>(in), {} };
     // SAME LENGTH: the freed slot becomes DT_NULL padding, so nothing after
     // PT_DYNAMIC moves and no offset in the file needs fixing up.
-    EXPECT_EQ(after.size(), before);
+    expect(eq(after.size(), before));
 
     auto tags = read_tags(after, e.dynOff, true, true);
-    EXPECT_EQ(std::ranges::count(tags, kRunpath), 0);
+    expect(eq(std::ranges::count(tags, kRunpath), 0));
     // The other entries survive, in order. Losing DT_SONAME here would make the
     // library unfindable by the name its consumers link against.
-    EXPECT_EQ(std::ranges::count(tags, kNeeded), 1);
-    EXPECT_EQ(std::ranges::count(tags, kSoname), 1);
-    EXPECT_EQ(std::ranges::count(tags, kStrtab), 1);
-}
+    expect(eq(std::ranges::count(tags, kNeeded), 1));
+    expect(eq(std::ranges::count(tags, kSoname), 1));
+    expect(eq(std::ranges::count(tags, kStrtab), 1));
+}};
 
-TEST(PackRelocate, RemovesRpathFromElf32BigEndian) {
+UTest removes_rpath_from_elf32_big_endian{"PackRelocate/RemovesRpathFromElf32BigEndian", [] {
     // No CI job produces this shape, and `--target` can. A width or byte-order
     // mistake would corrupt the image rather than fail.
     auto e = make_elf(/*wide=*/false, /*little=*/false,
@@ -199,20 +201,20 @@ TEST(PackRelocate, RemovesRpathFromElf32BigEndian) {
     auto path = write_temp(e.bytes, "elf32be.so");
 
     auto r = mcpp::pack::relocate::strip_search_paths(path);
-    ASSERT_TRUE(r.has_value()) << (r ? "" : r.error());
-    EXPECT_EQ(r->outcome, mcpp::pack::relocate::Outcome::Removed);
-    ASSERT_EQ(r->paths.size(), 1u);
-    EXPECT_EQ(r->paths[0], "/home/builder/store/lib");
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << (r ? "" : r.error());
+    expect(eq(r->outcome, mcpp::pack::relocate::Outcome::Removed));
+    expect(fatal(eq(r->paths.size(), 1u)));
+    expect(eq(r->paths[0], "/home/builder/store/lib"));
 
     std::ifstream in(path, std::ios::binary);
     std::string after{ std::istreambuf_iterator<char>(in), {} };
-    EXPECT_EQ(after.size(), before);
+    expect(eq(after.size(), before));
     auto tags = read_tags(after, e.dynOff, false, false);
-    EXPECT_EQ(std::ranges::count(tags, kRpath), 0);
-    EXPECT_EQ(std::ranges::count(tags, kNeeded), 1);
-}
+    expect(eq(std::ranges::count(tags, kRpath), 0));
+    expect(eq(std::ranges::count(tags, kNeeded), 1));
+}};
 
-TEST(PackRelocate, RemovesBothTagsWhenAnImageCarriesBoth) {
+UTest removes_both_tags_when_an_image_carries_both{"PackRelocate/RemovesBothTagsWhenAnImageCarriesBoth", [] {
     // `Both` is what a linker driven with `--disable-new-dtags` after an
     // explicit -rpath can produce, and the loader honours DT_RUNPATH there.
     // Leaving either one behind leaves the defect behind.
@@ -223,78 +225,78 @@ TEST(PackRelocate, RemovesBothTagsWhenAnImageCarriesBoth) {
     auto path = write_temp(e.bytes, "elfboth.so");
 
     auto r = mcpp::pack::relocate::strip_search_paths(path);
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->outcome, mcpp::pack::relocate::Outcome::Removed);
-    EXPECT_EQ(r->paths.size(), 2u);
+    expect(fatal(r.has_value()));
+    expect(eq(r->outcome, mcpp::pack::relocate::Outcome::Removed));
+    expect(eq(r->paths.size(), 2u));
 
     std::ifstream in(path, std::ios::binary);
     std::string after{ std::istreambuf_iterator<char>(in), {} };
     auto tags = read_tags(after, e.dynOff, true, true);
-    EXPECT_EQ(std::ranges::count(tags, kRpath), 0);
-    EXPECT_EQ(std::ranges::count(tags, kRunpath), 0);
-}
+    expect(eq(std::ranges::count(tags, kRpath), 0));
+    expect(eq(std::ranges::count(tags, kRunpath), 0));
+}};
 
-TEST(PackRelocate, AlreadyCleanIsNotTheSameAsNotChecked) {
+UTest already_clean_is_not_the_same_as_not_checked{"PackRelocate/AlreadyCleanIsNotTheSameAsNotChecked", [] {
     auto e = make_elf(true, true,
         { {kNeeded, 0}, {kStrtab, 0}, {kNull, 0} }, { "libc.so.6" }, { 0 });
     auto path = write_temp(e.bytes, "elfclean.so");
     auto r = mcpp::pack::relocate::strip_search_paths(path);
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->outcome, mcpp::pack::relocate::Outcome::NothingToDo);
-    EXPECT_TRUE(r->paths.empty());
-}
+    expect(fatal(r.has_value()));
+    expect(eq(r->outcome, mcpp::pack::relocate::Outcome::NothingToDo));
+    expect(r->paths.empty());
+}};
 
-TEST(PackRelocate, AStaticArchiveIsNotApplicableRatherThanAnError) {
+UTest a_static_archive_is_not_applicable_rather_than_an_error{"PackRelocate/AStaticArchiveIsNotApplicableRatherThanAnError", [] {
     // Every leg goes through this step, and a `.a` has no dynamic section to
     // begin with. Reporting that as a failure would make the caller branch on
     // the format before calling — which is the coupling this module removes.
     auto path = write_temp("!<arch>\n/               0           0     0     0       4         `\n",
                            "libfoo.a");
     auto r = mcpp::pack::relocate::strip_search_paths(path);
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->outcome, mcpp::pack::relocate::Outcome::NotApplicable);
-}
+    expect(fatal(r.has_value()));
+    expect(eq(r->outcome, mcpp::pack::relocate::Outcome::NotApplicable));
+}};
 
-TEST(PackRelocate, AMissingFileIsAnError) {
+UTest a_missing_file_is_an_error{"PackRelocate/AMissingFileIsAnError", [] {
     auto r = mcpp::pack::relocate::strip_search_paths(
         std::filesystem::temp_directory_path() / "mcpp-relocate-test" / "nope.so");
-    EXPECT_FALSE(r.has_value());
-}
+    expect(!r.has_value());
+}};
 
 // ── the strip table ─────────────────────────────────────────────────────
 
-TEST(PackStrip, StaticArchiveKeepsItsSymbolIndex) {
+UTest static_archive_keeps_its_symbol_index{"PackStrip/StaticArchiveKeepsItsSymbolIndex", [] {
     // THE MEASUREMENT BEHIND THIS TEST. `strip --strip-all` on a `.a`
     // removes the archive symbol index, and the consumer's link then fails
     // with `archive has no index; run ranlib to add one` — a message that
     // names neither strip nor the publisher. `--strip-debug` keeps it
     // (measured: 2988 -> 1244 bytes, and the consumer links and runs).
     auto args = mcpp::pack::strip_args(mcpp::pack::ArtifactShape::StaticArchive);
-    EXPECT_NE(std::ranges::find(args, "--strip-debug"), args.end());
-    EXPECT_EQ(std::ranges::find(args, "--strip-all"), args.end());
-    EXPECT_EQ(std::ranges::find(args, "--strip-unneeded"), args.end());
+    expect(ne(std::ranges::find(args, "--strip-debug"), args.end()));
+    expect(eq(std::ranges::find(args, "--strip-all"), args.end()));
+    expect(eq(std::ranges::find(args, "--strip-unneeded"), args.end()));
     // Two identical packs should produce identical bytes; this is the one
     // place the packer rewrites an archive.
-    EXPECT_NE(std::ranges::find(args, "--enable-deterministic-archives"), args.end());
-}
+    expect(ne(std::ranges::find(args, "--enable-deterministic-archives"), args.end()));
+}};
 
-TEST(PackStrip, SharedLibraryKeepsItsDynamicSymbols) {
+UTest shared_library_keeps_its_dynamic_symbols{"PackStrip/SharedLibraryKeepsItsDynamicSymbols", [] {
     // `--strip-unneeded` removes `.symtab` and keeps `.dynsym`, which IS the
     // export list. `--strip-all` would also keep `.dynsym`, but dh_strip uses
     // the narrower flag and there is no reason to be broader than the
     // reference implementation of this exact decision.
     auto args = mcpp::pack::strip_args(mcpp::pack::ArtifactShape::SharedLibrary);
-    EXPECT_NE(std::ranges::find(args, "--strip-unneeded"), args.end());
-    EXPECT_EQ(std::ranges::find(args, "--strip-all"), args.end());
-    EXPECT_EQ(std::ranges::find(args, "--strip-debug"), args.end());
-}
+    expect(ne(std::ranges::find(args, "--strip-unneeded"), args.end()));
+    expect(eq(std::ranges::find(args, "--strip-all"), args.end()));
+    expect(eq(std::ranges::find(args, "--strip-debug"), args.end()));
+}};
 
-TEST(PackStrip, ExecutableIsStrippedWhole) {
+UTest executable_is_stripped_whole{"PackStrip/ExecutableIsStrippedWhole", [] {
     auto args = mcpp::pack::strip_args(mcpp::pack::ArtifactShape::Executable);
-    EXPECT_NE(std::ranges::find(args, "--strip-all"), args.end());
-}
+    expect(ne(std::ranges::find(args, "--strip-all"), args.end()));
+}};
 
-TEST(PackStrip, EveryShapeDropsCommentAndNote) {
+UTest every_shape_drops_comment_and_note{"PackStrip/EveryShapeDropsCommentAndNote", [] {
     // dh_strip drops both from all three. `.note` is matched by exact name, so
     // `.note.gnu.build-id` survives — which is what `--add-gnu-debuglink` and
     // debuginfod pair with.
@@ -302,12 +304,12 @@ TEST(PackStrip, EveryShapeDropsCommentAndNote) {
                         mcpp::pack::ArtifactShape::SharedLibrary,
                         mcpp::pack::ArtifactShape::StaticArchive }) {
         auto args = mcpp::pack::strip_args(shape);
-        EXPECT_NE(std::ranges::find(args, "--remove-section=.comment"), args.end());
-        EXPECT_NE(std::ranges::find(args, "--remove-section=.note"), args.end());
+        expect(ne(std::ranges::find(args, "--remove-section=.comment"), args.end()));
+        expect(ne(std::ranges::find(args, "--remove-section=.note"), args.end()));
     }
-}
+}};
 
-TEST(PackStrip, WhetherStrippingAppliesIsAskedOfTheTargetNotTheCompiler) {
+UTest whether_stripping_applies_is_asked_of_the_target_not_the_compiler{"PackStrip/WhetherStrippingAppliesIsAskedOfTheTargetNotTheCompiler", [] {
     // Keying this on the compiler is wrong in BOTH directions, and each
     // direction is a real configuration mcpp ships:
     //
@@ -319,20 +321,20 @@ TEST(PackStrip, WhetherStrippingAppliesIsAskedOfTheTargetNotTheCompiler) {
     //                                  `mcpp pack` on a Mac — for a format
     //                                  whose image carries a debug MAP and
     //                                  leaves the DWARF in the .o files.
-    EXPECT_TRUE (mcpp::pack::debug_info_is_in_band("x86_64-linux-gnu"));
-    EXPECT_TRUE (mcpp::pack::debug_info_is_in_band("aarch64-linux-musl"));
-    EXPECT_TRUE (mcpp::pack::debug_info_is_in_band("x86_64-windows-gnu"));
-    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("x86_64-windows-msvc"));
-    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("aarch64-macos"));
-    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("x86_64-macos"));
+    expect(mcpp::pack::debug_info_is_in_band("x86_64-linux-gnu"));
+    expect(mcpp::pack::debug_info_is_in_band("aarch64-linux-musl"));
+    expect(mcpp::pack::debug_info_is_in_band("x86_64-windows-gnu"));
+    expect(!mcpp::pack::debug_info_is_in_band("x86_64-windows-msvc"));
+    expect(!mcpp::pack::debug_info_is_in_band("aarch64-macos"));
+    expect(!mcpp::pack::debug_info_is_in_band("x86_64-macos"));
     // iOS carries the same Mach-O debug map + out-of-band .dSYM as macOS.
-    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("aarch64-ios"));
+    expect(!mcpp::pack::debug_info_is_in_band("aarch64-ios"));
     // Segment-wise, not substring: mcpp has been bitten by a triple predicate
     // that answered on a substring before.
-    EXPECT_TRUE(mcpp::pack::debug_info_is_in_band("macos64-linux-gnu"));
-}
+    expect(mcpp::pack::debug_info_is_in_band("macos64-linux-gnu"));
+}};
 
-TEST(PackStrip, MsvcHasNothingInBandToRemove) {
+UTest msvc_has_nothing_in_band_to_remove{"PackStrip/MsvcHasNothingInBandToRemove", [] {
     // PE/MSVC keeps debug information in a separate `.pdb`. An empty `strip`
     // tool there is the right answer, not a missing dependency — and the two
     // must not be conflated, or every other platform gets a silent no-op.
@@ -340,15 +342,15 @@ TEST(PackStrip, MsvcHasNothingInBandToRemove) {
     mcpp::pack::StripTools tools{ {}, {}, /*inBandDebugInfo=*/false };
     auto r = mcpp::pack::strip_artifact(path, mcpp::pack::ArtifactShape::SharedLibrary,
                                         tools, {});
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->outcome, mcpp::pack::StripOutcome::NotApplicable);
-}
+    expect(fatal(r.has_value()));
+    expect(eq(r->outcome, mcpp::pack::StripOutcome::NotApplicable));
+}};
 
-TEST(PackStrip, AMissingStripToolIsRefusedWhereDebugInfoIsInBand) {
+UTest a_missing_strip_tool_is_refused_where_debug_info_is_in_band{"PackStrip/AMissingStripToolIsRefusedWhereDebugInfoIsInBand", [] {
     auto path = write_temp("not an image", "notanimage2.bin");
     mcpp::pack::StripTools tools{ {}, {}, /*inBandDebugInfo=*/true };
     auto r = mcpp::pack::strip_artifact(path, mcpp::pack::ArtifactShape::SharedLibrary,
                                         tools, {});
-    ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().find("no `strip`"), std::string::npos);
-}
+    expect(fatal(!r.has_value()));
+    expect(ne(r.error().find("no `strip`"), std::string::npos));
+}};

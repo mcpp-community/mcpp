@@ -81,19 +81,23 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 156 C++ tests, discovered by `mcpp test`
-└── e2e/                  649 shell scripts against a real binary
+├── unit/                 166 files of mtest cases, one test program (`[test] programs = "directory"`)
+└── e2e/                  711 shell scripts against a real binary
 ```
 
 ## Test Organization
 
 Two layers, and they answer different questions.
 
-**Unit tests** (`tests/unit/`, 156 files) are C++ programs `mcpp test`
-discovers. They exercise a module's contract with no binary and no filesystem
-state.
+**Unit tests** (`tests/unit/`, 166 files, and each member's `modules/<name>/tests/`)
+are C++ programs `mcpp test` discovers. They exercise a module's contract with no
+binary and no filesystem state. Each is a file of [mtest](https://github.com/mcpp-community/mtest)
+cases: an object `UTest name{"Suite/Case", [] { ... }};` is one case, with no `main`
+(`mcpp test --guide`). `mcpp test --case 'TargetSelect/*'` runs the cases a pattern
+names; `mcpp test -p <member>` runs a member's. The files are one program, linked once and run as
+one process per file.
 
-**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 649 files) run a real `mcpp`
+**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 721 files) run a real `mcpp`
 binary against a real project. `run_all.sh` is the CI entry point. `mcpp test`
 does **not** run them.
 
@@ -122,7 +126,9 @@ runs beside it; a script that changes the shared home's configuration says so).
 divides by the measured history of the store (`tests/e2e/.mtest`, which CI takes
 from main's last run), `E2E_JOBS` runs that many scripts at once, and
 `E2E_SET=pr` runs the scripts a change affects by the nightly coverage map
-(`.github/workflows/e2e-coverage.yml`). `mtest explain` in `tests/e2e` says where
+(`.github/workflows/e2e-coverage.yml`); a script the set leaves out is reported
+`unaffected`, which the check that every script runs somewhere (rule R5) accepts
+for that run, main's full runs being its coverage. `mtest explain` in `tests/e2e` says where
 a script failed and how to run it again.
 
 ## Writing a check that measures something

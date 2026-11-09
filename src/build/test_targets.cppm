@@ -192,6 +192,17 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         }
         result.targets.push_back(std::move(target));
     }
+    // A TEST'S NAME IS A PATH OF ITS PROGRAM (`bin/<name>`): one name that is
+    // another's directory would make one program a directory of the other's.
+    // The names are sorted: the first name below `<name>/` is the one to ask.
+    for (auto it = seenNames.begin(); it != seenNames.end(); ++it) {
+        auto next = seenNames.lower_bound(it->first + "/");
+        if (next == seenNames.end() || !next->first.starts_with(it->first + "/")) continue;
+        return std::unexpected(std::format(
+            "test '{}' ({}) is a directory of test '{}' ({}): a test's name is the path of its "
+            "program, and one cannot be both; move one of them",
+            it->first, it->second.generic_string(), next->first, next->second.generic_string()));
+    }
     return result;
 }
 

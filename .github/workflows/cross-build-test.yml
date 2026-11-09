@@ -359,6 +359,14 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/102_mingw_cross_wine.sh
 
+      # SPEC-016 §6: clang with the MinGW-w64 payload as its sysroot, run
+      # under wine. Named here for the reason 102 is: `# requires: mingw-cross
+      # wine`, which no Linux shard has.
+      - name: "e2e: clang pairs with the MinGW payload"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash tests/e2e/1044_clang_pairs_with_the_mingw_payload.sh
+
       # mcpp#365. This is the only job with a MinGW cross toolchain, so it is
       # the only place the GNU half of resource compilation (windres -O coff,
       # because GNU ld cannot consume a .res) can run at all — the Linux e2e

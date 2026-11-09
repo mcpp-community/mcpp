@@ -37,10 +37,18 @@ std::expected<void, std::string> apply(const std::filesystem::path& root,
 // The variant's tree: `source` copied to `variant` and the patches applied in
 // order, unless `variant` already holds the result for this digest. Written
 // beside `variant` and renamed into place, so a tree that exists is whole.
+//
+// THE PATCH ROOT IS THE PACKAGE'S (mcpp#911 G8): a patch names files relative
+// to `patchRoot`, the directory of the package's resolved manifest (or the
+// dependency's `patch_root`), relative to `source`. A patch written against
+// `source` itself -- the store's version directory, as before -- still
+// applies there, and `notes` receives that it did.
 std::expected<void, std::string> materialize(const std::filesystem::path& source,
                                              const std::vector<std::string>& patches,
                                              std::string_view digest,
-                                             const std::filesystem::path& variant);
+                                             const std::filesystem::path& variant,
+                                             const std::filesystem::path& patchRoot = {},
+                                             std::vector<std::string>* notes = nullptr);
 
 // The directory name of a variant of `version`: `<version>+p<first 12 of the
 // digest>`. Short, because Windows paths have a length.
@@ -303,7 +311,9 @@ std::expected<void, std::string> apply(const fs::path& root, std::string_view te
 std::expected<void, std::string> materialize(const fs::path& source,
                                              const std::vector<std::string>& patches,
                                              std::string_view digest,
-                                             const fs::path& variant) {
+                                             const fs::path& variant,
+                                             const fs::path& patchRoot,
+                                             std::vector<std::string>* notes) {
     const fs::path marker = variant / ".mcpp-variant";
     std::error_code ec;
     if (auto have = read_bytes(marker); have && *have == std::string(digest) + "\n") {
@@ -331,7 +341,24 @@ std::expected<void, std::string> materialize(const fs::path& source,
     for (auto const& p : patches) {
         auto text = read_bytes(p);
         if (!text) { fs::remove_all(work, ec); return std::unexpected(std::format("the patch '{}' cannot be read", p)); }
-        if (auto r = apply(work, *text, fs::path(p).filename().string()); !r) {
+        // The package's root, unless the patch names its first file from the
+        // source's own top and not from there (a patch written before G8).
+        fs::path root = work / patchRoot;
+        if (!patchRoot.empty()) {
+            if (auto parsed = parse(*text); parsed && !parsed->empty()) {
+                const auto& first = parsed->front();
+                const std::string rel = first.oldPath.empty() ? first.newPath : first.oldPath;
+                if (!first.oldPath.empty() && !fs::exists(root / rel, ec) && fs::exists(work / rel, ec)) {
+                    root = work;
+                    if (notes)
+                        notes->push_back(std::format(
+                            "the patch '{}' names its files from the archive's top ('{}'); a patch names "
+                            "them from the package's root ('{}'), and this one is read as written",
+                            fs::path(p).filename().string(), rel, patchRoot.generic_string()));
+                }
+            }
+        }
+        if (auto r = apply(root, *text, fs::path(p).filename().string()); !r) {
             fs::remove_all(work, ec);
             return std::unexpected(std::format("{} (from {})", r.error(), p));
         }

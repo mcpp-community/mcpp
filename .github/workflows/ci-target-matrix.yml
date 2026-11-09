@@ -123,9 +123,9 @@ jobs:
           # payload (it backs the host row), so that job uses `check` and the
           # test is guaranteed to be exercised somewhere on every run. Without
           # that, a reason accepted everywhere is a test that runs nowhere.
-          check_or_declared_skip() {   # log  ok-line  acceptable-skip-substring
+          check_or_declared_skip() {   # log  ok-line  acceptable-skip-pattern (ERE)
             grep -qF "$2" "$1".log && { echo "  ok  $1"; return 0; }
-            if grep -q '^SKIP:' "$1".log && grep -qF "$3" "$1".log; then
+            if grep -q '^SKIP:' "$1".log && grep -qE "$3" "$1".log; then
               echo "  ok  $1 (declared skip: $(grep -m1 '^SKIP:' "$1".log))"
               return 0
             fi
@@ -153,11 +153,13 @@ jobs:
             check 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" || fail=1
           else
-            # Non-Linux rows may restore a cache with no declared LLVM.
+            # Non-Linux rows may restore a cache with no declared LLVM, and a
+            # macOS host serves every gcc-pinned row through openkal-platform,
+            # whose compiler is llvm: no row there is overridden by llvm.
             # Both Linux hosts require the assertion after native provisioning.
             check_or_declared_skip 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" \
-              "llvm is not installed here" || fail=1
+              "llvm is not installed here|served by a non-llvm convention" || fail=1
           fi
 
           # ── 2026.8.26.2: an answer mcpp already had, now used ─────────────

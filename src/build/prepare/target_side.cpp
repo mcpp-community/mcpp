@@ -45,6 +45,7 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
@@ -1040,6 +1041,46 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
     return {};
 }
 
+namespace {
+thread_local std::optional<std::string> g_targetRestart;
+}
+
+std::optional<std::string> take_target_restart() {
+    auto r = std::move(g_targetRestart);
+    g_targetRestart.reset();
+    return r;
+}
+
+static std::expected<void, std::string> cabi_identity(PrepareState& state) {
+    namespace tt = mcpp::toolchain::triple;
+    namespace tsd = mcpp::targetside;
+    auto const& ts = state.resolvedTargetSide;
+    if (ts.cAbi.absent() || !ts.cAbi.fromGraph() || ts.cAbi.interfaceName.empty()) return {};
+    // A native build keeps its identity unless a platform supplies the C
+    // library (SPEC-016 §4.7): the graph's own C library in a native build is
+    // the project's arrangement, reported as such.
+    const bool requested = !state.overrides.target_triple.empty();
+    if (!requested && !state.platform.active) return {};
+    auto id = tt::parse(requested ? state.overrides.target_triple : tt::host_triple().str());
+    if (!id || id->is_freestanding() || id->loader_supplies_os()) return {};
+    if (tsd::c_abi_request_satisfied(id->env.empty() ? tsd::payload_libc_name(id->os, id->env) : id->env,
+                                     ts.cAbi.interfaceName))
+        return {};
+    const std::string env = ts.cAbi.interfaceName == "glibc" ? std::string("gnu") : ts.cAbi.interfaceName;
+    const auto row = std::format("{}-{}-{}", id->arch, id->os, env);
+    if (!mcpp::toolchain::target::find_row(row))
+        return {};
+    // A WRITTEN C LIBRARY IS THE PROJECT'S SPELLING AND STAYS: the mismatch is
+    // reported (the target report's `asks for the ... C ABI`), not refused --
+    // refusing broke every configuration spelling the host's identity over a
+    // graph-supplied C library (e2e 282). Only a request that names none
+    // follows the C library.
+    if (!state.requestedCAbi.empty()) return {};
+    if (state.overrides.target_request) return {};   // the second pass: the row it was given
+    g_targetRestart = row;
+    return std::unexpected(std::string("mcpp:target-restart"));
+}
+
 static std::expected<void, std::string>
 step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -1093,6 +1134,12 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
         // is the same with or without it. Refusing was tried and broke every
         // project spelling the host target `x86_64-linux-gnu` — which is what
         // `mcpp toolchain list` prints, and therefore what people write.
+        // THE IDENTITY FOLLOWS THE C LIBRARY (SPEC-016 §5, I5). A C library the
+        // graph or the platform supplies, under a system whose env names its C
+        // library, and a row that names it: a request that wrote no env is
+        // prepared again for that row; one that wrote another is refused, since
+        // an identity is not replaced and cannot name what is not linked.
+        if (auto conflict = cabi_identity(state); !conflict) return std::unexpected(conflict.error());
         if (auto why = tsd::check_request(state.resolvedTargetSide))
             mcpp::diag::warning("target", *why);
 
@@ -1279,8 +1326,12 @@ step9_same_os_check_and_report(PrepareState& state) {
             // A program its loader runs is compiled for no operating system
             // by design (`<arch>-unknown-none-elf`): the loader is its environment.
             const bool okImage = want && got && want->loader_supplies_os() && got->is_freestanding();
+            // A row a platform defines states the triple its compiler is given
+            // (SPEC-016 §2); that triple's system is the one to compare.
+            const bool stated = want && got && want->defined()
+                && [&] { auto c = mcpp::toolchain::triple::parse(want->llvm_triple()); return c && c->os == got->os; }();
             if (want && got && !want->os.empty() && !got->os.empty()
-                && want->os != got->os && !okImage) {
+                && want->os != got->os && !okImage && !stated) {
                 refusal::record(refusal::Code::OsMismatch);
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"
@@ -1312,8 +1363,14 @@ step9_same_os_check_and_report(PrepareState& state) {
                              &state.resolvedTargetSide.cAbi, &state.resolvedTargetSide.cxx })
                 if (l->fromGraph() && injected(l->impl)) l->byPlatform = true;
         }
+        // The request as written and the identity it selected; the identity is
+        // the canonical name the rest of the report and the output directory use.
+        const auto& choice = state.targetChoice;
+        const bool selected = !choice.identity.empty();
         mcpp::ui::info("Target", tsd::format_report(
-            state.resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
+            state.resolvedTargetSide, selected ? choice.identity : reportedTargetName,
+            mcpp::log::is_verbose(), selected ? choice.request : std::string_view{},
+            choice.fallback ? std::string_view(choice.why) : std::string_view{}));
     return {};
 }
 
@@ -1722,6 +1779,11 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
         // resolution.json only: the graph document a build program reads is
         // part of its re-run key, and must not change with when it is asked.
         if (!forBuildProgram) {
+            // The package's root as the build reads it (its patches applied):
+            // the tree a patch of it is written from (docs/05).
+            std::error_code ec;
+            entry["manifest_dir"] = std::filesystem::absolute(state.packages[i].root, ec)
+                                        .lexically_normal().generic_string();
             static const std::vector<std::string> none;
             // A member's program keeps its cache in the project (step 9).
             const bool member = state.m->package.virtualRoot && i != 0

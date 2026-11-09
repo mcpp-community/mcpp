@@ -4,9 +4,9 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.5 |
+| 状态 | 评审中 v1.6 |
 | 版本 | 1.5 |
-| 最后修改 | 2026-11-07 |
+| 最后修改 | 2026-11-09 |
 | 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
@@ -35,8 +35,12 @@
 
 ## 1. `[platform]` 段
 
-一个包的清单含 `[platform]` 段时,该包是平台包。`[platform]` **必须**含 `targets`;否则清单被拒绝。
-**已实现**
+一个包的清单含 `[platform]` 段时,该包是平台包。`[platform]` **必须**含 `targets` 或至少一个
+`[[platform.provider]]`;否则清单被拒绝。**已实现**
+
+**行与提供者的一般形式(mcpp >= 2026.11.9.1)。** `[[platform.define]]` 定义平台的行,`[[platform.provider]]` 声明
+服务行的提供者(SPEC-016 §2、§3、§5);`[platform]` 是服务 `targets` 的提供者,`[platform.hosted]` 是服务宿主三元组的
+hosted 提供者,二者为一般形式的简写,照旧可读。服务某身份的 `[[platform.provider]]` 的字段代替平台语句的同名字段。
 
 ```toml
 [platform]
@@ -56,6 +60,9 @@ plugin    = "build.mcpp"
 [platform.link]     driver, flags, start, script, inputs, exe, shared, seal
 [platform.versions] <package> = "<version>"
 [platform.hosted]   targets, toolchain, layers
+
+[[platform.define]]   triple, clang-triple, object-format, family, execution, ...   (SPEC-016 §2.1)
+[[platform.provider]] serves, priority, hosts, pairs, toolchain, sysroot, layers, link, hosted, base, execution
 ```
 
 ### 1.1 键
@@ -280,6 +287,10 @@ plugin    = "build.mcpp"
 | `shared` | 共享产物的名字模式,`{name}` 恰好一次,不含目录 |
 | `seal` | 封装步骤,每步一个 argv(§9.3) |
 
+`driver = "compiler"` 在每一行生效,包括行本身以 `link-emulation` 直接调用 `ld.lld` 的裸机行(mcpp >= 2026.11.9.1)。
+平台的 `exe`、`shared` 中 `{name}` 之后的部分是平台的格式:构建程序的 `artifact-name` 改变它时被报告,平台的模式保留;
+项目与本机的陈述照常生效(mcpp >= 2026.11.9.1)。
+
 `driver = "lld"` 时引擎在编译器旁依次查找 `ld.lld`、`lld`、`lld-link`(Windows 载荷只带 `lld-link`);都没有时拒绝
 (`lld-required-absent`),消息写出平台的工具链。程序名不是 `ld.lld` 时引擎加 `-flavor gnu`。链接或封装命名的程序既非图中为本机构建、也不在本机可找到时拒绝
 (`platform-tool-absent`),消息写出负责构建它的包,或写出 `[target.'cfg(platform = "<name>")'.tools]` 的写法。
@@ -351,6 +362,9 @@ run_under = ["qemu-aarch64"]
 系统库(映像的单文件在 Windows 上以 `system` 模式打包)。引擎不含任何加载器的调用。平台未声明 `carrier` 时,
 需要载体的打包被拒绝并写出该键;本 mcpp 不构建程序的行(SPEC-014 §4.4)上的载体在生成工程之前被拒绝,写出系统、架构与行
 (2026.10.29.1)。
+
+**平台定义的系统(mcpp >= 2026.11.9.1)。** `--systems` 与载体项的 `hosts` 接受任何系统词:`<os>-<arch>` 的
+`<os>` 为内置系统或已解析平台定义的系统,`all` 包含后者。平台定义的系统上的程序建于定义它的平台之上,为该行的静态程序。
 
 **载体项的选择(mcpp >= 2026.10.30.1)。** 为 `<os>-<arch>` 构建载体程序时(上述三处与 §10 的执行宿主),所用的是
 `hosts` 列出该对的第一项,否则为第一个未写 `hosts` 的项;两者都没有时,如同平台未声明 `carrier`,打包或运行被拒绝,写出
@@ -532,3 +546,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.3 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4.3–§4.5、§13.3):§1.1 `universal` 弃用、不起作用;`runner.hosts`;`carrier` 接受列表,每项的 `hosts` 与 `build`;`descriptor_keys`;§10 执行宿主的运行器程序按 `hosts` 选择载体项;§11 携带映像的载体只属于单文件,树携带运行器形式;判据 13 改写(e2e 961)。 |
 | 1.5 | 2026-11-07 | mcpp 2026.11.7.2(设计 2026-11-07 §4.10,D20):§14 目标表的平台列为确切版本 0.24.3,锁中不满足的记录不被采用并写出;使用内置版本的构建失败且索引有更新版本时给出提示;判据 15 新增(e2e 1025)。 |
 | 1.4 | 2026-11-07 | mcpp 2026.11.7.1(设计 2026-11-07 §4.1.4、§4.2.2 A2/A3):§7.5 版本组参与解析,解析后的检查保留为断言;§3.2 平台引用接受 SemVer 约束;§14 目标表的平台列为系列 `^0.24`,系列取引擎可读的最新版本;§15.1 系列从锁中读回,`mcpp update` 移动它;判据 5 改写、14 新增(e2e 1020、1021)。 |
+| 1.6 | 2026-11-09 | mcpp 2026.11.9.1(SPEC-016,mcpp#911):§1 `[[platform.define]]` 与 `[[platform.provider]]` 为一般形式,`[platform]`、`[platform.hosted]` 为其简写;§9.2 `driver = "compiler"` 在每一行生效,平台的产物名模式不被构建程序改变;§11 平台定义的系统上的载体与 `--systems`;主机对为任意系统词。 |

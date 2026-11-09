@@ -134,36 +134,33 @@ target spec 设置 `exe_suffix: ".js"`。
 的 emsdk payload，需要先经过[第 20 章](20-toolchains.md)所述的那次索引
 刷新，`mcpp run` 才能找到 runner。
 
-## 省略第三段
+## 省略第三段：请求只写系统（2026.11.9.1+）
 
-`<arch>-<os>` 在每个平台上都是一个完整的目标：
+写全的目标是**身份**：输出目录、缓存键与 `cfg()` 判断的对象。只写 `<arch>-<os>` 的目标是**请求**：它包含该系统的
+全部身份，构建取第一个其**提供者**（服务它的工具链与目标侧）在本机可得的身份（SPEC-016 §4）。
 
 ```bash
-mcpp build --target x86_64-linux      # = x86_64-linux-gnu
-mcpp build --target x86_64-windows    # = x86_64-windows-gnu
+mcpp build --target x86_64-linux      # Linux 上为 x86_64-linux-gnu；无 glibc 载荷处为 -musl
+mcpp build --target x86_64-windows    # 装有 MSVC 时为 -msvc，否则为 -musl（openkal-platform）
+mcpp build --target aarch64-macos     # macOS 上为 Apple 身份，否则为 aarch64-macos-musl
 mcpp build --target riscv64-none      # = riscv64-none-elf
-mcpp build --target aarch64-linux     # = aarch64-linux-gnu
-mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
-省略它不改变任何身份。输出目录、缓存键，以及 `cfg()` 谓词的对象，都取规范
-形式，因此两种拼法共用同一个指纹，第二次构建是缓存命中，而不是又一次
-完整构建。
+候选按提供者的优先级排序（引擎附带的数据：各系统自己的工具链与 C 库在前，openkal-platform 其次，其他约定在后），
+再按行的顺序。报告写出所取的身份，第一个候选在本机不可得时附其原因：
 
-不同的是**请求被记录成了什么**。三元组既充当身份 —— 身份必须完整 ——
-又充当请求 —— 请求必须能够什么都不说；mcpp 两者都保留：为身份填上那一
-段，同时记住这次填充只是一次填充。
+```text
+      Target x86_64-windows → x86_64-windows-musl
+             msvc is not available on linux-x86_64
+```
 
-### 补全取自词汇表，而不是取自一个固定的词
+`mcpp why target [--target <t>]` 按序列出候选、优先级与可得性（脚本用 `--format json`）。工程以
+`[target.<选择器>.priority] <提供者> = <n>` 改变顺序，或以 `platform = "builtin:<名>"` 指名一个内置提供者。写全的身份
+从不被替换：`--target x86_64-linux-gnu` 构建该身份，或被拒绝并写出所缺之物。`mcpp.lock` 记录每个请求得到的身份，
+`--locked` 拒绝选到另一身份的构建。
 
-省略环境段的请求按已知目标表补全。受支持的词法默认值优先；否则采用
-唯一受支持的同族行。没有受支持的行时保留词法形式，并在诊断中列出
-已登记的同族行。歧义请求列出受支持的候选。
-
-`aarch64-linux` 选择 `aarch64-linux-gnu`。原生 Linux ARM64 载荷采用
-LLVM 23.1.3 与 glibc。`aarch64-linux-musl` 仍是静态 musl 产物的显式
-拼法。显式写出的环境段保持不变。
-
+依赖图提供 C 库（`mcpp:c-abi`）而请求未写 C 库时，身份取该 C 库：依赖 musl 的 `x86_64-linux` 构建为
+`x86_64-linux-musl`。写出而与图矛盾的段被报告并保留。
 
 ### 采用的拼法
 
@@ -490,10 +487,13 @@ docs/22。
 | `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `aarch64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
+| `x86_64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `x86_64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `i686-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |

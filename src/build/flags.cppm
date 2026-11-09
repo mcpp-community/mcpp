@@ -1213,6 +1213,13 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // `/LTCG` on the link and the archive; before, it was not spelled at all,
     // and a build with `lto = true` reported `+ lto` while doing none.
     if (prof.lto) opt_flag += isMsvcDialect ? " /GL" : " -flto";
+    // ONE SECTION PER FUNCTION AND PER OBJECT (design 2026-11-09 §17.2), so
+    // that a link that keeps what it reaches (a test, `--gc-sections`) drops
+    // the rest of an object a module initializer pulls in. Measured on mcpp's
+    // unit tests: with whole objects the collection kept 15 of 17 MB of code.
+    // The freestanding prefix states it for its own units; cl.exe's `/Gy` is
+    // its default under optimisation.
+    if (!isMsvcDialect && !isFreestandingTarget) opt_flag += " -ffunction-sections -fdata-sections";
     // `ndebug` (design 2026-10-23 §15.4): the profiles that produce what is
     // shipped define NDEBUG for every unit of the graph, as CMake's Release,
     // Meson's `b_ndebug=if-release` and Cargo's release do.
@@ -1992,11 +1999,18 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // Not a new condition but the string that names the machine: a mingw
         // g++ has an empty `crossTargetFlag`, so this is the identity for the
         // case the paragraph was written about, and the fix for the other one.
-        f.ld = std::format("{}{}{}{}{}", crossTarget, link_intent_ld,
+        // CLANG PAIRED WITH THE MinGW-w64 PAYLOAD (SPEC-016 §6): the payload
+        // is the sysroot, libstdc++ and libgcc its runtime, lld the linker;
+        // `-pthread` because the payload's threads are winpthreads, which the
+        // clang driver does not add by itself.
+        const std::string paired = plan.toolchain.pairedSysroot.empty() ? std::string{}
+            : " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
+              + " -stdlib=libstdc++ -rtlib=libgcc -fuse-ld=lld -pthread";
+        f.ld = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                            user_ldflags, mingw_stdexp, link_extra);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}{}", crossTarget, link_intent_ld,
+        f.ldC = std::format("{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                             user_ldflags, link_extra);
         return f;
     }
@@ -2456,7 +2470,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (auto spec = mcpp::freestanding::resolve(
                 *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
             const auto prefix = mcpp::freestanding::compile_prefix(
-                *spec, plan.toolchain.targetCxxRuntime);
+                *spec, plan.toolchain.targetCxxRuntime, plan.toolchain.hostedC);
             f.cxx += prefix;
             f.cc  += prefix;
             f.as  += mcpp::freestanding::assemble_prefix(*spec);
@@ -2512,7 +2526,14 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             // needed either: the payload's clang config file is a DRIVER
             // config, and nothing here runs the driver.
             std::string fsLd;
-            if (!spec->lldEmulation.empty()) {
+            // A PLATFORM'S `link.driver = "compiler"` IS HONOURED ON EVERY ROW
+            // (mcpp#911 G4): the compiler driver then links, adding the start
+            // files and libraries it knows for the target, where the row alone
+            // would call ld.lld with its emulation.
+            const bool platformCompilerDriver = plan.platform.active
+                && plan.platform.fields.link.driver.set
+                && plan.platform.fields.link.driver.value == "compiler";
+            if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
                 fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc);
             } else {

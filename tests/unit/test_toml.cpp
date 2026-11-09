@@ -1,165 +1,166 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.libs.toml;
+
+using namespace mcpplibs::mtest;
 
 namespace t = mcpp::libs::toml;
 
-TEST(Toml, EmptyDocumentParses) {
+UTest empty_document_parses{"Toml/EmptyDocumentParses", [] {
     auto d = t::parse("");
-    ASSERT_TRUE(d.has_value());
-    EXPECT_TRUE(d->root().empty());
-}
+    expect(fatal(d.has_value()));
+    expect(d->root().empty());
+}};
 
-TEST(Toml, SimpleKeyValue) {
+UTest simple_key_value{"Toml/SimpleKeyValue", [] {
     auto d = t::parse("key = \"value\"\nnum = 42\nflag = true");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("key").value_or(""), "value");
-    EXPECT_EQ(d->get_int("num").value_or(-1), 42);
-    EXPECT_EQ(d->get_bool("flag").value_or(false), true);
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("key").value_or(""), "value"));
+    expect(eq(d->get_int("num").value_or(-1), 42));
+    expect(eq(d->get_bool("flag").value_or(false), true));
+}};
 
-TEST(Toml, NestedTables) {
+UTest nested_tables{"Toml/NestedTables", [] {
     auto d = t::parse(R"(
 [a.b]
 x = "deep"
 [a]
 y = "shallow"
 )");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("a.b.x").value_or(""), "deep");
-    EXPECT_EQ(d->get_string("a.y").value_or(""), "shallow");
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("a.b.x").value_or(""), "deep"));
+    expect(eq(d->get_string("a.y").value_or(""), "shallow"));
+}};
 
-TEST(Toml, ArrayOfStrings) {
+UTest array_of_strings{"Toml/ArrayOfStrings", [] {
     auto d = t::parse(R"(items = ["a", "b", "c"])");
-    ASSERT_TRUE(d.has_value());
+    expect(fatal(d.has_value()));
     auto arr = d->get_string_array("items");
-    ASSERT_TRUE(arr.has_value());
-    EXPECT_EQ(arr->size(), 3u);
-    EXPECT_EQ((*arr)[0], "a");
-    EXPECT_EQ((*arr)[2], "c");
-}
+    expect(fatal(arr.has_value()));
+    expect(eq(arr->size(), 3u));
+    expect(eq((*arr)[0], "a"));
+    expect(eq((*arr)[2], "c"));
+}};
 
-TEST(Toml, ArrayAllowsTrailingComma) {
+UTest array_allows_trailing_comma{"Toml/ArrayAllowsTrailingComma", [] {
     auto d = t::parse(R"(
 items = [
   "a",
   "b",
 ]
 )");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
     auto arr = d->get_string_array("items");
-    ASSERT_TRUE(arr.has_value());
-    EXPECT_EQ(*arr, std::vector<std::string>({"a", "b"}));
-}
+    expect(fatal(arr.has_value()));
+    expect(eq(*arr, std::vector<std::string>({"a", "b"})));
+}};
 
-TEST(Toml, EscapedString) {
+UTest escaped_string{"Toml/EscapedString", [] {
     auto d = t::parse(R"(s = "a\tb\nc")");
-    ASSERT_TRUE(d.has_value());
-    EXPECT_EQ(d->get_string("s").value_or(""), std::string("a\tb\nc"));
-}
+    expect(fatal(d.has_value()));
+    expect(eq(d->get_string("s").value_or(""), std::string("a\tb\nc")));
+}};
 
 // TOML 1.0's escapes: \b, \f and the Unicode forms were refused as "invalid
 // escape", so a valid manifest written with them could not be read.
-TEST(Toml, EveryTomlEscapeIsRead) {
+UTest every_toml_escape_is_read{"Toml/EveryTomlEscapeIsRead", [] {
     auto d = t::parse(R"(s = "a\bb\fc")");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("s").value_or(""), std::string("a\bb\fc"));
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("s").value_or(""), std::string("a\bb\fc")));
 
     // One, two, three and four UTF-8 bytes, upper- and lower-case hex.
     d = t::parse(R"(s = "\u0041 caf\u00e9 \u4E2D \U0001F600")");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("s").value_or(""),
-              std::string("A caf\xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80"));
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("s").value_or(""), std::string("A caf\xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80")));
 
     d = t::parse("s = \"\"\"\nJos\\u00e9\\U0000004A\"\"\"");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("s").value_or(""), std::string("Jos\xC3\xA9J"));
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("s").value_or(""), std::string("Jos\xC3\xA9J")));
 
     // A quoted key is a basic string too.
     d = t::parse(R"("caf\u00e9" = 1)");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->root().count("caf\xC3\xA9"), 1u);
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->root().count("caf\xC3\xA9"), 1u));
 
     // A literal string keeps its backslashes.
     d = t::parse(R"(s = 'C:\u0041')");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("s").value_or(""), R"(C:\u0041)");
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("s").value_or(""), R"(C:\u0041)"));
+}};
 
-TEST(Toml, AUnicodeEscapeNamesAScalarValue) {
-    EXPECT_FALSE(t::parse(R"(s = "\u12")").has_value());          // too few digits
-    EXPECT_FALSE(t::parse(R"(s = "\u12G4")").has_value());        // not hex
-    EXPECT_FALSE(t::parse(R"(s = "\U0001F60")").has_value());     // \U takes eight
-    EXPECT_FALSE(t::parse(R"(s = "\uD800")").has_value());        // a surrogate
-    EXPECT_FALSE(t::parse(R"(s = "\U00110000")").has_value());    // past U+10FFFF
-    EXPECT_FALSE(t::parse(R"(s = "\x41")").has_value());          // not TOML 1.0
+UTest a_unicode_escape_names_a_scalar_value{"Toml/AUnicodeEscapeNamesAScalarValue", [] {
+    expect(!(t::parse(R"(s = "\u12")").has_value()));          // too few digits
+    expect(!(t::parse(R"(s = "\u12G4")").has_value()));        // not hex
+    expect(!(t::parse(R"(s = "\U0001F60")").has_value()));     // \U takes eight
+    expect(!(t::parse(R"(s = "\uD800")").has_value()));        // a surrogate
+    expect(!(t::parse(R"(s = "\U00110000")").has_value()));    // past U+10FFFF
+    expect(!(t::parse(R"(s = "\x41")").has_value()));          // not TOML 1.0
 
     auto bad = t::parse("s = \"ok\\uDFFF\"");
-    ASSERT_FALSE(bad.has_value());
-    EXPECT_NE(bad.error().message.find("\\uDFFF"), std::string::npos) << bad.error().message;
-}
+    expect(fatal(!bad.has_value()));
+    if (auto&& failed = expect(ne(bad.error().message.find("\\uDFFF"), std::string::npos)); !failed) failed << bad.error().message;
+}};
 
-TEST(Toml, RejectUnterminatedString) {
+UTest reject_unterminated_string{"Toml/RejectUnterminatedString", [] {
     auto d = t::parse(R"(x = "no end)");
-    EXPECT_FALSE(d.has_value());
-}
+    expect(!d.has_value());
+}};
 
-TEST(Toml, CommentsIgnored) {
+UTest comments_ignored{"Toml/CommentsIgnored", [] {
     auto d = t::parse(R"(
 # top comment
 x = 1  # trailing isn't supported but full-line is
 y = 2
 )");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_int("x").value_or(-1), 1);
-    EXPECT_EQ(d->get_int("y").value_or(-1), 2);
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_int("x").value_or(-1), 1));
+    expect(eq(d->get_int("y").value_or(-1), 2));
+}};
 
-TEST(Toml, EscapeStringHelper) {
-    EXPECT_EQ(t::escape_string("hello"), "\"hello\"");
-    EXPECT_EQ(t::escape_string("a\"b"),  "\"a\\\"b\"");
-    EXPECT_EQ(t::escape_string("a\\b"),  "\"a\\\\b\"");
-}
+UTest escape_string_helper{"Toml/EscapeStringHelper", [] {
+    expect(eq(t::escape_string("hello"), "\"hello\""));
+    expect(eq(t::escape_string("a\"b"), "\"a\\\"b\""));
+    expect(eq(t::escape_string("a\\b"), "\"a\\\\b\""));
+}};
 
-TEST(Toml, MultilineBasicString) {
+UTest multiline_basic_string{"Toml/MultilineBasicString", [] {
     auto d = t::parse("body = \"\"\"\nline1\nline2 \"quoted\"\n\"\"\"\nafter = 1");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
     // First newline after the opening delimiter is trimmed (TOML 1.0).
-    EXPECT_EQ(d->get_string("body").value_or(""), "line1\nline2 \"quoted\"\n");
-    EXPECT_EQ(d->get_int("after").value_or(-1), 1);
-}
+    expect(eq(d->get_string("body").value_or(""), "line1\nline2 \"quoted\"\n"));
+    expect(eq(d->get_int("after").value_or(-1), 1));
+}};
 
-TEST(Toml, MultilineLiteralString) {
+UTest multiline_literal_string{"Toml/MultilineLiteralString", [] {
     auto d = t::parse("raw = '''\nno \\escapes here\n'''");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("raw").value_or(""), "no \\escapes here\n");
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("raw").value_or(""), "no \\escapes here\n"));
+}};
 
-TEST(Toml, MultilineLineEndingBackslash) {
+UTest multiline_line_ending_backslash{"Toml/MultilineLineEndingBackslash", [] {
     auto d = t::parse("s = \"\"\"a\\\n   b\"\"\"");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("s").value_or(""), "ab");
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("s").value_or(""), "ab"));
+}};
 
-TEST(Toml, MultilineUnterminatedIsError) {
+UTest multiline_unterminated_is_error{"Toml/MultilineUnterminatedIsError", [] {
     auto d = t::parse("s = \"\"\"never closed");
-    EXPECT_FALSE(d.has_value());
-}
+    expect(!d.has_value());
+}};
 
-TEST(Toml, EmptyStringStillParses) {
+UTest empty_string_still_parses{"Toml/EmptyStringStillParses", [] {
     auto d = t::parse("e = \"\"\nx = 2");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("e").value_or("?"), "");
-    EXPECT_EQ(d->get_int("x").value_or(-1), 2);
-}
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("e").value_or("?"), ""));
+    expect(eq(d->get_int("x").value_or(-1), 2));
+}};
 
 // #227: `[[dotted.path]]` array-of-tables — each occurrence appends a fresh
 // table to an array at that dotted path; keys after it fill THAT table until
 // the next `[...]`/`[[...]]` header. Declaration order must be preserved
 // (it's the "later entries win" override order for [build].flags).
-TEST(Toml, ParsesArrayOfTables) {
+UTest parses_array_of_tables{"Toml/ParsesArrayOfTables", [] {
     auto d = t::parse(R"(
 [[build.flags]]
 glob = "a/**"
@@ -167,27 +168,27 @@ cxxflags = ["-DX=1"]
 [[build.flags]]
 glob = "b/**"
 )");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
     auto* v = d->get("build.flags");
-    ASSERT_NE(v, nullptr);
-    ASSERT_TRUE(v->is_array());
+    expect(fatal(ne(v, nullptr)));
+    expect(fatal(v->is_array()));
     auto& arr = v->as_array();
-    ASSERT_EQ(arr.size(), 2u);
-    ASSERT_TRUE(arr[0].is_table());
-    EXPECT_EQ(arr[0].as_table().at("glob").as_string(), "a/**");
+    expect(fatal(eq(arr.size(), 2u)));
+    expect(fatal(arr[0].is_table()));
+    expect(eq(arr[0].as_table().at("glob").as_string(), "a/**"));
     auto cx = arr[0].as_table().at("cxxflags");
-    ASSERT_TRUE(cx.is_array());
-    ASSERT_EQ(cx.as_array().size(), 1u);
-    EXPECT_EQ(cx.as_array()[0].as_string(), "-DX=1");
-    ASSERT_TRUE(arr[1].is_table());
-    EXPECT_EQ(arr[1].as_table().at("glob").as_string(), "b/**");
-    EXPECT_EQ(arr[1].as_table().count("cxxflags"), 0u);
-}
+    expect(fatal(cx.is_array()));
+    expect(fatal(eq(cx.as_array().size(), 1u)));
+    expect(eq(cx.as_array()[0].as_string(), "-DX=1"));
+    expect(fatal(arr[1].is_table()));
+    expect(eq(arr[1].as_table().at("glob").as_string(), "b/**"));
+    expect(eq(arr[1].as_table().count("cxxflags"), 0u));
+}};
 
 // Regular `[table]` and inline-array-of-tables parsing must be unaffected by
 // AOT support — array-of-tables is an ADDITIONAL grammar form, not a
 // replacement.
-TEST(Toml, RegularTablesStillWorkAlongsideArrayOfTables) {
+UTest regular_tables_still_work_alongside_array_of_tables{"Toml/RegularTablesStillWorkAlongsideArrayOfTables", [] {
     auto d = t::parse(R"(
 [package]
 name = "x"
@@ -196,11 +197,11 @@ glob = "a/**"
 [dependencies]
 foo = "1.0"
 )");
-    ASSERT_TRUE(d.has_value()) << d.error().message;
-    EXPECT_EQ(d->get_string("package.name").value_or(""), "x");
-    EXPECT_EQ(d->get_string("dependencies.foo").value_or(""), "1.0");
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(d->get_string("package.name").value_or(""), "x"));
+    expect(eq(d->get_string("dependencies.foo").value_or(""), "1.0"));
     auto* v = d->get("build.flags");
-    ASSERT_NE(v, nullptr);
-    ASSERT_TRUE(v->is_array());
-    EXPECT_EQ(v->as_array().size(), 1u);
-}
+    expect(fatal(ne(v, nullptr)));
+    expect(fatal(v->is_array()));
+    expect(eq(v->as_array().size(), 1u));
+}};

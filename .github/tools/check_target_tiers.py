@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Every documented tier agrees with the target table.
 
-WHY THIS EXISTS. `kKnownTargets` in modules/toolchain-model/src/triple.cppm is
-the single source for a row's tier, and four documents restate it: both
+WHY THIS EXISTS. The built-in rows, modules/toolchain-model/data/builtin.toml
+(SPEC-016 §2.2), are the single source for a row's tier, and four documents restate it: both
 READMEs, both copies of docs/21. When `wasm32-emscripten` became `verified` and
 the Android rows gained tiers, docs/21 was updated and the READMEs were not --
 so the front page told a reader that three targets were `planned` while the
@@ -16,17 +16,19 @@ a tier disagrees.
 """
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TABLE = ROOT / "modules/toolchain-model/src/triple.cppm"
+TABLE = ROOT / "modules/toolchain-model/data/builtin.toml"
 TIERS = ("verified", "preview", "planned")
 
 # The engine's answer.
 rows = {}
-for m in re.finditer(r'^\s*\{\s*"([a-z0-9_.+-]+)",\s*"(verified|preview|planned)"',
-                     TABLE.read_text(), re.M):
-    rows[m.group(1)] = m.group(2)
+with TABLE.open("rb") as f:
+    for row in tomllib.load(f).get("platform", {}).get("define", []):
+        if row.get("tier") in TIERS:
+            rows[row["triple"]] = row["tier"]
 if len(rows) < 20:
     sys.exit(f"ERROR: only {len(rows)} rows parsed from {TABLE.name}; "
              "the pattern no longer matches the table")

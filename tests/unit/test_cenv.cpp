@@ -6,11 +6,13 @@
 // `mcpp.targetside::resolve` — so the whole mapping table §3.3 publishes can
 // be asserted here without compiling anything.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.targetside;
 import mcpp.toolchain.cenv;
+
+using namespace mcpplibs::mtest;
 
 namespace ts = mcpp::targetside;
 namespace cenv = mcpp::toolchain::cenv;
@@ -36,14 +38,14 @@ bool has(const std::vector<std::string>& v, std::string_view tok) {
 
 // ── §3.3's own table: the three realisable rows ──────────────────────────────
 
-TEST(CEnv, LinuxPosixArchDefaultIsANoOp) {
+UTest linux_posix_arch_default_is_a_no_op{"CEnv/LinuxPosixArchDefaultIsANoOp", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "linux", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->tokens.empty());
-    EXPECT_EQ(r->expectLongBytes, 8);
-    EXPECT_EQ(r->expectWcharBits, 32);
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(r->tokens.empty());
+    expect(eq(r->expectLongBytes, 8));
+    expect(eq(r->expectWcharBits, 32));
+}};
 
 // NOT a no-op — a correction from the design's original text, caught by the
 // verification probe on a real build (coordinator report): Apple's clang
@@ -53,14 +55,14 @@ TEST(CEnv, LinuxPosixArchDefaultIsANoOp) {
 // macOS's cost for that fact is one token, `-D__unix__`, same as a
 // freestanding target's (`FreestandingPosixDefinesUnix` below) and for the
 // identical reason: neither already has it.
-TEST(CEnv, MacosPosixArchDefaultDefinesUnix) {
+UTest macos_posix_arch_default_defines_unix{"CEnv/MacosPosixArchDefaultDefinesUnix", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "macos", "aarch64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    ASSERT_TRUE(has(r->tokens, "-D__unix__"));
-    ASSERT_TRUE(has(r->expectDefined, "__unix__"));
-    ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(fatal(bool(has(r->tokens, "-D__unix__"))));
+    expect(fatal(bool(has(r->expectDefined, "__unix__"))));
+    expect(fatal(bool(has(r->expectUndefined, "_WIN32"))));
+}};
 
 // The flagship case: Cygwin-flavoured Windows.
 //
@@ -92,120 +94,120 @@ TEST(CEnv, MacosPosixArchDefaultDefinesUnix) {
 // against the PUBLISHED 0.13.0 on this engine, which fails on libunwind's
 // two `static_assert`s exactly as predicted. An ordering between
 // repositories has no assertion in either of them.
-TEST(CEnv, WindowsPosixArchDefaultSubstitutesTheCygwinTriple) {
+UTest windows_posix_arch_default_substitutes_the_cygwin_triple{"CEnv/WindowsPosixArchDefaultSubstitutesTheCygwinTriple", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "windows", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(has(r->tokens, "--target=x86_64-pc-cygwin"));
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(bool(has(r->tokens, "--target=x86_64-pc-cygwin")));
     // The target's identity is not this module's to state: see above.
-    EXPECT_FALSE(has(r->tokens, "-D__MCPP_TARGET_WINDOWS__=1"));
+    expect(!has(r->tokens, "-D__MCPP_TARGET_WINDOWS__=1"));
     // The borrowed name is undefined on the compile line. `-U` rather than a
     // different triple: the Cygwin identity is what supplies `__unix__` and
     // suppresses `_WIN32`, which is the point of `presents = "posix"`; only
     // the NAME was unwanted.
-    EXPECT_TRUE(has(r->tokens, "-U__CYGWIN__"));
-    EXPECT_TRUE(has(r->tokens, "-U__CYGWIN32__"));
+    expect(bool(has(r->tokens, "-U__CYGWIN__")));
+    expect(bool(has(r->tokens, "-U__CYGWIN32__")));
     // wchar 32 differs from Cygwin's own default (16) — the flag is added.
-    EXPECT_TRUE(has(r->tokens, "-fno-short-wchar"));
-    EXPECT_EQ(r->expectLongBytes, 8);
-    EXPECT_EQ(r->expectWcharBits, 32);
-    ASSERT_TRUE(has(r->expectDefined, "__unix__"));
-    ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
+    expect(bool(has(r->tokens, "-fno-short-wchar")));
+    expect(eq(r->expectLongBytes, 8));
+    expect(eq(r->expectWcharBits, 32));
+    expect(fatal(bool(has(r->expectDefined, "__unix__"))));
+    expect(fatal(bool(has(r->expectUndefined, "_WIN32"))));
     // THE PROBE CHECKS THESE, which is what keeps the tokens from being ones
     // the compiler could ignore: `cenv_probe::verify` compares the realised
     // configuration's predefines against these lists and refuses on a
     // mismatch. A `-U` that did not take effect is a verification failure,
     // not a silent one --- and silence is the whole risk here, since a `#if`
     // that finds the name still defined simply compiles the other branch.
-    ASSERT_TRUE(has(r->expectUndefined, "__CYGWIN__"));
-    ASSERT_TRUE(has(r->expectUndefined, "__CYGWIN32__"));
-    EXPECT_FALSE(has(r->expectDefined, "__CYGWIN__"));
-}
+    expect(fatal(bool(has(r->expectUndefined, "__CYGWIN__"))));
+    expect(fatal(bool(has(r->expectUndefined, "__CYGWIN32__"))));
+    expect(!has(r->expectDefined, "__CYGWIN__"));
+}};
 
 // wchar = 16 on the Cygwin substitution matches Cygwin's own default, so no
 // `-f[no-]short-wchar` token is needed.
-TEST(CEnv, WindowsPosixWchar16NeedsNoWcharFlag) {
+UTest windows_posix_wchar16_needs_no_wchar_flag{"CEnv/WindowsPosixWchar16NeedsNoWcharFlag", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 16);
     auto r = cenv::realise(d, "windows", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_FALSE(has(r->tokens, "-fno-short-wchar"));
-    EXPECT_FALSE(has(r->tokens, "-fshort-wchar"));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(!has(r->tokens, "-fno-short-wchar"));
+    expect(!has(r->tokens, "-fshort-wchar"));
+}};
 
 // `presents = "windows"` on Windows is the base triple's own identity.
-TEST(CEnv, WindowsWindowsArchDefaultIsANoOp) {
+UTest windows_windows_arch_default_is_a_no_op{"CEnv/WindowsWindowsArchDefaultIsANoOp", [] {
     auto d = decl(ts::CAbiPresents::Windows, ts::CAbiDataModel::ArchDefault, 16);
     auto r = cenv::realise(d, "windows", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->tokens.empty());
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(r->tokens.empty());
+}};
 
 // ── `builtins = "iso"` — the Apple case is the only one this survey found ────
 
-TEST(CEnv, BuiltinsIsoOnMacosDisablesMemsetPattern16) {
+UTest builtins_iso_on_macos_disables_memset_pattern16{"CEnv/BuiltinsIsoOnMacosDisablesMemsetPattern16", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32,
                   ts::CAbiBuiltins::Iso);
     auto r = cenv::realise(d, "macos", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
     // `-fno-builtin`, NOT the per-function spelling. The narrower form was
     // emitted here and measured to do nothing: clang checks `-fno-builtin-X`
     // against its builtin table, `memset_pattern16` is an LLVM TLI libfunc,
     // and the call is produced by a pass that consults TLI. clang accepts an
     // unknown name in that family in silence, so the flag looked right and
     // was not.
-    EXPECT_TRUE(has(r->builtinsTokens, "-fno-builtin"));
-    EXPECT_FALSE(has(r->builtinsTokens, "-fno-builtin-memset_pattern16"));
-}
+    expect(bool(has(r->builtinsTokens, "-fno-builtin")));
+    expect(!has(r->builtinsTokens, "-fno-builtin-memset_pattern16"));
+}};
 
-TEST(CEnv, BuiltinsIsoOnLinuxAddsNothingMeasurable) {
+UTest builtins_iso_on_linux_adds_nothing_measurable{"CEnv/BuiltinsIsoOnLinuxAddsNothingMeasurable", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32,
                   ts::CAbiBuiltins::Iso);
     auto r = cenv::realise(d, "linux", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->builtinsTokens.empty());
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(r->builtinsTokens.empty());
+}};
 
-TEST(CEnv, BuiltinsPlatformAddsNothingOnAnyTarget) {
+UTest builtins_platform_adds_nothing_on_any_target{"CEnv/BuiltinsPlatformAddsNothingOnAnyTarget", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32,
                   ts::CAbiBuiltins::Platform);
     auto r = cenv::realise(d, "macos", "x86_64", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(r->builtinsTokens.empty());
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(r->builtinsTokens.empty());
+}};
 
 // ── refusals: everything outside the table §3.3 publishes ───────────────────
 
-TEST(CEnv, WindowsPosixOnANonX86_64ArchIsRefused) {
+UTest windows_posix_on_a_non_x86_64_arch_is_refused{"CEnv/WindowsPosixOnANonX86_64ArchIsRefused", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "windows", "aarch64", false);
-    ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().find("x86_64"), std::string::npos) << r.error();
-}
+    expect(fatal(!r.has_value()));
+    if (auto&& failed = expect(ne(r.error().find("x86_64"), std::string::npos)); !failed) failed << r.error();
+}};
 
-TEST(CEnv, LinuxWindowsPresentsIsRefused) {
+UTest linux_windows_presents_is_refused{"CEnv/LinuxWindowsPresentsIsRefused", [] {
     auto d = decl(ts::CAbiPresents::Windows, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "linux", "x86_64", false);
-    ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().find("no known way"), std::string::npos) << r.error();
-}
+    expect(fatal(!r.has_value()));
+    if (auto&& failed = expect(ne(r.error().find("no known way"), std::string::npos)); !failed) failed << r.error();
+}};
 
-TEST(CEnv, WindowsPresentsNoneIsRefused) {
+UTest windows_presents_none_is_refused{"CEnv/WindowsPresentsNoneIsRefused", [] {
     auto d = decl(ts::CAbiPresents::None, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "windows", "x86_64", false);
-    ASSERT_FALSE(r.has_value());
-}
+    expect(fatal(!r.has_value()));
+}};
 
-TEST(CEnv, LlP64RequestedOnLinuxIsRefused) {
+UTest ll_p64_requested_on_linux_is_refused{"CEnv/LlP64RequestedOnLinuxIsRefused", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::Llp64, 32);
     auto r = cenv::realise(d, "linux", "x86_64", false);
-    ASSERT_FALSE(r.has_value());
-    EXPECT_NE(r.error().find("data-model"), std::string::npos) << r.error();
-}
+    expect(fatal(!r.has_value()));
+    if (auto&& failed = expect(ne(r.error().find("data-model"), std::string::npos)); !failed) failed << r.error();
+}};
 
-TEST(CEnv, FreestandingAcceptsNone) {
+UTest freestanding_accepts_none{"CEnv/FreestandingAcceptsNone", [] {
     auto ok = decl(ts::CAbiPresents::None, ts::CAbiDataModel::ArchDefault, 32);
     auto r1 = cenv::realise(ok, "none", "riscv64", true);
-    ASSERT_TRUE(r1.has_value()) << r1.error();
+    if (auto&& failed = expect(fatal(r1.has_value())); !failed) failed << r1.error();
     // The wchar branch ALWAYS emits on a freestanding target now (wave
     // 2026-09-18, openkal-llvm-runtime#24, Windows-host × riscv64-none-elf
     // measurement): the toolchain's host-contaminated default is not
@@ -214,15 +216,15 @@ TEST(CEnv, FreestandingAcceptsNone) {
     // macros stay absent (the `none` presents value's whole point),
     // but the wchar realisation still applies — and so does the
     // expectation, which the probe then measures.
-    EXPECT_TRUE(has(r1->tokens, "-fno-short-wchar"));
-    EXPECT_TRUE(r1->expectUndefined.empty())
+    expect(bool(has(r1->tokens, "-fno-short-wchar")));
+    expect(r1->expectUndefined.empty())
         << "presents = none declares NO environment-identity macros, "
            "neither defined nor undefined";
-    EXPECT_TRUE(r1->expectDefined.empty());
+    expect(r1->expectDefined.empty());
     // Data-model is not checked on freestanding (no C library runtime to
     // present it), so `expectLongBytes` stays at 0.
-    EXPECT_EQ(r1->expectLongBytes, 0);
-}
+    expect(eq(r1->expectLongBytes, 0));
+}};
 
 // A freestanding target ALSO realises `presents = "posix"` (design §3.3,
 // coordinator revision — this used to be an unconditional refusal, which is
@@ -230,14 +232,14 @@ TEST(CEnv, FreestandingAcceptsNone) {
 // before reaching any other target, for a fact this engine can in fact
 // deliver). Bare metal starts with neither `_WIN32` nor `__unix__` defined,
 // same as macOS's default triple, so it costs the identical one token.
-TEST(CEnv, FreestandingPosixDefinesUnix) {
+UTest freestanding_posix_defines_unix{"CEnv/FreestandingPosixDefinesUnix", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "none", "riscv64", true);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    ASSERT_TRUE(has(r->tokens, "-D__unix__"));
-    ASSERT_TRUE(has(r->expectDefined, "__unix__"));
-    ASSERT_TRUE(has(r->expectUndefined, "_WIN32"));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(fatal(bool(has(r->tokens, "-D__unix__"))));
+    expect(fatal(bool(has(r->expectDefined, "__unix__"))));
+    expect(fatal(bool(has(r->expectUndefined, "_WIN32"))));
+}};
 
 // A freestanding target with `wchar = 32` USED TO skip the
 // `-fno-short-wchar` token on the reasoning that the toolchain default was
@@ -251,44 +253,44 @@ TEST(CEnv, FreestandingPosixDefinesUnix) {
 // the engine actually produced (32 bits, with the flag), not the host's
 // leak. Pinned here so a future "freestanding skips the flag" optimisation
 // cannot return without a regression test.
-TEST(CEnv, FreestandingWchar32AlwaysEmitsNoShortWchar) {
+UTest freestanding_wchar32_always_emits_no_short_wchar{"CEnv/FreestandingWchar32AlwaysEmitsNoShortWchar", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "none", "riscv64", true);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(has(r->tokens, "-fno-short-wchar"))
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(bool(has(r->tokens, "-fno-short-wchar")))
         << "freestanding host leakage on Windows would compile a 16-bit "
            "wchar_t otherwise; the wave's measurement is the source for "
            "this assertion.";
-    EXPECT_EQ(r->expectWcharBits, 32);
-}
+    expect(eq(r->expectWcharBits, 32));
+}};
 
 // The matching case for `wchar = 16`: `-fshort-wchar` always emitted on
 // freestanding when the declaration asks for 16, so a Linux/macOS host
 // (which defaults to 32 bits on a freestanding target) is brought down to
 // the declaration. Mirrors the wave's measurement in the other direction.
-TEST(CEnv, FreestandingWchar16AlwaysEmitsShortWchar) {
+UTest freestanding_wchar16_always_emits_short_wchar{"CEnv/FreestandingWchar16AlwaysEmitsShortWchar", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 16);
     auto r = cenv::realise(d, "none", "riscv64", true);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_TRUE(has(r->tokens, "-fshort-wchar"));
-    EXPECT_EQ(r->expectWcharBits, 16);
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(bool(has(r->tokens, "-fshort-wchar")));
+    expect(eq(r->expectWcharBits, 16));
+}};
 
 // `windows` still has no realisation on a freestanding target — there is no
 // operating system under it for that identity to belong to. Unaffected by
 // the `posix` fix above; pinned so it stays that way.
-TEST(CEnv, FreestandingWindowsIsStillRefused) {
+UTest freestanding_windows_is_still_refused{"CEnv/FreestandingWindowsIsStillRefused", [] {
     auto d = decl(ts::CAbiPresents::Windows, ts::CAbiDataModel::ArchDefault, 16);
     auto r = cenv::realise(d, "none", "riscv64", true);
-    ASSERT_FALSE(r.has_value());
-}
+    expect(fatal(!r.has_value()));
+}};
 
 // A 32-bit architecture's own native data model is ILP32 — the Cygwin
 // mechanism is x86_64-only, so `arch-default` there needs no substitution and
 // stays a no-op regardless.
-TEST(CEnv, Ilp32ArchDefaultOnA32BitArchIsANoOp) {
+UTest ilp32_arch_default_on_a32_bit_arch_is_a_no_op{"CEnv/Ilp32ArchDefaultOnA32BitArchIsANoOp", [] {
     auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
     auto r = cenv::realise(d, "linux", "arm", false);
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_EQ(r->expectLongBytes, 4);
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(eq(r->expectLongBytes, 4));
+}};

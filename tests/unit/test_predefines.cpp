@@ -9,7 +9,6 @@
 // because a set compared by reading is a set compared by sampling --- this
 // project has already shipped two tables that were "the ones it was missing"
 // and were not.
-#include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cctype>
@@ -17,8 +16,12 @@
 #include <string>
 #include <vector>
 
+import mcpplibs.mtest;
+
 import mcpp.toolchain.predefines;
 import mcpp.toolchain.triple;
+
+using namespace mcpplibs::mtest;
 
 namespace pd = mcpp::toolchain::predefines;
 namespace triple = mcpp::toolchain::triple;
@@ -48,16 +51,16 @@ bool listed(std::string_view name, std::string_view os) {
 
 } // namespace
 
-TEST(Predefines, EveryEmittedMacroIsInTheContract) {
+UTest every_emitted_macro_is_in_the_contract{"Predefines/EveryEmittedMacroIsInTheContract", [] {
     for (auto const& os : {"linux", "windows", "macos", "ios", "android", "none"})
         for (bool openkal : {false, true})
             for (auto const& m : emitted(os, openkal))
-                EXPECT_TRUE(listed(m, os))
+                expect(bool(listed(m, os)))
                     << m << " is emitted for os=" << os
                     << " openkal=" << openkal << " and kContract does not list it";
-}
+}};
 
-TEST(Predefines, EveryContractRowThisModuleEmitsIsReachable) {
+UTest every_contract_row_this_module_emits_is_reachable{"Predefines/EveryContractRowThisModuleEmitsIsReachable", [] {
     // `Realisation` rows are emitted by `mcpp.toolchain.cenv`, deliberately,
     // and are listed here because the contract is about what a READER may
     // encounter rather than about which module wrote it.
@@ -70,21 +73,19 @@ TEST(Predefines, EveryContractRowThisModuleEmitsIsReachable) {
                 if (std::ranges::find(ms, pd::spelling_for(e, os)) != ms.end())
                     reached = true;
             }
-        EXPECT_TRUE(reached)
+        expect(bool(reached))
             << e.spelling << " is in kContract and no configuration emits it";
     }
-}
+}};
 
-TEST(Predefines, TheTargetMacroIsSpeltFromTheTripleField) {
+UTest the_target_macro_is_spelt_from_the_triple_field{"Predefines/TheTargetMacroIsSpeltFromTheTripleField", [] {
     // The engine learns no operating-system name: a target added to the
     // triple parser gets its macro without an edit to this module.
-    EXPECT_EQ(pd::define_tokens("freebsd", false).front(),
-              "-D__MCPP_TARGET_FREEBSD__=1");
-    EXPECT_EQ(pd::define_tokens("none", false).front(),
-              "-D__MCPP_TARGET_NONE__=1");
-}
+    expect(eq(pd::define_tokens("freebsd", false).front(), "-D__MCPP_TARGET_FREEBSD__=1"));
+    expect(eq(pd::define_tokens("none", false).front(), "-D__MCPP_TARGET_NONE__=1"));
+}};
 
-TEST(Predefines, OneMacroPerTargetAndItIsAlwaysPresent) {
+UTest one_macro_per_target_and_it_is_always_present{"Predefines/OneMacroPerTargetAndItIsAlwaysPresent", [] {
     // Conditional emission would make absence ambiguous: "not Windows" and
     // "Windows, but nothing suppressed its macros" would read the same.
     for (auto const& os : {"linux", "windows", "macos", "ios", "android", "none"}) {
@@ -92,36 +93,36 @@ TEST(Predefines, OneMacroPerTargetAndItIsAlwaysPresent) {
         const auto n = std::ranges::count_if(ms, [](std::string const& m) {
             return m.starts_with("__MCPP_TARGET_");
         });
-        EXPECT_EQ(n, 1) << "os=" << os;
+        expect(eq(n, 1)) << "os=" << os;
     }
-}
+}};
 
-TEST(Predefines, OpenkalIsTiedToTheResolvedLayerAndNotToAnyTarget) {
+UTest openkal_is_tied_to_the_resolved_layer_and_not_to_any_target{"Predefines/OpenkalIsTiedToTheResolvedLayerAndNotToAnyTarget", [] {
     for (auto const& os : {"linux", "windows", "macos"}) {
         auto without = emitted(os, false);
         auto with    = emitted(os, true);
-        EXPECT_EQ(std::ranges::find(without, "__OPENKAL__"), without.end());
-        EXPECT_NE(std::ranges::find(with, "__OPENKAL__"), with.end());
+        expect(eq(std::ranges::find(without, "__OPENKAL__"), without.end()));
+        expect(ne(std::ranges::find(with, "__OPENKAL__"), with.end()));
     }
-}
+}};
 
-TEST(Predefines, AnEmptyTargetOsEmitsNoTargetMacro) {
+UTest an_empty_target_os_emits_no_target_macro{"Predefines/AnEmptyTargetOsEmitsNoTargetMacro", [] {
     // A triple that failed to parse must not produce `__MCPP_TARGET___`.
     auto ms = emitted("", false);
-    EXPECT_TRUE(ms.empty());
-}
+    expect(ms.empty());
+}};
 
-TEST(Predefines, EveryContractRowStatesBothWhatIsAllowedAndWhatIsNot) {
+UTest every_contract_row_states_both_what_is_allowed_and_what_is_not{"Predefines/EveryContractRowStatesBothWhatIsAllowedAndWhatIsNot", [] {
     // A rule with only a permission invites every use its author did not
     // think of; the `__OPENKAL__` entry has had a forbidden list since it was
     // written, and the rest follow it.
     for (auto const& e : pd::kContract) {
-        EXPECT_FALSE(e.allowed.empty())   << e.spelling;
-        EXPECT_FALSE(e.forbidden.empty()) << e.spelling;
+        expect(!e.allowed.empty())   << e.spelling;
+        expect(!e.forbidden.empty()) << e.spelling;
     }
-}
+}};
 
-TEST(Predefines, EveryOwnedNameIsSpeltInThisProjectsConvention) {
+UTest every_owned_name_is_spelt_in_this_projects_convention{"Predefines/EveryOwnedNameIsSpeltInThisProjectsConvention", [] {
     // Upper case, `__`-wrapped. The convention splits by what a name IS: a
     // vendor or product name is upper (`__APPLE__`, `_WIN32`), a
     // kind-of-system name is lower (`__linux__`). Every owned row names a
@@ -135,20 +136,20 @@ TEST(Predefines, EveryOwnedNameIsSpeltInThisProjectsConvention) {
     // and must never be pulled into this project's namespace.
     for (auto const& e : pd::kContract) {
         if (!e.owned) {
-            EXPECT_FALSE(e.spelling.starts_with("__MCPP_"))
+            expect(!e.spelling.starts_with("__MCPP_"))
                 << e.spelling << " is supplied rather than owned, so it keeps "
                    "the standard spelling";
             continue;
         }
-        EXPECT_TRUE(e.spelling.starts_with("__") && e.spelling.ends_with("__"))
+        expect(e.spelling.starts_with("__") && e.spelling.ends_with("__"))
             << e.spelling << " is owned and is not `__`-wrapped";
         for (char c : e.spelling)
-            EXPECT_FALSE(c >= 'a' && c <= 'z')
+            expect(!(c >= 'a' && c <= 'z'))
                 << e.spelling << " is owned and carries a lower-case letter";
     }
-}
+}};
 
-TEST(Predefines, EveryTargetInTheRegistryYieldsAValidIdentifier) {
+UTest every_target_in_the_registry_yields_a_valid_identifier{"Predefines/EveryTargetInTheRegistryYieldsAValidIdentifier", [] {
     // The spelling is derived from the triple's own `os` field, which is why
     // a target added to the parser needs no edit to `predefines.cppm`. The
     // price of that is that an `os` carrying a character no identifier may
@@ -162,20 +163,19 @@ TEST(Predefines, EveryTargetInTheRegistryYieldsAValidIdentifier) {
     std::size_t rows = 0;
     for (auto const& row : triple::known_targets()) {
         const auto t = triple::parse(row.canonical);
-        ASSERT_TRUE(t.has_value()) << row.canonical << " does not parse";
+        expect(fatal(t.has_value())) << row.canonical << " does not parse";
         const auto toks = pd::define_tokens(t->os, false);
-        ASSERT_EQ(toks.size(), 1u) << row.canonical << " (os=" << t->os << ")";
+        if (auto&& failed = expect(fatal(eq(toks.size(), 1u))); !failed) failed << row.canonical << " (os=" << t->os << ")";
         const std::string m = macro_of(toks.front());
-        EXPECT_FALSE(m.empty());
-        EXPECT_TRUE(std::isalpha(static_cast<unsigned char>(m.front()))
-                    || m.front() == '_')
-            << row.canonical << " -> " << m;
+        expect(!m.empty());
+        if (auto&& failed = expect(std::isalpha(static_cast<unsigned char>(m.front()))
+                    || m.front() == '_'); !failed) failed << row.canonical << " -> " << m;
         for (char c : m)
-            EXPECT_TRUE(std::isalnum(static_cast<unsigned char>(c)) || c == '_')
+            expect(std::isalnum(static_cast<unsigned char>(c)) || c == '_')
                 << row.canonical << " -> " << m
                 << " is not a valid identifier";
         ++rows;
     }
     // A registry that enumerated nothing would pass every assertion above.
-    EXPECT_GT(rows, 10u) << "the target registry produced " << rows << " rows";
-}
+    expect(gt(rows, 10u)) << "the target registry produced " << rows << " rows";
+}};

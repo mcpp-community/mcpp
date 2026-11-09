@@ -1,13 +1,15 @@
-#include <gtest/gtest.h>
 
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.version;
 import mcpp.build.program_protocol;
 import mcpp.build.hostprogram;
+
+using namespace mcpplibs::mtest;
 
 // GLOBAL CROSS-CHECK.
 //
@@ -30,7 +32,7 @@ import mcpp.build.hostprogram;
 
 namespace pp = mcpp::build::program_protocol;
 
-TEST(SubsystemContracts, TheAnnouncedProtocolIsSubstitutedAndNotHardcoded) {
+UTest the_announced_protocol_is_substituted_and_not_hardcoded{"SubsystemContracts/TheAnnouncedProtocolIsSubstitutedAndNotHardcoded", [] {
     // The bundled `mcpp` module announces `mcpp:protocol=N` so the engine can
     // reject a program written for a newer protocol. N is injected by
     // substituting `@PROTOCOL@` at compile time, PRECISELY so the announced
@@ -40,28 +42,28 @@ TEST(SubsystemContracts, TheAnnouncedProtocolIsSubstitutedAndNotHardcoded) {
     // subsystem's own tests stay green while a bumped protocol silently keeps
     // announcing the old one.
     const std::string src{mcpp::build::kMcppModuleSource};
-    EXPECT_NE(src.find("@PROTOCOL@"), std::string::npos)
+    expect(ne(src.find("@PROTOCOL@"), std::string::npos))
         << "the bundled module no longer carries the substitution point";
 
     const std::string hardcoded =
         "mcpp:protocol=" + std::to_string(pp::kProtocolVersion);
-    EXPECT_EQ(src.find(hardcoded), std::string::npos)
+    expect(eq(src.find(hardcoded), std::string::npos))
         << "the protocol number is spelled into the bundled module; "
            "substitute @PROTOCOL@ instead so the two cannot diverge";
-}
+}};
 
-TEST(SubsystemContracts, TheModuleDeclarationIsAlsoSubstituted) {
+UTest the_module_declaration_is_also_substituted{"SubsystemContracts/TheModuleDeclarationIsAlsoSubstituted", [] {
     // `export module mcpp;` inside a string literal would be read by mcpp's
     // own regex scanner as this file exporting a second module. The engine
     // writes `@MODULE@` and substitutes it when it emits the source.
     const std::string src{mcpp::build::kMcppModuleSource};
-    EXPECT_NE(src.find("@MODULE@"), std::string::npos);
-    EXPECT_EQ(src.find("export module mcpp;"), std::string::npos)
+    expect(ne(src.find("@MODULE@"), std::string::npos));
+    expect(eq(src.find("export module mcpp;"), std::string::npos))
         << "a literal module declaration here makes the scanner believe this "
            "translation unit exports it";
-}
+}};
 
-TEST(SubsystemContracts, TheBinaryVersionMatchesTheRootManifest) {
+UTest the_binary_version_matches_the_root_manifest{"SubsystemContracts/TheBinaryVersionMatchesTheRootManifest", [] {
     // Two files, one fact. `.github/tools/check_version_pins.sh` enforces this
     // as text before anything is built; this asserts it on the value the
     // COMPILED binary carries, which is what `--version`, the BMI fingerprint
@@ -73,11 +75,11 @@ TEST(SubsystemContracts, TheBinaryVersionMatchesTheRootManifest) {
     fs::path root = fs::current_path();
     for (int i = 0; i < 6 && !fs::exists(root / "mcpp.toml"); ++i)
         root = root.parent_path();
-    ASSERT_TRUE(fs::exists(root / "mcpp.toml"))
+    expect(fatal(fs::exists(root / "mcpp.toml")))
         << "could not find the root manifest from " << fs::current_path();
 
     std::ifstream in(root / "mcpp.toml");
-    ASSERT_TRUE(in.is_open());
+    expect(fatal(in.is_open()));
     std::string line, fromToml;
     while (std::getline(in, line)) {
         if (!line.starts_with("version")) continue;
@@ -87,6 +89,6 @@ TEST(SubsystemContracts, TheBinaryVersionMatchesTheRootManifest) {
         fromToml = line.substr(a + 1, b - a - 1);
         break;
     }
-    ASSERT_FALSE(fromToml.empty()) << "no [package] version in the root manifest";
-    EXPECT_EQ(fromToml, std::string(mcpp::MCPP_VERSION));
-}
+    if (auto&& failed = expect(fatal(!fromToml.empty())); !failed) failed << "no [package] version in the root manifest";
+    expect(eq(fromToml, std::string(mcpp::MCPP_VERSION)));
+}};

@@ -7,6 +7,7 @@ import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
+import mcpp.manifest.platform_providers;
 import mcpp.targetside;
 import std;
 import mcpp.invocation;
@@ -1054,6 +1055,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // 2026-10-29 §4.5): the platform reader type-checks every entry.
         "platform.carrier",
         "target.*.carrier",
+        // `[[platform.define]]` and `[[platform.provider]]` (SPEC-016 §2, §3):
+        // the platform reader type-checks every entry.
+        "platform.define",
+        "platform.provider",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
@@ -1061,7 +1066,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
             "[[runtime.artifacts]], [[runtime.deploy]], [[platform.link.inputs]], "
-            "[[platform.carrier]] and [xlings] deps entries",
+            "[[platform.carrier]], [[platform.define]], [[platform.provider]] and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -2181,6 +2186,29 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         read_list("cxxflags",          t.cxxflags);
         read_list("defines",           t.defines);
         read_list("required_features", t.requiredFeatures);
+        // `[targets.<name>.build]`: the artifact's own compile of the
+        // package's translation units it links (mcpp#911 G9).
+        if (auto it = tt.find("build"); it != tt.end()) {
+            if (!it->second.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[targets.{}].build must be a table of cflags, cxxflags and defines", tname)));
+            for (auto const& [bk, bv] : it->second.as_table()) {
+                std::vector<std::string>* dst = bk == "cflags" ? &t.buildCflags
+                                              : bk == "cxxflags" ? &t.buildCxxflags
+                                              : bk == "defines" ? &t.buildDefines : nullptr;
+                if (!dst || !bv.is_array())
+                    return std::unexpected(error(origin, std::format(
+                        "[targets.{}.build].{} is not read: the keys are cflags, cxxflags and defines, "
+                        "each a list", tname, bk)));
+                for (auto const& v : bv.as_array())
+                    if (v.is_string()) dst->push_back(v.as_string());
+            }
+            for (auto const& flag : t.buildCxxflags)
+                if (starts_with_std_flag(flag))
+                    return std::unexpected(error(origin, std::format(
+                        "[targets.{}.build].cxxflags contains '{}'; use [package].standard to "
+                        "configure the C++ language standard", tname, flag)));
+        }
         // `windows_subsystem` / `windows_entry` (#618). A closed set each, so a
         // misspelling is refused by name rather than rendered as nothing.
         auto read_choice = [&](const char* key, std::string& out, bool subsystem)
@@ -2268,7 +2296,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // at the right axis (workspace / features / profile).
         static constexpr std::string_view kKnownTargetKeys[] = {
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
-            "cflags", "cxxflags", "defines", "required_features",
+            "cflags", "cxxflags", "defines", "required_features", "build",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
             "start", "test-protocol", "test-main", "test-guide",
         };
@@ -2327,7 +2355,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             || k == "backend"  || k == "tools" || k == "artifacts"
             || k == "host-module" || k == "reexport"
             || k == "linkage"
-            || k == "patches" || k == "embed" || k == "exclude";
+            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -2540,6 +2568,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 spec.patches.push_back(pp.lexically_normal().generic_string());
             }
         }
+        if (auto it = sub.find("patch_root"); it != sub.end()) {
+            const std::filesystem::path pr = it->second.is_string() ? it->second.as_string() : std::string{};
+            if (!it->second.is_string() || pr.is_absolute())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] patch_root must be a directory relative to the package's root", section, fqName)));
+            spec.patchRoot = pr.lexically_normal().generic_string();
+        }
         if (auto it = sub.find("embed"); it != sub.end()) {
             if (!it->second.is_bool())
                 return std::unexpected(error(origin, std::format(
@@ -2568,6 +2603,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         if (auto it = sub.find("backend"); it != sub.end() && it->second.is_string()) {
             spec.features.push_back("backend-" + it->second.as_string());
         }
+        // AT MOST ONE OF `rev`, `tag`, `branch` (SPEC-001 §5); none is the
+        // remote's default branch, resolved when the dependency is fetched.
+        if (int refs = int(sub.contains("rev")) + int(sub.contains("tag")) + int(sub.contains("branch")); refs > 1)
+            return std::unexpected(error(origin, std::format(
+                "[{}.\"{}\"] names {} of rev / tag / branch; a git dependency names at most one",
+                section, fqName, refs)));
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
             spec.gitRefKind = "rev";
@@ -2600,10 +2641,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             return std::unexpected(error(origin, std::format(
                 "[{}.\"{}\"] must specify 'path', 'version', or 'git'", section, fqName)));
         }
-        if (!spec.git.empty() && spec.gitRev.empty()) {
-            return std::unexpected(error(origin, std::format(
-                "[{}.\"{}\"] git dep requires one of: rev / tag / branch", section, fqName)));
-        }
+        if (!spec.git.empty() && spec.gitRefKind.empty()) spec.gitRefKind = "branch";   // the default branch
         return {};
     };
 
@@ -3665,10 +3703,34 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testPrograms = value.as_string();
                 continue;
             }
+            if (key == "store") {
+                if (!value.is_string() || value.as_string().empty())
+                    return std::unexpected(error(origin,
+                        "[test] store is a directory relative to the project, or \"none\""));
+                m.testStore = value.as_string();
+                continue;
+            }
+            if (key == "split") {
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "case"
+                                           && value.as_string() != "none"))
+                    return std::unexpected(error(origin,
+                        "[test] split is \"file\" (a process per file of a program's cases, the default), "
+                        "\"case\" (a process per case) or \"none\" (one process)"));
+                m.testSplit = value.as_string();
+                continue;
+            }
+            if (key == "link") {
+                if (!value.is_string() || (value.as_string() != "used" && value.as_string() != "objects"))
+                    return std::unexpected(error(origin,
+                        "[test] link is \"used\" (the linker keeps what a test reaches, the default) or "
+                        "\"objects\" (every object whole)"));
+                m.testLink = value.as_string();
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, main, programs, start, windows_code_page, windows_long_paths.", key));
+                    "discover, link, main, programs, split, start, store, windows_code_page, windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -3863,9 +3925,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                             &m.schemaWarnings};
         auto st = rd.statement(*pt);
         if (!st) return std::unexpected(error(origin, st.error()));
-        if (!st->targets.set)
+        if (!st->targets.set && st->providers.empty())
             return std::unexpected(error(origin,
-                "[platform] names the targets it serves: targets = [\"<triple>\", ...]"));
+                "[platform] names the targets it serves: targets = [\"<triple>\", ...], or its "
+                "providers: [[platform.provider]] serves = [...]"));
+        // The rows it defines and the providers it states, checked against the
+        // rows as the engine reads them (SPEC-016 §5).
+        auto findings = mcpp::manifest::platform::check_statement(
+            *st, mcpp::manifest::platform::platform_name(m.package.name));
+        if (!findings.errors.empty())
+            return std::unexpected(error(origin, findings.errors.front()));
+        for (auto& w : findings.warnings) m.schemaWarnings.push_back(std::move(w));
         m.platform = std::move(*st);
         m.platformDeclared = true;
     }
@@ -3875,6 +3945,25 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         auto ov = rd.override_(*ht, "");
         if (!ov) return std::unexpected(error(origin, ov.error()));
         m.hostPlatform = std::move(*ov);
+    }
+    // [defaults."<capability>"] — the provider of a required capability when
+    // nothing else provides it (mcpp#911 G7): `<selector> = "<package>@<version>"`
+    // or a dependency table, the selector a target selector (`linux`,
+    // `cfg(os = "freebsd")`, a triple, `*`).
+    if (auto* dt = doc->get_table("defaults")) {
+        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                            &m.schemaWarnings};
+        for (auto const& [cap, body] : *dt) {
+            if (!body.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[defaults.\"{}\"] must be a table of <target selector> = <package>, for example "
+                    "linux = \"openkal-linux@^0.25\"", cap), body.position));
+            for (auto const& [sel, v] : body.as_table()) {
+                auto r = rd.ref(v, std::format("[defaults.\"{}\"].{}", cap, toml_header_key(sel)), false, false);
+                if (!r) return std::unexpected(error(origin, r.error(), v.position));
+                m.capabilityDefaults.push_back({ cap, sel, std::move(*r), static_cast<int>(v.position.line) });
+            }
+        }
     }
 
     // [lib] — library root convention (cargo-style).
@@ -4216,6 +4305,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "[target.{}].link must be a table, e.g. [target.{}.link] start = \"<symbol>\"", triple, triple)));
                 platformKeys = true;
             }
+            // The priority of a provider for the rows this selector matches
+            // (SPEC-016 §4.3): data the selection orders candidates by.
+            if (auto it = body.find("priority"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].priority must be a table, e.g. [target.{}.priority] mingw = 200", triple, triple)));
+                platformKeys = true;
+            }
             if (platformKeys || body.contains("runner") || body.contains("runners")) {
                 mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                     &m.schemaWarnings};
@@ -4268,7 +4365,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             static constexpr std::string_view kKnownTargetTables[] = {
                 "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
-                "feature-xlings", "layers", "link", "requires_abi", "runners", "runtime",
+                "feature-xlings", "layers", "link", "priority", "requires_abi", "runners", "runtime",
                 "targets", "tools", "xlings",
             };
             for (auto& [key, value] : body) {
@@ -4304,7 +4401,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
                     "cxx_runtime, linkage, min_api_level, platform, run_under, runner, sysroot, "
                     "toolchain, plus the [target.<triple>.runners] table for named runners and "
-                    "the platform's layers, tools, carrier and link tables. "
+                    "the platform's layers, tools, carrier, link and priority tables. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }
@@ -5670,18 +5767,20 @@ upsert_dependency_text(std::string_view source,
         }
     }
 
+    auto quoted_list = [](const std::vector<std::string>& items) {
+        std::string list;
+        for (auto const& item : items) {
+            if (!list.empty()) list += ", ";
+            list += std::format("\"{}\"", item);
+        }
+        return list;
+    };
     std::string value;
     if (edit.features.empty()) {
         value = std::format("\"{}\"", edit.version);
     } else {
-        std::string featureList;
-        for (auto const& feature : edit.features) {
-            if (!featureList.empty()) featureList += ", ";
-            featureList += std::format("\"{}\"", feature);
-        }
-        value = std::format(
-            "{{ version = \"{}\", features = [{}] }}",
-            edit.version, featureList);
+        value = std::format("{{ version = \"{}\", features = [{}] }}", edit.version,
+                            quoted_list(edit.features));
     }
 
     struct SectionSpan {
@@ -5785,9 +5884,13 @@ upsert_dependency_text(std::string_view source,
     // Retained flat dotted spellings are removed before canonical namespace
     // subtable emission. The parsed identity gate above ensures this edits the
     // exact PackageId, not a short-name substring match.
-    if (!defaultNamespace) {
+    // The default namespace's dotted spelling (`mcpplibs.cmdline = ...`) is
+    // the same package as the bare one and is removed as well.
+    {
+        const std::string dotted = defaultNamespace
+            ? std::format("{}.{}", edit.namespace_, edit.shortName) : spelling;
         if (auto base = find_section(text, baseHeader)) {
-            if (auto legacy = key_line_span(text, *base, spelling)) {
+            if (auto legacy = key_line_span(text, *base, dotted)) {
                 auto eraseEnd = legacy->second;
                 if (eraseEnd < text.size() && text[eraseEnd] == '\n')
                     ++eraseEnd;

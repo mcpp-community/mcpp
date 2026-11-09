@@ -680,7 +680,7 @@ int run(int argc, char** argv) {
             // (cmd_new validates presence for project creation itself).
             .arg(cl::Arg("name").help("Package directory name"))
             .option(cl::Option("template").short_name('t').takes_value().value_name("SPEC")
-                .help("bin (default) | lib | [ns.]pkg[@ver][:template] — exact package template"))
+                .help("bin (default) | lib | platform | [ns.]pkg[@ver][:template] — exact package template"))
             .option(cl::Option("list-templates").takes_value().value_name("PKG")
                 .help("List templates from exact [ns.]pkg[@ver]"))
             .action(wrap_rc(cmd_new)))
@@ -936,9 +936,9 @@ int run(int argc, char** argv) {
                 .help("Keep unrecorded directories written more recently than this, e.g. 12h, 3d (default [build] keep_days, 3d; 0 keeps none; implies --stale)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
-            .description("Explain how the toolchain / runtime / deps / runners / sources were resolved")
-            .arg(cl::Arg("topic").help("toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat (default: all)"))
-            .arg(cl::Arg("subject").help("for `tool` and `payload`: the name to look up"))
+            .description("Explain how the target / toolchain / runtime / deps / runners / sources / flags were resolved")
+            .arg(cl::Arg("topic").help("target | toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat | flags | platform (default: all but flags and platform)"))
+            .arg(cl::Arg("subject").help("for `tool` and `payload`: the name to look up; for `flags`: the unit, by the end of its path"))
             // `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build
             // for THIS pair resolve to" is the question the target matrix asks
@@ -1070,6 +1070,8 @@ int run(int argc, char** argv) {
                 .help("Output format: human (default) | json (one mcpp.pack envelope on stdout; narration on stderr)"))
             .option(cl::Option("no-strip")
                 .help("Ship the artifacts as built (default: strip debug info)"))
+            .option(cl::Option("all-programs")
+                .help("Ship every program of the package: the one named after it (or the named one) and the others beside it"))
             .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
                 .help("Pack the named workspace member (namespace.name or package name, then directory), as if run in its directory; repeat to pack several, planned and built once"))
             .option(cl::Option("workspace")

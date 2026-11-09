@@ -51,17 +51,25 @@ runs:
       env:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
-        WORK=$(mktemp -d)
-        tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
-        # Retried and verified — .github/tools/fetch_release.sh. A bare curl
-        # here is the `curl: (52) Empty reply from server` flake.
-        bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
-          "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
-          "${WORK}/${tarball}"
-        tar -xzf "${WORK}/${tarball}" -C "${WORK}"
-        XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64"
-        "$XLINGS_DIR/subos/default/bin/xlings" self install
+        # THE CACHE ALREADY HOLDS THE PINNED XLINGS (its key names the version):
+        # nothing is downloaded, as bootstrap-mcpp's fast path does. This step
+        # fetched the release on every run, a cache hit or not, and a 504 of
+        # that fetch failed the job (2026-11-09).
+        XL="$HOME/.xlings/subos/default/bin/xlings"
+        if ! { [ -x "$XL" ] && "$XL" --version 2>/dev/null | head -1 | grep -qF "$XLINGS_VERSION"; }; then
+          WORK=$(mktemp -d)
+          tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz"
+          # Retried and verified, and by the API's address when the web's
+          # fails — .github/tools/fetch_release.sh.
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
+            "${WORK}/${tarball}"
+          tar -xzf "${WORK}/${tarball}" -C "${WORK}"
+          XLINGS_DIR="${WORK}/xlings-${XLINGS_VERSION}-macosx-arm64"
+          "$XLINGS_DIR/subos/default/bin/xlings" self install
+        fi
         export PATH="$HOME/.xlings/subos/default/bin:$PATH"
         xlings --version
         echo "PATH=$HOME/.xlings/subos/default/bin:$PATH" >> "$GITHUB_ENV"
