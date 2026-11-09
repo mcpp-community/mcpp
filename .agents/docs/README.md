@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-356 records.
+357 records.
 
 ## By subject
 
@@ -41,6 +41,10 @@ Records that declare one. Everything else is listed by date below.
 ### compiler-scheduling
 
 - [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
+
+### cross-platform
+
+- [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
 
 ### design
 
@@ -183,6 +187,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
 - [目标与提供者：统一的目标模型（结合 mcpp#911）](2026-11-09-target-model-design.md) — active
 - [生态顶层方案：#885 收尾之后的工作流、原则与依赖](2026-11-08-ecosystem-top-level-design.md) — active
 - [#885 收尾补充方案：目标角色、平台事实、系统接口与版本书写](2026-11-08-ecosystem-885-supplement-design.md) — active
