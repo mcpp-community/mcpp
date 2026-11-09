@@ -288,3 +288,38 @@ jobs:
           path: timings/
           if-no-files-found: ignore
           retention-days: 14
+
+  # THE WORKFLOW RUN'S TESTS AS ONE REPORT (mtest `ci report`): the unit runs
+  # each host kept (test-report, mtest-unit-*) and the e2e shards' stores
+  # (e2e-store-*), the runs of this workflow run's group together -- the
+  # summary, the failures, the slowest cases and the metrics.
+  test-report:
+    name: the run's tests, reported
+    needs: [changes, linux, macos, windows, linux-e2e, macos-e2e, windows-e2e]
+    if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/mtest
+      - name: The stores of the run's jobs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '{mtest-unit-*,e2e-store-*}'
+          path: stores
+      - name: One report over every job
+        shell: bash
+        run: |
+          set -euo pipefail
+          for store in stores/*/; do
+            [ -f "$store/index.ndjson" ] || continue
+            "$MTEST" store import --from "$store"
+          done
+          "$MTEST" ci report --group "$GITHUB_RUN_ID" --out test-report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: test-report.md
+          if-no-files-found: ignore
+          retention-days: 14

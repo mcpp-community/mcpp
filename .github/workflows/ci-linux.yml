@@ -96,6 +96,21 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The engine's own costs as metrics with a history (bench/tests, mtest
+      # Bench cases; design 2026-11-10 §16): this commit's mcpp timed on a small
+      # fixture, kept in bench/target/mtest beside the unit runs.
+      - name: The engine's costs (bench, mtest Bench)
+        run: |
+          cd bench && MCPP="$MCPP_FRESH" "$MCPP_FRESH" test
+
+      # The runs `mcpp test` kept: this job's report in its summary, and the
+      # store for the workflow run's report (ci.yml test-report).
+      - uses: ./.github/actions/test-report
+        if: always()
+        with:
+          name: mtest-unit-linux
+          stores: target/mtest bench/target/mtest
+
   # A cold, from-scratch self-host build by this commit's binary with the
   # manifest-pinned GCC: mcpp building itself, where build.yml has the
   # bootstrap build it. `mcpp test` is deliberately NOT repeated here; it would

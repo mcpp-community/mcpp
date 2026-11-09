@@ -120,8 +120,15 @@ jobs:
           set -o pipefail
           bash tests/e2e/run_all.sh 2>&1 | tee "$RUNNER_TEMP/e2e-suite.log"
 
-      # Measurement legs print READING lines (#646 F2 across PE images, #649 E10
-      # the llvm row's recorded CRT); collected where a reader finds them.
+      # The shard's run as Markdown in the job's summary (mtest report).
+      - name: The shard's report
+        if: always()
+        shell: bash
+        run: |
+          [ -n "${E2E_MTEST:-}" ] || exit 0
+          (cd tests/e2e && "$E2E_MTEST" report --format md --group "$GITHUB_RUN_ID") >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::no e2e run of this workflow run in the store"
+
       # The shard's store: main's are the history the next runs divide the suite by.
       - name: Upload the shard's store
         if: always()
@@ -145,6 +152,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # Measurement legs print READING lines (#646 F2 across PE images, #649 E10
+      # the llvm row's recorded CRT); collected where a reader finds them.
       - name: Measurement readings
         if: always()
         shell: bash
