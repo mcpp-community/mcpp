@@ -73,7 +73,7 @@ mylib = { path = "../mylib" }
 ```
 
 ```toml
-# Git dependency — pick exactly one of tag / branch / rev
+# Git dependency — tag / branch / rev 至多一个；都不写即远端的缺省分支
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
@@ -93,6 +93,10 @@ widget = { version = "1.0", backend = "glfw_opengl3" }  # Sugar for: features=["
 
 构建记录相同的解析结果时，`mcpp.lock` 保留原内容与修改时间（2026.10.21.1+）。
 仅 LF 与 CRLF 行结束形式不同不会触发改写。这不跳过依赖解析，也不改变锁定范围。
+
+不写 `tag`、`branch`、`rev` 的 git 依赖跟随远端的缺省分支，分支名取远端的通告（`main`、`master`、`trunk` 等；
+2026.11.9.1+），此后按 `branch` 处理并以 commit 锁定。命令行上的平台与工具使用相同的字符串形式：
+`--platform git+https://example.org/acme/acme-platform.git#tag=v1`。
 
 **Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 已经指向历史中的一个固定点，而
 `branch` 是会移动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,

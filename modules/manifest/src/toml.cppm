@@ -3948,7 +3948,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             for (auto const& [sel, v] : body.as_table()) {
                 auto r = rd.ref(v, std::format("[defaults.\"{}\"].{}", cap, toml_header_key(sel)), false, false);
                 if (!r) return std::unexpected(error(origin, r.error(), v.position));
-                m.capabilityDefaults.push_back({ cap, sel, std::move(*r), v.position.line });
+                m.capabilityDefaults.push_back({ cap, sel, std::move(*r), static_cast<int>(v.position.line) });
             }
         }
     }

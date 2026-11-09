@@ -81,7 +81,7 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 166 mtest programs, discovered by `mcpp test`
+├── unit/                 166 files of mtest cases, one test program (`[test] programs = "directory"`)
 └── e2e/                  711 shell scripts against a real binary
 ```
 
@@ -94,9 +94,10 @@ are C++ programs `mcpp test` discovers. They exercise a module's contract with n
 binary and no filesystem state. Each is a file of [mtest](https://github.com/mcpp-community/mtest)
 cases: an object `UTest name{"Suite/Case", [] { ... }};` is one case, with no `main`
 (`mcpp test --guide`). `mcpp test --case 'TargetSelect/*'` runs the cases a pattern
-names; `mcpp test -p <member>` runs a member's.
+names; `mcpp test -p <member>` runs a member's. The files are one program, linked once and run as
+one process per file.
 
-**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 711 files) run a real `mcpp`
+**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 721 files) run a real `mcpp`
 binary against a real project. `run_all.sh` is the CI entry point. `mcpp test`
 does **not** run them.
 

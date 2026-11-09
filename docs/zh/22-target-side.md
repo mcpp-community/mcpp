@@ -271,6 +271,24 @@ requires = ["mcpp:c++-abi=libstdc++"]
 另一种变体构建进同一个存储目录，否则第一个消费者就会替之后所有消费者决定
 变体。
 
+
+### 缺省提供者（2026.11.9.1+）
+
+需要某能力的包为每个目标陈述在无人提供时所取的提供者（SPEC-002 §3.6）：
+
+```toml
+[package]
+requires = ["mcpp:kernel-abi=openkal"]
+
+[defaults."mcpp:kernel-abi=openkal"]
+linux   = "openkal-linux@^0.25"
+macos   = "openkal-macos@^0.25"
+"*"     = "openkal-posix@^0.25"
+```
+
+依赖图中的提供者——使用者的依赖，或平台为其层加入的包——优先；否则与目标匹配的选择器的缺省作为该包的依赖进入
+依赖图，构建报告之（`Default ... for ... of ...`）。指名目标的选择器先于 `*`。
+
 ### 表形式与按目标的 `requires`（mcpp 2026.10.26.1+）
 
 `requires` 的条目可以是一张表：

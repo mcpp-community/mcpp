@@ -307,6 +307,15 @@ Before 2026.8.3.3 a mingw build on a Windows host emitted `foo.lib` — a GNU
 archive wearing an MSVC name, which MSVC cannot consume. A script
 that globs `*.lib` out of a `windows-gnu` build, it needs to glob `*.a` now.
 
+### clang with the MinGW-w64 payload (2026.11.9.1+)
+
+The MinGW-w64 provider pairs with gcc and with llvm. With llvm declared
+(`--toolchain llvm@<v>`, or `[target.x86_64-windows-gnu] toolchain`), the
+payload is installed as for gcc and becomes clang's sysroot: its C library,
+libstdc++ (whose `bits/std.cc` is the std module, so `import std` works) and
+the GCC runtime, linked by lld. The build reports `Pairs clang ... with the
+gcc@<v> payload`.
+
 ## Linux ELF from Windows (`x86_64-linux-musl`, no WSL required)
 
 The mirror of the section above: a Windows machine producing a **fully static

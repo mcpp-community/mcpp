@@ -284,6 +284,38 @@ platform package, with no `--target`, builds its tests for each of its
 architecture and those an execution host is named for (2026.10.29.1+), and
 reports the others as built and not run.
 
+## Defining targets and providers (2026.11.9.1+)
+
+A platform may serve a system no built-in row names. `[[platform.define]]`
+states the row, `[[platform.provider]]` the provider that serves it:
+
+```toml
+[[platform.define]]
+triple        = "x86_64-freebsd"
+clang-triple  = "x86_64-unknown-freebsd14.1"
+object-format = "elf"
+family        = "unix"
+execution     = "freebsd"          # the system its programs run on
+
+[[platform.provider]]
+serves   = ["x86_64-freebsd"]      # patterns: `*` is any one segment
+priority = 100
+hosted   = true                    # the C environment has `main`
+```
+
+With the platform selected (`[target.x86_64-freebsd] platform = {...}` or
+`--platform`), `--target x86_64-freebsd` builds into `target/x86_64-freebsd/`,
+`cfg(os = "freebsd")` holds, and a program whose system is not this machine's
+is built, not run, until a runner states how it runs (docs/41). The row's
+machine description is the platform's: a target whose machine differs from a
+built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
+shorthands of a provider.
+
+`mcpp new <name> --template platform` writes a platform package defining
+`<arch>-<name>`; `mcpp check platform [dir]` reads one as the engine does --
+its rows, its providers and the identities it serves with their priorities --
+and refuses a row that redefines a built-in one.
+
 ## Inspecting a configuration
 
 ```sh

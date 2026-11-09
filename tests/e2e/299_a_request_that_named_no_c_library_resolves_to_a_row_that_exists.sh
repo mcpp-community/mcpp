@@ -94,9 +94,23 @@ esac
 # AND THE ROW IS THE IDENTITY, NOT THE SPELLING. The output directory is the
 # identity. Asserting only "it did not refuse with tier-planned" would stay
 # green in a world where the completion picked some other row entirely.
-case "$row" in
-  aarch64-linux-gnu|aarch64-unknown-linux-gnu) echo "  ok  and it resolved to the native GNU row ($row)" ;;
-  *)      echo "FAIL: aarch64-linux resolved to '$row', not the GNU row"; exit 1 ;;
+# SINCE 2026.11.9.1 THE REQUEST IS A PATTERN (SPEC-016 §4): it takes the GNU row
+# where that row's provider is available -- an aarch64 Linux host -- and the
+# next available row of the system elsewhere (`aarch64-linux-musl`, through the
+# musl cross payload or openkal-platform), the report saying why.
+hostpair="$(uname -s)-$(uname -m)"
+case "$hostpair" in
+  Linux-aarch64)
+    case "$row" in
+      aarch64-linux-gnu|aarch64-unknown-linux-gnu) echo "  ok  and it resolved to the native GNU row ($row)" ;;
+      *) echo "FAIL: aarch64-linux resolved to '$row' on an aarch64 Linux host, not the GNU row"; exit 1 ;;
+    esac ;;
+  *)
+    case "$row" in
+      aarch64-linux-gnu|aarch64-unknown-linux-gnu|aarch64-linux-musl|aarch64-unknown-linux-musl)
+        echo "  ok  and it resolved to a row of the system available here ($row)" ;;
+      *) echo "FAIL: aarch64-linux resolved to '$row', no aarch64 Linux row"; exit 1 ;;
+    esac ;;
 esac
 case "$row" in
   aarch64*) ;;
@@ -111,21 +125,20 @@ esac
 # "send every bare -linux to musl", which passes half one perfectly.
 hostr="$(reason_for x86_64-linux)"
 hostrow="$(resolved_row x86_64-linux)"
-case "$hostrow" in
-  *-gnu) echo "  ok  and x86_64-linux is still gnu ($hostrow, reason '$hostr')" ;;
-  *)     echo "FAIL: x86_64-linux resolved to '$hostrow' (reason '$hostr')"; exit 1 ;;
+case "$hostpair:$hostrow" in
+  Linux-x86_64:*-gnu) echo "  ok  and x86_64-linux is still gnu on an x86_64 Linux host ($hostrow, reason '$hostr')" ;;
+  Linux-x86_64:*)     echo "FAIL: x86_64-linux resolved to '$hostrow' on an x86_64 Linux host (reason '$hostr')"; exit 1 ;;
+  *:x86_64*linux*)    echo "  ok  and x86_64-linux is a row of the system available here ($hostrow)" ;;
+  *)                  echo "FAIL: x86_64-linux resolved to '$hostrow' (reason '$hostr')"; exit 1 ;;
 esac
 
 # ── Half three: a written segment is a request, not a gap ────────────────
 #
-# An explicit segment names the same GNU identity. Host serviceability is a
-# separate property and agrees with the omitted-segment query.
-wr="$(reason_for aarch64-linux-gnu)"
-if [ "$wr" = "$r" ] && [ "$(resolved_row aarch64-linux-gnu)" = "$row" ]; then
-    echo "  ok  and writing -gnu preserves the selected GNU row"
-else
-    echo "FAIL: written and omitted GNU segments disagree ($wr / $r)"
-    exit 1
-fi
+# An explicit segment names the identity whatever the host: it is never replaced
+# by another row, served here or not.
+case "$(resolved_row aarch64-linux-gnu)" in
+  aarch64-linux-gnu|aarch64-unknown-linux-gnu) echo "  ok  and writing -gnu keeps the GNU row" ;;
+  *) echo "FAIL: written -gnu resolved to '$(resolved_row aarch64-linux-gnu)'"; exit 1 ;;
+esac
 
 echo "OK: a request that named no C library resolves to a row that exists"

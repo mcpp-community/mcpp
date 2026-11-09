@@ -83,7 +83,7 @@ src/
 └── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 166 mtest programs, discovered by `mcpp test`
+├── unit/                 166 个 mtest 用例文件，组成一个测试程序（`[test] programs = "directory"`）
 └── e2e/                  711 shell scripts against a real binary
 ```
 
@@ -95,9 +95,9 @@ tests/
 发现的 C++ 程序。它们检验一个模块的契约，不需要二进制、也不需要文件系统状态。每个文件由
 [mtest](https://github.com/mcpp-community/mtest) 的用例组成：一个对象 `UTest name{"Suite/Case", [] { ... }};`
 即一个用例，文件不写 `main`（`mcpp test --guide`）。`mcpp test --case 'TargetSelect/*'` 运行模式所指的用例；
-`mcpp test -p <成员>` 运行一个成员的用例。
+`mcpp test -p <成员>` 运行一个成员的用例。这些文件组成一个程序，只链接一次，按文件各起一个进程运行。
 
-**端到端测试**（`tests/e2e/NN_<name>.sh`，711 个文件）拿真实的 `mcpp`
+**端到端测试**（`tests/e2e/NN_<name>.sh`，721 个文件）拿真实的 `mcpp`
 二进制跑真实工程。`run_all.sh` 是 CI 的入口。`mcpp test` **不**运行它们。
 
 ```bash

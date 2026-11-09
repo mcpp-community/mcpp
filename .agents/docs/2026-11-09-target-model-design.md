@@ -1,6 +1,6 @@
 ---
 subject: target-model
-status: accepted
+status: active
 ---
 
 # 目标与提供者：统一的目标模型（结合 mcpp#911）
@@ -65,7 +65,7 @@ SPEC-013 §0 规定引擎不持有任何平台的知识，§14 又规定宿主�
 | `hosted` | C 环境是否 hosted；sysroot 或 c-abi 提供者亦可声明 `hosted-standard-library` | G3 |
 | `[platform.link] driver` | 在每一行生效；`"compiler"` 交由编译器驱动加入启动文件与库 | G4 |
 | `execution` | 产物的执行环境（系统、加载器） | G5、G11 |
-| 默认参数 | 带来源的数据；更具体的声明方以显式 `replace` 替换，否则追加 | G2 |
+| 默认参数 | 行的机器描述不可替换；机器不同的目标是另一行（G1、G12）；每个参数的来源由 `mcpp why flags` 写出 | G2 |
 | `pairs` | 可与之配对的编译器族（如 mingw 提供者：gcc、llvm） | 第 7 节 |
 
 **内置提供者。** 原生约定改写为随引擎发布的提供者：glibc payload（`*-linux-gnu`，native）、musl-gcc（`*-linux-musl`，
@@ -119,13 +119,13 @@ Emscripten SDK。openkal-platform 的 hosted 部分为提供者，服务 `*-linu
 | G6 描述符 | 源码制品一份、与目标无关；预编译 payload 按身份的轴匹配，含 `any` 与回落；`linux`、`macosx`、`windows`、`openkal`、`none` 块作为轴组合的别名读取，已有索引条目不变；`descriptor_keys` 照旧可读，不再必需 |
 | G7 能力槽 | SPEC-002 的层机制推广到普通包：`requires` 加按系统的默认提供者；解析顺序为依赖图 > 平台 > 默认值。openkal-run 的清单随之改写 |
 | G8 补丁根 | 包根（解析后的清单所在目录）或显式 `patch_root`；`mcpp patch edit/save` |
-| G9 按产物的编译变体 | `[targets.X] defines/flags` 作用于该产物的共享源码，按参数键编译变体，只在参数不同处 |
+| G9 按产物的编译变体 | `[targets.X.build] defines/cflags/cxxflags` 作用于该产物链接的本包翻译单元，在 `obj/_variant/<X>/` 编译变体；`[targets.X] defines/flags` 维持只作用于入口；模块接口每包一个，不做变体 |
 | G10 载体与打包 | 任何已解析平台能构建的行，按平台声明作载体或打包的系统 |
 | G11 执行宿主 | 运行器协议：传输、运行、输出流、退出码，由 runner 包实现（VM、ssh、设备）；无运行器的异系统产物为「已构建，未运行」 |
 | B1 | 生成的清单以 TOML 引号书写含 `.` 的目标名 |
 | B2 | 平台规定的产物后缀不被宿主后缀规则覆盖；冲突在规划期报告 |
 | B3 | 多个程序可打包时拒绝并说明，提供打包一个包的全部程序的写法 |
-| 构建插件（SPEC-007） | SPEC-013 §1.2 的分工不变：行、提供者、层只能声明（解析工具链与依赖图时尚无程序可运行）；`build`、`link`、`runner` 可由插件陈述，`replace` 在陈述层，来源记录 |
+| 构建插件（SPEC-007） | SPEC-013 §1.2 的分工不变：行、提供者、层只能声明（解析工具链与依赖图时尚无程序可运行）；`build`、`link`、`runner` 可由插件陈述，来源记录；构建程序的 `artifact-name` 不改变平台的产物格式 |
 
 ## 9. 多视角自审
 
@@ -141,7 +141,7 @@ Emscripten SDK。openkal-platform 的 hosted 部分为提供者，服务 `*-linu
 | 缓存与 ABI | `-linux-musl` 可由 musl-gcc 或 openkal-musl 提供；二者的预编译产物是否互换 | 缓存键已含工具链与平台的指纹，二者不共享缓存；索引中按身份匹配的预编译 payload 要求 C 层 ABI 兼容，openkal-musl 与 musl-gcc 的 musl 版本差异列为验证项 |
 | 跨平台 | 从 macOS 构建 `-linux-gnu` 需要 glibc payload 能装在 macOS 宿主上 | glibc payload 是目标数据，属 G6 的按身份匹配；在其可得之前，该身份在 macOS 宿主上不可服务，请求 `x86_64-linux` 回落到 `-musl` |
 | 跨平台 | macOS 无 SDK 的链接（dyld、libSystem 的存根） | 列为验证项（第 11 节）；验证前 `aarch64-macos-musl` 在非 macOS 宿主上标为 preview |
-| 安全 | 平台包可以定义行与替换默认参数 | 平台包本就能注入参数；`replace` 只作用于带来源的默认参数，`mcpp explain flags` 写出每个参数的来源层 |
+| 安全 | 平台包可以定义行 | 平台包本就能注入参数；定义的行不能覆盖内置行；`mcpp why flags` 写出每个参数的来源层 |
 | 性能 | 选择不得拉长构建的准备阶段 | 内置行与提供者由构建程序编为引擎中的静态表，运行时不解析任何文件；平台包只在被选中或已解析时读取（与现在相同）；候选按优先级依次检查可得性（本地 store 的存在性），取到第一个即停；结果在一次构建内缓存；`--timings` 报告选择所用时间，e2e 断言其上界 |
 | 用户体验 | 新增提示可能冗余 | 只在发生回落时附一句原因；其余沿用现有的「写法 → 身份」与层来源行 |
 | 诊断 | 拒绝时用户不知道下一步 | 第 6 节第 6 条：所需、各候选的原因、可执行的命令 |
@@ -387,3 +387,17 @@ mcpp 的单元测试（`tests/unit/` 166 个文件，以及各成员的 `modules
 | G1 | 全部 | CI 全绿、生态级自审、合入与发布、xim-pkgindex、clean-room 验证、关闭 issue | 以上全部 |
 
 可以并行的部分：B1、C1 的 CI 运行期间推进 A2–A8；mcpp 的 CI 运行期间推进 D1、E1。发布顺序为 os → mtest → mcpp → openkal-platform 与 openkal-image → mcppls。
+
+
+## 19. 实现中的取舍（2026-11-09，按“通用、必要、符合规范”评估）
+
+| 项 | 结论 | 理由 |
+|---|---|---|
+| G2 `replace` | 撤回 | 有了 G1 与 G12，机器不同的目标即另一行；追加参数时编译器取后者。替换机制是多余的核心复杂度 |
+| G2 解释 | `mcpp why flags`，不新增 `explain flags` | `why` 是来源解释的既有命令族；`explain` 只解释错误码 |
+| 显式身份与图冲突 | 报告，不拒绝（SPEC-002 §3.4 规则四） | 拒绝曾实测打破把宿主身份写作 `x86_64-linux-gnu` 的配置；只有未写 env 的请求随 C 库 |
+| 拒绝码 | 沿用 `host-cannot-serve`、`unknown-target`、`tier-planned` | 不新增与既有码同义的 `target-unserved` 等 |
+| B2 | 只约束构建程序的 `artifact-name` | 项目与本机对产物名的陈述是显式选择，照常生效 |
+| G9 | 新表 `[targets.X.build]` | 现有键的作用范围不变，升级无感 |
+| G8 `mcpp patch edit/save` | 保留 | 补丁是核心功能，编辑流程与之同属（同 pnpm 的 `patch`/`patch-commit`） |
+| 测试程序 | 按目录组成为可选（`[test] programs`）；`[test] split` 按文件分进程为缺省；测试只保留可达部分（`--gc-sections`） | 缺省不改变既有工程的程序划分与命名；按文件分进程同时保留隔离与并行 |

@@ -178,3 +178,4 @@ downstream tooling.
   - [SPEC-013 — Platforms: the configuration of a class of targets, its selection, merge, graph completion, link, seal, runner and carrier](specs/platforms.md)
   - [SPEC-014 — Packaging and distribution: link, closure and container, legs, the staged tree, the platform's tree, run coverage and single-file packages](specs/packaging.md)
   - [SPEC-015 — Target sets and legs: spelling and expansion, commands over several legs, test archives](specs/target-sets.md)
+  - [SPEC-016 — Targets and providers: rows, providers, the selection, platform-defined rows, reports and the lock](specs/targets-and-providers.md)

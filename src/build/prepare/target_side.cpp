@@ -1070,14 +1070,12 @@ static std::expected<void, std::string> cabi_identity(PrepareState& state) {
     const auto row = std::format("{}-{}-{}", id->arch, id->os, env);
     if (!mcpp::toolchain::target::find_row(row))
         return {};
-    if (!state.requestedCAbi.empty() && !state.overrides.target_request) {
-        refusal::record(refusal::Code::TargetCabiConflict);
-        return std::unexpected(std::format(
-            "target '{}' asks for the `{}` C library, and the build links `{}` ({}).\n"
-            "       An identity names the C library it links, so this build is `{}`.\n"
-            "       build it as `--target {}`, or as `--target {}-{}` to let the C library name it.",
-            id->str(), state.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.impl, row, row, id->arch, id->os));
-    }
+    // A WRITTEN C LIBRARY IS THE PROJECT'S SPELLING AND STAYS: the mismatch is
+    // reported (the target report's `asks for the ... C ABI`), not refused --
+    // refusing broke every configuration spelling the host's identity over a
+    // graph-supplied C library (e2e 282). Only a request that names none
+    // follows the C library.
+    if (!state.requestedCAbi.empty()) return {};
     if (state.overrides.target_request) return {};   // the second pass: the row it was given
     g_targetRestart = row;
     return std::unexpected(std::string("mcpp:target-restart"));

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: llvm mingw-cross wine
+# requires: mingw-cross wine
 source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 1044 -- clang pairs with the MinGW-w64 payload (SPEC-016 §6).
 #
@@ -9,7 +9,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #
 # Criteria: the build reports the pairing; the compile line carries the payload as `--sysroot`
 # and `-stdlib=libstdc++`; the program, which uses `import std` and `std::println`, runs under
-# wine; its imports are the system's DLLs only.
+# wine; its imports are the system's DLLs only. The llvm payload is installed by the build itself
+# when this machine has none (the `--toolchain` request), so the test needs only the MinGW-w64 cross
+# payload and wine.
 set -e
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | tail -20; exit 1; }

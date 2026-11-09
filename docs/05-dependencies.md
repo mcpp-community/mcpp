@@ -78,10 +78,11 @@ mylib = { path = "../mylib" }
 ```
 
 ```toml
-# Git dependency — pick exactly one of tag / branch / rev
+# Git dependency — at most one of tag / branch / rev; none follows the default branch
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
+tiplib = { git = "https://github.com/user/tiplib.git" }   # the remote's default branch
 ```
 
 ```toml
@@ -102,6 +103,12 @@ An unchanged `mcpp.lock` retains its contents and modification time when a build
 records the same resolution (2026.10.21.1+). LF and CRLF line endings are accepted
 without rewriting an otherwise identical file. This does not skip dependency
 resolution or change which dependencies the lock pins.
+
+A git dependency that names none of `tag`, `branch` and `rev` follows the remote's
+default branch, whose name the remote announces (`main`, `master`, `trunk`, ...;
+2026.11.9.1+); it is a `branch` from then on, locked by commit. The same string
+forms reach a platform or a tool on the command line:
+`--platform git+https://example.org/acme/acme-platform.git#tag=v1`.
 
 **Git dependencies and `mcpp.lock`**: a `tag` or `rev` already names a fixed point
 in history, but a `branch` moves. The first build resolves the branch to a commit

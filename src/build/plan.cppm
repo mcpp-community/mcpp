@@ -2045,9 +2045,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // the sections nothing references; static constructors are its roots, so
     // a case that registers itself stays. `[test] link = "objects"` keeps
     // every object whole. ELF and Mach-O through the compiler driver; MSVC's
-    // link.exe, a freestanding image and wasm keep their own link lines.
+    // link.exe, a freestanding image, a platform's ld.lld and wasm keep their
+    // own link lines.
     auto keep_what_tests_reach = [&](LinkUnit& lu, const mcpp::manifest::Manifest& owner) {
         if (owner.testLink == "objects" || msvcTarget || targetTriple.is_freestanding()) return;
+        // A platform that links with ld.lld itself states its own link line
+        // (an ok image collects its sections there already).
+        if (platform && platform->active && platform->fields.link.driver.value == "lld") return;
         if (!targetTriple.empty() && targetTriple.str().starts_with("wasm")) return;
         const bool macho = targetTriple.empty() ? bool(mcpplibs::os::is_macos) : targetTriple.is_mach_o();
         lu.linkFlags.push_back(macho ? "-Wl,-dead_strip" : "-Wl,--gc-sections");

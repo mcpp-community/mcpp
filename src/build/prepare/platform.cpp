@@ -968,9 +968,9 @@ std::vector<std::string> split_words(std::string_view v) {
 
 // THE PLATFORM'S NAMES OF ITS ARTIFACTS STAND (mcpp#911 B2): what follows
 // `{name}` in `link.exe` and `link.shared` is the platform's format (`.oke`,
-// `.okso`), which its own steps read. A later statement that would change it
-// (a build program's `artifact-name`, written for the host's suffix) is
-// reported, and the platform's pattern is kept.
+// `.okso`), which its own steps read. A build program's `artifact-name` that
+// would change it -- written for the host's suffix, without knowing the
+// platform -- is reported, and the platform's pattern is kept.
 namespace {
 void keep_platform_naming(mp::Statement& s, const mp::Statement& platform, std::string_view display,
                           std::vector<std::string>* conflicts) {
@@ -981,7 +981,9 @@ void keep_platform_naming(mp::Statement& s, const mp::Statement& platform, std::
     for (auto [field, base, kind] : { std::tuple{ &s.link.exe, &platform.link.exe, "exe" },
                                       std::tuple{ &s.link.shared, &platform.link.shared, "shared" } }) {
         if (!base->set || base->origin.tier != mp::Tier::Platform || suffix(base->value).empty()) continue;
-        if (!field->set || field->origin.tier == mp::Tier::Platform || suffix(field->value) == suffix(base->value))
+        // A build program's `artifact-name` only: the project and the machine
+        // state a name on purpose, and theirs stands as any field's does.
+        if (!field->set || field->origin.tier != mp::Tier::Program || suffix(field->value) == suffix(base->value))
             continue;
         if (conflicts)
             conflicts->push_back(std::format(

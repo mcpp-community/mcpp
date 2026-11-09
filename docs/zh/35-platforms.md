@@ -234,6 +234,32 @@ seal   = [["okld", "note", "{}"], ["okld", "place", "{}"], ["okld", "check", "{}
 `mcpp test` 而不给 `--target` 时,以该包为平台为其每个 `targets` 构建测试,运行本机架构的那些与给出了执行宿主的
 那些(2026.10.29.1+),其余报告为已构建、未运行。
 
+## 定义目标与提供者（2026.11.9.1+）
+
+平台可以服务内置行未命名的系统。`[[platform.define]]` 陈述行，`[[platform.provider]]` 陈述服务它的提供者：
+
+```toml
+[[platform.define]]
+triple        = "x86_64-freebsd"
+clang-triple  = "x86_64-unknown-freebsd14.1"
+object-format = "elf"
+family        = "unix"
+execution     = "freebsd"          # 其程序运行的系统
+
+[[platform.provider]]
+serves   = ["x86_64-freebsd"]      # 模式：`*` 代表任一段
+priority = 100
+hosted   = true                    # C 环境有 `main`
+```
+
+选中该平台（`[target.x86_64-freebsd] platform = {...}` 或 `--platform`）后，`--target x86_64-freebsd` 构建到
+`target/x86_64-freebsd/`，`cfg(os = "freebsd")` 成立；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
+未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
+提供者的两种简写。
+
+`mcpp new <名> --template platform` 生成一个定义 `<arch>-<名>` 的平台包；`mcpp check platform [dir]` 按引擎的读法
+检查它——行、提供者以及所服务的身份与优先级——并拒绝重新定义内置行的行。
+
 ## 查看一个配置
 
 ```sh

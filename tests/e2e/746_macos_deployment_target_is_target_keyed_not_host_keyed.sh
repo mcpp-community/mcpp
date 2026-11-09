@@ -72,6 +72,9 @@ macos_deployment_target = "$1"
 
 [target.aarch64-macos]
 toolchain = "llvm@$LLVM_VERSION"
+# The Apple provider by name: on a host without it, a request of the system
+# would otherwise take the next available row, aarch64-macos-musl (SPEC-016 §4).
+platform  = "builtin:apple"
 EOF
 }
 
