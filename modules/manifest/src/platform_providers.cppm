@@ -98,14 +98,21 @@ std::vector<StatedProvider> stated_providers(const Statement& s, std::string_vie
     return out;
 }
 
+// The rows one provider serves, each once. A sorted vector and not a set: GCC
+// 16.1 left a set's constructor that this unit instantiated undefined for an
+// importer (mcpp#905).
+std::vector<std::string> rows_served(const Statement& s, const StatedProvider& p) {
+    std::vector<std::string> rows;
+    for (auto const& pattern : p.serves) std::ranges::copy(rows_matching(s, pattern), std::back_inserter(rows));
+    std::ranges::sort(rows);
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    return rows;
+}
+
 std::vector<ServedIdentity> served_identities(const Statement& s, std::string_view name) {
     std::vector<ServedIdentity> out;
-    for (auto const& p : stated_providers(s, name)) {
-        std::set<std::string> seen;
-        for (auto const& pattern : p.serves)
-            for (auto& id : rows_matching(s, pattern))
-                if (seen.insert(id).second) out.push_back({ std::move(id), p.name, p.priority });
-    }
+    for (auto const& p : stated_providers(s, name))
+        for (auto const& id : rows_served(s, p)) out.push_back({ id, p.name, p.priority });
     std::ranges::sort(out, [](auto const& a, auto const& b) {
         return std::tie(a.identity, b.priority, a.provider) < std::tie(b.identity, a.priority, b.provider);
     });
