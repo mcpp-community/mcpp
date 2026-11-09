@@ -706,7 +706,9 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
             "       Name one of them.",
             ctx.requestedSpelling, opts));
     }
-    if (!ctx.known && !ctx.hasExplicitSection) {
+    // A row a platform defines is known to this build by its definition
+    // (SPEC-016 §2), whether or not the project writes a section for it.
+    if (!ctx.known && !ctx.hasExplicitSection && !(ctx.parsed && ctx.parsed->defined())) {
         // "UNKNOWN" IS A CLAIM ABOUT THE VOCABULARY, AND IT WAS FALSE FOR
         // A WHOLE arch+os FAMILY.
         //

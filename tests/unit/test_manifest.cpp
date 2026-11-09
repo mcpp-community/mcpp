@@ -7090,3 +7090,30 @@ target = "x86_64-openkal"
 )");
     if (auto&& failed = expect(fatal(ok.has_value())); !failed) failed << ok.error().format();
 }};
+
+// A GIT DEPENDENCY NAMES AT MOST ONE OF rev, tag, branch (SPEC-001 §5); none is
+// the remote's default branch.
+UTest a_git_dependency_names_at_most_one_ref{"Manifest/AGitDependencyNamesAtMostOneRef", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git" }
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    auto const& bar = m->dependencies.at("bar");
+    expect(eq(bar.gitRefKind, "branch"));
+    expect(bar.gitRev.empty());
+    auto two = mcpp::manifest::parse_string(R"(
+[package]
+name    = "x"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", tag = "v1", rev = "abc" }
+)");
+    expect(fatal(!two.has_value()));
+    expect(ne(two.error().format().find("a git dependency names at most one"), std::string::npos));
+}};

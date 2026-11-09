@@ -66,6 +66,16 @@ std::string known_short_name(const mp::PackageRef& r) {
                 .shortName;
         return {};
     }
+    // A repository named by its URL alone is the package its last segment
+    // names (`.../openkal-platform.git` is `openkal-platform`); the fetched
+    // manifest's own name is checked against it as any dependency's is.
+    if (!r.spec.git.empty()) {
+        std::string_view url = r.spec.git;
+        while (!url.empty() && (url.back() == '/' || url.back() == '\\')) url.remove_suffix(1);
+        if (url.ends_with(".git")) url.remove_suffix(4);
+        const auto cut = url.find_last_of("/\\:");
+        return std::string(cut == std::string_view::npos ? url : url.substr(cut + 1));
+    }
     return {};
 }
 

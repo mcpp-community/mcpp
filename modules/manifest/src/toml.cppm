@@ -2604,6 +2604,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         if (auto it = sub.find("backend"); it != sub.end() && it->second.is_string()) {
             spec.features.push_back("backend-" + it->second.as_string());
         }
+        // AT MOST ONE OF `rev`, `tag`, `branch` (SPEC-001 §5); none is the
+        // remote's default branch, resolved when the dependency is fetched.
+        if (int refs = int(sub.contains("rev")) + int(sub.contains("tag")) + int(sub.contains("branch")); refs > 1)
+            return std::unexpected(error(origin, std::format(
+                "[{}.\"{}\"] names {} of rev / tag / branch; a git dependency names at most one",
+                section, fqName, refs)));
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
             spec.gitRefKind = "rev";
@@ -2636,10 +2642,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             return std::unexpected(error(origin, std::format(
                 "[{}.\"{}\"] must specify 'path', 'version', or 'git'", section, fqName)));
         }
-        if (!spec.git.empty() && spec.gitRev.empty()) {
-            return std::unexpected(error(origin, std::format(
-                "[{}.\"{}\"] git dep requires one of: rev / tag / branch", section, fqName)));
-        }
+        if (!spec.git.empty() && spec.gitRefKind.empty()) spec.gitRefKind = "branch";   // the default branch
         return {};
     };
 

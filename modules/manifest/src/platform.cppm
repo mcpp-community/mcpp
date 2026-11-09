@@ -404,8 +404,31 @@ inline const Carrier* carrier_for(const Statement& s, std::string_view pair) {
 
 // `"[<namespace>.]<name>@<version>"` -> the ref; the error names what is
 // missing. `none` is not a ref; callers test for it first.
+// THE STRING FORM OF A REFERENCE (SPEC-016 §8, SPEC-001 §5): `[<ns>.]<name>@<version>`,
+// or `git+<url>[#tag=<t>|rev=<r>|branch=<b>]` -- no fragment is the remote's
+// default branch. A path is read by the caller, which knows the directory.
 inline std::expected<PackageRef, std::string> parse_ref_text(std::string_view text) {
     PackageRef r;
+    if (text.starts_with("git+")) {
+        auto rest = text.substr(4);
+        const auto hash = rest.find('#');
+        r.spec.git = std::string(rest.substr(0, hash));
+        if (r.spec.git.empty())
+            return std::unexpected(std::format("'{}' names no repository after `git+`", text));
+        r.spec.gitRefKind = "branch";   // the default branch, resolved when it is fetched
+        if (hash != std::string_view::npos) {
+            const auto frag = rest.substr(hash + 1);
+            const auto eq = frag.find('=');
+            const auto kind = frag.substr(0, eq);
+            if (eq == std::string_view::npos || eq + 1 == frag.size()
+                || (kind != "tag" && kind != "rev" && kind != "branch"))
+                return std::unexpected(std::format(
+                    "'{}': after `#` write tag=<tag>, rev=<commit> or branch=<branch>", text));
+            r.spec.gitRefKind = std::string(kind);
+            r.spec.gitRev = std::string(frag.substr(eq + 1));
+        }
+        return r;
+    }
     const auto at = text.rfind('@');
     if (at == std::string_view::npos || at == 0 || at + 1 == text.size())
         return std::unexpected(std::format(

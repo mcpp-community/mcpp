@@ -613,3 +613,19 @@ targets = ["x86_64-none-elf"]
     expect(eq(march->origin.tier, mp::Tier::Manifest));
     expect(eq(merged.replace.size(), 2u));
 }};
+
+// THE STRING FORM OF A REPOSITORY (SPEC-016 §8): `git+<url>` with at most one of
+// tag, rev, branch after `#`; none is the remote's default branch.
+UTest a_repository_reference_has_a_string_form{"PlatformManifest/ARepositoryReferenceHasAStringForm", [] {
+    auto tagged = mp::parse_ref_text("git+https://example.org/acme/toy-platform.git#tag=v1");
+    expect(fatal(tagged.has_value()));
+    expect(eq(tagged->spec.git, "https://example.org/acme/toy-platform.git"));
+    expect(eq(tagged->spec.gitRefKind, "tag"));
+    expect(eq(tagged->spec.gitRev, "v1"));
+    auto deflt = mp::parse_ref_text("git+git@example.org:acme/toy.git");
+    expect(fatal(deflt.has_value()));
+    expect(eq(deflt->spec.gitRefKind, "branch"));
+    expect(deflt->spec.gitRev.empty());
+    expect(!mp::parse_ref_text("git+https://example.org/x.git#sha=1").has_value());
+    expect(!mp::parse_ref_text("git+").has_value());
+}};

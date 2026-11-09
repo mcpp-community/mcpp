@@ -1472,6 +1472,42 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             const std::string lockKey = rootDeclared ? name
                 : mcpp::pm::compat::qualified_name(
                       spec.namespace_, spec.shortName.empty() ? name : spec.shortName);
+            // THE DEFAULT BRANCH (SPEC-001 §5): a git reference that names no
+            // `tag`, `rev` or `branch` follows the remote's default branch,
+            // whose name the remote announces (`git ls-remote --symref`); the
+            // lock's entry for the same remote answers it offline. A remote
+            // that announces none is tried for `main`, then `master`.
+            if (spec.gitRefKind == "branch" && spec.gitRev.empty()) {
+                if (auto it = state.gitLockAnchors.find(lockKey);
+                    it != state.gitLockAnchors.end() && it->second.url == spec.git
+                    && it->second.refKind == "branch" && !it->second.ref.empty())
+                    spec.gitRev = it->second.ref;
+                else if (offline)
+                    return refuse_offline("`git ls-remote`",
+                        "its default branch is resolved from the remote, and mcpp.lock records none",
+                        "resolve");
+                else {
+                    auto head = run_with_network_retry({ "git", "ls-remote", "--symref", spec.git, "HEAD" });
+                    if (head.exit_code == 0)
+                        if (auto p = head.output.find("ref: refs/heads/"); p != std::string::npos) {
+                            const auto from = p + 16;
+                            const auto end = head.output.find_first_of("\t \r\n", from);
+                            spec.gitRev = head.output.substr(from, end == std::string::npos ? end : end - from);
+                        }
+                    for (auto candidate : { "main", "master" }) {
+                        if (!spec.gitRev.empty()) break;
+                        auto r = run_with_network_retry({ "git", "ls-remote", spec.git,
+                                                          std::format("refs/heads/{}", candidate) });
+                        if (r.exit_code == 0 && !r.output.empty()) spec.gitRev = candidate;
+                    }
+                    if (spec.gitRev.empty())
+                        return std::unexpected(std::format(
+                            "git dependency '{}': '{}' announces no default branch and has neither "
+                            "`main` nor `master`; name one with tag, rev or branch", name, spec.git));
+                    mcpp::ui::info("Resolved", std::format("{}: the default branch of {} is {}",
+                                                           name, spec.git, spec.gitRev));
+                }
+            }
             if (spec.gitRefKind == "branch") {
                 auto it = state.gitLockAnchors.find(lockKey);
                 if (it != state.gitLockAnchors.end()

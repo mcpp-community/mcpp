@@ -200,7 +200,7 @@ namespace {
 namespace mp = mcpp::manifest::platform;
 
 bool names_a_path(std::string_view v) {
-    if (v.empty()) return false;
+    if (v.empty() || v.starts_with("git+")) return false;   // a repository (SPEC-016 §8)
     if (v.starts_with("path:")) return true;
     if (v.starts_with("/") || v.starts_with("./") || v.starts_with("../") || v.starts_with("~")
         || v == "." || v == "..")
