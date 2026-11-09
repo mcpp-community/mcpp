@@ -1104,6 +1104,15 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             state.tc->binaryPath.generic_string(),
             P.fields.toolchain.set ? P.fields.toolchain.value : std::string("an llvm toolchain")));
     }
+    // `link.flags` are words for ld.lld itself; a platform that links through
+    // the compiler gives them to no program, and says so rather than dropping
+    // them (`[platform.build] ldflags` reach the compiler's link).
+    if (P.active && P.fields.link.flags.set && P.fields.link.driver.value != "lld")
+        mcpp::ui::warning(std::format(
+            "the platform {} states `[platform.link] flags` ({}), and it links through the "
+            "compiler: those words are given to ld.lld only, so this link uses none of them.\n"
+            "       Words for the compiler's link belong in `[platform.build] ldflags`.",
+            P.display(), mcpp::platform::origin_text(P.fields.link.flags.origin)));
     // THE PLATFORM, REPORTED (SPEC-013 §9): which one and why, then what it
     // contributes beyond the layers the Target lines already showed.
     if (P.active) {

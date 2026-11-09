@@ -519,9 +519,11 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
-> target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
-> are compiled once and linked into every target (mcpp's compile-once model); the shared sources
-> of one target take its own flags through `[targets.<name>.build]`. They are the right
+> target's entry source** (its `main`) — never to shared module/impl objects, which are compiled
+> once and linked into every target (mcpp's compile-once model); the shared sources of one target
+> take its own flags through `[targets.<name>.build]`. An entry that several programs name is
+> compiled once per program whose flags differ (`obj/_entry/<name>/`, 2026.11.10.1+), so each
+> program links its own entry object. They are the right
 > tool when the flag only needs to affect a single binary's (or test's) own entry — for example a
 > per-test contract evaluation semantic (`-fcontract-evaluation-semantic=observe`) for a test whose
 > `main` exercises the violation, a feature macro the entry alone reads, or a local warning
@@ -541,9 +543,10 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | To **select a variant** of a shared library (e.g. a backend) | `[features]` on that library (§2.8) — additive, reaches the library's own compile |
 | A **whole-build mode** (sanitizers, contract semantics, opt level) | `[profile.<name>]` (§2.9) + `--profile`; also honored by `mcpp test --profile <name>` |
 
-mcpp deliberately does not compile a shared source two different ways within one build: a source
-maps to one object (and one BMI for modules), so divergence that must reach shared code belongs at
-the package/feature boundary, not on an individual target.
+A source maps to one object per set of flags: the package's object, and one variant for each
+target whose `[targets.<name>.build]` or entry flags differ from the package's. A module interface
+maps to one BMI per package and is not varied, so divergence that must reach a module interface
+belongs at the package/feature boundary, not on an individual target.
 
 ### 2.3 `[build]` — Build Configuration
 

@@ -491,9 +491,11 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
 > **范围（重要）：** 目标上的 `defines` / `cxxflags` / `cflags` **只**
-> 应用于该目标专属的入口源文件（它的 `main`）——绝不应用于共享的
+> 应用于该目标的入口源文件（它的 `main`）——绝不应用于共享的
 > 模块/实现对象，后者只编译一次，并链接进每一个目标（mcpp 的一次编译
-> 模型）。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
+> 模型）；一个目标的共享源文件经 `[targets.<name>.build]` 取得它自己的参数。
+> 多个程序共用的入口，按参数不同的每个程序各编译一次
+> （`obj/_entry/<name>/`，2026.11.10.1+），每个程序链接自己的入口对象。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
 > 键是正确的工具——例如某个测试的 `main` 专门触发违规，需要按测试设置
 > contract 求值语义（`-fcontract-evaluation-semantic=observe`）；或者
 > 只有入口会读到的一个 feature 宏；或者一次局部的警告抑制。如果一个
@@ -514,9 +516,9 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | **选择一个变体**的共享库（例如某个后端） | 用该库上的 `[features]`（§2.8）——是增量的，到达库自己的编译 |
 | **整个构建范围**的模式（sanitizer、contract 语义、优化档位） | `[profile.<name>]`（§2.9） + `--profile`；`mcpp test --profile <name>` 同样尊重它 |
 
-mcpp 刻意不在一次构建里用两种方式编译同一份共享源码：一个源文件对应
-一个对象（模块对应一个 BMI），所以凡是必须到达共享代码的分歧，都属于
-包/feature 的边界，不属于单个目标。
+一个源文件按每组参数对应一个对象：包的对象，以及参数（`[targets.<name>.build]`
+或入口参数）与包不同的每个目标各一个变体。模块接口每包对应一个 BMI，不做变体，
+所以凡是必须到达模块接口的分歧，都属于包/feature 的边界，不属于单个目标。
 
 ### 2.3 `[build]` —— 构建配置
 
