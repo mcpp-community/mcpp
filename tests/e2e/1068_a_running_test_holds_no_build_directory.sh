@@ -16,6 +16,16 @@ source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# `timeout` is not on every host (macOS): the command, ended after SECS.
+bounded() {
+    local secs=$1; shift
+    "$@" & local pid=$!
+    ( sleep "$secs"; kill "$pid" 2>/dev/null ) & local guard=$!
+    local rc=0
+    wait "$pid" || rc=$?
+    kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true
+    return $rc
+}
 cd "$TMP"
 "$MCPP" new app > /dev/null
 cd app
@@ -51,10 +61,10 @@ done
 sleep 1
 
 # Beside it: a build of the same configuration, and a second test.
-timeout 60 "$MCPP" build > "$TMP/build.log" 2>&1 || {
+bounded 60 "$MCPP" build > "$TMP/build.log" 2>&1 || {
     touch "$TMP/gate"; wait $first || true
     cat "$TMP/build.log"; echo "FAIL: mcpp build waited for a running test"; exit 1; }
-timeout 60 "$MCPP" test quick > "$TMP/second.log" 2>&1 || {
+bounded 60 "$MCPP" test quick > "$TMP/second.log" 2>&1 || {
     touch "$TMP/gate"; wait $first || true
     cat "$TMP/second.log"; echo "FAIL: a second mcpp test waited for a running one"; exit 1; }
 if grep -q 'Waiting for the build directory' "$TMP/build.log" "$TMP/second.log"; then
@@ -88,7 +98,7 @@ cat > tests/inner.cpp <<EOF
 int main() { return std::system(WHOLE("\"$MCPP_HOST\" build > \"$INNER_LOG\" 2>&1")) == 0 ? 0 : 1; }
 EOF
 "$MCPP" test inner > "$TMP/prime.log" 2>&1 || { cat "$TMP/prime.log" "$TMP/inner.log"; echo "FAIL: a test that builds its project failed"; exit 1; }
-timeout 120 "$MCPP" test inner > "$TMP/inner-test.log" 2>&1 || {
+bounded 120 "$MCPP" test inner > "$TMP/inner-test.log" 2>&1 || {
     cat "$TMP/inner-test.log" "$TMP/inner.log"; echo "FAIL: a test that builds its project failed"; exit 1; }
 if grep -qE 'Waiting for the build directory|Resolving' "$TMP/inner.log"; then
     cat "$TMP/inner.log"; echo "FAIL: the inner build waited or planned"; exit 1
