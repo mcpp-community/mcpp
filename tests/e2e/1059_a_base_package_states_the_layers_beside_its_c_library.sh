@@ -95,4 +95,8 @@ out=$("$MCPP" why flags --target aarch64-freebsd 2>&1) || fail "the aarch64 plan
 grep -q -- "--sysroot=$t/aarch64-toy-sysroot" <<<"$out" || fail "aarch64 does not take its own base" "$out"
 grep -qE 'c\+\+-abi +libc\+\+ +\(aarch64-toy-sysroot@1.0, prebuilt' <<<"$out" || fail "aarch64's C++ layer is not its base's" "$out"
 echo "  ok  each identity takes the base its provider names"
+out=$("$MCPP" why flags --target x86_64-freebsd-musl 2>&1) && fail "the musl row was served by a platform that does not serve it" "$out"
+grep -q 'serves x86_64-freebsd, aarch64-freebsd and not x86_64-freebsd-musl' <<<"$out" \
+    || fail "the refusal does not name what the platform serves" "$out"
+echo "  ok  a row the chosen platform does not serve is refused, naming the rows it serves"
 echo "PASS: 1059 a base package states the layers beside its C library"

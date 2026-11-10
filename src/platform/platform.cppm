@@ -459,8 +459,16 @@ serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::
         auto pt = mcpp::toolchain::triple::parse(w);
         if (pt ? pt->str() == t.str() : w == t.str()) return false;
     }
-    std::string list;
-    for (auto const& w : p.targets.value) { if (!list.empty()) list += ", "; list += w; }
+    // What it serves: its targets and the identities its providers name.
+    std::string list, first;
+    auto name = [&](std::string_view w) {
+        if (first.empty()) first = std::string(w);
+        if (!list.empty()) list += ", ";
+        list += w;
+    };
+    for (auto const& w : p.targets.value) name(w);
+    for (auto const& pr : p.providers)
+        for (auto const& w : pr.serves) name(w);
     if (p.hosted.set) {
         if (!p.hosted.targets.set) return true;
         std::string hosts;
@@ -495,8 +503,8 @@ serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::
         "platform {} serves {} and not {}: it has no [platform.hosted] table, the part a host "
         "triple may take (SPEC-013 §5.4).\n"
         "       Build for one of its targets (--target {}), or select another platform for {}",
-        package, list, t.str(), p.targets.value.empty() ? std::string("<target>") : p.targets.value.front(),
-        t.str()));
+        package, list.empty() ? std::string("nothing") : list, t.str(),
+        first.empty() ? std::string("<target>") : first, t.str()));
 }
 
 TargetFlags evaluate_flags(const mp::Statement& s, const Matches& matches) {

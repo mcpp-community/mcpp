@@ -47,6 +47,9 @@
   specification when it held any of those keys, whatever their values, and was
   refused for naming no source; a specification's `path`, `version` and `git`
   are strings and its `workspace` a boolean, and only such a value decides it.
+- A platform refused for a row it does not serve names the rows its providers
+  serve; the list named only its `targets` and was empty for a platform that
+  states `[[platform.provider]]`.
 
 ## [2026.11.10.1] - 2026-11-10
 
