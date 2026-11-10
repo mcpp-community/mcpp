@@ -32,6 +32,7 @@ import mcpp.build.build_program;
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
+import mcpp.home.files;   // the home's install turn
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
@@ -856,6 +857,40 @@ step4a_load_version_dep_locate(PrepareState& state, LoadVersionDepCtx& ctx) {
     return {};
 }
 
+// ONE INSTALL AT A TIME IN A HOME, ACROSS PROCESSES. Two processes asking for
+// one package at once both ran the provider, and the second was told the
+// install succeeded while the first was still placing it: "install path
+// missing after fetch" (measured in CI, two e2e workers fetching compat.gtest
+// into one home). A process takes the home's install turn before it installs a
+// package and keeps it for the package's own dependencies, which its install
+// hooks install first in the same process. A turn that had to be waited for
+// is reported, so that what its holder installed is looked for again.
+namespace {
+thread_local int g_installTurnDepth = 0;
+thread_local std::optional<mcpp::home::FileLock> g_installTurn;
+
+class InstallTurn {
+public:
+    InstallTurn(const mcpp::config::GlobalConfig& cfg, const std::string& what, bool& waited) {
+        waited = false;
+        if (g_installTurnDepth++ > 0) return;
+        std::error_code ec;
+        std::filesystem::create_directories(cfg.registryDir, ec);
+        g_installTurn = mcpp::home::FileLock::acquire(
+            cfg.registryDir, ".install.lock", std::format("installing {}", what),
+            std::chrono::milliseconds(0), [&](std::string_view holder) {
+                waited = true;
+                mcpp::ui::status("Waiting", holder.empty()
+                    ? std::string("for another mcpp of this home to finish an install")
+                    : std::format("for another mcpp of this home, {}", holder));
+            });
+    }
+    ~InstallTurn() { if (--g_installTurnDepth == 0) g_installTurn.reset(); }
+    InstallTurn(const InstallTurn&) = delete;
+    InstallTurn& operator=(const InstallTurn&) = delete;
+};
+}  // namespace
+
 static std::expected<void, std::string>
 step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
         auto cfg = state.get_cfg(true);
@@ -882,6 +917,13 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             }
         }
 
+        std::optional<InstallTurn> turn;
+        if (!ctx.installed && !mcpp::effects::offline_mode()) {
+            bool waited = false;
+            turn.emplace(**cfg, std::format("{}@{}", depName, version), waited);
+            if (waited)
+                if (auto again = step4a_load_version_dep_locate(state, ctx); !again) return again;
+        }
         if (!ctx.installed) {
             if (ctx.luaContent) {
                 auto field = mcpp::manifest::extract_mcpp_field(*ctx.luaContent);

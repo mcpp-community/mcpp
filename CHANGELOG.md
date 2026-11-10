@@ -81,6 +81,16 @@
 - A `[scan_overrides]` glob whose files exist but take no part in this build
   (a feature that is off, a target's `!` rule) is kept for the builds that
   compile them; a glob matching no file is still refused (mcpp#902).
+- Two `mcpp` processes of one home install one package once: a dependency is
+  installed under the home's install turn (`registry/.install.lock`), and a
+  process that waited for the turn looks for the package again before
+  installing it. A second process was told the install succeeded while the
+  first was still placing the package, and stopped with "install path missing
+  after fetch".
+- A provider's base yields to a dependency graph that supplies the C library
+  wherever the provider is chosen; it was decided once before the graph was
+  loaded. A paired provider's sysroot is stated on the compile line of a
+  toolchain without a cfg (the Windows llvm payload), as on the link line.
 
 ## [2026.11.9.1] - 2026-11-09
 
