@@ -54,7 +54,7 @@
 - 内置行的 os 与 env 是解析器接受的词，与平台定义的行相同（v1.1）。
 - 主流系统的两种身份都是内置数据（v1.1）：系统自身 ABI 的行（`x86_64-freebsd`、`aarch64-freebsd`）没有内置提供者，由平台
   提供；未选平台时，请求被拒绝并指名 `[target.<身份>] platform`。openkal 的 hosted 行（`x86_64-freebsd-musl`、
-  `aarch64-freebsd-musl`）在其实现发布前为 planned。
+  `aarch64-freebsd-musl`）由 openkal 提供者经 openkal-platform 0.26.0 服务（openkal-freebsd 0.1.0 发布后，mcpp >= 2026.11.10.2）。
 - 32 位 hosted 行（`i686-linux-musl`、`i686-linux-gnu`、`i686-openkal`）为 planned（v1.1）：请求按 planned 拒绝，而非按
   未知目标；显式的 `[target.<身份>] toolchain` 可提前启用。
 

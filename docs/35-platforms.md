@@ -203,7 +203,7 @@ manifest,
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.25.0"     # a release, or a series: "openkal-platform@^0.25"
+platform = "openkal-platform@0.26.0"     # a release, or a series: "openkal-platform@^0.26"
 ```
 
 and a build that fails while the default is in use and the synced index holds a
