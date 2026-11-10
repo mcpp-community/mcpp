@@ -1314,8 +1314,15 @@ void define_platform(const mcpp::manifest::platform::Statement& s, std::string_v
 // manifest is on this machine (a directory, or the second pass's root); and a
 // provisional row for a request only a chosen platform can define.
 void define_early_platform(PrepareState& state);
+// The provider chosen by name for `t` (`builtin:<name>`, or the platform package
+// a built-in provider names); `none` for `--platform none`. A platform package no
+// built-in provider names leaves it empty and is reported in `platform` (its
+// short name).
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
-                           std::span<const mcpp::manifest::platform::Override> config);
+                           std::span<const mcpp::manifest::platform::Override> config,
+                           std::string* platform = nullptr);
+// The short name of the package a reference names (`path:<dir>` reads its manifest).
+std::string platform_short_name(std::string_view ref);
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);

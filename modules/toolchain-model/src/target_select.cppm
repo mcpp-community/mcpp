@@ -45,6 +45,9 @@ struct Context {
     std::string provider;
     // `--platform none`: no provider a platform package implements serves.
     bool platformPackages = true;
+    // A platform package chosen for the request that no built-in provider
+    // names: the providers of other platform packages do not serve it.
+    std::function<bool(std::string_view platform)> platformChosen;
 };
 
 struct Selection {
@@ -105,6 +108,7 @@ Selection select(std::string_view request, std::string_view arch, std::string_vi
             if (!serves(*p, row.triple)) continue;
             if (!ctx.provider.empty() && p->name != ctx.provider) continue;
             if (!ctx.platformPackages && !p->platform.empty()) continue;
+            if (ctx.platformChosen && !p->platform.empty() && !ctx.platformChosen(p->platform)) continue;
             served = true;
             Candidate c{ &row, p, p->priority, true, {} };
             if (ctx.priority)
