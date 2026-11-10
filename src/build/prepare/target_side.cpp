@@ -313,6 +313,10 @@ step9_gather_target_side_candidates(PrepareState& state) {
                     if (ovr && (ovr->starts_with("path:") || ovr->find(':') == std::string::npos))
                         in.sysrootLibc = state.tc->base.libc.empty() ? std::string("sysroot")
                                                                      : state.tc->base.libc;
+                    // A base package states its C library (`provides`, E5),
+                    // and that name is the layer's, not the package's.
+                    else if (!state.tc->base.layers.cAbi.empty())
+                        in.sysrootLibc = state.tc->base.layers.cAbi;
                     // A hosted base whose C library is the row's own, measured
                     // and floor-checked by `step2_resolve_base`.
                     const auto& b = state.tc->base;

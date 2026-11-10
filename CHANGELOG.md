@@ -20,7 +20,7 @@
   provider's `sysroot` (a package, or `{ path }` in a platform) is its
   identity's base, ahead of the platform's own, so a platform gives each
   identity its own base. The index carries `xim:x86_64-freebsd-sysroot@14.5`,
-  `xim:aarch64-freebsd-sysroot@14.5` and `xim:mingw-w64-sysroot@20261104-1`.
+  `xim:aarch64-freebsd-sysroot@14.5` and `xim:mingw-w64-sysroot@20261104-2`.
 - **Windows GNU-ABI rows from every host (mcpp#913).** The `mingw-llvm`
   provider serves `x86_64-windows-gnu` and the new `aarch64-windows-gnu` with
   clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on
@@ -91,6 +91,10 @@
   wherever the provider is chosen; it was decided once before the graph was
   loaded. A paired provider's sysroot is stated on the compile line of a
   toolchain without a cfg (the Windows llvm payload), as on the link line.
+- A base package's C library is reported by the name its manifest states
+  (`provides`), not by the package's name; the `mingw-llvm` provider names
+  `xim:mingw-w64-sysroot@20261104-2`, whose manifest states
+  `mcpp:c-abi=ucrt`, the name the MinGW-w64 payload answers.
 
 ## [2026.11.9.1] - 2026-11-09
 

@@ -10,7 +10,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # names. No gcc payload takes part, so every host reaches both architectures. The provider is chosen
 # by name here because this host has the `mingw` payload, which outranks it.
 #
-# Criteria: the build reports the base's c++-abi and compiler-runtime; the compile line carries
+# Criteria: the build reports the base's C library (ucrt), c++-abi and compiler-runtime; the compile line carries
 # `-stdlib=libc++` and the base as `--sysroot`; the program, which uses `import std`, runs under
 # wine and imports system DLLs only (the default link is static); the same project builds an Aarch64
 # PE for `aarch64-windows-gnu`, a row no gcc payload serves.
@@ -39,6 +39,7 @@ EOF2
 cd "$t"
 
 out=$("$MCPP" build --target x86_64-windows-gnu 2>&1) || fail "the build over the base failed" "$out"
+grep -qE 'c-abi +ucrt +\(' <<<"$out" || fail "the base's C library is not reported by its name" "$out"
 grep -qE 'c\+\+-abi +libc\+\+ +\(mingw-w64-sysroot@' <<<"$out" || fail "the base's C++ layer is not reported" "$out"
 grep -qE 'compiler-runtime +compiler-rt +\(mingw-w64-sysroot@' <<<"$out" || fail "the base's compiler runtime is not reported" "$out"
 ninja=$(find target/x86_64-windows-gnu -name build.ninja | head -1)
