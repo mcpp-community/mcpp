@@ -57,7 +57,7 @@ EOF
     "$MCPP" test 2>&1 | tail -5
     exit 1
 }
-nj=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
+nj=$(find target -name test.ninja -not -path '*/.build-mcpp/*' | xargs ls -t 2>/dev/null | head -1)
 grep -q 'cJSON_Utils' "$nj" || {
     echo "FAIL: cJSON_Utils.c absent from the test-mode build graph"; exit 1
 }

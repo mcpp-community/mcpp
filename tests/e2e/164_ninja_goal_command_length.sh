@@ -45,8 +45,9 @@ cd proj
 "$MCPP" test > test.log 2>&1 || { cat test.log; echo "FAIL: mcpp test"; exit 1; }
 grep -q "sanity ... ok" test.log || { cat test.log; exit 1; }
 
-NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
-[ -n "$NINJA" ] || { echo "FAIL: no build.ninja"; exit 1; }
+# The test graph is test.ninja, beside build.ninja (2026.11.10.1).
+NINJA=$(find target -name test.ninja -not -path '*/.build-mcpp/*' | head -1)
+[ -n "$NINJA" ] || { echo "FAIL: no test.ninja"; exit 1; }
 
 # The phony edge is how the goal set reaches ninja.
 grep -q "^build mcpp-requested-goals : phony " "$NINJA" || {

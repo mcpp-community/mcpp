@@ -492,6 +492,12 @@ struct BuildPlan {
     // share an output directory and overwrite each other's graph; this is what
     // lets a fast path tell them apart (mcpp#407, mcpp.build.graph_shape).
     GraphShape                      graphShape = GraphShape::Normal;
+    // The file the graph is written to, in the output directory. `mcpp test`
+    // writes `test.ninja` (design 2026-11-10 supplement, T5): the build's own
+    // graph stays where its fast path replays it, and the two share the
+    // directory's objects, `.ninja_log` and `.ninja_deps`, so an output both
+    // graphs name is rebuilt when one names another command for it.
+    std::string                     graphFile = "build.ninja";
     // The module-edge schedule this plan will emit, resolved ONCE (see
     // mcpp.build.schedule.policy). The backend writes the graph in this shape,
     // the graph records the tag, and the fast path compares against it — three
