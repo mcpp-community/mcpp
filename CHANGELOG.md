@@ -123,6 +123,12 @@
 
 ### Fixed
 
+- The toolchain's C++ archives built for another target are not linked: on a
+  row of another architecture or system (`aarch64-freebsd-musl` from a Linux
+  host) the payload's own `libc++.a` was put on the link and failed as
+  incompatible, or, of one architecture, linked another system's C++ runtime
+  by chance. The link states that the row's C++ runtime is a package's
+  (`mcpp:c++-abi`, openkal-llvm-runtime above openkal-musl).
 - `mcpp test` releases the build directory once its tests are built: a
   `mcpp build`, or a second `mcpp test` of the same configuration, no longer
   waits for a running test, and each invocation keeps its protocol files in a

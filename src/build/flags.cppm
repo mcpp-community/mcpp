@@ -1720,6 +1720,20 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (wantsArchives) {
             auto libcxxA    = find_archive("libc++.a");
             auto libcxxAbiA = find_archive("libc++abi.a");
+            // Another target's archives (MechanismInput::foreignCxxArchives): the
+            // directory names a triple of another architecture or system.
+            if (!libcxxA.empty()) {
+                const auto dir = std::filesystem::path(libcxxA).parent_path().filename().string();
+                const auto theirs = std::ranges::count(dir, '-') >= 2 ? mcpp::toolchain::triple::parse(dir) : std::nullopt;
+                const auto ours = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+                auto same_os = [](std::string_view a, std::string_view b) { return a.starts_with(b) || b.starts_with(a); };
+                if (theirs && ours && (theirs->arch != ours->arch || !same_os(theirs->os, ours->os))) {
+                    mi.foreignCxxArchives = true;
+                    mi.foreignCxxTriple = dir;
+                    libcxxA.clear();
+                    libcxxAbiA.clear();
+                }
+            }
             mi.libcxxArchive    = libcxxA.empty()    ? std::string{} : escape_path(libcxxA);
             mi.libcxxAbiArchive = libcxxAbiA.empty() ? std::string{} : escape_path(libcxxAbiA);
             {
