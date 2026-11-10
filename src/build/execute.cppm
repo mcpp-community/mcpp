@@ -4099,6 +4099,9 @@ struct TestResult {
     std::vector<std::string>            sources;
     // The guide of the framework the test is written with, when known.
     std::string                         guide;
+    // How the program is started, for a test built and not run (`--no-run`,
+    // mcpp test spec B5): what a launcher other than this command runs.
+    std::optional<mcpp::build::result::Launch> launch;
 };
 
 // THE RUN IN THE MTEST STORE (mtest spec P12; design 2026-11-09 §17.3): the
@@ -4162,6 +4165,8 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                         one["expected"] = x.expected;
                         one["actual"] = x.actual;
                     }
+                    if (!x.source.empty()) one["source"] = x.source;
+                    if (x.fatal) one["fatal"] = true;
                     f.push_back(std::move(one));
                 }
                 // P12: the case's kind, tags, start after the run began (its
@@ -4179,6 +4184,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                     line["metrics"] = std::move(ms);
                 }
                 if (!c.bounds.empty()) line["bounds"] = mcpp::build::test_protocol::bounds_json(c.bounds);
+                if (c.checks) line["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
                 cases << line.dump() << "\n";
             }
         }
@@ -4241,6 +4247,7 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
         record["sources"] = r.sources;
     }
     if (!r.guide.empty()) record["guide"] = r.guide;
+    if (r.launch) record["launch"] = mcpp::build::result::to_json(*r.launch);
     std::println("{}", record.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
     std::fflush(libc::stdout());
 }
@@ -4305,7 +4312,8 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
             list.push_back({{"package", f.package}, {"version", f.version}, {"entry", f.entry},
                             {"protocol", f.protocol ? nlohmann::ordered_json(f.protocol) : nlohmann::ordered_json(nullptr)},
                             {"guide", f.guide.empty() ? nlohmann::ordered_json(nullptr) : nlohmann::ordered_json(f.guide)},
-                            {"repo", f.repo}});
+                            {"repo", f.repo}, {"capabilities", f.capabilities},
+                            {"session", f.session.empty() ? nlohmann::ordered_json(nullptr) : nlohmann::ordered_json(f.session)}});
         nlohmann::ordered_json g = {
             {"frameworks", list},
             {"commands", {{"list", "mcpp test --cases"}, {"one", "mcpp test <test> --case <id>"},
@@ -4327,6 +4335,16 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
                          f.protocol ? std::format(", test protocol {}", f.protocol) : std::string{});
             if (!f.guide.empty()) std::println("    guide  {}", f.guide);
             if (!f.repo.empty()) std::println("    repo   {}", f.repo);
+            if (!f.capabilities.empty()) {
+                std::string list;
+                for (auto const& c : f.capabilities) list += (list.empty() ? "" : ", ") + c;
+                std::println("    implements  {}", list);
+            }
+            if (!f.session.empty()) {
+                std::string argv;
+                for (auto const& a : f.session) argv += (argv.empty() ? "" : " ") + a;
+                std::println("    session  {}", argv);
+            }
         }
     }
     std::println("Commands:");
@@ -4947,7 +4965,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 const auto reportFile = r.protocolDir / "report.ndjson";
                 const long long programStartMs =
                     std::chrono::duration_cast<std::chrono::milliseconds>(tStart - tLoop).count();
+                std::mutex readerMutex;
                 auto stream_changes = [&] {
+                    std::scoped_lock readerLock(readerMutex);
                     for (auto const& ch : reader.poll(reportFile)) {
                         auto const& c = reader.report().cases[ch.index];
                         nlohmann::ordered_json body = {{"member", memberName}, {"test", r.name}, {"id", c.id},
@@ -4998,6 +5018,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     // `read_report` closes it (P5.4).
                     if (streamCases) stream_changes(); else reader.poll(reportFile);
                     report = reader.finish(exitCode);
+                    // A CASE'S OWN OUTPUT (SPEC-017 O8, feature `test-output`):
+                    // the program's `output` events, or, of a program that ran
+                    // one case, all that it wrote. Several cases share a stream
+                    // the program buffers, which no reading of it divides.
+                    if (report.cases.size() == 1 && !report.cases.front().outputStated)
+                        report.cases.front().output = runOutput;
                     std::error_code ec;
                     std::filesystem::remove_all(r.protocolDir / "tmp", ec);
                     if (!report.spoke && !timedOut) {
@@ -5365,6 +5391,15 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         t.guide = r.guide;
         t.program = r.program.generic_string();
         t.sources = r.sources;
+        // B5: the start a launcher repeats -- the argument vector through the
+        // execution host or runner, the environment this command gives the
+        // program, its directory. The protocol's variables are the launcher's
+        // own (P2), as are the cases it selects.
+        std::error_code ec;
+        t.launch = mcpp::build::result::Launch{
+            r.argv, r.env,
+            (r.cwd.empty() ? std::filesystem::current_path(ec) : r.cwd).generic_string(),
+            !tb.runUnderPrefix.empty() ? "run_under" : !runnerTmpl.empty() ? "runner" : ""};
         return t;
     };
     if (testOpts.noRun || tb.builtNotRunHere) {
@@ -5959,7 +5994,8 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
     }
     json frameworks = json::array();
     for (auto const& f : ctx.plan.testFrameworks)
-        frameworks.push_back({{"package", f.package}, {"version", f.version}, {"guide", f.guide}});
+        frameworks.push_back({{"package", f.package}, {"version", f.version}, {"guide", f.guide},
+                              {"capabilities", f.capabilities}, {"session", f.session}});
     json runtimeDirs = json::array();
     for (auto const& d : ctx.plan.runtimeLibraryDirs) runtimeDirs.push_back(d.generic_string());
     json pathDirs = json::array();
@@ -6129,6 +6165,8 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
         tf.package = f.value("package", "");
         tf.version = f.value("version", "");
         tf.guide = f.value("guide", "");
+        tf.capabilities = f.value("capabilities", std::vector<std::string>{});
+        tf.session = f.value("session", std::vector<std::string>{});
         ctx.plan.testFrameworks.push_back(std::move(tf));
     }
     mcpp::log::verbose("fast-path", std::format("test: {} of {} tests from the record", runs.size(), recordedNames.size()));

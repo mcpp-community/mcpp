@@ -260,7 +260,7 @@ inline nlohmann::json to_json(const Diagnostic& in) {
 // exist, which a client turns something on or off by. A name is added when a
 // client gates on it, is never renamed and never removed; docs/50 names the
 // release that added it and the client that reads it.
-inline constexpr std::array<std::string_view, 8> kFeatures{{
+inline constexpr std::array<std::string_view, 12> kFeatures{{
     "target-sets",       // SPEC-015 §1: `--target openkal` is the set's legs (an IDE's target picker)
     "pkg-format-list",   // SPEC-014 §5.4: `--pkg-format tar,okb` writes each container (an IDE's pack form)
     "test-launch",       // docs/50 §6: `mcpp test <name> --print-launch` (an IDE debugging a test)
@@ -269,6 +269,10 @@ inline constexpr std::array<std::string_view, 8> kFeatures{{
     "test-parts",        // docs/50 §8: a program run as parts names them (`parts`, `part_of`; an IDE's test tree)
     "test-case-stream",  // docs/50 §8: `case` records as cases begin and end (an IDE's live results)
     "test-metrics",      // docs/50 §8, mtest P6/P12: metrics, bounds, kind, tags, usage (an IDE's metrics and trends)
+    "test-launch-records", // SPEC-017 B5: `--no-run` records carry each program's `launch` (a test session)
+    "test-frameworks",   // SPEC-017 B6: `--guide` names each framework's capabilities and session (an IDE's choice of runner)
+    "test-checks",       // SPEC-017 O3: a failure's `source` and `fatal`, a case's `checks` (an IDE's check list)
+    "test-output",       // SPEC-017 O8: a case's own output, `output` (an IDE's case output)
 }};
 
 // The same list as JSON: `--protocol-version` and every envelope's `mcpp` field

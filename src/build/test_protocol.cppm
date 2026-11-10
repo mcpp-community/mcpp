@@ -78,6 +78,17 @@ struct Failure {
     std::string message;
     std::string expected;
     std::string actual;
+    // SPEC-017 O3: the expectation's source statement, and whether the failure
+    // ended the case.
+    std::string source;
+    bool        fatal = false;
+};
+
+// SPEC-017 O3: of the expectations a case ran, how many held and how many did
+// not, as its `end` event states them.
+struct Checks {
+    long long held = 0;
+    long long failed = 0;
 };
 
 // One case's result (P5.3), with its failures, its metrics and the limits it
@@ -93,6 +104,11 @@ struct CaseResult {
     double                   t = -1;   // `begin`: milliseconds after the program started
     std::vector<Metric>      metrics;  // `metric` events (P6), in the order they came
     std::vector<Bound>       bounds;   // the `begin` event's (P6.5)
+    std::optional<Checks>    checks;   // the `end` event's (O3)
+    // SPEC-017 O8: what the case wrote, by the program's `output` events or,
+    // for a program that ran this case alone, all that the program wrote.
+    std::string              output;
+    bool                     outputStated = false;   // an `output` event came
 };
 
 // What one program's report says.
@@ -284,9 +300,15 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
         if (auto t = e.find("t"); t != e.end() && t->is_number()) c.t = t->get<double>();
         return ReportReader::Change{r.cases.size() - 1, false};
     } else if (kind == "failure") {
-        r.cases[case_of(r, open, id)].failures.push_back({text(e, "file"), number(e, "line"),
-                                                          text(e, "message"), text(e, "expected"),
-                                                          text(e, "actual")});
+        Failure f{text(e, "file"), number(e, "line"), text(e, "message"), text(e, "expected"),
+                  text(e, "actual")};
+        f.source = text(e, "source");
+        if (auto v = e.find("fatal"); v != e.end() && v->is_boolean()) f.fatal = v->get<bool>();
+        r.cases[case_of(r, open, id)].failures.push_back(std::move(f));
+    } else if (kind == "output") {
+        auto& c = r.cases[case_of(r, open, id)];
+        c.output += text(e, "text");
+        c.outputStated = true;
     } else if (kind == "metric") {
         // A MEASUREMENT IS A CASE'S RESULT TOO (P6): kept with the case, so a
         // record and a store hold what `mtest analyze bench|trend` reads.
@@ -312,6 +334,12 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
         c.status = text(e, "status");
         if (auto ms = e.find("ms"); ms != e.end() && ms->is_number()) c.ms = ms->get<double>();
         c.reason = text(e, "reason");
+        if (auto k = e.find("checks"); k != e.end() && k->is_object()) {
+            Checks n;
+            if (auto v = k->find("held"); v != k->end() && v->is_number_integer()) n.held = v->get<long long>();
+            if (auto v = k->find("failed"); v != k->end() && v->is_number_integer()) n.failed = v->get<long long>();
+            c.checks = n;
+        }
         return ReportReader::Change{i, true};
     } else if (kind == "missing") {
         r.missing.push_back(id);
@@ -341,6 +369,7 @@ std::vector<ReportReader::Change> ReportReader::poll(const std::filesystem::path
     offset_ += at;
     return out;
 }
+
 
 Report ReportReader::finish(int exitStatus) {
     for (auto& c : r_.cases)
@@ -461,6 +490,8 @@ nlohmann::json case_json(const CaseResult& c) {
                 failure["expected"] = f.expected;
                 failure["actual"] = f.actual;
             }
+            if (!f.source.empty()) failure["source"] = f.source;
+            if (f.fatal) failure["fatal"] = true;
             one["failures"].push_back(std::move(failure));
         }
     }
@@ -471,6 +502,8 @@ nlohmann::json case_json(const CaseResult& c) {
         for (const auto& m : c.metrics) one["metrics"].push_back(metric_json(m));
     }
     if (!c.bounds.empty()) one["bounds"] = bounds_json(c.bounds);
+    if (c.checks) one["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
+    if (!c.output.empty()) one["output"] = c.output;
     return one;
 }
 

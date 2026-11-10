@@ -243,6 +243,12 @@ struct Target {
     // Of an entry target: `test-guide = "<file>"`, the package's guide to
     // writing its tests, relative to the package root (`mcpp test --guide`).
     std::string                 testGuide;
+    // Of an entry target: `test-capabilities = [...]`, the optional
+    // capabilities of the mcpp test spec its framework implements
+    // (docs/specs/test.md, B6), and `test-session = [...]`, the command of the
+    // framework's session (O9); both empty when the entry states none.
+    std::vector<std::string>    testCapabilities;
+    std::vector<std::string>    testSession;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --

@@ -344,7 +344,7 @@ A test program may consist of cases. mcpp does not provide a framework for
 them; it implements the runner's side of a protocol that frameworks implement:
 the [mtest test protocol](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md),
 version 1 (mcpp 2026.11.8.1+), whatever framework or language a program is written with
-([SPEC-017](specs/test-runner.md)). A program implements it when its entry states it,
+([SPEC-017](specs/test.md)). A program implements it when its entry states it,
 
 ```toml
 [targets.main]

@@ -8,6 +8,22 @@
 
 ### Added
 
+- The mcpp test spec (SPEC-017 v2.0, `docs/specs/test.md`) is the one
+  contract between clients, mcpp and test frameworks: it merges SPEC-017 v1,
+  the normative text of the mtest test protocol (clauses P1–P12 kept) and the
+  `[test]` keys, and divides them into base capabilities (B1–B6) that every
+  runner and framework implements and optional ones (O1–O9) a framework or its
+  tools declare.
+- `mcpp test --no-run --message-format json` records how each program starts,
+  `launch` (`argv`, `env`, `cwd`, `via`), for a launcher that runs the built
+  programs itself (B5; feature `test-launch-records`).
+- A framework's entry states `test-capabilities` and `test-session`, and
+  `mcpp test --guide` reports them (B6; feature `test-frameworks`).
+- A failure's `source` and `fatal` and a case's `checks` (`held`, `failed`)
+  reach the records and the kept run as the program reported them (O3;
+  feature `test-checks`), and a case has its own `output`: the program's
+  `output` events, or all that a program which ran one case wrote (O8; feature
+  `test-output`).
 - **Base packages (SPEC-002 §2.5).** A sysroot whose root carries a package
   manifest is read as any package is: its `provides` answers its layers and
   its `[build]` keys state them -- `include_dirs` the C++ library's headers,

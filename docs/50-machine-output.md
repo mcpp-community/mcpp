@@ -250,6 +250,10 @@ envelope says when either has changed since.
 | `test-parts` | 2026.11.10.1 | with `test-protocol`: a program run as several processes (`[test] split`) names its parts under `--cases` (`parts`) and in each part's record (`part_of`) (§8) | an IDE's test tree |
 | `test-case-stream` | 2026.11.10.1 | with `test-protocol`: a `case` record as each case begins and ends, before its program's record (§8) | an IDE's live results |
 | `test-metrics` | 2026.11.10.1 | with `test-protocol`: the cases' `kind`, `tags`, `metrics` and `bounds`, the program's `usage`, in the records and in the run `mcpp test` keeps (mtest spec P6, P10.2, P12; §8) | an IDE's metrics, bounds and trends |
+| `test-launch-records` | 2026.11.10.1 | with `test-protocol`: a record of a program built and not run (`--no-run`) carries its `launch`: `argv`, `env`, `cwd`, `via` (SPEC-017 B5) | a test session that starts the programs itself |
+| `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` names each framework's `capabilities` and `session` (SPEC-017 B6) | an IDE choosing between a session and processes |
+| `test-checks` | 2026.11.10.1 | with `test-protocol`: a failure's `source` and `fatal`, and a case's `checks` (`held`, `failed`), as the program reported them (SPEC-017 O3) | an IDE's list of checks |
+| `test-output` | 2026.11.10.1 | with `test-case-stream`: a case's own output, `output`: the program's `output` events, or all the output of a program that ran that case alone, in its program's `cases` and, from events, in its `end` record (SPEC-017 O8) | an IDE's output of one case |
 
 ### How a tool runs mcpp for a project
 

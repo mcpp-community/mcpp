@@ -280,7 +280,7 @@ mcpp test --archive tests.tar.gz                             # 在检出中运�
 
 一个测试程序可以由若干用例组成。mcpp 不为用例提供框架，而是实现一份由框架实现的协议的运行器一侧：
 [mtest 测试协议](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md) 第 1 版
-（mcpp 2026.11.8.1+），与程序所用的框架或语言无关（[SPEC-017](../specs/test-runner.md)）。程序的入口陈述它时，程序实现该协议：
+（mcpp 2026.11.8.1+），与程序所用的框架或语言无关（[SPEC-017](../specs/test.md)）。程序的入口陈述它时，程序实现该协议：
 
 ```toml
 [targets.main]

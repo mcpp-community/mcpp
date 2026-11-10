@@ -2084,6 +2084,31 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "targets.{}.test-guide is a file of the package, on a `kind = \"entry\"` target", tname)));
             t.testGuide = git->second.as_string();
         }
+        // `test-capabilities` and `test-session` (docs/specs/test.md, B6): what
+        // the framework implements of the spec's optional capabilities, and
+        // the command that starts its session (O9). A name is a capability's
+        // (lowercase words joined by `-`); a name this mcpp does not know is
+        // reported as stated.
+        auto strings_of = [&](std::string_view key, std::vector<std::string>& out) -> std::optional<std::string> {
+            auto it = tt.find(std::string(key));
+            if (it == tt.end()) return std::nullopt;
+            if (t.kind != Target::Entry || !it->second.is_array() || it->second.as_array().empty())
+                return std::format("targets.{}.{} is a non-empty array of strings, on a `kind = \"entry\"` target",
+                                   tname, key);
+            for (auto const& v : it->second.as_array()) {
+                if (!v.is_string() || v.as_string().empty())
+                    return std::format("targets.{}.{} is a non-empty array of strings, on a `kind = \"entry\"` target",
+                                       tname, key);
+                out.push_back(v.as_string());
+            }
+            return std::nullopt;
+        };
+        if (auto bad = strings_of("test-capabilities", t.testCapabilities)) return std::unexpected(error(origin, *bad));
+        for (auto const& c : t.testCapabilities)
+            if (!std::ranges::all_of(c, [](char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-'; }))
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-capabilities: '{}' is not a capability's name (lowercase words joined by `-`)", tname, c)));
+        if (auto bad = strings_of("test-session", t.testSession)) return std::unexpected(error(origin, *bad));
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.

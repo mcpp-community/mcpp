@@ -422,6 +422,10 @@ struct TestFramework {
     int         protocol = 0;
     std::string guide;      // absolute path of its guide, or empty
     std::string repo;
+    // What it states of the mcpp test spec (docs/specs/test.md, B6): the
+    // optional capabilities it implements, and its session's command (O9).
+    std::vector<std::string> capabilities;
+    std::vector<std::string> session;
 };
 
 struct BuildPlan {
@@ -3590,12 +3594,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         auto const& dir = i == 0 ? projectRoot : packages[i].root;
         for (auto const& entry : m.targets) {
             if (entry.kind != mcpp::manifest::Target::Entry) continue;
-            if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain) continue;
+            if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain
+                && entry.testCapabilities.empty() && entry.testSession.empty()) continue;
             plan.testFrameworks.push_back({
                 qualified_package_name(m), m.package.version,
                 std::format("{}/{}", m.package.name, entry.name), entry.testProtocol,
                 entry.testGuide.empty() ? std::string{} : (dir / entry.testGuide).lexically_normal().generic_string(),
-                m.package.repo});
+                m.package.repo, entry.testCapabilities, entry.testSession});
         }
     }
 

@@ -213,6 +213,10 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `test-parts` | 2026.11.10.1 | 在 `test-protocol` 之上：以多个进程运行的程序（`[test] split`）在 `--cases` 下写出其各部分（`parts`），各部分的记录写出 `part_of`（§8） | IDE 的测试树 |
 | `test-case-stream` | 2026.11.10.1 | 在 `test-protocol` 之上：每个用例开始与结束时各有一条 `case` 记录，先于其程序的记录（§8） | IDE 的实时结果 |
 | `test-metrics` | 2026.11.10.1 | 在 `test-protocol` 之上：用例的 `kind`、`tags`、`metrics`、`bounds` 与程序的 `usage`，出现在记录与 `mcpp test` 保存的运行中（mtest 规范 P6、P10.2、P12；§8） | IDE 的指标、界限与趋势 |
+| `test-launch-records` | 2026.11.10.1 | 在 `test-protocol` 之上：构建而未运行（`--no-run`）的程序记录带 `launch`：`argv`、`env`、`cwd`、`via`（SPEC-017 B5） | 自行启动程序的测试会话 |
+| `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` 写出每个框架的 `capabilities` 与 `session`（SPEC-017 B6） | 在会话与进程之间选择的 IDE |
+| `test-checks` | 2026.11.10.1 | 在 `test-protocol` 之上：失败的 `source` 与 `fatal`，用例的 `checks`（`held`、`failed`），按程序的报告（SPEC-017 O3） | IDE 的检查点列表 |
+| `test-output` | 2026.11.10.1 | 在 `test-case-stream` 之上：用例自己的输出 `output`：程序的 `output` 事件，或只运行该用例的程序的全部输出；出现在程序的 `cases` 中，来自事件时也出现在其 `end` 记录中（SPEC-017 O8） | IDE 中单个用例的输出 |
 
 ### 工具为项目运行 mcpp 的方式
 
