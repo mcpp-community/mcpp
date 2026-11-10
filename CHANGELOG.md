@@ -16,7 +16,16 @@
   of the system beneath. A request of `<arch>-freebsd` with no platform selected
   for it takes this identity, as `aarch64-macos` takes the musl identity on a
   host that is not a Mac; a project that selects a platform for `<arch>-freebsd`
-  keeps the system's own ABI.
+  keeps the system's own ABI, by whichever selector chose it (`[target.<row>]`,
+  `[target.freebsd]` or `cfg(os = "freebsd")`): a platform package chosen for a
+  request that no built-in provider names serves it, and another package's
+  provider does not compete with it.
+- A cfg bareword names any system a row names: `unix` is the family word, and
+  any other word without a dash is `os = "<word>"`, so `[target.freebsd]`,
+  `cfg(freebsd)` and the system of a row a platform defines select as `linux`
+  does. A row states its family (`family`, `unix` or `windows`), and FreeBSD's
+  rows are of the `unix` family, so `cfg(unix)` holds on them. A word that
+  names no row's system is reported as before.
 
 ### Changed
 
@@ -32,6 +41,12 @@
   It was answered as `msvc`, so `requires = ["mcpp:c-abi=ucrt"]` (a Win32
   backend's statement of its C runtime) refused the MSVC route while the GNU
   routes satisfied it. SPEC-002 v1.7 states the names.
+- A dependency namespace holding a package named `version`, `path`, `git` or
+  `workspace` is read as the namespace (#918): `gpp.version = { path = "…" }`
+  declares the package `gpp.version`. A table was taken as one dependency
+  specification when it held any of those keys, whatever their values, and was
+  refused for naming no source; a specification's `path`, `version` and `git`
+  are strings and its `workspace` a boolean, and only such a value decides it.
 
 ## [2026.11.10.1] - 2026-11-10
 
