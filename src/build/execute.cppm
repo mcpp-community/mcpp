@@ -4855,22 +4855,6 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 o.unset.emplace_back(v);
         for (auto& kv : stated) o.env.push_back(std::move(kv));
     };
-    auto print_failed_cases = [](const mcpp::build::test_protocol::Report& report) {
-        for (const auto& c : report.cases) {
-            if (c.status != "fail" && c.status != "xpass") continue;
-            if (c.failures.empty()) {
-                mcpp::ui::plain(std::format("    case {} {}{}", c.id,
-                    c.status == "xpass" ? "passed, expected to fail" : "failed",
-                    c.reason.empty() ? std::string{} : ": " + c.reason));
-                continue;
-            }
-            const auto& f = c.failures.front();
-            mcpp::ui::plain(std::format("    case {} failed at {}:{}: {}", c.id, f.file, f.line, f.message));
-        }
-        for (const auto& id : report.missing)
-            mcpp::ui::plain(std::format("    case {}: the program has no such case", id));
-    };
-
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
         const bool capture = json || list.size() > 1;
@@ -5102,10 +5086,6 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     std::fputs(runOutput.c_str(), libc::stdout());
                     if (runOutput.back() != '\n') std::fputc('\n', libc::stdout());
                 }
-                // Of a failing program that reports its cases, the ones that
-                // failed, each with its first failure's place.
-                if (!json && results.back().status == TestResult::St::RunFail)
-                    print_failed_cases(results.back().report);
                 std::fflush(libc::stdout());
                 emit_json(results.back());
             }
@@ -5602,19 +5582,68 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         counts += std::format("; {} not run ({})", notRun, firstLine);
     }
 
+    // THE CASES, BESIDE THE PROGRAMS THE COUNT ABOVE IS OF. A case that
+    // declared cases (a suite run as a case) is told by them, not counted.
+    auto declares = [](const mcpp::build::test_protocol::Report& rep, const std::string& id) {
+        return std::ranges::any_of(rep.cases, [&](const auto& c) {
+            return c.id.size() > id.size() && c.id.starts_with(id) && c.id[id.size()] == '/';
+        });
+    };
+    int casesPassed = 0, casesFailed = 0, casesSkipped = 0;
+    for (auto& r : results)
+        for (const auto& c : r.report.cases) {
+            if (declares(r.report, c.id)) continue;
+            if (c.status == "pass" || c.status == "xfail") ++casesPassed;
+            else if (c.status == "fail" || c.status == "xpass") ++casesFailed;
+            else if (c.status == "skip") ++casesSkipped;
+        }
+    const auto caseLine = casesPassed + casesFailed + casesSkipped == 0 ? std::string{}
+        : std::format("cases: {} passed, {} failed, {} skipped (in {} program{})",
+                      casesPassed, casesFailed, casesSkipped, passed + failed + notRun + built,
+                      passed + failed + notRun + built == 1 ? "" : "s");
+
     std::println("");
     if (rc == 0) {
         mcpp::ui::result("test result",
             std::format("ok. {}; finished in {}", counts, timing));
+        if (!caseLine.empty()) std::println("             {}", caseLine);
         return 0;
     }
     mcpp::ui::error(std::format(
         "test result: {}. {}; finished in {}",
         failed ? "FAILED" : "NOT RUN", counts, timing));
+    if (!caseLine.empty()) std::println("       {}", caseLine);
     if (failed) {
+        // EACH FAILED PROGRAM, AND UNDER IT THE CASES THAT FAILED WITH THE
+        // PLACE OF THEIR FIRST FAILURE: an index of what is shown in full
+        // under the program's own line above.
+        auto shown = [&](const std::string& file) {
+            std::error_code ec;
+            const std::filesystem::path p(file);
+            auto rel = std::filesystem::proximate(p, ctx->projectRoot, ec);
+            return !p.is_absolute() || ec || rel.empty() || *rel.begin() == ".."
+                ? file : rel.generic_string();
+        };
         std::println("");
         std::println("failures:");
-        for (auto& n : failures) std::println("    {}", n);
+        for (auto& r : results) {
+            if (r.status != TestResult::St::RunFail && r.status != TestResult::St::CompileFail)
+                continue;
+            std::println("    {}", r.name);
+            for (const auto& c : r.report.cases) {
+                if ((c.status != "fail" && c.status != "xpass") || declares(r.report, c.id)) continue;
+                if (c.failures.empty())
+                    std::println("        {}  {}", c.id, c.status == "xpass" ? "passed, expected to fail"
+                                 : c.reason.empty() ? std::string("failed") : c.reason);
+                else
+                    std::println("        {}  {}:{}{}", c.id, shown(c.failures.front().file),
+                                 c.failures.front().line,
+                                 c.failures.size() > 1 ? std::format(" (+{} more)", c.failures.size() - 1)
+                                                       : std::string{});
+            }
+            for (const auto& id : r.report.missing)
+                std::println("        {}  the program has no such case", id);
+        }
         // (Each compile failure's diagnostics already printed inline under its
         // FAIL line in Phase B — the summary stays a compact name list.)
         print_unprovided_test_imports(ctx->plan, failures);
