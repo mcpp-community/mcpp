@@ -2398,14 +2398,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // property #349 established for the index floor: data must not be able to
     // decide whether the program works.
     //
-    // An identity key is an unambiguous discriminator: a nested namespace
-    // table's keys are PACKAGE names, and no package is named `version` /
-    // `path` / `git` / `workspace`.
+    // An identity key with an identity value is the discriminator: `path` /
+    // `version` / `git` are strings and `workspace` is a boolean in a spec. A
+    // nested namespace table's keys are PACKAGE names, and a package may be
+    // named `version` (#918: `gpp.version = { path = "../version" }`), so the
+    // same key holding a table is that package, not the spec's field.
     auto looks_like_inline_dep_spec = [](const t::Table& sub) {
-        if (sub.empty()) return false;
-        for (auto& [sk, sv] : sub)
-            if (sk == "path" || sk == "version" || sk == "git" || sk == "workspace")
+        for (auto& [sk, sv] : sub) {
+            if ((sk == "path" || sk == "version" || sk == "git") && sv.is_string())
                 return true;
+            if (sk == "workspace" && sv.is_bool()) return true;
+        }
         return false;
     };
 

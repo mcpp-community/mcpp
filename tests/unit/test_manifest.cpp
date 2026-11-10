@@ -2502,6 +2502,34 @@ ylib = { path = "ylib" }
     expect(s.version.empty());
 }};
 
+UTest a_package_named_like_a_spec_field{"Manifest/APackageNamedLikeASpecField", [] {
+    // #918: `gpp.version = { path = ... }` is the package `version` in the
+    // namespace `gpp`. A spec's `version` is a string; a table under the same
+    // key is a package, in [dependencies] and in [workspace.dependencies].
+    constexpr auto src = R"(
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+gpp.core = { path = "../core" }
+gpp.version = { path = "../version" }
+solo = { version = "2.0.0" }
+
+[workspace.dependencies]
+gpp.git = { path = "../git" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(fatal(m->dependencies.contains("gpp.version")));
+    expect(eq(m->dependencies.at("gpp.version").path, "../version"));
+    expect(eq(m->dependencies.at("gpp.core").path, "../core"));
+    expect(eq(m->dependencies.at("solo").version, "2.0.0"));
+    expect(!m->dependencies.contains("gpp"));
+    expect(fatal(m->workspace.dependencies.contains("gpp.git")));
+    expect(eq(m->workspace.dependencies.at("gpp.git").path, "../git"));
+}};
+
 UTest no_workspace_section_means_not_present{"Manifest/NoWorkspaceSectionMeansNotPresent", [] {
     constexpr auto src = R"(
 [package]
