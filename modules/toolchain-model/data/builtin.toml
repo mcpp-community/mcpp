@@ -28,6 +28,8 @@
 #                   does not
 #   clang-triple    the triple the compiler is given, when the system's spelling
 #                   is not derived from the identity (`x86_64-unknown-freebsd14.0`)
+#   family          the system's family, `unix` or `windows` (`cfg(unix)`); a
+#                   system the engine has always known answers it by convention
 #   march, mabi, code-model, multilib, flags, link-emulation
 #                   the ISA profile of a bare-metal row: `-march`, `-mabi`,
 #                   `-mcmodel` (empty: the driver's default), the multilib
@@ -169,24 +171,28 @@ standard = false
 # COMPAT_FREEBSD14, on 15.
 [[platform.define]]
 triple       = "x86_64-freebsd"
+family       = "unix"
 tier         = "preview"
 standard     = true
 clang-triple = "x86_64-unknown-freebsd14.0"
 
 [[platform.define]]
 triple       = "aarch64-freebsd"
+family       = "unix"
 tier         = "preview"
 standard     = true
 clang-triple = "aarch64-unknown-freebsd14.0"
 
 [[platform.define]]
 triple       = "x86_64-freebsd-musl"
+family       = "unix"
 tier         = "preview"
 standard     = false
 clang-triple = "x86_64-unknown-freebsd14.0"
 
 [[platform.define]]
 triple       = "aarch64-freebsd-musl"
+family       = "unix"
 tier         = "preview"
 standard     = false
 clang-triple = "aarch64-unknown-freebsd14.0"

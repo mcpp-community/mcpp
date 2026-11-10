@@ -1093,15 +1093,21 @@ openblas = "0.3.33"
 ldflags = ["-Llib", "-llibopenblas"]
 
 # cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
-# plus the bare aliases windows/unix/linux/macos).
+# plus barewords: `unix` and the name of a system).
 [target.'cfg(all(linux, not(arch = "aarch64")))'.build]
 cxxflags = ["-march=x86-64-v2"]
 ```
 
-`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']` — the bare
-aliases `windows` / `linux` / `macos` / `unix` are never valid target triples, so
-there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
-for arch/env conditions and combinators.
+`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']`. A bareword
+is data rather than a list: `unix` is `family = "unix"`, and any other word without a
+dash is `os = "<word>"` (`linux`, `macos`, `windows`, `freebsd`, or the system of a
+row a platform defines). A row states its family (`family` in the row table), so
+FreeBSD is of the `unix` family. A target triple always contains a dash, so a
+bareword is never a triple. A word that names no row's system is reported, as an
+unknown key is. Use the bare form for a single OS/family; use `cfg(...)` for arch/env
+conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`,
+`windows` and `unix` as barewords; a package read by such a release writes
+`cfg(os = "<system>")` for any other system.
 
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
   `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see [30 — build.mcpp](30-build-mcpp.md); the feature is

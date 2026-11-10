@@ -15,7 +15,7 @@
 // Specificity is the set of target-triple components a selector fixes:
 //
 //   a bare triple (`x86_64-unknown-linux-gnu`)   every component; above any cfg
-//   `os = "…"`, `linux`, `macos`, `windows`       the OS and its family
+//   `os = "…"`, a bareword naming a system         the OS and its family
 //   `family = "…"`, `unix`                        the family
 //   `arch = "…"`, `env = "…"`                     that component
 //   `all(a, b, …)`                                the union of its terms
@@ -53,9 +53,16 @@ inline constexpr std::string_view kCfgLayerKeys[] = {
     "c++-abi", "c-abi", "compiler", "compiler-runtime",
     "kernel-abi",
 };
-inline constexpr std::string_view kCfgBarewords[] = {
-    "linux", "macos", "unix", "windows",
-};
+// A BAREWORD NAMES A SYSTEM, AND THE ROWS ARE ITS VOCABULARY. `unix` is the
+// one word that names a family (unix | windows, the row's `family`); every
+// other identifier without a `-` is `os = "<word>"`: `linux`, `macos`,
+// `windows`, `freebsd`, and the system of any row a platform defines, with no
+// list here to extend. A `-` makes a key a triple, never a bareword.
+inline constexpr std::string_view kCfgFamilyBareword = "unix";
+constexpr bool is_bareword(std::string_view word) {
+    return !word.empty() && word.find('-') == std::string_view::npos
+        && word.find('(') == std::string_view::npos;
+}
 
 // The rank of a selector: the number of target-triple components it fixes, or
 // `kTripleRank` for a bare triple. Larger is more specific.
@@ -89,9 +96,8 @@ unsigned component_of_key(std::string_view key) {
 }
 
 unsigned component_of_bareword(std::string_view word) {
-    if (word == "linux" || word == "macos" || word == "windows") return kOs | kFamily;
-    if (word == "unix") return kFamily;
-    return 0;
+    if (!is_bareword(word)) return 0;
+    return word == kCfgFamilyBareword ? kFamily : kOs | kFamily;
 }
 
 // The grammar of `cfg(...)`: all(list) | any(list) | not(expr) | key = "value"

@@ -27,6 +27,7 @@ import mcpp.toolchain.apple_sdk;
 import mcpp.toolchain.model;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 import mcpp.ui;
 
 export namespace mcpp::build {
@@ -206,7 +207,7 @@ using mcpp::manifest::cfg::kCfgTripleKeys;
 // either; only the schedule question (`uses_layer`) distinguishes them.
 using mcpp::manifest::cfg::kCfgEarlyLayerKeys;
 using mcpp::manifest::cfg::kCfgLayerKeys;
-using mcpp::manifest::cfg::kCfgBarewords;
+using mcpp::manifest::cfg::kCfgFamilyBareword;
 
 // Answerable before resolution. Its value comes from the build's own accel.
 inline bool is_cfg_early_layer_key(std::string_view k) {
@@ -267,11 +268,10 @@ struct Parser {
     }
     bool match_alias(const std::string& a) {
         if (seenWords) seenWords->push_back(a);
-        if (a == "windows") return c.os == "windows";
-        if (a == "linux")   return c.os == "linux";
-        if (a == "macos")   return c.os == "macos";
-        if (a == "unix")    return c.family == "unix";
-        return false;  // unknown bareword → no match, and `seenWords` reports it
+        if (a == kCfgFamilyBareword) return c.family == a;
+        // Any other word names a system: `os = "<word>"`. A word no row names
+        // matches nothing, and `seenWords` reports it.
+        return mcpp::manifest::cfg::is_bareword(a) && c.os == a;
     }
     bool match_kv(const std::string& k, const std::string& v) {
         if (seenKeys) seenKeys->push_back(k);
@@ -331,10 +331,9 @@ inline bool matches(const std::string& predicate, const Ctx& c) {
         return p.expr();
     }
     // Bare OS/family alias sugar: `[target.linux]` ≡ `[target.'cfg(linux)']`.
-    // These aliases are never valid triples (no dash), so there is no ambiguity
+    // A bareword is never a valid triple (no dash), so there is no ambiguity
     // with the exact-triple namespace. Evaluated as the cfg bareword.
-    if (predicate == "windows" || predicate == "linux" ||
-        predicate == "macos"   || predicate == "unix") {
+    if (mcpp::manifest::cfg::is_bareword(predicate)) {
         Parser p{ predicate, 0, c };
         return p.expr();
     }
@@ -423,8 +422,7 @@ inline std::vector<std::string> os_only_platforms(const std::string& predicate) 
     // `Parser::expr()` in `matches()` — so both are eligible here. Anything
     // else (an exact triple, or the unparsed escape hatch) names neither an
     // OS nor a platform on its own.
-    static constexpr std::string_view kBareAliases[] = { "linux", "macos", "unix", "windows" };
-    if (!wrapped && std::ranges::find(kBareAliases, predicate) == std::end(kBareAliases))
+    if (!wrapped && !mcpp::manifest::cfg::is_bareword(predicate))
         return {};
     std::string_view inner = wrapped ? text.substr(4, text.size() - 5) : text;
 
@@ -477,6 +475,20 @@ inline bool uses_layer(const std::string& predicate) {
 // evaluate to false in silence, which is indistinguishable from a predicate
 // that correctly did not apply — so `[target.'cfg(c-abi = "musl")'.build]` was
 // dropped without a word for the entire time docs/14 documented it.
+// The systems the rows name (built-in and defined), and the family word.
+inline std::vector<std::string> system_barewords() {
+    std::set<std::string> systems;
+    for (auto const* r : mcpp::toolchain::target::rows())
+        if (!r->os.empty()) systems.emplace(r->os);
+    std::vector<std::string> out{ std::string(kCfgFamilyBareword) };
+    out.insert(out.end(), systems.begin(), systems.end());
+    return out;
+}
+inline bool known_bareword(std::string_view w) {
+    if (w == kCfgFamilyBareword) return true;
+    return std::ranges::any_of(mcpp::toolchain::target::rows(), [&](auto const* r) { return r->os == w; });
+}
+
 inline std::vector<std::string> unknown_tokens(const std::string& predicate) {
     auto scan = scan_predicate(predicate);
     std::vector<std::string> out;
@@ -489,7 +501,7 @@ inline std::vector<std::string> unknown_tokens(const std::string& predicate) {
             && !is_cfg_layer_key(k))
             add(k);
     for (auto const& w : scan.barewords)
-        if (std::ranges::find(kCfgBarewords, w) == std::end(kCfgBarewords))
+        if (!known_bareword(w))
             add(w);
     return out;
 }
@@ -499,8 +511,9 @@ inline std::string vocabulary_sentence() {
     std::string keys, words;
     for (auto k : kCfgTripleKeys) { if (!keys.empty()) keys += ", "; keys += k; }
     for (auto k : kCfgLayerKeys)  { if (!keys.empty()) keys += ", "; keys += k; }
-    for (auto w : kCfgBarewords)  { if (!words.empty()) words += ", "; words += w; }
-    return std::format("Supported keys: {}. Supported barewords: {}.", keys, words);
+    for (auto const& w : system_barewords()) { if (!words.empty()) words += ", "; words += w; }
+    return std::format("Supported keys: {}. Supported barewords: {}, and the system of a row a platform "
+                       "defines.", keys, words);
 }
 
 }  // namespace cfgpred

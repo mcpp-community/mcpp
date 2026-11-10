@@ -16,7 +16,7 @@ namespace {
 
 constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
-    "link-emulation", "clang-triple",
+    "link-emulation", "clang-triple", "family",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
@@ -100,6 +100,11 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
     }
     if (seg.size() < 2 || seg.size() > 3 || std::ranges::any_of(seg, [](auto const& x) { return x.empty(); }))
         throw Failure{std::format("{}: a triple is `arch-os` or `arch-os-env`", where)};
+    // A row may state its system's family (`unix` | `windows`); a system the
+    // engine has always known answers it by convention when the row is silent.
+    const auto family = text(t, "family", where);
+    if (!family.empty() && family != "unix" && family != "windows")
+        throw Failure{std::format("{}: `family` is `unix` or `windows`, not `{}`", where, family)};
     bool exact = false;
     if (auto it = t.find("exact"); it != t.end()) {
         if (!it->second.is_bool()) throw Failure{std::format("{}: `exact` is not a boolean", where)};
@@ -108,13 +113,13 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
     return std::format(
         "    {{ .triple = {}, .arch = {}, .os = {}, .env = {}, .tier = {}, .note = {}, .standard = {}, "
         ".exact = {}, .march = {}, .mabi = {}, "
-        ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {} }},\n",
+        ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, .family = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
         lit(text(t, "code-model", where)), lit(text(t, "multilib", where)),
         arrays.add(words(t, "flags", where)), lit(text(t, "link-emulation", where)),
-        lit(text(t, "clang-triple", where)));
+        lit(text(t, "clang-triple", where)), lit(family));
 }
 
 std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {

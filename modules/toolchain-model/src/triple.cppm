@@ -410,6 +410,10 @@ struct Triple {
     // nothing, unchanged: `cfg(unix)` on bare metal would be false in a way no
     // source could act on.
     std::string family() const {
+        // The row's own statement first (`family`, built-in or defined), then
+        // the convention of the systems the engine has always known.
+        if (auto* r = mcpp::toolchain::target::find_row(str()); r && !r->family.empty())
+            return std::string(r->family);
         if (auto* d = defined()) return std::string(d->family);
         if (os == "windows") return "windows";
         if (os == "linux" || os == "macos" || os == "ios"

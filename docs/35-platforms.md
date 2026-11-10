@@ -311,7 +311,7 @@ hosted   = true                    # the C environment has `main`
 
 With the platform selected (`[target.x86_64-haiku] platform = {...}` or
 `--platform`), `--target x86_64-haiku` builds into `target/x86_64-haiku/`,
-`cfg(os = "haiku")` holds, and a program whose system is not this machine's
+`cfg(os = "haiku")` holds (and `cfg(haiku)`, `cfg(unix)` by the row's `family`, 2026.11.10.2+), and a program whose system is not this machine's
 is built, not run, until a runner states how it runs (docs/41). The row's
 machine description is the platform's: a target whose machine differs from a
 built-in row is another row. `[platform]` and `[platform.hosted]` remain the two

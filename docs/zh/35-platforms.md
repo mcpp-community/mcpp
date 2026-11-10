@@ -257,7 +257,7 @@ hosted   = true                    # C 环境有 `main`
 ```
 
 选中该平台（`[target.x86_64-haiku] platform = {...}` 或 `--platform`）后，`--target x86_64-haiku` 构建到
-`target/x86_64-haiku/`，`cfg(os = "haiku")` 成立；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
+`target/x86_64-haiku/`，`cfg(os = "haiku")` 成立（2026.11.10.2 起 `cfg(haiku)` 亦成立，`cfg(unix)` 由行的 `family` 决定）；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
 未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
 提供者的两种简写。
 

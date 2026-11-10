@@ -308,7 +308,7 @@ row x86_64-freebsd
   llvm x86_64-unknown-freebsd14.0
   llvm@15.0 x86_64-unknown-freebsd14.0
   format ELF
-  family 
+  family unix
   pe/macho/wasm 000
   apple/ios/sim/android 0000
   freestanding/openkal/own-sysroot/capability 0000
@@ -327,7 +327,7 @@ row aarch64-freebsd
   llvm aarch64-unknown-freebsd14.0
   llvm@15.0 aarch64-unknown-freebsd14.0
   format ELF
-  family 
+  family unix
   pe/macho/wasm 000
   apple/ios/sim/android 0000
   freestanding/openkal/own-sysroot/capability 0000
@@ -346,7 +346,7 @@ row x86_64-freebsd-musl
   llvm x86_64-unknown-freebsd14.0
   llvm@15.0 x86_64-unknown-freebsd14.0
   format ELF
-  family 
+  family unix
   pe/macho/wasm 000
   apple/ios/sim/android 0000
   freestanding/openkal/own-sysroot/capability 0001
@@ -365,7 +365,7 @@ row aarch64-freebsd-musl
   llvm aarch64-unknown-freebsd14.0
   llvm@15.0 aarch64-unknown-freebsd14.0
   format ELF
-  family 
+  family unix
   pe/macho/wasm 000
   apple/ios/sim/android 0000
   freestanding/openkal/own-sysroot/capability 0001
