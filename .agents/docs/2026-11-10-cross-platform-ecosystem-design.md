@@ -591,7 +591,7 @@ B 路线在 Windows 上就是正确的默认。
 | X1、X2 | xlings-res 的 GitHub 发布与 GitCode 镜像（下载回验 sha256）；xim-pkgindex 收录，CI 在三种宿主上安装、检查、卸载；X1 的修订版 `20261104-2` 以 `mcpp:c-abi=ucrt` 陈述其 C 库，基座的 C 库按其陈述的名字报告 | xim-pkgindex CI；e2e 1063 |
 | I1 | compat.glfw 的 Windows 行要求 `mcpp:c-abi=ucrt` | gnu 行构建、windows-musl 行在解析期拒绝（实测） |
 | CI 中暴露并修复 | 提供者的基座在依赖图载入前被记住（改为图载入后才保留）；没有 cfg 的 Windows llvm 载荷编译时不陈述配对的 sysroot；同一 home 的两个进程并发安装同一个包（安装次序锁 `registry/.install.lock`） | target-matrix、openkal 交叉构建、各宿主 e2e |
-| 实施中发现并修复 | 工具链为另一目标构建的 C++ 归档（其父目录的三元组与目标的架构或系统不同）不链接，并给出降级诊断；ok 映像的启动器依赖 mcpplibs.os 0.4.4（openkal 0.24 与 0.25 两族均可） | 单元测试 `Distribution/ForeignArchivesAreNotLinked`；mingw 交叉打包 |
+| 实施中发现并修复 | 工具链为另一目标构建的 C++ 归档（其父目录的三元组与目标的架构或系统不同）不链接，并给出降级诊断；ok 映像的启动器依赖 mcpplibs.os 0.4.4（openkal 0.24 与 0.25 两族均可）；交叉 gcc 自身的 Windows 头文件属于工具链（`mingw` 提供者下资源脚本的 `"winres.h"`）；资源脚本中各处都找不到、也无构建动作写出的带引号 include 不进入构建图，由脚本的预处理与资源编译器处理 | 单元测试 `Distribution/ForeignArchivesAreNotLinked`；mingw 交叉打包；e2e 1058、1072（验证工程的 Windows 行暴露） |
 
 openkal 家族（K5、K6，openkal 0.25.0）、openkal-freebsd 0.1.0（hosted 与 standalone 两种形态，x86_64 与 arm64）、
 openkal-musl 0.29.1 与 openkal-llvm-runtime 0.20.1（FreeBSD 的 standalone C 与 C++ 运行时）以及 mcpplibs/os 的实施记录
