@@ -158,6 +158,12 @@ public:
         install_path(std::string_view ns, std::string_view shortName,
                      std::string_view version) const;
 
+    // The version directories install_path() looks for, in its order: the
+    // place a payload that is not found was expected, for its diagnostic.
+    std::vector<std::filesystem::path>
+        install_path_candidates(std::string_view ns, std::string_view shortName,
+                                std::string_view version) const;
+
     // Read the raw xpkg .lua file content for a package from the cloned
     // index. Uses namespace-aware candidate filenames.
     std::optional<std::string>
@@ -1433,6 +1439,18 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
             if (auto p = try_dir(legacy)) return *p;
     }
     return std::nullopt;
+}
+
+std::vector<std::filesystem::path>
+Fetcher::install_path_candidates(std::string_view ns, std::string_view shortName,
+                                 std::string_view version) const
+{
+    std::vector<std::filesystem::path> out;
+    const auto candidates = mcpp::pm::compat::install_dir_candidates(ns, shortName, cfg_.defaultIndex);
+    for (const auto& base : mcpp::provider::open(location_of(cfg_))->stores())
+        for (auto& dirName : candidates)
+            out.push_back(base / dirName / std::string(version));
+    return out;
 }
 
 // ─── Legacy install_path (COMPAT(internal:legacy-fetcher-api)) ──────────────────

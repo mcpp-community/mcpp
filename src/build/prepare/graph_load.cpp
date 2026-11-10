@@ -1237,8 +1237,15 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             }
             // After install, check project data first for custom index packages.
             ctx.installed = step4a_find_raw_installed(state, ctx);
-            if (!ctx.installed) return std::unexpected(std::format(
-                "package '{}@{}' install path missing after fetch", depName, version));
+            if (!ctx.installed) {
+                // Where the payload was expected, so that a provider that
+                // placed it elsewhere is seen at once.
+                std::string looked;
+                for (auto& p : fetcher.install_path_candidates(ns, shortName, version))
+                    looked += "\n  looked in " + p.string();
+                return std::unexpected(std::format(
+                    "package '{}@{}' install path missing after fetch{}", depName, version, looked));
+            }
         }
 
     return {};
