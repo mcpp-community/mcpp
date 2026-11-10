@@ -2629,6 +2629,10 @@ export struct ReplayAsk {
     // of build.ninja, true when a source of it is newer. Empty for a path whose
     // trees are all recorded roots, which is what a workspace's members are.
     std::function<bool(std::filesystem::file_time_type)> projectSourcesNewer;
+    // The graph replayed: the build's, or the tests' (`test.ninja`, written by
+    // `mcpp test` beside it). The tests' graph links no artifact a program
+    // runs, so it records no validated snapshot and is not asked for one.
+    std::string_view      graphFile = "build.ninja";
 };
 
 // What a path needs of an admitted record to go on: where the graph is, the
@@ -2662,8 +2666,9 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
         return std::unexpected("the recorded build directory is not the one for this fingerprint");
 
     std::error_code ec;
-    const auto ninjaPath = outputDir / "build.ninja";
-    if (!std::filesystem::exists(ninjaPath, ec)) return std::unexpected("build.ninja does not exist");
+    const bool testGraph = ask.graphFile != "build.ninja";
+    const auto ninjaPath = outputDir / ask.graphFile;
+    if (!std::filesystem::exists(ninjaPath, ec)) return std::unexpected(std::format("{} does not exist", ask.graphFile));
 
     // The graph names the engine it runs, and that is asked of the graph, not
     // only of the record: another engine's `--configure-only` rewrites the
@@ -2680,24 +2685,26 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     // that for a plain build linked the tests, never linked the target, and
     // printed `Finished`; and a broken file under tests/ (never scanned here)
     // failed a plain `mcpp build` outright.
-    if (!mcpp::build::is_plain_build_graph(ninjaPath))
+    if (!testGraph && !mcpp::build::is_plain_build_graph(ninjaPath))
         return std::unexpected("build.ninja was written by another mode (test, pack or a named target)");
+    if (testGraph && mcpp::build::read_shape(ninjaPath) != mcpp::build::GraphShape::WithTests)
+        return std::unexpected(std::format("{} is not a test graph", ask.graphFile));
     // What the graph was planned for (workspace design 2026-09-29 §3): the
     // features no longer name the directory, so the graph says which it has.
     if (mcpp::build::read_request(ninjaPath) != ask.request)
         return std::unexpected("build.ninja was written for another request (features or workspace members)");
 
     const auto ninjaTime = std::filesystem::last_write_time(ninjaPath, ec);
-    if (ec) return std::unexpected("the time of build.ninja cannot be read");
+    if (ec) return std::unexpected(std::format("the time of {} cannot be read", ask.graphFile));
 
     const auto runtimeTime = std::filesystem::last_write_time(
         mcpp::provider::layout().description(e.runtimeBinding->subosDir), ec);
     if (ec || runtimeTime > ninjaTime)
-        return std::unexpected("the runtime environment's description is newer than build.ninja");
+        return std::unexpected(std::format("the runtime environment's description is newer than {}", ask.graphFile));
 
     const auto manifestTime = std::filesystem::last_write_time(ask.manifest, ec);
     if (ec || manifestTime > ninjaTime)
-        return std::unexpected(std::format("{} is newer than build.ninja", ask.manifestName));
+        return std::unexpected(std::format("{} is newer than {}", ask.manifestName, ask.graphFile));
     if (e.lockDigest.empty())
         return std::unexpected("the recorded build predates the lock it was planned under");
     if (e.lockDigest != lock_digest(ask.manifest.parent_path()))
@@ -2706,7 +2713,7 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     // mcpp#225: bounded + vcs/build-dir-excluded walk (see sources_newer_than)
     // instead of a hand-rolled recursive_directory_iterator over src/.
     if (ask.projectSourcesNewer && ask.projectSourcesNewer(ninjaTime))
-        return std::unexpected("a project source, build.mcpp, a build-program input or a resource script is newer than build.ninja");
+        return std::unexpected(std::format("a project source, build.mcpp, a build-program input or a resource script is newer than {}", ask.graphFile));
 
     // A cache written before this field existed cannot say whether the build
     // had `path` dependencies, and answering "assume none" is the wrong half of
@@ -2721,13 +2728,15 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     if (!e.rootCompileDbRecorded)
         return std::unexpected("the recorded build predates the location of the project's compile database");
     if (dep_sources_newer_than(e.depSourceRoots, ninjaTime))
-        return std::unexpected(std::format("{} manifest or source is newer than build.ninja", ask.treesName));
+        return std::unexpected(std::format("{} manifest or source is newer than {}", ask.treesName, ask.graphFile));
     if (!xlings_payloads_present(e)) return std::unexpected("a recorded xlings payload is missing");
     if (!local_toolchain_unchanged(e.outputDir))
         return std::unexpected("a program of the toolchain named by path changed");
 
-    auto validated = mcpp::build::runtime_validation::validated_artifact_snapshot(
-        outputDir, *e.runtimeBinding);
+    auto validated = testGraph ? std::optional<mcpp::build::runtime_validation::ArtifactSnapshot>(
+                                     mcpp::build::runtime_validation::ArtifactSnapshot{})
+                               : mcpp::build::runtime_validation::validated_artifact_snapshot(
+                                     outputDir, *e.runtimeBinding);
     if (!validated) return std::unexpected("no validated artifact snapshot is recorded for this build");
 
     auto ninjaProgram = e.ninjaProgram;
@@ -2785,11 +2794,13 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // cache-reading graph for a request that asked not to read the cache.
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
+    // A workspace's root package is planned as the workspace's member `.`
+    // (selection and group `.`): its record is the project's own.
     for (auto& e : entries) {
         if (e.targetTriple == currentTarget && e.profile == want->profile
             && e.cacheMode == want->cacheMode && e.features == want->features
             && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
-            && e.selection.empty()) {
+            && ((e.selection.empty() && e.group.empty()) || (e.selection == "." && e.group == "."))) {
             match = &e;
             break;
         }
@@ -2812,7 +2823,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // The gates every fast path shares (see admit_recorded_build); what is left
     // here is the project's own tree.
     auto admitted = admit_recorded_build(*match, {
-        .request = mcpp::build::request_tag({}, want->features),
+        .request = mcpp::build::request_tag(match->group, want->features),
         .manifest = projectRoot / "mcpp.toml",
         .projectSourcesNewer = [&](std::filesystem::file_time_type ninjaTime) {
             return sources_newer_than(projectRoot, ninjaTime, want->resourceScripts,
@@ -4395,6 +4406,11 @@ struct TestBuild {
     std::optional<std::set<std::string>>     affected;
     std::unique_ptr<Backend>                 backend;
     long long                                prepareMs = 0;
+    // What the backend drove the test graph with, for the record of the test
+    // fast path (`write_test_plan`).
+    std::string                              ninjaProgram;
+    std::string                              ninjaEnvKey;
+    std::string                              ninjaEnvValue;
     // Phase A, the bulk pass, and any attribution drive.
     long long                                buildMs = 0;
     bool                                     bulkBuiltEverything = false;
@@ -4502,6 +4518,9 @@ static std::optional<BuildError> test_phase_a(TestBuild& tb, const TestOptions& 
     tb.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - tPhaseA).count();
     if (!a) return std::move(a.error());
+    tb.ninjaProgram = a->ninjaProgram;
+    tb.ninjaEnvKey = a->runtimeEnvKey;
+    tb.ninjaEnvValue = a->runtimeEnvValue;
 
     // M3.2: populate BMI cache for deps that did NOT hit cache — deps
     // are package-level artifacts, so this belongs right after Phase A.
@@ -4577,7 +4596,13 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
             bulk.ninjaTargets.push_back(lu.output.generic_string());
     if (!bulk.ninjaTargets.empty()) {
         auto tBulk = std::chrono::steady_clock::now();
-        tb.bulkBuiltEverything = backend->build(ctx->plan, bulk).has_value();
+        auto built = backend->build(ctx->plan, bulk);
+        tb.bulkBuiltEverything = built.has_value();
+        if (built) {
+            tb.ninjaProgram = built->ninjaProgram;
+            tb.ninjaEnvKey = built->runtimeEnvKey;
+            tb.ninjaEnvValue = built->runtimeEnvValue;
+        }
         tb.buildMs += std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - tBulk).count();
     }
@@ -5855,6 +5880,261 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
     return notRun ? 2 : 0;
 }
 
+// ─── the test fast path (design 2026-11-10 supplement, T7) ──────────────────
+//
+// A test of a project nothing in which changed neither resolves nor scans: the
+// full path records, beside `test.ninja`, what it planned for every test of
+// the package (`test-plan.json`) and a build-cache entry for the test graph
+// (selection `@test`). The next `mcpp test` admits that entry as `mcpp build`
+// admits its own -- the engine, the lock, the manifests, the trees of the path
+// dependencies, the toolchain, the sources -- and also asks that the tests the
+// package discovers are the ones recorded, that no file under `tests/` is newer
+// than the graph, and that ninja has nothing to do for the selected tests. Any
+// other answer is the full path's: it builds, attributes a failure to its test
+// and writes the record again.
+//
+// The record is the plan's, not the invocation's: the arguments after `--`, an
+// execution host, the programs' places and the variables read from the
+// environment are joined when the test runs. A plan with a runner or an
+// execution host records nothing.
+
+constexpr std::string_view kTestPlanSelection = "@test";
+constexpr std::string_view kTestPlanFile = "test-plan.json";
+
+std::string test_graph_stamp(const std::filesystem::path& graph) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(graph, ec);
+    if (ec) return {};
+    const auto time = std::filesystem::last_write_time(graph, ec);
+    if (ec) return {};
+    return std::format("{}:{}", size, time.time_since_epoch().count());
+}
+
+void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
+    namespace fs = std::filesystem;
+    using nlohmann::json;
+    const auto& ctx = *tb.ctx;
+    if (tb.ninjaProgram.empty() || !tb.runnerTmpl.empty() || !tb.runUnderPrefix.empty()
+        || !tb.invocationNotRunReason.empty() || tb.archived)
+        return;
+    const auto graph = ctx.outputDir / ctx.plan.graphFile;
+    json tests = json::array();
+    std::map<fs::path, fs::path> sourceOf;
+    for (auto const& cu : ctx.plan.compileUnits) sourceOf[cu.object] = cu.source;
+    std::map<fs::path, const LinkUnit*> archiveOf;
+    for (auto const& unit : ctx.plan.linkUnits)
+        if (unit.kind == LinkUnit::StaticLibrary) archiveOf[unit.output] = &unit;
+    for (auto const& lu : ctx.plan.linkUnits) {
+        if (lu.kind != LinkUnit::TestBinary) continue;
+        std::set<std::string> files;
+        auto add_objects = [&](const std::vector<fs::path>& objects) {
+            for (auto const& o : objects)
+                if (auto it = sourceOf.find(o); it != sourceOf.end()) files.insert(it->second.generic_string());
+        };
+        add_objects(lu.objects);
+        for (auto const& input : lu.implicitInputs)
+            if (auto a = archiveOf.find(input); a != archiveOf.end()) add_objects(a->second->objects);
+        json stems = json::array();
+        for (auto const& f : lu.ownSources) stems.push_back(f.stem().generic_string());
+        const bool collected = std::ranges::any_of(lu.linkFlags, [](std::string_view f) {
+            return f == "-Wl,--gc-sections" || f == "-Wl,-dead_strip";
+        });
+        json objects = json::array();
+        if (collected)
+            for (auto const& o : lu.objects) objects.push_back((o.is_absolute() ? o : ctx.outputDir / o).generic_string());
+        auto guide = [&](int protocol) {
+            std::vector<const TestFramework*> guided;
+            for (auto const& f : ctx.plan.testFrameworks) {
+                if (f.guide.empty()) continue;
+                if (!lu.testFramework.empty() && f.package == lu.testFramework) return f.guide;
+                guided.push_back(&f);
+            }
+            return lu.testFramework.empty() && protocol && guided.size() == 1 ? guided.front()->guide : std::string{};
+        };
+        tests.push_back({{"name", lu.targetName}, {"program", lu.output.generic_string()}, {"stems", stems},
+                         {"sources", std::vector<std::string>(files.begin(), files.end())},
+                         {"protocol", lu.testProtocol}, {"objects", objects},
+                         {"guide", guide(mcpp::build::test_protocol::kVersion)}, {"guide_none", guide(0)},
+                         {"own_files", std::max<std::size_t>(lu.ownSources.size(), 1)}});
+    }
+    json frameworks = json::array();
+    for (auto const& f : ctx.plan.testFrameworks)
+        frameworks.push_back({{"package", f.package}, {"version", f.version}, {"guide", f.guide}});
+    json runtimeDirs = json::array();
+    for (auto const& d : ctx.plan.runtimeLibraryDirs) runtimeDirs.push_back(d.generic_string());
+    json pathDirs = json::array();
+    if constexpr (!mcpplibs::os::is_windows)
+        if (auto environment = mcpp::provider::environment_of(ctx.tc.binaryPath))
+            if (std::error_code ec; fs::exists(*environment / "bin", ec)) pathDirs.push_back((*environment / "bin").generic_string());
+    const json record{{"schema", "mcpp.test-plan/1"}, {"graph", ctx.plan.graphFile},
+                      {"graph_stamp", test_graph_stamp(graph)}, {"tests", tests}, {"frameworks", frameworks},
+                      {"runtime_dirs", runtimeDirs}, {"path_dirs", pathDirs},
+                      {"split", ctx.manifest.testSplit}, {"store", ctx.manifest.testStore},
+                      {"jobs", ctx.globalDefaultJobs}, {"group", ctx.workspaceGroup}};
+    {
+        const auto tmp = ctx.outputDir / std::format("{}.{:x}", kTestPlanFile, std::random_device{}());
+        { std::ofstream(tmp, std::ios::binary) << record.dump(1) << "\n"; }
+        std::error_code ec;
+        fs::rename(tmp, ctx.outputDir / kTestPlanFile, ec);
+        if (ec) { fs::remove(tmp, ec); return; }
+    }
+    write_build_cache(ctx.projectRoot, ctx.outputDir, tb.ninjaProgram, std::string(targetOverride),
+                      ctx.outputDir.filename().string(),
+                      tb.ninjaEnvKey.empty() ? "-" : tb.ninjaEnvKey, tb.ninjaEnvValue,
+                      {}, "", "", ctx.profile, std::string(cache_mode_name(ctx.cacheMode)),
+                      ctx.plan.runtimeBinding, ctx.depSourceRoots, false, ctx.runTierPending,
+                      normalize_features(ctx.activeFeatureRequest), toolchain_request_identity(),
+                      [&] {
+                          std::vector<std::string> v;
+                          for (auto const& p : ctx.xlingsPayloads) v.push_back(p.generic_string());
+                          return v;
+                      }(),
+                      std::string(kTestPlanSelection), {}, ctx.plan.rootCompileDb);
+}
+
+// The tests of an unchanged project, from the record; nullopt: the full path.
+std::optional<std::vector<TestRunnable>>
+fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& testOpts,
+               const std::vector<std::string>& discovered, std::span<const std::string> passthrough,
+               const std::vector<std::pair<std::string, std::string>>& programEnv,
+               BuildContext& ctx) {
+    namespace fs = std::filesystem;
+    auto declined = [](std::string_view why) {
+        mcpp::log::verbose("fast-path", std::format("test declined: {}", why));
+        return std::nullopt;
+    };
+    if (!testOpts.since.empty() || !testOpts.changed.empty()) return declined("a change selects the tests (--since, --changed)");
+    if (!testOpts.archive.empty() || testOpts.guide || print_launch_flag()) return declined("an archive, the guide or a launch is asked for");
+    if (!testOpts.runnerName.empty() || testOpts.noRunner) return declined("a runner is named");
+    if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") return declined("MCPP_LOCKED=1 asks for a locked resolution");
+    if (auto v = mcpp::invocation::get("MCPP_MANAGED_ONLY"); v && *v != "0") return declined("MCPP_MANAGED_ONLY asks for the sources to be checked");
+    if (mcpp::effects::effect_denied("write-project")) return declined("the caller denied write-project");
+    auto want = fast_path_identity(projectRoot);
+    if (!want) return declined("the manifest or the request could not be read");
+    if (want->hooksActive) return declined("the project declares [hooks]");
+    if (!want->defaultTarget.empty()) return declined("the project names a default target");
+    auto entries = read_build_cache(projectRoot);
+    const BuildCacheEntry* match = nullptr;
+    for (auto& e : entries)
+        if (e.targetTriple.empty() && e.profile == want->profile && e.cacheMode == want->cacheMode
+            && e.features == want->features && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
+            && e.selection == kTestPlanSelection) { match = &e; break; }
+    if (!match) return declined("no recorded test graph matches this request");
+    if (match->runtimeBinding && !match->runtimeBinding->baseIdentity.empty())
+        return declined("a stated target base is measured on the full path");
+    const fs::path outputDir(match->outputDir);
+    std::ifstream in(outputDir / kTestPlanFile, std::ios::binary);
+    auto record = nlohmann::json::parse(in, nullptr, false);
+    if (!record.is_object() || record.value("schema", "") != "mcpp.test-plan/1") return declined("no test plan is recorded");
+    const std::string graphFile = record.value("graph", "test.ninja");
+    // The tests the package has are the ones planned: a test added or removed
+    // is a new plan.
+    std::set<std::string> recordedNames, discoveredNames(discovered.begin(), discovered.end());
+    for (auto const& t : record["tests"]) recordedNames.insert(t.value("name", ""));
+    if (recordedNames != discoveredNames) return declined("the package's tests are not the recorded ones");
+
+    ctx.buildLock = mcpp::build::dirlock::acquire(outputDir);
+    if (test_graph_stamp(outputDir / graphFile) != record.value("graph_stamp", ""))
+        return declined("the test graph is not the one the record was written with");
+    auto admitted = admit_recorded_build(*match, {
+        .request = mcpp::build::request_tag(record.value("group", ""), want->features),
+        .manifest = projectRoot / "mcpp.toml",
+        .projectSourcesNewer = [&](fs::file_time_type graphTime) {
+            if (sources_newer_than(projectRoot, graphTime, want->resourceScripts, want->extTable)) return true;
+            std::error_code ec;
+            for (auto& f : mcpp::modgraph::expand_glob(projectRoot, "tests/**/*")) {
+                auto ft = fs::last_write_time(f, ec);
+                if (ec || ft > graphTime) return true;
+            }
+            return false;
+        },
+        .graphFile = graphFile,
+    });
+    if (!admitted) return declined(admitted.error());
+
+    // The selected tests, and ninja asked whether anything of them is to do.
+    std::vector<TestRunnable> runs;
+    std::vector<std::string> goals;
+    std::map<fs::path, int> markers;
+    for (auto const& t : record["tests"]) {
+        const std::string name = t.value("name", "");
+        bool selected = testOpts.filter.empty() || name.find(testOpts.filter) != std::string::npos;
+        for (auto const& stem : t["stems"])
+            selected = selected || std::format("{}/{}", name, stem.get<std::string>()).find(testOpts.filter) != std::string::npos;
+        if (!selected) continue;
+        TestRunnable r;
+        r.name = name;
+        r.program = outputDir / t.value("program", "");
+        goals.push_back(t.value("program", ""));
+        r.argv.push_back(r.program.string());
+        for (auto const& a : passthrough) r.argv.push_back(a);
+        r.sources = t.value("sources", std::vector<std::string>{});
+        r.ownFiles = t.value("own_files", std::size_t{1});
+        r.protocol = t.value("protocol", 0);
+        if (!r.protocol) {
+            r.protocol = mcpp::build::test_protocol::marker_version(r.program);
+            if (!r.protocol)
+                for (auto const& o : t["objects"]) {
+                    auto [it, fresh] = markers.try_emplace(fs::path(o.get<std::string>()), 0);
+                    if (fresh) it->second = mcpp::build::test_protocol::marker_version(it->first);
+                    if (it->second == mcpp::build::test_protocol::kVersion) { r.protocol = it->second; break; }
+                }
+        }
+        if (r.protocol != mcpp::build::test_protocol::kVersion) r.protocol = 0;
+        r.guide = r.protocol ? t.value("guide", "") : t.value("guide_none", "");
+        runs.push_back(std::move(r));
+    }
+    if (runs.empty()) return declined("no recorded test matches the filter");
+    {
+        std::vector<std::string> argv{admitted->ninjaProgram, "-C", outputDir.string(), "-f", graphFile, "-n"};
+        argv.insert(argv.end(), goals.begin(), goals.end());
+        auto dry = mcpp::run::execute(argv, {});
+        if (dry.exit_code != 0 || dry.output.find("no work to do") == std::string::npos)
+            return declined("ninja has work to do for the selected tests");
+    }
+
+    // The environment, joined now: the runtime directories and the tool
+    // directory before what the environment holds, the runtime's variables,
+    // the programs' places.
+    std::vector<std::pair<std::string, std::string>> env;
+    if (const auto key = mcpp::runtime::launch_env::runtime_library_path_key(); !key.empty()) {
+        std::vector<fs::path> dirs;
+        for (auto const& d : record["runtime_dirs"]) dirs.emplace_back(d.get<std::string>());
+        if (auto value = mcpp::runtime::launch_env::prepend_path_list(key, dirs); !dirs.empty() && !value.empty())
+            env.emplace_back(key, value);
+    }
+    if (match->runtimeBinding)
+        for (auto& kv : mcpp::runtime::resolve_runtime_environment(*match->runtimeBinding,
+                 [](std::string_view v) -> std::optional<std::string> { return mcpp::invocation::get(v); }))
+            env.push_back(std::move(kv));
+    for (auto const& kv : programEnv) env.push_back(kv);
+    {
+        std::vector<fs::path> dirs;
+        for (auto const& d : record["path_dirs"]) dirs.emplace_back(d.get<std::string>());
+        if (!dirs.empty())
+            if (auto value = mcpp::runtime::launch_env::prepend_path_list("PATH", dirs); !value.empty())
+                env.emplace_back("PATH", value);
+    }
+    for (auto& r : runs) r.env = env;
+
+    // What the run reads of the configuration.
+    ctx.projectRoot = projectRoot;
+    ctx.outputDir = outputDir;
+    ctx.profile = want->profile;
+    ctx.manifest.testSplit = record.value("split", "");
+    ctx.manifest.testStore = record.value("store", "");
+    ctx.globalDefaultJobs = record.value("jobs", 0);
+    for (auto const& f : record["frameworks"]) {
+        TestFramework tf;
+        tf.package = f.value("package", "");
+        tf.version = f.value("version", "");
+        tf.guide = f.value("guide", "");
+        ctx.plan.testFrameworks.push_back(std::move(tf));
+    }
+    mcpp::log::verbose("fast-path", std::format("test: {} of {} tests from the record", runs.size(), recordedNames.size()));
+    return runs;
+}
+
 // `mcpp test` driver: discover tests/**/*.cpp, synthesize targets, build
 // with dev-deps, run each test binary, summarize.
 export int run_tests(std::span<const std::string> passthrough,
@@ -5947,6 +6227,12 @@ export int run_tests(std::span<const std::string> passthrough,
     // never linked against the tests' dev-dependencies. Before this a package
     // whose tests ran its own executable had to be built first by hand.
     std::vector<std::pair<std::string, std::string>> programEnv;
+    // The conditions under which `mcpp build` takes its fast path (cmd_build):
+    // no override that the recorded graphs were not planned with.
+    const bool fastPossible = overrides.target_triple.empty() && !overrides.force_static
+        && overrides.profile.empty() && overrides.features.empty() && !overrides.strict
+        && overrides.capabilities.empty() && overrides.package_filter.empty()
+        && overrides.cache_mode.empty() && overrides.accel.empty();
     {
         bool hasPrograms = false;
         if (auto m = mcpp::manifest::load(testRoot / "mcpp.toml")) {
@@ -5963,10 +6249,6 @@ export int run_tests(std::span<const std::string> passthrough,
         // scans to learn that its programs are current. Measured on a project
         // of 1,500 sources: 2.65 s of a 5.8 s test of one case, before it.
         std::vector<std::pair<std::string, std::string>> fastPrograms;
-        const bool fastPossible = overrides.target_triple.empty() && !overrides.force_static
-            && overrides.profile.empty() && overrides.features.empty() && !overrides.strict
-            && overrides.capabilities.empty() && overrides.package_filter.empty()
-            && overrides.cache_mode.empty() && overrides.accel.empty();
         if (hasPrograms && fastPossible) {
             if (auto rc = try_fast_build(testRoot, mcpp::log::is_verbose(), false, "", &fastPrograms)) {
                 if (*rc != 0) return *rc;
@@ -6017,6 +6299,24 @@ export int run_tests(std::span<const std::string> passthrough,
         auto t = mcpp::toolchain::triple::parse(overrides.target_triple);
         return t ? t->str() : overrides.target_triple;
     }();
+    // THE TEST FAST PATH (T7): an unchanged project's tests, from the record
+    // the last full path wrote, without planning.
+    if (fastPossible) {
+        std::vector<std::string> names;
+        for (auto const& t : testTargets) names.push_back(t.name);
+        BuildContext fastCtx;
+        if (auto runs = fast_test_plan(testRoot, testOpts, names, passthrough, programEnv, fastCtx)) {
+            TestBuild tb;
+            tb.ctx.emplace(std::move(fastCtx));
+            tb.archived = std::move(*runs);
+            tb.bulkBuiltEverything = true;
+            tb.programEnv = programEnv;
+            mcpp::build::progress::programs_done();
+            mcpp::build::progress::close();
+            return test_run_member(tb, testOpts, passthrough, json, memberName, /*owner=*/"",
+                                   member_ms(), summary);
+        }
+    }
     auto prepared = prepare_build(/*print_fp=*/false,
                                   /*includeDevDeps=*/true,
                                   std::move(testTargets),
@@ -6099,6 +6399,7 @@ export int run_tests(std::span<const std::string> passthrough,
     summary.buildMs = tb.buildMs;
     const int rc = test_run_member(tb, testOpts, passthrough, json, memberName, /*owner=*/"",
                                    member_ms(), summary);
+    if (fastPossible && tb.affected == std::nullopt && testOpts.archive.empty()) write_test_plan(tb, "");
     if (rc != 0 || testOpts.archive.empty()) return rc;
     const ArchiveLeg leg{legTriple, ctx, &tb.programEnv};
     return write_test_archive(testOpts, std::span<const ArchiveLeg>(&leg, 1));

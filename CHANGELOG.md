@@ -58,6 +58,12 @@
   its fast path, and a dependency scan both graphs name has one command in
   both (`$module_map` begins with its own separator), so alternating the two
   commands rescans nothing.
+- The tests of an unchanged project run without planning: a full `mcpp test`
+  records what it planned for every test (`test-plan.json`, and a build-cache
+  entry for `test.ninja`), and a later run that the build fast path's checks,
+  the package's discovered tests and a dry run of ninja admit runs the
+  selected tests from it. Measured on a workspace of 1,500 sources: one
+  program's tests, unchanged, from 5.8 s to 0.13 s.
 - The programs `mcpp test` builds for its tests (`MCPP_BIN_<NAME>`) are built
   by `mcpp build`'s fast path when nothing changed; a run of an unchanged
   project neither resolves nor scans to learn that they are current.

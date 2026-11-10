@@ -136,6 +136,14 @@ mcpp test -- --verbose    # everything after `--` goes to each test binary
 `mcpp test 2>&1 | tee test.log` 两者都收集
 （见 [09 —— 按场景选命令](09-commands-by-scenario.md#输出流)）。
 
+### 未改动的工程（2026.11.10.1+）
+
+测试的图是 `test.ninja`，与构建的 `build.ninja` 位于同一构建目录；两者共享目标文件和 ninja 的记录，
+因此 `mcpp test` 之后的 `mcpp build` 重放它自己的图，两张图都编译的目标文件只编译一次。完整的一次运行记录它为
+包的每个测试所做的计划（`test-plan.json`）。此后，若工程未改动（清单、锁、`src/` 与 `tests/` 下的源文件、路径依赖、
+工具链）且测试仍是记录中的那些，运行直接按记录执行所选测试，不再规划；任何改动都走完整路径。构建目录只在构建测试期间
+被占用，在第一个测试运行前释放，因此构建或同一配置的另一次测试可以与正在运行的测试并行进行。
+
 ### 变更影响的测试
 
 `mcpp test --since <commit>` 与 `--changed <path>`（2026.11.8.1+）只构建并运行一次变更

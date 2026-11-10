@@ -161,6 +161,20 @@ test's verdict, the output of a test that failed, the `test result` line and, fo
 collects the report, and `mcpp test 2>&1 | tee test.log` collects both
 ([09 — Commands by scenario](09-commands-by-scenario.md#output-streams)).
 
+### An unchanged project (2026.11.10.1+)
+
+The tests' graph is `test.ninja`, beside the build's `build.ninja` in the same
+build directory; the two share the objects and ninja's records, so `mcpp build`
+after `mcpp test` replays its own graph, and an object both graphs compile is
+compiled once. A full run records what it planned for every test of the package
+(`test-plan.json`). A later run of a project in which nothing changed (the
+manifests, the lock, the sources under `src/` and `tests/`, the path
+dependencies, the toolchain) and whose tests are the recorded ones runs the
+selected tests from that record without planning; any change takes the full
+path. The build directory is held while the tests are built and released before
+the first one runs, so a build, or a second test of the same configuration,
+proceeds beside a running test.
+
 ### The tests a change affects
 
 `mcpp test --since <commit>` and `--changed <path>` (2026.11.8.1+) build and run
