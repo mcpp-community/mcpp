@@ -824,6 +824,20 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
     return {};
 }
 
+// The constraints a record is bound by: those of the requesters still in the
+// graph. A record kept before requests were tracked by requester answers with
+// its combined string.
+static std::string effective_constraint(const PrepareState& state,
+                                        const ResolvedRecord& r) {
+    if (r.constraintsBy.empty()) return r.constraint;
+    std::string out;
+    for (auto const& [by, c] : r.constraintsBy) {
+        if (state.supersededRequesters.contains(by)) continue;
+        out += (out.empty() ? "" : ",") + c;
+    }
+    return out.empty() ? std::string("*") : out;
+}
+
 static std::expected<void, std::string>
 step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                std::map<ResolvedKey, ResolvedRecord>::iterator it) {
@@ -844,7 +858,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
 
                 auto merged = mcpp::pm::try_merge_semver(
                     key.ns, key.shortName,
-                    it->second.constraint,
+                    effective_constraint(state, it->second),
                     item.originalConstraint,
                     state.index_route(*cfg), *state.targetPlatform);
                 if (!merged) {
@@ -1068,6 +1082,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     it->second.constraint = addCstr;
                 else
                     it->second.constraint += "," + addCstr;
+                it->second.constraintsBy.emplace_back(item.requestedBy, addCstr);
 
                 if (*merged == it->second.version) {
                     // The existing pin already satisfies the new constraint —
@@ -1087,6 +1102,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     std::format("{}{}{} {} ⨯ {} → v{}",
                         key.ns, key.ns.empty() ? "" : ".", key.shortName,
                         it->second.version, spec.version, *merged));
+                state.supersededRequesters.insert(std::format("{}{}{}@{}",
+                    key.ns, key.ns.empty() ? "" : ".", key.shortName, it->second.version));
                 auto reloaded = state.loadVersionDep(name, key.ns, key.shortName, *merged);
                 if (!reloaded) return std::unexpected(reloaded.error());
                 auto& [newRoot, newManifest] = *reloaded;
@@ -2020,6 +2037,10 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             .depIndex          = state.dep_manifests.size() - 1,
             .linkFlagsAdded    = std::move(linkFlagsAdded),
             .patches           = spec.patches,
+            .constraintsBy     = sourceKind == "version"
+                ? std::vector<std::pair<std::string, std::string>>{{item.requestedBy,
+                      item.originalConstraint.empty() ? std::string("*") : item.originalConstraint}}
+                : std::vector<std::pair<std::string, std::string>>{},
         };
 
         // Recurse: the dep's own [dependencies] become new worklist items.
@@ -2446,6 +2467,12 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
             WorklistItemCtx ctx;
             ctx.item = std::move(state.worklist.front());
             state.worklist.pop_front();
+            if (state.supersededRequesters.contains(ctx.item.requestedBy)) {
+                mcpp::log::verbose("resolve", std::format(
+                    "{} is not walked: {}, which asked for it, was replaced by a merge",
+                    ctx.item.name, ctx.item.requestedBy));
+                continue;
+            }
 
             if (auto r = step4b_resolve_identity(state, ctx); !r)
                 return std::unexpected(r.error());

@@ -229,6 +229,9 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // A variant's patches, as its edge stated them (absolute paths), for
         // the lock (design 2026-11-02 §14.1).
         std::vector<std::string> patches;
+        // `constraint`, by who asked: a request made by a version a merge has
+        // since replaced is withdrawn with that version (supersededRequesters).
+        std::vector<std::pair<std::string, std::string>> constraintsBy;
     };
 
     struct WorkItem {
@@ -818,6 +821,13 @@ struct PrepareState {
     // (with these helpers as its own captures) and called repeatedly from
     // the worklist loop, well after its defining call returns. ────────────
     std::deque<WorkItem> worklist;
+    // THE REQUESTS OF A VERSION NO LONGER IN THE GRAPH. A merge that replaces
+    // `<ns>.<name>@<old>` takes that version's requests out with it: its
+    // queued items are not walked and its constraints no longer bound a merge.
+    // Kept, they reported a conflict between a version and a request of a
+    // version that had already left (os 0.4.4 and openkal-linux 0.26.0 after
+    // both were merged down, measured).
+    std::set<std::string> supersededRequesters;
     std::map<std::string, ResolvedKey> identityBySource;
     std::map<ResolvedKey, DeclaringManifest> declaringManifest;
     std::set<std::pair<std::string, std::string>> adoptionsReported;
