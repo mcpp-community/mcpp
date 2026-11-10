@@ -11,8 +11,10 @@
 #   O8  a case's own output: the program's `output` events, or all that a
 #       program which ran one case wrote; several cases are not divided.
 set -e
+source "$(dirname "$0")/_host_path.sh"
 
 TMP=$(mktemp -d)
+TMP_HOST="$(host_path "$TMP")"
 trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 PY=python3; command -v python3 >/dev/null 2>&1 || PY=python
@@ -60,7 +62,7 @@ name    = "app"
 version = "0.1.0"
 
 [dev-dependencies]
-fw = { path = "$TMP/fw" }
+fw = { path = "$TMP_HOST/fw" }
 EOF
 cat > app/tests/t.cpp <<'CPP'
 import std;
