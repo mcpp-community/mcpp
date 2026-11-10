@@ -206,6 +206,7 @@ sysroot = { path = "/opt/acme/sysroot" }    # 团队约定的路径,用于仓库
 
 `[xlings] home` 移动 registry，它指向的必须是 mcpp 建立的 home。不是 mcpp 建立的 home（例如 `~/.xlings`）在这里被拒绝：
 复用它的包应使用 `upstream`（§3）。
+已经存在的 registry 保留建立它的 home 所记录的索引位置：指向它的另一个 home 读取这些索引和存储，不在其中记录自己的位置（2026.11.10.1）。
 
 ## 6. 文件系统与长路径
 

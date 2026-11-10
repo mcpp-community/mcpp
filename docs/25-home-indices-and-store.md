@@ -259,6 +259,9 @@ way to the bundled one, with a note naming why.
 `[xlings] home` moves the registry; it names a home mcpp made. A home mcpp did
 not make (an `~/.xlings`) is refused there: reusing its packages is what
 `upstream` is for (§3).
+A registry that already exists keeps the places of its indices as the home that
+made it recorded them: a second home that names it reads those indices and
+stores and records none of its own there (2026.11.10.1).
 
 ## 6. Filesystems and long paths
 
