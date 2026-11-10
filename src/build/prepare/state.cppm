@@ -705,6 +705,9 @@ struct PrepareState {
     // by every site that used to read `[target.<t>].sysroot` itself.
     std::optional<mcpp::toolchain::base::Statement> baseStatement;
     std::string baseStatementFor;
+    // Decided by the engine's tier before the dependency graph was loaded:
+    // asked again once it is (a provider's base yields to a graph supplier).
+    bool baseStatementProvisional = false;
     // The artifact's runtime when a stated base re-derived it (§4.2 step 6).
     // `runtimeBindingSnapshot` stays what the COMPILER runs on and what a
     // host sub-build inherits; the plan and the context read this one.

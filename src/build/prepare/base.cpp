@@ -115,8 +115,10 @@ std::string missing_path_message(const mcpp::toolchain::triple::Triple& t, const
 std::expected<tb::Statement, std::string>
 base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
     const auto key = t.str();
-    if (state.baseStatement && state.baseStatementFor == key) return *state.baseStatement;
-    bool keep = true;   // the engine's tiers keep their answer only once the graph is known (tier 4)
+    if (state.baseStatement && state.baseStatementFor == key
+        && !(state.baseStatementProvisional && !state.packages.empty()))
+        return *state.baseStatement;
+    bool provisional = false;   // the engine's tier, asked before the graph is known
     auto settle = [&](std::expected<tb::Statement, std::string> s)
         -> std::expected<tb::Statement, std::string> {
         if (!s) return s;
@@ -125,10 +127,9 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
             refusal::record(refusal::Code::TargetBase);
             return std::unexpected(std::format("{} (stated in {})", *why, origin_text(*s)));
         }
-        if (keep) {
-            state.baseStatement = *s;
-            state.baseStatementFor = key;
-        }
+        state.baseStatement = *s;
+        state.baseStatementFor = key;
+        state.baseStatementProvisional = provisional;
         return s;
     };
     auto stamped = [&](std::expected<tb::Statement, std::string> s, std::string kind,
@@ -196,8 +197,9 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
     //    An engine default yields to a dependency graph that supplies the
     //    system (a C library composed over a kernel interface), as the row's
     //    toolchain convention does: a base would be a second C library. Asked
-    //    before the graph is loaded, the answer is provisional and not kept.
-    keep = !state.packages.empty();
+    //    before the graph is loaded, the answer is provisional: it is asked
+    //    again once the graph is known.
+    provisional = state.packages.empty();
     if (!graph_supplies_system(state)) {
         const auto address = tb::row_base(t).address;
         const auto identity = state.targetChoice.identity.empty() ? key : state.targetChoice.identity;
