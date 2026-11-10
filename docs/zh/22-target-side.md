@@ -451,6 +451,7 @@ C 库名的通用知识：
 | 目标 | 请求 | 实现 |
 |---|---|---|
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
+| FreeBSD、NetBSD | `posix` / `arch-default` | 与 Linux 相同：ELF 三元组预定义 `__unix__`，LP64，`wchar_t` 为 32 位（`<arch>-freebsd-musl`，openkal-freebsd 之上的 C 库） |
 | macOS | `posix` / `arch-default` | 一个令牌，`-D__unix__`——Apple 的 clang 在默认三元组上预定义的是 `__APPLE__`/`__MACH__`，从来不是 `__unix__` |
 | freestanding（裸机） | `posix` / `arch-default` | 同样一个令牌，`-D__unix__`，理由相同：这里同样没有任何东西定义它 |
 | Windows | `posix` / `arch-default` | 采用 Cygwin 式语义：只在编译行加 `--target=x86_64-pc-cygwin`；再加 `-D__MCPP_TARGET_WINDOWS__`（见下方说明）；`data-model` 变为 LP64 是三元组切换的结果，不是另一个开关 |

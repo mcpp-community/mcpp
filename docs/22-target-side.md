@@ -523,6 +523,7 @@ that names no C library:
 | Target | Request | Realisation |
 |---|---|---|
 | Linux | `posix` / `arch-default` | the default triple already satisfies it |
+| FreeBSD, NetBSD | `posix` / `arch-default` | as Linux: the ELF triple predefines `__unix__` and is LP64 with a 32-bit `wchar_t` (`<arch>-freebsd-musl`, a C library above openkal-freebsd) |
 | macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
 | freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
 | Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__MCPP_TARGET_WINDOWS__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |

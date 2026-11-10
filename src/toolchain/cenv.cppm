@@ -403,9 +403,12 @@ inline std::expected<Realisation, std::string> realise(
             return refuse("no known way to suppress every environment-"
                           "identity macro on a hosted Windows triple");
         }
-    } else if (os == "linux") {
+    } else if (os == "linux" || os == "freebsd" || os == "netbsd") {
         if (decl.presents == CAbiPresents::Posix) {
-            // The default triple already presents POSIX — nothing to add.
+            // The default triple already presents POSIX — nothing to add. The
+            // BSDs' ELF triples predefine `__unix__` as Linux's does, and are
+            // LP64 with a 32-bit wchar_t (the C library above openkal on
+            // `<arch>-freebsd-musl`).
             r.expectDefined.push_back("__unix__");
             r.expectUndefined.push_back("_WIN32");
         } else {
