@@ -131,6 +131,36 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     return {};
 }
 
+// A SUBJECT is one package whose resources are planned: its manifest, the
+// directory its paths were written in, and the images it owns. Selection
+// decides the graph, not the ownership of an image within that graph.
+namespace {
+struct Subject {
+    const mcpp::manifest::Manifest* m;
+    std::filesystem::path           dir;
+    std::string                     owner;   // qualified package identity
+};
+}  // namespace
+
+static std::vector<Subject> resource_subjects(PrepareState& state, BuildContext& ctx) {
+    std::vector<Subject> subjects;
+    std::set<std::string> seenSubjects;
+    auto add_subject = [&](const auto& manifest, const auto& root) {
+        auto owner = mcpp::build::qualified_package_name(manifest);
+        if (seenSubjects.insert(owner).second)
+            subjects.push_back({&manifest, root, std::move(owner)});
+    };
+    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
+    for (auto const& pkg : state.packages) {
+        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
+        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
+            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
+        });
+        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
+    }
+    return subjects;
+}
+
 std::expected<void, std::string> step13_windows_resources(PrepareState& state, BuildContext& ctx) {
     // ─── Windows resources: [resources] → a tracked link input (mcpp#365) ──
     //
@@ -161,30 +191,7 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // through `[resources] files`: both would sit at ordinal 1, the package
     // said nothing about code pages, and its own manifest is the one it ships.
     // A DECLARED `utf-8` beside such a manifest is refused below instead.
-    //
-    // A SUBJECT is one package whose resources are planned: its manifest, the
-    // directory its paths were written in, and the images it owns. Selection
-    // decides the graph, not the ownership of an image within that graph.
-    struct Subject {
-        const mcpp::manifest::Manifest* m;
-        std::filesystem::path           dir;
-        std::string                     owner;   // qualified package identity
-    };
-    std::vector<Subject> subjects;
-    std::set<std::string> seenSubjects;
-    auto add_subject = [&](const auto& manifest, const auto& root) {
-        auto owner = mcpp::build::qualified_package_name(manifest);
-        if (seenSubjects.insert(owner).second)
-            subjects.push_back({&manifest, root, std::move(owner)});
-    };
-    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
-    for (auto const& pkg : state.packages) {
-        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
-        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
-            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
-        });
-        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
-    }
+    const auto subjects = resource_subjects(state, ctx);
     const bool hostToolBuild = state.overrides.tool_depth > 0;
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
