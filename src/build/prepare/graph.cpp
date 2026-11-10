@@ -71,164 +71,6 @@ namespace mcpp::build {
 // Internal linkage: these names belong to this file, not to
 // mcpp.build.prepare's surface.
 
-static std::vector<std::filesystem::path> expandIncludeDirs(
-        PrepareState& state,
-        const std::filesystem::path& packageRoot,
-        const mcpp::manifest::Manifest& manifest)
-{
-        std::vector<std::filesystem::path> dirs;
-        for (auto const& inc : manifest.buildConfig.includeDirs) {
-            if (inc.is_absolute()) {
-                // Native spelling: a TOML `C:/SDL2/include` stays mixed on
-                // MSVC and leaks into the CDB's -I otherwise. Direct
-                // make_preferred — no generic_string round trip, which can
-                // throw for names the ANSI codepage cannot spell (mcpp#230).
-                auto n = inc;
-                n.make_preferred();
-                state.appendUniquePath(dirs, std::move(n));
-                continue;
-            }
-            for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, inc.generic_string())) {
-                state.appendUniquePath(dirs, dir);
-            }
-        }
-        return dirs;
-}
-
-    // #249: same glob expansion for `include_dirs_after` (the -idirafter
-    // channel — searched after the toolchain's system dirs).
-static std::vector<std::filesystem::path> expandIncludeDirsAfter(
-        PrepareState& state,
-        const std::filesystem::path& packageRoot,
-        const mcpp::manifest::Manifest& manifest)
-{
-        std::vector<std::filesystem::path> dirs;
-        for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
-            if (inc.is_absolute()) {
-                auto n = inc;
-                n.make_preferred();
-                state.appendUniquePath(dirs, std::move(n));
-                continue;
-            }
-            for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, inc.generic_string())) {
-                state.appendUniquePath(dirs, dir);
-            }
-        }
-        return dirs;
-}
-
-    // The same expansion for `private_include_dirs`, so a private entry may be
-    // a glob and still name exactly the directories it expands to.
-static std::vector<std::filesystem::path> expandPrivateIncludeDirs(
-        PrepareState& state,
-        const std::filesystem::path& packageRoot,
-        const mcpp::manifest::Manifest& manifest)
-{
-        std::vector<std::filesystem::path> dirs;
-        for (auto const& inc : manifest.buildConfig.privateIncludeDirs) {
-            if (inc.is_absolute()) {
-                auto n = inc;
-                n.make_preferred();
-                state.appendUniquePath(dirs, std::move(n));
-                continue;
-            }
-            for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, inc.generic_string())) {
-                state.appendUniquePath(dirs, dir);
-            }
-        }
-        return dirs;
-}
-
-static std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
-        PrepareState& state,
-        const std::filesystem::path& packageRoot,
-        const mcpp::manifest::Manifest& manifest)
-{
-        // THE SNAPSHOT READS A NORMALISED MANIFEST; IT DOES NOT NORMALISE ONE.
-        //
-        // Every merge that feeds a package's build inputs (workspace
-        // inheritance, the conditional `[target.<sel>.build]` sections) runs
-        // at the package's LOAD site, and `fold_build_defines_into_flags` runs
-        // after all of them. This lambda only captures the result.
-        //
-        // `[workspace.build]` inheritance used to run here (#539). The root
-        // had already inherited at load time, so it received the workspace
-        // entries twice; a member reached as a sibling's `path` dependency
-        // inherited after its `defines` had been folded, so the workspace
-        // `defines` never reached its compile lines (#690). Both follow from
-        // performing a merge at the snapshot, and both are removed by
-        // performing it at the load site, where the root already did.
-        //
-        // The post-condition below is what keeps it removed: a merge placed
-        // after the fold leaves `defines` non-empty here, and the build stops
-        // with an internal error instead of dropping the macros in silence.
-        if (auto unfolded = unfolded_defines_error(manifest))
-            return std::unexpected(*unfolded);
-
-        mcpp::modgraph::PackageRoot pkg;
-        pkg.root = packageRoot;
-        pkg.manifest = manifest;
-        pkg.usageResolved = true;
-
-        pkg.privateBuild.includeDirs = expandIncludeDirs(state, packageRoot, manifest);
-        pkg.privateBuild.includeDirsAfter = expandIncludeDirsAfter(state, packageRoot, manifest);
-        pkg.privateBuild.cflags = manifest.buildConfig.cflags;
-        pkg.privateBuild.cxxflags = manifest.buildConfig.cxxflags;
-        // NOT `= privateBuild` ANY MORE — a package may now say which of
-        // its include directories stop at its own boundary.
-        //
-        // This line took the whole set for as long as the two were the same
-        // set, which they are for almost every package. The one shape where
-        // they are not is a package that vendors a library with an internal
-        // header overlay: musl's `src/include` adds `hidden`, `weak` and
-        // `weak_alias` for musl's own sources, and publishing it hands those
-        // names to every consumer. See BuildInputs::privateIncludeDirs.
-        //
-        // THE FILTER IS APPLIED AFTER GLOB EXPANSION, so a private entry may
-        // itself be a glob and still name exactly the directories it expands
-        // to. Comparing the unexpanded spellings would let `musl/src/*` be
-        // published because it is not literally equal to `musl/src/include`.
-        {
-            const auto privateExpanded =
-                expandPrivateIncludeDirs(state, packageRoot, manifest);
-            for (auto const& d : pkg.privateBuild.includeDirs)
-                if (std::ranges::find(privateExpanded, d) == privateExpanded.end())
-                    pkg.publicUsage.includeDirs.push_back(d);
-
-            // AN ENTRY THAT WITHHOLDS NOTHING IS REPORTED, because the way
-            // it fails is the very defect this key exists to prevent: a
-            // directory the author believes is private stays published, and
-            // nothing about the build looks different until a consumer trips
-            // over a name months later.
-            //
-            // A WARNING AND NOT AN ERROR, for consistency with `include_dirs`
-            // itself: that key silently ignores a glob matching nothing, and a
-            // conditional manifest can legitimately name a directory that
-            // exists on one platform only. Refusing here would be stricter
-            // than the list this one filters.
-            for (auto const& want : privateExpanded) {
-                if (std::ranges::find(pkg.privateBuild.includeDirs, want)
-                    != pkg.privateBuild.includeDirs.end())
-                    continue;
-                mcpp::diag::warning("manifest", std::format(
-                    "package '{}': `private_include_dirs` names '{}', which is "
-                    "not among this package's `include_dirs`.\n"
-                    "       It withholds nothing — `private_include_dirs` says "
-                    "which entries OF `include_dirs`\n"
-                    "       stop at this package's boundary, and an entry that "
-                    "is not one of them is published\n"
-                    "       exactly as before.",
-                    manifest.package.name, want.generic_string()));
-            }
-        }
-        pkg.publicUsage.includeDirsAfter = pkg.privateBuild.includeDirsAfter;
-        pkg.linkUsage.ldflags = manifest.buildConfig.ldflags;
-        return pkg;
-}
-
 static std::vector<std::string> propagateLinkFlags(
         PrepareState& state,
         const std::filesystem::path& depRoot,
@@ -680,6 +522,10 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             }};
         }
 
+        // THE ROOT'S OVERRIDE (T2): a dependency's request for a package the
+        // root declares `override = true` takes the root's source.
+        step4b_apply_root_override(state, item);
+
         // A VERSION THE ROOT HAS ALREADY ANSWERED FOR. A dependency's request
         // by version for an identity the root declared by path or git is
         // overridden by the root's declaration (row 4 below), whatever the
@@ -824,6 +670,29 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
     return {};
 }
 
+// The constraints a record is bound by: those of the requesters still in the
+// graph. A record kept before requests were tracked by requester answers with
+// its combined string.
+static std::string effective_constraint(const PrepareState& state,
+                                        const ResolvedRecord& r) {
+    if (r.constraintsBy.empty()) return r.constraint;
+    std::string out;
+    for (auto const& [by, c] : r.constraintsBy) {
+        if (state.supersededRequesters.contains(by)) continue;
+        out += (out.empty() ? "" : ",") + c;
+    }
+    return out.empty() ? std::string("*") : out;
+}
+
+// THE PROJECT'S WAY OUT OF AN IRRECONCILABLE PAIR (T3): the line that chooses
+// one version for the whole graph, ready to copy into the root's manifest.
+static std::string override_hint(const ResolvedKey& key, std::string_view a, std::string_view b) {
+    const auto name = key.ns.empty() ? key.shortName : key.ns + "." + key.shortName;
+    return std::format("\n       Or choose one version for the whole graph in the root's mcpp.toml:\n"
+                       "           {} = {{ version = \"{}\", override = true }}   # or \"{}\"",
+                       name, a, b);
+}
+
 static std::expected<void, std::string>
 step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                std::map<ResolvedKey, ResolvedRecord>::iterator it) {
@@ -844,7 +713,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
 
                 auto merged = mcpp::pm::try_merge_semver(
                     key.ns, key.shortName,
-                    it->second.constraint,
+                    effective_constraint(state, it->second),
                     item.originalConstraint,
                     state.index_route(*cfg), *state.targetPlatform);
                 if (!merged) {
@@ -879,7 +748,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
                             it->second.version, it->second.constraint, it->second.requestedBy,
                             spec.version, item.originalConstraint, item.requestedBy,
-                            merged.error()));
+                            merged.error())
+                        + override_hint(key, it->second.version, spec.version));
                     }
 
                     auto loaded = state.loadVersionDep(name, key.ns, key.shortName, spec.version);
@@ -899,7 +769,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
                             it->second.version, it->second.requestedBy,
                             spec.version, item.requestedBy,
-                            spec.version));
+                            spec.version)
+                        + override_hint(key, it->second.version, spec.version));
                     }
 
                     // THE RENAME'S BOUNDARY (design 2026-10-28 §8.2): it renames
@@ -930,7 +801,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                 state.platform.active
                                     ? std::format(", or select the release of {} that carries the "
                                                   "version you need", state.platform.display())
-                                    : std::string()));
+                                    : std::string())
+                        + override_hint(key, it->second.version, spec.version));
                     }
                     // Module names are authored API and are not required to
                     // mirror package identity. Discover every provided module
@@ -958,7 +830,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                         key.ns, key.ns.empty() ? "" : ".", key.shortName,
                         it->second.version, it->second.requestedBy,
                         spec.version, item.requestedBy,
-                        moduleNames.error()));
+                        moduleNames.error())
+                        + override_hint(key, it->second.version, spec.version));
                     std::map<std::string, std::string> rename;
                     for (auto const& module : *moduleNames) {
                         rename.emplace(module,
@@ -1068,6 +941,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     it->second.constraint = addCstr;
                 else
                     it->second.constraint += "," + addCstr;
+                it->second.constraintsBy.emplace_back(item.requestedBy, addCstr);
 
                 if (*merged == it->second.version) {
                     // The existing pin already satisfies the new constraint —
@@ -1087,6 +961,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     std::format("{}{}{} {} ⨯ {} → v{}",
                         key.ns, key.ns.empty() ? "" : ".", key.shortName,
                         it->second.version, spec.version, *merged));
+                state.supersededRequesters.insert(std::format("{}{}{}@{}",
+                    key.ns, key.ns.empty() ? "" : ".", key.shortName, it->second.version));
                 auto reloaded = state.loadVersionDep(name, key.ns, key.shortName, *merged);
                 if (!reloaded) return std::unexpected(reloaded.error());
                 auto& [newRoot, newManifest] = *reloaded;
@@ -1221,6 +1097,9 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
     auto& key = ctx.key;
     auto& sourceKind = ctx.sourceKind;
 
+            if (sourceKind == "version" && it->second.depIndex < state.dep_manifests.size()
+                && state.dep_manifests[it->second.depIndex])
+                step4b_note_exact_pin(state, item, *state.dep_manifests[it->second.depIndex]);
             // A package is dev-only until some non-dev consumer wants it. Order
             // of arrival must not decide, so this is an AND over every request.
             it->second.devOnly = it->second.devOnly && item.devOnly;
@@ -1684,12 +1563,18 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                     return std::unexpected(std::format(
                         "dependency '{}': patch_root '{}' leaves the package's source", name, spec.patchRoot));
                 std::vector<std::string> notes;
-                if (auto r = mcpp::pm::patch::materialize(dep_root, spec.patches,
-                                                          spec.patchesDigest, variant,
-                                                          spec.patchRoot, &notes); !r)
+                // A MEMBER IS PATCHED IN A COPY OF ITS WHOLE CLONE, so its `path` edges keep
+                // their targets (design 2026-11-10 E6); `+repo` keeps it apart from an older copy.
+                const bool member = !gitMember.empty();
+                const auto tree = member ? variant.parent_path() / (variant.filename().string() + "+repo") : variant;
+                const auto patchRoot = member
+                    ? (std::filesystem::path(gitMember) / spec.patchRoot).lexically_normal().generic_string()
+                    : spec.patchRoot;
+                if (auto r = mcpp::pm::patch::materialize(member ? gitMemberCloneRoot : dep_root, spec.patches,
+                                                          spec.patchesDigest, tree, patchRoot, &notes); !r)
                     return std::unexpected(std::format("dependency '{}': {}", name, r.error()));
                 for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", name, n));
-                dep_root = variant;
+                dep_root = member ? tree / gitMember : tree;
             }
         }
         // (version-source: dep_root + manifest are loaded together via
@@ -2010,11 +1895,19 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             .fromRoot          = state.declaredByRoot(item.consumerDepIndex),
             .fromSelectedMember = item.consumerDepIndex != kMainConsumer
                                   && state.declaredByRoot(item.consumerDepIndex),
+            .overridden        = state.declaredByRoot(item.consumerDepIndex) && spec.override_,
             .devOnly           = item.devOnly,
             .depIndex          = state.dep_manifests.size() - 1,
             .linkFlagsAdded    = std::move(linkFlagsAdded),
             .patches           = spec.patches,
+            .constraintsBy     = sourceKind == "version"
+                ? std::vector<std::pair<std::string, std::string>>{{item.requestedBy,
+                      item.originalConstraint.empty() ? std::string("*") : item.originalConstraint}}
+                : std::vector<std::pair<std::string, std::string>>{},
         };
+
+        if (sourceKind == "version" && !state.dep_manifests.empty() && state.dep_manifests.back())
+            step4b_note_exact_pin(state, item, *state.dep_manifests.back());
 
         // Recurse: the dep's own [dependencies] become new worklist items.
         // dev-dependencies are intentionally NOT walked — those are
@@ -2401,6 +2294,9 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     step4b_seed_platform(state);
     if (auto r = step4b_platform_within_engine(state); !r) return r;
 
+    // The root's overrides (T2), before any request is resolved.
+    step4b_read_root_overrides(state);
+
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
     const std::string mainPkgLabel = state.m->package.name;
@@ -2440,6 +2336,12 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
             WorklistItemCtx ctx;
             ctx.item = std::move(state.worklist.front());
             state.worklist.pop_front();
+            if (state.supersededRequesters.contains(ctx.item.requestedBy)) {
+                mcpp::log::verbose("resolve", std::format(
+                    "{} is not walked: {}, which asked for it, was replaced by a merge",
+                    ctx.item.name, ctx.item.requestedBy));
+                continue;
+            }
 
             if (auto r = step4b_resolve_identity(state, ctx); !r)
                 return std::unexpected(r.error());

@@ -238,7 +238,12 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // The codegen step compiles a BMI, which already carries what the
     // headers contributed; only the machine has to be restated. See
     // Toolchain::stdModuleTargetFlags.
-    const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // A BASE PACKAGE'S OWN WORDS FOR ITS MODULE (design 2026-11-10 E5,
+    // SPEC-002 §2.3 `std-module-flags`): what the system's headers need for the
+    // module to export them, on both steps.
+    std::string baseModuleWords;
+    for (auto const& w : tc.base.layers.stdModuleFlags) baseModuleWords += " " + w;
+    const std::string codegenFlags = tc.stdModuleTargetFlags + baseModuleWords;
     // AND THE PRECOMPILE NEEDS THE MACHINE TOO, FROM WHICHEVER SOURCE HAS IT.
     //
     // `stdModuleTargetFlags` reached only the CODEGEN command, on the reading
@@ -266,8 +271,8 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // `stdModuleTargetFlags` when it is set at all (the producer builds the
     // machine part first and appends the include part), so taking it in
     // preference keeps `--target` off the command line twice.
-    const std::string& precompileFlags =
-        extraFlags.empty() ? codegenFlags : extraFlags;
+    const std::string precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags + baseModuleWords;
     if constexpr (mcpplibs::os::is_windows) {
         // Windows: use absolute paths, raw binary path as first token
         // (cmd.exe strips leading quotes), shq for args with spaces.
@@ -492,10 +497,15 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     const std::string& extraFlags = tc.stdModuleFlags;
     // Same split as the `std` builder above: the second command compiles a BMI
     // and needs the machine restated, not the include paths.
-    const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // A BASE PACKAGE'S OWN WORDS FOR ITS MODULE (design 2026-11-10 E5,
+    // SPEC-002 §2.3 `std-module-flags`): what the system's headers need for the
+    // module to export them, on both steps.
+    std::string baseModuleWords;
+    for (auto const& w : tc.base.layers.stdModuleFlags) baseModuleWords += " " + w;
+    const std::string codegenFlags = tc.stdModuleTargetFlags + baseModuleWords;
     // Same third kind of toolchain as the `std` builder above, same reason.
-    const std::string& precompileFlags =
-        extraFlags.empty() ? codegenFlags : extraFlags;
+    const std::string precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags + baseModuleWords;
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.

@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.6 |
+| 状态 | 评审中 v1.7 |
 | 版本 | 1.5 |
-| 最后修改 | 2026-11-09 |
-| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;逐条标注 |
+| 最后修改 | 2026-11-10 |
+| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
 | 相关规范 | [SPEC-002](target-side.md)(目标侧的层)、[SPEC-004](manifest-semantics.md)(条件化形状)、[SPEC-006](toolchain-management.md)(工具链选择)、[SPEC-007](build-plugins.md)(构建程序与协议)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-014](packaging.md)(打包) |
@@ -279,7 +279,7 @@ plugin    = "build.mcpp"
 | 键 | 语义 |
 |---|---|
 | `driver` | `"compiler"`(编译器驱动链接,缺省)或 `"lld"`(`ld.lld` 直接链接) |
-| `flags` | `driver = "lld"` 时给 `ld.lld` 的参数,位于其他链接参数之前 |
+| `flags` | `driver = "lld"` 时给 `ld.lld` 的参数,位于其他链接参数之前;`driver = "compiler"` 时不交给任何程序,构建**必须**给出警告并指名 `[platform.build] ldflags`(v1.7) |
 | `start` | 入口符号(SPEC-004 §14);入口未定义是链接错误 |
 | `script` | 平台包中的链接脚本,以 `-T` 给出 |
 | `inputs` | `{ file = "<包内路径>" }`,或 `{ from = [argv], as = "<文件名>" }`:运行程序,把其标准输出保存为 `as`;以 `.S`、`.s` 结尾时先汇编,否则原样参与链接 |
@@ -405,7 +405,7 @@ run_under = ["qemu-aarch64"]
 ## 14. 内置平台与目标表
 
 宿主目标(Linux、macOS、Windows、Android、iOS、Emscripten)的约定留在引擎中,无平台包。目标表有平台列:
-`x86_64-openkal`、`aarch64-openkal` 的值为一个确切的平台版本,即当前引擎验证过的版本(mcpp 2026.11.8.1 为 `mcpplibs.openkal-platform@0.24.4`),
+`x86_64-openkal`、`aarch64-openkal` 的值为一个确切的平台版本,即当前引擎验证过的版本(mcpp 2026.11.10.1 为 `mcpplibs.openkal-platform@0.25.0`),
 也是这两个目标的内置支持;选择来源报告为 `built-in`。项目可以以 `[target.<selector>] platform` 选择另一个版本或系列。
 锁中记录的版本不满足内置版本时不被采用,报告写出采用的版本与锁中记录的版本。使用内置版本的构建失败、且已同步的索引中
 有更新版本时,构建以一条 `tip` 写出两个版本与选择它的写法(mcpp >= 2026.11.7.2;2026.11.7.1 的值为系列 `^0.24`)。**已实现**
@@ -547,3 +547,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.5 | 2026-11-07 | mcpp 2026.11.7.2(设计 2026-11-07 §4.10,D20):§14 目标表的平台列为确切版本 0.24.3,锁中不满足的记录不被采用并写出;使用内置版本的构建失败且索引有更新版本时给出提示;判据 15 新增(e2e 1025)。 |
 | 1.4 | 2026-11-07 | mcpp 2026.11.7.1(设计 2026-11-07 §4.1.4、§4.2.2 A2/A3):§7.5 版本组参与解析,解析后的检查保留为断言;§3.2 平台引用接受 SemVer 约束;§14 目标表的平台列为系列 `^0.24`,系列取引擎可读的最新版本;§15.1 系列从锁中读回,`mcpp update` 移动它;判据 5 改写、14 新增(e2e 1020、1021)。 |
 | 1.6 | 2026-11-09 | mcpp 2026.11.9.1(SPEC-016,mcpp#911):§1 `[[platform.define]]` 与 `[[platform.provider]]` 为一般形式,`[platform]`、`[platform.hosted]` 为其简写;§9.2 `driver = "compiler"` 在每一行生效,平台的产物名模式不被构建程序改变;§11 平台定义的系统上的载体与 `--systems`;主机对为任意系统词。 |
+| 1.7 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E8,mcpp#911 N6):§4 `link.flags` 在 `driver = "compiler"` 时给出警告。 |

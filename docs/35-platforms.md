@@ -194,8 +194,8 @@ index change resolves the same either way.
 ## The built-in platform is one release
 
 The target table selects one openkal-platform release for the two ok-image
-targets, the one this mcpp was qualified with: 0.24.4 for mcpp 2026.11.8.1,
-0.24.3 for 2026.11.7.2 (2026.11.7.1 selected the series `^0.24`). A project that states no platform
+targets, the one this mcpp was qualified with: 0.25.0 for mcpp 2026.11.10.1,
+0.24.4 for 2026.11.8.1 and 2026.11.9.1, 0.24.3 for 2026.11.7.2 (2026.11.7.1 selected the series `^0.24`). A project that states no platform
 builds the same versions at any time, with or without `mcpp.lock`; when the lock
 records another release, the build takes the default and says which release the
 lock recorded. A newer platform needs no new mcpp: a project selects it in its
@@ -203,7 +203,7 @@ manifest,
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.24.4"     # a release, or a series: "openkal-platform@^0.24"
+platform = "openkal-platform@0.25.0"     # a release, or a series: "openkal-platform@^0.25"
 ```
 
 and a build that fails while the default is in use and the synced index holds a
@@ -297,25 +297,63 @@ states the row, `[[platform.provider]]` the provider that serves it:
 
 ```toml
 [[platform.define]]
-triple        = "x86_64-freebsd"
-clang-triple  = "x86_64-unknown-freebsd14.1"
+triple        = "x86_64-haiku"
+clang-triple  = "x86_64-unknown-haiku"
 object-format = "elf"
 family        = "unix"
-execution     = "freebsd"          # the system its programs run on
+execution     = "haiku"            # the system its programs run on
 
 [[platform.provider]]
-serves   = ["x86_64-freebsd"]      # patterns: `*` is any one segment
+serves   = ["x86_64-haiku"]        # patterns: `*` is any one segment
 priority = 100
 hosted   = true                    # the C environment has `main`
 ```
 
-With the platform selected (`[target.x86_64-freebsd] platform = {...}` or
-`--platform`), `--target x86_64-freebsd` builds into `target/x86_64-freebsd/`,
-`cfg(os = "freebsd")` holds, and a program whose system is not this machine's
+With the platform selected (`[target.x86_64-haiku] platform = {...}` or
+`--platform`), `--target x86_64-haiku` builds into `target/x86_64-haiku/`,
+`cfg(os = "haiku")` holds, and a program whose system is not this machine's
 is built, not run, until a runner states how it runs (docs/41). The row's
 machine description is the platform's: a target whose machine differs from a
 built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
 shorthands of a provider.
+
+**A defined row is read as a built-in one (2026.11.10.1+).** Its `march` and
+`link-emulation` reach the compile and an `ld.lld` link (`mcpp why flags` marks them
+`row`); nothing the toolchain payload built for its own host — its libc++ headers,
+its runtime directories, the host's `-L` and RPATH — reaches the row; and the host
+loader's closure and symbol checks apply only when the row's execution system is
+this machine's. The same holds for a built-in row no built-in provider serves.
+
+**A system the built-in rows name is served, not defined (2026.11.10.1+).**
+FreeBSD's rows are built-in (`x86_64-freebsd`, `aarch64-freebsd`); a platform that
+serves them states a provider and a base for each, and defining them again is an error.
+A provider's `sysroot` (a package, or `{ path = "<dir>" }` relative to the platform's
+manifest) is that identity's base, ahead of the platform's own `sysroot`:
+
+```toml
+[platform]
+toolchain = "llvm@23.1.3"
+
+[[platform.provider]]
+serves  = ["x86_64-freebsd"]
+sysroot = "xim:x86_64-freebsd-sysroot@14.5"     # a base package ([22](22-target-side.md))
+hosted  = true
+
+[[platform.provider]]
+serves  = ["aarch64-freebsd"]
+sysroot = "xim:aarch64-freebsd-sysroot@14.5"
+hosted  = true
+
+[platform.build]
+ldflags = ["-pthread"]
+
+[platform.link]
+driver = "compiler"
+```
+
+**`[platform.link] flags` are words for ld.lld (2026.11.10.1+).** A platform whose
+`driver` is `"compiler"` gives them to no program, and the build says so, naming
+`[platform.build] ldflags`, whose words reach the compiler's link.
 
 `mcpp new <name> --template platform` writes a platform package defining
 `<arch>-<name>`. Reading a platform's manifest checks its statement against the

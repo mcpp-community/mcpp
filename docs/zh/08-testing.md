@@ -70,8 +70,10 @@ discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
 `[test] link = "objects"` 保留每个目标文件的全部内容。
 
 一次运行以 mtest 存储的形式保存（2026.11.9.1+）：`target/mtest/` 中有 `runs/<id>/run.json`，
-`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例），`cases.ndjson`
-每个用例一行，`index.ndjson` 列出各次运行。`mtest store import --from target/mtest` 把它们取入 mtest 的存储，
+`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例，程序报告时还有 `usage`），`cases.ndjson`
+每个用例一行（其 kind、tags、相对运行开始的开始时刻、带期望值与实际值的失败、指标与界限，2026.11.10.1+），
+`index.ndjson` 列出各次运行。`Bench` 用例的测量因此留在存储中，`mtest analyze trend` 把它们与其界限一起按
+`mcpp test` 保存的各次运行展示。`mtest store import --from target/mtest` 把它们取入 mtest 的存储，
 `[project] store` 为 `target/mtest` 的 `mtest.toml` 则就地读取；`mtest report`、`analyze` 与 `graph` 随之像读取
 mtest 自身的运行一样读取它们（Markdown 报告、最慢的用例、关键路径与调度）。在 CI 中 `commit` 与 `group` 取
 `GITHUB_SHA` 与 `GITHUB_RUN_ID`。`[test] store = "<dir>"` 另指一个目录，相对项目；`"none"` 不保存。
@@ -133,6 +135,14 @@ mcpp test -- --verbose    # everything after `--` goes to each test binary
 属于叙述，写到标准错误，因此 `mcpp test > report.txt` 收集报告，
 `mcpp test 2>&1 | tee test.log` 两者都收集
 （见 [09 —— 按场景选命令](09-commands-by-scenario.md#输出流)）。
+
+### 未改动的工程（2026.11.10.1+）
+
+测试的图是 `test.ninja`，与构建的 `build.ninja` 位于同一构建目录；两者共享目标文件和 ninja 的记录，
+因此 `mcpp test` 之后的 `mcpp build` 重放它自己的图，两张图都编译的目标文件只编译一次。完整的一次运行记录它为
+包的每个测试所做的计划（`test-plan.json`）。此后，若工程未改动（清单、锁、`src/` 与 `tests/` 下的源文件、路径依赖、
+工具链）且测试仍是记录中的那些，运行直接按记录执行所选测试，不再规划；任何改动都走完整路径。构建目录只在构建测试期间
+被占用，在第一个测试运行前释放，因此构建或同一配置的另一次测试可以与正在运行的测试并行进行。
 
 ### 变更影响的测试
 
@@ -270,7 +280,7 @@ mcpp test --archive tests.tar.gz                             # 在检出中运�
 
 一个测试程序可以由若干用例组成。mcpp 不为用例提供框架，而是实现一份由框架实现的协议的运行器一侧：
 [mtest 测试协议](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md) 第 1 版
-（mcpp 2026.11.8.1+）。程序的入口陈述它时，程序实现该协议：
+（mcpp 2026.11.8.1+），与程序所用的框架或语言无关（[SPEC-017](../specs/test.md)）。程序的入口陈述它时，程序实现该协议：
 
 ```toml
 [targets.main]

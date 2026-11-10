@@ -47,6 +47,10 @@ struct LockedPackage {
     // package and in a lock written before the fields.
     std::string              variant;
     std::vector<std::string> patches;
+    // The root chose it for the whole graph (`override = true`, design
+    // 2026-11-10 supplement T2): the version is the root's, not the one the
+    // requests would have merged to. False in a lock written before the field.
+    bool                     overridden = false;
 };
 
 // Parsed form of a git source string as written to mcpp.lock.
@@ -182,6 +186,7 @@ std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
                 for (auto const& e : it->second.as_array())
                     if (e.is_string()) lp.targets.push_back(e.as_string());
             if (auto it = tt.find("variant"); it != tt.end() && it->second.is_string()) lp.variant = it->second.as_string();
+            if (auto it = tt.find("override"); it != tt.end() && it->second.is_bool()) lp.overridden = it->second.as_bool();
             if (auto it = tt.find("patches"); it != tt.end() && it->second.is_array())
                 for (auto const& e : it->second.as_array())
                     if (e.is_string()) lp.patches.push_back(e.as_string());
@@ -243,6 +248,7 @@ std::string serialize(const Lockfile& lock) {
         out += std::format("source  = {}\n", t::escape_string(p.source));
         out += std::format("hash    = {}\n", t::escape_string(p.hash));
         if (!p.origin.empty()) out += std::format("origin  = {}\n", t::escape_string(p.origin));
+        if (p.overridden) out += "override = true\n";
         if (!p.targets.empty()) {
             std::string list;
             for (auto const& t : p.targets) list += (list.empty() ? "" : ", ") + t::escape_string(t);

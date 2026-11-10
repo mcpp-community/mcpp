@@ -313,6 +313,10 @@ step9_gather_target_side_candidates(PrepareState& state) {
                     if (ovr && (ovr->starts_with("path:") || ovr->find(':') == std::string::npos))
                         in.sysrootLibc = state.tc->base.libc.empty() ? std::string("sysroot")
                                                                      : state.tc->base.libc;
+                    // A base package states its C library (`provides`, E5),
+                    // and that name is the layer's, not the package's.
+                    else if (!state.tc->base.layers.cAbi.empty())
+                        in.sysrootLibc = state.tc->base.layers.cAbi;
                     // A hosted base whose C library is the row's own, measured
                     // and floor-checked by `step2_resolve_base`.
                     const auto& b = state.tc->base;
@@ -324,6 +328,12 @@ step9_gather_target_side_candidates(PrepareState& state) {
             }
             in.payloadLibcRef      = state.tc->base.package;
             in.payloadCxxInterface = state.tc->stdlibId;
+            if (auto const& L = state.tc->base.layers; !L.cxx.empty() || !L.compilerRuntime.empty()) {
+                in.baseRef = L.ref;
+                in.baseCxx = L.cxx;
+                in.baseCompilerRuntime = L.compilerRuntime;
+                in.baseHasStdModule = !L.stdModule.empty();
+            }
             // The compiler is a layer, and it is the one layer no package can
             // supply. It enters here so that a requirement has something to be
             // checked against and so the report can show the whole stack.
@@ -1125,6 +1135,10 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
             refusal::record(refusal::Code::LayerRequirement);
             return std::unexpected(*why);
         }
+        if (auto why = tsd::check_layer_cycle(state.resolvedTargetSide, gather.requirements)) {
+            refusal::record(refusal::Code::LayerCycle);
+            return std::unexpected(*why);
+        }
         // The islands: packages whose private C++ requirement the graph's C++
         // layer does not meet. Verified where their objects and the image
         // exist (phase 13 and after the link), not here.
@@ -1333,6 +1347,18 @@ step9_same_os_check_and_report(PrepareState& state) {
             if (want && got && !want->os.empty() && !got->os.empty()
                 && want->os != got->os && !okImage && !stated) {
                 refusal::record(refusal::Code::OsMismatch);
+                // A row no built-in provider serves is a platform's to serve
+                // (E4): the remedy is the platform, not a toolchain.
+                if (want->c_library_by_platform())
+                    return std::unexpected(std::format(
+                        "target '{}' is served by a platform, and none is selected for it.\n"
+                        "       Its C library and C++ run-time are the system's own, which a "
+                        "platform package states\n"
+                        "       (a sysroot and the layers over it). Select one with\n"
+                        "           [target.{}]\n"
+                        "           platform = \"<package>@<version>\"   # or {{ path = \"...\" }}\n"
+                        "       `mcpp why target --target {}` lists the candidates.",
+                        reportedTargetName, reportedTargetName, reportedTargetName));
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"
                     "       Those are different operating systems, so nothing "

@@ -227,9 +227,11 @@ inline RowBase row_base(const triple::Triple& t) {
         return {Address::MsvcRoots, static_cast<std::uint8_t>(pkg | loc | path), "msvc",
                 "\"msvc@system\", \"msvc@<toolset>\", \"xim:msvc@<toolset>\" or, for clang, "
                 "{ path = \"<dir>\" }"};
+    // A MinGW-w64 toolchain carries its own system, and a base package
+    // (`xim:mingw-w64-sysroot@<v>`, or its directory) is one for clang (E9).
     if (t.os == "windows")
-        return {Address::DriverInternal, static_cast<std::uint8_t>(pkg | empty), {},
-                "a package or \"\": the MinGW toolchain carries its own system"};
+        return {Address::DriverInternal, static_cast<std::uint8_t>(pkg | path | empty), {},
+                "a base package (\"xim:mingw-w64-sysroot@<version>\"), { path = \"<dir>\" } or \"\""};
     if (t.os == "linux" && t.is_musl())
         return {Address::GnuSysroot, static_cast<std::uint8_t>(pkg | loc | path | empty), "musl",
                 "a package, \"musl@system\", { path = \"<dir>\" } or \"\""};
@@ -455,6 +457,22 @@ struct Resolution {
     // Content identity: enters the runtime contract and so the fingerprint.
     // Empty for the ecosystem default, whose identity is the contract itself.
     std::string            identity;
+    // A BASE PACKAGE (design 2026-11-10 E5; SPEC-002 §2.5): a base whose root
+    // carries a package manifest. Its `provides` answers its layers and its
+    // `[build]` keys state them; its root is the sysroot, and its C++ headers,
+    // libraries and std module stand where the toolchain payload's would.
+    struct Layers {
+        std::string ref;                              // `x86_64-freebsd-sysroot@14.5`
+        std::string cAbi;                             // from `provides`, e.g. `freebsd-libc`
+        std::string cxx;                              // `libc++`; empty: none
+        std::string compilerRuntime;                  // `libgcc`; empty: none
+        std::vector<std::filesystem::path> cxxIncludes;   // absolute
+        std::vector<std::string> ldflags;                 // `[build] ldflags`: the C++ libraries
+        std::filesystem::path stdModule, stdCompatModule; // absolute; empty: none
+        std::vector<std::string> stdModuleFlags;          // `std-module-flags`
+        std::filesystem::path compilerRuntimeDir;         // `[build] compiler_runtime_dir`, absolute
+    };
+    Layers                 layers;
 
     bool stated() const { return form != Form::Default; }
 };

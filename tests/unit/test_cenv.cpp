@@ -47,6 +47,18 @@ UTest linux_posix_arch_default_is_a_no_op{"CEnv/LinuxPosixArchDefaultIsANoOp", [
     expect(eq(r->expectWcharBits, 32));
 }};
 
+// The BSDs are Linux's row: the ELF triple already presents POSIX.
+UTest bsd_posix_arch_default_is_a_no_op{"CEnv/BsdPosixArchDefaultIsANoOp", [] {
+    auto d = decl(ts::CAbiPresents::Posix, ts::CAbiDataModel::ArchDefault, 32);
+    for (auto os : {"freebsd", "netbsd"}) {
+        auto r = cenv::realise(d, os, "x86_64", false);
+        if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+        expect(r->tokens.empty());
+        expect(eq(r->expectLongBytes, 8));
+        expect(eq(r->expectWcharBits, 32));
+    }
+}};
+
 // NOT a no-op — a correction from the design's original text, caught by the
 // verification probe on a real build (coordinator report): Apple's clang
 // predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__`.

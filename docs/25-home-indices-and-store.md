@@ -35,6 +35,12 @@ stated on the build's own command lines.
   xpkgs/                    the payloads they serve
 ```
 
+Processes share a home. Installing a package is one process at a time
+(2026.11.10.1+): a process takes the home's install turn
+(`registry/.install.lock`) before it installs, keeps it for the package's own
+dependencies, and a process that waited for the turn looks for the package
+again first, so a package two builds ask for at once is installed once.
+
 `<project>/.mcpp/` is the machine's state of the project, never its sources.
 mcpp writes `.gitignore` with the one line `*` into it whenever it creates or
 uses it, so version control ignores it in a project whose own ignore file does
@@ -253,6 +259,9 @@ way to the bundled one, with a note naming why.
 `[xlings] home` moves the registry; it names a home mcpp made. A home mcpp did
 not make (an `~/.xlings`) is refused there: reusing its packages is what
 `upstream` is for (§3).
+A registry that already exists keeps the places of its indices as the home that
+made it recorded them: a second home that names it reads those indices and
+stores and records none of its own there (2026.11.10.1).
 
 ## 6. Filesystems and long paths
 

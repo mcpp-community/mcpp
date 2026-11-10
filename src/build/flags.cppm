@@ -942,6 +942,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         hopt.appleSdkCxxHeaders = plan.toolchain.base.apple.cxxHeaders;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+        // The machine description of a row a platform defines (E1, SPEC-016 §2.1).
+        if (auto spec = mcpp::freestanding::hosted_spec(plan.toolchain.targetTriple))
+            for (auto const& w : mcpp::freestanding::row_words(*spec))
+                compile_toolchain_flags += " " + w;
         for (auto const& w : mcpp::toolchain::apple_float_macro_words(plan.toolchain))
             compile_toolchain_flags += " " + ninja_command_word(w);
     } else {
@@ -1399,6 +1403,9 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
                         msvc_base, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag);
+    // The paired system's C++ library, on C++ commands only (SPEC-016 §6).
+    if (!isFreestandingTarget)
+        if (auto w = mcpp::toolchain::paired_stdlib_flag(plan.toolchain); !w.empty()) f.cxx += " " + w;
     // MSVC compiles C with cl.exe too; /std: for C uses cN spellings — skip
     // the C standard flag there (cl defaults are fine for the C entry TUs).
     //
@@ -1613,7 +1620,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // (`llvm.libcxx` on the iOS rows, mcpp#630), and asking the C library
         // there answered "payload" and linked the SDK's `-lc++` under objects
         // compiled against the package's headers.
-        mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph() && !graphLibstdcxx;
+        // A base package's C++ run-time is not the toolchain's either (design
+        // 2026-11-10 E5): its libraries are on the link by name, and the
+        // payload's archives, built for the payload's host, are not.
+        mi.graphCxxRuntime = (plan.targetSide.cxx.fromGraph() && !graphLibstdcxx)
+            || !plan.toolchain.base.layers.cxx.empty();
 
         // AND THE DRIVER'S HALF, WHICH IS ASKED FIRST (#634 A6).
         //
@@ -1709,6 +1720,20 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (wantsArchives) {
             auto libcxxA    = find_archive("libc++.a");
             auto libcxxAbiA = find_archive("libc++abi.a");
+            // Another target's archives (MechanismInput::foreignCxxArchives): the
+            // directory names a triple of another architecture or system.
+            if (!libcxxA.empty()) {
+                const auto dir = std::filesystem::path(libcxxA).parent_path().filename().string();
+                const auto theirs = std::ranges::count(dir, '-') >= 2 ? mcpp::toolchain::triple::parse(dir) : std::nullopt;
+                const auto ours = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+                auto same_os = [](std::string_view a, std::string_view b) { return a.starts_with(b) || b.starts_with(a); };
+                if (theirs && ours && (theirs->arch != ours->arch || !same_os(theirs->os, ours->os))) {
+                    mi.foreignCxxArchives = true;
+                    mi.foreignCxxTriple = dir;
+                    libcxxA.clear();
+                    libcxxAbiA.clear();
+                }
+            }
             mi.libcxxArchive    = libcxxA.empty()    ? std::string{} : escape_path(libcxxA);
             mi.libcxxAbiArchive = libcxxAbiA.empty() ? std::string{} : escape_path(libcxxAbiA);
             {
@@ -1954,6 +1979,25 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     if (compressDebug) link_extra += " -gz=zlib";
     if (prof.strip) link_extra += " -s";
 
+    // A BASE PACKAGE'S RUN-TIMES ON THE LINK (design 2026-11-10 E5): where its
+    // compiler runtime stands (`compiler_runtime_dir`: clang reads it as its
+    // resource directory, gcc through `-B`), and, when it supplies the C++
+    // layer, its `ldflags` in place of the driver's own C++ library, which
+    // names the toolchain's.
+    auto base_link_words = [&] {
+        std::string words;
+        auto const& L = plan.toolchain.base.layers;
+        if (!L.compilerRuntimeDir.empty())
+            words += plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
+                ? " -resource-dir=" + ninjaEsc(L.compilerRuntimeDir)
+                : " -B" + ninjaEsc(L.compilerRuntimeDir);
+        if (!L.cxx.empty() && !L.ldflags.empty()) {
+            words += " -nostdlib++";
+            for (auto const& w : L.ldflags) words += " " + ninja_command_word(w);
+        }
+        return words;
+    };
+
     // MinGW PE link — keyed on the TARGET (is_mingw_target), NOT the host: a
     // Linux-hosted cross build produces exactly the same PE link as a native
     // Windows MinGW build (host≠target). No rpath/loader/payload model. Static
@@ -2003,15 +2047,29 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // is the sysroot, libstdc++ and libgcc its runtime, lld the linker;
         // `-pthread` because the payload's threads are winpthreads, which the
         // clang driver does not add by itself.
+        // A BASE PACKAGE THERE (E9) states libc++, libunwind and compiler-rt;
+        // the compiler runtime is read from the directory the base names
+        // (`[build] compiler_runtime_dir`), a resource directory of the link only,
+        // since the payload's own holds no runtime for this target.
+        auto const& layers = plan.toolchain.base.layers;
         const std::string paired = plan.toolchain.pairedSysroot.empty() ? std::string{}
+            : layers.cxx == "libc++"
+            ? " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
+              + " -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -fuse-ld=lld"
             : " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
               + " -stdlib=libstdc++ -rtlib=libgcc -fuse-ld=lld -pthread";
         f.ld = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                            user_ldflags, mingw_stdexp, link_extra);
+        // A static link over a base takes its archives, not the import
+        // libraries beside them (`libc++.dll.a`), which lld prefers otherwise.
+        const std::string baseStatic =
+            !plan.toolchain.pairedSysroot.empty() && !layers.cxx.empty() && f.linkage == "static"
+            ? " -static" : "";
+        f.ld += baseStatic + base_link_words();
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}{}{}", crossTarget, paired, link_intent_ld,
-                            user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
+                            user_ldflags, link_extra, baseStatic);
         return f;
     }
 
@@ -2611,6 +2669,9 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         if (p.fields.link.driver.value == "lld") {
             f.ldDriver = mcpp::freestanding::resolve_lld_any(plan.toolchain.binaryPath);
             f.ld  = words(p.fields.link.flags.value) + words(p.flags.ldflags) + user_ldflags;
+            // The row's emulation first, as for a bare-metal row (E1).
+            if (auto spec = mcpp::freestanding::hosted_spec(plan.toolchain.targetTriple))
+                for (auto const& w : mcpp::freestanding::row_link_words(*spec)) f.ld = " " + w + f.ld;
             // `lld` and `lld-link` are the same program, which chooses its
             // flavour from its name or from `-flavor`; a payload that ships
             // one of them and not `ld.lld` is asked for the ELF linker
@@ -2636,6 +2697,9 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             f.ldC += t;
         }
     }
+
+    // A BASE PACKAGE'S RUN-TIMES (design 2026-11-10 E5).
+    f.ld += base_link_words();
 
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY
     // SHAPE HAS BUILT ITS LINE.

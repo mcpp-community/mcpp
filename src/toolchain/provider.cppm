@@ -90,7 +90,8 @@ ProviderCapabilities capabilities_for(const Toolchain& tc) {
 
             caps.has_scan_deps  = true;     // clang-scan-deps lives beside clang++
             caps.stdlib_id      = msvc_target ? "msvc-stl"
-                                : !tc.pairedSysroot.empty() ? "libstdc++" : "libc++";
+                                : !tc.pairedSysroot.empty() && tc.base.layers.cxx != "libc++" ? "libstdc++"
+                                : "libc++";
             caps.archive_format = "llvm-ar";
             break;
         }

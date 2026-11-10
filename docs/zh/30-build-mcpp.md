@@ -1148,6 +1148,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 | `MCPP_TARGET_ARCH` *(0.0.100+)* | `mcpp::target_arch()` | 目标的 arch 段（GNU 拼写：`x86_64`、`aarch64`…） |
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | 目标的 env 段（`gnu`/`musl`/`msvc`）；三元组无 env 段（macOS）时为空串 |
 | `MCPP_TARGET_PROVIDER` *(2026.11.9.1+)* | `mcpp::target_provider()` | 选择为目标身份给出的提供者（`openkal`、`musl-gcc`、`msvc` 等；SPEC-016 §4）；宿主自身的构建为空串 |
+| `MCPP_KERNEL_ABI_INTERFACES` *(2026.11.10.1+)* | `mcpp::kernel_abi_interfaces()` | 声明 `requires = ["mcpp:kernel-abi=..."]` 的包：所解析的 kernel-abi 提供者的 `provides-interfaces`，以 `;` 连接（`openkal.fs;openkal.process;...`）。总是设置；提供者未声明清单或包没有该需求时为空，程序把空读作「未知」，按全部接口绑定 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名（`dev`/`release`/…） |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`；不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |

@@ -57,7 +57,9 @@ Layers layers_of(const BuildPlan& plan) {
     Layers l;
     auto const& tc = plan.toolchain;
     l.rowName = tc.targetTriple;
-    if (auto spec = mcpp::freestanding::resolve(tc.targetTriple)) {
+    auto spec = mcpp::freestanding::resolve(tc.targetTriple);
+    if (!spec) spec = mcpp::freestanding::hosted_spec(tc.targetTriple);
+    if (spec) {
         auto words = mcpp::freestanding::row_words(*spec);
         for (auto& w : mcpp::freestanding::row_link_words(*spec)) words.push_back(std::move(w));
         l.row.insert(words.begin(), words.end());

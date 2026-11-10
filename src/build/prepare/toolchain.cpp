@@ -1007,12 +1007,14 @@ step1_host_can_serve_check(PrepareState& state, TargetOverrideCtx& ctx) {
             "       this host builds: {}\n"
             "       To build it anyway: depend on a package that implements the target's system "
             "(its kernel interface and C library),\n"
-            "       choose a platform that serves it (`--platform <package>`), or supply your own "
-            "cross toolchain with [target.{}] toolchain = \"…\".\n"
+            "       choose a platform that serves it (`--platform <package>`), or name a cross "
+            "toolchain this machine has by path:\n"
+            "         [toolchain]\n"
+            "         {} = {{ path = \"<dir>\", prefix = \"<driver prefix>\" }}   # docs/20\n"
             "       `mcpp why target {}` lists the candidates and why each is or is not available.",
             ctx.parsed->str(), candidates.empty() ? std::string(" (none)") : candidates,
-            servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable, ctx.parsed->str(),
-            ctx.requestedSpelling);
+            servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
+            mcpp::toolchain::triple::host_triple().os, ctx.requestedSpelling);
     }
 }
 

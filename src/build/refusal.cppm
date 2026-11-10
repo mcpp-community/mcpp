@@ -147,6 +147,10 @@ enum class Code {
     // the same build would otherwise reach the answer at the link, naming an
     // undefined symbol rather than the interface and the package.
     InterfaceNotProvided,
+    // The suppliers of the target side's layers require one another in a
+    // circle (an implementation above a C library beneath a C library built on
+    // it): refused at resolution, naming each supplier (design 2026-11-10 E14).
+    LayerCycle,
     // `[build] platform-dependencies = "refuse"` and a package in the graph
     // brings a platform SDK dependency (design §6).
     PlatformDependency,
@@ -246,6 +250,7 @@ constexpr std::string_view name(Code c) {
         case Code::CEnvVerificationMismatch:
                                          return "c-env-verification-mismatch";
         case Code::InterfaceNotProvided: return "interface-not-provided";
+        case Code::LayerCycle:           return "layer-cycle";
         case Code::PlatformDependency:   return "platform-dependency";
         case Code::MsvcRedistUnavailable:
             return "msvc-redist-unavailable";

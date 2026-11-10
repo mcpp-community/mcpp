@@ -2084,6 +2084,31 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "targets.{}.test-guide is a file of the package, on a `kind = \"entry\"` target", tname)));
             t.testGuide = git->second.as_string();
         }
+        // `test-capabilities` and `test-session` (docs/specs/test.md, B6): what
+        // the framework implements of the spec's optional capabilities, and
+        // the command that starts its session (O9). A name is a capability's
+        // (lowercase words joined by `-`); a name this mcpp does not know is
+        // reported as stated.
+        auto strings_of = [&](std::string_view key, std::vector<std::string>& out) -> std::optional<std::string> {
+            auto it = tt.find(std::string(key));
+            if (it == tt.end()) return std::nullopt;
+            if (t.kind != Target::Entry || !it->second.is_array() || it->second.as_array().empty())
+                return std::format("targets.{}.{} is a non-empty array of strings, on a `kind = \"entry\"` target",
+                                   tname, key);
+            for (auto const& v : it->second.as_array()) {
+                if (!v.is_string() || v.as_string().empty())
+                    return std::format("targets.{}.{} is a non-empty array of strings, on a `kind = \"entry\"` target",
+                                       tname, key);
+                out.push_back(v.as_string());
+            }
+            return std::nullopt;
+        };
+        if (auto bad = strings_of("test-capabilities", t.testCapabilities)) return std::unexpected(error(origin, *bad));
+        for (auto const& c : t.testCapabilities)
+            if (!std::ranges::all_of(c, [](char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-'; }))
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-capabilities: '{}' is not a capability's name (lowercase words joined by `-`)", tname, c)));
+        if (auto bad = strings_of("test-session", t.testSession)) return std::unexpected(error(origin, *bad));
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.
@@ -2298,7 +2323,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features", "build",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start", "test-protocol", "test-main", "test-guide",
+            "start", "test-protocol", "test-main", "test-guide", "test-capabilities", "test-session",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
@@ -2355,7 +2380,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             || k == "backend"  || k == "tools" || k == "artifacts"
             || k == "host-module" || k == "reexport"
             || k == "linkage"
-            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude";
+            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude"
+            || k == "override";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -2546,6 +2572,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // (tools, host module, dependency dir) on to THIS package's consumers.
         // Off by default; see DependencySpec::reexport for why it is not the
         // edge's `visibility`.
+        if (auto it = sub.find("override"); it != sub.end()) {
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] override is `true` or `false`", section, fqName)));
+            spec.override_ = it->second.as_bool();
+        }
         if (auto it = sub.find("reexport"); it != sub.end() && it->second.is_bool()) {
             spec.reexport = it->second.as_bool();
         }
@@ -2963,6 +2995,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
 
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
+    if (auto v = doc->get_string("build.compiler_runtime_dir")) m.buildConfig.compilerRuntimeDir = *v;
     // #336 — [build] cxx_runtime. Two spellings for one field, cargo-style:
     //   cxx_runtime = "host-coupled"                                  (all roles)
     //   cxx_runtime = { default = "...", tests = "...", shared = "..." }

@@ -116,7 +116,7 @@ glibc 专有行为（NSS 查询、`dlopen` 宿主插件）时的首选。
 | `--compress zstd` 或 `xz` 与 `--pkg-format zip` | `--compress gzip`（DEFLATE）或 `none`，或 `--pkg-format tar` |
 | `--compress gzip` 或 `xz` 与 `--pkg-format single-file` | `--compress zstd[:<level>]` 或 `none`：启动器解压 zstd |
 | 自带运行器的映像树与映像的单文件之外使用 `--systems` | `--mode self-contained`，或 `--pkg-format single-file`；不相容的 `[pack] systems` 写出提示后搁置 |
-| 映像的单文件，`--systems` 中写出的系统的行本 mcpp 不构建程序（`x86_64-macos`、`aarch64-windows-gnu`） | 只列出会构建的组合的 `--systems`；`--systems all` 取这些并写出其余 |
+| 映像的单文件，`--systems` 中写出的系统的行本 mcpp 不构建程序（`x86_64-macos`），或平台的载体在该系统上不存在（载体未写 `hosts` 时取其运行器的 `hosts`） | 只列出会构建的组合的 `--systems`；`--systems all` 取这些并写出其余 |
 | 结果多于一个文件（每腿一个包、多个单文件）而 `-o` 命名一个文件 | `-o <目录>/` |
 | 未声明 `runner` 的平台的多条映像腿，且不是单文件 | 每个目标打一次，或 `--pkg-format single-file` |
 | 平台目标之外的 `--target` | 平台服务的目标 |
@@ -650,6 +650,19 @@ dylib 的消费者，其链接所带的 `@loader_path` rpath 本就会查找的�
 打包任何东西，与 PE 相同。`kind = "lib"` / `"shared"` 的 target 走库打包
 路线，不受影响。
 
+### 另一系统的 ELF 程序：从文件读取闭包（2026.11.10.1+）
+
+执行系统不是打包宿主的行上的程序——在 Linux 上打包的 FreeBSD 程序，或平台定义的行——不交给宿主的加载器；那只会描述宿主，
+或者失败（`ldd` 对 FreeBSD 程序以 127 退出）。它的闭包从文件的 `DT_NEEDED` 读取：
+
+| 名字 | 处理 |
+|---|---|
+| 本构建产出、位于程序旁（`bin/`、`../lib/`）的共享库 | 随程序放入 |
+| 其余名字 | 属于目标系统；记为平台需求，不放入 |
+
+`--mode static` 在这样的行上与原生行一样链接全静态程序，并在打包前读取文件：带加载器或共享库需求的程序被拒绝并写出
+这些需求，而不以 `-static` 的名字打包。
+
 ### ok 映像（`<arch>-openkal`）：映像本身，或携带它的程序
 
 ok 映像经 `okrun` 在其架构的每个系统上运行（见 [24](24-openkal-cross.md)），怎样打包由它的平台陈述
@@ -718,8 +731,9 @@ Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的�
 `linux-aarch64` 取一个组合；`all`；缺省为本机系统），mcpp 构建不携带任何内容的平台载体 —— 一个像 `okrun` 一样运行
 其第一个参数所指映像的程序 —— 放入 `libexec/<runner>/<os>-<arch>/`。每个运行器在其行（`<arch>-linux-musl`、
 `<arch>-macos`、`<arch>-windows-gnu`）上以平台的托管安排构建，因此无论在哪台机器上打包结果都是同一个程序，不需要
-该系统的 SDK 与 C 运行时；Linux 的运行器为静态。本 mcpp 不构建程序的行（`x86_64-macos` 为 planned；
-`aarch64-windows-gnu` 不在目标表中）不放入包并给出警告。在 Windows 主机上构建的映像与其他主机上的字节不同
+该系统的 SDK 与 C 运行时；Linux 的运行器为静态。本 mcpp 不构建程序的行（`x86_64-macos` 为 planned），以及平台的载体
+不存在的系统，不放入包并给出警告：未写 `hosts` 的载体就是运行器的程序，存在于运行器存在之处（`runner.hosts`；
+openkal-platform 的不含 `windows-aarch64`，因此本 mcpp 能构建的 `aarch64-windows-gnu` 行不从它得到运行器）。在 Windows 主机上构建的映像与其他主机上的字节不同
 （#850）：树在 Linux 或 macOS 上打包。
 
 **在哪里运行。** 打包把 `runs_on` 写进 `mcpp-package.json`，并在 `Packed` 之后写出：`self` 为凭包内携带的东西即可

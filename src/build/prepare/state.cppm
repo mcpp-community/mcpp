@@ -217,6 +217,8 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // selected members that disagree about one dependency are refused,
         // since neither outranks the other.
         bool        fromSelectedMember = false;
+        // The root declared it with `override = true` (T2); mcpp.lock says so.
+        bool        overridden = false;
         // Reached ONLY through [dev-dependencies]. mcpp.lock excludes these:
         // dev-deps are resolved under `mcpp test` and not under `mcpp build`, so
         // recording them makes a VCS-committed file depend on which command ran
@@ -229,6 +231,9 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // A variant's patches, as its edge stated them (absolute paths), for
         // the lock (design 2026-11-02 §14.1).
         std::vector<std::string> patches;
+        // `constraint`, by who asked: a request made by a version a merge has
+        // since replaced is withdrawn with that version (supersededRequesters).
+        std::vector<std::pair<std::string, std::string>> constraintsBy;
     };
 
     struct WorkItem {
@@ -251,6 +256,9 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // inherited, unlike `buildOnly`: it is the table of this one
         // declaration, which is what an edge records (DependencyEdge).
         bool                                 fromBuildTable = false;
+        // The root's override answered this request (T2): its source is the
+        // root's, and the platform's version group does not bind it.
+        bool                                 overridden = false;
     };
 
     struct DeclaringManifest {
@@ -705,6 +713,9 @@ struct PrepareState {
     // by every site that used to read `[target.<t>].sysroot` itself.
     std::optional<mcpp::toolchain::base::Statement> baseStatement;
     std::string baseStatementFor;
+    // Decided by the engine's tier before the dependency graph was loaded:
+    // asked again once it is (a provider's base yields to a graph supplier).
+    bool baseStatementProvisional = false;
     // The artifact's runtime when a stated base re-derived it (§4.2 step 6).
     // `runtimeBindingSnapshot` stays what the COMPILER runs on and what a
     // host sub-build inherits; the plan and the context read this one.
@@ -815,6 +826,29 @@ struct PrepareState {
     // (with these helpers as its own captures) and called repeatedly from
     // the worklist loop, well after its defining call returns. ────────────
     std::deque<WorkItem> worklist;
+    // THE REQUESTS OF A VERSION NO LONGER IN THE GRAPH. A merge that replaces
+    // `<ns>.<name>@<old>` takes that version's requests out with it: its
+    // queued items are not walked and its constraints no longer bound a merge.
+    // Kept, they reported a conflict between a version and a request of a
+    // version that had already left (os 0.4.4 and openkal-linux 0.26.0 after
+    // both were merged down, measured).
+    std::set<std::string> supersededRequesters;
+    // THE ROOT'S OVERRIDES (design 2026-11-10 supplement, T2): each
+    // `override = true` declaration of the root's tables and of
+    // `[workspace.dependencies]`, with the identity it answers for and the
+    // graph its table governs. Read once, before the walk.
+    struct RootOverride {
+        std::string                    key;          // the declaration's key as written
+        std::string                    ns, shortName;
+        mcpp::manifest::DependencySpec spec;
+        std::string                    declaredIn;   // "[dependencies] of app"
+        bool                           buildSide = false;   // [build-dependencies]
+    };
+    std::vector<RootOverride> rootOverrides;
+    std::set<std::string>     overrideStated;    // the lines printed, once each
+    // The root's own exact pins of a package that every consumer shares (T3),
+    // which `mcpp publish` refuses for a library; a dependency's are noted.
+    std::vector<std::string>  sharedExactPins;
     std::map<std::string, ResolvedKey> identityBySource;
     std::map<ResolvedKey, DeclaringManifest> declaringManifest;
     std::set<std::pair<std::string, std::string>> adoptionsReported;
@@ -1025,6 +1059,25 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 void withdraw_link_flags(PrepareState& state, std::size_t p);
 // The lookups the later phases ask of the graph (graph_closures.cpp).
 void step4b_define_lookup_closures(PrepareState& state);
+// The root's overrides (overrides.cpp, T2): read before the walk; applied to a
+// dependency's request for an identity one of them answers for, which then
+// takes the root's source; a library's `override` is reported and ignored.
+void step4b_read_root_overrides(PrepareState& state);
+bool step4b_apply_root_override(PrepareState& state, WorkItem& item);
+// The root's override of a member of the platform's version group: it is not
+// pinned to the group, which is said once (SPEC-013: the platform gives the
+// defaults, the project may override them).
+bool step4b_root_overrides_group(PrepareState& state, const WorkItem& item, std::string_view shortName,
+                                 std::string_view groupVersion);
+// A request that pins one release of a package every consumer shares (it
+// provides a target-side layer or a kernel ABI): noted for a dependency,
+// recorded for the root (overrides.cpp, T3).
+void step4b_note_exact_pin(PrepareState& state, const WorkItem& item, const mcpp::manifest::Manifest& dep);
+// The root the graph records for a package: its build inputs, normalised at its
+// load site, with its include directories expanded (package_root.cpp).
+std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
+        PrepareState& state, const std::filesystem::path& packageRoot,
+        const mcpp::manifest::Manifest& manifest);
 // Where the build program of package `i` keeps its files: its cache, its
 // graph document, and the program mcpp synthesises for it. The root's and a
 // workspace member's are below their own target/; a dependency's is below the
@@ -1233,6 +1286,13 @@ struct PackageInstances {
     std::vector<bool> host;
 };
 PackageInstances package_instances(const PrepareState& state);
+// The kernel-abi provider's stated interfaces for the build program of package
+// `i`, ';'-joined (E13): empty unless the package requires the layer and the
+// provider of the same instance (target or build program) states a list.
+std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i);
+// Whether the dependency graph supplies the target's system: a C library on
+// any target, a kernel interface where the target has no system of its own.
+bool graph_supplies_system(const PrepareState& state);
 // The platform's fields a package's build program stated (protocol 17), at the
 // build-program tier of the build's platform statement, named after `who`.
 void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,

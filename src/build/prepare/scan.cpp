@@ -706,8 +706,10 @@ step11_package_std_module_source(PrepareState& state) {
             }();
             hopt.macosDeploymentTarget = mcpp::toolchain::apple::deployment_target(
                 cAbiTargetIsMacos, state.m->buildConfig.macosDeploymentTarget);
-            for (auto& t : mcpp::toolchain::host_compile_tokens(
-                     *state.tc, hopt, mcpp::toolchain::no_escape)) {
+            auto tokens = mcpp::toolchain::host_compile_tokens(*state.tc, hopt, mcpp::toolchain::no_escape);
+            // The scan reads C++ units: the paired system's C++ library too.
+            if (auto w = mcpp::toolchain::paired_stdlib_flag(*state.tc); !w.empty()) tokens.push_back(w);
+            for (auto& t : tokens) {
                 const auto q = " " + mcpp::build::command_line::quote(t);
                 if (flags.find(q) == std::string::npos) flags += q;
             }

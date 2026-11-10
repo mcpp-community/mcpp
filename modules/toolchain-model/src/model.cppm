@@ -125,7 +125,9 @@ struct Toolchain {
     bool                                hostedC = false;
     // THE PAYLOAD A PAIRED PROVIDER SUPPLIES THE SYSTEM FROM (SPEC-016 §6):
     // clang aimed at `x86_64-windows-gnu` takes the MinGW-w64 payload as its
-    // sysroot, C library and C++ runtime (libstdc++). Empty otherwise.
+    // sysroot, C library and C++ runtime (libstdc++). A base package on that
+    // row is the same root with the run-times its layers state (E9: libc++,
+    // compiler-rt; `base.layers.cxx` says which). Empty otherwise.
     std::filesystem::path                pairedSysroot;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
@@ -616,8 +618,11 @@ bool target_supports_full_static(std::string_view targetTriple, bool hostCapabil
     if (t->is_mach_o()) return false;
 
     // Linux ELF — glibc or musl, native or cross. This is the line that was
-    // previously gated on the HOST being Linux.
-    return t->os == "linux";
+    // previously gated on the HOST being Linux. And an ELF system whose C
+    // library a platform describes (FreeBSD's base holds libc.a): a static
+    // linkage there is a static program (design 2026-11-10 E7; `--mode static`
+    // packed a dynamic one, mcpp#911 N8).
+    return t->os == "linux" || t->c_library_by_platform();
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {

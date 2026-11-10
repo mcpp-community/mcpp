@@ -739,6 +739,7 @@ std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& stat
         const bool sameNs = spec.namespace_.empty() || platformNs.empty()
                          || spec.namespace_ == platformNs;
         if (auto g = state.platformGroup.find(shortName); sameNs && g != state.platformGroup.end()) {
+            if (step4b_root_overrides_group(state, item, shortName, g->second)) return {};
             const auto group = mcpp::version_req::parse_version(g->second);
             const auto asked = spec.version.empty() ? std::string("*") : spec.version;
             if (auto req = mcpp::version_req::parse_req(asked);
@@ -1104,6 +1105,15 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             state.tc->binaryPath.generic_string(),
             P.fields.toolchain.set ? P.fields.toolchain.value : std::string("an llvm toolchain")));
     }
+    // `link.flags` are words for ld.lld itself; a platform that links through
+    // the compiler gives them to no program, and says so rather than dropping
+    // them (`[platform.build] ldflags` reach the compiler's link).
+    if (P.active && P.fields.link.flags.set && P.fields.link.driver.value != "lld")
+        mcpp::ui::warning(std::format(
+            "the platform {} states `[platform.link] flags` ({}), and it links through the "
+            "compiler: those words are given to ld.lld only, so this link uses none of them.\n"
+            "       Words for the compiler's link belong in `[platform.build] ldflags`.",
+            P.display(), mcpp::platform::origin_text(P.fields.link.flags.origin)));
     // THE PLATFORM, REPORTED (SPEC-013 §9): which one and why, then what it
     // contributes beyond the layers the Target lines already showed.
     if (P.active) {

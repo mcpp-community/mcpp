@@ -243,6 +243,12 @@ struct Target {
     // Of an entry target: `test-guide = "<file>"`, the package's guide to
     // writing its tests, relative to the package root (`mcpp test --guide`).
     std::string                 testGuide;
+    // Of an entry target: `test-capabilities = [...]`, the optional
+    // capabilities of the mcpp test spec its framework implements
+    // (docs/specs/test.md, B6), and `test-session = [...]`, the command of the
+    // framework's session (O9); both empty when the entry states none.
+    std::vector<std::string>    testCapabilities;
+    std::vector<std::string>    testSession;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --
@@ -882,6 +888,10 @@ inline std::string effective_c_standard(std::string_view declared) {
 }
 
 struct BuildConfig : BuildInputs {
+    // `[build] compiler_runtime_dir`: the directory, relative to the package
+    // root, that holds the compiler runtime a `compiler-runtime` supplier
+    // provides (design 2026-11-10 E5). Empty: none stated.
+    std::string compilerRuntimeDir;
     // THE LINK FLAGS OF THE GRAPH, NOT OF THE ROOT PACKAGE (2026.10.5.2).
     //
     // The profile's `ldflags` and the words `[target.<selector>.abi]` renders

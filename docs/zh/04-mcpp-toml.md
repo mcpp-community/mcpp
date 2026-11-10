@@ -484,6 +484,8 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。入口目标陈述其翻译单元定义的函数，由选择它的程序继承。 |
 | `start` *（2026.10.26.2+）* | 独立目标上镜像的入口符号。见上文 `start`。 |
 | `test-guide` *（2026.11.8.1+）* | 入口目标的键：包中的一个文件，即编写以它为起点的测试的指南，由 `mcpp test --guide` 列出（[08](08-testing.md#编写测试)）。在其他目标上被拒绝。 |
+| `test-capabilities` *（2026.11.10.1+）* | 入口目标的键：其框架实现的 mcpp 测试规范可选能力，按名称列出（`["check-details", "metrics", "fixtures"]`；[SPEC-017](../specs/test.md) B6）。`mcpp test --guide` 报告它们；客户端只依赖已陈述的能力。在其他目标上被拒绝。 |
+| `test-session` *（2026.11.10.1+）* | 入口目标的键：启动其框架测试会话的命令（`["mtest", "serve", "--stdio"]`；SPEC-017 O9）。客户端启动该会话，在持有会话期间运行、加入和取消用例。`mcpp test --guide` 报告它。在其他目标上被拒绝。 |
 | `test-main` *（2026.11.8.1+）* | 入口目标的键：`true` 表示它可作为依赖本包（或本包自身）且未陈述 `[test] main` 的包中、不定义 `main` 的测试文件的起点（[08](08-testing.md#测试程序的起点)）。在其他目标上被拒绝。 |
 | `test-protocol` *（2026.11.8.1+）* | 入口目标的键：以此为起点的测试程序实现的测试协议版本，`1`；`mcpp test` 随之列出、选择并报告程序的用例（[08](08-testing.md#用例测试协议)）。在其他目标上被拒绝。 |
 | `windows_code_page` *（2026.9.26.1+）* | 可执行文件在 Windows 上的 ANSI 代码页：`"utf-8"`，以 Windows 10 1903 及以后版本会遵从的应用程序清单嵌入；或 `"legacy"`，即系统代码页。两者都不写的程序目标运行在系统代码页里，作为 host 工具构建的程序（§2.14）除外，它默认为 `"utf-8"`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。见 §2.3 的*路径与文本编码*。 |
@@ -491,9 +493,11 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
 > **范围（重要）：** 目标上的 `defines` / `cxxflags` / `cflags` **只**
-> 应用于该目标专属的入口源文件（它的 `main`）——绝不应用于共享的
+> 应用于该目标的入口源文件（它的 `main`）——绝不应用于共享的
 > 模块/实现对象，后者只编译一次，并链接进每一个目标（mcpp 的一次编译
-> 模型）。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
+> 模型）；一个目标的共享源文件经 `[targets.<name>.build]` 取得它自己的参数。
+> 多个程序共用的入口，按参数不同的每个程序各编译一次
+> （`obj/_entry/<name>/`，2026.11.10.1+），每个程序链接自己的入口对象。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
 > 键是正确的工具——例如某个测试的 `main` 专门触发违规，需要按测试设置
 > contract 求值语义（`-fcontract-evaluation-semantic=observe`）；或者
 > 只有入口会读到的一个 feature 宏；或者一次局部的警告抑制。如果一个
@@ -514,9 +518,9 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | **选择一个变体**的共享库（例如某个后端） | 用该库上的 `[features]`（§2.8）——是增量的，到达库自己的编译 |
 | **整个构建范围**的模式（sanitizer、contract 语义、优化档位） | `[profile.<name>]`（§2.9） + `--profile`；`mcpp test --profile <name>` 同样尊重它 |
 
-mcpp 刻意不在一次构建里用两种方式编译同一份共享源码：一个源文件对应
-一个对象（模块对应一个 BMI），所以凡是必须到达共享代码的分歧，都属于
-包/feature 的边界，不属于单个目标。
+一个源文件按每组参数对应一个对象：包的对象，以及参数（`[targets.<name>.build]`
+或入口参数）与包不同的每个目标各一个变体。模块接口每包对应一个 BMI，不做变体，
+所以凡是必须到达模块接口的分歧，都属于包/feature 的边界，不属于单个目标。
 
 ### 2.3 `[build]` —— 构建配置
 
@@ -563,6 +567,7 @@ c_standard   = "c11"              # Standard for this package's C sources (defau
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
+compiler_runtime_dir = "compiler-rt" # 供给 compiler-runtime 的包：其运行时所在的目录（2026.11.10.1+；docs/22）
 defines      = ["BIZ=1", "QUX"]   # 本包每个编译单元的预处理宏；按宏名构成集合（见下文）
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
@@ -1447,7 +1452,9 @@ imports  = ["std"]
 这条声明会在**每次构建时被审计**：编译器自己对这个文件做的 P1689
 扫描（`.ddi` dyndep 输入）会与它比对，任何分歧都会让那条编译边失败，
 并同时打印双方的结果——一条陈旧的声明无法悄悄污染这张图。一条不匹配
-任何源文件的 override glob 是一个错误。
+包内任何文件的 override glob 是一个错误。文件存在但本次构建不编译它们的
+glob——feature 未启用，或被 `[target.<selector>.build]` 的 `!` 规则排除——
+不是错误：这条声明为编译这些文件的构建描述它们（2026.11.10.1+，mcpp#902）。
 
 xpkg 描述符（索引包）里也有同一个键：
 
@@ -1789,9 +1796,9 @@ platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 
 声明这个包支持的平台（一条 CI 矩阵提示，经 `mcpp why` 展示）。词汇由
 mcpp（拥有 target/triple 体系的一方）固定：
-`linux | macos | windows | ios | android | emscripten`
+`linux | macos | windows | ios | android | emscripten | openkal | freebsd`
 （mcpp 2026.9.12.3+；`ios`、`android` 与 `emscripten` 是这套此前只有
-`linux | macos | windows` 的词汇新增的成员）；未知取值会产生警告，
+`linux | macos | windows` 的词汇新增的成员，`freebsd` 自 2026.11.10.1 起是其成员）；未知取值会产生警告，
 `--strict` 下是错误。
 
 一个平台名就是目标三元组的 `os`，除非一个自己命名了平台的 `env`
@@ -1922,7 +1929,10 @@ mcpp 读取 `.rc` 里带引号的 `#include`，以及资源语句（`ICON`、
 `RCDATA`、`MANIFEST`、数字类型 `24` 等）命名的文件，并把它们变成构建输入，
 所以修改图标会触发重新链接。相对文件名按脚本自己所在的目录解析，rc.exe、
 llvm-rc 与 windres 也在那里查找它。尖括号 include（`<windows.h>`）属于工具链，由
-工具链指纹覆盖，而不是这项扫描。
+工具链指纹覆盖，而不是这项扫描；工具链的 Windows 头文件中已有的带引号 include
+（`"winres.h"`）同样如此。各处都找不到的带引号 include，只有在某个构建动作写出它时
+才是输入；否则由脚本自身的预处理决定（`#if __has_include("x.h")`），缺失时由资源
+编译器报告，并给出脚本名与行号（2026.11.10.1+）。
 
 一个经由宏到达的文件名（`1 ICON APP_ICON`）对这项扫描是不可见的。
 mcpp 会点名它无法解析的部分，并要求显式声明：

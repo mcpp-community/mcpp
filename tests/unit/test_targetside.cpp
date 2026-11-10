@@ -682,6 +682,38 @@ UTest an_unsupplied_layer_is_named_as_such{"TargetSideRequirements/AnUnsuppliedL
     expect(ne(why->find("mcpp:c-abi=picolibc"), std::string::npos));
 }};
 
+// ── Rule two: the layers stand on one another (E14) ──────────────────────────
+
+UTest suppliers_that_require_one_another_are_refused{"TargetSideLayerCycle/SuppliersThatRequireOneAnotherAreRefused", [] {
+    auto in = payload_linux();
+    in.kernelAbi = provider("openkal-posix", "0.1.0", "openkal");
+    in.cAbi      = provider("openkal-musl", "0.29.0", "musl");
+    auto r = ts::resolve(in);
+
+    // The C library is built on the kernel interface: one direction is the layering itself.
+    std::vector<ts::Requirement> reqs{{"openkal-musl@0.29.0", ts::CapLayer::KernelAbi, "openkal"}};
+    expect(eq(ts::check_layer_cycle(r, reqs), std::nullopt));
+
+    // An implementation written above a C library, beneath the C library built on it.
+    reqs.push_back({"openkal-posix@0.1.0", ts::CapLayer::CAbi, ""});
+    auto why = ts::check_layer_cycle(r, reqs);
+    expect(fatal(why.has_value()));
+    expect(ne(why->find("`openkal-posix@0.1.0` supplies the kernel-abi and requires the c-abi"),
+              std::string::npos)) << *why;
+    expect(ne(why->find("`openkal-musl@0.29.0` supplies the c-abi and requires the kernel-abi"),
+              std::string::npos)) << *why;
+}};
+
+UTest a_requirement_on_a_prebuilt_layer_is_no_cycle{"TargetSideLayerCycle/ARequirementOnAPrebuiltLayerIsNoCycle", [] {
+    // The implementation above a C library over the system's own C library: the
+    // payload supplies the c-abi and requires nothing.
+    auto in = payload_linux();
+    in.kernelAbi = provider("openkal-posix", "0.1.0", "openkal");
+    auto r = ts::resolve(in);
+    std::vector<ts::Requirement> reqs{{"openkal-posix@0.1.0", ts::CapLayer::CAbi, ""}};
+    expect(eq(ts::check_layer_cycle(r, reqs), std::nullopt));
+}};
+
 // ── Rule one: one supplier per layer ─────────────────────────────────────────
 
 UTest two_suppliers_are_named_together_with_how_each_arrived{"TargetSideConflict/TwoSuppliersAreNamedTogetherWithHowEachArrived", [] {

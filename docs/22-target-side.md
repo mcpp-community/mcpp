@@ -523,6 +523,7 @@ that names no C library:
 | Target | Request | Realisation |
 |---|---|---|
 | Linux | `posix` / `arch-default` | the default triple already satisfies it |
+| FreeBSD, NetBSD | `posix` / `arch-default` | as Linux: the ELF triple predefines `__unix__` and is LP64 with a 32-bit `wchar_t` (`<arch>-freebsd-musl`, a C library above openkal-freebsd) |
 | macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
 | freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
 | Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__MCPP_TARGET_WINDOWS__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
@@ -1033,7 +1034,7 @@ did not match.
 
 ## Diagnostics
 
-Four conditions are reported by the engine rather than by a compiler.
+Five conditions are reported by the engine rather than by a compiler.
 
 | Condition | Report |
 |---|---|
@@ -1041,6 +1042,7 @@ Four conditions are reported by the engine rather than by a compiler.
 | two packages supply one layer | names both, and how each entered the graph |
 | a layer has no supplier | names the layer, and the capability to depend on |
 | the payload's C++ runtime sits above a foreign C library | names both, and the two ways out |
+| the suppliers of the layers require one another in a circle (2026.11.10.1+) | names each package, the layer it supplies and the layer it requires; `layer-cycle` |
 
 A message from a compiler or a linker about a target-side combination
 indicates a missing diagnostic. The engine knows the combination is untenable
@@ -1272,6 +1274,49 @@ also takes `{ path = "<dir>" }` (2026.10.24.1+): an unpacked Visual Studio tree
 or clang's `/winsysroot` layout, whose `Windows Kits/10` is used when present.
 Any other value on such a row is rejected. See
 [20 — Clang on the MSVC ABI](20-toolchains.md#clang-on-the-msvc-abi-the-toolset-is-the-sysroot).
+
+#### Base packages: a sysroot that states its layers (2026.11.10.1+)
+
+A sysroot can say what it holds beside its C library. A **base package** is a sysroot whose root
+carries an ordinary package manifest: `provides` names the layers it supplies, and `[build]`
+states them with the keys any layer supplier uses, relative to the package root, which is the
+sysroot:
+
+```toml
+[package]
+name     = "x86_64-freebsd-sysroot"
+version  = "14.5"
+provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
+            "hosted-standard-library"]
+
+[build]
+include_dirs      = ["usr/include/c++/v1"]   # the C++ library's headers
+ldflags           = ["-lc++", "-lcxxrt"]     # the C++ libraries the link names
+std-module        = "usr/share/libc++/v1/std.cppm"
+std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
+std-module-flags  = ["-D__fenv_static="]
+# compiler_runtime_dir = "compiler-rt"       # where the compiler runtime stands
+```
+
+Named as any sysroot is (`sysroot = "xim:x86_64-freebsd-sysroot@14.5"`, `{ path = "…" }`, a
+platform's or a provider's `sysroot`), the base answers the layers it states:
+
+- the report shows them as `prebuilt`, with the base's `<name>@<version>`;
+- the C++ headers, the `std` module and the C++ libraries of the link are the base's; the
+  toolchain payload's C++ runtime and its archives, built for the payload's own host, take no
+  part. A base that states no `std-module` leaves the build without `import std`;
+- `compiler_runtime_dir` (a `[build]` key, 2026.11.10.1+) names the directory of the compiler
+  runtime: clang reads it as its resource directory, gcc through `-B`.
+
+A base package is the sysroot of one identity. A platform gives each identity its own base
+through each provider's `sysroot` ([35](35-platforms.md)); a system whose driver tells its
+architectures apart inside one root (MinGW-w64) is served by one package.
+
+The index carries `xim:x86_64-freebsd-sysroot` and `xim:aarch64-freebsd-sysroot` (FreeBSD's base
+system, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
+MinGW-w64 on UCRT, libc++, libunwind and compiler-rt, for x86_64 and aarch64). On a
+`*-windows-gnu` row the latter is clang's sysroot; the `mingw-llvm` provider names it, so every
+host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)).
 
 A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and

@@ -4,12 +4,12 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.0 |
-| 版本 | 1.0 |
-| 最后修改 | 2026-11-09 |
-| 对应实现 | mcpp >= 2026.11.9.1 |
-| 相关设计文档 | `.agents/docs/2026-11-09-target-model-design.md` |
-| 相关 issue | mcpp#911 |
+| 状态 | 评审中 v1.1 |
+| 版本 | 1.1 |
+| 最后修改 | 2026-11-10 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1 |
+| 相关设计文档 | `.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md` |
+| 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
 | 使用文档 | [21 —— 目标三元组](../zh/21-the-target-triple.md)、[35 —— 平台](../zh/35-platforms.md) |
 
@@ -44,11 +44,19 @@
 - `exact = true` 的行只由写出其全部段的请求得到（Android 的行）。
 - `march`、`mabi`、`code-model`、`flags`、`link-emulation` 是行的机器描述，引擎原样使用，**不可**被替换；机器不同的目标以
   另一行表达（§5）。
+- `clang-triple` 是交给 clang 的目标拼写，未写时由段推出；它只改变编译器所见的三元组，不改变身份（v1.1）。
 
 ### 2.2 内置行
 
 内置行是 mcpp 源码树中的数据（`modules/toolchain-model/data/builtin.toml`），由该包的构建程序编入引擎；运行时不读取文件，
 不联网。行的顺序是数据：同一系统中标准身份在前。
+
+- 内置行的 os 与 env 是解析器接受的词，与平台定义的行相同（v1.1）。
+- 主流系统的两种身份都是内置数据（v1.1）：系统自身 ABI 的行（`x86_64-freebsd`、`aarch64-freebsd`）没有内置提供者，由平台
+  提供；未选平台时，请求被拒绝并指名 `[target.<身份>] platform`。openkal 的 hosted 行（`x86_64-freebsd-musl`、
+  `aarch64-freebsd-musl`）在其实现发布前为 planned。
+- 32 位 hosted 行（`i686-linux-musl`、`i686-linux-gnu`、`i686-openkal`）为 planned（v1.1）：请求按 planned 拒绝，而非按
+  未知目标；显式的 `[target.<身份>] toolchain` 可提前启用。
 
 ## 3. 提供者
 
@@ -64,10 +72,18 @@
 | `execution` | 产物运行的系统 |
 
 - 引擎不含提供者的类别，也不含实现名；所有提供者同一结构，只有数据不同。
-- 内置提供者：glibc 载荷、musl-gcc、MinGW-w64（与 gcc、llvm 配对）、MSVC、Apple SDK、Android NDK、Emscripten SDK、裸机、
-  openkal-platform（ok 映像，及 `*-linux-musl`、`*-windows-musl`、`*-macos-musl` 的 hosted 部分）。
+- 内置提供者：glibc 载荷、musl-gcc、MinGW-w64（与 gcc、llvm 配对）、`mingw-llvm`（v1.1）、MSVC、Apple SDK、Android NDK、
+  Emscripten SDK、裸机、openkal-platform（ok 映像，及 `*-linux-musl`、`*-windows-musl`、`*-macos-musl` 的 hosted 部分）。
 - 与声明的编译器族配对的提供者提供系统：例如 llvm 与 MinGW-w64 配对时，该提供者的载荷是 clang 的 sysroot、C 库与 C++ 运行时
   （libstdc++）。
+- **所选提供者的 sysroot 是该身份的基座陈述（v1.1）。** 行的基座由 sysroot 陈述决定的（gnu-sysroot、
+  driver-internal），在项目与本机都未陈述时，先取所选提供者的 `sysroot`（包，或相对平台清单的 `{ path = "<目录>" }`），
+  再取平台的 `sysroot`（SPEC-006 §3.9.2 的引擎默认档），按项目陈述的同一规则解析；是基座包时按 SPEC-002 §2.5 读取。
+  平台由此为每个身份指名自己的基座。
+- **`mingw-llvm`（v1.1）。** 以基座包 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind、
+  compiler-rt）与 llvm 服务 `x86_64-windows-gnu` 与 `aarch64-windows-gnu`，在任一宿主可得，优先级 5，低于有 gcc 载荷之处的
+  MinGW-w64 提供者。基座是 clang 的 sysroot；其 libc++ 的模块源码是 std 模块；编译器运行时取自基座所指的目录；静态链接取基座的
+  归档而非其导入库。
 
 ## 4. 选择
 
@@ -90,6 +106,10 @@
 - 读取平台清单时按行检查其语句：与内置行同名的定义、同一行的两次定义**必须**被拒绝；不服务任何行的提供者、以同一优先级
   服务同一身份的两个提供者为警告，按清单警告的规则只在平台自身的构建中给出。
 - 平台定义的行不取宿主载荷的 C 库：除非平台或项目声明 sysroot，该行没有 C 库。
+- **C 库由平台描述的行与内置行由同一谓词读取（v1.1）。** 平台定义的行，以及没有内置提供者的内置行，其 `march`、
+  `link-emulation` 等机器描述进入编译与 ld.lld 链接（`mcpp why flags` 标为 `row`）；工具链载荷为其自身宿主构建的目标侧——
+  libc++ 头文件、运行时目录、编译器运行时目录、宿主的 `-L` 与 RPATH——不进入该行的编译与链接；本机加载器的闭包与符号检查
+  只在该行的执行系统为本机系统时进行。
 - 首次遇到只在索引中的平台时，请求以临时行进入第一次准备，平台取得后重新准备。
 
 ## 6. C 环境、链接与执行
@@ -97,7 +117,10 @@
 - **hosted。** 声明 `hosted-standard-library` 的 sysroot，或 `hosted = true` 的提供者，使裸机行不加 `-ffreestanding`。
 - **链接驱动。** 平台的 `link.driver = "compiler"` 在每一行生效，包括行本身以 `link-emulation` 直接调用 ld.lld 的行。
 - **执行。** 行的 `execution` 不是本机系统时：构建不以本机加载器检查产物的运行时闭包；`mcpp run` 与 `mcpp test` 在无运行器、
-  无执行主机时报告「已构建，未运行」。运行器包是目标的工具（`[target.<sel>.tools]`），以 docs/41 的运行协议启动。
+  无执行主机时报告「已构建，未运行」。运行器包是目标的工具（`[target.<sel>.tools]`），以 docs/41 的运行协议启动。打包从产物
+  文件读取其闭包，不运行本机加载器（SPEC-014，v1.1）。
+- **`link.flags` 与链接驱动（v1.1）。** `[platform.link] flags` 只交给 ld.lld；`driver = "compiler"` 的平台陈述它时，构建
+  给出警告并指名 `[platform.build] ldflags`。
 
 ## 7. 报告、机器输出与锁
 
@@ -107,6 +130,8 @@
   （根包是平台包时为其自身，否则为目标所选的平台）。
 - 构建记录与 `plan` 事件的 `configuration.target` 为 `{request, identity, provider, priority, fallback}`；本机构建为 `null`。
 - 构建程序读 `MCPP_TARGET_PROVIDER`（`mcpp::target_provider()`）。
+- 声明 `requires = ["mcpp:kernel-abi=…"]` 的包，其构建程序读 `MCPP_KERNEL_ABI_INTERFACES`（`mcpp::kernel_abi_interfaces()`）：
+  所解析的 kernel-abi 提供者的 `provides-interfaces`，以 `;` 连接；总是设置，空为未知（v1.1）。
 - `mcpp.lock` 以 `[target."<request>"] identity, provider` 记录每个请求得到的身份；`--locked` 下选择另一身份的构建被拒绝，
   并写出锁中的与本次的身份。
 
@@ -122,3 +147,4 @@
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | 1.0 | 2026-11-09 | 初版：行、提供者、选择、平台定义的行、C 环境、执行、报告与锁 |
+| 1.1 | 2026-11-10 | `clang-triple`；内置行的系统词；FreeBSD 两种身份与 32 位 planned 行；提供者 sysroot 为基座陈述的最后一级；`mingw-llvm` 与 `aarch64-windows-gnu`；C 库由平台描述的行与内置行同一读法；打包读文件闭包；`link.flags` 的警告；构建程序的 `MCPP_KERNEL_ABI_INTERFACES` |

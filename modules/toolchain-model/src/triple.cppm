@@ -154,13 +154,14 @@ struct Triple {
     // would let a caller supply one platform's answer for the other's.
     std::string llvm_triple(std::string_view minPlatformVersion = {}) const {
         if (empty()) return {};
-        // A ROW A PLATFORM DEFINES STATES ITS OWN: `clang-triple`, with
-        // `{version}` the project's minimum system version and
-        // `{version:<default>}` the row's when the project states none.
-        if (auto* d = defined()) {
-            if (d->clangTriple.empty()) return str();
-            return expand_version(d->clangTriple, minPlatformVersion);
-        }
+        // A ROW THAT STATES ITS OWN -- one a platform defines, or a built-in
+        // row whose data carries `clang-triple` (design 2026-11-10 E4: the
+        // FreeBSD rows) -- is taken as written, with `{version}` the project's
+        // minimum system version and `{version:<default>}` the row's when the
+        // project states none.
+        if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->clangTriple.empty())
+            return expand_version(r->clangTriple, minPlatformVersion);
+        if (defined()) return str();
         if (os == "macos") {
             // Apple spells the 64-bit ARM architecture `arm64`, and the OS
             // component carries the deployment target: `arm64-apple-macos14`.
@@ -303,6 +304,12 @@ struct Triple {
     // to_xim_package). If a row ever gains a second toolchain that does NOT
     // ship a sysroot, this has to move onto the toolchain.
     bool has_own_sysroot() const;   // after the table: the row's provider answers
+    // A TARGET WHOSE C LIBRARY A PLATFORM DESCRIBES (SPEC-016 §5; design
+    // 2026-11-10 E1): a row a platform defines, or a built-in row that no
+    // built-in provider serves. Nothing the toolchain payload carries for its
+    // own host -- its libc++ build, its runtime directories, the host's loader
+    // -- belongs to such a target; what does is the platform's sysroot or base.
+    bool c_library_by_platform() const;
 
     // APPLE, AS ONE QUESTION. `os == "macos"` was the whole of it while macOS
     // was the only Apple row; iOS shares the object format, the linker, the
@@ -459,6 +466,13 @@ struct Triple {
     const mcpp::toolchain::target::Row* defined() const {
         return mcpp::toolchain::target::defined_row(str());
     }
+    // THE SYSTEM THE ROW'S ARTIFACTS RUN ON (SPEC-016 §6): its `execution`,
+    // built-in or defined, else its own system.
+    std::string execution_system() const {
+        if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->execution.empty())
+            return std::string(r->execution);
+        return os;
+    }
 
     static std::string expand_version(std::string_view pattern, std::string_view version) {
         std::string out(pattern);
@@ -573,6 +587,14 @@ inline bool Triple::has_own_sysroot() const {
     for (auto const& k : kKnownTargets)
         if (k.canonical == s) return k.provider && k.provider->sysroot == "toolchain";
     return os == "emscripten" || os == "android" || env == "android";
+}
+
+inline bool Triple::c_library_by_platform() const {
+    const auto s = str();
+    if (mcpp::toolchain::target::defined_row(s)) return true;
+    for (auto const& k : kKnownTargets)
+        if (k.canonical == s) return k.provider == nullptr;
+    return false;
 }
 
 // A PIN IS A CAPABILITY WHEN THE PROVIDER PAIRS WITH ONE COMPILER FAMILY ONLY:
@@ -915,7 +937,7 @@ inline std::string android_abi(const Triple& t) {
 // a claim nothing can yet check; the unit test asserts every known row's
 // `platform_name` is a member.
 inline constexpr std::string_view kPlatformNames[] = {
-    "linux", "macos", "windows", "ios", "android", "emscripten", "openkal",
+    "linux", "macos", "windows", "ios", "android", "emscripten", "openkal", "freebsd",
 };
 
 inline std::string platform_name(const Triple& t) {
@@ -1319,7 +1341,10 @@ std::expected<Wanted, std::string> wanted_of(std::string_view spelling) {
 
 bool is_set_spelling(std::string_view spelling) {
     const auto w = first_segment(spelling);
-    return std::ranges::find(kSystemWords, w) != std::end(kSystemWords);
+    // A system the rows name -- built-in data or a platform's -- is a set word
+    // as the listed ones are (`freebsd`, design 2026-11-10 E4).
+    return std::ranges::find(kSystemWords, w) != std::end(kSystemWords)
+        || mcpp::toolchain::target::defines_os(w);
 }
 
 std::expected<Expansion, std::string> expand_set(std::string_view spelling,

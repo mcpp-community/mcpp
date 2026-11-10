@@ -17,7 +17,7 @@ import std;
 int main() { std::println("test_other: ok"); return 0; }
 EOF
 
-out=$("$MCPP" test 2>&1)
+out=$("$MCPP" test 2>&1) || { echo "mcpp test failed: $out"; exit 1; }
 echo "$out" | grep -q 'test_smoke ... ok' || { echo "missing smoke pass: $out"; exit 1; }
 echo "$out" | grep -q 'test_other ... ok' || { echo "missing other pass: $out"; exit 1; }
 echo "$out" | grep -q '2 passed; 0 failed' || { echo "missing summary: $out"; exit 1; }

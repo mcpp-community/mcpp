@@ -261,7 +261,7 @@ UTest the_windows_launcher_is_a_program{"PackDistribution/TheWindowsLauncherIsAP
     expect(ne(src.find("(\"windows-\" + arch)"), std::string::npos)) << src;
     expect(ne(src.find("os::process::exec"), std::string::npos)) << src;
     const auto manifest = d::exe_launcher_manifest("hello", "1.0.0");
-    expect(ne(manifest.find("mcpplibs.os = \"0.4.1\""), std::string::npos)) << manifest;
+    expect(ne(manifest.find("mcpplibs.os = \"0.4.4\""), std::string::npos)) << manifest;
     expect(ne(manifest.find("[targets.\"hello\"]"), std::string::npos)) << manifest;
 }};
 

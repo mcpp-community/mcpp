@@ -247,6 +247,13 @@ envelope says when either has changed since.
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
 | `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` streams the build's events, then the `mcpp.launch` envelope (below) | an IDE's Run, showing the build as it goes |
 | `test-protocol` | 2026.11.8.1 | a test program that implements the test protocol has its cases listed (`--cases`), selected (`--case`) and reported in the records of `mcpp test --message-format json` (§8) | an IDE's test tree, a case run from the editor |
+| `test-parts` | 2026.11.10.1 | with `test-protocol`: a program run as several processes (`[test] split`) names its parts under `--cases` (`parts`) and in each part's record (`part_of`) (§8) | an IDE's test tree |
+| `test-case-stream` | 2026.11.10.1 | with `test-protocol`: a `case` record as each case begins and ends, before its program's record (§8) | an IDE's live results |
+| `test-metrics` | 2026.11.10.1 | with `test-protocol`: the cases' `kind`, `tags`, `metrics` and `bounds`, the program's `usage`, in the records and in the run `mcpp test` keeps (mtest spec P6, P10.2, P12; §8) | an IDE's metrics, bounds and trends |
+| `test-launch-records` | 2026.11.10.1 | with `test-protocol`: a record of a program built and not run (`--no-run`) carries its `launch`: `argv`, `env`, `cwd`, `via` (SPEC-017 B5) | a test session that starts the programs itself |
+| `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` names each framework's `capabilities` and `session` (SPEC-017 B6) | an IDE choosing between a session and processes |
+| `test-checks` | 2026.11.10.1 | with `test-protocol`: a failure's `source` and `fatal`, and a case's `checks` (`held`, `failed`), as the program reported them (SPEC-017 O3) | an IDE's list of checks |
+| `test-output` | 2026.11.10.1 | with `test-case-stream`: a case's own output, `output`: the program's `output` events, or all the output of a program that ran that case alone, in its program's `cases` and, from events, in its `end` record (SPEC-017 O8) | an IDE's output of one case |
 
 ### How a tool runs mcpp for a project
 
@@ -545,7 +552,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.25.0` from 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -639,6 +646,7 @@ a program classifying the outcome reads `reason`:
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |
 | `layer-ordering` | the five layers do not stack |
+| `layer-cycle` | the packages that supply the layers require one another in a circle (a kernel-abi written above a C library under a C library written above a kernel-abi); the message names each package, the layer it supplies and the layer it requires, and carries the token in brackets *(2026.11.10.1+)* |
 | `exclusive-capability` | two packages provide one capability and at least one declared it exclusive |
 | `version-floor-unmet` | a package requires more of the machine than the machine was declared to have |
 | `accel-mismatch` | a `[build] sources` entry is constrained to a device set this build does not cover |
@@ -835,6 +843,26 @@ Per test:
 | `listed` | under `--cases`: each case's `id`, `name`, `file`, `line`, and `kind`, `tags`, `expect` when stated *(2026.11.8.1+)* |
 | `guide` | the guide of the framework the test is written with, a file, when its framework states one *(2026.11.8.1+)* |
 | `program`, `sources` | a test built and not run (`--no-run`, `--cases`): the program, and the files it is compiled from -- its own and those of the libraries it links -- for a runner that selects tests by change *(2026.11.8.1+)* |
+| `parts` | under `--cases`, a program a run divides into processes (`[test] split = "file"`, cases in several of its files): each part's `name` (`<test>/<file stem>`, as the run's records name it) and `file` *(2026.11.10.1+, `test-parts`)* |
+| `part_of` | the record of a part: the program it is a part of *(2026.11.10.1+, `test-parts`)* |
+| `usage` | the program's use of the machine, as it reported it (P10.2): `user_ms`, `sys_ms`, and `peak_bytes`, `read_bytes`, `written_bytes` when stated *(2026.11.10.1+, `test-metrics`)* |
+
+A case in `cases` also has, when the program stated them, `kind`, `tags`, `metrics` (`name`,
+`value`, `unit`, and `samples`, `better`, `precision` when stated) and `bounds` (`metric`, `max`,
+`min`); an entry of `listed` has `bounds` *(2026.11.10.1+, `test-metrics`)*.
+
+**Cases as they happen** *(2026.11.10.1+, `test-case-stream`)*. A program's report is read while
+it runs, and each case's beginning and end is a record of its own, before the program's record,
+which still carries every case:
+
+```json
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"begin","t_ms":12}}
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"end","status":"pass","duration_ms":3.1}}
+```
+
+`t_ms` counts from the start of the run, as the store's `started_ms` does. The `end` record has
+the fields of a case in `cases`. A program that ends without a case's `end` leaves that case
+begun; its program's record states it failed (protocol P5.4).
 
 Summary record, `{"summary": {...}}`:
 

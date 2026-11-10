@@ -155,7 +155,8 @@ rec=$(record a.json math)
 [ "$(field "$rec" "r['cases'][1]['failures'][0]['line']")" = 5 ] || fail "A: the failure's place" a.json
 field "$rec" "r['cases'][2]['reason']" | grep -q "status 3 before the case ended" || fail "A: a crashed case's reason (P5.4)" a.json
 "$MCPP" test -p app > a.log 2>&1 && fail "A: the human run passed" a.log
-grep -q "case math/fails failed at t.cpp:5" a.log || fail "A: the human report does not name the failed case" a.log
+grep -qE "^        math/fails  t\.cpp:5$" a.log || fail "A: the failures' index does not name the failed case at its place" a.log
+grep -qE "cases: 1 passed, 2 failed, 0 skipped" a.log || fail "A: the summary does not count the cases" a.log
 
 # B
 "$MCPP" test --case math/adds --message-format json > b.json 2> b.err || fail "B: the selected case failed" b.json b.err

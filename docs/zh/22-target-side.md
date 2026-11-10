@@ -451,6 +451,7 @@ C 库名的通用知识：
 | 目标 | 请求 | 实现 |
 |---|---|---|
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
+| FreeBSD、NetBSD | `posix` / `arch-default` | 与 Linux 相同：ELF 三元组预定义 `__unix__`，LP64，`wchar_t` 为 32 位（`<arch>-freebsd-musl`，openkal-freebsd 之上的 C 库） |
 | macOS | `posix` / `arch-default` | 一个令牌，`-D__unix__`——Apple 的 clang 在默认三元组上预定义的是 `__APPLE__`/`__MACH__`，从来不是 `__unix__` |
 | freestanding（裸机） | `posix` / `arch-default` | 同样一个令牌，`-D__unix__`，理由相同：这里同样没有任何东西定义它 |
 | Windows | `posix` / `arch-default` | 采用 Cygwin 式语义：只在编译行加 `--target=x86_64-pc-cygwin`；再加 `-D__MCPP_TARGET_WINDOWS__`（见下方说明）；`data-model` 变为 LP64 是三元组切换的结果，不是另一个开关 |
@@ -865,7 +866,7 @@ schema 警告，并且该段不生效。它过去静默地求值为假，而那�
 
 ## 诊断
 
-四种情形由引擎而非由编译器报出。
+五种情形由引擎而非由编译器报出。
 
 | 情形 | 报出内容 |
 |---|---|
@@ -873,6 +874,7 @@ schema 警告，并且该段不生效。它过去静默地求值为假，而那�
 | 两个包供给同一层 | 同时指出二者，以及各自进入图的路径 |
 | 某一层无人供给 | 指出该层，以及应当依赖的能力 |
 | 载荷的 C++ 运行时位于一个外来 C 库之上 | 同时指出二者，以及两条出路 |
+| 各层的供给者相互需要成环（2026.11.10.1+） | 指出每个包、它供给的层与它需要的层；`layer-cycle` |
 
 一条来自编译器或链接器、关于某个目标侧组合的消息，表明缺少一条诊断。在任何
 命令行被发出之前，引擎已经知道该组合不成立。
@@ -1069,6 +1071,44 @@ sysroot = ""                          # no C library at all
 其他取值被拒绝。编译器为 clang 时,该行还接受 `{ path = "<目录>" }`(2026.10.24.1+):
 一棵解包的 Visual Studio 目录树或 clang 的 `/winsysroot` 布局,其中存在 `Windows Kits/10` 时使用它。见 [20 —— 工具链管理](20-toolchains.md) 中
 「MSVC ABI 上的 clang：toolset 就是 sysroot」一节。
+
+#### 基座包：陈述其各层的 sysroot（2026.11.10.1+）
+
+一个 sysroot 可以说出它在 C 库之外还有什么。**基座包**是根目录带普通包清单的 sysroot：`provides` 写出它供给的层，
+`[build]` 用任何层供给者都使用的键陈述这些层，路径相对包根，包根即 sysroot：
+
+```toml
+[package]
+name     = "x86_64-freebsd-sysroot"
+version  = "14.5"
+provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
+            "hosted-standard-library"]
+
+[build]
+include_dirs      = ["usr/include/c++/v1"]   # C++ 库的头文件
+ldflags           = ["-lc++", "-lcxxrt"]     # 链接的 C++ 库
+std-module        = "usr/share/libc++/v1/std.cppm"
+std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
+std-module-flags  = ["-D__fenv_static="]
+# compiler_runtime_dir = "compiler-rt"       # 编译器运行时所在的目录
+```
+
+与任何 sysroot 一样被指名（`sysroot = "xim:x86_64-freebsd-sysroot@14.5"`、`{ path = "…" }`、平台或提供者的
+`sysroot`）时，基座回答它陈述的各层：
+
+- 报告把这些层标为 `prebuilt`，并附基座的 `<名>@<版本>`；
+- C++ 头文件、`std` 模块与链接的 C++ 库取自基座；工具链载荷为其自身宿主构建的 C++ 运行时及其归档不参与。基座未给出
+  `std-module` 时，该构建没有 `import std`；
+- `compiler_runtime_dir`（`[build]` 的键，2026.11.10.1+）指名编译器运行时所在的目录：clang 读作资源目录，gcc 经 `-B`
+  读取。
+
+一个基座包是一个身份的 sysroot。平台以各提供者的 `sysroot` 为每个身份指名自己的基座（[35](35-platforms.md)）；驱动能在
+一个根内区分架构的系统（MinGW-w64）由一个包服务。
+
+索引中有 `xim:x86_64-freebsd-sysroot` 与 `xim:aarch64-freebsd-sysroot`（FreeBSD 的基本系统，附 libc++ 的模块源码），
+以及 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind 与 compiler-rt，x86_64 与
+aarch64）。在 `*-windows-gnu` 行上后者是 clang 的 sysroot；`mingw-llvm` 提供者指名它，因此每一台宿主都能构建 GNU ABI 的
+Windows 行（[21](21-the-target-triple.md)）。
 
 构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**：`mcpp::target_libc()`
 返回该包的名字，`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的

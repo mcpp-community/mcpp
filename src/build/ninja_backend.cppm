@@ -1857,14 +1857,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // and a `--target-bmi` there would name an edge nobody declared.
     //
     // `$module_map` names the unit's module map when it reaches a BMI below its
-    // provider's directory (B1); the rule carries it only when some unit does,
-    // so a plan of the root's modules alone writes the file it always wrote.
+    // provider's directory (B1). Its value begins with the space that separates
+    // it, so a unit without one has the command a plan of the root's modules
+    // alone always had, in every graph: the rule's text was conditional on the
+    // plan, and a unit of both the build's graph and the tests' (the program's
+    // `main.cpp`) had two commands, so each command rescanned it after the
+    // other.
     append(std::format(
         "rule cxx_dyndep\n"
-        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} $bind $expect{} --output $out $in\n"
+        "  command = $mcpp dyndep --single --bmi-dir {} --bmi-ext {} $bind $expect$module_map --output $out $in\n"
         "  description = DYNDEP $out\n"
         "  restat = 1\n\n",
-        traits.bmiDir, traits.bmiExt, plan.moduleScopes.empty() ? "" : " $module_map"));
+        traits.bmiDir, traits.bmiExt));
 
     // P2: cxx_module preserves BMI timestamps when interface is unchanged.
     // GCC always updates the .gcm timestamp even if content is identical.
@@ -3175,7 +3179,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                 append("  bind = --split-module\n");
             if (auto at = ddiScope.find(ddi); at != ddiScope.end())
                 if (auto sc = plan.moduleScopes.find(at->second); sc != plan.moduleScopes.end())
-                    append(std::format("  module_map = --module-map {}\n",
+                    append(std::format("  module_map = $ --module-map {}\n",
                                        escape_ninja_path(sc->second.mapFile)));
             if (auto it = ddi_expect.find(ddi); it != ddi_expect.end())
                 append(std::format("  expect = {}\n", it->second));
@@ -4571,7 +4575,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         reclaim_stale_schedule_tokens(plan.outputDir);
     }
 
-    auto ninja_path = plan.outputDir / "build.ninja";
+    auto ninja_path = plan.outputDir / plan.graphFile;
     // Written beside build.ninja and not into it: the fast path replays the
     // ninja file without a plan, and the advice a failed link needs has to
     // reach both channels or it appears depending on whether build.ninja
@@ -4885,6 +4889,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nargv.push_back("--quiet");
     nargv.push_back("-C");
     nargv.push_back(plan.outputDir.string());
+    if (plan.graphFile != "build.ninja") { nargv.push_back("-f"); nargv.push_back(plan.graphFile); }
     if (opts.verbose)
         nargv.push_back("-v");
     // MCPP_NINJA_DEBUG: append ninja's own `-d` topics. The one instrument that
@@ -4954,14 +4959,14 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         const auto preDeadline =
             std::chrono::milliseconds(static_cast<long long>(opts.buildTimeoutSecs) * 1000);
         if (report) {
-            std::vector<std::string> pre{ninjaProgram, "-C", plan.outputDir.string(),
+            std::vector<std::string> pre{ninjaProgram, "-C", plan.outputDir.string(), "-f", plan.graphFile,
                                          std::string(kStagedCacheGoal)};
             (void)run_ninja_reporting(pre, nenv, preDeadline, *report, opts.verbose,
                                       command_prefixes(flags, plan),
                                       mcpp::build::progress::PassKind::Placement,compilerStopped);
         } else {
             std::vector<std::string> pre{ninjaProgram, "--quiet", "-C", plan.outputDir.string(),
-                                         std::string(kStagedCacheGoal)};
+                                         "-f", plan.graphFile, std::string(kStagedCacheGoal)};
             // A ninja whose progress nobody reads reports no action start, not
             // even into the file of a build that runs this one (design §6.4).
             auto preEnv = nenv;
@@ -4998,7 +5003,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // The main pass's options, and its goal last.
         std::vector<std::string> scan{ninjaProgram};
         if (!opts.verbose && !report) scan.push_back("--quiet");
-        scan.insert(scan.end(), {std::string("-C"), plan.outputDir.string()});
+        scan.insert(scan.end(), {std::string("-C"), plan.outputDir.string(), std::string("-f"), plan.graphFile});
         if (opts.verbose) scan.push_back("-v");
         if (auto topics = mcpp::invocation::get("MCPP_NINJA_DEBUG")) {
             scan.push_back("-d");
@@ -5085,7 +5090,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             : filter_ninja_output(out, command_prefixes(flags, plan));
         return std::unexpected(BuildError{
             std::format("build timed out after {}s", opts.buildTimeoutSecs),
-            plan.outputDir / "build.ninja", std::move(partial), /*timedOut=*/true});
+            plan.outputDir / plan.graphFile, std::move(partial), /*timedOut=*/true});
     }
 
     r.exitCode = ok ? 0 : 1;
@@ -5257,7 +5262,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                 plan.targetSide.cAbiDecl->absent);
         // (the fast path reads the same list from the sidecar this build
         // wrote beside build.ninja — see `write_c_abi_absent_sidecar`)
-        BuildError failure{"build failed", plan.outputDir / "build.ninja",
+        BuildError failure{"build failed", plan.outputDir / plan.graphFile,
                            std::move(diagnostics)};
         failure.reported = reported;
         failure.rawOutput = out;

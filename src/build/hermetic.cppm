@@ -164,6 +164,7 @@ std::expected<void, std::string> verify_hermetic_link(
             if (auto upstream = mcpp::provider::store_of(real)) allowed.push_back(*upstream);
     }
     if (!tc.base.root.empty()) allowed.push_back(tc.base.root);
+    if (!tc.pairedSysroot.empty()) allowed.push_back(tc.pairedSysroot);
 
     if (auto e = mcpp::invocation::get("MCPP_ALLOW_HOST_LIBS"); e && e->front() != '0')
         allowHostLibs = true;
@@ -244,7 +245,7 @@ std::expected<void, std::string> verify_hermetic_link(
     // invited the reader to reinstall a glibc payload that has nothing to do
     // with it.
     if (auto tt = mcpp::toolchain::triple::parse(tc.targetTriple);
-        tt && tt->has_own_sysroot()) {
+        tt && (tt->has_own_sysroot() || tt->c_library_by_platform())) {
         mcpp::log::verbose("hermetic", std::format(
             "target {} carries its own sysroot; its loader ({}) is a path on "
             "the target and is not checked against the sandbox",

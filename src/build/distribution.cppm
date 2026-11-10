@@ -510,6 +510,16 @@ struct MechanismInput {
     // library to name, and the honest flag is the one that stops the driver
     // from adding its own.
     bool             graphCxxRuntime = false;
+    // THE TOOLCHAIN'S C++ ARCHIVES ARE ANOTHER TARGET'S: the directory they
+    // were found in names a triple whose architecture or system is not this
+    // row's (the payload's own host, `x86_64-unknown-linux-gnu`, on an
+    // `aarch64-freebsd-musl` link). Not linked: they were the wrong machine's
+    // code (`ld.lld: libc++.a(algorithm.cpp.o) is incompatible`), or, on a row
+    // of one architecture and another system, another system's C++ runtime
+    // linked by chance. The row's C++ runtime is a package's (`mcpp:c++-abi`).
+    // `foreignCxxTriple` names theirs.
+    bool             foreignCxxArchives = false;
+    std::string      foreignCxxTriple;
 };
 
 struct Mechanism {
@@ -621,6 +631,16 @@ Mechanism resolve(const MechanismInput& in) {
     if (in.freestanding || in.graphCxxRuntime) {
         m.effective = Contract::SelfContained;
         m.unitFlags = " -nostdlib++";
+        return m;
+    }
+    if (in.foreignCxxArchives) {
+        m.effective = Contract::SelfContained;
+        m.unitFlags = " -nostdlib++";
+        m.degraded = true;
+        m.diagnostic = std::format(
+            "the toolchain's C++ runtime is built for {}, not for this target, and is not linked; "
+            "a C++ program here takes its C++ runtime from a package that provides `mcpp:c++-abi` "
+            "(openkal-llvm-runtime on a row above openkal-musl)", in.foreignCxxTriple);
         return m;
     }
 

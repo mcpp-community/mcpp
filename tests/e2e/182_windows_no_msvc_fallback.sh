@@ -178,7 +178,10 @@ iso_out=$(cd "$ISO" && PATH="/usr/bin:/c/Windows/System32" ./bare_win.exe 2>&1) 
 # ── 4) An EXPLICIT choice must not be overruled ────────────────────────────
 # mcpp may revise a default it picked itself. It must not silently swap the
 # ABI out from under a project that asked for MSVC in writing — a project
-# linking vcpkg-built .lib files is far better served by an error.
+# linking vcpkg-built .lib files is far better served by an error. The MSVC
+# ABI is written as the project's target: llvm alone does not ask for it, since
+# clang pairs with the MinGW-w64 payload of x86_64-windows-gnu (SPEC-016 §6),
+# which step 2 made this machine's default target.
 cd "$TMP"
 "$MCPP" new explicit_msvc >/dev/null 2>&1
 cd explicit_msvc
@@ -186,6 +189,9 @@ cat >> mcpp.toml <<EOF
 
 [toolchain]
 windows = "llvm@${LLVM_VERSION}"
+
+[build]
+target = "x86_64-windows-msvc"
 EOF
 
 set +e
@@ -193,7 +199,7 @@ exp_out=$("$MCPP" build 2>&1)
 exp_rc=$?
 set -e
 [[ $exp_rc -ne 0 ]] || {
-    echo "FAIL: explicit [toolchain] windows = llvm was silently replaced"
+    echo "FAIL: an explicit MSVC target with [toolchain] windows = llvm was silently replaced"
     echo "$exp_out"; exit 1; }
 echo "$exp_out" | grep -q "x86_64-windows-gnu" || {
     echo "FAIL: the error does not point at the working alternative:"

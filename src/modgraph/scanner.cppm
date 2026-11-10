@@ -1196,8 +1196,11 @@ void scan_one_into(ScanResult& result,
             ? manifest.package.name
             : manifest.package.namespace_ + "." + manifest.package.name;
     // scan_overrides: author-asserted units bypass the text scan entirely.
-    // Every override glob must match at least one collected source file —
-    // an unmatched glob is a typo or a stale declaration, not a no-op.
+    // Every override glob must match a file: one that matches nothing on disk
+    // is a typo or a stale declaration, not a no-op. One whose files exist and
+    // take no part in this build -- a feature that is off, a `!` rule of a
+    // `[target.<selector>.build]` -- describes them for the builds that do
+    // compile them (mcpp#902).
     std::map<std::string, int> overrideHits;
     for (auto const& [glob, ov] : manifest.modules.scanOverrides)
         overrideHits[glob] = 0;
@@ -1339,10 +1342,11 @@ void scan_one_into(ScanResult& result,
     }
 
     for (auto const& [glob, hits] : overrideHits) {
-        if (hits == 0) {
+        if (hits == 0 && std::ranges::none_of(expand_braces(glob), [&](auto const& branch) {
+                return !expand_glob(root, branch).empty(); })) {
             result.errors.push_back(ScanError{root, 0, std::format(
-                "scan_overrides glob '{}' matched no source file "
-                "(typo, or the glob is not covered by `sources`)", glob)});
+                "scan_overrides glob '{}' matches no file of the package (a typo, or "
+                "a stale declaration)", glob)});
         }
     }
 

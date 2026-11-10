@@ -404,6 +404,21 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     }
     if (!dm.hasCfg) return dm;
     dm.llvmRoot = tc.binaryPath.parent_path().parent_path();
+    // A TARGET WHOSE C LIBRARY A PLATFORM DESCRIBES TAKES NONE OF THE
+    // PAYLOAD'S OWN TARGET SIDE (E1): its libc++ headers and runtime
+    // directories are built for the payload's host. Measured on a FreeBSD row
+    // a platform defined (2026-11-10): the payload's `include/c++/v1` reached C
+    // units (`'__config_site' file not found`), and its `lib/<host triple>`
+    // reached the link and the artifact's RPATH.
+    // A BASE PACKAGE'S C++ HEADERS STAND WHERE THE PAYLOAD'S WOULD (E5), so
+    // every reader of this model -- a unit, the std module, a build program --
+    // compiles against the library the base links.
+    if (!tc.base.layers.cxx.empty()) {
+        dm.cxxIncludes = tc.base.layers.cxxIncludes;
+        return dm;
+    }
+    if (auto t = mcpp::toolchain::triple::parse(tc.targetTriple); t && t->c_library_by_platform())
+        return dm;
     auto libcxxInclude = dm.llvmRoot / "include" / "c++" / "v1";
     dm.cxxIncludes.push_back(libcxxInclude);
 
@@ -520,6 +535,10 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     // which brings compiler-rt and libunwind instead.
     auto add_compiler_runtime_dir = [&] {
         if (is_musl_target(tc) || lm.clangDriver || tc.binaryPath.empty()) return;
+        // The payload's runtime is built for its host, not for a target whose
+        // C library a platform describes (E1).
+        if (auto t = mcpp::toolchain::triple::parse(tc.targetTriple); t && t->c_library_by_platform())
+            return;
         std::error_code lec;
         auto gccLib = tc.binaryPath.parent_path().parent_path() / "lib64";
         if (std::filesystem::exists(gccLib, lec))

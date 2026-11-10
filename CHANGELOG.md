@@ -4,6 +4,180 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.10.1] - 2026-11-10
+
+### Added
+
+- `override = true` on a root's dependency, or in `[workspace.dependencies]`,
+  answers every request for the package in the graph its table governs; each
+  replaced request is named once (`Overrode`), `mcpp.lock` records the
+  override and `--locked` reads it, and an override of a platform version
+  group's member is taken with a warning. A library's `override` is ignored
+  and said to be (mcpp#914).
+- A refusal of two irreconcilable versions ends with the line that overrides
+  the package; a library that pins one release of a package every consumer
+  shares (a target-side layer, a kernel ABI) is noted to its users, and
+  `mcpp publish` refuses the pin in a library (mcpp#914).
+- The mcpp test spec (SPEC-017 v2.0, `docs/specs/test.md`) is the one
+  contract between clients, mcpp and test frameworks: it merges SPEC-017 v1,
+  the normative text of the mtest test protocol (clauses P1–P12 kept) and the
+  `[test]` keys, and divides them into base capabilities (B1–B6) that every
+  runner and framework implements and optional ones (O1–O9) a framework or its
+  tools declare.
+- `mcpp test --no-run --message-format json` records how each program starts,
+  `launch` (`argv`, `env`, `cwd`, `via`), for a launcher that runs the built
+  programs itself (B5; feature `test-launch-records`).
+- A framework's entry states `test-capabilities` and `test-session`, and
+  `mcpp test --guide` reports them (B6; feature `test-frameworks`).
+- A failure's `source` and `fatal` and a case's `checks` (`held`, `failed`)
+  reach the records and the kept run as the program reported them (O3;
+  feature `test-checks`), and a case has its own `output`: the program's
+  `output` events, or all that a program which ran one case wrote (O8; feature
+  `test-output`).
+- **Base packages (SPEC-002 §2.5).** A sysroot whose root carries a package
+  manifest is read as any package is: its `provides` answers its layers and
+  its `[build]` keys state them -- `include_dirs` the C++ library's headers,
+  `ldflags` its libraries, `std-module`, `std-compat-module` and
+  `std-module-flags` its std module, and the new `compiler_runtime_dir` the
+  directory of its compiler runtime (`-resource-dir` for clang, `-B` for gcc)
+  -- with paths relative to the package root, which is the sysroot. The build
+  takes those layers from the base, reports them as `prebuilt` with the base's
+  name and version, and keeps the toolchain payload's C++ runtime out. A
+  provider's `sysroot` (a package, or `{ path }` in a platform) is its
+  identity's base, ahead of the platform's own, so a platform gives each
+  identity its own base. The index carries `xim:x86_64-freebsd-sysroot@14.5`,
+  `xim:aarch64-freebsd-sysroot@14.5` and `xim:mingw-w64-sysroot@20261104-2`.
+- **Windows GNU-ABI rows from every host (mcpp#913).** The `mingw-llvm`
+  provider serves `x86_64-windows-gnu` and the new `aarch64-windows-gnu` with
+  clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on
+  UCRT, libc++, libunwind, compiler-rt), below the gcc payload where that
+  exists; `import std` included, static by default. A provider's sysroot
+  package is the base statement of last resort; a MinGW row takes a base
+  package by name or path.
+- FreeBSD's identities are built-in rows: `x86_64-freebsd` and
+  `aarch64-freebsd` (the system's own ABI, served by a platform that names a
+  base) and their `-musl` counterparts (planned). A row's `clang-triple` is
+  data; built-in rows' systems are words of the language.
+- The 32-bit hosted identities `i686-linux-musl`, `i686-linux-gnu` and
+  `i686-openkal` are planned rows: refused as planned, not as unknown.
+- Build programs of a package that requires `mcpp:kernel-abi` read the
+  resolved provider's `provides-interfaces` (`mcpp::kernel_abi_interfaces()`,
+  `MCPP_KERNEL_ABI_INTERFACES`, `;`-joined; empty is unknown).
+- `mcpp test` states what its programs report as they report it (mcpp#917):
+  a `case` record as each case begins and ends, before the program's record
+  (feature `test-case-stream`); the parts a program runs as, under `--cases`
+  (`parts`) and in each part's record (`part_of`, feature `test-parts`); the
+  cases' `kind`, `tags`, `metrics` and `bounds` and the program's `usage`, in
+  the records and in the run kept under `target/mtest` with the case's start
+  and its failures' expected and actual values (feature `test-metrics`; mtest
+  spec P6, P10.2, P12). A `Bench` case's measurements reach `mtest analyze
+  trend`.
+- The suppliers of the layers may not require one another in a circle; the
+  build is refused before compiling, naming each package, the layer it
+  supplies and the one it requires (`layer-cycle`, SPEC-002 §3.8).
+
+### Changed
+
+- `mcpp test` writes its graph to `test.ninja` beside `build.ninja`; the two
+  share the directory's objects, `.ninja_log` and `.ninja_deps`. A test no
+  longer rewrites the build's graph, so `mcpp build` after `mcpp test` takes
+  its fast path, and a dependency scan both graphs name has one command in
+  both (`$module_map` begins with its own separator), so alternating the two
+  commands rescans nothing.
+- The tests of an unchanged project run without planning: a full `mcpp test`
+  records what it planned for every test (`test-plan.json`, and a build-cache
+  entry for `test.ninja`), and a later run that the build fast path's checks,
+  the package's discovered tests and a dry run of ninja admit runs the
+  selected tests from it. Measured on a workspace of 1,500 sources: one
+  program's tests, unchanged, from 5.8 s to 0.13 s.
+- The programs `mcpp test` builds for its tests (`MCPP_BIN_<NAME>`) are built
+  by `mcpp build`'s fast path when nothing changed; a run of an unchanged
+  project neither resolves nor scans to learn that they are current.
+- A package's and a test's `Compiling` line states work done: it is written
+  when one of its steps runs, and a run with nothing to compile writes none.
+- The built-in platform of `x86_64-openkal` and `aarch64-openkal` is
+  openkal-platform 0.25.0 (openkal 0.25, openkal-image 0.5.5, openkal-musl
+  0.29.0); it was 0.24.4.
+- Programs that share an entry source keep their own flags: the entry is
+  compiled once per program whose `[targets.<name>]` or
+  `[targets.<name>.build]` flags differ (`obj/_entry/<name>/`; mcpp#911 N1).
+- A row a platform defines, and a built-in row no built-in provider serves, is
+  read as a built-in row: its `march` and `link-emulation` reach the compile
+  and an ld.lld link; nothing the toolchain payload built for its own host
+  (libc++ headers, runtime directories, the host's `-L` and RPATH) reaches it;
+  the host loader's closure and symbol checks apply only to rows that run on
+  this machine (mcpp#911 N2, N3, N4, N7).
+- An artifact for another system is packed from the closure its file names
+  (`DT_NEEDED`): a library this build produced travels, other names are the
+  target system's; `--mode static` links a static program on such a row and
+  refuses to pack a dynamic one under the `-static` name (mcpp#911 N8).
+- The unserved-target diagnosis names a spelling the parser accepts:
+  `[toolchain] <host> = { path, prefix }` (mcpp#913).
+- `mcpp test` states, under its result line, the cases of the run
+  (`cases: N passed, N failed, N skipped (in N programs)`, counting no case
+  that only declares others) and a `failures:` index that names each failed
+  program with its failed cases and their places. The failure blocks are the
+  framework's and are no longer repeated after the summary.
+- The C environment of FreeBSD and NetBSD rows is POSIX's: a default
+  architecture there adds no flag, as on Linux.
+
+### Fixed
+
+- The toolchain's C++ archives built for another target are not linked: on a
+  row of another architecture or system (`aarch64-freebsd-musl` from a Linux
+  host) the payload's own `libc++.a` was put on the link and failed as
+  incompatible, or, of one architecture, linked another system's C++ runtime
+  by chance. The link states that the row's C++ runtime is a package's
+  (`mcpp:c++-abi`, openkal-llvm-runtime above openkal-musl).
+- `mcpp test` releases the build directory once its tests are built: a
+  `mcpp build`, or a second `mcpp test` of the same configuration, no longer
+  waits for a running test, and each invocation keeps its protocol files in a
+  directory of its own (`test-protocol/<pid>-<start>/`), removed when it ends
+  (mcpp#915).
+- A version that a merge replaces takes its requests out of the graph: they
+  no longer constrain what remains. A graph where a pinned library brought a
+  package down to an older release was refused as "irreconcilable versions"
+  between that release's family and a request of the newer one (mcpp#914).
+- A home that names an existing registry (`[xlings] home`) leaves the places
+  of the registry's indices as the home that made it recorded them. Each home
+  over a shared registry wrote its own index directory and store there, and a
+  later build was sent to the store of a home that no longer existed
+  ("install path missing after fetch"). The message of that error now names
+  each place it looked in and the configuration that declared the stores.
+- A GNU-ABI Windows row finds its resource compiler in the paired payload or
+  uses `llvm-rc`, and a quoted `"winres.h"` is the toolchain's header, not a
+  generated input: the paired payload's, or a cross gcc's own
+  (`<root>/x86_64-w64-mingw32/include`).
+- A resource script's quoted include that no directory holds and no build
+  action writes is no longer an input of the build graph. Such a build failed
+  in ninja without the script's name, even when the script included the file
+  only `#if __has_include`; the resource compiler now reports a missing one
+  with the script's name and line.
+- `patches` on a git dependency that is a workspace member is applied in a
+  copy of the whole repository, so the member's edges to its siblings hold
+  (mcpp#911 N5).
+- `[platform.link] flags` on a platform that links through the compiler are
+  named in a warning instead of being dropped (mcpp#911 N6).
+- A `[scan_overrides]` glob whose files exist but take no part in this build
+  (a feature that is off, a target's `!` rule) is kept for the builds that
+  compile them; a glob matching no file is still refused (mcpp#902).
+- Two `mcpp` processes of one home install one package once: a dependency is
+  installed under the home's install turn (`registry/.install.lock`), and a
+  process that waited for the turn looks for the package again before
+  installing it. A second process was told the install succeeded while the
+  first was still placing the package, and stopped with "install path missing
+  after fetch".
+- A provider's base yields to a dependency graph that supplies the C library
+  wherever the provider is chosen; it was decided once before the graph was
+  loaded. A paired provider's sysroot is stated on the compile line of a
+  toolchain without a cfg (the Windows llvm payload), as on the link line,
+  and its C++ library (`-stdlib=`) is stated on C++ commands only: a C unit
+  carrying it drew clang's unused-argument warning, an error under `-Werror`.
+- A base package's C library is reported by the name its manifest states
+  (`provides`), not by the package's name; the `mingw-llvm` provider names
+  `xim:mingw-w64-sysroot@20261104-2`, whose manifest states
+  `mcpp:c-abi=ucrt`, the name the MinGW-w64 payload answers.
+
 ## [2026.11.9.1] - 2026-11-09
 
 ### Added

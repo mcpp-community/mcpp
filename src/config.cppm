@@ -1147,9 +1147,19 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     canonicalize_legacy_index_names(cfg);
     // Ownership is by index (design 2026-10-16 §5): an index mcpp serves
     // keeps its data and payloads in mcpp's home; the provider's own indexes
-    // stay where the provider keeps them.
+    // stay where the provider keeps them. A registry another home made
+    // (`[xlings] home` naming an existing one) keeps the places that home
+    // recorded: writing this home's there sent every later user of the
+    // registry to this home's store, which ended with it (the e2e homes under
+    // a temporary directory, measured on Windows and macOS).
+    const bool borrowedRegistry = [&] {
+        if (cfg.xlingsHomeOverride.empty()) return false;
+        std::error_code ec;
+        if (std::filesystem::equivalent(cfg.xlingsHomeOverride, cfg.registryDir, ec)) return false;
+        return std::filesystem::exists(mcpp::provider::open(make_xlings_env(cfg))->config_file(), ec);
+    }();
     for (auto& r : cfg.indexRepos) {
-        if (mcpp::provider::layout().is_provider_index(r.name)) continue;
+        if (borrowedRegistry || mcpp::provider::layout().is_provider_index(r.name)) continue;
         r.dir = cfg.mcppHome / "indices" / r.name;
         r.store = mcpp::provider::layout().own_store(cfg.mcppHome);
     }

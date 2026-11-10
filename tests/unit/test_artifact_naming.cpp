@@ -243,5 +243,5 @@ UTest every_known_row_is_in_the_vocabulary{"PlatformName/EveryKnownRowIsInTheVoc
     expect(is_platform_name("emscripten"));
     expect(!is_platform_name("web"));
     expect(is_platform_name("openkal"));
-    expect(eq(platform_names_joined(), "linux | macos | windows | ios | android | emscripten | openkal"));
+    expect(eq(platform_names_joined(), "linux | macos | windows | ios | android | emscripten | openkal | freebsd"));
 }};

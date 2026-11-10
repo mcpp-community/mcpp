@@ -514,6 +514,9 @@ run_by_mtest() {
     [[ -n "${E2E_SET:-}" ]] && args+=(--set "$E2E_SET")
     # E2E_COVERAGE: the run measures the coverage map ([coverage] of mtest.toml).
     [[ -n "${E2E_COVERAGE:-}" ]] && args+=(--coverage)
+    # The workflow run is the group its runs are reported together by
+    # (`mtest ci report`, ci.yml's test-report job).
+    [[ -n "${GITHUB_RUN_ID:-}" ]] && args+=(--group "$GITHUB_RUN_ID")
     (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" "${args[@]}")
 }
 # The programs of a listing, one per line; the arguments narrow it.

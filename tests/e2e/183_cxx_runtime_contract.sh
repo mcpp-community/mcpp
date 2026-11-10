@@ -123,15 +123,18 @@ EOF
 "$MCPP" build >/dev/null 2>&1 || { echo "FAIL: host-coupled build"; exit 1; }
 "$MCPP" test  >/dev/null 2>&1 || { echo "FAIL: host-coupled test"; exit 1; }
 
-NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 # Whatever the platform's self-contained mechanism is (-static-libstdc++,
 # -static, -load_hidden archives), host-coupled must not carry it — for the
-# test target as much as for the binary.
-if grep -E "unit_ldflags.*(-static-libstdc\+\+|-load_hidden|-nostdlib\+\+)" "$NINJA" >/dev/null; then
-    echo "FAIL: host-coupled still emits a self-contained mechanism:"
-    grep "unit_ldflags" "$NINJA"
-    exit 1
-fi
+# test target (test.ninja, 2026.11.10.1) as much as for the binary (build.ninja).
+for graph in build.ninja test.ninja; do
+    NINJA=$(find target -name "$graph" -not -path '*/.build-mcpp/*' | head -1)
+    [ -n "$NINJA" ] || { echo "FAIL: no $graph"; exit 1; }
+    if grep -E "unit_ldflags.*(-static-libstdc\+\+|-load_hidden|-nostdlib\+\+)" "$NINJA" >/dev/null; then
+        echo "FAIL: host-coupled still emits a self-contained mechanism in $graph:"
+        grep "unit_ldflags" "$NINJA"
+        exit 1
+    fi
+done
 
 echo "== 4. the older spelling means the same thing =="
 "$MCPP" build >/dev/null 2>&1

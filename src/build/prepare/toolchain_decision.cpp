@@ -39,8 +39,6 @@ import mcpp.toolchain.post_install;
 
 namespace mcpp::build {
 
-namespace {
-
 // WHAT "THE GRAPH SUPPLIES THE SYSTEM" MEANS FOR THIS TARGET. A C library of
 // the graph does, on any target. A kernel-abi package does only where the
 // target has no system of its own (a freestanding or a loader-supplied row):
@@ -66,7 +64,6 @@ bool graph_supplies_system(const PrepareState& state) {
     });
 }
 
-}  // namespace
 
 // OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
 // NOTHING IN ITS PLACE IS NOT, AND UNTIL THIS BLOCK IT LOOKED THE SAME.

@@ -1077,7 +1077,7 @@ std::string exe_launcher_manifest(std::string_view name, std::string_view versio
         "[targets.{2}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "# The OS library as one release, the one this mcpp was qualified with, so a\n"
         "# pack is the same at any later time (design 2026-11-07, D20).\n"
-        "[dependencies]\nmcpplibs.os = \"0.4.1\"\n",
+        "[dependencies]\nmcpplibs.os = \"0.4.4\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version,
         mcpp::libs::toml::escape_string(name));
 }
@@ -1424,7 +1424,7 @@ std::string launcher_manifest(std::string_view name, std::string_view version) {
         "[package]\nname    = \"{0}\"\nversion = \"{1}\"\n\n"
         "[targets.{2}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "[build]\nsources = [\"src/main.cpp\", \"src/carried.S\"]\n\n"
-        "[dependencies]\nmcpplibs.os         = \"0.4.1\"\nmcpplibs.mwrap.zstd = \"1.5.7\"\n",
+        "[dependencies]\nmcpplibs.os         = \"0.4.4\"\nmcpplibs.mwrap.zstd = \"1.5.7\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version,
         mcpp::libs::toml::escape_string(name));
 }

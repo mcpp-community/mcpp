@@ -625,6 +625,25 @@ UTest freestanding_carries_no_runtime_to_distribute{"Distribution/FreestandingCa
     expect(!m.degraded);
 }};
 
+// The toolchain's archives built for another target: the payload's host
+// libc++ found for an `aarch64-freebsd-musl` link. Not linked, and said: the
+// row's C++ runtime is a package's. Measured before this existed:
+// `ld.lld: error: ...x86_64-unknown-linux-gnu/libc++.a(algorithm.cpp.o) is incompatible`.
+UTest foreign_archives_are_not_linked{"Distribution/ForeignArchivesAreNotLinked", [] {
+    dist::MechanismInput in;
+    in.format             = dist::Format::Elf;
+    in.stdlibId           = "libc++";
+    in.requested          = dist::Contract::SelfContained;
+    in.role               = dist::Role::Distributable;
+    in.foreignCxxArchives = true;
+    in.foreignCxxTriple   = "x86_64-unknown-linux-gnu";
+    auto m = dist::resolve(in);
+    expect(eq(m.unitFlags, " -nostdlib++"));
+    expect(m.degraded);
+    expect(ne(m.diagnostic.find("x86_64-unknown-linux-gnu"), std::string::npos)) << m.diagnostic;
+    expect(ne(m.diagnostic.find("mcpp:c++-abi"), std::string::npos)) << m.diagnostic;
+}};
+
 // The hosted form of the same fact. A package in the graph has compiled a
 // C++ runtime FOR THIS TARGET and its objects are already on the link line, so
 // there is no library to name and nothing to look for. Measured before this

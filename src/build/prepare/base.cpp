@@ -26,6 +26,8 @@ import mcpp.runtime.binding;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 import mcpp.ui;
 import mcpp.invocation;
 
@@ -113,7 +115,10 @@ std::string missing_path_message(const mcpp::toolchain::triple::Triple& t, const
 std::expected<tb::Statement, std::string>
 base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
     const auto key = t.str();
-    if (state.baseStatement && state.baseStatementFor == key) return *state.baseStatement;
+    if (state.baseStatement && state.baseStatementFor == key
+        && !(state.baseStatementProvisional && !state.packages.empty()))
+        return *state.baseStatement;
+    bool provisional = false;   // the engine's tier, asked before the graph is known
     auto settle = [&](std::expected<tb::Statement, std::string> s)
         -> std::expected<tb::Statement, std::string> {
         if (!s) return s;
@@ -124,6 +129,7 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
         }
         state.baseStatement = *s;
         state.baseStatementFor = key;
+        state.baseStatementProvisional = provisional;
         return s;
     };
     auto stamped = [&](std::expected<tb::Statement, std::string> s, std::string kind,
@@ -181,8 +187,33 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
             return settle(std::move(s));
         }
     }
-    // 4. The engine's: the platform's `sysroot` (SPEC-013 §2), then the row,
-    //    read where it always was (`effective_sysroot`).
+    // 4. The engine's, the more specific first: the `sysroot` of the provider
+    //    that serves the identity here (SPEC-016 §3; a platform gives each
+    //    identity its own base this way, design 2026-11-10 E5), then the
+    //    platform's `sysroot` (SPEC-013 §2). A provider's sysroot is a statement
+    //    only where the row's base is rendered from one (gnu-sysroot,
+    //    driver-internal); a bare-metal row's C library stays the row's
+    //    (`effective_sysroot`).
+    //    An engine default yields to a dependency graph that supplies the
+    //    system (a C library composed over a kernel interface), as the row's
+    //    toolchain convention does: a base would be a second C library. Asked
+    //    before the graph is loaded, the answer is provisional: it is asked
+    //    again once the graph is known.
+    provisional = state.packages.empty();
+    if (!graph_supplies_system(state)) {
+        const auto address = tb::row_base(t).address;
+        const auto identity = state.targetChoice.identity.empty() ? key : state.targetChoice.identity;
+        for (auto const* p : mcpp::toolchain::target::providers()) {
+            if (p->name != state.targetChoice.provider || !mcpp::toolchain::target::serves(*p, identity))
+                continue;
+            if ((address == tb::Address::GnuSysroot || address == tb::Address::DriverInternal)
+                && (p->sysroot.starts_with("xim:") || p->sysroot.starts_with("path:")))
+                return settle(stamped(tb::parse_text(std::string(p->sysroot)),
+                                      p->platform.empty() ? "provider" : "platform", {}, 0,
+                                      std::format("the provider '{}' of {}", p->name, identity)));
+            break;
+        }
+    }
     if (state.platformEarly && state.platformData.sysroot.set) {
         auto const& o = state.platformData.sysroot.origin;
         auto s = stamped(tb::parse_text(state.platformData.sysroot.value), "platform", o.file,
@@ -209,6 +240,41 @@ std::vector<std::string> driver_base(const mcpp::toolchain::Toolchain& tc) {
     if (mcpp::toolchain::is_clang(tc)) v.push_back("--no-default-config");
     if (!tc.crossTargetFlag.empty()) v.push_back(tc.crossTargetFlag);
     return v;
+}
+
+// A BASE PACKAGE (design 2026-11-10 E5, SPEC-002 §2.5): a sysroot whose root
+// carries a package manifest. It is read as any package is: `provides` answers
+// its layers, and its `[build]` keys mean what they mean for any supplier --
+// `include_dirs` the C++ library's headers, `ldflags` its libraries,
+// `std-module*` the std module, `compiler_runtime_dir` where the compiler
+// runtime stands -- with paths relative to the package root, which is the
+// sysroot. Nothing in the manifest marks the role: being named where a sysroot
+// is named is the role. false: no manifest, an ordinary base.
+std::expected<bool, std::string>
+read_base_package(const fs::path& dir, tb::Resolution::Layers& out) {
+    std::error_code ec;
+    const auto manifest = dir / "mcpp.toml";
+    if (!fs::is_regular_file(manifest, ec)) return false;
+    auto m = mcpp::manifest::load(manifest);
+    if (!m) return std::unexpected(std::format("{}: {}", manifest.string(), m.error().message));
+    out.ref = std::format("{}@{}", m->package.name, m->package.version);
+    for (auto const& p : m->provides) {
+        auto take = [&](std::string_view layer, std::string& into) {
+            const auto k = std::string("mcpp:") + std::string(layer) + "=";
+            if (p.starts_with(k)) into = p.substr(k.size());
+        };
+        take("c-abi", out.cAbi);
+        take("c++-abi", out.cxx);
+        take("compiler-runtime", out.compilerRuntime);
+    }
+    auto const& b = m->buildConfig;
+    for (auto const& d : b.includeDirs) out.cxxIncludes.push_back(dir / d);
+    out.ldflags = b.ldflags;
+    if (!m->stdModule.empty()) out.stdModule = dir / m->stdModule;
+    if (!m->stdCompatModule.empty()) out.stdCompatModule = dir / m->stdCompatModule;
+    out.stdModuleFlags = b.stdModuleFlags;
+    if (!b.compilerRuntimeDir.empty()) out.compilerRuntimeDir = dir / b.compilerRuntimeDir;
+    return true;
 }
 
 bool provides_c_abi(const tb::Statement& s, std::string* impl) {
@@ -336,6 +402,45 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         record_source(state, std::move(d));
         return {};
     }
+    // A BASE PACKAGE ON A ROW WHOSE DRIVER RESOLVES ITS OWN SYSTEM (E9): the
+    // MinGW-w64 rows. The base is the driver's sysroot as the paired payload
+    // is, with the run-times its layers state; nothing is measured, the
+    // package's statement is the declaration (§3.4).
+    if (row.address == tb::Address::DriverInternal
+        && (stmt->form == tb::Form::Package || stmt->form == tb::Form::Path)) {
+        fs::path dir = stmt->form == tb::Form::Path ? fs::path(stmt->path) : fs::path{};
+        if (stmt->form == tb::Form::Package) {
+            auto p = package_dir(state, stmt->text);
+            if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
+                                                       tt->str(), stmt->text, p.error()));
+            dir = *p;
+        }
+        tc.base.layers = {};
+        auto b = read_base_package(dir, tc.base.layers);
+        if (!b) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text,
+                                               b.error()));
+        }
+        if (*b && mcpp::toolchain::is_mingw_target(tc)) {
+            tc.pairedSysroot = dir;
+            tc.base.runtime = tb::Runtime::None;
+            tc.base.libc = tc.base.layers.cAbi;
+            if (!tc.base.layers.cxx.empty()) {
+                tc.stdlibId = tc.base.layers.cxx;
+                std::error_code ec;
+                if (!tc.base.layers.stdModule.empty() && fs::is_regular_file(tc.base.layers.stdModule, ec))
+                    tc.set_std_modules(tc.base.layers.stdModule, tc.base.layers.stdCompatModule);
+                else
+                    tc.clear_std_modules();
+            }
+            d.detail = std::format("{} ({})", tc.base.libc, tc.base.layers.ref);
+            record_identity(tc.base.layers.ref, {dir / "mcpp.toml"});
+            record_source(state, std::move(d));
+            return {};
+        }
+        tc.base.layers = {};
+    }
     if (row.address != tb::Address::GnuSysroot || stmt->form == tb::Form::Empty) {
         // The empty form, and a package on a row whose SDK resolves its own
         // system: accepted as they always were, and stated.
@@ -359,6 +464,11 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
                                                    tt->str(), stmt->text, p.error()));
         dir = *p;
+    }
+    tc.base.layers = {};
+    if (auto b = read_base_package(dir, tc.base.layers); !b) {
+        refusal::record(refusal::Code::TargetBase);
+        return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text, b.error()));
     }
     const auto ecosystemLinux = tc.base.payload ? tc.base.payload->linuxInclude : fs::path{};
     const bool native = tt->os == "linux" && tt->arch == mcpp::toolchain::platform::host_arch
@@ -394,7 +504,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     } else {
         auto m = tb::measure_gnu(driver_base(tc), *tt, dir,
                                  mcpp::toolchain::is_clang(tc), probeDir);
-        if (!m.cAbiFound && !provides_c_abi(*stmt, &impl)) {
+        if (!m.cAbiFound && !provides_c_abi(*stmt, &impl) && tc.base.layers.cAbi.empty()) {
             refusal::record(refusal::Code::TargetBase);
             return std::unexpected(std::format(
                 "[target.{}].sysroot = {} ({}): {} supplies no C library the compiler can find "
@@ -427,6 +537,18 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         if (native && !ecosystemLinux.empty()
             && !fs::exists(dir / "usr" / "include" / "linux" / "limits.h", ec))
             tc.base.addedIncludes.push_back(ecosystemLinux);
+    }
+    // A base package's own `provides` is its declaration, as a statement's is.
+    if (tc.base.libc.empty() && !tc.base.layers.cAbi.empty()) tc.base.libc = tc.base.layers.cAbi;
+    // ITS C++ RUN-TIME STANDS WHERE THE PAYLOAD'S WOULD (E5): the std module is
+    // the base's, or there is none -- the payload's module was built from
+    // another release of the library than the base's headers.
+    if (!tc.base.layers.cxx.empty()) {
+        tc.stdlibId = tc.base.layers.cxx;
+        if (!tc.base.layers.stdModule.empty() && fs::is_regular_file(tc.base.layers.stdModule, ec))
+            tc.set_std_modules(tc.base.layers.stdModule, tc.base.layers.stdCompatModule);
+        else
+            tc.clear_std_modules();
     }
     // A declaration checks a measurement and stands in for one that cannot be
     // made (§3.4).

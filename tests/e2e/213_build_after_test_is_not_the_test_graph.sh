@@ -2,8 +2,9 @@
 # requires: gcc
 # 213_build_after_test_is_not_the_test_graph.sh — mcpp#407.
 #
-# `mcpp build`, `mcpp test` and `mcpp build --configure-only` all write
-# `target/<triple>/<fp>/build.ninja`, and they land in the same directory
+# `mcpp build`, `mcpp test` and `mcpp build --configure-only` all wrote
+# `target/<triple>/<fp>/build.ninja` (`mcpp test` writes `test.ninja` beside it
+# since 2026.11.10.1), and they land in the same directory
 # because the fingerprint covers neither dev-dependencies nor test targets.
 # A test-mode plan's `default` line names the TEST binaries and does not
 # contain the package's own target at all.
@@ -68,15 +69,22 @@ grep -q '^# mcpp:graph=normal' "$N" || {
     exit 1
 }
 
-# ── 2. mcpp test rewrites the same file with the test graph ─────────────────
+# ── 2. mcpp test writes its graph beside the build's ────────────────────────
+# Since 2026.11.10.1 the test graph is `test.ninja` in the same directory: the
+# objects, `.ninja_log` and `.ninja_deps` are shared, and build.ninja keeps the
+# build's graph. The read-side check below still has to hold for the graphs
+# `mcpp build --configure-only` writes into build.ninja.
 "$MCPP" test > t1.log 2>&1 || { cat t1.log; exit 1; }
-N2="$(find_ninja)"
-[[ "$N2" == "$N" ]] || {
-    echo "NOTE: test used a different build.ninja ($N2); #407 needs the shared one"
+T2="$(dirname "$N")/test.ninja"
+[[ -f "$T2" ]] || { echo "FAIL: mcpp test wrote no test.ninja beside $N"; ls "$(dirname "$N")"; exit 1; }
+grep -q '^# mcpp:graph=test' "$T2" || {
+    echo "FAIL: mcpp test's test.ninja does not declare graph=test"
+    head -3 "$T2"
+    exit 1
 }
-grep -q '^# mcpp:graph=test' "$N2" || {
-    echo "FAIL: mcpp test's build.ninja does not declare graph=test"
-    head -3 "$N2"
+grep -q '^# mcpp:graph=normal' "$N" || {
+    echo "FAIL: mcpp test rewrote build.ninja"
+    head -3 "$N"
     exit 1
 }
 

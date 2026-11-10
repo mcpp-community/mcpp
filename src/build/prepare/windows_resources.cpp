@@ -80,11 +80,13 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
     const auto  dialectId = mcpp::toolchain::dialect_for(*state.tc).id;
-    const bool msvcStyle = (dialectId == "msvc");
 
     // Lazy + hard failure, exactly like nasm: a dropped resource
     // surfaces as "where did my icon go", which is unattributable.
     auto tool = rsrc::find_rc_tool(*state.tc, dialectId);
+    // The TOOL's style decides the spelling and the output (`.res` or a COFF
+    // object), not the dialect: clang on a GNU-ABI row may compile with llvm-rc.
+    const bool msvcStyle = tool ? tool->style == "msvc" : dialectId == "msvc";
     if (!tool) {
         return std::unexpected(std::format(
             "[resources] needs a Windows resource compiler for the "
@@ -113,15 +115,9 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     // plan with one package states them once.
     const std::string ip = msvcStyle ? "/I" : "-I";
     std::vector<std::string> systemIncludes;
-    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos) {
-        for (auto const& ev : state.tc->envOverrides) {
-            if (ev.key != "INCLUDE") continue;
-            // Shared splitter: `;` only. See rsrc::split_env_list --
-            // the drive colon is not a separator.
-            for (auto dir : rsrc::split_env_list(ev.value))
-                systemIncludes.push_back(ip + std::string(dir));
-        }
-    }
+    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos)
+        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId))
+            systemIncludes.push_back(ip + dir.string());
     for (auto& ru : ctx.plan.resourceUnits) {
         if (auto target = rsrc::coff_target_flag(*tool, state.tc->targetTriple);
             !target.empty())
@@ -133,6 +129,36 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     }
     ctx.plan.rcFlags = ctx.plan.resourceUnits.front().flags;
     return {};
+}
+
+// A SUBJECT is one package whose resources are planned: its manifest, the
+// directory its paths were written in, and the images it owns. Selection
+// decides the graph, not the ownership of an image within that graph.
+namespace {
+struct Subject {
+    const mcpp::manifest::Manifest* m;
+    std::filesystem::path           dir;
+    std::string                     owner;   // qualified package identity
+};
+}  // namespace
+
+static std::vector<Subject> resource_subjects(PrepareState& state, BuildContext& ctx) {
+    std::vector<Subject> subjects;
+    std::set<std::string> seenSubjects;
+    auto add_subject = [&](const auto& manifest, const auto& root) {
+        auto owner = mcpp::build::qualified_package_name(manifest);
+        if (seenSubjects.insert(owner).second)
+            subjects.push_back({&manifest, root, std::move(owner)});
+    };
+    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
+    for (auto const& pkg : state.packages) {
+        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
+        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
+            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
+        });
+        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
+    }
+    return subjects;
 }
 
 std::expected<void, std::string> step13_windows_resources(PrepareState& state, BuildContext& ctx) {
@@ -165,35 +191,15 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // through `[resources] files`: both would sit at ordinal 1, the package
     // said nothing about code pages, and its own manifest is the one it ships.
     // A DECLARED `utf-8` beside such a manifest is refused below instead.
-    //
-    // A SUBJECT is one package whose resources are planned: its manifest, the
-    // directory its paths were written in, and the images it owns. Selection
-    // decides the graph, not the ownership of an image within that graph.
-    struct Subject {
-        const mcpp::manifest::Manifest* m;
-        std::filesystem::path           dir;
-        std::string                     owner;   // qualified package identity
-    };
-    std::vector<Subject> subjects;
-    std::set<std::string> seenSubjects;
-    auto add_subject = [&](const auto& manifest, const auto& root) {
-        auto owner = mcpp::build::qualified_package_name(manifest);
-        if (seenSubjects.insert(owner).second)
-            subjects.push_back({&manifest, root, std::move(owner)});
-    };
-    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
-    for (auto const& pkg : state.packages) {
-        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
-        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
-            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
-        });
-        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
-    }
+    const auto subjects = resource_subjects(state, ctx);
     const bool hostToolBuild = state.overrides.tool_depth > 0;
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
     const auto  dialectId = mcpp::toolchain::dialect_for(*state.tc).id;
-    const bool msvcStyle = (dialectId == "msvc");
+    // The output is the tool's (`.res` from rc.exe/llvm-rc, a COFF object from
+    // windres), found as the compile step below finds it (E3).
+    const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
+    const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
@@ -375,7 +381,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
 
                 // Author-written scripts: compiled once, linked into every image.
                 for (auto const& rcSrc : peUnits.empty() ? decltype(scriptFiles){} : scriptFiles) {
-                    auto scan = rsrc::scan_rc(rcSrc, rcIncludes);
+                    // The script's own directories, then the toolchain's: a
+                    // quoted `"winres.h"` is the toolchain's header, not a file
+                    // a build action produces (E3).
+                    auto scanIncludes = rcIncludes;
+                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId))
+                        scanIncludes.push_back(d);
+                    auto scan = rsrc::scan_rc(rcSrc, scanIncludes);
                     if (scan.versionInfoNamedByString) {
                         // The mcpp#365 silent failure, caught on the way in. A
                         // degradation rather than a warning: the impact is exactly
@@ -412,7 +424,21 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                             "UTF-8</activeCodePage>` to your manifest and set "
                             "`windows_code_page = \"legacy\"`, or drop your manifest.",
                             rcSrc.filename().generic_string()));
-                    auto inputs = std::move(scan.inputs);
+                    // A name found nowhere is an input only when a build action
+                    // writes it. Otherwise the script's own preprocessing decides
+                    // (`#if __has_include`), or the resource compiler names it; a
+                    // build graph edge on a file nothing produces would only fail
+                    // in ninja, without the script's name.
+                    std::vector<std::filesystem::path> inputs;
+                    for (auto& in : scan.inputs) {
+                        std::error_code ec;
+                        const bool written = std::ranges::any_of(ctx.plan.actions, [&](auto const& act) {
+                            return std::ranges::any_of(act.outputs, [&](auto const& o) {
+                                return std::filesystem::path(o).filename() == in.filename();
+                            });
+                        });
+                        if (written || std::filesystem::exists(in, ec)) inputs.push_back(std::move(in));
+                    }
                     inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
                     if (auto a = add_unit(rcSrc, rcSrc.stem().string(),
                                           std::move(inputs),

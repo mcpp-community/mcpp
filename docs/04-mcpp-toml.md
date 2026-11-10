@@ -512,6 +512,8 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. An entry target states the function its translation unit defines, and the program that selects it inherits it. |
 | `start` *(2026.10.26.2+)* | The symbol the image is entered at, on a freestanding target. See `start` above. |
 | `test-guide` *(2026.11.8.1+)* | Of an entry target: a file of the package, its guide to writing the tests it begins, which `mcpp test --guide` names ([08](08-testing.md#writing-a-test)). Refused on any other target. |
+| `test-capabilities` *(2026.11.10.1+)* | Of an entry target: the optional capabilities of the mcpp test spec its framework implements, by name (`["check-details", "metrics", "fixtures"]`; [SPEC-017](specs/test.md) B6). `mcpp test --guide` reports them, and a client relies on one only when it is stated. Refused on any other target. |
+| `test-session` *(2026.11.10.1+)* | Of an entry target: the command that starts its framework's test session (`["mtest", "serve", "--stdio"]`; SPEC-017 O9), which a client starts to run, add and cancel cases while it holds the session. `mcpp test --guide` reports it. Refused on any other target. |
 | `test-main` *(2026.11.8.1+)* | Of an entry target: `true` offers it as the beginning of a test file that defines no `main` in a package that depends on this one (or is this one) and states no `[test] main` ([08](08-testing.md#where-a-test-program-begins)). Refused on any other target. |
 | `test-protocol` *(2026.11.8.1+)* | Of an entry target: the version of the test protocol a test program that begins here implements, `1`; `mcpp test` then lists, selects and reports the program's cases ([08](08-testing.md#cases-the-test-protocol)). Refused on any other target. |
 | `windows_code_page` *(2026.9.26.1+)* | The ANSI code page of an executable on Windows: `"utf-8"`, embedded as an application manifest that Windows 10 version 1903 and later honour, or `"legacy"`, the system's code page. A program target that writes neither runs in the system's code page, except a program built as a host tool (§2.14), which defaults to `"utf-8"`. Refused on a library target; renders nothing on a target that is not PE. See *Paths and text encoding* in §2.3. |
@@ -519,9 +521,11 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
-> target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
-> are compiled once and linked into every target (mcpp's compile-once model); the shared sources
-> of one target take its own flags through `[targets.<name>.build]`. They are the right
+> target's entry source** (its `main`) — never to shared module/impl objects, which are compiled
+> once and linked into every target (mcpp's compile-once model); the shared sources of one target
+> take its own flags through `[targets.<name>.build]`. An entry that several programs name is
+> compiled once per program whose flags differ (`obj/_entry/<name>/`, 2026.11.10.1+), so each
+> program links its own entry object. They are the right
 > tool when the flag only needs to affect a single binary's (or test's) own entry — for example a
 > per-test contract evaluation semantic (`-fcontract-evaluation-semantic=observe`) for a test whose
 > `main` exercises the violation, a feature macro the entry alone reads, or a local warning
@@ -541,9 +545,10 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | To **select a variant** of a shared library (e.g. a backend) | `[features]` on that library (§2.8) — additive, reaches the library's own compile |
 | A **whole-build mode** (sanitizers, contract semantics, opt level) | `[profile.<name>]` (§2.9) + `--profile`; also honored by `mcpp test --profile <name>` |
 
-mcpp deliberately does not compile a shared source two different ways within one build: a source
-maps to one object (and one BMI for modules), so divergence that must reach shared code belongs at
-the package/feature boundary, not on an individual target.
+A source maps to one object per set of flags: the package's object, and one variant for each
+target whose `[targets.<name>.build]` or entry flags differ from the package's. A module interface
+maps to one BMI per package and is not varied, so divergence that must reach a module interface
+belongs at the package/feature boundary, not on an individual target.
 
 ### 2.3 `[build]` — Build Configuration
 
@@ -594,6 +599,7 @@ c_standard   = "c11"              # Standard for this package's C sources (defau
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
+compiler_runtime_dir = "compiler-rt" # A compiler-runtime supplier: where its runtime stands (2026.11.10.1+; docs/22)
 defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU of this package; keyed by name (§ below)
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
@@ -1575,7 +1581,10 @@ module graph directly. The declaration is **audited every build**: the
 compiler's own P1689 scan of the file (the `.ddi` dyndep input) is compared
 against it, and any divergence fails that compile edge with both sides
 printed — a stale declaration cannot silently corrupt the graph. An override
-glob that matches no source file is an error.
+glob that matches no file of the package is an error. A glob whose files exist
+and take no part in this build — a feature that is off, a `!` rule of a
+`[target.<selector>.build]` — is not: the declaration describes those files for
+the builds that compile them (2026.11.10.1+, mcpp#902).
 
 The same key exists in xpkg descriptors (index packages):
 
@@ -1962,10 +1971,10 @@ platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 
 Declares the platforms the package supports (a CI matrix hint, shown via `mcpp why`).
 The vocabulary is fixed by mcpp (which owns the target/triple system):
-`linux | macos | windows | ios | android | emscripten` (mcpp 2026.9.12.3+;
+`linux | macos | windows | ios | android | emscripten | openkal | freebsd` (mcpp 2026.9.12.3+;
 `ios`, `android` and `emscripten` are new members of a vocabulary that was
-`linux | macos | windows` before); unknown values produce a warning, and an
-error under `--strict`.
+`linux | macos | windows` before, and `freebsd` is a member from 2026.11.10.1); unknown
+values produce a warning, and an error under `--strict`.
 
 A platform name is a target triple's `os`, except that an `env` naming a
 platform of its own wins. Android rows have `os = "linux"` and
@@ -2108,7 +2117,11 @@ statements (`ICON`, `RCDATA`, `MANIFEST`, the numeric type `24`, …), and makes
 them build inputs, so editing the icon relinks. A relative file name is resolved
 against the script's own directory, which is also where rc.exe, llvm-rc and
 windres look for it. Angled includes (`<windows.h>`) are the toolchain's
-and are covered by the toolchain fingerprint instead.
+and are covered by the toolchain fingerprint instead, as is a quoted include the
+toolchain's Windows headers hold (`"winres.h"`). A quoted include found nowhere is
+an input only when a build action writes it; otherwise the script's own
+preprocessing decides (`#if __has_include("x.h")`), and the resource compiler
+reports a missing one with the script's name and line (2026.11.10.1+).
 
 A file name reached through a macro (`1 ICON APP_ICON`) is invisible to that
 scan. mcpp names what it could not resolve and requires an explicit declaration:

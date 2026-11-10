@@ -422,6 +422,10 @@ struct TestFramework {
     int         protocol = 0;
     std::string guide;      // absolute path of its guide, or empty
     std::string repo;
+    // What it states of the mcpp test spec (docs/specs/test.md, B6): the
+    // optional capabilities it implements, and its session's command (O9).
+    std::vector<std::string> capabilities;
+    std::vector<std::string> session;
 };
 
 struct BuildPlan {
@@ -492,6 +496,12 @@ struct BuildPlan {
     // share an output directory and overwrite each other's graph; this is what
     // lets a fast path tell them apart (mcpp#407, mcpp.build.graph_shape).
     GraphShape                      graphShape = GraphShape::Normal;
+    // The file the graph is written to, in the output directory. `mcpp test`
+    // writes `test.ninja` (design 2026-11-10 supplement, T5): the build's own
+    // graph stays where its fast path replays it, and the two share the
+    // directory's objects, `.ninja_log` and `.ninja_deps`, so an output both
+    // graphs name is rebuilt when one names another command for it.
+    std::string                     graphFile = "build.ninja";
     // The module-edge schedule this plan will emit, resolved ONCE (see
     // mcpp.build.schedule.policy). The backend writes the graph in this shape,
     // the graph records the tag, and the fast path compares against it — three
@@ -2689,6 +2699,18 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         for (auto const& source : t.testSources) entryFilesAcrossTargets.insert(root / source);
     };
     for (auto& t : manifest.targets) own_files(projectRoot, t);
+    // HOW MANY TARGETS OF THE ROOT PACKAGE BEGIN AT EACH FILE (design 2026-11-10
+    // E2). An entry two targets name is compiled once for the targets that give
+    // it no flags of their own, and once more for each target that does, under
+    // `obj/_entry/<target>/`: a target's `defines`, `cflags`, `cxxflags` and
+    // `[targets.<name>.build]` reach its own beginning and no other target's.
+    std::map<std::filesystem::path, std::size_t> entryUses;
+    for (auto const& t : manifest.targets)
+        if (!t.main.empty()) ++entryUses[projectRoot / t.main];
+    auto shared_entry = [&](const std::filesystem::path& f) {
+        auto it = entryUses.find(f);
+        return it != entryUses.end() && it->second > 1;
+    };
     for (auto const& p : packages)
         for (auto const& t : p.manifest.targets) own_files(p.root, t);
 
@@ -3296,6 +3318,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             if (t.kind != mcpp::manifest::Target::Entry || t.main.empty()) return;
             if (t.defines.empty() && t.cflags.empty() && t.cxxflags.empty()) return;
             const auto entry = root / t.main;
+            if (root == projectRoot && shared_entry(entry)) return;   // E2: per target, below
             if (!std::ranges::any_of(plan.compileUnits,
                                      [&](const CompileUnit& cu) { return cu.source == entry; }))
                 return;
@@ -3571,12 +3594,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         auto const& dir = i == 0 ? projectRoot : packages[i].root;
         for (auto const& entry : m.targets) {
             if (entry.kind != mcpp::manifest::Target::Entry) continue;
-            if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain) continue;
+            if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain
+                && entry.testCapabilities.empty() && entry.testSession.empty()) continue;
             plan.testFrameworks.push_back({
                 qualified_package_name(m), m.package.version,
                 std::format("{}/{}", m.package.name, entry.name), entry.testProtocol,
                 entry.testGuide.empty() ? std::string{} : (dir / entry.testGuide).lexically_normal().generic_string(),
-                m.package.repo});
+                m.package.repo, entry.testCapabilities, entry.testSession});
         }
     }
 
@@ -3660,6 +3684,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
         // The beginning a dependency's entry target supplies (§24.3).
         std::optional<EntrySelection> selectedEntry;
+        bool sharedEntry = false;   // E2: this program's entry is another target's too
         auto defaulted = test_main_default(0, manifest, t, lu, depEntryMainSources);
         if (!defaulted) return std::unexpected(defaulted.error());
         const auto& begins = *defaulted ? **defaulted : t;
@@ -3755,6 +3780,31 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 plan.compileUnits.push_back(main_cu);
                 entryObject = main_cu.object;
             }
+            sharedEntry = shared_entry(main_cu.source);
+            const bool ownEntryFlags = !t.defines.empty() || !t.cflags.empty()
+                || !t.cxxflags.empty() || t.has_build_variant();
+            if (sharedEntry && ownEntryFlags) {
+                auto base = std::ranges::find_if(plan.compileUnits,
+                    [&](const CompileUnit& cu) { return cu.object == entryObject; });
+                CompileUnit own = base != plan.compileUnits.end() ? *base : main_cu;
+                own.object = std::filesystem::path("obj") / "_entry" / sanitize(t.name)
+                           / entryObject.lexically_relative("obj");
+                auto add = [&](const std::vector<std::string>& defines,
+                               const std::vector<std::string>& cflags,
+                               const std::vector<std::string>& cxxflags) {
+                    for (auto const& d : defines) {
+                        const auto element = mcpp::manifest::flag_element("-D" + d);
+                        own.packageCflags.push_back(element);
+                        own.packageCxxflags.push_back(element);
+                    }
+                    for (auto const& f : cflags)   own.packageCflags.push_back(f);
+                    for (auto const& f : cxxflags) own.packageCxxflags.push_back(f);
+                };
+                add(t.buildDefines, t.buildCflags, t.buildCxxflags);
+                add(t.defines, t.cflags, t.cxxflags);
+                entryObject = own.object;
+                artifactVariants.push_back(std::move(own));
+            }
             lu.objects.push_back(entryObject);
             if (lu.kind == LinkUnit::TestBinary) lu.ownSources.push_back(main_cu.source);
             for (auto& extra : test_program_units(main_cu, t, projectRoot, rootExtTable)) {
@@ -3774,7 +3824,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // are excluded from every other target's object set below), so these
             // flags never color a shared module/impl object. `defines` desugar
             // to -D on both the C and C++ entry compile.
-            if (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty()) {
+            if (!sharedEntry && (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty())) {
                 for (auto& cu : plan.compileUnits) {
                     if (cu.source != main_cu.source
                         && std::ranges::none_of(t.testSources, [&](auto const& s) { return cu.source == projectRoot / s; }))
@@ -3837,7 +3887,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             for (auto const& f : t.buildCxxflags) cu.packageCxxflags.push_back(f);
         };
         std::vector<CompileUnit> variants;
-        if (t.has_build_variant() && lu.entryMain)
+        if (t.has_build_variant() && lu.entryMain && !sharedEntry)
             for (auto& cu : plan.compileUnits)
                 if (cu.source == *lu.entryMain && cu.packageName == rootPackage) vary(cu);
         for (auto& cu : plan.compileUnits) {

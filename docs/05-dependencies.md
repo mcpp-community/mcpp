@@ -239,6 +239,37 @@ refused naming the request and the group if it does not (docs/35, "The version
 group"). A family whose packages name one another by compatible ranges is
 therefore resolved by its group, one version of each package per build.
 
+### The root overrides a dependency for the whole graph: `override` (mcpp 2026.11.10.1+)
+
+A declaration of the root written `override = true` answers every request for
+its package in the graph its table governs, whatever version, path or
+repository the request names:
+
+```toml
+[dependencies]
+mcpplibs.os = { version = "0.4.4", override = true }
+```
+
+- **Where it holds.** On the root's tables and on `[workspace.dependencies]`,
+  which governs every plan of the workspace's members (declaring a package
+  there does not make a member depend on it). `[dependencies]` governs the
+  build's graph and the tests'; `[dev-dependencies]` the tests' only;
+  `[build-dependencies]` the build programs' only. A library that writes it is
+  told that it is ignored: the decision is the project's.
+- **What it states.** Each request the override replaces and does not already
+  admit is named once, `Overrode <package> <request> (requested by <who>) ->
+  <override> (<table>)`. `mcpp.lock` marks the package `override = true`, and
+  `--locked` reads the marker as part of the recorded resolution.
+- **The platform's version group.** An override of a package the group lists
+  is taken, with a warning that names the group's version: the platform states
+  the defaults, and the project may choose another.
+- **When it is needed.** Two version requests that no SemVer merge reconciles
+  are refused naming both, and the refusal ends with the line that overrides
+  the package. A library that pins one release of a package every consumer
+  shares (one that provides a target-side layer or a kernel ABI) is noted to
+  the projects that use it, and `mcpp publish` refuses the pin in a library:
+  a range leaves the choice to the project.
+
 ### The identity of a `path` or `git` dependency (mcpp 2026.9.14.2+)
 
 A `path` or `git` dependency is the package its manifest declares, whatever key
