@@ -471,10 +471,6 @@ inline bool uses_layer(const std::string& predicate) {
                                [](auto const& k) { return is_cfg_late_layer_key(k); });
 }
 
-// Tokens outside the vocabulary. A predicate naming one of these used to
-// evaluate to false in silence, which is indistinguishable from a predicate
-// that correctly did not apply — so `[target.'cfg(c-abi = "musl")'.build]` was
-// dropped without a word for the entire time docs/14 documented it.
 // The systems the rows name (built-in and defined), and the family word.
 inline std::vector<std::string> system_barewords() {
     std::set<std::string> systems;
@@ -489,6 +485,10 @@ inline bool known_bareword(std::string_view w) {
     return std::ranges::any_of(mcpp::toolchain::target::rows(), [&](auto const* r) { return r->os == w; });
 }
 
+// Tokens outside the vocabulary. A predicate naming one of these used to
+// evaluate to false in silence, which is indistinguishable from a predicate
+// that correctly did not apply — so `[target.'cfg(c-abi = "musl")'.build]` was
+// dropped without a word for the entire time docs/14 documented it.
 inline std::vector<std::string> unknown_tokens(const std::string& predicate) {
     auto scan = scan_predicate(predicate);
     std::vector<std::string> out;
