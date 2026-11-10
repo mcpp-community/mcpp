@@ -456,7 +456,8 @@ list` reports for this machine):
 | `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
 | `aarch64-windows-gnu` | llvm 23 with `xim:mingw-w64-sysroot` (llvm-mingw's target side) — built on any host; the same base serves `x86_64-windows-gnu` where no gcc payload exists | preview |
 | `x86_64-freebsd` · `aarch64-freebsd` | the platform that serves them, over `xim:<arch>-freebsd-sysroot` ([22](docs/22-target-side.md)) | preview |
-| `riscv64-linux-musl` · `x86_64-macos` · `x86_64-freebsd-musl` · `aarch64-freebsd-musl` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
+| `x86_64-freebsd-musl` · `aarch64-freebsd-musl` | llvm 23 — a static FreeBSD program with a musl C library over openkal-freebsd, built on any host *(what `<arch>-freebsd` is with no platform chosen)* | preview |
+| `riscv64-linux-musl` · `x86_64-macos` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
 | `x86_64-openkal` · `aarch64-openkal` | llvm 23 — an ok image: one artifact per architecture, run by `okrun` on Linux, macOS and Windows; the C library and C++ run-time inside it are packages ([24](docs/24-openkal-cross.md)) | verified |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with the `node` the payload declares (`xim:node`), not one found on PATH | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |

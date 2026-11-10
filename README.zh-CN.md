@@ -405,7 +405,8 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
 | `aarch64-windows-gnu` | llvm 23 加 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧）；任意宿主可构建；没有 gcc 载荷之处同一基座也服务 `x86_64-windows-gnu` | preview |
 | `x86_64-freebsd` · `aarch64-freebsd` | 服务它们的平台，基于 `xim:<arch>-freebsd-sysroot`（[22](docs/zh/22-target-side.md)） | preview |
-| `riscv64-linux-musl` · `x86_64-macos` · `x86_64-freebsd-musl` · `aarch64-freebsd-musl` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
+| `x86_64-freebsd-musl` · `aarch64-freebsd-musl` | llvm 23；openkal-freebsd 之上带 musl C 库的静态 FreeBSD 程序，任意宿主可构建 *（未选平台时 `<arch>-freebsd` 即此身份）* | preview |
+| `riscv64-linux-musl` · `x86_64-macos` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
 | `x86_64-openkal` · `aarch64-openkal` | llvm 23；ok 映像：每种架构一个产物，由 `okrun` 在 Linux、macOS 与 Windows 上运行；映像内的 C 库与 C++ 运行时是包（[24](docs/zh/24-openkal-cross.md)） | verified |
 | `wasm32-emscripten` | `emsdk@6.0.9`；Emscripten 自带 sysroot 与 libc++ 模块接口；`mcpp run` 使用 payload 声明的 `node`（`xim:node`）运行模块，不使用 PATH 上的 `node` | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370`；bionic 来自 NDK，一个 payload 服务两个 ABI；已在 API 24 的 x86_64 模拟器镜像上运行 | verified |
