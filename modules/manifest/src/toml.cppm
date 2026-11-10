@@ -2323,7 +2323,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
             "cflags", "cxxflags", "defines", "required_features", "build",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start", "test-protocol", "test-main", "test-guide",
+            "start", "test-protocol", "test-main", "test-guide", "test-capabilities", "test-session",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
