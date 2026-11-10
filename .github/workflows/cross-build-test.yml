@@ -458,6 +458,17 @@ jobs:
           grep -qxF "PASS: 988 the Windows launcher finds its package from a Windows path" "$log" \
             || { echo "::error::988 did not print its PASS line"; exit 1; }
 
+      # The MinGW-w64 base package beside llvm (design 2026-11-10 E9): the
+      # program runs under wine, which only this job has.
+      - name: "e2e: a mingw base package serves windows-gnu beside llvm (1063)"
+        run: |
+          set -o pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          log="$RUNNER_TEMP/1063.log"
+          bash tests/e2e/1063_a_mingw_base_package_serves_windows_gnu_beside_llvm.sh 2>&1 | tee "$log"
+          grep -qxF "PASS: 1063 a mingw base package serves windows-gnu beside llvm" "$log" \
+            || { echo "::error::1063 did not print its PASS line"; exit 1; }
+
       # A polyglot file (SPEC-014 §5.3) is the Windows program as it is: its
       # criterion H runs the file under wine, which only this job has.
       - name: "e2e: a polyglot file runs on every system it holds (992)"
