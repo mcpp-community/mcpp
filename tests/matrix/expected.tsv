@@ -84,11 +84,17 @@
 #     (`'cstdio' file not found`),是没有 cfg 的 Windows llvm 载荷不陈述配对的
 #     sysroot 的缺陷,修正后建出。
 #
+# 2026.11.10.2 改变的格(设计 2026-11-10 K9):
+#   - `x86_64-freebsd-musl`、`aarch64-freebsd-musl` 由 openkal-platform 0.26.0 的 hosted 部分服务
+#     (openkal-freebsd standalone 之上的 openkal-musl 0.29.2):payload 体系以 llvm 建出;gcc 与 msvc
+#     是 `capability-pin`;graph 体系里图中钉的版本在平台版本组之外,`platform-version-group`。
+#   - openkal 各行的平台为 openkal-platform 0.26.0,openkal 列为 openkal-llvm-runtime@0.20.1。
+#
 # 中间五列是报告器输出,不参与支持判定。现有报告器把 aarch64-ios 的
 # c-abi 输出为 glibc(payload),这不代表 iOS 产物实际链接 glibc。Apple
 # 目标的实际依赖由目标构建与运行门检查,不能从该报告字段推导。
-graph	linux-aarch64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-aarch64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+graph	linux-aarch64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+graph	linux-aarch64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	linux-aarch64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-aarch64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	linux-aarch64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
@@ -109,8 +115,8 @@ graph	linux-aarch64	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-pla
 graph	linux-aarch64	riscv64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
 graph	linux-aarch64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-aarch64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-graph	linux-aarch64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-aarch64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+graph	linux-aarch64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+graph	linux-aarch64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	linux-aarch64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-aarch64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	linux-aarch64	x86_64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	host-cannot-serve
@@ -123,8 +129,8 @@ graph	linux-aarch64	x86_64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	host-can
 graph	linux-aarch64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
 graph	linux-aarch64	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-aarch64	x86_64-windows-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
-graph	linux-x86_64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+graph	linux-x86_64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	linux-x86_64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
@@ -145,8 +151,8 @@ graph	linux-x86_64	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-plan
 graph	linux-x86_64	riscv64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
 graph	linux-x86_64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-graph	linux-x86_64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+graph	linux-x86_64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	linux-x86_64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	x86_64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
@@ -161,7 +167,7 @@ graph	linux-x86_64	x86_64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-req
 graph	linux-x86_64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
 graph	linux-x86_64	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	x86_64-windows-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
-graph	macos-arm64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+graph	macos-arm64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	macos-arm64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	macos-arm64	aarch64-linux-gnu	llvm@23.1.3	aarch64-unknown-linux-gnu	host	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
 graph	macos-arm64	aarch64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
@@ -174,7 +180,7 @@ graph	macos-arm64	i686-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
 graph	macos-arm64	i686-openkal	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
 graph	macos-arm64	riscv64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
 graph	macos-arm64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-graph	macos-arm64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+graph	macos-arm64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	macos-arm64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	macos-arm64	x86_64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	macos-arm64	x86_64-macos	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
@@ -182,8 +188,8 @@ graph	macos-arm64	x86_64-macos-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-v
 graph	macos-arm64	x86_64-openkal	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	macos-arm64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
 graph	macos-arm64	x86_64-windows-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
-graph	windows-x86_64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	aarch64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
+graph	windows-x86_64	aarch64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	aarch64-linux-android	msvc@system	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	aarch64-linux-gnu	llvm@23.1.3	aarch64-unknown-linux-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
@@ -204,8 +210,8 @@ graph	windows-x86_64	riscv64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-p
 graph	windows-x86_64	riscv64-linux-musl	msvc@system	-	-	-	-	-	unsupported	tier-planned
 graph	windows-x86_64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	wasm32-emscripten	msvc@system	-	-	-	-	-	unsupported	capability-pin
-graph	windows-x86_64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	x86_64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
+graph	windows-x86_64	x86_64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	x86_64-linux-android	msvc@system	-	-	-	-	-	unsupported	capability-pin
 graph	windows-x86_64	x86_64-linux-musl	llvm@23.1.3	x86_64-unknown-linux-musl	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
@@ -220,8 +226,8 @@ graph	windows-x86_64	x86_64-windows-msvc	llvm@23.1.3	-	-	-	-	-	unsupported	std-m
 graph	windows-x86_64	x86_64-windows-msvc	msvc@system	-	-	-	-	-	unsupported	host-tool-toolchain
 graph	windows-x86_64	x86_64-windows-musl	llvm@23.1.3	-	-	-	-	-	unsupported	platform-version-group
 graph	windows-x86_64	x86_64-windows-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
-payload	linux-aarch64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-aarch64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-aarch64	aarch64-freebsd-musl	llvm@23.1.3	aarch64-unknown-freebsd14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-aarch64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	convention-unreplaced
@@ -231,7 +237,7 @@ payload	linux-aarch64	aarch64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	conve
 payload	linux-aarch64	aarch64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	aarch64-none-elf	llvm@23.1.3	aarch64-none-elf	payload	-	-	-	ok	none
 payload	linux-aarch64	aarch64-openkal	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-aarch64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-aarch64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-aarch64	aarch64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	aarch64-windows-gnu	llvm@23.1.3	aarch64-w64-windows-gnu	none	ucrt(prebuilt)	libc++(prebuilt)	-	ok	none
 payload	linux-aarch64	armv7a-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
@@ -268,24 +274,24 @@ payload	linux-aarch64	thumbv8m.main-none-eabihf	gcc@16.1.0	-	-	-	-	-	unsupported
 payload	linux-aarch64	thumbv8m.main-none-eabihf	llvm@23.1.3	thumbv8m.main-none-eabihf	payload	-	-	-	ok	none
 payload	linux-aarch64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-payload	linux-aarch64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-aarch64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-aarch64	x86_64-freebsd-musl	llvm@23.1.3	x86_64-unknown-freebsd14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-aarch64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	x86_64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	host-cannot-serve
-payload	linux-aarch64	x86_64-linux-musl	llvm@23.1.3	x86_64-unknown-linux-musl	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-aarch64	x86_64-linux-musl	llvm@23.1.3	x86_64-unknown-linux-musl	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-aarch64	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-aarch64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-aarch64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-aarch64	x86_64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	x86_64-none-elf	llvm@23.1.3	x86_64-none-elf	payload	-	-	-	ok	none
 payload	linux-aarch64	x86_64-openkal	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-aarch64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-aarch64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-aarch64	x86_64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	host-cannot-serve
 payload	linux-aarch64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	ucrt(prebuilt)	libc++(prebuilt)	-	ok	none
 payload	linux-aarch64	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-aarch64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
-payload	linux-x86_64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	linux-x86_64	aarch64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	aarch64-freebsd-musl	llvm@23.1.3	aarch64-unknown-freebsd14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-x86_64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	convention-unreplaced
@@ -295,7 +301,7 @@ payload	linux-x86_64	aarch64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	conven
 payload	linux-x86_64	aarch64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	aarch64-none-elf	llvm@23.1.3	aarch64-none-elf	payload	-	-	-	ok	none
 payload	linux-x86_64	aarch64-openkal	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-x86_64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-x86_64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-x86_64	aarch64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	aarch64-windows-gnu	llvm@23.1.3	aarch64-w64-windows-gnu	none	ucrt(prebuilt)	libc++(prebuilt)	-	ok	none
 payload	linux-x86_64	armv7a-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
@@ -332,8 +338,8 @@ payload	linux-x86_64	thumbv8m.main-none-eabihf	gcc@16.1.0	-	-	-	-	-	unsupported	
 payload	linux-x86_64	thumbv8m.main-none-eabihf	llvm@23.1.3	thumbv8m.main-none-eabihf	payload	-	-	-	ok	none
 payload	linux-x86_64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-payload	linux-x86_64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	x86_64-freebsd-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	x86_64-freebsd-musl	llvm@23.1.3	x86_64-unknown-freebsd14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-x86_64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	x86_64-linux-gnu	gcc@16.1.0	x86_64-unknown-linux-gnu	subos	glibc(payload)	libstdc++(payload)	-	ok	none
@@ -341,25 +347,25 @@ payload	linux-x86_64	x86_64-linux-gnu	llvm@23.1.3	x86_64-unknown-linux-gnu	paylo
 payload	linux-x86_64	x86_64-linux-musl	gcc@16.1.0	x86_64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
 payload	linux-x86_64	x86_64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	convention-unreplaced
 payload	linux-x86_64	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-x86_64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-x86_64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-x86_64	x86_64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	x86_64-none-elf	llvm@23.1.3	x86_64-none-elf	payload	-	-	-	ok	none
 payload	linux-x86_64	x86_64-openkal	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-x86_64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	linux-x86_64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	linux-x86_64	x86_64-windows-gnu	gcc@16.1.0	x86_64-w64-windows-gnu	none	ucrt(payload)	libstdc++(payload)	-	ok	none
 payload	linux-x86_64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	ucrt(payload)	libstdc++(payload)	-	ok	none
 payload	linux-x86_64	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux-x86_64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
-payload	macos-arm64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	payload	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	macos-arm64	aarch64-freebsd-musl	llvm@23.1.3	aarch64-unknown-freebsd14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	aarch64-ios	llvm@23.1.3	arm64-apple-ios18.5	host	glibc(payload)	libc++(payload)	-	ok	none
 payload	macos-arm64	aarch64-ios-sim	llvm@23.1.3	arm64-apple-ios18.5-simulator	host	sim(payload)	libc++(payload)	-	ok	none
 payload	macos-arm64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	macos-arm64	aarch64-linux-gnu	llvm@23.1.3	-	-	-	-	-	unsupported	host-cannot-serve
-payload	macos-arm64	aarch64-linux-musl	llvm@23.1.3	aarch64-unknown-linux-musl	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	macos-arm64	aarch64-linux-musl	llvm@23.1.3	aarch64-unknown-linux-musl	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	aarch64-macos	llvm@23.1.3	arm64-apple-macos14.0	host	libSystem(payload)	libc++(payload)	-	ok	none
-payload	macos-arm64	aarch64-macos-musl	llvm@23.1.3	arm64-apple-macos14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	macos-arm64	aarch64-macos-musl	llvm@23.1.3	arm64-apple-macos14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	aarch64-none-elf	llvm@23.1.3	aarch64-none-elf	host	-	-	-	ok	none
-payload	macos-arm64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	macos-arm64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	aarch64-windows-gnu	llvm@23.1.3	aarch64-w64-windows-gnu	none	ucrt(prebuilt)	libc++(prebuilt)	-	ok	none
 payload	macos-arm64	armv7a-none-eabi	llvm@23.1.3	armv7a-none-eabi	host	-	-	-	ok	none
 payload	macos-arm64	armv7a-none-eabihf	llvm@23.1.3	armv7a-none-eabihf	host	-	-	-	ok	none
@@ -378,27 +384,27 @@ payload	macos-arm64	thumbv8m.base-none-eabi	llvm@23.1.3	thumbv8m.base-none-eabi	
 payload	macos-arm64	thumbv8m.main-none-eabi	llvm@23.1.3	thumbv8m.main-none-eabi	host	-	-	-	ok	none
 payload	macos-arm64	thumbv8m.main-none-eabihf	llvm@23.1.3	thumbv8m.main-none-eabihf	host	-	-	-	ok	none
 payload	macos-arm64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-payload	macos-arm64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	x86_64-freebsd-musl	llvm@23.1.3	x86_64-unknown-freebsd14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	x86_64-ios-sim	llvm@23.1.3	x86_64-apple-ios18.5-simulator	host	sim(payload)	libc++(payload)	-	ok	none
 payload	macos-arm64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
-payload	macos-arm64	x86_64-linux-musl	llvm@23.1.3	x86_64-unknown-linux-musl	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
-payload	macos-arm64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
-payload	macos-arm64	x86_64-macos-musl	llvm@23.1.3	x86_64-apple-macos14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	macos-arm64	x86_64-linux-musl	llvm@23.1.3	x86_64-unknown-linux-musl	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	macos-arm64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	macos-arm64	x86_64-macos-musl	llvm@23.1.3	x86_64-apple-macos14.0	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	x86_64-none-elf	llvm@23.1.3	x86_64-none-elf	host	-	-	-	ok	none
-payload	macos-arm64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	macos-arm64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	macos-arm64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	ucrt(prebuilt)	libc++(prebuilt)	-	ok	none
-payload	macos-arm64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
-payload	windows-x86_64	aarch64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	aarch64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	host	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	windows-x86_64	aarch64-freebsd-musl	llvm@23.1.3	aarch64-unknown-freebsd14.0	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	windows-x86_64	aarch64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	aarch64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	aarch64-linux-android	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	aarch64-linux-gnu	llvm@23.1.3	-	-	-	-	-	unsupported	host-cannot-serve
 payload	windows-x86_64	aarch64-linux-gnu	msvc@system	-	-	-	-	-	unsupported	convention-unreplaced
-payload	windows-x86_64	aarch64-linux-musl	llvm@23.1.3	aarch64-unknown-linux-musl	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	windows-x86_64	aarch64-linux-musl	llvm@23.1.3	aarch64-unknown-linux-musl	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	windows-x86_64	aarch64-linux-musl	msvc@system	-	-	-	-	-	unsupported	convention-unreplaced
 payload	windows-x86_64	aarch64-none-elf	llvm@23.1.3	aarch64-none-elf	none	-	-	-	ok	none
 payload	windows-x86_64	aarch64-none-elf	msvc@system	-	-	-	-	-	unsupported	capability-pin
-payload	windows-x86_64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	windows-x86_64	aarch64-openkal	llvm@23.1.3	aarch64-unknown-none-elf	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	windows-x86_64	aarch64-openkal	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	aarch64-windows-gnu	llvm@23.1.3	aarch64-w64-windows-gnu	none	ucrt(prebuilt)	libc++(prebuilt)	-	ok	none
 payload	windows-x86_64	aarch64-windows-gnu	msvc@system	-	-	-	-	-	unsupported	capability-pin
@@ -436,21 +442,21 @@ payload	windows-x86_64	thumbv8m.main-none-eabihf	llvm@23.1.3	thumbv8m.main-none-
 payload	windows-x86_64	thumbv8m.main-none-eabihf	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	wasm32-emscripten	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	wasm32-emscripten	msvc@system	-	-	-	-	-	unsupported	capability-pin
-payload	windows-x86_64	x86_64-freebsd-musl	llvm@23.1.3	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	x86_64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	x86_64-freebsd-musl	llvm@23.1.3	x86_64-unknown-freebsd14.0	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
+payload	windows-x86_64	x86_64-freebsd-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-linux-android	llvm@23.1.3	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-linux-android	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-linux-musl	llvm@23.1.3	-	-	-	-	-	unsupported	convention-unreplaced
 payload	windows-x86_64	x86_64-linux-musl	msvc@system	-	-	-	-	-	unsupported	convention-unreplaced
-payload	windows-x86_64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	windows-x86_64	x86_64-macos	llvm@23.1.3	x86_64-apple-macos14.0	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	windows-x86_64	x86_64-macos	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-none-elf	llvm@23.1.3	-	-	-	-	-	unsupported	lld-required-absent
 payload	windows-x86_64	x86_64-none-elf	msvc@system	-	-	-	-	-	unsupported	capability-pin
-payload	windows-x86_64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	windows-x86_64	x86_64-openkal	llvm@23.1.3	x86_64-unknown-none-elf	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	windows-x86_64	x86_64-openkal	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-windows-gnu	llvm@23.1.3	x86_64-w64-windows-gnu	none	ucrt(payload)	libstdc++(payload)	-	ok	none
 payload	windows-x86_64	x86_64-windows-gnu	msvc@system	-	-	-	-	-	unsupported	convention-unreplaced
 payload	windows-x86_64	x86_64-windows-msvc	llvm@23.1.3	x86_64-pc-windows-msvc	none	msvc(payload)	msvc-stl(payload)	-	ok	none
 payload	windows-x86_64	x86_64-windows-msvc	msvc@system	x86_64-pc-windows-msvc	none	msvc(payload)	(payload)	-	ok	none
-payload	windows-x86_64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.19.2	ok	none
+payload	windows-x86_64	x86_64-windows-musl	llvm@23.1.3	x86_64-w64-windows-gnu	none	musl(platform)	libc++(platform)	openkal-llvm-runtime@0.20.1	ok	none
 payload	windows-x86_64	x86_64-windows-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
