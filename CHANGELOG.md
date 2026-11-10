@@ -52,6 +52,20 @@
 
 ### Changed
 
+- `mcpp test` writes its graph to `test.ninja` beside `build.ninja`; the two
+  share the directory's objects, `.ninja_log` and `.ninja_deps`. A test no
+  longer rewrites the build's graph, so `mcpp build` after `mcpp test` takes
+  its fast path, and a dependency scan both graphs name has one command in
+  both (`$module_map` begins with its own separator), so alternating the two
+  commands rescans nothing.
+- The programs `mcpp test` builds for its tests (`MCPP_BIN_<NAME>`) are built
+  by `mcpp build`'s fast path when nothing changed; a run of an unchanged
+  project neither resolves nor scans to learn that they are current.
+- A package's and a test's `Compiling` line states work done: it is written
+  when one of its steps runs, and a run with nothing to compile writes none.
+- The built-in platform of `x86_64-openkal` and `aarch64-openkal` is
+  openkal-platform 0.25.0 (openkal 0.25, openkal-image 0.5.5, openkal-musl
+  0.29.0); it was 0.24.4.
 - Programs that share an entry source keep their own flags: the entry is
   compiled once per program whose `[targets.<name>]` or
   `[targets.<name>.build]` flags differ (`obj/_entry/<name>/`; mcpp#911 N1).
@@ -77,6 +91,11 @@
 
 ### Fixed
 
+- `mcpp test` releases the build directory once its tests are built: a
+  `mcpp build`, or a second `mcpp test` of the same configuration, no longer
+  waits for a running test, and each invocation keeps its protocol files in a
+  directory of its own (`test-protocol/<pid>-<start>/`), removed when it ends
+  (mcpp#915).
 - A version that a merge replaces takes its requests out of the graph: they
   no longer constrain what remains. A graph where a pinned library brought a
   package down to an older release was refused as "irreconcilable versions"
