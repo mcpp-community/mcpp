@@ -21,6 +21,7 @@
 //   graph_load.cpp     P4a -- loading one git, path or version dependency.
 //   graph.cpp          P4b -- the worklist, the graph, the cycle check.
 //   graph_closures.cpp P4b -- the lookups the later phases ask of the graph.
+//   package_root.cpp   P4b -- a package's root: the build inputs the graph records.
 //   host_graph.cpp     the build programs' graph: its workspace, its sub-build,
 //                      the programs' identities and the build-plugin checks.
 //   toolchain_decision.cpp  P5 -- the toolchain, decided once the graph exists.

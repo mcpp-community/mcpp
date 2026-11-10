@@ -1038,6 +1038,11 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 void withdraw_link_flags(PrepareState& state, std::size_t p);
 // The lookups the later phases ask of the graph (graph_closures.cpp).
 void step4b_define_lookup_closures(PrepareState& state);
+// The root the graph records for a package: its build inputs, normalised at its
+// load site, with its include directories expanded (package_root.cpp).
+std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
+        PrepareState& state, const std::filesystem::path& packageRoot,
+        const mcpp::manifest::Manifest& manifest);
 // Where the build program of package `i` keeps its files: its cache, its
 // graph document, and the program mcpp synthesises for it. The root's and a
 // workspace member's are below their own target/; a dependency's is below the
