@@ -53,6 +53,9 @@ inline constexpr auto kRecordSettle=std::chrono::milliseconds(250);
 // registering its unit with the generation's owner. One bound for both, so a
 // registration retried within it never outlives the wait for it.
 inline constexpr auto kStartupGrace=std::chrono::seconds(10);
+// A record that exists and is still refused after kRecordSettle. The refusal
+// is a fact about the moment, not about the record's content.
+inline constexpr std::string_view kRecordUnreadable="cannot read compiler transaction record";
 enum class Opened { yes, absent, refused };
 // Opens `path' for reading, waiting out a publication in progress.
 Opened open_settled(std::ifstream& input,const fs::path& path) {
@@ -76,10 +79,10 @@ Record read(const fs::path& path, std::string_view tag) {
     std::ifstream input;
     const auto opened=open_settled(input,path);
     if(opened==Opened::absent)return std::optional<Fields>{};
-    if(opened==Opened::refused)return std::unexpected("cannot read compiler transaction record");
+    if(opened==Opened::refused)return std::unexpected(std::string(kRecordUnreadable));
     std::string bytes(65537,'\0');
     input.read(bytes.data(),bytes.size());bytes.resize(static_cast<std::size_t>(input.gcount()));
-    if(input.bad())return std::unexpected("cannot read compiler transaction record");
+    if(input.bad())return std::unexpected(std::string(kRecordUnreadable));
     if (bytes.size() < 18 || bytes.size() > 65536 || bytes[bytes.size()-18] != '\n' || bytes.back() != '\n')
         return std::unexpected("corrupt compiler transaction record");
     const auto body = std::string_view(bytes).substr(0,bytes.size()-18);
@@ -438,6 +441,18 @@ private:
     std::atomic<bool> stopping_{false},failed_{false};
     std::mutex admission_;
     ObserverMap held_;
+    // AN UNREADABLE RECORD IS ASKED AGAIN AT THE NEXT AUDIT, as an unknown
+    // controller is. A Windows reader can be refused a just-published record
+    // for longer than kRecordSettle while the host scans new files; the
+    // refusal decides the loss of a compiler only when it outlasts the
+    // startup grace. Corrupt content is decided at once.
+    std::map<std::string,std::chrono::steady_clock::time_point> unreadable_;
+    bool settling(const std::string& attempt,std::string_view error) {
+        if(error!=kRecordUnreadable)return false;
+        const auto now=std::chrono::steady_clock::now();
+        const auto first=unreadable_.try_emplace(attempt,now).first->second;
+        return now-first<kStartupGrace;
+    }
     void fail(std::string_view reason) {
         if(!failed_.exchange(true))
             std::println(std::cerr,"mcpp: compiler witness: {}",reason);
@@ -446,20 +461,21 @@ private:
         for(auto it=held_.begin();it!=held_.end();) {
             const auto directory=named(it->first);
             auto retired=read(directory/"retired","mcpp-retired-v1");
-            if(!retired) {fail(retired.error());++it;continue;}
+            if(!retired) {if(!settling(it->first,retired.error()))fail(retired.error());++it;continue;}
             if(*retired&&(**retired).size()!=3) {fail("invalid retirement certificate");++it;continue;}
-            if(*retired) {it=held_.erase(it);continue;}
+            if(*retired) {unreadable_.erase(it->first);it=held_.erase(it);continue;}
             auto attempt=Attempt::load(directory);
-            if(!attempt) {fail(attempt.error());++it;continue;}
+            if(!attempt) {if(!settling(it->first,attempt.error()))fail(attempt.error());++it;continue;}
+            unreadable_.erase(it->first);
             const auto state=controller_state(*attempt);
             if(state==Controller::unknown) {++it;continue;}  // asked again at the next audit
             if(state==Controller::ended) {
                 // Retirement can be published between the first read and the
                 // controller's exit. Observe it again before reporting loss.
                 retired=read(directory/"retired","mcpp-retired-v1");
-                if(!retired)fail(retired.error());
+                if(!retired) {if(!settling(it->first,retired.error()))fail(retired.error());}
                 else if(*retired&&(**retired).size()!=3)fail("invalid retirement certificate");
-                else if(*retired) {it=held_.erase(it);continue;}
+                else if(*retired) {unreadable_.erase(it->first);it=held_.erase(it);continue;}
                 else fail("controller ended without retirement certificate");
             }
             ++it;

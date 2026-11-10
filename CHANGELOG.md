@@ -53,6 +53,13 @@
 - A test of an unchanged project that this host cannot execute is reported for
   the host's target: `mcpp test` without planning (2026.11.10.1) named an empty
   target in the refusal and in the `[target.…].runner` it proposes.
+- A compiler record that Windows refuses to a reader for longer than the
+  publication bound is asked for again at the witness's next audit, as an
+  unknown controller already was; the refusal ends the build only when it
+  outlasts the startup grace. It ended a Windows build with "a compiler
+  controller ended before completion" after a large package installation. The
+  target-matrix scan reports the supervision's own `mcpp:` lines with a failed
+  cell.
 
 ## [2026.11.10.1] - 2026-11-10
 
