@@ -35,6 +35,12 @@ stated on the build's own command lines.
   xpkgs/                    the payloads they serve
 ```
 
+Processes share a home. Installing a package is one process at a time
+(2026.11.10.1+): a process takes the home's install turn
+(`registry/.install.lock`) before it installs, keeps it for the package's own
+dependencies, and a process that waited for the turn looks for the package
+again first, so a package two builds ask for at once is installed once.
+
 `<project>/.mcpp/` is the machine's state of the project, never its sources.
 mcpp writes `.gitignore` with the one line `*` into it whenever it creates or
 uses it, so version control ignores it in a project whose own ignore file does
