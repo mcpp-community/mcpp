@@ -760,6 +760,8 @@ UTest exactly_these_rows_have_a_capability_pin{"Triple/ExactlyTheseRowsHaveACapa
         "x86_64-windows-musl",
         // musl on macOS: openkal-platform's hosted part, which pairs with clang only.
         "aarch64-macos-musl", "x86_64-macos-musl",
+        // musl on FreeBSD: the same hosted part over openkal-freebsd (design 2026-11-10 K9).
+        "aarch64-freebsd-musl", "x86_64-freebsd-musl",
         "wasm32-emscripten",
         "aarch64-linux-android", "x86_64-linux-android",
         // Ok images: clang and lld emit them on every host, as for bare metal.

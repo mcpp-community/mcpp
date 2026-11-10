@@ -6346,6 +6346,9 @@ export int run_tests(std::span<const std::string> passthrough,
         if (auto runs = fast_test_plan(testRoot, testOpts, names, passthrough, programEnv, fastCtx)) {
             TestBuild tb;
             tb.ctx.emplace(std::move(fastCtx));
+            // The record serves the host only and no runner: the target a
+            // refusal to execute names is the host's.
+            tb.runnerChoice.tripleKey = legTriple;
             tb.archived = std::move(*runs);
             tb.bulkBuiltEverything = true;
             tb.programEnv = programEnv;

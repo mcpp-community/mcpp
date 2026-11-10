@@ -1011,7 +1011,9 @@ cxxflags = ["-D_GNU_SOURCE"]
 **A layer names the library, not the triple's env segment.** They coincide
 for `musl` and diverge for `gnu`: on Linux that segment asks for glibc, and on
 Windows it names the MinGW flavour of the toolchain, whose C runtime is the same
-UCRT the MSVC flavour links. The spelling is `c-abi = "glibc"`, never
+UCRT the MSVC flavour links. Both Windows payloads answer `ucrt` (the MSVC one
+from 2026.11.10.2), so a package that needs the Win32 C runtime states
+`requires = ["mcpp:c-abi=ucrt"]` once. The spelling is `c-abi = "glibc"`, never
 `c-abi = "gnu"`; the request, as opposed to the answer, is `env = "gnu"` — a
 different question (`docs/specs/target-side.md` §3.4).
 
@@ -1091,15 +1093,21 @@ openblas = "0.3.33"
 ldflags = ["-Llib", "-llibopenblas"]
 
 # cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
-# plus the bare aliases windows/unix/linux/macos).
+# plus barewords: `unix` and the name of a system).
 [target.'cfg(all(linux, not(arch = "aarch64")))'.build]
 cxxflags = ["-march=x86-64-v2"]
 ```
 
-`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']` — the bare
-aliases `windows` / `linux` / `macos` / `unix` are never valid target triples, so
-there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
-for arch/env conditions and combinators.
+`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']`. A bareword
+is data rather than a list: `unix` is `family = "unix"`, and any other word without a
+dash is `os = "<word>"` (`linux`, `macos`, `windows`, `freebsd`, or the system of a
+row a platform defines). A row states its family (`family` in the row table), so
+FreeBSD is of the `unix` family. A target triple always contains a dash, so a
+bareword is never a triple. A word that names no row's system is reported, as an
+unknown key is. Use the bare form for a single OS/family; use `cfg(...)` for arch/env
+conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`,
+`windows` and `unix` as barewords; a package read by such a release writes
+`cfg(os = "<system>")` for any other system.
 
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
   `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see [30 — build.mcpp](30-build-mcpp.md); the feature is

@@ -4,6 +4,63 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.10.2] - 2026-11-10
+
+### Added
+
+- FreeBSD's musl identity is served: `x86_64-freebsd-musl` and
+  `aarch64-freebsd-musl` are preview rows of the openkal provider, through
+  openkal-platform 0.26.0's hosted part — openkal-musl 0.29.2 over
+  openkal-freebsd 0.1.0 in its standalone arrangement, with
+  openkal-llvm-runtime 0.20.1 above it, as one static program with no C library
+  of the system beneath. A request of `<arch>-freebsd` with no platform selected
+  for it takes this identity, as `aarch64-macos` takes the musl identity on a
+  host that is not a Mac; a project that selects a platform for `<arch>-freebsd`
+  keeps the system's own ABI, by whichever selector chose it (`[target.<row>]`,
+  `[target.freebsd]` or `cfg(os = "freebsd")`): a platform package chosen for a
+  request that no built-in provider names serves it, and another package's
+  provider does not compete with it.
+- A cfg bareword names any system a row names: `unix` is the family word, and
+  any other word without a dash is `os = "<word>"`, so `[target.freebsd]`,
+  `cfg(freebsd)` and the system of a row a platform defines select as `linux`
+  does. A row states its family (`family`, `unix` or `windows`), and FreeBSD's
+  rows are of the `unix` family, so `cfg(unix)` holds on them. A word that
+  names no row's system is reported as before.
+
+### Changed
+
+- The openkal targets' platform is openkal-platform 0.26.0 (from 0.25.0): its
+  version group is openkal-image 0.6.1, whose runner binds only the interfaces
+  its implementation provides and is built for FreeBSD as well, openkal-musl
+  0.29.2, openkal-llvm-runtime 0.20.1 and openkal-freebsd 0.1.0.
+
+### Fixed
+
+- The MSVC payload's C library is `ucrt`, as the MinGW-w64 payload's is: the
+  triple's env segment names the toolset on Windows, `msvc` and `gnu` alike.
+  It was answered as `msvc`, so `requires = ["mcpp:c-abi=ucrt"]` (a Win32
+  backend's statement of its C runtime) refused the MSVC route while the GNU
+  routes satisfied it. SPEC-002 v1.7 states the names.
+- A dependency namespace holding a package named `version`, `path`, `git` or
+  `workspace` is read as the namespace (#918): `gpp.version = { path = "…" }`
+  declares the package `gpp.version`. A table was taken as one dependency
+  specification when it held any of those keys, whatever their values, and was
+  refused for naming no source; a specification's `path`, `version` and `git`
+  are strings and its `workspace` a boolean, and only such a value decides it.
+- A platform refused for a row it does not serve names the rows its providers
+  serve; the list named only its `targets` and was empty for a platform that
+  states `[[platform.provider]]`.
+- A test of an unchanged project that this host cannot execute is reported for
+  the host's target: `mcpp test` without planning (2026.11.10.1) named an empty
+  target in the refusal and in the `[target.…].runner` it proposes.
+- A compiler record that Windows refuses to a reader for longer than the
+  publication bound is asked for again at the witness's next audit, as an
+  unknown controller already was; the refusal ends the build only when it
+  outlasts the startup grace. It ended a Windows build with "a compiler
+  controller ended before completion" after a large package installation. The
+  target-matrix scan reports the supervision's own `mcpp:` lines with a failed
+  cell.
+
 ## [2026.11.10.1] - 2026-11-10
 
 ### Added

@@ -552,7 +552,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.25.0` from 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.26.0` from 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the

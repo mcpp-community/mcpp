@@ -681,6 +681,9 @@ struct Inputs {
 // compared through `c_abi_request_satisfied` rather than by equality.
 inline std::string payload_libc_name(std::string_view os, std::string_view env) {
     if (env == "gnu") return os == "windows" ? "ucrt" : "glibc";
+    // `-msvc` names the toolset, as `-gnu` does on Windows: the C library of
+    // both is the Universal CRT, the name a base package states for it.
+    if (env == "msvc" && os == "windows") return "ucrt";
     if (!env.empty()) return std::string(env);
     if (os == "macos")   return "libSystem";
     if (os == "windows") return "ucrt";
@@ -694,6 +697,7 @@ inline bool c_abi_request_satisfied(std::string_view requested,
                                     std::string_view resolved) {
     if (requested == resolved) return true;
     if (requested == "gnu")   return resolved == "glibc" || resolved == "ucrt";
+    if (requested == "msvc")  return resolved == "ucrt";
     if (requested == "glibc") return resolved == "gnu";
     return false;
 }

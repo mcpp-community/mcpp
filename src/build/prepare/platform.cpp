@@ -298,8 +298,13 @@ void define_early_platform(PrepareState& state) {
     state.provisionalTarget = true;
 }
 
+std::string platform_short_name(std::string_view ref) {
+    auto r = mp::parse_ref_text(ref);
+    return r ? known_short_name(*r) : std::string{};
+}
+
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
-                           std::span<const mp::Override> config) {
+                           std::span<const mp::Override> config, std::string* platform) {
     const auto flag = !state.overrides.platform_choice.empty()
         ? state.overrides.platform_choice
         : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
@@ -317,6 +322,7 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
         auto ref = mp::parse_ref_text(p->platform);
         if (ref && ref->spec.shortName == chosen) return std::string(p->name);
     }
+    if (platform) *platform = chosen;
     return {};
 }
 

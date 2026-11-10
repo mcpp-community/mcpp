@@ -279,9 +279,10 @@ for tc in $(compilers); do
         # 这里只留错误行,不倒整份构建日志 —— 40 格 × 一份完整日志读不动。
         # 三行,**整行**。前一版 `cut -c1-160` 把真正的错误砍在半路 ——
         # macOS 那格只留下 `precompiled file '/private/var/…/target/` 就没了,
-        # 而要看的正是后半截。判据的单位是一整行输出。
+        # 而要看的正是后半截。判据的单位是一整行输出。`mcpp:` 行是编译器
+        # 监督自身的陈述(哪一次观察判定了失败),它不带 `error:`,却是原因。
         echo "scan: $t × $tc 构建失败:" >&2
-        grep -m3 -iE '^error|error:' "$work/b.out" | sed 's/^/    /' >&2
+        grep -m4 -iE '^error|error:|^mcpp: ' "$work/b.out" | sed 's/^/    /' >&2
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              mismatch build-failed
     fi

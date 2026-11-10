@@ -616,11 +616,17 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
                 family = std::string(mcpp::toolchain::family_name(spec->family));
         std::vector<mcpp::manifest::platform::Override> config;
         if (auto cfg = state.get_cfg(true); cfg) config = (*cfg)->platformOverrides;
-        const std::string provider = named_provider(state, *ctx.parsed, config);
+        std::string platform;
+        const std::string provider = named_provider(state, *ctx.parsed, config, &platform);
         auto sctx = target_context(state.m->platformOverrides, config, family,
                                    provider == "none" ? std::string{} : provider,
                                    state.msvc_usable_either_origin);
         sctx.platformPackages = provider != "none";
+        // A platform the project or the machine chose for the request serves it:
+        // another package's provider (openkal's musl identity of the system) is
+        // not a candidate, and the request's own row waits for the platform's.
+        if (!platform.empty())
+            sctx.platformChosen = [platform](std::string_view ref) { return platform_short_name(ref) == platform; };
         ctx.sel = mcpp::toolchain::target::select(state.overrides.target_triple, ctx.parsed->arch,
                                                   ctx.parsed->os, ctx.parsed->env,
                                                   ctx.parsed->envExplicit, sctx);

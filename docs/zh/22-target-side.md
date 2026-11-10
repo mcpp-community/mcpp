@@ -847,7 +847,9 @@ cxxflags = ["-D_GNU_SOURCE"]
 
 **层名指的是库，不是三元组的 env 段。** 二者在 `musl` 上重合，在 `gnu` 上
 分叉：在 Linux 上该段请求的是 glibc，在 Windows 上它命名的是工具链的
-MinGW 形态，而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。写法是
+MinGW 形态，而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。两种 Windows 载荷都回答
+`ucrt`（MSVC 载荷自 2026.11.10.2 起），因此需要 Win32 C 运行时的包写一次
+`requires = ["mcpp:c-abi=ucrt"]` 即可。写法是
 `c-abi = "glibc"`，而非 `c-abi = "gnu"`；与答案相对的那个「请求」是
 `env = "gnu"`——这是另一个问题（`docs/specs/target-side.md` §3.4）。
 
@@ -918,14 +920,17 @@ openblas = "0.3.33"
 ldflags = ["-Llib", "-llibopenblas"]
 
 # cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
-# plus the bare aliases windows/unix/linux/macos).
+# plus barewords: `unix` and the name of a system).
 [target.'cfg(all(linux, not(arch = "aarch64")))'.build]
 cxxflags = ["-march=x86-64-v2"]
 ```
 
-`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价——裸别名
-`windows` / `linux` / `macos` / `unix` 都不是合法的目标三元组，因此不存在
-歧义。单个 OS/族用裸形式，arch/env 条件与组合子用 `cfg(...)`。
+`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价。裸词由数据决定而非列表：`unix` 即
+`family = "unix"`，其余不含短横线的词即 `os = "<词>"`（`linux`、`macos`、`windows`、`freebsd`，
+或平台所定义行的系统）。行陈述其族（行表中的 `family`），因此 FreeBSD 属于 `unix` 族。目标三元组
+必含短横线，故裸词不会是三元组。不对应任何行之系统的词与未知键一样会被报告。单个 OS/族用裸形式，
+arch/env 条件与组合子用 `cfg(...)`。2026.11.10.2 之前的 mcpp 仅将 `linux`、`macos`、`windows`
+与 `unix` 读作裸词；需要被这些版本读取的包对其他系统写 `cfg(os = "<系统>")`。
 
 - **可用键**：`dependencies` / `dev-dependencies` / `build-dependencies` /
   `feature-deps.<feature>`（mcpp 2026.8.6.2+——见

@@ -6,7 +6,7 @@ status: active
 # 生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证
 
 **日期：** 2026-11-10
-**状态：** 第四版，mcpp 部分已在 2026.11.10.1 实施。Q1–Q6 已定稿（第 11.1 节）；O1–O4 已按推荐实施，实施中的调整见第 11.2 节；第 12 节为两项
+**状态：** 第四版，mcpp 部分已在 2026.11.10.1 实施，K9、E15、I1 的补正与 #918 的修正在 2026.11.10.2。Q1–Q6 已定稿（第 11.1 节）；O1–O4 已按推荐实施，实施中的调整见第 11.2 节；第 12 节为两项
 风险的说明，第 13 节为多视角深度自审；第 15 节为实施记录，第 16 节为测试体系向 mtest 的迁移
 **范围：** mcpp（引擎与内置数据）；openkal 家族（openkal 规范、openkal-linux/macos/windows、openkal-musl、
 openkal-llvm-runtime、openkal-image、openkal-platform、openkal-conformance，新增 openkal-freebsd、openkal-posix）；
@@ -592,6 +592,10 @@ B 路线在 Windows 上就是正确的默认。
 | I1 | compat.glfw 的 Windows 行要求 `mcpp:c-abi=ucrt` | gnu 行构建、windows-musl 行在解析期拒绝（实测） |
 | CI 中暴露并修复 | 提供者的基座在依赖图载入前被记住（改为图载入后才保留）；没有 cfg 的 Windows llvm 载荷编译时不陈述配对的 sysroot；同一 home 的两个进程并发安装同一个包（安装次序锁 `registry/.install.lock`） | target-matrix、openkal 交叉构建、各宿主 e2e |
 | 实施中发现并修复 | 工具链为另一目标构建的 C++ 归档（其父目录的三元组与目标的架构或系统不同）不链接，并给出降级诊断；ok 映像的启动器依赖 mcpplibs.os 0.4.4（openkal 0.24 与 0.25 两族均可）；交叉 gcc 自身的 Windows 头文件属于工具链（`mingw` 提供者下资源脚本的 `"winres.h"`）；资源脚本中各处都找不到、也无构建动作写出的带引号 include 不进入构建图，由脚本的预处理与资源编译器处理 | 单元测试 `Distribution/ForeignArchivesAreNotLinked`；mingw 交叉打包；e2e 1058、1072（验证工程的 Windows 行暴露） |
+| K9（mcpp 2026.11.10.2） | `<arch>-freebsd-musl` 两行由 openkal 提供者经 openkal-platform 0.26.0 的 hosted 部分服务（openkal-freebsd standalone 之上的 openkal-musl 0.29.2）；未为 `<arch>-freebsd` 选平台时取该身份，选了平台则保留系统 ABI；openkal-run 0.6.1 在 FreeBSD 上以 openkal-freebsd 为缺省实现，okrun 由两条路线构建；平台的运行器主机加入 FreeBSD | e2e 1073、1059；openkal-platform CI 的 freebsd 作业（FreeBSD 虚拟机中运行程序，并以 FreeBSD 的 okrun 运行 ok 映像） |
+| I1 的补正（mcpp 2026.11.10.2） | MSVC 载荷的 `c-abi` 回答 `ucrt`（此前为工具集名 `msvc`），`compat.glfw` 的 `requires = ["mcpp:c-abi=ucrt"]` 在 MSVC 行上成立；SPEC-002 v1.7 写明段与 C 库名的对应 | 单元测试 `TargetSideResolve`；mcpp-index#748 的 Windows 作业 |
+| E15（mcpp 2026.11.10.2） | cfg 裸词由数据决定：`unix` 为族词，其余不含短横线的词即 `os = "<词>"`；行表的 `family` 陈述族，FreeBSD 各行属 `unix` 族；词表与诊断由行的系统生成，平台定义的系统同样可作裸词 | 单元测试 `CfgBarewords`；docs/22 |
+| #918 的修正（mcpp 2026.11.10.2） | 依赖表仅当 `path`/`version`/`git` 为字符串或 `workspace` 为布尔时视为单个依赖说明，命名空间中名为 `version` 等的包按包读取 | 单元测试 `Manifest/APackageNamedLikeASpecField` |
 
 openkal 家族（K5、K6，openkal 0.25.0）、openkal-freebsd 0.1.0（hosted 与 standalone 两种形态，x86_64 与 arm64）、
 openkal-musl 0.29.1 与 openkal-llvm-runtime 0.20.1（FreeBSD 的 standalone C 与 C++ 运行时）以及 mcpplibs/os 的实施记录
