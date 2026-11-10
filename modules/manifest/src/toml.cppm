@@ -2380,7 +2380,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             || k == "backend"  || k == "tools" || k == "artifacts"
             || k == "host-module" || k == "reexport"
             || k == "linkage"
-            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude";
+            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude"
+            || k == "override";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -2571,6 +2572,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // (tools, host module, dependency dir) on to THIS package's consumers.
         // Off by default; see DependencySpec::reexport for why it is not the
         // edge's `visibility`.
+        if (auto it = sub.find("override"); it != sub.end()) {
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] override is `true` or `false`", section, fqName)));
+            spec.override_ = it->second.as_bool();
+        }
         if (auto it = sub.find("reexport"); it != sub.end() && it->second.is_bool()) {
             spec.reexport = it->second.as_bool();
         }

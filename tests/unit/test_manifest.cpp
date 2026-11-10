@@ -4001,7 +4001,7 @@ name = "depspeckeys"
 version = "0.1.0"
 
 [dependencies.compat]
-everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], artifacts = ["a"], host-module = true, reexport = true, linkage = "shared", patches = ["p/one.patch"], embed = true, exclude = ["src/prim.c"] }
+everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], artifacts = ["a"], host-module = true, reexport = true, linkage = "shared", patches = ["p/one.patch"], embed = true, exclude = ["src/prim.c"], override = true }
 bygit      = { git = "https://example.invalid/x.git", tag = "v1", visibility = "interface" }
 bypath     = { path = "../sibling" }
 )";
@@ -4025,6 +4025,7 @@ bypath     = { path = "../sibling" }
     // `backend = "openblas"` is sugar for requesting the backend-<impl> feature.
     expect(ne(std::find(all->features.begin(), all->features.end(), "backend-openblas"), all->features.end()));
     expect(eq(all->linkage, "shared"));
+    expect(bool(all->override_));   // design 2026-11-10 supplement, T2
     // design 2026-11-02 §14.1: a patch is named relative to the manifest that
     // carries it, and read as an absolute path.
     expect(fatal(eq(all->patches.size(), 1u)));

@@ -522,6 +522,10 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             }};
         }
 
+        // THE ROOT'S OVERRIDE (T2): a dependency's request for a package the
+        // root declares `override = true` takes the root's source.
+        step4b_apply_root_override(state, item);
+
         // A VERSION THE ROOT HAS ALREADY ANSWERED FOR. A dependency's request
         // by version for an identity the root declared by path or git is
         // overridden by the root's declaration (row 4 below), whatever the
@@ -680,6 +684,15 @@ static std::string effective_constraint(const PrepareState& state,
     return out.empty() ? std::string("*") : out;
 }
 
+// THE PROJECT'S WAY OUT OF AN IRRECONCILABLE PAIR (T3): the line that chooses
+// one version for the whole graph, ready to copy into the root's manifest.
+static std::string override_hint(const ResolvedKey& key, std::string_view a, std::string_view b) {
+    const auto name = key.ns.empty() ? key.shortName : key.ns + "." + key.shortName;
+    return std::format("\n       Or choose one version for the whole graph in the root's mcpp.toml:\n"
+                       "           {} = {{ version = \"{}\", override = true }}   # or \"{}\"",
+                       name, a, b);
+}
+
 static std::expected<void, std::string>
 step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                std::map<ResolvedKey, ResolvedRecord>::iterator it) {
@@ -735,7 +748,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
                             it->second.version, it->second.constraint, it->second.requestedBy,
                             spec.version, item.originalConstraint, item.requestedBy,
-                            merged.error()));
+                            merged.error())
+                        + override_hint(key, it->second.version, spec.version));
                     }
 
                     auto loaded = state.loadVersionDep(name, key.ns, key.shortName, spec.version);
@@ -755,7 +769,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
                             it->second.version, it->second.requestedBy,
                             spec.version, item.requestedBy,
-                            spec.version));
+                            spec.version)
+                        + override_hint(key, it->second.version, spec.version));
                     }
 
                     // THE RENAME'S BOUNDARY (design 2026-10-28 §8.2): it renames
@@ -786,7 +801,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                 state.platform.active
                                     ? std::format(", or select the release of {} that carries the "
                                                   "version you need", state.platform.display())
-                                    : std::string()));
+                                    : std::string())
+                        + override_hint(key, it->second.version, spec.version));
                     }
                     // Module names are authored API and are not required to
                     // mirror package identity. Discover every provided module
@@ -814,7 +830,8 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                         key.ns, key.ns.empty() ? "" : ".", key.shortName,
                         it->second.version, it->second.requestedBy,
                         spec.version, item.requestedBy,
-                        moduleNames.error()));
+                        moduleNames.error())
+                        + override_hint(key, it->second.version, spec.version));
                     std::map<std::string, std::string> rename;
                     for (auto const& module : *moduleNames) {
                         rename.emplace(module,
@@ -1080,6 +1097,9 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
     auto& key = ctx.key;
     auto& sourceKind = ctx.sourceKind;
 
+            if (sourceKind == "version" && it->second.depIndex < state.dep_manifests.size()
+                && state.dep_manifests[it->second.depIndex])
+                step4b_note_exact_pin(state, item, *state.dep_manifests[it->second.depIndex]);
             // A package is dev-only until some non-dev consumer wants it. Order
             // of arrival must not decide, so this is an AND over every request.
             it->second.devOnly = it->second.devOnly && item.devOnly;
@@ -1875,6 +1895,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             .fromRoot          = state.declaredByRoot(item.consumerDepIndex),
             .fromSelectedMember = item.consumerDepIndex != kMainConsumer
                                   && state.declaredByRoot(item.consumerDepIndex),
+            .overridden        = state.declaredByRoot(item.consumerDepIndex) && spec.override_,
             .devOnly           = item.devOnly,
             .depIndex          = state.dep_manifests.size() - 1,
             .linkFlagsAdded    = std::move(linkFlagsAdded),
@@ -1884,6 +1905,9 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                       item.originalConstraint.empty() ? std::string("*") : item.originalConstraint}}
                 : std::vector<std::pair<std::string, std::string>>{},
         };
+
+        if (sourceKind == "version" && !state.dep_manifests.empty() && state.dep_manifests.back())
+            step4b_note_exact_pin(state, item, *state.dep_manifests.back());
 
         // Recurse: the dep's own [dependencies] become new worklist items.
         // dev-dependencies are intentionally NOT walked — those are
@@ -2269,6 +2293,9 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     // is completed with once the root's own requests are walked (SPEC-013).
     step4b_seed_platform(state);
     if (auto r = step4b_platform_within_engine(state); !r) return r;
+
+    // The root's overrides (T2), before any request is resolved.
+    step4b_read_root_overrides(state);
 
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.

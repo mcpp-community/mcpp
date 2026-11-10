@@ -87,7 +87,51 @@ export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
         parsed.option_or_empty("namespace").value());
 }
 
+// A LIBRARY DOES NOT CHOOSE A SHARED PACKAGE'S RELEASE FOR ITS USERS (design
+// 2026-11-10 supplement, T3). A library that pins one release of a package
+// every consumer shares -- one that provides a target-side layer or a kernel
+// ABI -- holds every project that uses it to that release. Its graph is
+// planned (nothing is built) and such a pin is refused, naming the range that
+// replaces it. A plan that cannot be made here leaves the check to the
+// consumers' builds, which note the pin, and says so.
+static int refuse_shared_exact_pins() {
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root) return 0;
+    auto m = mcpp::manifest::load(*root / "mcpp.toml");
+    if (!m || m->dependencies.empty()) return 0;
+    const bool library = m->targets.empty()
+        ? !std::filesystem::exists(*root / "src" / "main.cpp")
+        : std::ranges::any_of(m->targets, [](auto const& t) {
+              return t.kind == mcpp::manifest::Target::Library || t.kind == mcpp::manifest::Target::SharedLibrary;
+          });
+    if (!library) return 0;
+    mcpp::build::BuildOverrides ov;
+    ov.plan_only = true;
+    ov.work_dir = mcpp::home::root() / "cache" / "publish-plan"
+                / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
+    std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
+    {
+        mcpp::ui::terminal::StdoutToStderr narration;
+        ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false, {}, ov);
+    }
+    if (!ctx) {
+        mcpp::ui::note(std::format("the library's pins of shared packages were not checked: its graph could not "
+                                   "be planned here ({})", ctx.error().substr(0, ctx.error().find('\n'))));
+        return 0;
+    }
+    if (ctx->sharedExactPins.empty()) return 0;
+    std::string lines;
+    for (auto const& l : ctx->sharedExactPins) lines += "\n         " + l;
+    mcpp::ui::error(std::format(
+        "{} pins one release of a package every consumer shares:{}\n"
+        "       A library that pins it holds every project that uses the library to that release.\n"
+        "       State a range; a project that needs one release chooses it with `override = true`.",
+        m->package.name, lines));
+    return 2;
+}
+
 export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    if (int rc = refuse_shared_exact_pins(); rc != 0) return rc;
     return mcpp::publish::publish_package(
         parsed.is_flag_set("dry-run"), parsed.is_flag_set("allow-dirty"));
 }

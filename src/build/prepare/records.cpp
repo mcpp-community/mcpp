@@ -305,6 +305,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             lp.name       = lock_name_for(key);
             lp.namespace_ = key.ns;
             lp.version    = rec.version;
+            lp.overridden = rec.overridden;
             // A variant is its own entry, and says which patches made it
             // (design 2026-11-02 §14.1): each by its path, relative to the
             // project where it is inside it, and its SHA-256.
@@ -472,8 +473,13 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                                                 : p.namespace_ + "." + sn;
                 };
                 std::map<std::string, std::string> was, now;
-                for (auto const& p : prior->packages) was[key(p)] = p.version;
-                for (auto const& p : lock.packages)    now[key(p)] = p.version;
+                // An override is part of the recorded resolution (T2): the
+                // same version chosen by a merge or by the root is drift.
+                auto recorded = [](const mcpp::lockfile::LockedPackage& p) {
+                    return p.overridden ? p.version + " (override)" : p.version;
+                };
+                for (auto const& p : prior->packages) was[key(p)] = recorded(p);
+                for (auto const& p : lock.packages)    now[key(p)] = recorded(p);
                 std::vector<std::string> drift;
                 if (auto d = target_drift(state, priorTarget)) drift.push_back(std::move(*d));
                 for (auto const& [k, v] : now) {

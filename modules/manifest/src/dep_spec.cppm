@@ -113,6 +113,14 @@ struct DependencySpec {
     // into publicUsage unconditionally. Only build.mcpp-INJECTED include dirs
     // are private-only.)
     bool                        reexport = false;
+    // `override = true` (design 2026-11-10 supplement, T2): this declaration
+    // answers every request for the package in the graph its table governs
+    // ([dependencies]: the build's and the tests'; [dev-dependencies]: the
+    // tests'; [build-dependencies]: the build programs'), whatever version a
+    // dependency asks for. Honoured on the root's edges and on
+    // [workspace.dependencies]; a library that writes it is told it is
+    // ignored, as `linkage` is a root's alone.
+    bool                        override_ = false;
     // design 2026-11-02 (part 3) §14: a patched dependency is another
     // library. `patches` are unified diffs applied in order to the verified
     // source; the edge's dependency becomes the VARIANT (package, version,

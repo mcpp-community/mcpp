@@ -22,6 +22,7 @@
 //   graph.cpp          P4b -- the worklist, the graph, the cycle check.
 //   graph_closures.cpp P4b -- the lookups the later phases ask of the graph.
 //   package_root.cpp   P4b -- a package's root: the build inputs the graph records.
+//   overrides.cpp      P4b -- the root's overrides, and the pins of shared packages.
 //   host_graph.cpp     the build programs' graph: its workspace, its sub-build,
 //                      the programs' identities and the build-plugin checks.
 //   toolchain_decision.cpp  P5 -- the toolchain, decided once the graph exists.
@@ -493,6 +494,9 @@ export struct BuildContext {
     // parser of one file, and because the two readers must not be able to
     // disagree about the machine.
     int                             globalDefaultJobs = 0;
+    // The root's exact pins of packages every consumer shares (T3): what
+    // `mcpp publish` refuses in a library, one line each.
+    std::vector<std::string>        sharedExactPins;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the

@@ -992,6 +992,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     // own target, and the output directory is shared with plain builds because
     // the fingerprint covers neither input. Stamping it on the plan is what
     // lets the graph say so about itself.
+    ctx.sharedExactPins = state.sharedExactPins;
     ctx.plan.graphShape = (state.includeDevDeps || !state.extraTargets.empty()
                            || !state.memberTargets.empty())
         ? mcpp::build::GraphShape::WithTests

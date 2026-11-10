@@ -8,6 +8,16 @@
 
 ### Added
 
+- `override = true` on a root's dependency, or in `[workspace.dependencies]`,
+  answers every request for the package in the graph its table governs; each
+  replaced request is named once (`Overrode`), `mcpp.lock` records the
+  override and `--locked` reads it, and an override of a platform version
+  group's member is taken with a warning. A library's `override` is ignored
+  and said to be (mcpp#914).
+- A refusal of two irreconcilable versions ends with the line that overrides
+  the package; a library that pins one release of a package every consumer
+  shares (a target-side layer, a kernel ABI) is noted to its users, and
+  `mcpp publish` refuses the pin in a library (mcpp#914).
 - The mcpp test spec (SPEC-017 v2.0, `docs/specs/test.md`) is the one
   contract between clients, mcpp and test frameworks: it merges SPEC-017 v1,
   the normative text of the mtest test protocol (clauses P1–P12 kept) and the

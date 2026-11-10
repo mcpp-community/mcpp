@@ -739,6 +739,7 @@ std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& stat
         const bool sameNs = spec.namespace_.empty() || platformNs.empty()
                          || spec.namespace_ == platformNs;
         if (auto g = state.platformGroup.find(shortName); sameNs && g != state.platformGroup.end()) {
+            if (step4b_root_overrides_group(state, item, shortName, g->second)) return {};
             const auto group = mcpp::version_req::parse_version(g->second);
             const auto asked = spec.version.empty() ? std::string("*") : spec.version;
             if (auto req = mcpp::version_req::parse_req(asked);
