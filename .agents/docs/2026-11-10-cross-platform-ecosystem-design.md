@@ -607,3 +607,8 @@ openkal 家族（K5、K6，openkal 0.25.0）与 mcpplibs/os 0.4.3 的实施记�
   `test-report`，`MTEST_VERSION` 固定在 `.github/versions.env`。
 - **宿主依赖（P9）。** mtest、wine、qemu 与虚拟机镜像都取自 xpkg。
 
+
+## 17. 补充方案
+
+测试与依赖解析的补充决定（T1–T18：被替换版本撤回请求、根上的 `override`、测试图与快路径、构建锁、失败的呈现、mcpp test spec 的基础与可选能力、会话、mcpp-ide 的对接）与两份方案合并的全局自审，见
+[2026-11-10-test-and-resolution-supplement-design.md](2026-11-10-test-and-resolution-supplement-design.md)。
