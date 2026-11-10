@@ -72,4 +72,26 @@ if ls -d target/*/*/test-protocol/*/ 2>/dev/null | grep -q .; then
     ls -R target/*/*/test-protocol; echo "FAIL: an ended invocation left its protocol directory"; exit 1
 fi
 
+# The issue's own shape: a test that builds its own project with mcpp. The
+# inner build has the test's environment (the subos's `bin` first on PATH); it
+# finds the directory free, the configuration the outer command built, and its
+# graph current, so it neither waits nor plans.
+MCPP_HOST="$(host_path "$(command -v "$MCPP" || echo "$MCPP")")"
+INNER_LOG="$(host_path "$TMP")/inner.log"
+cat > tests/inner.cpp <<EOF
+#include <cstdlib>
+#ifdef _WIN32
+#define WHOLE(s) "\"" s "\""   // cmd /c drops the outer pair of quotes
+#else
+#define WHOLE(s) s
+#endif
+int main() { return std::system(WHOLE("\"$MCPP_HOST\" build > \"$INNER_LOG\" 2>&1")) == 0 ? 0 : 1; }
+EOF
+"$MCPP" test inner > "$TMP/prime.log" 2>&1 || { cat "$TMP/prime.log" "$TMP/inner.log"; echo "FAIL: a test that builds its project failed"; exit 1; }
+timeout 120 "$MCPP" test inner > "$TMP/inner-test.log" 2>&1 || {
+    cat "$TMP/inner-test.log" "$TMP/inner.log"; echo "FAIL: a test that builds its project failed"; exit 1; }
+if grep -qE 'Waiting for the build directory|Resolving' "$TMP/inner.log"; then
+    cat "$TMP/inner.log"; echo "FAIL: the inner build waited or planned"; exit 1
+fi
+
 echo "PASS: 1068 a running test holds no build directory"
