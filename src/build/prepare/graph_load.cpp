@@ -1243,6 +1243,9 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                 std::string looked;
                 for (auto& p : fetcher.install_path_candidates(ns, shortName, version))
                     looked += "\n  looked in " + p.string();
+                looked += "\n  the stores are those "
+                    + mcpp::provider::open(mcpp::config::make_xlings_env(**cfg))->config_file().string()
+                    + " declares, then the home's";
                 return std::unexpected(std::format(
                     "package '{}@{}' install path missing after fetch{}", depName, version, looked));
             }
