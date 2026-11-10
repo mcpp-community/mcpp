@@ -1011,7 +1011,9 @@ cxxflags = ["-D_GNU_SOURCE"]
 **A layer names the library, not the triple's env segment.** They coincide
 for `musl` and diverge for `gnu`: on Linux that segment asks for glibc, and on
 Windows it names the MinGW flavour of the toolchain, whose C runtime is the same
-UCRT the MSVC flavour links. The spelling is `c-abi = "glibc"`, never
+UCRT the MSVC flavour links. Both Windows payloads answer `ucrt` (the MSVC one
+from 2026.11.10.2), so a package that needs the Win32 C runtime states
+`requires = ["mcpp:c-abi=ucrt"]` once. The spelling is `c-abi = "glibc"`, never
 `c-abi = "gnu"`; the request, as opposed to the answer, is `env = "gnu"` — a
 different question (`docs/specs/target-side.md` §3.4).
 

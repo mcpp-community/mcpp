@@ -400,6 +400,12 @@ UTest the_payload_c_library_is_named_for_its_platform{"TargetSideResolve/ThePayl
     expect(eq(ts::resolve(winGnu).cAbi.interfaceName, "ucrt"))
         << "on Windows `-gnu` names the MinGW toolchain flavour, not glibc";
 
+    auto winMsvc = payload_linux();
+    winMsvc.targetOs  = "windows";
+    winMsvc.targetEnv = "msvc";
+    expect(eq(ts::resolve(winMsvc).cAbi.interfaceName, "ucrt"))
+        << "on Windows `-msvc` names the toolset; its C library is the Universal CRT, as `-gnu`'s is";
+
     auto musl = payload_linux();
     musl.targetEnv = "musl";
     expect(eq(ts::resolve(musl).cAbi.interfaceName, "musl"))
@@ -414,6 +420,7 @@ UTest the_env_request_is_satisfied_by_the_library_it_names{"TargetSideResolve/Th
     expect(bool(ts::c_abi_request_satisfied("gnu",   "ucrt")));
     expect(bool(ts::c_abi_request_satisfied("musl",  "musl")));
     expect(bool(ts::c_abi_request_satisfied("glibc", "gnu")));
+    expect(bool(ts::c_abi_request_satisfied("msvc",  "ucrt")));
     expect(!ts::c_abi_request_satisfied("gnu",  "musl"));
     expect(!ts::c_abi_request_satisfied("musl", "glibc"));
 }};

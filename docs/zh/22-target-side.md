@@ -847,7 +847,9 @@ cxxflags = ["-D_GNU_SOURCE"]
 
 **层名指的是库，不是三元组的 env 段。** 二者在 `musl` 上重合，在 `gnu` 上
 分叉：在 Linux 上该段请求的是 glibc，在 Windows 上它命名的是工具链的
-MinGW 形态，而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。写法是
+MinGW 形态，而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。两种 Windows 载荷都回答
+`ucrt`（MSVC 载荷自 2026.11.10.2 起），因此需要 Win32 C 运行时的包写一次
+`requires = ["mcpp:c-abi=ucrt"]` 即可。写法是
 `c-abi = "glibc"`，而非 `c-abi = "gnu"`；与答案相对的那个「请求」是
 `env = "gnu"`——这是另一个问题（`docs/specs/target-side.md` §3.4）。
 
