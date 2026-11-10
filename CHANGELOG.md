@@ -67,9 +67,26 @@
   refuses to pack a dynamic one under the `-static` name (mcpp#911 N8).
 - The unserved-target diagnosis names a spelling the parser accepts:
   `[toolchain] <host> = { path, prefix }` (mcpp#913).
+- `mcpp test` states, under its result line, the cases of the run
+  (`cases: N passed, N failed, N skipped (in N programs)`, counting no case
+  that only declares others) and a `failures:` index that names each failed
+  program with its failed cases and their places. The failure blocks are the
+  framework's and are no longer repeated after the summary.
+- The C environment of FreeBSD and NetBSD rows is POSIX's: a default
+  architecture there adds no flag, as on Linux.
 
 ### Fixed
 
+- A version that a merge replaces takes its requests out of the graph: they
+  no longer constrain what remains. A graph where a pinned library brought a
+  package down to an older release was refused as "irreconcilable versions"
+  between that release's family and a request of the newer one (mcpp#914).
+- A home that names an existing registry (`[xlings] home`) leaves the places
+  of the registry's indices as the home that made it recorded them. Each home
+  over a shared registry wrote its own index directory and store there, and a
+  later build was sent to the store of a home that no longer existed
+  ("install path missing after fetch"). The message of that error now names
+  each place it looked in and the configuration that declared the stores.
 - A GNU-ABI Windows row finds its resource compiler in the paired payload or
   uses `llvm-rc`, and a quoted `"winres.h"` is the toolchain's header, not a
   generated input.
