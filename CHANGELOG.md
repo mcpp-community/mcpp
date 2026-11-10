@@ -50,6 +50,9 @@
 - A platform refused for a row it does not serve names the rows its providers
   serve; the list named only its `targets` and was empty for a platform that
   states `[[platform.provider]]`.
+- A test of an unchanged project that this host cannot execute is reported for
+  the host's target: `mcpp test` without planning (2026.11.10.1) named an empty
+  target in the refusal and in the `[target.…].runner` it proposes.
 
 ## [2026.11.10.1] - 2026-11-10
 
