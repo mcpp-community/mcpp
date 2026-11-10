@@ -6,7 +6,8 @@
 # (0.4.4, over the openkal 0.25 family); a path library pins os = 0.4.1, over
 # the openkal 0.24 family. The merge takes os down to 0.4.1, and the requests
 # 0.4.4 made -- openkal-linux 0.26.0, and through it openkal 0.25.0 -- leave
-# with it. The library is named to be walked first, so that the pin is met
+# with it (on Windows and macOS, the 0.25 family's implementation of that
+# system). The library is named to be walked first, so that the pin is met
 # before the newer release's own requests are. Before, they stayed: the graph
 # was refused with "irreconcilable versions" between openkal 0.24.0 and a
 # request of openkal-linux 0.26.0, a version no longer in it (the mtest
@@ -58,7 +59,13 @@ grep -qE 'Merged mcpplibs\.os 0\.4\.[2-9] ⨯ 0\.4\.1 → v0\.4\.1' plan.log || 
     cat plan.log; echo "FAIL: os was not merged down to the pinned version"; exit 1; }
 grep -A2 '^\[package\."openkal"\]' mcpp.lock | grep -q 'version = "0.24.0"' || {
     cat mcpp.lock; echo "FAIL: openkal is not the 0.24 the pinned os asks for"; exit 1; }
-grep -A2 '^\[package\."openkal-linux"\]' mcpp.lock | grep -q 'version = "0.25.0"' || {
-    cat mcpp.lock; echo "FAIL: openkal-linux is not the 0.25 the pinned os asks for"; exit 1; }
+# The system's implementation is the one of the 0.24 family, whichever system
+# this is: none of the 0.25 family's (linux 0.26, macos 0.23, windows 0.21).
+for member in 'openkal-linux" 0.26' 'openkal-macos" 0.23' 'openkal-windows" 0.21'; do
+    name=${member%% *}; series=${member##* }
+    if grep -A2 "^\[package\.\"$name\]" mcpp.lock | grep -q "version = \"$series\."; then
+        cat mcpp.lock; echo "FAIL: ${name%\"} $series of the replaced version is in the graph"; exit 1
+    fi
+done
 
 echo "PASS: 1066 a merged version withdraws its requests"
