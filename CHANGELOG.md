@@ -90,7 +90,9 @@
 - A provider's base yields to a dependency graph that supplies the C library
   wherever the provider is chosen; it was decided once before the graph was
   loaded. A paired provider's sysroot is stated on the compile line of a
-  toolchain without a cfg (the Windows llvm payload), as on the link line.
+  toolchain without a cfg (the Windows llvm payload), as on the link line,
+  and its C++ library (`-stdlib=`) is stated on C++ commands only: a C unit
+  carrying it drew clang's unused-argument warning, an error under `-Werror`.
 - A base package's C library is reported by the name its manifest states
   (`provides`), not by the package's name; the `mingw-llvm` provider names
   `xim:mingw-w64-sysroot@20261104-2`, whose manifest states

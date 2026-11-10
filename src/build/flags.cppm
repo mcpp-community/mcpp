@@ -1403,6 +1403,9 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
                         msvc_base, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag);
+    // The paired system's C++ library, on C++ commands only (SPEC-016 §6).
+    if (!isFreestandingTarget)
+        if (auto w = mcpp::toolchain::paired_stdlib_flag(plan.toolchain); !w.empty()) f.cxx += " " + w;
     // MSVC compiles C with cl.exe too; /std: for C uses cN spellings — skip
     // the C standard flag there (cl defaults are fine for the C entry TUs).
     //

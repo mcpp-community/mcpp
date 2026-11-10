@@ -184,6 +184,13 @@ struct HostFlagOptions {
 // argv) quotes a word its own way.
 std::vector<std::string> apple_float_macro_words(const Toolchain& tc);
 
+// The C++ library a paired provider's system holds (SPEC-016 §6), as the
+// driver selects it: `-stdlib=libc++` over a base package that states libc++
+// (E9), `-stdlib=libstdc++` over the MinGW-w64 payload; empty without a paired
+// system. A C++ word only: a C command carrying it draws clang's
+// unused-argument warning, an error under -Werror.
+std::string paired_stdlib_flag(const Toolchain& tc);
+
 // Host-compile flags as argv tokens, in the order the string channels have
 // always emitted them (clang cfg → deployment target → C library), so
 // rendering reproduces today's command lines byte for byte.
@@ -245,6 +252,11 @@ std::vector<std::string> apple_float_macro_words(const Toolchain& tc) {
     auto tt = triple::parse(tc.targetTriple);
     if (!tt || !tt->is_apple()) return {};
     return {"-DINFINITY=HUGE_VALF", "-DNAN=__builtin_nanf(\"0x7fc00000\")"};
+}
+
+std::string paired_stdlib_flag(const Toolchain& tc) {
+    if (tc.pairedSysroot.empty()) return {};
+    return tc.base.layers.cxx == "libc++" ? "-stdlib=libc++" : "-stdlib=libstdc++";
 }
 
 std::vector<std::string> host_compile_tokens(const Toolchain& tc,
@@ -419,7 +431,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     if (!trustCfg && !tc.pairedSysroot.empty()) {
         out.push_back("--no-default-config");
         out.push_back("--sysroot=" + esc(tc.pairedSysroot));
-        out.push_back(tc.base.layers.cxx == "libc++" ? "-stdlib=libc++" : "-stdlib=libstdc++");
+        if (opt.clangStdlibSelect) out.push_back(paired_stdlib_flag(tc));
     } else if (bypassCfg && !graphSuppliesTarget && cxxFromPayload) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
