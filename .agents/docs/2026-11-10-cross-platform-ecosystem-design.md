@@ -6,7 +6,7 @@ status: active
 # 生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证
 
 **日期：** 2026-11-10
-**状态：** 第四版，实施中。Q1–Q6 已定稿（第 11.1 节）；O1–O4 已按推荐实施，实施中的调整见第 11.2 节；第 12 节为两项
+**状态：** 第四版，mcpp 部分已在 2026.11.10.1 实施。Q1–Q6 已定稿（第 11.1 节）；O1–O4 已按推荐实施，实施中的调整见第 11.2 节；第 12 节为两项
 风险的说明，第 13 节为多视角深度自审；第 15 节为实施记录，第 16 节为测试体系向 mtest 的迁移
 **范围：** mcpp（引擎与内置数据）；openkal 家族（openkal 规范、openkal-linux/macos/windows、openkal-musl、
 openkal-llvm-runtime、openkal-image、openkal-platform、openkal-conformance，新增 openkal-freebsd、openkal-posix）；
@@ -591,8 +591,11 @@ B 路线在 Windows 上就是正确的默认。
 | X1、X2 | xlings-res 的 GitHub 发布与 GitCode 镜像（下载回验 sha256）；xim-pkgindex 收录，CI 在三种宿主上安装、检查、卸载；X1 的修订版 `20261104-2` 以 `mcpp:c-abi=ucrt` 陈述其 C 库，基座的 C 库按其陈述的名字报告 | xim-pkgindex CI；e2e 1063 |
 | I1 | compat.glfw 的 Windows 行要求 `mcpp:c-abi=ucrt` | gnu 行构建、windows-musl 行在解析期拒绝（实测） |
 | CI 中暴露并修复 | 提供者的基座在依赖图载入前被记住（改为图载入后才保留）；没有 cfg 的 Windows llvm 载荷编译时不陈述配对的 sysroot；同一 home 的两个进程并发安装同一个包（安装次序锁 `registry/.install.lock`） | target-matrix、openkal 交叉构建、各宿主 e2e |
+| 实施中发现并修复 | 工具链为另一目标构建的 C++ 归档（其父目录的三元组与目标的架构或系统不同）不链接，并给出降级诊断；ok 映像的启动器依赖 mcpplibs.os 0.4.4（openkal 0.24 与 0.25 两族均可） | 单元测试 `Distribution/ForeignArchivesAreNotLinked`；mingw 交叉打包 |
 
-openkal 家族（K5、K6，openkal 0.25.0）与 mcpplibs/os 0.4.3 的实施记录在各自仓库的 PR 与 CHANGELOG 中。
+openkal 家族（K5、K6，openkal 0.25.0）、openkal-freebsd 0.1.0（hosted 与 standalone 两种形态，x86_64 与 arm64）、
+openkal-musl 0.29.1 与 openkal-llvm-runtime 0.20.1（FreeBSD 的 standalone C 与 C++ 运行时）以及 mcpplibs/os 的实施记录
+在各自仓库的 PR 与 CHANGELOG 中。测试与依赖解析的实施记录见补充方案第 9 节。
 
 ## 16. 测试体系向 mtest 的迁移
 

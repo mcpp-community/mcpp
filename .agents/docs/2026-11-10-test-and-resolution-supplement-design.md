@@ -6,7 +6,7 @@ status: active
 # 测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide
 
 **日期：** 2026-11-10
-**状态：** 第三版，待审查（第二版审查：会话不在 mcpp 中实现，改为可选能力 O9；测试的规范与协议收敛为一份 mcpp test spec，分基础与可选，T18；第 8 节为与跨平台方案合并的全局自审）
+**状态：** 第三版，已实施（第二版审查：会话不在 mcpp 中实现，改为可选能力 O9；测试的规范与协议收敛为一份 mcpp test spec，分基础与可选，T18；第 8 节为与跨平台方案合并的全局自审；第 9 节为实施记录）
 **上游文档：** [2026-11-10-cross-platform-ecosystem-design.md](2026-11-10-cross-platform-ecosystem-design.md)
 **相关：** mcpp#914、mcpp#915、mcpp#917、mcpp#407、mcpp#839；SPEC-017；mtest 测试协议版本 1；mtest#10；mcpp-ide 1.4.0
 
@@ -444,3 +444,28 @@ mcpp 2026.11.10.1 的默认平台是 0.25.0，因为 0.26.0 需要该版本的 E
 | G8 | 测试覆盖 | 本轮新增的规范面（T18 的 B/O、`override`、会话）各有 e2e 或一致性条款；跨仓库的组合（会话 + mcpp + 插件）只在 mcpp-ide 的端到端中覆盖 | mcpp-ide 的 PR 加入以 mock mcpp 与真实 mcpp 各跑一次的测试 |
 | G9 | 范围 | PR #916 的范围进一步增大 | 按"每个仓库一个 PR"保留；提交按编号（E、T、B、O）分开；PR 描述按编号列出验证 |
 | G10 | 资源 | 主机磁盘余量约 4 GB，其他工作区也在写入 | 只清理自己的 `target/` 与临时目录；大构建前检查余量 |
+
+## 9. 实施记录
+
+| 项 | 实施 | 验证 |
+|---|---|---|
+| T1 | 合并替换的版本撤回它的请求 | e2e 1066 |
+| T2、T3 | 依赖条目上的 `override = true`（只在根上生效，库的覆盖给出警告并忽略）；锁文件记录 `override = true`，`--locked` 的漂移标注 `(override)`；平台组成员的覆盖给出警告；不可调和的请求在报错中给出 `override` 的写法；共享包的精确版本给出 `dependency/exact-pin` 提示，`mcpp publish` 拒绝库对共享包的精确版本 | e2e 1071；docs/05（中英文） |
+| T4 | 不扩展（决定） | — |
+| T5 | 测试图写入 `test.ninja`，与 `build.ninja` 共用 `.ninja_log` 与 `.ninja_deps`；两图的 dyndep 规则文本一致 | e2e 1069 |
+| T6 | 测试前的包构建经构建快路径（工作区根的记录同样接受） | e2e 1069 |
+| T7 | `test-plan.json` 与选择 `@test` 的构建缓存记录；接受条件为发现的测试与记录一致、`tests/**` 无变化、`ninja -n` 无工作 | e2e 1069；docs/08（中英文）；mcpp-language-server 的 `test_fs` 由 5.8 s 降至 0.13 s |
+| T8 | 构建目录锁在测试运行前释放；协议目录按调用分开（`test-protocol/<pid>-<started_ns>/`） | e2e 1068 |
+| T9 | 实测测试环境不改变配置指纹，无需改动；测试内的 `mcpp build` 由 e2e 覆盖 | e2e 1068 |
+| T10 | `Compiling` 行只在实际编译时出现 | e2e 1069 |
+| T11、T12 | 第一版已实现 | — |
+| T13 | mtest 0.6.0 依赖 mcpplibs.os `^0.4.1` 与 openkal-platform 0.25.0 | mtest#10 CI |
+| T14 | mcpp-ide 1.5.0：不认识任何框架；用例为程序的列举并保留至下一次列举；按标识运行；检查与输出；测试各占一条执行道 | mcpp-ide#11 |
+| T15 | mtest 0.6.0 的 `mtest serve` 实现会话（`test/run`、`add`、`cancel`、`status` 与通知）；mcpp-ide 1.5.0 经会话运行用例，`mcpp.test.session` 选择 | mtest#10；mcpp-ide e2e/protocol；本地以真实 mcpp 与 `mtest serve` 验证 |
+| T16 | 用例的检查计数与失败细节（O3）、输出（O8）：程序的 `output` 事件优先，否则单用例程序的全部输出，否则无 | e2e 1070；mtest 0.6.0 |
+| T17 | mtest 0.6.0：库入口声明 `test-capabilities` 与 `test-session` | mtest#10 |
+| T18 | `docs/specs/test.md`（SPEC-017 v2.0）：B1–B6、O1–O9、P1–P12；特性 `test-launch-records`、`test-frameworks`、`test-checks`、`test-output` | e2e 1070 |
+| G1 | 借用他人注册表的 home 不改写注册表中索引的位置 | e2e 1067；docs/25（中英文） |
+
+实施中的发现：openkal-linux 的 `bound_lifetime` 以 `PR_SET_PDEATHSIG` 实现，Linux 在创建子进程的线程结束时即发出该信号，而非进程结束时；在短寿命线程中创建、需与进程同寿命的子进程因此提前结束。mcpp-ide 的会话改为以输入结束为终止条件；该行为与 mcpplibs.os 的陈述之间的差异留待 openkal 讨论。
+
