@@ -97,8 +97,8 @@ std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple);
 
 // The toolchain's Windows header directories, which a resource script reaches
 // with `#include "winres.h"` as well as with angle brackets: the INCLUDE an
-// MSVC backend states, and on a GNU-ABI row the paired payload's
-// `<arch>-w64-mingw32/include` (design 2026-11-10 E3). One list for the
+// MSVC backend states, and on a GNU-ABI row the paired payload's (or a cross
+// gcc's own) `<arch>-w64-mingw32/include` (design 2026-11-10 E3). One list for the
 // compile's `/I` and for the scan of what the script reads.
 std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
                                                         std::string_view dialectId);
@@ -211,17 +211,27 @@ std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::To
         if (ev.key != "INCLUDE") continue;
         for (auto dir : split_env_list(ev.value)) out.emplace_back(std::string(dir));
     }
-    if (dialectId != "msvc" && !tc.pairedSysroot.empty()) {
-        std::error_code ec;
-        // A base package keeps the headers of every architecture in one
-        // `<root>/include` (E9); a gcc payload under `<triple>/include`.
-        if (std::filesystem::is_directory(tc.pairedSysroot / "include", ec))
-            out.push_back(tc.pairedSysroot / "include");
-        for (auto const& entry : std::filesystem::directory_iterator(tc.pairedSysroot, ec))
+    if (dialectId == "msvc") return out;
+    std::error_code ec;
+    // A gcc payload keeps the target's headers under `<triple>/include`.
+    auto add_triple_dirs = [&](const std::filesystem::path& root) {
+        for (auto const& entry : std::filesystem::directory_iterator(root, ec))
             if (auto inc = entry.path() / "include";
                 entry.path().filename().string().ends_with("-w64-mingw32")
                 && std::filesystem::is_directory(inc, ec))
                 out.push_back(inc);
+    };
+    if (!tc.pairedSysroot.empty()) {
+        // A base package keeps the headers of every architecture in one
+        // `<root>/include` (E9).
+        if (std::filesystem::is_directory(tc.pairedSysroot / "include", ec))
+            out.push_back(tc.pairedSysroot / "include");
+        add_triple_dirs(tc.pairedSysroot);
+    } else if (!tc.binaryPath.empty()) {
+        // A cross gcc is its own payload: `<root>/bin/<triple>-gcc` beside
+        // `<root>/<triple>/include` (its configured sysroot names where it was
+        // built, not where it is).
+        add_triple_dirs(tc.binaryPath.parent_path().parent_path());
     }
     return out;
 }

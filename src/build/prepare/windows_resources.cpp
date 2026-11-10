@@ -424,7 +424,21 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                             "UTF-8</activeCodePage>` to your manifest and set "
                             "`windows_code_page = \"legacy\"`, or drop your manifest.",
                             rcSrc.filename().generic_string()));
-                    auto inputs = std::move(scan.inputs);
+                    // A name found nowhere is an input only when a build action
+                    // writes it. Otherwise the script's own preprocessing decides
+                    // (`#if __has_include`), or the resource compiler names it; a
+                    // build graph edge on a file nothing produces would only fail
+                    // in ninja, without the script's name.
+                    std::vector<std::filesystem::path> inputs;
+                    for (auto& in : scan.inputs) {
+                        std::error_code ec;
+                        const bool written = std::ranges::any_of(ctx.plan.actions, [&](auto const& act) {
+                            return std::ranges::any_of(act.outputs, [&](auto const& o) {
+                                return std::filesystem::path(o).filename() == in.filename();
+                            });
+                        });
+                        if (written || std::filesystem::exists(in, ec)) inputs.push_back(std::move(in));
+                    }
                     inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
                     if (auto a = add_unit(rcSrc, rcSrc.stem().string(),
                                           std::move(inputs),

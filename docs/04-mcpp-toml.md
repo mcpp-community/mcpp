@@ -2117,7 +2117,11 @@ statements (`ICON`, `RCDATA`, `MANIFEST`, the numeric type `24`, …), and makes
 them build inputs, so editing the icon relinks. A relative file name is resolved
 against the script's own directory, which is also where rc.exe, llvm-rc and
 windres look for it. Angled includes (`<windows.h>`) are the toolchain's
-and are covered by the toolchain fingerprint instead.
+and are covered by the toolchain fingerprint instead, as is a quoted include the
+toolchain's Windows headers hold (`"winres.h"`). A quoted include found nowhere is
+an input only when a build action writes it; otherwise the script's own
+preprocessing decides (`#if __has_include("x.h")`), and the resource compiler
+reports a missing one with the script's name and line (2026.11.10.1+).
 
 A file name reached through a macro (`1 ICON APP_ICON`) is invisible to that
 scan. mcpp names what it could not resolve and requires an explicit declaration:

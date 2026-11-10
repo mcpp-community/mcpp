@@ -146,7 +146,13 @@
   each place it looked in and the configuration that declared the stores.
 - A GNU-ABI Windows row finds its resource compiler in the paired payload or
   uses `llvm-rc`, and a quoted `"winres.h"` is the toolchain's header, not a
-  generated input.
+  generated input: the paired payload's, or a cross gcc's own
+  (`<root>/x86_64-w64-mingw32/include`).
+- A resource script's quoted include that no directory holds and no build
+  action writes is no longer an input of the build graph. Such a build failed
+  in ninja without the script's name, even when the script included the file
+  only `#if __has_include`; the resource compiler now reports a missing one
+  with the script's name and line.
 - `patches` on a git dependency that is a workspace member is applied in a
   copy of the whole repository, so the member's edges to its siblings hold
   (mcpp#911 N5).
