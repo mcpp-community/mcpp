@@ -23,7 +23,9 @@ runs:
         for mirror in GLOBAL CN; do
           xlings config --mirror "$mirror" > /dev/null 2>&1 || true
           xlings update > /dev/null 2>&1 || true
-          if xlings install "mtest@$MTEST_VERSION" -y; then launcher=$(command -v mtest); break; fi
+          # Into the global subos (-g): inside the repository xlings would install it
+          # for the project, and its shim refuses to run it from another directory.
+          if xlings install "mtest@$MTEST_VERSION" -y -g; then launcher=$(command -v mtest); break; fi
         done
         xlings config --mirror GLOBAL > /dev/null 2>&1 || true
         if [ -z "$launcher" ]; then
