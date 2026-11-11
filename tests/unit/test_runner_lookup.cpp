@@ -148,6 +148,76 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
     expect(eq(msg.find("runner = ["), std::string::npos)) << msg;   // no runner advice
 }};
 
+// A SCRIPT'S `#!` LINE, READ AS THE KERNEL READS IT (#621). The interpreter is
+// the first word; through `env`, the program is the first word that is neither
+// `-S` nor an assignment. A form read without certainty names no program.
+UTest a_shebang_names_its_interpreter{"RunnerLookup/AShebangNamesItsInterpreter", [] {
+    auto direct = parse_script_interpreter("#!/bin/sh -e\nexit 0\n");
+    expect(fatal(direct.has_value()));
+    expect(eq(direct->program, std::filesystem::path("/bin/sh")));
+    expect(eq(direct->viaEnv, std::string{}));
+    expect(eq(direct->line, std::string("#!/bin/sh -e")));
+
+    auto viaEnv = parse_script_interpreter("#!/usr/bin/env node\r\n// emsdk\n");
+    expect(fatal(viaEnv.has_value()));
+    expect(eq(viaEnv->program, std::filesystem::path("/usr/bin/env")));
+    expect(eq(viaEnv->viaEnv, std::string("node")));
+    expect(eq(viaEnv->line, std::string("#!/usr/bin/env node")));
+
+    auto split = parse_script_interpreter("#! /usr/bin/env -S NODE_OPTIONS=x node --flag\n");
+    expect(fatal(split.has_value()));
+    expect(eq(split->viaEnv, std::string("node")));
+}};
+
+UTest an_uncertain_shebang_names_no_program{"RunnerLookup/AnUncertainShebangNamesNoProgram", [] {
+    expect(!parse_script_interpreter("\x7f" "ELF\x02\x01\x01").has_value());
+    expect(!parse_script_interpreter("#!\n").has_value());
+    expect(!parse_script_interpreter("#!node\n").has_value());        // not absolute
+    expect(!parse_script_interpreter("#!/usr/bin/env\n").has_value()); // no program
+    expect(!parse_script_interpreter("#!/usr/bin/env -i node\n").has_value());
+    expect(!parse_script_interpreter("#!/usr/bin/env -u X node\n").has_value());
+}};
+
+UTest a_script_whose_interpreter_is_missing_is_noted{"RunnerLookup/AScriptWhoseInterpreterIsMissingIsNoted", [] {
+    auto root = fresh_root("mcpp-runner-lookup-shebang-1");
+    auto env = make_exe(root / "sys", "env");
+    auto script = root / "app.js";
+    { std::ofstream o(script); o << "#!" << env.string() << " node-absent\nconsole.log(1)\n"; }
+    auto note = missing_interpreter_note(script, (root / "path").string());
+    expect(ne(note.find(script.string()), std::string::npos)) << note;
+    expect(ne(note.find("`#!" + env.string() + " node-absent`"), std::string::npos)) << note;
+    expect(ne(note.find("'node-absent' is not on PATH"), std::string::npos)) << note;
+    expect(ne(note.find(".mcpp-toolchain.json"), std::string::npos)) << note;
+    expect(ne(note.find("mcpp index update"), std::string::npos)) << note;
+    expect(ne(note.find("mcpp toolchain remove <spec>"), std::string::npos)) << note;
+    expect(ne(note.find("mcpp toolchain install <spec>"), std::string::npos)) << note;
+
+    // ...and once the program is on the PATH the artefact receives, nothing.
+    make_exe(root / "path", "node-absent");
+    expect(eq(missing_interpreter_note(script, (root / "path").string()), std::string{}));
+}};
+
+UTest a_missing_interpreter_path_is_noted{"RunnerLookup/AMissingInterpreterPathIsNoted", [] {
+    auto root = fresh_root("mcpp-runner-lookup-shebang-2");
+    auto script = root / "tool.sh";
+    { std::ofstream o(script); o << "#!" << (root / "absent" / "sh").string() << "\n"; }
+    auto note = missing_interpreter_note(script, "");
+    expect(ne(note.find("'" + (root / "absent" / "sh").string() + "' is not an executable file"),
+              std::string::npos)) << note;
+}};
+
+UTest a_program_or_a_found_interpreter_is_not_noted{"RunnerLookup/AProgramOrAFoundInterpreterIsNotNoted", [] {
+    auto root = fresh_root("mcpp-runner-lookup-shebang-3");
+    auto sh = make_exe(root / "sys", "sh");
+    auto found = root / "found.sh";
+    { std::ofstream o(found); o << "#!" << sh.string() << "\nexit 0\n"; }
+    expect(eq(missing_interpreter_note(found, ""), std::string{}));
+    auto binary = root / "app";
+    { std::ofstream o(binary, std::ios::binary); o << "\x7f" "ELF"; }
+    expect(eq(missing_interpreter_note(binary, ""), std::string{}));
+    expect(eq(missing_interpreter_note(root / "absent", ""), std::string{}));
+}};
+
 #else
 
 UTest runner_lookup_windows_covered_by_integration{"RunnerLookup/WindowsCoveredByIntegration", [] { /* passes */; }};

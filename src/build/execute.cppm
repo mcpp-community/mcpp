@@ -2995,6 +2995,21 @@ void yield_terminal() {
     mcpp::ui::print_closing_notices();
 }
 
+// A SCRIPT WHOSE `#!` INTERPRETER IS NOT THERE (#621), said before the
+// artefact is executed directly: the refusal is the interpreter's own and
+// comes after mcpp has handed the process over, so nothing of mcpp follows it.
+// The PATH searched is the one the artefact receives -- the last value
+// `childEnv` gives it, else this invocation's -- since that is the one `env`
+// searches.
+void note_missing_interpreter(const std::filesystem::path& exe,
+                              const std::vector<std::pair<std::string, std::string>>& childEnv) {
+    std::string path = mcpp::invocation::get("PATH").value_or("");
+    for (auto const& [key, value] : childEnv)
+        if (key == "PATH") path = value;
+    if (auto note = mcpp::build::runner_lookup::missing_interpreter_note(exe, path); !note.empty())
+        mcpp::ui::note(note);
+}
+
 // mcpp#225 (E2): `mcpp run`'s fast path. Mirrors try_fast_build's
 // fingerprint/freshness gate against the SAME cache entry `mcpp build`
 // wrote (targetTriple == "" — a HOST build; see the precondition below), then
@@ -3451,7 +3466,6 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         }
         runClosure = *closure;
     }
-    run_separator();
 
     std::vector<std::pair<std::string, std::string>> childEnv;
     auto [runEnvKey, runEnvValue] = compute_run_env(ctx.plan);
@@ -3464,6 +3478,9 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     if (runClosure)
         for (auto& kv : run_contract_env(ctx, exe, "run", choice.tripleKey, *runClosure))
             childEnv.push_back(std::move(kv));
+    if (choice.tmpl.empty() && host.prefix.empty() && !print_launch_flag())
+        note_missing_interpreter(exe, childEnv);
+    run_separator();
 
     // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
@@ -4464,6 +4481,9 @@ struct TestBuild {
     // and each such result is NotRun, not RunFail. The reason is printed once.
     std::atomic<bool>                        hostCannotRun{false};
     std::string                              hostCannotRunReason;
+    // The first test executed directly was read for a missing `#!`
+    // interpreter (#621); the note, if any, is printed once per build.
+    bool                                     interpreterNoted = false;
 };
 
 // Phase A goal set: every shared prerequisite — all package/dep compile
@@ -5318,6 +5338,16 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (!pathVal.empty()) childEnv.emplace_back("PATH", pathVal);
                 }
             }
+        }
+
+        // Said once for the build, before any test runs: every test of one
+        // build is executed the same way, so one script's missing interpreter
+        // is every script's.
+        if (runnerTmpl.empty() && tb.runUnderPrefix.empty() && !tb.interpreterNoted && !json
+            && !print_launch_flag() && !testOpts.noRun && !tb.builtNotRunHere
+            && invocationNotRunReason.empty()) {
+            tb.interpreterNoted = true;
+            note_missing_interpreter(exe, childEnv);
         }
 
         runnable.push_back({lu.targetName, std::move(argv), std::move(childEnv),

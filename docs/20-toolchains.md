@@ -853,7 +853,10 @@ give such a payload a descriptor, refresh the index first and then reinstall:
 again, because the index is refreshed when a resolution misses and not because a
 recipe changed; measured in the sandbox verification of 2026.9.12.2. Until then
 the failure is the interpreter's own (`/usr/bin/env: 'node': No such file or
-directory`), which mcpp does not yet explain (#621).
+directory`). Before `mcpp run` and `mcpp test` execute an artefact directly,
+they read its `#!` line, and when the program it names is not there (`node` on
+no directory of the artefact's PATH) a note names that program and these three
+steps (#621).
 
 For a target whose artifact runs elsewhere, the `runner` key is an argv prefix
 and the session belongs to a package rather than to the engine:
