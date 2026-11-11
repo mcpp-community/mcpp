@@ -18,11 +18,15 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-358 records.
+359 records.
 
 ## By subject
 
 Records that declare one. Everything else is listed by date below.
+
+### architecture
+
+- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — active
 
 ### build
 
@@ -188,6 +192,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — active
 - [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active
 - [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
 - [目标与提供者：统一的目标模型（结合 mcpp#911）](2026-11-09-target-model-design.md) — active
