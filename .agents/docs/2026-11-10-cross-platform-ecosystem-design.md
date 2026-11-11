@@ -292,7 +292,7 @@ X1 的清单：`provides` 为 c-abi（UCRT 上的 MinGW-w64）、c++-abi（libc+
 
 | # | 内容 |
 |---|---|
-| I1 | compat.glfw 描述符：Windows 行以 `requires = { "mcpp:c-abi=ucrt" }` 陈述 Win32 后端所写的 C 库（与 Linux 行陈述 glibc 同一形式）。MSVC 行、MinGW-w64 载荷与 X1 基座都回答它，X1 由 E9 的提供者在每个宿主上给出，不需要私有依赖；B 路线（openkal-musl）没有窗口系统，在解析期按该要求被拒绝（#913 的 note (b)） |
+| I1 | compat.glfw 描述符：Windows 行以 `requires = { "mcpp:kernel-abi=windows" }` 陈述 Win32 后端直接调用的系统接口（与 Linux 行陈述 glibc 同一形式）。MSVC 行、MinGW-w64 载荷与 X1 基座都回答它，X1 由 E9 的提供者在每个宿主上给出，不需要私有依赖；B 路线（openkal-musl 经 openkal-windows，kernel-abi 为 `openkal`）没有窗口系统，在解析期按该要求被拒绝（#913 的 note (b)） |
 | RP | 运行器包：wine（Windows 行）、qemu-user（异架构 Linux 行）、系统虚拟机（FreeBSD 等）。按 docs/41 的运行协议实现，供所有工程的 `mcpp run` 与 `mcpp test` 使用 |
 
 ## 7. 验证工程内部（只为验证，不进入上游）
@@ -589,11 +589,12 @@ B 路线在 Windows 上就是正确的默认。
 | E14 | 层供给者的需求不成环（`layer-cycle`） | e2e 1055、单元测试 |
 | 规范 | SPEC-002 v1.6、SPEC-006 v0.11、SPEC-013 v1.7、SPEC-014 v2.2、SPEC-016 v1.1；docs 04、10、21、22、30、35、50（中英文） | 文档检查 |
 | X1、X2 | xlings-res 的 GitHub 发布与 GitCode 镜像（下载回验 sha256）；xim-pkgindex 收录，CI 在三种宿主上安装、检查、卸载；X1 的修订版 `20261104-2` 以 `mcpp:c-abi=ucrt` 陈述其 C 库，基座的 C 库按其陈述的名字报告 | xim-pkgindex CI；e2e 1063 |
-| I1 | compat.glfw 的 Windows 行要求 `mcpp:c-abi=ucrt` | gnu 行构建、windows-musl 行在解析期拒绝（实测） |
+| I1 | compat.glfw 的 Windows 行要求 `mcpp:kernel-abi=windows` | gnu 行（MinGW-w64 载荷与 `builtin:mingw-llvm`）构建，后者在 wine 中运行；windows-musl 行在解析期拒绝（实测，mcpp 2026.11.10.2） |
 | CI 中暴露并修复 | 提供者的基座在依赖图载入前被记住（改为图载入后才保留）；没有 cfg 的 Windows llvm 载荷编译时不陈述配对的 sysroot；同一 home 的两个进程并发安装同一个包（安装次序锁 `registry/.install.lock`） | target-matrix、openkal 交叉构建、各宿主 e2e |
 | 实施中发现并修复 | 工具链为另一目标构建的 C++ 归档（其父目录的三元组与目标的架构或系统不同）不链接，并给出降级诊断；ok 映像的启动器依赖 mcpplibs.os 0.4.4（openkal 0.24 与 0.25 两族均可）；交叉 gcc 自身的 Windows 头文件属于工具链（`mingw` 提供者下资源脚本的 `"winres.h"`）；资源脚本中各处都找不到、也无构建动作写出的带引号 include 不进入构建图，由脚本的预处理与资源编译器处理 | 单元测试 `Distribution/ForeignArchivesAreNotLinked`；mingw 交叉打包；e2e 1058、1072（验证工程的 Windows 行暴露） |
 | K9（mcpp 2026.11.10.2） | `<arch>-freebsd-musl` 两行由 openkal 提供者经 openkal-platform 0.26.0 的 hosted 部分服务（openkal-freebsd standalone 之上的 openkal-musl 0.29.2）；未为 `<arch>-freebsd` 选平台时取该身份，选了平台则保留系统 ABI；openkal-run 0.6.1 在 FreeBSD 上以 openkal-freebsd 为缺省实现，okrun 由两条路线构建；平台的运行器主机加入 FreeBSD | e2e 1073、1059；openkal-platform CI 的 freebsd 作业（FreeBSD 虚拟机中运行程序，并以 FreeBSD 的 okrun 运行 ok 映像） |
-| I1 的补正（mcpp 2026.11.10.2） | MSVC 载荷的 `c-abi` 回答 `ucrt`（此前为工具集名 `msvc`），`compat.glfw` 的 `requires = ["mcpp:c-abi=ucrt"]` 在 MSVC 行上成立；SPEC-002 v1.7 写明段与 C 库名的对应 | 单元测试 `TargetSideResolve`；mcpp-index#748 的 Windows 作业 |
+| I1 的补正（mcpp 2026.11.10.2） | MSVC 载荷的 `c-abi` 回答 `ucrt`（此前为工具集名 `msvc`）；SPEC-002 v1.7 写明段与 C 库名的对应 | 单元测试 `TargetSideResolve` |
+| I1 的层（兼容性） | 要求写在 kernel-abi 而不写在 c-abi 上。索引接受 mcpp 2026.9.18.3 起的版本，2026.11.3.1–2026.11.10.1 对 MSVC 的 c-abi 回答 `msvc`，`c-abi=ucrt` 会使这些版本在 MSVC 上拒绝本包；载荷的 kernel-abi 即目标的系统，各版本在每条 Windows 路线上都回答 `windows` | mcpp-index#748 的 Windows 作业（mcpp 2026.11.7.2，MSVC） |
 | E15（mcpp 2026.11.10.2） | cfg 裸词由数据决定：`unix` 为族词，其余不含短横线的词即 `os = "<词>"`；行表的 `family` 陈述族，FreeBSD 各行属 `unix` 族；词表与诊断由行的系统生成，平台定义的系统同样可作裸词 | 单元测试 `CfgBarewords`；docs/22 |
 | #918 的修正（mcpp 2026.11.10.2） | 依赖表仅当 `path`/`version`/`git` 为字符串或 `workspace` 为布尔时视为单个依赖说明，命名空间中名为 `version` 等的包按包读取 | 单元测试 `Manifest/APackageNamedLikeASpecField` |
 
