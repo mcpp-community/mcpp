@@ -141,11 +141,15 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     ctx.plan.rcPath  = tool->path;
     ctx.plan.rcStyle = tool->style;
 
-    // The third source is resolved only where it will be read: below the
-    // toolchain's own include sources, never beside them (G3) -- a row that
-    // states its headers does not fetch a payload its compile will not read.
+    // The third source is resolved only where it will be read, and only for
+    // a row whose Windows headers are not the machine's own (G3's subject):
+    // a located MSVC SDK is the row's stated header source -- an INCLUDE the
+    // shell did not export is not that SDK's absence, and an MSVC row never
+    // fetches another row's payload. Below the toolchain's own include
+    // sources, never beside them. The same sentence gates both call sites.
     std::filesystem::path mingwHeaders;
     if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos
+        && state.tc->base.msvc.sdkRoot.empty()
         && rsrc::system_include_dirs(*state.tc, dialectId).empty())
         mingwHeaders = mingw_headers_root(state, trip);
 
@@ -249,7 +253,14 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // windres), found as the compile step below finds it (E3).
     const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
     const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
-    const auto mingwHeaders = mingw_headers_root(state, trip);
+    // Lazy, as at the compiler step above: a row that states its own headers
+    // resolves nothing, and a scan that finds no script reads none.
+    namespace rsrc = mcpp::build::resources;
+    std::filesystem::path mingwHeaders;
+    if (rcTool && msvcStyle && rcTool->name().find("llvm-rc") != std::string::npos
+        && state.tc->base.msvc.sdkRoot.empty()
+        && rsrc::system_include_dirs(*state.tc, dialectId).empty())
+        mingwHeaders = mingw_headers_root(state, trip);
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;

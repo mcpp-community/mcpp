@@ -65,7 +65,8 @@ resolved_row() {   # request → the row it resolved to
     t="$(printf '%s' "$doc" | jq -r '.data.triple.llvm // empty')"
     if [ -n "$t" ]; then printf '%s' "$t"; return; fi
     printf '%s' "$doc" | jq -r '.diagnostics[0].message // empty' \
-        | head -1 | sed -n "s/^[^']*'\\([^']*\\)'.*/\\1/p"
+        | head -1 | sed -n -e "s/^[^']*'\([^']*\)'.*/\1/p" \
+                            -e "s/^\[target\.\([^]]*\)\].*/\1/p"
 }
 message_of() {
     "$MCPP" why toolchain --target "$1" --format json 2>/dev/null \
