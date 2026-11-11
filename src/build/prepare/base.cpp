@@ -538,6 +538,21 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
             && !fs::exists(dir / "usr" / "include" / "linux" / "limits.h", ec))
             tc.base.addedIncludes.push_back(ecosystemLinux);
     }
+
+    // A LOADER INSIDE A CROSS BASE IS THE SYSROOT'S, NOT THIS MACHINE'S
+    // (2026.11.11.1): a --sysroot link names it sysroot-relative
+    // (/lib/ld-linux-aarch64.so.1), and so does the artifact's PT_INTERP --
+    // the form qemu -L <sysroot>, a runner declaration and the ld scripts
+    // beside it (the base's own libc.so GROUPs /lib/...) all resolve. An
+    // absolute path would bake this machine's install directory into every
+    // image it links; the native case keeps its absolute path, as the
+    // Locator form's distro path above already states.
+    if (!native && !tc.base.loader.empty()) {
+        std::error_code lec;
+        if (auto rel = fs::relative(tc.base.loader, dir, lec); !lec && !rel.empty()
+            && rel.native().find("..") == std::string_view::npos)
+            tc.base.loader = fs::path("/") / rel;
+    }
     // A base package's own `provides` is its declaration, as a statement's is.
     if (tc.base.libc.empty() && !tc.base.layers.cAbi.empty()) tc.base.libc = tc.base.layers.cAbi;
     // ITS C++ RUN-TIME STANDS WHERE THE PAYLOAD'S WOULD (E5): the std module is

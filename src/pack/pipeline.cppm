@@ -964,7 +964,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
             std::vector<std::string> unbuilt, built;
             const bool all = std::ranges::find(run.opts.systems, "all") != run.opts.systems.end();
             for (auto const& arch : archs)
-                for (auto const& system : mcpp::pack::systems_for(run.opts.systems, arch)) {
+                for (auto const& system : mcpp::pack::systems_for(run.opts.systems, arch, &ctx.plan.platform)) {
                     auto row = mcpp::pack::unbuilt_row(system, arch);
                     if (row.empty()) built.push_back(std::format("{}-{}", system, arch));
                     else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, row));
@@ -1256,7 +1256,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
         std::error_code xec;
         const bool windowsLauncher = std::filesystem::is_regular_file(plan->stagingRoot / "bin" / (stem + ".exe"), xec);
         for (auto const& arch : archs)
-            for (auto const& system : carries ? mcpp::pack::systems_for(opts.systems, arch)
+            for (auto const& system : carries ? mcpp::pack::systems_for(opts.systems, arch, &plan->platform)
                                               : std::vector<std::string>{}) {
                 const auto pair = std::format("{}-{}", system, arch);
                 if (covered(pair)) continue;

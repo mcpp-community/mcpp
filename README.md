@@ -453,7 +453,7 @@ list` reports for this machine):
 | `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 23 — Cortex-A 32-bit, the first row with an MMU ² | verified |
 | `aarch64-none-elf` · `x86_64-none-elf` · `i686-none-elf` | llvm 23 — bare metal, no C library by default ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
-| `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
+| `aarch64-linux-gnu` | `llvm@23.1.3-r2` | preview |
 | `aarch64-windows-gnu` | llvm 23 with `xim:mingw-w64-sysroot` (llvm-mingw's target side) — built on any host; the same base serves `x86_64-windows-gnu` where no gcc payload exists | preview |
 | `x86_64-freebsd` · `aarch64-freebsd` | the platform that serves them, over `xim:<arch>-freebsd-sysroot` ([22](docs/22-target-side.md)) | preview |
 | `x86_64-freebsd-musl` · `aarch64-freebsd-musl` | llvm 23 — a static FreeBSD program with a musl C library over openkal-freebsd, built on any host *(what `<arch>-freebsd` is with no platform chosen)* | preview |

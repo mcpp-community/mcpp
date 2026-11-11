@@ -857,6 +857,17 @@ names no `windows-aarch64`, so `aarch64-windows-gnu`, a row this mcpp builds,
 gets no runner from it). An image built on a Windows host is not the bytes of one built
 elsewhere (#850): pack trees on Linux or macOS.
 
+**What `all` names is data, not a list (mcpp 2026.11.11.1+).** The machine's
+own system, every system a platform defines a row of for the architecture, and
+every system the platform's runner states a host of for it (`runner.hosts`):
+a platform whose runner exists for `freebsd-<arch>` gets FreeBSD's runners,
+built as `<arch>-freebsd-musl` over the platform's hosted arrangement — the
+same static identity a FreeBSD request takes — into
+`libexec/<runner>/freebsd-<arch>/`. A pack without a platform answers with
+the machine's own system alone, and `--systems` naming an `<os>` or an
+`<os>-<arch>` keeps its exact meaning; only an explicit `--systems all` (or
+`[pack] systems`) ever packs another system.
+
 **Where it runs.** The pack writes `runs_on` into `mcpp-package.json` and says
 it after `Packed`: `self`, the `<os>-<arch>` pairs the package runs on with
 what it carries, and `with.<runner>`, the pairs it runs on where the machine

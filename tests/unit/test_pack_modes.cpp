@@ -52,14 +52,17 @@ UTest dispatched_format_stages_without_it{"PackClosureUnavailableOutcome/Dispatc
     expect(eq(closure_unavailable_outcome(Format::Dispatched), ClosureUnavailableOutcome::StageWithoutClosure));
 }};
 
-// `--systems` (design 2026-10-29 §4.1): `<os>` for every architecture of the
-// legs, `<os>-<arch>` for one, `all` for the three systems; unstated, this
-// machine's.
+// `--systems` (design 2026-10-29 §4.1; `all` since 2026.11.11.1 answers
+// with the data): `<os>` for every architecture of the legs, `<os>-<arch>`
+// for one; unstated, this machine's. `all` is this machine's system, the
+// systems the builtin rows define for the architecture, and -- with a
+// resolved platform -- the systems its runner states a host of. Without a
+// platform that is the machine's system and this table's linux rows alone.
 UTest the_words_name_systems_for_an_architecture{"PackSystems/TheWordsNameSystemsForAnArchitecture", [] {
     using V = std::vector<std::string>;
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "x86_64"), V{ "linux" }));
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "aarch64"), (V{ "linux", "macos" })));
-    expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux", "macos", "windows" })));
+    expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux" })));
     expect(eq(mcpp::pack::systems_for({}, "x86_64").size(), 1u));
 }};
 

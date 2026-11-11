@@ -4,6 +4,70 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.11.1] - 2026-11-11
+
+### Added
+
+- The cross rows of the platform table are served from what their own data
+  names, not from a list of hosts written in the engine. `aarch64-linux-gnu`
+  takes its C library from the sysroot payload its row declares
+  (`xim:aarch64-linux-gnu-sysroot`, glibc 2.44 with the kernel headers,
+  libgcc and libc++ inside; the package root is the sysroot), so the row is
+  built wherever that payload is published — an x86_64 Linux host included —
+  and `host_can_serve` reads the declaration instead of refusing every
+  arch-crossing glibc target. The row links its GCC run-time in, as the musl
+  rows do: that sysroot carries no shared libgcc. When such a base package
+  serves the target, the host contributes nothing to the link: the payload's
+  own `-B`/`-L`/loader words and its `compiler_runtime_dir` resource
+  directory are the whole C-runtime group, on the C link exactly as on the
+  C++ one (before, the host's runtime directories and `-latomic` shadowed
+  the target's — an x86_64 `libatomic.a` the linker then called incompatible
+  with aarch64 — and a C link could not find the payload's builtins at all),
+  and the runtime-closure rules state the premise they always had: the
+  artifact's loader is the payload's, a process on this machine is not the
+  one that would load it. The test that holds the row skips itself until the
+  package index carries the payload.
+- `longjmp` joins `threads` and `exceptions` as a member of
+  `[target.<selector>.abi]`: how `sigsetjmp`/`siglongjmp` cross the
+  WebAssembly boundary on an Emscripten row. `"wasm"` renders
+  `-sSUPPORT_LONGJMP=wasm` on every C and C++ translation unit and on the
+  link; `"js"` states the toolchain's default model the same way. Declared
+  on any other row the member is refused naming that fact. A program whose
+  non-local exits run deep still wants `-sSTACK_SIZE` — a project knob of
+  its own, not an ABI fact, so the engine does not render it.
+- `mcpp pack --systems all` answers with data rather than a fixed list: this
+  machine's system, every system a platform defines a row of for the
+  architecture, and every system the platform's runner states a host of
+  (`runner.hosts`) — FreeBSD's among them. A FreeBSD runner is built as
+  `<arch>-freebsd-musl` over the platform's hosted arrangement, the same
+  static identity a FreeBSD request takes. The default pack is unchanged:
+  without `--systems` it carries the runner of the packing machine's system
+  alone.
+- A Windows row whose system the graph supplies compiles its resources with
+  the Windows headers the platform's rows declare. `x86_64-windows-musl` has
+  no paired payload and its llvm binary carries no headers of its own, so a
+  script including `"winres.h"` failed in llvm-rc; the MinGW-w64 sysroot
+  payload a row declares for the architecture's GNU-ABI identity supplies
+  them, and every PE row shares that set. The two existing include sources
+  keep their precedence.
+- The llvm line moves to `llvm@23.1.3-r2`: the same payload with the MinGW
+  cross builtins beside it, repackaged under its own version key because the
+  index keeps an existing version's entry immutable. A plain C link for
+  `aarch64-windows-gnu` now needs no second payload.
+
+### Changed
+
+- A program of another system's kernel interface that starts and dies at
+  once is told apart from a crash in a working program. `mcpp run` of such
+  an artifact — a static FreeBSD ELF of the host's own architecture, spawned
+  by a kernel that does not ask which system it names — now runs it as a
+  child, so the death by signal is observed and named with the
+  `[target.<triple>]` runner declaration, and the status itself is returned
+  unchanged: 139 stays 139. A spawn refusal whose errno names only a missing
+  interpreter (ENOENT, a dynamic linker of the other system) carries the
+  same declaration. Native targets keep the launch they always had, and a
+  native signal death is never interpreted.
+
 ## [2026.11.10.2] - 2026-11-10
 
 ### Added

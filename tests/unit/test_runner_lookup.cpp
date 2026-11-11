@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <csignal>
 #include <fstream>
 
 import std;
@@ -146,6 +147,50 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
     expect(ne(msg.find("Permission denied"), std::string::npos)) << msg;
     expect(ne(msg.find("(error 13)"), std::string::npos)) << msg;
     expect(eq(msg.find("runner = ["), std::string::npos)) << msg;   // no runner advice
+}};
+
+// The classification of a death by signal (2026.11.11.1, G6): the four
+// signals an artifact of another system's kernel interface dies by on its
+// first kernel call, and nothing else — a normal exit, an exit by a signal
+// the classification does not take (SIGTERM, 143) and the launcher's own
+// 127/126 band are all someone else's fact.
+UTest death_by_signal_takes_four_signals{"RunnerLookup/DeathBySignalTakesFourSignals", [] {
+    expect(death_by_signal(128 + SIGSEGV));
+    expect(death_by_signal(128 + SIGILL));
+    expect(death_by_signal(128 + SIGABRT));
+#ifdef SIGBUS
+    expect(death_by_signal(128 + SIGBUS));
+#endif
+    expect(!death_by_signal(0));
+    expect(!death_by_signal(1));
+    expect(!death_by_signal(128 + SIGTERM));
+    expect(!death_by_signal(128 + SIGINT));
+    expect(!death_by_signal(127));
+    expect(!death_by_signal(-11));
+    expect(eq(signal_of_death(128 + SIGSEGV), std::string_view("SIGSEGV")));
+    expect(eq(signal_of_death(128 + SIGILL), std::string_view("SIGILL")));
+    expect(eq(signal_of_death(0), std::string_view{}));
+}};
+
+UTest signal_death_message_names_the_runner_declaration{"RunnerLookup/SignalDeathMessageNamesTheRunnerDeclaration", [] {
+    const std::filesystem::path art{"/x/target/x86_64-freebsd-musl/debug/bin/app"};
+    auto msg = signal_death_message("x86_64-freebsd-musl", art, 128 + SIGSEGV);
+    expect(ne(msg.find("was started and died at once"), std::string::npos)) << msg;
+    expect(ne(msg.find("SIGSEGV"), std::string::npos)) << msg;
+    expect(ne(msg.find("status 139"), std::string::npos)) << msg;
+    expect(ne(msg.find("another system's kernel interface"), std::string::npos)) << msg;
+    expect(ne(msg.find("[target.x86_64-freebsd-musl]"), std::string::npos)) << msg;
+    expect(ne(msg.find("runner = ["), std::string::npos)) << msg;
+    expect(ne(msg.find("--no-runner"), std::string::npos)) << msg;
+    // The status stays the caller's to return; the message only says it.
+    expect(eq(msg.find("status 139, but"), std::string::npos)) << msg;
+}};
+
+UTest runner_advice_text_declares_the_target{"RunnerLookup/RunnerAdviceTextDeclaresTheTarget", [] {
+    auto msg = runner_advice_text("aarch64-linux-gnu");
+    expect(ne(msg.find("The artifact was built for 'aarch64-linux-gnu'"), std::string::npos)) << msg;
+    expect(ne(msg.find("[target.aarch64-linux-gnu]"), std::string::npos)) << msg;
+    expect(ne(msg.find("runner = ["), std::string::npos)) << msg;
 }};
 
 #else

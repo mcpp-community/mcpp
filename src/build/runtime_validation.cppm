@@ -684,6 +684,18 @@ ValidationReport validate_changed_artifacts(
         record_without_rules(plan, before);
         return report;
     }
+
+    // A ROW'S BASE PACKAGE IS THE TARGET'S C LIBRARY (the gnu-sysroot form,
+    // 2026.11.11.1): the artifact's loader and libc are the payload's, and
+    // the process these rules describe -- one process on this machine with
+    // this machine's binding -- is not the one that would load it. The row's
+    // declaration is the statement, exactly as an SDK's is above; the
+    // closure belongs to the payload that served the link, and a runner
+    // declaration (or qemu) is how such an artifact runs.
+    if (!plan.toolchain.base.layers.cAbi.empty()) {
+        record_without_rules(plan, before);
+        return report;
+    }
     // THE ARTIFACT'S OWN SYSTEM DECIDES (mcpp#911 G5): a row a platform defines
     // states where its artifacts run, and an artifact for another system is
     // judged by that system's loader, not this machine's. Its closure is not

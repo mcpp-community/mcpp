@@ -29,6 +29,8 @@ import mcpp.toolchain.llvm;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;
 
 export namespace mcpp::toolchain {
 
@@ -1365,7 +1367,25 @@ bool host_can_serve(const triple::Triple& target) {
             const bool crossArch = target.arch != mcpp::toolchain::platform::host_arch;
             if (target.is_musl())
                 return !crossArch || mcpp::toolchain::platform::host_arch == "x86_64";
-            return !crossArch;
+            // A CROSS WHOSE ROW NAMES A SYSROOT PAYLOAD IS SERVED WHEREVER
+            // THAT PAYLOAD IS PUBLISHED (2026.11.11.1, G1). llvm alone carries
+            // no glibc of another architecture, which is what `return
+            // !crossArch` answered: no payload here produces it. The row's
+            // own declaration is the better answer -- a provider that serves
+            // the identity with a sysroot payload, available on this host,
+            // supplies the C library whatever the architectures are. The
+            // answer stays data: no host is named in this function.
+            if (crossArch) {
+                const auto host = std::format("linux-{}",
+                                              mcpp::toolchain::platform::host_arch);
+                for (auto const* p : mcpp::toolchain::target::providers())
+                    if (mcpp::toolchain::target::serves(*p, target.str())
+                        && !p->sysroot.empty() && p->sysroot != "toolchain"
+                        && mcpp::toolchain::target::available_on(*p, host, target.arch))
+                        return true;
+                return false;
+            }
+            return true;
         }
         // Non-Linux host: only the self-contained musl payloads can work at
         // all (nothing else would find a C library). Today exactly one such

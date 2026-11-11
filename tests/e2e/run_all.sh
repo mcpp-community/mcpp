@@ -93,6 +93,14 @@ case "$OS" in
         if ls "${MCPP_HOME}"/registry/data/xpkgs/xim-x-llvm/*/bin/clang++ 2>/dev/null | head -1 | grep -q .; then
             CAPS+=(llvm)
         fi
+        # aarch64-gnu-sysroot: the glibc sysroot payload the aarch64-linux-gnu
+        # row names (xim:aarch64-linux-gnu-sysroot). A payload directory, not a
+        # version: the row's e2e skips until the package index carries the
+        # recipe and the runner prewarms it, which is why the token probes
+        # rather than assuming.
+        if ls "${MCPP_HOME}"/registry/data/xpkgs/xim-x-aarch64-linux-gnu-sysroot/*/lib/libc.so.6 2>/dev/null | head -1 | grep -q .; then
+            CAPS+=(aarch64-gnu-sysroot)
+        fi
         # Host MinGW headers can come from a distro prefix or the dedicated
         # xlings fixture outside MCPP_HOME. Test 738 proves that unrestricted
         # Clang finds the latter before checking graph isolation.
@@ -271,7 +279,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
+KNOWN_CAPS=(aarch64-gnu-sysroot android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
             mingw mingw-cross mingw-host-headers msvc musl nasm no-msvc pack patchelf python3
             qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
             xlings-msvc)

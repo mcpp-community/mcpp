@@ -3493,8 +3493,32 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         emit_launch(env);
         return 0;
     }
+    // A PROGRAM OF ANOTHER SYSTEM'S KERNEL INTERFACE, of this machine's own
+    // architecture, STARTS AND DIES ON ITS FIRST KERNEL CALL (G6): the kernel
+    // maps a static foreign ELF without asking which system it names, the
+    // program then states a syscall in that system's vocabulary, and the death
+    // is by signal — where mcpp, having become the program on POSIX, can say
+    // nothing at all. Such an artifact is run as a child instead, so its death
+    // is observed, named with the [target.<triple>] runner declaration, and
+    // its status returned unchanged: 139 stays 139, exactly what a direct
+    // launch would have reported. Every other launch — a declared runner,
+    // `run_under`, a native or cross-arch target — keeps the launch it always
+    // had, and a native signal death is never interpreted: that death is the
+    // program's own.
+    const bool foreignKernel = [&] {
+        if (!choice.tmpl.empty() || !host.prefix.empty()) return false;
+        auto t = mcpp::toolchain::triple::parse(choice.tripleKey);
+        if (!t || t->os.empty()) return false;
+        const std::string_view here = mcpplibs::os::is_windows ? "windows"
+                                      : mcpplibs::os::is_macos ? "macos" : "linux";
+        return t->os != here && t->arch == mcpp::toolchain::platform::host_arch;
+    }();
     int spawnErr = 0;
-    const int rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
+    int rc = 0;
+    if (foreignKernel)
+        rc = mcpp::run::run_exec(argv, childEnv, &spawnErr);
+    else
+        rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
         if (!choice.tmpl.empty() || !host.prefix.empty())
@@ -3502,10 +3526,20 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         else if (classify(spawnErr) == SpawnClass::Unloadable)
             std::println(libc::stderr(), "error: {}",
                          unrunnable_message(choice.tripleKey, exe, spawnErr));
+        else if (foreignKernel)
+            // The program was found and its interpreter was not (ENOENT, a
+            // dynamic linker of the other system): the bare errno names
+            // neither fact, so the same runner declaration follows it.
+            std::println(libc::stderr(), "error: {}{}",
+                         spawn_failed_message(exe.string(), spawnErr),
+                         runner_advice_text(choice.tripleKey));
         else
             std::println(libc::stderr(), "error: {}", spawn_failed_message(exe.string(), spawnErr));
         return launcher_status(spawnErr);
     }
+    if (foreignKernel && mcpp::build::runner_lookup::death_by_signal(rc))
+        std::println(libc::stderr(), "error: {}",
+                     mcpp::build::runner_lookup::signal_death_message(choice.tripleKey, exe, rc));
     return rc;
 }
 

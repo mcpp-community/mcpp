@@ -568,7 +568,16 @@ std::string unbuilt_row(std::string_view system, std::string_view arch);
 // The systems `--systems` names for an architecture (design 2026-10-29
 // §4.1): an `<os>`, an `<os>-<arch>` of that architecture, or every system
 // for `all`; this machine's system when it names none.
-std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch);
+//
+// `all` is the DATA's answer (2026.11.11.1, G5), not a list spelled here:
+// this machine's system, every system a platform defines a row of for the
+// architecture (mcpp#911 G10), and every system the platform's runner states
+// a host of for it (`runner.hosts`) -- which is where FreeBSD enters, a
+// runner the platform builds for `freebsd-<arch>`. A pack without a platform
+// answers with the machine's own system alone; `--systems` naming an `<os>`
+// keeps its exact meaning.
+std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch,
+                                     const mcpp::platform::Resolved* P = nullptr);
 
 // The single files of an image (design 2026-10-29 §4.5): one per leg and
 // system of the leg's architecture, the legs in the plan's order. `skipped`
@@ -2390,6 +2399,16 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
                 if (t && t->os == system && t->arch == arch)
                     return { t->str(), "static", platform_ref_of(*P) };
             }
+        // FREEBSD'S ROW IS THE MUSL IDENTITY THE PLATFORM SERVES (2026.11.11.1,
+        // G5), as FreeBSD's own request takes it (design 2026-11-10 E4):
+        // `*-freebsd-musl`, openkal-musl over openkal-freebsd, one static
+        // program with no C library of the system beneath -- built over the
+        // platform's hosted arrangement wherever the machine that packs it is,
+        // needing no FreeBSD and no SDK.
+        if (system == "freebsd") {
+            const auto triple = std::format("{}-freebsd-musl", arch);
+            return { triple, "static", hosted_platform_for(P, triple) };
+        }
         return { std::format("{}-{}", arch, system), "static", {} };
     }
     if (system == "linux") {
@@ -2756,7 +2775,7 @@ run_loaded(const Plan& plan)
         }
         if (plan.opts.mode == Mode::BundleAll) {
             for (auto const& leg : legs)
-                for (auto const& system : mcpp::pack::systems_for(plan.opts.systems, leg.arch)) {
+                for (auto const& system : mcpp::pack::systems_for(plan.opts.systems, leg.arch, &plan.platform)) {
                     // A row this mcpp builds no program for (a planned
                     // target, `x86_64-macos`) carries no runner: said, and
                     // the package's metadata lists the systems it carries.
@@ -3509,7 +3528,8 @@ std::expected<void, Error> finalize_staged(const Plan& plan) {
     return detail::finalize_tree(plan);
 }
 
-std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch) {
+std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch,
+                                     const mcpp::platform::Resolved* P) {
     if (stated.empty()) return { std::string(detail::host_system()) };
     std::vector<std::string> out;
     auto add = [&](std::string os) {
@@ -3517,12 +3537,21 @@ std::vector<std::string> systems_for(const std::vector<std::string>& stated, std
     };
     for (auto const& e : stated) {
         if (e == "all") {
-            for (auto os : { "linux", "macos", "windows" }) add(os);
-            // And every system the platforms of this process define a row of
-            // for the architecture (mcpp#911 G10).
+            // This machine's system, every system the platforms of this
+            // process define a row of for the architecture (mcpp#911 G10),
+            // and every system the carrier's runner states a host of for it
+            // (2026.11.11.1, G5) -- the rows the platform itself says its
+            // runner exists for, FreeBSD's among them.
+            add(std::string(detail::host_system()));
             for (auto const* r : mcpp::toolchain::target::rows())
                 if (r->defined && r->arch == arch && !r->os.empty() && r->os != "none")
                     add(std::string(r->os));
+            if (P && P->active)
+                for (auto const& h : P->fields.runner.hosts) {
+                    const auto dash = h.find('-');
+                    if (dash == std::string_view::npos) continue;
+                    if (h.substr(dash + 1) == arch) add(std::string(h.substr(0, dash)));
+                }
             continue;
         }
         const auto dash = e.find('-');
@@ -3538,7 +3567,7 @@ std::vector<SingleFileRow> single_file_rows(const Plan& plan) {
     const bool all = std::ranges::find(plan.opts.systems, "all") != plan.opts.systems.end();
     std::vector<SingleFileRow> rows;
     for (auto const& arch : archs)
-        for (auto const& system : systems_for(plan.opts.systems, arch)) {
+        for (auto const& system : systems_for(plan.opts.systems, arch, &plan.platform)) {
             SingleFileRow r{ system, arch, {} };
             if (all)
                 if (auto row = unbuilt_row(system, arch); !row.empty())

@@ -1428,6 +1428,31 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
         state.add_once(state.m->buildConfig.ldflags, flag);
         state.add_once(state.m->buildConfig.graphLdflags, flag);
     }
+    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.11.1):
+    // how `sigsetjmp`/`siglongjmp` cross the WebAssembly boundary. The flag
+    // changes the CODE emcc emits for the two calls, so it reaches both
+    // sides -- every translation unit's flags (C and C++ alike; the C library
+    // calls are what it is about) and the link, the channels `threads` uses.
+    // Declared on any row but Emscripten's it is refused, not ignored: the
+    // member names a WebAssembly model, and a build that wrote it for another
+    // target has a selector that matches the wrong row.
+    if (state.m->buildConfig.abiLongjmpDeclared) {
+        if (!emscripten)
+            return std::unexpected(std::format(
+                "[target.<selector>.abi] longjmp states a WebAssembly long-jump model, "
+                "and the target '{}' is not an Emscripten row; the member belongs to "
+                "`[target.'cfg(os = \"emscripten\")'.abi]` alone",
+                state.overrides.target_triple.empty()
+                    ? mcpp::toolchain::triple::host_triple().str()
+                    : state.overrides.target_triple));
+        const std::string flag = "-sSUPPORT_LONGJMP="
+            + (state.m->buildConfig.abiLongjmpModel == "wasm"
+                   ? std::string("wasm") : std::string("emscripten"));
+        state.add_once(state.m->buildConfig.dialectCxxflags, flag);
+        state.add_once(state.m->buildConfig.cflags, flag);
+        state.add_once(state.m->buildConfig.ldflags, flag);
+        state.add_once(state.m->buildConfig.graphLdflags, flag);
+    }
     // #851: emcc runs wasm-opt and minifies the JavaScript launcher AT THE
     // LINK, from the optimisation level the link is given; a link without
     // one is -O0 whatever the compiles were. The profile's level reaches it.

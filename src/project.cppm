@@ -1095,14 +1095,17 @@ export std::string root_position_key(
     auto abiThreads = b.abiThreadsDeclared ? (b.abiThreads ? "1" : "0") : "-";
     std::string abiExceptions = b.abiExceptionsDeclared
         ? (b.abiExceptions ? "1" + b.abiExceptionsModel : "0") : "-";
+    std::string abiLongjmp = b.abiLongjmpDeclared ? b.abiLongjmpModel : "-";
     if (applies)
         for (auto const& cc : m.conditionalConfigs) {
-            if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared && !cc.abiExceptionsDeclared)
+            if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared
+                && !cc.abiExceptionsDeclared && !cc.abiLongjmpDeclared)
                 continue;
             if (!applies(cc.predicate)) continue;
             dialect.insert(dialect.end(), cc.dialectCxxflags.begin(), cc.dialectCxxflags.end());
             if (cc.abiThreadsDeclared) abiThreads = cc.abiThreads ? "1" : "0";
             if (cc.abiExceptionsDeclared) abiExceptions = cc.abiExceptions ? "1" + cc.abiExceptionsModel : "0";
+            if (cc.abiLongjmpDeclared) abiLongjmp = cc.abiLongjmpModel;
         }
     list("dialect_cxxflags", dialect);
     field("cxx_runtime", b.cxxRuntime);
@@ -1116,6 +1119,7 @@ export std::string root_position_key(
     field("ios_deployment_target", b.iosDeploymentTarget);
     field("abi_threads", abiThreads);
     field("abi_exceptions", abiExceptions);
+    field("abi_longjmp", abiLongjmp);
     field("accel", b.accel);
     field("bmi_schedule", b.bmiSchedule);
     field("jobs", b.jobs);
@@ -1196,6 +1200,8 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     b.abiExceptions = f.abiExceptions;
     b.abiExceptionsModel = f.abiExceptionsModel;
     b.abiExceptionsDeclared = f.abiExceptionsDeclared;
+    b.abiLongjmpModel = f.abiLongjmpModel;
+    b.abiLongjmpDeclared = f.abiLongjmpDeclared;
     b.allowHostLibs = f.allowHostLibs;
     b.macosDeploymentTarget = f.macosDeploymentTarget;
     b.iosDeploymentTarget = f.iosDeploymentTarget;
@@ -1210,7 +1216,8 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     // member declares (or inherits) reaches the build when the member is
     // planned under a virtual root (#786). Nothing a package owns travels.
     for (auto const& cc : first.conditionalConfigs) {
-        if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared && !cc.abiExceptionsDeclared)
+        if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared
+            && !cc.abiExceptionsDeclared && !cc.abiLongjmpDeclared)
             continue;
         mcpp::manifest::ConditionalConfig row;
         row.predicate = cc.predicate;
@@ -1220,6 +1227,8 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
         row.abiExceptions = cc.abiExceptions;
         row.abiExceptionsModel = cc.abiExceptionsModel;
         row.abiExceptionsDeclared = cc.abiExceptionsDeclared;
+        row.abiLongjmpModel = cc.abiLongjmpModel;
+        row.abiLongjmpDeclared = cc.abiLongjmpDeclared;
         v.conditionalConfigs.push_back(std::move(row));
     }
     return v;

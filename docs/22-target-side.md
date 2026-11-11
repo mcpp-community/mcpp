@@ -1363,8 +1363,9 @@ package needs.
 |---|---|---|---|
 | `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
 | `exceptions` *(mcpp 2026.9.12.3+)* | boolean, or `"wasm"` / `"js"` *(2026.10.30.1+)* | on `os = "emscripten"` only, on the compile line through the dialect flags and on the link: `"wasm"` is `-fwasm-exceptions`, WebAssembly's own exception handling; `"js"` and `true` are `-fexceptions`, the JavaScript-based model. Nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
+| `longjmp` *(mcpp 2026.11.11.1+)* | `"wasm"` or `"js"` | on `os = "emscripten"` only, on the compile line of every C and C++ translation unit and on the link: `"wasm"` is `-sSUPPORT_LONGJMP=wasm`, WebAssembly's own stack switching; `"js"` is `-sSUPPORT_LONGJMP=emscripten`, the JavaScript model and the toolchain's default. Declared on any other row, it is refused. An absent member renders nothing | the same set `threads` reaches |
 
-Both members enter the dependency cache key through the dialect flags, so a
+All three members enter the dependency cache key through the flags they render, so a
 dependency built without one is never reused by a build with it, and one built
 with one exception model is never reused by a build with the other. An unknown
 member, and a value outside the table, are refused naming the values.
@@ -1386,6 +1387,15 @@ Aborted(Assertion failed: Exception thrown, but exception catching is not
 enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or
 -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.)
 ```
+
+**`longjmp = "wasm"` is what makes C's `sigsetjmp`/`siglongjmp` work under
+Emscripten.** With the toolchain's default JavaScript model the pair compiles
+into a stack copy, and a non-local exit over two call levels reads past the
+module's stack and dies at run time. With `-sSUPPORT_LONGJMP=wasm` on both the
+compiles and the link, the pair round-trips. A program whose non-local exits
+run deep also wants a bigger stack; that is a project knob of its own
+(`ldflags = ["-sSTACK_SIZE=..."]`), not an ABI fact, so the engine does not
+render it.
 
 **Only the root manifest decides.** The switch belongs to the artefact, and the
 root is the only package that builds one. A dependency that writes

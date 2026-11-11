@@ -1173,6 +1173,15 @@ struct BuildConfig : BuildInputs {
     // "wasm" (`-fwasm-exceptions`), "js" (`-fexceptions`), or empty for
     // `exceptions = true`, which keeps its meaning since 2026.9.12.3: "js".
     std::string                        abiExceptionsModel;
+    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.11.1):
+    // how `sigsetjmp`/`siglongjmp` cross the WebAssembly boundary on an
+    // Emscripten row. A model, not a switch: "wasm" (`-sSUPPORT_LONGJMP=wasm`,
+    // WebAssembly's own stack switching) or "js" (`-sSUPPORT_LONGJMP=emscripten`,
+    // the JavaScript model, which is also the toolchain's default). The root's
+    // statement only, rendered into every translation unit and the link, like
+    // `threads`; the model reaches every cache key through those flags.
+    bool                               abiLongjmpDeclared = false;
+    std::string                        abiLongjmpModel;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
     // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
@@ -1732,6 +1741,9 @@ struct ConditionalConfig {
     bool                                abiExceptions = false;
     bool                                abiExceptionsDeclared = false;
     std::string                         abiExceptionsModel;
+    // `[target.<sel>.abi] longjmp` -- see BuildConfig::abiLongjmpModel.
+    bool                                abiLongjmpDeclared = false;
+    std::string                         abiLongjmpModel;
     // `[target.<sel>.build] dialect_cxxflags` -- a GRAPH-WIDE switch under a
     // target condition (issue #717, design 2026-09-27 §6). Like `abiThreads`/
     // `abiExceptions` above, only the ROOT's value is rendered; unlike them it
@@ -1846,7 +1858,7 @@ inline bool is_empty(const ConditionalConfig& c) {
         && c.buildDependencies.empty() && c.featureDeps.empty()
         && c.targetKinds.empty()
         && c.xlings.empty() && c.xlings.overrides.empty()
-        && !c.abiThreadsDeclared && !c.abiExceptionsDeclared
+        && !c.abiThreadsDeclared && !c.abiExceptionsDeclared && !c.abiLongjmpDeclared
         && !c.requiresAbiThreads && !c.requiresAbiExceptions
         && c.requires_.empty() && c.privateRequires.empty()
         && c.featureRequiresAbiThreads.empty() && c.featureRequiresAbiExceptions.empty()

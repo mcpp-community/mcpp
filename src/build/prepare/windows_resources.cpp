@@ -30,6 +30,8 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
@@ -72,6 +74,40 @@ import mcpp.bmi_cache;
 
 namespace mcpp::build {
 
+// THE WINDOWS HEADERS EVERY PE ROW SHARES (2026.11.11.1, G3): a row whose
+// system the graph supplies -- `x86_64-windows-musl` over openkal -- has no
+// paired payload, and its llvm binary carries no Windows headers, so
+// `winres.h` reaches neither of the include sources the toolchain states. The
+// MinGW-w64 sysroot payload a platform row declares for this architecture's
+// GNU-ABI identity has them, under one `<root>/include` for every
+// architecture (E9's layout). Resolved through the payload channel the row's
+// own sysroot goes through, and probed relative to what it resolves to --
+// never PATH. Empty when no row declares one or the payload is not here: the
+// resource compile then fails with the tool's own missing-header text, which
+// is the truthful message.
+static std::filesystem::path
+mingw_headers_root(PrepareState& state, const mcpp::toolchain::triple::Triple& trip) {
+    if (trip.os != "windows") return {};
+    const auto gnuTriple = std::format("{}-windows-gnu", trip.arch);
+    for (auto const* p : mcpp::toolchain::target::providers()) {
+        if (p->sysroot.empty() || p->sysroot == "toolchain") continue;
+        if (!mcpp::toolchain::target::serves(*p, gnuTriple)) continue;
+        auto cfg = state.get_cfg(true);
+        if (!cfg) return {};
+        mcpp::fetcher::Fetcher fetcher(**cfg);
+        mcpp::fetcher::InstallProgressHandler progress;
+        if (auto payload = fetcher.resolve_xpkg_path(
+                std::string(p->sysroot), mcpp::fetcher::PayloadIntent::Use, &progress))
+            return payload->root / "include";
+        auto xl = mcpp::config::make_xlings_env(**cfg);
+        if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xl),
+                                                mcpp::provider::parse_ref(p->sysroot)))
+            return *dir / "include";
+        return {};   // one declared payload per row; the first provider wins
+    }
+    return {};
+}
+
 // The resource compiler of the plan's resource units, and each unit's flags.
 static std::expected<void, std::string>
 step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
@@ -100,9 +136,11 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     ctx.plan.rcPath  = tool->path;
     ctx.plan.rcStyle = tool->style;
 
+    const auto mingwHeaders = mingw_headers_root(state, trip);
+
     // UTF-8 input, always. `[package]` metadata is user text and
     // routinely non-ASCII; without this llvm-rc refuses the script
-    // outright ("Non-ASCII 8-bit codepoint can't be interpreted in
+    // outright ("Non-ASCII 8-bit codepage can't be interpreted in
     // the current codepage") rather than mangling it, so a project
     // with a Chinese description could not build at all.
     //
@@ -116,7 +154,7 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     const std::string ip = msvcStyle ? "/I" : "-I";
     std::vector<std::string> systemIncludes;
     if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos)
-        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId))
+        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId, mingwHeaders))
             systemIncludes.push_back(ip + dir.string());
     for (auto& ru : ctx.plan.resourceUnits) {
         if (auto target = rsrc::coff_target_flag(*tool, state.tc->targetTriple);
@@ -200,6 +238,7 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // windres), found as the compile step below finds it (E3).
     const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
     const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
+    const auto mingwHeaders = mingw_headers_root(state, trip);
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
@@ -385,7 +424,7 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                     // quoted `"winres.h"` is the toolchain's header, not a file
                     // a build action produces (E3).
                     auto scanIncludes = rcIncludes;
-                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId))
+                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId, mingwHeaders))
                         scanIncludes.push_back(d);
                     auto scan = rsrc::scan_rc(rcSrc, scanIncludes);
                     if (scan.versionInfoNamedByString) {

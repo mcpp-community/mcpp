@@ -24,19 +24,19 @@ host-aware:
 
 - Linux x86_64 uses `gcc@16.1.0` for the native glibc ABI, so X11, OpenGL, and
   system libraries work out of the box.
-- Linux aarch64 uses `llvm@23.1.3` for the native glibc ABI (2026.10.8.1+).
+- Linux aarch64 uses `llvm@23.1.3-r2` for the native glibc ABI (2026.10.8.1+).
 - Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
   toolchain.
-- macOS uses `llvm@23.1.3`.
-- Windows with a usable MSVC installation uses `llvm@23.1.3` for the MSVC ABI.
+- macOS uses `llvm@23.1.3-r2`.
+- Windows with a usable MSVC installation uses `llvm@23.1.3-r2` for the MSVC ABI.
   Without usable MSVC, it uses `gcc@16.1.0` with target
   `x86_64-windows-gnu` (MinGW-w64, static by default), says which half of the
   MSVC ABI is missing — Visual Studio's C++ tools or the Windows SDK — and where
   it looked, and records the pair as the machine's default. Once both halves
-  are present, `mcpp toolchain default llvm@23.1.3` moves the machine to the
+  are present, `mcpp toolchain default llvm@23.1.3-r2` moves the machine to the
   MSVC ABI.
 - Android (Termux) uses the default of GNU/Linux on its architecture: on
-  aarch64, `llvm@23.1.3` with the managed glibc. Android 10 or later is
+  aarch64, `llvm@23.1.3-r2` with the managed glibc. Android 10 or later is
   required (the shell is reached as `/bin/sh`), with xlings 2026.10.10.2 or
   later, which unpacks payloads in the app sandbox, where hard links cannot be
   created.
@@ -78,7 +78,7 @@ this model with a one-line `note:` hint.
 
 ```bash
 mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
-mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
+mcpp toolchain install llvm 23.1.3-r2          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
                                             # target's convention pin (gcc@16.1.0)
@@ -133,14 +133,14 @@ configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
 working unchanged.)
 
 On native Linux aarch64 (2026.10.8.1+), an explicit migration selects both
-LLVM 23.1.3 and the GNU target after the native payload is published:
+LLVM 23.1.3-r2 and the GNU target after the native payload is published:
 
 ```bash
-mcpp toolchain install llvm 23.1.3
-mcpp toolchain default llvm@23.1.3 --target aarch64-linux-gnu
+mcpp toolchain install llvm 23.1.3-r2
+mcpp toolchain default llvm@23.1.3-r2 --target aarch64-linux-gnu
 ```
 
-The command records `llvm@23.1.3` and `aarch64-linux-gnu` as the default pair.
+The command records `llvm@23.1.3-r2` and `aarch64-linux-gnu` as the default pair.
 Existing configurations remain effective until explicitly changed; project
 manifest declarations retain their precedence.
 
@@ -166,7 +166,7 @@ the required family for that build:
 ```
 $ mcpp build
    Resolving toolchain
-    Resolved llvm@23.1.3 → …/xim-x-llvm/23.1.3/bin/clang++
+    Resolved llvm@23.1.3-r2 → …/xim-x-llvm/23.1.3-r2/bin/clang++
              required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
              not your gcc@16.1.0 — this project only
 ```
@@ -212,7 +212,7 @@ The output has two blocks — one per axis:
 Toolchains:
   *  gcc 16.1.0              (default)
      gcc 15.1.0
-     llvm 23.1.3
+     llvm 23.1.3-r2
 
 Targets:
      TARGET                  NOTE                  TOOLCHAIN         STATUS
