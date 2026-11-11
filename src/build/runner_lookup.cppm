@@ -184,14 +184,14 @@ inline std::string unrunnable_message(std::string_view triple,
 // why the classification is asked about artifacts of another system only,
 // never about a native one, where the same status is the program's own bug
 // and advice about runners would be noise on top of it.
+// POSIX defines SIGBUS everywhere mcpp builds; no conditional compilation
+// is needed (and the include gate forbids #ifdef here).
 inline bool death_by_signal(int rc) {
     switch (rc) {
         case 128 + SIGSEGV:
         case 128 + SIGILL:
         case 128 + SIGABRT:
-#ifdef SIGBUS
         case 128 + SIGBUS:
-#endif
             return true;
         default:
             return false;
@@ -205,9 +205,7 @@ inline std::string_view signal_of_death(int rc) {
         case 128 + SIGSEGV: return "SIGSEGV";
         case 128 + SIGILL:  return "SIGILL";
         case 128 + SIGABRT: return "SIGABRT";
-#ifdef SIGBUS
         case 128 + SIGBUS:  return "SIGBUS";
-#endif
         default:            return {};
     }
 }

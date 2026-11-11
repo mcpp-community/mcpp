@@ -402,7 +402,7 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 23；Cortex-A 32 位，第一个带 MMU 的目标 ² | verified |
 | `aarch64-none-elf` · `x86_64-none-elf` · `i686-none-elf` | llvm 23；裸机，默认不带 C 库 ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23；Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
-| `aarch64-linux-gnu` | `llvm@23.1.3-r2` | preview |
+| `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
 | `aarch64-windows-gnu` | llvm 23 加 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧）；任意宿主可构建；没有 gcc 载荷之处同一基座也服务 `x86_64-windows-gnu` | preview |
 | `x86_64-freebsd` · `aarch64-freebsd` | 服务它们的平台，基于 `xim:<arch>-freebsd-sysroot`（[22](docs/zh/22-target-side.md)） | preview |
 | `x86_64-freebsd-musl` · `aarch64-freebsd-musl` | llvm 23；openkal-freebsd 之上带 musl C 库的静态 FreeBSD 程序，任意宿主可构建 *（未选平台时 `<arch>-freebsd` 即此身份）* | preview |
