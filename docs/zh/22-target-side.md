@@ -1147,6 +1147,7 @@ WebAssembly 上，每个目标文件、预编译的标准库模块与链接必�
 |---|---|---|---|
 | `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`；在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元，以及链接 |
 | `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
+| `longjmp` *(mcpp 2026.11.11.1+)* | `"wasm"` 或 `"js"` | 只在 `os = "emscripten"` 上，进入每个 C 与 C++ 翻译单元的编译行与链接行：`"wasm"` 为 `-sSUPPORT_LONGJMP=wasm`，即 WebAssembly 自身的栈切换；`"js"` 为 `-sSUPPORT_LONGJMP=emscripten`，即 JavaScript 模型，也是工具链的默认。声明在其余任何行上都会被拒绝。成员缺省时不产生任何 flag | 与 `threads` 相同的那一套 |
 
 两个成员都经由方言 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会
 被启用它的构建复用，以一种异常模型构建的依赖也不会被另一种模型的构建复用。
