@@ -1,3 +1,8 @@
+---
+subject: architecture
+status: active
+---
+
 # The three-plane platform architecture: mcpp × openkal × xim
 
 Date: 2026-11-12
