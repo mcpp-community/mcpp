@@ -86,9 +86,27 @@ case "$r" in
   host-cannot-serve)
     echo "  ok  --target aarch64-linux completed (this host serves no such payload)" ;;
   *)
-    echo "FAIL: --target aarch64-linux refused for reason '$r'"
-    message_of aarch64-linux | sed 's/^/        /'
-    exit 1 ;;
+    # THE ROW'S PAYLOAD IS A PACKAGE, AND A PACKAGE MAY NOT BE INSTALLABLE
+    # WHERE THIS RUNS (2026.11.11.1, G1): the GNU row names its sysroot, and
+    # an index without it -- a CI runner ahead of the index PR, an offline
+    # machine -- refuses about the PACKAGE, quoting the row it resolved. That
+    # refusal still answers this half's question: the request reached a row
+    # of the system, which the refusal's subject and the row checks below
+    # both name. Anything else it names is not about the row and stays red.
+    if [ "$row" = aarch64-linux-gnu ] || [ "$row" = aarch64-unknown-linux-gnu ] \
+       || [ "$row" = aarch64-linux-musl ] || [ "$row" = aarch64-unknown-linux-musl ]; then
+      if message_of aarch64-linux | grep -q "could not be installed"; then
+        echo "  ok  --target aarch64-linux reached a row whose payload package is not installable here"
+      else
+        echo "FAIL: --target aarch64-linux refused for reason '$r'"
+        message_of aarch64-linux | sed 's/^/        /'
+        exit 1
+      fi
+    else
+      echo "FAIL: --target aarch64-linux refused for reason '$r'"
+      message_of aarch64-linux | sed 's/^/        /'
+      exit 1
+    fi ;;
 esac
 
 # AND THE ROW IS THE IDENTITY, NOT THE SPELLING. The output directory is the

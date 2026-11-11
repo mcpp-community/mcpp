@@ -80,11 +80,16 @@ namespace mcpp::build {
 // `winres.h` reaches neither of the include sources the toolchain states. The
 // MinGW-w64 sysroot payload a platform row declares for this architecture's
 // GNU-ABI identity has them, under one `<root>/include` for every
-// architecture (E9's layout). Resolved through the payload channel the row's
-// own sysroot goes through, and probed relative to what it resolves to --
-// never PATH. Empty when no row declares one or the payload is not here: the
-// resource compile then fails with the tool's own missing-header text, which
-// is the truthful message.
+// architecture (E9's layout).
+//
+// READ WHERE THE TWO SOURCES ABOVE FOUND NOTHING, AND STANDING PAYLOADS
+// FIRST: a row that already states its headers -- the SDK's, a paired
+// payload's -- never resolves this, so preparing an MSVC or GNU-ABI project
+// does not fetch a payload its link will not read. Only a compile that would
+// otherwise lack `winres.h` resolves the declaration, and it takes the
+// payload where it already stands before it fetches one. Empty when no row
+// declares one or the payload is not here: the resource compile then fails
+// with the tool's own missing-header text, which is the truthful message.
 static std::filesystem::path
 mingw_headers_root(PrepareState& state, const mcpp::toolchain::triple::Triple& trip) {
     if (trip.os != "windows") return {};
@@ -94,15 +99,15 @@ mingw_headers_root(PrepareState& state, const mcpp::toolchain::triple::Triple& t
         if (!mcpp::toolchain::target::serves(*p, gnuTriple)) continue;
         auto cfg = state.get_cfg(true);
         if (!cfg) return {};
+        auto xl = mcpp::config::make_xlings_env(**cfg);
+        if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xl),
+                                                mcpp::provider::parse_ref(p->sysroot)))
+            return *dir / "include";
         mcpp::fetcher::Fetcher fetcher(**cfg);
         mcpp::fetcher::InstallProgressHandler progress;
         if (auto payload = fetcher.resolve_xpkg_path(
                 std::string(p->sysroot), mcpp::fetcher::PayloadIntent::Use, &progress))
             return payload->root / "include";
-        auto xl = mcpp::config::make_xlings_env(**cfg);
-        if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xl),
-                                                mcpp::provider::parse_ref(p->sysroot)))
-            return *dir / "include";
         return {};   // one declared payload per row; the first provider wins
     }
     return {};
@@ -136,7 +141,13 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     ctx.plan.rcPath  = tool->path;
     ctx.plan.rcStyle = tool->style;
 
-    const auto mingwHeaders = mingw_headers_root(state, trip);
+    // The third source is resolved only where it will be read: below the
+    // toolchain's own include sources, never beside them (G3) -- a row that
+    // states its headers does not fetch a payload its compile will not read.
+    std::filesystem::path mingwHeaders;
+    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos
+        && rsrc::system_include_dirs(*state.tc, dialectId).empty())
+        mingwHeaders = mingw_headers_root(state, trip);
 
     // UTF-8 input, always. `[package]` metadata is user text and
     // routinely non-ASCII; without this llvm-rc refuses the script

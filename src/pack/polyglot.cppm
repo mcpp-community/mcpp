@@ -29,8 +29,8 @@ import std;
 
 export namespace mcpp::pack::polyglot {
 
-// One system's program: `system` is `linux`, `macos` or `windows`, `arch`
-// `x86_64` or `aarch64`.
+// One system's program: `system` is `linux`, `freebsd`, `macos` or `windows`,
+// `arch` `x86_64` or `aarch64`.
 struct Program {
     std::string system;
     std::string arch;
@@ -66,7 +66,9 @@ void put32(std::string& b, std::size_t o, std::uint32_t v) {
 
 // `uname -s`-`uname -m` spellings of a system and architecture.
 std::string uname_pattern(std::string_view system, std::string_view arch) {
-    const std::string s = system == "macos" ? "Darwin" : "Linux";
+    const std::string s = system == "macos"     ? "Darwin"
+                        : system == "freebsd"   ? "FreeBSD"
+                                                : "Linux";
     if (arch == "x86_64") return std::format("{0}-x86_64|{0}-amd64", s);
     return std::format("{0}-aarch64|{0}-arm64", s);
 }
@@ -145,7 +147,7 @@ std::expected<std::string, std::string> assemble(std::string_view name, const st
                     "a polyglot file leads with one Windows program, and this pack has two ({}, {})",
                     windows->arch, p.arch));
             windows = &p;
-        } else if (p.system == "linux" || p.system == "macos") {
+        } else if (p.system == "linux" || p.system == "freebsd" || p.system == "macos") {
             posix.push_back(p);
         } else {
             return std::unexpected(std::format("a polyglot file holds no program of {}", p.system));

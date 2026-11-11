@@ -1,6 +1,7 @@
 
 import std;
 import mcpplibs.mtest;
+import mcpplibs.os.platform;
 import mcpp.pack;
 
 using namespace mcpplibs::mtest;
@@ -62,7 +63,16 @@ UTest the_words_name_systems_for_an_architecture{"PackSystems/TheWordsNameSystem
     using V = std::vector<std::string>;
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "x86_64"), V{ "linux" }));
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "aarch64"), (V{ "linux", "macos" })));
-    expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux" })));
+    // `all` answers with the data, and one of the facts is the machine asking:
+    // its system stands first, wherever the same suite runs. A Linux host and
+    // the table's linux rows coincide; a macOS host names macos beside them.
+    const char* here = "linux";
+    if constexpr (mcpplibs::os::is_windows) here = "windows";
+    else if constexpr (mcpplibs::os::is_macos) here = "macos";
+    if (std::string_view(here) == "linux")
+        expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux" })));
+    else
+        expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ here, "linux" })));
     expect(eq(mcpp::pack::systems_for({}, "x86_64").size(), 1u));
 }};
 
