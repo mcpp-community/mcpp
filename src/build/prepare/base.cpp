@@ -550,7 +550,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     if (!native && !tc.base.loader.empty()) {
         std::error_code lec;
         if (auto rel = fs::relative(tc.base.loader, dir, lec); !lec && !rel.empty()
-            && rel.native().find("..") == std::string_view::npos)
+            && rel.generic_string().find("..") == std::string::npos)
             tc.base.loader = fs::path("/") / rel;
     }
     // A base package's own `provides` is its declaration, as a statement's is.
