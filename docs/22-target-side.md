@@ -1363,7 +1363,7 @@ package needs.
 |---|---|---|---|
 | `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
 | `exceptions` *(mcpp 2026.9.12.3+)* | boolean, or `"wasm"` / `"js"` *(2026.10.30.1+)* | on `os = "emscripten"` only, on the compile line through the dialect flags and on the link: `"wasm"` is `-fwasm-exceptions`, WebAssembly's own exception handling; `"js"` and `true` are `-fexceptions`, the JavaScript-based model. Nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
-| `longjmp` *(mcpp 2026.11.11.1+)* | `"wasm"` or `"js"` | on `os = "emscripten"` only, on the compile line of every C and C++ translation unit and on the link: `"wasm"` is `-sSUPPORT_LONGJMP=wasm`, WebAssembly's own stack switching; `"js"` is `-sSUPPORT_LONGJMP=emscripten`, the JavaScript model and the toolchain's default. Declared on any other row, it is refused. An absent member renders nothing | the same set `threads` reaches |
+| `longjmp` *(mcpp 2026.11.12.1+)* | `"wasm"` or `"js"` | on `os = "emscripten"` only, on the compile line of every C and C++ translation unit and on the link: `"wasm"` is `-sSUPPORT_LONGJMP=wasm`, WebAssembly's own stack switching; `"js"` is `-sSUPPORT_LONGJMP=emscripten`, the JavaScript model and the toolchain's default. Declared on any other row, it is refused. An absent member renders nothing | the same set `threads` reaches |
 
 All three members enter the dependency cache key through the flags they render, so a
 dependency built without one is never reused by a build with it, and one built

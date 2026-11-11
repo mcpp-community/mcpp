@@ -637,7 +637,7 @@ UTest each_rows_tier_matches_the_evidence_that_exists_for_it{"Triple/EachRowsTie
         // the LLVM 23.1.3/glibc default, its deployed pack, GNU self-host,
         // all 147 suites and four real index members, from source. The tier
         // stays `preview` until the released engine is consumed on a clean
-        // ARM64 host (SPEC-009 §10.7). From 2026.11.11.1 the row names the
+        // ARM64 host (SPEC-009 §10.7). From 2026.11.12.1 the row names the
         // sysroot payload its C library comes from (G1) -- llvm alone
         // carries no glibc of another architecture -- and the linkage is
         // glibc's own dynamic one: the compiler run-time is the payload's

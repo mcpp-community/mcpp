@@ -74,7 +74,7 @@ import mcpp.bmi_cache;
 
 namespace mcpp::build {
 
-// THE WINDOWS HEADERS EVERY PE ROW SHARES (2026.11.11.1, G3): a row whose
+// THE WINDOWS HEADERS EVERY PE ROW SHARES (2026.11.12.1, G3): a row whose
 // system the graph supplies -- `x86_64-windows-musl` over openkal -- has no
 // paired payload, and its llvm binary carries no Windows headers, so
 // `winres.h` reaches neither of the include sources the toolchain states. The

@@ -857,7 +857,7 @@ names no `windows-aarch64`, so `aarch64-windows-gnu`, a row this mcpp builds,
 gets no runner from it). An image built on a Windows host is not the bytes of one built
 elsewhere (#850): pack trees on Linux or macOS.
 
-**What `all` names is data, not a list (mcpp 2026.11.11.1+).** The machine's
+**What `all` names is data, not a list (mcpp 2026.11.12.1+).** The machine's
 own system, every system a platform defines a row of for the architecture, and
 every system the platform's runner states a host of for it (`runner.hosts`):
 a platform whose runner exists for `freebsd-<arch>` gets FreeBSD's runners,

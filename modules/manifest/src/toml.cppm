@@ -4489,7 +4489,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     // 2026-10-29 §6): "wasm" or "js"; `true` keeps "js".
                     const bool model = ak == "exceptions" && av.is_string()
                         && (av.as_string() == "wasm" || av.as_string() == "js");
-                    // `longjmp` is a model only (2026.11.11.1): "wasm" or
+                    // `longjmp` is a model only (2026.11.12.1): "wasm" or
                     // "js", no boolean -- the engine's default is the
                     // toolchain's own ("js"), and an absent member is that
                     // default rather than a switch turned off.

@@ -1173,7 +1173,7 @@ struct BuildConfig : BuildInputs {
     // "wasm" (`-fwasm-exceptions`), "js" (`-fexceptions`), or empty for
     // `exceptions = true`, which keeps its meaning since 2026.9.12.3: "js".
     std::string                        abiExceptionsModel;
-    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.11.1):
+    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.12.1):
     // how `sigsetjmp`/`siglongjmp` cross the WebAssembly boundary on an
     // Emscripten row. A model, not a switch: "wasm" (`-sSUPPORT_LONGJMP=wasm`,
     // WebAssembly's own stack switching) or "js" (`-sSUPPORT_LONGJMP=emscripten`,

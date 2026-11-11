@@ -53,7 +53,7 @@ UTest dispatched_format_stages_without_it{"PackClosureUnavailableOutcome/Dispatc
     expect(eq(closure_unavailable_outcome(Format::Dispatched), ClosureUnavailableOutcome::StageWithoutClosure));
 }};
 
-// `--systems` (design 2026-10-29 §4.1; `all` since 2026.11.11.1 answers
+// `--systems` (design 2026-10-29 §4.1; `all` since 2026.11.12.1 answers
 // with the data): `<os>` for every architecture of the legs, `<os>-<arch>`
 // for one; unstated, this machine's. `all` is this machine's system, the
 // systems the builtin rows define for the architecture, and -- with a

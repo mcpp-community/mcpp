@@ -39,7 +39,7 @@ flowchart TB
   M --> A
   K --> M
   KF["firmware implementations</br>(UEFI boot services, RISC-V SBI)"] --> K
-  KP["kernel implementations</br>(the reference one, a BSD one,") --> K
+  KP["kernel implementations</br>(the reference kernel's own interface,</br>a BSD kernel's, a Windows kernel's)"] --> K
   KX["a POSIX-library implementation</br>(for systems whose own libc is the interface)"] --> K
   R3["runner ③"] -. runs the artifact on.-> consumer
 ```
@@ -75,6 +75,12 @@ Measured, not aspirational (each item landed with its gate green):
 6. **One file, several systems.** A pack can hold the programs of several
    systems: a PE leads with a POSIX script in its DOS header, and every
    POSIX system's program rides behind it.
+7. **Layer vocabulary.** `kernel-abi` is a layer the rows, the payloads and
+   the requirement side all speak (`layers.kernel-abi`, `requires`), an
+   implementation written above a C library never sits beneath one it would
+   call back into — the resolution refuses that graph before anything is
+   compiled — and a payload's kernel-abi is the target's system, so a
+   requirement stated on it holds across every route to the row.
 
 ## 4. What the next systems consume
 
@@ -83,7 +89,7 @@ The same planes, with no engine work:
 | Scenario | What it uses | What is left to build |
 |---|---|---|
 | A POSIX-family kernel with its own libc | the POSIX-library implementation of the ABI (already above every such libc), rows, a cross toolchain payload | the toolchain payload; a disk-image asset; an emulator runner |
-| Firmware (UEFI, SBI) | the existing firmware implementations; an ordinary PE row and three link flags state a UEFI application — measured, no new target kind | an OVMF/emulator runner entry; a status convention for environments without exit codes |
+| Firmware (UEFI, SBI) | the existing firmware implementations; an ordinary PE row and three link flags state a UEFI application — measured, no new target kind; a runner's exit status is the program's (the contract already carries firmware: the harness states the status) | an OVMF/emulator runner entry |
 | A system's official media, booted | the disk-image asset class (`<system>-disk-image`): official media assembled into a bootable image, serial console, a marker protocol that separates the program's output from the machine's noise, exit codes carried through | the generic emulator harness (overlay isolation, expect/send primitives, the marker protocol); the naming and attribution conventions |
 | Freestanding and bare-metal targets | the freestanding rows; a C-only, no-module path | the conformance hook-ups |
 | Any corrective republish | the revision channel | nothing |

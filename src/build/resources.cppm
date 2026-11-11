@@ -101,7 +101,7 @@ std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple);
 // gcc's own) `<arch>-w64-mingw32/include` (design 2026-11-10 E3). One list for the
 // compile's `/I` and for the scan of what the script reads.
 //
-// `mingw_headers` is the third source (2026.11.11.1, G3): the include
+// `mingw_headers` is the third source (2026.11.12.1, G3): the include
 // directory of the MinGW-w64 sysroot payload the platform's rows declare,
 // which is where the Windows headers of a row whose system the graph supplies
 // -- `x86_64-windows-musl`, no paired payload, an llvm binary that carries no

@@ -68,7 +68,7 @@ UTest refuses_what_it_cannot_lay_out{"PackPolyglot/RefusesWhatItCannotLayOut", [
     expect(!(pg::assemble("app", {}).has_value()));
     expect(!(pg::assemble("a'b", { program("linux", "x86_64", "x") }).has_value()))
         << "the name is quoted in the script";
-    // FreeBSD is a POSIX system of the file since 2026.11.11.1 (G5): its
+    // FreeBSD is a POSIX system of the file since 2026.11.12.1 (G5): its
     // program rides behind the script head beside Linux's. What still has
     // no place is a system the script names no `uname` pattern for.
     expect(!(pg::assemble("app", { program("plan9", "x86_64", "x") }).has_value()));

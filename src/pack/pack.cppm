@@ -569,7 +569,7 @@ std::string unbuilt_row(std::string_view system, std::string_view arch);
 // §4.1): an `<os>`, an `<os>-<arch>` of that architecture, or every system
 // for `all`; this machine's system when it names none.
 //
-// `all` is the DATA's answer (2026.11.11.1, G5), not a list spelled here:
+// `all` is the DATA's answer (2026.11.12.1, G5), not a list spelled here:
 // this machine's system, every system a platform defines a row of for the
 // architecture (mcpp#911 G10), and every system the platform's runner states
 // a host of for it (`runner.hosts`) -- which is where FreeBSD enters, a
@@ -2399,7 +2399,7 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
                 if (t && t->os == system && t->arch == arch)
                     return { t->str(), "static", platform_ref_of(*P) };
             }
-        // FREEBSD'S ROW IS THE MUSL IDENTITY THE PLATFORM SERVES (2026.11.11.1,
+        // FREEBSD'S ROW IS THE MUSL IDENTITY THE PLATFORM SERVES (2026.11.12.1,
         // G5), as FreeBSD's own request takes it (design 2026-11-10 E4):
         // `*-freebsd-musl`, openkal-musl over openkal-freebsd, one static
         // program with no C library of the system beneath -- built over the
@@ -3540,7 +3540,7 @@ std::vector<std::string> systems_for(const std::vector<std::string>& stated, std
             // This machine's system, every system the platforms of this
             // process define a row of for the architecture (mcpp#911 G10),
             // and every system the carrier's runner states a host of for it
-            // (2026.11.11.1, G5) -- the rows the platform itself says its
+            // (2026.11.12.1, G5) -- the rows the platform itself says its
             // runner exists for, FreeBSD's among them.
             add(std::string(detail::host_system()));
             for (auto const* r : mcpp::toolchain::target::rows())

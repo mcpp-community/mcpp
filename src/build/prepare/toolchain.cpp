@@ -1428,7 +1428,7 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
         state.add_once(state.m->buildConfig.ldflags, flag);
         state.add_once(state.m->buildConfig.graphLdflags, flag);
     }
-    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.11.1):
+    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.12.1):
     // how `sigsetjmp`/`siglongjmp` cross the WebAssembly boundary. The flag
     // changes the CODE emcc emits for the two calls, so it reaches both
     // sides -- every translation unit's flags (C and C++ alike; the C library

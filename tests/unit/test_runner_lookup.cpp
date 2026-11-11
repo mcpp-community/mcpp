@@ -149,7 +149,7 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
     expect(eq(msg.find("runner = ["), std::string::npos)) << msg;   // no runner advice
 }};
 
-// The classification of a death by signal (2026.11.11.1, G6): the three
+// The classification of a death by signal (2026.11.12.1, G6): the three
 // signals the mwrap of the C library's macros carries that an artifact of
 // another system's kernel interface dies by on its first kernel call, and
 // nothing else — a normal exit, an exit by a signal the classification

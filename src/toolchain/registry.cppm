@@ -1368,7 +1368,7 @@ bool host_can_serve(const triple::Triple& target) {
             if (target.is_musl())
                 return !crossArch || mcpp::toolchain::platform::host_arch == "x86_64";
             // A CROSS WHOSE ROW NAMES A SYSROOT PAYLOAD IS SERVED WHEREVER
-            // THAT PAYLOAD IS PUBLISHED (2026.11.11.1, G1). llvm alone carries
+            // THAT PAYLOAD IS PUBLISHED (2026.11.12.1, G1). llvm alone carries
             // no glibc of another architecture, which is what `return
             // !crossArch` answered: no payload here produces it. The row's
             // own declaration is the better answer -- a provider that serves

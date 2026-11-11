@@ -2733,7 +2733,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
 
     // A BASE PACKAGE'S RUN-TIMES (design 2026-11-10 E5).
     f.ld  += base_link_words(true);
-    // The base's run-time directory reaches the C link too (2026.11.11.1):
+    // The base's run-time directory reaches the C link too (2026.11.12.1):
     // a hosted cross over a sysroot payload links its compiler run-time from
     // the payload's own resource directory, and the C program's link is the
     // one that had nowhere to find it.

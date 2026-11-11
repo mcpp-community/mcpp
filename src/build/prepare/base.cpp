@@ -540,7 +540,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     }
 
     // A LOADER INSIDE A CROSS BASE IS THE SYSROOT'S, NOT THIS MACHINE'S
-    // (2026.11.11.1): a --sysroot link names it sysroot-relative
+    // (2026.11.12.1): a --sysroot link names it sysroot-relative
     // (/lib/ld-linux-aarch64.so.1), and so does the artifact's PT_INTERP --
     // the form qemu -L <sysroot>, a runner declaration and the ld scripts
     // beside it (the base's own libc.so GROUPs /lib/...) all resolve. An
