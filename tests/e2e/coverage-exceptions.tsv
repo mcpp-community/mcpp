@@ -2,4 +2,3 @@
 # One `<test>\t<reason>` line each. A test that runs on some shard, or that a
 # workflow names, does not belong here, and the check fails if it is listed.
 658_a_program_runs_on_an_attached_android_device.sh	needs an Android device attached over adb; the android job of ci-linux-e2e.yml runs `mcpp test` on an emulator instead
-1076_an_aarch64_linux_gnu_cross_comes_from_a_sysroot_payload.sh	needs the xim:aarch64-linux-gnu-sysroot payload installed; no hosted shard installs it, and the test skips rather than guesses until the index carries the payload
