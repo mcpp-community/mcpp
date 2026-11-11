@@ -149,18 +149,16 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
     expect(eq(msg.find("runner = ["), std::string::npos)) << msg;   // no runner advice
 }};
 
-// The classification of a death by signal (2026.11.11.1, G6): the four
-// signals an artifact of another system's kernel interface dies by on its
-// first kernel call, and nothing else — a normal exit, an exit by a signal
-// the classification does not take (SIGTERM, 143) and the launcher's own
-// 127/126 band are all someone else's fact.
-UTest death_by_signal_takes_four_signals{"RunnerLookup/DeathBySignalTakesFourSignals", [] {
+// The classification of a death by signal (2026.11.11.1, G6): the three
+// signals the mwrap of the C library's macros carries that an artifact of
+// another system's kernel interface dies by on its first kernel call, and
+// nothing else — a normal exit, an exit by a signal the classification
+// does not take (SIGTERM, 143) and the launcher's own 127/126 band are all
+// someone else's fact.
+UTest death_by_signal_takes_the_wrapped_three{"RunnerLookup/DeathBySignalTakesTheWrappedThree", [] {
     expect(death_by_signal(128 + SIGSEGV));
     expect(death_by_signal(128 + SIGILL));
     expect(death_by_signal(128 + SIGABRT));
-#ifdef SIGBUS
-    expect(death_by_signal(128 + SIGBUS));
-#endif
     expect(!death_by_signal(0));
     expect(!death_by_signal(1));
     expect(!death_by_signal(128 + SIGTERM));

@@ -20,13 +20,11 @@
 //
 // Design: .agents/docs/2026-09-02-runner-beyond-baremetal-design.md §4.3-4.4.
 
-module;
-#include <csignal>
-
 export module mcpp.build.runner_lookup;
 
 import std;
 import mcpplibs.os.platform;
+import mcpplibs.mwrap.libc;
 export namespace mcpp::build::runner_lookup {
 
 struct Lookup {
@@ -184,14 +182,16 @@ inline std::string unrunnable_message(std::string_view triple,
 // why the classification is asked about artifacts of another system only,
 // never about a native one, where the same status is the program's own bug
 // and advice about runners would be noise on top of it.
-// POSIX defines SIGBUS everywhere mcpp builds; no conditional compilation
-// is needed (and the include gate forbids #ifdef here).
+// The constants come from the mwrap of the C library's macros (the engine
+// includes no headers); SIGBUS is not among them, and its typical cause here
+// -- a stack the kernel never grew -- arrives as SIGSEGV on the systems that
+// report it, so the classification keeps the three the wrap carries.
+namespace sigc = mcpplibs::mwrap::libc::macros;
 inline bool death_by_signal(int rc) {
     switch (rc) {
-        case 128 + SIGSEGV:
-        case 128 + SIGILL:
-        case 128 + SIGABRT:
-        case 128 + SIGBUS:
+        case 128 + sigc::SIGSEGV:
+        case 128 + sigc::SIGILL:
+        case 128 + sigc::SIGABRT:
             return true;
         default:
             return false;
@@ -202,11 +202,10 @@ inline bool death_by_signal(int rc) {
 // classification did not take.
 inline std::string_view signal_of_death(int rc) {
     switch (rc) {
-        case 128 + SIGSEGV: return "SIGSEGV";
-        case 128 + SIGILL:  return "SIGILL";
-        case 128 + SIGABRT: return "SIGABRT";
-        case 128 + SIGBUS:  return "SIGBUS";
-        default:            return {};
+        case 128 + sigc::SIGSEGV: return "SIGSEGV";
+        case 128 + sigc::SIGILL:  return "SIGILL";
+        case 128 + sigc::SIGABRT: return "SIGABRT";
+        default:                  return {};
     }
 }
 
