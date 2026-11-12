@@ -1320,11 +1320,25 @@ A base package is the sysroot of one identity. A platform gives each identity it
 through each provider's `sysroot` ([35](35-platforms.md)); a system whose driver tells its
 architectures apart inside one root (MinGW-w64) is served by one package.
 
+**A base package has one reading (2026.11.12.1+).** Its manifest states that the package root
+is the sysroot, and it is rendered as one (`--sysroot=<root>`) whatever its directories are
+called; the directory layout is probed only for a directory that carries no manifest. Where
+this machine does not load the artifact — the base is another architecture's or another
+system's — the link takes nothing of the toolchain payload's own run-time directories, a dynamic
+artifact names the row's `loader` as its program interpreter (`/lib/ld-linux-aarch64.so.1`), and
+no directory of this machine enters its RUNPATH. Such an artifact runs through a runner, which
+is given the base as `{sysroot}` ([41](41-devices.md)). A native dynamic artifact names the
+base's own loader, where it stands.
+
 The index carries `xim:x86_64-freebsd-sysroot` and `xim:aarch64-freebsd-sysroot` (FreeBSD's base
 system, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
 MinGW-w64 on UCRT, libc++, libunwind and compiler-rt, for x86_64 and aarch64). On a
 `*-windows-gnu` row the latter is clang's sysroot; the `mingw-llvm` provider names it, so every
-host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)).
+host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)). It also carries
+`xim:aarch64-linux-gnu-sysroot` (glibc for arm64 with the kernel headers, libc++ with its module
+sources, and compiler-rt), which the `glibc-sysroot` provider names: on linux-x86_64,
+`--target aarch64-linux-gnu` builds C, C++ and `import std` programs over it, dynamically or
+statically (2026.11.12.1+).
 
 A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and
@@ -1396,6 +1410,14 @@ compiles and the link, the pair round-trips. A program whose non-local exits
 run deep also wants a bigger stack; that is a project knob of its own
 (`ldflags = ["-sSTACK_SIZE=..."]`), not an ABI fact, so the engine does not
 render it.
+
+**`longjmp` and `exceptions` name one mechanism.** WebAssembly's exception
+handling carries both the throw and the long jump, and the JavaScript model
+carries both. An unstated `longjmp` follows `exceptions`, as the SDK's own
+default does. A build that states one model for `exceptions` and the other for
+`longjmp` is refused with both statements, before any compile. A declared
+`longjmp` is part of the configuration's key; a project that does not state it
+keeps the key it had.
 
 **Only the root manifest decides.** The switch belongs to the artefact, and the
 root is the only package that builds one. A dependency that writes

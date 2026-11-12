@@ -59,6 +59,11 @@ echo "MCPP_HOME: $MCPP_HOME"
 
 CAPS=()
 OS="$(uname -s)"
+# x86_64-host: the machine's architecture, for a script that holds a provider
+# whose `hosts` name one (the cross entry of aarch64-linux-gnu is published for
+# linux-x86_64). A script that cannot hold anything elsewhere is excluded by
+# this token, which the run reports; it does not pass by printing a line.
+case "$(uname -m)" in x86_64|amd64) CAPS+=(x86_64-host) ;; esac
 
 case "$OS" in
     Linux)
@@ -274,7 +279,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 KNOWN_CAPS=(android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
             mingw mingw-cross mingw-host-headers msvc musl nasm no-msvc pack patchelf python3
             qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
-            xlings-msvc)
+            x86_64-host xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do

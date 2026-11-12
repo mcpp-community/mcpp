@@ -159,10 +159,22 @@ freebsd-vm = { git = "https://example.org/freebsd-vm.git", tag = "v1" }
 The tool is built for this machine and started with the argv and the
 environment above: it transfers the artifact and the files `MCPP_RUNTIME_FILES`
 lists, runs the argv, streams the program's output, and exits with the
-program's status. An artifact of a row a platform defines whose `execution` is
-another system than this machine's, with no runner and no execution host
-(`run_under`), is **built, not run**: `mcpp run` refuses it naming the keys that
-state a runner, and `mcpp test` reports its tests as not run.
+program's status. An artifact whose row's `execution` is another system than
+this machine's, with no runner and no execution host (`run_under`), is
+**built, not run**: `mcpp run` refuses it before anything is started, naming
+the keys that state a runner, and `mcpp test` reports its tests as not run.
+The rule is one for every row, built-in or defined by a platform
+(2026.11.12.1+; before, a built-in row's artifact was started and the kernel's
+answer reported). This machine's kernel does not read the system a program
+names, and gives that system's call numbers its own meaning, so starting it
+observes nothing. `--no-runner` states that the triple is native here, for a
+host that runs such programs through a registered interpreter. An artifact of
+this system and another architecture is launched as before.
+
+A provider may state the runner of its arrangement, so a target runs with
+nothing declared (docs/35): `mcpp run --target aarch64-linux-gnu` on
+linux-x86_64 installs the user-mode emulator on its first run and starts the
+artifact under it, with the arrangement's base as the emulator's root.
 
 ## Running a distributable
 

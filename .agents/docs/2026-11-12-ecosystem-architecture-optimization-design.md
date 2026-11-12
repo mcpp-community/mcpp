@@ -6,9 +6,10 @@ status: active
 # 生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）
 
 **日期：** 2026-11-12
-**状态：** 草案第二版，待评审。评审定稿前不实施任何一项。第二版并入：D16–D23 的裁决、CI 触发模型（5.11）、固件与裸机
-（5.12）、归属判据（P16）、层级三与固件的六个本地探针（第 8 节，结果在 `okexp/t3/PROBES.md`），以及多视角自审（第 14 节）
-对第一版的七处修改。第 11 节列出仍需裁决的决定。
+**状态：** 第三版，实施中。第二版并入了 D16–D23 的裁决、CI 触发模型（5.11）、固件与裸机（5.12）、归属判据（P16）、
+层级三与固件的本地探针（第 8 节）与多视角自审（第 14 节）。负责人于 2026-11-12 授权按本文实施，第 11.2 节的决定按其推荐
+执行，其中 D5 由"每个仓库一个 PR"取代（mcpp#924 续用，不拆分）。第三版增加 P17 与 5.13（重复实现的收敛），并在第 15 节
+记录实施中对本文的修正与各项的门禁。
 **范围：** mcpp（引擎、内置数据、规范、CI）；openkal 家族（规范、各实现、openkal-musl、openkal-llvm-runtime、
 openkal-image、openkal-platform）；xlings 生态（xim-pkgindex、xpkgindex-update、xlings-res 资产、dirun）；mtest（库与引擎）。
 验证工程（一个 C89 命令解释器）只用于检验，不在上游范围内，本文不点名。
@@ -264,7 +265,7 @@ SPEC-016 §6 已经规定：行的 `execution` 不是本机系统、又没有运
 [[platform.provider]]
 name     = "openkal"
 serves   = ["*-freebsd-musl"]
-runner   = { cmd = ["dirun", "--profile", "{image}/dirun.toml", "--", "{}"], hosts = ["linux-*", "macos-*"],
+runner   = { cmd = ["dirun", "--profile", "{pkg:freebsd-disk-image}/dirun.toml", "--", "{}"], hosts = ["linux-*", "macos-*"],
              requires = ["xim:dirun", "xim:freebsd-disk-image@14.5", "xim:qemu-system"] }
 ```
 
@@ -272,7 +273,8 @@ runner   = { cmd = ["dirun", "--profile", "{image}/dirun.toml", "--", "{}"], hos
 
 1. 优先级沿用 P8：项目 `[target.<sel>] runner` 先于本机配置，先于平台，先于提供者。
 2. `requires` 里的包在第一次 `mcpp run` 或 `mcpp test` 需要时按工具链同样的同意方式安装；构建从不安装它们。
-3. 模板的占位：`{}` 是产物，`{sysroot}` 来自链接模型（5.4），`{image}` 是 `requires` 中镜像包的根。
+3. 模板的占位：`{}` 是产物，`{sysroot}` 是该安排的基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根（一个模板可以
+   用到两个包——镜像与固件——所以占位按名字，而不是一个 `{image}`）。模板的程序先在 `requires` 的包里找，再找 PATH。
 4. **不运行另一系统的程序来观察它。** 内置行与平台定义的行由同一个谓词判断：行的执行系统不是本机、又没有运行器，就在启动
    之前回答"已构建，未运行"，指名身份与可写的声明。另一系统的系统调用号在本机内核上指向别的操作，启动它的后果不确定
    （第 14 节第 2 条）。诊断的文字由数据生成，只有一处。
@@ -516,6 +518,23 @@ openkal-opensbi 是写在 SBI 上的实现，提供核心三个接口加 `time` 
 
 **收益。** openkal 的 UEFI 实现之上是同一个 openkal-musl 与同一个 C++ 运行时：UEFI 应用可以用 C++23 模块与 `import std`
 编写，在 CI 里两秒跑完。这对引导加载器、固件工具与教学是直接可用的。
+
+### 5.13 重复实现的收敛（P17）
+
+实施中遇到的"同一个问题有两处以上回答"逐项收敛。每项收敛前后由同一组测试证明行为不变，有意的行为变化单列。
+
+| 问题 | 收敛前 | 收敛后 |
+|---|---|---|
+| 产物是否由本机运行 | 六处各自近似：`hermetic.cppm`（自带 sysroot 或由平台描述）、`runtime_validation.cppm` 三处、`pack.cppm`、`execute.cppm` 两处三元式 | `Triple::system_is_host()` 与 `Triple::loads_on_host()`，读行的 `execution` 与架构；Android 的行以数据陈述 `execution = "android"` |
+| 基座供给 C 库时宿主让位 | `flags.cppm` 五处读 `base.layers.cAbi.empty()`，与 `targetSide.cAbi.origin` 并存 | 基座解析处决定一次（带清单即包根 sysroot；另一台机器的基座清空载荷的宿主运行时目录），`flags.cppm` 回到只渲染链接模型 |
+| 加载器的名字 | `linkmodel.cppm` 的按架构表（`loader_filename`、`distro_loader_path`），与行的 `loader` 键并存而后者无人读 | 两个函数读行的 `loader`；表删除 |
+| 本主机能否服务一个目标 | `registry.cppm::host_can_serve` 约 150 行按系统名的分支，与选择读的 `hosts` 数据并存 | 读提供者的 `hosts`；函数里不再有系统或架构 |
+| 一个包引用所指的目录 | `base.cpp` 的 `package_dir` 与 `windows_resources.cpp` 的另一份（顺序相反） | 一个解析，三个使用者（基座、系统头文件、运行器的包） |
+| 多系统单文件按什么选择程序 | `polyglot.cppm` 的三元式与系统白名单 | 系统表的 `uname` |
+| 运行器建议里的示例程序 | 三处字面量 `qemu-aarch64-static` | 只写声明的形状；可用的运行器由提供者陈述 |
+
+仍在基线里的（由 `check_system_names.py` 持有，只许减少）：打包对 linux、macos、windows 三个系统的约定、
+对象格式与后缀的若干分支、`modules/platform/` 之外的宿主谓词。
 
 ## 6. 纠正清单
 

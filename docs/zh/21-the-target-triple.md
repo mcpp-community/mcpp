@@ -473,12 +473,16 @@ docs/22。
 着；`aarch64-linux-gnu` 由 `linux-aarch64` 原生宿主服务。把它们
 合并成 `linux`，会让一台的行覆盖掉另一台的行。
 
+`aarch64-linux-gnu` 还有第二种、交叉的安排（2026.11.12.1+）：在 `linux-x86_64` 上，提供者 `glibc-sysroot` 以一个基座包
+服务它（[22](22-target-side.md)）。它排在 musl 的条目之下，所以 `--target aarch64-linux` 在那里仍由 `aarch64-linux-musl`
+回答，写全身份才取 glibc 的交叉安排；`mcpp run` 经该提供者的运行器启动其产物（[41](41-devices.md)）。
+
 ### 构建机与它们服务的目标
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | 载荷 | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | 载荷 | — | — |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | 基座包 | 载荷 | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |

@@ -467,6 +467,7 @@ export struct TargetCandidate {
     std::string identity, provider, why;
     int         priority = 0;
     bool        available = false;
+    std::string tier;   // of the arrangement: the provider entry's, else the row's
 };
 
 export struct TargetSelection {

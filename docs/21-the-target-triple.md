@@ -514,12 +514,19 @@ not from `linux-aarch64`, while `aarch64-linux-gnu` is served natively by
 `linux-aarch64`. Collapsing them to `linux` would let one overwrite the
 other's rows.
 
+`aarch64-linux-gnu` has a second, cross arrangement (2026.11.12.1+): on
+`linux-x86_64` the provider `glibc-sysroot` serves it from a base package
+([22](22-target-side.md)). It stands below the musl entries, so `--target
+aarch64-linux` is still answered by `aarch64-linux-musl` there and the whole
+identity selects the glibc cross; `mcpp run` starts its artifacts through the
+provider's runner ([41](41-devices.md)).
+
 ### Build hosts and the targets they serve
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | payload | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | payload | — | — |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | base package | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |

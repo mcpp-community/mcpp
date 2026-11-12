@@ -14,14 +14,12 @@
 # <arch>-freebsd-musl` builds the program, exits 2 without running it, states
 # "built, not run", names both systems and prints the `[target.<triple>]`
 # runner declaration for the row; `mcpp test` of the same target reports the
-# tests as built, not run. On a FreeBSD host the row is native and the check
-# does not apply.
+# tests as built, not run.
 set -e
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; tail -30 "$f" 2>/dev/null; done; exit 1; }
 
-case "$(uname -s)" in FreeBSD) echo "SKIP: FreeBSD is this machine's system"; exit 77 ;; esac
 case "$(uname -m)" in x86_64|amd64) ARCH=x86_64 ;; *) ARCH=aarch64 ;; esac
 T="$ARCH-freebsd-musl"
 

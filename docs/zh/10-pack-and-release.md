@@ -736,6 +736,10 @@ Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的�
 openkal-platform 的不含 `windows-aarch64`，因此本 mcpp 能构建的 `aarch64-windows-gnu` 行不从它得到运行器）。在 Windows 主机上构建的映像与其他主机上的字节不同
 （#850）：树在 Linux 或 macOS 上打包。
 
+**`all` 所指的是系统表（mcpp 2026.11.12.1+）。** 表中陈述的每个系统（`[[platform.system]]`，内置的或平台的），加上平台为该
+架构定义了行的系统。没有程序可构建的对写为未覆盖并附原因，其余照常打包。引擎不持有约定的系统，其程序按平台运行器为该宿主
+对陈述的身份构建（`runner.built-as`，[35](35-platforms.md)）；不带 `--systems` 的打包只携带打包机自身系统的运行器。
+
 **在哪里运行。** 打包把 `runs_on` 写进 `mcpp-package.json`，并在 `Packed` 之后写出：`self` 为凭包内携带的东西即可
 运行的 `<os>-<arch>`，`with.<runner>` 为机器装有该运行器时可运行的组合（腿的架构 × 平台的 `runner.hosts`）。
 

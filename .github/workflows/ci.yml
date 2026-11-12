@@ -102,6 +102,9 @@ jobs:
       - name: Check modules/ wiring
         run: bash .github/tools/check_modules_wiring.sh
 
+      - name: Check that the engine's sources name no more systems than the baseline
+        run: python3 .github/tools/check_system_names.py
+
       - name: Check that headers and conditional directives appear only in the system lock files
         run: bash .github/tools/check_include_regions.sh
 

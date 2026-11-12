@@ -1518,7 +1518,8 @@ nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx) {
     auto candidates = nlohmann::json::array();
     for (auto const& c : s.candidates)
         candidates.push_back({ {"identity", c.identity}, {"provider", c.provider},
-                               {"priority", c.priority}, {"available", c.available}, {"why", c.why} });
+                               {"priority", c.priority}, {"available", c.available}, {"why", c.why},
+                               {"tier", c.tier} });
     return { {"request", s.request}, {"identity", s.identity}, {"provider", s.provider},
              {"priority", s.priority}, {"fallback", s.fallback}, {"why", s.why},
              {"candidates", candidates} };
@@ -1661,8 +1662,8 @@ export int why_report(const std::string& topic, const std::string& features,
             if (!s.candidates.empty()) std::println("  candidates, in order:");
             for (auto const& c : s.candidates) {
                 const bool taken = c.identity == s.identity && c.provider == s.provider;
-                std::println("    {:<26} {:<14} {:>4}  {}", c.identity,
-                             c.provider.empty() ? std::string("(platform)") : c.provider, c.priority,
+                std::println("    {:<26} {:<14} {:>4}  {:<9} {}", c.identity,
+                             c.provider.empty() ? std::string("(platform)") : c.provider, c.priority, c.tier,
                              taken ? std::string("taken")
                                    : c.available ? std::string("available") : "not available: " + c.why);
             }

@@ -8,65 +8,86 @@
 
 ### Added
 
-- The cross rows of the platform table are served from what their own data
-  names, not from a list of hosts written in the engine. `aarch64-linux-gnu`
-  takes its C library from the sysroot payload its row declares
-  (`xim:aarch64-linux-gnu-sysroot`, glibc 2.44 with the kernel headers,
-  libgcc and libc++ inside; the package root is the sysroot), so the row is
-  built wherever that payload is published — an x86_64 Linux host included —
-  and `host_can_serve` reads the declaration instead of refusing every
-  arch-crossing glibc target. The row links its GCC run-time in, as the musl
-  rows do: that sysroot carries no shared libgcc. When such a base package
-  serves the target, the host contributes nothing to the link: the payload's
-  own `-B`/`-L`/loader words and its `compiler_runtime_dir` resource
-  directory are the whole C-runtime group, on the C link exactly as on the
-  C++ one (before, the host's runtime directories and `-latomic` shadowed
-  the target's — an x86_64 `libatomic.a` the linker then called incompatible
-  with aarch64 — and a C link could not find the payload's builtins at all),
-  and the runtime-closure rules state the premise they always had: the
-  artifact's loader is the payload's, a process on this machine is not the
-  one that would load it. The test that holds the row skips itself until the
-  package index carries the payload.
+- `aarch64-linux-gnu` has a cross arrangement: the provider `glibc-sysroot`
+  serves it on linux-x86_64 from the base package
+  `xim:aarch64-linux-gnu-sysroot` (glibc, the kernel headers, libc++ with its
+  std module, compiler-rt), with llvm. A C program, a C++ program and one that
+  imports std build for it, dynamically and statically. The entry stands at
+  priority 40, below the musl entries, so the request `aarch64-linux` is
+  answered as before on every host and the whole identity reaches the new
+  entry; the native arrangement on an aarch64 host is unchanged.
+- A provider states how its artifacts are started: `runner = { cmd, hosts,
+  requires }` on a provider entry is the lowest tier of the runner statement,
+  under the platform's, a build program's, the machine's and the project's.
+  `{}` is the artifact, `{sysroot}` the arrangement's base, `{pkg:<name>}` the
+  root of the required package of that name; the packages of `requires` are
+  installed on the first `mcpp run` or `mcpp test`, never by a build.
+  `mcpp run --target aarch64-linux-gnu` on linux-x86_64 runs the artifact
+  under `qemu-aarch64-static -L {sysroot}` with nothing declared.
+- The system table: `[[platform.system]] name, uname` states the facts of a
+  system that no single row carries, in the built-in data and in a platform
+  package alike. A file that carries one program per system selects by
+  `uname`; FreeBSD joins it through the table.
+- Provider keys `tier` (the tier of one arrangement, where it differs from its
+  row's) and `system-headers` (the package whose headers state the system's
+  own interfaces). Row keys `loader` and `execution` are read on built-in rows
+  as on rows a platform defines.
+- A platform's runner states `built-as = { "<os>-<arch>" = "<identity>" }`:
+  the identity its runner program for that host pair is built as. A package
+  that carries its runner builds it so for a system the engine holds no
+  convention for; `mcpp pack --systems all` takes every system of the table
+  and writes the pairs no program is built for as not covered.
 - `longjmp` joins `threads` and `exceptions` as a member of
-  `[target.<selector>.abi]`: how `sigsetjmp`/`siglongjmp` cross the
+  `[target.<selector>.abi]`: how `sigsetjmp` and `siglongjmp` cross the
   WebAssembly boundary on an Emscripten row. `"wasm"` renders
   `-sSUPPORT_LONGJMP=wasm` on every C and C++ translation unit and on the
-  link; `"js"` states the toolchain's default model the same way. Declared
-  on any other row the member is refused naming that fact. A program whose
-  non-local exits run deep still wants `-sSTACK_SIZE` — a project knob of
-  its own, not an ABI fact, so the engine does not render it.
-- `mcpp pack --systems all` answers with data rather than a fixed list: this
-  machine's system, every system a platform defines a row of for the
-  architecture, and every system the platform's runner states a host of
-  (`runner.hosts`) — FreeBSD's among them. A FreeBSD runner is built as
-  `<arch>-freebsd-musl` over the platform's hosted arrangement, the same
-  static identity a FreeBSD request takes. The default pack is unchanged:
-  without `--systems` it carries the runner of the packing machine's system
-  alone.
-- A Windows row whose system the graph supplies compiles its resources with
-  the Windows headers the platform's rows declare. `x86_64-windows-musl` has
-  no paired payload and its llvm binary carries no headers of its own, so a
-  script including `"winres.h"` failed in llvm-rc; the MinGW-w64 sysroot
-  payload a row declares for the architecture's GNU-ABI identity supplies
-  them, and every PE row shares that set. The two existing include sources
-  keep their precedence.
-- The llvm line moves to `llvm@23.1.3-r2`: the same payload with the MinGW
-  cross builtins beside it, repackaged under its own version key because the
-  index keeps an existing version's entry immutable. A plain C link for
-  `aarch64-windows-gnu` now needs no second payload.
+  link; `"js"` states the JavaScript model the same way. Unstated, the model
+  follows `exceptions`, as the SDK's default does. A build that states one
+  model for `exceptions` and the other for `longjmp` is refused with both
+  statements, and the member is refused on a row that is not Emscripten's.
+- A Windows row whose system the graph supplies compiles its resources: its
+  provider names the package of the system's headers (`system-headers`), read
+  where the toolchain states no header source. A row that states its own (the
+  MSVC SDK, a paired payload) resolves nothing and installs nothing.
+- `.github/tools/check_system_names.py` holds the number of times the engine's
+  sources name a system. The count is compared with a baseline that only
+  falls.
+- `tests/unit/test_link_line_golden.cpp` states the C-library group of the
+  link line for each combination of compiler family, C library supplier and
+  machine.
 
 ### Changed
 
-- A program of another system's kernel interface that starts and dies at
-  once is told apart from a crash in a working program. `mcpp run` of such
-  an artifact — a static FreeBSD ELF of the host's own architecture, spawned
-  by a kernel that does not ask which system it names — now runs it as a
-  child, so the death by signal is observed and named with the
-  `[target.<triple>]` runner declaration, and the status itself is returned
-  unchanged: 139 stays 139. A spawn refusal whose errno names only a missing
-  interpreter (ENOENT, a dynamic linker of the other system) carries the
-  same declaration. Native targets keep the launch they always had, and a
-  native signal death is never interpreted.
+- An artifact of another system is not started when nothing states how it
+  runs. `mcpp run` and `mcpp test` answer "built, not run" before any process
+  is spawned, for built-in rows as for rows a platform defines, and name the
+  `[target.<triple>]` runner declaration; the exit status is 2. The kernel of
+  this machine gives another system's call numbers its own meaning, so a
+  launch was not an observation. `--no-runner` states that the triple is
+  native here and is believed. An artifact of this system and another
+  architecture is launched as before. A host that runs another system's
+  programs through a registered interpreter passes `--no-runner` or declares
+  the runner.
+- A dynamic artifact that this machine does not load names the row's `loader`
+  as its program interpreter and carries no RUNPATH of this machine. A native
+  dynamic artifact names the base's own loader, as before.
+- A base package has one reading: a sysroot whose root carries a manifest is
+  rendered as a sysroot whatever its directories are called. The layout is
+  probed only for a directory without a manifest.
+- Whether this host serves a target from a payload is answered by the
+  providers' `hosts`, the data the selection reads; the per-system conditions
+  of `host_can_serve` are removed.
+- The messages that print a runner declaration print its shape and no
+  program.
+- Android's rows state `execution = "android"`: the kernel is Linux and the
+  system is not.
+
+### Fixed
+
+- A base package's compiler run-time directory reaches the C link as well as
+  the C++ one.
+- The loader name of a row is read from the row; the per-architecture table
+  in the link model is removed.
 
 ## [2026.11.10.2] - 2026-11-10
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: llvm elf
+# requires: llvm elf x86_64-host
 source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 # 1076 -- the cross arrangement of aarch64-linux-gnu: its C library, C++
 # library and compiler run-time come from a base package, its artifacts name
@@ -19,16 +19,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 #   4. `mcpp run` starts each through the provider's runner, which this run
 #      installs, and the program's exit status and output arrive.
 #
-# The entry's hosts are linux-x86_64: elsewhere the script has nothing to hold
-# and says so with the skip status.
+# The entry's hosts are linux-x86_64, which the capability line states: on
+# another host the script is excluded, and the run reports it as such.
 set -e
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | tail -25; exit 1; }
 
-if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
-    echo "SKIP: the cross entry's hosts are linux-x86_64"
-    exit 77
-fi
 readelf="$_e2e_registry_base/xim-x-llvm/${LLVM_VERSION}/bin/llvm-readelf"
 
 T=aarch64-linux-gnu
