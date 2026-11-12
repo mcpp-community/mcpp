@@ -1454,6 +1454,10 @@ struct RunnerChoice {
     // machine (SPEC-016 §6): a run or a test installs them and asks again; a
     // build installs nothing.
     std::vector<std::string> missing;
+    // A place the template names that this build does not have (`{sysroot}`
+    // with no base, `{pkg:<name>}` outside `requires`): the launch is refused
+    // naming it, since the word would reach the runner as it is written.
+    std::string unplaced;
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -1496,7 +1500,21 @@ void settle_runner_places(const BuildContext& ctx, RunnerChoice& c,
         if (!ctx.tc.base.root.empty()) place(word, "{sysroot}", ctx.tc.base.root.generic_string());
         for (auto const& [name, root] : roots)
             place(word, std::format("{{pkg:{}}}", name), root.generic_string());
+        // What is left after the packages stand is a place nothing gives.
+        if (!c.unplaced.empty() || !c.missing.empty()) continue;
+        if (word.find("{sysroot}") != std::string::npos) c.unplaced = "{sysroot}";
+        else if (auto at = word.find("{pkg:"); at != std::string::npos)
+            c.unplaced = word.substr(at, word.find('}', at) == std::string::npos
+                                             ? std::string::npos : word.find('}', at) - at + 1);
     }
+}
+
+// The refusal of a template whose place this build does not have.
+std::string unplaced_message(const RunnerChoice& c) {
+    return std::format(
+        "the runner of '{}' names {}, and this build has no such place: `{{sysroot}}` is the base "
+        "the target is linked against, `{{pkg:<name>}}` a package of the runner's `requires`",
+        c.tripleKey, c.unplaced);
 }
 
 // What a run or a test does about `missing`: installs each through the channel
@@ -3353,6 +3371,10 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         }
         choice = choose_device_action(ctx, runner_name, no_runner);
     }
+    if (!choice.unplaced.empty()) {
+        std::println(libc::stderr(), "error: {}", unplaced_message(choice));
+        return 2;
+    }
     if (choice.ignored)
         mcpp::ui::info("note", std::format(
             "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
@@ -4704,9 +4726,16 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
         if (auto why = install_runner_packages(tb.runnerChoice); !why.empty()) {
             tb.invocationNotRunReason = why;
             std::println(libc::stderr(), "error: {}", why);
+            tb.runnerFatal = 2;
             return;
         }
         tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+    }
+    if (!tb.runnerChoice.unplaced.empty()) {
+        tb.invocationNotRunReason = unplaced_message(tb.runnerChoice);
+        std::println(libc::stderr(), "error: {}", tb.invocationNotRunReason);
+        tb.runnerFatal = 2;
+        return;
     }
     auto& runnerChoice = tb.runnerChoice;
     if (!testOpts.runnerName.empty() && runnerChoice.tmpl.empty()) {
