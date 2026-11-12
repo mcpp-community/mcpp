@@ -387,6 +387,16 @@ jobs:
             echo "::error::e2e 981 did not run to its PASS line over the installed emsdk"
             exit 1
           fi
+          # e2e 1079 (the `longjmp` member of `abi`) needs the same payload and a
+          # node of the image; the shards have no emsdk and it skips itself there.
+          # A script that does not apply exits 77, so the status says it ran.
+          MCPP="$MCPP_UNDER_TEST" bash tests/e2e/1079_an_emscripten_rows_longjmp_model_round_trips.sh 2>&1 \
+            | tee "$RUNNER_TEMP/1079.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::e2e 1079 ended with $rc over the installed emsdk (77: it skipped itself)"
+            exit 1
+          fi
 
   coverage:
     # THE DENOMINATOR. Every check above is per host, and no per-host check
