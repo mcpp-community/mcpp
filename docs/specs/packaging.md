@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-014 |
 | 标题 | 打包与分发:链接、闭包、容器三个维度与构建腿,腿的合并,暂存树与包元数据,运行覆盖、单文件、容器列表、签名、压缩、合并与分发描述 |
-| 状态 | 评审中 v2.2 |
-| 版本 | 2.1 |
+| 状态 | 评审中 v2.3 |
+| 版本 | 2.3 |
 | 最后修改 | 2026-11-10 |
 | 对应实现 | mcpp >= 2026.10.31.1;v2.2 条款 mcpp >= 2026.11.10.1 |
 | 相关设计文档 | `.agents/docs/2026-10-30-ecosystem-part2-ide-and-language-service-design.md`(§19.6)、`.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
@@ -225,14 +225,18 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 
 ### 4.4 `--systems`
 
-`--systems` 的每个词为 `<os>`(`linux`、`macos`、`windows`,取腿的全部架构)、`<os>-<arch>`(只取该架构的腿)或
-`all`(三个系统);可重复,也可逗号分隔;缺省为本机系统;未给出时取 `[pack] systems`。对 `self-contained` 的树,为
+`--systems` 的每个词为 `<os>`(系统表中的系统,取腿的全部架构)、`<os>-<arch>`(只取该架构的腿)或
+`all`;可重复,也可逗号分隔;缺省为本机系统;未给出时取 `[pack] systems`。`all` 为系统表陈述的全部系统
+(SPEC-016 §2.3,内置的与平台的)加上平台为该架构定义了行的系统;其中没有程序可构建的对逐个写为未覆盖(§4.7),
+不被略去也不使打包失败(**mcpp >= 2026.11.12.1**;此前为 `linux`、`macos`、`windows` 三个系统)。对 `self-contained` 的树,为
 每个系统 × 腿的每个架构构建平台的载体(不携带任何内容,即运行器形式,SPEC-013 §11)并放入
 `libexec/<runner>/<os>-<arch>/`;对映像的单文件,为每条腿与每个系统写一个文件(§5.2)。每个系统的程序在其行
 (`<arch>-linux-musl`、`<arch>-macos`、`<arch>-windows-gnu`)上构建;平台的托管安排(SPEC-013 §5.4)服务该行时以它
 构建,于是同一程序在任何打包的机器上相同,不需要该系统的 SDK 与 C 运行时;Linux 的程序为静态。托管安排不服务该行时
 按惯常行构建,与本机系统和架构相同时取本机的行。本 mcpp 不构建程序的行(目标表标为 planned 或未列出)不放入包,并
-写出该系统与行。
+写出该系统与行。引擎只对 `linux`、`macos`、`windows` 持有"该系统的程序是哪一行"的约定;其余系统的程序是平台运行器
+为该宿主对陈述的身份(`runner.built-as`,SPEC-013 §10),无此陈述、平台也未为它定义行的系统没有程序
+(**mcpp >= 2026.11.12.1**)。
 
 ### 4.5 `mcpp-package.json`
 
@@ -486,3 +490,4 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 | 2.0 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4、§13):§1.4 腿只是命令命名的目标(目标集合按 SPEC-015 展开),腿按目标的种类与平台合并,原生程序每腿一个包,`-o <目录>/`;删除通用包与 `[platform] universal`、`[pack] universal`、`--no-universal` 的作用(迁移见 §2、docs/51);§1.2、§4.2 声明运行器的平台的映像只有一种布局(树),M3 只属于单文件,`--mode static` 为静态树;§4.3 Windows 启动器为引擎的程序,不再生成 `.cmd`,启动器为派生文件;§4.4 `--systems` 接受 `<os>`、`<os>-<arch>`、`all` 与 `[pack] systems`;§4.6 合并重新生成启动器、合并 `runs_on`、树以平台名命名;§4.7 运行覆盖 `runs_on` 与 `Runs on`、未覆盖的摘要,空覆盖被拒绝;§5.2 单文件覆盖腿 × 系统;§5.4 容器列表;§7 签名含 Windows 启动器;§8 条目按 `runs_on` 描述;§9 `pkgFormats`、`runsOn`;判据 3、4、7、9 改写,判据 10–13(e2e 983–987)。 |
 | 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;§4.3 macOS 上带 quarantine 标记的运行器;判据 14(e2e 992)。 |
 | 2.2 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E7,mcpp#911 N8):§1.2 另一系统的产物从文件读取闭包,不运行本机加载器;`--mode static` 链接全静态程序并在打包前核对。 |
+| 2.3 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 C6、C7):§4.4 `--systems all` 取系统表,无程序可构建的对写为未覆盖;三个系统之外的程序按 `runner.built-as` 构建;单文件按系统表的 `uname` 选择程序(SPEC-016 §2.3)。 |

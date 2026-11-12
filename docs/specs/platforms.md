@@ -4,9 +4,9 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.7 |
-| 版本 | 1.5 |
-| 最后修改 | 2026-11-10 |
+| 状态 | 评审中 v1.8 |
+| 版本 | 1.8 |
+| 最后修改 | 2026-11-12 |
 | 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
@@ -312,7 +312,13 @@ plugin    = "build.mcpp"
 | `cmd` | argv,非空;`{}` 为产物 |
 | `host` | `"same-arch"`:产物只在其架构的机器上运行;`"any"`:运行器可以从任何机器到达产物(模拟器、探针) |
 | `exclusive` | 为真时该目标的运行不重叠,`mcpp test` 串行运行 |
-| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为 `linux`、`macos`、`windows`):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** |
+| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为系统表中的系统,SPEC-016 §2.3):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** |
+| `requires` | 运行器从哪些包安装(`xim:<名>@<版本>`)。第一次 `mcpp run` 或 `mcpp test` 时按工具链的同一方式安装;构建不安装。模板的程序先在这些包中查找,再查 PATH。替换 `cmd` 的陈述同时替换它。**mcpp >= 2026.11.12.1** |
+| `built-as` | `{ "<os>-<arch>" = "<身份>" }`:为该宿主对构建的运行器程序是哪个身份。自带运行器的包(SPEC-014 §4.4)对引擎不持有约定的系统按它构建。**mcpp >= 2026.11.12.1** |
+
+模板中 `{}` 为产物,`{sysroot}` 为该目标的基座(SPEC-006),`{pkg:<name>}` 为 `requires` 中该名字的包的根
+(**mcpp >= 2026.11.12.1**)。运行器陈述的最低一级是所选提供者条目的 `runner`(SPEC-016 §6),其上依次为平台、构建程序、
+本机配置、项目与环境变量。
 
 `host = "same-arch"` 而产物的架构不是本机架构时,`mcpp run` 与 `mcpp test` 拒绝运行,消息给出
 `[target.<triple>] run_under` 的写法;`run_under` 存在或给出 `--no-runner` 时不拒绝。运行器的合并顺序与 §6
@@ -548,3 +554,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.4 | 2026-11-07 | mcpp 2026.11.7.1(设计 2026-11-07 §4.1.4、§4.2.2 A2/A3):§7.5 版本组参与解析,解析后的检查保留为断言;§3.2 平台引用接受 SemVer 约束;§14 目标表的平台列为系列 `^0.24`,系列取引擎可读的最新版本;§15.1 系列从锁中读回,`mcpp update` 移动它;判据 5 改写、14 新增(e2e 1020、1021)。 |
 | 1.6 | 2026-11-09 | mcpp 2026.11.9.1(SPEC-016,mcpp#911):§1 `[[platform.define]]` 与 `[[platform.provider]]` 为一般形式,`[platform]`、`[platform.hosted]` 为其简写;§9.2 `driver = "compiler"` 在每一行生效,平台的产物名模式不被构建程序改变;§11 平台定义的系统上的载体与 `--systems`;主机对为任意系统词。 |
 | 1.7 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E8,mcpp#911 N6):§4 `link.flags` 在 `driver = "compiler"` 时给出警告。 |
+| 1.8 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 §5.2、§5.5):§10 运行器的 `requires` 与 `built-as`,模板占位 `{sysroot}`、`{pkg:<name>}`,提供者的 `runner` 为陈述的最低一级;`hosts` 的系统取自系统表。 |
