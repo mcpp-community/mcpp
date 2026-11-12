@@ -54,9 +54,13 @@ echo "ok: --systems <os>-<arch> makes that pair's file"
 # C
 if [ "$OS" = linux ]; then
     "$MCPP" pack --target openkal --pkg-format single-file --systems all -o all/ > c.log 2>&1 || fail "C: --systems all" c.log
-    for pair in linux-x86_64 linux-aarch64 windows-x86_64 macos-aarch64; do
+    # `all` is the system table (SPEC-016 §2.3): FreeBSD is a system of it, and
+    # the platform's runner states the identity its FreeBSD program is built as
+    # (`runner.built-as`, openkal-platform 0.27.0), so its files are made too.
+    for pair in linux-x86_64 linux-aarch64 windows-x86_64 macos-aarch64 freebsd-x86_64 freebsd-aarch64; do
         ls all/sf-0.1.0-$pair* > /dev/null 2>&1 || fail "C: no file for $pair" c.log
     done
+    # A pair no program is built for is written, not left out.
     grep -q "Not covered macos-x86_64 (no carrier row" c.log || fail "C: the pair without a row is not said" c.log
     echo "ok: --systems all makes every file this mcpp can and says the rest"
 fi
