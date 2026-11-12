@@ -1412,10 +1412,20 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // `msvc_base` rides the GNU branch too: on the LLVM row it holds the CRT
     // word (`-fms-runtime-lib=*`) and nothing else, since `d.alwaysFlags` is
     // only ever set for the msvc dialect. Empty everywhere else, as before.
+    //
+    // AFTER THE STANDARD, AS ON THE C++ LINE. `msvc_base` begins with its own
+    // space and the standard's prefix does not: written before it, the two
+    // were one word, `-fms-runtime-lib=dll-std=c11`. clang reads no C library
+    // model in that word and no standard, so every C unit of an MSVC-ABI build
+    // named the static C library (`/DEFAULTLIB:libcmt.lib`) beside C++ units
+    // that named the DLL's, and a call through a local import slot of that
+    // link went to the image's first byte. A cache of dependency objects built
+    // before the word was added kept it from view until the toolchain's
+    // revision changed and the objects were built again.
     f.cc = isMsvcDialect
         ? std::format("{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
                       b_flag)
-        : std::format("{}{}{}{}{}{}{}", msvc_base, d.stdPrefix, c_std, opt_flag,
+        : std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, msvc_base, opt_flag,
                       pic_flag, compile_toolchain_flags, b_flag);
 
     // GAS assembly (.S/.s via the C driver): the asm-safe subset — no -std

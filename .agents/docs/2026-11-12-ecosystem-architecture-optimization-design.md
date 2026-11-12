@@ -551,8 +551,9 @@ openkal-opensbi 是写在 SBI 上的实现，提供核心三个接口加 `time` 
 | 同一构造在其他实现 | openkal-macos 与 openkal-windows 的三个释放是同样的顺序；openkal-freebsd、openkal-posix 不用世代号 | 一并修复（P17 在仓库之间的对应：一个事实，三处实现，同一修法、同一测试） |
 | openkal-musl#52：`poll` 之后的 `recv` 只交回一个字节 | 成立。`read` 的路径已经把预取的字节与已到达的其余部分一起交回，`recv`、`recvfrom`、`recvmsg` 的路径没有。测得 1000 字节 1000 次调用 | 修复。交付收敛到 `okm_take_ahead` 一处，两条路径都调用它；数据报不受影响（预取的是整条报文） |
 
-发布链：三个实现各发补丁版本 → 索引 → openkal-musl 0.29.3（抬高三个实现的下界）→ openkal-platform 0.27.1 → mcpp 钉 0.27.1。
-openkal-windows 0.22.1 是索引中的第一个 0.22，它带着此前已合入而未入索引的 0.22.0（节点的单一身份、关闭的衰减归还位置）。
+发布链：三个实现各发补丁版本 → 索引 → openkal-musl 0.29.4（抬高三个实现的下界）→ openkal-platform 0.27.1 → mcpp 钉 0.27.1。
+openkal-windows 的修正发在家族所在的 0.21 线上（0.21.1）；0.22.1 同时存在于索引，是 0.22 线的头，带着此前已合入而未入索引的
+0.22.0（节点的单一身份、关闭的衰减归还位置），等家族整体迁移时采用。openkal-musl 0.29.3 曾写 `^0.22.1`，由 0.29.4 改回。
 
 ## 6. 纠正清单
 
@@ -868,9 +869,10 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 | C14：配方自己的验证在索引 CI 中运行 | xim #1146 | `tests/test_ci_architecture.py` |
 | P10：系统名只减不增 | mcpp `.github/tools/check_system_names.py` 与基线 | CI 的文档与仓库检查作业 |
 | P17、5.13：七项重复实现的收敛 | mcpp | 收敛前后同一组单元测试（169 个程序、2627 个用例） |
-| 5.14：句柄先退役后关闭；一次释放只关闭一次；已释放句柄的流不是流 | openkal-linux 0.26.1、openkal-macos 0.23.1、openkal-windows 0.22.1 | 各仓库的 `tests/a_released_handle_is_stale_before_its_*_is_free.cpp`（三个上下文并行 3 秒） |
-| 5.14：`poll` 预取的字节与其余部分由一处交付 | openkal-musl 0.29.3 | `examples/net`：经 `poll`+`recv` 与 `poll`+`recvmsg` 各取一千字节并计数 |
+| 5.14：句柄先退役后关闭；一次释放只关闭一次；已释放句柄的流不是流 | openkal-linux 0.26.1、openkal-macos 0.23.1、openkal-windows 0.21.1 与 0.22.1 | 各仓库的 `tests/a_released_handle_is_stale_before_its_*_is_free.cpp`（三个上下文并行 3 秒） |
+| 5.14：`poll` 预取的字节与其余部分由一处交付 | openkal-musl 0.29.3、0.29.4 | `examples/net`：经 `poll`+`recv` 与 `poll`+`recvmsg` 各取一千字节并计数 |
 | mtest 的版本由清单与源码一致陈述 | mtest 0.6.2 | mtest CI：源码中每一处版本陈述与清单比对（找不到陈述即失败）；打包后的引擎被询问 |
+| MSVC ABI 上 clang 的 C 行：模型与标准各是一个词 | mcpp `flags.cppm`、`cache_key.cppm` | `NinjaBackendPeRuntime/CrtWordIsOneWordEqualOnCompileAndLink` 按整词比较（在缺陷上失败）；Windows 的单元测试作业 |
 | 直接运行 e2e 脚本的作业读"跳过"的退出状态 | mcpp `ci-linux-e2e.yml` | 裸机作业：必须运行的脚本跳过即失败 |
 
 本地测量（x86_64 Linux，无 KVM，2026-11-12）：交叉 `aarch64-linux-gnu` 的 C、C++ 头文件与 `import std` 程序各自构建并
@@ -888,11 +890,12 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 | xim-pkgindex 一个 PR | 引擎的 CI 需要索引里已有修订 3；基座准入作业与运行器包又需要已发布的引擎 | 两个 PR：发布前（#1146），发布后 |
 | 运行器模板的 `{image}` 占位（5.5） | 一个模板可以用到两个包 | `{pkg:<name>}` |
 | mtest 0.6.1 的发布（本轮所做） | 清单写 0.6.1，源码的七处仍写 0.6.0；钉 0.6.1 并询问引擎版本的 CI 拒绝它 | mtest 0.6.2，并加上使其不再发生的检查 |
-| "main 在 2026-11-11 是绿的，Windows 单元测试的访问违例来自环境" | 那次 push 只改文档，Windows 作业全部被跳过。通过的运行从全局依赖缓存取了 `compat.xz` 的对象；llvm 载荷的修订变更使缓存失效，重新编译出的对象出错。载荷的内容与此无关（去掉修订 2 新增的两个目录后同样出错） | 见 15.3 |
+| "main 在 2026-11-11 是绿的，Windows 单元测试的访问违例来自环境" | 那次 push 只改文档，Windows 作业全部被跳过。通过的运行从全局依赖缓存取了 `compat.xz` 的对象；llvm 载荷的修订变更使缓存失效，重新编译出的对象出错。载荷的内容与此无关（去掉修订 2 新增的两个目录后同样出错）。根因在 main：MSVC ABI 上 clang 的 C 行把 C 运行时模型的词与 C 标准的词写成了一个词（`-fms-runtime-lib=dll-std=c11`），clang 两者都读不到，全部 C 单元（655 个对象中的 115 个）声明静态 C 库，与声明 DLL 的 C++ 单元混链，经本地导入槽的调用落在映像首字节。既有单元测试以子串计数检查"一个词"，所以没有发现 | 词序改为先标准后模型；测试按整词比较；依赖缓存的键陈述 C 行的形式，使旧对象不再被取用 |
+| 平台组升到 openkal-windows 0.22.1（本轮所做） | openkal-run 写的是 `^0.21.0`，mcpplibs.os 的上界是 `<0.22.0`；组里一个包只有一个版本，引擎拒绝 | 修正回移到 0.21 线（0.21.1）；openkal-musl 0.29.4 写 `^0.21.1`；0.22.1 留作 0.22 线的头 |
+| PR 上的 e2e 即全量 | PR 运行按改动选择（`E2E_SET=pr`），一次推送可能只选中几个脚本 | 合入前对分支手动触发一次全量运行；它查出了 `mcpp why platform` 的一处回归（合并陈述时丢了平台自己的行与提供者），已修 |
 
 ### 15.3 尚未实施
 
 按第 10 节的阶段。S4 的 e2e 与 bench 向 mtest 的迁移、mtest 的 M1–M6、dirun 的整形、两个金丝雀与夜间矩阵、CI 的按改动选择与每
 宿主一道闸；S5 的 K7、DOS 的 A 路线、UEFI 平台包与单任务环境的规范明示；S6 的新系统；xim 的第二个 PR（基座准入作业
-BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；openkal-freebsd 的运行器改用 dirun；mcpp#924 三个未定性
-的 CI 失败的根因。
+BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；openkal-freebsd 的运行器改用 dirun。

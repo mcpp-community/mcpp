@@ -1018,7 +1018,15 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             s.runner.set = true;
         }
     }
-    if (P.active) mcpp::platform::merge(s, state.platformData);
+    // The platform's statement is taken whole over it: its fields are merged
+    // field by field, and what a statement of a platform alone holds (the rows
+    // it defines, its providers and systems) is the platform's as it is.
+    if (P.active) {
+        mp::Statement whole = state.platformData;
+        mcpp::platform::merge(s, state.platformData);
+        whole.runner = s.runner;
+        s = std::move(whole);
+    }
     mp::Statement program = state.programPlatform;
     // The root's own program states them as well (applied into its manifest);
     // it is the last program to run, and it speaks for the project.

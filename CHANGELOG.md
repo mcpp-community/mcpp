@@ -90,6 +90,23 @@
   the C++ one.
 - The loader name of a row is read from the row; the per-architecture table
   in the link model is removed.
+- **A C unit of an MSVC-ABI build with clang receives the C library model
+  and its standard** (SPEC toolchain-management §CRT). The model's word and
+  the standard's were written as one, `-fms-runtime-lib=dll-std=c11`, on the
+  C line only: clang read neither, so every C unit named the static C library
+  (`/DEFAULTLIB:libcmt.lib`) in a build whose C++ units named the DLL's, and
+  was compiled in the compiler's default C standard. Such a link held both,
+  and a call through one of its local import slots went to the image's first
+  byte: on Windows, `mcpp pack --compress xz:<level>` and anything else that
+  reached the slot ended with an access violation. Objects of C dependencies
+  kept in the global cache since before the word was added kept it from view.
+  The cache key of a dependency's objects states the C line, so objects built
+  with the joined word are not taken again.
+- `mcpp why platform` in a project that selects a platform lists the rows the
+  platform defines and the identities it serves again (the statement kept only
+  its merged fields in this version's first form).
+- An e2e part whose only script does not apply on the machine is a run that
+  reported a case, not an empty run.
 
 ## [2026.11.10.2] - 2026-11-10
 

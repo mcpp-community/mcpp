@@ -417,6 +417,13 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     if (b.trimPaths) put(s, "trim", "1");
     put(s, "pic",      b.pic   ? "1" : "0");
     put(s, "crt",      b.crt);
+    // THE FORM IN WHICH THE MODEL REACHES A C UNIT. Until 2026.11.12.1 the
+    // model's word and the C standard's were one word on the C line
+    // (flags.cppm), so a C object of a build that states a model named the
+    // static C library whatever the model was, and this key did not tell it
+    // from one built since. Only where a model is stated, so every other key
+    // is unchanged.
+    if (!b.crt.empty()) put(s, "crtform", "2");
     // D
     put(s, "index",    p.indexName);
     put(s, "pkg",      p.packageName);
