@@ -872,7 +872,8 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 | 5.14：句柄先退役后关闭；一次释放只关闭一次；已释放句柄的流不是流 | openkal-linux 0.26.1、openkal-macos 0.23.1、openkal-windows 0.21.1 与 0.22.1 | 各仓库的 `tests/a_released_handle_is_stale_before_its_*_is_free.cpp`（三个上下文并行 3 秒） |
 | 5.14：`poll` 预取的字节与其余部分由一处交付 | openkal-musl 0.29.3、0.29.4 | `examples/net`：经 `poll`+`recv` 与 `poll`+`recvmsg` 各取一千字节并计数 |
 | mtest 的版本由清单与源码一致陈述 | mtest 0.6.2 | mtest CI：源码中每一处版本陈述与清单比对（找不到陈述即失败）；打包后的引擎被询问 |
-| MSVC ABI 上 clang 的 C 行：模型与标准各是一个词 | mcpp `flags.cppm`、`cache_key.cppm` | `NinjaBackendPeRuntime/CrtWordIsOneWordEqualOnCompileAndLink` 按整词比较（在缺陷上失败）；Windows 的单元测试作业 |
+| MSVC ABI 上 clang 的 C 行：模型与标准各是一个词 | mcpp `flags.cppm`、`cache_key.cppm` | `NinjaBackendPeRuntime/CrtWordIsOneWordEqualOnCompileAndLink` 按整词比较（在缺陷上失败） |
+| 静态的 liblzma 以静态 API 被读（`LZMA_API_STATIC`） | mcpplibs.mwrap.xz 5.8.3.1；mcpp 的依赖随之更新 | xz-m 的 CI：release 档的测试、`tests/linked.cpp`；mcpp 在 Windows 的单元测试作业 |
 | 直接运行 e2e 脚本的作业读"跳过"的退出状态 | mcpp `ci-linux-e2e.yml` | 裸机作业：必须运行的脚本跳过即失败 |
 
 本地测量（x86_64 Linux，无 KVM，2026-11-12）：交叉 `aarch64-linux-gnu` 的 C、C++ 头文件与 `import std` 程序各自构建并
@@ -890,7 +891,8 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 | xim-pkgindex 一个 PR | 引擎的 CI 需要索引里已有修订 3；基座准入作业与运行器包又需要已发布的引擎 | 两个 PR：发布前（#1146），发布后 |
 | 运行器模板的 `{image}` 占位（5.5） | 一个模板可以用到两个包 | `{pkg:<name>}` |
 | mtest 0.6.1 的发布（本轮所做） | 清单写 0.6.1，源码的七处仍写 0.6.0；钉 0.6.1 并询问引擎版本的 CI 拒绝它 | mtest 0.6.2，并加上使其不再发生的检查 |
-| "main 在 2026-11-11 是绿的，Windows 单元测试的访问违例来自环境" | 那次 push 只改文档，Windows 作业全部被跳过。通过的运行从全局依赖缓存取了 `compat.xz` 的对象；llvm 载荷的修订变更使缓存失效，重新编译出的对象出错。载荷的内容与此无关（去掉修订 2 新增的两个目录后同样出错）。根因在 main：MSVC ABI 上 clang 的 C 行把 C 运行时模型的词与 C 标准的词写成了一个词（`-fms-runtime-lib=dll-std=c11`），clang 两者都读不到，全部 C 单元（655 个对象中的 115 个）声明静态 C 库，与声明 DLL 的 C++ 单元混链，经本地导入槽的调用落在映像首字节。既有单元测试以子串计数检查"一个词"，所以没有发现 | 词序改为先标准后模型；测试按整词比较；依赖缓存的键陈述 C 行的形式，使旧对象不再被取用 |
+| "main 在 2026-11-11 是绿的，Windows 单元测试的访问违例来自环境" | 那次 push 只改文档，Windows 作业全部被跳过。通过的运行从全局依赖缓存取了 `compat.xz` 的对象；llvm 载荷的修订变更使缓存失效，重新编译出的对象出错；载荷的内容与此无关。根因由链接映射文件给出：出错的五个槽是 `__imp_lzma_end`、`__imp_lzma_code`、`__imp_lzma_easy_buffer_encode`、`__imp_lzma_stream_decoder`、`__imp_lzma_stream_buffer_bound`。`lzma.h` 在 Windows 上默认把函数声明为从 DLL 导入，封装模块没有定义 `LZMA_API_STATIC`；lld-link 为它们各造一个本地槽，而回收无引用节时不把槽算作引用，按函数分节后函数被回收，槽里是映像首字节 | mcpplibs.mwrap.xz 5.8.3.1：模块以静态库的方式读 `lzma.h`；其 CI 增加 release 档的测试；链接测试检查各函数不在同一地址 |
+| "访问违例的原因是 C 行上粘连的词"（本轮排查中的第一个结论） | 修掉粘连的词之后崩溃依旧。粘连的词是另一个真实缺陷：MSVC ABI 上 clang 的 C 行把模型词与标准词写成一个词（`-fms-runtime-lib=dll-std=c11`），clang 两者都读不到且不报错，全部 C 单元（655 个对象中的 115 个）声明静态 C 库、以缺省 C 标准编译。既有单元测试以子串计数检查"一个词" | 两处都修：词序改为先标准后模型，测试按整词比较，依赖缓存的键陈述 C 行的形式。结论先于证据的做法不再重复：以映射文件、对象的指令节这类直接读数为准 |
 | 平台组升到 openkal-windows 0.22.1（本轮所做） | openkal-run 写的是 `^0.21.0`，mcpplibs.os 的上界是 `<0.22.0`；组里一个包只有一个版本，引擎拒绝 | 修正回移到 0.21 线（0.21.1）；openkal-musl 0.29.4 写 `^0.21.1`；0.22.1 留作 0.22 线的头 |
 | PR 上的 e2e 即全量 | PR 运行按改动选择（`E2E_SET=pr`），一次推送可能只选中几个脚本 | 合入前对分支手动触发一次全量运行；它查出了 `mcpp why platform` 的一处回归（合并陈述时丢了平台自己的行与提供者），已修 |
 

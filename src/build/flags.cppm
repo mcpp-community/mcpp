@@ -1416,12 +1416,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // AFTER THE STANDARD, AS ON THE C++ LINE. `msvc_base` begins with its own
     // space and the standard's prefix does not: written before it, the two
     // were one word, `-fms-runtime-lib=dll-std=c11`. clang reads no C library
-    // model in that word and no standard, so every C unit of an MSVC-ABI build
-    // named the static C library (`/DEFAULTLIB:libcmt.lib`) beside C++ units
-    // that named the DLL's, and a call through a local import slot of that
-    // link went to the image's first byte. A cache of dependency objects built
-    // before the word was added kept it from view until the toolchain's
-    // revision changed and the objects were built again.
+    // model in that word and no standard, and says nothing: every C unit of an
+    // MSVC-ABI build named the static C library (`/DEFAULTLIB:libcmt.lib`)
+    // beside C++ units that named the DLL's, and was compiled at the
+    // compiler's default C standard. Measured on a build of mcpp itself: 115
+    // of 655 objects, the C units of its three C dependencies.
     f.cc = isMsvcDialect
         ? std::format("{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
                       b_flag)
