@@ -14,7 +14,11 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME="$TMP/mcpp-home"
 MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0 source "$(dirname "$0")/_inherit_toolchain.sh"
 
-MUSL_PAYLOAD="$MCPP_HOME/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++"
+# The musl payload is the one linked from the developer's home, whichever
+# release that is. The probe named 15.1.0 until 2026-11-12, the runners
+# installed a later one, and the script skipped itself on every runner.
+source "$(dirname "$0")/_toolchain_env.sh"
+MUSL_PAYLOAD="$MUSL_GCC_ROOT/bin/x86_64-linux-musl-g++"
 if [[ ! -x "$MUSL_PAYLOAD" ]]; then
     echo "SKIP: no reusable musl-gcc xpkg payload"
     echo "OK"

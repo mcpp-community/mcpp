@@ -9,6 +9,7 @@
 # (that would require glibc/sysroot env activation, which is xlings'
 # subos shim concern, not mcpp's toolchain-resolve feature).
 set -e
+source "$(dirname "$0")/_toolchain_env.sh"
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -21,11 +22,21 @@ mkdir -p "$SANDBOX_HOME/registry/data/xpkgs"
 # predicate (physical location must resolve inside cfg.registryDir), so the
 # seed is deliberately KEPT: it doubles as a live canary — if the fence ever
 # regresses, the machine's gcc breaks loudly and immediately.
-if [[ -d "$HOME/.xlings/data/xpkgs/xim-x-gcc/16.1.0" ]]; then
-    ln -s "$HOME/.xlings/data/xpkgs/xim-x-gcc" \
-          "$SANDBOX_HOME/registry/data/xpkgs/xim-x-gcc"
+# The payload is the one this machine has: in the home mcpp installs into
+# (`mcpp toolchain install gcc <version>`, which is where CI's runners have it)
+# or in the system xlings. The probe named the system xlings and 16.1.0 alone
+# until 2026-11-12, and the script skipped itself on every runner.
+GCC_SEED=""
+for store in "$(dirname "$MCPP_E2E_GCC_ROOT")" "$HOME/.xlings/data/xpkgs/xim-x-gcc"; do
+    if [[ -d "$store/$GCC_VERSION" ]]; then
+        GCC_SEED="$store"
+        break
+    fi
+done
+if [[ -n "$GCC_SEED" ]]; then
+    ln -s "$GCC_SEED" "$SANDBOX_HOME/registry/data/xpkgs/xim-x-gcc"
 else
-    echo "SKIP: system xlings has no gcc 16.1.0"
+    echo "SKIP: neither mcpp's home nor the system xlings has gcc $GCC_VERSION"
     echo "OK"
     exit 77
 fi
@@ -36,7 +47,7 @@ cd "$TMP"
 "$MCPP" new myapp > /dev/null
 cd myapp
 
-cat > mcpp.toml <<'EOF'
+cat > mcpp.toml <<EOF
 [package]
 name        = "myapp"
 version     = "0.1.0"
@@ -45,7 +56,7 @@ standard   = "c++23"
 modules    = true
 import_std = true
 [toolchain]
-linux = "gcc@16.1.0"
+linux = "gcc@${GCC_VERSION}"
 [modules]
 sources = ["src/**/*.cppm", "src/**/*.cpp"]
 [targets.myapp]
@@ -66,9 +77,9 @@ echo "$out" | grep -q 'toolchain'  || { echo "missing toolchain: $out"; exit 1; 
 #    render as `@mcpp/...` — so we match the shortened form
 #    rather than the absolute one. The trailing path components are
 #    what actually prove the toolchain came from mcpp's sandbox.
-echo "$out" | grep -q 'Resolved.*gcc@16.1.0' || {
-    echo "missing Resolved gcc@16.1.0: $out"; exit 1; }
-echo "$out" | grep -q '@mcpp/registry/data/xpkgs/xim-x-gcc/16.1.0/bin/g++' || {
+echo "$out" | grep -q "Resolved.*gcc@${GCC_VERSION}" || {
+    echo "missing Resolved gcc@${GCC_VERSION}: $out"; exit 1; }
+echo "$out" | grep -q "@mcpp/registry/data/xpkgs/xim-x-gcc/${GCC_VERSION}/bin/g++" || {
     echo "Resolved path doesn't reference the mcpp sandbox xpkg: $out"; exit 1; }
 
 echo "OK"

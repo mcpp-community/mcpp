@@ -118,6 +118,14 @@
   its merged fields in this version's first form).
 - An e2e part whose only script does not apply on the machine is a run that
   reported a case, not an empty run.
+- Six e2e scripts run on a runner again. A script that does not apply on a
+  machine leaves with 77 and is reported as a skip; it left with 0 and was
+  reported as a pass, and the coverage check of the first full run named six
+  scripts no runner had run. The probes of 13, 28 and 31 named a payload
+  release or a store the runners no longer have, and read the release from
+  the home now (`_toolchain_env.sh`), as does Mode A of 30, which was left out
+  for the same reason. 650, 653 and 657 need the emsdk payload and run in the
+  job that installs it, beside 981 and 1079.
 
 ## [2026.11.10.2] - 2026-11-10
 
