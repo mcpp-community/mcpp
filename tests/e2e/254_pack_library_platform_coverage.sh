@@ -22,11 +22,15 @@
 #
 # So the silence is as much the feature as the warning, and both are asserted.
 #
-# THE PER-HOST PICKS BELOW MIRROR host_can_serve (registry.cppm:542-566).
-# That is deliberate and it is a tripwire: if mcpp ever gains, say, a
-# macOS-hosted Windows toolchain, this test starts failing — which is the
-# correct outcome, because the table it encodes will have changed and the
-# expectations here have to be re-derived rather than assumed.
+# THE PER-HOST PICKS BELOW MIRROR THE PROVIDERS' `hosts` (data/builtin.toml,
+# which `host_can_serve` reads since 2026.11.12.1). That is deliberate and it
+# is a tripwire: when a provider's hosts change, this test starts failing —
+# which is the correct outcome, because the table it encodes will have changed
+# and the expectations here have to be re-derived rather than assumed. It
+# tripped once, as predicted: the `mingw-llvm` provider (2026.11.10.1) serves
+# the GNU-ABI Windows rows on every host, a macOS host included, and the
+# function this test mirrored then still said a macOS host builds for macOS
+# alone.
 set -e
 
 TMP=$(mktemp -d)
@@ -79,10 +83,10 @@ echo "host platform: $HOST_OS (from target/$host_triple)"
 case "$HOST_OS" in
     linux)   UNSERVABLE=macos   SERVABLE_UNPACKED=windows ;;
     windows) UNSERVABLE=macos   SERVABLE_UNPACKED=linux   ;;
-    # macOS serves exactly one target — "macOS has no Linux-targeting payload at
-    # all", and PE needs a Windows or Linux host — so there is no
-    # servable-but-unpacked platform to name here. Structural, not a gap.
-    macos)   UNSERVABLE=windows SERVABLE_UNPACKED=        ;;
+    # macOS has no Linux-targeting payload (a Linux identity is the graph's
+    # there, which is not this question), and it builds PE through the
+    # MinGW-w64 base package as every host does.
+    macos)   UNSERVABLE=linux   SERVABLE_UNPACKED=windows ;;
 esac
 
 # ── 1. packed, not declared ─────────────────────────────────────────────

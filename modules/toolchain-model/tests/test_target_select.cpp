@@ -134,6 +134,39 @@ UTest an_arm_pattern_takes_the_standard_c_library{"TargetSelect/AnArmPatternTake
     expect(!s.fallback);
     const Ask written{"aarch64-linux-gnu", "aarch64", "linux", "gnu", true};
     auto w = on("linux-aarch64", written);
-    expect(fatal(eq(w.candidates.size(), std::size_t(1))));
     expect(eq(w.identity(), "aarch64-linux-gnu"));
+    expect(eq(provider_of(w), "glibc"));
+    expect(!w.fallback);
+}};
+
+// ONE ENTRY, ONE ARRANGEMENT; A NEW ENTRY CHANGES NO ANSWER (SPEC-016 §3, §4.6).
+// The identity has a native arrangement and a cross one, as two entries. The
+// cross entry stands below the entries that answer `aarch64-linux`, so that
+// request keeps the answer it had before the entry existed, on every host, and
+// only the whole identity reaches the cross arrangement.
+UTest a_cross_arrangement_is_its_own_entry_and_changes_no_answer{"TargetSelect/ACrossArrangementIsItsOwnEntryAndChangesNoAnswer", [] {
+    const Ask written{"aarch64-linux-gnu", "aarch64", "linux", "gnu", true};
+    // On its own architecture: the native entry, and the cross one is a
+    // candidate that host does not have.
+    auto native = on("linux-aarch64", written);
+    expect(fatal(eq(native.candidates.size(), std::size_t(2))));
+    expect(eq(provider_of(native), "glibc"));
+    expect(bool(native.candidates[0].available));
+    expect(eq(native.candidates[1].provider->name, "glibc-sysroot"));
+    expect(!native.candidates[1].available);
+    // From x86_64: the whole identity takes the cross entry, with its base.
+    auto cross = on("linux-x86_64", written);
+    expect(eq(cross.identity(), "aarch64-linux-gnu"));
+    expect(eq(provider_of(cross), "glibc-sysroot"));
+    expect(fatal(cross.provider != nullptr));
+    expect(eq(cross.provider->sysroot, "xim:aarch64-linux-gnu-sysroot@2.44.3"));
+    expect(eq(cross.provider->linkage, "dynamic"));
+    expect(!cross.provider->runner.empty());
+    // The request without an env is answered as before the entry existed.
+    auto plain = on("linux-x86_64", {"aarch64-linux", "aarch64", "linux", "gnu"});
+    expect(eq(plain.identity(), "aarch64-linux-musl"));
+    expect(eq(provider_of(plain), "musl-gcc"));
+    // Elsewhere neither arrangement exists, and the answer is the graph's identity.
+    auto mac = on("macos-aarch64", {"aarch64-linux", "aarch64", "linux", "gnu"});
+    expect(eq(mac.identity(), "aarch64-linux-musl"));
 }};
