@@ -1095,7 +1095,12 @@ export std::string root_position_key(
     auto abiThreads = b.abiThreadsDeclared ? (b.abiThreads ? "1" : "0") : "-";
     std::string abiExceptions = b.abiExceptionsDeclared
         ? (b.abiExceptions ? "1" + b.abiExceptionsModel : "0") : "-";
-    std::string abiLongjmp = b.abiLongjmpDeclared ? b.abiLongjmpModel : "-";
+    // `abi longjmp` needs no field of its own here: it reaches the compile
+    // line through `dialect_cxxflags` (prepare adds the flag there), and this
+    // key is a CROSS-VERSION contract -- a project's plan stays current for an
+    // engine of another release reading it (1068's inner build, the subos's
+    // own engine, must find the graph current). Threads and exceptions have
+    // fields because they are booleans that render no flag of their own.
     if (applies)
         for (auto const& cc : m.conditionalConfigs) {
             if (cc.dialectCxxflags.empty() && !cc.abiThreadsDeclared
@@ -1105,7 +1110,9 @@ export std::string root_position_key(
             dialect.insert(dialect.end(), cc.dialectCxxflags.begin(), cc.dialectCxxflags.end());
             if (cc.abiThreadsDeclared) abiThreads = cc.abiThreads ? "1" : "0";
             if (cc.abiExceptionsDeclared) abiExceptions = cc.abiExceptions ? "1" + cc.abiExceptionsModel : "0";
-            if (cc.abiLongjmpDeclared) abiLongjmp = cc.abiLongjmpModel;
+            // abi longjmp: rendered into dialect_cxxflags by prepare; adding
+            // a field here would orphan every plan a differently-released
+            // engine wrote (measured: 1068 on a self-host shard, twice).
         }
     list("dialect_cxxflags", dialect);
     field("cxx_runtime", b.cxxRuntime);
@@ -1119,7 +1126,6 @@ export std::string root_position_key(
     field("ios_deployment_target", b.iosDeploymentTarget);
     field("abi_threads", abiThreads);
     field("abi_exceptions", abiExceptions);
-    field("abi_longjmp", abiLongjmp);
     field("accel", b.accel);
     field("bmi_schedule", b.bmiSchedule);
     field("jobs", b.jobs);
