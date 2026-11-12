@@ -548,10 +548,12 @@ for c in run.get("cases", []):
 PY
 )"
     rm -f "$record"
+    MTEST_REPORTED=0
     while read -r status ms name why; do
         name="${name%$'\r'}"   # Windows' Python ends a printed line with CR LF
         why="${why%$'\r'}"
         [[ -n "$name" ]] || continue
+        ((++MTEST_REPORTED))
         # A script that skipped itself ran nothing: it is reported as a skip with
         # its reason, which the coverage check reads as "did not run here".
         if [[ "$status" == skip ]]; then
@@ -578,8 +580,9 @@ PY
         done < <(mtest_programs)
     fi
     # A run the set gave nothing ran nothing; any other empty run is mtest's
-    # failure.
-    if [[ $((PASS + FAIL)) -eq 0 ]]; then
+    # failure. A script that skipped itself is a case mtest reported: a part
+    # whose only script does not apply here is not an empty run.
+    if [[ $MTEST_REPORTED -eq 0 ]]; then
         part=(); (( SHARD_TOTAL > 1 )) && part=(--shard "$SHARD_IDX/$SHARD_TOTAL")
         if [[ -n "${E2E_SET:-}" ]] \
            && [[ -z "$(mtest_programs --set "$E2E_SET" ${part[@]+"${part[@]}"})" ]]; then
