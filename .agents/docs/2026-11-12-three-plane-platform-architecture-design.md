@@ -1,14 +1,22 @@
 ---
 subject: architecture
-status: active
+status: superseded
+superseded_by: 2026-11-12-ecosystem-architecture-optimization-design.md
 ---
 
 # The three-plane platform architecture: mcpp × openkal × xim
 
 Date: 2026-11-12
-Status: reference design (a synthesis; nothing in this document adds engine
-behaviour — it names what the merged changes established and what the next
-systems consume)
+Status: superseded by
+[the ecosystem architecture optimization design](2026-11-12-ecosystem-architecture-optimization-design.md),
+which extends sections 1, 2, 4 and 5 into four planes. Section 3 was written
+before the round it describes was checked: its items 2 and 3 did not land in
+the form stated there. A base package is read as a sysroot and the artifact
+names the row's loader (not a loader "folded sysroot-relative" beside the
+payload's own `-B/-L`), and an artifact of another system is not started at all
+(not run as a child whose death is classified). The record of what was
+implemented, with the check that holds each item, is section 15 of the
+superseding design.
 
 ## 1. The statement
 

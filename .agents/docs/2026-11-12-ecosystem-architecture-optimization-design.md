@@ -309,8 +309,9 @@ runner   = { cmd = ["dirun", "--profile", "{pkg:freebsd-disk-image}/dirun.toml",
 | BP6 | 有运行器的身份：BP3–BP5 的产物运行，退出码与输出相符 | — |
 | BP7 | 产物里没有构建机的路径（`PT_INTERP`、`RUNPATH`、调试信息之外的字符串） | 烙入的加载器 |
 
-BP1 与 BP2 的布局部分写进 xpkgindex-update 的 guard，对所有资产生效；BP3–BP7 是基座包专有的作业。**安装检查不可跳过：**
-一个改了某个包的索引 PR，必须在该包声明的每个宿主上真实安装它一次；被跳过的安装检查视为失败。
+BP1、BP2 与 BP7 中仅凭安装后的目录树即可回答的部分，是索引仓库里每个基座包测试模块调用的布局契约
+（`tests/lib/base_package.py`）；BP3–BP7 中需要引擎的部分是基座包专有的作业，随引擎发布之后进入。**配方自己的验证在 CI
+中运行：** 改动直接编辑的配方，在安装作业的每个宿主上运行其模块的 L3 与 L4 测试（15.2）。
 
 镜像一致性：CN 镜像滞后时客户端装到旧字节。修订通道的客户端在摘要不符时回落到另一个镜像并报告，而不是由每个 CI 作业
 手工钉 GLOBAL。
@@ -555,7 +556,7 @@ openkal-opensbi 是写在 SBI 上的实现，提供核心三个接口加 `time` 
 | C11 | 规范一处未改；中文文档不对等；三平面记录的"已成立"与实测不符 | 每项行为变更同 PR 改 SPEC 与两种语言；三平面记录第 3 节改写为引用门禁，或标为由本文取代 | mcpp | — |
 | C12 | 三个镜像包名 | `freebsd-disk-image` 为正名，另两个为别名 | xim | 别名保留一个周期 |
 | C13 | FreeBSD 运行器是手写路径 | 5.5 的运行器描述；`vm-run.py` 在 dirun 等价后退役；补 aarch64 | openkal-freebsd、openkal-platform | README 的旧写法继续可用 |
-| C14 | 索引 PR 的安装检查可跳过 | 5.6：安装检查不可跳过；guard 增加布局检查 | xim、xpkgindex-update | — |
+| C14 | 配方自己的安装后验证（L3、L4）在索引 CI 里只对一个包运行；安装作业只做安装与移除 | 安装作业对改动直接编辑的每个配方运行其模块的 L3、L4；基座包的布局契约（`tests/lib/base_package.py`）进入四个 sysroot 包的模块。第一版写的"安装检查被跳过"不成立，见 15.2 | xim | 编辑配方的 PR 多一步验证 |
 | C15 | dirun 自带测试模块；mcpplibs 下的归档空仓 | 测试改用 mtest；空仓的去留由负责人决定 | dirun | — |
 | C16 | 在评审规则未满足、检查未全绿时以管理员权限合入 | 见决定 D12 | 三个生态 | — |
 
@@ -825,3 +826,50 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 - **按改动选择对数据文件的处理**：内置数据编进引擎后，覆盖图能否把它与读它的用例对应起来，没有核对；5.11 因此把它
   写成"影响全部目标类用例"的保守规则。
 - **三个未定性的 CI 失败**（Windows 访问违例、xcode-27 的 1068、Windows 的 860）仍然没有根因。
+
+## 15. 实施记录（第三版）
+
+本节随实施更新。每一项写明它在哪里、由哪个检查持有；本地测量标明主机。
+
+### 15.1 已实施
+
+| 项 | 位置 | 持有它的检查 |
+|---|---|---|
+| C1：GCC 分支恢复；基座的运行时目录同样到达 C 链接 | mcpp `flags.cppm` | `tests/unit/test_link_line_golden.cpp`；e2e 1080（在 mcpp#924 的旧头上失败） |
+| C2、D1、P11、P12：`glibc` 与 `glibc-sysroot`（优先级 40）两条条目 | mcpp `builtin.toml` | 行表快照（`aarch64-linux` 在三种宿主上的回答不变，新候选排在末尾）；e2e 295、1076 |
+| C3、D3：不由本机加载的动态产物写行的 `loader`，无本机 RUNPATH；基座包单一读法 | mcpp `base.cpp`、`linkmodel.cppm`、`hermetic.cppm` | 金样测试；e2e 1076（解释器、RUNPATH、产物内无本机路径） |
+| C4：sysroot 修订 3 | xlings-res、xim #1146 | 配方的安装钩子与 L4 测试；布局契约 |
+| C5：1076 重写（C、C++、`import std`，动态与静态，经提供者的运行器运行）；不再有"跳过即通过" | mcpp e2e | 能力词 `x86_64-host`：不适用的宿主被排除并由运行报告 |
+| C6、D4：系统表（`uname`）、提供者的 `system-headers`、`tier`、`runner`；平台 `runner.built-as` | mcpp 模式、生成器与平台清单解析；openkal-platform 0.27.0 | 单元测试（polyglot、pack、清单）；`check_system_names.py` |
+| C7：`--systems all` 取系统表，无程序的对写为未覆盖 | mcpp `pack.cppm` | 单元测试；e2e 986、1078 |
+| C8、D6：`abi.longjmp` 与 `exceptions` 不一致时拒绝；声明了才进键 | mcpp `toolchain.cpp`、`project.cppm` | e2e 1079 |
+| C9、D25：另一系统的程序在启动前回答"已构建，未运行"；mcpp#924 的子进程与信号归类已撤回 | mcpp `execute.cppm` | e2e 1077、1040 |
+| C10：系统头文件一个谓词，取所选提供者的 `system-headers`，装不上即拒绝 | mcpp `windows_resources.cpp` | e2e 1075 |
+| D8、D24：提供者的 `runner`，`requires` 在第一次运行时安装，占位 `{sysroot}`、`{pkg:<name>}` | mcpp `platform.cpp`、`execute.cppm` | e2e 1076 |
+| D13：安排的档位进入选择与 `mcpp why target` | mcpp `target_select.cppm` | 单元测试 |
+| D18：bench 只在 main、手动与 `ci:bench` 运行 | mcpp `ci.yml`、`ci-linux.yml` | — |
+| C14：配方自己的验证在索引 CI 中运行 | xim #1146 | `tests/test_ci_architecture.py` |
+| P10：系统名只减不增 | mcpp `.github/tools/check_system_names.py` 与基线 | CI 的文档与仓库检查作业 |
+| P17、5.13：七项重复实现的收敛 | mcpp | 收敛前后同一组单元测试（169 个程序、2627 个用例） |
+
+本地测量（x86_64 Linux，无 KVM，2026-11-12）：交叉 `aarch64-linux-gnu` 的 C、C++ 头文件与 `import std` 程序各自构建并
+经 `mcpp run` 运行，退出码原样返回；`import std` 的静态链接同样。以修订 3 的 sysroot 测得。
+
+### 15.2 实施中对本文的修正
+
+| 本文原先的说法 | 实测 | 修正 |
+|---|---|---|
+| "链接模型需要一个新的单值结构"（5.4） | 单值已经存在：`TargetSide::cAbi.origin` 与 `ToolchainLinkModel`。缺陷是 mcpp#924 在渲染处加了第二处推断，以及带清单的基座走了布局探测的通道 | 不新增结构；删去第二处推断，基座解析处决定一次 |
+| sysroot 修订 2"归档顶层目录与资产名不一致"是缺陷（2.2） | 该配方没有安装钩子，客户端的缺省解包认 `<名>-<版本>`，修订 2 因此装得正确；改为资产名之后，缺省解包反而把目录多套一层 | 修订 3 的顶层目录取资产名，并由配方的 `install()` 安装，与其余基座包一致。这个问题由 C14 新增的步骤在合入前拦下 |
+| 修订 2 有四处缺陷 | 第五处：`libm.a` 是保留了安装期占位符的 ld 脚本，`libm.so` 又被改写为指向它，所以任何 C++ 链接与静态链接都解析不了 libm | 修订 3 以一条规则处理 `lib/` 下的全部 ld 脚本 |
+| "索引 PR 的安装检查有 15 项被跳过"（2.2） | 被跳过的是按路径选择、与该改动无关的套件；安装作业在三个宿主上运行了。缺的是安装之后的验证：各配方模块的 L3、L4 在 CI 中只对一个包运行 | C14 改写；修订通道的 guard 不需要改动 |
+| D5：mcpp#924 拆成多个 PR | 负责人要求每个仓库一个 PR | mcpp#924 续用，其内容按本文重做 |
+| xim-pkgindex 一个 PR | 引擎的 CI 需要索引里已有修订 3；基座准入作业与运行器包又需要已发布的引擎 | 两个 PR：发布前（#1146），发布后 |
+| 运行器模板的 `{image}` 占位（5.5） | 一个模板可以用到两个包 | `{pkg:<name>}` |
+
+### 15.3 尚未实施
+
+按第 10 节的阶段。S4 的 e2e 与 bench 向 mtest 的迁移、mtest 的 M1–M6、dirun 的整形、两个金丝雀与夜间矩阵、CI 的按改动选择与每
+宿主一道闸；S5 的 K7、DOS 的 A 路线、UEFI 平台包与单任务环境的规范明示；S6 的新系统；xim 的第二个 PR（基座准入作业
+BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；openkal-freebsd 的运行器改用 dirun；mcpp#924 三个未定性
+的 CI 失败的根因。

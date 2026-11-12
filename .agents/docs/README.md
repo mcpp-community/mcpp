@@ -26,7 +26,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### architecture
 
-- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — active
+- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
 
 ### build
 
@@ -193,7 +193,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
-- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — active
+- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
 - [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active
 - [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
