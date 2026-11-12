@@ -81,8 +81,15 @@
   program.
 - Android's rows state `execution = "android"`: the kernel is Linux and the
   system is not.
-- The openkal targets' platform is openkal-platform 0.27.0 (from 0.26.0): the
-  same version group, with the runner's `built-as` statement for FreeBSD.
+- The openkal targets' platform is openkal-platform 0.27.1 (from 0.26.0):
+  0.27.0 states the runner's `built-as` for FreeBSD, and 0.27.1 is a patch of
+  the version group. Its implementations retire a handle before closing it
+  (openkal-linux 0.26.1, openkal-macos 0.23.1, openkal-windows 0.21.1): a
+  file one thread opened while another closed a socket was left with a stale
+  handle, and above the C library its reads and writes reached descriptor 0
+  (mcpplibs/openkal-linux#53). openkal-musl 0.29.4 returns what has arrived
+  from a `recv` that follows a `poll`, as `read` does, where it returned one
+  byte (mcpplibs/openkal-musl#52).
 
 ### Fixed
 

@@ -411,7 +411,7 @@ run_under = ["qemu-aarch64"]
 ## 14. 内置平台与目标表
 
 宿主目标(Linux、macOS、Windows、Android、iOS、Emscripten)的约定留在引擎中,无平台包。目标表有平台列:
-`x86_64-openkal`、`aarch64-openkal` 的值为一个确切的平台版本,即当前引擎验证过的版本(mcpp 2026.11.12.1 为 `mcpplibs.openkal-platform@0.27.0`),
+`x86_64-openkal`、`aarch64-openkal` 的值为一个确切的平台版本,即当前引擎验证过的版本(mcpp 2026.11.12.1 为 `mcpplibs.openkal-platform@0.27.1`),
 也是这两个目标的内置支持;选择来源报告为 `built-in`。项目可以以 `[target.<selector>] platform` 选择另一个版本或系列。
 锁中记录的版本不满足内置版本时不被采用,报告写出采用的版本与锁中记录的版本。使用内置版本的构建失败、且已同步的索引中
 有更新版本时,构建以一条 `tip` 写出两个版本与选择它的写法(mcpp >= 2026.11.7.2;2026.11.7.1 的值为系列 `^0.24`)。**已实现**

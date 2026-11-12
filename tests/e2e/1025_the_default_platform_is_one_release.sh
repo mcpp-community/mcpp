@@ -7,9 +7,9 @@
 #
 # Criteria:
 #   A. A project that states no platform builds `x86_64-openkal` over
-#      openkal-platform 0.27.0, from the target table, and mcpp.lock records it.
+#      openkal-platform 0.27.1, from the target table, and mcpp.lock records it.
 #   B. A lock that records another release of it does not decide: the build
-#      says which it takes and which the lock recorded, and records 0.27.0.
+#      says which it takes and which the lock recorded, and records 0.27.1.
 #   C. A platform the project states is taken as it is (a series here).
 set -e
 TMP=$(mktemp -d)
@@ -30,20 +30,20 @@ PY
 
 # A
 "$MCPP" build --target x86_64-openkal > a.log 2>&1 || fail "A: the openkal build failed" a.log
-grep -q 'Platform *openkal-platform 0.27.0' a.log || fail "A: the build does not use openkal-platform 0.27.0" a.log
-[[ "$(locked)" == "0.27.0" ]] || fail "A: mcpp.lock does not record 0.27.0" mcpp.lock
+grep -q 'Platform *openkal-platform 0.27.1' a.log || fail "A: the build does not use openkal-platform 0.27.1" a.log
+[[ "$(locked)" == "0.27.1" ]] || fail "A: mcpp.lock does not record 0.27.1" mcpp.lock
 
 # B
 $PY - <<'PY'
 import re
 text = open("mcpp.lock").read()
-text = re.sub(r'(\[package\."openkal-platform"\][^\[]*?version\s*=\s*")0\.27\.0(")', r'\g<1>0.24.3\2', text, count=1)
+text = re.sub(r'(\[package\."openkal-platform"\][^\[]*?version\s*=\s*")0\.27\.1(")', r'\g<1>0.24.3\2', text, count=1)
 open("mcpp.lock", "w").write(text)
 PY
 [[ "$(locked)" == "0.24.3" ]] || fail "B: the fixture could not edit mcpp.lock" mcpp.lock
 "$MCPP" build --target x86_64-openkal > b.log 2>&1 || fail "B: the openkal build failed" b.log
 grep -q "default; mcpp.lock recorded v0.24.3" b.log || fail "B: the build does not say which release it takes over the lock's" b.log
-[[ "$(locked)" == "0.27.0" ]] || fail "B: mcpp.lock was not rewritten to 0.27.0" mcpp.lock
+[[ "$(locked)" == "0.27.1" ]] || fail "B: mcpp.lock was not rewritten to 0.27.1" mcpp.lock
 
 # C
 cat >> mcpp.toml <<'EOT'
