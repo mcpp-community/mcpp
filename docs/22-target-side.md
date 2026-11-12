@@ -1320,11 +1320,25 @@ A base package is the sysroot of one identity. A platform gives each identity it
 through each provider's `sysroot` ([35](35-platforms.md)); a system whose driver tells its
 architectures apart inside one root (MinGW-w64) is served by one package.
 
+**A base package has one reading (2026.11.12.1+).** Its manifest states that the package root
+is the sysroot, and it is rendered as one (`--sysroot=<root>`) whatever its directories are
+called; the directory layout is probed only for a directory that carries no manifest. Where
+this machine does not load the artifact — the base is another architecture's or another
+system's — the link takes nothing of the toolchain payload's own run-time directories, a dynamic
+artifact names the row's `loader` as its program interpreter (`/lib/ld-linux-aarch64.so.1`), and
+no directory of this machine enters its RUNPATH. Such an artifact runs through a runner, which
+is given the base as `{sysroot}` ([41](41-devices.md)). A native dynamic artifact names the
+base's own loader, where it stands.
+
 The index carries `xim:x86_64-freebsd-sysroot` and `xim:aarch64-freebsd-sysroot` (FreeBSD's base
 system, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
 MinGW-w64 on UCRT, libc++, libunwind and compiler-rt, for x86_64 and aarch64). On a
 `*-windows-gnu` row the latter is clang's sysroot; the `mingw-llvm` provider names it, so every
-host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)).
+host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)). It also carries
+`xim:aarch64-linux-gnu-sysroot` (glibc for arm64 with the kernel headers, libc++ with its module
+sources, and compiler-rt), which the `glibc-sysroot` provider names: on linux-x86_64,
+`--target aarch64-linux-gnu` builds C, C++ and `import std` programs over it, dynamically or
+statically (2026.11.12.1+).
 
 A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and
@@ -1363,8 +1377,9 @@ package needs.
 |---|---|---|---|
 | `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
 | `exceptions` *(mcpp 2026.9.12.3+)* | boolean, or `"wasm"` / `"js"` *(2026.10.30.1+)* | on `os = "emscripten"` only, on the compile line through the dialect flags and on the link: `"wasm"` is `-fwasm-exceptions`, WebAssembly's own exception handling; `"js"` and `true` are `-fexceptions`, the JavaScript-based model. Nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
+| `longjmp` *(mcpp 2026.11.12.1+)* | `"wasm"` or `"js"` | on `os = "emscripten"` only, on the compile line of every C and C++ translation unit and on the link: `"wasm"` is `-sSUPPORT_LONGJMP=wasm`, WebAssembly's own stack switching; `"js"` is `-sSUPPORT_LONGJMP=emscripten`, the JavaScript model and the toolchain's default. Declared on any other row, it is refused. An absent member renders nothing | the same set `threads` reaches |
 
-Both members enter the dependency cache key through the dialect flags, so a
+All three members enter the dependency cache key through the flags they render, so a
 dependency built without one is never reused by a build with it, and one built
 with one exception model is never reused by a build with the other. An unknown
 member, and a value outside the table, are refused naming the values.
@@ -1386,6 +1401,23 @@ Aborted(Assertion failed: Exception thrown, but exception catching is not
 enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or
 -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.)
 ```
+
+**`longjmp = "wasm"` is what makes C's `sigsetjmp`/`siglongjmp` work under
+Emscripten.** With the toolchain's default JavaScript model the pair compiles
+into a stack copy, and a non-local exit over two call levels reads past the
+module's stack and dies at run time. With `-sSUPPORT_LONGJMP=wasm` on both the
+compiles and the link, the pair round-trips. A program whose non-local exits
+run deep also wants a bigger stack; that is a project knob of its own
+(`ldflags = ["-sSTACK_SIZE=..."]`), not an ABI fact, so the engine does not
+render it.
+
+**`longjmp` and `exceptions` name one mechanism.** WebAssembly's exception
+handling carries both the throw and the long jump, and the JavaScript model
+carries both. An unstated `longjmp` follows `exceptions`, as the SDK's own
+default does. A build that states one model for `exceptions` and the other for
+`longjmp` is refused with both statements, before any compile. A declared
+`longjmp` is part of the configuration's key; a project that does not state it
+keeps the key it had.
 
 **Only the root manifest decides.** The switch belongs to the artefact, and the
 root is the only package that builds one. A dependency that writes

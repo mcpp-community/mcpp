@@ -32,7 +32,7 @@ cd "$TMP"
 SRC="$MCPP_HOME/indices/mcpplibs/pkgs/c/chriskohlhoff.asio.lua"
 if [ ! -f "$SRC" ]; then
     echo "SKIP 165_bare_name_cross_namespace_wire_address (no asio descriptor in registry)"
-    exit 0
+    exit 77
 fi
 
 # A `compat`-namespaced package named by its SPEC-001 short name. The

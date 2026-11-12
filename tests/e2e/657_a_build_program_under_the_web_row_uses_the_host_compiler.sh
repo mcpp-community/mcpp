@@ -76,7 +76,7 @@ for d in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-emsdk/*/emscripte
 done
 if [ "$have_emsdk" -ne 1 ]; then
     echo "SKIP: 657 -- no emsdk payload installed (looked under xim-x-emsdk/*/emscripten)"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d)

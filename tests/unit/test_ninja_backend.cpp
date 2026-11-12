@@ -33,6 +33,21 @@ std::size_t count_occurrences(std::string_view haystack, std::string_view needle
     return count;
 }
 
+// The words of a flag string equal to `word`: a flag glued to its neighbour is
+// not one of them.
+std::size_t count_words(std::string_view flags, std::string_view word) {
+    std::size_t count = 0;
+    while (!flags.empty()) {
+        const auto start = flags.find_first_not_of(' ');
+        if (start == std::string_view::npos) break;
+        flags.remove_prefix(start);
+        const auto end = flags.find(' ');
+        if (flags.substr(0, end) == word) ++count;
+        flags.remove_prefix(end == std::string_view::npos ? flags.size() : end);
+    }
+    return count;
+}
+
 std::string escaped_include_flag(const std::filesystem::path& path) {
     auto s = path.string();
     std::string escaped;
@@ -1915,6 +1930,12 @@ UTest crt_word_is_one_word_equal_on_compile_and_link{"NinjaBackendPeRuntime/CrtW
 
             expect(eq(count_occurrences(flags.cxx, want), 1u)) << flags.cxx;
             expect(eq(count_occurrences(flags.cc, want), 1u)) << flags.cc;
+            // A word of its own: `-fms-runtime-lib=dll-std=c11` holds the text
+            // once and states neither the model nor the standard.
+            expect(eq(count_words(flags.cxx, want), 1u)) << flags.cxx;
+            expect(eq(count_words(flags.cc, want), 1u)) << flags.cc;
+            if (row.compiler == mcpp::toolchain::CompilerId::Clang)
+                expect(eq(flags.cc.find("=dll-std"), std::string::npos)) << flags.cc;
             expect(eq(flags.cxx.find(other), std::string::npos));
             expect(eq(flags.cc.find(other), std::string::npos));
 

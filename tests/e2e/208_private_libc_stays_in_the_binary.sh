@@ -101,7 +101,7 @@ NINJA=$(find target -name build.ninja -not -path '*/.build-mcpp/*' | head -1)
 GLIBC_LIB=$(grep -oE '/[^ ",]*/xim-x-glibc/[0-9.]+/lib(64)?' "$NINJA" | head -1 || true)
 if [[ -z "$GLIBC_LIB" ]]; then
     echo "SKIP: this toolchain has no private glibc payload"
-    exit 0
+    exit 77
 fi
 echo "private libc payload: $GLIBC_LIB"
 

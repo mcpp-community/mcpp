@@ -23,6 +23,8 @@ struct StatedProvider {
     int                      priority = 100;
     std::string              toolchain, sysroot, linkage;
     bool                     shorthand = false;   // `[platform]` or `[platform.hosted]`
+    std::string              tier, systemHeaders;
+    std::vector<std::string> runner, runnerHosts, runnerRequires;
 };
 
 // `name` is the platform's name (`platform_name`), the name of every provider
@@ -78,7 +80,8 @@ std::vector<StatedProvider> stated_providers(const Statement& s, std::string_vie
     std::vector<StatedProvider> out;
     for (auto const& p : s.providers)
         out.push_back({ p.name.empty() ? std::string(name) : p.name, p.serves, p.hosts, p.pairs, p.priority,
-                        p.toolchain.empty() ? s.toolchain.value : p.toolchain, p.sysroot, p.linkage, false });
+                        p.toolchain.empty() ? s.toolchain.value : p.toolchain, p.sysroot, p.linkage, false,
+                        p.tier, p.systemHeaders, p.runner.cmd, p.runner.hosts, p.runner.requires_ });
     if (s.targets.set)
         out.push_back({ std::string(name), s.targets.value, {"*"}, {}, s.prioritySet ? s.priority : 100,
                         s.toolchain.value, {}, {}, true });

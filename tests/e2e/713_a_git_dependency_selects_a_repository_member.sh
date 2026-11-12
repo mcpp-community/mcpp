@@ -33,7 +33,7 @@ fi
 
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
-command -v git >/dev/null || { echo "SKIP: git is not installed"; exit 0; }
+command -v git >/dev/null || { echo "SKIP: git is not installed"; exit 77; }
 
 mkdir -p repo/src repo/tool/src
 cat > repo/mcpp.toml <<'EOF'

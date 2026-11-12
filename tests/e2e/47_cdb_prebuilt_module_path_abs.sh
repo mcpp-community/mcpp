@@ -40,7 +40,7 @@ fi
 
 command -v jq >/dev/null 2>&1 || {
     echo "SKIP: jq not on PATH (preinstalled on GitHub-hosted runners)"
-    exit 0
+    exit 77
 }
 
 # jq returns each value JSON-unescaped (\\ → \, etc.). Stage to a temp

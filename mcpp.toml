@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.11.10.2"
+version     = "2026.11.12.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -108,7 +108,7 @@ mcpplibs.mwrap.libc = "17.0.0"
 # is written the same way on every host and nothing is looked for on PATH.
 mcpplibs.mwrap.zlib = "1.3.2"
 mcpplibs.mwrap.zstd = "1.5.7"
-mcpplibs.mwrap.xz   = "5.8.3"
+mcpplibs.mwrap.xz   = "5.8.3.1"
 
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.

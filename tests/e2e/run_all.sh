@@ -59,6 +59,11 @@ echo "MCPP_HOME: $MCPP_HOME"
 
 CAPS=()
 OS="$(uname -s)"
+# x86_64-host: the machine's architecture, for a script that holds a provider
+# whose `hosts` name one (the cross entry of aarch64-linux-gnu is published for
+# linux-x86_64). A script that cannot hold anything elsewhere is excluded by
+# this token, which the run reports; it does not pass by printing a line.
+case "$(uname -m)" in x86_64|amd64) CAPS+=(x86_64-host) ;; esac
 
 case "$OS" in
     Linux)
@@ -274,7 +279,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 KNOWN_CAPS=(android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
             mingw mingw-cross mingw-host-headers msvc musl nasm no-msvc pack patchelf python3
             qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
-            xlings-msvc)
+            x86_64-host xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
@@ -537,14 +542,24 @@ try:
 except (OSError, ValueError):
     sys.exit(0)
 for c in run.get("cases", []):
-    status = {"pass": "pass", "flaky": "pass", "timeout": "timeout"}.get(c.get("status"), "fail")
-    print(status, int(c.get("ms", 0)), c.get("program", c.get("id", "")))
+    status = {"pass": "pass", "flaky": "pass", "timeout": "timeout", "skip": "skip"}.get(c.get("status"), "fail")
+    # The fourth word on: why a skipped script did not apply here (its `SKIP:` line).
+    print(status, int(c.get("ms", 0)), c.get("program", c.get("id", "")), c.get("reason", ""))
 PY
 )"
     rm -f "$record"
-    while read -r status ms name; do
+    MTEST_REPORTED=0
+    while read -r status ms name why; do
         name="${name%$'\r'}"   # Windows' Python ends a printed line with CR LF
+        why="${why%$'\r'}"
         [[ -n "$name" ]] || continue
+        ((++MTEST_REPORTED))
+        # A script that skipped itself ran nothing: it is reported as a skip with
+        # its reason, which the coverage check reads as "did not run here".
+        if [[ "$status" == skip ]]; then
+            ((SKIP++)); report skip "$name" "$ms" "skipped itself: ${why:-no reason given}"
+            continue
+        fi
         TIMINGS+=("$ms $name")
         case "$status" in
             pass) ((PASS++)); report pass "$name" "$ms" "" ;;
@@ -565,8 +580,9 @@ PY
         done < <(mtest_programs)
     fi
     # A run the set gave nothing ran nothing; any other empty run is mtest's
-    # failure.
-    if [[ $((PASS + FAIL)) -eq 0 ]]; then
+    # failure. A script that skipped itself is a case mtest reported: a part
+    # whose only script does not apply here is not an empty run.
+    if [[ $MTEST_REPORTED -eq 0 ]]; then
         part=(); (( SHARD_TOTAL > 1 )) && part=(--shard "$SHARD_IDX/$SHARD_TOTAL")
         if [[ -n "${E2E_SET:-}" ]] \
            && [[ -z "$(mtest_programs --set "$E2E_SET" ${part[@]+"${part[@]}"})" ]]; then
@@ -623,6 +639,12 @@ for test in "$HERE"/[0-9]*.sh; do
         echo "PASS: $name (${_dur})"
         ((PASS++))
         report pass "$name" "$_dur_ms" ""
+    elif [[ $rc -eq 77 ]]; then
+        # The script's own word for "nothing to hold on this machine" (the
+        # `skip_exit` of tests/e2e/mtest.toml): a skip, not a pass.
+        echo "SKIP: $name (skipped itself)"
+        ((SKIP++))
+        report skip "$name" "$_dur_ms" "skipped itself"
     elif [[ $rc -eq 124 ]]; then
         report timeout "$name" "$_dur_ms" "exceeded ${E2E_TEST_TIMEOUT}s"
         # GNU timeout: 124 = killed after deadline (TERM); 137 = SIGKILL after grace.

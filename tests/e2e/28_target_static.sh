@@ -9,16 +9,15 @@
 # it in this test (would be a 200 MB download per CI run).
 set -e
 
-# musl-gcc lives in the workspace toolchain (.xlings.json) once
-# `xlings install -y` is run. CI does this; locally the developer has it
-# from the `.xlings.json` workspace install too.
-if ! command -v x86_64-linux-musl-g++ >/dev/null 2>&1 \
-   && ! [ -x "$HOME/.xlings/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++" ] \
-   && ! [ -x "$HOME/.mcpp/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++" ]
-then
-    echo "SKIP: no musl-gcc 15.1.0 available — not testing --target=*-linux-musl"
+# The musl toolchain is the one this home has (`mcpp toolchain install gcc
+# <version>-musl`; CI's shards install it), whichever release that is. The probe
+# named 15.1.0 until 2026-11-12, the runners installed a later one, and the
+# script skipped itself on every runner.
+source "$(dirname "$0")/_toolchain_env.sh"
+if ! [ -x "$MUSL_GCC_ROOT/bin/x86_64-linux-musl-g++" ]; then
+    echo "SKIP: no musl-gcc payload in this home: not testing --target=*-linux-musl"
     echo "OK"
-    exit 0
+    exit 77
 fi
 
 # Detect installed GNU gcc version for the default-build regression check.
@@ -47,14 +46,14 @@ cat >> mcpp.toml <<EOF
 linux = "gcc@${GNU_GCC_VER}"
 
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@${MUSL_GCC_VERSION}-musl"
 linkage   = "static"
 EOF
 else
-cat >> mcpp.toml <<'EOF'
+cat >> mcpp.toml <<EOF
 
 [target.x86_64-linux-musl]
-toolchain = "gcc@15.1.0-musl"
+toolchain = "gcc@${MUSL_GCC_VERSION}-musl"
 linkage   = "static"
 EOF
 fi

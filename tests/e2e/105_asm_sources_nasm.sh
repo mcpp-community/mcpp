@@ -9,7 +9,7 @@ set -e
 # 2026.10.26.1 ([build] compile_commands); this test reads it.
 export MCPP_COMPILE_COMMANDS=compile_commands.json
 
-[[ "$(uname -m)" == "x86_64" ]] || { echo "SKIP: x86-only NASM"; exit 0; }
+[[ "$(uname -m)" == "x86_64" ]] || { echo "SKIP: x86-only NASM"; exit 77; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

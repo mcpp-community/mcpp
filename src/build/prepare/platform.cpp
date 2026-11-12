@@ -215,22 +215,26 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.defined = true;
         set.rows.push_back(r);
     }
-    auto provider = [&](std::string pname, const std::vector<std::string>& serves, int priority,
-                        std::string_view toolchain, const std::vector<std::string>& hosts,
-                        const std::vector<std::string>& pairs, std::string_view sysroot,
-                        std::string_view linkage) {
+    auto provider = [&](const mp::StatedProvider& sp) {
         target::Provider p;
-        p.name = set.keep(std::move(pname));
-        p.serves = set.keep(serves);
-        p.priority = priority;
-        p.hosts = set.keep(hosts.empty() ? std::vector<std::string>{"*"} : hosts);
-        p.pairs = set.keep(pairs);
-        p.toolchain = set.keep(std::string(toolchain));
-        p.sysroot = set.keep(std::string(sysroot));
-        p.linkage = set.keep(std::string(linkage));
+        p.name = set.keep(sp.name);
+        p.serves = set.keep(sp.serves);
+        p.priority = sp.priority;
+        p.hosts = set.keep(sp.hosts.empty() ? std::vector<std::string>{"*"} : sp.hosts);
+        p.pairs = set.keep(sp.pairs);
+        p.toolchain = set.keep(sp.toolchain);
+        p.sysroot = set.keep(sp.sysroot);
+        p.linkage = set.keep(sp.linkage);
         p.platform = set.keep(std::string(ref));
+        p.tier = set.keep(sp.tier);
+        p.systemHeaders = set.keep(sp.systemHeaders);
+        p.runner = set.keep(sp.runner);
+        p.runnerHosts = set.keep(sp.runnerHosts);
+        p.runnerRequires = set.keep(sp.runnerRequires);
         set.providers.push_back(p);
     };
+    for (auto const& sys : s.systems)
+        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname) });
     // A platform the engine's own providers name (openkal-platform) is served by
     // those; its shorthands are not registered twice.
     const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {
@@ -238,8 +242,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         return r && *r && (*r)->spec.shortName == shortName;
     });
     for (auto const& p : mp::stated_providers(s, name))
-        if (!p.shorthand || !builtin)
-            provider(p.name, p.serves, p.priority, p.toolchain, p.hosts, p.pairs, p.sysroot, p.linkage);
+        if (!p.shorthand || !builtin) provider(p);
     target::define(std::move(set));
 }
 
@@ -996,7 +999,34 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
     auto const& P = state.platform;
     const auto t = target_of(state);
     const auto cfgCtx = platform_cfg_context(state);
-    mp::Statement s = P.active ? state.platformData : mp::Statement{};
+    // THE PROVIDER'S RUNNER STANDS BENEATH EVERY OTHER STATEMENT (SPEC-016 §6):
+    // how an artifact of the arrangement is started when nothing nearer says,
+    // on the hosts the provider names for it.
+    mp::Statement s;
+    if (auto const* p = chosen_provider(state); p && !p->runner.empty()) {
+        const auto host = mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name,
+                                                             mcpp::toolchain::platform::host_arch);
+        const bool here = p->runnerHosts.empty()
+            || std::ranges::any_of(p->runnerHosts, [&](std::string_view h) {
+                   return mcpp::toolchain::target::host_matches(h, host, t.arch);
+               });
+        if (here) {
+            s.runner.cmd.assign(p->runner.begin(), p->runner.end());
+            s.runner.requires_.assign(p->runnerRequires.begin(), p->runnerRequires.end());
+            s.runner.origin = mp::Origin{ mp::Tier::BuiltIn, {}, 0,
+                std::format("the provider '{}' of {}", p->name, state.targetChoice.identity) };
+            s.runner.set = true;
+        }
+    }
+    // The platform's statement is taken whole over it: its fields are merged
+    // field by field, and what a statement of a platform alone holds (the rows
+    // it defines, its providers and systems) is the platform's as it is.
+    if (P.active) {
+        mp::Statement whole = state.platformData;
+        mcpp::platform::merge(s, state.platformData);
+        whole.runner = s.runner;
+        s = std::move(whole);
+    }
     mp::Statement program = state.programPlatform;
     // The root's own program states them as well (applied into its manifest);
     // it is the last program to run, and it speaks for the project.

@@ -29,10 +29,16 @@ under tests/e2e:
              and neither does a longer name that contains it;
   excused    tests/e2e/coverage-exceptions.tsv lists it with the reason no hosted
              runner can run it;
+  owed       tests/e2e/coverage-debt.tsv lists it: it skips itself on every
+             host that starts it (a script leaves with 77 after a `SKIP:` line
+             when it can hold nothing on a machine, and the run reports it as a
+             skip). The list is a debt, and it only shrinks: each entry names
+             what a host lacks, and is removed when a host gains it;
   uncovered  none of these. The check fails.
 
-An exception for a test that ran, or for a test that does not exist, also fails
-the check, so that the list cannot outlive the reason it records.
+An exception or a debt entry for a test that ran, or for a test that does not
+exist, also fails the check, so that neither list can outlive the reason it
+records.
 
 Some claims need a test to pass on particular hosts, not on some host: docs/21
 calls a target row `verified` when CI builds and runs its artefact, and the
@@ -133,6 +139,7 @@ def main() -> int:
     workflows = workflow_tokens([p.read_text(encoding="utf-8")
                                  for p in sorted((root / ".github" / "workflows").glob("*.yml"))])
     exceptions = read_exceptions(root / "tests" / "e2e" / "coverage-exceptions.tsv")
+    debt = read_exceptions(root / "tests" / "e2e" / "coverage-debt.tsv")
     required = read_host_requirements(root / "tests" / "e2e" / "host-requirements.tsv")
 
     ran: dict[str, set[str]] = defaultdict(set)
@@ -165,17 +172,25 @@ def main() -> int:
             counts["ran"] += 1
             if test in exceptions:
                 stale.append(f"{test} is excused but ran on {', '.join(sorted(ran[test]))}")
+            if test in debt:
+                stale.append(f"{test} is listed as owed but ran on {', '.join(sorted(ran[test]))}: "
+                             f"remove it from coverage-debt.tsv")
         elif test in unaffected:
             counts["unaffected"] += 1
         elif named_by_a_workflow(test, workflows):
             counts["job"] += 1
         elif test in exceptions:
             counts["excused"] += 1
+        elif test in debt:
+            counts["owed"] += 1
         else:
             uncovered.append(f"{test}: {'; '.join(sorted(skipped[test])) or 'in no report'}")
     for test in exceptions:
         if test not in tests:
             stale.append(f"{test} is excused but does not exist")
+    for test in debt:
+        if test not in tests:
+            stale.append(f"{test} is listed as owed but does not exist")
     unmet = []
     for test, hosts in sorted(required.items()):
         if test not in tests:
@@ -188,7 +203,7 @@ def main() -> int:
 
     print(f"{len(tests)} tests: {counts['ran']} ran on a shard, {counts['unaffected']} unaffected by "
           f"the change, {counts['job']} run by a dedicated job, {counts['excused']} excused, "
-          f"{len(uncovered)} uncovered")
+          f"{counts['owed']} owed, {len(uncovered)} uncovered")
     for (host, shard), ms in sorted(shard_ms.items()):
         print(f"  {host} shard {shard}: {ms / 60000:.1f} min of tests")
     for line in uncovered:

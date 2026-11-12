@@ -12,7 +12,7 @@ HOST_ARCH="$(uname -m)"
 case "$HOST_ARCH" in
     x86_64)  THIS=x86_64;  OTHER=aarch64 ;;
     aarch64|arm64) THIS=aarch64; OTHER=x86_64 ;;
-    *) echo "SKIP: unmapped arch $HOST_ARCH"; exit 0 ;;
+    *) echo "SKIP: unmapped arch $HOST_ARCH"; exit 77 ;;
 esac
 
 cd "$TMP"

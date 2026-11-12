@@ -311,6 +311,17 @@ struct Triple {
     // -- belongs to such a target; what does is the platform's sysroot or base.
     bool c_library_by_platform() const;
 
+    // WHERE THE ROW'S ARTIFACT RUNS, COMPARED WITH THIS MACHINE (SPEC-016 §6),
+    // asked in one place. `system_is_host`: its execution system is this
+    // machine's -- the question a launch asks, since a kernel refuses or
+    // emulates a program of its own system and another architecture, and gives
+    // a program of another system's call numbers its own meaning for them.
+    // `loads_on_host`: the system and the architecture both -- the question a
+    // check of the artifact's loader and run-time closure asks, since those
+    // describe a process of this machine.
+    bool system_is_host() const;
+    bool loads_on_host() const;
+
     // APPLE, AS ONE QUESTION. `os == "macos"` was the whole of it while macOS
     // was the only Apple row; iOS shares the object format, the linker, the
     // `arm64` spelling and `codesign`, and differs in the SDK and the
@@ -691,6 +702,11 @@ inline Triple host_triple() {
     if (t.os == "linux")        t.env = "gnu";
     else if (t.os == "windows") t.env = "msvc";
     return t;
+}
+
+inline bool Triple::system_is_host() const { return execution_system() == host_triple().os; }
+inline bool Triple::loads_on_host() const {
+    return system_is_host() && arch == mcpp::toolchain::platform::host_arch;
 }
 
 // ── Version pins (single site; §4.6 of the design doc) ───────────────────────

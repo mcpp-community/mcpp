@@ -28,7 +28,7 @@ for h in zlib.h X11/Xlib.h curl/curl.h openssl/ssl.h; do
 done
 if [ -z "$header" ]; then
     echo "SKIP: 891 needs a header that only the host's /usr/include has"
-    exit 0
+    exit 77
 fi
 
 mkdir -p "$TMP/app/src"

@@ -20,7 +20,7 @@ fail() { echo "FAIL: $*"; echo "----"; echo "${out:-}"; exit 1; }
 
 tuple="$(uname -m)-linux-gnu"
 if [[ ! -e "/usr/lib/$tuple/crt1.o" ]]; then
-    echo "SKIP: this host is not a Debian multiarch layout (/usr/lib/$tuple/crt1.o)"; exit 0
+    echo "SKIP: this host is not a Debian multiarch layout (/usr/lib/$tuple/crt1.o)"; exit 77
 fi
 host_glibc=$(getconf GNU_LIBC_VERSION | awk '{print $2}')
 

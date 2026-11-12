@@ -51,7 +51,7 @@ find_llvm() {
 LLVM_VERSION="$(find_llvm || true)"
 if [ -z "$LLVM_VERSION" ]; then
     echo "SKIP: no xim-x-llvm payload on this host to cross-resolve aarch64-macos with"
-    exit 0
+    exit 77
 fi
 echo "using llvm@$LLVM_VERSION"
 

@@ -5,13 +5,16 @@
 # Verifies the contract of each mode by extracting the produced tarball
 # and inspecting the resulting binary + (for non-static) bundled libs.
 #
-# Skipped when musl-gcc isn't installed (Mode A needs it). The default
-# Mode C path runs unconditionally.
+# Mode A needs a musl-gcc payload and is left out where the home has none; the
+# payload is whichever release the home has (_toolchain_env.sh). Its probe named
+# 15.1.0 until 2026-11-12, the runners installed a later one, and Mode A ran on
+# no runner. The default Mode C path runs unconditionally.
 set -e
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME=$HOME/.mcpp
+source "$(dirname "$0")/_toolchain_env.sh"
 
 cd "$TMP"
 "$MCPP" new myapp > /dev/null
@@ -71,7 +74,7 @@ grep -q 'Hello' "$TMP/c-name.log" || {
     cat "$TMP/c-name.log"; echo "Mode C: top-level entry output missing"; exit 1; }
 
 # ─── Mode A (static, musl) ─────────────────────────────────────────────
-musl_gcc="$HOME/.mcpp/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-linux-musl-g++"
+musl_gcc="$MUSL_GCC_ROOT/bin/x86_64-linux-musl-g++"
 if [[ -x "$musl_gcc" ]]; then
     "$MCPP" pack --mode static > "$TMP/pack-a.log" 2>&1 || {
         cat "$TMP/pack-a.log"; echo "Mode A pack failed"; exit 1; }

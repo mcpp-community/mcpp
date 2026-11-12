@@ -53,7 +53,7 @@ base="$(resolved "$work/plain" riscv64-none-elf)"
 case "$base" in
   llvm@*) echo "  ok  baseline: the bare-metal row resolves $base" ;;
   *) echo "SKIP: the bare-metal row did not resolve to llvm here (got '${base:-nothing}')"
-     exit 0 ;;
+     exit 77 ;;
 esac
 
 make_project "$work/declares" 'provides = ["mcpp:kernel-abi=openkal"]'

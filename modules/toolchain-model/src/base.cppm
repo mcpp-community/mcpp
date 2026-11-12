@@ -451,6 +451,10 @@ struct Resolution {
     // What a binding artifact loads: the base's dynamic loader and the
     // directories its RUNPATH names.
     std::filesystem::path  loader;
+    // What a floor's dynamic artifact names as its program interpreter: the
+    // row's `loader`, a path on the machine that runs it (SPEC-016 §6). Empty
+    // for a binding (which names `loader`) and for a static link.
+    std::string            interpreter;
     std::vector<std::filesystem::path> runtimeDirs;
     // Kernel headers the base lacks, supplied by the engine (§2.4, additive).
     std::vector<std::filesystem::path> addedIncludes;

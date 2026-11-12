@@ -857,6 +857,15 @@ names no `windows-aarch64`, so `aarch64-windows-gnu`, a row this mcpp builds,
 gets no runner from it). An image built on a Windows host is not the bytes of one built
 elsewhere (#850): pack trees on Linux or macOS.
 
+**What `all` names is the system table (mcpp 2026.11.12.1+).** Every system
+the table states (`[[platform.system]]`, built-in or a platform's) and every
+system a platform defines a row of for the architecture. A pair no program is
+built for is written as not covered, with the reason, and the pack succeeds for
+the rest. The program of a system the engine holds no convention for is built
+as the identity the platform's runner states for the host pair
+(`runner.built-as`, [35](35-platforms.md)); a pack without `--systems` carries
+the runner of the packing machine's system alone.
+
 **Where it runs.** The pack writes `runs_on` into `mcpp-package.json` and says
 it after `Packed`: `self`, the `<os>-<arch>` pairs the package runs on with
 what it carries, and `with.<runner>`, the pairs it runs on where the machine

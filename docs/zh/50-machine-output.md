@@ -488,7 +488,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（2026.11.10.2 起为 `mcpplibs.openkal-platform@0.26.0`，2026.11.10.1 为 `@0.25.0`，2026.11.8.1 起为 `@0.24.4`，2026.11.7.2 为 `@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
+（2026.11.12.1 起为 `mcpplibs.openkal-platform@0.27.1`，2026.11.10.2 为 `@0.26.0`，2026.11.10.1 为 `@0.25.0`，2026.11.8.1 起为 `@0.24.4`，2026.11.7.2 为 `@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标

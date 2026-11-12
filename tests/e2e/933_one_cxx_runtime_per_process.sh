@@ -21,10 +21,10 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 source "$(dirname "$0")/_toolchain_env.sh"
-[[ "$(uname -s)" == Linux ]] || { echo "SKIP: 933 is about ELF"; exit 0; }
-[[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo "SKIP: no llvm payload"; exit 0; }
+[[ "$(uname -s)" == Linux ]] || { echo "SKIP: 933 is about ELF"; exit 77; }
+[[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo "SKIP: no llvm payload"; exit 77; }
 GLIB="$MCPP_E2E_GCC_ROOT/lib64"
-[[ -e "$GLIB/libstdc++.so.6" && -x "$MCPP_E2E_GCC_ROOT/bin/g++" ]] || { echo "SKIP: no gcc payload"; exit 0; }
+[[ -e "$GLIB/libstdc++.so.6" && -x "$MCPP_E2E_GCC_ROOT/bin/g++" ]] || { echo "SKIP: no gcc payload"; exit 77; }
 
 project() {   # $1 dir, $2 target kind, $3 extra manifest text
     mkdir -p "$1/src" "$1/tests"

@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # requires:
+# resources: machine
 # 1069 — the tests of an unchanged project run without planning (the test fast
 # path, design 2026-11-10 supplement T7).
+#
+# Alone on the machine: a fast path declines when the run-time environment's
+# description is newer than its graph, and the description is the home's, which
+# any mcpp beside this one rewrites when it installs a package. On the day new
+# versions of packages many scripts name entered the index, a script that ran
+# beside this one installed one between two runs here, and the second was
+# planned again (xcode-27, three runs; "the runtime environment's description
+# is newer than test.ninja").
 #
 # A full `mcpp test` records what it planned for every test of the package
 # beside `test.ninja`. The next one admits that record as `mcpp build` admits

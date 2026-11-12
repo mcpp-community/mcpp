@@ -351,11 +351,15 @@ void merge(mp::Statement& b, const mp::Statement& o) {
     if (o.sysroot.set) { b.sysroot = o.sysroot; b.sysrootProvides = o.sysrootProvides; }
     // Field by field: an argv-only statement keeps the platform's `host` and
     // `exclusive`; a table, or a program's `run-host`, states what it states.
+    // `requires` are the packages of THAT command, so a statement that
+    // replaces the command replaces them.
     if (o.runner.set) {
         b.runner.cmd = o.runner.cmd;
+        b.runner.requires_ = o.runner.requires_;
         b.runner.origin = o.runner.origin;
         b.runner.set = true;
     }
+    if (!o.runner.builtAs.empty()) b.runner.builtAs = o.runner.builtAs;
     if (!o.runner.host.empty()) b.runner.host = o.runner.host;
     if (o.runner.exclusiveSet) {
         b.runner.exclusive = o.runner.exclusive;

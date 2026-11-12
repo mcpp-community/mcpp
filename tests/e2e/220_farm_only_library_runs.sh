@@ -161,7 +161,7 @@ if [[ -z "$FARM_LIB" ]]; then
     echo "SKIP: this SubOS farm provides no library the payloads do not already"
     echo "      provide, so there is nothing whose loading proves the farm is"
     echo "      reachable. Install any library into the SubOS to exercise this."
-    exit 0
+    exit 77
 fi
 echo "farm-only library: -l$FARM_LIB  (from $FARM_DIR)"
 

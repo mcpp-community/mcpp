@@ -30,6 +30,8 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
@@ -72,6 +74,38 @@ import mcpp.bmi_cache;
 
 namespace mcpp::build {
 
+// THE SYSTEM'S OWN HEADERS, FOR A ROW WHOSE TOOLCHAIN STATES NONE (SPEC-016
+// §3, `system-headers`). A row whose system the graph supplies has no paired
+// payload, and its compiler carries no headers of the system, so a resource
+// script's `winres.h` reaches neither of the include sources the toolchain
+// states. The provider the selection took names the package that has them.
+//
+// ONE QUESTION, ASKED BY BOTH STEPS THAT READ THE ANSWER: is the script
+// compiled by llvm-rc (which reads no INCLUDE of its own) for a row that
+// states no header source. A row that states its headers -- the SDK's, a
+// paired payload's -- resolves nothing, so preparing it installs no package
+// its build does not read. Where the provider names a package and it cannot
+// be installed, the build is refused with the package's name: a resource
+// compile left to fail on a missing header would name neither.
+static bool resource_headers_wanted(const mcpp::toolchain::Toolchain& tc,
+                                    const mcpp::build::resources::RcTool* tool,
+                                    std::string_view dialectId, bool msvcStyle) {
+    return tool && msvcStyle && tool->name().find("llvm-rc") != std::string::npos
+        && tc.base.msvc.sdkRoot.empty()
+        && mcpp::build::resources::system_include_dirs(tc, dialectId).empty();
+}
+
+static std::expected<std::filesystem::path, std::string> system_headers_root(PrepareState& state) {
+    auto const* p = chosen_provider(state);
+    if (!p || p->systemHeaders.empty()) return std::filesystem::path{};
+    auto dir = package_dir(state, std::string(p->systemHeaders), true);
+    if (!dir)
+        return std::unexpected(std::format(
+            "the provider '{}' of {} takes the system's headers from {}, and {}",
+            p->name, state.targetChoice.identity, p->systemHeaders, dir.error()));
+    return *dir / "include";
+}
+
 // The resource compiler of the plan's resource units, and each unit's flags.
 static std::expected<void, std::string>
 step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
@@ -100,9 +134,17 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     ctx.plan.rcPath  = tool->path;
     ctx.plan.rcStyle = tool->style;
 
+    // Below the toolchain's own include sources, never beside them.
+    std::filesystem::path systemHeaders;
+    if (resource_headers_wanted(*state.tc, &*tool, dialectId, msvcStyle)) {
+        auto headers = system_headers_root(state);
+        if (!headers) return std::unexpected(headers.error());
+        systemHeaders = *headers;
+    }
+
     // UTF-8 input, always. `[package]` metadata is user text and
     // routinely non-ASCII; without this llvm-rc refuses the script
-    // outright ("Non-ASCII 8-bit codepoint can't be interpreted in
+    // outright ("Non-ASCII 8-bit codepage can't be interpreted in
     // the current codepage") rather than mangling it, so a project
     // with a Chinese description could not build at all.
     //
@@ -116,7 +158,7 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     const std::string ip = msvcStyle ? "/I" : "-I";
     std::vector<std::string> systemIncludes;
     if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos)
-        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId))
+        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId, systemHeaders))
             systemIncludes.push_back(ip + dir.string());
     for (auto& ru : ctx.plan.resourceUnits) {
         if (auto target = rsrc::coff_target_flag(*tool, state.tc->targetTriple);
@@ -161,6 +203,54 @@ static std::vector<Subject> resource_subjects(PrepareState& state, BuildContext&
     return subjects;
 }
 
+
+// ─── The per-subject manifest policy: code page and long paths ────────────
+//
+// The predicates step13 applies to every subject, as functions so the gate's
+// 400-line budget holds (split at the boundary the block already had).
+
+static bool subject_declares_own_manifest(const mcpp::manifest::Manifest& M,
+                                          const Subject& S, bool hostToolBuild)
+{
+    return hostToolBuild
+        && std::ranges::any_of(M.resources.files, [&](const auto& f) {
+               const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
+               return mcpp::build::resources::scan_rc(abs).declaresManifest;
+           });
+}
+
+static std::string_view target_code_page(const mcpp::manifest::Target& t,
+                                         bool hostToolBuild, bool ownManifest)
+{
+    if (!t.windowsCodePage.empty()) return t.windowsCodePage;
+    return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+}
+
+// `windows_long_paths` (design 2026-10-16 §11), with the same default: a
+// host tool is long-path aware unless it says otherwise.
+static bool target_long_paths(const mcpp::manifest::Target& t,
+                              bool hostToolBuild, bool ownManifest)
+{
+    const auto& stated = t.windowsLongPaths;
+    if (stated) return *stated;
+    return hostToolBuild && t.is_program() && !ownManifest;
+}
+
+// A test program carries the code page `[test] windows_code_page` gave it,
+// and nothing by default: the host-tool default is a program's.
+static bool target_takes_code_page(const mcpp::manifest::Target& t)
+{
+    return t.is_program() || t.kind == mcpp::manifest::Target::TestBinary;
+}
+
+// Whether an image carries an application manifest of mcpp's: a UTF-8 code
+// page or long paths asked for.
+static bool target_manifested(const mcpp::manifest::Target& t,
+                              bool hostToolBuild, bool ownManifest)
+{
+    return target_code_page(t, hostToolBuild, ownManifest) == "utf-8"
+        || target_long_paths(t, hostToolBuild, ownManifest);
+}
 std::expected<void, std::string> step13_windows_resources(PrepareState& state, BuildContext& ctx) {
     // ─── Windows resources: [resources] → a tracked link input (mcpp#365) ──
     //
@@ -200,6 +290,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // windres), found as the compile step below finds it (E3).
     const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
     const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
+    namespace rsrc = mcpp::build::resources;
+    std::filesystem::path systemHeaders;
+    if (resource_headers_wanted(*state.tc, rcTool ? &*rcTool : nullptr, dialectId, msvcStyle)) {
+        auto headers = system_headers_root(state);
+        if (!headers) return std::unexpected(headers.error());
+        systemHeaders = *headers;
+    }
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
@@ -210,32 +307,16 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                     && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary);
             });
         };
-        const bool ownManifest = hostToolBuild
-            && std::ranges::any_of(M.resources.files, [&](const auto& f) {
-                   const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
-                   return mcpp::build::resources::scan_rc(abs).declaresManifest;
-               });
-        auto codePageOf = [&](const mcpp::manifest::Target& t) -> std::string_view {
-            if (!t.windowsCodePage.empty()) return t.windowsCodePage;
-            return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+        const bool ownManifest = subject_declares_own_manifest(M, S, hostToolBuild);
+        auto codePageOf = [&](const mcpp::manifest::Target& t) {
+            return target_code_page(t, hostToolBuild, ownManifest);
         };
-        // `windows_long_paths` (design 2026-10-16 §11), with the same
-        // defaults: a host tool is long-path aware unless it says otherwise.
         auto longPathsOf = [&](const mcpp::manifest::Target& t) {
-            const auto& stated = t.windowsLongPaths;
-            if (stated) return *stated;
-            return hostToolBuild && t.is_program() && !ownManifest;
+            return target_long_paths(t, hostToolBuild, ownManifest);
         };
-        // A test program carries the code page `[test] windows_code_page`
-        // gave it, and nothing by default: the host-tool default is a
-        // program's.
-        auto takesCodePage = [](const mcpp::manifest::Target& t) {
-            return t.is_program() || t.kind == mcpp::manifest::Target::TestBinary;
-        };
-        // Whether an image carries an application manifest of mcpp's: a
-        // UTF-8 code page or long paths asked for.
+        auto takesCodePage = target_takes_code_page;
         auto manifested = [&](const mcpp::manifest::Target& t) {
-            return codePageOf(t) == "utf-8" || longPathsOf(t);
+            return target_manifested(t, hostToolBuild, ownManifest);
         };
         const bool anyUtf8Image = std::ranges::any_of(M.targets, [&](const auto& t) {
             return active_target(t) && takesCodePage(t) && manifested(t);
@@ -385,7 +466,7 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                     // quoted `"winres.h"` is the toolchain's header, not a file
                     // a build action produces (E3).
                     auto scanIncludes = rcIncludes;
-                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId))
+                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId, systemHeaders))
                         scanIncludes.push_back(d);
                     auto scan = rsrc::scan_rc(rcSrc, scanIncludes);
                     if (scan.versionInfoNamedByString) {

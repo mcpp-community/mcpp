@@ -152,7 +152,9 @@ inline std::string spawn_failed_message(std::string_view program, int e,
 // The hosted sibling of mcpp::freestanding::no_runner_message. It reports what
 // the kernel answered rather than asserting why: on a hosted triple mcpp does
 // not know whether the refusal is a foreign ISA or a file that is not an
-// executable at all, and the example it prints is a user-mode emulator.
+// executable at all. The declaration it prints is the key's shape; which
+// program runs the artifact is the statement of a provider, a platform or the
+// project (SPEC-016 §6), and no program is named here.
 inline std::string unrunnable_message(std::string_view triple,
                                       const std::filesystem::path& artifact, int e) {
     return std::format(
@@ -160,7 +162,7 @@ inline std::string unrunnable_message(std::string_view triple,
         "       The artifact was built for '{}'. Declare how to run it here:\n"
         "\n"
         "           [target.{}]\n"
-        "           runner = [\"qemu-aarch64-static\"]\n"
+        "           runner = [\"<program>\", \"{{}}\"]\n"
         "\n"
         "       The artifact path is appended, or substituted for `{{}}` if the "
         "template contains it.\n"

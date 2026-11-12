@@ -25,7 +25,7 @@ trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
 VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
-[[ -x "$VSWHERE" ]] || { echo "SKIP: no vswhere on this runner"; exit 0; }
+[[ -x "$VSWHERE" ]] || { echo "SKIP: no vswhere on this runner"; exit 77; }
 VSROOT="$("$VSWHERE" -latest -prerelease -products '*' \
     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
     -property installationPath | tr -d '\r')"

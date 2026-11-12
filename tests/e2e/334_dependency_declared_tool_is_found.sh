@@ -76,7 +76,7 @@ PATH_WITHOUT_TOOL="$PATH"
 case ":$PATH_WITHOUT_TOOL:" in
     *":$work/fakepkg/bin:"*) echo "FAIL: fixture leaked onto PATH"; exit 1 ;;
 esac
-command -v demo-tool >/dev/null 2>&1 && { echo "SKIP: a demo-tool already on PATH"; exit 0; }
+command -v demo-tool >/dev/null 2>&1 && { echo "SKIP: a demo-tool already on PATH"; exit 77; }
 
 # `[xlings] deps` resolution needs a real xim package, which this fixture is
 # not. What is asserted instead is the ordering the fix establishes: the lookup

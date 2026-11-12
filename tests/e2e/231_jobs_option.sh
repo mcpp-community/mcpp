@@ -20,7 +20,7 @@ set -e
 if [ -z "${MCPP:-}" ]; then
   _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   MCPP="$(bash "$_root/.github/tools/newest_artifact.sh" "$_root" mcpp 2>/dev/null || true)"
-  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 0; }
+  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 77; }
   case "$MCPP" in /*|?:[/\\]*) ;; *) MCPP="$_root/$MCPP" ;; esac
   export MCPP
 fi

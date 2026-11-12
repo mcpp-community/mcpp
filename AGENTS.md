@@ -77,7 +77,9 @@ MCPP=<abs path of fresh mcpp> bash tests/e2e/<NNN>_<sentence>.sh
 
 - An e2e script is named by the behaviour it asserts, states on line 2 the capabilities it requires
   (`# requires: llvm wine`), opens with the design or issue it verifies and its criteria, and uses
-  an isolated home. Every e2e script runs on some host or is listed in
+  an isolated home. A script that can hold nothing on a machine prints `SKIP: <reason>` and exits
+  77: the run reports a skip, never a pass. A script that skips itself on every host is listed in
+  `tests/e2e/coverage-debt.tsv`, which only shrinks. Every e2e script runs on some host or is listed in
   `tests/e2e/coverage-exceptions.tsv`. The scripts run as mtest programs
   ([`tests/e2e/mtest.toml`](tests/e2e/mtest.toml)).
 - A subsystem's unit tests live in `modules/<x>/tests/` and build against that package alone;

@@ -111,7 +111,10 @@ UTest unrunnable_message_names_kernel_answer_triple_and_key{"RunnerLookup/Unrunn
     expect(ne(msg.find("/x/bin/app"), std::string::npos)) << msg;
     expect(ne(msg.find("built for 'aarch64-linux-musl'"), std::string::npos)) << msg;
     expect(ne(msg.find("[target.aarch64-linux-musl]"), std::string::npos)) << msg;
-    expect(ne(msg.find("runner = [\"qemu-aarch64-static\"]"), std::string::npos)) << msg;
+    // The key's shape, and no program: which one runs the artifact is a
+    // statement of the data (SPEC-016 §6).
+    expect(ne(msg.find("runner = [\"<program>\", \"{}\"]"), std::string::npos)) << msg;
+    expect(eq(msg.find("qemu"), std::string::npos)) << msg;
     expect(ne(msg.find("--no-runner"), std::string::npos)) << msg;
 }};
 

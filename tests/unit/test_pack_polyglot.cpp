@@ -60,11 +60,24 @@ UTest without_windows_the_file_is_a_script_and_each_program_lies_where_its_line_
     expect(ne(script.find("Darwin-aarch64|Darwin-arm64)"), std::string_view::npos));
 }};
 
+// The word a system is selected by is the system table's `uname` (SPEC-016
+// §2.3): a system the table states joins the file with no word of the code.
+UTest a_system_of_the_table_is_selected_by_its_uname{"PackPolyglot/ASystemOfTheTableIsSelectedByItsUname", [] {
+    auto file = pg::assemble("app", { program("linux", "x86_64", "LINUX"),
+                                      program("freebsd", "x86_64", "FREEBSD") });
+    expect(fatal(file.has_value()));
+    expect(ne(file->find("FreeBSD-x86_64|FreeBSD-amd64)"), std::string::npos));
+    expect(ne(file->find("Linux-x86_64|Linux-amd64)"), std::string::npos));
+}};
+
 UTest refuses_what_it_cannot_lay_out{"PackPolyglot/RefusesWhatItCannotLayOut", [] {
     expect(!(pg::assemble("app", {}).has_value()));
     expect(!(pg::assemble("a'b", { program("linux", "x86_64", "x") }).has_value()))
         << "the name is quoted in the script";
-    expect(!(pg::assemble("app", { program("freebsd", "x86_64", "x") }).has_value()));
+    // A system no table states has no `uname` word to be selected by.
+    auto unstated = pg::assemble("app", { program("plan9", "x86_64", "x") });
+    expect(fatal(!unstated.has_value()));
+    expect(ne(unstated.error().find("[[platform.system]]"), std::string::npos)) << unstated.error();
     auto notPe = pg::assemble("app", { program("windows", "x86_64", std::string(256, 'x')) });
     expect(fatal(!notPe.has_value()));
     if (auto&& failed = expect(ne(notPe.error().find("no PE"), std::string::npos)); !failed) failed << notPe.error();

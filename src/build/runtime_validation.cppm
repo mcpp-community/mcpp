@@ -679,29 +679,20 @@ ValidationReport validate_changed_artifacts(
     // `os == "linux"` on purpose -- it IS the kernel -- so every Linux-shaped
     // decision in the tree is right about it except the ones that mean "this
     // machine".
+    // ONE QUESTION FOR EVERY SUCH ROW (SPEC-016 §6): does this machine load the
+    // artifact. An SDK's row, a row of another system and a row of another
+    // architecture all answer no, and the row's data answers it -- Android's
+    // `execution`, a defined row's, the architecture segment. An artifact for
+    // another system says so, since its closure is the one thing not checked.
     if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        tt && tt->has_own_sysroot()) {
+        tt && !tt->loads_on_host()) {
+        if (!before.empty() && tt->c_library_by_platform() && !tt->system_is_host())
+            mcpp::ui::info("note", std::format(
+                "the artifacts are for {}, not this machine: their runtime closure is not "
+                "checked here", tt->execution_system()));
         record_without_rules(plan, before);
         return report;
     }
-    // THE ARTIFACT'S OWN SYSTEM DECIDES (mcpp#911 G5): a row a platform defines
-    // states where its artifacts run, and an artifact for another system is
-    // judged by that system's loader, not this machine's. Its closure is not
-    // checked here, and the build says so rather than calling it a defect.
-    // A row whose C library a platform describes, compared with this machine's
-    // system rather than with a name (E1; the comparison read "linux", so a
-    // row run on its own macOS host was called foreign there). Built-in rows
-    // keep the checks their own providers answer for.
-    if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple); tt)
-        if (auto const sys = tt->execution_system();
-            tt->c_library_by_platform() && sys != mcpp::toolchain::triple::host_triple().os) {
-            if (!before.empty())
-                mcpp::ui::info("note", std::format(
-                    "the artifacts are for {}, not this machine: their runtime closure is not "
-                    "checked here", sys));
-            record_without_rules(plan, before);
-            return report;
-        }
 
     auto doc = read_cache(plan.outputDir);
     bool changedCache = false;
@@ -978,8 +969,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     // machine's search directories do not hold (E1, mcpp#911 N4: a FreeBSD
     // program was compared with the host's glibc).
     if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        tt && tt->c_library_by_platform()
-        && tt->execution_system() != mcpp::toolchain::triple::host_triple().os)
+        tt && !tt->loads_on_host())
         return findings;
 
     // The flags this build hands the linker, as ONE vector, because the

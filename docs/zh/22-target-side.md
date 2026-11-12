@@ -1110,10 +1110,18 @@ std-module-flags  = ["-D__fenv_static="]
 一个基座包是一个身份的 sysroot。平台以各提供者的 `sysroot` 为每个身份指名自己的基座（[35](35-platforms.md)）；驱动能在
 一个根内区分架构的系统（MinGW-w64）由一个包服务。
 
+**基座包只有一种读法（2026.11.12.1+）。** 它的清单陈述包根即 sysroot，所以不论其目录怎样命名，都按 sysroot 渲染
+（`--sysroot=<根>`）；目录布局只对不带清单的目录探测。产物不由本机加载时——基座属于另一架构或另一系统——链接不取工具链
+载荷自身的运行时目录，动态产物以行的 `loader` 为程序解释器（`/lib/ld-linux-aarch64.so.1`），其 RUNPATH 不含本机的任何
+目录。这类产物经运行器运行，运行器以 `{sysroot}` 得到该基座（[41](41-devices.md)）。原生的动态产物仍写基座自己的加载器
+所在的路径。
+
 索引中有 `xim:x86_64-freebsd-sysroot` 与 `xim:aarch64-freebsd-sysroot`（FreeBSD 的基本系统，附 libc++ 的模块源码），
 以及 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind 与 compiler-rt，x86_64 与
 aarch64）。在 `*-windows-gnu` 行上后者是 clang 的 sysroot；`mingw-llvm` 提供者指名它，因此每一台宿主都能构建 GNU ABI 的
-Windows 行（[21](21-the-target-triple.md)）。
+Windows 行（[21](21-the-target-triple.md)）。索引中还有 `xim:aarch64-linux-gnu-sysroot`（arm64 的 glibc，附内核头文件、
+带模块源码的 libc++ 与 compiler-rt），由 `glibc-sysroot` 提供者指名：在 linux-x86_64 上，`--target aarch64-linux-gnu` 以它
+构建 C、C++ 与 `import std` 的程序，动态或静态皆可（2026.11.12.1+）。
 
 构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**：`mcpp::target_libc()`
 返回该包的名字，`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的
@@ -1147,10 +1155,20 @@ WebAssembly 上，每个目标文件、预编译的标准库模块与链接必�
 |---|---|---|---|
 | `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`；在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元，以及链接 |
 | `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
+| `longjmp` *(mcpp 2026.11.12.1+)* | `"wasm"` 或 `"js"` | 只在 `os = "emscripten"` 上，进入每个 C 与 C++ 翻译单元的编译行与链接行：`"wasm"` 为 `-sSUPPORT_LONGJMP=wasm`，即 WebAssembly 自身的栈切换；`"js"` 为 `-sSUPPORT_LONGJMP=emscripten`，即 JavaScript 模型，也是工具链的默认。声明在其余任何行上都会被拒绝。成员缺省时不产生任何 flag | 与 `threads` 相同的那一套 |
 
-两个成员都经由方言 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会
+三个成员都经由它们渲染的 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会
 被启用它的构建复用，以一种异常模型构建的依赖也不会被另一种模型的构建复用。
 未知成员，以及表外的取值，都会被拒绝，并列出可取的值。
+
+**`longjmp = "wasm"` 使 C 的 `sigsetjmp`/`siglongjmp` 在 Emscripten 下可用。** 工具链默认的 JavaScript 模型把这一对编译成
+栈拷贝，越过两层调用的非局部退出会读到模块的栈之外，在运行时终止。编译与链接都带上 `-sSUPPORT_LONGJMP=wasm` 后，这一对
+可以往返。非局部退出很深的程序还需要更大的栈；那是项目自己的旋钮（`ldflags = ["-sSTACK_SIZE=..."]`），不是 ABI 事实，
+所以引擎不渲染它。
+
+**`longjmp` 与 `exceptions` 所指的是同一机制。** WebAssembly 的异常处理同时承载抛出与长跳转，JavaScript 模型也同时承载
+二者。未写 `longjmp` 时它随 `exceptions`，与 SDK 自身的缺省一致。为 `exceptions` 写一种模型、为 `longjmp` 写另一种的构建，
+在任何编译之前被拒绝，并写出两处陈述。声明了的 `longjmp` 是配置键的一部分；未声明它的项目保持原有的键。
 
 **新程序应选 `"wasm"`。** 它的代码比 JavaScript 模型更小、更快，要求宿主支持 WebAssembly 异常处理：Safari 15.2、
 Firefox 100、Chrome 95、Node 17 及以上。`true` 保持自 2026.9.12.3 起的含义，即 JavaScript 模型。依赖的

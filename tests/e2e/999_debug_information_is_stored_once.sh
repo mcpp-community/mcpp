@@ -19,7 +19,7 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
-[ "$(uname -s)" = Linux ] || { echo "SKIP: the split form is checked on Linux (ELF)"; exit 0; }
+[ "$(uname -s)" = Linux ] || { echo "SKIP: the split form is checked on Linux (ELF)"; exit 77; }
 
 mkdir -p app/src
 cd app

@@ -80,7 +80,7 @@ case "$arch" in arm64) arch=aarch64 ;; esac
 case "$(uname -s)" in
     Linux)  row="$arch-linux-gnu" ;;
     Darwin) row="$arch-macos" ;;
-    *)      echo "SKIP: no canonical host row for $(uname -s)"; exit 0 ;;
+    *)      echo "SKIP: no canonical host row for $(uname -s)"; exit 77 ;;
 esac
 printf '\n[target.%s.runners]\napp = ["%s/run-C.sh"]\n' "$row" "$TMP" >> mcpp.toml
 "$MCPP" build > manifest.log 2>&1 || fail "2: the manifest's runner did not settle it" manifest.log

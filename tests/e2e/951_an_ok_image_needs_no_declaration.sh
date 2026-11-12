@@ -40,7 +40,7 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 case "$(uname -m)" in
     x86_64|amd64)  HOST_ARCH=x86_64 ;;
     aarch64|arm64) HOST_ARCH=aarch64 ;;
-    *) echo "SKIP: no ok-image row for $(uname -m)"; exit 0 ;;
+    *) echo "SKIP: no ok-image row for $(uname -m)"; exit 77 ;;
 esac
 T="$HOST_ARCH-openkal"
 

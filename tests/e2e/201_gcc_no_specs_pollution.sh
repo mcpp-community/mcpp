@@ -49,7 +49,7 @@ bin=$(find target -type f -name prog -path '*/bin/*' | head -1)
 
 # `readelf` may be an xvm shim needing a per-tool pin; use the payload's own.
 readelf=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-binutils/*/bin/readelf 2>/dev/null | head -1)
-[[ -x "$readelf" ]] || { echo "SKIP: no payload readelf to inspect with"; exit 0; }
+[[ -x "$readelf" ]] || { echo "SKIP: no payload readelf to inspect with"; exit 77; }
 
 runpath=$("$readelf" -d "$bin" 2>/dev/null | grep -iE 'RUNPATH|RPATH' | sed 's/.*\[\(.*\)\]/\1/' || true)
 

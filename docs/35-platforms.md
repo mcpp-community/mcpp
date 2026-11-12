@@ -203,7 +203,7 @@ manifest,
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.26.0"     # a release, or a series: "openkal-platform@^0.26"
+platform = "openkal-platform@0.27.1"     # a release, or a series: "openkal-platform@^0.27"
 ```
 
 and a build that fails while the default is in use and the synced index holds a
@@ -354,6 +354,53 @@ driver = "compiler"
 **`[platform.link] flags` are words for ld.lld (2026.11.10.1+).** A platform whose
 `driver` is `"compiler"` gives them to no program, and the build says so, naming
 `[platform.build] ldflags`, whose words reach the compiler's link.
+
+**A provider states how its artifacts start, and what a system is called
+(2026.11.12.1+).** Three keys of a provider entry and one table:
+
+```toml
+[[platform.provider]]
+serves         = ["x86_64-haiku"]
+tier           = "preview"                       # of this arrangement; unset: the row's
+system-headers = "xim:haiku-headers@1.0"         # the system's own interfaces, for a step that compiles against them
+runner         = { cmd = ["dirun", "--profile", "{pkg:haiku-disk-image}/dirun.toml", "--", "{}"],
+                   hosts = ["linux-x86_64", "macos-aarch64"],
+                   requires = ["xim:dirun@0.2.0", "xim:haiku-disk-image@1.0"] }
+
+[[platform.system]]
+name  = "haiku"
+uname = "Haiku"                                  # what `uname -s` answers there
+```
+
+A provider's `runner` is the lowest tier of the runner statement: the
+platform's `runner`, a build program's, this machine's `config.toml`, the
+project's `[target.<selector>] runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each
+replace it. `hosts` are the machines the runner exists on (unset: any). In the
+template `{}` is the artifact, `{sysroot}` the base the artifact was linked
+against, and `{pkg:<name>}` the root of the package of that name among
+`requires`; the template's program is looked for in the required packages
+before `PATH`. The packages of `requires` are installed by the first `mcpp
+run` or `mcpp test` that needs them, never by a build.
+
+One provider entry states one arrangement of payloads: a native arrangement and
+a cross one are two entries, each with its `hosts`, base and priority. A new
+entry does not change the answer of a request that was answered before it, so
+it enters below the entries that answer `<arch>-<os>` today
+([SPEC-016 §4](specs/targets-and-providers.md)).
+
+A system that states a `uname` joins a file that carries one program per
+system (`mcpp pack --pkg-format single-file`); the system that states none
+leads the file as its PE. A platform whose runner is built for several systems
+states the identity of each:
+
+```toml
+[platform]
+runner = { cmd = ["okrun", "{}"], hosts = ["linux-x86_64", "freebsd-x86_64"],
+           built-as = { "freebsd-x86_64" = "x86_64-freebsd-musl" } }
+```
+
+`mcpp pack --systems all` takes every system of the table, and writes a pair no
+program is built for as not covered.
 
 `mcpp new <name> --template platform` writes a platform package defining
 `<arch>-<name>`. Reading a platform's manifest checks its statement against the

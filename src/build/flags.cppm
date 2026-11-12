@@ -1412,10 +1412,19 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // `msvc_base` rides the GNU branch too: on the LLVM row it holds the CRT
     // word (`-fms-runtime-lib=*`) and nothing else, since `d.alwaysFlags` is
     // only ever set for the msvc dialect. Empty everywhere else, as before.
+    //
+    // AFTER THE STANDARD, AS ON THE C++ LINE. `msvc_base` begins with its own
+    // space and the standard's prefix does not: written before it, the two
+    // were one word, `-fms-runtime-lib=dll-std=c11`. clang reads no C library
+    // model in that word and no standard, and says nothing: every C unit of an
+    // MSVC-ABI build named the static C library (`/DEFAULTLIB:libcmt.lib`)
+    // beside C++ units that named the DLL's, and was compiled at the
+    // compiler's default C standard. Measured on a build of mcpp itself: 115
+    // of 655 objects, the C units of its three C dependencies.
     f.cc = isMsvcDialect
         ? std::format("{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
                       b_flag)
-        : std::format("{}{}{}{}{}{}{}", msvc_base, d.stdPrefix, c_std, opt_flag,
+        : std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, msvc_base, opt_flag,
                       pic_flag, compile_toolchain_flags, b_flag);
 
     // GAS assembly (.S/.s via the C driver): the asm-safe subset — no -std
@@ -1983,15 +1992,17 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // compiler runtime stands (`compiler_runtime_dir`: clang reads it as its
     // resource directory, gcc through `-B`), and, when it supplies the C++
     // layer, its `ldflags` in place of the driver's own C++ library, which
-    // names the toolchain's.
-    auto base_link_words = [&] {
+    // names the toolchain's. The run-time directory is as much a C link's as a
+    // C++ one's (`kLinkDriverFlagsC` states the same of the driver's own
+    // selection); the C++ library's words belong to the C++ link alone.
+    auto base_link_words = [&](bool cxx) {
         std::string words;
         auto const& L = plan.toolchain.base.layers;
         if (!L.compilerRuntimeDir.empty())
             words += plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
                 ? " -resource-dir=" + ninjaEsc(L.compilerRuntimeDir)
                 : " -B" + ninjaEsc(L.compilerRuntimeDir);
-        if (!L.cxx.empty() && !L.ldflags.empty()) {
+        if (cxx && !L.cxx.empty() && !L.ldflags.empty()) {
             words += " -nostdlib++";
             for (auto const& w : L.ldflags) words += " " + ninja_command_word(w);
         }
@@ -2065,11 +2076,12 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         const std::string baseStatic =
             !plan.toolchain.pairedSysroot.empty() && !layers.cxx.empty() && f.linkage == "static"
             ? " -static" : "";
-        f.ld += baseStatic + base_link_words();
+        f.ld += baseStatic + base_link_words(true);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
         f.ldC = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                             user_ldflags, link_extra, baseStatic);
+        f.ldC += base_link_words(false);
         return f;
     }
 
@@ -2699,7 +2711,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     }
 
     // A BASE PACKAGE'S RUN-TIMES (design 2026-11-10 E5).
-    f.ld += base_link_words();
+    f.ld  += base_link_words(true);
+    f.ldC += base_link_words(false);
 
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY
     // SHAPE HAS BUILT ITS LINE.

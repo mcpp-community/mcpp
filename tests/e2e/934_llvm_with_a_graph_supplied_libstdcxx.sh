@@ -16,11 +16,11 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 source "$(dirname "$0")/_toolchain_env.sh"
-[[ "$(uname -s)" == Linux ]] || { echo "SKIP: 934 uses the Linux gcc payload"; exit 0; }
-[[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo "SKIP: no llvm payload"; exit 0; }
+[[ "$(uname -s)" == Linux ]] || { echo "SKIP: 934 uses the Linux gcc payload"; exit 77; }
+[[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo "SKIP: no llvm payload"; exit 77; }
 G="$MCPP_E2E_GCC_ROOT"
 [[ -e "$G/include/c++/$GCC_VERSION/bits/std.cc" && -e "$G/lib64/libstdc++.so.6" ]] \
-    || { echo "SKIP: no gcc payload with bits/std.cc"; exit 0; }
+    || { echo "SKIP: no gcc payload with bits/std.cc"; exit 77; }
 
 # The provider, as `gcc.libstdcxx`'s install() lays it out.
 P="$TMP/libstdcxx"

@@ -268,10 +268,26 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
                 if (!h) return std::unexpected(h.error());
                 r.hosts = std::move(*h);
                 r.hostsSet = true;
+            } else if (k == "requires") {
+                auto w = strings(val, key);
+                if (!w) return std::unexpected(w.error());
+                r.requires_ = std::move(*w);
+            } else if (k == "built-as") {
+                if (!val.is_table())
+                    return std::unexpected(std::format(
+                        "{} must be a table of \"<os>-<arch>\" = \"<triple>\"", key));
+                for (auto const& [pair, triple] : val.as_table()) {
+                    if (!mcpp::manifest::platform::is_host_pair(pair) || !triple.is_string()
+                        || triple.as_string().empty())
+                        return std::unexpected(std::format(
+                            "{}.{} must name the identity the runner of that host pair is built as, "
+                            "for example \"freebsd-x86_64\" = \"x86_64-freebsd-musl\"", key, pair));
+                    r.builtAs[pair] = triple.as_string();
+                }
             } else {
                 warn(std::format(
-                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, hosts, exclusive",
-                    where, k));
+                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, hosts, "
+                    "exclusive, requires, built-as", where, k));
             }
         }
     } else {
@@ -616,6 +632,13 @@ std::expected<ProviderSpec, std::string> Reader::provider(const toml::Table& t, 
             }
             if (path.empty()) return std::unexpected(std::format("{} is a table without `path`", key));
             p.sysroot = "path:" + absolute(path).generic_string();
+        } else if (k == "runner") {
+            auto r = runner(v, key);
+            if (!r) return std::unexpected(r.error());
+            p.runner = std::move(*r);
+        } else if (k == "tier" || k == "system-headers") {
+            if (!v.is_string()) return std::unexpected(std::format("{} must be a string", key));
+            (k == "tier" ? p.tier : p.systemHeaders) = v.as_string();
         } else if (k == "name" || k == "toolchain" || k == "sysroot" || k == "linkage" || k == "execution"
             || k == "base") {
             if (!v.is_string())
@@ -650,6 +673,8 @@ std::expected<ProviderSpec, std::string> Reader::provider(const toml::Table& t, 
         return std::unexpected(std::format("{}.linkage is static or dynamic", where));
     if (p.base != "platform" && p.base != "none")
         return std::unexpected(std::format("{}.base is \"platform\" or \"none\"", where));
+    if (!p.tier.empty() && p.tier != "verified" && p.tier != "preview" && p.tier != "planned")
+        return std::unexpected(std::format("{}.tier is verified, preview or planned", where));
     return p;
 }
 
@@ -757,6 +782,29 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                 return std::unexpected(std::format("{} must be an integer", key));
             s.priority = static_cast<int>(v.as_int());
             s.prioritySet = true;
+        } else if (k == "system") {
+            if (!v.is_array())
+                return std::unexpected(std::format("{} is an array of tables: write [[platform.system]]", key));
+            std::size_t i = 0;
+            for (auto const& e : v.as_array()) {
+                const auto where = std::format("[[platform.system]] #{}", ++i);
+                if (!e.is_table()) return std::unexpected(std::format("{} must be a table", where));
+                SystemSpec sys;
+                sys.origin = Origin{ tier, file.generic_string(), 0, where };
+                for (auto const& [sk, sv] : e.as_table()) {
+                    if (!contains(kSystemKeys, sk)) {
+                        warn(std::format("{}: '{}' is not a key of a system (ignored); the keys are {}",
+                                         where, sk, list_of(kSystemKeys)));
+                        continue;
+                    }
+                    if (!sv.is_string())
+                        return std::unexpected(std::format("{}.{} must be a string", where, sk));
+                    (sk == "name" ? sys.name : sys.uname) = sv.as_string();
+                }
+                if (sys.name.empty())
+                    return std::unexpected(std::format("{} names no system: write name = \"<os>\"", where));
+                s.systems.push_back(std::move(sys));
+            }
         } else if (k == "define" || k == "provider") {
             if (!v.is_array())
                 return std::unexpected(std::format(

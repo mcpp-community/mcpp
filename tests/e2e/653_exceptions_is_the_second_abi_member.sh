@@ -39,8 +39,7 @@ for d in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-emsdk/*/emscripte
 done
 if [ "$have_emsdk" -ne 1 ]; then
     echo "SKIP: 653 -- no emsdk payload installed (looked under xim-x-emsdk/*/emscripten)"
-    echo "PASS: 653 (skipped)"
-    exit 0
+    exit 77
 fi
 
 echo "== 653/1: a Linux build of a manifest carrying the table is byte-identical to one without =="

@@ -16,6 +16,8 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
 import mcpp.wire;
@@ -754,9 +756,22 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // Apple SDK is not redistributable, so none can, which makes every
         // Apple row like `aarch64-macos` and unlike `x86_64-windows-musl`.
         // Stating it removes the reliance on an empty field.
+        //
+        //
+        // AND AN APPLE ROW A PLATFORM SERVES IS NOT AN SDK'S (2026.11.12.1): the
+        // musl identities of macOS take their system from the platform's
+        // packages and need no SDK. They are listed where their system is this
+        // machine's, as they were while `host_can_serve` answered every Apple
+        // row by the host's system -- then as if a payload produced them, now
+        // as what the data says, the graph's. (They build on every host; the
+        // list and the matrix name them on a macOS host only, as before.)
+        const bool platformServesHere = t->system_is_host() && std::ranges::any_of(
+            mcpp::toolchain::target::providers(), [&](auto const* p) {
+                return !p->platform.empty() && mcpp::toolchain::target::serves(*p, info.canonical);
+            });
         bool graphCouldServe = false;
         if (!planned && !installable_here(*t) && !info.pin.empty()
-            && !t->is_apple()) {
+            && (platformServesHere || !t->is_apple())) {
             auto at = info.pin.find('@');
             auto fam = info.pin.substr(0, at == std::string_view::npos
                                               ? info.pin.size() : at);

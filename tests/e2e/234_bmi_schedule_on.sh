@@ -31,7 +31,7 @@ set -e
 _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ -z "${MCPP:-}" ]; then
   MCPP="$(bash "$_root/.github/tools/newest_artifact.sh" "$_root" mcpp 2>/dev/null || true)"
-  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 0; }
+  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 77; }
 fi
 # ABSOLUTISE WHATEVER WE GOT, not just what we derived. This test `cd`s into a
 # temp directory, so a RELATIVE MCPP — which is what `ls -t target/*/*/bin/mcpp`
@@ -90,7 +90,7 @@ EOF
 # detach-codegen is the GCC strategy. On a machine whose default toolchain
 # resolves to clang the decision is TwoPhase and there is no semaphore at all,
 # so the second contract has nothing to test — say so rather than pass hollowly.
-say_skip_reason() { echo "SKIP: $1"; exit 0; }
+say_skip_reason() { echo "SKIP: $1"; exit 77; }
 
 echo "== 1. builds with bmi_schedule = \"on\" =="
 "$MCPP" build --release --verbose > build.log 2>&1 || {

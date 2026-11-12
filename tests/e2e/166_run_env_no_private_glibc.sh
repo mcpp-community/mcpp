@@ -85,7 +85,7 @@ GLIBC_STORE=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/xim-x-glibc/*/ 2>/dev/null
 if [ -z "$GLIBC_STORE" ]; then
     echo "SKIP (second half): no private glibc payload installed"
     echo OK
-    exit 0
+    exit 77
 fi
 
 cd "$TMP"

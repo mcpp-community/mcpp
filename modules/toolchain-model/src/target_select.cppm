@@ -31,6 +31,11 @@ struct Candidate {
     int             priority = 0;         // after the overrides
     bool            available = false;
     std::string     why;                  // why it is not available here
+    // The tier of the arrangement: the provider entry's, else the row's.
+    std::string_view tier() const {
+        if (provider && !provider->tier.empty()) return provider->tier;
+        return row ? row->tier : std::string_view{};
+    }
 };
 
 struct Context {
@@ -128,6 +133,11 @@ Selection select(std::string_view request, std::string_view arch, std::string_vi
             } else if (row.tier == "planned") {
                 c.available = false;
                 c.why = std::format("{} is planned", row.triple);
+            } else if (p->tier == "planned") {
+                // The arrangement's own tier (SPEC-016 §3): registered intent,
+                // not a payload that exists.
+                c.available = false;
+                c.why = std::format("{} of {} is planned", p->name, row.triple);
             }
             s.candidates.push_back(std::move(c));
         }

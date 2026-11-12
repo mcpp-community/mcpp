@@ -59,7 +59,9 @@ UTest the_words_name_systems_for_an_architecture{"PackSystems/TheWordsNameSystem
     using V = std::vector<std::string>;
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "x86_64"), V{ "linux" }));
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "aarch64"), (V{ "linux", "macos" })));
-    expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux", "macos", "windows" })));
+    // `all` is the system table's answer, in the table's order (SPEC-016 §2.3).
+    expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"),
+              (V{ "linux", "macos", "freebsd", "windows" })));
     expect(eq(mcpp::pack::systems_for({}, "x86_64").size(), 1u));
 }};
 

@@ -29,6 +29,9 @@ import mcpp.toolchain.llvm;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_select;
 
 export namespace mcpp::toolchain {
 
@@ -1296,155 +1299,25 @@ bool is_system_toolchain(const ToolchainSpec& spec) {
 bool host_can_serve(const triple::Triple& target) {
     if (target.empty()) return true;              // host target
 
-    // AN SDK THAT SHIPS ITS OWN SYSROOT IS SERVED WHERE THE SDK IS PUBLISHED,
-    // AND THE ARCH IN THE TRIPLE IS THE GUEST'S.
-    //
-    // Every branch below reasons about a cross payload per host arch, because
-    // that is how a compiler targeting another Linux or another Windows is
-    // published here. An Emscripten or Android SDK is published per HOST and
-    // serves every guest arch from one archive: one `xim:emsdk` compiles for
-    // wasm32 regardless of the machine's arch, and one NDK serves both Android
-    // arches from a single `--target=<arch>-linux-android`.
-    //
-    // Without this the wasm row's own pin was not enough. Measured: with
-    // `emsdk@6.0.9` in the table, `mcpp build --target wasm32-emscripten`
-    // still answered "No toolchain payload here produces it" and listed
-    // seventeen servable targets -- because `target.os` is neither "linux" nor
-    // a Windows form, so control reached a `return false` written for triples
-    // nobody publishes a payload for.
-    //
-    // "WHEREVER" WAS TOO BROAD ONCE, AND THE TARGET MATRIX IS WHAT CAUGHT IT.
-    // The first version returned true unconditionally, which is the same
-    // mistake as the branches it sits above: a predicate correct about the
-    // objects its author had in mind. It was then narrowed to
-    // `mcpplibs::os::is_linux`, because `xim:emsdk` and `xim:android-ndk`
-    // both declared ONLY an `xpm.linux` table -- so on macOS or Windows there
-    // was no payload to install and the honest answer was the same
-    // `host-cannot-serve` every other unpublished combination gets. That
-    // comment named its own expiry: "when a darwin or windows NDK lands in the
-    // index -- upstream publishes both -- this is the one line that changes."
-    //
-    // IT HAS LANDED, SO THIS IS THAT LINE. Both packages now declare
-    // `xpm.linux`, `xpm.macosx` and `xpm.windows`, and the index's own
-    // per-host install jobs are the measurement rather than the declaration:
-    // on macOS and Windows each payload downloads, extracts, passes its
-    // recipe's compiler probe and registers its shims. Two host assumptions
-    // inside those recipes were found by exactly those jobs and fixed there,
-    // which is where a host-shaped packaging defect belongs -- not here.
-    //
-    // Keyed on the target and no longer on the host, because these payloads
-    // are published per host OS and carry every guest arch: one `xim:emsdk`
-    // compiles for wasm32 regardless of the machine's arch, and one NDK serves
-    // both Android arches. The remaining per-host question is whether the
-    // payload EXISTS, and that is the index's answer to give, not a constant
-    // compiled into the engine. A row whose pin the index cannot satisfy on
-    // this host fails at install with the package's own diagnostic, which
-    // names the payload -- strictly better than this function silently
-    // deleting the row from `toolchain list`, which reported a target mcpp
-    // knows as one it has never heard of.
-    if (target.has_own_sysroot()) return true;
-
-    if (target.os == "linux") {
-        if constexpr (mcpplibs::os::is_linux) {
-            // "SELF-CONTAINED" IS ABOUT THE PAYLOAD'S CONTENTS, NOT ABOUT
-            // WHICH HOSTS IT IS PUBLISHED FOR — and this line read it as both.
-            //
-            // A musl payload really does carry its own sysroot, so no host-side
-            // libc is needed. It still has to EXIST for the host running it,
-            // and the cross packages are published per host arch:
-            //
-            //   x86_64-linux-musl-gcc    archs = { "x86_64" }
-            //   aarch64-linux-musl-gcc   archs = { "x86_64", "aarch64" }
-            //
-            // Measured on ubuntu-24.04-arm: `--target x86_64-linux-musl` was
-            // admitted, resolved a package with no aarch64 asset, and failed at
-            // install — `mismatch / build-failed` in the target matrix, twice.
-            //
-            // The native row stays reachable on every arch: `musl-gcc`
-            // publishes both, which is why `aarch64-linux-musl` is `ok` there.
-            const bool crossArch = target.arch != mcpp::toolchain::platform::host_arch;
-            if (target.is_musl())
-                return !crossArch || mcpp::toolchain::platform::host_arch == "x86_64";
-            return !crossArch;
-        }
-        // Non-Linux host: only the self-contained musl payloads can work at
-        // all (nothing else would find a C library). Today exactly one such
-        // payload exists — the windows-hosted canadian cross, built per host
-        // arch — so an arch-crossing combination stays unserviceable until one
-        // is published. macOS has no Linux-targeting payload at all.
-        return mcpplibs::os::is_windows
-            && target.is_musl()
-            && target.arch == mcpp::toolchain::platform::host_arch;
-    }
-    // THE mingw CROSS IS PUBLISHED FOR ONE HOST ARCH. `mingw-cross-gcc`
-    // declares `archs = { "x86_64" }`, so a Linux host that is not x86_64
-    // cannot obtain it — measured on ubuntu-24.04-arm, where the row was
-    // listed and its refusal carried no reason at all (`unsupported / other`).
-    if (target.is_windows_gnu()) {
-        if constexpr (mcpplibs::os::is_windows) return true;
-        return mcpplibs::os::is_linux
-            && mcpp::toolchain::platform::host_arch == "x86_64";
-    }
-    // PE + musl HAS NO PAYLOAD ON ANY HOST, INCLUDING WINDOWS.
-    //
-    // `triple::pin_is_capability()` already says so — no gcc emits a PE with a
-    // musl C library, and LLVM cannot spell the triple — and chapter 16 states
-    // it in those words: "A payload for it does not exist on any host; its
-    // system can only come from a dependency graph."
-    //
-    // This line disagreed, on exactly one host. Measured on windows-2022,
-    // payload system:
-    //
-    //     c-abi      musl      (payload)
-    //     c++-abi    msvc-stl  (payload)
-    //     lld-link: error: undefined symbol: __main
-    //     lld-link: error: undefined symbol: __mingw_vfprintf
-    //
-    // — musl's C library, MSVC's STL and MinGW's CRT symbols in one link. On
-    // Linux the same cell already answered `host-cannot-serve`, which is the
-    // right answer everywhere.
-    //
-    // The graph path is untouched: this refusal is held and released only
-    // when nothing supplies the target's system, and `graph × windows-musl` is
-    // `ok` on both hosts.
-    if (target.is_pe() && target.is_musl()) return false;
-    if (target.os == "windows") return bool(mcpplibs::os::is_windows);
-    // APPLE, AND ONE ARM FOR BOTH OF ITS PLATFORMS.
-    //
-    // This read `os == "macos"`, which was the same question while macOS was
-    // the only Apple target mcpp had. An iOS target then fell through to the
-    // `return false` at the end of this function -- on EVERY host, including
-    // the one that serves it.
-    //
-    // The consequence was not a refused build: the SDK gate in prepare answers
-    // before this one. It was `toolchain list`, which drops a row this says no
-    // host can serve -- so the three iOS rows were absent from the list on
-    // macOS, and present on linux-x86_64 for the wrong reason (see
-    // `graphCouldServe` in mcpp.toolchain.lifecycle). Measured as a
-    // target-matrix scan that reached three fewer cells on linux-aarch64 than
-    // the expected table declares.
-    //
-    // `is_apple()` is the predicate the table already carries, and until now
-    // it had no reader at all.
-    if (target.is_apple())      return bool(mcpplibs::os::is_macos);
-
-    // Bare metal: every host can serve it, and that is a property of the
-    // toolchain rather than a claim about payload coverage. clang and lld are
-    // cross-compilers by construction — one binary emits every target it was
-    // built with — so a freestanding target needs NO per-host cross payload,
-    // unlike every hosted case above, which needs a C library that only exists
-    // for some (host, target) pairs.
-    //
-    // Serviceable is not the same as complete: a target with no C library
-    // still links only `-nostdlib` programs. That gap belongs to the ecosystem
-    // (a libc wrapper package), and saying `false` here would hide it behind
-    // "this host cannot build it", which is the wrong diagnosis.
-    if (target.is_freestanding()) return true;
-    // An ok image the same way: clang and lld emit it on every host, and what
-    // the image holds above `kal_*` is the graph's.
-    if (target.loader_supplies_os()) return true;
-
-    return false;
+    // THE DATA ANSWERS (SPEC-016 §3): a provider that brings its own payloads
+    // serves the identity, and its `hosts` name this machine. The question is
+    // about payloads, so a provider a platform package implements is not
+    // counted -- whether the graph supplies the system is asked where the
+    // graph is known. Which hosts a payload exists for is a fact of the index,
+    // written once beside the provider; this function names no system and no
+    // architecture.
+    const auto host = mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name,
+                                                         mcpp::toolchain::platform::host_arch);
+    const auto identity = target.str();
+    for (auto const* p : mcpp::toolchain::target::providers())
+        if (p->platform.empty() && mcpp::toolchain::target::serves(*p, identity)
+            && mcpp::toolchain::target::available_on(*p, host, target.arch))
+            return true;
+    // A triple no row defines is a freestanding one the driver emits by
+    // itself (clang and lld are cross-compilers by construction), or an ok
+    // image, whose every part above `kal_*` is the graph's.
+    if (!mcpp::toolchain::target::find_row(identity)) return target.is_freestanding();
+    return target.loader_supplies_os();
 }
 
 std::vector<AvailableIndex> available_toolchain_indexes() {

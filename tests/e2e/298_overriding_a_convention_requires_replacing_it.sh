@@ -46,7 +46,7 @@ llvmver="$("$MCPP" toolchain list --format json 2>/dev/null \
            | jq -r '[.data.toolchains[] | select(.family=="llvm") | .version][0] // empty' | tr -d '\r')"
 if [ -z "$llvmver" ]; then
     echo "SKIP: llvm is not installed here, and this test is about declaring it"
-    exit 0
+    exit 77
 fi
 
 fail=0
@@ -118,7 +118,7 @@ pinned="$(pick "$hostArch")"
 [ -n "$pinned" ] || pinned="$(pick "")"
 if [ -z "$pinned" ]; then
     echo "SKIP: no target row here is served by a non-llvm convention"
-    exit 0
+    exit 77
 fi
 
 printf '[package]\nname    = "convprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefault = "llvm@%s"\n' \
@@ -152,7 +152,7 @@ case "$reason" in
     fail=1 ;;
   *)
     echo "SKIP: $pinned refused under '$reason', which is not the rule this test is about"
-    exit 0 ;;
+    exit 77 ;;
 esac
 
 # AND IT POINTS AT THE WAY OUT. A refusal that names no replacement leaves

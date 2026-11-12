@@ -27,6 +27,7 @@ import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_select;
 import mcpp.toolchain.target_schema;
 import mcpp.ui;
 import mcpp.invocation;
@@ -285,24 +286,59 @@ bool provides_c_abi(const tb::Statement& s, std::string* impl) {
     return false;
 }
 
-// The directory a package statement names, installed through the channel a
-// row's toolchain pin uses (and `MCPP_NO_AUTO_INSTALL` / offline are the
-// fetcher's to decide, as they are there).
+// The directory a package statement names: where its payload stands, and,
+// when `install`, installed through the channel a row's toolchain pin uses
+// (`MCPP_NO_AUTO_INSTALL` and offline are the fetcher's to decide, as they
+// are there). One resolution for every statement that names a package -- a
+// base, the system's headers, a runner's packages.
 std::expected<fs::path, std::string>
-package_dir(PrepareState& state, const std::string& ref) {
-    auto cfg = state.get_cfg(true);
-    if (!cfg) return std::unexpected(cfg.error());
-    mcpp::fetcher::Fetcher f(**cfg);
+package_dir_in(const mcpp::config::GlobalConfig& cfg, const std::string& ref, bool install) {
+    auto xl = mcpp::config::make_xlings_env(cfg);
+    if (!install) {
+        if (auto d = mcpp::provider::payload(*mcpp::provider::open(xl), mcpp::provider::parse_ref(ref)))
+            return *d;
+        return std::unexpected(std::format("the package {} is not installed", ref));
+    }
+    mcpp::fetcher::Fetcher f(cfg);
     mcpp::fetcher::InstallProgressHandler progress;
     if (auto p = f.resolve_xpkg_path(ref, mcpp::fetcher::PayloadIntent::Use, &progress))
         return p->root;
-    auto xl = mcpp::config::make_xlings_env(**cfg);
     if (auto d = mcpp::provider::payload(*mcpp::provider::open(xl), mcpp::provider::parse_ref(ref)))
         return *d;
     return std::unexpected(std::format("the package {} could not be installed", ref));
 }
 
 } // namespace
+
+std::expected<fs::path, std::string>
+package_dir(PrepareState& state, const std::string& ref, bool install) {
+    auto cfg = state.get_cfg(true);
+    if (!cfg) return std::unexpected(cfg.error());
+    return package_dir_in(**cfg, ref, install);
+}
+
+std::expected<fs::path, std::string> package_root(const std::string& ref, bool install) {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/true);
+    if (!cfg) return std::unexpected(cfg.error().message);
+    return package_dir_in(*cfg, ref, install);
+}
+
+const mcpp::toolchain::target::Provider* chosen_provider(const PrepareState& state) {
+    if (state.targetChoice.provider.empty()) return nullptr;
+    const auto host = mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name,
+                                                         mcpp::toolchain::platform::host_arch);
+    const mcpp::toolchain::target::Provider* named = nullptr;
+    for (auto const* p : mcpp::toolchain::target::providers()) {
+        if (p->name != state.targetChoice.provider
+            || !mcpp::toolchain::target::serves(*p, state.targetChoice.identity))
+            continue;
+        const auto dash = state.targetChoice.identity.find('-');
+        if (mcpp::toolchain::target::available_on(*p, host, state.targetChoice.identity.substr(0, dash)))
+            return p;
+        if (!named) named = p;
+    }
+    return named;
+}
 
 // THE ONE RESOLUTION (§4.2 steps 5-7) for the rows whose base the engine
 // renders itself: a gnu-sysroot (Linux), and the identity and report of every
@@ -410,7 +446,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         && (stmt->form == tb::Form::Package || stmt->form == tb::Form::Path)) {
         fs::path dir = stmt->form == tb::Form::Path ? fs::path(stmt->path) : fs::path{};
         if (stmt->form == tb::Form::Package) {
-            auto p = package_dir(state, stmt->text);
+            auto p = package_dir(state, stmt->text, true);
             if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
                                                        tt->str(), stmt->text, p.error()));
             dir = *p;
@@ -460,15 +496,17 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
             return std::unexpected(missing_path_message(*tt, *stmt));
         }
     } else {
-        auto p = package_dir(state, stmt->text);
+        auto p = package_dir(state, stmt->text, true);
         if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
                                                    tt->str(), stmt->text, p.error()));
         dir = *p;
     }
     tc.base.layers = {};
-    if (auto b = read_base_package(dir, tc.base.layers); !b) {
+    const auto basePackage = read_base_package(dir, tc.base.layers);
+    if (!basePackage) {
         refusal::record(refusal::Code::TargetBase);
-        return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text, b.error()));
+        return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text,
+                                           basePackage.error()));
     }
     const auto ecosystemLinux = tc.base.payload ? tc.base.payload->linuxInclude : fs::path{};
     const bool native = tt->os == "linux" && tt->arch == mcpp::toolchain::platform::host_arch
@@ -481,7 +519,11 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     std::vector<fs::path> evidence;
     std::vector<fs::path> hostLibcDirs;
     std::string impl;
-    if (tb::is_payload_layout(dir)) {
+    // A BASE PACKAGE HAS ONE READING (SPEC-002 §2.5): its manifest states that
+    // the package root is the sysroot, so it is rendered as one whatever its
+    // directories are called. The layout is consulted only for a directory
+    // that states nothing about itself.
+    if (!*basePackage && tb::is_payload_layout(dir)) {
         // The ecosystem's own layout: a glibc package (`xim:glibc@2.39`). It
         // is linked as the default base is, from its own directories.
         tc.base.payload = tb::payload_layout_paths(dir, ecosystemLinux);
@@ -538,6 +580,22 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
             && !fs::exists(dir / "usr" / "include" / "linux" / "limits.h", ec))
             tc.base.addedIncludes.push_back(ecosystemLinux);
     }
+
+    // THE LOADER AN ARTIFACT NAMES IS A PATH ON THE MACHINE THAT RUNS IT
+    // (SPEC-016 §6). A native dynamic link names the base's own loader, where
+    // it stands; an artifact this machine does not load names the row's
+    // `loader`, and no directory of this machine enters it.
+    tc.base.interpreter.clear();
+    if (!native && !staticLink)
+        if (auto const* r = mcpp::toolchain::target::find_row(tt->str()))
+            tc.base.interpreter = std::string(r->loader);
+    // THE PAYLOAD'S RUN-TIME DIRECTORIES ARE ITS HOST'S. A retargetable driver
+    // discovers them for the machine it runs on (`lib/<host triple>`), and a
+    // base of another machine takes none of them: on the link they precede the
+    // base's own (measured: the x86_64 libatomic.a ahead of the sysroot's on an
+    // aarch64 link), and in the artifact they are a RUNPATH of this machine.
+    // Decided here, where the base is resolved, so no renderer asks again.
+    if (!native && mcpp::toolchain::is_clang(tc)) tc.linkRuntimeDirs.clear();
     // A base package's own `provides` is its declaration, as a statement's is.
     if (tc.base.libc.empty() && !tc.base.layers.cAbi.empty()) tc.base.libc = tc.base.layers.cAbi;
     // ITS C++ RUN-TIME STANDS WHERE THE PAYLOAD'S WOULD (E5): the std module is

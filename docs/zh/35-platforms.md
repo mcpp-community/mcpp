@@ -168,7 +168,7 @@ error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-p
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.26.0"     # 一个版本,或一个系列:"openkal-platform@^0.26"
+platform = "openkal-platform@0.27.1"     # 一个版本,或一个系列:"openkal-platform@^0.27"
 ```
 
 使用默认平台的构建失败、且已同步的索引中有更新版本时,最后输出一行 `tip:`,写出两个版本与上面这一行。
@@ -292,6 +292,42 @@ driver = "compiler"
 
 **`[platform.link] flags` 是给 ld.lld 的词（2026.11.10.1+）。** `driver` 为 `"compiler"` 的平台不把它们交给任何程序，构建
 会说明这一点，并指名 `[platform.build] ldflags`——后者的词进入编译器的链接。
+
+**提供者陈述其产物怎样启动，以及一个系统叫什么（2026.11.12.1+）。** 提供者条目的三个键与一张表：
+
+```toml
+[[platform.provider]]
+serves         = ["x86_64-haiku"]
+tier           = "preview"                       # 这一安排的档位；未写时为行的档位
+system-headers = "xim:haiku-headers@1.0"         # 系统自身接口的头文件，供对它们编译的步骤读取
+runner         = { cmd = ["dirun", "--profile", "{pkg:haiku-disk-image}/dirun.toml", "--", "{}"],
+                   hosts = ["linux-x86_64", "macos-aarch64"],
+                   requires = ["xim:dirun@0.2.0", "xim:haiku-disk-image@1.0"] }
+
+[[platform.system]]
+name  = "haiku"
+uname = "Haiku"                                  # `uname -s` 在该系统上的回答
+```
+
+提供者的 `runner` 是运行器陈述的最低一级：平台的 `runner`、构建程序的、本机 `config.toml` 的、项目的
+`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
+模板中 `{}` 是产物，`{sysroot}` 是产物链接时所用的基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在
+`requires` 的包中查找，再查 `PATH`。`requires` 的包由第一次需要它们的 `mcpp run` 或 `mcpp test` 安装，构建不安装。
+
+一条提供者条目陈述一种载荷安排：原生安排与交叉安排是两条条目，各有自己的 `hosts`、基座与优先级。新增的条目不改变
+此前已有回答的请求，所以它以低于现有 `<arch>-<os>` 回答的优先级进入
+（[SPEC-016 §4](../specs/targets-and-providers.md)）。
+
+陈述了 `uname` 的系统可进入每个系统一个程序的单文件（`mcpp pack --pkg-format single-file`）；未陈述的系统，其程序是
+文件开头的 PE。运行器为多个系统构建的平台，陈述各自的身份：
+
+```toml
+[platform]
+runner = { cmd = ["okrun", "{}"], hosts = ["linux-x86_64", "freebsd-x86_64"],
+           built-as = { "freebsd-x86_64" = "x86_64-freebsd-musl" } }
+```
+
+`mcpp pack --systems all` 取表中的全部系统，没有程序可构建的对写为未覆盖。
 
 `mcpp new <名> --template platform` 生成一个定义 `<arch>-<名>` 的平台包。读取平台清单时按行检查其语句：定义内置行、
 同一行定义两次是错误，无论平台在何处被读取；不服务任何行的提供者、以同一优先级服务同一身份的两个提供者是平台自身构建的

@@ -30,6 +30,14 @@
 #                   is not derived from the identity (`x86_64-unknown-freebsd14.0`)
 #   family          the system's family, `unix` or `windows` (`cfg(unix)`); a
 #                   system the engine has always known answers it by convention
+#   loader          the program interpreter a dynamic program of the row names: the
+#                   path on the machine that runs it. A link whose artifact this
+#                   machine does not load writes it; a native link writes the
+#                   payload's own loader
+#   execution       the system the row's artifacts run on, when it is not the os
+#                   segment (`android`: the kernel is Linux, the system is not)
+#   object-format, data-model, exe-suffix, shared-suffix
+#                   facts of a system the engine's conventions do not answer
 #   march, mabi, code-model, multilib, flags, link-emulation
 #                   the ISA profile of a bare-metal row: `-march`, `-mabi`,
 #                   `-mcmodel` (empty: the driver's default), the multilib
@@ -51,16 +59,37 @@
 #                   toolchain ships the whole sysroot itself
 #   linkage         the default linkage, `static` or `dynamic`
 #   platform        a platform package that implements it (SPEC-013)
+#   tier            the tier of this arrangement, when it differs from the row's
+#   system-headers  the package whose headers state the system's own interfaces,
+#                   read by the steps that compile against them (resources)
+#   runner          how an artifact of the arrangement is started when nothing
+#                   nearer says: `{ cmd = [argv], hosts = [...], requires = [...] }`.
+#                   `{}` is the artifact, `{sysroot}` the arrangement's base;
+#                   `requires` are installed on the first run, never by a build
+#
+# ONE ENTRY STATES ONE ARRANGEMENT OF PAYLOADS. A native arrangement and a cross
+# one are two entries, each with its `hosts`; an entry whose facts depend on the
+# host it is read on is two entries written as one. A NEW ENTRY DOES NOT CHANGE
+# THE ANSWER OF A REQUEST THAT WAS ANSWERED BEFORE IT: it enters below the
+# priority of the entries that answer `arch-os` today (SPEC-016 §4.7).
+#
+# System keys (`[[platform.system]]`)
+#   name            the os segment the system's rows carry
+#   uname           the word `uname -s` answers there; a file that carries one
+#                   program per system selects by it, and a system without the
+#                   key joins no such file
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
 [[platform.define]]
 triple   = "x86_64-linux-gnu"
+loader   = "/lib64/ld-linux-x86-64.so.2"
 tier     = "verified"
 standard = true
 
 [[platform.define]]
 triple   = "x86_64-linux-musl"
+loader   = "/lib/ld-musl-x86_64.so.1"
 tier     = "verified"
 standard = true
 
@@ -70,11 +99,13 @@ standard = true
 # (SPEC-009 §10.7).
 [[platform.define]]
 triple   = "aarch64-linux-gnu"
+loader   = "/lib/ld-linux-aarch64.so.1"
 tier     = "preview"
 standard = true
 
 [[platform.define]]
 triple   = "aarch64-linux-musl"
+loader   = "/lib/ld-musl-aarch64.so.1"
 tier     = "verified"
 standard = true
 
@@ -126,6 +157,7 @@ standard = false
 
 [[platform.define]]
 triple   = "riscv64-linux-musl"
+loader   = "/lib/ld-musl-riscv64.so.1"
 tier     = "planned"
 standard = true
 
@@ -135,11 +167,13 @@ standard = true
 # an explicit `[target.<row>] toolchain` opts in early.
 [[platform.define]]
 triple   = "i686-linux-musl"
+loader   = "/lib/ld-musl-i386.so.1"
 tier     = "planned"
 standard = true
 
 [[platform.define]]
 triple   = "i686-linux-gnu"
+loader   = "/lib/ld-linux.so.2"
 tier     = "planned"
 standard = true
 
@@ -171,6 +205,7 @@ standard = false
 # COMPAT_FREEBSD14, on 15.
 [[platform.define]]
 triple       = "x86_64-freebsd"
+loader       = "/libexec/ld-elf.so.1"
 family       = "unix"
 tier         = "preview"
 standard     = true
@@ -178,6 +213,7 @@ clang-triple = "x86_64-unknown-freebsd14.0"
 
 [[platform.define]]
 triple       = "aarch64-freebsd"
+loader       = "/libexec/ld-elf.so.1"
 family       = "unix"
 tier         = "preview"
 standard     = true
@@ -363,12 +399,14 @@ link-emulation = "elf_i386"
 
 [[platform.define]]
 triple   = "aarch64-linux-android"
+execution = "android"
 tier     = "verified"
 standard = true
 exact    = true
 
 [[platform.define]]
 triple   = "x86_64-linux-android"
+execution = "android"
 tier     = "verified"
 standard = true
 exact    = true
@@ -417,8 +455,7 @@ standard = true
 # which serves the musl identities of every system, 50; other conventions 10; a
 # base package beside llvm where a payload of the system's own exists too, 5.
 
-# glibc from the payload, at the host's default toolchain natively. A cross to
-# another architecture's glibc pins llvm; the payload exists for the host's arch.
+# glibc from the payload, at the host's default toolchain natively.
 [[platform.provider]]
 name     = "glibc"
 serves   = ["x86_64-linux-gnu"]
@@ -431,6 +468,23 @@ serves    = ["aarch64-linux-gnu"]
 priority  = 100
 hosts     = ["linux-{arch}"]
 toolchain = "llvm@23.1.3"
+
+# THE CROSS ARRANGEMENT OF THE SAME IDENTITY: the C library, libc++ and the
+# compiler run-time come from a base package whose root is the sysroot, since
+# the toolchain's payload carries the libraries of its own host only. Below the
+# musl entries (100, 50), so `aarch64-linux` is answered as before it existed
+# and the whole identity reaches it. The loader the artifact names is the row's;
+# it runs through the runner, which is given the base as its root.
+[[platform.provider]]
+name      = "glibc-sysroot"
+serves    = ["aarch64-linux-gnu"]
+priority  = 40
+hosts     = ["linux-x86_64"]
+toolchain = "llvm@23.1.3"
+sysroot   = "xim:aarch64-linux-gnu-sysroot@2.44.3"
+linkage   = "dynamic"
+tier      = "preview"
+runner    = { cmd = ["qemu-aarch64-static", "-L", "{sysroot}", "{}"], hosts = ["linux-x86_64"], requires = ["xim:qemu-user-aarch64@7.2.0"] }
 
 # The musl cross payloads: native on each Linux arch, every arch from x86_64,
 # and the Canadian cross on a Windows host of the same arch.
@@ -546,14 +600,46 @@ hosts     = ["*"]
 toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 linkage   = "static"
-platform  = "mcpplibs.openkal-platform@0.26.0"
+platform  = "mcpplibs.openkal-platform@0.27.1"
 
 [[platform.provider]]
 name      = "openkal"
-serves    = ["x86_64-windows-musl", "*-linux-musl", "*-macos-musl", "*-freebsd-musl"]
+serves    = ["*-linux-musl", "*-macos-musl", "*-freebsd-musl"]
 priority  = 50
 hosts     = ["*"]
 toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 linkage   = "static"
-platform  = "mcpplibs.openkal-platform@0.26.0"
+platform  = "mcpplibs.openkal-platform@0.27.1"
+
+# The same arrangement on Windows, whose own interfaces a resource script
+# compiles against: their headers are the MinGW-w64 base's, which states them
+# for every architecture under one `include`.
+[[platform.provider]]
+name           = "openkal"
+serves         = ["x86_64-windows-musl"]
+priority       = 50
+hosts          = ["*"]
+toolchain      = "llvm@23.1.3"
+pairs          = ["llvm"]
+linkage        = "static"
+platform       = "mcpplibs.openkal-platform@0.27.1"
+system-headers = "xim:mingw-w64-sysroot@20261104-2"
+
+# ── Systems ──────────────────────────────────────────────────────────────────
+
+[[platform.system]]
+name  = "linux"
+uname = "Linux"
+
+[[platform.system]]
+name  = "macos"
+uname = "Darwin"
+
+[[platform.system]]
+name  = "freebsd"
+uname = "FreeBSD"
+
+# A Windows program is not selected by `uname`: it leads the file.
+[[platform.system]]
+name  = "windows"

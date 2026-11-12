@@ -10,18 +10,18 @@ set -e
 OS="$(uname -s)"
 if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     echo "SKIP: libatomic/-latomic path is Linux-only"
-    exit 0
+    exit 77
 fi
 if [[ "$OS" == Darwin* ]]; then
     echo "SKIP: libatomic is a GNU/Linux runtime; not applicable on macOS"
-    exit 0
+    exit 77
 fi
 
 source "$(dirname "$0")/_llvm_env.sh"
 
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
     echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
-    exit 0
+    exit 77
 fi
 # The fix only emits -latomic when a link-resolvable libatomic is present in
 # the toolchain (self-guarding). If a slimmed package does not bundle it, the
@@ -29,7 +29,7 @@ fi
 if [[ ! -e "$LLVM_ROOT/lib/x86_64-unknown-linux-gnu/libatomic.so" \
    && ! -e "$LLVM_ROOT/lib/x86_64-unknown-linux-gnu/libatomic.a" ]]; then
     echo "SKIP: llvm@${LLVM_VERSION} package ships no link-resolvable libatomic"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d)

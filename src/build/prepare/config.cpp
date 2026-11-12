@@ -342,6 +342,10 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.buildConfig.abiExceptionsModel = cc.abiExceptionsModel;
             m.buildConfig.abiExceptionsDeclared = true;
         }
+        if (cc.abiLongjmpDeclared) {
+            m.buildConfig.abiLongjmpModel = cc.abiLongjmpModel;
+            m.buildConfig.abiLongjmpDeclared = true;
+        }
         // `[target.<sel>.build] dialect_cxxflags` (#717): recorded for every
         // package, like the abi switches above, but APPENDED rather than
         // replaced -- there is no "last matching section wins" here, because

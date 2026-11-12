@@ -4,7 +4,7 @@
 |---|---|
 | 规范编号 | SPEC-002 |
 | 标题 | 目标侧模型与能力声明(`mcpp:` 保留命名空间) |
-| 状态 | 评审中 v1.7 |
+| 状态 | 评审中 v1.8 |
 | 最后修改 | 2026-11-10 |
 | 对应实现 | mcpp >= 2026.8.24.2;§2.2 的对象形式与 §7 mcpp >= 2026.10.26.1 |
 | 相关设计文档 | `.agents/docs/2026-08-24-target-side-design.md`、`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md` §6 |
@@ -114,6 +114,10 @@ mcpp:<层名>[=<实现名>]
 
 在 sysroot 的位置被指名(工程、本机配置、平台或提供者的 `sysroot`)、且根目录带 `mcpp.toml` 的预制目录是**基座包**。
 它按普通包读取,不带角色标记:
+
+- **一种读法(mcpp >= 2026.11.12.1)。** 清单陈述包根即 sysroot,所以基座包**必须**按 sysroot 渲染,不论其目录怎样
+  命名;目录布局(`include/features.h` 与 `lib64`,即生态自身的 glibc 包布局)只对不带清单的目录探测。产物不由本机
+  加载时的链接规则见 SPEC-016 §6。
 
 - `[package] provides` 回答它供给的层(`mcpp:c-abi=…`、`mcpp:c++-abi=…`、`mcpp:compiler-runtime=…`)与
   `hosted-standard-library`;这些层的来源为 `prebuilt`,报告附基座包的 `<名>@<版本>`。
@@ -391,3 +395,4 @@ hosted 与否是 C 环境的一个声明:提供 `hosted-standard-library` 的 sy
 | v1.6 | 2026-11-10 | 随 mcpp 2026.11.10.1:新增 §2.5 基座包(按普通包读取:`provides` 回答层,`[build]` 陈述层,包根即 sysroot;新键 `compiler_runtime_dir`)与 §3.8 层供给者的需求不成环(`layer-cycle`)。 |
 | v1.7 | 2026-11-10 | 随 mcpp 2026.11.10.2:§3.4 写明段与 C 库名的对应,MSVC 载荷的 `c-abi` 回答 `ucrt`。 |
 | v1.2 | 2026-10-23 | 随 mcpp 2026.10.24.1:§1.3 `prebuilt` 放宽为被点名、按内容识别的预制目录;§2.4 改为由测量回答、`provides` 声明或核对,标为已实现;规则一增加基座是一个供给者与 c-abi 独占律;规则二增加基座上的编译器运行库与可测量的下限;规则三增加可叠加层;新增 §6 目标侧执行(组合、运行器契约、物理边界)。 |
+| v1.8 | 2026-11-12 | 随 mcpp 2026.11.12.1:§2.5 基座包只有一种读法(带清单即包根 sysroot,布局只对无清单的目录探测)。 |

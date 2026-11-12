@@ -42,6 +42,7 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
 import mcpp.toolchain.target_select;
 import mcpp.toolchain.base;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
@@ -1156,6 +1157,14 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t);
 const std::string* base_statement_text(PrepareState& state,
                                        const mcpp::toolchain::triple::Triple& t);
 std::expected<void, std::string> step2_resolve_base(PrepareState& state);
+// The directory a package statement names (`xim:<name>@<version>`): where its
+// payload stands, installed first when `install` and it does not stand.
+std::expected<std::filesystem::path, std::string>
+package_dir(PrepareState& state, const std::string& ref, bool install);
+// The provider entry the selection took: the one of that name that serves the
+// identity, the entry available on this host before one that is not. Null when
+// no provider serves it.
+const mcpp::toolchain::target::Provider* chosen_provider(const PrepareState& state);
 // The execution host's wrapper (`run_under`), decided once (§3.7).
 std::expected<void, std::string> step2_resolve_run_under(PrepareState& state);
 

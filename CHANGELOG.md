@@ -4,6 +4,129 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.12.1] - 2026-11-12
+
+### Added
+
+- `aarch64-linux-gnu` has a cross arrangement: the provider `glibc-sysroot`
+  serves it on linux-x86_64 from the base package
+  `xim:aarch64-linux-gnu-sysroot` (glibc, the kernel headers, libc++ with its
+  std module, compiler-rt), with llvm. A C program, a C++ program and one that
+  imports std build for it, dynamically and statically. The entry stands at
+  priority 40, below the musl entries, so the request `aarch64-linux` is
+  answered as before on every host and the whole identity reaches the new
+  entry; the native arrangement on an aarch64 host is unchanged.
+- A provider states how its artifacts are started: `runner = { cmd, hosts,
+  requires }` on a provider entry is the lowest tier of the runner statement,
+  under the platform's, a build program's, the machine's and the project's.
+  `{}` is the artifact, `{sysroot}` the arrangement's base, `{pkg:<name>}` the
+  root of the required package of that name; the packages of `requires` are
+  installed on the first `mcpp run` or `mcpp test`, never by a build.
+  `mcpp run --target aarch64-linux-gnu` on linux-x86_64 runs the artifact
+  under `qemu-aarch64-static -L {sysroot}` with nothing declared.
+- The system table: `[[platform.system]] name, uname` states the facts of a
+  system that no single row carries, in the built-in data and in a platform
+  package alike. A file that carries one program per system selects by
+  `uname`; FreeBSD joins it through the table.
+- Provider keys `tier` (the tier of one arrangement, where it differs from its
+  row's) and `system-headers` (the package whose headers state the system's
+  own interfaces). Row keys `loader` and `execution` are read on built-in rows
+  as on rows a platform defines.
+- A platform's runner states `built-as = { "<os>-<arch>" = "<identity>" }`:
+  the identity its runner program for that host pair is built as. A package
+  that carries its runner builds it so for a system the engine holds no
+  convention for; `mcpp pack --systems all` takes every system of the table
+  and writes the pairs no program is built for as not covered.
+- `longjmp` joins `threads` and `exceptions` as a member of
+  `[target.<selector>.abi]`: how `sigsetjmp` and `siglongjmp` cross the
+  WebAssembly boundary on an Emscripten row. `"wasm"` renders
+  `-sSUPPORT_LONGJMP=wasm` on every C and C++ translation unit and on the
+  link; `"js"` states the JavaScript model the same way. Unstated, the model
+  follows `exceptions`, as the SDK's default does. A build that states one
+  model for `exceptions` and the other for `longjmp` is refused with both
+  statements, and the member is refused on a row that is not Emscripten's.
+- A Windows row whose system the graph supplies compiles its resources: its
+  provider names the package of the system's headers (`system-headers`), read
+  where the toolchain states no header source. A row that states its own (the
+  MSVC SDK, a paired payload) resolves nothing and installs nothing.
+- `.github/tools/check_system_names.py` holds the number of times the engine's
+  sources name a system. The count is compared with a baseline that only
+  falls.
+- `tests/unit/test_link_line_golden.cpp` states the C-library group of the
+  link line for each combination of compiler family, C library supplier and
+  machine.
+
+### Changed
+
+- An artifact of another system is not started when nothing states how it
+  runs. `mcpp run` and `mcpp test` answer "built, not run" before any process
+  is spawned, for built-in rows as for rows a platform defines, and name the
+  `[target.<triple>]` runner declaration; the exit status is 2. The kernel of
+  this machine gives another system's call numbers its own meaning, so a
+  launch was not an observation. `--no-runner` states that the triple is
+  native here and is believed. An artifact of this system and another
+  architecture is launched as before. A host that runs another system's
+  programs through a registered interpreter passes `--no-runner` or declares
+  the runner.
+- A dynamic artifact that this machine does not load names the row's `loader`
+  as its program interpreter and carries no RUNPATH of this machine. A native
+  dynamic artifact names the base's own loader, as before.
+- A base package has one reading: a sysroot whose root carries a manifest is
+  rendered as a sysroot whatever its directories are called. The layout is
+  probed only for a directory without a manifest.
+- Whether this host serves a target from a payload is answered by the
+  providers' `hosts`, the data the selection reads; the per-system conditions
+  of `host_can_serve` are removed.
+- The messages that print a runner declaration print its shape and no
+  program.
+- Android's rows state `execution = "android"`: the kernel is Linux and the
+  system is not.
+- The openkal targets' platform is openkal-platform 0.27.1 (from 0.26.0):
+  0.27.0 states the runner's `built-as` for FreeBSD, and 0.27.1 is a patch of
+  the version group. Its implementations retire a handle before closing it
+  (openkal-linux 0.26.1, openkal-macos 0.23.1, openkal-windows 0.21.1): a
+  file one thread opened while another closed a socket was left with a stale
+  handle, and above the C library its reads and writes reached descriptor 0
+  (mcpplibs/openkal-linux#53). openkal-musl 0.29.4 returns what has arrived
+  from a `recv` that follows a `poll`, as `read` does, where it returned one
+  byte (mcpplibs/openkal-musl#52).
+
+### Fixed
+
+- A base package's compiler run-time directory reaches the C link as well as
+  the C++ one.
+- The loader name of a row is read from the row; the per-architecture table
+  in the link model is removed.
+- **A C unit of an MSVC-ABI build with clang receives the C library model
+  and its standard** (SPEC toolchain-management §3.7). The model's word and
+  the standard's were written as one, `-fms-runtime-lib=dll-std=c11`, on the
+  C line only: clang read neither and said nothing, so every C unit named the
+  static C library (`/DEFAULTLIB:libcmt.lib`) in a build whose C++ units named
+  the DLL's, and was compiled at the compiler's default C standard. The cache
+  key of a dependency's objects states the C line's form, so objects built
+  with the joined word are not taken again.
+- **`mcpp pack --compress xz` no longer faults on Windows.** mcpp names
+  mcpplibs.mwrap.xz 5.8.3.1, whose module reads `lzma.h` as the static library
+  it links (`LZMA_API_STATIC`). With 5.8.3 the calls went through
+  `__imp_lzma_*` slots the linker made, the release link collected the
+  functions behind them, and the first call into liblzma was an access
+  violation at the image's first byte. Dependency objects kept in the global
+  cache since before they were compiled a function to a section kept it from
+  view until the toolchain's packaging revision changed.
+- `mcpp why platform` in a project that selects a platform lists the rows the
+  platform defines and the identities it serves again (the statement kept only
+  its merged fields in this version's first form).
+- An e2e part whose only script does not apply on the machine is a run that
+  reported a case, not an empty run.
+- Six e2e scripts run on a runner again. A script that does not apply on a
+  machine leaves with 77 and is reported as a skip; it left with 0 and was
+  reported as a pass, and the coverage check of the first full run named six
+  scripts no runner had run. The probes of 13, 28 and 31 named a payload
+  release or a store the runners no longer have, and read the release from
+  the home now (`_toolchain_env.sh`), as does Mode A of 30, which was left out
+  for the same reason. 650, 653 and 657 need the emsdk payload and run in the
+  job that installs it, beside 981 and 1079.
+
 ## [2026.11.10.2] - 2026-11-10
 
 ### Added

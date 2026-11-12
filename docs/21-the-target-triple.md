@@ -514,12 +514,19 @@ not from `linux-aarch64`, while `aarch64-linux-gnu` is served natively by
 `linux-aarch64`. Collapsing them to `linux` would let one overwrite the
 other's rows.
 
+`aarch64-linux-gnu` has a second, cross arrangement (2026.11.12.1+): on
+`linux-x86_64` the provider `glibc-sysroot` serves it from a base package
+([22](22-target-side.md)). It stands below the musl entries, so `--target
+aarch64-linux` is still answered by `aarch64-linux-musl` there and the whole
+identity selects the glibc cross; `mcpp run` starts its artifacts through the
+provider's runner ([41](41-devices.md)).
+
 ### Build hosts and the targets they serve
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | payload | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | payload | — | — |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | base package | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
@@ -574,7 +581,7 @@ vocabulary, nothing wired yet.
 | `x86_64-windows-gnu` | Linux and Windows by the gcc payload; every host by the MinGW-w64 base package | one identity, host-split at the distribution layer; the `mingw-llvm` provider serves it with clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on UCRT, libc++, compiler-rt) where no gcc payload exists |
 | `aarch64-windows-gnu` | every host | the MinGW-w64 base package alone; no gcc payload targets it |
 | `*-freebsd` | every host, through a platform | the rows are built-in; a platform names each identity's FreeBSD base package (`xim:x86_64-freebsd-sysroot`, `xim:aarch64-freebsd-sysroot`) and is selected with `[target.<row>] platform`, or by any selector the row meets (`[target.freebsd]`, `cfg(os = "freebsd")`); another platform package's provider does not compete with the chosen platform |
-| `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.26.0): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
+| `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.27.1): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |

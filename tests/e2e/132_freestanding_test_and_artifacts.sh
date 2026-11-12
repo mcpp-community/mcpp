@@ -27,11 +27,11 @@ for d in "$HOME"/.mcpp/registry/data/xpkgs/*-x-qemu-riscv/*/bin \
          "$HOME"/.xlings/data/xpkgs/*-x-qemu-riscv/*/bin; do
     [[ -x "$d/qemu-system-riscv64" ]] && QEMU="$d/qemu-system-riscv64"
 done
-[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 0; }
+[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 77; }
 
 MH="${MCPP_HOME:-$HOME/.mcpp}"
 [[ -d "$MH/registry/data/xpkgs/xim-x-picolibc-riscv" ]] \
-    || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 0; }
+    || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 77; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

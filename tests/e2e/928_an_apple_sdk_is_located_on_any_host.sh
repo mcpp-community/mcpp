@@ -11,7 +11,7 @@
 set -e
 
 MCPP="${MCPP:-mcpp}"
-[[ "$(uname -s)" == Linux ]] || { echo "SKIP: the non-Apple arm"; exit 0; }
+[[ "$(uname -s)" == Linux ]] || { echo "SKIP: the non-Apple arm"; exit 77; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 export NO_COLOR=1 MCPP_NO_AUTO_INSTALL=1

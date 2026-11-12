@@ -14,7 +14,7 @@ MCPP_STATE_HOME=${MCPP_HOME:-"$HOME/.mcpp"}
 GLIBC_LIB=$(ls -d "$MCPP_STATE_HOME"/registry/data/xpkgs/xim-x-glibc/*/lib64 2>/dev/null | head -1)
 if [[ -z "$GLIBC_LIB" ]]; then
     echo "SKIP: no private glibc payload installed"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d)

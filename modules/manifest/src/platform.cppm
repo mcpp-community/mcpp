@@ -120,6 +120,12 @@ struct Runner {
     bool                     hostsSet = false;
     bool                     exclusive    = false;
     bool                     exclusiveSet = false;
+    // The identity the runner program of a host pair is built as, where the
+    // platform builds it for a system (`built-as = { "freebsd-x86_64" =
+    // "x86_64-freebsd-musl" }`): a package that carries its runner reads it.
+    std::map<std::string, std::string> builtAs;
+    // The packages the runner is installed from on the first run.
+    std::vector<std::string> requires_;
     Origin                   origin;
     bool                     set = false;
 };
@@ -267,6 +273,16 @@ struct ProviderSpec {
     std::map<std::string, LayerEntry> layers;
     Link link;
     std::string execution;
+    // The tier of this arrangement (empty: the row's), the package of the
+    // system's own headers, and how its artifacts are started (SPEC-016 §3, §6).
+    std::string tier, systemHeaders;
+    Runner runner;
+    Origin origin;
+};
+
+// A SYSTEM (`[[platform.system]]`, SPEC-016 §2.3).
+struct SystemSpec {
+    std::string name, uname;
     Origin origin;
 };
 
@@ -308,6 +324,7 @@ struct Statement {
     std::optional<bool>           cHosted;
     std::vector<RowSpec>          defines;
     std::vector<ProviderSpec>     providers;
+    std::vector<SystemSpec>       systems;
     int                           priority = 100;
     bool                          prioritySet = false;
 
@@ -317,7 +334,8 @@ struct Statement {
             && tools.empty() && build.empty() && buildCfg.empty()
             && !link.driver.set && !link.flags.set && !link.start.set && !link.script.set
             && !link.inputsSet && !link.exe.set && !link.shared.set && !link.sealSet
-            && versions.empty() && !hosted.set && defines.empty() && providers.empty();
+            && versions.empty() && !hosted.set && defines.empty() && providers.empty()
+            && systems.empty();
     }
 };
 
@@ -352,7 +370,7 @@ constexpr bool is_layer(std::string_view k) {
 inline constexpr std::string_view kPlatformKeys[] = {
     "targets", "toolchain", "sysroot", "runner", "runners", "carrier", "plugin",
     "universal", "descriptor_keys", "layers", "tools", "build", "link", "versions", "hosted",
-    "define", "provider", "priority",
+    "define", "provider", "system", "priority",
 };
 inline constexpr std::string_view kDefineKeys[] = {
     "triple", "tier", "note", "standard", "exact", "clang-triple", "object-format", "family",
@@ -361,8 +379,9 @@ inline constexpr std::string_view kDefineKeys[] = {
 };
 inline constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
-    "hosted", "layers", "link", "execution",
+    "hosted", "layers", "link", "execution", "tier", "system-headers", "runner",
 };
+inline constexpr std::string_view kSystemKeys[] = { "name", "uname" };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
     "driver", "flags", "start", "script", "inputs", "exe", "shared", "seal",

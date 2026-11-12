@@ -10,14 +10,14 @@ set -e
 MCPP="${MCPP:-mcpp}"
 source "$(dirname "$0")/_llvm_env.sh"
 source "$(dirname "$0")/_sysroot_fixture.sh"
-[[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo "SKIP: no llvm payload installed ($LLVM_ROOT)"; exit 0; }
-[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo "SKIP: the fixture sysroot is x86_64 Linux"; exit 0; }
+[[ -x "$LLVM_ROOT/bin/clang++" ]] || { echo "SKIP: no llvm payload installed ($LLVM_ROOT)"; exit 77; }
+[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo "SKIP: the fixture sysroot is x86_64 Linux"; exit 77; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 export NO_COLOR=1
 fail() { echo "FAIL: $*"; echo "----"; echo "${out:-}"; exit 1; }
 
-make_glibc_sysroot "$work/sr" || { echo "SKIP: no glibc payload to build a sysroot from"; exit 0; }
+make_glibc_sysroot "$work/sr" || { echo "SKIP: no glibc payload to build a sysroot from"; exit 77; }
 mkdir -p "$work/app/src"
 cd "$work/app"
 cat > mcpp.toml <<TOML

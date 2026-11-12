@@ -27,6 +27,7 @@ struct DefinitionSet {
     std::deque<std::vector<std::string_view>> lists;
     std::vector<Row> rows;
     std::vector<Provider> providers;
+    std::vector<System> systems;
 
     std::string_view keep(std::string s) { return strings.emplace_back(std::move(s)); }
     std::span<const std::string_view> keep(const std::vector<std::string>& v) {
@@ -44,6 +45,11 @@ void define(DefinitionSet set);
 std::vector<const Row*> rows();
 std::vector<const Provider*> providers();
 const Row* find_row(std::string_view triple);
+
+// The system table: the built-in systems, then those the platforms state. A
+// system stated twice is the first statement's.
+std::vector<const System*> systems();
+const System* find_system(std::string_view name);
 
 // Whether a defined row names this os, or this env under this os: the words the
 // parser accepts beyond its own.
@@ -131,6 +137,24 @@ std::vector<const Provider*> providers() {
 const Row* find_row(std::string_view triple) {
     for (auto const* r : rows())
         if (r->triple == triple) return r;
+    return nullptr;
+}
+
+std::vector<const System*> systems() {
+    std::vector<const System*> out;
+    for (auto const& b : mcpp::toolchain::builtin::kSystems) out.push_back(&b);
+    auto& r = registry();
+    std::lock_guard g(r.lock);
+    for (auto const& s : r.sets)
+        for (auto const& d : s.systems)
+            if (std::ranges::none_of(out, [&](const System* k) { return k->name == d.name; }))
+                out.push_back(&d);
+    return out;
+}
+
+const System* find_system(std::string_view name) {
+    for (auto const* s : systems())
+        if (s->name == name) return s;
     return nullptr;
 }
 

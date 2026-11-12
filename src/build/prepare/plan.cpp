@@ -2214,7 +2214,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         for (auto const& k : c.candidates)
             s.candidates.push_back({ k.row ? std::string(k.row->triple) : std::string{},
                                      k.provider ? std::string(k.provider->name) : std::string{},
-                                     k.why, k.priority, k.available });
+                                     k.why, k.priority, k.available, std::string(k.tier()) });
     }
     if (!state.runUnder.empty()) {
         auto const& o = state.runUnderOrigin;

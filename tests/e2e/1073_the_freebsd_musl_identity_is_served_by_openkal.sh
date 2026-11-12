@@ -3,7 +3,7 @@
 # 1073 -- FreeBSD's musl identity is served by openkal (design 2026-11-10 E4, K8,
 # K9; docs/21 'Build hosts and the targets they serve').
 #
-# `x86_64-freebsd-musl` is openkal-platform's hosted part (0.26.0): openkal-musl
+# `x86_64-freebsd-musl` is openkal-platform's hosted part (0.26.0 on): openkal-musl
 # over openkal-freebsd in its standalone arrangement, linked as one static
 # program with no C library of the system beneath. A request of `x86_64-freebsd`
 # with no platform selected for it takes that identity, as `aarch64-macos`

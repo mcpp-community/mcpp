@@ -26,11 +26,14 @@
 export module mcpp.pack.polyglot;
 
 import std;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 
 export namespace mcpp::pack::polyglot {
 
-// One system's program: `system` is `linux`, `macos` or `windows`, `arch`
-// `x86_64` or `aarch64`.
+// One system's program: `system` is a system of the table (SPEC-016 §2.3),
+// `arch` `x86_64` or `aarch64`. A system that states a `uname` is selected by
+// the script; the one that states none leads the file as its PE.
 struct Program {
     std::string system;
     std::string arch;
@@ -64,9 +67,16 @@ void put32(std::string& b, std::size_t o, std::uint32_t v) {
     for (int i = 0; i < 4; ++i) b[o + static_cast<std::size_t>(i)] = static_cast<char>(v >> (8 * i) & 0xFF);
 }
 
+// The word `uname -s` answers on a system: the system table's (SPEC-016
+// §2.3). Empty for a system that states none, or that no table knows.
+std::string uname_of(std::string_view system) {
+    auto const* s = mcpp::toolchain::target::find_system(system);
+    return s ? std::string(s->uname) : std::string{};
+}
+
 // `uname -s`-`uname -m` spellings of a system and architecture.
 std::string uname_pattern(std::string_view system, std::string_view arch) {
-    const std::string s = system == "macos" ? "Darwin" : "Linux";
+    const std::string s = uname_of(system);
     if (arch == "x86_64") return std::format("{0}-x86_64|{0}-amd64", s);
     return std::format("{0}-aarch64|{0}-arm64", s);
 }
@@ -139,16 +149,20 @@ std::expected<std::string, std::string> assemble(std::string_view name, const st
     const Program* windows = nullptr;
     std::vector<Program> posix;
     for (auto const& p : programs) {
-        if (p.system == "windows") {
+        if (!uname_of(p.system).empty()) {
+            posix.push_back(p);
+        } else if (mcpp::toolchain::target::find_system(p.system)) {
+            // A system that states no `uname` is not selected by the script:
+            // its program is the PE the file leads with.
             if (windows)
                 return std::unexpected(std::format(
                     "a polyglot file leads with one Windows program, and this pack has two ({}, {})",
                     windows->arch, p.arch));
             windows = &p;
-        } else if (p.system == "linux" || p.system == "macos") {
-            posix.push_back(p);
         } else {
-            return std::unexpected(std::format("a polyglot file holds no program of {}", p.system));
+            return std::unexpected(std::format(
+                "a polyglot file holds no program of {}: no system of that name is stated "
+                "([[platform.system]] name, uname)", p.system));
         }
     }
     if (programs.empty()) return std::unexpected(std::string("a polyglot file holds at least one program"));

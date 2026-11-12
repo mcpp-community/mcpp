@@ -379,14 +379,24 @@ jobs:
             exit 1
           fi
           echo "ok: wasm32-emscripten ran through the payload's runner; the decoy node was never run"
-          # #851 (e2e 981) needs the emsdk payload this step has just installed;
-          # the shards have none and skip it, so it runs here, in that home.
-          MCPP="$MCPP_UNDER_TEST" bash tests/e2e/981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh 2>&1 \
-            | tee "$RUNNER_TEMP/981.log"
-          if grep -q '^SKIP' "$RUNNER_TEMP/981.log" || ! grep -qx 'PASS: 981' "$RUNNER_TEMP/981.log"; then
-            echo "::error::e2e 981 did not run to its PASS line over the installed emsdk"
-            exit 1
-          fi
+          # THE WEB-ROW SCRIPTS RUN HERE, OVER THE PAYLOAD THIS STEP HAS JUST
+          # INSTALLED. The shards have no emsdk, and each of these leaves there
+          # with 77 after its `SKIP:` line; until 2026-11-12 that exit was 0, the
+          # shards reported them as passes, and 650, 653 and 657 ran on no
+          # runner. A status other than 0 fails the step, 77 included.
+          for t in 650_wasm_row_names_its_launcher.sh \
+                   653_exceptions_is_the_second_abi_member.sh \
+                   657_a_build_program_under_the_web_row_uses_the_host_compiler.sh \
+                   981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh \
+                   1079_an_emscripten_rows_longjmp_model_round_trips.sh; do
+            echo "::group::e2e $t"
+            MCPP="$MCPP_UNDER_TEST" bash "tests/e2e/$t" && rc=0 || rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::e2e $t ended with $rc over the installed emsdk (77: it skipped itself)"
+              exit 1
+            fi
+          done
 
   coverage:
     # THE DENOMINATOR. Every check above is per host, and no per-host check
