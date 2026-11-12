@@ -142,10 +142,21 @@ compilers() {
                  else print $0 }'
 }
 
-emit() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@"; }
+# A CELL SAYS WHEN IT ENDS. The table goes to stdout, which the workflow writes
+# to a file, and until 2026-11-12 stderr carried only what was skipped: on
+# macos-arm64 the payload system is nineteen to twenty-three minutes of cells,
+# and the step printed one line before them and none during. A step that is
+# working and a step that hangs read the same. Each cell now leaves one line
+# on stderr: system, target, compiler, result, and the seconds it took.
+emit() {
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@"
+    printf 'scan: %s %s × %s: %s/%s (%ss)\n' "$1" "$3" "$4" "${10}" "${11}" "$((SECONDS - cell_began))" >&2
+}
 
+cell_began=$SECONDS
 for tc in $(compilers); do
   for t in $(targets); do
+    cell_began=$SECONDS
     # graph 体系不覆盖裸机行,而这是一句声明,不是一次省略。
     #
     # openkal 的这套依赖(`openkal-musl` + `openkal-llvm-runtime`)描述的是一个
