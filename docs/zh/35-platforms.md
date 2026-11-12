@@ -168,7 +168,7 @@ error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-p
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.26.0"     # 一个版本,或一个系列:"openkal-platform@^0.26"
+platform = "openkal-platform@0.27.0"     # 一个版本,或一个系列:"openkal-platform@^0.27"
 ```
 
 使用默认平台的构建失败、且已同步的索引中有更新版本时,最后输出一行 `tip:`,写出两个版本与上面这一行。

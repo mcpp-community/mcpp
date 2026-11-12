@@ -81,6 +81,8 @@
   program.
 - Android's rows state `execution = "android"`: the kernel is Linux and the
   system is not.
+- The openkal targets' platform is openkal-platform 0.27.0 (from 0.26.0): the
+  same version group, with the runner's `built-as` statement for FreeBSD.
 
 ### Fixed
 
