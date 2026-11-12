@@ -24,6 +24,13 @@ name: ci-linux
 
 on:
   workflow_call:
+    inputs:
+      # The engine's own costs are measured where the measurement is kept: a
+      # push to main, a run asked for them, a pull request labelled `ci:bench`
+      # (design 2026-11-12 §5.11). Every other run leaves them out.
+      bench:
+        type: boolean
+        default: false
 
 env:
   # MCPP_HOME pinned so the cache keys below restore into the same path
@@ -100,6 +107,7 @@ jobs:
       # Bench cases; design 2026-11-10 §16): this commit's mcpp timed on a small
       # fixture, kept in bench/target/mtest beside the unit runs.
       - name: The engine's costs (bench, mtest Bench)
+        if: inputs.bench
         run: |
           cd bench && MCPP="$MCPP_FRESH" "$MCPP_FRESH" test
 

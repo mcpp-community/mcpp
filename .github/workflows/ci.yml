@@ -26,6 +26,11 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      bench:
+        description: "measure the engine's own costs (bench/tests)"
+        type: boolean
+        default: false
 
 # A superseded pull-request run is cancelled. Every push to main runs to the
 # end, in a group of its own commit: its build jobs are the only writers of the
@@ -213,6 +218,10 @@ jobs:
   linux:
     needs: build-linux
     uses: ./.github/workflows/ci-linux.yml
+    with:
+      # A pull request's label is read when a push starts its run; a run
+      # started by hand states it as an input.
+      bench: ${{ github.event_name == 'push' || inputs.bench == true || contains(github.event.pull_request.labels.*.name, 'ci:bench') }}
 
   linux-e2e:
     needs: build-linux
