@@ -242,7 +242,8 @@ static std::string_view target_code_page(const mcpp::manifest::Target& t,
 static bool target_long_paths(const mcpp::manifest::Target& t,
                               bool hostToolBuild, bool ownManifest)
 {
-    if (const auto& stated = t.windowsLongPaths) return *stated;
+    const auto& stated = t.windowsLongPaths;
+    if (stated) return *stated;
     return hostToolBuild && t.is_program() && !ownManifest;
 }
 
