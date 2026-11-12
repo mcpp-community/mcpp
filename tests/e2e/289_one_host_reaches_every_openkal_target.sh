@@ -144,7 +144,7 @@ printf '\n  built %d, skipped %d, failed %d\n' "$built" "$skipped" "$failed"
 # reporting as a skip of the whole file rather than as success.
 if [ "$built" = 0 ]; then
     echo "SKIP: no target could be built here"
-    exit 0
+    exit 77
 fi
 
 echo "OK: one host reached $built of the ecosystem's targets"

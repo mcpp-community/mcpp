@@ -15,7 +15,7 @@
 # that imports std builds and runs with it, and the module's command names it.
 # The flag is the x86_64 one, so the test asks it of an x86_64 machine only.
 set -e
-case "$(uname -m)" in x86_64|amd64) ;; *) echo "SKIP: -fcf-protection is an x86_64 flag"; exit 0 ;; esac
+case "$(uname -m)" in x86_64|amd64) ;; *) echo "SKIP: -fcf-protection is an x86_64 flag"; exit 77 ;; esac
 source "$(dirname "$0")/_toolchain_env.sh"
 
 TMP=$(mktemp -d)

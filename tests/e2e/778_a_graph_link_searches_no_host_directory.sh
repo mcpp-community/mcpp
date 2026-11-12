@@ -73,7 +73,7 @@ C
 skip_if_unreachable() {
     if grep -qE 'not found in the synced index|install_packages failed' "$1"; then
         echo "SKIP: the openkal packages are not reachable from here"
-        exit 0
+        exit 77
     fi
 }
 

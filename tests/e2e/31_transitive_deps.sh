@@ -18,7 +18,7 @@ MUSL_PAYLOAD="$MCPP_HOME/registry/data/xpkgs/xim-x-musl-gcc/15.1.0/bin/x86_64-li
 if [[ ! -x "$MUSL_PAYLOAD" ]]; then
     echo "SKIP: no reusable musl-gcc xpkg payload"
     echo "OK"
-    exit 0
+    exit 77
 fi
 
 # ── 1. Grandchild: a header-providing C lib whose `[build].include_dirs`

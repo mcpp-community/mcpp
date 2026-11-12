@@ -40,14 +40,14 @@ $2
 $1
 TOML
 }
-[[ "$(uname -m)" == x86_64 ]] || { echo "SKIP: the fixture sysroot is x86_64"; exit 0; }
+[[ "$(uname -m)" == x86_64 ]] || { echo "SKIP: the fixture sysroot is x86_64"; exit 77; }
 
 # The default build first: it installs the payloads the fixture is made of,
 # and its output directory is the one a stated base must not reuse.
 manifest "" ""
 out="$("$MCPP" build 2>&1)" || fail "the default build failed"
 default_dir=$(ls -d target/x86_64-linux-gnu/*/ | head -1)
-make_glibc_sysroot "$work/app/third_party/sysroot" || { echo "SKIP: no glibc payload to build a sysroot from"; exit 0; }
+make_glibc_sysroot "$work/app/third_party/sysroot" || { echo "SKIP: no glibc payload to build a sysroot from"; exit 77; }
 SR="$work/app/third_party/sysroot"
 
 artifact() { ls target/x86_64-linux-gnu/*/bin/app | xargs ls -t | head -1; }

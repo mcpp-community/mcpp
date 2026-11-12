@@ -78,7 +78,7 @@ fi
 if [ "$have_emsdk" -ne 1 ]; then
     echo "SKIP: 650/2 -- no emsdk payload installed (looked under xim-x-emsdk/*/emscripten)"
     echo "PASS: 650 (part 1 only)"
-    exit 0
+    exit 77
 fi
 
 echo "== 650/2: build, run and pack a 1-2-3 program for wasm32-emscripten =="

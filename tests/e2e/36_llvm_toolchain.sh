@@ -14,7 +14,7 @@ else
 fi
 if [[ ! -x "$CLANGPP_BIN" ]]; then
     echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d)

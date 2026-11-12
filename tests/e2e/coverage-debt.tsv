@@ -1,0 +1,5 @@
+# Tests that skip themselves on every host of CI that starts them, read by
+# .github/tools/check_e2e_coverage.py. One `<test>\t<what the hosts lack>` line each.
+# A debt, not an excuse: the list only shrinks. An entry whose test ran fails the
+# check until the entry is removed; a test that begins to skip itself everywhere is
+# uncovered until a host is given what it needs, or it is listed here with the reason.

@@ -27,7 +27,7 @@ if [[ -d "$HOME/.xlings/data/xpkgs/xim-x-gcc/16.1.0" ]]; then
 else
     echo "SKIP: system xlings has no gcc 16.1.0"
     echo "OK"
-    exit 0
+    exit 77
 fi
 
 export MCPP_HOME="$SANDBOX_HOME"

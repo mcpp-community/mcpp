@@ -23,7 +23,7 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64|Linux-amd64) ;;
-    *) echo "SKIP: the Windows runner is x86_64 and wine runs it on Linux x86_64"; exit 0 ;;
+    *) echo "SKIP: the Windows runner is x86_64 and wine runs it on Linux x86_64"; exit 77 ;;
 esac
 
 mkdir -p "$TMP/app/src"

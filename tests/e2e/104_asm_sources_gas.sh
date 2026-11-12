@@ -8,7 +8,7 @@
 set -e
 
 # x86_64 assembly — host-aware skip elsewhere (aarch64 self-host e2e).
-[[ "$(uname -m)" == "x86_64" ]] || { echo "SKIP: x86_64-only asm"; exit 0; }
+[[ "$(uname -m)" == "x86_64" ]] || { echo "SKIP: x86_64-only asm"; exit 77; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

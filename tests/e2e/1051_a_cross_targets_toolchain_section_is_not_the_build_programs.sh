@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_toolchain_env.sh"
 set -e
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | tail -20; exit 1; }
-[ "$(uname -m)" = x86_64 ] || { echo "SKIP: an x86_64 host"; exit 0; }
+[ "$(uname -m)" = x86_64 ] || { echo "SKIP: an x86_64 host"; exit 77; }
 mkdir -p "$t/src" && cd "$t"
 cat > mcpp.toml <<EOF
 [package]

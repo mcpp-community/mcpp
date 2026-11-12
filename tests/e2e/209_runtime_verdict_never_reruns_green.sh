@@ -41,7 +41,7 @@ cd app
 CACHE=$(find target -name '.mcpp-runtime-verdicts.json' | head -1)
 if [[ -z "$CACHE" ]]; then
     echo "SKIP: no glibc runtime binding on this host (no stored verdicts)"
-    exit 0
+    exit 77
 fi
 
 # Every artifact must have been validated and recorded as passing, or the rest

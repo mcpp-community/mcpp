@@ -10,7 +10,7 @@
 #   A  the link rule writes a temporary name and renames it (POSIX);
 #   B  starting the program in a loop while it is relinked never fails to exec.
 set -e
-case "$(uname -s)" in Linux|Darwin) ;; *) echo "SKIP: POSIX publication"; exit 0 ;; esac
+case "$(uname -s)" in Linux|Darwin) ;; *) echo "SKIP: POSIX publication"; exit 77 ;; esac
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }

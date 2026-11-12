@@ -44,7 +44,7 @@ set -e
 _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ -z "${MCPP:-}" ]; then
   MCPP="$(bash "$_root/.github/tools/newest_artifact.sh" "$_root" mcpp 2>/dev/null || true)"
-  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet"; exit 0; }
+  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet"; exit 77; }
 fi
 case "$MCPP" in /*) ;; *) MCPP="$_root/$MCPP" ;; esac
 [ -x "$MCPP" ] || { echo "FAIL: MCPP=$MCPP is not executable"; exit 1; }
@@ -62,7 +62,7 @@ mkdir -p "$MCPP_HOME/registry/data" "$MCPP_HOME/registry/subos/default"
 if [ -d "$REAL_HOME/registry/data/xpkgs" ]; then
     ln -s "$REAL_HOME/registry/data/xpkgs" "$MCPP_HOME/registry/data/xpkgs"
 else
-    echo "SKIP: no xpkgs payloads to inherit from $REAL_HOME"; exit 0
+    echo "SKIP: no xpkgs payloads to inherit from $REAL_HOME"; exit 77
 fi
 for d in "$REAL_HOME/registry"/*; do
     b="$(basename "$d")"
@@ -146,7 +146,7 @@ PY
 )"
 [ -n "$GLIBC_VER" ] && [ -d "$GLIBC_DIR/$GLIBC_VER" ] \
     || GLIBC_VER="$(ls "$GLIBC_DIR" 2>/dev/null | head -1)"
-[ -n "$GLIBC_VER" ] || { echo "SKIP: no glibc payload to bind to"; exit 0; }
+[ -n "$GLIBC_VER" ] || { echo "SKIP: no glibc payload to bind to"; exit 77; }
 python3 - "$MCPP_HOME/registry/subos/default/.xlings.json" "$GLIBC_VER" <<'PY'
 import json, sys
 path, ver = sys.argv[1], sys.argv[2]

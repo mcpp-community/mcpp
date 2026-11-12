@@ -58,12 +58,12 @@ cd app
 cross=x86_64-linux-musl
 
 if ! "$MCPP" build --target "$cross" >/dev/null 2>&1; then
-    echo "SKIP: this machine cannot build $cross"; exit 0
+    echo "SKIP: this machine cannot build $cross"; exit 77
 fi
 
 rm -rf target
 if ! "$MCPP" run --target "$cross" >/dev/null 2>&1; then
-    echo "SKIP: $cross builds but does not run here"; exit 0
+    echo "SKIP: $cross builds but does not run here"; exit 77
 fi
 
 # ── The command under test ──────────────────────────────────────────────────

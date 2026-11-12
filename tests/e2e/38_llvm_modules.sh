@@ -13,18 +13,18 @@ OS="$(uname -s)"
 # check in run_all.sh already gates this, but guard here too for direct runs.
 if [[ "$OS" == MINGW* || "$OS" == MSYS* || "$OS" == CYGWIN* ]]; then
     echo "SKIP: libc++ std.cppm not available on Windows"
-    exit 0
+    exit 77
 fi
 
 source "$(dirname "$0")/_llvm_env.sh"
 
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
     echo "SKIP: xlings llvm@${LLVM_VERSION} is not installed"
-    exit 0
+    exit 77
 fi
 if [[ ! -f "$LLVM_ROOT/share/libc++/v1/std.cppm" ]]; then
     echo "SKIP: xlings llvm@${LLVM_VERSION} has no libc++ std.cppm"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d)

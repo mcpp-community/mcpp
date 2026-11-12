@@ -17,9 +17,9 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; tail -30 "
 case "$(uname -m)" in
     x86_64|amd64)  ARCH=x86_64 ;;
     aarch64|arm64) ARCH=aarch64 ;;
-    *) echo "SKIP: no ok-image row for $(uname -m)"; exit 0 ;;
+    *) echo "SKIP: no ok-image row for $(uname -m)"; exit 77 ;;
 esac
-case "$(uname -s)" in Linux) OS=linux ;; *) echo "SKIP: a Linux host"; exit 0 ;; esac
+case "$(uname -s)" in Linux) OS=linux ;; *) echo "SKIP: a Linux host"; exit 77 ;; esac
 
 cd "$TMP"
 "$MCPP" new app > /dev/null 2>&1

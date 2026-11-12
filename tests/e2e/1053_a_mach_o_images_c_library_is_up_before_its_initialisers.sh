@@ -41,7 +41,7 @@ CPP
 "$MCPP" build --target aarch64-macos-musl > build.log 2>&1 || fail "the hosted macOS build" build.log
 grep -q "openkal-platform" build.log || {
     echo "SKIP: aarch64-macos-musl is not served by openkal-platform's hosted arrangement here"
-    exit 0
+    exit 77
 }
 bin=$(find target -path '*/bin/early' -type f | head -1)
 [ -n "$bin" ] || fail "no image was produced" build.log

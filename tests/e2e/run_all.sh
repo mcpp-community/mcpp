@@ -542,14 +542,22 @@ try:
 except (OSError, ValueError):
     sys.exit(0)
 for c in run.get("cases", []):
-    status = {"pass": "pass", "flaky": "pass", "timeout": "timeout"}.get(c.get("status"), "fail")
-    print(status, int(c.get("ms", 0)), c.get("program", c.get("id", "")))
+    status = {"pass": "pass", "flaky": "pass", "timeout": "timeout", "skip": "skip"}.get(c.get("status"), "fail")
+    # The fourth word on: why a skipped script did not apply here (its `SKIP:` line).
+    print(status, int(c.get("ms", 0)), c.get("program", c.get("id", "")), c.get("reason", ""))
 PY
 )"
     rm -f "$record"
-    while read -r status ms name; do
+    while read -r status ms name why; do
         name="${name%$'\r'}"   # Windows' Python ends a printed line with CR LF
+        why="${why%$'\r'}"
         [[ -n "$name" ]] || continue
+        # A script that skipped itself ran nothing: it is reported as a skip with
+        # its reason, which the coverage check reads as "did not run here".
+        if [[ "$status" == skip ]]; then
+            ((SKIP++)); report skip "$name" "$ms" "skipped itself: ${why:-no reason given}"
+            continue
+        fi
         TIMINGS+=("$ms $name")
         case "$status" in
             pass) ((PASS++)); report pass "$name" "$ms" "" ;;
@@ -628,6 +636,12 @@ for test in "$HERE"/[0-9]*.sh; do
         echo "PASS: $name (${_dur})"
         ((PASS++))
         report pass "$name" "$_dur_ms" ""
+    elif [[ $rc -eq 77 ]]; then
+        # The script's own word for "nothing to hold on this machine" (the
+        # `skip_exit` of tests/e2e/mtest.toml): a skip, not a pass.
+        echo "SKIP: $name (skipped itself)"
+        ((SKIP++))
+        report skip "$name" "$_dur_ms" "skipped itself"
     elif [[ $rc -eq 124 ]]; then
         report timeout "$name" "$_dur_ms" "exceeded ${E2E_TEST_TIMEOUT}s"
         # GNU timeout: 124 = killed after deadline (TERM); 137 = SIGKILL after grace.

@@ -18,7 +18,7 @@ if ! command -v x86_64-linux-musl-g++ >/dev/null 2>&1 \
 then
     echo "SKIP: no musl-gcc 15.1.0 available — not testing --target=*-linux-musl"
     echo "OK"
-    exit 0
+    exit 77
 fi
 
 # Detect installed GNU gcc version for the default-build regression check.

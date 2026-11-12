@@ -19,14 +19,14 @@ source "$(dirname "$0")/_inherit_toolchain.sh"
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
 gxx=$(ls -d "$MCPP_HOME"/registry/data/xpkgs/xim-x-gcc/*/bin/g++ 2>/dev/null | head -1)
-[ -n "$gxx" ] || { echo "SKIP: no gcc payload to reach from outside the store"; exit 0; }
+[ -n "$gxx" ] || { echo "SKIP: no gcc payload to reach from outside the store"; exit 77; }
 ninja=$(ls -d "$MCPP_HOME"/registry/data/xpkgs/xim-x-ninja/*/ninja 2>/dev/null | head -1)
-[ -n "$ninja" ] || { echo "SKIP: mcpp's home holds no ninja"; exit 0; }
+[ -n "$ninja" ] || { echo "SKIP: mcpp's home holds no ninja"; exit 77; }
 ln -s "$(dirname "$(dirname "$gxx")")" "$TMP/external-gcc"
 
 # The xlings mcpp drives, named outright: the PATH below holds no xlings.
 export MCPP_VENDORED_XLINGS="${MCPP_VENDORED_XLINGS:-$(command -v xlings || true)}"
-[ -n "$MCPP_VENDORED_XLINGS" ] || [ -x "$MCPP_HOME/registry/bin/xlings" ] || { echo "SKIP: no xlings to name"; exit 0; }
+[ -n "$MCPP_VENDORED_XLINGS" ] || [ -x "$MCPP_HOME/registry/bin/xlings" ] || { echo "SKIP: no xlings to name"; exit 77; }
 
 # A PATH with the usual tools and no ninja. An external toolchain is complete
 # where it is installed (MSYS2's GCC carries its assembler in its own `bin');

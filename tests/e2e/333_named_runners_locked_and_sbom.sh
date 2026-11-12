@@ -92,7 +92,7 @@ cat > src/main.cpp <<'CPP'
 int main() { return 0; }
 CPP
 
-"$MCPP" build >/dev/null 2>&1 || { echo "SKIP: cmdline@0.0.1 unavailable"; exit 0; }
+"$MCPP" build >/dev/null 2>&1 || { echo "SKIP: cmdline@0.0.1 unavailable"; exit 77; }
 test -f mcpp.lock || { echo "FAIL: no mcpp.lock after a build with a dependency"; exit 1; }
 
 "$MCPP" build --locked >/dev/null 2>&1 \

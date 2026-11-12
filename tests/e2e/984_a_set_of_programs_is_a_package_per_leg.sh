@@ -21,7 +21,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
-[ "$(uname -s)" = Linux ] || { echo "SKIP: the linux-musl rows are built on Linux"; exit 0; }
+[ "$(uname -s)" = Linux ] || { echo "SKIP: the linux-musl rows are built on Linux"; exit 77; }
 
 mkdir -p "$TMP/app/src"
 cd "$TMP/app"
@@ -31,7 +31,7 @@ printf 'import std;\nint main() { std::println("per leg"); }\n' > src/main.cpp
 # A
 if ! "$MCPP" pack --target linux-musl -o out/ > a.log 2>&1; then
     if grep -qE "cannot be built on this host|install_packages failed|not found in the synced index" a.log; then
-        echo "SKIP: a linux-musl row cannot be built here"; exit 0
+        echo "SKIP: a linux-musl row cannot be built here"; exit 77
     fi
     fail "A: pack --target linux-musl" a.log
 fi

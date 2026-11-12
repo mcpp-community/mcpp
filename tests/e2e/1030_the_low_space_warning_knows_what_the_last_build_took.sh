@@ -22,7 +22,7 @@ cd "$TMP"
 cd app
 "$MCPP" build > a.log 2>&1 || fail "the build failed" a.log
 rec=$(find target -name .mcpp-written | head -1)
-[ -n "$rec" ] || { echo "SKIP: the file system reported no change in free space"; exit 0; }
+[ -n "$rec" ] || { echo "SKIP: the file system reported no change in free space"; exit 77; }
 grep -Eq '^[0-9]+$' "$rec" || fail "A: .mcpp-written is not a number" "$rec"
 echo "ok: the build recorded what it took ($(cat "$rec") bytes)"
 echo 1152921504606846976 > "$rec"    # 1 EiB: more than any file system here has free

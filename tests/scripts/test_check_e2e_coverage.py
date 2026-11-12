@@ -46,7 +46,8 @@ class E2ECoverage(unittest.TestCase):
     def test_ran_named_and_excused_tests_are_covered(self) -> None:
         r = self.run_check()
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn("1 ran on a shard, 0 unaffected by the change, 2 run by a dedicated job, 1 excused, 0 uncovered", r.stdout)
+        self.assertIn("1 ran on a shard, 0 unaffected by the change, 2 run by a dedicated job, 1 excused, "
+                      "0 owed, 0 uncovered", r.stdout)
 
     def test_a_name_in_a_comment_or_inside_a_longer_name_does_not_count(self) -> None:
         e2e = self.root / "tests" / "e2e"
@@ -87,6 +88,27 @@ class E2ECoverage(unittest.TestCase):
         r = self.run_check()
         self.assertEqual(r.returncode, 1)
         self.assertIn("REQUIRED ON HOST: 50_untouched.sh did not pass on linux", r.stdout)
+
+    def test_a_test_that_skips_itself_everywhere_is_uncovered_until_it_is_owed(self) -> None:
+        """A script that leaves with its skip status ran nothing: it is not a pass."""
+        (self.root / "tests" / "e2e" / "55_skips_itself.sh").write_text("# x\n# requires: llvm\n")
+        for host in ("linux", "macos"):
+            (self.reports / f"e2e-report-{host}-3.tsv").write_text(
+                "skip\t55_skips_itself.sh\t40\tskipped itself: no emulator on this machine\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("UNCOVERED: 55_skips_itself.sh", r.stdout)
+        self.assertIn("skipped itself: no emulator on this machine", r.stdout)
+        debt = self.root / "tests" / "e2e" / "coverage-debt.tsv"
+        debt.write_text("# test\twhat the hosts lack\n55_skips_itself.sh\tno shard installs the emulator\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("1 owed, 0 uncovered", r.stdout)
+        # The debt only shrinks: an entry whose test ran is stale.
+        (self.reports / "e2e-report-linux-4.tsv").write_text("pass\t55_skips_itself.sh\t900\t\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("55_skips_itself.sh is listed as owed but ran on linux", r.stdout)
 
     def test_an_exception_for_a_test_that_ran_fails(self) -> None:
         (self.reports / "e2e-report-macos-1.tsv").write_text("pass\t30_excused.sh\t10\t\n")

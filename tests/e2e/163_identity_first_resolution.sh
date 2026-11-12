@@ -35,7 +35,7 @@ for c in "$MCPP_HOME/indices/mcpplibs/pkgs/c/chriskohlhoff.asio.lua"; do
 done
 if [ -z "$SRC" ]; then
     echo "SKIP 163_identity_first_resolution (no asio descriptor in registry)"
-    exit 0
+    exit 77
 fi
 
 mkidx() {  # mkidx <dir> <relpath> <namespace> <name>

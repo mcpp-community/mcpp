@@ -13,7 +13,7 @@ set -e
 MCPP="${MCPP:-mcpp}"
 source "$(dirname "$0")/_llvm_env.sh"
 if [[ ! -x "$LLVM_ROOT/bin/clang++" ]]; then
-    echo "SKIP: no llvm payload installed ($LLVM_ROOT)"; exit 0
+    echo "SKIP: no llvm payload installed ($LLVM_ROOT)"; exit 77
 fi
 work="$(mktemp -d)"
 # Paths written INTO a manifest go through host_path (see _host_path.sh).

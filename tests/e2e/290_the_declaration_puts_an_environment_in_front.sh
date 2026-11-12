@@ -70,7 +70,7 @@ make_project "$work/plain" ""
 plain="$(run_probe "$work/plain")"
 if [ -z "$plain" ]; then
     echo "SKIP: the build program did not report — it may not have run here"
-    exit 0
+    exit 77
 fi
 
 if [ "$plain" = "$inherited" ]; then
@@ -93,7 +93,7 @@ subos = "default"'
 declared="$(run_probe "$work/declared")"
 if [ -z "$declared" ]; then
     echo "SKIP: the declaring project's build program did not report"
-    exit 0
+    exit 77
 fi
 
 if [ "$declared" = "$inherited" ]; then

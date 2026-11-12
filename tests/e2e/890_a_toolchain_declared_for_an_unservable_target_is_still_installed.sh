@@ -41,7 +41,7 @@ export MCPP_HOME="$TMP/mcpp-home"
 # its CI home is the macOS leg of the target matrix.
 case "$(uname -s)" in
     Darwin|MINGW*|MSYS*|CYGWIN*) ;;
-    *) echo "SKIP: hosted-guest refusal semantics only bite on a non-linux host"; exit 0 ;;
+    *) echo "SKIP: hosted-guest refusal semantics only bite on a non-linux host"; exit 77 ;;
 esac
 
 mkdir -p app/src

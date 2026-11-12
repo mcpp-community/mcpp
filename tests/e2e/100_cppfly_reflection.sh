@@ -19,7 +19,7 @@ USER_MCPP="${MCPP_HOME:-$HOME/.mcpp}"
 GXX=$(find "$USER_MCPP/registry/data/xpkgs/xim-x-gcc" -name "g++" -path "*/bin/*" 2>/dev/null | sort | tail -1)
 if [[ -z "$GXX" ]] || ! echo 'int main(){}' | "$GXX" -freflection -std=c++26 -x c++ - -fsyntax-only -o /dev/null 2>/dev/null; then
     echo "SKIP-INLINE: no -freflection-capable gcc payload available"
-    exit 0
+    exit 77
 fi
 GCC_VER=$(basename "$(dirname "$(dirname "$GXX")")")
 

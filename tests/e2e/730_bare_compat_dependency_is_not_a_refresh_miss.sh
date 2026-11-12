@@ -25,7 +25,7 @@ for cand in cjson argparse gtest ftxui; do
 done
 if [ -z "$DESC" ]; then
     echo "SKIP: no compat descriptor in the local mcpplibs index"
-    exit 0
+    exit 77
 fi
 VER=$(grep -o '\["[0-9][0-9.]*"\]' "$INDEX_ROOT/compat.$DESC.lua" | head -1 | tr -d '[]"')
 [ -n "$VER" ] || fail "could not read a version of compat.$DESC"

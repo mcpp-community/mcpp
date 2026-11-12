@@ -11,7 +11,7 @@ trap "rm -rf $TMP" EXIT
 source "$(dirname "$0")/_llvm_env.sh"
 if [[ ! -d "$LLVM_ROOT" ]]; then
     echo "SKIP: xlings llvm@${LLVM_VERSION:-none} is not installed"
-    exit 0
+    exit 77
 fi
 
 export MCPP_HOME="$TMP/mcpp-home"

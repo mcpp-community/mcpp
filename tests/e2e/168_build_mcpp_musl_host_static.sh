@@ -13,7 +13,7 @@ set -euo pipefail
 if [[ "$(uname -s)" != "Linux" ]]; then
     echo "SKIP: Linux ELF regression"
     echo "OK"
-    exit 0
+    exit 77
 fi
 
 : "${MCPP:?MCPP must point to the mcpp binary under test}"
@@ -58,7 +58,7 @@ MUSL_VERSION=$(find_musl_version || true)
 if [[ -z "$MUSL_VERSION" ]]; then
     echo "SKIP: no musl-gcc payload installed — not testing the musl host helper"
     echo "OK"
-    exit 0
+    exit 77
 fi
 echo "musl toolchain: gcc@${MUSL_VERSION}-musl"
 
