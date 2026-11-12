@@ -121,7 +121,9 @@ if [[ "$(uname -s)" == Linux ]]; then
   grep -q "this host cannot execute" <<<"$out" || fail "unrunnable message missing: $out"
   grep -q "Exec format error" <<<"$out" || fail "the kernel's answer is missing: $out"
   grep -q "\[target.$HOST\]" <<<"$out" || fail "paste-able key missing: $out"
-  grep -q 'runner = \["qemu-aarch64-static"\]' <<<"$out" || fail "runner example missing: $out"
+  grep -q 'runner = \["<program>", "{}"\]' <<<"$out" || fail "the runner declaration's shape is missing: $out"
+  # No program is named: which one runs the artifact is a statement of the data (SPEC-016 §6).
+  if grep -q "qemu" <<<"$out"; then fail "the message names an emulator: $out"; fi
   grep -q -- "--no-runner" <<<"$out" || fail "escape hatch not mentioned: $out"
   # The criterion measured the patched artifact, not a rebuilt one.
   [[ "$(od -An -tx1 -j18 -N2 "$bin" | tr -d ' ')" == "ffff" ]] \
