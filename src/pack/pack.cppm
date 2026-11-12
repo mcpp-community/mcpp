@@ -563,21 +563,13 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
 // on -- an image's single file, a self-contained tree's runner -- when this mcpp
 // builds no program for it: a row its table states as planned (`x86_64-macos`)
 // or does not state (`aarch64-windows-gnu`). Empty when it builds one.
-std::string unbuilt_row(std::string_view system, std::string_view arch);
+std::string unbuilt_row(std::string_view system, std::string_view arch,
+                        const mcpp::platform::Resolved* P = nullptr);
 
 // The systems `--systems` names for an architecture (design 2026-10-29
 // §4.1): an `<os>`, an `<os>-<arch>` of that architecture, or every system
 // for `all`; this machine's system when it names none.
-//
-// `all` is the DATA's answer (2026.11.12.1, G5), not a list spelled here:
-// this machine's system, every system a platform defines a row of for the
-// architecture (mcpp#911 G10), and every system the platform's runner states
-// a host of for it (`runner.hosts`) -- which is where FreeBSD enters, a
-// runner the platform builds for `freebsd-<arch>`. A pack without a platform
-// answers with the machine's own system alone; `--systems` naming an `<os>`
-// keeps its exact meaning.
-std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch,
-                                     const mcpp::platform::Resolved* P = nullptr);
+std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch);
 
 // The single files of an image (design 2026-10-29 §4.5): one per leg and
 // system of the leg's architecture, the legs in the plan's order. `skipped`
@@ -2347,11 +2339,7 @@ std::string dependency_entry(const mcpp::manifest::platform::PackageRef& r) {
 }
 
 // The system names a package speaks of, and this machine's.
-constexpr std::string_view host_system() {
-    if constexpr (mcpplibs::os::is_windows) return "windows";
-    else if constexpr (mcpplibs::os::is_macos) return "macos";
-    else return "linux";
-}
+constexpr std::string_view host_system() { return mcpp::toolchain::platform::name; }
 
 // The triple a program of `system` on `arch` is built for, and the mode it
 // is packed in: a Linux program is static (musl), the one form that runs on
@@ -2359,7 +2347,9 @@ constexpr std::string_view host_system() {
 // macOS or Windows takes this machine's own row; another system's is its
 // conventional row. `single`: the program is the whole package (a single
 // file), so on Windows it takes its C++ run-time from the system.
-struct ProgramRow { std::string triple; std::string mode; std::string platform; };
+// `served`: false for a system whose row nothing states -- neither the engine's
+// conventions nor the platform -- which no program is built for.
+struct ProgramRow { std::string triple; std::string mode; std::string platform; bool served = true; };
 
 // The platform a generated program of `triple` is built over, as `--platform`
 // names it: the target's platform where its hosted arrangement serves the
@@ -2389,9 +2379,19 @@ std::string platform_ref_of(const mcpp::platform::Resolved& P) {
 
 ProgramRow program_row(std::string_view system, std::string_view arch, bool single,
                        const mcpp::platform::Resolved* P = nullptr) {
+    // THE IDENTITY THE PLATFORM BUILDS ITS RUNNER AS (`runner.built-as`,
+    // SPEC-013 §11): the platform that serves a system says which of its rows a
+    // program for that system is, and the engine holds no such table. One
+    // static program over the platform's hosted arrangement, the same whichever
+    // machine packs it.
+    if (P && P->active)
+        if (auto it = P->fields.runner.builtAs.find(std::format("{}-{}", system, arch));
+            it != P->fields.runner.builtAs.end())
+            return { it->second, "static", hosted_platform_for(P, it->second) };
     // A SYSTEM A PLATFORM DEFINES (mcpp#911 G10): its row of that architecture,
     // built over the platform that defines it, as the platform's carrier and
-    // packs of every other row are.
+    // packs of every other row are. A system nothing states a row for has no
+    // program.
     if (system != "linux" && system != "macos" && system != "windows") {
         if (P && P->active)
             for (auto const& d : P->fields.defines) {
@@ -2399,17 +2399,7 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
                 if (t && t->os == system && t->arch == arch)
                     return { t->str(), "static", platform_ref_of(*P) };
             }
-        // FREEBSD'S ROW IS THE MUSL IDENTITY THE PLATFORM SERVES (2026.11.12.1,
-        // G5), as FreeBSD's own request takes it (design 2026-11-10 E4):
-        // `*-freebsd-musl`, openkal-musl over openkal-freebsd, one static
-        // program with no C library of the system beneath -- built over the
-        // platform's hosted arrangement wherever the machine that packs it is,
-        // needing no FreeBSD and no SDK.
-        if (system == "freebsd") {
-            const auto triple = std::format("{}-freebsd-musl", arch);
-            return { triple, "static", hosted_platform_for(P, triple) };
-        }
-        return { std::format("{}-{}", arch, system), "static", {} };
+        return { std::format("{}-{}", arch, system), "static", {}, false };
     }
     if (system == "linux") {
         const auto triple = std::format("{}-linux-musl", arch);
@@ -2541,6 +2531,7 @@ std::string_view launcher_platform() {
 // state (`aarch64-windows-gnu`), or states as planned (`x86_64-macos`, its
 // toolchain not published), is not built.
 bool row_is_built(const ProgramRow& row) {
+    if (!row.served) return false;
     if (row.triple.empty()) return true;   // this machine's own row
     auto t = mcpp::toolchain::triple::parse(row.triple);
     if (!t) return false;
@@ -2775,7 +2766,7 @@ run_loaded(const Plan& plan)
         }
         if (plan.opts.mode == Mode::BundleAll) {
             for (auto const& leg : legs)
-                for (auto const& system : mcpp::pack::systems_for(plan.opts.systems, leg.arch, &plan.platform)) {
+                for (auto const& system : mcpp::pack::systems_for(plan.opts.systems, leg.arch)) {
                     // A row this mcpp builds no program for (a planned
                     // target, `x86_64-macos`) carries no runner: said, and
                     // the package's metadata lists the systems it carries.
@@ -3221,8 +3212,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             // with it; every other name is the target system's.
             const bool foreignSystem = [&] {
                 auto t = mcpp::toolchain::triple::parse(plan.triple);
-                return t && t->c_library_by_platform()
-                    && t->execution_system() != mcpp::toolchain::triple::host_triple().os;
+                return t && !t->loads_on_host();
             }();
             std::vector<std::string> targetSystemNames;
             auto foreign_closure = [&]() -> std::expected<LddClosure, std::string> {
@@ -3528,8 +3518,7 @@ std::expected<void, Error> finalize_staged(const Plan& plan) {
     return detail::finalize_tree(plan);
 }
 
-std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch,
-                                     const mcpp::platform::Resolved* P) {
+std::vector<std::string> systems_for(const std::vector<std::string>& stated, std::string_view arch) {
     if (stated.empty()) return { std::string(detail::host_system()) };
     std::vector<std::string> out;
     auto add = [&](std::string os) {
@@ -3537,21 +3526,15 @@ std::vector<std::string> systems_for(const std::vector<std::string>& stated, std
     };
     for (auto const& e : stated) {
         if (e == "all") {
-            // This machine's system, every system the platforms of this
-            // process define a row of for the architecture (mcpp#911 G10),
-            // and every system the carrier's runner states a host of for it
-            // (2026.11.12.1, G5) -- the rows the platform itself says its
-            // runner exists for, FreeBSD's among them.
-            add(std::string(detail::host_system()));
+            // Every system the table states (SPEC-016 §2.3), built-in or a
+            // platform's, and every system the platforms of this process
+            // define a row of for the architecture (mcpp#911 G10). A pair no
+            // program is built for is written as uncovered (SPEC-014 §4.5),
+            // not left out.
+            for (auto const* s : mcpp::toolchain::target::systems()) add(std::string(s->name));
             for (auto const* r : mcpp::toolchain::target::rows())
                 if (r->defined && r->arch == arch && !r->os.empty() && r->os != "none")
                     add(std::string(r->os));
-            if (P && P->active)
-                for (auto const& h : P->fields.runner.hosts) {
-                    const auto dash = h.find('-');
-                    if (dash == std::string_view::npos) continue;
-                    if (h.substr(dash + 1) == arch) add(std::string(h.substr(0, dash)));
-                }
             continue;
         }
         const auto dash = e.find('-');
@@ -3567,10 +3550,10 @@ std::vector<SingleFileRow> single_file_rows(const Plan& plan) {
     const bool all = std::ranges::find(plan.opts.systems, "all") != plan.opts.systems.end();
     std::vector<SingleFileRow> rows;
     for (auto const& arch : archs)
-        for (auto const& system : systems_for(plan.opts.systems, arch, &plan.platform)) {
+        for (auto const& system : systems_for(plan.opts.systems, arch)) {
             SingleFileRow r{ system, arch, {} };
             if (all)
-                if (auto row = unbuilt_row(system, arch); !row.empty())
+                if (auto row = unbuilt_row(system, arch, &plan.platform); !row.empty())
                     r.skipped = std::format("no carrier row: this mcpp builds no program for {}", row);
             if (all && r.skipped.empty() && plan.platform.active)
                 if (auto why = detail::unbuilt_carrier(plan.platform, system, arch, true))
@@ -3588,8 +3571,9 @@ bool output_names_directory(const std::filesystem::path& output) {
     return std::filesystem::is_directory(output, ec);
 }
 
-std::string unbuilt_row(std::string_view system, std::string_view arch) {
-    const auto row = detail::program_row(system, arch, true);
+std::string unbuilt_row(std::string_view system, std::string_view arch,
+                        const mcpp::platform::Resolved* P) {
+    const auto row = detail::program_row(system, arch, true, P);
     return detail::row_is_built(row) ? std::string() : row.triple;
 }
 
@@ -3801,7 +3785,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
         const std::string system = !t ? std::string(detail::host_system())
                                  : t->os == "windows" ? std::string("windows")
                                  : t->os == "macos" ? std::string("macos") : std::string("linux");
-        const auto row = detail::program_row(system, arch, true);
+        const auto row = detail::program_row(system, arch, true, &plan.platform);
         if (!write(dir / "payload.zst", *payload)
             || !write(dir / "mcpp.toml", d::launcher_manifest(stem, plan.packageVersion) + detail::static_row_pin(row))
             || !write(dir / "src" / "main.cpp", d::launcher_main())

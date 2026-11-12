@@ -1017,30 +1017,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             link_toolchain_flags += " -fuse-ld=lld";
             link_toolchain_flags_c = link_toolchain_flags;
         } else {
-        // A ROW'S BASE PACKAGE IS THE TARGET'S C LIBRARY (the gnu-sysroot
-        // form): the host's model contributes nothing, exactly as when the
-        // graph supplies it -- the base's own -B/-L/loader words reach the
-        // line through the payload channel, and this machine's runtime
-        // directories would shadow the target's (measured: the host payload's
-        // x86_64 libatomic.a resolved ahead of the sysroot's, and lld called
-        // it incompatible with aarch64linux).
-        if (lm.mode == mcpp::toolchain::CLibMode::Sysroot
-            && plan.toolchain.base.layers.cAbi.empty())
+        if (lm.mode == mcpp::toolchain::CLibMode::Sysroot)
             link_toolchain_flags += lm.link_flags(ninjaEsc);
-
-        // THE BASE'S ROOT IS A SYSROOT (the gnu-sysroot form): name it to
-        // the driver, and the ld scripts inside it (/lib GROUPs), its crt
-        // objects and its loader all resolve the way a --sysroot link
-        // resolves them -- the payload's own mcpp.toml states the package
-        // root IS the sysroot, and without the flag a dynamic link reads
-        // /lib/libc.so.6 against this machine's root instead.
-        if (!plan.toolchain.base.layers.cAbi.empty()) {
-            std::filesystem::path baseDir = plan.toolchain.base.root;
-            if (baseDir.empty() && plan.toolchain.base.payload)
-                baseDir = plan.toolchain.base.payload->glibcLib.parent_path();
-            if (!baseDir.empty())
-                link_toolchain_flags += " --sysroot=" + ninjaEsc(baseDir);
-        }
         link_toolchain_flags_c = link_toolchain_flags
             + std::string(mcpp::toolchain::ClangDriverModel::kLinkDriverFlagsC);
         // A graph-supplied libstdc++ under the payload's clang: the driver
@@ -1055,9 +1033,9 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         }
         f.sysroot = link_toolchain_flags;
     } else if (lm.mode != mcpp::toolchain::CLibMode::None) {
-        if (lm.mode == mcpp::toolchain::CLibMode::Sysroot
-            && plan.toolchain.base.layers.cAbi.empty())
-            link_toolchain_flags += lm.link_flags(ninjaEsc);
+        // GCC (or Clang without cfg): --sysroot from probe, or the payload
+        // headers + C runtime (-B for crt discovery, -L for -lc/-lm).
+        link_toolchain_flags = crossTarget + lm.link_flags(ninjaEsc);
         link_toolchain_flags_c = link_toolchain_flags;   // nothing C++-only here
         f.sysroot = link_toolchain_flags;
     } else if (!crossTarget.empty() && ownSysrootTarget) {
@@ -1917,18 +1895,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
 
     std::string runtime_dirs;
     if constexpr (mcpp::toolchain::platform::supports_rpath) {
-        // Toolchain runtime dirs (glibc/gcc) as before -- but not for a
-        // target whose C library a row's base package serves (the
-        // gnu-sysroot form): those directories are THIS MACHINE's, and on a
-        // cross they would both shadow the target's libraries (-L precedes
-        // the base's own) and bake a host RUNPATH into the target's
-        // artifact. The base's directories reach the line through its own
-        // channel.
-        if (plan.toolchain.base.layers.cAbi.empty())
-            for (auto& dir : plan.toolchain.linkRuntimeDirs) {
-                runtime_dirs += " -L" + escape_path(dir);
-                runtime_dirs += " -Wl,-rpath," + escape_path(dir);
-            }
+        // Toolchain runtime dirs (glibc/gcc) as before...
+        for (auto& dir : plan.toolchain.linkRuntimeDirs) {
+            runtime_dirs += " -L" + escape_path(dir);
+            runtime_dirs += " -Wl,-rpath," + escape_path(dir);
+        }
         // Dependency/runtime provider search comes from LinkIntent and is
         // rendered separately.  In particular runtimeSearchDirs contributes
         // RUNPATH only; it must never become a link-time -L path.
@@ -2011,6 +1982,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // A BASE PACKAGE'S RUN-TIMES ON THE LINK (design 2026-11-10 E5): where its
     // compiler runtime stands (`compiler_runtime_dir`: clang reads it as its
     // resource directory, gcc through `-B`), and, when it supplies the C++
+    // layer, its `ldflags` in place of the driver's own C++ library, which
+    // names the toolchain's. The run-time directory is as much a C link's as a
+    // C++ one's (`kLinkDriverFlagsC` states the same of the driver's own
+    // selection); the C++ library's words belong to the C++ link alone.
     auto base_link_words = [&](bool cxx) {
         std::string words;
         auto const& L = plan.toolchain.base.layers;
@@ -2018,11 +1993,6 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             words += plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
                 ? " -resource-dir=" + ninjaEsc(L.compilerRuntimeDir)
                 : " -B" + ninjaEsc(L.compilerRuntimeDir);
-        // The C++ library words are the C++ link's alone; the run-time
-        // directory above is as much a C decision -- a C link resolves
-        // __udivti3 from the same builtins the C++ one does, and a base
-        // package that names one names it for every link (the same sentence
-        // `kLinkDriverFlagsC` states for the driver's own selection).
         if (cxx && !L.cxx.empty() && !L.ldflags.empty()) {
             words += " -nostdlib++";
             for (auto const& w : L.ldflags) words += " " + ninja_command_word(w);
@@ -2102,6 +2072,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // drop it — the C line has to leave it out.
         f.ldC = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                             user_ldflags, link_extra, baseStatic);
+        f.ldC += base_link_words(false);
         return f;
     }
 
@@ -2353,7 +2324,6 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // `--push-state`/`--pop-state` pair), which is what sent a reader here.
         std::string atomic_ld =
             plan.targetSide.cAbi.prebuilt()
-                && plan.toolchain.base.layers.cAbi.empty()
                 ? atomic_link_flag(plan.toolchain.linkRuntimeDirs,
                                    !full_static.empty())
                 : std::string{};
@@ -2733,10 +2703,6 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
 
     // A BASE PACKAGE'S RUN-TIMES (design 2026-11-10 E5).
     f.ld  += base_link_words(true);
-    // The base's run-time directory reaches the C link too (2026.11.12.1):
-    // a hosted cross over a sysroot payload links its compiler run-time from
-    // the payload's own resource directory, and the C program's link is the
-    // one that had nowhere to find it.
     f.ldC += base_link_words(false);
 
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY

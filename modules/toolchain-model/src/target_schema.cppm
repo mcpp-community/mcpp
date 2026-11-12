@@ -59,6 +59,26 @@ struct Provider {
     std::string_view sysroot;                   // a payload, or `toolchain`
     std::string_view linkage;                   // static | dynamic
     std::string_view platform;                  // a platform package reference
+    std::string_view tier;                      // of this arrangement; empty: the row's
+    // The package whose headers state the system's own interfaces, for the
+    // steps that compile against them and not against the C library (a
+    // resource compiler's `windows.h`).
+    std::string_view systemHeaders;
+    // HOW AN ARTIFACT OF THE ARRANGEMENT IS STARTED (SPEC-016 §6): the argv
+    // template, the hosts on which that program exists (empty: every host),
+    // and the packages it is installed from on the first run.
+    std::span<const std::string_view> runner;
+    std::span<const std::string_view> runnerHosts;
+    std::span<const std::string_view> runnerRequires;
+};
+
+// A SYSTEM (SPEC-016 §2.3): the facts of an operating system that no single
+// row states. `uname` is the word `uname -s` answers there, which a file that
+// carries one program per system selects by; a system without it joins no
+// such file.
+struct System {
+    std::string_view name;
+    std::string_view uname;
 };
 
 // THE PATTERN OF `serves`: segment by segment, `*` standing for any one segment

@@ -31,10 +31,8 @@ std::uint64_t number_after(std::string_view text, std::string_view key) {
 }  // namespace
 
 UTest without_windows_the_file_is_a_script_and_each_program_lies_where_its_line_says{"PackPolyglot/WithoutWindowsTheFileIsAScriptAndEachProgramLiesWhereItsLineSays", [] {
-    const std::string linux64(1000, 'L'), mac(777, 'M'), fbsd(333, 'F');
-    auto file = pg::assemble("app", { program("linux", "x86_64", linux64),
-                                      program("freebsd", "x86_64", fbsd),
-                                      program("macos", "aarch64", mac) });
+    const std::string linux64(1000, 'L'), mac(777, 'M');
+    auto file = pg::assemble("app", { program("linux", "x86_64", linux64), program("macos", "aarch64", mac) });
     if (auto&& failed = expect(fatal(file.has_value())); !failed) failed << file.error();
     expect(file->starts_with("#!/bin/sh\no=$0;"));
     expect(pg::is_polyglot(*file));
@@ -49,7 +47,6 @@ UTest without_windows_the_file_is_a_script_and_each_program_lies_where_its_line_
     expect(eq(script.find("MINGW*"), std::string_view::npos)) << "no Windows program, no MSYS line";
 
     for (auto [key, bytes] : { std::pair{std::string_view("k=linux-x86_64 a="), std::string_view(linux64)},
-                               std::pair{std::string_view("k=freebsd-x86_64 a="), std::string_view(fbsd)},
                                std::pair{std::string_view("k=macos-aarch64 a="), std::string_view(mac)} }) {
         const auto line = script.find(key);
         expect(fatal(ne(line, std::string_view::npos))) << key;
@@ -60,18 +57,27 @@ UTest without_windows_the_file_is_a_script_and_each_program_lies_where_its_line_
     }
     // `uname` spells an architecture two ways on some systems.
     expect(ne(script.find("Linux-x86_64|Linux-amd64)"), std::string_view::npos));
-    expect(ne(script.find("FreeBSD-x86_64|FreeBSD-amd64)"), std::string_view::npos));
     expect(ne(script.find("Darwin-aarch64|Darwin-arm64)"), std::string_view::npos));
+}};
+
+// The word a system is selected by is the system table's `uname` (SPEC-016
+// §2.3): a system the table states joins the file with no word of the code.
+UTest a_system_of_the_table_is_selected_by_its_uname{"PackPolyglot/ASystemOfTheTableIsSelectedByItsUname", [] {
+    auto file = pg::assemble("app", { program("linux", "x86_64", "LINUX"),
+                                      program("freebsd", "x86_64", "FREEBSD") });
+    expect(fatal(file.has_value()));
+    expect(ne(file->find("FreeBSD-x86_64|FreeBSD-amd64)"), std::string::npos));
+    expect(ne(file->find("Linux-x86_64|Linux-amd64)"), std::string::npos));
 }};
 
 UTest refuses_what_it_cannot_lay_out{"PackPolyglot/RefusesWhatItCannotLayOut", [] {
     expect(!(pg::assemble("app", {}).has_value()));
     expect(!(pg::assemble("a'b", { program("linux", "x86_64", "x") }).has_value()))
         << "the name is quoted in the script";
-    // FreeBSD is a POSIX system of the file since 2026.11.12.1 (G5): its
-    // program rides behind the script head beside Linux's. What still has
-    // no place is a system the script names no `uname` pattern for.
-    expect(!(pg::assemble("app", { program("plan9", "x86_64", "x") }).has_value()));
+    // A system no table states has no `uname` word to be selected by.
+    auto unstated = pg::assemble("app", { program("plan9", "x86_64", "x") });
+    expect(fatal(!unstated.has_value()));
+    expect(ne(unstated.error().find("[[platform.system]]"), std::string::npos)) << unstated.error();
     auto notPe = pg::assemble("app", { program("windows", "x86_64", std::string(256, 'x')) });
     expect(fatal(!notPe.has_value()));
     if (auto&& failed = expect(ne(notPe.error().find("no PE"), std::string::npos)); !failed) failed << notPe.error();

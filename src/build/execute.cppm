@@ -1356,35 +1356,44 @@ ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string
     return h;
 }
 
-// THE PHYSICAL BOUNDARY (§3.8): an artifact no path from this machine can
-// execute is refused before anything is spawned, naming the key that adds one.
-// Today that is an Apple artifact on a host that is not macOS: the simulator
-// and the OS run only there. `--no-runner` states that the triple is native
-// here, and is believed.
+// THE PHYSICAL BOUNDARY (§3.8, SPEC-016 §6): an artifact this machine does
+// not execute is refused before anything is spawned, naming the key that adds
+// a way. One predicate for every row, built-in or defined: the row's execution
+// system against this machine's. `--no-runner` states that the triple is
+// native here, and is believed.
 std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
                                                  std::string_view tripleKey, bool noRunner,
                                                  bool runnerDeclared = false) {
     if (noRunner || !ctx.runUnder.empty()) return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
-    // AN ARTIFACT OF A SYSTEM A PLATFORM DEFINES runs where its row's
-    // `execution` names (mcpp#911 G11): on this machine when that is this
-    // machine's system, else through a runner -- a runner package's program,
-    // which reaches a VM, a remote host or a device by the run protocol
-    // (docs/41) -- or an execution host. With neither it is built, not run.
-    if (auto const* d = t ? t->defined() : nullptr; d && !runnerDeclared) {
-        const std::string_view system = d->execution.empty() ? std::string_view(t->os) : d->execution;
-        const std::string_view here = mcpplibs::os::is_windows ? "windows"
-                                    : mcpplibs::os::is_macos ? "macos" : "linux";
-        if (system != here)
-            return std::format(
-                "{} artifacts run on {}, not on this {} host: built, not run.\n"
-                "       State how they run: [target.{}] runner = [\"<program>\", \"{{}}\"], the program a "
-                "runner package builds\n"
-                "       ([target.{}.tools] <program> = {{ ... }}; the run protocol is docs/41), or an "
-                "execution host:\n"
-                "       [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"].",
-                tripleKey, system, here, tripleKey, tripleKey, tripleKey);
-    }
+    // An Apple artifact off macOS: no runner reaches it, only an execution host.
+    if (!mcpplibs::os::is_macos && t && t->is_apple())
+        return std::format(
+            "cannot run {} artifacts on this host: {} runs only on macOS.\n"
+            "       Name an execution host: [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"]\n"
+            "       (in mcpp.toml for the team, or ~/.mcpp/config.toml for this machine).",
+            tripleKey, t->is_ios_simulator() ? "the iOS Simulator" : t->is_ios() ? "iOS" : "macOS",
+            tripleKey);
+    // AN ARTIFACT OF ANOTHER SYSTEM IS NOT STARTED TO SEE WHAT HAPPENS (SPEC-016
+    // §6). A row's artifacts run on its execution system -- the `execution` its
+    // row states, built-in or defined, else its own -- and that is this
+    // machine's system or it is not. Where it is not, the artifact runs through
+    // a runner (a provider's, a platform's, a runner package's program by the
+    // run protocol, docs/41) or an execution host; with neither it is built,
+    // not run. The kernel of this machine gives another system's call numbers
+    // its own meaning, so a launch is not an observation. An artifact of this
+    // system and another architecture is launched as before: the kernel
+    // refuses it or an emulator it knows runs it.
+    if (t && !t->is_freestanding() && !runnerDeclared && !t->system_is_host())
+        return std::format(
+            "{} artifacts run on {}, not on this {} host: built, not run.\n"
+            "       State how they run: [target.{}] runner = [\"<program>\", \"{{}}\"], the program a "
+            "runner package builds\n"
+            "       ([target.{}.tools] <program> = {{ ... }}; the run protocol is docs/41), or an "
+            "execution host:\n"
+            "       [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"].",
+            tripleKey, t->execution_system(), mcpp::toolchain::triple::host_triple().os,
+            tripleKey, tripleKey, tripleKey);
     // A RUNNER THAT RUNS THE ARTIFACT ON A MACHINE OF ITS ARCHITECTURE
     // (`runner = { ..., host = "same-arch" }`, SPEC-013): an ok image's loader
     // is a program of this machine, and an image of another architecture is
@@ -1402,14 +1411,7 @@ std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext
             tripleKey, mcpp::toolchain::platform::host_arch,
             r.cmd.empty() ? std::string() : r.cmd.front(),
             mcpp::platform::origin_text(r.origin), tripleKey);
-    if (mcpplibs::os::is_macos) return std::nullopt;
-    if (!t || !t->is_apple()) return std::nullopt;
-    return std::format(
-        "cannot run {} artifacts on this host: {} runs only on macOS.\n"
-        "       Name an execution host: [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"]\n"
-        "       (in mcpp.toml for the team, or ~/.mcpp/config.toml for this machine).",
-        tripleKey, t->is_ios_simulator() ? "the iOS Simulator" : t->is_ios() ? "iOS" : "macOS",
-        tripleKey);
+    return std::nullopt;
 }
 
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
@@ -1448,6 +1450,10 @@ struct RunnerChoice {
     bool ignored = false;               // --no-runner dropped a declared template
     bool longLived = false;             // declared by the package; no natural end
     bool fromPayload = false;           // the toolchain payload's runner, nothing declared
+    // The packages the runner is installed from that do not stand on this
+    // machine (SPEC-016 §6): a run or a test installs them and asks again; a
+    // build installs nothing.
+    std::vector<std::string> missing;
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -1458,6 +1464,50 @@ struct RunnerChoice {
     // message it produces cannot disagree about which target they mean.
     std::string tripleKey;
 };
+
+// THE PLACES A RUNNER'S TEMPLATE NAMES (SPEC-016 §6). `{sysroot}` is the base
+// the artifact was linked against (a user-mode emulator's root); `{pkg:<name>}`
+// the root of the package of that name among `requires` (an image, a firmware
+// file); the template's program is taken from a required package before PATH.
+// Packages are located where they stand, and the ones that do not stand are
+// named for the caller: what installs them is a run, never this lookup.
+void settle_runner_places(const BuildContext& ctx, RunnerChoice& c,
+                          std::span<const std::string> requires_) {
+    std::map<std::string, std::filesystem::path> roots;
+    for (auto const& ref : requires_) {
+        auto name = ref.substr(ref.find(':') == std::string::npos ? 0 : ref.find(':') + 1);
+        name = name.substr(0, name.find('@'));
+        if (auto dir = mcpp::build::package_root(ref, false)) roots[name] = *dir;
+        else c.missing.push_back(ref);
+    }
+    if (c.tmpl.empty()) return;
+    for (auto const& [name, root] : roots) {
+        auto found = mcpp::build::runner_lookup::locate(
+            c.tmpl.front(), mcpp::build::runner_lookup::payload_search_dirs(root), {});
+        if (!found.program) continue;
+        c.tmpl.front() = found.program->string();
+        break;
+    }
+    auto place = [](std::string& word, std::string_view key, const std::string& value) {
+        for (auto at = word.find(key); at != std::string::npos; at = word.find(key, at + value.size()))
+            word.replace(at, key.size(), value);
+    };
+    for (auto& word : c.tmpl) {
+        if (!ctx.tc.base.root.empty()) place(word, "{sysroot}", ctx.tc.base.root.generic_string());
+        for (auto const& [name, root] : roots)
+            place(word, std::format("{{pkg:{}}}", name), root.generic_string());
+    }
+}
+
+// What a run or a test does about `missing`: installs each through the channel
+// a toolchain pin uses, with the same consent. Empty: all stand.
+std::string install_runner_packages(const RunnerChoice& c) {
+    for (auto const& ref : c.missing)
+        if (auto dir = mcpp::build::package_root(ref, true); !dir)
+            return std::format("the runner of '{}' is installed from {}, and {}", c.tripleKey, ref,
+                               dir.error());
+    return {};
+}
 
 // ONE READER FOR FOUR SLOTS, PARAMETERISED BY THE SLOT.
 //
@@ -1493,6 +1543,7 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
             c.tmpl = pf.runner.cmd;
             c.fromManifest = overrides_program(pf.runner.origin,
                                                !ctx.manifest.buildConfig.runner.empty());
+            settle_runner_places(ctx, c, pf.runner.requires_);
         }
     } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end()) {
         c.tmpl = it->second.value;
@@ -3294,7 +3345,14 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     // while debugging, or naming `qemu-aarch64-static` for a cross target.
     const bool isRunSlot = runner_name.empty();
     const std::string slotName{runner_name};
-    const auto choice = choose_device_action(ctx, runner_name, no_runner);
+    auto choice = choose_device_action(ctx, runner_name, no_runner);
+    if (!choice.missing.empty()) {
+        if (auto why = install_runner_packages(choice); !why.empty()) {
+            std::println(libc::stderr(), "error: {}", why);
+            return 2;
+        }
+        choice = choose_device_action(ctx, runner_name, no_runner);
+    }
     if (choice.ignored)
         mcpp::ui::info("note", std::format(
             "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
@@ -3493,32 +3551,8 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         emit_launch(env);
         return 0;
     }
-    // A PROGRAM OF ANOTHER SYSTEM'S KERNEL INTERFACE, of this machine's own
-    // architecture, STARTS AND DIES ON ITS FIRST KERNEL CALL (G6): the kernel
-    // maps a static foreign ELF without asking which system it names, the
-    // program then states a syscall in that system's vocabulary, and the death
-    // is by signal — where mcpp, having become the program on POSIX, can say
-    // nothing at all. Such an artifact is run as a child instead, so its death
-    // is observed, named with the [target.<triple>] runner declaration, and
-    // its status returned unchanged: 139 stays 139, exactly what a direct
-    // launch would have reported. Every other launch — a declared runner,
-    // `run_under`, a native or cross-arch target — keeps the launch it always
-    // had, and a native signal death is never interpreted: that death is the
-    // program's own.
-    const bool foreignKernel = [&] {
-        if (!choice.tmpl.empty() || !host.prefix.empty()) return false;
-        auto t = mcpp::toolchain::triple::parse(choice.tripleKey);
-        if (!t || t->os.empty()) return false;
-        const std::string_view here = mcpplibs::os::is_windows ? "windows"
-                                      : mcpplibs::os::is_macos ? "macos" : "linux";
-        return t->os != here && t->arch == mcpp::toolchain::platform::host_arch;
-    }();
     int spawnErr = 0;
-    int rc = 0;
-    if (foreignKernel)
-        rc = mcpp::run::run_exec(argv, childEnv, &spawnErr);
-    else
-        rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
+    const int rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
         if (!choice.tmpl.empty() || !host.prefix.empty())
@@ -3526,20 +3560,10 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         else if (classify(spawnErr) == SpawnClass::Unloadable)
             std::println(libc::stderr(), "error: {}",
                          unrunnable_message(choice.tripleKey, exe, spawnErr));
-        else if (foreignKernel)
-            // The program was found and its interpreter was not (ENOENT, a
-            // dynamic linker of the other system): the bare errno names
-            // neither fact, so the same runner declaration follows it.
-            std::println(libc::stderr(), "error: {}{}",
-                         spawn_failed_message(exe.string(), spawnErr),
-                         runner_advice_text(choice.tripleKey));
         else
             std::println(libc::stderr(), "error: {}", spawn_failed_message(exe.string(), spawnErr));
         return launcher_status(spawnErr);
     }
-    if (foreignKernel && mcpp::build::runner_lookup::death_by_signal(rc))
-        std::println(libc::stderr(), "error: {}",
-                     mcpp::build::runner_lookup::signal_death_message(choice.tripleKey, exe, rc));
     return rc;
 }
 
@@ -4674,6 +4698,16 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
 static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool json) {
     auto* ctx = &*tb.ctx;
     tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+    if (!tb.runnerChoice.missing.empty()) {
+        // A package that cannot be installed leaves the tests not run, said
+        // once for the build as a missing program is.
+        if (auto why = install_runner_packages(tb.runnerChoice); !why.empty()) {
+            tb.invocationNotRunReason = why;
+            std::println(libc::stderr(), "error: {}", why);
+            return;
+        }
+        tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+    }
     auto& runnerChoice = tb.runnerChoice;
     if (!testOpts.runnerName.empty() && runnerChoice.tmpl.empty()) {
         tb.invocationNotRunReason = std::format("no runner named '{}' for '{}'",

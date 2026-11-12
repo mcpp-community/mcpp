@@ -24,7 +24,7 @@ export module mcpp.build.runner_lookup;
 
 import std;
 import mcpplibs.os.platform;
-import mcpplibs.mwrap.libc;
+
 export namespace mcpp::build::runner_lookup {
 
 struct Lookup {
@@ -152,7 +152,9 @@ inline std::string spawn_failed_message(std::string_view program, int e,
 // The hosted sibling of mcpp::freestanding::no_runner_message. It reports what
 // the kernel answered rather than asserting why: on a hosted triple mcpp does
 // not know whether the refusal is a foreign ISA or a file that is not an
-// executable at all, and the example it prints is a user-mode emulator.
+// executable at all. The declaration it prints is the key's shape; which
+// program runs the artifact is the statement of a provider, a platform or the
+// project (SPEC-016 §6), and no program is named here.
 inline std::string unrunnable_message(std::string_view triple,
                                       const std::filesystem::path& artifact, int e) {
     return std::format(
@@ -160,90 +162,12 @@ inline std::string unrunnable_message(std::string_view triple,
         "       The artifact was built for '{}'. Declare how to run it here:\n"
         "\n"
         "           [target.{}]\n"
-        "           runner = [\"qemu-aarch64-static\"]\n"
+        "           runner = [\"<program>\", \"{{}}\"]\n"
         "\n"
         "       The artifact path is appended, or substituted for `{{}}` if the "
         "template contains it.\n"
         "       A host that can execute it directly may pass --no-runner.",
         artifact.string(), errno_text(e), e, triple, triple);
-}
-
-// ─── Started, and dead at once ────────────────────────────────────────────
-//
-// A SPAWN THAT SUCCEEDS CAN STILL DIE BEFORE IT DOES ANYTHING. The kernel
-// maps a static ELF of its own architecture without reading the system the
-// ELF names — FreeBSD's OSABI byte is not a question Linux asks — so the
-// program runs, states its first kernel interface call in its own system's
-// vocabulary, and the kernel answers with a signal: SIGSEGV or SIGILL for a
-// syscall number that maps nowhere, SIGBUS for a stack it never grew,
-// SIGABRT where the C library gave up first. `mcpp::run` reports the exit
-// status a shell would (128 + the signal), and the status is the only fact
-// that distinguishes this death from a crash in a working program — which is
-// why the classification is asked about artifacts of another system only,
-// never about a native one, where the same status is the program's own bug
-// and advice about runners would be noise on top of it.
-// The constants come from the mwrap of the C library's macros (the engine
-// includes no headers); SIGBUS is not among them, and its typical cause here
-// -- a stack the kernel never grew -- arrives as SIGSEGV on the systems that
-// report it, so the classification keeps the three the wrap carries.
-namespace sigc = mcpplibs::mwrap::libc::macros;
-inline bool death_by_signal(int rc) {
-    switch (rc) {
-        case 128 + sigc::SIGSEGV:
-        case 128 + sigc::SIGILL:
-        case 128 + sigc::SIGABRT:
-            return true;
-        default:
-            return false;
-    }
-}
-
-// The signal's name, for a message a reader can grep; empty for a status the
-// classification did not take.
-inline std::string_view signal_of_death(int rc) {
-    switch (rc) {
-        case 128 + sigc::SIGSEGV: return "SIGSEGV";
-        case 128 + sigc::SIGILL:  return "SIGILL";
-        case 128 + sigc::SIGABRT: return "SIGABRT";
-        default:                  return {};
-    }
-}
-
-// What an artifact of another system's kernel interface says when it dies at
-// once: the [target.<triple>] runner declaration, the same template
-// `unrunnable_message` prints, under a first line that states the death and
-// the fact of the build rather than guessing at a diagnosis.
-inline std::string signal_death_message(std::string_view triple,
-                                        const std::filesystem::path& artifact, int rc) {
-    return std::format(
-        "'{}' was started and died at once ({}, status {}): it was built for "
-        "'{}', another system's kernel interface, and this machine cannot "
-        "execute it directly.\n"
-        "       Declare how to run it here:\n"
-        "\n"
-        "           [target.{}]\n"
-        "           runner = [\"qemu-aarch64-static\"]\n"
-        "\n"
-        "       The artifact path is appended, or substituted for `{{}}` if the "
-        "template contains it.\n"
-        "       A host that can execute it directly may pass --no-runner.",
-        artifact.string(), signal_of_death(rc), rc, triple, triple);
-}
-
-// The same declaration, appended to a spawn refusal whose bare text names
-// only the errno (an interpreter of another system the kernel could not
-// find, ENOENT) — the reader's remedy is the same either way.
-inline std::string runner_advice_text(std::string_view triple) {
-    return std::format(
-        "\n       The artifact was built for '{}'. Declare how to run it here:\n"
-        "\n"
-        "           [target.{}]\n"
-        "           runner = [\"qemu-aarch64-static\"]\n"
-        "\n"
-        "       The artifact path is appended, or substituted for `{{}}` if the "
-        "template contains it.\n"
-        "       A host that can execute it directly may pass --no-runner.",
-        triple, triple);
 }
 
 } // namespace mcpp::build::runner_lookup

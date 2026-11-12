@@ -53,28 +53,12 @@ echo "ok: --systems <os>-<arch> makes that pair's file"
 
 # C
 if [ "$OS" = linux ]; then
-    # `--systems all` is the data's answer (2026.11.11.1): this machine's
-    # system, the systems the platform defines a row of for the
-    # architecture, and the systems its runner states a host of -- FreeBSD
-    # included, and never a pair no row exists for, so nothing is "Not
-    # covered" and nothing needs to say so.
     "$MCPP" pack --target openkal --pkg-format single-file --systems all -o all/ > c.log 2>&1 || fail "C: --systems all" c.log
-    for pair in linux-x86_64 linux-aarch64 windows-x86_64 macos-aarch64 \
-                freebsd-x86_64 freebsd-aarch64; do
+    for pair in linux-x86_64 linux-aarch64 windows-x86_64 macos-aarch64; do
         ls all/sf-0.1.0-$pair* > /dev/null 2>&1 || fail "C: no file for $pair" c.log
     done
-    [ ! -e all/sf-0.1.0-macos-x86_64 ] || fail "C: a pair with no row was packed" c.log
-    # Naming an <os> keeps its exact meaning: for a single file per pair,
-    # a system one of whose architectures has no row is refused naming the
-    # pair and the spelling that would work.
-    if "$MCPP" pack --target openkal --pkg-format single-file --systems macos -o mac/ > m.log 2>&1; then
-        fail "C: --systems macos was accepted with a rowless pair" m.log
-    fi
-    grep -q "builds no program for macos-x86_64" m.log \
-        || fail "C: the pair without a row is not said" m.log
-    grep -q "use: --systems macos-aarch64" m.log \
-        || fail "C: the refusal does not name the working spelling" m.log
-    echo "ok: --systems all makes every file the data names; a named system with a rowless pair is refused naming it"
+    grep -q "Not covered macos-x86_64 (no carrier row" c.log || fail "C: the pair without a row is not said" c.log
+    echo "ok: --systems all makes every file this mcpp can and says the rest"
 fi
 
 # D

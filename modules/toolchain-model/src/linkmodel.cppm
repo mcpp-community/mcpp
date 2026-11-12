@@ -22,6 +22,8 @@ import mcpplibs.os.platform;
 import mcpp.toolchain.apple_sdk;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 
 export namespace mcpp::toolchain {
 
@@ -302,50 +304,27 @@ struct ClangDriverModel {
     }
 };
 
-// ── loader resolution: data over hardcodes ───────────────────────────────
+// ── loader resolution: the row's data ────────────────────────────────────
 //
-// Priority:
-//   1. Triple map (x86_64/aarch64/riscv64/loongarch64 glibc + musl) —
-//      loader file names are platform-ABI-level stable conventions.
-//   2. Glob: first `ld-*.so*` regular file in the lib dir (covers arches
-//      the map doesn't know yet).
-//
-// A third, declared-metadata source (a persisted `.xpkg-exports.json`
-// written by the installer) was evaluated and removed: its only consumer
-// would have been this resolver, while the two sources above already cover
-// every real payload — see docs/91-toolchain-internals.md for the record.
-//
-// Returns the loader's absolute path, or empty when none was found (callers
-// then omit --dynamic-linker and the hermeticity check reports the gap).
+// A row states the program interpreter its dynamic programs name (`loader`,
+// SPEC-016 §2.1): the path on the machine that runs them. The file name of
+// that path is what a payload's library directory holds, and the path itself
+// is what a shipped binary's PT_INTERP reads. A triple no row states one for
+// has neither; `resolve_loader` then takes the first `ld-*.so*` of the
+// directory.
 
-// Loader *file name* for a target triple; empty when the arch is unknown.
-std::string loader_filename(std::string_view targetTriple) {
-    const bool musl = targetTriple.find("musl") != std::string_view::npos;
-    struct ArchLoader { std::string_view arch, gnuName, muslArch; };
-    static constexpr std::array<ArchLoader, 5> kMap{{
-        {"x86_64",      "ld-linux-x86-64.so.2",          "x86_64"},
-        {"aarch64",     "ld-linux-aarch64.so.1",         "aarch64"},
-        {"riscv64",     "ld-linux-riscv64-lp64d.so.1",   "riscv64"},
-        {"loongarch64", "ld-linux-loongarch-lp64d.so.1", "loongarch64"},
-        {"i686",        "ld-linux.so.2",                 "i386"},
-    }};
-    for (auto& m : kMap) {
-        if (targetTriple.starts_with(m.arch)) {
-            if (musl) return std::format("ld-musl-{}.so.1", m.muslArch);
-            return std::string(m.gnuName);
-        }
-    }
-    return {};
+// The distro-side loader path of a target (`mcpp pack`, the host's own root).
+std::string distro_loader_path(std::string_view targetTriple) {
+    auto t = triple::parse(targetTriple);
+    auto const* r = target::find_row(t ? t->str() : std::string(targetTriple));
+    return r ? std::string(r->loader) : std::string{};
 }
 
-// The distro-side loader path a *shipped* binary's PT_INTERP should point at
-// (LSB layout), by target triple. Used by `mcpp pack`.
-std::string distro_loader_path(std::string_view targetTriple) {
-    auto name = loader_filename(targetTriple);
-    if (name.empty()) return {};
-    if (targetTriple.starts_with("x86_64"))
-        return "/lib64/" + name;   // LSB-mandated symlink on glibc distros
-    return "/lib/" + name;
+// Its file name; empty when the row states none.
+std::string loader_filename(std::string_view targetTriple) {
+    const auto p = distro_loader_path(targetTriple);
+    const auto slash = p.rfind('/');
+    return slash == std::string::npos ? p : p.substr(slash + 1);
 }
 
 std::filesystem::path resolve_loader(const std::filesystem::path& libDir,
@@ -353,7 +332,7 @@ std::filesystem::path resolve_loader(const std::filesystem::path& libDir,
     if (libDir.empty()) return {};
     std::error_code ec;
 
-    // 1. Triple map.
+    // 1. The row's loader.
     if (auto name = loader_filename(targetTriple); !name.empty()) {
         auto p = libDir / name;
         if (std::filesystem::exists(p, ec)) return p;
@@ -576,6 +555,13 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
             if (tc.base.runtime == base::Runtime::Binding) {
                 lm.loader = tc.base.loader;
                 for (auto const& d : tc.base.runtimeDirs) lm.libDirs.push_back(d);
+            }
+            // A FLOOR'S DYNAMIC ARTIFACT NAMES THE ROW'S LOADER (SPEC-016 §6):
+            // the path on the machine that runs it, which the base resolution
+            // took from the row. No directory joins it: the artifact's
+            // libraries are that machine's.
+            else if (tc.base.runtime == base::Runtime::Floor && !tc.base.interpreter.empty()) {
+                lm.loader = tc.base.interpreter;
             }
             if (tc.base.multiarch && !tc.base.multiarchTuple.empty()) {
                 lm.multiarchIncludes.push_back(root / "usr" / "include" / tc.base.multiarchTuple);

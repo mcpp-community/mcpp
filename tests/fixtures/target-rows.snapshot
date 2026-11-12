@@ -37,7 +37,7 @@ row x86_64-linux-musl
   descriptor-keys linux
   sysroot 
 row aarch64-linux-gnu
-  table tier=preview note= pin=llvm@23.1.3 sysroot=xim:aarch64-linux-gnu-sysroot@2.44.3 static=0 platform=
+  table tier=preview note= pin=llvm@23.1.3 sysroot= static=0 platform=
   str aarch64-linux-gnu
   llvm aarch64-unknown-linux-gnu
   llvm@15.0 aarch64-unknown-linux-gnu
@@ -54,7 +54,7 @@ row aarch64-linux-gnu
   android-abi arm64-v8a
   platform-name linux
   descriptor-keys linux
-  sysroot xim:aarch64-linux-gnu-sysroot@2.44.3
+  sysroot 
 row aarch64-linux-musl
   table tier=verified note= pin=gcc@16.1.0 sysroot= static=1 platform=
   str aarch64-linux-musl
@@ -861,9 +861,9 @@ request x86_64-linux
   on windows-x86_64 -> x86_64-linux-musl musl-gcc fallback=1 | x86_64-linux-gnu/glibc/100/x x86_64-linux-musl/musl-gcc/100 x86_64-linux-musl/openkal/50
 request aarch64-linux
   parsed aarch64-linux-gnu envExplicit=0
-  on linux-x86_64 -> aarch64-linux-gnu glibc fallback=0 | aarch64-linux-gnu/glibc/100 aarch64-linux-musl/musl-gcc/100 aarch64-linux-musl/openkal/50
-  on macos-aarch64 -> aarch64-linux-musl openkal fallback=1 | aarch64-linux-gnu/glibc/100/x aarch64-linux-musl/musl-gcc/100/x aarch64-linux-musl/openkal/50
-  on windows-x86_64 -> aarch64-linux-musl openkal fallback=1 | aarch64-linux-gnu/glibc/100/x aarch64-linux-musl/musl-gcc/100/x aarch64-linux-musl/openkal/50
+  on linux-x86_64 -> aarch64-linux-musl musl-gcc fallback=1 | aarch64-linux-gnu/glibc/100/x aarch64-linux-musl/musl-gcc/100 aarch64-linux-musl/openkal/50 aarch64-linux-gnu/glibc-sysroot/40
+  on macos-aarch64 -> aarch64-linux-musl openkal fallback=1 | aarch64-linux-gnu/glibc/100/x aarch64-linux-musl/musl-gcc/100/x aarch64-linux-musl/openkal/50 aarch64-linux-gnu/glibc-sysroot/40/x
+  on windows-x86_64 -> aarch64-linux-musl openkal fallback=1 | aarch64-linux-gnu/glibc/100/x aarch64-linux-musl/musl-gcc/100/x aarch64-linux-musl/openkal/50 aarch64-linux-gnu/glibc-sysroot/40/x
 request riscv64-linux
   parsed riscv64-linux-gnu envExplicit=0
   on linux-x86_64 -> riscv64-linux-musl musl-gcc fallback=0 | riscv64-linux-musl/musl-gcc/100/x riscv64-linux-musl/openkal/50/x

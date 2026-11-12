@@ -245,9 +245,9 @@ std::expected<void, std::string> verify_hermetic_link(
     // invited the reader to reinstall a glibc payload that has nothing to do
     // with it.
     if (auto tt = mcpp::toolchain::triple::parse(tc.targetTriple);
-        tt && (tt->has_own_sysroot() || tt->c_library_by_platform())) {
+        tt && (!tt->loads_on_host() || tt->c_library_by_platform())) {
         mcpp::log::verbose("hermetic", std::format(
-            "target {} carries its own sysroot; its loader ({}) is a path on "
+            "target {} is not loaded by this machine; its loader ({}) is a path on "
             "the target and is not checked against the sandbox",
             tc.targetTriple, effectiveLoader));
     } else if (!effectiveLoader.empty()) {

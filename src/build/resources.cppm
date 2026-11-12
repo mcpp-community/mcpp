@@ -101,16 +101,14 @@ std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple);
 // gcc's own) `<arch>-w64-mingw32/include` (design 2026-11-10 E3). One list for the
 // compile's `/I` and for the scan of what the script reads.
 //
-// `mingw_headers` is the third source (2026.11.12.1, G3): the include
-// directory of the MinGW-w64 sysroot payload the platform's rows declare,
-// which is where the Windows headers of a row whose system the graph supplies
-// -- `x86_64-windows-musl`, no paired payload, an llvm binary that carries no
-// headers of its own -- come from. Every PE row shares that one set. It is
-// read ONLY when the two sources above found nothing, so a GNU-ABI row keeps
-// its paired payload's headers and an MSVC row its SDK's.
+// `system_headers` is the third source: the include directory of the package
+// the selected provider names for the system's own headers (`system-headers`,
+// SPEC-016 §3), for a row whose toolchain states none. It is read ONLY when
+// the two sources above found nothing, so a GNU-ABI row keeps its paired
+// payload's headers and an MSVC row its SDK's.
 std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
                                                         std::string_view dialectId,
-                                                        const std::filesystem::path& mingw_headers = {});
+                                                        const std::filesystem::path& system_headers = {});
 
 // Split a Windows environment list (PATH, INCLUDE, LIB) into its entries.
 //
@@ -215,7 +213,7 @@ bool is_llvm_windres(const std::filesystem::path& p) {
 
 std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
                                                         std::string_view dialectId,
-                                                        const std::filesystem::path& mingw_headers) {
+                                                        const std::filesystem::path& system_headers) {
     std::vector<std::filesystem::path> out;
     for (auto const& ev : tc.envOverrides) {
         if (ev.key != "INCLUDE") continue;
@@ -250,9 +248,9 @@ std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::To
     // under one `<root>/include` (E9's layout). The caller resolved that
     // payload; this stays a probe beside the directories it already probed,
     // never a search of PATH.
-    if (out.empty() && !mingw_headers.empty()
-        && std::filesystem::is_directory(mingw_headers, ec))
-        out.push_back(mingw_headers);
+    if (out.empty() && !system_headers.empty()
+        && std::filesystem::is_directory(system_headers, ec))
+        out.push_back(system_headers);
     return out;
 }
 

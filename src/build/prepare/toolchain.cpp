@@ -1445,9 +1445,25 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
                 state.overrides.target_triple.empty()
                     ? mcpp::toolchain::triple::host_triple().str()
                     : state.overrides.target_triple));
+        // THE TWO MEMBERS NAME ONE MECHANISM (design 2026-11-12 D6): WebAssembly's
+        // exception handling carries both the throw and the long jump, and the
+        // JavaScript one carries both. A build that states one model for
+        // exceptions and the other for long jumps is refused here, with both
+        // statements, rather than by the SDK's driver after the compiles.
+        // Unstated, the long-jump model is the SDK's own default, which
+        // follows the exception model.
+        const bool wasmLongjmp = state.m->buildConfig.abiLongjmpModel == "wasm";
+        if (abiExceptionsRendered
+            && wasmLongjmp != (state.m->buildConfig.abiExceptionsModel == "wasm"))
+            return std::unexpected(std::format(
+                "[target.<selector>.abi] longjmp = \"{}\" and exceptions = \"{}\" name two "
+                "unwinding mechanisms for one program: state the same model for both, or leave "
+                "`longjmp` unstated and it follows `exceptions`",
+                state.m->buildConfig.abiLongjmpModel,
+                state.m->buildConfig.abiExceptionsModel.empty()
+                    ? std::string("js") : state.m->buildConfig.abiExceptionsModel));
         const std::string flag = "-sSUPPORT_LONGJMP="
-            + (state.m->buildConfig.abiLongjmpModel == "wasm"
-                   ? std::string("wasm") : std::string("emscripten"));
+            + (wasmLongjmp ? std::string("wasm") : std::string("emscripten"));
         state.add_once(state.m->buildConfig.dialectCxxflags, flag);
         state.add_once(state.m->buildConfig.cflags, flag);
         state.add_once(state.m->buildConfig.ldflags, flag);

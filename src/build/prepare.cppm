@@ -803,6 +803,12 @@ export std::string profile_override_from_flags(std::string_view profileOption,
 
 // Command-level overrides (--target / --static).
 // Empty defaults preserve pre-existing behaviour exactly.
+// THE ROOT OF A PACKAGE A STATEMENT NAMES (`xim:<name>@<version>`), for the
+// readers outside prepare (a runner's packages, SPEC-016 §6): where the payload
+// stands, installed first when `install` and it does not stand.
+export std::expected<std::filesystem::path, std::string>
+package_root(const std::string& ref, bool install);
+
 export struct BuildOverrides {
     // Where the package being built LIVES (its mcpp.toml). Empty = walk up from
     // the process cwd, which is what every user-facing invocation does. Set by

@@ -1,7 +1,6 @@
 
 import std;
 import mcpplibs.mtest;
-import mcpplibs.os.platform;
 import mcpp.pack;
 
 using namespace mcpplibs::mtest;
@@ -53,26 +52,16 @@ UTest dispatched_format_stages_without_it{"PackClosureUnavailableOutcome/Dispatc
     expect(eq(closure_unavailable_outcome(Format::Dispatched), ClosureUnavailableOutcome::StageWithoutClosure));
 }};
 
-// `--systems` (design 2026-10-29 §4.1; `all` since 2026.11.12.1 answers
-// with the data): `<os>` for every architecture of the legs, `<os>-<arch>`
-// for one; unstated, this machine's. `all` is this machine's system, the
-// systems the builtin rows define for the architecture, and -- with a
-// resolved platform -- the systems its runner states a host of. Without a
-// platform that is the machine's system and this table's linux rows alone.
+// `--systems` (design 2026-10-29 §4.1): `<os>` for every architecture of the
+// legs, `<os>-<arch>` for one, `all` for the three systems; unstated, this
+// machine's.
 UTest the_words_name_systems_for_an_architecture{"PackSystems/TheWordsNameSystemsForAnArchitecture", [] {
     using V = std::vector<std::string>;
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "x86_64"), V{ "linux" }));
     expect(eq(mcpp::pack::systems_for({ "linux", "macos-aarch64" }, "aarch64"), (V{ "linux", "macos" })));
-    // `all` answers with the data, and one of the facts is the machine asking:
-    // its system stands first, wherever the same suite runs. A Linux host and
-    // the table's linux rows coincide; a macOS host names macos beside them.
-    const char* here = "linux";
-    if constexpr (mcpplibs::os::is_windows) here = "windows";
-    else if constexpr (mcpplibs::os::is_macos) here = "macos";
-    if (std::string_view(here) == "linux")
-        expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ "linux" })));
-    else
-        expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"), (V{ here, "linux" })));
+    // `all` is the system table's answer, in the table's order (SPEC-016 §2.3).
+    expect(eq(mcpp::pack::systems_for({ "all", "linux" }, "x86_64"),
+              (V{ "linux", "macos", "freebsd", "windows" })));
     expect(eq(mcpp::pack::systems_for({}, "x86_64").size(), 1u));
 }};
 

@@ -74,43 +74,36 @@ import mcpp.bmi_cache;
 
 namespace mcpp::build {
 
-// THE WINDOWS HEADERS EVERY PE ROW SHARES (2026.11.12.1, G3): a row whose
-// system the graph supplies -- `x86_64-windows-musl` over openkal -- has no
-// paired payload, and its llvm binary carries no Windows headers, so
-// `winres.h` reaches neither of the include sources the toolchain states. The
-// MinGW-w64 sysroot payload a platform row declares for this architecture's
-// GNU-ABI identity has them, under one `<root>/include` for every
-// architecture (E9's layout).
+// THE SYSTEM'S OWN HEADERS, FOR A ROW WHOSE TOOLCHAIN STATES NONE (SPEC-016
+// §3, `system-headers`). A row whose system the graph supplies has no paired
+// payload, and its compiler carries no headers of the system, so a resource
+// script's `winres.h` reaches neither of the include sources the toolchain
+// states. The provider the selection took names the package that has them.
 //
-// READ WHERE THE TWO SOURCES ABOVE FOUND NOTHING, AND STANDING PAYLOADS
-// FIRST: a row that already states its headers -- the SDK's, a paired
-// payload's -- never resolves this, so preparing an MSVC or GNU-ABI project
-// does not fetch a payload its link will not read. Only a compile that would
-// otherwise lack `winres.h` resolves the declaration, and it takes the
-// payload where it already stands before it fetches one. Empty when no row
-// declares one or the payload is not here: the resource compile then fails
-// with the tool's own missing-header text, which is the truthful message.
-static std::filesystem::path
-mingw_headers_root(PrepareState& state, const mcpp::toolchain::triple::Triple& trip) {
-    if (trip.os != "windows") return {};
-    const auto gnuTriple = std::format("{}-windows-gnu", trip.arch);
-    for (auto const* p : mcpp::toolchain::target::providers()) {
-        if (p->sysroot.empty() || p->sysroot == "toolchain") continue;
-        if (!mcpp::toolchain::target::serves(*p, gnuTriple)) continue;
-        auto cfg = state.get_cfg(true);
-        if (!cfg) return {};
-        auto xl = mcpp::config::make_xlings_env(**cfg);
-        if (auto dir = mcpp::provider::payload(*mcpp::provider::open(xl),
-                                                mcpp::provider::parse_ref(p->sysroot)))
-            return *dir / "include";
-        mcpp::fetcher::Fetcher fetcher(**cfg);
-        mcpp::fetcher::InstallProgressHandler progress;
-        if (auto payload = fetcher.resolve_xpkg_path(
-                std::string(p->sysroot), mcpp::fetcher::PayloadIntent::Use, &progress))
-            return payload->root / "include";
-        return {};   // one declared payload per row; the first provider wins
-    }
-    return {};
+// ONE QUESTION, ASKED BY BOTH STEPS THAT READ THE ANSWER: is the script
+// compiled by llvm-rc (which reads no INCLUDE of its own) for a row that
+// states no header source. A row that states its headers -- the SDK's, a
+// paired payload's -- resolves nothing, so preparing it installs no package
+// its build does not read. Where the provider names a package and it cannot
+// be installed, the build is refused with the package's name: a resource
+// compile left to fail on a missing header would name neither.
+static bool resource_headers_wanted(const mcpp::toolchain::Toolchain& tc,
+                                    const mcpp::build::resources::RcTool* tool,
+                                    std::string_view dialectId, bool msvcStyle) {
+    return tool && msvcStyle && tool->name().find("llvm-rc") != std::string::npos
+        && tc.base.msvc.sdkRoot.empty()
+        && mcpp::build::resources::system_include_dirs(tc, dialectId).empty();
+}
+
+static std::expected<std::filesystem::path, std::string> system_headers_root(PrepareState& state) {
+    auto const* p = chosen_provider(state);
+    if (!p || p->systemHeaders.empty()) return std::filesystem::path{};
+    auto dir = package_dir(state, std::string(p->systemHeaders), true);
+    if (!dir)
+        return std::unexpected(std::format(
+            "the provider '{}' of {} takes the system's headers from {}, and {}",
+            p->name, state.targetChoice.identity, p->systemHeaders, dir.error()));
+    return *dir / "include";
 }
 
 // The resource compiler of the plan's resource units, and each unit's flags.
@@ -141,17 +134,13 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     ctx.plan.rcPath  = tool->path;
     ctx.plan.rcStyle = tool->style;
 
-    // The third source is resolved only where it will be read, and only for
-    // a row whose Windows headers are not the machine's own (G3's subject):
-    // a located MSVC SDK is the row's stated header source -- an INCLUDE the
-    // shell did not export is not that SDK's absence, and an MSVC row never
-    // fetches another row's payload. Below the toolchain's own include
-    // sources, never beside them. The same sentence gates both call sites.
-    std::filesystem::path mingwHeaders;
-    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos
-        && state.tc->base.msvc.sdkRoot.empty()
-        && rsrc::system_include_dirs(*state.tc, dialectId).empty())
-        mingwHeaders = mingw_headers_root(state, trip);
+    // Below the toolchain's own include sources, never beside them.
+    std::filesystem::path systemHeaders;
+    if (resource_headers_wanted(*state.tc, &*tool, dialectId, msvcStyle)) {
+        auto headers = system_headers_root(state);
+        if (!headers) return std::unexpected(headers.error());
+        systemHeaders = *headers;
+    }
 
     // UTF-8 input, always. `[package]` metadata is user text and
     // routinely non-ASCII; without this llvm-rc refuses the script
@@ -169,7 +158,7 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     const std::string ip = msvcStyle ? "/I" : "-I";
     std::vector<std::string> systemIncludes;
     if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos)
-        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId, mingwHeaders))
+        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId, systemHeaders))
             systemIncludes.push_back(ip + dir.string());
     for (auto& ru : ctx.plan.resourceUnits) {
         if (auto target = rsrc::coff_target_flag(*tool, state.tc->targetTriple);
@@ -301,14 +290,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // windres), found as the compile step below finds it (E3).
     const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
     const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
-    // Lazy, as at the compiler step above: a row that states its own headers
-    // resolves nothing, and a scan that finds no script reads none.
     namespace rsrc = mcpp::build::resources;
-    std::filesystem::path mingwHeaders;
-    if (rcTool && msvcStyle && rcTool->name().find("llvm-rc") != std::string::npos
-        && state.tc->base.msvc.sdkRoot.empty()
-        && rsrc::system_include_dirs(*state.tc, dialectId).empty())
-        mingwHeaders = mingw_headers_root(state, trip);
+    std::filesystem::path systemHeaders;
+    if (resource_headers_wanted(*state.tc, rcTool ? &*rcTool : nullptr, dialectId, msvcStyle)) {
+        auto headers = system_headers_root(state);
+        if (!headers) return std::unexpected(headers.error());
+        systemHeaders = *headers;
+    }
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
@@ -478,7 +466,7 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                     // quoted `"winres.h"` is the toolchain's header, not a file
                     // a build action produces (E3).
                     auto scanIncludes = rcIncludes;
-                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId, mingwHeaders))
+                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId, systemHeaders))
                         scanIncludes.push_back(d);
                     auto scan = rsrc::scan_rc(rcSrc, scanIncludes);
                     if (scan.versionInfoNamedByString) {
