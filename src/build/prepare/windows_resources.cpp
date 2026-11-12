@@ -214,6 +214,53 @@ static std::vector<Subject> resource_subjects(PrepareState& state, BuildContext&
     return subjects;
 }
 
+
+// ─── The per-subject manifest policy: code page and long paths ────────────
+//
+// The predicates step13 applies to every subject, as functions so the gate's
+// 400-line budget holds (split at the boundary the block already had).
+
+static bool subject_declares_own_manifest(const mcpp::manifest::Manifest& M,
+                                          const Subject& S, bool hostToolBuild)
+{
+    return hostToolBuild
+        && std::ranges::any_of(M.resources.files, [&](const auto& f) {
+               const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
+               return mcpp::build::resources::scan_rc(abs).declaresManifest;
+           });
+}
+
+static std::string_view target_code_page(const mcpp::manifest::Target& t,
+                                         bool hostToolBuild, bool ownManifest)
+{
+    if (!t.windowsCodePage.empty()) return t.windowsCodePage;
+    return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+}
+
+// `windows_long_paths` (design 2026-10-16 §11), with the same default: a
+// host tool is long-path aware unless it says otherwise.
+static bool target_long_paths(const mcpp::manifest::Target& t,
+                              bool hostToolBuild, bool ownManifest)
+{
+    if (const auto& stated = t.windowsLongPaths) return *stated;
+    return hostToolBuild && t.is_program() && !ownManifest;
+}
+
+// A test program carries the code page `[test] windows_code_page` gave it,
+// and nothing by default: the host-tool default is a program's.
+static bool target_takes_code_page(const mcpp::manifest::Target& t)
+{
+    return t.is_program() || t.kind == mcpp::manifest::Target::TestBinary;
+}
+
+// Whether an image carries an application manifest of mcpp's: a UTF-8 code
+// page or long paths asked for.
+static bool target_manifested(const mcpp::manifest::Target& t,
+                              bool hostToolBuild, bool ownManifest)
+{
+    return target_code_page(t, hostToolBuild, ownManifest) == "utf-8"
+        || target_long_paths(t, hostToolBuild, ownManifest);
+}
 std::expected<void, std::string> step13_windows_resources(PrepareState& state, BuildContext& ctx) {
     // ─── Windows resources: [resources] → a tracked link input (mcpp#365) ──
     //
@@ -271,32 +318,16 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                     && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary);
             });
         };
-        const bool ownManifest = hostToolBuild
-            && std::ranges::any_of(M.resources.files, [&](const auto& f) {
-                   const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
-                   return mcpp::build::resources::scan_rc(abs).declaresManifest;
-               });
-        auto codePageOf = [&](const mcpp::manifest::Target& t) -> std::string_view {
-            if (!t.windowsCodePage.empty()) return t.windowsCodePage;
-            return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+        const bool ownManifest = subject_declares_own_manifest(M, S, hostToolBuild);
+        auto codePageOf = [&](const mcpp::manifest::Target& t) {
+            return target_code_page(t, hostToolBuild, ownManifest);
         };
-        // `windows_long_paths` (design 2026-10-16 §11), with the same
-        // defaults: a host tool is long-path aware unless it says otherwise.
         auto longPathsOf = [&](const mcpp::manifest::Target& t) {
-            const auto& stated = t.windowsLongPaths;
-            if (stated) return *stated;
-            return hostToolBuild && t.is_program() && !ownManifest;
+            return target_long_paths(t, hostToolBuild, ownManifest);
         };
-        // A test program carries the code page `[test] windows_code_page`
-        // gave it, and nothing by default: the host-tool default is a
-        // program's.
-        auto takesCodePage = [](const mcpp::manifest::Target& t) {
-            return t.is_program() || t.kind == mcpp::manifest::Target::TestBinary;
-        };
-        // Whether an image carries an application manifest of mcpp's: a
-        // UTF-8 code page or long paths asked for.
+        auto takesCodePage = target_takes_code_page;
         auto manifested = [&](const mcpp::manifest::Target& t) {
-            return codePageOf(t) == "utf-8" || longPathsOf(t);
+            return target_manifested(t, hostToolBuild, ownManifest);
         };
         const bool anyUtf8Image = std::ranges::any_of(M.targets, [&](const auto& t) {
             return active_target(t) && takesCodePage(t) && manifested(t);
