@@ -29,7 +29,7 @@ script	subsystem	class	destination	note
 26_toolchain_management.sh	toolchain	merge	e2e/toolchain	
 27_namespace_dependencies.sh	deps	merge	e2e/deps::path/27 namespace dependencies	migrated (batch 3); script removed
 27_self_contained_home.sh	self	keep	keep	home located from the installed binary's own directory (<root>/bin/mcpp): a release-layout install
-28_target_static.sh	target	merge	e2e/target	
+28_target_static.sh	target	merge	e2e/targets::machine/28 target static	migrated (batch 20); script removed
 29_toolchain_partial_versions.sh	toolchain	merge	e2e/toolchain	
 30_dev_binary_home.sh	self	keep	keep	a dev binary's home when MCPP_HOME is unset: needs the real ~/.mcpp of the machine
 30_pack_modes.sh	pack	merge	e2e/pack::modes/30 pack modes	migrated (batch 6); script removed
@@ -98,7 +98,7 @@ script	subsystem	class	destination	note
 88_xlings_environment.sh	self	merge	e2e/self::config/88 xlings environment	migrated (batch 15); script removed
 89_build_mcpp.sh	build-program	merge	e2e/build-program::protocol/89 build mcpp	migrated (batch 2); script removed
 90_workspace_test.sh	test	merge	e2e/test::workspace/90 workspace test	migrated (batch 1); script removed
-91_target_bare_alias.sh	target	merge	e2e/target	
+91_target_bare_alias.sh	target	merge	e2e/targets::rows/91 target bare alias	migrated (batch 20); script removed
 92_build_mcpp_import.sh	build-program	merge	e2e/build-program::protocol/92 build mcpp import	migrated (batch 2); script removed
 93_xpkg_parse.sh	index	merge	e2e/index::listing/93 xpkg parse	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_xpkg_parse: it asserts a command's output or file effect
 94_macos_test_stdlib.sh	test	merge	e2e/test::frameworks/94 macos test stdlib	migrated (batch 1); script removed; skips without macos, as the script was excluded
@@ -111,7 +111,7 @@ script	subsystem	class	destination	note
 100_feature_sources_test_mode.sh	features	merge	e2e/features::sources/100 feature sources test mode	migrated (batch 5); script removed
 101_cppfly_llvm_soft.sh	toolchain	merge	e2e/toolchain	
 102_mingw_cross_wine.sh	windows	keep	keep	emulator: runs the cross-built PE under wine
-103_target_vocabulary.sh	target	merge	e2e/target	
+103_target_vocabulary.sh	target	merge	e2e/targets::rows/103 target vocabulary	migrated (batch 20); script removed
 104_asm_sources_gas.sh	build	merge	e2e/build::sources/104 asm sources gas	migrated (batch 7); script removed
 105_asm_sources_nasm.sh	build	merge	e2e/build::sources/105 asm sources nasm	migrated (batch 7); script removed
 106_feature_gated_sources_toml.sh	features	merge	e2e/features::sources/106 feature gated sources toml	migrated (batch 5); script removed
@@ -141,7 +141,7 @@ script	subsystem	class	destination	note
 131_freestanding_bsp_supplies_everything.sh	baremetal	keep	keep	emulator: boots the image in qemu-system-riscv64
 132_freestanding_test_and_artifacts.sh	baremetal	keep	keep	emulator: runs the freestanding tests in qemu-system-riscv64
 133_freestanding_std_subset.sh	baremetal	keep	keep	emulator: boots the image in qemu-system-riscv64
-134_target_sysroot_and_queries.sh	target	merge	e2e/target	
+134_target_sysroot_and_queries.sh	target	merge	e2e/targets::rows/134 target sysroot and queries	migrated (batch 20); script removed
 135_diagnostic_promise_resolves.sh	toolchain	merge	e2e/toolchain	
 136_aarch64_zero_libc_target.sh	baremetal	merge	e2e/baremetal::rows/136 aarch64 zero libc target	migrated (batch 19); script removed
 137_x86_64_zero_libc_target.sh	baremetal	merge	e2e/baremetal::rows/137 x86_64 zero libc target	migrated (batch 19); script removed
@@ -268,34 +268,34 @@ script	subsystem	class	destination	note
 264_pack_library_is_relocatable.sh	pack	merge	e2e/pack::library/264 pack library is relocatable	migrated (batch 6); script removed
 265_pack_strips_but_stays_usable.sh	pack	merge	e2e/pack::library/265 pack strips but stays usable	migrated (batch 6); script removed
 266_pack_reads_a_macho_program_without_running_it.sh	macos	merge	e2e/macos	
-267_target_requested_is_empty_for_a_native_build.sh	target	merge	e2e/target	
-268_target_side_resolution.sh	target	merge	e2e/target	
+267_target_requested_is_empty_for_a_native_build.sh	target	merge	e2e/targets::rows/267 target requested is empty for a native build	migrated (batch 20); script removed
+268_target_side_resolution.sh	target	merge	e2e/targets::side/268 target side resolution	migrated (batch 20); script removed
 269_openkal_llvm_spelling_still_resolves.sh	openkal	merge	e2e/openkal::stack/269 openkal llvm spelling still resolves	migrated (batch 16); script removed
-280_target_side_layers.sh	target	merge	e2e/target	
-281_target_side_rules.sh	target	merge	e2e/target	
-282_target_is_a_request.sh	target	merge	e2e/target	
-283_run_target_flag_owns_its_cache_slot.sh	target	merge	e2e/target	
-284_env_segment_is_optional_everywhere.sh	target	merge	e2e/target	
+280_target_side_layers.sh	target	merge	e2e/targets::side/280 target side layers	migrated (batch 20); script removed
+281_target_side_rules.sh	target	merge	e2e/targets::side/281 target side rules	migrated (batch 20); script removed
+282_target_is_a_request.sh	target	merge	e2e/targets::requests/282 target is a request	migrated (batch 20); script removed
+283_run_target_flag_owns_its_cache_slot.sh	target	merge	e2e/targets::rows/283 run target flag owns its cache slot	migrated (batch 20); script removed
+284_env_segment_is_optional_everywhere.sh	target	merge	e2e/targets::rows/284 env segment is optional everywhere	migrated (batch 20); script removed
 285_kernel_abi_from_graph_keeps_the_payload_c_library.sh	openkal	merge	e2e/openkal::stack/285 kernel abi from graph keeps the payload c library	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 286_the_openkal_stack_still_builds.sh	openkal	merge	e2e/openkal::stack/286 the openkal stack still builds	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml, ci-aarch64-fresh-install.yml and .github/tools/check_published_arm64_cn_ecosystem.sh run it by path
 287_the_openkal_stack_crosses_to_aarch64.sh	openkal	merge	e2e/openkal::stack/287 the openkal stack crosses to aarch64	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 288_the_openkal_stack_on_a_machine_with_no_os.sh	openkal	keep	keep	emulator: boots the openkal stack in qemu-system-riscv64
 289_one_host_reaches_every_openkal_target.sh	openkal	merge	e2e/openkal::stack/289 one host reaches every openkal target	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
-290_the_declaration_puts_an_environment_in_front.sh	target	merge	e2e/target	
-291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh	target	merge	e2e/target	
-292_a_package_that_names_a_layer_does_not_lose_the_targets_compiler.sh	target	merge	e2e/target	
-293_the_requested_target_and_the_resolved_one_name_one_os.sh	target	merge	e2e/target	
-294_the_list_answers_what_can_be_built_not_what_has_a_payload.sh	target	merge	e2e/target	
-295_naming_the_host_target_changes_nothing.sh	target	merge	e2e/target	
-296_what_the_report_names_is_what_the_link_line_uses.sh	target	merge	e2e/target	
-297_a_capability_pin_is_not_a_preference.sh	target	merge	e2e/target	
-298_overriding_a_convention_requires_replacing_it.sh	target	merge	e2e/target	
-299_a_request_that_named_no_c_library_resolves_to_a_row_that_exists.sh	target	merge	e2e/target	
-300_a_registered_family_is_not_reported_unknown.sh	target	sink	unit/test_target_vocabulary	answers a parse/selection rule without a build: registered families
-301_the_graphs_compiler_is_taken_and_nothing_is_written.sh	target	merge	e2e/target	
-302_a_stated_compiler_outranks_the_graph_and_two_requirements_do_not_stack.sh	target	sink	unit/test_toolchain_rank	answers a parse/selection rule without a build: stated compiler over the graph
-303_the_query_gives_one_answer_for_the_c_library.sh	target	sink	unit/test_why_toolchain	answers a parse/selection rule without a build: one C-library answer
-304_the_target_side_reaches_every_unit.sh	target	merge	e2e/target	
+290_the_declaration_puts_an_environment_in_front.sh	target	merge	e2e/targets::side/290 the declaration puts an environment in front	migrated (batch 20); script removed
+291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh	target	merge	e2e/targets::graph/291 dynamic linkage is refused only when the c library is the graphs	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
+292_a_package_that_names_a_layer_does_not_lose_the_targets_compiler.sh	target	merge	e2e/targets::side/292 a package that names a layer does not lose the targets compiler	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
+293_the_requested_target_and_the_resolved_one_name_one_os.sh	target	merge	e2e/targets::requests/293 the requested target and the resolved one name one os	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
+294_the_list_answers_what_can_be_built_not_what_has_a_payload.sh	target	merge	e2e/targets::requests/294 the list answers what can be built not what has a payload	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
+295_naming_the_host_target_changes_nothing.sh	target	merge	e2e/targets::requests/295 naming the host target changes nothing	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines
+296_what_the_report_names_is_what_the_link_line_uses.sh	target	merge	e2e/targets::selection/296 what the report names is what the link line uses	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines
+297_a_capability_pin_is_not_a_preference.sh	target	merge	e2e/targets::selection/297 a capability pin is not a preference	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines
+298_overriding_a_convention_requires_replacing_it.sh	target	merge	e2e/targets::selection/298 overriding a convention requires replacing it	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines
+299_a_request_that_named_no_c_library_resolves_to_a_row_that_exists.sh	target	merge	e2e/targets::requests/299 a request that named no c library resolves to a row that exists	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines
+300_a_registered_family_is_not_reported_unknown.sh	target	merge	e2e/targets::requests/300 a registered family is not reported unknown	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines. A case rather than a unit test: the rule is decided in the build's preparation (its tier gate, which computes a request's registered rows), which exports no function that answers it
+301_the_graphs_compiler_is_taken_and_nothing_is_written.sh	target	merge	e2e/targets::selection/301 the graphs compiler is taken and nothing is written	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines
+302_a_stated_compiler_outranks_the_graph_and_two_requirements_do_not_stack.sh	target	merge	e2e/targets::selection/302 a stated compiler outranks the graph and two requirements do not stack	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines. A case rather than a unit test: the rule is decided in the build's preparation (its toolchain decision over the graph's compiler requirements), which exports no function that answers it
+303_the_query_gives_one_answer_for_the_c_library.sh	target	merge	e2e/targets::selection/303 the query gives one answer for the c library	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path and holds it to its lines. A case rather than a unit test: suppliesTarget is computed inside the why toolchain command, which exports no function that answers it
+304_the_target_side_reaches_every_unit.sh	target	merge	e2e/targets::side/304 the target side reaches every unit	migrated (batch 20); script removed
 305_built_from_is_not_published.sh	openkal	merge	e2e/openkal::layers/305 built from is not published	migrated (batch 16); script removed
 306_dependency_linkage_axis.sh	runtime	merge	e2e/runtime::packages/306 dependency linkage axis	migrated (batch 17); script removed
 307_symbol_provision.sh	runtime	merge	e2e/runtime::records/307 symbol provision	migrated (batch 17); script removed
@@ -369,21 +369,21 @@ script	subsystem	class	destination	note
 637_a_conditional_runtime_table_alone_is_applied.sh	features	merge	e2e/features::layers/637 a conditional runtime table alone is applied	migrated (batch 5); script removed
 638_pack_format_dispatch.sh	pack	merge	e2e/pack::formats/638 pack format dispatch	migrated (batch 6); script removed
 639_the_scanner_does_not_read_inside_a_comment.sh	modules	merge	e2e/modules::scanner/639 the scanner does not read inside a comment	migrated (batch 9); script removed
-640_a_capability_pin_explains_its_own_row.sh	target	merge	e2e/target	
+640_a_capability_pin_explains_its_own_row.sh	target	merge	e2e/targets::selection/640 a capability pin explains its own row	migrated (batch 20); script removed
 641_the_android_rows_are_wired_and_the_simulator_is_a_row.sh	android	merge	e2e/android	
 642_windows_subsystem.sh	windows	merge	e2e/windows	
 643_windows_subsystem_cross.sh	windows	merge	e2e/windows	
 644_windows_keys_are_inert_elsewhere.sh	windows	merge	e2e/windows	
 645_the_fast_path_compares_the_toolchain_request.sh	cache	merge	e2e/cache::fastpath/645 the fast path compares the toolchain request	migrated (batch 10); script removed
 646_runtime_deploy_places_files_in_a_directory.sh	runtime	merge	e2e/runtime::deploy/646 runtime deploy places files in a directory	migrated (batch 17); script removed
-647_abi_threads_is_one_switch_for_the_graph.sh	target	merge	e2e/target	
+647_abi_threads_is_one_switch_for_the_graph.sh	target	merge	e2e/targets::abi/647 abi threads is one switch for the graph	migrated (batch 20); script removed
 648_an_install_hook_sees_the_build_target.sh	actions	merge	e2e/actions::hooks/648 an install hook sees the build target	migrated (batch 4); script removed
 649_pack_carries_runtime_deploy_files.sh	pack	merge	e2e/pack::modes/649 pack carries runtime deploy files	migrated (batch 6); script removed
 650_wasm_row_names_its_launcher.sh	web	merge	e2e/web::emscripten/650 wasm row names its launcher	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 651_a_build_program_deploys_what_it_generated.sh	build-program	merge	e2e/build-program::protocol/651 a build program deploys what it generated	migrated (batch 2); script removed
 652_an_application_is_a_kind.sh	pack	merge	e2e/pack::modes/652 an application is a kind	migrated (batch 6); script removed
 652b_an_application_on_android_is_a_shared_library.sh	android	merge	e2e/android	
-653_exceptions_is_the_second_abi_member.sh	target	merge	e2e/target	
+653_exceptions_is_the_second_abi_member.sh	target	merge	e2e/targets::abi/653 exceptions is the second abi member	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 654_a_requirement_on_the_target_axis.sh	features	merge	e2e/features::layers/654 a requirement on the target axis	migrated (batch 5); script removed
 656_run_hands_the_distributable_to_the_runner.sh	run	merge	e2e/run::runners/656 run hands the distributable to the runner	migrated (batch 12); script removed
 657_a_build_program_under_the_web_row_uses_the_host_compiler.sh	web	merge	e2e/web::emscripten/657 a build program under the web row uses the host compiler	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
@@ -406,7 +406,7 @@ script	subsystem	class	destination	note
 674_a_format_is_run_by_the_runner_named_after_it.sh	run	merge	e2e/run::contract/674 a format is run by the runner named after it	migrated (batch 12); script removed
 675_android_test_programs_carry_their_cxx_runtime.sh	android	merge	e2e/android	
 677_a_conditional_dependency_replaces_the_unconditional_one.sh	features	merge	e2e/features::conditional/677 a conditional dependency replaces the unconditional one	migrated (batch 5); script removed
-678_a_row_states_a_library_form.sh	target	merge	e2e/target	
+678_a_row_states_a_library_form.sh	target	merge	e2e/targets::abi/678 a row states a library form	migrated (batch 20); script removed
 679_a_path_dependency_takes_its_manifests_identity.sh	deps	merge	e2e/deps::identity/679 a path dependency takes its manifests identity	migrated (batch 3); script removed
 680_a_dependency_floor_on_the_android_api_level.sh	android	merge	e2e/android	
 681_index_repos_reach_an_existing_home.sh	self	merge	e2e/self::subos/681 index repos reach an existing home	migrated (batch 15); script removed
@@ -446,13 +446,13 @@ script	subsystem	class	destination	note
 735_offline_missing_package_has_its_own_code.sh	index	merge	e2e/index::refresh/735 offline missing package has its own code	migrated (batch 14); script removed
 736_compile_flag_words_reach_the_compiler_and_the_databases.sh	cdb	merge	e2e/cdb::emit/736 compile flag words reach the compiler and the databases	migrated (batch 13); script removed
 737_the_declared_runtime_payload_is_installed.sh	index	merge	e2e/index::xlings/737 the declared runtime payload is installed	migrated (batch 14); script removed
-738_a_graph_supplied_target_closes_the_hosts_own_search.sh	target	merge	e2e/target	
+738_a_graph_supplied_target_closes_the_hosts_own_search.sh	target	merge	e2e/targets::graph/738 a graph supplied target closes the hosts own search	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 739_a_private_feature_dep_does_not_reach_the_consumer.sh	features	merge	e2e/features::activation/739 a private feature dep does not reach the consumer	migrated (batch 5); script removed
 740_gcc_over_a_graph_c_library_is_degraded_not_refused.sh	toolchain	merge	e2e/toolchain	
-741_c_abi_environment_declared_by_the_c_library.sh	target	merge	e2e/target	
+741_c_abi_environment_declared_by_the_c_library.sh	target	merge	e2e/targets::side/741 c abi environment declared by the c library	migrated (batch 20); script removed
 742_gcc_accepted_when_the_realisation_is_empty.sh	toolchain	merge	e2e/toolchain	
 743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh	openkal	merge	e2e/openkal::layers/743 kernel abi interfaces are resolved not preprocessed	migrated (batch 16); script removed
-744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/target	
+744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/targets::side/744 a declared absence explains the link that asked for it	migrated (batch 20); script removed
 745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test::archive/745 no run builds the tests and says so	migrated (batch 1); script removed
 746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos	
 760_msvc_toolset_is_chosen_once.sh	windows	merge	e2e/windows	
@@ -464,7 +464,7 @@ script	subsystem	class	destination	note
 775_a_host_tool_merges_its_conditional_sections_once.sh	build-program	merge	e2e/build-program::hosttools/775 a host tool merges its conditional sections once	migrated (batch 2); script removed
 776_a_path_with_no_utf8_spelling_is_named.sh	build	merge	e2e/build::sources/776 a path with no utf8 spelling is named	migrated (batch 7); script removed
 777_c_standard_applies_to_the_package_that_declares_it.sh	build	merge	e2e/build::flags/777 c standard applies to the package that declares it	migrated (batch 7); script removed
-778_a_graph_link_searches_no_host_directory.sh	target	merge	e2e/target	
+778_a_graph_link_searches_no_host_directory.sh	target	merge	e2e/targets::graph/778 a graph link searches no host directory	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 779_a_build_program_declares_a_runtime_search_dir.sh	build-program	merge	e2e/build-program::deps/779 a build program declares a runtime search dir	migrated (batch 2); script removed
 780_a_passing_check_moves_its_stamp_past_a_changed_input.sh	actions	merge	e2e/actions::checks/780 a passing check moves its stamp past a changed input	migrated (batch 4); script removed
 781_deleted_root_cdb_is_restored.sh	cdb	merge	e2e/cdb::root/781 deleted root cdb is restored	migrated (batch 13); script removed
@@ -684,7 +684,7 @@ script	subsystem	class	destination	note
 1011_accelerator_requests_are_complete_and_canonical.sh	build-program	merge	e2e/build-program::accel/1011 accelerator requests are complete and canonical	migrated (batch 2); script removed
 1012_capabilities_bind_in_each_consumer_context.sh	features	merge	e2e/features::activation/1012 capabilities bind in each consumer context	migrated (batch 5); script removed
 1013_optional_action_progress_preserves_outputs.sh	actions	merge	e2e/actions::progress/1013 optional action progress preserves outputs	migrated (batch 4); script removed
-1014_host_only_layers_do_not_select_the_target_abi.sh	target	merge	e2e/target	
+1014_host_only_layers_do_not_select_the_target_abi.sh	target	merge	e2e/targets::side/1014 host only layers do not select the target abi	migrated (batch 20); script removed
 1015_action_progress_paths_are_utf8_on_every_host.sh	actions	merge	e2e/actions::progress/1015 action progress paths are utf8 on every host	migrated (batch 4); script removed
 1016_a_killed_build_does_not_race_the_next_one.sh	cli	merge	e2e/cli::signals/1016 a killed build does not race the next one	migrated (batch 8); script removed
 1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows	
@@ -712,7 +712,7 @@ script	subsystem	class	destination	note
 1039_two_builds_that_find_the_std_module_missing_compile_it_once.sh	modules	merge	e2e/modules::bmi/1039 two builds that find the std module missing compile it once	migrated (batch 9); script removed
 1040_a_platform_defines_a_target.sh	openkal	merge	e2e/openkal::platforms/1040 a platform defines a target	migrated (batch 16); script removed
 1041_a_32_bit_x86_bare_target.sh	baremetal	merge	e2e/baremetal::rows/1041 a 32 bit x86 bare target	migrated (batch 19); script removed
-1042_each_flag_names_its_layer_and_a_request_its_selection.sh	target	merge	e2e/target	
+1042_each_flag_names_its_layer_and_a_request_its_selection.sh	target	merge	e2e/targets::requests/1042 each flag names its layer and a request its selection	migrated (batch 20); script removed
 1043_several_programs_and_a_dotted_name_are_packed_as_stated.sh	pack	merge	e2e/pack::modes/1043 several programs and a dotted name are packed as stated	migrated (batch 6); script removed
 1044_clang_pairs_with_the_mingw_payload.sh	windows	keep	keep	emulator: runs the clang/mingw program under wine
 1045_a_required_capability_takes_its_default_provider.sh	features	merge	e2e/features::defaults/1045 a required capability takes its default provider	migrated (batch 5); script removed
@@ -725,7 +725,7 @@ script	subsystem	class	destination	note
 1052_a_framework_that_uses_the_package_under_test_is_built_against_it.sh	test	merge	e2e/test::frameworks/1052 a framework that uses the package under test is built against it	migrated (batch 1); script removed
 1053_a_mach_o_images_c_library_is_up_before_its_initialisers.sh	macos	merge	e2e/macos	
 1054_programs_that_share_an_entry_keep_their_own_flags.sh	build	merge	e2e/build::flags/1054 programs that share an entry keep their own flags	migrated (batch 7); script removed
-1055_layer_suppliers_that_require_one_another_are_refused.sh	target	merge	e2e/target	
+1055_layer_suppliers_that_require_one_another_are_refused.sh	target	merge	e2e/targets::side/1055 layer suppliers that require one another are refused	migrated (batch 20); script removed
 1056_a_runner_reads_the_interfaces_its_implementation_provides.sh	openkal	merge	e2e/openkal::layers/1056 a runner reads the interfaces its implementation provides	migrated (batch 16); script removed
 1057_a_platform_row_takes_nothing_of_the_payloads_host.sh	openkal	merge	e2e/openkal::platforms/1057 a platform row takes nothing of the payloads host	migrated (batch 16); script removed
 1058_a_gnu_abi_windows_row_compiles_its_resources.sh	windows	merge	e2e/windows	
@@ -746,8 +746,8 @@ script	subsystem	class	destination	note
 1073_the_freebsd_musl_identity_is_served_by_openkal.sh	openkal	merge	e2e/openkal::stack/1073 the freebsd musl identity is served by openkal	migrated (batch 16); script removed
 1074_a_namespace_package_named_like_a_spec_field.sh	deps	merge	e2e/deps::names/1074 a namespace package named like a spec field	migrated (batch 3); script removed
 1075_a_graph_supplied_windows_row_finds_its_resource_headers.sh	windows	merge	e2e/windows	
-1076_an_aarch64_linux_gnu_cross_comes_from_a_sysroot_payload.sh	target	merge	e2e/target	
-1077_a_program_of_another_system_is_built_not_run.sh	target	merge	e2e/target	
+1076_an_aarch64_linux_gnu_cross_comes_from_a_sysroot_payload.sh	target	merge	e2e/targets::rows/1076 an aarch64 linux gnu cross comes from a sysroot payload	migrated (batch 20); script removed
+1077_a_program_of_another_system_is_built_not_run.sh	target	merge	e2e/targets::rows/1077 a program of another system is built not run	migrated (batch 20); script removed
 1078_systems_all_carries_the_runners_the_platform_declares.sh	openkal	merge	e2e/openkal::trees/1078 systems all carries the runners the platform declares	migrated (batch 16); script removed
 1079_an_emscripten_rows_longjmp_model_round_trips.sh	web	merge	e2e/web::emscripten/1079 an emscripten rows longjmp model round trips	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 1080_gcc_over_the_hosts_payload_links_from_the_payload.sh	toolchain	merge	e2e/toolchain	
