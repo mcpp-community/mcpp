@@ -90,7 +90,7 @@ script	subsystem	class	destination	note
 81_capability_binding.sh	features	merge	e2e/features::activation/81 capability binding	migrated (batch 5); script removed
 82_feature_optional_deps.sh	features	merge	e2e/features::activation/82 feature optional deps	migrated (batch 5); script removed
 83_feature_defines_propagate.sh	features	merge	e2e/features::activation/83 feature defines propagate	migrated (batch 5); script removed
-84_runtime_dll_deploy.sh	windows	merge	e2e/windows	
+84_runtime_dll_deploy.sh	windows	merge	e2e/windows::images/84 runtime dll deploy	migrated (batch 24); script removed
 85_target_cfg_build_flags.sh	features	merge	e2e/features::conditional/85 target cfg build flags	migrated (batch 5); script removed
 86_llvm_hermetic_link.sh	toolchain	merge	e2e/toolchain::llvm/86 llvm hermetic link	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path
 86_target_cfg_dependencies.sh	features	merge	e2e/features::conditional/86 target cfg dependencies	migrated (batch 5); script removed
@@ -102,11 +102,11 @@ script	subsystem	class	destination	note
 92_build_mcpp_import.sh	build-program	merge	e2e/build-program::protocol/92 build mcpp import	migrated (batch 2); script removed
 93_xpkg_parse.sh	index	merge	e2e/index::listing/93 xpkg parse	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_xpkg_parse: it asserts a command's output or file effect
 94_macos_test_stdlib.sh	test	merge	e2e/test::frameworks/94 macos test stdlib	migrated (batch 1); script removed; skips without macos, as the script was excluded
-95_msvc_system_toolchain.sh	windows	merge	e2e/windows	
-96_msvc_unavailable_nonwindows.sh	windows	merge	e2e/windows	
-97_mingw_toolchain.sh	windows	merge	e2e/windows	
+95_msvc_system_toolchain.sh	windows	merge	e2e/windows::msvc/95 msvc system toolchain	migrated (batch 24); script removed
+96_msvc_unavailable_nonwindows.sh	windows	merge	e2e/windows::images/96 msvc unavailable nonwindows	migrated (batch 24); script removed
+97_mingw_toolchain.sh	windows	merge	e2e/windows::mingw/97 mingw toolchain	migrated (batch 24); script removed
 98_reflection_import_std.sh	toolchain	merge	e2e/toolchain::standard/98 reflection import std	migrated (batch 21); script removed
-99_msvc_native_build.sh	windows	merge	e2e/windows	
+99_msvc_native_build.sh	windows	merge	e2e/windows::msvc/99 msvc native build	migrated (batch 24); script removed
 100_cppfly_reflection.sh	toolchain	merge	e2e/toolchain::standard/100 cppfly reflection	migrated (batch 21); script removed
 100_feature_sources_test_mode.sh	features	merge	e2e/features::sources/100 feature sources test mode	migrated (batch 5); script removed
 101_cppfly_llvm_soft.sh	toolchain	merge	e2e/toolchain::llvm/101 cppfly llvm soft	migrated (batch 21); script removed
@@ -184,13 +184,13 @@ script	subsystem	class	destination	note
 174_cache_modes_and_commands.sh	cache	merge	e2e/cache::entries/174 cache modes and commands	migrated (batch 10); script removed
 175_cpp20_import_std.sh	toolchain	merge	e2e/toolchain::standard/175 cpp20 import std	migrated (batch 21); script removed
 176_cpp20_std_bmi_isolation.sh	toolchain	merge	e2e/toolchain::standard/176 cpp20 std bmi isolation	migrated (batch 21); script removed
-177_cpp20_msvc.sh	windows	merge	e2e/windows	
+177_cpp20_msvc.sh	windows	merge	e2e/windows::msvc/177 cpp20 msvc	migrated (batch 24); script removed
 178_test_observability.sh	test	merge	e2e/test::streams/178 test observability	migrated (batch 1); script removed
 179_spaced_paths.sh	build	merge	e2e/build::sources/179 spaced paths	migrated (batch 7); script removed
-180_msvc_build_mcpp.sh	windows	merge	e2e/windows	
+180_msvc_build_mcpp.sh	windows	merge	e2e/windows::msvc/180 msvc build mcpp	migrated (batch 24); script removed
 181_build_mcpp_import_std.sh	build-program	merge	e2e/build-program::protocol/181 build mcpp import std	migrated (batch 2); script removed
-182_windows_no_msvc_fallback.sh	windows	merge	e2e/windows	
-183_cross_no_relink.sh	windows	merge	e2e/windows	
+182_windows_no_msvc_fallback.sh	windows	merge	e2e/windows::mingw/182 windows no msvc fallback	migrated (batch 24); script removed
+183_cross_no_relink.sh	windows	merge	e2e/windows::images/183 cross no relink	migrated (batch 24); script removed
 183_cxx_runtime_contract.sh	runtime	merge	e2e/runtime::contract/183 cxx runtime contract	migrated (batch 17); script removed
 184_build_cache_object_layout.sh	cache	merge	e2e/cache::entries/184 build cache object layout	migrated (batch 10); script removed
 185_index_floor_degrades.sh	index	merge	e2e/index::refresh/185 index floor degrades	migrated (batch 14); script removed
@@ -205,9 +205,9 @@ script	subsystem	class	destination	note
 194_build_mcpp_glob_input.sh	build-program	merge	e2e/build-program::protocol/194 build mcpp glob input	migrated (batch 2); script removed
 195_target_cfg_feature_deps.sh	features	merge	e2e/features::conditional/195 target cfg feature deps	migrated (batch 5); script removed
 196_version_identity_and_lock.sh	deps	merge	e2e/deps::lock/196 version identity and lock	migrated (batch 3); script removed
-197_windows_resources.sh	windows	merge	e2e/windows	
-198_windows_resources_cross.sh	windows	merge	e2e/windows	
-199_resources_validation.sh	windows	merge	e2e/windows	
+197_windows_resources.sh	windows	merge	e2e/windows::resources/197 windows resources	migrated (batch 24); script removed
+198_windows_resources_cross.sh	windows	merge	e2e/windows::resources/198 windows resources cross	migrated (batch 24); script removed
+199_resources_validation.sh	windows	merge	e2e/windows::resources/199 resources validation	migrated (batch 24); script removed
 200_subos_env_reaches_program.sh	runtime	merge	e2e/runtime::binding/200 subos env reaches program	migrated (batch 17); script removed
 201_gcc_no_specs_pollution.sh	toolchain	merge	e2e/toolchain::layers/201 gcc no specs pollution	migrated (batch 21); script removed
 202_machine_output_contract.sh	cli	merge	e2e/cli::commands/202 machine output contract	migrated (batch 8); script removed
@@ -241,29 +241,29 @@ script	subsystem	class	destination	note
 237_default_subos_without_info.sh	self	merge	e2e/self::subos/237 default subos without info	migrated (batch 15); script removed
 238_c_only_unit_links_with_c_driver.sh	build	merge	e2e/build::link/238 c only unit links with c driver	migrated (batch 7); script removed
 239_msvc_managed_toolset.sh	windows	keep	keep	CI-only: xlings-managed MSVC (opt-in MCPP_E2E_XLINGS_MSVC, ~380 MB download)
-240_pack_pe_zip_cross.sh	windows	merge	e2e/windows	
-241_windows_ucrt_runtime_identity.sh	windows	merge	e2e/windows	
+240_pack_pe_zip_cross.sh	windows	merge	e2e/windows::pack/240 pack pe zip cross	migrated (batch 24); script removed
+241_windows_ucrt_runtime_identity.sh	windows	merge	e2e/windows::msvc/241 windows ucrt runtime identity	migrated (batch 24); script removed
 242_pack_library_interface_and_headers.sh	pack	merge	e2e/pack::library/242 pack library interface and headers	migrated (batch 6); script removed
 243_pack_library_interface_closure.sh	pack	merge	e2e/pack::library/243 pack library interface closure	migrated (batch 6); script removed
 244_pack_library_gate.sh	pack	merge	e2e/pack::library/244 pack library gate	migrated (batch 6); script removed
 245_pack_library_fat_target_selection.sh	pack	merge	e2e/pack::library/245 pack library fat target selection	migrated (batch 6); script removed
 246_explicit_empty_sources.sh	build	merge	e2e/build::sources/246 explicit empty sources	migrated (batch 7); script removed
 247_bare_triple_conditional_native.sh	features	merge	e2e/features::conditional/247 bare triple conditional native	migrated (batch 5); script removed
-248_pack_library_fat_pe_leg.sh	windows	merge	e2e/windows	
+248_pack_library_fat_pe_leg.sh	windows	merge	e2e/windows::pack/248 pack library fat pe leg	migrated (batch 24); script removed
 249_pack_workspace_root_unchanged.sh	pack	merge	e2e/pack::members/249 pack workspace root unchanged	migrated (batch 6); script removed
 250_pack_names_the_target.sh	pack	merge	e2e/pack::members/250 pack names the target	migrated (batch 6); script removed
 251_pack_library_shared.sh	pack	merge	e2e/pack::library/251 pack library shared	migrated (batch 6); script removed
 252_pack_library_old_client.sh	pack	merge	e2e/pack::library/252 pack library old client	migrated (batch 6); script removed
 253_pack_library_undetermined_partition.sh	pack	merge	e2e/pack::library/253 pack library undetermined partition	migrated (batch 6); script removed
 254_pack_library_platform_coverage.sh	pack	merge	e2e/pack::library/254 pack library platform coverage	migrated (batch 6); script removed
-255_pack_library_msvc_archiver.sh	windows	merge	e2e/windows	
-256_pack_library_fat_windows.sh	windows	merge	e2e/windows	
+255_pack_library_msvc_archiver.sh	windows	merge	e2e/windows::libraries/255 pack library msvc archiver	migrated (batch 24); script removed
+256_pack_library_fat_windows.sh	windows	merge	e2e/windows::libraries/256 pack library fat windows	migrated (batch 24); script removed
 257_shared_library_pe.sh	windows	keep	keep	emulator: runs the PE DLL program under wine
-258_shared_library_msvc_auto_def.sh	windows	merge	e2e/windows	
+258_shared_library_msvc_auto_def.sh	windows	merge	e2e/windows::libraries/258 shared library msvc auto def	migrated (batch 24); script removed
 259_shared_library_macho.sh	macos	merge	e2e/macos::rows/259 shared library macho	migrated (batch 23); script removed
 260_module_extension_is_configuration.sh	modules	merge	e2e/modules::extensions/260 module extension is configuration	migrated (batch 9); script removed
 261_pack_follows_the_module_extension.sh	pack	merge	e2e/pack::library/261 pack follows the module extension	migrated (batch 6); script removed
-262_pack_consumed_by_native_cl.sh	windows	merge	e2e/windows	
+262_pack_consumed_by_native_cl.sh	windows	merge	e2e/windows::libraries/262 pack consumed by native cl	migrated (batch 24); script removed
 263_lib_root_follows_the_extension.sh	modules	merge	e2e/modules::extensions/263 lib root follows the extension	migrated (batch 9); script removed
 264_pack_library_is_relocatable.sh	pack	merge	e2e/pack::library/264 pack library is relocatable	migrated (batch 6); script removed
 265_pack_strips_but_stays_usable.sh	pack	merge	e2e/pack::library/265 pack strips but stays usable	migrated (batch 6); script removed
@@ -371,9 +371,9 @@ script	subsystem	class	destination	note
 639_the_scanner_does_not_read_inside_a_comment.sh	modules	merge	e2e/modules::scanner/639 the scanner does not read inside a comment	migrated (batch 9); script removed
 640_a_capability_pin_explains_its_own_row.sh	target	merge	e2e/targets::selection/640 a capability pin explains its own row	migrated (batch 20); script removed
 641_the_android_rows_are_wired_and_the_simulator_is_a_row.sh	android	merge	e2e/android::rows/641 the android rows are wired and the simulator is a row	migrated (batch 22); script removed
-642_windows_subsystem.sh	windows	merge	e2e/windows	
-643_windows_subsystem_cross.sh	windows	merge	e2e/windows	
-644_windows_keys_are_inert_elsewhere.sh	windows	merge	e2e/windows	
+642_windows_subsystem.sh	windows	merge	e2e/windows::images/642 windows subsystem	migrated (batch 24); script removed
+643_windows_subsystem_cross.sh	windows	merge	e2e/windows::images/643 windows subsystem cross	migrated (batch 24); script removed
+644_windows_keys_are_inert_elsewhere.sh	windows	merge	e2e/windows::images/644 windows keys are inert elsewhere	migrated (batch 24); script removed
 645_the_fast_path_compares_the_toolchain_request.sh	cache	merge	e2e/cache::fastpath/645 the fast path compares the toolchain request	migrated (batch 10); script removed
 646_runtime_deploy_places_files_in_a_directory.sh	runtime	merge	e2e/runtime::deploy/646 runtime deploy places files in a directory	migrated (batch 17); script removed
 647_abi_threads_is_one_switch_for_the_graph.sh	target	merge	e2e/targets::abi/647 abi threads is one switch for the graph	migrated (batch 20); script removed
@@ -426,7 +426,7 @@ script	subsystem	class	destination	note
 700_a_program_over_a_cxx_shared_library_has_one_cxx_runtime.sh	runtime	merge	e2e/runtime::contract/700 a program over a cxx shared library has one cxx runtime	migrated (batch 17); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
 701_symbol_provision_does_not_report_what_the_build_shares_by_construction.sh	runtime	merge	e2e/runtime::contract/701 symbol provision does not report what the build shares by construction	migrated (batch 17); script removed
 702_a_static_package_under_a_shared_library_is_linked_into_it.sh	runtime	merge	e2e/runtime::packages/702 a static package under a shared library is linked into it	migrated (batch 17); script removed
-703_the_llvm_row_on_the_msvc_abi_records_its_static_crt.sh	windows	merge	e2e/windows	
+703_the_llvm_row_on_the_msvc_abi_records_its_static_crt.sh	windows	merge	e2e/windows::crt/703 the llvm row on the msvc abi records its static crt	migrated (batch 24); script removed
 704_cxx_identity_across_macho_images.sh	macos	keep	keep	a measurement leg (prints a table, asserts nothing)
 705_cxx_identity_across_pe_images.sh	windows	keep	keep	a measurement leg (prints a table, asserts nothing)
 710_a_forward_reaches_every_dependency_table.sh	features	merge	e2e/features::defaults/710 a forward reaches every dependency table	migrated (batch 5); script removed
@@ -455,7 +455,7 @@ script	subsystem	class	destination	note
 744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/targets::side/744 a declared absence explains the link that asked for it	migrated (batch 20); script removed
 745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test::archive/745 no run builds the tests and says so	migrated (batch 1); script removed
 746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos::rows/746 macos deployment target is target keyed not host keyed	migrated (batch 23); script removed
-760_msvc_toolset_is_chosen_once.sh	windows	merge	e2e/windows	
+760_msvc_toolset_is_chosen_once.sh	windows	merge	e2e/windows::msvc/760 msvc toolset is chosen once	migrated (batch 24); script removed
 765_a_consumer_include_directory_stays_in_the_consumer.sh	build	merge	e2e/build::flags/765 a consumer include directory stays in the consumer	migrated (batch 7); script removed
 770_workspace_member_as_dependency.sh	workspace	merge	e2e/workspace::inheritance/770 workspace member as dependency	migrated (batch 11); script removed
 772_a_published_member_is_self_contained.sh	workspace	merge	e2e/workspace::inheritance/772 a published member is self contained	migrated (batch 11); script removed
@@ -480,7 +480,7 @@ script	subsystem	class	destination	note
 791_a_prepare_action_that_creates_nothing_fails.sh	actions	merge	e2e/actions::prepare/791 a prepare action that creates nothing fails	migrated (batch 4); script removed
 792_a_rerun_input_inside_a_prepare_directory_is_warned.sh	actions	merge	e2e/actions::prepare/792 a rerun input inside a prepare directory is warned	migrated (batch 4); script removed
 793_an_unknown_action_role_is_refused.sh	actions	merge	e2e/actions::prepare/793 an unknown action role is refused	migrated (batch 4); script removed
-794_a_windows_program_finds_a_dll_through_runtime_search_dir.sh	windows	merge	e2e/windows	
+794_a_windows_program_finds_a_dll_through_runtime_search_dir.sh	windows	merge	e2e/windows::placement/794 a windows program finds a dll through runtime search dir	migrated (batch 24); script removed
 795_a_link_flag_reaches_the_linker_as_written.sh	build	merge	e2e/build::link/795 a link flag reaches the linker as written	migrated (batch 7); script removed
 796_runtime_search_dir_on_pe_under_wine.sh	windows	keep	keep	emulator: runs the PE program under wine
 797_a_windows_program_finds_its_dlls_beside_it.sh	windows	keep	keep	emulator: runs the PE program under wine
@@ -497,21 +497,21 @@ script	subsystem	class	destination	note
 808_device_source_is_not_a_compile_unit.sh	actions	merge	e2e/actions::rules/808 device source is not a compile unit	migrated (batch 4); script removed
 809_failed_build_program_hides_no_device_source.sh	cdb	merge	e2e/cdb::planning/809 failed build program hides no device source	migrated (batch 13); script removed
 810_two_packages_deploy_the_same_bytes_to_one_name.sh	runtime	merge	e2e/runtime::deploy/810 two packages deploy the same bytes to one name	migrated (batch 17); script removed
-811_place_dlls_never_overwrites_a_declared_deploy.sh	windows	merge	e2e/windows	
+811_place_dlls_never_overwrites_a_declared_deploy.sh	windows	merge	e2e/windows::deploy/811 place dlls never overwrites a declared deploy	migrated (batch 24); script removed
 812_an_index_floor_is_a_closing_tip.sh	index	merge	e2e/index::refresh/812 an index floor is a closing tip	migrated (batch 14); script removed
 813_conditional_dialect_cxxflags_root_only.sh	features	merge	e2e/features::conditional/813 conditional dialect cxxflags root only	migrated (batch 5); script removed
-814_the_llvm_row_defaults_to_the_dynamic_crt.sh	windows	merge	e2e/windows	
+814_the_llvm_row_defaults_to_the_dynamic_crt.sh	windows	merge	e2e/windows::crt/814 the llvm row defaults to the dynamic crt	migrated (batch 24); script removed
 815_the_database_describes_what_a_rule_generates.sh	cdb	merge	e2e/cdb::emit/815 the database describes what a rule generates	migrated (batch 13); script removed
 816_a_git_dependency_reports_its_fetch.sh	deps	merge	e2e/deps::git/816 a git dependency reports its fetch	migrated (batch 3); script removed
 817_emit_writes_no_xlings_json_under_private_work_dir.sh	cdb	merge	e2e/cdb::emit/817 emit writes no xlings json under private work dir	migrated (batch 13); script removed
-818_a_declared_deploy_outranks_a_search_dir_dll_cross.sh	windows	merge	e2e/windows	
-819_the_crt_is_placed_by_its_rule_not_by_search_order.sh	windows	sink	unit/test_runtime_placement	answers a parse/selection rule without a build: CRT placed by its rule
-820_a_windows_program_takes_its_runtime_from_one_resolver.sh	windows	merge	e2e/windows	
+818_a_declared_deploy_outranks_a_search_dir_dll_cross.sh	windows	merge	e2e/windows::deploy/818 a declared deploy outranks a search dir dll cross	migrated (batch 24); script removed
+819_the_crt_is_placed_by_its_rule_not_by_search_order.sh	windows	sink	e2e/windows::placement/819 the crt is placed by its rule not by search order	migrated (batch 24) as a case that synthesises its PE images and runs on every host; script removed
+820_a_windows_program_takes_its_runtime_from_one_resolver.sh	windows	merge	e2e/windows::placement/820 a windows program takes its runtime from one resolver	migrated (batch 24); script removed
 821_an_edge_states_its_advice_on_both_paths.sh	deps	merge	e2e/deps::advice/821 an edge states its advice on both paths	migrated (batch 3); script removed
 822_a_package_states_the_oldest_mcpp_it_supports.sh	deps	merge	e2e/deps::floors/822 a package states the oldest mcpp it supports	migrated (batch 3); script removed
 823_mcpp_core_and_mcpp_name_one_interface.sh	build-program	merge	e2e/build-program::protocol/823 mcpp core and mcpp name one interface	migrated (batch 2); script removed
 824_a_build_program_reads_the_resolved_toolchain.sh	build-program	merge	e2e/build-program::protocol/824 a build program reads the resolved toolchain	migrated (batch 2); script removed
-825_a_build_program_reads_the_msvc_toolset.sh	windows	merge	e2e/windows	
+825_a_build_program_reads_the_msvc_toolset.sh	windows	merge	e2e/windows::msvc/825 a build program reads the msvc toolset	migrated (batch 24); script removed
 826_plugin_diagnostics_features_and_names.sh	build-program	merge	e2e/build-program::hosttools/826 plugin diagnostics features and names	migrated (batch 2); script removed
 827_many_placements_run_as_one_process.sh	actions	merge	e2e/actions::outputs/827 many placements run as one process	migrated (batch 4); script removed
 828_a_library_states_its_interface.sh	pack	merge	e2e/pack::library/828 a library states its interface	migrated (batch 6); script removed
@@ -522,7 +522,7 @@ script	subsystem	class	destination	note
 834_a_workspace_plans_once_and_replays_in_one_check.sh	workspace	merge	e2e/workspace::graph/834 a workspace plans once and replays in one check	migrated (batch 11); script removed
 835_a_shared_library_is_placed_by_a_link.sh	runtime	merge	e2e/runtime::packages/835 a shared library is placed by a link	migrated (batch 17); script removed
 836_a_members_own_statements_reach_its_build.sh	workspace	merge	e2e/workspace::statements/836 a members own statements reach its build	migrated (batch 11); script removed
-837_a_members_resources_reach_its_image.sh	windows	merge	e2e/windows	
+837_a_members_resources_reach_its_image.sh	windows	merge	e2e/windows::resources/837 a members resources reach its image	migrated (batch 24); script removed
 838_a_program_shipped_through_artifacts_links_its_own_closure.sh	runtime	merge	e2e/runtime::packages/838 a program shipped through artifacts links its own closure	migrated (batch 17); script removed
 839_a_workspaces_build_programs_are_named_ordered_and_cached.sh	workspace	merge	e2e/workspace::graph/839 a workspaces build programs are named ordered and cached	migrated (batch 11); script removed
 840_a_workspace_database_describes_each_package_once.sh	cdb	merge	e2e/cdb::sets/840 a workspace database describes each package once	migrated (batch 13); script removed
@@ -533,7 +533,7 @@ script	subsystem	class	destination	note
 845_play_game_restores_the_terminal.sh	cli	merge	e2e/cli::terminal/845 play game restores the terminal	migrated (batch 19); script removed. G3 holds since the interrupt ends each running program before mcpp exits (2026.11.13.1)
 846_the_vendored_xlings_is_replaced_from_the_newest_source.sh	self	keep	keep	upgrade: the vendored xlings replaced from the newest source in a home
 847_a_module_name_is_unique_within_a_program.sh	modules	merge	e2e/modules::programs/847 a module name is unique within a program	migrated (batch 9); script removed
-848_msvc_binds_a_module_name_per_program.sh	windows	merge	e2e/windows	
+848_msvc_binds_a_module_name_per_program.sh	windows	merge	e2e/windows::msvc/848 msvc binds a module name per program	migrated (batch 24); script removed
 849_a_staged_bmi_waits_for_a_module_compiled_here.sh	modules	merge	e2e/modules::bmi/849 a staged bmi waits for a module compiled here	migrated (batch 9); script removed
 850_a_selected_member_declares_as_the_root.sh	workspace	merge	e2e/workspace::members/850 a selected member declares as the root	migrated (batch 11); script removed
 851_a_shared_member_is_compiled_once_per_configuration.sh	workspace	merge	e2e/workspace::graph/851 a shared member is compiled once per configuration	migrated (batch 11); script removed
@@ -566,18 +566,18 @@ script	subsystem	class	destination	note
 878_an_upgraded_engine_does_not_replay_the_old_graph.sh	cache	merge	e2e/cache::fastpath/878 an upgraded engine does not replay the old graph	migrated (batch 10); script removed
 879_a_providers_module_extension_reaches_the_fast_path.sh	cache	merge	e2e/cache::fastpath/879 a providers module extension reaches the fast path	migrated (batch 10); script removed
 880_a_members_executable_keeps_its_own_implementation.sh	workspace	merge	e2e/workspace::graph/880 a members executable keeps its own implementation	migrated (batch 11); script removed
-881_pe_auto_exports_accept_llvm_bitcode.sh	windows	merge	e2e/windows	
+881_pe_auto_exports_accept_llvm_bitcode.sh	windows	merge	e2e/windows::exports/881 pe auto exports accept llvm bitcode	migrated (batch 24); script removed
 882_parent_directory_glob_inputs.sh	build	merge	e2e/build::basics/882 parent directory glob inputs	migrated (batch 7); script removed
 883_run_hands_the_terminal_to_the_program.sh	run	merge	e2e/run::program/883 run hands the terminal to the program	migrated (batch 12); script removed
 884_a_shared_library_links_with_its_own_closure.sh	runtime	merge	e2e/runtime::packages/884 a shared library links with its own closure	migrated (batch 17); script removed
 885_workspace_profiles_and_the_root_package.sh	workspace	merge	e2e/workspace::statements/885 workspace profiles and the root package	migrated (batch 11); script removed
 886_std_compat_is_built_when_imported.sh	toolchain	merge	e2e/toolchain::standard/886 std compat is built when imported	migrated (batch 21); script removed
-887_msvc_lto_and_export_discovery.sh	windows	merge	e2e/windows	
-888_the_llvm_row_in_a_developer_environment.sh	windows	merge	e2e/windows	
-889_windows_driver_target_and_coff_resources.sh	windows	merge	e2e/windows	
+887_msvc_lto_and_export_discovery.sh	windows	merge	e2e/windows::msvc/887 msvc lto and export discovery	migrated (batch 24); script removed
+888_the_llvm_row_in_a_developer_environment.sh	windows	merge	e2e/windows::crt/888 the llvm row in a developer environment	migrated (batch 24); script removed
+889_windows_driver_target_and_coff_resources.sh	windows	merge	e2e/windows::msvc/889 windows driver target and coff resources	migrated (batch 24); script removed
 890_a_toolchain_declared_for_an_unservable_target_is_still_installed.sh	toolchain	merge	e2e/toolchain::management/890 a toolchain declared for an unservable target is still installed	migrated (batch 21); script removed
 891_a_host_header_is_written_not_searched.sh	toolchain	merge	e2e/toolchain::layers/891 a host header is written not searched	migrated (batch 21); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
-892_coroutines_on_the_32_bit_msvc_abi_are_explained.sh	windows	merge	e2e/windows	
+892_coroutines_on_the_32_bit_msvc_abi_are_explained.sh	windows	merge	e2e/windows::msvc/892 coroutines on the 32 bit msvc abi are explained	migrated (batch 24); script removed
 893_the_workspace_prefix_carries_the_meaning.sh	workspace	merge	e2e/workspace::statements/893 the workspace prefix carries the meaning	migrated (batch 11); script removed
 894_the_position_reading_is_kept_and_reported.sh	build	merge	e2e/build::basics/894 the position reading is kept and reported	migrated (batch 7); script removed
 895_conditional_configuration_rows_count_as_they_evaluate.sh	features	merge	e2e/features::conditional/895 conditional configuration rows count as they evaluate	migrated (batch 5); script removed
@@ -607,8 +607,8 @@ script	subsystem	class	destination	note
 919_a_home_selection_is_remembered_once.sh	self	merge	e2e/self::homes/919 a home selection is remembered once	migrated (batch 15); script removed
 920_the_doctor_checks_resources_without_bootstrap.sh	self	merge	e2e/self::homes/920 the doctor checks resources without bootstrap	migrated (batch 15); script removed
 921_emit_watches_inputs_not_host_outputs.sh	cdb	merge	e2e/cdb::sets/921 emit watches inputs not host outputs	migrated (batch 13); script removed
-922_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
-923_cross_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
+922_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows::resources/922 dependency images keep their resources	migrated (batch 24); script removed
+923_cross_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows::resources/923 cross dependency images keep their resources	migrated (batch 24); script removed
 924_visible_imports_resolve_transitive_modules.sh	modules	merge	e2e/modules::basics/924 visible imports resolve transitive modules	migrated (batch 9); script removed
 925_a_stated_sysroot_is_the_c_library.sh	openkal	merge	e2e/openkal::bases/925 a stated sysroot is the c library	migrated (batch 16); script removed
 926_the_hosts_own_root_is_a_base.sh	openkal	merge	e2e/openkal::bases/926 the hosts own root is a base	migrated (batch 16); script removed
@@ -687,13 +687,13 @@ script	subsystem	class	destination	note
 1014_host_only_layers_do_not_select_the_target_abi.sh	target	merge	e2e/targets::side/1014 host only layers do not select the target abi	migrated (batch 20); script removed
 1015_action_progress_paths_are_utf8_on_every_host.sh	actions	merge	e2e/actions::progress/1015 action progress paths are utf8 on every host	migrated (batch 4); script removed
 1016_a_killed_build_does_not_race_the_next_one.sh	cli	merge	e2e/cli::signals/1016 a killed build does not race the next one	migrated (batch 8); script removed
-1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows	
+1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows::msvc/1017 a system msvc builds the build program of a cross target	migrated (batch 24); script removed
 1018_a_package_and_a_namespaced_package_of_one_name_both_link.sh	deps	merge	e2e/deps::graph/1018 a package and a namespaced package of one name both link	migrated (batch 3); script removed
 1019_a_later_edge_walks_the_feature_deps_it_activates.sh	features	merge	e2e/features::activation/1019 a later edge walks the feature deps it activates	migrated (batch 5); script removed
 1020_a_platform_version_group_chooses_the_version.sh	openkal	merge	e2e/openkal::platforms/1020 a platform version group chooses the version	migrated (batch 16); script removed
 1021_a_platform_series_is_locked_and_skips_newer_engines.sh	openkal	merge	e2e/openkal::platforms/1021 a platform series is locked and skips newer engines	migrated (batch 16); script removed
 1022_a_taken_over_directory_keeps_no_compiler_record_of_another.sh	cache	merge	e2e/cache::directories/1022 a taken over directory keeps no compiler record of another	migrated (batch 10); script removed
-1023_msvc_objects_carry_their_own_debug_information.sh	windows	merge	e2e/windows	
+1023_msvc_objects_carry_their_own_debug_information.sh	windows	merge	e2e/windows::msvc/1023 msvc objects carry their own debug information	migrated (batch 24); script removed
 1024_a_launch_description_takes_the_fast_path.sh	run	merge	e2e/run::contract/1024 a launch description takes the fast path	migrated (batch 12); script removed
 1025_the_default_platform_is_one_release.sh	openkal	merge	e2e/openkal::platforms/1025 the default platform is one release	migrated (batch 16); script removed
 1026_an_archived_member_test_carries_its_members_files.sh	test	merge	e2e/test::archive/1026 an archived member test carries its members files	migrated (batch 1); script removed
@@ -728,7 +728,7 @@ script	subsystem	class	destination	note
 1055_layer_suppliers_that_require_one_another_are_refused.sh	target	merge	e2e/targets::side/1055 layer suppliers that require one another are refused	migrated (batch 20); script removed
 1056_a_runner_reads_the_interfaces_its_implementation_provides.sh	openkal	merge	e2e/openkal::layers/1056 a runner reads the interfaces its implementation provides	migrated (batch 16); script removed
 1057_a_platform_row_takes_nothing_of_the_payloads_host.sh	openkal	merge	e2e/openkal::platforms/1057 a platform row takes nothing of the payloads host	migrated (batch 16); script removed
-1058_a_gnu_abi_windows_row_compiles_its_resources.sh	windows	merge	e2e/windows	
+1058_a_gnu_abi_windows_row_compiles_its_resources.sh	windows	merge	e2e/windows::rows/1058 a gnu abi windows row compiles its resources	migrated (batch 24); script removed
 1059_a_base_package_states_the_layers_beside_its_c_library.sh	openkal	merge	e2e/openkal::layers/1059 a base package states the layers beside its c library	migrated (batch 16); script removed
 1060_a_patched_member_of_a_repository_keeps_its_siblings.sh	deps	merge	e2e/deps::edges/1060 a patched member of a repository keeps its siblings	migrated (batch 3); script removed
 1061_an_artifact_for_another_system_is_packed_without_running_it.sh	pack	merge	e2e/pack::modes/1061 an artifact for another system is packed without running it	migrated (batch 6); script removed
@@ -742,10 +742,10 @@ script	subsystem	class	destination	note
 1069_an_unchanged_project_tests_without_planning.sh	test	merge	e2e/test::fast/1069 an unchanged project tests without planning	migrated (batch 1); script removed
 1070_the_test_spec_launches_frameworks_checks_and_output.sh	test	merge	e2e/test::protocol/1070 the test spec launches frameworks checks and output	migrated (batch 1); script removed
 1071_the_root_overrides_a_dependency_for_the_whole_graph.sh	deps	merge	e2e/deps::graph/1071 the root overrides a dependency for the whole graph	migrated (batch 3); script removed
-1072_a_resource_include_nothing_provides_is_the_scripts_own.sh	windows	merge	e2e/windows	
+1072_a_resource_include_nothing_provides_is_the_scripts_own.sh	windows	merge	e2e/windows::rows/1072 a resource include nothing provides is the scripts own	migrated (batch 24); script removed
 1073_the_freebsd_musl_identity_is_served_by_openkal.sh	openkal	merge	e2e/openkal::stack/1073 the freebsd musl identity is served by openkal	migrated (batch 16); script removed
 1074_a_namespace_package_named_like_a_spec_field.sh	deps	merge	e2e/deps::names/1074 a namespace package named like a spec field	migrated (batch 3); script removed
-1075_a_graph_supplied_windows_row_finds_its_resource_headers.sh	windows	merge	e2e/windows	
+1075_a_graph_supplied_windows_row_finds_its_resource_headers.sh	windows	merge	e2e/windows::rows/1075 a graph supplied windows row finds its resource headers	migrated (batch 24); script removed
 1076_an_aarch64_linux_gnu_cross_comes_from_a_sysroot_payload.sh	target	merge	e2e/targets::rows/1076 an aarch64 linux gnu cross comes from a sysroot payload	migrated (batch 20); script removed
 1077_a_program_of_another_system_is_built_not_run.sh	target	merge	e2e/targets::rows/1077 a program of another system is built not run	migrated (batch 20); script removed
 1078_systems_all_carries_the_runners_the_platform_declares.sh	openkal	merge	e2e/openkal::trees/1078 systems all carries the runners the platform declares	migrated (batch 16); script removed
