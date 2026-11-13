@@ -55,29 +55,22 @@ std::set<std::string> ms_versions(const fs::path& ninja) {
     return words;
 }
 
-// A home of the case whose payloads are the shared home's registry (`[xlings] home`).
-s::options registry_home() {
-    const auto home = s::case_home(s::home::fresh);
-    s::project(home, {{"config.toml", std::format("[xlings]\nhome = \"{}\"\n", (s::shared_home() / "registry").generic_string())}});
-    return {.where = s::home::fresh};
-}
-
 E2E msvc{"msvc", [] {
-    "95 msvc system toolchain"_test[s::msvc][resource{"machine"}] = [] {
+    "95 msvc system toolchain"_test[s::msvc] = [] {
         // `toolchain default msvc` locates and identifies the machine's MSVC and persists
         // msvc@system; `toolchain list` shows it under System, starred; a versioned spec is a
         // payload, and an absent one is refused, the default undisturbed; the retired
         // `msvc@<cl-version>` names both replacements; mcpp never removes or installs the
         // machine's Visual Studio; a hello builds and runs. A neutral directory: a project's
         // [toolchain] would shadow the default.
-        s::default_kept kept;
+        const s::options home{.where = s::home::registry};
         const auto cwd = s::case_dir();
-        auto r = s::mcpp({"toolchain", "default", "msvc"}, cwd);
+        auto r = s::mcpp({"toolchain", "default", "msvc"}, cwd, home);
         auto out = s::text(r);
         expect(fatal(e2e::succeeded(r))) << "default msvc: " << out;
         for (std::string_view word : {"Detected", "msvc ", "msvc@system", "cl:"}) expect(fatal(e2e::contains(out, word))) << "1: no '" << word << "': " << out;
         const auto starred = [&] {
-            const auto list = s::text(s::mcpp({"toolchain", "list"}, cwd));
+            const auto list = s::text(s::mcpp({"toolchain", "list"}, cwd, home));
             return std::pair{list, std::regex_search(list, std::regex(R"(\*\s*msvc)"))};
         };
         auto [list, star] = starred();
@@ -86,53 +79,53 @@ E2E msvc{"msvc", [] {
 
         // A toolset that is not installed fails: falling back to the machine's compiler is the
         // silent substitution the version axis exists to prevent.
-        r = s::mcpp({"toolchain", "default", "msvc@14.0.99999"}, cwd);
+        r = s::mcpp({"toolchain", "default", "msvc@14.0.99999"}, cwd, home);
         expect(fatal(failed(r))) << "3: an absent toolset resolved: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "not installed"))) << "3: absent-toolset message: " << s::text(r);
         std::tie(list, star) = starred();
         expect(fatal(star)) << "3: a failed pin disturbed the default: " << list;
 
         std::smatch m;
-        const auto again = s::text(s::mcpp({"toolchain", "default", "msvc"}, cwd));
+        const auto again = s::text(s::mcpp({"toolchain", "default", "msvc"}, cwd, home));
         if (std::regex_search(again, m, std::regex(R"(msvc (19\.[0-9]+))"))) {
-            r = s::mcpp({"toolchain", "default", "msvc@" + m[1].str()}, cwd);
+            r = s::mcpp({"toolchain", "default", "msvc@" + m[1].str()}, cwd, home);
             expect(fatal(failed(r))) << "3b: msvc@" << m[1].str() << " resolved";
             expect(fatal(e2e::contains(s::text(r), "COMPILER version"))) << "3b: no cl-version signpost: " << s::text(r);
             expect(fatal(e2e::contains(s::text(r), "msvc@system"))) << "3b: the signpost omits msvc@system: " << s::text(r);
         }
 
-        r = s::mcpp({"toolchain", "remove", "msvc"}, cwd);
+        r = s::mcpp({"toolchain", "remove", "msvc"}, cwd, home);
         expect(fatal(failed(r) && e2e::contains(s::text(r), "cannot remove it"))) << "4: remove msvc: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "msvc@<toolset>"))) << "4: remove msvc omits the managed route: " << s::text(r);
-        (void)s::mcpp({"toolchain", "default", "msvc"}, cwd);
-        r = s::mcpp({"toolchain", "install", "msvc"}, cwd);
+        (void)s::mcpp({"toolchain", "default", "msvc"}, cwd, home);
+        r = s::mcpp({"toolchain", "install", "msvc"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << "4: install msvc (present) should succeed: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "does not manage it"))) << "4: install msvc message: " << s::text(r);
 
-        r = s::mcpp({"new", "hello_msvc"}, cwd);
+        r = s::mcpp({"new", "hello_msvc"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
-        r = s::mcpp({"run"}, cwd / "hello_msvc");
+        r = s::mcpp({"run"}, cwd / "hello_msvc", home);
         expect(fatal(e2e::succeeded(r))) << "5: msvc hello build/run: " << s::text(r);
         expect(fatal(s::contains_nocase(s::text(r), "hello"))) << "5: hello output: " << s::text(r);
     };
 
-    "99 msvc native build"_test[s::msvc][resource{"machine"}] = [] {
+    "99 msvc native build"_test[s::msvc] = [] {
         // toolchain default msvc, new, build, run: `import std` through std.ixx, a named module
         // through /interface, .obj and .ifc from the cl.exe pipeline; editing the module rebuilds
         // and the run prints the new value.
-        s::default_kept kept;
+        const s::options home{.where = s::home::registry};
         const auto cwd = s::case_dir();
-        auto r = s::mcpp({"toolchain", "default", "msvc"}, cwd);
+        auto r = s::mcpp({"toolchain", "default", "msvc"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << "toolchain default msvc: " << s::text(r);
-        r = s::mcpp({"new", "hello_cl"}, cwd);
+        r = s::mcpp({"new", "hello_cl"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         s::project p(cwd / "hello_cl", {{"src/greet.cppm", "export module hello.greet;\nimport std;\nexport namespace hello {\nstd::string greet() { return \"cl-ok\"; }\n}\n"},
                                         {"src/main.cpp", "import std;\nimport hello.greet;\nint main() { std::println(\"{}\", hello::greet()); return 0; }\n"}});
-        r = p.mcpp({"build"});
+        r = p.mcpp({"build"}, home);
         expect(fatal(e2e::succeeded(r))) << "msvc build: " << s::text(r);
         // A stale default_target once rerouted `toolchain default msvc` to another toolchain.
         expect(fatal(e2e::contains(s::text(r), "msvc"))) << "the build did not resolve msvc: " << s::text(r);
-        r = p.mcpp({"run"});
+        r = p.mcpp({"run"}, home);
         expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "cl-ok"))) << "msvc run: " << s::text(r);
         expect(fatal(!s::find_files(p.at("target"), ".*\\.obj").empty())) << "no .obj produced";
         bool ifc = false;
@@ -140,22 +133,22 @@ E2E msvc{"msvc", [] {
         expect(fatal(ifc)) << "no .ifc produced under ifc.cache";
         std::this_thread::sleep_for(std::chrono::seconds(1));
         p.write("src/greet.cppm", std::regex_replace(p.read("src/greet.cppm"), std::regex("cl-ok"), "cl-ok2"));
-        r = p.mcpp({"run"});
+        r = p.mcpp({"run"}, home);
         expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "cl-ok2"))) << "incremental run: " << s::text(r);
     };
 
-    "177 cpp20 msvc"_test[s::msvc][resource{"machine"}] = [] {
+    "177 cpp20 msvc"_test[s::msvc] = [] {
         // standard = "c++20" on cl.exe: /std:c++20 reaches the command lines, not /std:c++latest,
         // and `import std` compiles and runs (microsoft/STL#3945, fixed by STL#3977, cl 19.38). If
         // this fails on a 19.38+ cl, msvc::std_module_min_level goes back to 23. The toolset the
         // claim was verified on is printed into the case's log.
-        s::default_kept kept;
-        auto r = s::mcpp({"toolchain", "default", "msvc"}, s::case_dir());
+        const s::options home{.where = s::home::registry};
+        auto r = s::mcpp({"toolchain", "default", "msvc"}, s::case_dir(), home);
         expect(fatal(e2e::succeeded(r))) << "toolchain default msvc: " << s::text(r);
-        for (const auto& line : s::lines_with(s::text(s::mcpp({"toolchain", "list"}, s::case_dir())), "msvc")) std::println("{}", line);
+        for (const auto& line : s::lines_with(s::text(s::mcpp({"toolchain", "list"}, s::case_dir(), home)), "msvc")) std::println("{}", line);
         s::project p{{"mcpp.toml", "[package]\nname     = \"cpp20cl\"\nversion  = \"0.1.0\"\nstandard = \"c++20\"\n"},
                      {"src/main.cpp", "import std;\nint main() {\n    std::vector<int> v{1, 2, 3};\n    std::cout << \"cl20 \" << v.size() << \"\\n\";\n    return 0;\n}\n"}};
-        const s::options o{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
+        const s::options o{.where = s::home::registry, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         r = p.mcpp({"build"}, o);
         expect(fatal(e2e::succeeded(r))) << "msvc c++20 + import std build failed; on a cl >= 19.38 the premise (MSVC answers 20) is wrong: " << s::text(r);
         r = p.mcpp({"run"}, o);
@@ -329,7 +322,7 @@ int main() {
         // stating false with __declspec(dllexport): full /GL, it links. E /GL in the DLL's flags
         // with discovery on: refused. F /bigobj with discovery on: read, the consumer links
         // (2026.10.5.2, #770).
-        const auto o = registry_home();
+        const s::options o{.where = s::home::registry};
         const auto tmp = s::case_dir();
         s::project a(tmp / "a", {{"src/main.cpp", "int main() { return 0; }\n"},
                                  {"mcpp.toml", "[package]\nname = \"a\"\nversion = \"0.1.0\"\n[toolchain]\nwindows = \"msvc@system\"\n[profile.release]\nlto = true\n"}});
@@ -384,7 +377,7 @@ int main() {
         // `import std` and `import std.compat` build and run, no note; C C++20 code using
         // coroutines fails, the note offering no C++20. When the compiler predefines the macro, A
         // builds and no note appears (2026.10.8.1, LLVM 23.1.3 Part 3, D1).
-        const auto o = registry_home();
+        const s::options o{.where = s::home::registry};
         const auto llvm = s::llvm_version();
         const std::string note = "does not support C++20 coroutines";
         const auto make = [&](std::string_view name, std::string_view standard, std::string_view source) {
@@ -436,18 +429,18 @@ int main() { f(); }
         expect(fatal(e2e::contains(out, "toolchain = \"llvm@22.1.8\""))) << "C: llvm 22.1.8 was not offered: " << out;
     };
 
-    "1017 a system msvc builds the build program of a cross target"_test[s::windows][s::msvc][resource{"machine"}] = [] {
+    "1017 a system msvc builds the build program of a cross target"_test[s::windows][s::msvc] = [] {
         // With msvc@system the machine's default, a build program of a riscv64-none-elf build is
         // compiled by the located Visual Studio, not looked up as a package, and its directive
         // reaches the cross build (2026.11.7.1; design 2026-11-07 §4.1.3).
-        s::default_kept kept;
-        auto r = s::mcpp({"toolchain", "default", "msvc"}, s::case_dir());
+        const s::options home{.where = s::home::registry};
+        auto r = s::mcpp({"toolchain", "default", "msvc"}, s::case_dir(), home);
         expect(fatal(e2e::succeeded(r))) << "msvc@system not selectable: " << s::text(r);
         s::project p{{"mcpp.toml", "[package]\nname    = \"layout\"\nversion = \"0.1.0\"\n"},
                      {"build.mcpp", "#include <cstdio>\nint main() {\n    std::puts(\"mcpp:include-dir=inc\");\n    std::puts(\"mcpp:rerun-if-changed=build.mcpp\");\n    return 0;\n}\n"},
                      {"inc/layout.h", "struct pair_layout { unsigned size; unsigned long long stamp; };\n"},
                      {"src/main.cpp", "#include \"layout.h\"\nstatic_assert(__builtin_offsetof(pair_layout, stamp) == 8);\nextern \"C\" void _start() { for (;;) {} }\n"}};
-        r = p.mcpp({"build", "--target", "riscv64-none-elf"});
+        r = p.mcpp({"build", "--target", "riscv64-none-elf"}, home);
         const auto out = s::text(r);
         expect(fatal(e2e::succeeded(r))) << "the cross build with a build program failed: " << out;
         expect(fatal(e2e::contains(out, "host toolchain for build.mcpp: msvc@system"))) << "the build program was not compiled by the located msvc@system: " << out;
@@ -507,7 +500,7 @@ int main() { f(); }
         // i686, x86_64 and `x86` (MSVC's spelling of the i686 row, 2026.10.5.3), a C program, a C++
         // program and a DLL link for their machine, a program runs, the resource object is of that
         // machine, its data reaches the image, and an edit rebuilds it.
-        const auto o = registry_home();
+        const s::options o{.where = s::home::registry};
         const auto u16 = [](const std::string& b, std::size_t at) { return std::uint32_t(std::uint8_t(b[at])) | std::uint32_t(std::uint8_t(b[at + 1])) << 8; };
         const auto pe_machine = [&](const fs::path& f) {
             const auto b = s::read_file(f);
@@ -552,24 +545,24 @@ int main() { f(); }
             }
         }
     };
-    "180 msvc build mcpp"_test[s::windows][s::msvc][resource{"machine"}] = [] {
+    "180 msvc build mcpp"_test[s::windows][s::msvc] = [] {
         // build.mcpp under msvc@system, checked by its effect: 1 an #include-based program runs (it
         // writes a file) and its define reaches the build; 2 `mcpp:link-lib` is spelled the MSVC way
         // (advapi32 links); 3 a build program with named modules (`import mcpp`) compiles through
         // cl.exe's module pipeline, whose .ifc for the bundled module is in the cache or the
         // workspace's store (#748).
-        s::default_kept kept;
-        auto r = s::mcpp({"toolchain", "default", "msvc"}, s::case_dir());
+        const s::options home{.where = s::home::registry};
+        auto r = s::mcpp({"toolchain", "default", "msvc"}, s::case_dir(), home);
         expect(fatal(e2e::succeeded(r))) << "msvc@system not selectable: " << s::text(r);
-        r = s::mcpp({"new", "msvc_bp"}, s::case_dir());
+        r = s::mcpp({"new", "msvc_bp"}, s::case_dir(), home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         s::project p(s::case_dir() / "msvc_bp", {});
         const auto step = [&](std::string_view what, std::string_view program, std::string_view define, std::string_view says) {
             p.write("build.mcpp", program);
             p.write("src/main.cpp", std::format("import std;\nint main() {{\n#ifdef {}\n    std::println(\"{}\");\n    return 0;\n#else\n    std::println(\"define missing\");\n    return 1;\n#endif\n}}\n", define, says));
-            auto b = p.mcpp({"build"});
+            auto b = p.mcpp({"build"}, home);
             expect(fatal(e2e::succeeded(b))) << what << ": " << s::text(b);
-            auto run = p.mcpp({"run"});
+            auto run = p.mcpp({"run"}, home);
             expect(fatal(e2e::succeeded(run) && e2e::contains(s::text(run), says))) << what << ": run: " << s::text(run);
             return b;
         };
@@ -580,7 +573,7 @@ int main() { f(); }
              "MSVC_LINK_LIB_OK", "msvc-link-lib-ok");
         step("3 named modules in build.mcpp", "import std;\nimport mcpp;\nint main() {\n    std::string tag = std::format(\"MSVC_MODULES_{}\", 1 + 1);\n    mcpp::define(tag.c_str());\n    mcpp::rerun_if_changed(\"build.mcpp\");\n    return 0;\n}\n",
              "MSVC_MODULES_2", "msvc-modules-ok");
-        const auto cache = s::lines_with(s::text(p.mcpp({"cache", "dir"})), "");
+        const auto cache = s::lines_with(s::text(p.mcpp({"cache", "dir"}, home)), "");
         bool ifc = !s::find_files(p.at("target/.build-mcpp"), ".*\\.ifc").empty();
         if (!cache.empty()) {
             auto root = cache.front();

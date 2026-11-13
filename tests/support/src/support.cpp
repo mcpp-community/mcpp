@@ -235,32 +235,6 @@ fs::path payload_root(std::string_view package, std::string_view version) {
 
 // ---- mcpp ----------------------------------------------------------------------------------------
 
-default_kept::default_kept() {
-    const auto conf = shared_home() / "config.toml";
-    if (!fs::exists(conf)) return;
-    static const std::regex entry(R"re(^default\s*=\s*"([^"]*)")re");
-    bool in_toolchain = false;
-    for (auto line : lines_with(read_file(conf), "")) {
-        std::erase(line, '\r');
-        if (line.starts_with("[")) {
-            in_toolchain = line.starts_with("[toolchain]");
-            continue;
-        }
-        if (std::smatch m; in_toolchain && std::regex_search(line, m, entry)) {
-            original_ = m[1].str();
-            return;
-        }
-    }
-}
-
-default_kept::~default_kept() {
-    if (original_.empty()) return;
-    try {
-        (void)mcpp({"toolchain", "default", original_}, case_dir());
-    } catch (...) {
-    }
-}
-
 fs::path repository() {
     // The directory holding tests/support/mcpp.toml: above this source file when the compiler
     // named it absolutely, else above the working directory (`mcpp test` runs in the package).
@@ -440,6 +414,8 @@ void populate_home(const fs::path& h, home kind) {
         link_or_copy(home_dir() / "registry", h / "registry");
     else if (kind == home::inherited || kind == home::payloads)
         inherit(h, kind == home::inherited);
+    else if (kind == home::registry)
+        std::ofstream(h / "config.toml") << std::format("[xlings]\nhome = \"{}\"\n", (home_dir() / "registry").generic_string());
 }
 }  // namespace
 

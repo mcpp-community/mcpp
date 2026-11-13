@@ -105,18 +105,6 @@ inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cr
 // The directory of that payload's version.
 fs::path payload_root(std::string_view package, std::string_view version);
 
-// The shared home's `[toolchain] default`, restored when the object ends however the case ends: a
-// case that sets the machine's default (`mcpp toolchain default`) holds one, and resource{"machine"}.
-class default_kept {
-public:
-    default_kept();
-    default_kept(const default_kept&) = delete;
-    default_kept& operator=(const default_kept&) = delete;
-    ~default_kept();
-private:
-    std::string original_;
-};
-
 // The root of the mcpp repository these cases belong to (its examples, its fixtures).
 fs::path repository();
 
@@ -142,7 +130,11 @@ std::string mcpp_path();
 // inherited: tests/e2e/_inherit_toolchain.sh's home, a home of the case holding links to each
 // payload of the user's homes, their indices, `subos` and `bin`, and a copy of `config.toml`.
 // payloads: inherited without config.toml and subos (MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0).
-enum class home { shared, fresh, linked, inherited, payloads };
+// registry: a home of the case whose `[xlings] home` is the shared home's registry (its toolchains,
+// indices and sandbox) and whose config.toml is its own. A case that sets the default toolchain
+// (`mcpp toolchain default`) runs here: the cases that read the machine's default run beside it
+// unchanged.
+enum class home { shared, fresh, linked, inherited, payloads, registry };
 
 // The directory of the case, under the system's temporary directory: made on first use and removed
 // once the case has ended. Not under the repository, so that mcpp run in a directory of the case

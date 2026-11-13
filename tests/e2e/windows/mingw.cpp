@@ -41,27 +41,27 @@ void self_contained(const std::string& imports, std::string_view what) {
 }
 
 E2E mingw{"mingw", [] {
-    "97 mingw toolchain"_test[s::windows][resource{"machine"}] = [] {
+    "97 mingw toolchain"_test[s::windows] = [] {
         // `toolchain install mingw 16.1.0` installs the payload; `toolchain default mingw@16.1.0`
         // persists gcc@16.1.0 and x86_64-windows-gnu, both starred by `list`; a project with a named
         // module and `import std` builds and runs; the program and the build.mcpp host helper import
         // no toolchain DLL and run without the toolchain on PATH (#299).
-        s::default_kept kept;
+        const s::options home{.where = s::home::registry};
         const auto cwd = s::case_dir();
-        auto r = s::mcpp({"toolchain", "install", "mingw", "16.1.0"}, cwd);
+        auto r = s::mcpp({"toolchain", "install", "mingw", "16.1.0"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << "install mingw: " << s::text(r);
-        r = s::mcpp({"toolchain", "default", "mingw@16.1.0"}, cwd);
+        r = s::mcpp({"toolchain", "default", "mingw@16.1.0"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << "default mingw@16.1.0: " << s::text(r);
-        const auto list = s::text(s::mcpp({"toolchain", "list"}, cwd));
+        const auto list = s::text(s::mcpp({"toolchain", "list"}, cwd, home));
         expect(fatal(std::regex_search(list, std::regex(R"(\*\s*gcc 16\.1\.0)")))) << "gcc 16.1.0 is not starred among the toolchains: " << list;
         expect(fatal(std::regex_search(list, std::regex(R"(\*\s*x86_64-windows-gnu)")))) << "x86_64-windows-gnu is not starred among the targets: " << list;
-        r = s::mcpp({"new", "hello_mingw"}, cwd);
+        r = s::mcpp({"new", "hello_mingw"}, cwd, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         s::project p(cwd / "hello_mingw", {{"src/greet.cppm", "export module hello.greet;\nimport std;\nexport namespace hello {\nstd::string greet() { return \"mingw-ok\"; }\n}\n"},
                                            {"src/main.cpp", "import std;\nimport hello.greet;\nint main() { std::println(\"{}\", hello::greet()); return 0; }\n"}});
-        r = p.mcpp({"build"});
+        r = p.mcpp({"build"}, home);
         expect(fatal(e2e::succeeded(r))) << "build: " << s::text(r);
-        r = p.mcpp({"run"});
+        r = p.mcpp({"run"}, home);
         expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "mingw-ok"))) << "run: " << s::text(r);
         std::optional<fs::path> exe;
         for (const auto& f : s::find_files(p.at("target"), "hello_mingw\\.exe"))
@@ -71,7 +71,7 @@ E2E mingw{"mingw", [] {
         auto alone = run_alone(*exe, "iso");
         expect(fatal(e2e::succeeded(alone) && alone.out.contains("mingw-ok"))) << "the program alone: " << s::text(alone);
         p.write("build.mcpp", "#include <cstdio>\nint main() {\n    FILE* marker = std::fopen(\"helper-ran\", \"w\");\n    if (!marker) return 2;\n    std::fputs(\"ok\\n\", marker);\n    std::fclose(marker);\n    std::puts(\"mcpp:rerun-if-changed=build.mcpp\");\n    return 0;\n}\n");
-        r = p.mcpp({"build"});
+        r = p.mcpp({"build"}, home);
         expect(fatal(e2e::succeeded(r) && p.exists("helper-ran"))) << "build with build.mcpp: " << s::text(r);
         const auto helper = p.at("target/.build-mcpp/build.mcpp.exe");
         expect(fatal(fs::exists(helper))) << "no helper binary at " << helper.string();

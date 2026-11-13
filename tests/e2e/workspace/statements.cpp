@@ -34,13 +34,6 @@ std::vector<fs::path> graphs(const fs::path& root) {
     return out;
 }
 
-// A fresh home of the case whose registry is the shared home's ([xlings] home in config.toml).
-s::options registry_home() {
-    const auto home = s::case_home(s::home::fresh);
-    s::project(home, {{"config.toml", std::format("[xlings]\nhome = \"{}\"\n", (s::shared_home() / "registry").generic_string())}});
-    return {.where = s::home::fresh};
-}
-
 E2E statements{"statements", [] {
     "836 a members own statements reach its build"_test = [] {
         // M1 a member whose tests import std is tested, from the root and from its directory;
@@ -74,7 +67,7 @@ E2E statements{"statements", [] {
         // replaces it, unmerged; W3 a rooted workspace's root package receives [workspace.build]
         // once beside its own [build], in one graph, built as the root or with --workspace, and
         // the root file's profile reaches a member built on its own.
-        const auto o = registry_home();
+        const s::options o{.where = s::home::registry};
         const auto tmp = s::case_dir();
         auto profile = [](std::string_view mark) { return std::format("[profile.release]\ncxxflags = [\"-DMARK_PROFILE_{}\"]\n", mark); };
         // The variables of the graph and the build statement of `object` with its indented lines.
