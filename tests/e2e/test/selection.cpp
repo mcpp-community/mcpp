@@ -1,5 +1,5 @@
-// Which tests `mcpp test` finds and runs: names from paths, a pattern, the listing, `[test]
-// discover` (formerly tests/e2e/152, 154, 159 and 673).
+// Which tests `mcpp test` finds and runs: names from paths, a pattern and several, the listing,
+// `[test] discover` (formerly tests/e2e/152, 154, 159 and 673; 1084).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -41,6 +41,29 @@ E2E selection{"selection", [] {
         auto none = p.mcpp({"test", "does-not-exist"});
         expect(e2e::exited(none, 2));
         expect(e2e::contains(s::text(none), "no tests match"));
+    };
+
+    "1084 several patterns select every test one of them names"_test = [] {
+        // `mcpp test <pattern> <pattern>`: a test one of them names runs, one neither names does
+        // not; a pattern after the first is never dropped; `--print-launch` names one test and
+        // refuses two patterns; the refusal for no match names every pattern.
+        s::project p{{"mcpp.toml", manifest("patterns")},
+                     {"tests/00-a/0.cpp", "int main() { return 0; }\n"},
+                     {"tests/01-b/0.cpp", "int main() { return 0; }\n"},
+                     {"tests/02-c/0.cpp", "int main() { return 0; }\n"}};
+        auto r = p.mcpp({"test", "00-a", "02-c"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        const auto out = s::text(r);
+        expect(e2e::contains(out, "00-a/0 ... ok"));
+        expect(e2e::contains(out, "02-c/0 ... ok")) << "the second pattern was dropped: " << out;
+        expect(s::lacks(out, "01-b/0")) << "a test neither pattern names ran: " << out;
+        expect(e2e::contains(out, "2 passed"));
+        auto launch = p.mcpp({"test", "00-a", "02-c", "--print-launch"});
+        expect(e2e::exited(launch, 2)) << s::text(launch);
+        expect(e2e::contains(s::text(launch), "names several PATTERNs")) << s::text(launch);
+        auto none = p.mcpp({"test", "nope-1", "nope-2"});
+        expect(e2e::exited(none, 2));
+        expect(e2e::contains(s::text(none), "no tests match 'nope-1 nope-2'")) << s::text(none);
     };
 
     "159 test list"_test = [] {

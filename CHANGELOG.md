@@ -94,6 +94,9 @@
 - A file no strip reads is packed as its row's seal left it: a seal may wrap the
   link's output in a container of its own (the DOS row's MZ stub before an ELF32
   executable). Before, the pack failed in `llvm-strip`.
+- `mcpp test` takes several patterns and runs every test one of them names
+  (`mcpp test parse lex`); `--print-launch` refuses more than one. Before, a
+  pattern after the first was ignored without a word.
 
 ## [2026.11.12.1] - 2026-11-12
 

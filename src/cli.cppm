@@ -823,7 +823,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("test")
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
             .arg(cl::Arg("pattern")
-                .help("Run only tests whose name contains PATTERN (optional)"))
+                .help("Run only tests whose name contains a PATTERN; several select every test one of them names (optional)"))
             .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
                 .help("Cross target triple or target set (same axis as `mcpp build --target`); "
                       "repeatable: every leg is built, and run where this host reaches it"))

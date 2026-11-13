@@ -146,6 +146,7 @@ for one test, the build is refused, naming them, and `[test] main` chooses.
 ```bash
 mcpp test                 # build and run every test
 mcpp test parse           # only those whose name matches
+mcpp test parse lex       # those whose name matches either
 mcpp test --list          # what would run, without building or running it
 mcpp test -- --verbose    # everything after `--` goes to each test binary
 ```

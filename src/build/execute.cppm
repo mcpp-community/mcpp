@@ -4017,7 +4017,9 @@ export int build_run_target(const std::optional<std::string>& targetName,
 export enum class TestMessageFormat { Human, Json };
 
 export struct TestOptions {
-    std::string        filter;   // substring match on the path-based test name; empty = all
+    // The patterns a test is selected by: one that is a substring of its path-based name, or of a
+    // part of it, selects it; none selects every test.
+    std::vector<std::string> filters;
     // `--since <commit>` and `--changed <path>`: only the tests the change
     // affects (docs/08 "The tests a change affects").
     std::string              since;
@@ -4503,12 +4505,27 @@ static std::string part_label(const std::filesystem::path& root, const std::file
     return file.stem().generic_string();
 }
 
-static bool test_matches(const LinkUnit& lu, std::string_view filter) {
-    if (filter.empty() || lu.targetName.find(filter) != std::string::npos) return true;
+static bool test_matches(const LinkUnit& lu, const std::vector<std::string>& filters) {
+    if (filters.empty()) return true;
     const auto root = part_root(lu.ownSources);
-    return std::ranges::any_of(lu.ownSources, [&](const std::filesystem::path& f) {
-        return std::format("{}/{}", lu.targetName, part_label(root, f)).find(filter) != std::string::npos;
+    return std::ranges::any_of(filters, [&](const std::string& filter) {
+        if (lu.targetName.find(filter) != std::string::npos) return true;
+        return std::ranges::any_of(lu.ownSources, [&](const std::filesystem::path& f) {
+            return std::format("{}/{}", lu.targetName, part_label(root, f)).find(filter) != std::string::npos;
+        });
     });
+}
+
+// Whether `name` is selected: one of the patterns is a substring of it, or there is none.
+static bool selected_by(const std::vector<std::string>& filters, std::string_view name) {
+    return filters.empty() || std::ranges::any_of(filters, [&](const std::string& f) { return name.find(f) != std::string_view::npos; });
+}
+
+// The patterns as a command line wrote them, for a message and the store's record.
+static std::string patterns_text(const std::vector<std::string>& filters) {
+    std::string out;
+    for (const auto& f : filters) out += (out.empty() ? "" : " ") + f;
+    return out;
 }
 
 // A TEST PROGRAM TO RUN: built by this command, or read from an archive.
@@ -4920,7 +4937,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         return lu.kind == mcpp::build::LinkUnit::TestBinary
             && (owner.empty() || lu.memberOf == owner)
             && (!tb.affected || tb.affected->contains(lu.targetName))
-            && test_matches(lu, testOpts.filter);
+            && test_matches(lu, testOpts.filters);
     };
     std::vector<TestResult> results;
     auto emit_json = [&](const TestResult& r) {
@@ -5504,12 +5521,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     if (print_launch_flag()) {
         const Runnable* chosen = nullptr;
         for (auto const& r : runnable)
-            if (r.name == testOpts.filter) chosen = &r;
+            if (r.name == testOpts.filters.front()) chosen = &r;
         if (!chosen && runnable.size() == 1) chosen = &runnable.front();
         if (!chosen) {
             mcpp::ui::error(runnable.empty()
-                ? std::format("--print-launch: no test that built is named '{}'", testOpts.filter)
-                : std::format("--print-launch describes one test, and '{}' names {}: name one", testOpts.filter, runnable.size()));
+                ? std::format("--print-launch: no test that built is named '{}'", testOpts.filters.front())
+                : std::format("--print-launch describes one test, and '{}' names {}: name one", testOpts.filters.front(), runnable.size()));
             return 2;
         }
         if (!invocationNotRunReason.empty()) {
@@ -5705,13 +5722,13 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 std::ranges::stable_sort(ordered, std::greater{}, [](auto const& g) { return g.second.size(); });
                 std::size_t n = 0;
                 // A pattern that named a part, not its program, keeps that part.
-                const bool whole = testOpts.filter.empty() || r.name.find(testOpts.filter) != std::string::npos;
+                const bool whole = selected_by(testOpts.filters, r.name);
                 for (auto& [key, ids] : ordered) {
                     Runnable part = r;
                     const auto label = split == "case" ? key : part_label(r.partRoot, key);
                     part.name = std::format("{}/{}", r.name, label);
                     part.partOf = r.name;
-                    if (!whole && part.name.find(testOpts.filter) == std::string::npos) continue;
+                    if (!whole && !selected_by(testOpts.filters, part.name)) continue;
                     part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
                     std::error_code ec;
                     std::filesystem::create_directories(part.protocolDir, ec);
@@ -5734,7 +5751,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                           testStartedWall,
                           std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - tLoop).count(),
-                          runJobs, testOpts.filter);
+                          runJobs, patterns_text(testOpts.filters));
     summary.elapsedMs = carriedMs + std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - tLoop).count();
 
@@ -5920,7 +5937,7 @@ int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
         leg.triple = l.triple;
         for (auto const& lu : l.ctx->plan.linkUnits) {
             if (lu.kind != LinkUnit::TestBinary) continue;
-            if (!test_matches(lu, o.filter)) continue;
+            if (!test_matches(lu, o.filters)) continue;
             const auto exe = l.ctx->outputDir / lu.output;
             if (!fs::is_regular_file(exe, ec)) continue;
             ta::Test t{lu.targetName, ta::test_dest(l.triple, lu.targetName, exe.filename().string()), {},
@@ -6024,7 +6041,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
         // workers, the store (SPEC-015 §4; docs/08).
         std::vector<TestRunnable> runs;
         for (auto const& t : leg.tests) {
-            if (!testOpts.filter.empty() && t.name.find(testOpts.filter) == std::string::npos) continue;
+            if (!selected_by(testOpts.filters, t.name)) continue;
             TestRunnable r;
             r.name = t.name;
             r.program = (opened->root / t.program).lexically_normal();
@@ -6267,9 +6284,9 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     std::map<fs::path, int> markers;
     for (auto const& t : record["tests"]) {
         const std::string name = t.value("name", "");
-        bool selected = testOpts.filter.empty() || name.find(testOpts.filter) != std::string::npos;
+        bool selected = selected_by(testOpts.filters, name);
         for (auto const& stem : t["stems"])
-            selected = selected || std::format("{}/{}", name, stem.get<std::string>()).find(testOpts.filter) != std::string::npos;
+            selected = selected || selected_by(testOpts.filters, std::format("{}/{}", name, stem.get<std::string>()));
         if (!selected) continue;
         TestRunnable r;
         r.name = name;
@@ -6413,8 +6430,7 @@ export int run_tests(std::span<const std::string> passthrough,
     if (testOpts.list) {
         std::size_t total = 0;
         for (auto& t : testTargets) {
-            if (!testOpts.filter.empty()
-                && t.name.find(testOpts.filter) == std::string::npos) continue;
+            if (!selected_by(testOpts.filters, t.name)) continue;
             ++total;
             auto abs = std::filesystem::absolute(testRoot / t.main)
                            .lexically_normal().generic_string();
@@ -6565,17 +6581,17 @@ export int run_tests(std::span<const std::string> passthrough,
     // filtered run must not clobber it down to one entry).
     auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
         return lu.kind == mcpp::build::LinkUnit::TestBinary
-            && test_matches(lu, testOpts.filter);
+            && test_matches(lu, testOpts.filters);
     };
-    if (!testOpts.filter.empty()) {
+    if (!testOpts.filters.empty()) {
         bool any = false;
         for (auto& lu : ctx->plan.linkUnits)
             if (filter_match(lu)) { any = true; break; }
         if (!any) {
             if (json)
                 std::println("{{\"error\":\"no-tests-matched\",\"filter\":\"{}\"}}",
-                             test_json_escape(testOpts.filter));
-            mcpp::ui::error(std::format("no tests match '{}'", testOpts.filter));
+                             test_json_escape(patterns_text(testOpts.filters)));
+            mcpp::ui::error(std::format("no tests match '{}'", patterns_text(testOpts.filters)));
             return 2;
         }
     }
@@ -6661,9 +6677,8 @@ export int run_test_legs(std::span<const std::string> passthrough,
     if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
     // Nothing to build, a listing, or a filter that selects nothing: the
     // answer does not depend on the target, and is the one-leg answer.
-    const bool anyMatch = testOpts.filter.empty()
-        || std::ranges::any_of(discovered->targets, [&](auto const& t) {
-               return t.name.find(testOpts.filter) != std::string::npos; });
+    const bool anyMatch = testOpts.filters.empty()
+        || std::ranges::any_of(discovered->targets, [&](auto const& t) { return selected_by(testOpts.filters, t.name); });
     if (discovered->targets.empty() || testOpts.list || !anyMatch) {
         base.target_triple = requested.front().triple;
         return run_tests(passthrough, std::move(base), testOpts);
@@ -6736,7 +6751,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
 
     auto filter_match = [&](const mcpp::build::LinkUnit& lu) {
         return lu.kind == mcpp::build::LinkUnit::TestBinary
-            && test_matches(lu, testOpts.filter);
+            && test_matches(lu, testOpts.filters);
     };
 
     // ── built at the same time, a thread per leg ──
@@ -6908,16 +6923,16 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         if (members[i].targets.empty()) { slots[i].note = members[i].noTests; continue; }
         // As `test_matches' asks of a planned test: the program, or a part of it.
         auto names_it = [&](const mcpp::manifest::Target& t) {
-            if (t.name.find(testOpts.filter) != std::string::npos) return true;
+            if (selected_by(testOpts.filters, t.name)) return true;
             std::vector<std::filesystem::path> own{std::filesystem::path(t.main)};
             for (auto const& f : t.testSources) own.emplace_back(f);
             const auto root = part_root(own);
             auto part = [&](const std::string& f) {
-                return std::format("{}/{}", t.name, part_label(root, f)).find(testOpts.filter) != std::string::npos;
+                return selected_by(testOpts.filters, std::format("{}/{}", t.name, part_label(root, f)));
             };
             return part(t.main) || std::ranges::any_of(t.testSources, part);
         };
-        if (!testOpts.filter.empty() && std::ranges::none_of(members[i].targets, names_it)) {
+        if (!testOpts.filters.empty() && std::ranges::none_of(members[i].targets, names_it)) {
             slots[i].noMatch = true;
             continue;
         }
@@ -7110,7 +7125,7 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         test_bulk(tb, testOpts, [&](const mcpp::build::LinkUnit& lu) {
             return lu.kind == mcpp::build::LinkUnit::TestBinary
                 && runnable.contains(lu.memberOf)
-                && test_matches(lu, testOpts.filter);
+                && test_matches(lu, testOpts.filters);
         });
         if (!runnable.empty()) test_resolve_runner(tb, testOpts, json);
     }
@@ -7175,8 +7190,8 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         } else if (slot.noMatch) {
             if (json)
                 std::println("{{\"error\":\"no-tests-matched\",\"filter\":\"{}\"}}",
-                             test_json_escape(testOpts.filter));
-            mcpp::ui::error(std::format("no tests match '{}'", testOpts.filter));
+                             test_json_escape(patterns_text(testOpts.filters)));
+            mcpp::ui::error(std::format("no tests match '{}'", patterns_text(testOpts.filters)));
             rc = 2;
         } else if (!slot.note.empty()) {
             if (!json) std::println("{}", slot.note);

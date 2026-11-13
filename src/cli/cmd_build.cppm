@@ -1206,7 +1206,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         for (auto const& l : *legs) testLegs.push_back({l.triple, l.fromSet});
 
     mcpp::build::TestOptions to;
-    if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
+    for (std::size_t i = 0; i < parsed.positional_count(); ++i) to.filters.push_back(parsed.positional(i));
     to.list = parsed.is_flag_set("list");
     to.noRunner = parsed.is_flag_set("no-runner");   // see cmd_run
     if (auto runner = parsed.value("runner")) to.runnerName = *runner;
@@ -1290,7 +1290,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // package on one target, built and not run, and nothing else on stdout.
     if (parsed.is_flag_set("print-launch")) {
         std::string refused;
-        if (to.filter.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        if (to.filters.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        else if (to.filters.size() > 1) refused = "describes one test, and the command names several PATTERNs: name one";
         else if (to.list || to.noRun || !to.archive.empty()) refused = "describes a test to run; --list, --no-run and --archive do not run one";
         else if (to.format == mcpp::build::TestMessageFormat::Json) refused = "prints the mcpp.launch envelope; --message-format json prints records";
         else if (!testLegs.empty()) refused = "describes one test on one target, and --target names several legs";
