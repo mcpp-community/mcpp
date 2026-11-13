@@ -477,7 +477,7 @@ int main() {
                 expect(fatal(!(" " + l + " ").contains(" " + bmi + " "))) << "B: the aggregate holds a stage that waits for a compile: " << l;
 
         std::optional<fs::path> ninja;
-        for (auto pattern : {"xim-x-ninja/*/ninja", "xim-x-ninja/*/bin/ninja"})
+        for (const auto& pattern : {"xim-x-ninja/*/" + s::exe("ninja"), "xim-x-ninja/*/bin/" + s::exe("ninja")})
             for (const auto& c : s::glob(mcpp_home / "registry/data/xpkgs", pattern))
                 if (!ninja && fs::is_regular_file(c)) ninja = c;
         expect(fatal(ninja.has_value())) << "C: no ninja binary";

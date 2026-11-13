@@ -125,10 +125,10 @@ E2E subos{"subos", [] {
         (void)config();
         expect(fatal(fs::exists(xj))) << "the registry was not seeded";
         expect(fatal(entry_url(xj, "xim") == "absent")) << "a fresh home already names xim: " << s::read_file(xj);
-        append(std::format("\n[index.repos.xim]\nurl = \"{}\"\n", checkout.string()));
+        append(std::format("\n[index.repos.xim]\nurl = \"{}\"\n", checkout.generic_string()));
         auto log = config();
-        expect(fatal(entry_url(xj, "xim") == checkout.string())) << "A: the table did not reach .xlings.json: " << s::read_file(xj) << log;
-        expect(fatal(e2e::contains(log, std::format("xim -> {} ([index.repos.xim] in config.toml)", checkout.string())))) << "A: no line names the change: " << log;
+        expect(fatal(entry_url(xj, "xim") == checkout.generic_string())) << "A: the table did not reach .xlings.json: " << s::read_file(xj) << log;
+        expect(fatal(e2e::contains(log, std::format("xim -> {} ([index.repos.xim] in config.toml)", checkout.generic_string())))) << "A: no line names the change: " << log;
         expect(fatal(fs::exists(rec))) << "A: the change was not recorded";
         const auto before = s::read_file(xj);
         log = config();
@@ -140,7 +140,7 @@ E2E subos{"subos", [] {
         expect(fatal(entry_url(xj, "xim") == "absent")) << "C: removing the table left the entry: " << s::read_file(xj) << log;
         expect(fatal(e2e::contains(log, "xim restored"))) << "C: no line names the restoration: " << log;
         expect(fatal(!fs::exists(rec))) << "C: the record outlived the table";
-        append(std::format("\n[index.repos.xim]\nurl = \"{}\"\n", checkout.string()));
+        append(std::format("\n[index.repos.xim]\nurl = \"{}\"\n", checkout.generic_string()));
         (void)config();
         auto d = s::json_file(xj);
         for (auto& r : d["index_repos"]) if (r.value("name", "") == "xim") r["url"] = "/somewhere/else";
@@ -162,10 +162,10 @@ E2E subos{"subos", [] {
         expect(fatal(!fs::exists(rec))) << "E: a change was recorded for the default entry";
         const auto mirror = tmp / "mcpplibs-checkout";
         fs::create_directories(mirror);
-        append(std::format("\n[index.repos.mcpplibs]\nurl = \"{}\"\n", mirror.string()));
+        append(std::format("\n[index.repos.mcpplibs]\nurl = \"{}\"\n", mirror.generic_string()));
         log = config();
-        expect(fatal(entry_url(xj, "mcpplibs") == mirror.string())) << "F: the table did not replace the default entry: " << s::read_file(xj) << log;
-        expect(fatal(e2e::contains(log, std::format("mcpplibs -> {} ([index.repos.mcpplibs] in config.toml)", mirror.string())))) << "F: no line names the change: " << log;
+        expect(fatal(entry_url(xj, "mcpplibs") == mirror.generic_string())) << "F: the table did not replace the default entry: " << s::read_file(xj) << log;
+        expect(fatal(e2e::contains(log, std::format("mcpplibs -> {} ([index.repos.mcpplibs] in config.toml)", mirror.generic_string())))) << "F: no line names the change: " << log;
         rewrite(cfg, R"(\n\[index\.repos\.mcpplibs\]\nurl = "[^"]*"\n)");
         log = config();
         expect(fatal(s::json_file(xj) == nlohmann::json::parse(xj_e))) << "F: removing the table did not restore the entry it replaced: " << s::read_file(xj) << log;

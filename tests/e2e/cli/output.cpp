@@ -202,21 +202,18 @@ main = "src/main.cpp"
                        {"app/mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nslow = { path = \"../slow\" }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                        {"app/src/main.cpp", "int main() { return R5_BROKEN; }\n"}});
         r5.write("slow/build.mcpp", slow_program("slow-install", "slow:install", 6));
-        // The script's Python reader: the time of the first `error: build failed` line and of the end.
-        auto c = s::mcpp_command({"build"}, r5.at("app"));
-        auto p = s::process::start({.argv = c.argv, .cwd = r5.at("app"), .env = c.env});
+        // The time of the first `error: build failed` line and of the end, read from both streams
+        // on one pipe as they are written (a session: the same reader on every system).
         const auto start = std::chrono::steady_clock::now();
-        std::optional<double> first_error;
-        while (!p.poll()) {
-            p.pump(std::chrono::milliseconds{50});
-            if (!first_error && s::has_line(p.piped(), R"(^error: build failed in app v0\.1\.0 \(\.\))"))
-                first_error = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        }
-        const double end = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        const int code = p.wait();
-        expect(fatal(code != 0)) << "R5: the broken build succeeded\n" << p.piped();
-        expect(fatal(first_error.has_value())) << "R5: no `error: build failed` line\n" << p.piped();
-        expect(end - *first_error >= 3.0) << std::format("R5: the failure was reported {:.1f}s before mcpp exited; it waited for ninja\n", end - *first_error) << p.piped();
+        const auto since = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); };
+        auto build = e2e::session::start(s::mcpp_command({"build"}, r5.at("app")));
+        const auto seen = build.expect(R"((?:^|\n)error: build failed in app v0\.1\.0 \(\.\))", std::chrono::seconds{300});
+        const double first_error = since();
+        const auto done = build.finish(std::chrono::seconds{300});
+        const double end = since();
+        expect(fatal(done.started && !done.timed_out && done.status != 0)) << "R5: the broken build succeeded\n" << build.transcript();
+        expect(fatal(seen.has_value())) << "R5: no `error: build failed` line\n" << build.transcript();
+        expect(end - first_error >= 3.0) << std::format("R5: the failure was reported {:.1f}s before mcpp exited; it waited for ninja\n", end - first_error) << build.transcript();
     };
 
     "864 a builds status is on standard error"_test[s::unix_shell] = [] {
