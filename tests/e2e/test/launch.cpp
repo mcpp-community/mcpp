@@ -123,7 +123,7 @@ E2E launch{"launch", [] {
         };
         auto one_call = [&](std::string_view last) {
             const auto rows = invocations();
-            return rows.size() == 1 && rows[0][0].get<std::string>().contains("math2") && rows[0].back() == last;
+            return rows.size() == 1 && rows[0][0].get<std::string>().contains("math2") && rows[0].back().is_string() && rows[0].back().get<std::string>() == last;
         };
         auto direct = p.mcpp({"test", "unit/math2", "--runner", "debuggee", "--", "direct"});
         expect(e2e::succeeded(direct)) << "named runner direct test";

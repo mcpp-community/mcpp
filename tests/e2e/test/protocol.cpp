@@ -14,7 +14,7 @@ namespace {
 // The record of test `name` in a stream (the first line naming it).
 json record(std::string_view stream, std::string_view name) {
     for (auto& r : s::json_lines(stream))
-        if (r.contains("test") && r["test"] == name)
+        if (r.contains("test") && r["test"].is_string() && r["test"].get<std::string>() == name)
             return r;
     return json{};
 }
