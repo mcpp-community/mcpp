@@ -1248,6 +1248,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) {
                 pr.debug = it->second.as_bool();
                 pr.debugDeclared = true;
+            } else if (it != tt.end() && it->second.is_string()) {
+                pr.debugWritten = it->second.as_string();
+                pr.debug = pr.debugLines = pr.debugWritten == "lines";
+                pr.debugDeclared = true;
             }
             if (auto it = tt.find("lto"); it != tt.end() && it->second.is_bool()) {
                 pr.lto = it->second.as_bool();

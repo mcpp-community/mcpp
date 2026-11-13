@@ -1647,7 +1647,7 @@ where it would become a BMI path that nothing reports.
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g; /Z7 on cl.exe
+debug    = false          # -g; /Z7 on cl.exe; "lines": the line tables alone
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
@@ -1717,6 +1717,14 @@ anything compiles.
   build directory the skeleton names. `"off"` keeps all of it in the artifact.
   Mach-O (the debug map), PDB, MinGW, WebAssembly and freestanding targets are
   unchanged. `-gz=none` in a package's flags turns compression off.
+- **`debug = "lines"` (2026.11.13.1+)** keeps the line tables alone: `-g1` with
+  GCC, which is `-gline-tables-only` with clang. A backtrace, a sanitizer report
+  and a profiler still name a file and a line; a debugger sees no variables and
+  no types. A test program of a large closure is a fraction of its `debug = true`
+  size, which is what a profile for CI and full test runs wants (see
+  [08 — The size of a test build](08-testing.md#the-size-of-a-test-build)).
+  cl.exe has no level below `/Z7`, which `"lines"` compiles with there. Any other
+  string is refused.
 - **Each profile owns its own build directory.** The resolved profile knobs
   participate in the fingerprint, so `target/<triple>/` holds one hash directory
   per profile and switching between them is incremental instead of a full

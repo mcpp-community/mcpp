@@ -224,6 +224,39 @@ The command continues past a member that fails, whether a test, its package's
 build or its plan failed, reports each member, and exits non-zero if any did.
 Discovery is scoped per member, so two members may each have a `tests/main.cpp`.
 
+A member is tested while another is edited and built: the two commands wait for
+each other only while one compiles or links, and a running test holds nothing
+([07 — Two commands at once](07-workspace.md#55-two-commands-at-once-and-a-configurations-directory-over-time)).
+
+### The size of a test build
+
+Every test program carries the closure it links, with its debug information.
+`mcpp clean --report` states, per configuration, the bytes of objects, of split
+debug information, of BMIs and of products. A suite of many programs is kept
+small by these, in the order of their effect:
+
+1. **A profile for the full run.** Debug information is most of a test
+   program's bytes. A profile for CI and for full runs states less of it and
+   strips the symbols, and day-to-day work keeps the `dev` profile:
+
+   ```toml
+   [profile.ci]
+   opt   = 0
+   debug = "lines"   # file and line in backtraces and sanitizer reports (2026.11.13.1+)
+   strip = true
+   ```
+
+   `mcpp test --profile ci` builds it in a directory of its own.
+2. **One program per directory.** `[test] programs = "directory"` links a
+   directory's files once (see [Where tests are](#where-tests-are)).
+3. **Module implementation units.** A function body in `module X;` instead of
+   `export module X;` does not change X's BMI, and what imports X is not
+   compiled again when it changes.
+4. **Layered members.** Logic in members that do not depend on UI or rendering
+   lets most tests link the logic alone.
+5. **What no configuration uses** is removed by `mcpp clean --stale`, and after
+   a build by the sweep that `[build] keep_days` bounds.
+
 ## Tests that reach packages the artifact does not
 
 ```toml

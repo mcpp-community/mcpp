@@ -1216,6 +1216,9 @@ std::string with_index_cause(std::string msg);
 // A new fingerprint of a lineage takes over its predecessor's directory, or
 // removes it when the toolchain changed (design 2026-10-31 §8.2).
 void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::path& outputDir);
+// The configuration's directory, under its lock: emptied when the compiler
+// build it records is not this one's (2026-11-12 §17, W1).
+void renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 // `uses.list`, `lineage` and `toolchain` in the directory.
 void record_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 

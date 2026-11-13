@@ -187,6 +187,7 @@ struct BuildAxes {
     // C
     std::string optLevel;
     bool        debug = false;
+    bool        debugLines = false;   // debug = "lines"
     bool        lto   = false;
     bool        strip = false;
     bool        ndebug = false;
@@ -364,6 +365,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"pic", b.pic},
         {"crt", b.crt},
     };
+    if (b.debugLines) j["profile"]["debug"] = "lines";
     j["package"] = {
         {"index", p.indexName},
         {"name", p.packageName},
@@ -409,7 +411,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "minplat",  b.minPlatformVersion);
     // C
     put(s, "opt",      b.optLevel);
-    put(s, "debug",    b.debug ? "1" : "0");
+    put(s, "debug",    b.debug ? (b.debugLines ? "lines" : "1") : "0");
     put(s, "lto",      b.lto   ? "1" : "0");
     put(s, "strip",    b.strip ? "1" : "0");
     // Only when on, so a key computed before these existed is unchanged.
@@ -586,6 +588,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
 
     b.optLevel        = rootManifest.buildConfig.optLevel;
     b.debug           = rootManifest.buildConfig.debug;
+    b.debugLines      = rootManifest.buildConfig.debugLines;
     b.lto             = rootManifest.buildConfig.lto;
     b.strip           = rootManifest.buildConfig.strip;
     b.ndebug          = rootManifest.buildConfig.ndebug;

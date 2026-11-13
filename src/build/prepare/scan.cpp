@@ -1232,6 +1232,7 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
     if (state.print_fingerprint) {
         std::println("Toolchain: {}", state.tc->label());
         std::println("Fingerprint: {}", state.fp.hex);
+        std::println("Lineage: {} (the build directory's name)", state.fp.lineage);
         for (std::size_t i = 0; i < state.fp.parts.size(); ++i) {
             std::println("  [{}] {}", i + 1, state.fp.parts[i]);
         }

@@ -399,7 +399,13 @@ Record begin(const std::filesystem::path& projectRoot, const std::filesystem::pa
     r.status = "running";
     r.outputDir = outputDir;
     r.projectRoot = projectRoot;
-    r.fingerprint = outputDir.filename().string();
+    // The directory records the whole fingerprint; its name is the lineage
+    // (2026-11-12 §17). A directory an earlier mcpp wrote is named by it.
+    {
+        std::ifstream in(outputDir / "fingerprint");
+        if (!std::getline(in, r.fingerprint) || r.fingerprint.empty())
+            r.fingerprint = outputDir.filename().string();
+    }
     if (auto c = mcpp::invocation::get("MCPP_CLIENT")) r.client = *c;
     return r;
 }

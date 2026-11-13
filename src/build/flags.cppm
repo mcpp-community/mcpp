@@ -660,7 +660,7 @@ bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
 
 std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc) {
     std::string d = realises_optimization(bc) ? "optimized" : "unoptimized";
-    if (bc.debug) d += " + debuginfo";
+    if (bc.debug) d += bc.debugLines ? " + line tables" : " + debuginfo";
     if (bc.lto)   d += bc.ltoPartial ? " + lto (partial)" : " + lto";
     return d;
 }
@@ -1200,7 +1200,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     std::string opt_flag = (isMsvcDialect && optLevel == "0")
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
         : std::format(" {}{}", d.optPrefix, optLevel);
-    if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
+    if (prof.debug) opt_flag += std::format(" {}", prof.debugLines ? d.lineDebugFlags : d.debugFlags);
     // DEBUG INFORMATION IS COMPRESSED where the linker copies it into every
     // artifact (mcpp#874): on ELF each program of a member, every test among
     // them, carries the DWARF of its whole closure, and zlib halves it (a

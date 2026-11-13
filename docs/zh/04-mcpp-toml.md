@@ -1515,7 +1515,7 @@ GCC 16.1 报告 `sorry, unimplemented: private module fragment`，mcpp
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g;cl.exe 上为 /Z7
+debug    = false          # -g;cl.exe 上为 /Z7;"lines":只含行表
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
@@ -1569,6 +1569,10 @@ ldflags  = []
   它只在 `trim_paths` 关闭时生效,因为调试器经骨架所记的构建目录查找单元的 `.dwo`。`"off"` 把全部调试信息
   留在产物中。Mach-O(debug map)、PDB、MinGW、WebAssembly 与裸机目标不变。在包的 flags 中写 `-gz=none`
   可关闭压缩。
+- **`debug = "lines"`(2026.11.13.1+)** 只保留行表:GCC 为 `-g1`,clang 即 `-gline-tables-only`。回溯、sanitizer 报告与
+  性能分析器仍给出文件与行号;调试器看不到变量与类型。闭包大的测试程序只有 `debug = true` 时的一部分大小,这正是 CI 与全量测试的
+  profile 所需(见 [08 —— 测试构建的体积](08-testing.md#测试构建的体积))。cl.exe 没有低于 `/Z7` 的级别,`"lines"` 在其上以 `/Z7`
+  编译。其他字符串被拒绝。
 - **每个 profile 拥有自己的构建目录。** 解析出的 profile 旋钮参与
   指纹，所以 `target/<triple>/` 下每个 profile 各有一个哈希目录，在
   它们之间切换是增量的，不是一次完整重建。这也意味着磁盘开销随实际

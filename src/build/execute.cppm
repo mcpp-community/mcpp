@@ -1958,7 +1958,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // Populate the global cache for deps that did NOT hit.
     mcpp::build::populate_dependency_cache(ctx);
 
-    // P1.5: warn if fingerprint changed from last build (explains full rebuild).
+    // P1.5: warn if the configuration changed from the last build (explains a full build).
     // Compared against the entry for the SAME profile: the profile is now a
     // fingerprint input, so a dev↔release switch always changes the fp. That is
     // exactly what the user asked for, and warning about it turns a useful
@@ -1971,12 +1971,33 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                 && e.cacheMode == cache_mode_name(ctx.cacheMode)
                 && e.selection == ctx.workspaceRequest && e.group == ctx.workspaceGroup
                 && !e.fingerprint.empty()) {
-                auto newFp = ctx.outputDir.filename().string();
-                if (e.fingerprint != newFp) {
+                // A directory is a configuration's lineage (2026-11-12 §17): a
+                // new mcpp or compiler continues in it, and only a changed
+                // configuration builds in another. One that a build took over
+                // is gone, and nothing was rebuilt in full.
+                const std::filesystem::path was(e.outputDir);
+                std::error_code wec;
+                if (was != ctx.outputDir && std::filesystem::exists(was / "lineage", wec)) {
+                    auto lines = [](const std::filesystem::path& f) {
+                        std::ifstream in(f);
+                        std::vector<std::string> out;
+                        for (std::string l; std::getline(in, l);) out.push_back(l);
+                        return out;
+                    };
+                    const auto before = lines(was / "lineage"), after = lines(ctx.outputDir / "lineage");
+                    std::string what;
+                    for (std::size_t i = 0; i < before.size() && i < after.size(); ++i)
+                        if (before[i] != after[i]) {
+                            const auto sp = after[i].find(' ');
+                            what += std::format("{}{} {} → {}", what.empty() ? "" : ", ",
+                                                after[i].substr(0, sp), before[i].substr(sp + 1),
+                                                after[i].substr(sp + 1));
+                        }
                     mcpp::ui::warning(std::format(
-                        "fingerprint changed ({} → {}), full rebuild; "
+                        "the configuration changed{}: {} is built in full beside {}; "
                         "`mcpp clean --stale` drops the directories no build still uses",
-                        e.fingerprint, newFp));
+                        what.empty() ? std::string{} : " (" + what + ")",
+                        ctx.outputDir.filename().string(), was.filename().string()));
                 }
                 break;
             }
@@ -7185,7 +7206,8 @@ export int clean_project(bool wipe_bmi) {
 // member's `target/.build-mcpp/`, where its build program's outputs are, is
 // kept.
 // `mcpp clean --report` (mcpp#874): where target/ holds its bytes. Per
-// configuration directory, its objects, its BMIs and its products; then the
+// configuration directory, its objects, their split debug information, its BMIs
+// and its products; then the
 // configuration-independent `.build-mcpp` (build programs' groups, generated
 // sources, dependencies' build-program copies). Removes nothing; `--stale
 // --dry-run` says what of it is unused.
@@ -7197,7 +7219,20 @@ export int clean_report() {
     const fs::path target = *root / "target";
     using mcpp::bmi_cache::dir_size, mcpp::bmi_cache::human_bytes;
     std::uintmax_t total = 0;
-    std::println("{:<44} {:>10} {:>10} {:>10} {:>10}", "configuration", "obj", "bmi", "bin", "total");
+    // The split debug information (`.dwo`) is a column of its own and not
+    // counted under obj (2026-11-12 §17, W3): it is what a profile's `debug`
+    // decides.
+    auto split_debug = [](const fs::path& dir) {
+        std::uintmax_t n = 0;
+        std::error_code wec;
+        for (fs::recursive_directory_iterator it(dir, wec), end; !wec && it != end; it.increment(wec)) {
+            std::error_code sec;
+            if (it->path().extension() == ".dwo" && it->is_regular_file(sec)) n += it->file_size(sec);
+        }
+        return n;
+    };
+    std::println("{:<44} {:>10} {:>10} {:>10} {:>10} {:>10}", "configuration", "obj", "debug", "bmi", "bin",
+                 "total");
     std::error_code ec;
     for (fs::directory_iterator t(target, ec), end; t != end; t.increment(ec)) {
         const auto triple = t->path().filename().string();
@@ -7205,14 +7240,15 @@ export int clean_report() {
         if (triple.starts_with(".") || !t->is_directory(fec)) continue;
         for (fs::directory_iterator f(t->path(), fec), fend; f != fend; f.increment(fec)) {
             if (!f->is_directory()) continue;
-            const auto obj = dir_size(f->path() / "obj");
+            const auto debug = split_debug(f->path() / "obj");
+            const auto obj = dir_size(f->path() / "obj") - debug;
             const auto bmi = dir_size(f->path() / "gcm.cache") + dir_size(f->path() / "pcm.cache");
             const auto bin = dir_size(f->path() / "bin");
             const auto all = dir_size(f->path());
             total += all;
-            std::println("{:<44} {:>10} {:>10} {:>10} {:>10}",
+            std::println("{:<44} {:>10} {:>10} {:>10} {:>10} {:>10}",
                          triple + "/" + f->path().filename().string(), human_bytes(obj),
-                         human_bytes(bmi), human_bytes(bin), human_bytes(all));
+                         human_bytes(debug), human_bytes(bmi), human_bytes(bin), human_bytes(all));
         }
     }
     const auto bm = target / ".build-mcpp";

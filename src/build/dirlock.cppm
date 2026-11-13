@@ -68,6 +68,10 @@ void set_waiting_observer(std::function<void(const Holder&, std::chrono::millise
 // copied, and the last copy to go releases it; `release` drops it early.
 std::shared_ptr<mcpp::home::FileLock> acquire(const std::filesystem::path& outputDir);
 
+// The time this process waited for build directories another command held:
+// part of `Finished`'s account (2026-11-12 §17, W3).
+std::chrono::milliseconds waited();
+
 }  // namespace mcpp::build::dirlock
 
 namespace mcpp::build::dirlock {
@@ -81,6 +85,7 @@ std::function<void(const Holder&, std::chrono::milliseconds)>& observer_slot() {
     static std::function<void(const Holder&, std::chrono::milliseconds)> observer;
     return observer;
 }
+std::atomic<long long> g_waitedMs{0};
 long current_pid() { return mcpp::invocation::process_id(); }
 std::int64_t now_seconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(
@@ -158,9 +163,11 @@ std::shared_ptr<mcpp::home::FileLock> acquire(const std::filesystem::path& outpu
     std::lock_guard heldLock(g_heldMutex);
     if (auto existing = held()[key].lock()) return existing;
     const auto start = std::chrono::steady_clock::now();
+    bool waiting = false;
     auto lock = mcpp::home::FileLock::acquire(
         outputDir, kLockName, owner_record(), std::chrono::milliseconds(300),
         [&](std::string_view record) {
+            waiting = true;
             const auto holder = parse_holder(record);
             mcpp::ui::status("Waiting", std::format("for the build directory, held by {}",
                                                      describe(holder, now_seconds())));
@@ -168,10 +175,15 @@ std::shared_ptr<mcpp::home::FileLock> acquire(const std::filesystem::path& outpu
                 observe(holder, std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - start));
         });
+    if (waiting)
+        g_waitedMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start).count();
     if (!lock) return nullptr;
     auto shared = std::make_shared<mcpp::home::FileLock>(std::move(*lock));
     held()[key] = shared;
     return shared;
 }
+
+std::chrono::milliseconds waited() { return std::chrono::milliseconds(g_waitedMs.load()); }
 
 }  // namespace mcpp::build::dirlock

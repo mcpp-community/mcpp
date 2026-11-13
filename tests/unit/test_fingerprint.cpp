@@ -129,3 +129,36 @@ UTest hash_string_matches_hash_file{"Fingerprint/HashStringMatchesHashFile", [] 
     expect(eq(h1, h2));
     expect(ne(hash_string("hello"), hash_string("hellp")));
 }};
+
+// THE LINEAGE NAMES THE BUILD DIRECTORY (2026-11-12 §17, W1). What evolves --
+// mcpp's version, the compiler's version and build, the standard library's
+// version, the std module, the runtime contract -- changes the fingerprint and
+// not the lineage, so an upgrade keeps every path the commands name; what a
+// developer switches between changes both.
+UTest an_upgrade_keeps_the_lineage{"Fingerprint/AnUpgradeKeepsTheLineage", [] {
+    const auto a = compute_fingerprint(baseline());
+    auto in = baseline();
+    in.toolchain.version = "16.2.0";
+    in.toolchain.driverIdent = "g++ (xim-x-gcc 16.2.0) 16.2.0";
+    in.toolchain.stdlibVersion = "16.2.0";
+    in.stdBmiHash = "fedcba9876543210";
+    const auto b = compute_fingerprint(in);
+    expect(ne(a.hex, b.hex));
+    expect(eq(a.lineage, b.lineage));
+    expect(eq(a.lineage.size(), 16u));
+    expect(ne(toolchain_text(a), toolchain_text(b)));
+}};
+
+UTest a_configuration_is_another_lineage{"Fingerprint/AConfigurationIsAnotherLineage", [] {
+    const auto a = compute_fingerprint(baseline());
+    for (auto change : std::initializer_list<void (*)(FingerprintInputs&)>{
+             [](FingerprintInputs& in) { in.compileFlags = "-O0"; },
+             [](FingerprintInputs& in) { in.cppStandard = "c++26"; },
+             [](FingerprintInputs& in) { in.toolchain.targetTriple = "aarch64-linux-gnu"; },
+             [](FingerprintInputs& in) { in.toolchain.compiler = CompilerId::Clang; },
+             [](FingerprintInputs& in) { in.toolchain.stdlibId = "libc++"; }}) {
+        auto in = baseline();
+        change(in);
+        expect(ne(compute_fingerprint(in).lineage, a.lineage));
+    }
+}};

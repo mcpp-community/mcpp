@@ -265,7 +265,11 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         if (!state.overrides.dependency_linkage.empty())
             state.m->buildConfig.dependencyLinkage = state.overrides.dependency_linkage;
         state.m->buildConfig.optLevel = pr.optLevel;
+        if (!pr.debugWritten.empty() && pr.debugWritten != "lines")
+            return std::unexpected(std::format(
+                "[profile.{}] debug = \"{}\": expected true, false or \"lines\"", pname, pr.debugWritten));
         state.m->buildConfig.debug    = pr.debug;
+        state.m->buildConfig.debugLines = pr.debugLines;
         state.m->buildConfig.lto      = pr.lto;
         state.m->buildConfig.strip    = pr.strip;
         // `ndebug` and `trim_paths` follow the industry's convention for a

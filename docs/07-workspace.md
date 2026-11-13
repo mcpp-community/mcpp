@@ -660,6 +660,39 @@ member that several members use is compiled once.
   that links both is refused. See
   [05 — One module per name in each program](05-dependencies.md#one-module-per-name-in-each-program-mcpp-20269302).
 
+### 5.5 Two commands at once, and a configuration's directory over time
+
+A configuration's build directory has one lock, held while the directory is
+written and not otherwise. Reading the manifests, resolving, fetching, finding
+the toolchain and scanning hold nothing; `mcpp test` releases the lock before
+its first test runs, and `mcpp run` before the program starts. So:
+
+- **One member is tested while another is edited and built.** The two commands
+  queue only while each compiles and links, and the one that waits says which
+  command holds the directory (`Waiting for the build directory, held by …`).
+  A test that runs while a source changes runs the program linked before the
+  change; the next build compiles the change.
+- **Commands of different configurations do not wait for each other.** A
+  profile, a target or a selection that plans a different configuration is a
+  different directory.
+- **The lock is the configuration's, not the member's.** A configuration has
+  one `build.ninja` and one ninja state, which two ninja processes cannot write
+  at once (mcpp#839).
+- `Finished` says how long a command waited for a directory when it waited a
+  second or more (2026.11.13.1+).
+
+A configuration's directory is named by its **lineage** (2026.11.13.1+): the
+compiler family, the target, the standard library's family, the C++ standard
+and the configuration's flags. What evolves --- mcpp's version, the compiler's
+version and build, the standard library's version, the runtime contract --- is
+recorded in the directory (`toolchain`, `fingerprint`) and not in its name. An
+mcpp upgrade therefore keeps every path, and ninja compiles only the units whose
+commands the new version changes; a compiler build that differs empties the
+directory in place (`Replaced`). Before 2026.11.13.1 the name was the whole
+fingerprint: an upgrade moved the directory to a new name, which every
+member's commands contain, and every member was compiled again. The first build
+with 2026.11.13.1 takes such a directory over once.
+
 ## 6. Directory Layout
 
 The recommended directory layout for a workspace:
@@ -688,7 +721,7 @@ A workspace builds at its root (2026.9.29.1+):
 ```
 myproject/
 ├── mcpp.lock                               # one lock for the workspace
-└── target/<triple>/<configuration>/
+└── target/<triple>/<configuration>/       # named by the configuration's lineage (§5.5)
     ├── build.ninja, compile_commands.json  # one graph and one database per configuration
     ├── obj/<package>/                      # intermediate objects of every package
     ├── gcm.cache/<package>/                # each package's BMIs (pcm.cache with clang)

@@ -2250,6 +2250,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     }
     if (!state.overrides.plan_only) adopt_predecessor_dir(state, ctx.outputDir);
     if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
+    if (!state.overrides.plan_only) renew_build_dir(state, ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).

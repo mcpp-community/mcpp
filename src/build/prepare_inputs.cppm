@@ -559,7 +559,9 @@ std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
     // outside the language keep their raw spelling.
     auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
     if (auto t = mcpp::toolchain::triple::parse(triple)) triple = t->str();
-    return root / "target" / triple / fp.hex;
+    // Named by the configuration's lineage, which the commands compiled there
+    // name (2026-11-12 §17, W1); the evolving rest is recorded inside.
+    return root / "target" / triple / fp.lineage;
 }
 
 
@@ -595,7 +597,7 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
         s += flag;
     }
     s += " opt=";   s += root.buildConfig.optLevel;
-    s += " debug="; s += root.buildConfig.debug ? "1" : "0";
+    s += " debug="; s += root.buildConfig.debug ? (root.buildConfig.debugLines ? "lines" : "1") : "0";
     s += " lto=";   s += root.buildConfig.lto   ? "1" : "0";
     s += " strip="; s += root.buildConfig.strip ? "1" : "0";
     // Only when on: a profile that has neither keeps the identity it had.
