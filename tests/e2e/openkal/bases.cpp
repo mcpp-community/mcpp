@@ -94,7 +94,7 @@ E2E bases{"bases", [] {
         // S2: a sysroot named by a relative path is the base the artifact is built against and
         // runs on (PT_INTERP and RUNPATH the sysroot's, not the SubOS farm), in a directory of
         // its own, described in resolution.json and by `why sysroot`. S4: a base rewritten in
-        // place is another base. S7: overrides outrank the project, the machine's default fills
+        // place is built again in its directory. S7: overrides outrank the project, the machine's default fills
         // a gap. S6: what is not a sysroot, and what is not there. S3: a base older than the
         // compiler's runtime is refused naming both. S1: a toolchain named by path with the
         // sysroot it carries, and pack states the C library floor.
@@ -152,10 +152,10 @@ E2E bases{"bases", [] {
         }
         r = app.mcpp({"build"}, plain);
         expect(fatal(e2e::succeeded(r))) << "S4: the rebuild failed: " << s::text(r);
-        std::optional<fs::path> second;
-        for (const auto& d : s::glob(app.at("target/x86_64-linux-gnu"), "*"))
-            if (fs::is_directory(d) && (!second || fs::last_write_time(d) > fs::last_write_time(*second))) second = d;
-        expect(fatal(second && *second != first)) << "S4: a sysroot rewritten in place reused the output directory";
+        // The base as stated names the configuration's directory; what it holds evolves (design
+        // 2026-11-12 §17): the same directory, emptied and built again.
+        expect(fatal(artifact(app)->parent_path().parent_path() == first)) << "S4: a sysroot rewritten in place moved to another directory";
+        expect(fatal(e2e::contains(s::text(r), "the base changed, and nothing compiled there is reused"))) << "S4: a sysroot rewritten in place reused what was compiled against it: " << s::text(r);
 
         // S7
         const auto other = work / "other";
