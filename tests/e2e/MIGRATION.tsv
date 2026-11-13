@@ -379,14 +379,14 @@ script	subsystem	class	destination	note
 647_abi_threads_is_one_switch_for_the_graph.sh	target	merge	e2e/target	
 648_an_install_hook_sees_the_build_target.sh	actions	merge	e2e/actions::hooks/648 an install hook sees the build target	migrated (batch 4); script removed
 649_pack_carries_runtime_deploy_files.sh	pack	merge	e2e/pack::modes/649 pack carries runtime deploy files	migrated (batch 6); script removed
-650_wasm_row_names_its_launcher.sh	web	merge	e2e/web	
+650_wasm_row_names_its_launcher.sh	web	merge	e2e/web::emscripten/650 wasm row names its launcher	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 651_a_build_program_deploys_what_it_generated.sh	build-program	merge	e2e/build-program::protocol/651 a build program deploys what it generated	migrated (batch 2); script removed
 652_an_application_is_a_kind.sh	pack	merge	e2e/pack::modes/652 an application is a kind	migrated (batch 6); script removed
 652b_an_application_on_android_is_a_shared_library.sh	android	merge	e2e/android	
 653_exceptions_is_the_second_abi_member.sh	target	merge	e2e/target	
 654_a_requirement_on_the_target_axis.sh	features	merge	e2e/features::layers/654 a requirement on the target axis	migrated (batch 5); script removed
 656_run_hands_the_distributable_to_the_runner.sh	run	merge	e2e/run::runners/656 run hands the distributable to the runner	migrated (batch 12); script removed
-657_a_build_program_under_the_web_row_uses_the_host_compiler.sh	web	merge	e2e/web	
+657_a_build_program_under_the_web_row_uses_the_host_compiler.sh	web	merge	e2e/web::emscripten/657 a build program under the web row uses the host compiler	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 658_a_program_runs_on_an_attached_android_device.sh	android	keep	keep	a physical Android device over adb
 659_an_action_declaration_has_no_size_limit.sh	actions	merge	e2e/actions::commands/659 an action declaration has no size limit	migrated (batch 4); script removed
 660_an_action_names_the_engine_through_mcpp_self.sh	actions	merge	e2e/actions::commands/660 an action names the engine through mcpp self	migrated (batch 4); script removed
@@ -651,7 +651,7 @@ script	subsystem	class	destination	note
 963_a_target_set_builds_every_member_and_runs_where_it_is_reached.sh	openkal	merge	e2e/openkal::sets/963 a target set builds every member and runs where it is reached	migrated (batch 16); script removed
 964_tests_built_once_run_from_an_archive.sh	openkal	merge	e2e/openkal::sets/964 tests built once run from an archive	migrated (batch 16); script removed
 980_an_ambiguous_dependency_name_is_no_packages.sh	deps	merge	e2e/deps::graph/980 an ambiguous dependency name is no packages	migrated (batch 3); script removed
-981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh	web	merge	e2e/web	
+981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh	web	merge	e2e/web::emscripten/981 a web link has the profiles level and the wasm exception model	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 982_an_action_reads_the_builds_contract.sh	actions	merge	e2e/actions::outputs/982 an action reads the builds contract	migrated (batch 4); script removed
 983_a_pack_holds_the_legs_it_names.sh	openkal	merge	e2e/openkal::sets/983 a pack holds the legs it names	migrated (batch 16); script removed
 984_a_set_of_programs_is_a_package_per_leg.sh	openkal	merge	e2e/openkal::sets/984 a set of programs is a package per leg	migrated (batch 16); script removed
@@ -749,5 +749,5 @@ script	subsystem	class	destination	note
 1076_an_aarch64_linux_gnu_cross_comes_from_a_sysroot_payload.sh	target	merge	e2e/target	
 1077_a_program_of_another_system_is_built_not_run.sh	target	merge	e2e/target	
 1078_systems_all_carries_the_runners_the_platform_declares.sh	openkal	merge	e2e/openkal::trees/1078 systems all carries the runners the platform declares	migrated (batch 16); script removed
-1079_an_emscripten_rows_longjmp_model_round_trips.sh	web	merge	e2e/web	
+1079_an_emscripten_rows_longjmp_model_round_trips.sh	web	merge	e2e/web::emscripten/1079 an emscripten rows longjmp model round trips	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 1080_gcc_over_the_hosts_payload_links_from_the_payload.sh	toolchain	merge	e2e/toolchain	
