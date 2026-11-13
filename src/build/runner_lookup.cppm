@@ -170,4 +170,97 @@ inline std::string unrunnable_message(std::string_view triple,
         artifact.string(), errno_text(e), e, triple, triple);
 }
 
+// THE PROGRAM A SCRIPT'S `#!` LINE HANDS IT TO (#621).
+//
+// An artefact the run slot executes directly can be a script: emsdk's
+// JavaScript launcher begins `#!/usr/bin/env node`. When that program is not
+// there, the refusal comes after mcpp has handed the process over -- from the
+// kernel, or from `env` once it has started (`/usr/bin/env: 'node': No such
+// file or directory`) -- so none of the messages above applies. The line is
+// read as the kernel reads it: the interpreter is the first word after `#!`
+// and the rest is its argument; through `env`, that argument names the program
+// `env` looks up on PATH. A form this does not read with certainty (an
+// interpreter that is not an absolute path, an `env` option other than `-S`,
+// `env` with no program) names no program, so a note built on it never names
+// the wrong one.
+struct ScriptInterpreter {
+    std::string           line;      // the `#!` line, without its line end
+    std::filesystem::path program;   // what the kernel executes
+    std::string           viaEnv;    // what `program`, an `env`, looks up on PATH; empty otherwise
+};
+
+inline std::optional<ScriptInterpreter> parse_script_interpreter(std::string_view head) {
+    if (!head.starts_with("#!")) return std::nullopt;
+    head = head.substr(0, head.find_first_of("\r\n"));
+    ScriptInterpreter out;
+    out.line = std::string(head);
+    constexpr std::string_view blanks = " \t";
+    auto next_word = [&](std::string_view& rest) {
+        const auto from = std::min(rest.find_first_not_of(blanks), rest.size());
+        rest.remove_prefix(from);
+        const auto to = std::min(rest.find_first_of(blanks), rest.size());
+        auto word = rest.substr(0, to);
+        rest.remove_prefix(to);
+        return word;
+    };
+    std::string_view rest = head.substr(2);
+    const auto program = next_word(rest);
+    if (!program.starts_with('/')) return std::nullopt;
+    out.program = std::filesystem::path(program);
+    if (out.program.filename() != "env") return out;
+    // `env [-S] [NAME=value]... <program> [<argument>]...`
+    for (auto word = next_word(rest); !word.empty(); word = next_word(rest)) {
+        if (word == "-S" || word == "--split-string") continue;
+        if (word.starts_with('-')) return std::nullopt;
+        if (word.find('=') != std::string_view::npos) continue;
+        out.viaEnv = std::string(word);
+        return out;
+    }
+    return std::nullopt;
+}
+
+// The artefact's own `#!` line; none on Windows, which does not read one.
+inline std::optional<ScriptInterpreter> script_interpreter(const std::filesystem::path& artifact) {
+    if constexpr (mcpplibs::os::is_windows) {
+        return std::nullopt;
+    } else {
+        std::ifstream in(artifact, std::ios::binary);
+        if (!in) return std::nullopt;
+        // The kernel reads no more of the line than this (BINPRM_BUF_SIZE).
+        std::string head(256, '\0');
+        in.read(head.data(), static_cast<std::streamsize>(head.size()));
+        head.resize(static_cast<std::size_t>(in.gcount()));
+        return parse_script_interpreter(head);
+    }
+}
+
+// What `mcpp run` and `mcpp test` say before they execute `artifact` directly
+// when the program its `#!` line names is not there; empty when it is, and
+// when the artefact is no script this reads. `pathEnv` is the PATH the
+// artefact receives, the one `env` searches.
+//
+// The remedy is the one an emsdk payload installed before its recipe wrote
+// `.mcpp-toolchain.json` needs (docs/20, "Running what they produce"). The
+// note names no toolchain: it reads a file's first line, and which payload
+// built the file is not a fact that line holds.
+inline std::string missing_interpreter_note(const std::filesystem::path& artifact,
+                                            std::string_view pathEnv) {
+    auto script = script_interpreter(artifact);
+    if (!script) return {};
+    std::string missing;
+    if (!detail::executable_file(script->program))
+        missing = std::format("'{}' is not an executable file", script->program.string());
+    else if (!script->viaEnv.empty() && !locate(script->viaEnv, {}, pathEnv).program)
+        missing = std::format("'{}' is not on PATH", script->viaEnv);
+    if (missing.empty()) return {};
+    return std::format(
+        "'{}' runs through its first line, `{}`, and {}.\n"
+        "      A toolchain payload names the program that runs its artefacts in\n"
+        "      `.mcpp-toolchain.json`; one installed before its recipe wrote that file\n"
+        "      names none, and its artefacts run through their `#!` line.\n"
+        "      fix: `mcpp index update`, then `mcpp toolchain remove <spec>` and\n"
+        "      `mcpp toolchain install <spec>` for the toolchain that built it.",
+        artifact.string(), script->line, missing);
+}
+
 } // namespace mcpp::build::runner_lookup

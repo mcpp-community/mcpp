@@ -769,8 +769,10 @@ runner 时，`mcpp run` 与 `mcpp test` 使用这个程序，因此不涉及 PAT
 与 `mcpp toolchain install <spec>`。仅仅重装会再次按同一份配方安装，因为
 索引只在解析未命中时刷新，而不因配方变化而刷新；这一点在 2026.9.12.2 的
 沙箱验证中实测过。在此之前，失败信息来自解释器自身
-(`/usr/bin/env: 'node': No such file or directory`)，mcpp 尚未对它作出解释
-(#621)。
+(`/usr/bin/env: 'node': No such file or directory`)。`mcpp run` 与
+`mcpp test` 在直接执行产物之前会读取它的 `#!` 行；这一行指名的程序不存在时
+(产物所得 PATH 的任何目录中都没有 `node`)，一条 note 会指出这个程序以及上述
+三步(#621)。
 
 对于产物在别处运行的 target，`runner` 键是一个 argv 前缀，而那个会话属于
 一个**包**，不属于引擎：
