@@ -13,6 +13,19 @@ own — dependencies are [05](05-dependencies.md), features are
 
 `mcpp.toml` is the project configuration file for the mcpp build tool, analogous to Cargo's `Cargo.toml` or Node's `package.json`. Place it in the project root; `mcpp build` discovers and reads it automatically.
 
+The file is TOML. An inline table may span several lines, carry comments and
+end with a comma after its last pair, as TOML 1.1 allows; each `key = value`
+pair stays on one line (#928). The same holds for every TOML file mcpp reads
+(`mcpp.lock`, `config.toml`, template metadata).
+
+```toml
+[dependencies]
+widget = {
+    version  = "2.0.0",
+    features = ["gui"],   # a comment inside the table
+}
+```
+
 ## 1. Minimal Examples
 
 mcpp is designed around **convention over configuration** — most fields have sensible defaults, so the simplest `mcpp.toml` is just a few lines:

@@ -597,6 +597,14 @@ std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit);
 
+// Where the `key = value` line that begins at `lineStart` ends: the newline
+// after its value, or the end of `text`. An inline table or an array may
+// continue over the following lines (TOML 1.1 inline tables, any array), so
+// an editor that replaced or erased the first line alone would leave the rest
+// of the value behind. Brackets are counted outside strings and comments; the
+// value ends at the first newline where none is open.
+std::size_t assignment_end(std::string_view text, std::size_t lineStart);
+
 // Every path the lib-root convention would accept, in extension-table order
 // (`.cppm` first, then whatever `[build] module_extensions` declares). An
 // explicit `[lib] path` collapses this to that one entry.
@@ -5774,6 +5782,31 @@ license     = "Apache-2.0"
 )", packageName);
 }
 
+std::size_t assignment_end(std::string_view text, std::size_t lineStart) {
+    int depth = 0;
+    char quote = '\0';
+    bool comment = false;
+    for (std::size_t i = lineStart; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '\n') {
+            comment = false;
+            if (depth <= 0 && quote == '\0') return i;
+            continue;
+        }
+        if (comment) continue;
+        if (quote != '\0') {
+            if (c == '\\' && quote == '"') ++i;
+            else if (c == quote) quote = '\0';
+            continue;
+        }
+        if (c == '"' || c == '\'') quote = c;
+        else if (c == '#') comment = true;
+        else if (c == '{' || c == '[') ++depth;
+        else if (c == '}' || c == ']') --depth;
+    }
+    return text.size();
+}
+
 std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit) {
@@ -5916,7 +5949,7 @@ upsert_dependency_text(std::string_view source,
             };
             if (!line.starts_with('#')
                 && (assignment_for(key) || assignment_for(quotedKey))) {
-                return std::pair{lineStart, lineEnd};
+                return std::pair{lineStart, assignment_end(text, lineStart)};
             }
             if (newline == std::string_view::npos
                 || newline >= section.sectionEnd) break;

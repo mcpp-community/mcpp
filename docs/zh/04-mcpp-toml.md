@@ -13,6 +13,18 @@
 `mcpp.toml` 是 mcpp 构建工具的工程配置文件，类似于 Cargo 的 `Cargo.toml` 或
 Node 的 `package.json`。把它放在工程根目录；`mcpp build` 会自动发现并读取它。
 
+该文件是 TOML。内联表可以跨多行书写、包含注释，并在最后一对之后带一个逗号，
+这与 TOML 1.1 的规定一致；每一对 `key = value` 仍写在一行之内(#928)。mcpp
+读取的每个 TOML 文件(`mcpp.lock`、`config.toml`、模板元数据)都遵循同一规则。
+
+```toml
+[dependencies]
+widget = {
+    version  = "2.0.0",
+    features = ["gui"],   # 表内的注释
+}
+```
+
 ## 1. 最小化示例
 
 mcpp 按**约定优于配置**设计——大多数字段都有合理的默认值，因此最简单的
