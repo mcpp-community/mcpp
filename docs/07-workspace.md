@@ -682,16 +682,18 @@ its first test runs, and `mcpp run` before the program starts. So:
   second or more (2026.11.13.1+).
 
 A configuration's directory is named by its **lineage** (2026.11.13.1+): the
-compiler family, the target, the standard library's family, the C++ standard
-and the configuration's flags. What evolves --- mcpp's version, the compiler's
-version and build, the standard library's version, the runtime contract --- is
+compiler family, the target, the standard library's family, the C++ standard,
+the configuration's flags and the base as it is stated (the default base and a
+stated sysroot are two configurations). What evolves --- mcpp's version, the
+compiler's version and build, the standard library's version, the runtime
+contract, which holds what the base contains --- is
 recorded in the directory (`toolchain`, `fingerprint`) and not in its name. The
 graph runs mcpp through the directory's own link to it, `engine/epoch-<N>/mcpp`,
 which each build makes the running mcpp, so no command names a path that holds
 mcpp's version. An mcpp upgrade therefore keeps every command whose compiler,
 flags and files are unchanged, and ninja compiles only what the new version
-changes; a compiler build that differs empties the directory in place
-(`Replaced`). The epoch in the link's path changes only with a release whose own
+changes; a compiler build that differs, or a base whose contents changed, empties
+the directory in place (`Replaced`). The epoch in the link's path changes only with a release whose own
 build steps write something different, and then every step runs again. Before 2026.11.13.1 the name was the whole
 fingerprint: an upgrade moved the directory to a new name, which every
 member's commands contain, and every member was compiled again. The first build

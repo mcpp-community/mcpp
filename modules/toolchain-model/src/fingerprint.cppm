@@ -56,14 +56,21 @@ struct Fingerprint {
     // The configuration's lineage (see lineage_text), 16 hex chars: the name of
     // its build directory.
     std::string                     lineage;
+    // The base as the configuration states it: its form and canonical spelling
+    // (`default`, `path third_party/sysroot`, `package xim:glibc@2.39`). Part of
+    // the lineage; what the base holds is in parts[10] and evolves.
+    std::string                     base;
 };
 
 // A CONFIGURATION'S LINEAGE (design 2026-10-31 §8.2, 2026-11-12 §17): the
 // fingerprint's parts a developer switches between and keeps side by side --
 // the compiler family, the target, the standard library's family, the language
-// standard and the configuration's flags. The rest evolve with time: the
-// compiler's version and identity, the standard library's version, mcpp's
-// version, the std module and the runtime contract.
+// standard, the configuration's flags and the base as it is stated (a program
+// built against the default base and against a stated sysroot are two
+// configurations). The rest evolve with time: the compiler's version and
+// identity, the standard library's version, mcpp's version, the std module and
+// the runtime contract, which holds what the base contains -- a base rewritten
+// in place is the same configuration, built again in its directory.
 //
 // THE LINEAGE NAMES THE BUILD DIRECTORY, the whole fingerprint does not. The
 // commands of the units compiled there name it (an object's path, the link's
@@ -73,8 +80,11 @@ struct Fingerprint {
 // 2026.11.10.2 to 2026.11.12.1, every member and mtest). A directory named by
 // its lineage keeps its paths: ninja compiles what a release really changed.
 std::string lineage_text(const Fingerprint& fp);
-// The compiler's part of the evolution: objects and BMIs of another compiler
-// build are never reused, so a directory whose record differs here is emptied.
+// The compiler's part of the evolution, and the base's: objects and BMIs of
+// another compiler build, or compiled against another content of the base
+// (its runtime contract), are never reused, so a directory whose record differs
+// here is emptied. A base rewritten in place may keep its files' times, which
+// no edge of the graph would see.
 std::string toolchain_text(const Fingerprint& fp);
 
 std::string hash_file(const std::filesystem::path& p);     // returns 16 hex
@@ -157,18 +167,22 @@ Fingerprint compute_fingerprint(const FingerprintInputs& in) {
         h = fnv1a_64("\x1f", h);   // unit separator
     }
     fp.hex = to_hex16(h);
+    fp.base = tc.base.text.empty()
+        ? std::string(base::form_name(tc.base.form))
+        : std::format("{} {}", base::form_name(tc.base.form), tc.base.text);
     fp.lineage = hash_string(lineage_text(fp));
     return fp;
 }
 
 std::string lineage_text(const Fingerprint& fp) {
     const auto stdlibFamily = fp.parts[4].substr(0, fp.parts[4].find(' '));
-    return std::format("compiler {}\ntarget {}\nstdlib {}\nstandard {}\nconfiguration {}\n",
-                       fp.parts[0], fp.parts[3], stdlibFamily, fp.parts[5], fp.parts[6]);
+    return std::format("compiler {}\ntarget {}\nstdlib {}\nstandard {}\nconfiguration {}\nbase {}\n",
+                       fp.parts[0], fp.parts[3], stdlibFamily, fp.parts[5], fp.parts[6], fp.base);
 }
 
 std::string toolchain_text(const Fingerprint& fp) {
-    return std::format("compiler {}\ndriver {}\nstdlib {}\n", fp.parts[1], fp.parts[2], fp.parts[4]);
+    return std::format("compiler {}\ndriver {}\nstdlib {}\nruntime {}\n", fp.parts[1], fp.parts[2], fp.parts[4],
+                       fp.parts[10]);
 }
 
 } // namespace mcpp::toolchain

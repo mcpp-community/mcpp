@@ -56,6 +56,16 @@ std::string read_small(const std::filesystem::path& file) {
 // A DIRECTORY AN EARLIER MCPP NAMED BY THE WHOLE FINGERPRINT (before
 // 2026.11.13.1), or one this configuration left under another name, is taken
 // over once by the lineage it records; from then on the name holds.
+// What a directory's record says changed: the base when only its runtime line
+// differs (a base rewritten in place), the toolchain otherwise.
+std::string_view what_changed(std::string_view was, std::string_view now) {
+    auto without_runtime = [](std::string_view t) {
+        const auto at = t.find("runtime ");
+        return t.substr(0, at == std::string_view::npos ? t.size() : at);
+    };
+    return without_runtime(was) == without_runtime(now) ? "the base" : "the toolchain";
+}
+
 void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -79,7 +89,8 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     auto held = mcpp::home::FileLock::try_acquire(*best, mcpp::build::dirlock::kLockName);
     if (!held) return;
     const auto shown = best->lexically_relative(state.workRoot).generic_string();
-    const bool sameToolchain = read_small(*best / "toolchain") == toolchain_text(state.fp);
+    const auto was_toolchain = read_small(*best / "toolchain");
+    const bool sameToolchain = was_toolchain == toolchain_text(state.fp);
     if (sameToolchain) {
         // Its entries move in, one rename each, beside the lock this build
         // may already have created there.
@@ -101,8 +112,9 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     fs::remove_all(*best, ec);
     if (!sameToolchain && !ec)
         mcpp::ui::status("Replaced", std::format(
-            "{} ({}): the toolchain changed, and nothing compiled there is reused", shown,
-            mcpp::bmi_cache::human_bytes(bytes)));
+            "{} ({}): {} changed, and nothing compiled there is reused", shown,
+            mcpp::bmi_cache::human_bytes(bytes),
+            what_changed(was_toolchain, toolchain_text(state.fp))));
 }
 
 std::filesystem::path renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
@@ -120,8 +132,9 @@ std::filesystem::path renew_build_dir(const PrepareState& state, const std::file
             fs::remove_all(e.path(), rec);
         }
         mcpp::ui::status("Replaced", std::format(
-            "{} ({}): the toolchain changed, and nothing compiled there is reused",
-            outputDir.lexically_relative(state.workRoot).generic_string(), mcpp::bmi_cache::human_bytes(bytes)));
+            "{} ({}): {} changed, and nothing compiled there is reused",
+            outputDir.lexically_relative(state.workRoot).generic_string(), mcpp::bmi_cache::human_bytes(bytes),
+            what_changed(was, toolchain_text(state.fp))));
     } else if (const auto fp = read_small(outputDir / "fingerprint"); !fp.empty() && fp != state.fp.hex + "\n") {
         // Another mcpp, std module or runtime contract continues here: the
         // compiler records describe the attempts of the build before, as those

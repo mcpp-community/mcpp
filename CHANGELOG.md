@@ -35,10 +35,11 @@
 
 ### Changed
 
-- A configuration's build directory is named by its lineage; the evolving
-  parts (mcpp, the compiler build, the standard library version) are recorded
-  inside it, and the graph runs mcpp through the directory's link
-  `engine/epoch-<N>/mcpp`. An upgrade of mcpp alone compiles nothing again
+- A configuration's build directory is named by its lineage, which includes the
+  base as stated; the evolving parts (mcpp, the compiler build, the standard
+  library version, what the base contains) are recorded inside it, a compiler
+  build or base contents that differ empty it in place, and the graph runs mcpp
+  through the directory's link `engine/epoch-<N>/mcpp`. An upgrade of mcpp alone compiles nothing again
   (measured: 18 of 153 before, 0 after).
 - `Finished` states the time spent waiting for a build directory;
   `mcpp clean --report` gives split debug information its own column.

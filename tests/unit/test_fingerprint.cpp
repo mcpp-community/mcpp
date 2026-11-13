@@ -156,9 +156,32 @@ UTest a_configuration_is_another_lineage{"Fingerprint/AConfigurationIsAnotherLin
              [](FingerprintInputs& in) { in.cppStandard = "c++26"; },
              [](FingerprintInputs& in) { in.toolchain.targetTriple = "aarch64-linux-gnu"; },
              [](FingerprintInputs& in) { in.toolchain.compiler = CompilerId::Clang; },
-             [](FingerprintInputs& in) { in.toolchain.stdlibId = "libc++"; }}) {
+             [](FingerprintInputs& in) { in.toolchain.stdlibId = "libc++"; },
+             [](FingerprintInputs& in) {
+                 in.toolchain.base.form = mcpp::toolchain::base::Form::Path;
+                 in.toolchain.base.text = "third_party/sysroot";
+             }}) {
         auto in = baseline();
         change(in);
         expect(ne(compute_fingerprint(in).lineage, a.lineage));
     }
+}};
+
+// THE BASE AS STATED IS A CONFIGURATION; WHAT IT HOLDS EVOLVES. A program built
+// against the default base and against a stated sysroot are kept side by side;
+// a stated base whose contents change (its runtime contract) is built again in
+// its own directory.
+UTest a_rewritten_base_keeps_its_lineage{"Fingerprint/ARewrittenBaseKeepsItsLineage", [] {
+    auto in = baseline();
+    in.toolchain.base.form = mcpp::toolchain::base::Form::Path;
+    in.toolchain.base.text = "third_party/sysroot";
+    in.toolchain.runtimeContractHash = "0123456789abcdef";
+    const auto a = compute_fingerprint(in);
+    in.toolchain.runtimeContractHash = "fedcba9876543210";
+    const auto b = compute_fingerprint(in);
+    expect(ne(a.hex, b.hex));
+    expect(eq(a.lineage, b.lineage));
+    expect(ne(toolchain_text(a), toolchain_text(b))) << "the directory is emptied and built again";
+    expect(eq(a.base, std::string("path third_party/sysroot")));
+    expect(eq(compute_fingerprint(baseline()).base, std::string("default")));
 }};

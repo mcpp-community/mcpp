@@ -1732,13 +1732,15 @@ anything compiles.
   actually use.
 - **A configuration keeps one directory over time (2026.10.31.3+).** The part of
   the fingerprint a developer switches between -- the compiler family, the
-  target, the standard library's family, the standard and the configuration's
-  flags -- is the directory's lineage; the compiler's version, mcpp's version,
-  the std module and the runtime contract evolve. A new fingerprint of a lineage
+  target, the standard library's family, the standard, the configuration's
+  flags and the base as stated -- is the directory's lineage; the compiler's
+  version, mcpp's version, the std module and the runtime contract (what the
+  base contains) evolve. A new fingerprint of a lineage
   takes over the directory that lineage used last, and ninja rebuilds the edges
   whose commands changed: after an mcpp upgrade that leaves the flags as they
-  were, no unit is compiled again. A predecessor of another compiler build is
-  removed instead (its objects are not reusable). After a build or a test run,
+  were, no unit is compiled again. A predecessor of another compiler build, or
+  built against other contents of the base, is removed instead (its objects are
+  not reusable). After a build or a test run,
   at most once a day, the directories no configuration used for `[build]
   keep_days` days (config.toml; default 3, `0` keeps all) are removed.
 - **`[build] target_budget` bounds `target/` (2026.11.8.1+).** A size such as
