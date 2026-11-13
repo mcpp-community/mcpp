@@ -60,6 +60,9 @@ ldflags  = ["--coverage"]
 [test]
 windows_code_page = "utf-8"
 programs = "directory"
+# The unit tests, and the end-to-end cases (tests/e2e/<subsystem>/*.cpp, one program per
+# subsystem); the support package and the scripts' fixtures are not tests.
+discover = ["tests/**/*.cpp", "!tests/support/**", "!tests/e2e/fixtures/**", "!tests/fixtures/**"]
 
 # Each entry equals its row's Default (SPEC-009 §12): the LLVM line moved to
 # 23.1.3 — the first release carrying the macOS 27 arm64e.x1 linker fix
@@ -165,7 +168,9 @@ members = [
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
-mcpplibs.mtest = "0.5.2"
+mcpplibs.mtest = "0.7.1"
+# The support of the end-to-end cases (tests/support, design 2026-11-12 §5.9).
+mcpp.test-support = { path = "tests/support" }
 
 # Everything else uses M5.0 conventions:
 # - target        = mcpp (kind=bin inferred from src/main.cpp)

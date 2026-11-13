@@ -1,0 +1,310 @@
+module mcpp.test.support;
+
+import std;
+
+namespace mcpp::test::support {
+
+// ---- the machine -------------------------------------------------------------------------------
+
+bool on_windows() noexcept {
+#if defined(_WIN32)
+    return true;
+#else
+    return false;
+#endif
+}
+bool on_macos() noexcept {
+#if defined(__APPLE__)
+    return true;
+#else
+    return false;
+#endif
+}
+bool on_linux() noexcept {
+#if defined(__linux__)
+    return true;
+#else
+    return false;
+#endif
+}
+
+std::string exe(std::string_view name) {
+    return on_windows() ? std::string(name) + ".exe" : std::string(name);
+}
+
+std::optional<std::string> env(std::string_view name) {
+    if (const char* v = std::getenv(std::string(name).c_str()))
+        return std::string(v);
+    return std::nullopt;
+}
+
+// ---- mcpp ----------------------------------------------------------------------------------------
+
+std::string mcpp_path() {
+    if (auto v = env("MCPP_BIN_MCPP"); v && !v->empty())
+        return *v;
+    if (auto v = env("MCPP"); v && !v->empty())
+        return *v;
+    return e2e::program("mcpp");
+}
+
+e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o) {
+    e2e::command c;
+    c.argv.push_back(mcpp_path());
+    for (auto& a : args) c.argv.push_back(std::move(a));
+    c.cwd = cwd;
+    if (o.where == home::fresh) {
+        auto h = mcpplibs::mtest::temp_dir() / "home";
+        fs::create_directories(h);
+        c.env.emplace_back("MCPP_HOME", h.string());
+    } else if (!env("MCPP_HOME")) {
+        if (auto u = env(on_windows() ? "USERPROFILE" : "HOME"))
+            c.env.emplace_back("MCPP_HOME", (fs::path(*u) / ".mcpp").string());
+    }
+    for (const auto& kv : o.env) c.env.push_back(kv);
+    c.input = o.input;
+    c.timeout = o.timeout;
+    return e2e::run(std::move(c));
+}
+
+std::string text(const e2e::outcome& r) { return r.out + r.err; }
+
+// ---- a project -----------------------------------------------------------------------------------
+
+namespace {
+void write_into(const fs::path& dir, std::string_view relative, std::string_view content) {
+    const auto file = dir / fs::path(std::u8string(relative.begin(), relative.end()));
+    if (file.has_parent_path())
+        fs::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary).write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+}  // namespace
+
+project::project(files contents) : project(mcpplibs::mtest::temp_dir() / "project", contents) {}
+
+project::project(fs::path dir, files contents) : dir_(std::move(dir)) {
+    fs::create_directories(dir_);
+    for (const auto& [path, content] : contents)
+        write_into(dir_, path, content);
+}
+
+fs::path project::at(std::string_view relative) const {
+    return dir_ / fs::path(std::u8string(relative.begin(), relative.end()));
+}
+void project::write(std::string_view relative, std::string_view content) const { write_into(dir_, relative, content); }
+std::string project::read(std::string_view relative) const { return read_file(at(relative)); }
+bool project::exists(std::string_view relative) const { return fs::exists(at(relative)); }
+void project::remove(std::string_view relative) const { fs::remove_all(at(relative)); }
+
+e2e::outcome project::mcpp(std::vector<std::string> args, const options& o) const {
+    return support::mcpp(std::move(args), dir_, o);
+}
+e2e::outcome project::mcpp_in(std::string_view sub, std::vector<std::string> args, const options& o) const {
+    return support::mcpp(std::move(args), at(sub), o);
+}
+
+std::optional<fs::path> project::artifact(std::string_view name) const {
+    return find_file(dir_ / "target", name);
+}
+
+std::optional<fs::path> find_file(const fs::path& root, std::string_view name) {
+    std::error_code ec;
+    if (!fs::is_directory(root, ec))
+        return std::nullopt;
+    std::vector<fs::path> found;
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec))
+        if (it->is_regular_file(ec) && it->path().filename() == name)
+            found.push_back(it->path());
+    if (found.empty())
+        return std::nullopt;
+    std::ranges::sort(found);  // the same answer on every run
+    return found.front();
+}
+
+std::vector<fs::path> find_files(const fs::path& root, std::string_view pattern) {
+    std::vector<fs::path> found;
+    std::error_code ec;
+    if (!fs::is_directory(root, ec))
+        return found;
+    const std::regex re{std::string(pattern)};
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec))
+        if (it->is_regular_file(ec) && std::regex_match(it->path().filename().string(), re))
+            found.push_back(it->path());
+    std::ranges::sort(found);
+    return found;
+}
+
+// ---- readings --------------------------------------------------------------------------------------
+
+std::string read_file(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+std::vector<std::string> lines_with(std::string_view text, std::string_view needle) {
+    std::vector<std::string> out;
+    for (auto line : std::views::split(text, '\n')) {
+        std::string_view l(line.begin(), line.end());
+        if (l.ends_with('\r')) l.remove_suffix(1);
+        if (l.find(needle) != std::string_view::npos)
+            out.emplace_back(l);
+    }
+    return out;
+}
+
+std::vector<std::string> file_lines_with(const fs::path& file, std::string_view needle) {
+    return lines_with(read_file(file), needle);
+}
+
+nlohmann::json json(std::string_view text) {
+    auto whole = nlohmann::json::parse(text, nullptr, false);
+    if (!whole.is_discarded())
+        return whole;
+    for (auto line : std::views::split(text, '\n')) {
+        auto one = nlohmann::json::parse(std::string_view(line.begin(), line.end()), nullptr, false);
+        if (!one.is_discarded())
+            return one;
+    }
+    return nlohmann::json{};
+}
+
+nlohmann::json json_file(const fs::path& file) { return json(read_file(file)); }
+
+std::vector<nlohmann::json> json_lines(std::string_view text) {
+    std::vector<nlohmann::json> out;
+    for (auto line : std::views::split(text, '\n')) {
+        std::string_view l(line.begin(), line.end());
+        if (l.empty() || l.front() != '{')
+            continue;
+        auto one = nlohmann::json::parse(l, nullptr, false);
+        if (!one.is_discarded() && one.is_object())
+            out.push_back(std::move(one));
+    }
+    return out;
+}
+
+// ---- executables -------------------------------------------------------------------------------------
+
+namespace {
+
+template <class T>
+T get(const std::string& b, std::size_t at, bool big = false) {
+    T v{};
+    if (at + sizeof(T) > b.size())
+        return v;
+    std::memcpy(&v, b.data() + at, sizeof(T));
+    if (big) {
+        T r{};
+        for (std::size_t i = 0; i < sizeof(T); ++i)
+            r = static_cast<T>((r << 8) | static_cast<unsigned char>(b[at + i]));
+        return r;
+    }
+    return v;
+}
+
+std::string cstring(const std::string& b, std::size_t at) {
+    if (at >= b.size())
+        return {};
+    const auto end = b.find('\0', at);
+    return b.substr(at, end == std::string::npos ? std::string::npos : end - at);
+}
+
+void read_elf(const std::string& b, header& h) {
+    h.kind = format::elf;
+    h.wide = b.size() > 4 && b[4] == 2;
+    h.elf_type = get<std::uint16_t>(b, 16);
+    h.machine = get<std::uint16_t>(b, 18);
+    const std::uint64_t phoff = h.wide ? get<std::uint64_t>(b, 32) : get<std::uint32_t>(b, 28);
+    const std::uint16_t phentsize = get<std::uint16_t>(b, h.wide ? 54 : 42);
+    const std::uint16_t phnum = get<std::uint16_t>(b, h.wide ? 56 : 44);
+    std::uint64_t dyn_off = 0, dyn_size = 0;
+    struct load { std::uint64_t vaddr, offset, filesz; };
+    std::vector<load> loads;
+    for (std::uint16_t i = 0; i < phnum; ++i) {
+        const std::size_t p = static_cast<std::size_t>(phoff) + std::size_t(i) * phentsize;
+        const auto type = get<std::uint32_t>(b, p);
+        const std::uint64_t offset = h.wide ? get<std::uint64_t>(b, p + 8) : get<std::uint32_t>(b, p + 4);
+        const std::uint64_t vaddr = h.wide ? get<std::uint64_t>(b, p + 16) : get<std::uint32_t>(b, p + 8);
+        const std::uint64_t filesz = h.wide ? get<std::uint64_t>(b, p + 32) : get<std::uint32_t>(b, p + 16);
+        if (type == 3) {  // PT_INTERP
+            h.elf_interpreter = true;
+            h.interpreter = cstring(b, static_cast<std::size_t>(offset));
+        } else if (type == 2) {  // PT_DYNAMIC
+            dyn_off = offset;
+            dyn_size = filesz;
+        } else if (type == 1) {
+            loads.push_back({vaddr, offset, filesz});
+        }
+    }
+    if (!dyn_size)
+        return;
+    const std::size_t entry = h.wide ? 16 : 8;
+    std::uint64_t strtab = 0;
+    std::vector<std::uint64_t> needed;
+    std::uint64_t runpath = 0;
+    bool has_runpath = false;
+    for (std::uint64_t at = dyn_off; at + entry <= dyn_off + dyn_size; at += entry) {
+        const std::int64_t tag = h.wide ? get<std::int64_t>(b, at) : get<std::int32_t>(b, at);
+        const std::uint64_t val = h.wide ? get<std::uint64_t>(b, at + 8) : get<std::uint32_t>(b, at + 4);
+        if (tag == 0) break;
+        if (tag == 5) strtab = val;
+        else if (tag == 1) needed.push_back(val);
+        else if (tag == 29 || tag == 15) { runpath = val; has_runpath = true; }
+    }
+    // The string table's address, as a file offset.
+    std::uint64_t str_off = strtab;
+    for (const auto& l : loads)
+        if (strtab >= l.vaddr && strtab < l.vaddr + l.filesz)
+            str_off = strtab - l.vaddr + l.offset;
+    for (auto n : needed)
+        h.needed.push_back(cstring(b, static_cast<std::size_t>(str_off + n)));
+    if (has_runpath)
+        h.runpath = cstring(b, static_cast<std::size_t>(str_off + runpath));
+}
+
+void read_pe(const std::string& b, header& h) {
+    const auto pe = get<std::uint32_t>(b, 0x3c);
+    if (b.compare(pe, 4, std::string("PE\0\0", 4)) != 0)
+        return;  // an MZ program with no PE image (DOS)
+    h.kind = format::pe;
+    h.machine = get<std::uint16_t>(b, pe + 4);
+    const auto magic = get<std::uint16_t>(b, pe + 24);
+    h.wide = magic == 0x20b;
+    h.subsystem = get<std::uint16_t>(b, pe + 24 + 68);
+}
+
+}  // namespace
+
+header read_header(const fs::path& file) {
+    header h;
+    std::ifstream in(file, std::ios::binary);
+    std::string b(64 * 1024, '\0');
+    in.read(b.data(), static_cast<std::streamsize>(b.size()));
+    b.resize(static_cast<std::size_t>(in.gcount()));
+    if (b.size() >= 4 && b.compare(0, 4, "\x7f" "ELF") == 0) {
+        // The dynamic section may lie past the first 64 KiB.
+        h.kind = format::elf;
+        b = read_file(file);
+        read_elf(b, h);
+    } else if (b.size() >= 2 && b[0] == 'M' && b[1] == 'Z') {
+        read_pe(b, h);
+    } else if (b.size() >= 4) {
+        const auto m = get<std::uint32_t>(b, 0);
+        if (m == 0xfeedface || m == 0xfeedfacf) {
+            h.kind = format::macho;
+            h.wide = m == 0xfeedfacf;
+            h.machine = get<std::uint32_t>(b, 4);
+        } else if (m == 0xbebafeca || m == 0xbfbafeca) {
+            h.kind = format::macho_fat;
+        } else if (b.compare(0, 4, std::string("\0asm", 4)) == 0) {
+            h.kind = format::wasm;
+        } else if (b.size() >= 8 && b.compare(0, 8, "!<arch>\n") == 0) {
+            h.kind = format::archive;
+        }
+    }
+    return h;
+}
+
+}  // namespace mcpp::test::support
