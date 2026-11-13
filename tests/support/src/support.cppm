@@ -33,6 +33,15 @@ bool on_linux() noexcept;
 std::string exe(std::string_view name);
 // The value of the environment variable `name`, if set.
 std::optional<std::string> env(std::string_view name);
+// The executable `name` as PATH finds it (`name.exe` too on Windows).
+std::optional<fs::path> on_path(std::string_view name);
+
+// A capability word of a script's `# requires:` line, as tests/e2e/run_all.sh detects it on this
+// machine (the same probes: a program on PATH, a payload in the home, the system). An unknown word
+// fails the case, so that a misspelt word cannot turn into a skip on every machine.
+bool has(std::string_view capability);
+// Ends the case as skipped ("missing capability: <word>") unless this machine has every word.
+void needs(std::initializer_list<std::string_view> capabilities);
 
 // ---- mcpp ----------------------------------------------------------------------------------------
 
@@ -51,6 +60,8 @@ struct options {
 
 // mcpp with `args`, in `cwd`.
 e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o = {});
+// The same command, not run: for an `e2e::session` (a mcpp that runs while the case does more).
+e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, const options& o = {});
 
 // Standard output, then standard error: what a shell's `2>&1` would have collected, for a
 // message whose stream is not what the case asserts.
@@ -82,6 +93,10 @@ public:
     // `exe(name)`), or nothing.
     std::optional<fs::path> artifact(std::string_view name) const;
 
+    // `mcpp new <name> <args...>` in a directory of the case: the project it made (the case fails
+    // when mcpp does).
+    static project scaffold(std::string_view name, std::vector<std::string> args = {});
+
 private:
     fs::path dir_;
 };
@@ -90,6 +105,10 @@ private:
 std::optional<fs::path> find_file(const fs::path& root, std::string_view name);
 // Every regular file under `root` whose name matches `pattern` (ECMAScript, the whole name).
 std::vector<fs::path> find_files(const fs::path& root, std::string_view pattern);
+// The paths under `root` that a shell glob of `/`-separated components names, where `*` in a
+// component matches any run of characters and, as in a shell, no leading dot:
+// glob(p.at("target"), "*/*/build.ninja").
+std::vector<fs::path> glob(const fs::path& root, std::string_view pattern);
 
 // ---- readings --------------------------------------------------------------------------------------
 
@@ -102,6 +121,21 @@ nlohmann::json json(std::string_view text);
 nlohmann::json json_file(const fs::path& file);
 // Every line of `text` that is a JSON object (a stream of records).
 std::vector<nlohmann::json> json_lines(std::string_view text);
+
+// What a script's `grep` asked, as comparisons whose failure shows the text:
+// some line of `text` matches `pattern` (ECMAScript; `^` and `$` are the line's ends: `grep -E`);
+mcpplibs::mtest::comparison has_line(std::string_view text, std::string_view pattern);
+// no line of `text` matches `pattern` (`! grep -E`);
+mcpplibs::mtest::comparison no_line(std::string_view text, std::string_view pattern);
+// `text` does not contain `needle`;
+mcpplibs::mtest::comparison lacks(std::string_view text, std::string_view needle);
+// `text` contains `needle`, ignoring ASCII case (`grep -i`).
+mcpplibs::mtest::comparison contains_nocase(std::string_view text, std::string_view needle);
+// The number of lines of `text` that contain `needle` (`grep -c`).
+std::size_t count_lines(std::string_view text, std::string_view needle);
+
+// The outputs `.ninja_log` records, one per edge run (its fourth column), in order.
+std::vector<std::string> ninja_log_outputs(const fs::path& build_dir);
 
 // ---- executables -------------------------------------------------------------------------------------
 

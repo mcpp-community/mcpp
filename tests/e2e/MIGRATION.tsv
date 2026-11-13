@@ -14,10 +14,10 @@ script	subsystem	class	destination	note
 12_add_command.sh	deps	merge	e2e/deps	
 13_toolchain_pin.sh	toolchain	merge	e2e/toolchain	
 14_toolchain_fallback.sh	toolchain	merge	e2e/toolchain	
-15_test_passing.sh	test	merge	e2e/test	
-16_test_failing.sh	test	merge	e2e/test	
-17_test_no_tests.sh	test	merge	e2e/test	
-18_devdeps_isolation.sh	test	merge	e2e/test	
+15_test_passing.sh	test	merge	e2e/test::report/15 test passing	migrated (batch 1); script removed
+16_test_failing.sh	test	merge	e2e/test::report/16 test failing	migrated (batch 1); script removed
+17_test_no_tests.sh	test	merge	e2e/test::report/17 test no tests	migrated (batch 1); script removed
+18_devdeps_isolation.sh	test	merge	e2e/test::graph/18 devdeps isolation	migrated (batch 1); script removed
 19_bmi_cache_reuse.sh	modules	merge	e2e/modules	
 20_p1689_scanner.sh	modules	merge	e2e/modules	
 21_ninja_dyndep.sh	modules	merge	e2e/modules	
@@ -77,14 +77,14 @@ script	subsystem	class	destination	note
 69_package_templates.sh	cli	merge	e2e/cli	
 70_per_target_flags.sh	build	merge	e2e/build	
 71_required_features_gate.sh	features	merge	e2e/features	
-72_test_profile_features.sh	test	merge	e2e/test	
+72_test_profile_features.sh	test	merge	e2e/test::graph/72 test profile features	migrated (batch 1); script removed
 73_issue131_per_target_cxxflag.sh	build	merge	e2e/build	
 74_run_no_loader_env_leak.sh	run	merge	e2e/run	
 75_index_status_offline.sh	index	merge	e2e/index	
 76_compile_commands_generated.sh	cdb	merge	e2e/cdb	
 76_qualified_custom_ns_noncanonical_filename.sh	index	merge	e2e/index	
 77_cdb_preserves_test_entries.sh	cdb	merge	e2e/cdb	
-78_test_main_combinations.sh	test	merge	e2e/test	
+78_test_main_combinations.sh	test	merge	e2e/test::graph/78 test main combinations	migrated (batch 1); script removed
 79_gtest_regular_dep_feature_main.sh	deps	merge	e2e/deps	
 80_feature_defines.sh	features	merge	e2e/features	
 81_capability_binding.sh	features	merge	e2e/features	
@@ -97,11 +97,11 @@ script	subsystem	class	destination	note
 87_build_default_profile.sh	build	merge	e2e/build	
 88_xlings_environment.sh	self	merge	e2e/self	
 89_build_mcpp.sh	build-program	merge	e2e/build-program	
-90_workspace_test.sh	test	merge	e2e/test	
+90_workspace_test.sh	test	merge	e2e/test::workspace/90 workspace test	migrated (batch 1); script removed
 91_target_bare_alias.sh	target	merge	e2e/target	
 92_build_mcpp_import.sh	build-program	merge	e2e/build-program	
 93_xpkg_parse.sh	index	sink	unit/test_xpkg_parse	answers a parse/selection rule without a build: descriptor grammar, strict keys
-94_macos_test_stdlib.sh	test	merge	e2e/test	
+94_macos_test_stdlib.sh	test	merge	e2e/test::frameworks/94 macos test stdlib	migrated (batch 1); script removed; skips without macos, as the script was excluded
 95_msvc_system_toolchain.sh	windows	merge	e2e/windows	
 96_msvc_unavailable_nonwindows.sh	windows	merge	e2e/windows	
 97_mingw_toolchain.sh	windows	merge	e2e/windows	
@@ -158,19 +158,19 @@ script	subsystem	class	destination	note
 149_conditional_glob_flags.sh	features	merge	e2e/features	
 150_clang_module_operator_template.sh	toolchain	keep	keep	a state canary of the bundled Clang (expected crash), not an assertion about mcpp
 151_index_url_artifact_migration.sh	self	merge	e2e/self	
-152_test_subdir_names.sh	test	merge	e2e/test	
-153_test_isolation.sh	test	merge	e2e/test	
-154_test_filter.sh	test	merge	e2e/test	
-155_test_json.sh	test	merge	e2e/test	
+152_test_subdir_names.sh	test	merge	e2e/test::selection/152 test subdir names	migrated (batch 1); script removed
+153_test_isolation.sh	test	merge	e2e/test::report/153 test isolation	migrated (batch 1); script removed
+154_test_filter.sh	test	merge	e2e/test::selection/154 test filter	migrated (batch 1); script removed
+155_test_json.sh	test	merge	e2e/test::report/155 test json	migrated (batch 1); script removed
 156_nested_ld_library_path.sh	run	merge	e2e/run	
-157_test_glob_flags.sh	test	merge	e2e/test	
-158_test_signal_and_duration.sh	test	merge	e2e/test	
-159_test_list.sh	test	merge	e2e/test	
-160_test_timeout.sh	test	merge	e2e/test	
+157_test_glob_flags.sh	test	merge	e2e/test::graph/157 test glob flags	migrated (batch 1); script removed
+158_test_signal_and_duration.sh	test	merge	e2e/test::report/158 test signal and duration	migrated (batch 1); script removed
+159_test_list.sh	test	merge	e2e/test::selection/159 test list	migrated (batch 1); script removed
+160_test_timeout.sh	test	merge	e2e/test::report/160 test timeout	migrated (batch 1); script removed
 161_xpkg_name_form.sh	deps	merge	e2e/deps	
 162_bare_name_namespace_scope.sh	deps	merge	e2e/deps	
 163_identity_first_resolution.sh	deps	merge	e2e/deps	
-164_ninja_goal_command_length.sh	test	merge	e2e/test	
+164_ninja_goal_command_length.sh	test	merge	e2e/test::graph/164 ninja goal command length	migrated (batch 1); script removed
 165_bare_name_cross_namespace_wire_address.sh	deps	merge	e2e/deps	
 166_run_env_no_private_glibc.sh	run	merge	e2e/run	
 167_build_defines_module_scan.sh	modules	merge	e2e/modules	
@@ -185,7 +185,7 @@ script	subsystem	class	destination	note
 175_cpp20_import_std.sh	toolchain	merge	e2e/toolchain	
 176_cpp20_std_bmi_isolation.sh	toolchain	merge	e2e/toolchain	
 177_cpp20_msvc.sh	windows	merge	e2e/windows	
-178_test_observability.sh	test	merge	e2e/test	
+178_test_observability.sh	test	merge	e2e/test::streams/178 test observability	migrated (batch 1); script removed
 179_spaced_paths.sh	build	merge	e2e/build	
 180_msvc_build_mcpp.sh	windows	merge	e2e/windows	
 181_build_mcpp_import_std.sh	build-program	merge	e2e/build-program	
@@ -221,7 +221,7 @@ script	subsystem	class	destination	note
 210_local_index_addressing_on_every_host.sh	index	merge	e2e/index	
 211_configure_only_cdb.sh	cdb	merge	e2e/cdb	
 212_cached_dep_std_is_ordered.sh	cache	merge	e2e/cache	
-213_build_after_test_is_not_the_test_graph.sh	test	merge	e2e/test	
+213_build_after_test_is_not_the_test_graph.sh	test	merge	e2e/test::graph/213 build after test is not the test graph	migrated (batch 1); script removed
 214_executable_carries_dt_rpath.sh	runtime	merge	e2e/runtime	
 215_pack_has_no_build_machine_paths.sh	pack	merge	e2e/pack	
 216_selfcontained_refuses_host_capability.sh	pack	merge	e2e/pack	
@@ -402,7 +402,7 @@ script	subsystem	class	destination	note
 670_an_rpath_loader_token_is_left_as_written.sh	runtime	merge	e2e/runtime	
 671_toolchain_is_an_option_of_run_test_and_pack.sh	cli	merge	e2e/cli	
 672_a_runner_receives_the_files_the_artifact_carries.sh	run	merge	e2e/run	
-673_test_discover_names_where_tests_are.sh	test	merge	e2e/test	
+673_test_discover_names_where_tests_are.sh	test	merge	e2e/test::selection/673 test discover names where tests are	migrated (batch 1); script removed
 674_a_format_is_run_by_the_runner_named_after_it.sh	run	merge	e2e/run	
 675_android_test_programs_carry_their_cxx_runtime.sh	android	merge	e2e/android	
 677_a_conditional_dependency_replaces_the_unconditional_one.sh	features	merge	e2e/features	
@@ -453,7 +453,7 @@ script	subsystem	class	destination	note
 742_gcc_accepted_when_the_realisation_is_empty.sh	toolchain	merge	e2e/toolchain	
 743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh	openkal	merge	e2e/openkal	
 744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/target	
-745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test	
+745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test::archive/745 no run builds the tests and says so	migrated (batch 1); script removed
 746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos	
 760_msvc_toolset_is_chosen_once.sh	windows	merge	e2e/windows	
 765_a_consumer_include_directory_stays_in_the_consumer.sh	build	merge	e2e/build	
@@ -539,9 +539,9 @@ script	subsystem	class	destination	note
 851_a_shared_member_is_compiled_once_per_configuration.sh	workspace	merge	e2e/workspace	
 852_a_repeated_dash_p_selects_every_member_it_names.sh	workspace	merge	e2e/workspace	
 853_run_keeps_one_member_and_exclude_removes_members.sh	workspace	merge	e2e/workspace	
-854_a_test_over_several_members_plans_and_builds_once.sh	test	merge	e2e/test	
-855_a_shared_test_build_is_reported_once_per_group.sh	test	merge	e2e/test	
-856_a_test_over_several_members_continues_past_a_failing_one.sh	test	merge	e2e/test	
+854_a_test_over_several_members_plans_and_builds_once.sh	test	merge	e2e/test::workspace/854 a test over several members plans and builds once	migrated (batch 1); script removed
+855_a_shared_test_build_is_reported_once_per_group.sh	test	merge	e2e/test::workspace/855 a shared test build is reported once per group	migrated (batch 1); script removed
+856_a_test_over_several_members_continues_past_a_failing_one.sh	test	merge	e2e/test::workspace/856 a test over several members continues past a failing one	migrated (batch 1); script removed
 857_a_host_module_several_members_import_is_compiled_once.sh	modules	merge	e2e/modules	
 858_the_engines_module_is_compiled_once_per_home.sh	modules	merge	e2e/modules	
 859_a_host_module_entry_is_reused_while_its_inputs_agree.sh	build-program	merge	e2e/build-program	
@@ -550,7 +550,7 @@ script	subsystem	class	destination	note
 862_run_q_writes_exactly_the_programs_stdout.sh	run	merge	e2e/run	
 863_a_run_whose_build_failed_exits_101.sh	run	merge	e2e/run	
 864_a_builds_status_is_on_standard_error.sh	cli	merge	e2e/cli	
-865_mcpp_test_reports_its_steps_on_stderr_and_its_results_on_stdout.sh	test	merge	e2e/test	
+865_mcpp_test_reports_its_steps_on_stderr_and_its_results_on_stdout.sh	test	merge	e2e/test::streams/865 mcpp test reports its steps on stderr and its results on stdout	migrated (batch 1); script removed
 866_both_streams_on_one_pipe_keep_their_order_and_json_stays_clean.sh	cli	merge	e2e/cli	
 867_a_pack_over_several_members_plans_builds_and_runs_programs_once.sh	pack	merge	e2e/pack	
 868_a_pack_over_several_members_is_refused_before_anything_is_compiled.sh	pack	merge	e2e/pack	
@@ -659,11 +659,11 @@ script	subsystem	class	destination	note
 986_single_files_cover_the_legs_and_systems.sh	openkal	merge	e2e/openkal	
 987_the_universal_spellings_are_migrated.sh	openkal	merge	e2e/openkal	
 988_the_windows_launcher_finds_its_package_from_a_windows_path.sh	openkal	keep	keep	emulator: runs the Windows launcher under wine
-989_a_native_legs_tests_run_from_an_archive.sh	test	merge	e2e/test	
+989_a_native_legs_tests_run_from_an_archive.sh	test	merge	e2e/test::archive/989 a native legs tests run from an archive	migrated (batch 1); script removed
 990_a_lock_key_does_not_depend_on_the_selected_members.sh	deps	merge	e2e/deps	
 991_a_prebuilt_archive_in_ldflags_is_a_link_input.sh	build	merge	e2e/build	
 992_a_polyglot_file_runs_on_every_system_it_holds.sh	openkal	merge	e2e/openkal	
-993_a_test_describes_its_launch.sh	test	merge	e2e/test	
+993_a_test_describes_its_launch.sh	test	merge	e2e/test::launch/993 a test describes its launch ; e2e/test::launch/993 a test describes its launch (a named runner)	migrated (batch 1); script removed
 994_the_contract_names_the_target_side.sh	openkal	merge	e2e/openkal	
 995_the_windows_launcher_builds_over_any_platform_release.sh	openkal	merge	e2e/openkal	
 996_an_ok_image_waits_for_a_prepare_action.sh	openkal	merge	e2e/openkal	
@@ -696,7 +696,7 @@ script	subsystem	class	destination	note
 1023_msvc_objects_carry_their_own_debug_information.sh	windows	merge	e2e/windows	
 1024_a_launch_description_takes_the_fast_path.sh	run	merge	e2e/run	
 1025_the_default_platform_is_one_release.sh	openkal	merge	e2e/openkal	
-1026_an_archived_member_test_carries_its_members_files.sh	test	merge	e2e/test	
+1026_an_archived_member_test_carries_its_members_files.sh	test	merge	e2e/test::archive/1026 an archived member test carries its members files	migrated (batch 1); script removed
 1027_a_configuration_group_keeps_the_other_groups_lock_entries.sh	deps	merge	e2e/deps	
 1028_a_projects_state_directory_ignores_itself.sh	cache	merge	e2e/cache	
 1029_an_unused_std_module_is_collected_by_age.sh	cache	merge	e2e/cache	
@@ -704,11 +704,11 @@ script	subsystem	class	destination	note
 1031_target_keeps_within_its_budget.sh	cache	merge	e2e/cache	
 1032_a_quoted_dotted_dependency_key_is_deprecated.sh	deps	merge	e2e/deps	
 1033_an_ok_image_runs_on_the_system_that_built_it.sh	openkal	merge	e2e/openkal	
-1034_a_workspace_members_test_finds_its_programs.sh	test	merge	e2e/test	
-1035_a_test_program_reports_its_cases.sh	test	merge	e2e/test	
+1034_a_workspace_members_test_finds_its_programs.sh	test	merge	e2e/test::workspace/1034 a workspace members test finds its programs	migrated (batch 1); script removed
+1035_a_test_program_reports_its_cases.sh	test	merge	e2e/test::protocol/1035 a test program reports its cases	migrated (batch 1); script removed
 1036_a_context_states_the_engine_values_in_process.sh	build-program	merge	e2e/build-program	
-1037_a_skeleton_tests_with_mtest_and_a_test_needs_no_main.sh	test	merge	e2e/test	
-1038_test_programs_of_a_directory_and_the_tests_a_change_affects.sh	test	merge	e2e/test	
+1037_a_skeleton_tests_with_mtest_and_a_test_needs_no_main.sh	test	merge	e2e/test::skeleton/1037 a skeleton tests with mtest and a test needs no main	migrated (batch 1); script removed
+1038_test_programs_of_a_directory_and_the_tests_a_change_affects.sh	test	merge	e2e/test::affected/1038 test programs of a directory and the tests a change affects	migrated (batch 1); script removed
 1039_two_builds_that_find_the_std_module_missing_compile_it_once.sh	modules	merge	e2e/modules	
 1040_a_platform_defines_a_target.sh	openkal	merge	e2e/openkal	
 1041_a_32_bit_x86_bare_target.sh	baremetal	merge	e2e/baremetal	
@@ -720,9 +720,9 @@ script	subsystem	class	destination	note
 1047_an_artifact_compiles_its_shared_sources_with_its_own_flags.sh	build	merge	e2e/build	
 1048_a_git_reference_follows_the_default_branch.sh	deps	merge	e2e/deps	
 1049_a_platform_skeleton_is_made_and_its_statement_read_as_the_engine_reads_it.sh	openkal	merge	e2e/openkal	
-1050_a_test_run_is_kept_in_the_mtest_store.sh	test	merge	e2e/test	
+1050_a_test_run_is_kept_in_the_mtest_store.sh	test	merge	e2e/test::archive/1050 a test run is kept in the mtest store	migrated (batch 1); script removed
 1051_a_cross_targets_toolchain_section_is_not_the_build_programs.sh	build-program	merge	e2e/build-program	
-1052_a_framework_that_uses_the_package_under_test_is_built_against_it.sh	test	merge	e2e/test	
+1052_a_framework_that_uses_the_package_under_test_is_built_against_it.sh	test	merge	e2e/test::frameworks/1052 a framework that uses the package under test is built against it	migrated (batch 1); script removed
 1053_a_mach_o_images_c_library_is_up_before_its_initialisers.sh	macos	merge	e2e/macos	
 1054_programs_that_share_an_entry_keep_their_own_flags.sh	build	merge	e2e/build	
 1055_layer_suppliers_that_require_one_another_are_refused.sh	target	merge	e2e/target	
@@ -735,12 +735,12 @@ script	subsystem	class	destination	note
 1062_link_flags_on_a_compiler_link_are_named_not_dropped.sh	build	merge	e2e/build	
 1063_a_mingw_base_package_serves_windows_gnu_beside_llvm.sh	windows	keep	keep	emulator: runs the mingw base-package program under wine
 1064_a_scan_override_of_a_file_this_build_excludes_is_kept.sh	modules	merge	e2e/modules	
-1065_test_records_carry_parts_live_cases_and_metrics.sh	test	merge	e2e/test	
+1065_test_records_carry_parts_live_cases_and_metrics.sh	test	merge	e2e/test::protocol/1065 test records carry parts live cases and metrics	migrated (batch 1); script removed
 1066_a_merged_version_withdraws_its_requests.sh	deps	merge	e2e/deps	
 1067_a_borrowed_registry_keeps_its_owners_places.sh	index	merge	e2e/index	
-1068_a_running_test_holds_no_build_directory.sh	test	merge	e2e/test	
-1069_an_unchanged_project_tests_without_planning.sh	test	merge	e2e/test	
-1070_the_test_spec_launches_frameworks_checks_and_output.sh	test	merge	e2e/test	
+1068_a_running_test_holds_no_build_directory.sh	test	merge	e2e/test::fast/1068 a running test holds no build directory	migrated (batch 1); script removed
+1069_an_unchanged_project_tests_without_planning.sh	test	merge	e2e/test::fast/1069 an unchanged project tests without planning	migrated (batch 1); script removed
+1070_the_test_spec_launches_frameworks_checks_and_output.sh	test	merge	e2e/test::protocol/1070 the test spec launches frameworks checks and output	migrated (batch 1); script removed
 1071_the_root_overrides_a_dependency_for_the_whole_graph.sh	deps	merge	e2e/deps	
 1072_a_resource_include_nothing_provides_is_the_scripts_own.sh	windows	merge	e2e/windows	
 1073_the_freebsd_musl_identity_is_served_by_openkal.sh	openkal	merge	e2e/openkal	

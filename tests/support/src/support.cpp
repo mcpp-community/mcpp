@@ -38,6 +38,133 @@ std::optional<std::string> env(std::string_view name) {
     return std::nullopt;
 }
 
+std::optional<fs::path> on_path(std::string_view name) {
+    const auto path = env("PATH");
+    if (!path)
+        return std::nullopt;
+    const char sep = on_windows() ? ';' : ':';
+    for (auto part : std::views::split(std::string_view(*path), sep)) {
+        const fs::path dir(std::string(part.begin(), part.end()));
+        if (dir.empty())
+            continue;
+        std::error_code ec;
+        for (const auto& candidate : {dir / name, dir / (std::string(name) + ".exe")})
+            if (fs::is_regular_file(candidate, ec))
+                return candidate;
+    }
+    return std::nullopt;
+}
+
+// ---- capabilities (tests/e2e/run_all.sh, "Build the set of capabilities") ----------------------
+
+namespace {
+
+fs::path home_dir() {
+    if (auto h = env("MCPP_HOME"); h && !h->empty())
+        return *h;
+    return fs::path(env(on_windows() ? "USERPROFILE" : "HOME").value_or("")) / ".mcpp";
+}
+
+fs::path user_dir() { return env(on_windows() ? "USERPROFILE" : "HOME").value_or(""); }
+
+// A payload under the registry of the home or of the user's xlings: `<xpkgs>/<pattern>`.
+bool payload(std::string_view pattern, bool xlings_too = true) {
+    if (!glob(home_dir() / "registry/data/xpkgs", pattern).empty())
+        return true;
+    return xlings_too && !glob(user_dir() / ".xlings/data/xpkgs", pattern).empty();
+}
+
+bool probe(std::string_view c) {
+    const bool unix_like = on_linux() || on_macos();
+    if (c == "x86_64-host") {
+#if defined(__x86_64__) || defined(_M_X64)
+        return true;
+#else
+        return false;
+#endif
+    }
+    if (c == "elf") return on_linux();
+    if (c == "unix-shell" || c == "fresh-sandbox" || c == "symlink") return unix_like;
+    if (c == "macos") return on_macos();
+    if (c == "windows") return on_windows();
+    if (c == "gcc") return on_linux() && on_path("g++");
+    if (c == "patchelf" || c == "pack") return on_linux() && on_path("patchelf");
+    if (c == "musl")
+        return on_linux() && (on_path("x86_64-linux-musl-g++") || payload("xim-x-musl-gcc/*/bin/x86_64-linux-musl-g++"));
+    if (c == "mingw-cross") return on_linux() && payload("xim-x-mingw-cross-gcc/*/bin/x86_64-w64-mingw32-g++");
+    if (c == "llvm") return on_linux() && payload("xim-x-llvm/*/bin/clang++", false);
+    if (c == "mingw-host-headers") {
+        if (!on_linux()) return false;
+        if (fs::is_directory("/usr/x86_64-w64-mingw32/include")) return true;
+        auto root = env("MCPP_E2E_HOST_MINGW_ROOT");
+        return root && !root->empty() && fs::is_regular_file(fs::path(*root) / "x86_64-w64-mingw32/include/io.h");
+    }
+    if (c == "wine") return on_linux() && on_path("wine");
+    if (c == "qemu-riscv") return on_linux() && on_path("qemu-system-riscv64");
+    if (c == "qemu-arm") return on_linux() && (on_path("qemu-system-arm") || payload("xim-x-qemu-arm/*/bin/qemu-system-arm"));
+    if (c == "android-ndk") return on_linux() && payload("xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang++");
+    if (c == "android-device") {
+        // An arm64 device (not an emulator) answering the platform-tools' adb.
+        if (!on_linux()) return false;
+        std::vector<fs::path> adbs = glob(user_dir() / ".xlings/data/xpkgs", "xim-x-android-platform-tools/*/adb");
+        for (auto& a : glob(home_dir() / "registry/data/xpkgs", "xim-x-android-platform-tools/*/adb")) adbs.push_back(a);
+        for (const auto& adb : adbs) {
+            auto r = e2e::run({.argv = {adb.string(), "devices"}});
+            for (auto line : std::views::split(std::string_view(r.out), '\n')) {
+                std::string_view l(line.begin(), line.end());
+                const auto tab = l.find('\t');
+                if (tab == std::string_view::npos || l.starts_with("emulator-") || !l.substr(tab + 1).starts_with("device"))
+                    continue;
+                auto abi = e2e::run({.argv = {adb.string(), "shell", "getprop", "ro.product.cpu.abi"},
+                                     .env = {{"ANDROID_SERIAL", std::string(l.substr(0, tab))}}});
+                if (abi.out.starts_with("arm64-v8a")) return true;
+            }
+        }
+        return false;
+    }
+    if (c == "msvc" || c == "no-msvc") {
+        if (!on_windows()) return false;
+        const fs::path vswhere = "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe";
+        bool msvc = false;
+        if (fs::is_regular_file(vswhere)) {
+            auto r = e2e::run({.argv = {vswhere.string(), "-latest", "-products", "*", "-requires",
+                                        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property",
+                                        "installationPath"}});
+            msvc = r.out.find_first_not_of(" \r\n") != std::string::npos;
+        }
+        return c == "msvc" ? msvc : !msvc;
+    }
+    if (c == "mingw") return on_windows() && payload("xim-x-mingw-gcc/*/bin/g++.exe");
+    if (c == "python3") return on_path("python3").has_value();
+    if (c == "jq") return on_path("jq").has_value();
+    if (c == "nasm") return on_path("nasm") || payload("xim-x-nasm/*/nasm", false) || payload("xim-x-nasm/*/bin/nasm", false);
+    if (c == "scan-deps")
+        return on_path("clang-scan-deps") || payload("xim-x-llvm/*/bin/clang-scan-deps", false) ||
+               payload("xim-x-llvm/*/bin/clang-scan-deps.exe", false);
+    if (c == "import-std-libcxx") return payload("xim-x-llvm/*/share/libc++/v1/std.cppm", false);
+    if (c == "xlings-msvc") return env("MCPP_E2E_XLINGS_MSVC").value_or("") == "1";
+    mcpplibs::mtest::fail(std::format("unknown capability '{}' (run_all.sh's KNOWN_CAPS)", c));
+}
+
+}  // namespace
+
+bool has(std::string_view capability) {
+    static std::mutex m;
+    static std::map<std::string, bool, std::less<>> known;
+    std::scoped_lock lock(m);
+    if (auto it = known.find(capability); it != known.end())
+        return it->second;
+    const bool held = probe(capability);
+    known.emplace(std::string(capability), held);
+    return held;
+}
+
+void needs(std::initializer_list<std::string_view> capabilities) {
+    for (auto c : capabilities)
+        if (!has(c))
+            mcpplibs::mtest::skip(std::format("missing capability: {}", c));
+}
+
 // ---- mcpp ----------------------------------------------------------------------------------------
 
 std::string mcpp_path() {
@@ -49,6 +176,10 @@ std::string mcpp_path() {
 }
 
 e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o) {
+    return e2e::run(mcpp_command(std::move(args), cwd, o));
+}
+
+e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, const options& o) {
     e2e::command c;
     c.argv.push_back(mcpp_path());
     for (auto& a : args) c.argv.push_back(std::move(a));
@@ -64,7 +195,7 @@ e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const opti
     for (const auto& kv : o.env) c.env.push_back(kv);
     c.input = o.input;
     c.timeout = o.timeout;
-    return e2e::run(std::move(c));
+    return c;
 }
 
 std::string text(const e2e::outcome& r) { return r.out + r.err; }
@@ -107,6 +238,17 @@ std::optional<fs::path> project::artifact(std::string_view name) const {
     return find_file(dir_ / "target", name);
 }
 
+project project::scaffold(std::string_view name, std::vector<std::string> args) {
+    const auto parent = mcpplibs::mtest::temp_dir() / "new";
+    fs::create_directories(parent);
+    std::vector<std::string> argv{"new", std::string(name)};
+    argv.insert(argv.end(), args.begin(), args.end());
+    auto r = support::mcpp(std::move(argv), parent);
+    if (!r)
+        mcpplibs::mtest::fail(std::format("mcpp new {} failed: {}\n{}", name, r.line, text(r)));
+    return project(parent / fs::path(std::u8string(name.begin(), name.end())), {});
+}
+
 std::optional<fs::path> find_file(const fs::path& root, std::string_view name) {
     std::error_code ec;
     if (!fs::is_directory(root, ec))
@@ -134,6 +276,49 @@ std::vector<fs::path> find_files(const fs::path& root, std::string_view pattern)
             found.push_back(it->path());
     std::ranges::sort(found);
     return found;
+}
+
+namespace {
+// A shell's `*` within one name; no leading dot unless the pattern has one.
+bool wildcard(std::string_view pattern, std::string_view name) {
+    if (name.starts_with('.') && !pattern.starts_with('.'))
+        return false;
+    std::size_t p = 0, n = 0, star = std::string_view::npos, mark = 0;
+    while (n < name.size()) {
+        if (p < pattern.size() && pattern[p] == '*') { star = p++; mark = n; }
+        else if (p < pattern.size() && pattern[p] == name[n]) { ++p; ++n; }
+        else if (star != std::string_view::npos) { p = star + 1; n = ++mark; }
+        else return false;
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+}  // namespace
+
+std::vector<fs::path> glob(const fs::path& root, std::string_view pattern) {
+    std::vector<fs::path> level{root};
+    for (auto part : std::views::split(pattern, '/')) {
+        const std::string_view component(part.begin(), part.end());
+        if (component.empty())
+            continue;
+        std::vector<fs::path> next;
+        std::error_code ec;
+        for (const auto& dir : level) {
+            if (!component.contains('*')) {
+                if (fs::exists(dir / component, ec))
+                    next.push_back(dir / component);
+                continue;
+            }
+            if (!fs::is_directory(dir, ec))
+                continue;
+            for (const auto& e : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec))
+                if (wildcard(component, e.path().filename().string()))
+                    next.push_back(e.path());
+        }
+        level = std::move(next);
+    }
+    std::ranges::sort(level);
+    return level;
 }
 
 // ---- readings --------------------------------------------------------------------------------------
@@ -181,6 +366,64 @@ std::vector<nlohmann::json> json_lines(std::string_view text) {
         auto one = nlohmann::json::parse(l, nullptr, false);
         if (!one.is_discarded() && one.is_object())
             out.push_back(std::move(one));
+    }
+    return out;
+}
+
+namespace {
+std::vector<std::string_view> split_lines(std::string_view text) {
+    std::vector<std::string_view> out;
+    for (auto line : std::views::split(text, '\n')) {
+        std::string_view l(line.begin(), line.end());
+        if (l.ends_with('\r')) l.remove_suffix(1);
+        out.push_back(l);
+    }
+    return out;
+}
+std::string tail_of(std::string_view text) {
+    constexpr std::size_t keep = 3000;
+    return std::string(text.size() > keep ? text.substr(text.size() - keep) : text);
+}
+std::string lower(std::string_view s) {
+    std::string r(s);
+    for (auto& ch : r) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return r;
+}
+bool any_line(std::string_view text, std::string_view pattern) {
+    const std::regex re{std::string(pattern)};
+    for (auto l : split_lines(text))
+        if (std::regex_search(l.begin(), l.end(), re))
+            return true;
+    return false;
+}
+}  // namespace
+
+mcpplibs::mtest::comparison has_line(std::string_view text, std::string_view pattern) {
+    return {any_line(text, pattern), "has_line", std::format("a line matching /{}/", pattern), tail_of(text)};
+}
+mcpplibs::mtest::comparison no_line(std::string_view text, std::string_view pattern) {
+    return {!any_line(text, pattern), "no_line", std::format("no line matching /{}/", pattern), tail_of(text)};
+}
+mcpplibs::mtest::comparison lacks(std::string_view text, std::string_view needle) {
+    return {!text.contains(needle), "lacks", std::format("text without \"{}\"", needle), tail_of(text)};
+}
+mcpplibs::mtest::comparison contains_nocase(std::string_view text, std::string_view needle) {
+    return {lower(text).contains(lower(needle)), "contains_nocase",
+            std::format("text containing \"{}\" (any case)", needle), tail_of(text)};
+}
+std::size_t count_lines(std::string_view text, std::string_view needle) {
+    return static_cast<std::size_t>(std::ranges::count_if(split_lines(text), [&](auto l) { return l.contains(needle); }));
+}
+
+std::vector<std::string> ninja_log_outputs(const fs::path& build_dir) {
+    std::vector<std::string> out;
+    for (auto l : split_lines(read_file(build_dir / ".ninja_log"))) {
+        if (l.starts_with('#'))
+            continue;
+        std::vector<std::string_view> cols;
+        for (auto c : std::views::split(l, '\t')) cols.emplace_back(c.begin(), c.end());
+        if (cols.size() >= 4)
+            out.emplace_back(cols[3]);
     }
     return out;
 }
