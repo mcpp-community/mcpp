@@ -148,6 +148,63 @@ bool probe(std::string_view c) {
 
 }  // namespace
 
+namespace {
+// `sort -V` order of two versions: numbers as numbers, the rest as text.
+bool version_less(std::string_view a, std::string_view b) {
+    std::size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        if (std::isdigit(static_cast<unsigned char>(a[i])) && std::isdigit(static_cast<unsigned char>(b[j]))) {
+            std::size_t ie = i, je = j;
+            while (ie < a.size() && std::isdigit(static_cast<unsigned char>(a[ie]))) ++ie;
+            while (je < b.size() && std::isdigit(static_cast<unsigned char>(b[je]))) ++je;
+            const auto x = std::stoull(std::string(a.substr(i, ie - i)));
+            const auto y = std::stoull(std::string(b.substr(j, je - j)));
+            if (x != y) return x < y;
+            i = ie; j = je;
+        } else {
+            if (a[i] != b[j]) return a[i] < b[j];
+            ++i; ++j;
+        }
+    }
+    return a.size() - i < b.size() - j;
+}
+}  // namespace
+
+std::optional<std::string> newest_payload(std::string_view package, std::string_view probe) {
+    for (const auto& root : {home_dir() / "registry/data/xpkgs", user_dir() / ".xlings/data/xpkgs"}) {
+        std::vector<std::string> versions;
+        for (const auto& v : glob(root / package, "*"))
+            if (probe.empty() || !glob(v, probe).empty())
+                versions.push_back(v.filename().string());
+        if (!versions.empty())
+            return *std::ranges::max_element(versions, version_less);
+    }
+    return std::nullopt;
+}
+
+std::string family_version(std::string_view package, std::string_view override, std::string_view fallback) {
+    if (auto v = env(override); v && !v->empty())
+        return *v;
+    // _toolchain_env.sh reads the home's registry only (USERPROFILE's on Windows when unset).
+    std::vector<std::string> versions;
+    static const std::regex numeric{R"(^[0-9]+(\.[0-9]+)*$)"};
+    for (const auto& v : glob(home_dir() / "registry/data/xpkgs" / package, "*")) {
+        const auto name = v.filename().string();
+        if (std::regex_match(name, numeric))
+            versions.push_back(name);
+    }
+    if (versions.empty())
+        return std::string(fallback);
+    return *std::ranges::max_element(versions, version_less);
+}
+
+fs::path payload_root(std::string_view package, std::string_view version) {
+    const auto mine = home_dir() / "registry/data/xpkgs" / package / version;
+    if (std::error_code ec; fs::exists(mine, ec))
+        return mine;
+    return user_dir() / ".xlings/data/xpkgs" / package / version;
+}
+
 bool has(std::string_view capability) {
     static std::mutex m;
     static std::map<std::string, bool, std::less<>> known;
@@ -167,6 +224,27 @@ void needs(std::initializer_list<std::string_view> capabilities) {
 
 // ---- mcpp ----------------------------------------------------------------------------------------
 
+fs::path repository() {
+    // The directory holding tests/support/mcpp.toml: above this source file when the compiler
+    // named it absolutely, else above the working directory (`mcpp test` runs in the package).
+    const auto holds = [](const fs::path& d) {
+        std::error_code ec;
+        return fs::is_regular_file(d / "tests/support/mcpp.toml", ec);
+    };
+    std::vector<fs::path> starts;
+    if (const fs::path here = std::source_location::current().file_name(); here.is_absolute())
+        starts.push_back(here.parent_path());
+    starts.push_back(fs::current_path());
+    for (auto d : starts)
+        for (; !d.empty(); d = d.parent_path()) {
+            if (holds(d))
+                return d;
+            if (d == d.parent_path())
+                break;
+        }
+    mcpplibs::mtest::fail("the mcpp repository was not found above this program");
+}
+
 std::string mcpp_path() {
     if (auto v = env("MCPP_BIN_MCPP"); v && !v->empty())
         return *v;
@@ -184,10 +262,8 @@ e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, co
     c.argv.push_back(mcpp_path());
     for (auto& a : args) c.argv.push_back(std::move(a));
     c.cwd = cwd;
-    if (o.where == home::fresh) {
-        auto h = mcpplibs::mtest::temp_dir() / "home";
-        fs::create_directories(h);
-        c.env.emplace_back("MCPP_HOME", h.string());
+    if (o.where != home::shared) {
+        c.env.emplace_back("MCPP_HOME", case_home(o.where).string());
     } else if (!env("MCPP_HOME")) {
         if (auto u = env(on_windows() ? "USERPROFILE" : "HOME"))
             c.env.emplace_back("MCPP_HOME", (fs::path(*u) / ".mcpp").string());
@@ -199,6 +275,93 @@ e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, co
 }
 
 std::string text(const e2e::outcome& r) { return r.out + r.err; }
+
+fs::path shared_home() { return home_dir(); }
+
+namespace {
+void link_or_copy(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    if (fs::exists(fs::symlink_status(to, ec)))
+        return;
+    fs::create_directory_symlink(from, to, ec);
+    if (ec)
+        fs::copy(from, to, fs::copy_options::recursive, ec);
+}
+// _inherit_toolchain.sh's link_xpkg_payloads: each package directory of `from` is a directory of
+// `to` whose versions are links; anything else is linked whole.
+void link_payloads(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    if (!fs::is_directory(from, ec))
+        return;
+    fs::create_directories(to);
+    for (const auto& e : fs::directory_iterator(from, ec)) {
+        const auto there = to / e.path().filename();
+        if (!e.is_directory(ec) || fs::is_symlink(fs::symlink_status(there, ec))) {
+            link_or_copy(e.path(), there);
+            continue;
+        }
+        fs::create_directories(there);
+        for (const auto& v : fs::directory_iterator(e.path(), ec))
+            link_or_copy(v.path(), there / v.path().filename());
+    }
+}
+void inherit(const fs::path& h, bool whole) {
+    const auto user = home_dir();
+    const auto xlings = user_dir() / ".xlings/data/xpkgs";
+    link_payloads(user / "registry/data/xpkgs", h / "registry/data/xpkgs");
+    link_payloads(user / "xpkgs", h / "xpkgs");
+    link_payloads(xlings, h / "registry/data/xpkgs");
+    std::error_code ec;
+    for (auto name : {"xim-pkgindex", "xim-index-repos"})
+        if (fs::is_directory(user / "registry/data" / name, ec)) {
+            fs::create_directories(h / "registry/data");
+            link_or_copy(user / "registry/data" / name, h / "registry/data" / name);
+        }
+    if (whole && env("MCPP_INHERIT_SUBOS").value_or("1") != "0" && fs::is_directory(user / "registry/subos", ec))
+        link_or_copy(user / "registry/subos", h / "registry/subos");
+    if (whole && env("MCPP_INHERIT_CONFIG").value_or("1") != "0" && fs::is_regular_file(user / "config.toml", ec))
+        fs::copy_file(user / "config.toml", h / "config.toml", fs::copy_options::overwrite_existing, ec);
+    if (fs::is_directory(user / "bin", ec))
+        link_or_copy(user / "bin", h / "bin");
+}
+}  // namespace
+
+namespace {
+// The homes of the cases, made under the system's temporary directory: a payload may hold its
+// install directory in a fixed space (glibc's binaries hold 255 bytes), and a case's own directory
+// is too long for it, where the scripts' `mktemp -d` was not. Removed when the program ends.
+struct homes {
+    std::mutex m;
+    std::map<fs::path, fs::path> of_case;
+    ~homes() {
+        std::error_code ec;
+        for (const auto& [_, h] : of_case) fs::remove_all(h, ec);
+    }
+};
+homes& case_homes() {
+    static homes h;
+    return h;
+}
+}  // namespace
+
+fs::path case_home(home kind) {
+    auto& all = case_homes();
+    const auto key = mcpplibs::mtest::temp_dir();
+    std::scoped_lock lock(all.m);
+    if (auto it = all.of_case.find(key); it != all.of_case.end())
+        return it->second;
+    std::random_device rd;
+    fs::path h;
+    std::error_code ec;
+    do h = fs::temp_directory_path() / std::format("mcpp-e2e-home-{:08x}", rd());
+    while (!fs::create_directory(h, ec) && !ec);
+    all.of_case.emplace(key, h);
+    if (kind == home::linked && fs::is_directory(home_dir() / "registry", ec))
+        link_or_copy(home_dir() / "registry", h / "registry");
+    else if (kind == home::inherited || kind == home::payloads)
+        inherit(h, kind == home::inherited);
+    return h;
+}
 
 // ---- a project -----------------------------------------------------------------------------------
 
@@ -276,6 +439,49 @@ std::vector<fs::path> find_files(const fs::path& root, std::string_view pattern)
             found.push_back(it->path());
     std::ranges::sort(found);
     return found;
+}
+
+std::vector<std::string> listing(const fs::path& root) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec))
+        out.push_back(it->path().lexically_relative(root).generic_string());
+    std::ranges::sort(out);
+    return out;
+}
+
+std::optional<fs::path> newest_file(const fs::path& root, std::string_view name) {
+    std::optional<fs::path> best;
+    fs::file_time_type when{};
+    std::error_code ec;
+    if (!fs::is_directory(root, ec))
+        return best;
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().filename() != name)
+            continue;
+        const auto t = fs::last_write_time(it->path(), ec);
+        if (!best || t > when) { best = it->path(); when = t; }
+    }
+    return best;
+}
+
+void write_executable(const fs::path& file, std::string_view content) {
+    write_into(file.parent_path(), file.filename().string(), content);
+    std::error_code ec;
+    fs::permissions(file, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                              fs::perms::others_read | fs::perms::others_exec, ec);
+}
+
+e2e::outcome run(const fs::path& program, std::vector<std::string> args, const fs::path& cwd,
+                 std::vector<std::pair<std::string, std::optional<std::string>>> env) {
+    e2e::command c;
+    c.argv.push_back(program.string());
+    for (auto& a : args) c.argv.push_back(std::move(a));
+    c.cwd = cwd;
+    c.env = std::move(env);
+    return e2e::run(std::move(c));
 }
 
 namespace {
@@ -410,6 +616,28 @@ mcpplibs::mtest::comparison lacks(std::string_view text, std::string_view needle
 mcpplibs::mtest::comparison contains_nocase(std::string_view text, std::string_view needle) {
     return {lower(text).contains(lower(needle)), "contains_nocase",
             std::format("text containing \"{}\" (any case)", needle), tail_of(text)};
+}
+mcpplibs::mtest::comparison has_line_nocase(std::string_view text, std::string_view pattern) {
+    const std::regex re{std::string(pattern), std::regex::ECMAScript | std::regex::icase};
+    bool held = false;
+    for (auto l : split_lines(text))
+        held = held || std::regex_search(l.begin(), l.end(), re);
+    return {held, "has_line_nocase", std::format("a line matching /{}/i", pattern), tail_of(text)};
+}
+std::string last_line(std::string_view text) {
+    auto lines = split_lines(text);
+    while (!lines.empty() && lines.back().empty()) lines.pop_back();
+    return lines.empty() ? std::string{} : std::string(lines.back());
+}
+std::string last_starting(std::string_view text, std::string_view prefix) {
+    std::string found;
+    for (auto l : split_lines(text))
+        if (l.starts_with(prefix)) found = std::string(l);
+    return found;
+}
+std::size_t count_matching(std::string_view text, std::string_view pattern) {
+    const std::regex re{std::string(pattern)};
+    return static_cast<std::size_t>(std::ranges::count_if(split_lines(text), [&](auto l) { return std::regex_search(l.begin(), l.end(), re); }));
 }
 std::size_t count_lines(std::string_view text, std::string_view needle) {
     return static_cast<std::size_t>(std::ranges::count_if(split_lines(text), [&](auto l) { return l.contains(needle); }));

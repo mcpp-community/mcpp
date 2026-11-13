@@ -43,12 +43,39 @@ bool has(std::string_view capability);
 // Ends the case as skipped ("missing capability: <word>") unless this machine has every word.
 void needs(std::initializer_list<std::string_view> capabilities);
 
+// The newest version (by `sort -V`) of payload `package` (`xim-x-musl-gcc`) for which
+// `<version>/<probe>` (a glob) exists, in the shared home's registry or, failing that, the user's
+// xlings (tests/e2e/_toolchain_env.sh).
+std::optional<std::string> newest_payload(std::string_view package, std::string_view probe = "");
+// tests/e2e/_toolchain_env.sh: the version of a toolchain family the case uses, the variable
+// `override` when set, else the newest numeric version installed, else `fallback`.
+std::string family_version(std::string_view package, std::string_view override, std::string_view fallback);
+inline std::string llvm_version() { return family_version("xim-x-llvm", "MCPP_E2E_LLVM_VERSION", "23.1.3"); }
+inline std::string gcc_version() { return family_version("xim-x-gcc", "MCPP_E2E_GCC_VERSION", "16.1.0"); }
+inline std::string musl_gcc_version() { return family_version("xim-x-musl-gcc", "MCPP_E2E_MUSL_GCC_VERSION", "15.1.0"); }
+inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cross-gcc", "MCPP_E2E_MINGW_CROSS_VERSION", "16.1.0"); }
+// The directory of that payload's version.
+fs::path payload_root(std::string_view package, std::string_view version);
+
+// The root of the mcpp repository these cases belong to (its examples, its fixtures).
+fs::path repository();
+
 // ---- mcpp ----------------------------------------------------------------------------------------
 
 // The mcpp under test.
 std::string mcpp_path();
 
-enum class home { shared, fresh };
+// shared: the machine's home. fresh: an empty home of the case. linked: a home of the case whose
+// `registry` is a link to the shared home's (its toolchains, not its build cache or state).
+// inherited: tests/e2e/_inherit_toolchain.sh's home, a home of the case holding links to each
+// payload of the user's homes, their indices, `subos` and `bin`, and a copy of `config.toml`.
+// payloads: inherited without config.toml and subos (MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0).
+enum class home { shared, fresh, linked, inherited, payloads };
+
+// The home of the case (fresh, linked, inherited): one directory per case, made on first use.
+fs::path case_home(home kind = home::fresh);
+// The shared home: `MCPP_HOME`, else `~/.mcpp`.
+fs::path shared_home();
 
 struct options {
     home where = home::shared;
@@ -109,6 +136,15 @@ std::vector<fs::path> find_files(const fs::path& root, std::string_view pattern)
 // component matches any run of characters and, as in a shell, no leading dot:
 // glob(p.at("target"), "*/*/build.ninja").
 std::vector<fs::path> glob(const fs::path& root, std::string_view pattern);
+// Every path under `root`, relative and sorted (`find <root> | sort`): a tree to compare later.
+std::vector<std::string> listing(const fs::path& root);
+// The most recently written regular file under `root` named `name` (`ls -t $(find ...) | head -1`).
+std::optional<fs::path> newest_file(const fs::path& root, std::string_view name);
+// `content` written to `file` (its directories made), executable by its owner (a fake tool).
+void write_executable(const fs::path& file, std::string_view content);
+// A program the case built or wrote, run in `cwd` (a minute at most).
+e2e::outcome run(const fs::path& program, std::vector<std::string> args = {}, const fs::path& cwd = {},
+                 std::vector<std::pair<std::string, std::optional<std::string>>> env = {});
 
 // ---- readings --------------------------------------------------------------------------------------
 
@@ -131,8 +167,16 @@ mcpplibs::mtest::comparison no_line(std::string_view text, std::string_view patt
 mcpplibs::mtest::comparison lacks(std::string_view text, std::string_view needle);
 // `text` contains `needle`, ignoring ASCII case (`grep -i`).
 mcpplibs::mtest::comparison contains_nocase(std::string_view text, std::string_view needle);
+// some line of `text` matches `pattern`, ignoring ASCII case (`grep -iE`).
+mcpplibs::mtest::comparison has_line_nocase(std::string_view text, std::string_view pattern);
+// The last line of `text` that is not empty (`| tail -1` of a program's output).
+std::string last_line(std::string_view text);
+// The last line of `text` that starts with `prefix` (`grep '^<prefix>' | tail -1`), or "".
+std::string last_starting(std::string_view text, std::string_view prefix);
 // The number of lines of `text` that contain `needle` (`grep -c`).
 std::size_t count_lines(std::string_view text, std::string_view needle);
+// The number of lines of `text` that match `pattern` (`grep -cE`).
+std::size_t count_matching(std::string_view text, std::string_view pattern);
 
 // The outputs `.ninja_log` records, one per edge run (its fourth column), in order.
 std::vector<std::string> ninja_log_outputs(const fs::path& build_dir);
