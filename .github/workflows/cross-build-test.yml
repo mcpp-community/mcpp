@@ -349,10 +349,14 @@ jobs:
         with:
           host: linux-x86_64
 
+      # llvm beside it: the case that pairs clang with the MinGW payload reads
+      # the program's resources with the payload's llvm-readobj (`llvm`).
       - name: Install mingw-cross toolchain
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" toolchain install mingw-cross 16.1.0
+          "$MCPP" toolchain install llvm 23.1.3
+          echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
 
       - name: "e2e: cross-build + wine run"
         run: |
@@ -367,52 +371,31 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/1044_clang_pairs_with_the_mingw_payload.sh
 
-      # E3 (design 2026-11-10): the same pairing compiles `[resources]` with the
-      # payload's windres, and reads a quoted "winres.h" from the payload's headers.
-      - name: "e2e: resources on the clang + MinGW pairing"
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          bash tests/e2e/1058_a_gnu_abi_windows_row_compiles_its_resources.sh
-
-      # mcpp#365. This is the only job with a MinGW cross toolchain, so it is
-      # the only place the GNU half of resource compilation (windres -O coff,
-      # because GNU ld cannot consume a .res) can run at all — the Linux e2e
-      # shards skip it for want of the `mingw-cross` capability. Named
-      # explicitly for the same reason 102 is.
-      - name: "e2e: windows resources (windres / COFF)"
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          bash tests/e2e/198_windows_resources_cross.sh
-          bash tests/e2e/923_cross_dependency_images_keep_their_resources.sh
-
-      # Packaging a Windows program FROM LINUX — and this job is the only
-      # place that can happen, for the same reason as the two above.
-      #
-      # Running it on a Windows runner would prove nothing: the point of
-      # reading the import table instead of executing the artifact
-      # (mcpp.pack.binfmt) is precisely that the packaging host need not be
-      # the target. A same-OS pack cannot tell the two implementations apart.
-      - name: "e2e: pack a PE from Linux (zip + DLL closure)"
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          bash tests/e2e/240_pack_pe_zip_cross.sh
-
-      # A LIBRARY package whose legs cross an OS boundary, for the same reason
-      # as the three above: this is the only job with a MinGW cross toolchain.
-      #
-      # It is not redundant with 245 (which covers the fat-package mechanism
-      # with gnu + musl and therefore runs on every ordinary Linux shard). The
-      # leg added here changes BINARY FORMAT, and it is the case that proves
-      # `lib/` has to be keyed by triple rather than by OS: MinGW and MSVC are
-      # both "windows" and write `libfoo.a` and `foo.lib` respectively.
-      #
-      # Without this step the test would carry `# requires: mingw-cross` and
-      # skip in every job that exists — verified on a developer's machine and
-      # nowhere else, while the suite reported green.
-      - name: "e2e: pack a library across an OS boundary (PE leg)"
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          bash tests/e2e/248_pack_library_fat_pe_leg.sh
+      # The Windows cases only this job can run, for the reason 102 is: it is
+      # the one job with a MinGW cross toolchain, which the Linux shards lack.
+      # - resources: the GNU half of resource compilation (windres -O coff,
+      #   since GNU ld cannot consume a .res; mcpp#365), on the clang + MinGW
+      #   pairing as well (design 2026-11-10 E3), and kept by a dependency's
+      #   images across the cross build;
+      # - pack: a Windows program packed FROM LINUX, which reads the import
+      #   table instead of executing the artifact (mcpp.pack.binfmt), so a
+      #   same-OS pack could not tell the two implementations apart;
+      # - a library package whose legs cross a binary format: MinGW and MSVC
+      #   are both "windows" and write libfoo.a and foo.lib, which is why
+      #   `lib/` is keyed by triple, not by OS (245 covers gnu + musl).
+      # Run from the test archive build.yml wrote (no build here); each case
+      # is held to its `ok` line, so a skip cannot pass as a run.
+      - name: "e2e: Windows resources, packing and a PE leg, from Linux"
+        uses: ./.github/actions/e2e-cases
+        with:
+          mcpp: ${{ env.MCPP }}
+          host: linux-x86_64
+          cases: |
+            rows/1058 a gnu abi windows row compiles its resources
+            resources/198 windows resources cross
+            resources/923 cross dependency images keep their resources
+            pack/240 pack pe zip cross
+            pack/248 pack library fat pe leg
 
       # SPEC-007 R4.3: the engine places a Windows program's runtime DLLs
       # beside it after its link, so a program started by hand finds them.

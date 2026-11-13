@@ -27,6 +27,12 @@ on:
     # Run daily at 06:00 UTC to catch issues from xlings/runner updates
     - cron: '0 6 * * *'
 
+permissions:
+  contents: read
+  # The bare Windows job runs a case from the test archive of main's last CI
+  # run (.github/actions/e2e-cases).
+  actions: read
+
 concurrency:
   group: ci-fresh-install
   cancel-in-progress: false # use false to test in PRs, true to only test released mcpp
@@ -821,13 +827,23 @@ jobs:
           bash .github/tools/install_released_mcpp.sh "${MCPP_PIN}" "$(pwd)"
           mcpp self config --mirror GLOBAL
 
+      - name: The released mcpp
+        shell: bash
+        run: echo "MCPP_RELEASED=$(command -v mcpp)" >> "$GITHUB_ENV"
+
       # The self-check, the fallback, persistence, a self-contained exe, and
       # the refusal to overrule an explicit [toolchain] — all in e2e 182, so
-      # the assertions live with the tests rather than in workflow YAML.
+      # the assertions live with the tests rather than in workflow YAML. This
+      # host builds nothing with Visual Studio masked: the case comes from the
+      # test archive of main's last CI run, and tests the released mcpp.
       - name: "No Visual Studio: fallback to winlibs GCC (e2e 182)"
-        shell: bash
-        run: |
-          MCPP="$(command -v mcpp)" bash tests/e2e/182_windows_no_msvc_fallback.sh
+        uses: ./.github/actions/e2e-cases
+        with:
+          mcpp: ${{ env.MCPP_RELEASED }}
+          under-test: ${{ env.MCPP_RELEASED }}
+          host: windows-x86_64
+          from-main: 'true'
+          cases: mingw/182 windows no msvc fallback
 
       - uses: actions/upload-artifact@v4
         if: failure()

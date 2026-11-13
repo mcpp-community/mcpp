@@ -190,12 +190,18 @@ jobs:
         shell: bash
         run: python .github/tools/check_default_toolchain_docs.py --mcpp "$MCPP_SELF"
 
-      - name: "No Visual Studio: fallback to winlibs GCC (e2e 182)"
+      # From the test archive build.yml wrote: with Visual Studio masked this
+      # host builds nothing, so the case is built where it can be.
+      - name: The xlings the cases' mcpp uses
         shell: bash
-        env:
-          MCPP_VENDORED_XLINGS: ${{ env.XLINGS_BIN }}
-        run: |
-          MCPP="$MCPP_SELF" bash tests/e2e/182_windows_no_msvc_fallback.sh
+        run: echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
+
+      - name: "No Visual Studio: fallback to winlibs GCC (e2e 182)"
+        uses: ./.github/actions/e2e-cases
+        with:
+          mcpp: ${{ env.MCPP_SELF }}
+          host: windows-x86_64
+          cases: mingw/182 windows no msvc fallback
 
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -340,11 +346,16 @@ jobs:
       # winlibs mirror): install → default → modules build/run → standalone
       # exe. Same flow as e2e 97 but as a visible CI step. Payload is cached
       # via the mcpp sandbox cache after the first run.
-      - name: "Toolchain: MinGW — install → build → run (xim:mingw-gcc)"
+      - name: The xlings the cases' mcpp uses
         shell: bash
-        run: |
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          MCPP="$MCPP_SELF" bash tests/e2e/97_mingw_toolchain.sh
+        run: echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
+
+      - name: "Toolchain: MinGW — install → build → run (xim:mingw-gcc)"
+        uses: ./.github/actions/e2e-cases
+        with:
+          mcpp: ${{ env.MCPP_SELF }}
+          host: windows-x86_64
+          cases: mingw/97 mingw toolchain
 
       # windows-latest ships VS 2022 Enterprise with the VC workload, so
       # msvc@system detection MUST succeed here — a failure is a regression
@@ -372,18 +383,22 @@ jobs:
           "$MCPP_SELF" self doctor 2>&1 | tee doctor.txt || true
           grep -qi "msvc" doctor.txt
 
-          # native cl.exe build: full e2e (modules, import std, incremental)
-          cd "$GITHUB_WORKSPACE"
-          MCPP="$MCPP_SELF" bash tests/e2e/99_msvc_native_build.sh
-
-          # build.mcpp under cl.exe. `MSVC x build.mcpp` was an empty cell in
-          # this matrix and the feature was correspondingly at zero — the ten
-          # build.mcpp e2e all run under clang, whose payload path has no
-          # spaces in it either. Both gaps closed here.
-          MCPP="$MCPP_SELF" bash tests/e2e/180_msvc_build_mcpp.sh
-
           # restore the LLVM default for the remaining steps
           "$MCPP_SELF" toolchain default llvm@23.1.3
+
+      # The native cl.exe build (modules, import std, incremental), and
+      # build.mcpp under cl.exe: `MSVC x build.mcpp` was an empty cell in this
+      # matrix and the feature was correspondingly at zero — the ten build.mcpp
+      # e2e all run under clang, whose payload path has no spaces in it either.
+      # Each case restores the default it changes.
+      - name: "Toolchain: MSVC — native build and build.mcpp (e2e 99, 180)"
+        uses: ./.github/actions/e2e-cases
+        with:
+          mcpp: ${{ env.MCPP_SELF }}
+          host: windows-x86_64
+          cases: |
+            msvc/99 msvc native build
+            msvc/180 msvc build mcpp
 
       # mcpp#693: a project in a directory whose name is not ASCII, inside the
       # runner's code page 1252 and outside it, on the llvm, MSVC and MinGW rows,

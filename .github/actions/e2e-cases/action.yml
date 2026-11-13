@@ -1,0 +1,85 @@
+name: e2e-cases
+description: >
+  Named cases of the C++ e2e suite, each held to its `ok` line: a case that is
+  skipped (a capability absent, another platform) or fails fails the step, so a
+  job that exists to run a case cannot pass without running it. The cases run
+  from the test archive build.yml wrote for the host (`mcpp-tests-<host>`,
+  `mcpp test --archive`, docs/08): no job that runs them builds them, and a
+  host with Visual Studio masked could not.
+
+inputs:
+  cases:
+    description: the cases, one `<suite>/<case>` per line
+    required: true
+  mcpp:
+    description: the mcpp that runs the tests
+    required: true
+  host:
+    description: the host of the archive (linux-x86_64, windows-x86_64)
+    required: true
+  from-main:
+    description: >
+      'true': the archive of main's last successful CI run, for a workflow that
+      runs outside it (ci-fresh-install); otherwise this run's.
+    required: false
+    default: 'false'
+  under-test:
+    description: >
+      The mcpp the cases test (MCPP_E2E_MCPP). Empty: the archive's own build
+      (MCPP_BIN_MCPP).
+    required: false
+    default: ''
+  token:
+    description: a token that reads this repository's actions
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: The tests of this run
+      if: inputs.from-main != 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: mcpp-tests-${{ inputs.host }}
+        path: ${{ runner.temp }}/mcpp-tests
+
+    - name: The tests of main's last CI run
+      if: inputs.from-main == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        HOST: ${{ inputs.host }}
+      run: |
+        set -euo pipefail
+        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
+                --json databaseId -q '.[0].databaseId')
+        [ -n "$run" ] || { echo "::error::no successful CI run of main holds the tests"; exit 1; }
+        rm -rf "$RUNNER_TEMP/mcpp-tests"
+        gh run download "$run" -R "$GITHUB_REPOSITORY" -n "mcpp-tests-$HOST" -D "$RUNNER_TEMP/mcpp-tests"
+        echo "the tests of main's run $run"
+
+    - name: The cases
+      shell: bash
+      env:
+        CASES: ${{ inputs.cases }}
+        RUNNER_MCPP: ${{ inputs.mcpp }}
+        UNDER_TEST: ${{ inputs.under-test }}
+      run: |
+        set -euo pipefail
+        cases=()
+        while IFS= read -r c; do
+          c="${c#"${c%%[![:space:]]*}"}"; c="${c%"${c##*[![:space:]]}"}"
+          if [ -n "$c" ]; then cases+=("$c"); fi
+        done <<< "$CASES"
+        [ "${#cases[@]}" -gt 0 ] || { echo "::error::no case named"; exit 1; }
+        args=(--archive "$RUNNER_TEMP/mcpp-tests/mcpp-tests.tar.gz")
+        for c in "${cases[@]}"; do args+=(--case "$c"); done
+        [ -z "$UNDER_TEST" ] || export MCPP_E2E_MCPP="$UNDER_TEST"
+        log="$RUNNER_TEMP/e2e-cases.log"
+        status=0
+        "$RUNNER_MCPP" test "${args[@]}" 2>&1 | tee "$log" || status=$?
+        for c in "${cases[@]}"; do
+          tr -d '\r' < "$log" | grep -qxF "  ok   $c" || { echo "::error::$c did not pass (a skip or a failure; its line above)"; status=1; }
+        done
+        exit "$status"

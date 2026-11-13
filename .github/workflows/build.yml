@@ -33,6 +33,14 @@ on:
         type: string
         required: false
         default: ''
+      tests:
+        description: >
+          The tests written as the artifact `mcpp-tests-<host>` (`mcpp test <tests>
+          --no-run --archive`, docs/08), for the jobs that run cases on a host
+          that cannot build them (.github/actions/e2e-cases).
+        type: string
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -83,6 +91,30 @@ jobs:
           path: dist/${{ startsWith(inputs.host, 'windows-') && 'mcpp.exe' || 'mcpp' }}
           if-no-files-found: error
           retention-days: 3
+
+      # The tests a host without a compiler runs (a Windows with Visual Studio
+      # masked, a job with only a cross toolchain, the released mcpp of
+      # ci-fresh-install): built here, where the package's programs already
+      # are, and run elsewhere from the archive with no build. The archive
+      # holds this build's mcpp, which its cases test (MCPP_BIN_MCPP).
+      - name: Write the tests other jobs run
+        if: ${{ inputs.tests != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # shellcheck disable=SC2086 -- the input is a list of test paths
+          "$MCPP" test ${{ inputs.tests }} --no-run --archive "dist/mcpp-tests.tar.gz"
+
+      - name: Upload the tests other jobs run
+        if: ${{ inputs.tests != '' }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-tests-${{ inputs.host }}
+          path: dist/mcpp-tests.tar.gz
+          if-no-files-found: error
+          retention-days: 7
 
       # Only on main, and only for the caches this job restored: a pull request
       # reads the main lineage and adds nothing to the store.
