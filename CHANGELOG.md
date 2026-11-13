@@ -4,6 +4,70 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.13.1] - 2026-11-13
+
+### Added
+
+- Toolchain payloads are data. Which package serves a family for a target on a
+  host is the `[[toolchain.payload]]` table of the built-in data, read in both
+  directions; `xim:<name>@<version>` accepts any package of the index and
+  resolves it as `path:<root>` with the table its `.mcpp-toolchain.json`
+  states (schema 2: `family`, `prefix`, `sysroot`, `tools`). A new
+  distribution of a known family needs no engine change.
+- `[profile.<name>] debug = "lines"` keeps the line tables alone (`-g1`; `/Z7`
+  under cl.exe): backtraces and sanitizer reports keep file and line.
+- `cfg(interface = "openkal.fs")` selects by the interfaces the resolved
+  kernel-abi provider states it provides; `cfg(object-format = "pe")` selects
+  by the row's container (`elf`, `pe`, `mach-o`, `wasm`, `coff`).
+- A provider entry states `link`, the base and `runner` of the identities it
+  serves, over the platform's, in either base. A row a platform defines states
+  its link emulation without its machine.
+- `[test] programs = "package"`: the package's discovered files are one
+  program, linked once, run as one process per file (`tests/<file>`). At most
+  one file defines `main`.
+- The end-to-end cases are C++ test programs of mtest (`tests/e2e/**`, support
+  in `tests/support`); each host's unit job runs them with `mcpp test`. Shell
+  scripts remain where a case needs a shell.
+- Two canary projects (`tests/canary/c`, `tests/canary/cxx`) and a nightly
+  matrix (`canaries.yml`): every identity a host offers is built, linked
+  statically, run, tested and packed, and each cell is compared with
+  `tests/canary/matrix.tsv` in both directions.
+
+### Changed
+
+- A configuration's build directory is named by its lineage; the evolving
+  parts (mcpp, the compiler build, the standard library version) are recorded
+  inside it, and the graph runs mcpp through the directory's link
+  `engine/epoch-<N>/mcpp`. An upgrade of mcpp alone compiles nothing again
+  (measured: 18 of 153 before, 0 after).
+- `Finished` states the time spent waiting for a build directory;
+  `mcpp clean --report` gives split debug information its own column.
+- The test summary divides its time as `Finished` does:
+  `finished in 7.77s (plan 2.10s · programs 1.73s · build 1.60s · run 2.34s)`,
+  replacing `(build Xs + run Ys)`.
+- `[test] programs = "directory"` notes the files it leaves programs of their
+  own; a setting that forms no group is a degradation that `--strict` refuses.
+- The warning for a configuration built in full beside another states the
+  other's size and the command that reclaims it.
+- The C environment a kernel-abi implementation presents is chosen by the
+  row's container, not its system name; a carrier takes its section directive
+  and program suffix from the row.
+- `--toolchain` opts a planned row in, as a `[target.<row>]` toolchain does.
+- mcpplibs.cmdline 0.0.4: every command's action returns its status.
+
+### Fixed
+
+- A compiler without C++ modules (GCC before 14) refuses the graph's C++
+  sources at planning, naming the first and the remedy; its C sources build.
+- An interrupt asks each running program to end and allows two seconds before
+  ending its unit; waits poll without holding the lock. Before, a program
+  started by `mcpp __action-stamp` outlived Ctrl-C.
+- A cold build (`--cache off`) makes the graph's engine link again.
+- A runner named by the environment replaces the requirements of the one it
+  replaces.
+- A reader of the package index waits for a refresh in progress when an index
+  it declares is absent, instead of reporting no local index.
+
 ## [2026.11.12.1] - 2026-11-12
 
 ### Added

@@ -65,7 +65,18 @@ directory stays a program of its own. A test's name is the path of its program,
 so a name that is another's directory (`unit` and `unit/own`) is refused,
 naming both (2026.11.9.1+). A program of many files is linked once
 where a program per file is linked once per file, which is what a suite of many
-small files spends its build time on.
+small files spends its build time on. When the setting leaves files directly in
+the fixed directory, `mcpp test` notes how many stay programs of their own; when
+it forms no group at all, the note is a degradation, which `--strict` refuses
+(2026.11.13.1+).
+
+`[test] programs = "package"` (2026.11.13.1+) makes every file the package
+discovers one program, named by the first glob's fixed directory (`tests`). At
+most one of its files defines `main`; two are refused, naming both. The program
+still runs one process per file, named `tests/<file>`, so isolation and
+parallelism are those of a program per file, with one link for the suite. The
+three values are the granularity of a test program: `"file"` (the default),
+`"directory"` and `"package"`.
 
 A program that speaks the test protocol runs as **one process per file of its
 cases** (2026.11.9.1+): mcpp lists the cases of a program of several files, and
@@ -161,6 +172,18 @@ test's verdict, the output of a test that failed, the `test result` line and, fo
 collects the report, and `mcpp test 2>&1 | tee test.log` collects both
 ([09 — Commands by scenario](09-commands-by-scenario.md#output-streams)).
 
+The `test result` line closes with the run's time, divided as `Finished`
+divides a build (2026.11.13.1+):
+
+```
+test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.73s · build 1.60s · run 2.34s)
+```
+
+`programs` is the build of the package's programs that the tests find by name,
+shown when it took 5 ms or more; `build` is the tests' own graph; `run` is the
+tests. `plan` is the rest: the manifest, resolution, the toolchain and the scan.
+The parts sum to the total.
+
 ### An unchanged project (2026.11.10.1+)
 
 The tests' graph is `test.ninja`, beside the build's `build.ninja` in the same
@@ -247,15 +270,24 @@ small by these, in the order of their effect:
    ```
 
    `mcpp test --profile ci` builds it in a directory of its own.
-2. **One program per directory.** `[test] programs = "directory"` links a
-   directory's files once (see [Where tests are](#where-tests-are)).
-3. **Module implementation units.** A function body in `module X;` instead of
+2. **Fewer programs.** `[test] programs = "directory"` links a directory's
+   files once, and `"package"` the package's (see [Where tests are](#where-tests-are)).
+   The count of links falls from the count of files to that of directories, or
+   to one.
+3. **Members as shared libraries.** `dependency_linkage = "shared"` in a
+   workspace profile links each member a test reaches as a shared library, so
+   the closure is on disk once rather than once per program. It is a profile to
+   choose, not a default: on Windows a member's symbols reach a DLL's importers
+   only through its exports.
+4. **Module implementation units.** A function body in `module X;` instead of
    `export module X;` does not change X's BMI, and what imports X is not
    compiled again when it changes.
-4. **Layered members.** Logic in members that do not depend on UI or rendering
+5. **Layered members.** Logic in members that do not depend on UI or rendering
    lets most tests link the logic alone.
-5. **What no configuration uses** is removed by `mcpp clean --stale`, and after
-   a build by the sweep that `[build] keep_days` bounds.
+6. **What no configuration uses** is removed by `mcpp clean --stale`, and after
+   a build by the sweep that `[build] keep_days` bounds. When a change of
+   configuration starts a directory of its own, the warning states the size of
+   the one beside it (2026.11.13.1+).
 
 ## Tests that reach packages the artifact does not
 

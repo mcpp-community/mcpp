@@ -477,7 +477,7 @@ mcpp test  --exclude legacy --exclude bench  # at a virtual root: every member b
    Workspace built members libs/core, libs/http, ... in 120.40s; slowest: obj/libs/jsc/tests/jsc.o 88.0s
    Workspace testing member 'libs/core' (3/97)
 test_paths ... ok (0.31s)
- test result ok. 7 passed; 0 failed; finished in 121.10s (build 120.40s + run 0.60s)
+ test result ok. 7 passed; 0 failed; finished in 121.10s (plan 0.10s · build 120.40s · run 0.60s)
    Workspace member 'libs/core' (3/97) ok — 7 passed, run 0.60s
 ...
  workspace result ok. 97 member(s); 412 passed; 0 failed; finished in 355.20s

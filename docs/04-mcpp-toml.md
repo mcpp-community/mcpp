@@ -1483,7 +1483,7 @@ established, repeats the first line of the reason in the summary, and exits 2:
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
 smoke ... not run
-error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (plan 0.02s · build 0.39s · run 0.00s)
 ```
 
 Exit code 1 keeps its meaning — a test ran and failed — and 0 means every test

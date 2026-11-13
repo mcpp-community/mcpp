@@ -1366,7 +1366,7 @@ test` 把它报告为**未运行**，在原因确定时打印一次，在摘要�
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
 smoke ... not run
-error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (plan 0.02s · build 0.39s · run 0.00s)
 ```
 
 退出码 1 保留原有含义——一个测试运行过并失败；0 意味着每个测试都
