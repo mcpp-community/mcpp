@@ -75,7 +75,10 @@
 
 - `config.toml` is replaced whole: programs started at once on a fresh home
   no longer read a part of another's write (`invalid config.toml: expected
-  '='`).
+  '='`). On Windows, which refuses a rename over a file a reader holds open,
+  `mcpp toolchain default` and the other writers no longer fail with `cannot
+  write config.toml`: the writer closes its own reader first and waits up to
+  two seconds for the others.
 - A compiler without C++ modules (GCC before 14) builds the C++ units that
   declare and import no module, without module flags, and refuses at planning
   the first unit that needs modules, naming what it needs. Before, the build
