@@ -354,6 +354,7 @@ struct header {
     std::string interpreter;           // its path
     std::vector<std::string> needed;   // ELF DT_NEEDED
     std::string runpath;               // ELF DT_RUNPATH or DT_RPATH (both, `:`-joined, when both)
+    std::string rpath;                 // ELF DT_RPATH alone
     bool elf_rpath = false;            // a DT_RPATH entry
     bool elf_runpath = false;          // a DT_RUNPATH entry
     std::string soname;                // ELF DT_SONAME
@@ -377,6 +378,15 @@ std::vector<elf_section> elf_sections(const fs::path& file);
 // The names an ELF symbol table (".symtab", or ".dynsym") holds (`nm`, `nm -D`); with
 // `defined_only`, those a section of the file defines (`nm --defined-only`).
 std::vector<std::string> elf_symbols(const fs::path& file, std::string_view table = ".symtab", bool defined_only = false);
+// The entries of that table with what `nm` and `readelf --dyn-syms` print beside a name: whether a
+// section of the file defines it (`UND` when not) and its binding (STB_GLOBAL 1, STB_WEAK 2,
+// STB_GNU_UNIQUE 10). Nothing when the file has no such table.
+struct elf_symbol {
+    std::string name;
+    bool defined = false;
+    std::uint8_t binding = 0;
+};
+std::vector<elf_symbol> elf_symbol_table(const fs::path& file, std::string_view table = ".symtab");
 
 // An archive's members (`tar -tf`) and their extraction (`tar -xf <archive> -C <into> [members]`),
 // by the machine's `tar`, which reads every compression it writes.

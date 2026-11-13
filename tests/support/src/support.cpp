@@ -806,7 +806,7 @@ void read_elf(const std::string& b, header& h) {
     std::uint64_t strtab = 0;
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> paths;
-    std::uint64_t soname = 0;
+    std::uint64_t soname = 0, rpath = 0;
     bool has_soname = false;
     for (std::uint64_t at = dyn_off; at + entry <= dyn_off + dyn_size; at += entry) {
         const std::int64_t tag = h.wide ? get<std::int64_t>(b, at) : get<std::int32_t>(b, at);
@@ -818,6 +818,7 @@ void read_elf(const std::string& b, header& h) {
         else if (tag == 29 || tag == 15) {
             paths.push_back(val);
             (tag == 15 ? h.elf_rpath : h.elf_runpath) = true;
+            if (tag == 15) rpath = val;
         }
     }
     // The string table's address, as a file offset.
@@ -833,6 +834,8 @@ void read_elf(const std::string& b, header& h) {
     }
     if (has_soname)
         h.soname = cstring(b, static_cast<std::size_t>(str_off + soname));
+    if (h.elf_rpath)
+        h.rpath = cstring(b, static_cast<std::size_t>(str_off + rpath));
 }
 
 void read_pe(const std::string& b, header& h) {
@@ -1021,6 +1024,27 @@ std::vector<std::string> elf_symbols(const fs::path& file, std::string_view tabl
             const auto st_shndx = get<std::uint16_t>(b, at + (wide ? 6 : 14));
             if (st_name && (!defined_only || st_shndx != 0))
                 out.push_back(cstring(b, static_cast<std::size_t>(strings + st_name)));
+        }
+    }
+    return out;
+}
+
+std::vector<elf_symbol> elf_symbol_table(const fs::path& file, std::string_view table) {
+    const auto b = read_file(file);
+    const auto all = raw_sections(b);
+    std::vector<elf_symbol> out;
+    const bool wide = b.size() > 4 && b[4] == 2;
+    for (const auto& s : all) {
+        if (s.name != table || s.entsize == 0 || s.link >= all.size()) continue;
+        const auto strings = all[s.link].offset;
+        for (std::uint64_t k = 0; k < s.size / s.entsize; ++k) {
+            const auto at = static_cast<std::size_t>(s.offset + k * s.entsize);
+            const auto st_name = get<std::uint32_t>(b, at);
+            if (!st_name) continue;
+            const auto st_info = get<std::uint8_t>(b, at + (wide ? 4 : 12));
+            const auto st_shndx = get<std::uint16_t>(b, at + (wide ? 6 : 14));
+            out.push_back({cstring(b, static_cast<std::size_t>(strings + st_name)), st_shndx != 0,
+                           static_cast<std::uint8_t>(st_info >> 4)});
         }
     }
     return out;
