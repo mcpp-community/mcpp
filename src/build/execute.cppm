@@ -1870,6 +1870,12 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     if (coldBuild) {
         std::error_code ec;
         std::filesystem::remove_all(ctx.outputDir, ec);
+        // The graph names the directory's link to this engine (design §17,
+        // W1), which the line above removed with everything else: made again,
+        // as the link spec below is, or every step of a cold build fails on a
+        // `mcpp` that is not there.
+        if (!ctx.plan.engine.empty())
+            ctx.plan.engine = mcpp::build::graph_engine::place(ctx.plan.engine);
     }
     // Said before the build rather than as a link that fails for want of
     // space (mcpp#874: `final link failed: No space left on device`). The

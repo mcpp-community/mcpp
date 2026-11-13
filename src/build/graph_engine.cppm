@@ -30,6 +30,12 @@ std::filesystem::path link(const std::filesystem::path& outputDir, int epoch);
 // own path when neither could be made. Called under the directory's lock.
 std::filesystem::path refresh(const std::filesystem::path& outputDir, int epoch);
 
+// The link at `to` (the path a plan's graph names), made again where it is
+// missing: a cold build (`--cache off`) empties the directory after the plan
+// named it. Returns `to`, or the running engine's own path when no link can be
+// made there.
+std::filesystem::path place(const std::filesystem::path& to);
+
 // Whether `named`, the engine a graph names, is this engine: its own path, or
 // a link that is the same file or a copy of it.
 bool is_this_engine(const std::filesystem::path& named);
@@ -60,26 +66,46 @@ bool is_this_engine(const std::filesystem::path& named) {
     return named == self || same_engine(named, self);
 }
 
-std::filesystem::path refresh(const std::filesystem::path& outputDir, int epoch) {
+namespace {
+// What the link is made from: the running engine's file, or, where that file
+// was replaced while it ran (Linux names it `<path> (deleted)`, as when an
+// engine rebuilds itself in its own repository), the running image itself.
+std::filesystem::path source_of(const std::filesystem::path& self) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(self, ec)) return self;
+    if constexpr (mcpplibs::os::is_linux) return "/proc/self/exe";
+    return self;
+}
+} // namespace
+
+std::filesystem::path place(const std::filesystem::path& to) {
     namespace fs = std::filesystem;
     const auto self = mcpp::invocation::self_exe_path();
-    const auto to = link(outputDir, epoch);
     if (same_engine(to, self)) return to;
+    const auto from = source_of(self);
     std::error_code ec;
-    // A link of another epoch is named by no graph this engine writes.
-    fs::remove_all(to.parent_path().parent_path(), ec);
     fs::create_directories(to.parent_path(), ec);
     ec.clear();
-    fs::create_hard_link(self, to, ec);
-    if (ec) {
+    if (from == self) fs::create_hard_link(from, to, ec);
+    if (from != self || ec) {
         ec.clear();
-        fs::copy_file(self, to, fs::copy_options::overwrite_existing, ec);
-        if (!ec) fs::last_write_time(to, fs::last_write_time(self, ec), ec);
+        fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+        if (!ec && from == self) fs::last_write_time(to, fs::last_write_time(self, ec), ec);
     }
     if (!ec) return to;
     std::error_code rec;
     fs::remove(to, rec);
     return self;
+}
+
+std::filesystem::path refresh(const std::filesystem::path& outputDir, int epoch) {
+    namespace fs = std::filesystem;
+    const auto to = link(outputDir, epoch);
+    if (same_engine(to, mcpp::invocation::self_exe_path())) return to;
+    std::error_code ec;
+    // A link of another epoch is named by no graph this engine writes.
+    fs::remove_all(to.parent_path().parent_path(), ec);
+    return place(to);
 }
 
 } // namespace mcpp::build::graph_engine
