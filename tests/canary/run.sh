@@ -68,7 +68,11 @@ while IFS=$'\t' read -r canary identity row_host step expect note; do
   mark=""
   if [ "$got" != "$expect" ]; then
     differ=$((differ + 1)); mark="  <- states $expect"
-    echo "::group::$canary $identity $step: $got (the row states $expect)"; tail -30 "$log"; echo "::endgroup::"
+    # The whole log of a short run: its head holds the resolution and the failed
+    # command, which a tail of linker errors pushes out.
+    echo "::group::$canary $identity $step: $got (the row states $expect)"
+    if [ "$(wc -l < "$log")" -le 300 ]; then cat "$log"; else head -150 "$log"; echo "[...]"; tail -100 "$log"; fi
+    echo "::endgroup::"
   fi
   printf '%-4s %-22s %-7s %-6s %3ss%s\n' "$canary" "$identity" "$step" "$got" "$seconds" "$mark"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$canary" "$identity" "$host" "$step" "$expect" "$got" "$seconds" >> "$report"
