@@ -309,8 +309,10 @@ name  = "haiku"
 uname = "Haiku"                                  # `uname -s` 在该系统上的回答
 ```
 
-提供者的 `runner` 是运行器陈述的最低一级：平台的 `runner`、构建程序的、本机 `config.toml` 的、项目的
-`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
+提供者的 `runner` 是运行器陈述的最低一级：构建程序的、本机 `config.toml` 的、项目的
+`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。平台自己的 `runner` 属于 `[platform] targets`，
+不替换它（2026.11.13.1）：提供者陈述它所服务的身份的运行器、链接（`link`）与基座（`sysroot`），`base = "platform"` 与
+`base = "none"` 相同，因此一个平台可以陈述约定不同的行（openkal 平台的 ok 镜像与 `x86_64-uefi`）。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
 模板中 `{}` 是产物，`{sysroot}` 是产物链接时所用的基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在
 `requires` 的包中查找，再查 `PATH`。`requires` 的包由第一次需要它们的 `mcpp run` 或 `mcpp test` 安装，构建不安装。
 

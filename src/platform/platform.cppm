@@ -427,22 +427,18 @@ const mp::ProviderSpec* provider_of(const mp::Statement& p, std::string_view ide
     return nullptr;
 }
 
-mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
-    const auto* pr = provider_of(p, identity);
-    if (!pr) return p;
-    if (pr->base == "none") {
-        auto s = hosted_view(p);
-        s.cHosted = pr->hosted;
-        if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
-        if (!pr->layers.empty()) s.layers = pr->layers;
-        return s;
-    }
-    auto s = p;
-    s.cHosted = pr->hosted;
-    if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
-    if (!pr->layers.empty()) s.layers = pr->layers;
-    if (!pr->sysroot.empty()) s.sysroot = mp::Text{ pr->sysroot, pr->origin, true };
-    auto const& l = pr->link;
+// THE PROVIDER'S OWN FIELDS, OVER WHICHEVER BASE (2026-11-13). `link`, `sysroot`
+// and `runner` are what a provider states for the identities it serves; with
+// `base = "none"` they were dropped with the platform's, so a provider could not
+// state the link of a row whose conventions are not the platform's own (the
+// openkal platform's `x86_64-uefi` beside its ok images). The platform's top-level
+// `runner` belongs to `[platform] targets`; a provider that states one runs its
+// identities by it.
+namespace {
+void take_provider_fields(mp::Statement& s, const mp::ProviderSpec& pr) {
+    if (!pr.sysroot.empty()) s.sysroot = mp::Text{ pr.sysroot, pr.origin, true };
+    if (!pr.runner.cmd.empty()) s.runner = pr.runner;
+    auto const& l = pr.link;
     auto text = [](mp::Text& to, const mp::Text& from) { if (from.set) to = from; };
     text(s.link.driver, l.driver);
     text(s.link.start, l.start);
@@ -452,6 +448,25 @@ mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
     if (l.flags.set) s.link.flags = l.flags;
     if (l.inputsSet) { s.link.inputs = l.inputs; s.link.inputsOrigin = l.inputsOrigin; s.link.inputsSet = true; }
     if (l.sealSet) { s.link.seal = l.seal; s.link.sealOrigin = l.sealOrigin; s.link.sealSet = true; }
+}
+} // namespace
+
+mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
+    const auto* pr = provider_of(p, identity);
+    if (!pr) return p;
+    if (pr->base == "none") {
+        auto s = hosted_view(p);
+        s.cHosted = pr->hosted;
+        if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+        if (!pr->layers.empty()) s.layers = pr->layers;
+        take_provider_fields(s, *pr);
+        return s;
+    }
+    auto s = p;
+    s.cHosted = pr->hosted;
+    if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+    if (!pr->layers.empty()) s.layers = pr->layers;
+    take_provider_fields(s, *pr);
     return s;
 }
 

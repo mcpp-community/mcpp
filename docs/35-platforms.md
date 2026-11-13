@@ -372,10 +372,14 @@ name  = "haiku"
 uname = "Haiku"                                  # what `uname -s` answers there
 ```
 
-A provider's `runner` is the lowest tier of the runner statement: the
-platform's `runner`, a build program's, this machine's `config.toml`, the
-project's `[target.<selector>] runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each
-replace it. `hosts` are the machines the runner exists on (unset: any). In the
+A provider's `runner` is the lowest tier of the runner statement: a build
+program's, this machine's `config.toml`, the project's `[target.<selector>]
+runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each replace it. The platform's own
+`runner` belongs to `[platform] targets` and does not replace it (2026.11.13.1):
+a provider states the runner, the link (`link`) and the base (`sysroot`) of the
+identities it serves, with `base = "platform"` and with `base = "none"` alike,
+so one platform states rows whose conventions differ (the openkal platform's ok
+images and `x86_64-uefi`). `hosts` are the machines the runner exists on (unset: any). In the
 template `{}` is the artifact, `{sysroot}` the base the artifact was linked
 against, and `{pkg:<name>}` the root of the package of that name among
 `requires`; the template's program is looked for in the required packages

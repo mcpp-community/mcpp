@@ -657,3 +657,51 @@ serves = ["riscv64-nosuch"]
     expect(eq(served[0].provider, "second"));
     expect(eq(served[1].provider, "toy"));
 }};
+
+// A provider states the link and the runner of the identities it serves, over
+// either base: one platform states rows whose conventions differ (2026.11.13.1).
+UTest a_provider_states_its_link_and_runner{"PlatformMerge/AProviderStatesItsLinkAndRunner", [] {
+    auto m = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-toy"]
+toolchain = "llvm@23.1.3"
+runner    = ["toyrun", "{}"]
+
+[platform.build]
+cflags = ["-fPIC"]
+
+[platform.link]
+driver = "lld"
+flags  = ["-shared"]
+exe    = "{name}.toy"
+seal   = [["toyseal", "{}"]]
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple        = "x86_64-fw"
+object-format = "pe"
+exe-suffix    = ".efi"
+
+[[platform.provider]]
+serves = ["x86_64-fw"]
+base   = "none"
+hosted = true
+link   = { driver = "lld", flags = ["--subsystem", "efi_application"], exe = "{name}.efi", seal = [] }
+runner = { cmd = ["fwrun", "{}"] }
+)");
+    auto fw = pf::provider_view(m.platform, "x86_64-fw");
+    expect(eq(fw.link.flags.value, std::vector<std::string>{"--subsystem", "efi_application"}));
+    expect(eq(fw.link.exe.value, "{name}.efi"));
+    expect(fw.link.sealSet && fw.link.seal.empty()) << "the provider's empty seal replaces the platform's";
+    expect(eq(fw.runner.cmd, std::vector<std::string>{"fwrun", "{}"}));
+    expect(fw.build.cflags.empty()) << "base none takes none of the platform's compile";
+    auto toy = pf::provider_view(m.platform, "x86_64-toy");
+    expect(eq(toy.runner.cmd, std::vector<std::string>{"toyrun", "{}"}));
+    expect(eq(toy.link.flags.value, std::vector<std::string>{"-shared"}));
+}};
