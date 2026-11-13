@@ -762,4 +762,10 @@ link   = { driver = "lld", seal = [] }
     auto toy = pf::provider_view(m.platform, "x86_64-toy");
     expect(eq(names(toy), std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
         << "the platform's rows keep every tool but another row's seal";
+    // What a build of each row reads (2026.11.13.1): a row of the platform's own
+    // conventions is a view too, not the whole statement.
+    expect(eq(names(pf::view_of(m.platform, "x86_64-toy", false)),
+              std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
+        << "a build of the platform's own row provisions no other row's tool";
+    expect(eq(names(pf::view_of(m.platform, "i686-dos", false)), std::vector<std::string>{"dosseal"}));
 }};

@@ -161,10 +161,11 @@ loader   = "/lib/ld-musl-riscv64.so.1"
 tier     = "planned"
 standard = true
 
-# 32-BIT HOSTED ROWS (E11): registered intent, refused until served. No payload of
-# the index targets them, and openkal has no 32-bit class yet (the image
-# convention, the loader and the system calls of ELF32 are a design discussion);
-# an explicit `[target.<row>] toolchain` opts in early.
+# 32-BIT ROWS (E11): registered intent, refused until served. No payload of the
+# index targets them. openkal states its 32-bit class (0.25.1, clause 5.5), and
+# openkal-platform 0.28.0 serves `i686-linux-musl` and `i686-openkal` with the
+# LLVM toolchain; the rows stay planned here until the engine's pin of that
+# platform serves them. An explicit `[target.<row>] toolchain` opts in early.
 [[platform.define]]
 triple   = "i686-linux-musl"
 loader   = "/lib/ld-musl-i386.so.1"

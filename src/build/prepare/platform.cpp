@@ -529,10 +529,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
                 mcpp::platform::origin_text(P.selection.origin)));
         }
         P.selection.hosted = *hosted;
-        state.platformData = mcpp::platform::provider_of(found->manifest.platform, t.str())
-            ? mcpp::platform::provider_view(found->manifest.platform, t.str())
-            : *hosted ? mcpp::platform::hosted_view(found->manifest.platform)
-                      : found->manifest.platform;
+        state.platformData = mcpp::platform::view_of(found->manifest.platform, t.str(), *hosted);
         P.fields = state.platformData;
         const auto ctx = platform_cfg_context(state);
         std::vector<mp::Override> config;

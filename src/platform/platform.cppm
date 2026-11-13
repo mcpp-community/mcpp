@@ -95,9 +95,15 @@ mcpp::manifest::platform::Statement hosted_view(const mcpp::manifest::platform::
 // The statement that applies to `identity` (SPEC-016 §3): the platform's, with the
 // fields of the `[[platform.provider]]` that serves it in place of the platform's
 // own (its toolchain, layers and link), or the hosted view when that provider is
-// hosted. The platform's own statement when no provider of it names the identity.
+// hosted. The platform's own statement when no provider of it names the identity,
+// without the tools only another row's provider names.
 mcpp::manifest::platform::Statement provider_view(const mcpp::manifest::platform::Statement& platform,
                                                   std::string_view identity);
+// The statement a build of `identity` reads, `hosted` as serves() answered: the
+// hosted view where the platform hosts the identity and no provider names it,
+// the provider view otherwise (a row of the platform's own conventions included).
+mcpp::manifest::platform::Statement view_of(const mcpp::manifest::platform::Statement& platform,
+                                            std::string_view identity, bool hosted);
 // The `[[platform.provider]]` of a platform that serves `identity`; null when none.
 const mcpp::manifest::platform::ProviderSpec* provider_of(const mcpp::manifest::platform::Statement& platform,
                                                           std::string_view identity);
@@ -510,6 +516,10 @@ mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
     take_provider_fields(s, *pr);
     select_tools(s, p, pr);
     return s;
+}
+
+mp::Statement view_of(const mp::Statement& p, std::string_view identity, bool hosted) {
+    return hosted && !provider_of(p, identity) ? hosted_view(p) : provider_view(p, identity);
 }
 
 std::expected<bool, std::string>
