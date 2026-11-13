@@ -84,6 +84,10 @@ MCPP=<abs path of fresh mcpp> bash tests/e2e/<NNN>_<sentence>.sh
   ([`tests/e2e/mtest.toml`](tests/e2e/mtest.toml)).
 - A subsystem's unit tests live in `modules/<x>/tests/` and build against that package alone;
   cross-layer tests live in `tests/unit/`.
+- Two canary projects (`tests/canary/c`, `tests/canary/cxx`) are built, linked statically, run,
+  tested and packed for every identity of `tests/canary/matrix.tsv`, nightly and on a pull request
+  labelled `ci:canaries` (`canaries.yml`). A row states `ok`, `fails` with its reason, or `n/a`; a
+  cell that differs either way fails, and a change of behaviour corrects its row.
 
 ## 6. Change workflow
 
