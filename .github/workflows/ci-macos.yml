@@ -10,6 +10,12 @@ name: ci-macos
 
 on:
   workflow_call:
+    inputs:
+      # The set of cases (ci.yml's changes job): `pr` runs the tests the
+      # change affects (`mcpp test --since`), `full` every test.
+      set:
+        type: string
+        default: full
 
 jobs:
   macos-xlings-llvm:
@@ -290,7 +296,7 @@ jobs:
       # docs/08; design 2026-11-08 W8): the base's tip is fetched, and when it
       # cannot be, every test runs.
       - name: The base of the change
-        if: github.base_ref != ''
+        if: github.base_ref != '' && inputs.set == 'pr'
         shell: bash
         run: |
           if git fetch --no-tags --depth=1 origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF"; then

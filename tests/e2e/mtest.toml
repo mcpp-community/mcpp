@@ -20,3 +20,12 @@ skip_exit      = 77
 timeout        = "10m"
 tags_from      = { "# requires:" = "requires:" }
 resources_from = ["# resources:"]
+
+# The shards of each host CI starts (ci.yml e2e-plan, `mtest ci plan`): the
+# selection's measured time there divided by `shard`, at most `max_shards`; a
+# case a host never ran counts `unknown`. The names are those the runs record.
+[ci.plan]
+hosts      = ["linux", "macos", "windows"]
+shard      = "12m"
+max_shards = 8
+unknown    = "30s"

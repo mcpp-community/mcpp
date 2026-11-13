@@ -55,8 +55,24 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      set: ${{ steps.set.outputs.set }}
     steps:
       - uses: actions/checkout@v4
+
+      # The set of cases this run runs (design 2026-11-12 §5.11): a pull
+      # request's push runs `pr`, the cases its change affects; a pull request
+      # labelled `ci:full`, a push to main and a run started by hand run `full`.
+      # The label is read when a push starts the run, as `ci:bench` is.
+      - name: The set of this run
+        id: set
+        env:
+          EVENT: ${{ github.event_name }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          set=full
+          if [ "$EVENT" = pull_request ] && [[ " $LABELS " != *" ci:full "* ]]; then set=pr; fi
+          echo "set=$set" >> "$GITHUB_OUTPUT"
+          echo "the set of this run: $set"
 
       - name: Classify the changed paths
         id: classify
@@ -93,6 +109,53 @@ jobs:
               full "event $EVENT"; exit 0 ;;
           esac
           python3 .github/tools/classify_changes.py --github-output "$GITHUB_OUTPUT" < changed.txt
+
+  # Each host's e2e shards, by the work its set gives it there (design
+  # 2026-11-12 §5.11): `mtest ci plan` divides the selection by the measured
+  # history of main's stores (tests/e2e/mtest.toml [ci.plan]), so the shard
+  # count follows the work, and a host the set gives nothing starts no shard.
+  # A plan that cannot be made gives every host three shards.
+  e2e-plan:
+    name: the e2e shards of each host
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      linux: ${{ steps.plan.outputs.linux }}
+      linux_work: ${{ steps.plan.outputs.linux_work }}
+      linux_count: ${{ steps.plan.outputs.linux_count }}
+      macos: ${{ steps.plan.outputs.macos }}
+      macos_work: ${{ steps.plan.outputs.macos_work }}
+      macos_count: ${{ steps.plan.outputs.macos_count }}
+      windows: ${{ steps.plan.outputs.windows }}
+      windows_work: ${{ steps.plan.outputs.windows_work }}
+      windows_count: ${{ steps.plan.outputs.windows_count }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/e2e-mtest
+        with:
+          host: '*'
+      - name: The plan
+        id: plan
+        env:
+          SET: ${{ needs.changes.outputs.set }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/plan.out"
+          if (cd tests/e2e && GITHUB_OUTPUT="$out" "$E2E_MTEST" ci plan --set "$SET" --format github); then
+            # A host given no work keeps a list a matrix accepts; `work` skips it.
+            sed 's/=\[\]$/=[1]/' "$out" >> "$GITHUB_OUTPUT"
+            for h in linux macos windows; do
+              n=$(sed -n "s/^$h=\[\(.*\)\]$/\1/p" "$out" | tr ',' '\n' | grep -c . || true)
+              echo "${h}_count=${n:-0}" >> "$GITHUB_OUTPUT"
+            done
+          else
+            echo "::warning::mtest ci plan failed: every host takes three shards"
+            for h in linux macos windows; do
+              printf '%s=[1,2,3]\n%s_work=true\n%s_count=3\n' "$h" "$h" "$h" >> "$GITHUB_OUTPUT"
+            done
+          fi
 
   docs:
     name: documentation and repository checks
@@ -176,6 +239,10 @@ jobs:
   build-linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: linux-x86_64
@@ -189,6 +256,10 @@ jobs:
   build-linux-arm:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: linux-aarch64
@@ -198,6 +269,10 @@ jobs:
   build-macos:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: macos-arm64
@@ -206,6 +281,10 @@ jobs:
   build-windows:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: windows-x86_64
@@ -224,36 +303,56 @@ jobs:
     uses: ./.github/workflows/ci-bootstrap.yml
 
   linux:
-    needs: build-linux
+    needs: [build-linux, changes]
     uses: ./.github/workflows/ci-linux.yml
     with:
       # A pull request's label is read when a push starts its run; a run
       # started by hand states it as an input.
       bench: ${{ github.event_name == 'push' || inputs.bench == true || contains(github.event.pull_request.labels.*.name, 'ci:bench') }}
+      set: ${{ needs.changes.outputs.set }}
 
   linux-e2e:
-    needs: build-linux
+    needs: [build-linux, changes, e2e-plan]
     uses: ./.github/workflows/ci-linux-e2e.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
+      shards: ${{ needs.e2e-plan.outputs.linux || '[1,2,3]' }}
+      count: ${{ needs.e2e-plan.outputs.linux_count || '3' }}
+      work: ${{ needs.e2e-plan.outputs.linux_work != 'false' }}
 
   macos:
-    needs: build-macos
+    needs: [build-macos, changes]
     uses: ./.github/workflows/ci-macos.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
 
   macos-e2e:
-    needs: build-macos
+    needs: [build-macos, changes, e2e-plan]
     uses: ./.github/workflows/ci-macos-e2e.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
+      shards: ${{ needs.e2e-plan.outputs.macos || '[1,2,3]' }}
+      count: ${{ needs.e2e-plan.outputs.macos_count || '3' }}
+      work: ${{ needs.e2e-plan.outputs.macos_work != 'false' }}
 
   macos-ios:
     needs: build-macos
     uses: ./.github/workflows/ci-macos-ios.yml
 
   windows:
-    needs: build-windows
+    needs: [build-windows, changes]
     uses: ./.github/workflows/ci-windows.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
 
   windows-e2e:
-    needs: build-windows
+    needs: [build-windows, changes, e2e-plan]
     uses: ./.github/workflows/ci-windows-e2e.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
+      shards: ${{ needs.e2e-plan.outputs.windows || '[1,2,3]' }}
+      count: ${{ needs.e2e-plan.outputs.windows_count || '3' }}
+      work: ${{ needs.e2e-plan.outputs.windows_work != 'false' }}
 
   windows-msvc-xlings:
     needs: build-windows
