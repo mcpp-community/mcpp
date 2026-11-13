@@ -44,11 +44,20 @@ std::map<int, std::function<void()>>& cleanups() {
     return c;
 }
 
+std::atomic<bool> g_finishing{false};
+
 // A started program, ended with mcpp at a request for as long as this lives.
+// One that ends while mcpp ends at a request (it was asked to, below) leaves
+// nothing of its unit: what it started is ended with it, as it would have
+// been had the program still run when the request's moment was over.
 struct Registered {
     Process* p;
     explicit Registered(Process* q) : p(q) { std::lock_guard g(g_live); live().insert(p); }
-    ~Registered() { std::lock_guard g(g_live); live().erase(p); }
+    ~Registered() {
+        if (g_finishing.load()) p->end_unit();
+        std::lock_guard g(g_live);
+        live().erase(p);
+    }
     Registered(const Registered&) = delete;
     Registered& operator=(const Registered&) = delete;
 };
@@ -57,7 +66,6 @@ struct Registered {
 // A second caller returns when the first has finished: what it ends then is
 // the state the request left. A cleanup that reaches it again from within (a
 // terminal's mode restored onto an output with no reader) returns at once.
-std::atomic<bool> g_finishing{false};
 std::once_flag g_finished;
 thread_local bool t_finishing = false;
 void finish_once() {
