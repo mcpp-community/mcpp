@@ -113,7 +113,7 @@ E2E rows{"rows", [] {
         expect(fatal(lists(s::tar_list(archive(p, "proj-0.1.0-")), "/bin/proj"))) << "the archive has no bin/proj";
         r = p.mcpp({"pack", "mathkit"});
         expect(fatal(e2e::succeeded(r))) << "a library target does not pack on macOS: " << s::text(r);
-        expect(fatal(!s::find_files(p.at("target/dist"), "*.a").empty())) << "no archive in the library package";
+        expect(fatal(!s::find_files(p.at("target/dist"), R"(.*\.a)").empty())) << "no archive in the library package";
     };
 
     "666 a macho program reaches a dispatched format with its tree"_test[s::macos] = [] {

@@ -110,12 +110,14 @@ int main() {
             expect(fatal(ninja.has_value())) << "FAIL: no build.ninja";
             const auto text = s::read_file(*ninja);
             expect(fatal(e2e::contains(text, "mcpp_ios_init"))) << "FAIL: no initializer-ordering shim in the macOS link";
+            // The line is kept before it is matched for its input: a match into a line of the
+            // temporary list would outlive the list.
             std::string link_line;
             static const std::regex link{R"(^build .*: cxx_link +([^ ]+).*)"};
-            std::smatch m;
             for (const auto& l : s::lines_with(text, ": cxx_link "))
-                if (std::regex_match(l, m, link)) { link_line = l; break; }
-            expect(fatal(m.size() > 1 && m[1].str().contains("mcpp_ios_init"))) << "FAIL: shim object is not the first link input: " << link_line;
+                if (std::regex_match(l, link)) { link_line = l; break; }
+            std::smatch m;
+            expect(fatal(std::regex_match(link_line, m, link) && m[1].str().contains("mcpp_ios_init"))) << "FAIL: shim object is not the first link input: " << link_line;
         }
         // 3
         siof.write("mcpp.toml", siof.read("mcpp.toml") + "\n[build]\ncxx_runtime = \"host-coupled\"\n");

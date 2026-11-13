@@ -143,7 +143,7 @@ E2E images{"images", [] {
         auto r = p.mcpp({"test"});
         expect(fatal(e2e::succeeded(r))) << "mcpp test failed: " << s::text(r);
         int checked = 0;
-        for (const auto& exe : s::find_files(p.at("target"), "*.exe")) {
+        for (const auto& exe : s::find_files(p.at("target"), R"(.*\.exe)")) {
             const auto name = exe.filename().string();
             if (name == "gui.exe" || name == "tool.exe" || name == "winmain.exe") continue;
             expect(fatal(s::read_header(exe).subsystem == 3)) << exe.string() << " has Subsystem " << s::read_header(exe).subsystem << ", expected 3";

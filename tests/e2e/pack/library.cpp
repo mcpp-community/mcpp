@@ -440,8 +440,10 @@ main = "src/main.cpp"
         expect(fatal(e2e::contains(s::text(r), "ok=42"))) << "wrong answer\n" << s::text(r);
         const auto boot = s::env("MCPP_BOOT");
         if (!boot || boot->empty() || !fs::is_regular_file(*boot)) return;  // the real old-client check did not run
-        auto version = [](const std::string& program) {
-            auto v = e2e::run({.argv = {program, "--version"}});
+        // Asked where the old client is to run: the bootstrap is an xvm shim, which answers only
+        // inside the project that declares it, and outside it prints no version.
+        auto version = [&](const std::string& program) {
+            auto v = e2e::run({.argv = {program, "--version"}, .cwd = app.dir()});
             auto out = v.out;
             while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
             return out;
