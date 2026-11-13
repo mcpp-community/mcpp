@@ -81,10 +81,9 @@ std::string captured(const e2e::outcome& r) {
 }
 
 E2E packages{"packages", [] {
-    "55 dependency shared artifact"_test[tag{"requires:elf"}] = [] {
+    "55 dependency shared artifact"_test[s::elf] = [] {
         // A dependency's shared library is built as its own artifact and linked by the consumer,
         // not flattened into it as objects.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project dep(tmp / "depShared", {{"src/dep.c", "int dep_shared_answer(void) {\n    return 42;\n}\n"},
                                            {"mcpp.toml", "[package]\nname    = \"depShared\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.c\"]\n\n[targets.depShared]\nkind = \"shared\"\n"}});
@@ -100,10 +99,9 @@ E2E packages{"packages", [] {
         expect(fatal(e2e::succeeded(r))) << "run failed: " << s::text(r);
     };
 
-    "56 transitive shared artifact"_test[tag{"requires:elf"}] = [] {
+    "56 transitive shared artifact"_test[s::elf] = [] {
         // A shared dependency over another shared package links that package itself, so the
         // intermediate library records the NEEDED edge.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project base(tmp / "depBase", {{"src/base.c", "int dep_base_answer(void) {\n    return 41;\n}\n"},
                                           {"mcpp.toml", "[package]\nname    = \"depBase\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.c\"]\n\n[targets.depBase]\nkind = \"shared\"\n"}});
@@ -123,10 +121,9 @@ E2E packages{"packages", [] {
         expect(fatal(e2e::succeeded(r))) << "run failed: " << s::text(r);
     };
 
-    "57 static dep shared artifact"_test[tag{"requires:elf"}] = [] {
+    "57 static dep shared artifact"_test[s::elf] = [] {
         // A static package that references a shared one: its objects are linked into the
         // consumer, so the consumer's link names the shared library too.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project shared(tmp / "depShared", {{"src/dep.c", "int dep_shared_answer(void) {\n    return 41;\n}\n"},
                                               {"mcpp.toml", "[package]\nname    = \"depShared\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.c\"]\n\n[targets.depShared]\nkind = \"shared\"\n"}});
@@ -144,10 +141,9 @@ E2E packages{"packages", [] {
         expect(fatal(e2e::succeeded(r))) << "run failed: " << s::text(r);
     };
 
-    "64 shared soname runtime alias"_test[tag{"requires:elf"}] = [] {
+    "64 shared soname runtime alias"_test[s::elf] = [] {
         // A library's SONAME is given an alias that `run` and `test` find, a test's own link
         // making it as well as the default target.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project dep(tmp / "depShared", {{"src/dep.c", "int dep_shared_answer(void) {\n    return 42;\n}\n"},
                                            {"mcpp.toml", "[package]\nname    = \"depShared\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.c\"]\n\n[targets.depShared]\nkind = \"shared\"\nsoname = \"libdepShared.so.1\"\n"}});
@@ -188,11 +184,10 @@ int main() {
         expect(fatal(s::find_file(app.at("target"), "libdepShared.so.1").has_value())) << "mcpp test did not produce the ABI soname alias: " << s::text(r);
     };
 
-    "306 dependency linkage axis"_test[tag{"requires:elf"}] = [] {
+    "306 dependency linkage axis"_test[s::elf] = [] {
         // `[build] dependency_linkage`: the default changes nothing, `shared` gives a library the
         // program loads, the two configurations take different output directories, and the
         // packed bundle starts.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project core(tmp / "core", {{"mcpp.toml", "[package]\nname    = \"core\"\nversion = \"0.1.0\"\n[build]\nc_standard = \"c11\"\nsources    = [\"src/*.c\"]\n[targets.core]\nkind = \"lib\"\n"},
                                        {"src/core.c", "int core_answer(void) { return 42; }\n"}});
@@ -262,10 +257,9 @@ int main() {
         expect(fatal(captured(run) == "42")) << "FAIL: bundle printed '" << captured(run) << "'";
     };
 
-    "621 exports narrows the symbol surface"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "621 exports narrows the symbol surface"_test[s::elf][s::gcc] = [] {
         // A shared library publishes what `exports` names (a file or an inline list), and
         // everything otherwise.
-        s::needs({"elf", "gcc"});
         s::project p({{"src/lib.cpp", "extern \"C\" int mcpp_e2e_621_public(int x)   { return x + 1; }\nextern \"C\" int mcpp_e2e_621_internal(int x) { return x + 2; }\n"},
                       {"abi/lib.exports", "# One symbol pattern per line; `#` starts a comment.\nmcpp_e2e_621_public\n"}});
         auto emit = [&](std::string_view extra) {
@@ -302,11 +296,10 @@ int main() {
         expect(fatal(dynsyms() == after)) << "FAIL: the inline list and the file disagree";
     };
 
-    "670 an rpath loader token is left as written"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "670 an rpath loader token is left as written"_test[s::elf][s::gcc] = [] {
         // A search path beginning with a loader token (`@executable_path`, `@loader_path`)
         // reaches the binary as written, from the root and from a dependency; an ordinary
         // relative one is anchored to its package.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project dep(tmp / "dep", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"dep\"\nversion   = \"0.1.0\"\n[targets.dep]\nkind = \"lib\"\n[build]\nldflags = [\"-Wl,-rpath,@loader_path/../lib\"]\n"},
                                      {"src/dep.cppm", "export module dep;\nexport int dep_anchor() { return 3; }\n"}});
@@ -328,10 +321,9 @@ int main() {
         expect(fatal(anchored)) << "an ordinary relative rpath is no longer anchored to the package: " << rpath;
     };
 
-    "685 a nested test loads a graph shared library"_test[tag{"requires:elf"}] = [] {
+    "685 a nested test loads a graph shared library"_test[s::elf] = [] {
         // A test from `tests/sub/` searches `$ORIGIN/..` for a graph-built library; the program
         // in `bin/` carries no relative entry.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         const std::string main_cpp = "import fw;\nint main() { return fw_anchor() == 41 ? 0 : 1; }\n";
         s::project fw(tmp / "fw", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"fw\"\nversion   = \"0.1.0\"\n[targets.fw]\nkind = \"shared\"\n"},
@@ -355,11 +347,10 @@ int main() {
         expect(fatal(s::lacks(s::read_header(*prog).runpath, "$ORIGIN/"))) << "3: the program beside the library carries a relative search entry";
     };
 
-    "692 a package states its default link form"_test[tag{"requires:elf"}] = [] {
+    "692 a package states its default link form"_test[s::elf] = [] {
         // `linkage` beside `kind` states a library's default link form: a silent consumer gets
         // it, a consumer's statement outranks it, a row may state it, and the contradictions
         // are refused.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         auto make_fw = [&](std::string_view dir, std::string_view tail) {
             s::project fw(tmp / dir, {});
@@ -458,11 +449,10 @@ int main() {
         expect(fatal(e2e::contains(log("prog"), "is a program target, which has no link form"))) << "F: program refusal wording: " << log("prog");
     };
 
-    "702 a static package under a shared library is linked into it"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "702 a static package under a shared library is linked into it"_test[s::unix_shell][s::python3] = [] {
         // A static package reachable only through a shared library is linked into it (a host
         // that never linked it loads the library); reached by the program too, ELF builds and
         // reports it and Mach-O refuses it; `linkage = "shared"` on it is the remedy.
-        s::needs({"unix-shell", "python3"});
         if (s::on_windows()) skip("the PE legs of 702 are not wired on this shard");
         const auto python = s::on_path("python3");
         expect(fatal(python.has_value())) << "no python to load the library from a foreign host";
@@ -526,10 +516,9 @@ int main() {
         expect(fatal(e2e::succeeded(s::run(dir / "bin/app")))) << "the program over the shared x exited non-zero";
     };
 
-    "835 a shared library is placed by a link"_test[tag{"requires:elf"}] = [] {
+    "835 a shared library is placed by a link"_test[s::elf] = [] {
         // A member's product directory holds the graph-built libraries its program loads (and
         // those they need); two product directories share one file where links are possible.
-        s::needs({"elf"});
         s::project ws({{"mcpp.toml", "[workspace]\nmembers = [\"base\", \"shlib\", \"p1\", \"p2\"]\n"},
                        {"base/mcpp.toml", "[package]\nname = \"base\"\nversion = \"0.1.0\"\n\n[targets.base]\nkind = \"shared\"\n"},
                        {"base/src/base.cppm", "export module basis;\nexport int base_v() { return 6; }\n"},
@@ -559,11 +548,10 @@ int main() {
             expect(fatal(entry_starting(dir / p, "libbase.so").has_value())) << "L3: libbase, which libshlib needs, is not placed in bin/" << p << "/";
     };
 
-    "838 a program shipped through artifacts links its own closure"_test[tag{"requires:elf"}] = [] {
+    "838 a program shipped through artifacts links its own closure"_test[s::elf] = [] {
         // A program a member ships through `artifacts` links with its own package's closure
         // (the library its build program states), runs in both product directories, and its
         // build program's `${mcpp.bin_dir}` is its own product directory.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project vend(tmp / "vend", {{"mcpp.toml", "[package]\nname = \"vend\"\nversion = \"0.1.0\"\n\n[targets.vend]\nkind = \"lib\"\n"},
                                        {"src/vend.cpp", "extern \"C\" int vend_v() { return 7; }\n"}});
@@ -608,11 +596,10 @@ int main() {
         expect(fatal(fs::is_regular_file(own->parent_path() / "helper.copy"))) << "A4: ${mcpp.bin_dir} is not the helper's product directory: " << s::text(r);
     };
 
-    "884 a shared library links with its own closure"_test[tag{"requires:elf"}] = [] {
+    "884 a shared library links with its own closure"_test[s::elf] = [] {
         // A shared library that is not the root's links with the graph's flags and those of the
         // packages its owner reaches, and no other package's; a search path only the root names
         // no longer reaches it, and the build says so.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         const auto home = s::another_home(s::home::fresh);
         fs::create_directories(home);

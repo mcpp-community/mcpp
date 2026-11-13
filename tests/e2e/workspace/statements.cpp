@@ -69,7 +69,7 @@ E2E statements{"statements", [] {
         expect(fatal(e2e::contains(s::text(r), "no_such_key"))) << "M3 a member's unknown cfg() key is not reported: " << s::text(r);
     };
 
-    "885 workspace profiles and the root package"_test[tag{"requires:unix-shell"}] = [] {
+    "885 workspace profiles and the root package"_test[s::unix_shell] = [] {
         // W1 the workspace's [profile.release] reaches a member; W2 a member's own profile
         // replaces it, unmerged; W3 a rooted workspace's root package receives [workspace.build]
         // once beside its own [build], in one graph, built as the root or with --workspace, and
@@ -141,12 +141,11 @@ E2E statements{"statements", [] {
         expect(fatal(reached)) << "W3: the root file's profile did not reach a member built on its own";
     };
 
-    "893 the workspace prefix carries the meaning"_test[tag{"requires:gcc"}] = [] {
+    "893 the workspace prefix carries the meaning"_test[s::gcc] = [] {
         // [workspace.package], [workspace.target.<cfg>.build] and [workspace.profile.release]
         // reach the members, a member's own conditional define and profile coming after; an
         // unknown [workspace] table is refused by name; one table written twice is refused
         // naming the spelling; [build] on a root without [package] warns (W7), --strict refuses.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const auto app_toml = R"([package]
 name = "app"
@@ -233,11 +232,10 @@ cxxflags = ["-DWS_RELEASE=1"]
         expect(fatal(failed(r))) << "--strict accepted W7: " << s::text(r);
     };
 
-    "900 publish writes the workspace layer into the member"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "900 publish writes the workspace layer into the member"_test[s::gcc][s::unix_shell] = [] {
         // The archived manifest of a published member is what it was built with: the
         // workspace's [toolchain], its conditional [build] merged before the member's, its
         // include_dirs rebased to the member; a workspace path outside the package is refused.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project repo(tmp / "repo", {
             {"mcpp.toml", R"([workspace]
@@ -292,7 +290,7 @@ assert row["include_dirs"] == ["inc"], row
         expect(fatal(e2e::contains(s::text(r), "outside this package's directory"))) << "the refusal does not say why: " << s::text(r);
     };
 
-    "911 a workspace states each table once"_test[tag{"requires:unix-shell"}] = [] {
+    "911 a workspace states each table once"_test[s::unix_shell] = [] {
         // R4 a rooted workspace's [workspace.xlings.overrides] serves the root and not the
         // member; R5 the root's own [xlings.overrides] is its own, and a member built alone is
         // told the position reading is deprecated; V [workspace.xlings.overrides] serves a member

@@ -218,10 +218,9 @@ windows = "llvm@{0}"
         }
     };
 
-    "329 exit codes match the contract"_test[tag{"requires:unix-shell"}] = [] {
+    "329 exit codes match the contract"_test[s::unix_shell] = [] {
         // 0 success, 2 a usage error (nothing on stdout), 127 an unknown command, 1 a command that
         // ran and failed (stderr says why), and a rejected descriptor's envelope on stdout.
-        s::needs({"unix-shell"});
         s::project p({{"split.lua", R"(package = {
     name      = "acme.sub.widget",
     namespace = "acme",

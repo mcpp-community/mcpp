@@ -12,8 +12,7 @@ namespace fs = std::filesystem;
 namespace {
 
 E2E machine{"machine", [] {
-    "28 target static"_test[tag{"requires:musl"}][tag{"requires:elf"}][resource{"machine"}] = [] {
-        s::needs({"musl", "elf"});
+    "28 target static"_test[s::musl][s::elf][resource{"machine"}] = [] {
         // The musl toolchain is the one this home has, whichever release that is.
         const auto musl_version = s::musl_gcc_version();
         if (!fs::exists(s::payload_root("xim-x-musl-gcc", musl_version) / "bin/x86_64-linux-musl-g++"))

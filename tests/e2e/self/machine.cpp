@@ -24,12 +24,11 @@ std::string field11(std::string_view out) {
 }
 
 E2E machine{"machine", [] {
-    "205 root local subos"_test[tag{"requires:elf"}][tag{"requires:gcc"}][resource{"machine"}] = [] {
+    "205 root local subos"_test[s::elf][s::gcc][resource{"machine"}] = [] {
         // The default SubOS's binding ignores XLINGS_ACTIVE_SUBOS, and an explicit "default" is
         // not its absence; a workspace root owns the members' SubOS (materialised at the root
         // only); the member alone selects its own; a dependency's SubOS does not reach its
         // consumer.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         const auto default_manifest = s::shared_home() / "registry/subos/default/.xlings.json";
         expect(fatal(fs::is_regular_file(default_manifest))) << "mcpp's default SubOS is missing";
@@ -84,10 +83,9 @@ E2E machine{"machine", [] {
         expect(fatal(e2e::succeeded(r))) << "the dependency's SubOS leaked into the consumer: " << s::text(r);
     };
 
-    "931 a suggested command quotes its path"_test[tag{"requires:unix-shell"}][tag{"requires:fresh-sandbox"}][resource{"machine"}] = [] {
+    "931 a suggested command quotes its path"_test[s::unix_shell][s::fresh_sandbox][resource{"machine"}] = [] {
         // With a home selected, `self init --home '<spaced path>'` suggests a command that quotes
         // the path, and that command, pasted, succeeds.
-        s::needs({"unix-shell", "fresh-sandbox"});
         const auto work = s::case_dir();
         fs::create_directories(work / "user");
         const s::options o{.env = {{"NO_COLOR", "1"}, {"HOME", (work / "user").string()}, {"MCPP_HOME", std::nullopt}}};

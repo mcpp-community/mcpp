@@ -81,11 +81,10 @@ std::optional<std::string> std_tokens_in(const nlohmann::json& j, std::string_vi
 }
 
 E2E layers{"layers", [] {
-    "201 gcc no specs pollution"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "201 gcc no specs pollution"_test[s::gcc][s::elf] = [] {
         // A gcc artifact carries only the RUNPATH the build asked for (no other home's temporary
         // directory, no dead entry), names the payload's glibc as its interpreter, and loads
         // nothing from the host, in the sysroot mode and in the payload-first one.
-        s::needs({"gcc", "elf"});
         auto p = s::project::scaffold("prog");
         p.write("mcpp.toml", p.read("mcpp.toml") + "\n[toolchain]\nlinux = \"gcc@16.1.0\"\n");
         auto r = p.mcpp({"build"});
@@ -128,11 +127,10 @@ E2E layers{"layers", [] {
         expect(fatal(e2e::succeeded(s::run(*pfbin)))) << "payload-first binary did not run";
     };
 
-    "663 a graph libcxx over the payloads c library"_test[tag{"requires:llvm"}] = [] {
+    "663 a graph libcxx over the payloads c library"_test[s::llvm] = [] {
         // llvm.libcxx supplies the C++ layer over the payload's C library: the payload's libc++
         // headers and archives leave the command lines, the package's std module names the
         // payload's glibc, and the program runs without a libc++ shared object.
-        s::needs({"llvm"});
         auto p = s::project::scaffold("app");
         p.write("src/main.cpp", "import std;\nint main() {\n    std::unordered_map<std::string, int> m;\n    m[\"one\"] = 1;\n    std::atomic<int> a{2};\n    a.notify_all();\n    std::print(\"{}-{}-3\\n\", m[\"one\"], a.load());\n}\n");
         p.write("mcpp.toml", p.read("mcpp.toml") + std::format("\n[toolchain]\ndefault = \"llvm@{}\"\n", s::llvm_version()));
@@ -166,12 +164,11 @@ E2E layers{"layers", [] {
         std::println("ok: llvm.libcxx supplies the C++ layer over the payload's C library, and the program runs");
     };
 
-    "696 a cxx layer provider keeps its own standard"_test[tag{"requires:llvm"}] = [] {
+    "696 a cxx layer provider keeps its own standard"_test[s::llvm] = [] {
         // A C++-layer provider that states a standard compiles its implementation units at it
         // under a lower or a higher graph level, its std module at the graph's; one that states
         // none keeps the graph's; an ordinary dependency keeps the one-standard rule and its
         // warning.
-        s::needs({"llvm"});
         const auto tmp = s::case_dir();
         const auto git = s::on_path("git");
         expect(fatal(git.has_value())) << "FAIL: cannot clone mcpplibs/libcxx 22.1.8.2 (no git)";
@@ -233,11 +230,10 @@ E2E layers{"layers", [] {
         std::println("PASS: a C++-layer provider compiles its implementation units at its own standard");
     };
 
-    "740 gcc over a graph c library is degraded not refused"_test[tag{"requires:gcc"}] = [] {
+    "740 gcc over a graph c library is degraded not refused"_test[s::gcc] = [] {
         // GCC over a graph-supplied C library cannot isolate it: a warning names the C library,
         // the compiler and the toolchain that does isolate, and the target side still reports; a
         // Clang-family toolchain over the same graph gets no such note.
-        s::needs({"gcc"});
         s::project p({{"libc/mcpp.toml", "[package]\nname     = \"fake-libc\"\nversion  = \"0.1.0\"\nprovides = [\"mcpp:c-abi=musl\"]\n\n[build]\nsources  = []\n"},
                       {"mcpp.toml", "[package]\nname    = \"clibdeg\"\nversion = \"0.1.0\"\n\n[dependencies]\nfake-libc = { path = \"libc\" }\n"}});
         auto r = p.mcpp({"why", "toolchain"});
@@ -262,10 +258,9 @@ E2E layers{"layers", [] {
         expect(fatal(s::lacks(out2, "has no way to stop"))) << "FAIL: the same degradation fired on a Clang-family toolchain, which DOES isolate the graph's C library";
     };
 
-    "742 gcc accepted when the realisation is empty"_test[tag{"requires:gcc"}][tag{"requires:mingw-cross"}] = [] {
+    "742 gcc accepted when the realisation is empty"_test[s::gcc][s::mingw_cross] = [] {
         // GCC is refused for a declared [c-abi] block only where the realisation is non-empty:
         // accepted on Linux (empty), refused for mingw on Windows (the Cygwin substitution).
-        s::needs({"gcc", "mingw-cross"});
         s::project p({{"fakemusl/src/lib.c", "int fakemusl_marker(void) { return 0; }\n"},
                       {"src/main.c", "int main(void) { return 0; }\n"},
                       {"mcpp.toml", "[package]\nname    = \"gcc-cabi-probe\"\nversion = \"0.1.0\"\n\n[dependencies]\nfakemusl = { path = \"fakemusl\" }\n\n[build]\nallow_host_libs = true\n"},
@@ -279,10 +274,9 @@ E2E layers{"layers", [] {
         expect(fatal(s::contains_nocase(s::text(r), "requires Clang-specific"))) << "FAIL: the refusal must still name the Clang-specific requirement: " << s::text(r);
     };
 
-    "891 a host header is written not searched"_test[tag{"requires:llvm"}][tag{"requires:elf"}] = [] {
+    "891 a host header is written not searched"_test[s::llvm][s::elf] = [] {
         // The host's /usr/include is not searched (a payload C library is not described as the
         // graph's, on the fast path either); a project that needs it writes it down.
-        s::needs({"llvm", "elf"});
         std::string header;
         for (std::string h : {"zlib.h", "X11/Xlib.h", "curl/curl.h", "openssl/ssl.h"})
             if (fs::is_regular_file("/usr/include/" + h)) { header = h; break; }
@@ -348,10 +342,9 @@ E2E layers{"layers", [] {
         expect(fatal(s::has_line(s::text(r), R"(requires the c\+\+-abi to be .libstdc\+\+.)"))) << "FAIL: D: the refusal does not name the requirement: " << s::text(r);
     };
 
-    "1080 gcc over the hosts payload links from the payload"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "1080 gcc over the hosts payload links from the payload"_test[s::gcc][s::elf] = [] {
         // gcc over the host's C library payload names the payload on its link (crt prefix,
         // library directory, loader), not a sysroot, and the program runs.
-        s::needs({"gcc", "elf"});
         auto p = s::project::scaffold("app");
         auto r = p.mcpp({"build", "--toolchain", "gcc@15.1.0"});
         expect(fatal(e2e::succeeded(r))) << "the project did not build with gcc@15.1.0: " << s::text(r);

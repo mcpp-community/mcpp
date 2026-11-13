@@ -65,11 +65,10 @@ std::string widget_descriptor(std::string_view name) {
 }
 
 E2E lock{"lock", [] {
-    "196 version identity and lock"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "196 version identity and lock"_test[s::gcc][s::fresh_sandbox] = [] {
         // mcpp#363: a resolved version is an index key (an address re-rendered from parsed
         // numbers did not exist), and mcpp.lock records what was resolved, stably, whatever the
         // command, without dev-dependencies.
-        s::needs({"gcc", "fresh-sandbox"});
         s::project p{{"src/main.cpp", "import gadget;\nint main(){ return gadget_value() == 42 ? 0 : 1; }\n"}};
         auto mk_pkg = [&](std::string_view name, std::string_view table, std::string_view mod = "gadget") {
             p.write(std::format("local-index/pkgs/a/acme.{}.lua", name),
@@ -161,11 +160,10 @@ E2E lock{"lock", [] {
         expect(e2e::contains(p.read("mcpp.lock"), "dev-dependencies are excluded")) << "the lock must state that dev-dependencies are excluded";
     };
 
-    "203 exact selector lock migration"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "203 exact selector lock migration"_test[s::gcc][s::fresh_sandbox] = [] {
         // A compact dotted selector used to try mcpplibs.<ns> first; during the migration release
         // an existing lock keeps the identity it selected. Both identities exist, so index order
         // cannot make the assertion pass.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         auto descriptor = [](std::string_view ns, std::string_view desc) {
             return std::format("package = {{\n    spec = \"1\",\n    namespace = \"{0}\",\n    name = \"lua\",\n    description = \"{1}\",\n    licenses = {{\"MIT\"}},\n    type = \"package\",\n    xpm = {{ linux = {{ [\"1.0.0\"] = {{\n        url = \"https://example.invalid/{0}-lua.tar.gz\",\n        sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\",\n    }} }} }},\n    mcpp = {{\n        language = \"c++23\",\n        import_std = false,\n        sources = {{ \"src/lua.cppm\" }},\n        targets = {{ [\"lua\"] = {{ kind = \"lib\" }} }},\n        deps = {{}},\n    }},\n}}\n", ns, desc);
@@ -187,11 +185,10 @@ E2E lock{"lock", [] {
         expect(e2e::contains(app.read("mcpp.lock"), "namespace = \"mcpplibs.capi\"")) << "lock identity changed during migration";
     };
 
-    "844 a planned build keeps one lock entry per identity"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "844 a planned build keeps one lock entry per identity"_test[s::gcc][s::fresh_sandbox] = [] {
         // A planned build of a workspace root keeps one mcpp.lock entry per identity, spelled as
         // the root's manifest spells it (F11): it keeps a lock in the 2026.9.28.3 spelling,
         // drops a second entry for the same identity, and does not rewrite an unchanged lock.
-        s::needs({"gcc", "fresh-sandbox"});
         s::project ws{{{"local-index/pkgs/c/cmdline.lua", cmdline_descriptor("fixture for the one-entry-per-identity lock (F11)")},
                        {".mcpp/.xlings/data/xpkgs/mcpplibs-x-cmdline/1.0.0/src/cmdline.cppm", "export module fixture.cmdline;\nexport int cmdline_value() { return 7; }\n"},
                        {".mcpp/.xlings/data/xpkgs/mcpplibs-x-cmdline/1.0.0/.mcpp_ok", "ok\n"},
@@ -242,11 +239,10 @@ hash    = "{}"
         expect(e2e::succeeded(ws.mcpp({"build"}, locked))) << "--locked reported drift on an unchanged lock";
     };
 
-    "939 a lock written meanwhile is not overwritten"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "939 a lock written meanwhile is not overwritten"_test[s::gcc][s::fresh_sandbox] = [] {
         // mcpp.lock is written optimistically: a lock that changed while a build resolved (here
         // the project's own build program appends to it) is not overwritten, and the build is
         // refused naming lockfile-concurrent and the remedy; the next build succeeds.
-        s::needs({"gcc", "fresh-sandbox"});
         s::project p{{{"local-index/pkgs/c/cmdline.lua", cmdline_descriptor("fixture for the optimistic lock write")},
                       {".mcpp/.xlings/data/xpkgs/mcpplibs-x-cmdline/1.0.0/src/cmdline.cppm", "export module fixture.cmdline;\nexport int cmdline_value() { return 7; }\n"},
                       {".mcpp/.xlings/data/xpkgs/mcpplibs-x-cmdline/1.0.0/.mcpp_ok", "ok\n"},
@@ -270,11 +266,10 @@ int main() {
         expect(e2e::succeeded(p.mcpp({"build"}, inherited))) << "C: the build after the concurrent write failed";
     };
 
-    "990 a lock key does not depend on the selected members"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "990 a lock key does not depend on the selected members"_test[s::gcc][s::fresh_sandbox] = [] {
         // Two members take one workspace dependency under two spellings; the lock entry's key and
         // hash do not depend on which members a command plans, and the key is the workspace's
         // own spelling.
-        s::needs({"gcc", "fresh-sandbox"});
         s::project ws{{{"local-index/pkgs/w/widget2.lua", widget_descriptor("widget2")},
                        {".mcpp/.xlings/data/xpkgs/mcpplibs.widget2/1.0.0/src/widget2.cppm", "export module widget2;\nexport int widget2_value() { return 35; }\n"},
                        {"mcpp.toml", "[workspace]\nmembers = [\"a\", \"c\"]\n[workspace.indices]\nmcpplibs = { path = \"local-index\" }\n[workspace.dependencies]\nwidget2 = \"1.0.0\"\n"},
@@ -310,10 +305,9 @@ int main() {
         expect(s::has_line(seen["--workspace"], R"(^\[package\."widget2"\])")) << "the key is not the workspace's own spelling (widget2)";
     };
 
-    "1027 a configuration group keeps the other groups lock entries"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "1027 a configuration group keeps the other groups lock entries"_test[s::gcc][s::fresh_sandbox] = [] {
         // A workspace whose members take two configurations is planned one group at a time,
         // and each plan writes the lock: a plan keeps the other groups' targets of an entry.
-        s::needs({"gcc", "fresh-sandbox"});
         s::project ws{{{"local-index/pkgs/w/widget3.lua", widget_descriptor("widget3")},
                        {".mcpp/.xlings/data/xpkgs/mcpplibs.widget3/1.0.0/src/widget3.cppm", "export module widget3;\nexport int widget3_value() { return 36; }\n"},
                        {"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n[workspace.indices]\nmcpplibs = { path = \"local-index\" }\n"},

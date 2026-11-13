@@ -38,11 +38,10 @@ bool unreachable(std::string_view out) {
 }
 
 E2E graph{"graph", [] {
-    "291 dynamic linkage is refused only when the c library is the graphs"_test[tag{"requires:gcc"}][tag{"requires:llvm"}][tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "291 dynamic linkage is refused only when the c library is the graphs"_test[s::gcc][s::llvm][s::elf][s::unix_shell] = [] {
         // `linkage = "dynamic"` is honoured without a word when the C library is the payload's
         // (the artifact has DT_NEEDED entries), and reported as having no effect when the graph
         // supplies the C library.
-        s::needs({"gcc", "llvm", "elf", "unix-shell"});
         const std::string target = "x86_64-linux-gnu";
         const auto tmp = s::case_dir();
         auto make_project = [&](std::string_view dir, std::string_view tc, std::string_view deps) {
@@ -68,10 +67,9 @@ E2E graph{"graph", [] {
         expect(fatal(e2e::contains(out2, "has no effect"))) << "FAIL: 'dynamic' cannot be honoured here and nothing said so: " << out2;
     };
 
-    "738 a graph supplied target closes the hosts own search"_test[tag{"requires:llvm"}][tag{"requires:mingw-host-headers"}][tag{"requires:python3"}] = [] {
+    "738 a graph supplied target closes the hosts own search"_test[s::llvm][s::mingw_host_headers][s::python3] = [] {
         // Over the openkal windows-gnu stack, every unit's header search names only directories
         // of the store, though an unrestricted clang finds the host's separate MinGW headers.
-        s::needs({"llvm", "mingw-host-headers", "python3"});
         const auto llvm = s::llvm_version();
         s::options o{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         if (auto root_env = s::env("MCPP_E2E_HOST_MINGW_ROOT"); root_env && !root_env->empty()) {
@@ -138,12 +136,11 @@ E2E graph{"graph", [] {
         }
     };
 
-    "778 a graph link searches no host directory"_test[tag{"requires:llvm"}][tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "778 a graph link searches no host directory"_test[s::llvm][s::elf][s::unix_shell] = [] {
         // A graph link's -lm is answered by openkal-musl's own archive (and runs, on x86_64 and
         // under an aarch64 emulator when there is one); a release that does not answer it fails
         // and names the one that does; a host directory in ldflags is refused by the hermetic
         // check, by name.
-        s::needs({"llvm", "elf", "unix-shell"});
         const std::string target = "x86_64-linux-musl";
         const auto tmp = s::case_dir();
         const auto llvm = s::llvm_version();

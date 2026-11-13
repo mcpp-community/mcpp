@@ -11,10 +11,9 @@ namespace fs = std::filesystem;
 namespace {
 
 E2E cross{"cross", [] {
-    "112 build mcpp cross"_test[tag{"requires:gcc"}][tag{"requires:mingw-cross"}] = [] {
+    "112 build mcpp cross"_test[s::gcc][s::mingw_cross] = [] {
         // Under `--target x86_64-windows-gnu` build.mcpp compiles and runs on the host and sees
         // MCPP_TARGET = the cross triple.
-        s::needs({"gcc", "mingw-cross"});
         auto p = s::project::scaffold("crossbp");
         p.write("build.mcpp", R"cpp(#include <cstdio>
 #include <cstdlib>
@@ -38,7 +37,7 @@ int main() {
         auto exe = s::find_file(p.at("target"), "crossbp.exe");
         expect(fatal(exe.has_value())) << "no PE artifact produced";
         // Under wine, when the machine has it, the loop is whole.
-        if (s::has("wine")) {
+        if (s::wine) {
             auto w = e2e::run({.argv = {"wine", exe->string()}, .env = {{"WINEDEBUG", "-all"}}});
             auto out = s::last_line(w.out);
             if (out.ends_with('\r')) out.pop_back();
@@ -66,12 +65,11 @@ int main() {
         expect(e2e::contains(p.read("src/cross_gen.cpp"), "x86_64-windows-gnu")) << "MCPP_TARGET wrong under import std";
     };
 
-    "168 build mcpp musl host static"_test[tag{"requires:elf"}] = [] {
+    "168 build mcpp musl host static"_test[s::elf] = [] {
         // Under a musl host toolchain the build program, which the system executes directly, is
         // static: a dynamic musl program names /lib/ld-musl-<arch>.so.1, which no payload installs,
         // and dies as an unexplained 127 (#295). The newest installed musl payload is the one a
         // user gets; none installed is a skip (this case never installs ~200 MB).
-        s::needs({"elf"});
         auto musl = s::newest_payload("xim-x-musl-gcc", "bin/*-linux-musl-g++");
         if (!musl)
             skip("no musl-gcc payload installed — not testing the musl host helper");
@@ -98,13 +96,12 @@ int main() {
         expect(!h.elf_interpreter) << "musl host helper contains PT_INTERP: " << h.interpreter;
     };
 
-    "1051 a cross targets toolchain section is not the build programs"_test[tag{"requires:elf"}][tag{"requires:llvm"}][tag{"requires:gcc"}][tag{"requires:musl"}] = [] {
+    "1051 a cross targets toolchain section is not the build programs"_test[s::elf][s::llvm][s::gcc][s::musl] = [] {
         // `[target.<t>] toolchain` names the target's compiler, not the build program's: under
         // --target x86_64-linux-musl the program is compiled by [toolchain] (llvm) and runs on
         // this machine, the target by the section's gcc (on Windows the program was compiled by
         // the musl cross gcc and could not start).
-        s::needs({"elf", "llvm", "gcc", "musl"});
-        if (!s::has("x86_64-host"))
+        if (!s::on_x86_64())
             skip("an x86_64 host");
         s::project p{{"mcpp.toml", std::format("[package]\nname    = \"crossprog\"\nversion = \"0.1.0\"\n\n[toolchain]\ndefault = \"llvm@{}\"\n\n[target.x86_64-linux-musl]\ntoolchain = \"gcc@16.1.0\"\n", s::llvm_version())},
                      {"build.mcpp", "import std;\nimport mcpp;\nint main() {\n    std::ofstream(std::string(mcpp::out_dir()) + \"/ran.txt\") << \"ran\\n\";\n}\n"},

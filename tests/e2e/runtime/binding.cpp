@@ -56,11 +56,10 @@ std::string with_following(std::string_view text, std::string_view pattern, std:
 }
 
 E2E binding{"binding", [] {
-    "200 subos env reaches program"_test[tag{"requires:elf"}] = [] {
+    "200 subos env reaches program"_test[s::elf] = [] {
         // One selected RuntimeBinding reaches the full-path and the cached `run`; the legacy
         // MCPP_SUBOS_DIR is ignored; a changed contract, an aged cache and no selection are
         // each taken as they are; a SubOS that cannot answer the contract is refused.
-        s::needs({"elf"});
         const auto default_manifest = s::shared_home() / "registry/subos/default/.xlings.json";
         expect(fatal(fs::is_regular_file(default_manifest))) << "FAIL: mcpp default SubOS is missing";
         const auto default_subos = default_manifest.parent_path();
@@ -142,11 +141,10 @@ E2E binding{"binding", [] {
         expect(fatal(s::has_line(s::text(r), "RuntimeBinding|no `subos_info`|does not describe itself"))) << "FAIL: missing-contract diagnostic is not actionable: " << s::text(r);
     };
 
-    "206 runtime binding physics"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "206 runtime binding physics"_test[s::elf][s::gcc] = [] {
         // A host library linked under `allow_host_libs` builds and its verdict is what the
         // artifact's own search path decides; a hot no-op neither relinks nor re-probes; the
         // doctor reuses the verdict; a proven rule-B mismatch fails, also when cached.
-        s::needs({"elf", "gcc"});
         // `find /lib /usr/lib -name 'libtinfo.so' -print -quit`
         std::optional<fs::path> tinfo;
         for (const fs::path root : {"/lib", "/usr/lib"}) {
@@ -218,10 +216,9 @@ E2E binding{"binding", [] {
         expect(fatal(stamp(*mismatch_verdict) == mismatch_before)) << "FAIL: cached mismatch was reparsed/rewritten";
     };
 
-    "208 private libc stays in the binary"_test[tag{"requires:gcc"}][tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "208 private libc stays in the binary"_test[s::gcc][s::elf][s::unix_shell] = [] {
         // The private libc directory reaches the artifact's RUNPATH and not the program's
         // LD_LIBRARY_PATH: a /bin/sh child survives and the dlopen it serves still resolves.
-        s::needs({"gcc", "elf", "unix-shell"});
         s::project app(s::case_dir() / "app", {{"runtime/plugin.c", "int runtime_plugin_answer(void) { return 42; }\n"},
                                                {"src/main.cpp", R"(#include <cstdio>
 #include <cstdlib>
@@ -279,10 +276,9 @@ int main() {
         expect(fatal(e2e::contains(out, "DLOPEN=ok answer=42"))) << "FAIL: dlopen through the runtime library dir regressed: " << out;
     };
 
-    "209 runtime verdict never reruns green"_test[tag{"requires:elf"}][tag{"requires:gcc"}][tag{"requires:python3"}] = [] {
+    "209 runtime verdict never reruns green"_test[s::elf][s::gcc][s::python3] = [] {
         // A stored proven mismatch fails the next plain build and the doctor names it; a changed
         // artifact is validated again.
-        s::needs({"elf", "gcc", "python3"});
         s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "int main() { return 0; }\n"}});
         auto r = app.mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "initial build failed: " << s::text(r);
@@ -315,11 +311,10 @@ int main() {
             expect(fatal(it.value().value("status", std::string()) == "pass")) << it.key() << ": " << it.value().dump();
     };
 
-    "214 executable carries dt rpath"_test[tag{"requires:gcc"}][tag{"requires:elf"}][tag{"requires:python3"}] = [] {
+    "214 executable carries dt rpath"_test[s::gcc][s::elf][s::python3] = [] {
         // An executable carries DT_RPATH and a shared library keeps the linker's DT_RUNPATH; the
         // flag is on the executable's link edge only; rule E records both and the record holds
         // across a no-op build and a build that relinks one of the two.
-        s::needs({"gcc", "elf", "python3"});
         s::project p({{"mcpp.toml", "[package]\nname = \"tags\"\nversion = \"0.1.0\"\n\n[targets.taglib]\nkind = \"shared\"\n\n[targets.tagbin]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                       {"src/lib.cppm", "export module tags.lib;\nexport int tag_value() { return 7; }\n"},
                       {"src/main.cpp", "import tags.lib;\nint main() { return tag_value() == 7 ? 0 : 1; }\n"}});
@@ -378,10 +373,9 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << s::text(r);
     };
 
-    "220 farm only library runs"_test[tag{"requires:gcc"}][tag{"requires:elf"}][tag{"requires:python3"}] = [] {
+    "220 farm only library runs"_test[s::gcc][s::elf][s::python3] = [] {
         // A library only the SubOS provides loads (a farm the case owns, then this machine's
         // farm), and a DT_NEEDED nothing provides fails the build naming itself.
-        s::needs({"gcc", "elf", "python3"});
         const auto tmp = s::case_dir();
         // half 0: a farm this case owns
         const auto farm_own = tmp / "ownfarm/.mcpp/.xlings/subos/probe/lib";

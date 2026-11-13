@@ -11,10 +11,9 @@ namespace fs = std::filesystem;
 namespace {
 
 E2E frameworks{"frameworks", [] {
-    "1052 a framework that uses the package under test is built against it"_test[tag{"requires:gcc"}] = [] {
+    "1052 a framework that uses the package under test is built against it"_test[s::gcc] = [] {
         // mtest uses mcpplibs.os, which is tested with mtest: the package being built stands for
         // itself in its own graph, whatever version the framework's edge asked for.
-        s::needs({"gcc"});
         s::project t(s::case_dir() / "t", {{"core/mcpp.toml", R"([package]
 namespace = "acme"
 name      = "core"
@@ -55,10 +54,9 @@ export namespace tf { bool check(bool held) { return held && answer() == 42; } }
         expect(n <= 1u) << "the root's module was compiled more than once (" << n << ")";
     };
 
-    "94 macos test stdlib"_test[tag{"requires:macos"}] = [] {
+    "94 macos test stdlib"_test[s::macos] = [] {
         // A test program links the toolchain's libc++, not the system's (the header/dylib split of
         // the old -lc++ broke on libc++ 22's out-of-line __hash_memory).
-        s::needs({"macos"});
         auto p = s::project::scaffold("hashapp");
         p.write("tests/hash_test.cpp", R"(// Forces the string-hash path (__hash_memory-class symbols on libc++ >= 22).
 import std;

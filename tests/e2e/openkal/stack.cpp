@@ -38,10 +38,9 @@ bool packages_unreachable(std::string_view out) {
 }
 
 E2E stack{"stack", [] {
-    "269 openkal llvm spelling still resolves"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "269 openkal llvm spelling still resolves"_test[s::import_std_libcxx] = [] {
         // `openkal-llvm@<v>` resolves to the driver `llvm@<v>` does, and decides nothing of the
         // target side: with an empty graph every layer is the payload's.
-        s::needs({"import-std-libcxx"});
         const auto v = s::llvm_version();
         s::project p({{"src/main.cpp", "int main() { return 0; }\n"}});
         const auto manifest = [&](std::string_view spec) {
@@ -69,11 +68,10 @@ E2E stack{"stack", [] {
         expect(fatal(e2e::contains(report, "payload"))) << "with an empty graph every layer comes from the payload: " << report;
     };
 
-    "285 kernel abi from graph keeps the payload c library"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "285 kernel abi from graph keeps the payload c library"_test[s::gcc][s::unix_shell] = [] {
         // openkal-linux supplies the kernel interface and nothing below it: the C library, the
         // C++ runtime and the startup files stay the payload's, the link reaches them, and the
         // program (a throw and a std::string) runs.
-        s::needs({"gcc", "unix-shell"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"kabi\"\nversion = \"0.1.0\"\n\n[toolchain]\ndefault = \"gcc@16.1.0\"\n\n[dependencies]\nopenkal-linux = \"0.5.4\"\n"},
                       {"src/main.cpp", R"(#include <string>
 #include <stdexcept>
@@ -99,11 +97,10 @@ int main() {
         expect(fatal(s::text(ran) == "boom\n")) << "wrong output: " << s::text(ran);
     };
 
-    "286 the openkal stack still builds"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "286 the openkal stack still builds"_test[s::llvm][s::unix_shell] = [] {
         // openkal-musl and openkal-llvm-runtime supply every layer: the report says so by
         // layer, the program is static with no interpreter and runs; the hosted threads
         // companion (nlohmann.json, threads, TLS, concurrent unwind) runs too.
-        s::needs({"llvm", "unix-shell"});
         s::project p({{"mcpp.toml", std::format("[package]\nname    = \"okstack\"\nversion = \"0.1.0\"\n\n[toolchain]\ndefault = \"llvm@{}\"\n\n[dependencies]\nopenkal-musl = \"0.3.5\"\nopenkal-llvm-runtime = \"0.1.3\"\nnlohmann.json = \"3.12.0\"\n", s::llvm_version())},
                       {"src/main.cpp", R"(#include <cstdio>
 #include <string>
@@ -154,11 +151,10 @@ int main() {
             << "wrong hosted threads output: " << s::text(ran);
     };
 
-    "287 the openkal stack crosses to aarch64"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "287 the openkal stack crosses to aarch64"_test[s::llvm][s::unix_shell] = [] {
         // aarch64-linux-musl over openkal: an aarch64 static ELF whose outline-atomics helpers
         // are defined (none undefined), with LSE instructions in it (the feature on, not off);
         // where qemu-aarch64 exists it runs.
-        s::needs({"llvm", "unix-shell"});
         s::project p({{"mcpp.toml", std::format("[package]\nname    = \"okcross\"\nversion = \"0.1.0\"\n\n[toolchain]\ndefault = \"llvm@{}\"\n\n[dependencies]\nopenkal-musl = \"0.3.5\"\nopenkal-llvm-runtime = \"0.1.3\"\n", s::llvm_version())},
                       {"src/main.cpp", R"(#include <atomic>
 #include <cstdio>
@@ -216,11 +212,10 @@ int main() {
         }
     };
 
-    "289 one host reaches every openkal target"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "289 one host reaches every openkal target"_test[s::llvm][s::unix_shell] = [] {
         // One source per kind, one host, every target the ecosystem serves: each row builds the
         // artefact its machine names, or is skipped with its reason; a sweep that built nothing
         // is a skip, and a row that fails fails the case.
-        s::needs({"llvm", "unix-shell"});
         struct row {
             std::string target, deps;
             s::format kind;
@@ -277,11 +272,10 @@ int main() {
         if (built == 0) skip(std::format("no target could be built here ({} skipped)", skipped));
     };
 
-    "1073 the freebsd musl identity is served by openkal"_test[tag{"requires:llvm"}][tag{"requires:elf"}] = [] {
+    "1073 the freebsd musl identity is served by openkal"_test[s::llvm][s::elf] = [] {
         // `--target x86_64-freebsd-musl` builds a static FreeBSD ELF over openkal-musl and
         // openkal-freebsd; `--target x86_64-freebsd` with no platform selected takes that
         // identity and says so.
-        s::needs({"llvm", "elf"});
         auto app = s::project::scaffold("app");
         auto r = app.mcpp({"build", "--target", "x86_64-freebsd-musl"});
         expect(fatal(e2e::succeeded(r))) << "A: x86_64-freebsd-musl did not build: " << s::text(r);

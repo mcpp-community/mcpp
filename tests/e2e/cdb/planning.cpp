@@ -18,7 +18,7 @@ std::vector<std::string> set_names(const nlohmann::json& envelope) {
 }
 
 E2E planning{"planning", [] {
-    "787 emit plans every member on its own"_test[tag{"requires:python3"}] = [] {
+    "787 emit plans every member on its own"_test[s::python3] = [] {
         // A member whose plan fails leaves the others described (exit 1, one diagnostic naming
         // its manifest, both members watched); the bare document likewise, the reason on standard
         // error; when every member fails, the envelope has no data and a diagnostic per member.
@@ -60,11 +60,10 @@ E2E planning{"planning", [] {
         expect(fatal(paths == std::vector<std::string>{"bad/mcpp.toml", "good/mcpp.toml"})) << "C: paths";
     };
 
-    "788 emit defers an unbuilt host tool"_test[tag{"requires:gcc"}][tag{"requires:python3"}] = [] {
+    "788 emit defers an unbuilt host tool"_test[s::gcc][s::python3] = [] {
         // A: planning neither builds a dependency's host tool nor runs its build program's
         // check; it notes the tool as deferred. B: the build runs the blocking check, whose
         // failure it shows. C: once the tool is built, emit notes nothing.
-        s::needs({"gcc", "python3"});
         const auto tmp = s::case_dir();
         s::project tool(tmp / "tool", {
             {"mcpp.toml", "[package]\nname    = \"tool\"\nversion = \"0.1.0\"\n\n[targets.t]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
@@ -107,11 +106,10 @@ int main() {
         expect(fatal(s::json(r.out)["diagnostics"].empty())) << "C: diagnostics " << r.out;
     };
 
-    "789 emit describes a member past a failed build program"_test[tag{"requires:gcc"}][tag{"requires:python3"}] = [] {
+    "789 emit describes a member past a failed build program"_test[s::gcc][s::python3] = [] {
         // A build program that exits 1 (its directives dropped) or does not compile (the
         // compiler's diagnostic carried) leaves its package described with one diagnostic
         // (exit 1); a package with nothing to describe has no data and a plan diagnostic.
-        s::needs({"gcc", "python3"});
         const auto tmp = s::case_dir();
         s::project exits1(tmp / "exits1", {{"mcpp.toml", "[package]\nname    = \"exits1\"\nversion = \"0.1.0\"\n"},
                                            {"src/main.cpp", "int main() { return 0; }\n"},
@@ -153,7 +151,7 @@ int main() {
         diag = e["diagnostics"][0];
         expect(fatal(diag["code"] == "MCPP_BUILD_DATABASE_PLAN_FAILED" && diag["path"] == "mcpp.toml")) << "C: " << diag.dump();
     };
-    "809 failed build program hides no device source"_test[tag{"requires:python3"}] = [] {
+    "809 failed build program hides no device source"_test[s::python3] = [] {
         // A build program that does not compile, in a package whose device sources a rule
         // module compiles: one program diagnostic, naming no device source.
         const auto tmp = s::case_dir();
@@ -176,10 +174,9 @@ int main() {
         const auto message = diag["message"].get<std::string>();
         expect(fatal(!message.contains("k.dev") && !message.contains("device sources that no action compiles"))) << "D: " << message;
     };
-    "731 planning children do not inherit the callers pipe"_test[tag{"requires:elf"}] = [] {
+    "731 planning children do not inherit the callers pipe"_test[s::elf] = [] {
         // A build program that planning runs holds no descriptor of the pipe the caller reads
         // emit's output from.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                                      {"src/main.cpp", "int main() { return 0; }\n"},

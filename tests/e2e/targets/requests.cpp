@@ -66,15 +66,14 @@ std::string installed_version(const fs::path& cwd, std::string_view family) {
 }
 
 std::string uname_m() {
-    if (s::has("x86_64-host")) return "x86_64";
+    if (s::on_x86_64()) return "x86_64";
     return s::on_macos() ? "arm64" : "aarch64";
 }
 
 E2E requests{"requests", [] {
-    "282 target is a request"_test[tag{"requires:gcc"}] = [] {
+    "282 target is a request"_test[s::gcc] = [] {
         // A triple that declines to name a C library is no contradiction of the graph's; one
         // that names another is reported, with what resolved and a spelling to use instead.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project(tmp / "libc", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"tiny-musl\"\nversion   = \"0.1.0\"\nprovides  = [\"mcpp:c-abi=musl\"]\n\n[build]\nsources = []\n"}});
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ntiny-musl = { path = \"../libc\" }\n"},
@@ -89,10 +88,9 @@ E2E requests{"requests", [] {
         expect(fatal(e2e::contains(out, "--target x86_64-linux"))) << "the report names no correct spelling to use instead: " << out;
     };
 
-    "293 the requested target and the resolved one name one os"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "293 the requested target and the resolved one name one os"_test[s::gcc][s::unix_shell] = [] {
         // A build for one operating system is never quietly performed for another, and a correct
         // cross build is never refused for it.
-        s::needs({"gcc", "unix-shell"});
         const auto tmp = s::case_dir();
         auto make_project = [&](std::string_view dir, std::string_view section) {
             return s::project(tmp / dir, {{"mcpp.toml", std::format("[package]\nname    = \"osprobe\"\nversion = \"0.1.0\"\n{}", section.empty() ? std::string() : std::format("\n{}\n", section))},
@@ -133,10 +131,9 @@ E2E requests{"requests", [] {
         if (built == 0) skip(std::format("no target resolved here — the sweep proved nothing ({} skipped)", skipped));
     };
 
-    "294 the list answers what can be built not what has a payload"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "294 the list answers what can be built not what has a payload"_test[s::llvm][s::unix_shell] = [] {
         // `toolchain list` names the targets this host can build for, the ones a dependency
         // graph serves included, and leaves out those that need a host-only toolchain.
-        s::needs({"llvm", "unix-shell"});
         const auto out = s::text(s::mcpp({"toolchain", "list"}, s::case_dir()));
         std::vector<std::string> targets;
         bool in = false;
@@ -166,10 +163,9 @@ E2E requests{"requests", [] {
             expect(row(t).empty()) << "FAIL: " << t << " is offered on a Linux host, and no dependency supplies it: " << row(t);
     };
 
-    "295 naming the host target changes nothing"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "295 naming the host target changes nothing"_test[s::gcc][s::unix_shell][s::jq] = [] {
         // `--target <the triple a toolchain uses anyway>` gives the same link and compile lines
         // as no --target, for each installed family.
-        s::needs({"gcc", "unix-shell", "jq"});
         s::project p({{"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"ok\\n\"); }\n"}});
         auto line_of = [&](std::string_view channel, std::vector<std::string> extra) -> std::string {
             p.remove("target");
@@ -232,11 +228,10 @@ E2E requests{"requests", [] {
         if (checked == 0) skip("no toolchain here produced a link line to compare");
     };
 
-    "299 a request that named no c library resolves to a row that exists"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "299 a request that named no c library resolves to a row that exists"_test[s::unix_shell][s::jq] = [] {
         // `--target aarch64-linux` resolves to a supported row of the system (the native GNU row
         // on an aarch64 Linux host); x86_64-linux stays gnu on an x86_64 Linux host; a written
         // `-gnu` keeps the GNU row.
-        s::needs({"unix-shell", "jq"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"reqprobe\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "extern \"C\" int main(int, char**, char**) { return 0; }\n"}});
         auto why = [&](std::string_view t) { return s::json(p.mcpp({"why", "toolchain", "--target", std::string(t), "--format", "json"}).out); };
@@ -281,12 +276,11 @@ E2E requests{"requests", [] {
         expect(fatal(gnu == "aarch64-linux-gnu" || gnu == "aarch64-unknown-linux-gnu")) << "FAIL: written -gnu resolved to '" << gnu << "'";
     };
 
-    "300 a registered family is not reported unknown"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "300 a registered family is not reported unknown"_test[s::unix_shell][s::jq] = [] {
         // A family the vocabulary registers (riscv64-linux, whose row riscv64-linux-musl is
         // planned) is refused as planned, naming the row that exists and no triple nobody wrote; a
         // typo is still unknown and keeps its suggestion. The rule is decided in the build's
         // preparation (its tier gate), which exports no function that answers it.
-        s::needs({"unix-shell", "jq"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"unkprobe\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "extern \"C\" int main(int, char**, char**) { return 0; }\n"}});
         auto json_for = [&](std::string_view t) { return s::json(p.mcpp({"why", "toolchain", "--target", std::string(t), "--format", "json"}).out); };
@@ -303,10 +297,9 @@ E2E requests{"requests", [] {
         expect(fatal(e2e::contains(msg2, "x86_64-linux-musl"))) << "FAIL: the did-you-mean suggestion was lost\n" << msg2;
     };
 
-    "1042 each flag names its layer and a request its selection"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1042 each flag names its layer and a request its selection"_test[s::elf][s::llvm] = [] {
         // `why flags` names the layer of each word (row, engine, package), and `why target
         // --format json` states the request, the identity and the candidates in order.
-        s::needs({"elf", "llvm"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"bare\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.c\"]\ncflags  = [\"-DBARE_APP=1\"]\n\n[targets.bare]\nkind = \"bin\"\nmain = \"src/main.c\"\n"},
                       {"src/main.c", "void _start(void) { __asm__ volatile(\"mov $60, %eax\\n mov $7, %edi\\n syscall\"); }\n"}});
         auto r = p.mcpp({"why", "flags", "main.c", "--target", "x86_64-none-elf"});

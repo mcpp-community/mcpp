@@ -111,9 +111,8 @@ int main() { return widget_anchor(); }
             expect(s::lacks(app.read("mcpp.lock"), "ghost")) << "non-matching cfg dependency 'ghost' leaked into the resolve";
         }
     };
-    "108 cfg conditional sources"_test[tag{"requires:gcc"}] = [] {
+    "108 cfg conditional sources"_test[s::gcc] = [] {
         // `[target.'cfg(...)'.build] sources`: the host arch's file is compiled, the other's not.
-        s::needs({"gcc"});
         std::string this_arch, other_arch;  // the host's (`uname -m`), and the other one
 #if defined(__x86_64__) || defined(_M_X64)
         this_arch = "x86_64", other_arch = "aarch64";
@@ -140,10 +139,9 @@ int main() {
         expect(s::find_files(p.at("target"), R"(other\.o)").empty()) << "other-arch source compiled";
     };
 
-    "119 dep cfg sources"_test[tag{"requires:gcc"}] = [] {
+    "119 dep cfg sources"_test[s::gcc] = [] {
         // A path dependency's `[target.'cfg(...)'.build]` sources are compiled under build and
         // under test (#229).
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project{tmp / "mylib", {{"mcpp.toml", R"cpp([package]
 name    = "mylib"
@@ -328,12 +326,11 @@ nomatchlib = { path = "../nomatch", features = ["codegen"] }
         expect(count("MCPP_BARE_TRIPLE") > 0) << "bare triple inert with --target";
         expect(count("MCPP_CFG_ALIAS") > 0) << "cfg() inert with --target";
     };
-    "677 a conditional dependency replaces the unconditional one"_test[tag{"requires:elf"}] = [] {
+    "677 a conditional dependency replaces the unconditional one"_test[s::elf] = [] {
         // A matching `[target.<sel>.dependencies]` declaration replaces the unconditional one of
         // the same identity (its linkage applies, the graph records its table); a non-matching
         // one does not; a table naming no source is refused with the restated line; a misspelt
         // section is reported.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project{tmp / "fw", {{"mcpp.toml", R"cpp([package]
 namespace = "demo"
@@ -378,12 +375,11 @@ kind = "lib"
         expect(fatal(e2e::succeeded(dd))) << "D: build failed";
         expect(e2e::contains(s::text(dd), "[target.'cfg(os = \"linux\")'.dependecies] is not a section mcpp reads")) << "D: the misspelled section was not reported";
     };
-    "813 conditional dialect cxxflags root only"_test[tag{"requires:gcc"}] = [] {
+    "813 conditional dialect cxxflags root only"_test[s::gcc] = [] {
         // `[target.<selector>.build] dialect_cxxflags` is a graph-wide switch under a target
         // condition (#717): a matching row reaches the std BMI, the scan and every TU after the
         // root's own [build]; a non-matching one contributes nothing; switching rows rebuilds the
         // std BMI and switching back reuses it; a dependency's own key reaches no command.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         const std::vector<std::string> build{"build", "--toolchain", "gcc@16.1.0"};
@@ -531,12 +527,11 @@ main = "src/main.cpp"
         expect(s::lacks(s::read_file(n4b.front()) + text_of(four.at("compile_commands.json")), "-DDEPFLAG_V2")) << "the dependency's changed dialect_cxxflags reached a command";
     };
 
-    "895 conditional configuration rows count as they evaluate"_test[tag{"requires:gcc"}] = [] {
+    "895 conditional configuration rows count as they evaluate"_test[s::gcc] = [] {
         // A member's conditional rows count as they evaluate for the build (#786): its own
         // `[target.<sel>.build] dialect_cxxflags` reaches the build under a virtual root (R1); a
         // row for another target does not split the members (R2); rows that evaluate
         // differently do, each member keeping its own dialect (R3).
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options inherited{.where = s::home::inherited};
         const std::string host = R"(cfg(any(os = "linux", os = "macos", os = "windows")))";

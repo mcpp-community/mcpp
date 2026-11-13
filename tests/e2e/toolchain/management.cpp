@@ -92,11 +92,10 @@ main = "src/main.cpp"
         expect(fatal(e2e::contains(out, "msvc@system"))) << "FAIL: the refusal does not name the one supported exception: " << out;
     };
 
-    "26 toolchain management"_test[tag{"requires:gcc"}] = [] {
+    "26 toolchain management"_test[s::gcc] = [] {
         // `toolchain install / list / default / remove` in an isolated home: the build uses the
         // home's private compiler and nothing of the system's, `self env` names the default, and
         // remove needs the exact version.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::fresh);
         const s::options o{.where = s::home::fresh, .env = {{"MCPP_NO_AUTO_INSTALL", "1"}}};
         const auto cwd = s::case_dir();
@@ -168,11 +167,10 @@ main = "src/main.cpp"
         expect(fatal(s::no_line(s::text(r), R"(^gcc.*15\.1\.0)"))) << "FAIL: list still shows removed toolchain";
     };
 
-    "29 toolchain partial versions"_test[tag{"requires:gcc"}] = [] {
+    "29 toolchain partial versions"_test[s::gcc] = [] {
         // `toolchain default` accepts a partial version (`gcc 16`, `gcc@16`), and a first run in a
         // home with no default picks the glibc gcc@16.1.0, prints the First-run banner once, and
         // persists it.
-        s::needs({"gcc"});
         const auto h1 = s::case_home(s::home::payloads);
         const s::options o1{.where = s::home::payloads};
         configure_e2e_mirror(o1);
@@ -211,11 +209,10 @@ main = "src/main.cpp"
         expect(fatal(s::lacks(s::text(r), "First run"))) << "second build re-printed First-run banner — default not persisted";
     };
 
-    "325 system toolchain refused"_test[tag{"requires:gcc"}] = [] {
+    "325 system toolchain refused"_test[s::gcc] = [] {
         // `system` names no toolchain mcpp manages: refused for a plain project, for one with a
         // build program (before the program starts) and through MCPP_TOOLCHAIN, each refusal
         // showing what to write instead; a project with no [toolchain] still builds.
-        s::needs({"gcc"});
         s::project p({{"src/main.cpp", "#include <cstdio>\nint main(){ std::printf(\"hi\\n\"); return 0; }\n"}});
         auto manifest = [&](std::string_view extra) {
             p.write("mcpp.toml", std::format("[package]\nname = \"systc\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n{}", extra));
@@ -252,10 +249,9 @@ main = "src/main.cpp"
         expect(fatal(s::lacks(s::text(r), "toolchains it manages"))) << "FAIL: the refusal fired for a project that did not ask for system";
     };
 
-    "890 a toolchain declared for an unservable target is still installed"_test[tag{"requires:unix-shell"}] = [] {
+    "890 a toolchain declared for an unservable target is still installed"_test[s::unix_shell] = [] {
         // On a host that cannot serve a Linux guest, a declared toolchain is installed before the
         // hosted-guest refusal, which then names the graph remedy (mcpp#782).
-        s::needs({"unix-shell"});
         const auto home = s::case_home(s::home::fresh);
         const s::options o{.where = s::home::fresh};
         auto r = s::mcpp({"self", "config", "--mirror", s::env("MCPP_E2E_MIRROR").value_or("GLOBAL")}, s::case_dir(), o);
@@ -273,11 +269,10 @@ main = "src/main.cpp"
         expect(fatal(s::has_line(out, "depend on a package that implements|implement the target's system"))) << "FAIL: the refusal does not name the graph remedy";
     };
 
-    "899 toolchain flag replacing a declared toolchain says so"_test[tag{"requires:gcc"}][tag{"requires:llvm"}] = [] {
+    "899 toolchain flag replacing a declared toolchain says so"_test[s::gcc][s::llvm] = [] {
         // `--toolchain` replacing a toolchain the manifest (or the workspace root) declared warns,
         // naming both and where it was declared; the declared spec itself and an undeclared one
         // do not.
-        s::needs({"gcc", "llvm"});
         const s::options o{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         auto pkg = [&](const fs::path& dir, std::string_view extra) {

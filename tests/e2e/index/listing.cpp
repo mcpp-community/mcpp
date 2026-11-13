@@ -279,12 +279,11 @@ int f() { return "x]]y"[0]; }
         expect(fatal(sorted(e["data"]["versions"]["macosx"]) == names{"0.9.0", "1.0.0"})) << e.dump();
     };
 
-    "22 doctor cache publish"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "22 doctor cache publish"_test[s::elf][s::gcc] = [] {
         // On a cold home: `cache list` is empty, `self doctor` reports its checks and changes
         // nothing. Over the machine's payloads: a build's std entry is listed with a plausible
         // age, `cache dir` and `cache verify` agree, `publish --dry-run` packages, `cache prune`
         // needs --older-than, `cache clean` cleans, and `--explain` explains a known code only.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         const auto cold = s::another_home(s::home::fresh);
         const s::options in_cold{.env = {{"MCPP_HOME", cold.string()}}};

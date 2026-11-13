@@ -8,7 +8,7 @@ namespace s = mcpp::test::support;
 
 namespace {
 
-E2E basics{"basics", tag{"requires:fresh-sandbox"}, [] {
+E2E basics{"basics", s::fresh_sandbox, [] {
     "02 a new program is scaffolded, built and run with its arguments"_test = [] {
         s::project root;
         expect(fatal(e2e::succeeded(root.mcpp({"new", "hello"}))));

@@ -28,12 +28,11 @@ std::vector<std::string> words_of(const nlohmann::json& entry) {
 }
 
 E2E layers{"layers", [] {
-    "305 built from is not published"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "305 built from is not published"_test[s::unix_shell][s::jq] = [] {
         // `private_include_dirs` (a subset of `include_dirs`, globs expanded before the filter)
         // build the provider and do not reach the consumer: the provider's units carry its
         // private and public directories, the consumer's the public ones only, and a consumer
         // naming `hidden` as an identifier compiles.
-        s::needs({"unix-shell", "jq"});
         s::project p({{"lib/mcpp.toml", "[package]\nname    = \"vendored\"\nversion = \"0.1.0\"\n\n[build]\ninclude_dirs         = [\"internal\", \"gen/*\", \"pub\"]\nprivate_include_dirs = [\"internal\", \"gen/*\"]\n"},
                       {"lib/src/vendored.cppm", "export module vendored;\nexport int vendored_v() { return 7; }\n"},
                       {"lib/pub/pub.h", "#pragma once\n#define VENDORED_PUBLIC 1\n"},
@@ -70,12 +69,11 @@ E2E layers{"layers", [] {
         }
     };
 
-    "743 kernel abi interfaces are resolved not preprocessed"_test[tag{"requires:gcc"}] = [] {
+    "743 kernel abi interfaces are resolved not preprocessed"_test[s::gcc] = [] {
         // A: every required interface provided builds. B: one not provided is refused at
         // resolution naming the interface, the requirer and the resolved implementation, with
         // its code, nothing compiled. C: a provider stating no list builds and is named, with the
         // count of unchecked requirements. D: a provider stating its list draws no such note.
-        s::needs({"gcc"});
         s::project p({{"impl/src/lib.c", "int fake_kernel_marker(void) { return 0; }\n"}, {"src/main.c", "int main(void) { return 0; }\n"}});
         const auto write_impl = [&](std::string_view list) {
             p.write("impl/mcpp.toml", std::format("[package]\nname     = \"fakekernel\"\nversion  = \"0.1.0\"\nprovides = [\"mcpp:kernel-abi=openkal\"]\n\n[targets.fakekernel]\nkind    = \"lib\"\nsources = [\"src/*.c\"]\n{}",
@@ -122,11 +120,10 @@ E2E layers{"layers", [] {
         expect(fatal(s::lacks(s::text(r), "kernel-abi interfaces"))) << "D: the note belongs to the case where nothing was checked: " << s::text(r);
     };
 
-    "950 a kernel abi package over the system c library is in the shared image"_test[tag{"requires:elf"}] = [] {
+    "950 a kernel abi package over the system c library is in the shared image"_test[s::elf] = [] {
         // A: a program reaching a kernel-abi package only through a dependency's shared image:
         // the image defines the package's symbols (as its ordinary static dependency's) and
         // imports none of them. B: the program reaching the package itself links and runs.
-        s::needs({"elf"});
         s::project p({{"kernel/src/kernel.c", "int kal_fake_answer(void) { return 42; }\n"},
                       {"kernel/mcpp.toml", "[package]\nname     = \"fakekernel\"\nversion  = \"0.1.0\"\nprovides = [\"mcpp:kernel-abi=openkal\"]\n\n[targets.fakekernel]\nkind    = \"lib\"\nsources = [\"src/*.c\"]\n"},
                       {"sys/src/sys.c", "extern int kal_fake_answer(void);\nint sys_answer(void) { return kal_fake_answer(); }\n"},
@@ -163,11 +160,10 @@ E2E layers{"layers", [] {
         build_app("B");
     };
 
-    "994 the contract names the target side"_test[tag{"requires:llvm"}] = [] {
+    "994 the contract names the target side"_test[s::llvm] = [] {
         // For an ok image the contract's C++ words name `-D__OPENKAL__` and an `-isystem`
         // directory holding the C library's <stdio.h>; a C++ unit (<vector>, <cstdio>) and a C
         // unit (<stdio.h>) compile with the contract's program and words alone.
-        s::needs({"llvm"});
 #if defined(__x86_64__) || defined(_M_X64)
         const std::string arch = "x86_64";
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -206,11 +202,10 @@ E2E layers{"layers", [] {
         }
     };
 
-    "1056 a runner reads the interfaces its implementation provides"_test[tag{"requires:gcc"}] = [] {
+    "1056 a runner reads the interfaces its implementation provides"_test[s::gcc] = [] {
         // The build program of a package that requires the kernel-abi layer reads the provider's
         // `provides-interfaces` (`mcpp::kernel_abi_interfaces()`, ';'-joined); a package that
         // does not require it reads nothing; a provider stating no list gives nothing.
-        s::needs({"gcc"});
         const auto program = [](std::string_view name, std::string_view requires_line) -> std::vector<std::pair<std::string, std::string>> {
             return {{std::format("{}/mcpp.toml", name), std::format("[package]\nname     = \"{0}\"\nversion  = \"0.1.0\"\n{1}\n\n[targets.{0}]\nkind = \"lib\"\n", name, requires_line)},
                     {std::format("{0}/src/{0}.c", name), std::format("int {}_fn(void) {{ return 2; }}\n", name)},
@@ -232,12 +227,11 @@ E2E layers{"layers", [] {
         expect(fatal(e2e::contains(out, "runner sees []"))) << "an unstated list was not empty: " << out;
     };
 
-    "1059 a base package states the layers beside its c library"_test[tag{"requires:llvm"}] = [] {
+    "1059 a base package states the layers beside its c library"_test[s::llvm] = [] {
         // A sysroot carrying a manifest is a base package: its `provides` answers the c++-abi
         // and compiler-runtime layers, its [build] keys give a unit the base's C++ headers (not
         // the payload's) and the link its libraries with -nostdlib++; each architecture takes
         // the base its provider names; a row the platform does not serve is refused.
-        s::needs({"llvm"});
         const auto t = s::case_dir();
         for (std::string_view arch : {"x86_64", "aarch64"}) {
             fs::create_directories(t / std::format("{}-toy-sysroot", arch) / "usr/lib");

@@ -13,12 +13,11 @@ namespace {
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 E2E floors{"floors", [] {
-    "326 dependency standard floor"_test[tag{"requires:gcc"}] = [] {
+    "326 dependency standard floor"_test[s::gcc] = [] {
         // A module graph has one standard, the root's; a dependency that declared a higher one is
         // built at the root's, and that is reported (degraded, an error under --strict), naming
         // the package, the level and the one-place fix. Silent when it declared nothing, the
         // graph's own level, or once the root is raised.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project lib{tmp / "lib", {{"mcpp.toml", "[package]\nname = \"flib\"\nversion = \"0.1.0\"\nstandard = \"c++26\"\n[targets.flib]\nkind = \"lib\"\n"},
                                      {"src/flib.cppm", "export module flib;\nexport int f(){ return 1; }\n"}}};
@@ -82,12 +81,11 @@ E2E floors{"floors", [] {
         expect(e2e::succeeded(consumer({"futureneed"}).mcpp({"build"}))) << "a floor nobody answered was refused";
     };
 
-    "822 a package states the oldest mcpp it supports"_test[tag{"requires:unix-shell"}][resource{"machine"}] = [] {
+    "822 a package states the oldest mcpp it supports"_test[s::unix_shell][resource{"machine"}] = [] {
         // `[package] mcpp = ">=V"` states the oldest mcpp release a package supports: an engine
         // below it stops first, naming the package, the floor, its own release and the way to
         // upgrade; a bare release or a non-release is explained; a workspace floor reaches its
         // members; an unknown [lib] key is named.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         std::string have;
         {

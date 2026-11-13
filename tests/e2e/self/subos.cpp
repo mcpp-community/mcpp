@@ -46,10 +46,9 @@ E2E subos{"subos", [] {
         expect(fatal(e2e::contains(s::text(r), "does not exist"))) << "the missing-SubOS error no longer says what is wrong: " << s::text(r);
     };
 
-    "237 default subos without info"_test[tag{"requires:elf"}] = [] {
+    "237 default subos without info"_test[s::elf] = [] {
         // The default SubOS with no description: the build costs at most hermeticity; described
         // (runtime glibc@<v>), the same home builds; `toolchain install` exits 0 undescribed.
-        s::needs({"elf"});
         const fs::path real = s::env("MCPP_HOME_REAL").value_or((fs::path(s::env("HOME").value_or("")) / ".mcpp").string());
         const auto home = s::case_dir() / "home";
         fs::create_directories(home / "registry/data");
@@ -173,10 +172,9 @@ E2E subos{"subos", [] {
         expect(fatal(e2e::contains(log, "mcpplibs restored"))) << "F: no line names the restoration: " << log;
     };
 
-    "686 an activated xlings subos does not redirect the registry"_test[tag{"requires:fresh-sandbox"}] = [] {
+    "686 an activated xlings subos does not redirect the registry"_test[s::fresh_sandbox] = [] {
         // `self init` under XLINGS_ACTIVE_SUBOS initialises subos/default with its tools and
         // never acts on the shell's SubOS.
-        s::needs({"fresh-sandbox"});
         const auto home = s::case_dir() / "mcpp-home";
         constexpr std::string_view shell_subos = "mcpp-e2e-shell-subos";
         auto r = s::mcpp({"self", "init"}, s::case_dir(), {.env = {{"MCPP_HOME", home.string()}, {"XLINGS_ACTIVE_SUBOS", std::string(shell_subos)}}});

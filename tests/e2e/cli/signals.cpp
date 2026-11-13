@@ -31,10 +31,9 @@ std::size_t ninjas_under(const fs::path& dir) {
 void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds{ms}); }
 
 E2E signals{"signals", [] {
-    "340 no orphan survives a killed mcpp"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "340 no orphan survives a killed mcpp"_test[s::gcc][s::unix_shell] = [] {
         // A serial build is running ninja when mcpp alone is sent SIGTERM; ten seconds later no
         // ninja of the project is alive.
-        s::needs({"gcc", "unix-shell"});
         s::project p({{"src/main.cpp", "int main() { return 0; }\n"},
                       {"mcpp.toml", "[package]\nname    = \"orphan\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n"}});
         for (int i = 0; i < 60; ++i)
@@ -76,11 +75,10 @@ int f{0}() {{
         expect(after <= baseline) << "ninja survived a killed mcpp: " << after << " alive, baseline " << baseline << orphans;
     };
 
-    "941 a closed reader ends mcpp and no child inherits the ignore"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "941 a closed reader ends mcpp and no child inherits the ignore"_test[s::gcc][s::unix_shell][s::python3] = [] {
         // A: a program `mcpp run` starts begins with SIGPIPE at its default; B: `mcpp --help`
         // whose standard output has no reader ends by SIGPIPE, not by an exception or an exit.
         // mcpp itself starts with SIGPIPE at its default.
-        s::needs({"gcc", "unix-shell", "python3"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                       {"src/main.cpp", R"(#include <signal.h>
 #include <stdio.h>
@@ -104,10 +102,9 @@ int main() {
             << "B: mcpp did not end by SIGPIPE when its reader was gone (signal " << help.ended_by() << ")\n" << err;
     };
 
-    "1016 a killed build does not race the next one"_test[tag{"requires:gcc"}] = [] {
+    "1016 a killed build does not race the next one"_test[s::gcc] = [] {
         // Under both schedules, twelve rounds: a build whose mcpp is killed (SIGKILL) while a
         // second build waits; the waiting build succeeds, the next does nothing, the program runs.
-        s::needs({"gcc"});
         for (std::string_view schedule : {"default", "split"}) {
             s::project p(s::case_dir() / schedule, {});
             std::string manifest = "[package]\nname = \"kg\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";

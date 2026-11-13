@@ -53,12 +53,11 @@ E2E xlings{"xlings", [] {
         expect(fatal(failed(r))) << "a project with no legacy stamp was let through by another project's: " << s::text(r);
     };
 
-    "331 xlings workspace one table"_test[tag{"requires:unix-shell"}] = [] {
+    "331 xlings workspace one table"_test[s::unix_shell] = [] {
         // [xlings.workspace] assembles addresses (a version, a namespace on the value or a quoted
         // key, none); an unquoted namespaced key is an error; `deps` is provisioned with an
         // advisory naming the table and the line to write; an entry in both is a conflict naming
         // both versions; [xlings.envs] is refused; a project with no [xlings] hears nothing of it.
-        s::needs({"unix-shell"});
         auto p = s::project::scaffold("app");
         const auto base = p.read("mcpp.toml");
         const auto declare_and_build = [&](std::string_view block) {
@@ -91,10 +90,9 @@ E2E xlings{"xlings", [] {
         expect(fatal(!s::contains_nocase(s::text(r), "xlings"))) << "an undeclared project heard about xlings: " << s::text(r);
     };
 
-    "335 xlings tool tiers"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "335 xlings tool tiers"_test[s::gcc][s::unix_shell] = [] {
         // An entry without `when` is asked by build and run; `when = "build"` by build only;
         // `when = "run"` by run only; [feature-xlings.<f>] only with the feature.
-        s::needs({"gcc", "unix-shell"});
         s::project p(s::case_dir() / "app", {{"mcpp.toml", R"([package]
 name    = "tiers"
 version = "0.1.0"
@@ -129,10 +127,9 @@ hardware = {}
         expect(fatal(e2e::contains(hw, "tier-hardware"))) << "[feature-xlings.hardware] did not apply with --features hardware: " << hw;
     };
 
-    "614 feature xlings reaches xpkg dir"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][resource{"machine"}] = [] {
+    "614 feature xlings reaches xpkg dir"_test[s::gcc][s::unix_shell][resource{"machine"}] = [] {
         // A [feature-xlings.<f>] tool's MCPP_XPKG_<NS>_<NAME>_DIR is its payload with the feature
         // on and empty with it off.
-        s::needs({"gcc", "unix-shell"});
         auto st = s::mcpp({"index", "status"}, s::case_dir());
         fs::path registry;
         std::smatch m;
@@ -168,11 +165,10 @@ hardware = {}
         expect(e2e::contains(without, "xpkg_dir=[]")) << "the tool does not answer empty when the feature is off: " << without;
     };
 
-    "737 the declared runtime payload is installed"_test[tag{"requires:gcc"}] = [] {
+    "737 the declared runtime payload is installed"_test[s::gcc] = [] {
         // The default SubOS declares a glibc runtime. With that payload gone from the cache: A an
         // offline build fails naming xim:<runtime>; B an online build installs it (its loader)
         // and the program runs; C `toolchain install` installs it too.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::fresh);
         const s::options o{.where = s::home::fresh, .env = {{"MCPP_NO_AUTO_INSTALL", "1"}}};

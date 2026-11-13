@@ -111,11 +111,10 @@ int main(int, char** argv) {
         expect(fatal(e2e::contains(s::text(r), "runtime.deploy[1]: `to` has a `.` or `..` component"))) << "FAIL: the refusal does not name the entry and the component: " << s::text(r);
     };
 
-    "810 two packages deploy the same bytes to one name"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "810 two packages deploy the same bytes to one name"_test[s::gcc][s::elf] = [] {
         // Two build programs deploy a generated file to one name: identical bytes give one
         // stage_file edge with both sources and `emit build-database` succeeds; different bytes
         // are refused at build time naming both sources and the destination.
-        s::needs({"gcc", "elf"});
         const auto tmp = s::case_dir();
         const std::string gen_sh = "#!/usr/bin/env bash\nset -e\ncp \"$1\" \"$2\"\n";
         auto build_mcpp = [](std::string_view id) {

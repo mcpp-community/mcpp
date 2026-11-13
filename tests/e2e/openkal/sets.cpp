@@ -73,14 +73,13 @@ std::vector<std::string> strings(const nlohmann::json& a) {
 constexpr std::string_view smoke_test = "import std;\nint main() { std::vector<int> v{2, 1}; std::ranges::sort(v); return v.front() == 1 ? 0 : 1; }\n";
 
 E2E sets{"sets", [] {
-    "963 a target set builds every member and runs where it is reached"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "963 a target set builds every member and runs where it is reached"_test[s::llvm][s::python3] = [] {
         // `--target openkal`: A builds both legs under target/<triple>/ with one Finished; B the
         // JSON envelope is the first leg's record with both legs, each artifact event naming its
         // leg; C run runs this machine's leg and says which, and --print-launch describes the
         // selected leg; D test runs this machine's leg and reports the other built, not run; E
         // legs that ran no test fail; F self env reports both legs; G refusals: `none`,
         // `linux-msvc`, a set in [build] target.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         const std::string ht = std::string(host_arch) + "-openkal", ot = std::string(other_arch) + "-openkal";
         const auto tmp = s::case_dir();
@@ -154,13 +153,12 @@ E2E sets{"sets", [] {
         expect(fatal(failed(r) && e2e::contains(s::text(r), "names a target set"))) << "G: a set in [build] target is not refused: " << s::text(r);
     };
 
-    "964 tests built once run from an archive"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "964 tests built once run from an archive"_test[s::llvm][s::python3] = [] {
         // A `test --no-run --archive` writes every leg's tests with mcpp-tests.json; B in a
         // checkout without target/ `test --archive` runs this machine's leg, reports the other
         // not run, builds nothing; C a failing archived test fails the run; D an archive of no
         // leg this machine reaches fails; E the archive is compressed as its name states, and
         // a name stating no tar archive is refused before a build.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         const std::string ot = std::string(other_arch) + "-openkal";
         const auto tmp = s::case_dir();
@@ -225,12 +223,11 @@ E2E sets{"sets", [] {
         expect(fatal(!fs::is_directory(app.at("target")))) << "E: something was built before the name was refused";
     };
 
-    "983 a pack holds the legs it names"_test[tag{"requires:llvm"}][tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "983 a pack holds the legs it names"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `--target <host>-openkal` is one leg in the tree layout, and the summary says how to
         // pack them all; B `--target openkal` is both legs; C `--systems <os>-<arch>` carries
         // that runner alone and says where it runs; D the JSON envelope describes legs, formats
         // and where it runs; E `--merge` of two one-leg packages writes both legs' launchers.
-        s::needs({"llvm", "python3", "unix-shell"});
         needs_image_row();
         const auto os = posix_system();
         if (os.empty()) skip("a POSIX launcher");
@@ -296,11 +293,10 @@ E2E sets{"sets", [] {
         expect(fatal(e2e::contains(s::text(ran), "legs 2 args"))) << "E: the merged package's output: " << s::text(ran);
     };
 
-    "984 a set of programs is a package per leg"_test[tag{"requires:gcc"}][tag{"requires:python3"}] = [] {
+    "984 a set of programs is a package per leg"_test[s::gcc][s::python3] = [] {
         // `--target linux-musl`: A a package per leg named by its triple below the `-o`
         // directory, each holding the program of its architecture; B `-o` naming one file is
         // refused before a build; C the JSON envelope lists both packages and legs.
-        s::needs({"gcc", "python3"});
         if (!s::on_linux()) skip("the linux-musl rows are built on Linux");
         s::project app({{"mcpp.toml", "[package]\nname    = \"per\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "import std;\nint main() { std::println(\"per leg\"); }\n"}});
         // A
@@ -335,13 +331,12 @@ E2E sets{"sets", [] {
         expect(fatal(d["artifacts"].size() == 2u)) << "C: " << d["artifacts"].dump();
     };
 
-    "985 a format list writes each container of one tree"_test[tag{"requires:llvm"}][tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "985 a format list writes each container of one tree"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `--pkg-format tar,zip -o out/` writes both containers of one tree, compiled once;
         // B `dir` or `single-file` in a list, `-o` naming one file with a list and `mcpp run`
         // with a list are refused before a build; C `tar,okb` writes the tree's tar and the
         // platform's okb, and okb alone is refused under self-contained; D `-o target/dist/`
         // keeps what is written there.
-        s::needs({"llvm", "python3", "unix-shell"});
         s::project app({{"mcpp.toml", "[package]\nname    = \"lst\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "import std;\nint main() { std::println(\"list\"); }\n"}});
         // A
         auto r = app.mcpp({"pack", "--pkg-format", "tar,zip", "-o", "out/", "--message-format", "json"});
@@ -394,12 +389,11 @@ E2E sets{"sets", [] {
         expect(fatal(fs::is_regular_file(app.at("target/dist/lst-0.1.0.okb")))) << "D: no okb in target/dist/: " << s::text(r);
     };
 
-    "986 single files cover the legs and systems"_test[tag{"requires:llvm"}][tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "986 single files cover the legs and systems"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // `--target openkal --pkg-format single-file`: A a file per architecture on this
         // system, this machine's runs; B `--systems <os>-<host>` makes one; C (Linux)
         // `--systems all` makes every file this mcpp can and says the rest; D `-o` naming one
         // file with two is refused before a build.
-        s::needs({"llvm", "python3", "unix-shell"});
         needs_image_row();
         const auto os = posix_system();
         if (os.empty()) skip("a POSIX host");
@@ -432,12 +426,11 @@ E2E sets{"sets", [] {
         expect(fatal(s::lacks(s::text(r), "Compiling"))) << "D: refused after compiling: " << s::text(r);
     };
 
-    "987 the universal spellings are migrated"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "987 the universal spellings are migrated"_test[s::llvm][s::python3] = [] {
         // A `--no-universal` with one target packs the leg and notes the layout; B with a set it
         // is refused; C `[pack] universal = true` is refused naming `[pack] targets`, `false`
         // is noted; D `[pack] targets = ["openkal"]` packs both legs; E `pack --help` puts the
         // common options first.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         const std::string ht = std::string(host_arch) + "-openkal";
         s::project app({{"mcpp.toml", "[package]\nname    = \"mig\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "import std;\nint main() { std::println(\"mig\"); }\n"}});

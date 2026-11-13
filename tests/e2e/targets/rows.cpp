@@ -114,8 +114,7 @@ int main() { return 0; }
         expect(fatal(e2e::succeeded(r))) << "FAIL: build errored (bare alias not honored?): " << s::text(r);
     };
 
-    "103 target vocabulary"_test[tag{"requires:gcc"}] = [] {
-        s::needs({"gcc"});
+    "103 target vocabulary"_test[s::gcc] = [] {
         auto p = s::project::scaffold("vocab");
         const auto original = p.read("mcpp.toml");
         // 1. A typo is a hard error with a did-you-mean, never a silent host build.
@@ -154,10 +153,9 @@ int main() { return 0; }
         expect(fatal(!fs::is_directory(p.at("target/x86_64-unknown-linux-musl")))) << "FAIL: alias spelling minted its own target dir";
     };
 
-    "134 target sysroot and queries"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "134 target sysroot and queries"_test[s::llvm][s::unix_shell] = [] {
         // `[target.<triple>].sysroot` and the three target queries, each in both states: with
         // the override and without, with a C library and without one.
-        s::needs({"llvm", "unix-shell"});
         auto p = s::project::scaffold("probe");
         for (const auto& t : s::glob(p.at("tests"), "*.cpp")) fs::remove(t);
         p.write("build.mcpp", reporting_build_program);
@@ -226,11 +224,10 @@ SECTIONS {
         expect(fatal(e2e::contains(s::text(r), "is not a sysroot. A sysroot is a package"))) << "rejection did not explain the expected form: " << s::text(r);
     };
 
-    "267 target requested is empty for a native build"_test[tag{"requires:unix-shell"}] = [] {
+    "267 target requested is empty for a native build"_test[s::unix_shell] = [] {
         // MCPP_TARGET_REQUESTED is empty for a native build and the named triple otherwise, the
         // host's own triple included. The build program reports through a non-zero exit, whose
         // output mcpp prints.
-        s::needs({"unix-shell"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"target-requested-probe\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "int main() { return 0; }\n"},
                       {"build.mcpp", R"(import mcpp;
@@ -257,9 +254,8 @@ int main() {
         expect(fatal(e2e::contains(cross, std::format("requested=[{}]", host_triple)))) << "MCPP_TARGET_REQUESTED should carry the triple that was named: " << cross;
     };
 
-    "283 run target flag owns its cache slot"_test[tag{"requires:gcc"}] = [] {
+    "283 run target flag owns its cache slot"_test[s::gcc] = [] {
         // `mcpp run --target X` does not write X's build into the host's cache slot.
-        s::needs({"gcc"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"runslot\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"host-artifact\\n\"); }\n"}});
         const std::string cross = "x86_64-linux-musl";
@@ -278,10 +274,9 @@ int main() {
         expect(fatal(e2e::contains(out, "host-artifact"))) << "FAIL: the host program's own output is missing: " << out;
     };
 
-    "284 env segment is optional everywhere"_test[tag{"requires:gcc"}] = [] {
+    "284 env segment is optional everywhere"_test[s::gcc] = [] {
         // A target may decline its env segment on every platform, and declining it changes no
         // identity: the short and the canonical spelling build into one fingerprint.
-        s::needs({"gcc"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"envopt\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"ok\\n\"); }\n"}});
         auto check_pair = [&](const std::string& shortname, const std::string& canonical) {
@@ -304,7 +299,7 @@ int main() {
         };
         check_pair("x86_64-linux", "x86_64-linux-gnu");
         // On Windows a host with MSVC fills the segment with msvc; elsewhere with musl.
-        const std::string win = s::on_windows() && s::has("msvc") ? "x86_64-windows-msvc" : "x86_64-windows-musl";
+        const std::string win = s::on_windows() && bool(s::msvc) ? "x86_64-windows-msvc" : "x86_64-windows-musl";
         check_pair("x86_64-windows", win);
         check_pair("riscv64-none", "riscv64-none-elf");
         // mcpp names a C library LLVM cannot spell, and its provider builds it.
@@ -315,11 +310,10 @@ int main() {
         expect(fatal(e2e::contains(out, "Target x86_64-windows-musl → x86_64-w64-windows-gnu"))) << "FAIL: the report does not show the compiler's triple: " << out;
     };
 
-    "1076 an aarch64 linux gnu cross comes from a sysroot payload"_test[tag{"requires:llvm"}][tag{"requires:elf"}][tag{"requires:x86_64-host"}] = [] {
+    "1076 an aarch64 linux gnu cross comes from a sysroot payload"_test[s::llvm][s::elf][s::x86_64_host] = [] {
         // aarch64-linux-gnu is served by the aarch64-linux-gnu-sysroot payload: C, C++ and
         // import std programs build, name the row's loader, carry no path of this machine, and
         // run through the provider's runner; a static program names no interpreter.
-        s::needs({"llvm", "elf", "x86_64-host"});
         const std::string T = "aarch64-linux-gnu";
         const std::string loader = "/lib/ld-linux-aarch64.so.1";
         const auto tmp = s::case_dir();
@@ -364,11 +358,10 @@ int main() {
         expect(fatal(run.status == 44)) << "static: mcpp run exited " << run.status << ", the program returns 44: " << s::text(run);
     };
 
-    "1077 a program of another system is built not run"_test[tag{"requires:llvm"}] = [] {
+    "1077 a program of another system is built not run"_test[s::llvm] = [] {
         // `mcpp run` builds a FreeBSD program on this host and refuses to start it, naming the
         // artifact's system and the runner declaration; --no-runner is believed.
-        s::needs({"llvm"});
-        const std::string T = std::string(s::has("x86_64-host") ? "x86_64" : "aarch64") + "-freebsd-musl";
+        const std::string T = std::string(s::on_x86_64() ? "x86_64" : "aarch64") + "-freebsd-musl";
         auto p = s::project::scaffold("app");
         auto r = p.mcpp({"build", "--target", T});
         expect(fatal(e2e::succeeded(r))) << "the static FreeBSD program did not build: " << s::text(r);

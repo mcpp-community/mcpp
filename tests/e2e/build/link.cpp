@@ -129,11 +129,10 @@ E2E link{"link", [] {
         expect(e2e::succeeded(s::run(ninja->parent_path() / "bin" / s::exe("scale")))) << "linked binary did not run cleanly";
     };
 
-    "238 c only unit links with c driver"_test[tag{"requires:elf"}] = [] {
+    "238 c only unit links with c driver"_test[s::elf] = [] {
         // A link unit of C objects only links with the C driver (c_shared: NEEDED libc and not
         // libstdc++, libm or libgcc_s, its symbol exported); one C++ object makes it a C++ link
         // (cxx_shared); a C++ program links with cxx_link and runs; c_ldflags is defined.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         const auto llvm = s::llvm_version();
         const auto tc = std::format("[toolchain]\ndefault = \"gcc@16.1.0\"\nmacos   = \"llvm@{0}\"\nwindows = \"llvm@{0}\"\n", llvm);
@@ -173,11 +172,10 @@ int main() { std::println("cdriver-ok"); return 0; }
         expect(fatal(output_of(*bin) == "cdriver-ok")) << "binary printed '" << output_of(*bin) << "'";
         expect(s::has_line(g, "^c_ldflags ")) << "c_ldflags is not defined, but the C rules reference it";
     };
-    "795 a link flag reaches the linker as written"_test[tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "795 a link flag reaches the linker as written"_test[s::elf][s::unix_shell] = [] {
         // $ORIGIN in [build] ldflags, in mcpp::link_flag and in a dependency's ldflags reaches the
         // run path unexpanded; a search directory with a space is one argument; an element
         // escaped by hand reads as written and the first plan (only) says what the linker gets.
-        s::needs({"elf", "unix-shell"});
         const auto tmp = s::case_dir();
         auto program = [](const s::project& p, std::string_view name) {
             for (const auto& f : s::find_files(p.at("target"), std::string(name)))
@@ -308,10 +306,9 @@ ldflags = ["-Wl,-rpath='$$ORIGIN/../x'"]
         expect(errors.empty()) << "B: a start met a partially written program\n" << errors;
     };
 
-    "991 a prebuilt archive in ldflags is a link input"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "991 a prebuilt archive in ldflags is a link input"_test[s::gcc][s::unix_shell] = [] {
         // An archive named in [build] ldflags is a link input: replacing it relinks the program,
         // and a build with nothing changed links nothing.
-        s::needs({"gcc", "unix-shell"});
         const auto work = s::case_dir();
         s::project val{work / "val", {{"mcpp.toml", R"cpp([package]
 name    = "val"
@@ -356,10 +353,9 @@ int main() { std::println("val {}", val()); }
         expect(fatal(e2e::succeeded(r))) << "the third build\n" << s::text(r);
         expect(s::no_line(s::text(r), R"(^\[[0-9]+/[0-9]+\] .*bin/app)")) << "a build with nothing changed linked the program again\n" << s::text(r);
     };
-    "1006 a response file and what it names are link inputs"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "1006 a response file and what it names are link inputs"_test[s::gcc][s::unix_shell] = [] {
         // A response file in [build] ldflags and the archive it names are link inputs:
         // replacing the archive relinks the program, and a build with nothing changed links nothing.
-        s::needs({"gcc", "unix-shell"});
         const auto work = s::case_dir();
         s::project val{work / "val", {{"mcpp.toml", R"cpp([package]
 name    = "val"
@@ -405,10 +401,9 @@ int main() { std::println("val {}", val()); }
         expect(fatal(e2e::succeeded(r))) << "the third build\n" << s::text(r);
         expect(s::no_line(s::text(r), R"(^\[[0-9]+/[0-9]+\] .*bin/app)")) << "a build with nothing changed linked the program again\n" << s::text(r);
     };
-    "1062 link flags on a compiler link are named not dropped"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1062 link flags on a compiler link are named not dropped"_test[s::elf][s::llvm] = [] {
         // [platform.link] flags a compiler-driven link does not use are named with the remedy
         // ([platform.build] ldflags); an ld.lld link takes them without a word.
-        s::needs({"elf", "llvm"});
         const auto t = s::case_dir();
         const auto LLVM_VERSION = s::llvm_version();
         s::project plat{t / "plat", {{"mcpp.toml", std::format(R"cpp([package]

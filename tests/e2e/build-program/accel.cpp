@@ -22,11 +22,10 @@ s::project scaffold_plain(std::string_view name, const std::string& manifest) {
 }
 
 E2E accel{"accel", [] {
-    "600 accel variant selection"_test[tag{"requires:elf"}] = [] {
+    "600 accel variant selection"_test[s::elf] = [] {
         // gpuonly publishes one artifact, for sm_90f: an sm_86 build is refused naming the
         // dimension. gpukit publishes a CPU-only artifact first: the same build takes it (the
         // order that keeps an mcpp predating the field working).
-        s::needs({"elf"});
         const auto root = s::case_dir() / "new";
         constexpr std::string_view triple = "x86_64-linux-gnu";
         auto artifact = [&](std::string_view name, bool device) {
@@ -64,12 +63,11 @@ E2E accel{"accel", [] {
         expect(e2e::succeeded(app.mcpp({"build", "--accel", "cuda12.8+{sm_86}"}))) << "CPU-only artifact listed first did not accept sm_86";
     };
 
-    "605 probe channel and accel reach the build program"_test[tag{"requires:gcc"}] = [] {
+    "605 probe channel and accel reach the build program"_test[s::gcc] = [] {
         // The package measures (mcpp::fact), states what it needs (mcpp::floor), and the engine
         // compares after the root's build program has run: an unmet floor is refused naming both
         // values, under the reason `version-floor-unmet`. The same program reads MCPP_ACCEL, and
         // `cfg(accelerator = ...)` is fed from the same value. No vendor is named: `widget`.
-        s::needs({"gcc"});
         auto p = scaffold_plain("probe", "");
         p.write("src/main.cpp", "#ifndef WIDGET_ON\n#error \"cfg(accelerator = \\\"widget\\\") did not match, so WIDGET_ON is missing\"\n#endif\nint main() { return 0; }\n");
         auto write_manifest = [&](std::string_view floor) {
@@ -125,11 +123,10 @@ int main() {{
         expect(e2e::contains(s::text(none), "accel=[]")) << "MCPP_ACCEL is not empty under --no-accel";
     };
 
-    "625 a payload can be gated on the accelerator"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "625 a payload can be gated on the accelerator"_test[s::elf][s::gcc] = [] {
         // `[target.'cfg(accelerator = ...)'.xlings]`: the accel is an input read before
         // provisioning, so a payload gated on it is installed for a device build and not for a
         // CPU-only one. Both legs; the second is the point. A fresh home and shaderc, as in 618.
-        s::needs({"elf", "gcc"});
         s::project p{{"src/main.cpp", "int main() { return 0; }\n"},
                      {"mcpp.toml", "[package]\nname         = \"gated\"\nversion      = \"0.1.0\"\naccelerators = [\"vulkan\"]\n\n[targets.gated]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
                                    "[target.'cfg(accelerator = \"vulkan\")'.xlings.workspace]\n\"xim:shaderc\" = \"2026.3\"\n"}};
@@ -141,11 +138,10 @@ int main() {{
         expect(fs::is_directory(store)) << "the device build did not install the payload its predicate names";
     };
 
-    "626 naming a subset of backends is not a mismatch"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "626 naming a subset of backends is not a mismatch"_test[s::elf][s::gcc] = [] {
         // A constrained glob whose backend the build never named is left out, not refused; one
         // whose backend is named and architecture uncovered still is; a backend the package never
         // declared is refused, naming the misspelling.
-        s::needs({"elf", "gcc"});
         auto mk = [](std::string_view accel) {
             fs::remove_all(s::case_dir() / "p");
             s::project p{s::case_dir() / "p", {{"src/main.cpp", "int main() { return 0; }\n"},
@@ -175,11 +171,10 @@ int main() {{
         expect(e2e::contains(s::text(r4), "cude")) << "the refusal does not name the misspelling";
     };
 
-    "1011 accelerator requests are complete and canonical"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "1011 accelerator requests are complete and canonical"_test[s::gcc][s::unix_shell] = [] {
         // Invalid accelerator syntax does not become a successful CPU build, an implementation
         // cannot occur twice with order-dependent coverage, and equivalent requests are one
         // variant. (The script required python3 and did not use it.)
-        s::needs({"gcc", "unix-shell"});
         const s::options home{.where = s::home::inherited};
         const std::string manifest = "[package]\nname = \"accel-request\"\nversion = \"0.1.0\"\n\n[targets.accel-request]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
         s::project p{{"mcpp.toml", manifest}, {"src/main.cpp", "int main(){return 0;}\n"}};

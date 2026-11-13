@@ -12,8 +12,7 @@ namespace {
 
 E2E affected{"affected", [] {
 
-    "1038 test programs of a directory and the tests a change affects"_test[tag{"requires:gcc"}] = [] {
-        s::needs({"gcc"});
+    "1038 test programs of a directory and the tests a change affects"_test[s::gcc] = [] {
         auto p = s::project::scaffold("app");
         p.write("src/calc.cppm", "export module app.calc;\nexport int twice(int x) { return 2 * x; }\n");
         p.write("tests/unit/a.cpp", R"(import mcpplibs.mtest;

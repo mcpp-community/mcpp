@@ -19,11 +19,10 @@ std::string trim(std::string v) {
 std::vector<nlohmann::json> records(const fs::path& file) { return s::json_lines(s::read_file(file)); }
 
 E2E archive{"archive", [] {
-    "745 no run builds the tests and says so"_test[tag{"requires:gcc"}] = [] {
+    "745 no run builds the tests and says so"_test[s::gcc] = [] {
         // `--no-run` builds the tests and reports that, distinguishably from a run that could not
         // run them. The runner is a name that is not a program: tests built, nothing run, on every
         // host, for the native target. The package's only sources are its tests.
-        s::needs({"gcc"});
         s::project p{{"mcpp.toml", R"([package]
 name    = "norun"
 version = "0.1.0"
@@ -157,10 +156,9 @@ int main(int, char** argv) {
         expect(e2e::contains(s::text(b), "notice ... ok")) << "the archived test did not find its file";
     };
 
-    "1050 a test run is kept in the mtest store"_test[tag{"requires:gcc"}] = [] {
+    "1050 a test run is kept in the mtest store"_test[s::gcc] = [] {
         // target/mtest/runs/<id>/ (run.json, programs.ndjson, cases.ndjson) and a line in
         // target/mtest/index.ndjson per run; `[test] store` names another directory or "none".
-        s::needs({"gcc"});
         auto p = s::project::scaffold("prog");
         expect(fatal(e2e::succeeded(p.mcpp({"test"}))));
         const auto store = p.at("target/mtest");

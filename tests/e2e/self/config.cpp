@@ -138,12 +138,11 @@ E2E config{"config", [] {
         expect(fatal(e2e::contains(s::text(r), "[xlings.workspace]"))) << "no advisory for [xlings] deps: " << s::text(r);
     };
 
-    "151 index url artifact migration"_test[tag{"requires:python3"}] = [] {
+    "151 index url artifact migration"_test[s::python3] = [] {
         // A fresh seed names the new index url and its region artifact in both files; an old org
         // url is healed (idempotently, unrelated keys kept); a compact legacy entry is renamed and
         // gains both artifact halves; a flat default artifact becomes the region table; a user's
         // own artifact base is kept as written.
-        s::needs({"python3"});
         const cold_home h;
         const std::string new_url = "https://github.com/mcpplibs/mcpp-index.git", old_url = "https://github.com/mcpp-community/mcpp-index.git";
         const std::string art = "https://github.com/xlings-res/mcpp-index", art_cn = "https://gitcode.com/xlings-res/mcpp-index";

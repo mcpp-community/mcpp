@@ -20,7 +20,7 @@ std::string run_line(const s::project& p, std::string_view prefix, std::vector<s
 }
 
 E2E graph{"graph", [] {
-    "903 one package in both tables has two instances"_test[tag{"requires:elf"}] = [] {
+    "903 one package in both tables has two instances"_test[s::elf] = [] {
         // mcpp#797 R2, R3: one package in [dependencies] and [build-dependencies] has two
         // instances, each correct (they merged into one edge read as "build time only"). M1 both
         // import it; M2 `host-module = true` beside it changes nothing; M3 a feature of the build
@@ -28,7 +28,6 @@ E2E graph{"graph", [] {
         // through another library; M7 a dependency's own program uses it; M9 the build database
         // has a target set and a `:host` set, compile_commands the target units only; M10 a header
         // edit recompiles both and reruns the program. (The script read the database with python3.)
-        s::needs({"elf"});
         const auto root = s::case_dir();
         const std::string header = "#pragma once\nnamespace hl {\ninline int answer() { return 42; }\ninline int x_on() {\n#ifdef HL_X\n    return 1;\n#else\n    return 0;\n#endif\n}\n}\n";
         s::project hl{root / "hl", {{"include/hl/hl.hpp", header},
@@ -92,11 +91,10 @@ E2E graph{"graph", [] {
         expect(eq(run_line(m6, "V="), std::string("V=42 mid=42"))) << "M6/M7";
     };
 
-    "904 a build dependency feature stays out of the target"_test[tag{"requires:elf"}] = [] {
+    "904 a build dependency feature stays out of the target"_test[s::elf] = [] {
         // mcpp#797 R3: a feature one package requests of a library in its [build-dependencies] is
         // a request of the program's instance: the target instance does not have it (A), the
         // program's does (B).
-        s::needs({"elf"});
         const auto root = s::case_dir();
         s::project hl{root / "hl", {{"src/hl.cppm", "export module hl;\nexport namespace hl {\ninline int x_on() {\n#ifdef HL_X\n    return 1;\n#else\n    return 0;\n#endif\n}\n}\n"},
                                     {"mcpp.toml", "[package]\nname = \"hl\"\nversion = \"0.1.0\"\n[features]\nx = { defines = [\"HL_X\"] }\n[targets.hl]\nkind = \"lib\"\n"}}};
@@ -109,10 +107,9 @@ E2E graph{"graph", [] {
         expect(eq(run_line(app, "target="), std::string("target=0 program=1"))) << "A/B";
     };
 
-    "905 a build program links its libraries whole"_test[tag{"requires:elf"}] = [] {
+    "905 a build program links its libraries whole"_test[s::elf] = [] {
         // mcpp#797 Q4/Q5: a library a build program uses is compiled and linked whole: its
         // implementation units, its C sources and its own dependencies.
-        s::needs({"elf"});
         const auto root = s::case_dir();
         s::project base{root / "base", {{"src/base.cppm", "export module acme.base;\nexport int base_two();\n"},
                                         {"src/base_impl.cpp", "module acme.base;\nint base_two() { return 2; }\n"},
@@ -128,12 +125,11 @@ E2E graph{"graph", [] {
         expect(eq(run_line(app, "V="), std::string("V=42"))) << "the program computed another value";
     };
 
-    "906 a build program is compiled when its graph changes"_test[tag{"requires:elf"}] = [] {
+    "906 a build program is compiled when its graph changes"_test[s::elf] = [] {
         // mcpp#797 R6: a build program is compiled again exactly when its identity moves, and a
         // build whose programs stand does not plan their graph. A a header edit reruns it with the
         // new value; B nothing changed, the identity current, no graph planned; C both stated in
         // the verbose log.
-        s::needs({"elf"});
         const auto root = s::case_dir();
         s::project hl{root / "hl", {{"src/value.h", "#define HL_VALUE 42\n"},
                                     {"src/hl.cppm", "module;\n#include \"value.h\"\nexport module hl;\nexport int hl_value() { return HL_VALUE; }\n"},
@@ -159,12 +155,11 @@ E2E graph{"graph", [] {
         expect(eq(run_line(app, "V="), std::string("V=43"))) << "A: the program ran on the old header";
     };
 
-    "908 what a build dependency asks for"_test[tag{"requires:elf"}] = [] {
+    "908 what a build dependency asks for"_test[s::elf] = [] {
         // SPEC-004 §12 item 5: a [build-dependencies] entry with neither `tools` nor `host-module`
         // gives the library (A); `tools` alone gives the program and not the library, refused by
         // name before the compiler (B); both keys give both (C); `host-module = false` declines
         // the library (D).
-        s::needs({"elf"});
         const auto root = s::case_dir();
         s::project gen{root / "gen", {{"src/gen.cppm", "export module acme.gen;\nexport int gen_value() { return 42; }\n"},
                                       {"tools/gen_main.cpp", "#include <cstdio>\nint main() { std::puts(\"generated\"); }\n"},
@@ -190,7 +185,7 @@ E2E graph{"graph", [] {
         expect(e2e::contains(s::text(d), "imports 'acme.gen'")) << "D: the refusal does not name the module";
     };
 
-    "910 a build plugin is a package of the build program"_test[tag{"requires:elf"}] = [] {
+    "910 a build plugin is a package of the build program"_test[s::elf] = [] {
         // SPEC-007 §10: a unit importing `mcpp.core` (or `mcpp`) is a build-plugin unit. A a plugin
         // on a plugin and a library serves a consumer's program; B it builds as the root of a
         // build in the build-program configuration, its tests run, the engine package's entry
@@ -198,7 +193,6 @@ E2E graph{"graph", [] {
         // [dependencies] of a target is refused naming the chain; E a program importing mcpp is
         // refused; F pack refuses a plugin; G a library the plugin depends on is importable by its
         // consumers' programs only when handed on with `reexport = true`.
-        s::needs({"elf"});
         const auto root = s::case_dir();
         auto lib = [&](std::string_view name, std::string_view deps) {
             return s::project{root / name, {{"mcpp.toml", std::format("[package]\nnamespace = \"acme\"\nname = \"{0}\"\nversion = \"0.1.0\"\n[dependencies.acme]\n{1}\n[targets.{0}]\nkind = \"lib\"\n", name, deps)}}};

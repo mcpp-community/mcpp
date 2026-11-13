@@ -31,10 +31,9 @@ std::string host_triple(const s::project& p) {
 }
 
 E2E program{"program", [] {
-    "339 run reports the program status"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "339 run reports the program status"_test[s::gcc][s::unix_shell] = [] {
         // `run` exits with the program's status (127 too, without an error line of its own); a
         // runner that cannot be executed exits 126 saying why; a missing runner exits 2 or 127.
-        s::needs({"gcc", "unix-shell"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"status\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/main.cpp\"]\n"}});
         auto status_of = [&](int v) {
             p.write("src/main.cpp", std::format("int main() {{ return {}; }}\n", v));
@@ -62,7 +61,7 @@ E2E program{"program", [] {
         expect(fatal(r.status == 2 || r.status == 127)) << "missing runner: exit " << r.status << ", want 2 (pre-flight) or 127 (spawn): " << s::text(r);
     };
 
-    "862 run q writes exactly the programs stdout"_test[tag{"requires:unix-shell"}] = [] {
+    "862 run q writes exactly the programs stdout"_test[s::unix_shell] = [] {
         // `run -q` writes exactly the program's standard output and standard error, on the fast
         // path too; without -q, standard output is still the program's alone, and the status
         // lines on standard error end with `Running`, a blank line, and the program's own.
@@ -100,7 +99,7 @@ int main() {
         expect(fatal(a.out.ends_with("OUT no-line-end"))) << "D: standard output does not end with the program's last byte";
     };
 
-    "863 a run whose build failed exits 101"_test[tag{"requires:unix-shell"}] = [] {
+    "863 a run whose build failed exits 101"_test[s::unix_shell] = [] {
         // `run` exits with the program's status, 126 for a program that cannot be executed, and
         // 101 when its build fails (on the fast path, in the main source, in a first run, for an
         // unreadable manifest), which `build` (1) and `test` (1) do not adopt.
@@ -158,7 +157,7 @@ int main() {
         expect(fatal(failed(r))) << "B: mcpp build accepted an unreadable manifest";
         p.write("mcpp.toml", manifest);
     };
-    "883 run hands the terminal to the program"_test[tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "883 run hands the terminal to the program"_test[s::python3][s::unix_shell] = [] {
         // The program reads the terminal through the fast path and the prepared path; ^C
         // reaches its handler and its status comes back; piped input reaches it; a death by a
         // signal comes back as the same status; the program runs as the run's own process, so a

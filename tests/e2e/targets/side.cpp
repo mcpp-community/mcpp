@@ -37,11 +37,10 @@ bool any_word_contains(const nlohmann::json& entry, std::string_view needle) {
 }
 
 E2E side{"side", [] {
-    "268 target side resolution"_test[tag{"requires:unix-shell"}] = [] {
+    "268 target side resolution"_test[s::unix_shell] = [] {
         // A layer a dependency declares is reported with its interface, its supplier and its
         // origin; a package that declares nothing fills nothing; a misspelt name in the mcpp:
         // namespace is reported and fills nothing; a name outside it passes untouched.
-        s::needs({"unix-shell"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"target-side-probe\"\nversion = \"0.1.0\"\n\n[dependencies]\nfake-system = { path = \"sys\" }\n"},
                       {"src/main.cpp", "int main() { return 0; }\n"},
                       {"sys/src/sys.c", "int fake_system_marker(void) { return 0; }\n"}});
@@ -100,11 +99,10 @@ E2E side{"side", [] {
         expect(fatal(s::has_line(verbose, "compiler +(llvm|gcc|msvc) "))) << "the compiler layer must report a family, not a driver name";
     };
 
-    "281 target side rules"_test[tag{"requires:gcc"}] = [] {
+    "281 target side rules"_test[s::gcc] = [] {
         // Each layer has one supplier, the compiler is no package's to supply, a requirement the
         // compiler does not meet is refused with its remedy, and a layer name this engine does not
         // know is ignored in a dependency and refused in the root.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project(tmp / "runtime", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"needs-llvm\"\nversion   = \"0.1.0\"\nprovides  = [\"mcpp:c++-abi=libc++\"]\nrequires  = [\"mcpp:compiler=llvm\"]\n\n[build]\nsources = []\n"}});
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nneeds-llvm = { path = \"../runtime\" }\n"},
@@ -147,11 +145,10 @@ E2E side{"side", [] {
         expect(fatal(e2e::contains(out, "names no capability mcpp knows"))) << "the refusal does not say what is wrong: " << out;
     };
 
-    "290 the declaration puts an environment in front"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "290 the declaration puts an environment in front"_test[s::gcc][s::unix_shell] = [] {
         // A build program finds the tool the project declared: a project that declares nothing
         // gets the PATH mcpp was started with, and `[xlings] subos` puts that SubOS's bin first,
         // the inherited PATH unchanged behind it.
-        s::needs({"gcc", "unix-shell"});
         const auto tmp = s::case_dir();
         constexpr std::string_view probe = R"(import std;
 int main() {
@@ -181,11 +178,10 @@ int main() {
         expect(fatal(rest == inherited)) << "FAIL: the inherited PATH was not preserved behind the prefix\n  inherited: " << inherited << "\n  got:       " << rest;
     };
 
-    "292 a package that names a layer does not lose the targets compiler"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "292 a package that names a layer does not lose the targets compiler"_test[s::llvm][s::unix_shell] = [] {
         // Naming a layer changes the system, not the compiler that emits the target: the
         // bare-metal row keeps llvm, a hosted row keeps the project's toolchain, and a kernel-abi
         // package over the system's C library leaves the row's convention standing.
-        s::needs({"llvm", "unix-shell"});
         const auto tmp = s::case_dir();
         const auto llvm = s::llvm_version();
         static const std::regex resolved_re{R"(Resolved ([a-z]+@[0-9.]+))"};
@@ -213,11 +209,10 @@ int main() {
         expect(fatal(e2e::contains(k, "takes its C library from"))) << "FAIL: a kernel-abi package over the system's C library cancelled the row's convention: " << k;
     };
 
-    "304 the target side reaches every unit"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "304 the target side reaches every unit"_test[s::unix_shell][s::jq] = [] {
         // A layer the graph supplies is beneath every unit, a sibling package's included; its
         // private directory reaches only its own units; a non-layer package's directory does not
         // spread.
-        s::needs({"unix-shell", "jq"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"reachprobe\"\nversion = \"0.1.0\"\n\n[dependencies]\nabiprov = { path = \"abi\" }\nsibling = { path = \"dep\" }\n"},
                       {"src/main.cpp", "#include <stdio.h>\nimport abiprov;\nimport sibling;\nint main() { printf(\"%d\\n\", abiprov_v() + sibling_v()); }\n"},
                       {"abi/mcpp.toml", "[package]\nname    = \"abiprov\"\nversion = \"0.1.0\"\nprovides = [\"mcpp:c++-abi=libc++\"]\n\n[build]\ninclude_dirs         = [\"abi-internal\", \"abi-include\"]\nprivate_include_dirs = [\"abi-internal\"]\n"},
@@ -253,11 +248,10 @@ int main() {
         expect(fatal(own_private >= 1u)) << "FAIL: the provider lost its own private directory — the check above proves nothing";
     };
 
-    "741 c abi environment declared by the c library"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "741 c abi environment declared by the c library"_test[s::llvm][s::unix_shell] = [] {
         // A C library's `[c-abi]` declaration is realised as the compiler's target and flags for
         // every unit of the graph (assembly included) but the kernel-abi provider's, and a request
         // the target cannot realise refuses the build, naming the target and the request.
-        s::needs({"llvm", "unix-shell"});
         const auto llvm = s::llvm_version();
         s::project p({{"fakemusl/src/lib.c", "int fakemusl_marker(void) { return 0; }\n"},
                       {"openkalwin/src/shim.c", "int openkalwin_marker(void) { return 0; }\n"},
@@ -316,11 +310,10 @@ int main() {
         expect(fatal(s::contains_nocase(out, "llp64"))) << "FAIL: the refusal must name the request: " << out;
     };
 
-    "744 a declared absence explains the link that asked for it"_test[tag{"requires:gcc"}] = [] {
+    "744 a declared absence explains the link that asked for it"_test[s::gcc] = [] {
         // A `[c-abi-absent]` row with `form = "link"` reaches the link: the linker's diagnostic
         // survives and the row's note follows it, naming the C library and calling the absence
         // a property of the environment.
-        s::needs({"gcc"});
         s::project p({{"libc/src/lib.c", "int fake_c_library_marker(void) { return 0; }\n"},
                       {"src/main.c", "extern int mcpp_absent_probe_fn(void);\n/* `_start`, not `main`: this links without startup files, so there is no C\n   runtime to call main. Nothing runs it -- the subject is the link. */\nvoid _start(void) { mcpp_absent_probe_fn(); }\n"},
                       {"mcpp.toml", "[package]\nname    = \"absence-explains-the-link\"\nversion = \"0.1.0\"\n\n[targets.absence-explains-the-link]\nkind = \"bin\"\nmain = \"src/main.c\"\n\n[dependencies]\nfakelibc = { path = \"libc\" }\n\n[build]\nallow_host_libs = true\nldflags = [\"-nostdlib\", \"-nostartfiles\", \"-static\"]\n"},
@@ -336,11 +329,10 @@ int main() {
         expect(fatal(!s::has_line_nocase(out, "crt1|crti|multiple definition"))) << "FAIL: the link reached the host's C runtime: " << out;
     };
 
-    "1014 host only layers do not select the target abi"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "1014 host only layers do not select the target abi"_test[s::gcc][s::unix_shell] = [] {
         // A library build.mcpp uses may supply a host layer; neither it nor what reaches it
         // through another library selects the target's ABI, and the target's own instance of it
         // keeps its layer.
-        s::needs({"gcc", "unix-shell"});
         const s::options o{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         s::project(tmp / "provider", {{"mcpp.toml", "[package]\nname = \"host-provider\"\nversion = \"0.1.0\"\nprovides = [\"mcpp:kernel-abi=openkal\"]\n[targets.host-provider]\nkind = \"lib\"\n"},
@@ -365,11 +357,10 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "FAIL: target instance lost its layer: " << s::text(r);
     };
 
-    "1055 layer suppliers that require one another are refused"_test[tag{"requires:gcc"}] = [] {
+    "1055 layer suppliers that require one another are refused"_test[s::gcc] = [] {
         // A kernel-abi supplier that requires the c-abi and a c-abi supplier that requires it are
         // a circle, refused with both suppliers named and a `layer-cycle` code; one direction is
         // no circle.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project(tmp / "kimpl", {{"mcpp.toml", "[package]\nname     = \"kimpl\"\nversion  = \"0.1.0\"\nprovides = [\"mcpp:kernel-abi=toykernel\"]\nrequires = [\"mcpp:c-abi\"]\n\n[targets.kimpl]\nkind = \"lib\"\n"},
                                    {"src/k.c", "int toy_kernel(void) { return 1; }\n"}});

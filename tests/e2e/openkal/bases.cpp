@@ -90,7 +90,7 @@ std::optional<fs::path> artifact(const s::project& p) {
 const s::options plain{.env = {{"NO_COLOR", "1"}}};
 
 E2E bases{"bases", [] {
-    "925 a stated sysroot is the c library"_test[tag{"requires:gcc"}][tag{"requires:elf"}][tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "925 a stated sysroot is the c library"_test[s::gcc][s::elf][s::unix_shell][s::python3] = [] {
         // S2: a sysroot named by a relative path is the base the artifact is built against and
         // runs on (PT_INTERP and RUNPATH the sysroot's, not the SubOS farm), in a directory of
         // its own, described in resolution.json and by `why sysroot`. S4: a base rewritten in
@@ -98,7 +98,6 @@ E2E bases{"bases", [] {
         // a gap. S6: what is not a sysroot, and what is not there. S3: a base older than the
         // compiler's runtime is refused naming both. S1: a toolchain named by path with the
         // sysroot it carries, and pack states the C library floor.
-        s::needs({"gcc", "elf", "unix-shell", "python3"});
 #if !defined(__x86_64__) && !defined(_M_X64)
         skip("the fixture sysroot is x86_64");
 #endif
@@ -225,11 +224,10 @@ E2E bases{"bases", [] {
         expect(fatal(e2e::contains(s::text(r), "Requires glibc >= "))) << "S1: pack did not state the C library floor: " << s::text(r);
     };
 
-    "926 the hosts own root is a base"_test[tag{"requires:gcc"}][tag{"requires:llvm"}][tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "926 the hosts own root is a base"_test[s::gcc][s::llvm][s::elf][s::unix_shell] = [] {
         // `glibc@system` with gcc and with llvm: the Using line names the host's base, the
         // program runs on the host's glibc with the host's loader and no SubOS farm; the
         // multiarch directories are supplied to gcc and not to clang, which knows them.
-        s::needs({"gcc", "llvm", "elf", "unix-shell"});
 #if defined(__x86_64__) || defined(_M_X64)
         const std::string tuple = "x86_64-linux-gnu";
 #elif defined(__aarch64__)
@@ -268,11 +266,10 @@ E2E bases{"bases", [] {
         }
     };
 
-    "930 a toolchain phase states the base"_test[tag{"requires:llvm"}][tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "930 a toolchain phase states the base"_test[s::llvm][s::elf][s::unix_shell] = [] {
         // A toolchain phase stating `spec` and `sysroot` beside a managed compiler: the base is
         // reported as the program's, and the artifact loads it; `spec` with `prefix` (a key of
         // a toolchain named by path) is refused by name.
-        s::needs({"llvm", "elf", "unix-shell"});
         const auto v = s::llvm_version();
         if (!fs::exists(s::payload_root("xim-x-llvm", v) / "bin/clang++")) skip(std::format("no llvm payload installed ({})", s::payload_root("xim-x-llvm", v).string()));
 #if !defined(__linux__) || (!defined(__x86_64__) && !defined(_M_X64))

@@ -71,9 +71,8 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
 }
 
 E2E basics{"basics", [] {
-    "02 new build run"_test[tag{"requires:fresh-sandbox"}] = [] {
+    "02 new build run"_test[s::fresh_sandbox] = [] {
         // `mcpp new` writes a project that builds into target/ and runs, passing its arguments.
-        s::needs({"fresh-sandbox"});
         auto p = s::project::scaffold("hello");
         for (std::string_view f : {"mcpp.toml", "src/main.cpp", ".gitignore"})
             expect(fatal(p.exists(f))) << "missing " << f;
@@ -103,9 +102,8 @@ E2E basics{"basics", [] {
         expect(s::lacks(s::text(r), "std.cc")) << "std module re-built when it shouldn't be";
     };
 
-    "07 static library"_test[tag{"requires:elf"}] = [] {
+    "07 static library"_test[s::elf] = [] {
         // A `kind = "lib"` target is archived (cxx_archive) into a non-empty libmathlib.a of objects.
-        s::needs({"elf"});
         auto p = s::project::scaffold("mathlib");
         p.write("src/math.cppm", R"cpp(export module mathlib;
 import std;
@@ -133,9 +131,8 @@ kind = "lib"
         expect(e2e::contains(graph_text(p), "bin/libmathlib.a : cxx_archive")) << "build.ninja did not use cxx_archive for the lib target";
     };
 
-    "08 shared library"_test[tag{"requires:elf"}] = [] {
+    "08 shared library"_test[s::elf] = [] {
         // A `kind = "shared"` target links (cxx_shared) an ELF shared object, compiled with -fPIC.
-        s::needs({"elf"});
         auto p = s::project::scaffold("mathlib");
         p.write("src/math.cppm", R"cpp(export module mathlib;
 import std;
@@ -231,10 +228,9 @@ int main() { std::println("legacy schema OK"); return 0; }
         expect(program(legacy, "legacy") == "legacy schema OK") << "legacy runtime: " << program(legacy, "legacy");
     };
 
-    "26 c language support"_test[tag{"requires:gcc"}] = [] {
+    "26 c language support"_test[s::gcc] = [] {
         // C sources route to the c_object rule with the C compiler, c_standard and the package's
         // cflags, beside the C++ rule's own; the mixed program links and runs.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("cmix");
         p.write("src/cmix_core.c", R"cpp(#include <stdlib.h>
 #include <string.h>
@@ -331,11 +327,10 @@ cxxflags = ["-fno-plt"]
         expect(fatal(e2e::succeeded(opt.mcpp({"build", "--dev"}, cdb)))) << "--dev errored";
         expect(e2e::contains(cc(opt), "-O0")) << "--dev did not override project default to -O0\n" << cc(opt);
     };
-    "861 concurrent compiles plan what serial compiles plan"_test[tag{"requires:unix-shell"}] = [] {
+    "861 concurrent compiles plan what serial compiles plan"_test[s::unix_shell] = [] {
         // A workspace built at -j 4 writes the same build.ninja files and build-program caches
         // as at -j 1 (A), runs the same three build programs in the same order (B), core's first,
         // and links their three link flags in the same order (C).
-        s::needs({"unix-shell"});
         const s::options o{.where = s::home::inherited};
         s::project ws{s::files{{"mcpp.toml", R"cpp([workspace]
 members = ["core", "cli", "gui", "app"]
@@ -544,11 +539,10 @@ sealed = {{ git = "{0}", rev = "{1}" }}
         expect(fatal(failed(r))) << "a git dependency's glob that leaves its package was accepted\n" << s::text(r);
         expect(e2e::contains(s::text(r), "which leaves the package")) << "the refusal did not name the escaping glob\n" << s::text(r);
     };
-    "894 the position reading is kept and reported"_test[tag{"requires:gcc"}] = [] {
+    "894 the position reading is kept and reported"_test[s::gcc] = [] {
         // A virtual workspace root's [profile.<name>] still reaches a member by its position and
         // says so naming [workspace.profile.<name>]; a member's own table replaces it whole; a
         // root package's own table is not a position reading, while its member is told.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         auto flags_of = [](const s::project& ws, std::string_view suffix) {
@@ -592,11 +586,10 @@ sealed = {{ git = "{0}", rev = "{1}" }}
         expect(fatal(e2e::contains(s::text(r), "reaches member 'sub' by its position"))) << "a member that received the root's table by position was not told\n" << s::text(r);
         expect(e2e::contains(flags_of(rooted, "sub/src/main.cpp"), "-DROOT_RELEASE=1")) << "the position reading changed for a rooted workspace";
     };
-    "929 release trims paths and defines ndebug"_test[tag{"requires:gcc"}][tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "929 release trims paths and defines ndebug"_test[s::gcc][s::elf][s::unix_shell] = [] {
         // A release trims the paths an artifact carries (__FILE__, source_location: the same in
         // two checkouts, no project path) and defines NDEBUG; dev keeps both; [profile.release]
         // ndebug/trim_paths = false keep them; debug = true writes a source map back to the root.
-        s::needs({"gcc", "elf", "unix-shell"});
         const auto work = s::case_dir();
         const s::options o{.env = {{"NO_COLOR", "1"}}};
         const auto GCC_VERSION = s::gcc_version();
@@ -658,11 +651,10 @@ int main() {
         expect(fatal(!g.empty())) << "no source-map.gdbinit";
         expect(e2e::contains(s::read_file(g.front()), "set substitute-path app@1.2.0 " + (work / "d").string())) << "source-map.gdbinit does not map the root package back";
     };
-    "1003 one program one variant"_test[tag{"requires:gcc"}] = [] {
+    "1003 one program one variant"_test[s::gcc] = [] {
         // Two programs of a workspace may reach two patched variants of one package, each with a
         // source tree of its own; one program reaching both is refused naming the package and
         // both variants.
-        s::needs({"gcc"});
         const s::options o{.where = s::home::inherited};
         auto mark = [](int value) {
             return std::format("--- a/zlib-1.3.2/zlib.h\n+++ b/zlib-1.3.2/zlib.h\n@@ -31,4 +31,6 @@\n #ifndef ZLIB_H\n #define ZLIB_H\n \n+#define MCPP_MARK {}\n+\n #ifdef ZLIB_BUILD\n", value);

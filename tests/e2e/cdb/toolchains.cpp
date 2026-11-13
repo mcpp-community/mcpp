@@ -58,11 +58,10 @@ const nlohmann::json& entry_ending(const nlohmann::json& entries, std::string_vi
 }
 
 E2E toolchains{"toolchains", [] {
-    "783 cdb switches whole with the configuration"_test[tag{"requires:llvm"}] = [] {
+    "783 cdb switches whole with the configuration"_test[s::llvm] = [] {
         // `mcpp test` then `mcpp build` in one configuration keep the test entry; switching the
         // toolchain switches the whole root file; switching back restores that configuration's
         // entries, test units included.
-        s::needs({"llvm"});
         auto p = s::project::scaffold("app");
         auto r = p.mcpp({"test", "--toolchain", llvm_row()}, at_root);
         expect(fatal(e2e::succeeded(r))) << "mcpp test (llvm) failed: " << s::text(r);
@@ -86,10 +85,9 @@ E2E toolchains{"toolchains", [] {
         expect(fatal(any_clang(drivers(p)))) << "the root is not llvm's configuration after switching back";
     };
 
-    "784 cdb replays from its directory"_test[tag{"requires:llvm"}] = [] {
+    "784 cdb replays from its directory"_test[s::llvm] = [] {
         // `directory` is the output directory the compiler runs in, for every unit of the project
         // and both rows: each entry replays from it, and the project root gains no BMI cache.
-        s::needs({"llvm"});
         s::project p({{"mcpp.toml", "[package]\nname = \"replaytest\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"},
                       {"src/greet.cppm", "export module replaytest.greet;\nexport int answer() { return 42; }\n"},
                       {"src/main.cpp", "import replaytest.greet;\nint main() { return answer() == 42 ? 0 : 1; }\n"}});
@@ -110,10 +108,9 @@ E2E toolchains{"toolchains", [] {
         }
     };
 
-    "785 cdb interface flag module extensions"_test[tag{"requires:llvm"}] = [] {
+    "785 cdb interface flag module extensions"_test[s::llvm] = [] {
         // An interface of a `.ixx` extension carries `-x c++-module` immediately before `-c` and
         // replays into its object; the non-module unit carries no language flag.
-        s::needs({"llvm"});
         s::project p({{"mcpp.toml", "[package]\nname = \"ixxtest\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n\n[build]\nmodule_extensions = [\".ixx\"]\n"},
                       {"src/greet.ixx", "export module ixxtest.greet;\nexport int answer() { return 42; }\n"},
                       {"src/main.cpp", "import ixxtest.greet;\nint main() { return answer() == 42 ? 0 : 1; }\n"}});
@@ -132,11 +129,10 @@ E2E toolchains{"toolchains", [] {
         expect(fatal(!std::ranges::contains(main_args, std::string("-x")))) << "the non-module unit carries a language flag: " << entry_ending(entries, "main.cpp")["arguments"].dump();
     };
 
-    "786 std unit in the database and build id"_test[tag{"requires:llvm"}] = [] {
+    "786 std unit in the database and build id"_test[s::llvm] = [] {
         // The std unit's directory is the shared std cache; `emit --spec compile-commands` renders
         // the same std entry as the build's database; provides['std'] names the std-cache BMI;
         // the toolchain's build-id is present and stable across two runs.
-        s::needs({"llvm"});
         s::project p({{"mcpp.toml", "[package]\nname = \"stdunit\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"},
                       {"src/main.cpp", "import std;\nint main() { std::println(\"hi\"); return 0; }\n"}});
         auto r = p.mcpp({"build", "--toolchain", llvm_row()}, at_root);

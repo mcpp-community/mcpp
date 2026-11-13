@@ -13,8 +13,7 @@ constexpr std::string_view hang_cpp =
     "#include <chrono>\n#include <thread>\nint main() { std::this_thread::sleep_for(std::chrono::seconds(30)); return 0; }\n";
 
 E2E streams{"streams", [] {
-    "865 mcpp test reports its steps on stderr and its results on stdout"_test[tag{"requires:unix-shell"}] = [] {
-        s::needs({"unix-shell"});
+    "865 mcpp test reports its steps on stderr and its results on stdout"_test[s::unix_shell] = [] {
         s::project p{{"mcpp.toml", R"([package]
 name    = "p"
 version = "0.1.0"
@@ -66,10 +65,9 @@ main = "src/main.cpp"
         expect(s::lacks(d.err, "workspace result")) << "the workspace result line is on standard error";
     };
 
-    "178 test observability"_test[tag{"requires:unix-shell"}] = [] {
+    "178 test observability"_test[s::unix_shell] = [] {
         // `mcpp test` is streamed, timed and bounded. POSIX only: the deadline runner has no
         // kill-by-handle path on Windows, so --timeout and --build-timeout are documented POSIX-only.
-        s::needs({"unix-shell"});
         s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"fast\", \"slow\"]\n"},
                       {"fast/mcpp.toml", "[package]\nname = \"fast\"\nversion = \"0.1.0\"\n"},
                       {"slow/mcpp.toml", "[package]\nname = \"slow\"\nversion = \"0.1.0\"\n"},

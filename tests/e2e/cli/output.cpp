@@ -134,12 +134,11 @@ E2E output{"output", [] {
         expect(fatal(e2e::contains(s::text(r), "MCPPE2E_BUILD_ERROR_MARKER"))) << "verbose output missing compiler diagnostic marker";
     };
 
-    "842 the build reports each step once"_test[tag{"requires:python3"}] = [] {
+    "842 the build reports each step once"_test[s::python3] = [] {
         // R1 each package once, in the order its work finished, a blank line before Finished,
         // nothing redrawn; R2 a build program ran, then cached (--verbose); R3 an edit names its
         // package alone; R4 an edited dependency, then its dependant, --verbose's steps; R5 a
         // failed step is reported while another package's prepare action still runs.
-        s::needs({"python3"});
         s::project root({{"ws/mcpp.toml", "[workspace]\nmembers = [\"core\", \"cli\"]\n"},
                          {"ws/core/mcpp.toml", "[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n[targets.core]\nkind = \"lib\"\n"},
                          {"ws/core/src/core.cppm", "export module rp_core;\nexport int core_v() { return 1; }\n"},
@@ -271,12 +270,11 @@ main = "src/main.cpp"
         expect(fatal(e2e::contains(r.err, "Cleaned"))) << "E: mcpp clean does not say on standard error what it cleaned";
     };
 
-    "866 both streams on one pipe keep their order and json stays clean"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "866 both streams on one pipe keep their order and json stays clean"_test[s::unix_shell][s::python3] = [] {
         // C: a build's steps on one pipe, a blank line before Finished; A: run's line, a blank
         // line, then the program's lines in the order written; B: --message-format json keeps
         // standard output JSON and standard error free of status; D: the status row follows
         // standard error onto a terminal and stays off a terminal on standard output.
-        s::needs({"unix-shell", "python3"});
         s::project root({{"p/mcpp.toml", "[package]\nname    = \"p\"\nversion = \"0.1.0\"\n\n[targets.p]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                          {"p/src/main.cpp", R"(#include <cstdio>
 int main() {
@@ -351,12 +349,11 @@ int main() {
         expect(fatal(e2e::contains(err, "Finished"))) << "D2: Finished is not in the file on standard error";
     };
 
-    "936 the control contract"_test[tag{"requires:python3"}][resource{"machine"}] = [] {
+    "936 the control contract"_test[s::python3][resource{"machine"}] = [] {
         // A the JSON event stream and the build envelope, a failure's located diagnostic; B
         // --print-launch; C --deny; D CLICOLOR_FORCE and NO_COLOR; E --home; F the envelopes of
         // search, index list and pack --list-formats; G --protocol-version; H a build ended by
         // SIGTERM is recorded cancelled and exits 143.
-        s::needs({"python3"});
         auto p = s::project::scaffold("app");
         auto r = p.mcpp({"build", "--message-format", "json"});
         expect(fatal(e2e::succeeded(r))) << "A: the build failed\n" << r.err;

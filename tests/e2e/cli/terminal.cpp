@@ -234,12 +234,11 @@ std::vector<std::string> prepare_actions_alive(const fs::path& dir) {
 }
 
 E2E terminal{"terminal", [] {
-    "843 a terminal names the action that runs"_test[tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "843 a terminal names the action that runs"_test[s::python3][s::unix_shell] = [] {
         // T1 the status row names a running prepare action, its package and clock; T2 the
         // package once, a blank line before Finished; T3 no status row after Finished; T4 the
         // phase in 12 columns and a 24-cell screen; T5 the status row is the last row and no
         // blank row precedes it.
-        s::needs({"python3", "unix-shell"});
         auto p = app();
         auto proc = s::process::start(on_terminal(p, {"build"}, {{"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"}, {"MCPP_PROGRESS", "snake"},
                                                                  {"NO_COLOR", std::nullopt}, {"LC_ALL", std::nullopt}}));
@@ -275,7 +274,7 @@ E2E terminal{"terminal", [] {
         }
         expect(fatal(checked >= 3)) << "T5: only " << checked << " frames were drawn";
     };
-    "845 play game restores the terminal"_test[tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "845 play game restores the terminal"_test[s::python3][s::unix_shell] = [] {
         // Build output design 2026-09-30 (revision 3) §5.14, through a pseudo-terminal, with a
         // prepare action that takes four seconds. G1 while the game plays the terminal reads keys
         // without echo and without a line end, and the status row carries the score; G2 after
@@ -283,7 +282,6 @@ E2E terminal{"terminal", [] {
         // best round; G3 a Ctrl-C during the game ends mcpp by SIGINT, restores the mode, and
         // the prepare action does not outlive mcpp; G4 with standard input not a terminal the
         // game is off, a line says why, and the build succeeds.
-        s::needs({"python3", "unix-shell"});
         auto p = app();
         auto g = play(p, false);
         expect(fatal(g.during.has_value())) << "the build ended before the game could be observed\n" << g.plain;

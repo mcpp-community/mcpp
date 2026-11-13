@@ -202,12 +202,11 @@ E2E directories{"directories", [] {
         expect(fatal(s::no_line(s::text(rdev) + s::text(rel), "Waiting.*held by pid"))) << "D: two configurations waited on one lock\n" << s::text(rdev) << s::text(rel);
     };
 
-    "998 a build keeps its bytes once"_test[tag{"requires:gcc"}] = [] {
+    "998 a build keeps its bytes once"_test[s::gcc] = [] {
         // mcpp#874: a library's archive holds its own objects, a program's debug information is
         // compressed, an equal copy is linked, `clean --stale` and `clean --report` cover
         // `.build-mcpp/out`, a tool's edit supersedes its entry, an unchanged generated header
         // rebuilds nothing, and a library's build program is built in a group beside the first.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         const auto mcpp_home = s::case_home(s::home::linked);
         const auto tmp = s::case_dir();
@@ -320,11 +319,10 @@ E2E directories{"directories", [] {
         expect(fatal(inode(user.at("target/.build-mcpp/build.mcpp.bin")) == inode(binary))) << "the program beside its record is a copy";
     };
 
-    "999 debug information is stored once"_test[tag{"requires:gcc"}] = [] {
+    "999 debug information is stored once"_test[s::gcc] = [] {
         // design 2026-10-31 §4.1 (b): under dev a root unit keeps its debug information in a
         // `.dwo` and an index package's units keep theirs in the object (compressed); release and
         // `split_debuginfo = "off"` write no `.dwo`; another value is refused.
-        s::needs({"gcc"});
         if (!s::on_linux()) skip("the split form is checked on Linux (ELF)");
         s::project app({{"src/main.cpp", "#include <zlib.h>\n#include <cstdio>\nint main() { std::printf(\"%s\\n\", zlibVersion()); }\n"}});
         const auto manifest = [&](std::string_view extra) {
@@ -362,13 +360,12 @@ E2E directories{"directories", [] {
         expect(fatal(e2e::contains(s::text(r), "\"unpacked\" or \"off\""))) << "the refusal does not name the values\n" << s::text(r);
     };
 
-    "1000 a configuration keeps one directory"_test[tag{"requires:gcc"}] = [] {
+    "1000 a configuration keeps one directory"_test[s::gcc] = [] {
         // design 2026-10-31 §8 and 2026-11-12 §17: a predecessor of the lineage is taken over, one
         // of another toolchain replaced, another lineage kept; the sweep by keep_days; uses.list
         // marks the cache entries used; the directory is named by the lineage and the graph runs
         // mcpp through its link; mcpp at another path compiles nothing again; a rooted workspace
         // keeps its configuration under clean --stale.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"compat.zlib\" = \"1.3.2\"\n"},
@@ -467,10 +464,9 @@ E2E directories{"directories", [] {
         expect(fatal(!current.empty() && fs::is_directory(current))) << "clean --stale removed the rooted workspace's own build\n" << s::text(r);
     };
 
-    "1083 a configuration built beside another states the other's size"_test[tag{"requires:gcc"}] = [] {
+    "1083 a configuration built beside another states the other's size"_test[s::gcc] = [] {
         // mcpp#927 (design 2026-11-12 §18 P6): a change of configuration that builds in a directory
         // of its own names the directory it leaves beside it, its size and what reclaims it.
-        s::needs({"gcc"});
         s::project app({{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                         {"src/main.cpp", "int main() { return 0; }\n"}});
         build_ok(app.mcpp({"build"}), "the first build failed");
@@ -482,9 +478,8 @@ E2E directories{"directories", [] {
             << s::text(r);
     };
 
-    "1005 clean stale says what it kept"_test[tag{"requires:gcc"}] = [] {
+    "1005 clean stale says what it kept"_test[s::gcc] = [] {
         // mcpp#881: `clean --stale` says what it kept and within what window, `[build] keep_days`.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::inherited};
         s::project app({{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "int main() { return 0; }\n"}});
         build_ok(app.mcpp({"build"}, home), "the build failed");
@@ -509,11 +504,10 @@ E2E directories{"directories", [] {
         expect(fatal(!fs::exists(dead))) << "--older-than 1d kept a directory written two days ago\n" << s::text(r);
     };
 
-    "1022 a taken over directory keeps no compiler record of another"_test[tag{"requires:gcc"}] = [] {
+    "1022 a taken over directory keeps no compiler record of another"_test[s::gcc] = [] {
         // 2026.11.7.1: a directory taken over keeps no split-compile certificate naming the
         // predecessor's objects, and a certificate of another directory found at admission (the
         // project moved) is no record: the object is compiled again.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[build]\nbmi_schedule = \"on\"\n"},

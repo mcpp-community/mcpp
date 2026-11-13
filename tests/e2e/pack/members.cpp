@@ -146,11 +146,10 @@ main = "src/beta.cpp"
         expect(fatal(e2e::contains(s::text(r), "no target named 'nosuch'"))) << "wrong refusal\n" << s::text(r);
         expect(e2e::contains(s::text(r), "alpha") && e2e::contains(s::text(r), "beta")) << "the refusal did not list the available targets\n" << s::text(r);
     };
-    "829 pack takes a member"_test[tag{"requires:unix-shell"}] = [] {
+    "829 pack takes a member"_test[s::unix_shell] = [] {
         // `mcpp pack -p <member>` at the workspace root packs the member as a pack inside it
         // does (the same archive name and contents); a relative -o lands where it was typed;
         // an unknown member is refused by name (#734 E3).
-        s::needs({"unix-shell"});
         s::project ws{s::files{{"mcpp.toml", R"cpp([workspace]
 members = ["lib", "app"]
 )cpp"}, {"lib/mcpp.toml", R"cpp([package]
@@ -187,13 +186,12 @@ kind = "lib"
         expect(fatal(failed(r))) << "P3: an unknown member was accepted\n" << s::text(r);
         expect(s::contains_nocase(s::text(r), "nosuch")) << "P3: the refusal does not name the value\n" << s::text(r);
     };
-    "801 a dependency program is shipped with the consumer"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "801 a dependency program is shipped with the consumer"_test[s::gcc][s::elf] = [] {
         // `artifacts = ["updater"]` builds the dependency's program for the consumer's target
         // and profile beside the consumer's programs (mcpp#711): it runs, `mcpp run` still
         // chooses the package's program, none of its code is linked into the consumer,
         // ${mcpp.artifact:} reaches an action, the pack ships it, and a musl build (where a
         // musl toolchain is installed) builds it for musl.
-        s::needs({"gcc", "elf"});
         const auto tmp = s::case_dir();
         s::project{tmp / "updater", {{"mcpp.toml", R"cpp([package]
 name    = "updater"
@@ -252,20 +250,19 @@ int main() {
         expect(fatal(std::ranges::any_of(listing, [](const std::string& l) { return l.ends_with("/updater"); }))) << "4: the artifact is not in the archive";
         const bool musl = s::on_path("x86_64-linux-musl-g++").has_value()
                           || !s::glob(s::shared_home() / "registry/data/xpkgs", "xim-x-musl-gcc/*/bin/x86_64-linux-musl-g++").empty();
-        if (!s::has("x86_64-host") || !musl) return;  // 5: no musl toolchain on this machine
+        if (!s::on_x86_64() || !musl) return;  // 5: no musl toolchain on this machine
         r = app.mcpp({"build", "--target", "x86_64-linux-musl"});
         expect(fatal(e2e::succeeded(r))) << "5: cross build failed\n" << s::text(r);
         const auto cu = paths_ending(app.at("target/x86_64-linux-musl"), "/bin/updater");
         expect(fatal(!cu.empty())) << "5: no cross-built updater";
         expect(!s::read_header(cu.front()).elf_interpreter) << "5: the artifact was not built for the musl target";
     };
-    "867 a pack over several members plans builds and runs programs once"_test[tag{"requires:unix-shell"}] = [] {
+    "867 a pack over several members plans builds and runs programs once"_test[s::unix_shell] = [] {
         // `mcpp pack` over several members (mcpp#749) runs the shared member's build program
         // once and each provider's once per pass, told its format and stage on the second;
         // each member's program reads its own staged tree; each member's tree and
         // distributable are those `mcpp pack -p <member>` makes; after a build of the
         // workspace the pack compiles nothing and uses the same build directory.
-        s::needs({"unix-shell"});
         const s::options o{.where = s::home::inherited};
         s::project ws{s::files{{"mcpp.toml", R"cpp([workspace]
 members = ["core", "cli", "gui"]
@@ -417,11 +414,10 @@ int main() {
         const auto after = objects(dirs.front());
         expect(after == before) << "C: the pack compiled " << (after - before) << " object(s) after the build";
     };
-    "870 a pack over several members resolves and fails per member"_test[tag{"requires:unix-shell"}] = [] {
+    "870 a pack over several members resolves and fails per member"_test[s::unix_shell] = [] {
         // A pack of several members resolves a target name for the member an action is for
         // (a and b both name the target `tool`), lists the stages in [workspace] members order
         // across configurations, and lets a member whose distribution step fails fail alone.
-        s::needs({"unix-shell"});
         const s::options o{.where = s::home::inherited};
         s::project ws{s::files{{"mcpp.toml", R"cpp([workspace]
 members = ["a", "c", "b"]
@@ -495,14 +491,13 @@ int main() {{
         expect(fatal(zap("b").empty())) << "C: b's distributable of the previous pack is still in place";
         expect(s::has_line(s::text(r), "member 'b'|'b'")) << "C: the failure does not name b\n" << s::text(r);
     };
-    "868 a pack over several members is refused before anything is compiled"_test[tag{"requires:unix-shell"}] = [] {
+    "868 a pack over several members is refused before anything is compiled"_test[s::unix_shell] = [] {
         // What a pack over several members refuses, before anything is compiled and naming what
         // it refused (mcpp#749): a member without the format (E); a target name (F); an
         // --output naming a file (G); a member with no program by -p, which --workspace skips
         // (H); two members writing one archive (I); members served only by a shared provider,
         // which serves one member alone (J); a member that claimed nothing, or a configuration
         // that cannot be planned, fails alone while the others are packed (K).
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         auto program_member = [](const s::project& ws, std::string_view m, std::string_view deps) {
@@ -688,14 +683,13 @@ main = "src/main.cpp"
         expect(fatal(e2e::contains(s::text(r), "broken"))) << "K: the failure does not name the member\n" << s::text(r);
         expect(any_named(planfail.at("fine"), R"(fine-0\.1\.0-.*\.tar\.gz)")) << "K: the member of the other configuration was not packed\n" << s::text(r);
     };
-    "869 a pack over several members names each member in its report"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "869 a pack over several members names each member in its report"_test[s::unix_shell][s::python3] = [] {
         // What a pack over several members writes and reports for the built-in formats
         // (mcpp#749): each member's archive where it would be written alone, the same archive,
         // in [workspace] members order (L); below a directory --output names (M); less the
         // members --exclude names (N); the JSON envelope names each member's artifacts and
         // stages and keeps the single-member shape for one (O); members of two configurations
         // are each packed from their own build (P).
-        s::needs({"unix-shell", "python3"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         s::project ws{tmp / "ws", {{"mcpp.toml", R"cpp([workspace]

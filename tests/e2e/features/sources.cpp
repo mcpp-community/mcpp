@@ -44,9 +44,8 @@ E2E sources{"sources", [] {
         expect(s::lacks(s::read_file(*nj), "cJSON_Utils")) << "cJSON_Utils.c compiled without the `utils` feature";
     };
 
-    "106 feature gated sources toml"_test[tag{"requires:gcc"}] = [] {
+    "106 feature gated sources toml"_test[s::gcc] = [] {
         // [features] `sources`: off and on, under build and under test.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("featsrc");
         p.write("src/extra.cpp", "extern \"C\" int extra_answer() { return 42; }\n");
         p.write("src/main.cpp", "import std;\nextern \"C\" int extra_answer();\nint main() {\n#ifdef HAS_EXTRA\n    std::println(\"extra = {}\", extra_answer());\n#else\n    std::println(\"extra = none\");\n#endif\n    return 0;\n}\n");
@@ -63,10 +62,9 @@ E2E sources{"sources", [] {
         expect(fatal(e2e::succeeded(p.mcpp({"test"})))) << "mcpp test (off) failed";
         expect(e2e::succeeded(p.mcpp({"test", "--features", "extra"}))) << "mcpp test (on) failed";
     };
-    "138 feature sources gate vs provider"_test[tag{"requires:unix-shell"}] = [] {
+    "138 feature sources gate vs provider"_test[s::unix_shell] = [] {
         // A feature that gates a source (in no base list, but under the inferred `src/**`) and a
         // feature that switches a source the package provides, under build and test.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         s::project provider{tmp / "provider", {{"mcpp.toml", R"cpp([package]
 name    = "provider"
@@ -116,11 +114,10 @@ int main() { return gate_value() == 11 ? 0 : 1; }
         expect(!s::find_files(gate.at("target"), ".*gated_main.*").empty()) << "gate: a source the package provides unconditionally vanished under `mcpp test`";
     };
 
-    "146 feature flags"_test[tag{"requires:gcc"}] = [] {
+    "146 feature flags"_test[s::gcc] = [] {
         // [features].<name>.flags: per-feature per-glob flags reach exactly the matched TU, off
         // and on, under build and test; a dead glob warns only when its feature is on; a
         // dependency's feature flags stay private while its defines propagate.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("featflags");
         p.write("src/simd/kernel.cpp", R"cpp(#ifndef KERNEL_TAG
 #error "feature flags did not reach the glob-matched TU"

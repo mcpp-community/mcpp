@@ -101,14 +101,13 @@ struct writable_on_exit {
 constexpr std::string_view caught_main = "import std;\nint main(int argc, char** argv) {\n    try { throw std::runtime_error(\"caught\"); }\n    catch (const std::exception& e) { std::println(\"image: {} ({} args)\", e.what(), argc); }\n    return 0;\n}\n";
 
 E2E trees{"trees", [] {
-    "955 the openkal set is one tree of every architecture"_test[tag{"requires:llvm"}][tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "955 the openkal set is one tree of every architecture"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `pack --target openkal` writes <name>-<version>-openkal/ with both images, the
         // launchers and metadata naming legs, runner and entries; B the launcher runs this
         // machine's image through the runner on PATH; C self-contained carries the runner per
         // system and architecture and runs with nothing installed; D one target is packed alone
         // in the same layout; E (Linux) `--systems linux,macos,windows` carries a Mach-O and a
         // PE runner made here, none with its own package description.
-        s::needs({"llvm", "python3", "unix-shell"});
         needs_image_row();
         const auto os = posix_system();
         if (os.empty()) skip("a POSIX launcher");
@@ -173,13 +172,12 @@ E2E trees{"trees", [] {
         }
     };
 
-    "956 a single file runs without unpacking"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "956 a single file runs without unpacking"_test[s::unix_shell][s::python3] = [] {
         // A a native single file runs with its arguments and exit status, extracting its tree
         // into the cache once; B (Linux) `--linkage static` makes a file with no interpreter;
         // C `--compress xz` is refused naming zstd; D an image's single file runs and writes
         // nothing into the cache; E `-o` naming one file with several systems, and a system of
         // an unbuilt row, are refused before a build.
-        s::needs({"unix-shell", "python3"});
         const auto tmp = s::case_dir();
         const writable_on_exit guard{tmp};
         // The user's cache, isolated: $XDG_CACHE_HOME on Linux; on macOS ~/Library/Caches, so the
@@ -265,14 +263,13 @@ E2E trees{"trees", [] {
         expect(fatal(e2e::contains(s::text(r), "--systems linux"))) << "E: the refusal does not give the systems that are built: " << s::text(r);
     };
 
-    "957 packages merge and describe themselves"_test[tag{"requires:llvm"}][tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "957 packages merge and describe themselves"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `--merge a --merge b` (b: a's runner moved to another system's directory) writes one
         // package named after the output, the union of legs, systems and files with their
         // digests; D an archive merges as its directory does; B a file of both with different
         // digests, and different versions, are refused; C `emit xpkg --package` of a package
         // of images is one asset per system its `runs_on` names (or refused when empty), and an
         // archive without its own --package is refused.
-        s::needs({"llvm", "python3", "unix-shell"});
         needs_image_row();
         const auto tmp = s::case_dir();
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"mrg\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "import std;\nint main() { std::println(\"merged\"); }\n"}});
@@ -390,12 +387,11 @@ E2E trees{"trees", [] {
         expect(fatal(e2e::contains(r.err, "each archive is its own --package"))) << "C: the refusal does not say how: " << r.err;
     };
 
-    "961 a single file carries the image in a program of its architecture"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "961 a single file carries the image in a program of its architecture"_test[s::llvm][s::python3] = [] {
         // A the other architecture's single file is an ELF of that architecture (run by its
         // qemu where present); B `--list-formats` lists the platform's `okb` for the target and
         // not for this machine; C the self-contained tree of one target is described for its
         // pair, and the vendored tree as its runner's coverage says.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         const std::string system = s::on_macos() ? "macos" : s::on_windows() ? "windows" : "linux";
         const std::string xsystem = s::on_macos() ? "macosx" : system;
@@ -455,12 +451,11 @@ E2E trees{"trees", [] {
             expect(fatal(e2e::succeeded(emitted) && e2e::contains(emitted.out, R"(deps = { "xim:okrun" })"))) << "C: " << emitted.err << emitted.out;
     };
 
-    "962 a webassembly package is neither an xlings entry nor a single file"_test[tag{"requires:unix-shell"}] = [] {
+    "962 a webassembly package is neither an xlings entry nor a single file"_test[s::unix_shell] = [] {
         // A `emit xpkg --package` of a wasm32-emscripten package exits 2 naming the package,
         // its triple and `dist-web`, writing no entry; B where an emsdk payload is installed,
         // `--pkg-format single-file` for wasm32-emscripten is refused before a build naming both
         // choices and the formats that serve the row.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const std::string top = "web-0.1.0-wasm32-emscripten";
         s::project(tmp / top, {{"bin/web.js", "console.log(\"web\");\n"},
@@ -490,13 +485,12 @@ E2E trees{"trees", [] {
         expect(fatal(s::lacks(s::text(r), "Compiling"))) << "B: refused after compiling: " << s::text(r);
     };
 
-    "992 a polyglot file runs on every system it holds"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "992 a polyglot file runs on every system it holds"_test[s::llvm][s::unix_shell] = [] {
         // A `--pkg-format polyglot -o out/` writes one PE whose DOS header is a script; B `sh`
         // runs this machine's program, placing it in the cache once, and bash runs it too; C a
         // damaged file is refused (127) placing nothing; D a linked cache directory is refused
         // (127); E without Windows the file is a script run directly; F `mcpp run --pkg-format
         // polyglot` runs it through sh; G the refusals; H (wine) it runs as a Windows program.
-        s::needs({"llvm", "unix-shell"});
         needs_image_row();
         const auto os = posix_system();
         if (os.empty()) skip("a POSIX host");
@@ -612,11 +606,10 @@ E2E trees{"trees", [] {
         }
     };
 
-    "995 the windows launcher builds over any platform release"_test[tag{"requires:llvm"}] = [] {
+    "995 the windows launcher builds over any platform release"_test[s::llvm] = [] {
         // A project selecting openkal-platform 0.19.0 packs self-contained for linux and
         // windows: the tree holds bin/<name>.exe and the Windows runner, and the pack names the
         // selected platform release.
-        s::needs({"llvm"});
         if (!s::on_linux() || host_arch != "x86_64") skip("the Windows launcher is built here on Linux x86_64");
         s::project app({{"mcpp.toml", "[package]\nname    = \"wl\"\nversion = \"0.1.0\"\n\n[target.'cfg(os = \"openkal\")']\nplatform = \"mcpplibs.openkal-platform@0.19.0\"\n"},
                         {"src/main.cpp", "import std;\nint main(int argc, char**) { std::println(\"wl ok: {} args\", argc); }\n"}});
@@ -627,11 +620,10 @@ E2E trees{"trees", [] {
         expect(fatal(e2e::contains(s::text(r), "openkal-platform 0.19.0"))) << "B: the selected platform is not the image's: " << s::text(r);
     };
 
-    "1078 systems all carries the runners the platform declares"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "1078 systems all carries the runners the platform declares"_test[s::llvm][s::unix_shell] = [] {
         // Without `--systems` a self-contained pack carries this machine's system's runner for
         // each leg and no other system's; `--systems all` carries the runners the platform's
         // data names, FreeBSD's among them, and Windows' or says it has none.
-        s::needs({"llvm", "unix-shell"});
         needs_image_row();
         if (!s::on_linux()) skip("a Linux host");
         auto app = s::project::scaffold("app");

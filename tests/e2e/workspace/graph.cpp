@@ -139,7 +139,7 @@ int hide_dual_dll(const fs::path& root, const fs::path& hidden, std::string_view
 }
 
 E2E graph{"graph", [] {
-    "833 a workspace is one graph per configuration"_test[tag{"requires:unix-shell"}] = [] {
+    "833 a workspace is one graph per configuration"_test[s::unix_shell] = [] {
         // G1 a shared member compiled once; G2 a selection replays the workspace's graph; G3 a
         // member's flag edit rebuilds that member alone; G4 one build directory per
         // configuration; G5 G6 each member's products under bin/<package>/ (a namespaced one
@@ -219,7 +219,7 @@ E2E graph{"graph", [] {
         expect(fatal(ws.exists("cli/target/.build-mcpp/keep"))) << "G7: clean --stale removed a member's build-program outputs";
     };
 
-    "834 a workspace plans once and replays in one check"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "834 a workspace plans once and replays in one check"_test[s::unix_shell][s::python3] = [] {
         // P1 P2: --workspace and -p resolve the toolchain once; P3: an unchanged build replays
         // without planning, in under a second, for --workspace, -p and from inside a member.
         s::project ws({{"mcpp.toml", "[workspace]\nmembers = [\"lib1\", \"lib2\", \"lib3\", \"lib4\", \"lib5\", \"app\"]\n"},
@@ -294,7 +294,7 @@ E2E graph{"graph", [] {
         expect(fatal(s::lacks(t1 + s::text(b2), "(path)"))) << "B5: a package is named by its source kind, not its directory";
     };
 
-    "851 a shared member is compiled once per configuration"_test[tag{"requires:unix-shell"}] = [] {
+    "851 a shared member is compiled once per configuration"_test[s::unix_shell] = [] {
         // A: a library two configurations share is compiled once in each, with each
         // configuration's features and standard. B: two consumers in one configuration share one
         // compile with the union of their features, and a consumer's own cxxflags do not reach
@@ -431,7 +431,7 @@ export int consumer_flag_v() {
         expect(fatal(e2e::contains(s::text(r), "T860-failure-in-" + first))) << "C: the failure reported at -j 1 is not the one of " << first << ": " << s::text(r);
     };
 
-    "872 a member compiles once whatever the selection"_test[tag{"requires:python3"}] = [] {
+    "872 a member compiles once whatever the selection"_test[s::python3] = [] {
         // A B: after --workspace, every selection (and --release likewise, F) compiles nothing.
         // C: `emit build-database` gives each member's closure the same arguments whatever the
         // selection, names only argument files that exist, and names module maps. D: lib differs
@@ -661,7 +661,7 @@ int main() {
         expect(fatal(runs(bin_of(ws2.at("target"), "client")))) << "the consumer of an image holding a placed static did not run";
     };
 
-    "912 two configuration groups share the build programs graph"_test[tag{"requires:unix-shell"}] = [] {
+    "912 two configuration groups share the build programs graph"_test[s::unix_shell] = [] {
         // Two members in two configurations whose build programs share a build dependency: one
         // graph of build programs, the library compiled once, each member's value right.
         const auto tmp = s::case_dir();

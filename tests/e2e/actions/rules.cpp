@@ -35,12 +35,11 @@ fs::path example_copy() {
 }
 
 E2E rules{"rules", [] {
-    "610 feature controlled rule collection"_test[tag{"requires:gcc"}] = [] {
+    "610 feature controlled rule collection"_test[s::gcc] = [] {
         // One package, several rules, the set chosen by the consumer's feature request: an
         // activated feature's unit is importable under its declared name, an inactive one is
         // not compiled; the mcpp namespace draws no reserved-prefix warning, another draws one
         // per unit; a lib whose only unit implements an undeclared module keeps its diagnostic.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         auto collection = [&](std::string_view ns) {
             fs::remove_all(tmp / "plugins");
@@ -124,10 +123,9 @@ int main() { std::printf("A=%d B=%d V=%s\n", RULE_A, RULE_B, STR(PLUGINS_VERSION
         expect(e2e::contains(s::text(b5), "the build programs' workspace")) << "the diagnostic does not say where to reproduce it";
     };
 
-    "619 a tool may not be conditioned on a layer"_test[tag{"requires:gcc"}] = [] {
+    "619 a tool may not be conditioned on a layer"_test[s::gcc] = [] {
         // `[target.<selector>.xlings…]` refuses a predicate naming a target-side layer, naming
         // the tool, the predicate and the feature-xlings way out.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", "[package]\nname    = \"layer-gated-tool\"\nversion = \"0.1.0\"\n[target.'cfg(c-abi = \"musl\")'.xlings.workspace]\n\"xim:mcpp-e2e-no-such-tool\" = \"1.0\"\n"},
                       {"src/main.cpp", "int main() { return 0; }\n"}}};
         auto r = p.mcpp({"build"});
@@ -137,11 +135,10 @@ int main() { std::printf("A=%d B=%d V=%s\n", RULE_A, RULE_B, STR(PLUGINS_VERSION
         expect(e2e::contains(s::text(r), "feature-xlings")) << "the refusal does not name the gate form as the way out";
     };
 
-    "630 a rule brings its own environment"_test[tag{"requires:gcc"}] = [] {
+    "630 a rule brings its own environment"_test[s::gcc] = [] {
         // A rule package declares the payloads its rule needs, gated by the accelerator and the
         // feature: a build naming no accelerator installs nothing; a device build installs the
         // payload and the rule's build program finds it.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options fresh{.where = s::home::fresh};
         s::project dep{tmp / "dep", {{"src/lib.cpp", "int dep_touch() { return 1; }\n"},
@@ -170,11 +167,10 @@ int main() {
         expect(e2e::contains(dep.read("answered.txt"), "xim-x-zoxide")) << "the rule cannot find the payload it declared: " << dep.read("answered.txt");
     };
 
-    "798 a rule applies through a source it claims"_test[tag{"requires:gcc"}] = [] {
+    "798 a rule applies through a source it claims"_test[s::gcc] = [] {
         // An active rule applies to a consumer through the sources it claims (mcpp#715): the
         // example's app gets a synthesised build program and its kernel; a package that only
         // imports the rule's module gets neither a report nor a build program.
-        s::needs({"gcc"});
         const auto ex = example_copy();
         s::project app{ex / "app", {}};
         app.remove("build.mcpp");
@@ -192,11 +188,10 @@ int main() {
         expect(eq(s::last_line(only.mcpp({"run"}).out), std::string{"IMPORT_ONLY_OK"})) << "leg 2 program";
     };
 
-    "808 device source is not a compile unit"_test[tag{"requires:gcc"}] = [] {
+    "808 device source is not a compile unit"_test[s::gcc] = [] {
         // A rule-claimed device source is no C++ compile unit of the plan: no cxx_object edge,
         // no entry in compile_commands.json, in the build database or its compile-commands
         // spelling; the rule still compiles it and the program runs.
-        s::needs({"gcc"});
         const auto ex = example_copy();
         s::project app{ex / "app", {}};
         const s::options cc{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};

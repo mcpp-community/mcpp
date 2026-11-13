@@ -97,11 +97,10 @@ E2E records{"records", [] {
         expect(fatal(e2e::contains(s::text(r), "does not name a provider"))) << "missing exact provider diagnostic: " << s::text(r);
     };
 
-    "207 runtime contract provenance"_test[tag{"requires:elf"}][tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+    "207 runtime contract provenance"_test[s::elf][s::python3][s::unix_shell] = [] {
         // Two providers of one short name stay exact, a requirement cannot self-provide, and
         // `mcpp why runtime` reads the stored resolution: it succeeds with the manifest broken
         // and launches no graphics probe.
-        s::needs({"elf", "python3", "unix-shell"});
         const auto tmp = s::case_dir();
         auto mk_provider = [&](std::string_view ns, std::string_view value) {
             s::project(tmp / ns, {{"runtime/libbackend.fact", std::format("artifact-{}\n", ns)},
@@ -197,11 +196,10 @@ main = "src/main.cpp"
             expect(fatal(e2e::contains(why, want))) << why;
     };
 
-    "307 symbol provision"_test[tag{"requires:elf"}][tag{"requires:python3"}] = [] {
+    "307 symbol provision"_test[s::elf][s::python3] = [] {
         // A shared library over a static package (linked into it) is silent and measured; a
         // second provider of a name the executable holds is reported with both providers, is
         // real at run time, and fails --strict.
-        s::needs({"elf", "python3"});
         const auto python = s::on_path("python3");
         expect(fatal(python.has_value())) << "no python to load the library";
         const auto tmp = s::case_dir();
@@ -269,11 +267,10 @@ main = "src/main.cpp"
         expect(fatal(!r)) << "FAIL: --strict did not fail on a reported conflict: " << s::text(r);
     };
 
-    "323 post link record durability"_test[tag{"requires:elf"}] = [] {
+    "323 post link record durability"_test[s::elf] = [] {
         // The post-link verdicts survive an invocation and the other command: `test` adds to
         // the record and `build` keeps the tests'; resolution.json publishes both on a warm
         // build; an artifact gone from the disk leaves the record.
-        s::needs({"elf"});
         s::project p({{"mcpp.toml", "[package]\nname = \"dur\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"},
                       {"src/main.cpp", "int main(){ return 0; }\n"},
                       {"tests/t_one.cpp", "int main(){ return 0; }\n"},

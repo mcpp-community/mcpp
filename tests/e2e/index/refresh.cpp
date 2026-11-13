@@ -58,13 +58,12 @@ bool has_word(const nlohmann::json& list, std::string_view word) {
 }
 
 E2E refresh{"refresh", [] {
-    "173 index refresh policy"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "173 index refresh policy"_test[s::gcc][s::fresh_sandbox] = [] {
         // A 30-day-old marker refreshes nothing when the index answers (an exact version and a
         // constraint); offline, a miss says so and names the revision and `mcpp index update`;
         // a miss under a namespace no index can refute is inconclusive; a miss just after a sync
         // is debounced; `auto_refresh = false` names itself; `index update` refuses offline;
         // `index status` shows the revision.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto home = s::case_home(s::home::inherited);
         const auto index = home / "indices/mcpplibs";
         s::project(index, {{"pkgs/w/widget.lua", R"(package = {
@@ -125,11 +124,10 @@ E2E refresh{"refresh", [] {
         expect(fatal(s::has_line(log, "abc1234"))) << "index status should show the local index revision: " << log;
     };
 
-    "185 index floor degrades"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "185 index floor degrades"_test[s::gcc][s::fresh_sandbox] = [] {
         // An index whose min_mcpp is beyond this mcpp: a build that needs it fails naming E0006
         // and "this mcpp cannot read" (never a bare "not found"); a build that needs nothing of
         // it succeeds; MCPP_INDEX_FLOOR=ignore bypasses the floor.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         const auto make_index = [](const fs::path& dir, std::string_view floor, std::string_view pkg) {
             s::project idx(dir, {{std::format("pkgs/{}/{}.lua", pkg.substr(0, 1), pkg), std::format(R"(package = {{
@@ -190,10 +188,9 @@ E2E refresh{"refresh", [] {
         expect(fatal(s::lacks(s::text(r), "E0006"))) << "MCPP_INDEX_FLOOR=ignore still reported E0006: " << s::text(r);
     };
 
-    "730 bare compat dependency is not a refresh miss"_test[tag{"requires:elf"}] = [] {
+    "730 bare compat dependency is not a refresh miss"_test[s::elf] = [] {
         // A bare name the shared home's mcpplibs index files as compat.<name> resolves through
         // the deprecated bare-name rung, and the refresh decision asks no network refresh for it.
-        s::needs({"elf"});
         const auto root = s::shared_home() / "indices/mcpplibs/pkgs/c";
         std::string desc;
         for (std::string_view cand : {"cjson", "argparse", "gtest", "ftxui"})
@@ -211,10 +208,9 @@ E2E refresh{"refresh", [] {
         expect(fatal(s::lacks(r.err, std::format("index: {}@{}: offline mode", desc, ver)))) << "B: the refresh decision asked for a network refresh of a dependency the resolver found: " << r.err;
     };
 
-    "732 xlings refresh is bounded and owned"_test[tag{"requires:unix-shell"}] = [] {
+    "732 xlings refresh is bounded and owned"_test[s::unix_shell] = [] {
         // A: `index update` under refresh_timeout = 3 returns well within 30 s, names the bound,
         // and the hung xlings does not outlive it. B: SIGTERM to mcpp ends the xlings it started.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         s::write_executable(tmp / "bin/xlings", std::string("#!/usr/bin/env bash\n") + std::string(handshake) + R"SH(
 case "${1:-}:${2:-}" in
@@ -253,10 +249,9 @@ exit 0
         expect(fatal(!outlived)) << "B: the stub outlived mcpp after SIGTERM";
     };
 
-    "733 envelope reports observed network access"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "733 envelope reports observed network access"_test[s::unix_shell][s::python3] = [] {
         // A: a plan that refreshed the index (the stub saw the update) reports a network effect.
         // B: offline, no network effect, and a plan with no index is MCPP_OFFLINE_DOWNLOAD_REQUIRED.
-        s::needs({"unix-shell", "python3"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
         fs::remove_all(home / "indices/mcpplibs");
@@ -284,10 +279,9 @@ exit 0
         expect(fatal(has_word(codes, "MCPP_OFFLINE_DOWNLOAD_REQUIRED"))) << "B: an offline plan with no index is not MCPP_OFFLINE_DOWNLOAD_REQUIRED: " << d["diagnostics"].dump();
     };
 
-    "734 auto refresh false governs first index sync"_test[tag{"requires:unix-shell"}] = [] {
+    "734 auto refresh false governs first index sync"_test[s::unix_shell] = [] {
         // With auto_refresh = false a custom index never synced is refused (naming `mcpp index
         // update` and the setting) and is not synced.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
         stub_logging_xlings(tmp / "bin/xlings");
@@ -304,11 +298,10 @@ exit 0
         expect(fatal(s::no_line(log, "^update|^interface update_packages"))) << "B: the custom index was synced although auto_refresh = false: " << log;
     };
 
-    "735 offline missing package has its own code"_test[tag{"requires:python3"}] = [] {
+    "735 offline missing package has its own code"_test[s::python3] = [] {
         // Offline, a package whose archive is not installed exits 5 with
         // MCPP_OFFLINE_DOWNLOAD_REQUIRED naming it and its version; a selector error keeps
         // MCPP_BUILD_DATABASE_PLAN_FAILED.
-        s::needs({"python3"});
         const auto tmp = s::case_dir();
         s::project index(tmp / "index", {{"pkgs/w/widget.lua", R"(package = {
     spec = "1",
@@ -341,11 +334,10 @@ exit 0
         expect(fatal(first(s::json(r.out)).first == "MCPP_BUILD_DATABASE_PLAN_FAILED")) << "B: a selector error took the offline code: " << r.out;
     };
 
-    "803 a recorded payload that is gone is refused offline"_test[tag{"requires:gcc"}] = [] {
+    "803 a recorded payload that is gone is refused offline"_test[s::gcc] = [] {
         // Offline, an [xlings.workspace] entry that is not installed is refused naming the
         // declared address; recorded as provisioned (its FNV-1a stamp), it is refused naming the
         // address and the record.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::linked);
         s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[xlings.workspace]\nmcpp-e2e-payload-that-is-gone = \"1.0.0\"\n"},
                                                {"src/main.cpp", "int main() {}\n"}});
@@ -367,11 +359,10 @@ exit 0
         expect(fatal(t2.contains("recorded as provisioned") && t2.contains(address) && t2.contains(stamp))) << "2: the refusal does not name the address and the record: " << t2;
     };
 
-    "812 an index floor is a closing tip"_test[tag{"requires:unix-shell"}] = [] {
+    "812 an index floor is a closing tip"_test[s::unix_shell] = [] {
         // A: a refresh that brings a floor this mcpp does not meet keeps the usable tree and
         // ends with one tip naming the version asked for. B: `self doctor` lists an index whose
         // floor this mcpp does not meet and points at E0006.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
         const auto data = home / "indices/mcpplibs";
@@ -406,11 +397,10 @@ exit 0
         expect(fatal(e2e::contains(s::text(r), "E0006"))) << "B: doctor does not point at E0006: " << s::text(r);
     };
 
-    "949 a version the index lacks refreshes at install"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "949 a version the index lacks refreshes at install"_test[s::gcc][s::fresh_sandbox] = [] {
         // A version the local index predates: inside the debounce window the refused install
         // reaches the refresh policy and syncs nothing; with auto_refresh = false it is declined;
         // only the one address the descriptor named is asked for.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto home = s::case_home(s::home::inherited);
         const auto index = home / "indices/mcpplibs";
         s::project(index, {{".xlings-index-version", "abc1234\n"}, {"pkgs/l/laterpkg.lua", R"(package = {

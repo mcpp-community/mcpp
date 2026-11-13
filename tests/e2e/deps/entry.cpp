@@ -55,13 +55,12 @@ int main() {
 )cpp";
 
 E2E entry{"entry", [] {
-    "946 a program begins in a dependency entry"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "946 a program begins in a dependency entry"_test[s::gcc][s::elf] = [] {
         // A framework supplies `main` as an entry target; the application writes only the
         // callback. The entry is in no image that does not select it; required features gate
         // it; a selection naming nothing is refused with the candidates; the entry function
         // follows the entry; a platform row replaces its file; test programs begin in an entry;
         // `start` on a hosted target is refused; the result record names the beginning.
-        s::needs({"gcc", "elf"});
         const auto tmp = s::case_dir();
         s::project fw{tmp / "fw", {{"mcpp.toml", fw_manifest},
                                    {"src/fw.cppm", fw_module},

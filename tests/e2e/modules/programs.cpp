@@ -50,10 +50,9 @@ bool places(const fs::path& dir, std::string_view obj, std::string_view entry) {
 }
 
 E2E programs{"programs", [] {
-    "807 a lib root imports its own package"_test[tag{"requires:gcc"}] = [] {
+    "807 a lib root imports its own package"_test[s::gcc] = [] {
         // A host-module dependency whose lib root, explicit or by convention, imports a unit of
         // its own package builds, and the build program runs.
-        s::needs({"gcc"});
         for (std::string_view form : {"explicit", "convention"}) {
             s::project root(s::case_dir() / form, {});
             std::string rules = "[package]\nnamespace = \"repro\"\nname = \"rules\"\nversion = \"0.1.0\"\n\n";

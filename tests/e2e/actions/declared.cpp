@@ -26,7 +26,7 @@ std::optional<fs::path> ninja_file(const fs::path& target) {
 }
 
 E2E declared{"declared", [] {
-    "188 build actions"_test[tag{"requires:gcc"}] = [] {
+    "188 build actions"_test[s::gcc] = [] {
         // `mcpp:action=`: a build program declares work and the work becomes an edge: a
         // source action's output is compiled, a check's stamp and an artifact appear; an action
         // re-runs when its input or its command changes and not otherwise; a failing check
@@ -34,7 +34,6 @@ E2E declared{"declared", [] {
         // survives; an unknown target reference is refused (also beside a known one); an object
         // action reaches the link, the tests and is reported when no target takes it; a
         // malformed action is refused.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                                      {"src/main.cpp", "#include <cstdio>\nint generated_value();\nint main() { std::printf(\"VALUE=%d\\n\", generated_value()); }\n"},

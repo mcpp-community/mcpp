@@ -75,7 +75,7 @@ std::string installed_version(const nlohmann::json& list, std::string_view famil
 }
 
 std::string uname_m() {
-    if (s::has("x86_64-host")) return "x86_64";
+    if (s::on_x86_64()) return "x86_64";
     return s::on_macos() ? "arm64" : "aarch64";
 }
 
@@ -92,11 +92,10 @@ void targets_in(const nlohmann::json& j, std::vector<std::string>& out) {
 }
 
 E2E selection{"selection", [] {
-    "296 what the report names is what the link line uses"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "296 what the report names is what the link line uses"_test[s::gcc][s::unix_shell][s::jq] = [] {
         // Every toolchain the list names round-trips through --toolchain; the C library the query
         // names is on the link line (or, when it names none, the link line reaches nothing
         // outside the store); a graph C library does not drag this host's in.
-        s::needs({"gcc", "unix-shell", "jq"});
         s::project p({{"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"ok\\n\"); }\n"}});
         std::string report, ldflags;
         auto build_and_read = [&](std::vector<std::string> extra) {
@@ -172,10 +171,9 @@ E2E selection{"selection", [] {
         if (checked == 0) skip("nothing here produced a link line to relate to a report");
     };
 
-    "297 a capability pin is not a preference"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "297 a capability pin is not a preference"_test[s::gcc][s::unix_shell][s::jq] = [] {
         // A bare-metal row refuses a declared compiler that cannot emit it, naming the target,
         // the reason and the way out; a hosted row still honours the declared toolchain.
-        s::needs({"gcc", "unix-shell", "jq"});
         const auto tmp = s::case_dir();
         s::project p(tmp / "work", {{"src/main.cpp", "extern \"C\" int main(int, char**, char**) { return 0; }\n"}});
         const auto gccver = installed_version(toolchain_list(p.dir()), "gcc");
@@ -207,11 +205,10 @@ E2E selection{"selection", [] {
         expect(fatal(e2e::contains(hosted, "Finished"))) << "FAIL: the hosted control resolved but did not build: " << hosted;
     };
 
-    "298 overriding a convention requires replacing it"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "298 overriding a convention requires replacing it"_test[s::llvm][s::unix_shell][s::jq] = [] {
         // A row served by a gcc convention refuses a declared llvm with nothing in the
         // convention's place, naming the target, the convention and the replacement; the same
         // declaration is honoured when the graph supplies the C library.
-        s::needs({"llvm", "unix-shell", "jq"});
         const auto tmp = s::case_dir();
         s::project p(tmp / "work", {{"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"ok\\n\"); }\n"}});
         const auto list = toolchain_list(p.dir());
@@ -265,11 +262,10 @@ E2E selection{"selection", [] {
             expect(graph_cabi == "graph") << "FAIL: c-abi came from '" << graph_cabi << "', not the graph — half two proves nothing: " << graph;
     };
 
-    "301 the graphs compiler is taken and nothing is written"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "301 the graphs compiler is taken and nothing is written"_test[s::unix_shell][s::jq] = [] {
         // A dependency's `requires = ["mcpp:compiler=<family>"]` selects that compiler where mcpp's
         // own answer was another, says who asked and what it displaced, and leaves the machine's
         // configuration byte-identical.
-        s::needs({"unix-shell", "jq"});
         const auto tmp = s::case_dir();
         s::project app(tmp / "app", {{"src/main.cpp", "extern \"C\" int main(int, char**, char**) { return 0; }\n"},
                                      {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"}});
@@ -313,13 +309,12 @@ E2E selection{"selection", [] {
         expect(fatal(e2e::contains(out, "needs-" + want) && e2e::contains(out, "mcpp:compiler=" + want))) << "FAIL: the resolution does not say who required this compiler: " << out;
     };
 
-    "302 a stated compiler outranks the graph and two requirements do not stack"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "302 a stated compiler outranks the graph and two requirements do not stack"_test[s::unix_shell][s::jq] = [] {
         // A compiler the project states is not revised by the graph (and the remedy names where it
         // was stated); two packages requiring different compilers are an error naming both; a
         // capability row refuses a requirement it cannot satisfy and offers no remedy it ignores.
         // The rule is decided in the build's preparation (its toolchain decision), which exports
         // no function that answers it.
-        s::needs({"unix-shell", "jq"});
         const auto tmp = s::case_dir();
         std::set<std::string> installed;
         const auto list = toolchain_list(tmp);
@@ -370,12 +365,11 @@ E2E selection{"selection", [] {
         expect(fatal(s::lacks(msg3, "supplies this target's system"))) << "FAIL: the remedy offers to supply the system, which a capability pin ignores";
     };
 
-    "303 the query gives one answer for the c library"_test[tag{"requires:unix-shell"}][tag{"requires:jq"}] = [] {
+    "303 the query gives one answer for the c library"_test[s::unix_shell][s::jq] = [] {
         // `why toolchain --format json` says which of its two C-library answers governs
         // (`cLibrary.suppliesTarget`): with no dependency the two agree, and when the graph
         // supplies the c-abi the payload's model says it does not. The answer is computed inside
         // the query's command, which exports no function that answers it.
-        s::needs({"unix-shell", "jq"});
         s::project p({{"src/main.cpp", "extern \"C\" int main(int, char**, char**) { return 0; }\n"},
                       {"mcpp.toml", "[package]\nname    = \"clibprobe\"\nversion = \"0.1.0\"\n"}});
         auto why = [&] { return s::json(p.mcpp({"why", "toolchain", "--format", "json"}).out); };
@@ -407,10 +401,9 @@ E2E selection{"selection", [] {
         expect(fatal(supplies_of(probe2) == "false")) << "FAIL: c-abi comes from the graph, yet cLibrary claims to supply the target: " << (probe2.contains("data") ? probe2["data"].dump() : std::string());
     };
 
-    "640 a capability pin explains its own row"_test[tag{"requires:gcc"}] = [] {
+    "640 a capability pin explains its own row"_test[s::gcc] = [] {
         // Every capability-pinned row refuses a compiler that cannot emit it with the same rule
         // and its own reason; the PE+musl sentence belongs to exactly one row.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         int n = 0;
         auto build = [&](const std::string& target, const std::string& tc) {

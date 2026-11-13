@@ -58,12 +58,11 @@ void placed_and_closed(const fs::path& image, std::string_view address) {
 }
 
 E2E rows{"rows", [] {
-    "136 aarch64 zero libc target"_test[tag{"requires:llvm"}] = [] {
+    "136 aarch64 zero libc target"_test[s::llvm] = [] {
         // A the row builds with no C library anywhere in the project; B the image is aarch64 and
         // starts where the script says; C nothing is undefined; D the ABI flag is the measured
         // `-mabi=aapcs`, never the `-mabi=lp64` the RISC-V rows' spelling suggests (clang rejects
         // it; a build that had succeeded with it would be the more dangerous result).
-        s::needs({"llvm"});
         s::project p{{"mcpp.toml", probe_manifest("a64probe", "aarch64-none-elf")},
                      {"src/main.cpp", "namespace {\nvolatile unsigned int* const kUart = reinterpret_cast<unsigned int*>(0x09000000);\n}\n"
                                       "extern \"C\" void kmain() {\n    for (const char* p = \"a64 ok\\n\"; *p; ++p) *kUart = static_cast<unsigned int>(*p);\n"
@@ -85,14 +84,13 @@ E2E rows{"rows", [] {
         expect(fatal(s::lacks(out, "-mabi=lp64"))) << "D: an ABI clang rejects reached the command line: " << out;
     };
 
-    "137 x86_64 zero libc target"_test[tag{"requires:llvm"}] = [] {
+    "137 x86_64 zero libc target"_test[s::llvm] = [] {
         // clang has no BareMetal toolchain for x86_64, so the row carries an lld emulation and the
         // engine links with ld.lld itself. A it builds; B x86-64, `.text` at 0x100000; C nothing
         // undefined and no PT_INTERP (`--no-dynamic-linker` kept); D the link map exists, so the
         // map flag was rendered for ld.lld; E the link names ld.lld, not the host's g++; F
         // `-march=x86-64` and `-mno-red-zone`; G a shared library is refused in words, not by
         // ninja's "unknown build rule".
-        s::needs({"llvm"});
         s::project p{{"mcpp.toml", probe_manifest("x86probe", "x86_64-none-elf")},
                      {"src/main.cpp", "namespace {\ninline void outb(unsigned short port, unsigned char v) {\n    asm volatile(\"outb %0, %1\" :: \"a\"(v), \"Nd\"(port));\n}\n}\n"
                                       "extern \"C\" void kmain() {\n    for (const char* p = \"x86 ok\\n\"; *p; ++p) outb(0x3F8, static_cast<unsigned char>(*p));\n"
@@ -125,12 +123,11 @@ E2E rows{"rows", [] {
         expect(fatal(s::lacks(refused, "unknown build rule"))) << "G: the failure names an internal ninja rule instead of the cause: " << refused;
     };
 
-    "1041 a 32 bit x86 bare target"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1041 a 32 bit x86 bare target"_test[s::elf][s::llvm] = [] {
         // mcpp#911 G12, G4; SPEC-016 §3. The artifact is an ELF32 Intel 80386 executable; the
         // link line is ld.lld's (`-m elf_i386`) without a platform and the compiler's
         // (`--target=i686-none-elf ... -fuse-ld=`) with one stating `link.driver = "compiler"`;
         // where the machine runs 32-bit programs, both artifacts exit 7.
-        s::needs({"elf", "llvm"});
         const auto tmp = s::case_dir();
         s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"boot32\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.c\"]\n\n[targets.boot32]\nkind = \"bin\"\nmain = \"src/main.c\"\n"},
                                      {"src/main.c", "#if !defined(__i386__) || defined(__x86_64__)\n#error \"not a 32-bit x86 compilation\"\n#endif\n"

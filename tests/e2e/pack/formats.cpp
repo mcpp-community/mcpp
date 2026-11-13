@@ -62,7 +62,7 @@ std::string trimmed(std::string s) {
 }
 
 E2E formats{"formats", [] {
-    "638 pack format dispatch"_test[tag{"requires:gcc"}] = [] {
+    "638 pack format dispatch"_test[s::gcc] = [] {
         // `--pkg-format <name>` dispatches to a format the resolved graph provides; a plain
         // build's graph is dist=none and makes no distributable; an unknown format is refused
         // before a compile, on stderr, with exit 2, naming what is available; the format's
@@ -70,7 +70,6 @@ E2E formats{"formats", [] {
         // tree; an ungated stage_dir, a non-artifact role and an unclaimed format are refused;
         // an ungated artifact action is not the package; a provider reading no staged tree
         // gains no stage dependency.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name        = "app"
@@ -275,12 +274,11 @@ int main() {
         expect(fatal(e2e::contains(s::text(r), "app.zap"))) << "the provider was not reported as the package\n" << s::text(r);
         expect(s::lacks(s::text(r), "stage-manifest")) << "a provider that names no tree gained a stage dependency";
     };
-    "689 pack takes features"_test[tag{"requires:gcc"}] = [] {
+    "689 pack takes features"_test[s::gcc] = [] {
         // `mcpp pack --features` activates root-package features for the pack's build passes
         // (#641): without it the feature-gated host tool is neither built nor mentioned; with it
         // the tool is built and its output reaches the packed program; a plain build without the
         // feature builds no host tool.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project{tmp / "toolpkg", {{"mcpp.toml", R"cpp([package]
@@ -366,14 +364,13 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "the plain build failed\n" << s::text(r);
         expect(tool_entries() == 0u) << "a plain build without the feature built the host tool\n" << s::text(r);
     };
-    "722 pack strips what the graph built"_test[tag{"requires:pack"}][tag{"requires:python3"}] = [] {
+    "722 pack strips what the graph built"_test[s::pack][s::python3] = [] {
         // `mcpp pack` strips what the graph built on every row that strips, and says so only
         // when it does (#649 E5): the program and the graph-built shared library lose their
         // symbol and debug tables and keep their exports; --no-strip reaches the library;
         // --debug-symbols separates its debug information; a dispatched format's program reads
         // the strip decision; on the Android row (where the NDK is installed) the program, the
         // graph's library and the NDK runtime are stripped.
-        s::needs({"pack", "python3"});
         const auto tmp = s::case_dir();
         struct facts { int symtab = 0, debug = 0; bool debuglink = false; std::vector<std::string> dynsym; };
         auto elf_facts = [](const fs::path& f) {
@@ -512,12 +509,11 @@ int main() { return app_entry() == 43 ? 0 : 1; }
         expect(fatal(exports(elf_facts(only(app.at("xe"), "lib/libapp.so")), "app_entry"))) << "E: libapp.so lost app_entry";
         expect(exports(elf_facts(only(app.at("xe"), "lib/libdep.so")), "dep_answer")) << "E: libdep.so lost dep_answer";
     };
-    "723 pack reports what it produced"_test[tag{"requires:pack"}][tag{"requires:python3"}] = [] {
+    "723 pack reports what it produced"_test[s::pack][s::python3] = [] {
         // `mcpp pack --message-format json` reports what it produced in one envelope on stdout
         // (the archive, its legs, the staged tree; a directory as a directory); `pack` takes the
         // profile shorthands with --profile winning, as run and build do; an unknown message
         // format is refused with exit 2; the protocol document declares the kind and command.
-        s::needs({"pack", "python3"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name    = "app"
@@ -582,11 +578,10 @@ main = "src/main.cpp"
         expect(std::ranges::contains(fx, nlohmann::json("write-project")) && std::ranges::contains(fx, nlohmann::json("exec-build-script")))
             << "F: the protocol document\n" << r.out;
     };
-    "841 pack summarizes many outputs"_test[tag{"requires:python3"}] = [] {
+    "841 pack summarizes many outputs"_test[s::python3] = [] {
         // A format that submits one output per file is reported one `Packed` line per
         // directory with its file count (and a single file by name); --verbose names every
         // file; the JSON report lists every artifact.
-        s::needs({"python3"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name = "app"
@@ -634,11 +629,10 @@ int main() {
         auto a = nlohmann::json::parse(r.out)["data"]["artifacts"];
         expect(a.size() == 13u) << "P3: " << a.size() << " artifacts";
     };
-    "871 a pack states its build and every drive takes the job count"_test[tag{"requires:pack"}][tag{"requires:python3"}] = [] {
+    "871 a pack states its build and every drive takes the job count"_test[s::pack][s::python3] = [] {
         // `mcpp pack` states the build it performs (Compiling, then Finished before Packing),
         // its JSON output is one document, and build, test and pack each run at most
         // `[build] jobs` (1) compiles at once, read from the build's .ninja_log (mcpp#753).
-        s::needs({"pack", "python3"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name    = "app"
@@ -717,14 +711,13 @@ unsigned long long value{0}() {{ constexpr auto v = spin{0}(); return v; }}
         expect(fatal(e2e::succeeded(r))) << "C: pack failed\n" << s::text(r);
         no_overlap("C pack");
     };
-    "954 pack has three axes"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "954 pack has three axes"_test[s::unix_shell][s::python3] = [] {
         // `mcpp pack` has three axes (SPEC-014 §1): tar compressions and zip each hold one top
         // directory (zstd a zstd frame, zip deflated entries); mcpp-package.json describes every
         // file with its digest; the JSON envelope states the axes and the digest; [pack] format
         // and compress are defaults; impossible combinations are refused before a build;
         // --format is the earlier spelling; [pack] include/exclude stage resources; [pack] sign
         // signs each program and the digests are the signed files'; -o with dots names a directory.
-        s::needs({"unix-shell", "python3"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"axes\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "int main() { return 0; }\n"}}};
         const auto dist = app.at("target/dist");
@@ -843,11 +836,10 @@ exclude = ["share/**/*.tmp"]
         expect(fatal(e2e::succeeded(r))) << "H: pack -o with dots\n" << s::text(r);
         expect(fs::is_directory(dist / "axes-0.1.0-named")) << "H: -o axes-0.1.0-named did not name the directory";
     };
-    "1008 a provided format is told the compression"_test[tag{"requires:pack"}] = [] {
+    "1008 a provided format is told the compression"_test[s::pack] = [] {
         // A format a package provides is told the compression the command or `[pack] compress`
         // states (mcpp::pack_compress()), nothing when none is stated; a directory writes no
         // container and --compress on it is refused.
-        s::needs({"pack"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name     = "app"

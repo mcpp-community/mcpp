@@ -74,14 +74,13 @@ std::string archived(const fs::path& archive, std::string_view member) {
 }
 
 E2E inheritance{"inheritance", [] {
-    "321 workspace inheritance"_test[tag{"requires:gcc"}] = [] {
+    "321 workspace inheritance"_test[s::gcc] = [] {
         // [workspace.package] and [workspace.build] (#527), asserted on the compile command: a
         // member that declares nothing inherits the standard and the flags; a member that pins
         // the default standard keeps it; a member's own cxxflags follow the workspace's; the
         // build from inside a member inherits too; a member with no version anywhere is refused;
         // a sibling member reached as a path dependency inherits, a non-member path dependency
         // does not.
-        s::needs({"gcc"});
         const auto main_cpp = "#include <shared.h>\n#if !defined(FROM_WORKSPACE) || !defined(SHARED_HEADER_FOUND)\n"
                               "#error \"workspace [build] did not reach the member\"\n#endif\nint main(){return 0;}\n";
         s::project ws({
@@ -175,7 +174,7 @@ cxxflags = ["-DFROM_WORKSPACE=1"]
         expect(fatal(e2e::succeeded(r))) << s::text(r);
     };
 
-    "770 workspace member as dependency"_test[tag{"requires:python3"}] = [] {
+    "770 workspace member as dependency"_test[s::python3] = [] {
         // A member is compiled the same way whichever position it holds and however it was
         // fetched (#690): [workspace.build] reaches it once as the selected root and as a
         // sibling's path dependency, workspace words before the member's; a member reached as a
@@ -276,14 +275,13 @@ int lib_c(void) { return LEVEL; }
         expect(fatal(occurrences(g, "-DREPO_FLAG=1") == 1u)) << "D: -DREPO_FLAG=1 occurs " << occurrences(g, "-DREPO_FLAG=1") << " times in the git member's g.cpp";
     };
 
-    "772 a published member is self contained"_test[tag{"requires:gcc"}] = [] {
+    "772 a published member is self contained"_test[s::gcc] = [] {
         // `publish` of a member writes the workspace layer into the archived manifest and keeps
         // the original as mcpp.toml.orig, reproducibly; a consumer of the unpacked archive (and
         // a released client, when $MCPP_BOOT names one) builds it; a versioned sibling edge is
         // published as a version edge, a path-only one is refused naming the version to add;
         // `emit xpkg` reads the effective manifest; a package that needs no normalisation is
         // archived as `git archive HEAD`.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project repo(tmp / "repo", {
             {"mcpp.toml", R"([workspace]
@@ -379,11 +377,10 @@ cxxflags = ["-DWS_FLAG=1"]
         expect(fatal(s::lacks(s::text(r), "Manifest"))) << "an unchanged manifest was reported as normalised: " << s::text(r);
     };
 
-    "773 commands outside the build read the effective manifest"_test[tag{"requires:gcc"}] = [] {
+    "773 commands outside the build read the effective manifest"_test[s::gcc] = [] {
         // `toolchain list` in a member without [toolchain] reports the workspace's (the root and
         // a member with its own are the controls); `pack` in a member that leaves version to the
         // workspace is not refused for it.
-        s::needs({"gcc"});
         s::project ws(s::case_dir() / "ws", {
             {"mcpp.toml", "[workspace]\nmembers = [\"app\", \"pinned\"]\n\n[workspace.package]\nversion = \"0.2.0\"\n\n[toolchain]\ndefault = \"gcc@16.1.0\"\n"},
             {"app/mcpp.toml", "[package]\nname = \"app\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
@@ -405,7 +402,7 @@ cxxflags = ["-DWS_FLAG=1"]
         expect(fatal(s::lacks(pack, "missing required field 'package.version'"))) << "pack in a member that leaves version to the workspace was refused: " << pack;
     };
 
-    "774 an index member inherits its archive workspace"_test[tag{"requires:python3"}] = [] {
+    "774 an index member inherits its archive workspace"_test[s::python3] = [] {
         // A package whose descriptor names a member inside a workspace archive
         // (`mcpp = "*/libs/wlib/mcpp.toml"`) receives the archive's [workspace.build], once.
         const auto home = s::case_home(s::home::inherited);
@@ -445,12 +442,11 @@ cxxflags = ["-DWS_FLAG=1"]
         expect(fatal(occurrences(w, "-DREPO_DEF=4") == 1u)) << "-DREPO_DEF=4 occurs " << occurrences(w, "-DREPO_DEF=4") << " times in the member's unit";
     };
 
-    "805 rooted workspace reaches its own path dependency"_test[tag{"requires:gcc"}][tag{"requires:python3"}] = [] {
+    "805 rooted workspace reaches its own path dependency"_test[s::gcc][s::python3] = [] {
         // A rooted workspace ([package] beside [workspace]) whose root depends on a member by
         // path: the member gets its version from [workspace.package], its `workspace = true`
         // dependency the workspace's pinned (not latest) version, the workspace's cxxflags, and
         // the root's [toolchain] (the same compiler as the root's unit).
-        s::needs({"gcc", "python3"});
         const auto gcc = s::newest_payload("xim-x-gcc");
         expect(fatal(gcc.has_value())) << "no gcc payload found to pin [toolchain]";
         s::project ws(s::case_dir() / "ws", {

@@ -79,13 +79,12 @@ E2E homes{"homes", [] {
         expect(fatal(s::has_line(s::run(vendored, {"--version"}).out, "^xlings "))) << "C: after the replacement the vendored binary is not xlings: " << c.err;
     };
 
-    "919 a home selection is remembered once"_test[tag{"requires:python3"}] = [] {
+    "919 a home selection is remembered once"_test[s::python3] = [] {
         // Real CLI processes: a relative, spaced, Unicode home selected with --force persists and
         // is read through one hop; a locator in the destination and a broken one are handled;
         // a mirror change needs no network; a portable installation owns its locator; concurrent
         // writers publish whole; a failed publication keeps the previous pointer; a bare --force
         // rebuilds the target and keeps the origin.
-        s::needs({"python3"});
         const auto root = resolved(s::case_dir());
         const auto original = root / fs::path(u8"original home कखग");
         const auto target = root / fs::path(u8"selected home 日本語 \U0001f642");
@@ -215,12 +214,11 @@ E2E homes{"homes", [] {
         expect(fatal(as_path(home_of()["mcppHome"]) == target)) << "a bare --force changed the selection";
     };
 
-    "920 the doctor checks resources without bootstrap"_test[tag{"requires:python3"}] = [] {
+    "920 the doctor checks resources without bootstrap"_test[s::python3] = [] {
         // The provider's bounded probe_url names an HTTP refusal, a stall, a trickle and a TLS
         // refusal within 2 s each and changes nothing in the home; `self doctor` reaches the
         // resource server (exit 1, the corp rows, the build policy) within 7 s and changes
         // nothing; offline it skips the resources, makes no request and bootstraps nothing.
-        s::needs({"python3"});
         if (s::on_windows()) skip("the resource oracle is a POSIX socket server (tests/support local_server)");
         fs::path provider;
         for (std::string_view v : {"MCPP_NETWORK_PROVIDER", "MCPP_VENDORED_XLINGS", "XLINGS_BIN"})
@@ -310,10 +308,9 @@ E2E homes{"homes", [] {
         expect(fatal(!fs::exists(registry / "subos"))) << "the doctor bootstrapped the provider";
     };
 
-    "932 a fresh home with a space and non ascii builds"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:fresh-sandbox"}] = [] {
+    "932 a fresh home with a space and non ascii builds"_test[s::gcc][s::unix_shell][s::fresh_sandbox] = [] {
         // A fresh home at a spaced path initialises and builds and runs the default project; at a
         // non-ASCII path it builds too, or is refused naming gcc's module mapper.
-        s::needs({"gcc", "unix-shell", "fresh-sandbox"});
         const auto work = s::case_dir();
         const auto run_in = [&](const fs::path& home) {
             fs::create_directories(home);

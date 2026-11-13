@@ -27,14 +27,13 @@ bool locked_as_platforms(std::string_view lock, std::string_view name) {
 }
 
 E2E machine{"machine", [] {
-    "951 an ok image needs no declaration"_test[tag{"requires:llvm"}][tag{"requires:python3"}][resource{"machine"}] = [] {
+    "951 an ok image needs no declaration"_test[s::llvm][s::python3][resource{"machine"}] = [] {
         // The target table pins openkal-platform for the ok-image rows: A a project naming only
         // its sources runs as an image; B the report names the platform and what it added; C
         // the lock records those packages as the platform's, and a build for this machine
         // keeps it; D test and a self-contained pack work; E self env and toolchain list state
         // the platform; F a version outside its group is refused; G `--platform none` selects
         // none; H after `toolchain install --target` a project runs `--offline`.
-        s::needs({"llvm", "python3"});
 #if defined(__x86_64__) || defined(_M_X64)
         const std::string t = "x86_64-openkal";
 #elif defined(__aarch64__) || defined(_M_ARM64)

@@ -32,10 +32,9 @@ std::optional<fs::path> program(const s::project& p, std::string_view name) {
 }
 
 E2E scanner{"scanner", [] {
-    "113 scanner mcpp dir prune"_test[tag{"requires:gcc"}] = [] {
+    "113 scanner mcpp dir prune"_test[s::gcc] = [] {
         // `.mcpp` is pruned from a glob walk: a file reachable only through its index link is not
         // compiled; a file whose name has no narrow spelling does not abort the build.
-        s::needs({"gcc"});
         s::project root({{"outside/sub/extra.cpp", "int main() { return 9; }   // double-defines main if the walk escapes\n"},
                          {"outside/sub/问题反馈.cpp", "int cjk_never_compiled() { return 2; }\n"},
                          {"proj/src/main.cpp", "int main() { return 0; }\n"},
@@ -122,10 +121,9 @@ defines = ["COND_WIN"]
         expect(fatal(e2e::contains(s::text(r), "defnes"))) << "--strict rejection did not name the offending key\n" << s::text(r);
     };
 
-    "634 a private module fragment is not a partition"_test[tag{"requires:gcc"}] = [] {
+    "634 a private module fragment is not a partition"_test[s::gcc] = [] {
         // `module : private;` and `module :private;` are scanned as a fragment: no partition, no
         // malformed name, a module edge; the program runs, or the compiler declines at line 4.
-        s::needs({"gcc"});
         int k = 0;
         for (std::string_view spelling : {"module : private;", "module :private;"}) {
             s::project p(s::case_dir() / std::format("proj{}", k++),
@@ -150,9 +148,8 @@ defines = ["COND_WIN"]
         }
     };
 
-    "635 a byte order mark does not hide a module"_test[tag{"requires:gcc"}] = [] {
+    "635 a byte order mark does not hide a module"_test[s::gcc] = [] {
         // A module interface and a manifest that begin with a UTF-8 byte-order mark are read.
-        s::needs({"gcc"});
         const std::string bom = "\xEF\xBB\xBF";
         s::project p({{"src/main.cpp", "import bom;\nint main() { return bom() == 42 ? 0 : 1; }\n"},
                       {"mcpp.toml", "[package]\nname    = \"bomtest\"\nversion = \"0.1.0\"\n"}});
@@ -170,10 +167,9 @@ defines = ["COND_WIN"]
         expect(fatal(e2e::succeeded(r))) << "a BOM'd mcpp.toml was not read\n" << s::text(r);
     };
 
-    "636 a module extension file need not provide a module"_test[tag{"requires:gcc"}] = [] {
+    "636 a module extension file need not provide a module"_test[s::gcc] = [] {
         // An implementation unit in a .cppm builds; every module edge states its language; no
         // empty -fmodule-output= reaches the graph.
-        s::needs({"gcc"});
         s::project p({{"src/foo.cppm", "export module foo;\nexport int foo();\n"},
                       {"src/foo_impl.cppm", "module foo;\nint foo() { return 5; }\n"},
                       {"src/main.cpp", "import foo;\nint main() { return foo() == 5 ? 0 : 1; }\n"},
@@ -193,11 +189,10 @@ defines = ["COND_WIN"]
         expect(fatal(s::no_line(text, R"(-fmodule-output=(\s|$))"))) << "an empty -fmodule-output= reached the graph";
     };
 
-    "639 the scanner does not read inside a comment"_test[tag{"requires:gcc"}] = [] {
+    "639 the scanner does not read inside a comment"_test[s::gcc] = [] {
         // A comment's body is neither a module declaration nor an import, a comment opens no raw
         // string, code after a closed comment is code, a raw string's body is not code, and no
         // BMI edge exists for a module named only in a comment.
-        s::needs({"gcc"});
         int n = 0;
         const auto sees_import = [&](std::string_view source) {
             s::project p(s::case_dir() / std::format("s{}", n++),
@@ -224,10 +219,9 @@ defines = ["COND_WIN"]
         expect(s::no_line(s::read_file(first.front()), R"(y\.gcm|y\.pcm|y\.ifc)")) << "the graph names a BMI for 'y', which only a comment mentions";
     };
 
-    "1064 a scan override of a file this build excludes is kept"_test[tag{"requires:llvm"}] = [] {
+    "1064 a scan override of a file this build excludes is kept"_test[s::llvm] = [] {
         // Overrides of a file a feature leaves out and of one a target rule removes are kept;
         // with the feature on the overridden unit builds; a glob naming no file is refused.
-        s::needs({"llvm"});
         const auto tc = "llvm@" + s::llvm_version();
         s::project p({{"mcpp.toml", R"([package]
 name    = "sorepro"

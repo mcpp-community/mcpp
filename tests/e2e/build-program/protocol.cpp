@@ -14,11 +14,10 @@ namespace {
 constexpr std::string_view ran_again = R"(^ *build\.mcpp .* ran [0-9])";
 
 E2E protocol{"protocol", [] {
-    "89 build mcpp"_test[tag{"requires:gcc"}] = [] {
+    "89 build mcpp"_test[s::gcc] = [] {
         // mcpp compiles build.mcpp with the host toolchain and runs it before the build; its
         // directives add a define and a generated source; a declared-input cache runs it again
         // only when its source, inputs or environment change.
-        s::needs({"gcc"});
         s::project p{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                      {"src/main.cpp", R"cpp(#ifndef FROM_BUILD_MCPP
 #error "build.mcpp cxxflag did not reach the translation unit"
@@ -75,10 +74,9 @@ int main() {
         expect(sub.exists("src/gen.cpp")) << "generated source not written to project root";
     };
 
-    "92 build mcpp import"_test[tag{"requires:gcc"}] = [] {
+    "92 build mcpp import"_test[s::gcc] = [] {
         // A modules-first build program (no #include, no `import std;`) calls the typed API of
         // the bundled `import mcpp;`, which prints the same directives.
-        s::needs({"gcc"});
         s::project p{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                      {"build.mcpp", R"cpp(import mcpp;
 int main() {
@@ -111,11 +109,10 @@ int main() { return gen_value() == 99 ? 0 : 1; }
         expect(e2e::succeeded(p.mcpp({"run"}))) << "run non-zero (module directives/generated source missing)";
     };
 
-    "110 build mcpp env contract"_test[tag{"requires:gcc"}] = [] {
+    "110 build mcpp env contract"_test[s::gcc] = [] {
         // The program is given MCPP_TARGET, HOST, PROFILE, OUT_DIR, MANIFEST_DIR and FEATURES;
         // they are part of its cache key (a feature change runs it again, an identical build does
         // not).
-        s::needs({"gcc"});
         auto p = s::project::scaffold("envbp");
         p.write("build.mcpp", R"cpp(#include <cstdio>
 #include <cstdlib>
@@ -193,11 +190,10 @@ int main() {
         expect(e2e::contains(s::last_line(s::run(*bin).out), "profile=release")) << "profile not visible";
     };
 
-    "139 build program advisory"_test[tag{"requires:unix-shell"}][resource{"machine"}] = [] {
+    "139 build program advisory"_test[s::unix_shell][resource{"machine"}] = [] {
         // A program that succeeds and still says something (`mcpp:warning=`). The second build is
         // the test: the program's result is cached, and an advisory printed only where the
         // program ran would appear once and never again.
-        s::needs({"unix-shell"});
         s::project p{{"mcpp.toml", "[package]\nname    = \"advisory\"\nversion = \"0.1.0\"\n"},
                      {"src/main.cpp", "int main() { return 0; }\n"},
                      {"build.mcpp", R"cpp(import mcpp;
@@ -232,10 +228,9 @@ int main() {
         expect(e2e::contains(all, "b: advisory from b")) << "member b's advisory is missing or unattributed";
     };
 
-    "143 build mcpp source directive"_test[tag{"requires:gcc"}] = [] {
+    "143 build mcpp source directive"_test[s::gcc] = [] {
         // `mcpp:source=` selects a source that already exists, outside every sources glob, into
         // the compile set (typed: mcpp::source); the cached record keeps it there.
-        s::needs({"gcc"});
         const std::string manifest = "[package]\nname    = \"srcsel\"\nversion = \"0.1.0\"\n\n[modules]\nsources = [\"src/**/*.cpp\"]\n\n[targets.srcsel]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
         s::project p{{"extra/impl.cpp", "extern \"C\" int selected_value() { return 42; }\n"},
                      {"build.mcpp", "import mcpp;\nint main() {\n    mcpp::source(\"extra/impl.cpp\");\n    return 0;\n}\n"},
@@ -258,11 +253,10 @@ int main() {
         expect(e2e::contains(s::text(b3), "selected source")) << "missing-source error not surfaced";
     };
 
-    "144 build mcpp include dir"_test[tag{"requires:gcc"}] = [] {
+    "144 build mcpp include dir"_test[s::gcc] = [] {
         // `mcpp:include-dir=` adds a private include directory (here a header the program wrote
         // under MCPP_OUT_DIR); `mcpp:include-dir-after=` reaches the compile edges as -idirafter;
         // both survive the directive cache.
-        s::needs({"gcc"});
         s::project p{{"build.mcpp", R"cpp(#include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -297,10 +291,9 @@ int main() {
         expect(s::has_line(s::text(p.mcpp({"run"})), "^ANSWER2=42$")) << "cached include-dir record lost";
     };
 
-    "181 build mcpp import std"_test[tag{"requires:unix-shell"}] = [] {
+    "181 build mcpp import std"_test[s::unix_shell] = [] {
         // build.mcpp can `import std;`: alone, beside `import mcpp;`, and an #include-only program
         // that mentions `import std;` in a comment still takes the plain path.
-        s::needs({"unix-shell"});
         auto p = s::project::scaffold("imp_std");
         auto step = [&](std::string_view build, std::string_view main, std::string_view said) {
             p.write("build.mcpp", build);
@@ -368,11 +361,10 @@ int main() {
 )cpp", "plain-path-ok");
     };
 
-    "186 build mcpp protocol and bound"_test[tag{"requires:gcc"}] = [] {
+    "186 build mcpp protocol and bound"_test[s::gcc] = [] {
         // The contract's hardening: a program that announces a protocol has an unknown directive
         // refused, a printf program keeps warn-and-ignore, a newer protocol is refused with an
         // upgrade hint, a hanging program is bounded, and the cache's epoch guards its replay.
-        s::needs({"gcc"});
         const std::string manifest = "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n";
         s::project p{{"mcpp.toml", manifest},
                      {"src/main.cpp", "#ifndef FROM_BUILD_MCPP\n#error \"define missing\"\n#endif\nint main() { return 0; }\n"}};
@@ -456,11 +448,10 @@ int main() {
         expect(s::has_line(s::text(b8), ran_again)) << "an unknown cache record did not force a re-run";
     };
 
-    "194 build mcpp glob input"_test[tag{"requires:gcc"}] = [] {
+    "194 build mcpp glob input"_test[s::gcc] = [] {
         // #359: an input that is a set of files. A file that appears or goes runs the program
         // again (through the build.mcpp cache and the project's fast path); an edited one does
         // not on the glob's account; the program's own outputs are never in the set.
-        s::needs({"gcc"});
         const std::string program = R"cpp(import std;
 import mcpp;
 int main() {
@@ -518,11 +509,10 @@ int main() {
         expect(!ran(b6)) << "a wide glob re-runs forever — the build output tree is in its set";
     };
 
-    "612 build program file input fast path"_test[tag{"requires:gcc"}] = [] {
+    "612 build program file input fast path"_test[s::gcc] = [] {
         // A file declared with rerun_if_changed is compared on the fast path (a data file is not
         // a source, so the mtime sweep cannot see it); an unchanged one still takes the fast path.
         // The reading is the program's output.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("probe");
         for (const auto& m : s::glob(p.at("src"), "*.cppm")) fs::remove(m);
         p.write("data/value.txt", "first\n");
@@ -556,11 +546,10 @@ int main() {
         expect(s::lacks(s::text(p.mcpp({"build"})), "Compiling probe")) << "an unchanged input recompiled the project";
     };
 
-    "617 build program knows the cxx stdlib"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "617 build program knows the cxx stdlib"_test[s::elf][s::gcc] = [] {
         // mcpp::cxx_stdlib(): the C++ standard library the engine resolved (clang answers "clang"
         // with libc++ or libstdc++). The program writes what it read to a file (its stdout is
         // shown only when it fails), compared with resolution.json and with the compiler family.
-        s::needs({"elf", "gcc"});
         s::project p{{"src/main.cpp", "int main() { return 0; }\n"},
                      {"build.mcpp", R"cpp(#include <cstdio>
 #include <cstdlib>
@@ -598,11 +587,10 @@ int main() {
         expect(eq(stdlib, std::string("libstdc++"))) << "gcc's C++ standard library is libstdc++";
     };
 
-    "632 a build program is told its package name"_test[tag{"requires:gcc"}] = [] {
+    "632 a build program is told its package name"_test[s::gcc] = [] {
         // mcpp::package_name() and package_namespace() answer the [package] identity; the
         // directory (`app`) and the package (`vulkan-saxpy`) differ on purpose, or the case would
         // pass against a directory-derived answer. The answer is written to a file.
-        s::needs({"gcc"});
         s::project p{s::case_dir() / "app",
                      {{"src/main.cpp", "int main() { return 0; }\n"},
                       {"build.mcpp", R"cpp(#include <cstdio>
@@ -626,13 +614,12 @@ int main() {
         expect(eq(p.dir().filename().string(), std::string("app"))) << "this fixture no longer distinguishes the two derivations";
     };
 
-    "651 a build program deploys what it generated"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "651 a build program deploys what it generated"_test[s::elf][s::gcc] = [] {
         // mcpp::deploy(from, to) (#622 A4) places a file the program produced beside the artifact:
         // `from` may be an action's absolute output; the copy edge's input is that output (read in
         // build.ninja); a changed input changes it; a cache hit restores it; pack stages it;
         // `to = "../x"` is refused naming the directive and the package; and
         // MCPP_TARGET_MIN_PLATFORM_VERSION (#622 A11) is empty on Linux.
-        s::needs({"elf", "gcc"});
         const std::string build = R"cpp(import mcpp;
 #include <cstdio>
 #include <string>
@@ -752,10 +739,9 @@ int main() {
             << "A/B: the build program read '" << line << "'";
     };
 
-    "823 mcpp core and mcpp name one interface"_test[tag{"requires:unix-shell"}] = [] {
+    "823 mcpp core and mcpp name one interface"_test[s::unix_shell] = [] {
         // #734 E8: the build-program interface is `mcpp.core` (SPEC-007) and `mcpp` its permanent
         // equivalent; a program may import either, or both.
-        s::needs({"unix-shell"});
         for (auto [label, imports] : {std::pair{"C1", "import mcpp.core;"}, std::pair{"C2", "import mcpp;"},
                                       std::pair{"C3", "import mcpp.core;\nimport mcpp;"}}) {
             s::project p{s::case_dir() / label, {{"mcpp.toml", "[package]\nname = \"core823\"\nversion = \"0.1.0\"\n"},
@@ -768,12 +754,11 @@ int main() {
         }
     };
 
-    "824 a build program reads the resolved toolchain"_test[tag{"requires:unix-shell"}] = [] {
+    "824 a build program reads the resolved toolchain"_test[s::unix_shell] = [] {
         // #734 E2 (protocol 14): the resolved toolchain as facts. B1 tool("cxx") and tool("cc")
         // exist, tool("ld") is the driver; B2 abi_tool equals tool off the MSVC ABI; B3 the MSVC
         // facts are empty; B4 the identity is "<family> <version>" with no path; B5
         // ninja_program() runs; B6 cxx_runtime() follows the manifest.
-        s::needs({"unix-shell"});
         s::project p{{"src/main.cpp", "int main() { return 0; }\n"},
                      {"build.mcpp", R"cpp(import std;
 import mcpp.core;
@@ -826,11 +811,10 @@ int main() {
         expect(eq(val(*again, "runtime"), std::string("host-coupled"))) << "B6: the stated contract";
     };
 
-    "958 a build program runs again when its output is gone"_test[tag{"requires:gcc"}] = [] {
+    "958 a build program runs again when its output is gone"_test[s::gcc] = [] {
         // A cached run is replayed only while what the program wrote is there: with its include
         // directory deleted, a replay would hand the compile an empty directory, so the program
         // runs again. A: a second build replays and compiles nothing; B: output deleted, it runs.
-        s::needs({"gcc"});
         s::project p{{"build.mcpp", R"cpp(#include <filesystem>
 #include <fstream>
 #include <string>
@@ -861,11 +845,10 @@ int main() {
         expect(e2e::contains(s::text(b), "generated 7")) << "B: the program did not run again";
     };
 
-    "1036 a context states the engine values in process"_test[tag{"requires:gcc"}] = [] {
+    "1036 a context states the engine values in process"_test[s::gcc] = [] {
         // docs/30 "Testing a program's logic": within a mcpp::context the accessors read the
         // values it states, the innermost first, the rest from the context around it or the
         // environment; has_feature and dep_dir answer within them.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("ctx");
         p.write("build.mcpp", R"cpp(import std;
 import mcpp;

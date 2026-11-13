@@ -40,11 +40,10 @@ std::string lib_package(std::string_view ns_line, std::string_view name, std::st
 }
 
 E2E routes{"routes", [] {
-    "120 ws root indices"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "120 ws root indices"_test[s::gcc][s::fresh_sandbox] = [] {
         // [indices] and [workspace.dependencies] at a workspace root reach a member by their
         // position, with a warning naming [workspace.indices]; a member's own relative path is
         // anchored at the member; members naming one index tree are one configuration.
-        s::needs({"gcc", "fresh-sandbox"});
         s::project ws(s::case_dir() / "ws", {
             {"local-index/pkgs/x/x.widget2.lua", lib_package("\n    namespace = \"x\",", "x.widget2", "Namespaced package reachable only via the workspace-root-anchored index", "src/widget2.cppm", "widget2")},
             {"ylib/mcpp.toml", "[package]\nname = \"ylib\"\nversion = \"0.1.0\"\n\n[targets.ylib]\nkind = \"lib\"\n"},
@@ -74,9 +73,8 @@ E2E routes{"routes", [] {
         expect(fatal(ws.exists("mcpp.lock") && e2e::contains(ws.read("mcpp.lock"), "[package.\"x.widget2\"]"))) << "expected an x.widget2 lock entry";
     };
 
-    "121 default ns redirect"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "121 default ns redirect"_test[s::gcc][s::fresh_sandbox] = [] {
         // `[indices] default = { path }` and `"" = { path }` both serve the default namespace.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         s::project index(tmp / "local-index", {{"pkgs/g/gizmo.lua", lib_package("", "gizmo", "Default-namespace package served only via a redirected index", "src/gizmo.cppm", "gizmo")}});
         const auto app = [&](std::string_view name, std::string_view key) {
@@ -96,11 +94,10 @@ E2E routes{"routes", [] {
         expect(fatal(e2e::succeeded(r))) << "[indices] \"\" = {...} did not redirect the default namespace: " << s::text(r);
     };
 
-    "147 per os features xpkg"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "147 per os features xpkg"_test[s::gcc][s::fresh_sandbox] = [] {
         // A feature's neutral sources and its host-OS overlay (with a flag on its own source)
         // build and sum to 8; another OS's overlay is not compiled; with the feature off no
         // accel source is compiled.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         const std::string os = s::on_macos() ? "macosx" : s::on_windows() ? "windows" : "linux";
         const std::string other = s::on_linux() ? "macosx" : "linux";
@@ -174,10 +171,9 @@ E2E routes{"routes", [] {
         expect(fatal(e2e::succeeded(r))) << "run (off) failed: " << s::text(r);
     };
 
-    "169 semver project index"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "169 semver project index"_test[s::gcc][s::fresh_sandbox] = [] {
         // `^2.0` through a project [indices] entry resolves to 2.1.0 (no `index update` advice),
         // locked with its version and its host-independent FNV-1a hash; the exact 2.0.0 too.
-        s::needs({"gcc", "fresh-sandbox"});
         std::string xpm;
         for (std::string_view os : {"linux", "macosx", "windows"}) {
             const auto ext = os == "windows" ? "zip" : "tar.gz";
@@ -231,10 +227,9 @@ E2E routes{"routes", [] {
         expect(fatal(e2e::contains(lock, "hash    = \"fnv1a:34544b46fc9621c3\""))) << "acme.gadget 2.0.0's lock hash is not the host-independent FNV-1a: " << lock;
     };
 
-    "192 install path namespace"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "192 install path namespace"_test[s::gcc][s::fresh_sandbox] = [] {
         // acme:widget is not satisfied from the only widget payload on disk, compat's; the
         // build never reaches that source, and no diagnostic prints the placeholder <verdir>.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto home = s::case_home(s::home::inherited);
         s::project(home / "registry/data/xpkgs/compat-x-widget/1.5.0", {{"src/widget.cppm", "export module widget;\n// If this ever reaches a build that asked for acme:widget, the wrong package\n// was compiled. The value is the tell.\nexport int widget_value() { return 1; }\n"}});
         s::project p(s::case_dir() / "proj", {

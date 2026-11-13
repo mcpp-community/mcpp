@@ -89,10 +89,9 @@ E2E launch{"launch", [] {
         expect(e2e::contains(s::text(e), R"("test-launch")"));
     };
 
-    "993 a test describes its launch (a named runner)"_test[tag{"requires:python3"}] = [] {
+    "993 a test describes its launch (a named runner)"_test[s::python3] = [] {
         // A named runner is the same transformation for a test and a run. The runner is a Python
         // program, a real host runner whose generated argv can be executed.
-        s::needs({"python3"});
         auto p = app_with_tests();
         const auto python = s::on_path("python3")->generic_string();
         p.write("runner.py",

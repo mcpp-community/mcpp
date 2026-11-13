@@ -49,12 +49,11 @@ s::project scaffold(std::string_view name) {
 }
 
 E2E devices{"devices", [] {
-    "606 constrained source globs narrow to the build"_test[tag{"requires:gcc"}] = [] {
+    "606 constrained source globs narrow to the build"_test[s::gcc] = [] {
         // A `[build] sources` entry may carry the accel it is for: covered, its C++ compiles and
         // its device sources reach the build program; under --no-accel it is left out; outside
         // the build's accel it is refused naming the glob and both sides (accel-mismatch); a
         // constrained glob matching nothing is refused.
-        s::needs({"gcc"});
         auto p = scaffold("narrow");
         p.write("src/main.cpp", "int main() { return 0; }\n");
         p.write("src/dev/helper.cpp", "int widget_helper() { return 42; }\n");
@@ -87,11 +86,10 @@ E2E devices{"devices", [] {
         expect(e2e::contains(s::text(empty), "src/nowhere")) << "refusal does not name the empty glob";
     };
 
-    "607 chained actions form the device link"_test[tag{"requires:gcc"}] = [] {
+    "607 chained actions form the device link"_test[s::gcc] = [] {
         // One action consumes what another produced; the engine orders and fingerprints them:
         // an artifact action's output read by an object action whose output joins the link,
         // and an edit at the head of the chain reaches the link.
-        s::needs({"gcc"});
         auto p = scaffold("chain");
         p.write("src/main.cpp", "extern \"C\" int joined_value();\nint main() { return joined_value() == 42 ? 0 : 1; }\n");
         p.write("src/parts/a.inc", "extern \"C\" int joined_value() { return\n");
@@ -134,10 +132,9 @@ int main() {
         expect(failed(p.mcpp({"run"}))) << "the edit at the head of the chain did not reach the link";
     };
 
-    "608 object actions reach a static library"_test[tag{"requires:gcc"}] = [] {
+    "608 object actions reach a static library"_test[s::gcc] = [] {
         // An `object`-role action's outputs join a static library, not only an executable: the
         // archive holds the member and its symbol.
-        s::needs({"gcc"});
         auto p = scaffold("archived");
         p.remove("src/main.cpp");
         p.write("src/host.c", "extern int from_action(void);\nint host_value(void) { return from_action(); }\n");
@@ -170,11 +167,10 @@ int main() {
         expect(std::ranges::contains(s::archive_symbols(*lib), std::string{"from_action"})) << "the archive has the member but not its symbol";
     };
 
-    "609 shader sources are device sources"_test[tag{"requires:gcc"}] = [] {
+    "609 shader sources are device sources"_test[s::gcc] = [] {
         // A shader is a device source for every language a separate compiler consumes: all 18
         // extensions reach the build program and none is offered to the C++ compiler; an
         // extension with no role is refused by name; the default globs exclude them.
-        s::needs({"gcc"});
         auto p = scaffold("shaders");
         p.write("src/main.cpp", "int main() { return 0; }\n");
         p.write("build.mcpp", std::vformat(accounting, std::make_format_args("for (auto& c : flat) if (c == '\\n') c = ' ';\n    mcpp::warning((\"device=[\" + flat + \"]\").c_str());")));
@@ -207,11 +203,10 @@ int main() {
         expect(e2e::contains(s::text(def), "device=[]")) << "a shader under src/ reached a build program with no sources entry";
     };
 
-    "611 variant switch is not replayed"_test[tag{"requires:gcc"}] = [] {
+    "611 variant switch is not replayed"_test[s::gcc] = [] {
         // The device variant is part of the fingerprint: a plain build after `--no-accel`
         // builds and runs the device variant again (the fast path does not replay the last
         // directory), and each graph records the selection that wrote it.
-        s::needs({"gcc"});
         auto p = scaffold("probe");
         p.write("mcpp.toml", "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n[language]\nstandard = \"c++23\"\n[build]\naccel = \"widget9+{w1}\"\n[target.'cfg(accelerator = \"widget\")'.build]\ndefines = [\"WIDGET_ON=1\"]\n[targets.probe]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n");
         p.write("src/main.cpp", "#include <cstdio>\n#ifndef WIDGET_ON\n#define WIDGET_ON 0\n#endif\nint main() { std::printf(\"WIDGET=%d\\n\", WIDGET_ON); }\n");
@@ -237,11 +232,10 @@ int main() {
         expect(by_default == 1 && by_override == 1) << "expected one default and one override graph, got default=" << by_default << " override=" << by_override;
     };
 
-    "613 sycl sources are device sources"_test[tag{"requires:gcc"}] = [] {
+    "613 sycl sources are device sources"_test[s::gcc] = [] {
         // A SYCL unit is a device source because of the compiler that consumes it: a .sycl unit
         // in a constrained glob reaches the build program and is not compiled by mcpp; the same
         // content named .cpp is C++; --no-accel and the default globs leave .sycl out.
-        s::needs({"gcc"});
         auto p = scaffold("sycltest");
         p.write("src/main.cpp", "int main() { return 0; }\n");
         p.write("build.mcpp", std::vformat(accounting, std::make_format_args("for (auto& c : flat) if (c == '\\n') c = ' ';\n    mcpp::warning((\"device=[\" + flat + \"]\").c_str());")));
@@ -273,10 +267,9 @@ int main() {
         expect(e2e::contains(s::text(five), "device=[]")) << "a default glob picked up the .sycl source";
     };
 
-    "623 device sources must reach an action"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "623 device sources must reach an action"_test[s::elf][s::gcc] = [] {
         // A device-kind source no action compiles is refused naming the file: without a build
         // program, and with one that declared no action; --no-accel leaves it out and builds.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         auto mk = [&] {
             fs::remove_all(tmp / "p");

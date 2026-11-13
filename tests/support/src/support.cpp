@@ -44,6 +44,14 @@ bool on_linux() noexcept {
 #endif
 }
 
+bool on_x86_64() noexcept {
+#if defined(__x86_64__) || defined(_M_X64)
+    return true;
+#else
+    return false;
+#endif
+}
+
 std::string exe(std::string_view name) {
     return on_windows() ? std::string(name) + ".exe" : std::string(name);
 }
@@ -71,7 +79,7 @@ std::optional<fs::path> on_path(std::string_view name) {
     return std::nullopt;
 }
 
-// ---- capabilities (tests/e2e/run_all.sh, "Build the set of capabilities") ----------------------
+// ---- what payloads and the system provide (the capabilities of support.cppm) ----------------
 
 namespace {
 
@@ -90,38 +98,22 @@ bool payload(std::string_view pattern, bool xlings_too = true) {
     return xlings_too && !glob(user_dir() / ".xlings/data/xpkgs", pattern).empty();
 }
 
-bool probe(std::string_view c) {
-    const bool unix_like = on_linux() || on_macos();
-    if (c == "x86_64-host") {
-#if defined(__x86_64__) || defined(_M_X64)
-        return true;
-#else
-        return false;
-#endif
-    }
-    if (c == "elf") return on_linux();
-    if (c == "unix-shell" || c == "fresh-sandbox" || c == "symlink") return unix_like;
-    if (c == "macos") return on_macos();
-    if (c == "windows") return on_windows();
-    if (c == "gcc") return on_linux() && on_path("g++");
-    if (c == "patchelf" || c == "pack") return on_linux() && on_path("patchelf");
+}  // namespace
+
+bool provides(std::string_view c) {
     if (c == "musl")
-        return on_linux() && (on_path("x86_64-linux-musl-g++") || payload("xim-x-musl-gcc/*/bin/x86_64-linux-musl-g++"));
-    if (c == "mingw-cross") return on_linux() && payload("xim-x-mingw-cross-gcc/*/bin/x86_64-w64-mingw32-g++");
-    if (c == "llvm") return on_linux() && payload("xim-x-llvm/*/bin/clang++", false);
+        return on_path("x86_64-linux-musl-g++") || payload("xim-x-musl-gcc/*/bin/x86_64-linux-musl-g++");
+    if (c == "mingw-cross") return payload("xim-x-mingw-cross-gcc/*/bin/x86_64-w64-mingw32-g++");
+    if (c == "llvm") return payload("xim-x-llvm/*/bin/clang++", false);
     if (c == "mingw-host-headers") {
-        if (!on_linux()) return false;
         if (fs::is_directory("/usr/x86_64-w64-mingw32/include")) return true;
         auto root = env("MCPP_E2E_HOST_MINGW_ROOT");
         return root && !root->empty() && fs::is_regular_file(fs::path(*root) / "x86_64-w64-mingw32/include/io.h");
     }
-    if (c == "wine") return on_linux() && on_path("wine");
-    if (c == "qemu-riscv") return on_linux() && on_path("qemu-system-riscv64");
-    if (c == "qemu-arm") return on_linux() && (on_path("qemu-system-arm") || payload("xim-x-qemu-arm/*/bin/qemu-system-arm"));
-    if (c == "android-ndk") return on_linux() && payload("xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang++");
+    if (c == "qemu-arm") return on_path("qemu-system-arm") || payload("xim-x-qemu-arm/*/bin/qemu-system-arm");
+    if (c == "android-ndk") return payload("xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang++");
     if (c == "android-device") {
         // An arm64 device (not an emulator) answering the platform-tools' adb.
-        if (!on_linux()) return false;
         std::vector<fs::path> adbs = glob(user_dir() / ".xlings/data/xpkgs", "xim-x-android-platform-tools/*/adb");
         for (auto& a : glob(home_dir() / "registry/data/xpkgs", "xim-x-android-platform-tools/*/adb")) adbs.push_back(a);
         for (const auto& adb : adbs) {
@@ -138,31 +130,22 @@ bool probe(std::string_view c) {
         }
         return false;
     }
-    if (c == "msvc" || c == "no-msvc") {
-        if (!on_windows()) return false;
+    if (c == "msvc") {
         const fs::path vswhere = "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe";
-        bool msvc = false;
-        if (fs::is_regular_file(vswhere)) {
-            auto r = e2e::run({.argv = {vswhere.string(), "-latest", "-products", "*", "-requires",
-                                        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property",
-                                        "installationPath"}});
-            msvc = r.out.find_first_not_of(" \r\n") != std::string::npos;
-        }
-        return c == "msvc" ? msvc : !msvc;
+        if (!fs::is_regular_file(vswhere)) return false;
+        auto r = e2e::run({.argv = {vswhere.string(), "-latest", "-products", "*", "-requires",
+                                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property",
+                                    "installationPath"}});
+        return r.out.find_first_not_of(" \r\n") != std::string::npos;
     }
-    if (c == "mingw") return on_windows() && payload("xim-x-mingw-gcc/*/bin/g++.exe");
-    if (c == "python3") return on_path("python3").has_value();
-    if (c == "jq") return on_path("jq").has_value();
+    if (c == "mingw") return payload("xim-x-mingw-gcc/*/bin/g++.exe");
     if (c == "nasm") return on_path("nasm") || payload("xim-x-nasm/*/nasm", false) || payload("xim-x-nasm/*/bin/nasm", false);
     if (c == "scan-deps")
         return on_path("clang-scan-deps") || payload("xim-x-llvm/*/bin/clang-scan-deps", false) ||
                payload("xim-x-llvm/*/bin/clang-scan-deps.exe", false);
     if (c == "import-std-libcxx") return payload("xim-x-llvm/*/share/libc++/v1/std.cppm", false);
-    if (c == "xlings-msvc") return env("MCPP_E2E_XLINGS_MSVC").value_or("") == "1";
-    mcpplibs::mtest::fail(std::format("unknown capability '{}' (run_all.sh's KNOWN_CAPS)", c));
+    mcpplibs::mtest::fail(std::format("no probe provides '{}'", c));
 }
-
-}  // namespace
 
 namespace {
 // `sort -V` order of two versions: numbers as numbers, the rest as text.
@@ -221,24 +204,33 @@ fs::path payload_root(std::string_view package, std::string_view version) {
     return user_dir() / ".xlings/data/xpkgs" / package / version;
 }
 
-bool has(std::string_view capability) {
-    static std::mutex m;
-    static std::map<std::string, bool, std::less<>> known;
-    std::scoped_lock lock(m);
-    if (auto it = known.find(capability); it != known.end())
-        return it->second;
-    const bool held = probe(capability);
-    known.emplace(std::string(capability), held);
-    return held;
-}
-
-void needs(std::initializer_list<std::string_view> capabilities) {
-    for (auto c : capabilities)
-        if (!has(c))
-            mcpplibs::mtest::skip(std::format("missing capability: {}", c));
-}
-
 // ---- mcpp ----------------------------------------------------------------------------------------
+
+default_kept::default_kept() {
+    const auto conf = shared_home() / "config.toml";
+    if (!fs::exists(conf)) return;
+    static const std::regex entry(R"re(^default\s*=\s*"([^"]*)")re");
+    bool in_toolchain = false;
+    for (auto line : lines_with(read_file(conf), "")) {
+        std::erase(line, '\r');
+        if (line.starts_with("[")) {
+            in_toolchain = line.starts_with("[toolchain]");
+            continue;
+        }
+        if (std::smatch m; in_toolchain && std::regex_search(line, m, entry)) {
+            original_ = m[1].str();
+            return;
+        }
+    }
+}
+
+default_kept::~default_kept() {
+    if (original_.empty()) return;
+    try {
+        (void)mcpp({"toolchain", "default", original_}, case_dir());
+    } catch (...) {
+    }
+}
 
 fs::path repository() {
     // The directory holding tests/support/mcpp.toml: above this source file when the compiler
@@ -262,6 +254,8 @@ fs::path repository() {
 }
 
 std::string mcpp_path() {
+    if (auto v = env("MCPP_E2E_MCPP"); v && !v->empty())
+        return *v;
     if (auto v = env("MCPP_BIN_MCPP"); v && !v->empty())
         return *v;
     if (auto v = env("MCPP"); v && !v->empty())

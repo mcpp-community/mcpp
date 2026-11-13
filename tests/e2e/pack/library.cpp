@@ -275,10 +275,9 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << "restore failed\n" << s::text(r);
         expect(e2e::contains(s::text(r), "ok=42")) << "restore wrong answer\n" << s::text(r);
     };
-    "245 pack library fat target selection"_test[tag{"requires:gcc"}][tag{"requires:musl"}] = [] {
+    "245 pack library fat target selection"_test[s::gcc][s::musl] = [] {
         // One package, several targets: legs selected by cfg() predicates, never a bare
         // triple, and each build (native included) picks exactly its own leg.
-        s::needs({"gcc", "musl"});
         const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
@@ -622,11 +621,10 @@ kind = "lib"
         expect(fatal(plainpkg.has_value())) << "no plain package directory";
         expect(s::lacks(s::read_file(*plainpkg / "mcpp.toml"), "module_extensions")) << "a .cppm-only package gained a module_extensions key it does not need";
     };
-    "264 pack library is relocatable"_test[tag{"requires:pack"}][tag{"requires:python3"}] = [] {
+    "264 pack library is relocatable"_test[s::pack][s::python3] = [] {
         // A packed shared library carries no loader search path (#460); the consumer starts
         // against it with no injected environment; restoring a stale RUNPATH on the library
         // makes the consumer fail (the guard can see the defect), and the packed file restores it.
-        s::needs({"pack", "python3"});
         const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
@@ -692,12 +690,11 @@ main = "src/main.cpp"
         b = run_bare();
         expect(b.status == 0 && e2e::contains(s::text(b), "ok=42")) << "restoring the packed library did not restore the behaviour: rc=" << b.status << " out=" << s::text(b);
     };
-    "265 pack strips but stays usable"_test[tag{"requires:pack"}][tag{"requires:python3"}] = [] {
+    "265 pack strips but stays usable"_test[s::pack][s::python3] = [] {
         // `mcpp pack` ships stripped artifacts that stay usable: a static archive stays
         // linkable, a shared library loses its symbol and debug tables and still loads;
         // --no-strip and `[pack] strip = false` keep them; --debug-symbols separates them into
         // a per-triple directory and leaves a .gnu_debuglink.
-        s::needs({"pack", "python3"});
         const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
@@ -774,12 +771,11 @@ main = "src/main.cpp"
         for (const auto& sec : s::elf_sections(so_e)) debuglink = debuglink || sec.name == ".gnu_debuglink";
         expect(debuglink) << "no .gnu_debuglink in the stripped artifact";
     };
-    "828 a library states its interface"_test[tag{"requires:unix-shell"}] = [] {
+    "828 a library states its interface"_test[s::unix_shell] = [] {
         // A library's interface is its root module and what it re-exports (#734 E6): without a
         // root the build warns (W1) and the pack names the modules it does not ship (W2) and
         // withholds both units; with a facade both ship; a consumer importing a non-public
         // module is warned (W3) naming the public ones.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         s::project lib{tmp / "lib", {{"mcpp.toml", R"cpp([package]
 namespace = "probe"

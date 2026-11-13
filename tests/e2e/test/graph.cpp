@@ -52,10 +52,9 @@ path = "/nonexistent/ghost-package"
         expect(e2e::contains(s::text(t), "ghost-test-framework")) << "the test path did not reach the dev-dependency";
     };
 
-    "72 test profile features"_test[tag{"requires:gcc"}] = [] {
+    "72 test profile features"_test[s::gcc] = [] {
         // `mcpp test --profile` selects the mode of the whole test build: it reaches the code
         // under test (a shared src/ unit), not only the test's own file (#131 scenario B).
-        s::needs({"gcc"});
         s::project p{{"mcpp.toml", R"([package]
 name    = "proj"
 version = "0.1.0"
@@ -176,11 +175,10 @@ int main() { return 0; }
                 << "goal paths leaked into the recorded ninja invocation";
     };
 
-    "213 build after test is not the test graph"_test[tag{"requires:gcc"}] = [] {
+    "213 build after test is not the test graph"_test[s::gcc] = [] {
         // mcpp#407: a plain build after `mcpp test` must not replay the test's graph, and a broken
         // test file must not fail a plain build. Nothing is touched or deleted between the
         // commands: the defect exists only while the fast path is eligible.
-        s::needs({"gcc"});
         s::project p{{"mcpp.toml", "[package]\nname = \"tst\"\nversion = \"0.1.0\"\n"},
                      {"src/main.cpp", "int main() { return 0; }\n"},
                      {"tests/smoke.cpp", "int main() { return 0; }\n"}};

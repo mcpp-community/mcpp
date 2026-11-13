@@ -138,10 +138,9 @@ E2E bmi{"bmi", [] {
         expect(fatal(e2e::contains(s::text(r), "hi 99"))) << "edit to a transitive path dep did not reach the binary\n" << s::text(r);
     };
 
-    "49 bmi cache nested custom index"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "49 bmi cache nested custom index"_test[s::gcc][s::fresh_sandbox] = [] {
         // A local-path index package with two same-named units in nested directories is cached
         // with its nested object paths, and a cold rebuild stages it instead of compiling it.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
         const auto tmp = s::case_dir();

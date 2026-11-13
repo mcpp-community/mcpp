@@ -41,12 +41,11 @@ void library_repository(const fs::path& dir, std::string_view name, std::string_
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 E2E git_deps{"git", [] {
-    "24 git dependency"_test[tag{"requires:fresh-sandbox"}] = [] {
+    "24 git dependency"_test[s::fresh_sandbox] = [] {
         // A git dependency is cloned to $MCPP_HOME/git/<hash>/ and treated as a path dependency;
         // a rebuild does not clone again; a branch is locked (`git+...branch=main`), replayed
         // offline from the lock, kept at the locked commit when the clone cache is evicted, and
         // advanced by `mcpp update`. HOME is the case's own, so the caches resolve there.
-        s::needs({"fresh-sandbox"});
         const auto tmp = s::case_dir();
         const auto mhome = s::case_home(s::home::inherited);
         fs::create_directories(tmp / "home");
@@ -103,13 +102,12 @@ E2E git_deps{"git", [] {
         expect(e2e::contains(program(bapp, "branchapp"), "branch dep v2")) << "branch dep did not refresh after mcpp update";
     };
 
-    "661 one identity two declarations"_test[tag{"requires:gcc"}] = [] {
+    "661 one identity two declarations"_test[s::gcc] = [] {
         // Two declarations of one dependency identity: the root's reference wins over a
         // library's, warned and locked; with no root opinion the first-resolved declaration wins
         // for every edge; a kind clash between two non-root requesters is refused with the root
         // hint; a root pin below a library's SemVer floor is refused naming both; the same
         // reference declared twice is silent, under --strict too.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const auto fw_git = tmp / "framework-git";
         const auto fw_host = fw_git.generic_string();
@@ -231,12 +229,11 @@ E2E git_deps{"git", [] {
         expect(s::lacks(s::text(r6), "wins")) << "case 6: an identical reference declared twice still produced an override warning";
     };
 
-    "713 a git dependency selects a repository member"_test[tag{"requires:gcc"}] = [] {
+    "713 a git dependency selects a repository member"_test[s::gcc] = [] {
         // A git dependency whose key names a package other than the repository's root package
         // selects the `[workspace] members` entry declaring it; a second declaration of one
         // dependency by one consumer keeps its requests; a git dependency's compile banner names
         // its reference.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project repo{tmp / "repo", {{"mcpp.toml", "[package]\nname      = \"fw\"\nnamespace = \"spike\"\nversion   = \"0.1.0\"\n[targets.fw]\nkind = \"lib\"\n[build]\nsources = [\"src/*.cpp\"]\n[workspace]\nmembers = [\"tool\"]\n"},
@@ -288,10 +285,9 @@ int main() {
         expect(s::has_line(s::text(b3), R"(DEPBIN tool=\[[^\]])")) << "the second declaration's tools request was dropped";
     };
 
-    "816 a git dependency reports its fetch"_test[tag{"requires:unix-shell"}] = [] {
+    "816 a git dependency reports its fetch"_test[s::unix_shell] = [] {
         // Fetching a git dependency is reported with the renderer every other acquisition uses:
         // a start and a finish line when stdout is not a terminal, without CR or ESC bytes.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         s::project repo{tmp / "repo", {{"mcpp.toml", "[package]\nnamespace = \"probe816\"\nname = \"gdep\"\nversion = \"0.1.0\"\n[targets.gdep]\nkind = \"lib\"\n"},
                                        {"src/gdep.cppm", "export module probe816.gdep;\nexport int gdep_value() { return 7; }\n"}}};
@@ -310,10 +306,9 @@ int main() {
         expect(s::lacks(s::text(b), "\x1b")) << "B: the log carries an ESC byte";
     };
 
-    "943 a transitive git branch is locked"_test[tag{"requires:gcc"}] = [] {
+    "943 a transitive git branch is locked"_test[s::gcc] = [] {
         // A git branch reached through another package is locked as the root's own are: a later
         // commit on it is not taken until `mcpp update`.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         auto repo = [](const fs::path& dir) {
             git(dir, {"init", "--quiet", "-b", "main"});
@@ -343,11 +338,10 @@ int main() {
         expect(e2e::contains(s::text(run2), "value 2")) << "C: the build after mcpp update did not take the branch's tip";
     };
 
-    "944 a root checkout answers a version the index lacks"_test[tag{"requires:gcc"}] = [] {
+    "944 a root checkout answers a version the index lacks"_test[s::gcc] = [] {
         // A dependency's request by version is answered by the root's path or git checkout of
         // the package, whether or not the index carries it; an unsatisfied requirement is still
         // refused.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const auto host = tmp.generic_string();
         const std::string os = s::on_linux() ? "linux" : s::on_macos() ? "macos" : "windows";
@@ -377,11 +371,10 @@ int main() {
         expect(e2e::contains(s::text(c), "requires 0.2.0")) << "C: the refusal does not name the requirement";
     };
 
-    "1048 a git reference follows the default branch"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1048 a git reference follows the default branch"_test[s::elf][s::llvm] = [] {
         // A git dependency naming no reference follows the repository's default branch (here
         // `trunk`), reported, locked with its commit and read offline; two references are
         // refused; `--platform git+<url>#tag=<t>` takes a platform from its repository.
-        s::needs({"elf", "llvm"});
         const auto tmp = s::case_dir();
         auto repo = [](const fs::path& dir, std::string_view message) {
             git(dir, {"-c", "init.defaultBranch=trunk", "init", "-q", "."});

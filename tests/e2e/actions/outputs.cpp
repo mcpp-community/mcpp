@@ -25,11 +25,10 @@ std::optional<fs::path> ending(const fs::path& root, std::string_view name, std:
 }
 
 E2E outputs{"outputs", [] {
-    "827 many placements run as one process"_test[tag{"requires:unix-shell"}] = [] {
+    "827 many placements run as one process"_test[s::unix_shell] = [] {
         // The files a program's runtime needs beside it are placed by one `stage_list` edge, not
         // one per file; the edge does not run when no placement changed; a changed source
         // arrives and an unchanged destination is not rewritten; one entry keeps its own edge.
-        s::needs({"unix-shell"});
         s::project p{s::files{{"src/main.cpp", "int main() { return 0; }\n"},
                       {"mcpp.toml", "[package]\nname = \"place827\"\nversion = \"0.1.0\"\n"}}};
         for (int i = 1; i <= 50; ++i) p.write(std::format("data/f{}.txt", i), std::format("{}\n", i));
@@ -81,10 +80,9 @@ int main() {{
         expect(s::has_line(s::read_file(*nj), R"(: stage_file .*f1.txt)")) << "S4: the single entry lost its per-file edge";
     };
 
-    "896 an action output has one writer"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "896 an action output has one writer"_test[s::gcc][s::unix_shell] = [] {
         // An action's output is written by the action alone: prepare writes no placeholder, a
         // removed output is generated again, and an existing (empty) output is not rewritten.
-        s::needs({"gcc", "unix-shell"});
         const s::options inherited{.where = s::home::inherited};
         s::project ws{s::files{{"mcpp.toml", "[workspace]\nmembers = [\"app\"]\n"},
                        {"app/mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.0.1\"\n[build]\nsources = []\n[targets.app]\nkind = \"bin\"\nmain = \"main.cpp\"\n"},
@@ -124,11 +122,10 @@ int main() {
         expect(fs::last_write_time(*empty) == before) << "an existing output was rewritten by prepare";
     };
 
-    "897 each configuration has its own generated output"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "897 each configuration has its own generated output"_test[s::gcc][s::unix_shell] = [] {
         // `mcpp::out_dir()` is per configuration and resolution.json records it: after dev,
         // release, dev, each configuration's binary prints what its own out_dir was generated
         // for, and dev and release do not share one.
-        s::needs({"gcc", "unix-shell"});
         const s::options inherited{.where = s::home::inherited};
         s::project p{s::files{{"mcpp.toml", "[package]\nname = \"gp\"\nversion = \"0.1.0\"\n[build]\nsources = [\"src/main.cpp\"]\n[targets.gp]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nconst char* gen_profile();\nint main() { std::printf(\"GEN=%s\\n\", gen_profile()); }\n"},
@@ -171,12 +168,11 @@ int main() {
         expect(seen["dev"] != seen["release"]) << "dev and release share one out_dir: " << seen["dev"];
     };
 
-    "982 an action reads the builds contract"_test[tag{"requires:elf"}] = [] {
+    "982 an action reads the builds contract"_test[s::elf] = [] {
         // `${mcpp.contract}` names the configuration's contract beside its compile database:
         // each language's compiler and the words every unit gets (no dialect or module flags),
         // the link driver, its words and the archiver, without a package's own link inputs —
         // which still reach the consumer.
-        s::needs({"elf"});
         s::project p{s::files{{"mcpp.toml", "[package]\nname    = \"contract\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "int main() { return 0; }\n"},
                       {"build.mcpp", R"cpp(#include <string>

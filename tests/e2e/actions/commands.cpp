@@ -27,10 +27,9 @@ long long mtime(const fs::path& p) {
 std::string mcpp_host() { return fs::absolute(s::mcpp_path()).generic_string(); }
 
 E2E commands{"commands", [] {
-    "631 action depfile tracks a runtime discovered include"_test[tag{"requires:gcc"}] = [] {
+    "631 action depfile tracks a runtime discovered include"_test[s::gcc] = [] {
         // `mcpp::action`'s `depfile`: a file the command discovers by running, named only in the
         // depfile it writes, reruns the action when touched; nothing else does.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", "[package]\nname    = \"shaderdep\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nint generated_value();\nint main() { std::printf(\"VALUE=%d\\n\", generated_value()); }\n"},
                       {"included.glsl", "float unused = 1.0;\n"},

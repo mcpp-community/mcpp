@@ -86,7 +86,7 @@ bool lines_contain(const std::string& text, std::string_view line) {
 std::string first_line(const std::string& text) { return text.substr(0, text.find('\n')); }
 
 E2E rows{"rows", [] {
-    "641 the android rows are wired and the simulator is a row"_test[tag{"requires:gcc"}] = [] {
+    "641 the android rows are wired and the simulator is a row"_test[s::gcc] = [] {
         // The vocabulary half, which a runner without the NDK can assert; nothing installs a
         // payload. 1 both Android rows name android-ndk; 2 they are not refused as planned; 3 the
         // simulator rows resolve and, off Apple hosts, are refused for the SDK; 4 an effective
@@ -94,7 +94,6 @@ E2E rows{"rows", [] {
         // 6 min_api_level has a floor; 7 the listing answers for this host; 8 an iOS row's SDK is
         // located before a payload is resolved, and its absence is a refusal that names it; 9
         // min_api_level on another row does not trip --strict.
-        s::needs({"gcc"});
         const auto list = toolchain_list();
         for (std::string_view t : {"aarch64-linux-android", "x86_64-linux-android"}) {
             const auto row = listed(list, t);
@@ -173,14 +172,13 @@ E2E rows{"rows", [] {
         }
     };
 
-    "652b an application on android is a shared library"_test[tag{"requires:elf"}][tag{"requires:gcc"}][tag{"requires:android-ndk"}] = [] {
+    "652b an application on android is a shared library"_test[s::elf][s::gcc][s::android_ndk] = [] {
         // #622 A3: on *-linux-android an application links as a shared library. 1 `app` links
         // lib<name>.so and no executable; 2 `bin` stays an executable; 3 `mcpp run` of the app
         // is refused naming --pkg-format, and not for a bin; 4 a dispatched format stages
         // lib/libmyapp.so and the deployed file; 5 MCPP_TARGET_MIN_PLATFORM_VERSION is numeric on
         // Android and empty on the host. MCPP_NO_AUTO_INSTALL is left unset: the row's own
         // resolution reaches the payload on this machine, as a user's first build would.
-        s::needs({"elf", "gcc", "android-ndk"});
         const std::string t = "x86_64-linux-android";
         s::project p{{"mcpp.toml", "[package]\nname    = \"myapp\"\nversion = \"0.1.0\"\n\n[targets.myapp]\nkind = \"app\"\nmain = \"src/main.cpp\"\n\n[targets.tool]\nkind = \"bin\"\nmain = \"src/tool.cpp\"\n"},
                      {"src/main.cpp", "int main() { return 0; }\n"},
@@ -252,12 +250,11 @@ int main() {
         expect(fatal(s::read_file(*host_file).empty())) << "5: MCPP_TARGET_MIN_PLATFORM_VERSION was '" << s::read_file(*host_file) << "', not empty, on the host";
     };
 
-    "664 a universal apk is two legs in one tree"_test[tag{"requires:elf"}][tag{"requires:gcc"}][tag{"requires:android-ndk"}] = [] {
+    "664 a universal apk is two legs in one tree"_test[s::elf][s::gcc][s::android_ndk] = [] {
         // #630 A9: the route is chosen by the artifact's form. 1 one triple stages a flat
         // lib/libmyapp.so; 2 two Android triples stage lib/arm64-v8a/ and lib/x86_64/ in one
         // tree, the deployed file once; 3 other rows are a package each, named by the triple, a
         // target named twice is one leg, and `-o` naming one file is refused.
-        s::needs({"elf", "gcc", "android-ndk"});
         s::project p{{"mcpp.toml", "[package]\nname    = \"myapp\"\nversion = \"0.1.0\"\n\n[targets.myapp]\nkind = \"app\"\nmain = \"src/main.cpp\"\n\n[[runtime.deploy]]\nfrom = \"res.txt\"\nto   = \"myres\"\n"},
                      {"src/main.cpp", "int main() { return 0; }\n"},
                      {"res.txt", "resource-1\n"}};
@@ -289,14 +286,13 @@ int main() {
         expect(fatal(e2e::contains(s::text(r), "use: -o <directory>/"))) << "3: the refusal names no directory: " << s::text(r);
     };
 
-    "667 an android pack stages its closure"_test[tag{"requires:elf"}][tag{"requires:gcc"}][tag{"requires:android-ndk"}] = [] {
+    "667 an android pack stages its closure"_test[s::elf][s::gcc][s::android_ndk] = [] {
         // An app with a shared path dependency: lib/ holds the object, libfw.so and
         // libc++_shared.so, the stubs are the platform's (the stage manifest says so); the
         // libraries carry their file names as SONAME; a prebuilt library from [runtime] is
         // staged, and when it is gone dir and tar refuse naming it; a dispatched format receives
         // `closure = not-walked`, the unresolved name and the members; two triples stage a
         // closure each.
-        s::needs({"elf", "gcc", "android-ndk"});
         const auto tmp = s::case_dir();
         s::project fw(tmp / "fw", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"fw\"\nversion   = \"0.1.0\"\n\n[targets.fw]\nkind = \"lib\"\n"},
                                    {"src/fw.cppm", "export module fw;\nexport int fw_anchor() { return 41; }\n"}});
@@ -383,11 +379,10 @@ int main() {
         expect(fatal(s::read_header(tree2 / "lib/arm64-v8a/libc++_shared.so").machine == s::elf_machine::aarch64)) << "lib/arm64-v8a/libc++_shared.so is not the aarch64 run-time";
     };
 
-    "675 android test programs carry their cxx runtime"_test[tag{"requires:elf"}][tag{"requires:gcc"}][tag{"requires:android-ndk"}] = [] {
+    "675 android test programs carry their cxx runtime"_test[s::elf][s::gcc][s::android_ndk] = [] {
         // A test program on the Android row links the sysroot's per-API libc++.a and needs no
         // libc++_shared.so; a self-contained shared library hides the run-time it embeds
         // (`--exclude-libs`) and exports none of it.
-        s::needs({"elf", "gcc", "android-ndk"});
         const auto runner = s::case_dir() / "ok-runner.sh";
         s::write_executable(runner, "#!/bin/sh\nexit 0\n");
         auto p = s::project::scaffold("droid");
@@ -423,11 +418,10 @@ int main() {
         expect(fatal(!std::ranges::contains(exported, std::string("_ZNSt6__ndk19to_stringEi")))) << "the shared library exports the C++ run-time it embeds (std::__ndk1::to_string(int))";
     };
 
-    "680 a dependency floor on the android api level"_test[tag{"requires:elf"}][tag{"requires:gcc"}][tag{"requires:android-ndk"}] = [] {
+    "680 a dependency floor on the android api level"_test[s::elf][s::gcc][s::android_ndk] = [] {
         // A dependency states `android.api-level >= 23`: A an unset level is refused, saying so;
         // B level 21 is refused naming the key that set it; C level 24 builds; D the host row is
         // not refused and does not mention the floor.
-        s::needs({"elf", "gcc", "android-ndk"});
         const std::string t = "x86_64-linux-android";
         const auto tmp = s::case_dir();
         s::project fw(tmp / "fw", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"fw\"\nversion   = \"0.1.0\"\n\n[targets.fw]\nkind = \"lib\"\n\n[[runtime.requirements]]\nkind  = \"version-floor\"\nvalue = \"android.api-level >= 23\"\n"},

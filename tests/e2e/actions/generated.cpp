@@ -27,10 +27,9 @@ std::optional<fs::path> ninja_file(const fs::path& target) {
 }
 
 E2E generated{"generated", [] {
-    "51 package generated files"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "51 package generated files"_test[s::gcc][s::fresh_sandbox] = [] {
         // A package descriptor's generated_files are materialized in the package before it is
         // scanned and compiled.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         s::project{tmp / "local-index", {{"pkgs/t/tinycfg.lua", R"cpp(package = {
     spec = "1",
@@ -70,10 +69,9 @@ E2E generated{"generated", [] {
         expect(e2e::succeeded(app.mcpp({"run"}, inherited))) << "run failed";
     };
 
-    "107 generated files toml"_test[tag{"requires:gcc"}] = [] {
+    "107 generated files toml"_test[s::gcc] = [] {
         // [generated_files] entries materialize in the project root before the scan, enter the
         // fingerprint (a content change rebuilds), and a path escaping the root is an error.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("genf");
         p.write("mcpp.toml", "[package]\nname    = \"genf\"\nversion = \"0.1.0\"\n[generated_files]\n\"src/gen/answer.cpp\" = \"\"\"\nextern \"C\" int gen_answer() { return 41; }\n\"\"\"\n");
         p.write("src/main.cpp", "import std;\nextern \"C\" int gen_answer();\nint main() {\n    std::println(\"gen = {}\", gen_answer());\n    return 0;\n}\n");
@@ -91,11 +89,10 @@ E2E generated{"generated", [] {
         expect(s::contains_nocase(s::text(escape), "generated_files")) << "wrong error";
     };
 
-    "124 gen source out of root object path"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "124 gen source out of root object path"_test[s::elf][s::gcc] = [] {
         // A dependency's build program emits a source into OUT_DIR, outside the dependency's
         // root; its object path stays under obj/ (no `..`, not absolute), beside the consumer's
         // own gen.cpp.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project{tmp / "gdep", {{"build.mcpp", R"cpp(#include <cstdio>
 #include <string>
@@ -127,11 +124,10 @@ int main() {
         expect(eq(s::last_line(consumer.mcpp({"run"}).out), std::string{"sum=107"})) << "unexpected output";
     };
 
-    "142 generated files incremental"_test[tag{"requires:gcc"}] = [] {
+    "142 generated files incremental"_test[s::gcc] = [] {
         // An unchanged [generated_files] entry is not rewritten when an unrelated source change
         // re-runs the materialization, so its includers are not recompiled; a changed one is
         // rewritten and its includers recompiled.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("genincr");
         p.write("mcpp.toml", "[package]\nname    = \"genincr\"\nversion = \"0.1.0\"\n[generated_files]\n\"src/gen/config.h\" = \"\"\"\n#define GEN_ANSWER 41\n\"\"\"\n");
         p.write("src/main.cpp", "#include \"gen/config.h\"\n#include <cstdio>\nextern int other();\nint main() {\n    std::printf(\"gen = %d\\n\", GEN_ANSWER + other());\n    return 0;\n}\n");
@@ -164,11 +160,10 @@ int main() {
         expect(eq(s::last_line(p.mcpp({"run"}).out), std::string{"gen = 42"})) << "stale binary after content change";
     };
 
-    "314 dependency action generated header"_test[tag{"requires:gcc"}] = [] {
+    "314 dependency action generated header"_test[s::gcc] = [] {
         // A package that generates its own header compiles after the generator (mcpp#534): the
         // header is the generator's output, and every compile edge of the package waits for
         // the package's action phony, of which there is one.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project proto{tmp / "proto", {{"mcpp.toml", "[package]\nname    = \"proto\"\nversion = \"0.1.0\"\n[targets.proto]\nkind = \"lib\"\n"},
                                          {"src/proto.cppm", "module;\n#include \"proto_generated.h\"\nexport module proto;\nexport int proto_answer() { return PROTO_ANSWER; }\n"},

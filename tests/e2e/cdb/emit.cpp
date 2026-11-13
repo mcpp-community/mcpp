@@ -44,7 +44,7 @@ std::vector<fs::path> compiled(const fs::path& root, const fs::path& prune = {})
 }
 
 E2E emit{"emit", [] {
-    "688 emit build database"_test[tag{"requires:python3"}] = [] {
+    "688 emit build database"_test[s::python3] = [] {
         const auto tmp = s::case_dir() / "measured";
         const auto out = s::case_dir() / "out";
         fs::create_directories(out);
@@ -258,7 +258,7 @@ E2E emit{"emit", [] {
         expect(fatal(e2e::succeeded(r))) << "L control: configure-only in the cold home: " << s::text(r);
         expect(fatal(!compiled(cold, cold / "registry").empty())) << "L control: configure-only compiled nothing into the home";
     };
-    "736 compile flag words reach the compiler and the databases"_test[tag{"requires:python3"}] = [] {
+    "736 compile flag words reach the compiler and the databases"_test[s::python3] = [] {
         // A: a cxxflags or defines element reaches the compiler as the words a shell would read
         // from it (quotes removed, `\"` kept, a -D element with a space one word); B C: both
         // databases list those words, with no quote left over; D: the first plan names an
@@ -351,7 +351,7 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "the second build failed: " << s::text(r);
         expect(fatal(s::lacks(s::text(r), "reaches the compiler as"))) << "E: a repeated plan repeated the notes: " << s::text(r);
     };
-    "815 the database describes what a rule generates"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "815 the database describes what a rule generates"_test[s::unix_shell][s::python3] = [] {
         // A: each set the generated header reaches names it, its generator (id, inputs,
         // arguments) and its directory; B: their build paths lie under the project's target, and
         // the build writes the header there; C: compile_commands.json carries no such field.
@@ -407,7 +407,7 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "the compile database failed: " << r.err;
         expect(fatal(s::lacks(r.out, R"("generated")"))) << "C: compile_commands.json carries a generated field";
     };
-    "817 emit writes no xlings json under private work dir"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "817 emit writes no xlings json under private work dir"_test[s::unix_shell][s::python3] = [] {
         // A project declaring [xlings] deps: emit leaves the project tree as it was, writes no
         // <root>/.mcpp/.xlings.json, states no write-project effect, and writes the declaration
         // into its private work directory's .xlings.json instead (xlings a stub).

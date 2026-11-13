@@ -57,11 +57,10 @@ std::string recorded(const s::project& p, std::string_view key) {
 }
 
 E2E emscripten{"emscripten", [] {
-    "650 wasm row names its launcher"_test[tag{"requires:elf"}] = [] {
+    "650 wasm row names its launcher"_test[s::elf] = [] {
         // `kind = "shared"` is refused on the row before a toolchain is resolved, and an ordinary
         // bin is not; a program is bin/<name>.js with <name>.wasm, runs, is staged with both,
         // and `--no-entry` reaches its link as an ordinary ldflag.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project shared(tmp / "shared", {{"mcpp.toml", "[package]\nname    = \"sh\"\nversion = \"0.1.0\"\n\n[targets.sh]\nkind = \"shared\"\nmain = \"src/lib.cpp\"\n"},
                                            {"src/lib.cpp", "extern \"C\" int foo() { return 1; }\n"}});
@@ -108,11 +107,10 @@ E2E emscripten{"emscripten", [] {
         expect(fatal(ninja && e2e::contains(s::read_file(*ninja), "--no-entry"))) << "--no-entry did not reach build.ninja";
     };
 
-    "657 a build program under the web row uses the host compiler"_test[tag{"requires:elf"}] = [] {
+    "657 a build program under the web row uses the host compiler"_test[s::elf] = [] {
         // A project with a build.mcpp builds for the Web row: its build program is compiled for
         // this machine (MCPP_HOST a native triple, MCPP_TARGET the row), also in a fresh home
         // whose first build names the row, and the same fresh home still builds natively.
-        s::needs({"elf"});
         if (!have_emsdk()) skip("657 -- no emsdk payload installed (looked under xim-x-emsdk/*/emscripten)");
         const auto tmp = s::case_dir();
         const auto main_cpp = "#include <cstdio>\nint main() { std::puts(\"1-2-3\"); return 0; }\n";
@@ -171,11 +169,10 @@ E2E emscripten{"emscripten", [] {
         expect(fatal(printed == "1-2-3")) << "the native bin/bq in the same fresh home did not print 1-2-3";
     };
 
-    "981 a web link has the profiles level and the wasm exception model"_test[tag{"requires:elf"}] = [] {
+    "981 a web link has the profiles level and the wasm exception model"_test[s::elf] = [] {
         // The profile's level reaches the link (-O2 release, -O0 dev); `exceptions = "wasm"`
         // compiles and links -fwasm-exceptions and catches; `true` keeps the JavaScript model;
         // another value is refused naming the values.
-        s::needs({"elf"});
         if (!have_emsdk()) skip("981 -- no emsdk payload installed");
         s::project app(s::case_dir() / "app", {{"src/main.cpp", "import std;\nint main() {\n    try { throw std::runtime_error(\"boom\"); }\n    catch (std::exception const& e) { std::println(\"caught: {}\", e.what()); }\n}\n"}});
         auto write = [&](std::string_view value) {
@@ -224,10 +221,9 @@ E2E emscripten{"emscripten", [] {
         expect(fatal(e2e::contains(s::text(r), "\"wasm\" or \"js\""))) << "the refusal does not name the values: " << s::text(r);
     };
 
-    "1079 an emscripten rows longjmp model round trips"_test[tag{"requires:elf"}] = [] {
+    "1079 an emscripten rows longjmp model round trips"_test[s::elf] = [] {
         // `longjmp = "wasm"` makes a non-local exit over two call levels round-trip; on a Linux
         // row it is refused naming that row's os.
-        s::needs({"elf"});
         if (!have_emsdk() || !s::on_path("node")) skip("1079 -- no emsdk payload or node on this machine");
         s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"lj\"\nversion = \"0.1.0\"\n\n[targets.lj]\nkind = \"bin\"\nmain = \"src/main.c\"\n\n[target.wasm32-emscripten]\nrunner = [\"node\"]\n\n"
                                                              "[target.'cfg(os = \"emscripten\")'.abi]\nlongjmp = \"wasm\"\n\n[target.'cfg(os = \"emscripten\")'.build]\nldflags = [\"-sSTACK_SIZE=1048576\"]\n"},

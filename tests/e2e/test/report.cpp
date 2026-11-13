@@ -27,9 +27,8 @@ E2E report{"report", [] {
         expect(e2e::contains(out, "2 passed; 0 failed"));
     };
 
-    "16 test failing"_test[tag{"requires:scan-deps"}] = [] {
+    "16 test failing"_test[s::scan_deps] = [] {
         // One ok and one failing test: exit non-zero, and the summary lists the failures.
-        s::needs({"scan-deps"});
         auto p = s::project::scaffold("myapp");
         p.write("tests/test_fail.cpp", "int main() { return 1; }\n");
         auto r = p.mcpp({"test"});
@@ -97,10 +96,9 @@ E2E report{"report", [] {
         expect(e2e::exited(p.mcpp({"test", "--message-format", "yaml"}), 2));
     };
 
-    "158 test signal and duration"_test[tag{"requires:unix-shell"}] = [] {
+    "158 test signal and duration"_test[s::unix_shell] = [] {
         // A signaled test reports the shell's 128+signal with the signal in JSON, and every
         // test record carries duration_ms.
-        s::needs({"unix-shell"});
         s::project p{{"mcpp.toml", manifest("sigdur")},
                      {"tests/crash.cpp", "int main() { int* p = nullptr; return *p; }\n"},
                      {"tests/ok.cpp", "int main() { return 0; }\n"}};
@@ -113,9 +111,8 @@ E2E report{"report", [] {
         expect(e2e::contains(s::text(p.mcpp({"test", "crash"})), "crash ... FAIL (exit 139,"));
     };
 
-    "160 test timeout"_test[tag{"requires:unix-shell"}] = [] {
+    "160 test timeout"_test[s::unix_shell] = [] {
         // `mcpp test --timeout <secs>`: a hung test is killed and reported; the rest still runs.
-        s::needs({"unix-shell"});
         s::project p{{"mcpp.toml", manifest("hang")},
                      {"tests/sleepy.cpp",
                       "import std;\nint main() { std::this_thread::sleep_for(std::chrono::seconds(30)); return 0; }\n"},

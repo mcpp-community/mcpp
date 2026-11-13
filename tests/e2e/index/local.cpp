@@ -73,11 +73,10 @@ std::string c_lib_segment(std::string_view source, std::string_view target) {
 }
 
 E2E local{"local", [] {
-    "52 local path namespaced index"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "52 local path namespaced index"_test[s::gcc][s::fresh_sandbox] = [] {
         // A local path index finds pkgs/c/compat.cfg.lua; the project builds and runs. A clean
         // project installs it through the NDJSON interface with the qualified name
         // compat:compat.cfg@1.0.0, refreshing no builtin index and writing no xim index.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
         const auto seed = home / "registry/subos/default/.xlings.json";
@@ -171,10 +170,9 @@ exit 0
         expect(fatal(fs::exists(log) && e2e::contains(s::read_file(log), "compat:compat.cfg@1.0.0"))) << "the install target should name the full package: " << (fs::exists(log) ? s::read_file(log) : "(nothing recorded)") << "\n" << s::text(r);
     };
 
-    "53 namespaced cache label"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "53 namespaced cache label"_test[s::gcc][s::fresh_sandbox] = [] {
         // A local path index dependency refreshes no builtin index and shows no xlings update
         // output; rebuilt from the cache, it is reported as compat.widget.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
         s::project index(tmp / "local-index", {{"pkgs/c/compat.widget.lua", lua_package("compat.widget", "1.0.0", "Namespaced cache label package", "")}});
@@ -194,11 +192,10 @@ exit 0
         expect(fatal(s::has_line(s::text(r), R"(Cached compat\.widget v1\.0\.0 \((index [^,)]+, )?[0-9]+ units?\))"))) << "the cached namespaced dependency should be reported as compat.widget: " << s::text(r);
     };
 
-    "60 stale xpkg cache reinstall"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "60 stale xpkg cache reinstall"_test[s::gcc][s::fresh_sandbox] = [] {
         // A payload directory without its marker is installed again (through the interface,
         // never direct), mcpp writes no marker into the payload, and the program runs on the
         // reinstalled source.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
         s::project index(tmp / "local-index", {{"pkgs/c/compat.stale.lua", lua_package("compat.stale", "1.0.0", "stale cache reinstall test package", c_lib_segment("src/stale.c", "stale"))}});
@@ -249,11 +246,10 @@ exit 0
         expect(fatal(e2e::succeeded(r))) << s::text(r);
     };
 
-    "76 qualified custom ns noncanonical filename"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "76 qualified custom ns noncanonical filename"_test[s::gcc][s::fresh_sandbox] = [] {
         // aimol.tensorvia-cpu, filed as pkgs/t/tensorvia-cpu.lua in the home's mcpplibs index,
         // resolves by its identity and is locked under namespace aimol (no mcpplibs.aimol);
         // mcpplibs.tensorvia-cpu does not resolve.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto home = s::case_home(s::home::inherited);
         s::project(home / "indices/mcpplibs", {{".mcpp-index-updated", "ok\n"}, {"pkgs/t/tensorvia-cpu.lua", R"(package = {
     spec = "1",

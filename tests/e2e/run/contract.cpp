@@ -56,7 +56,7 @@ std::string list_of(const fs::path& rec) {
 bool received(const fs::path& rec) { return fs::exists(rec) && s::no_line(s::read_file(rec), "^UNSET$"); }
 
 E2E contract{"contract", [] {
-    "672 a runner receives the files the artifact carries"_test[tag{"requires:unix-shell"}] = [] {
+    "672 a runner receives the files the artifact carries"_test[s::unix_shell] = [] {
         // A runner receives MCPP_RUNTIME_FILES, a list of `<destination>\t<absolute source>`
         // naming the deployed files and the dependency's shared library, for `run` and for each
         // test (a test in a subdirectory names its files with ../, one list per test); the
@@ -182,7 +182,7 @@ int main() {
         list = list_of(rec);
         expect(fatal(fs::is_regular_file(list) && fs::file_size(list) == 0)) << "the distributable's list is not an existing empty file";
     };
-    "674 a format is run by the runner named after it"_test[tag{"requires:unix-shell"}] = [] {
+    "674 a format is run by the runner named after it"_test[s::unix_shell] = [] {
         // `run --pkg-format <f>` runs the distributable through the runner named <f> (a typed
         // --runner wins), returning the program's status; a plain run executes the link output
         // directly; a directory no runner reaches is refused (126) naming the runner and the
@@ -265,12 +265,11 @@ int main() {{
     };
 
     // It writes the shared home's config.toml (restored at its end): the machine resource.
-    "927 the runner contract"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][resource{"machine"}] = [] {
+    "927 the runner contract"_test[s::gcc][s::unix_shell][resource{"machine"}] = [] {
         // run_under composes in front of the artifact with the contract variables and a closure
         // manifest, returns the program's status and states where it was declared; the
         // environment's `..._RUN_UNDER=none` and --no-runner drop it; config.toml's run_under is
         // the default; a missing program fails with 2 naming it; `test` runs through it too.
-        s::needs({"gcc", "unix-shell"});
         const auto work = s::case_dir();
         const auto record = work / "record";
         s::write_executable(work / "bin/via-host", R"(#!/bin/sh
@@ -342,7 +341,7 @@ exec "$@"
         expect(fatal(e2e::succeeded(r))) << "mcpp test through run_under failed: " << s::text(r);
         expect(fatal(e2e::contains(s::read_file(record), "mode=test"))) << "a test was not run through run_under with MCPP_RUN_MODE=test";
     };
-    "1024 a launch description takes the fast path"_test[tag{"requires:python3"}] = [] {
+    "1024 a launch description takes the fast path"_test[s::python3] = [] {
         // A: `run --print-launch` of an unchanged project takes the fast path where `run` does,
         // and describes what the full path does (plus the program's arguments). B: after a
         // change, the description is the same. C: a launch record carrying a foreign field is not

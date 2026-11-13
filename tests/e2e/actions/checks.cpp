@@ -48,11 +48,10 @@ int main() {{
         expect(s::lacks(s::text(b2), "CHECK")) << "the check re-ran with nothing changed — its stamp is not satisfying the edge";
     };
 
-    "315 blocking check gates compilation"_test[tag{"requires:gcc"}] = [] {
+    "315 blocking check gates compilation"_test[s::gcc] = [] {
         // `blocking = true` on a check orders every compile edge after it (its stamp joins the
         // package's action phony), so a failing blocking check stops the compile; a
         // non-blocking one does not.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nint main(){ std::printf(\"ok\\n\"); }\n"}}};
         s::write_executable(p.at("check.sh"), "#!/usr/bin/env bash\nsleep 2\necho \"the check says no\" >&2\nexit 1\n");

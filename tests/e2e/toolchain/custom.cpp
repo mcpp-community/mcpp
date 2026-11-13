@@ -35,13 +35,12 @@ fs::path llvm_tree(const fs::path& at) {
 }
 
 E2E custom{"custom", [] {
-    "875 toolchain by path"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}][tag{"requires:symlink"}] = [] {
+    "875 toolchain by path"_test[s::llvm][s::unix_shell][s::symlink] = [] {
         // `[toolchain] default = { path = ... }` (mcpp#755): a toolchain tree named by path builds
         // with its launcher and its stated linker, is reported as custom, writes nothing into the
         // tree, keeps the fast path until one of its programs changes, is named by MCPP_TOOLCHAIN
         // too, and is identified (a contradicting family, a tree with no driver, and a gcc tree
         // that states ld are refused).
-        s::needs({"llvm", "unix-shell", "symlink"});
         const auto llvm_root = s::payload_root("xim-x-llvm", s::llvm_version());
         if (!fs::exists(llvm_root / "bin/clang++")) skip(std::format("no llvm payload installed ({})", llvm_root.string()));
         const auto work = s::case_dir();
@@ -126,11 +125,10 @@ E2E custom{"custom", [] {
         }
     };
 
-    "876 toolchain phase"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}][tag{"requires:symlink"}] = [] {
+    "876 toolchain phase"_test[s::llvm][s::unix_shell][s::symlink] = [] {
         // `[toolchain] default = { configure = "build.mcpp" }` (mcpp#755): the build program's
         // toolchain phase states the toolchain (a path, reported with its origin; a managed spec,
         // not announced as custom), must state one, and states nothing else.
-        s::needs({"llvm", "unix-shell", "symlink"});
         const auto llvm = s::llvm_version();
         const auto llvm_root = s::payload_root("xim-x-llvm", llvm);
         if (!fs::exists(llvm_root / "bin/clang++")) skip(std::format("no llvm payload installed ({})", llvm_root.string()));
@@ -179,10 +177,9 @@ int main() {{
         expect(fatal(e2e::contains(out, "stated `mcpp:cxxflag=` in its toolchain phase"))) << "FAIL: a flag in the toolchain phase was accepted: " << out;
     };
 
-    "1004 an external toolchain finds mcpps ninja"_test[tag{"requires:gcc"}] = [] {
+    "1004 an external toolchain finds mcpps ninja"_test[s::gcc] = [] {
         // A toolchain named by a path outside every provider finds the ninja of mcpp's home, with
         // no ninja on PATH; `self env` names it absolutely.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::inherited);
         const auto work = s::case_dir();
         const auto gxxs = s::glob(home / "registry/data/xpkgs", "xim-x-gcc/*/bin/g++");

@@ -79,11 +79,10 @@ void age(const fs::path& root, std::chrono::hours ago) {
 }  // namespace
 
 E2E entries{"entries", [] {
-    "172 build cache cross project"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "172 build cache cross project"_test[s::gcc][s::fresh_sandbox] = [] {
         // The global build cache saves work across projects: a dependency's key carries no
         // consumer identity, and the second project has zero compile edges for it (read from
         // build.ninja, not from a status line), while a new dependency version is compiled again.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         const auto index = tmp / "local-index";
@@ -137,10 +136,9 @@ E2E entries{"entries", [] {
         expect(fatal(s::count_matching(graph(one.dir()), compile_edges) > 0u)) << "a new dependency version was served from the old entry\n" << s::text(r);
     };
 
-    "174 cache modes and commands"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "174 cache modes and commands"_test[s::gcc][s::fresh_sandbox] = [] {
         // --cache=global|local|off, --no-cache, MCPP_BUILD_CACHE and [build] cache; the fast path
         // honours the mode; cache dir, list, info, verify, gc (by last use), clean.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
         const auto tmp = s::case_dir();
@@ -284,11 +282,10 @@ E2E entries{"entries", [] {
         expect(fatal(e2e::contains(s::text(r), "pre-v1"))) << "legacy wording\n" << s::text(r);
     };
 
-    "184 build cache object layout"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "184 build cache object layout"_test[s::gcc][s::fresh_sandbox] = [] {
         // An entry's object layout excludes the consumer (mcpp#344): two libraries that collide
         // on compress.c, in both orders, and the second project reuses lib-a with zero compile
         // edges and prints 42.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
         const auto tmp = s::case_dir();
@@ -329,11 +326,10 @@ E2E entries{"entries", [] {
         expect(fatal(e2e::succeeded(r))) << "cache verify reported incomplete entries\n" << s::text(r);
     };
 
-    "212 cached dep std is ordered"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "212 cached dep std is ordered"_test[s::gcc][s::fresh_sandbox] = [] {
         // mcpp#405: a dependency that imports std, consumed by a project that does not, builds on
         // a cache hit: the staged-cache aggregate names the std BMI. Nothing is deleted between
         // the builds.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         const auto index = tmp / "local-index";
@@ -360,11 +356,10 @@ E2E entries{"entries", [] {
         expect(fatal(s::has_line(output_of(hit, "projhit"), "^42$"))) << "staged artifacts produced wrong output";
     };
 
-    "959 a package is keyed by every module it imports"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "959 a package is keyed by every module it imports"_test[s::gcc][s::fresh_sandbox] = [] {
         // A cached package's key covers every package whose module it imports, declared or not:
         // ex.lib imports ex.api without stating it, and a new ex.api interface compiles ex.lib
         // again rather than serving the entry compiled against the old one.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
         const auto tmp = s::case_dir();

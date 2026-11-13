@@ -42,13 +42,12 @@ std::string runner(std::initializer_list<std::string_view> check, std::string_vi
 }
 
 E2E hosttools{"hosttools", [] {
-    "187 dep host tool"_test[tag{"requires:gcc"}] = [] {
+    "187 dep host tool"_test[s::gcc] = [] {
         // #355: the tool is built for the host into the store, found by mcpp::dep_bin(), and what
         // it generates is linked; a tool behind required_features is built with them active; a
         // consumer that does not ask gets nothing; a bad name lists the bin targets; an override
         // skips the build; a namespaced package answers both of its spellings. The tool store is
         // the case's own (a linked home), so a stale entry cannot make a broken build look green.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         const auto root = s::case_dir();
         s::project toolpkg{root / "toolpkg", {{"mcpp.toml", R"cpp([package]
@@ -128,11 +127,10 @@ required_features = ["codegen"]
         expect(eq(s::last_starting(s::text(ns2app.mcpp({"run"}, home)), "G2="), std::string("G2=5")));
     };
 
-    "189 host module rules"_test[tag{"requires:gcc"}] = [] {
+    "189 host module rules"_test[s::gcc] = [] {
         // `host-module = true` makes a dependency's module importable from the consumer's
         // build.mcpp: a rule written once, as a C++ module in an ordinary package, compiled in the
         // same command as build.mcpp.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         auto rule = [](std::string_view param, std::string_view value) {
             return std::format(R"cpp(module;
@@ -201,12 +199,11 @@ inline void define_answer(int n) {
         expect(eq(answer(), std::string("ANSWER=43"))) << "the renamed interface's directive did not land";
     };
 
-    "193 provision reexport"_test[tag{"requires:gcc"}] = [] {
+    "193 provision reexport"_test[s::gcc] = [] {
         // #359: a library stands up a toolchain on its user's behalf. Without `reexport` its tool
         // stays with it (an arbitrary transitive dependency cannot put entries in your build
         // program's tool namespace); with it, the consumer sees the tool, the rule module and the
         // package's directory through one dependency; a feature can add the request to an edge.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         const auto root = s::case_dir();
         s::project toolpkg{root / "toolpkg", {{"mcpp.toml", "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/lib.cpp\"]\n\n[targets.codegen]\nkind = \"bin\"\nmain = \"src/codegen.cpp\"\n"},
@@ -281,12 +278,11 @@ int main() {
         expect(s::lacks(s::text(b4), "host tool")) << "a tool was built for a consumer that did not enable the feature";
     };
 
-    "309 host module identity"_test[tag{"requires:gcc"}] = [] {
+    "309 host module identity"_test[s::gcc] = [] {
         // A rule's module name is what its source declares, not its package's name (Clang and MSVC
         // are handed an explicit name=BMI mapping, so a package-derived name built only under
         // GCC); a dotted name survives whole; two rules declaring one name are refused naming both
         // packages; an `mcpp.` name from another namespace warns and still builds.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         // 1. Package `protobufgen`, module `acme.rules.protobuf`.
         s::project rules{root / "rules", {{"mcpp.toml", "[package]\nname    = \"protobufgen\"\nversion = \"0.1.0\"\n\n[targets.protobufgen]\nkind = \"lib\"\n"},
@@ -336,12 +332,11 @@ int main() {
         expect(s::lacks(s::text(b4), "reserved for rules maintained by the mcpp project")) << "a package in the mcpp namespace was warned about its own prefix";
     };
 
-    "312 build rules example"_test[tag{"requires:gcc"}] = [] {
+    "312 build rules example"_test[s::gcc] = [] {
         // examples/08-build-rules builds and runs: two rule packages, one depending on the other
         // through its [build-dependencies], a `role = "check"` action and a generated source. It
         // is copied, without what an earlier run left in it, so that a second run does not
         // measure the first one's cache.
-        s::needs({"gcc"});
         const auto src = s::repository() / "examples/08-build-rules";
         expect(fatal(fs::is_directory(src))) << src.string() << " is missing";
         const auto ex = s::case_dir() / "ex";
@@ -380,11 +375,10 @@ int main() {
         expect(e2e::contains(s::text(b4), "goto")) << "the build failed without reporting what the check found";
     };
 
-    "624 a missing host module names the key"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "624 a missing host module names the key"_test[s::elf][s::gcc] = [] {
         // An import no dependency provides is refused by name before the compiler is reached
         // (whose message names neither the package nor the key); the names that can compile are
         // a closed set. The fix the message names is the fix that works.
-        s::needs({"elf", "gcc"});
         const auto root = s::case_dir();
         s::project rule{root / "rule", {{"src/rule.cppm", "export module rule;\nexport namespace testrule { inline int answer() { return 42; } }\n"},
                                         {"mcpp.toml", "[package]\nname    = \"rule\"\nversion = \"0.1.0\"\n\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n\n[build]\nsources = [\"src/rule.cppm\"]\n\n[targets.rule]\nkind = \"lib\"\n"}}};
@@ -406,11 +400,10 @@ int main() {
         expect(e2e::succeeded(app.mcpp({"build"}))) << "adding host-module = true did not make it build";
     };
 
-    "633 host modules are ordered by what they import"_test[tag{"requires:gcc"}] = [] {
+    "633 host modules are ordered by what they import"_test[s::gcc] = [] {
         // A host-module package's units are compiled in the order their imports require, not in
         // the order their paths sort; with no internal imports, path order survives. The reading
         // is a value the modules compute together, printed through mcpp::warning.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         const std::string head = "[package]\nname      = \"probe\"\nnamespace = \"ex\"\nversion   = \"0.1.0\"\n\n[language]\nstandard = \"c++23\"\nmodules  = true\n\n[build]\n";
         const std::string tail = "\n[features]\ndefault = []\nthing = { sources = [\"rules/thing.cppm\"] }\n";
@@ -439,12 +432,11 @@ int main() {
         expect(e2e::contains(s::text(b2), "CHAIN=1042")) << "the unconstrained case did not compute 1000 + 7 + 35";
     };
 
-    "665 a host tool follows its source"_test[tag{"requires:gcc"}] = [] {
+    "665 a host tool follows its source"_test[s::gcc] = [] {
         // #630 item 6: the tool store's key carries a stamp of a `path` package's tree and the
         // resolved commit of a `git` one, so an edit under an unchanged version reaches the
         // consumer, so does its reversal, and an unchanged tree (or a commit seen before) is not
         // rebuilt. The store is the case's own.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         const auto root = s::case_dir();
         auto write_tool = [&](const fs::path& dir, int value) {
@@ -633,14 +625,13 @@ int main() {
         }
     };
 
-    "712 a tool package contributes nothing to its consumer"_test[tag{"requires:gcc"}] = [] {
+    "712 a tool package contributes nothing to its consumer"_test[s::gcc] = [] {
         // #649 E6: a package whose targets are all programs contributes nothing to a consumer's
         // graph; its tools come from the tool sub-build. An SDK's program behind a feature that
         // depends on the SDK builds (it was a cycle of the consumer's graph) and runs, read under
         // both spellings; a tool's own library is not linked into the application; a cycle among
         // libraries is refused alike under both cache modes; a tool whose own build requests it
         // again is refused once, naming the repetition. The tool store is the case's own.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         auto fixture = [](const fs::path& w, std::string_view tool_dep) {
             s::project{w / "fw", {{"mcpp.toml", R"cpp([package]
@@ -775,11 +766,10 @@ int main() {
         expect(s::has_line(s::text(r), "^ANSWER=41")) << "wrong answer";
     };
 
-    "800 a feature provides its host tools"_test[tag{"requires:gcc"}] = [] {
+    "800 a feature provides its host tools"_test[s::gcc] = [] {
         // mcpp#709: `[features.<f>] tools = ["<bin>"]`: a consumer that enables the feature
         // receives the tool as if its edge had written `tools = [...]`; one that does not gets
         // nothing built; an entry naming no bin target is refused, naming the bin targets.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         const auto root = s::case_dir();
         const std::string tool_manifest = "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/lib.cpp\"]\n\n[features.codegen]\ntools = [\"codegen\"]\n\n[targets.codegen]\nkind = \"bin\"\nmain = \"src/codegen.cpp\"\n\n[targets.toolpkg]\nkind = \"lib\"\n";
@@ -805,12 +795,11 @@ int main() {
         expect(e2e::contains(s::text(b3), "nosuch") && e2e::contains(s::text(b3), "codegen")) << "3: the refusal does not name the entry and the bin targets";
     };
 
-    "802 a host build applies its host row"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "802 a host build applies its host row"_test[s::gcc][s::elf] = [] {
         // mcpp#704: a build without --target targets the host, and [target.<host-triple>]
         // describes it: without the row a plain build is self-contained (no NEEDED
         // libstdc++.so.6); with `cxx_runtime = "toolchain-coupled"` it needs it, as
         // `--target <host>` does; the row is found under another spelling of the triple.
-        s::needs({"gcc", "elf"});
         const auto uname = s::on_path("uname");
         expect(fatal(uname.has_value()));
         const auto arch = s::last_line(s::run(*uname, {"-m"}).out);
@@ -842,17 +831,16 @@ int main() {
         expect(needs_libstdcxx()) << "3: the row was not matched under another spelling";
     };
 
-    "804 a path host tool builds with its chosen toolchain"_test[tag{"requires:gcc"}][tag{"requires:elf"}] = [] {
+    "804 a path host tool builds with its chosen toolchain"_test[s::gcc][s::elf] = [] {
         // mcpp#710: a host tool is built by one compiler recorded in the store's key:
         // MCPP_TOOLCHAIN, else the tool package's own [toolchain], else the consumer's
         // build-program compiler. Through a plain path dependency: 1. no toolchain of its own,
         // the consumer's llvm (not the global default gcc); 2. its own gcc 16.1.0 while the
         // consumer keeps llvm. The compiler is read from the tool's .comment strings (the script
         // used `readelf -p .comment`; the case reads the bytes).
-        s::needs({"gcc", "elf"});
         const bool llvm_only = s::env("MCPP_E2E_804_LLVM_HOST_ONLY").value_or("0") == "1";
         if (llvm_only)
-            expect(fatal(s::on_linux() && !s::has("x86_64-host"))) << "LLVM-only host-helper admission requires native Linux ARM64";
+            expect(fatal(s::on_linux() && !s::on_x86_64())) << "LLVM-only host-helper admission requires native Linux ARM64";
         const auto llvm = s::llvm_version();
         const s::options home{.where = s::home::linked, .env = {{"MCPP_TOOLCHAIN", std::nullopt}}};
         if (auto index = s::env("MCPP_NATIVE_XIM_INDEX"); index && !index->empty()) {
@@ -897,13 +885,12 @@ int main() {
         expect(s::lacks(bytes, "clang version")) << "2: the tool was built by the consumer's clang";
     };
 
-    "826 plugin diagnostics features and names"_test[tag{"requires:unix-shell"}] = [] {
+    "826 plugin diagnostics features and names"_test[s::unix_shell] = [] {
         // #734 E11, E7, E10: a plugin `acme.gen` offers `mcpp.acme.gen` and two modules behind
         // features. D1 a structured diagnostic in the engine's form (impact, help); D2 a cache hit
         // reports it again; N1 a module behind a disabled feature fails naming the package and the
         // feature; R1 `mcpp.acme.*` from `acme` draws no warning; R2 `mcpp.rules.*` from `acme`
         // does, naming `mcpp.acme.*`.
-        s::needs({"unix-shell"});
         const auto root = s::case_dir();
         s::project gen{root / "gen", {{"mcpp.toml", "[package]\nnamespace = \"acme\"\nname      = \"gen\"\nversion   = \"0.1.0\"\n\n[lib]\npath = \"src/gen.cppm\"\n\n[features.extra]\nsources = [\"src/extra.cppm\"]\n\n[features.bad]\nsources = [\"src/bad.cppm\"]\n"},
                                       {"src/gen.cppm", R"cpp(export module mcpp.acme.gen;
@@ -954,12 +941,11 @@ inline void tell() {
         expect(e2e::contains(s::text(r2), "'mcpp.acme.*'")) << "R2: the warning does not name the accepted form";
     };
 
-    "831 a path dependency host module outside src"_test[tag{"requires:unix-shell"}] = [] {
+    "831 a path dependency host module outside src"_test[s::unix_shell] = [] {
         // #734: a path dependency's host module is compiled into the consumer's build program,
         // which no edge of build.ninja names, so the fast path sees an edit to it itself (it swept
         // only src/). S1 an edit to rules/hm.cppm re-runs the program; S2 a newer file of a
         // package nested in the dependency does not decline the fast path.
-        s::needs({"unix-shell"});
         const auto root = s::case_dir();
         s::project plug{root / "plug", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"plug831\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug831.cppm\"]\n\n[features.hm]\nsources = [\"rules/hm.cppm\"]\n"},
                                         {"src/plug831.cppm", "export module probe.plug831;\nexport int plug_root() { return 0; }\n"},
@@ -1069,12 +1055,11 @@ int main() {
         expect(e2e::contains(s::text(d), "T859 value two")) << "D: the replaced compile gave another value";
     };
 
-    "997 a members dev dependencies stay out of a host tool"_test[tag{"requires:gcc"}] = [] {
+    "997 a members dev dependencies stay out of a host tool"_test[s::gcc] = [] {
         // mcpp#874: a host tool has one store key whatever the command and the member; its
         // closure is the tool package's own manifests (it was read from the graph the build had
         // walked, holding a member's dev-dependencies). A: test --workspace then build: one entry,
         // naming `lib` and not `testing`; B: a second test --workspace builds no host tool.
-        s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
         s::project ws{s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"testing\", \"lib\", \"toolpkg\", \"app\"]\n"},
                                           {"testing/mcpp.toml", "[package]\nname    = \"testing\"\nversion = \"0.1.0\"\n\n[targets.testing]\nkind = \"lib\"\n"},

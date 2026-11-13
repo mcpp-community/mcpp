@@ -58,10 +58,9 @@ std::string local_package(std::string_view ns, std::string_view name, std::strin
 }
 
 E2E resolve{"resolve", [] {
-    "32 semver merge"_test[tag{"requires:fresh-sandbox"}] = [] {
+    "32 semver merge"_test[s::fresh_sandbox] = [] {
         // Two consumers of one package with overlapping constraints (exact and range) merge to
         // one satisfying version instead of erroring out.
-        s::needs({"fresh-sandbox"});
         with_user_index();
         const auto tmp = s::case_dir();
         s::project mylib{tmp / "mylib/mylib", {{"src/mylib.cppm", "export module mylib;\nexport int mylib_answer() { return 1; }\n"},
@@ -74,11 +73,10 @@ E2E resolve{"resolve", [] {
         expect(eq(s::last_line(app.mcpp({"run"}, inherited).out), std::string("ok=1")));
     };
 
-    "33 multi version mangling"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "33 multi version mangling"_test[s::elf][s::gcc] = [] {
         // Two transitive consumers wanting non-overlapping versions of one package: the second
         // copy's module name is mangled so both BMIs coexist; the header beside a staged source is
         // staged with it.
-        s::needs({"elf", "gcc"});
         with_user_index();
         const auto tmp = s::case_dir();
         s::project liba{tmp / "libA/libA", {{"src/libA.cppm", "export module libA;\nimport mcpplibs.cmdline;\nimport std;\nexport int libA_v() { return 1; }\n"},
@@ -98,10 +96,9 @@ E2E resolve{"resolve", [] {
         expect(eq(s::last_line(app.mcpp({"run"}, inherited).out), std::string("a=1 b=2")));
     };
 
-    "61 dependency visibility"_test[tag{"requires:gcc"}] = [] {
+    "61 dependency visibility"_test[s::gcc] = [] {
         // A private dependency is available while compiling its dependent, and its include
         // directories do not leak to that package's consumers.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project hidden{tmp / "hidden", {{"include/hidden/value.hpp", "#pragma once\ninline int hidden_value() { return 7; }\n"},
                                            {"src/hidden.cppm", "module;\n#include <hidden/value.hpp>\nexport module hidden;\nexport int hidden_answer() { return hidden_value(); }\n"},
@@ -118,10 +115,9 @@ E2E resolve{"resolve", [] {
         expect(e2e::contains(s::text(leak), "hidden/value.hpp")) << "consumer failed for an unexpected reason";
     };
 
-    "62 dotted dependency selector priority"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "62 dotted dependency selector priority"_test[s::gcc][s::fresh_sandbox] = [] {
         // A dotted selector in [dependencies] is exact: imgui.core -> (imgui, core), never
         // mcpplibs.imgui/core. The package is provided, so the build stays offline.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         s::project index{tmp / "imgui-index", {{"pkgs/i/imgui.core.lua", local_package("imgui", "imgui.core", "Exact dotted selector test package", "imgui-core", "src/core.cppm", "core")}}};
         s::project app{tmp / "project/app", {{".mcpp/.xlings/data/xpkgs/imgui-x-imgui.core/1.0.0/src/core.cppm", "export module imgui.core;\nexport int imgui_core_value() {\n    return 42;\n}\n"},
@@ -132,10 +128,9 @@ E2E resolve{"resolve", [] {
         expect(e2e::contains(app.read("mcpp.lock"), "namespace = \"imgui\"")) << "expected lockfile to record resolved peer namespace imgui";
     };
 
-    "63 bare dependency peer root priority"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "63 bare dependency peer root priority"_test[s::gcc][s::fresh_sandbox] = [] {
         // A bare selector means the default mcpplibs namespace: `imgui = "1.0.0"` locks
         // mcpplibs:imgui.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto h = s::case_home(s::home::inherited);
         s::project index{h / "indices/mcpplibs", {{".mcpp-index-updated", "ok\n"},
                                                   {"pkgs/i/imgui.lua", local_package("mcpplibs", "imgui", "Default-namespace exact selector test package", "imgui", "src/imgui.cppm", "imgui")}}};

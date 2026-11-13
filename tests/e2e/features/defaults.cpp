@@ -90,9 +90,8 @@ int main() { return widget_mode() == 1 ? 0 : 2; }
         expect(fatal(e2e::succeeded(re.mcpp({"build"}, cdb)))) << "(C) opt-out + explicit build failed";
         expect(e2e::contains(re.read("compile_commands.json"), "WIDGET_TURBO")) << "(C) explicit feature did not activate alongside opt-out";
     };
-    "127 transitive default features optout"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "127 transitive default features optout"_test[s::elf][s::gcc] = [] {
         // A consumer's `default-features = false` holds when the consumer is itself a dependency.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project{tmp / "B", {{"mcpp.toml", R"cpp([package]
 name    = "B"
@@ -224,12 +223,11 @@ mid = { path = "../mid" }
         expect(fatal(e2e::succeeded(off.mcpp({"test"}, cdb)))) << "(B) test build failed";
         expect(s::lacks(off.read("compile_commands.json"), "LEAF_EXTRA")) << "(B/test) leaf/extra leaked on the test path";
     };
-    "710 a forward reaches every dependency table"_test[tag{"requires:gcc"}] = [] {
+    "710 a forward reaches every dependency table"_test[s::gcc] = [] {
         // A feature forward is validated against every dependency table of its manifest: a
         // two-level forward along build-dependency edges builds under --strict and reaches the
         // leaf's tool; a row-declared dependency's forward is not reported; a forward to a key
         // no table declares is named, and refused under --strict.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project{tmp / "kt", {{"mcpp.toml", R"cpp([package]
@@ -340,11 +338,10 @@ int main() { return fw_answer() == 42 ? 0 : 1; }
         expect(fatal(failed(b4))) << "--strict accepted a forward to a key no table declares";
         expect(e2e::contains(s::text(b4), "spike.nowhere")) << "the --strict refusal does not name the key";
     };
-    "1045 a required capability takes its default provider"_test[tag{"requires:elf"}] = [] {
+    "1045 a required capability takes its default provider"_test[s::elf] = [] {
         // A library's required capability with no provider in the graph takes the provider its
         // [defaults] table names for the target (over `*`), reported; a provider the consumer
         // supplies is used instead, and no default is added.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         for (std::string_view p : {"a", "b"})
             s::project{tmp / std::format("greet-{}", p), {{"mcpp.toml", std::format(R"cpp([package]

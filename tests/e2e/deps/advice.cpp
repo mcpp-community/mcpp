@@ -11,11 +11,10 @@ namespace fs = std::filesystem;
 namespace {
 
 E2E advice{"advice", [] {
-    "821 an edge states its advice on both paths"_test[tag{"requires:unix-shell"}] = [] {
+    "821 an edge states its advice on both paths"_test[s::unix_shell] = [] {
         // An edge that has something to say on success writes its advice file, and mcpp reports
         // it once after a successful build, by one function the full build path and the fast
         // path both call; a build in which the edge did not run reports nothing.
-        s::needs({"unix-shell"});
         s::project p{{{"mcpp.toml", "[package]\nname    = \"advice821\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "int main() { return 0; }\n"},
                       {"data/probe.in", "first\n"},

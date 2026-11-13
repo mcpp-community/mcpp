@@ -50,13 +50,12 @@ std::string reported_root(std::string_view why) {
 }
 
 E2E edges{"edges", [] {
-    "1001 a dependency carries its patches"_test[tag{"requires:gcc"}] = [] {
+    "1001 a dependency carries its patches"_test[s::gcc] = [] {
         // A patched library is another library: the verified source is copied to the variant's
         // own tree under the mcpp home and patched there; the lock names the variant and each
         // patch with its SHA-256; a changed patch is another variant; a patch that does not
         // apply is refused naming the patch and its hunk and leaves no tree; a path dependency
         // carries no patches.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::inherited);
         const auto variants = home / "cache/src/compat.zlib";
         s::project app{{{"patches/0001-mark.patch", "--- a/zlib-1.3.2/zlib.h\n+++ b/zlib-1.3.2/zlib.h\n@@ -31,4 +31,6 @@\n #ifndef ZLIB_H\n #define ZLIB_H\n \n+#define MCPP_PATCHED_ZLIB 1\n+\n #ifdef ZLIB_BUILD\n"},
@@ -112,12 +111,11 @@ int main() {
         expect(e2e::contains(s::text(e), "is a path and carries patches")) << "the refusal does not say why";
     };
 
-    "1002 a dependency is embedded"_test[tag{"requires:gcc"}] = [] {
+    "1002 a dependency is embedded"_test[s::gcc] = [] {
         // `embed = true` compiles a dependency into its consumer: its sources, less `exclude`,
         // with its own include directories and macros; it builds no library; `exclude` needs
         // `embed`; a program reaching it holds its embedder or is refused; its link flags and
         // runtime libraries do not reach the program's link.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project zip{tmp / "zip", {{"mcpp.toml", "[package]\nname    = \"zip\"\nversion = \"0.1.0\"\n[dependencies]\n\"compat.zlib\" = { version = \"1.3.2\", embed = true, exclude = [\"*/uncompr.c\"] }\n"},
                                      {"src/zip.cppm", "module;\n#include <zlib.h>\nexport module zip;\nexport int zip_bound(int n) { return static_cast<int>(compressBound(static_cast<uLong>(n))); }\nexport const char* zip_version() { return zlibVersion(); }\n"},
@@ -172,10 +170,9 @@ int main() {
         expect(e2e::succeeded(lkapp.mcpp({"run"}, inherited))) << "the embedded package's link flags or libraries reached the program's link";
     };
 
-    "1046 a patch made with git diff from the package root is applied"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "1046 a patch made with git diff from the package root is applied"_test[s::elf][s::gcc] = [] {
         // `mcpp why deps` reports an index dependency's root; a patch made there with `git diff`
         // applies, and the variant is then the root the build reads.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nmcpplibs.cmdline = \"0.0.1\"\n"},
                                      {"src/main.cpp", "int main() { return 0; }\n"}}};
@@ -203,10 +200,9 @@ int main() {
         expect(e2e::contains(s::read_file(fs::path(variant) / file), "changed for the patch")) << "the variant does not hold the change";
     };
 
-    "1060 a patched member of a repository keeps its siblings"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "1060 a patched member of a repository keeps its siblings"_test[s::gcc][s::unix_shell] = [] {
         // A patch on a member of a git repository applies to that member, and its path
         // dependency on a sibling still reaches the sibling.
-        s::needs({"gcc", "unix-shell"});
         const auto tmp = s::case_dir();
         s::project repo{tmp / "repo", {{"mcpp.toml", "[workspace]\nmembers = [\"core\", \"front\"]\n"},
                                        {"core/mcpp.toml", "[package]\nname    = \"toy-core\"\nversion = \"0.1.0\"\n[targets.toy-core]\nkind = \"lib\"\n"},

@@ -23,10 +23,9 @@ std::string following(std::string_view text, std::string_view anchor, std::size_
 
 E2E skeleton{"skeleton", [] {
 
-    "1037 a skeleton tests with mtest and a test needs no main"_test[tag{"requires:gcc"}] = [] {
+    "1037 a skeleton tests with mtest and a test needs no main"_test[s::gcc] = [] {
         // `mcpp new` scaffolds a program or a library whose test is mtest's, and a test file with no
         // `main` begins at the entry a dependency offers.
-        s::needs({"gcc"});
         s::project t(s::case_dir() / "t", {});
         auto in = [&](std::string_view sub, std::vector<std::string> args) { return t.mcpp_in(sub, std::move(args)); };
 

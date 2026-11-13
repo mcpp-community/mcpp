@@ -80,13 +80,12 @@ bool has_exact_line(const fs::path& f, std::string_view line) { return std::rang
 std::string output_of(const fs::path& program) { return s::text(s::run(program)); }
 
 E2E modes{"modes", [] {
-    "30 pack modes"_test[tag{"requires:pack"}][tag{"requires:patchelf"}][tag{"requires:elf"}] = [] {
+    "30 pack modes"_test[s::pack][s::patchelf][s::elf] = [] {
         // `mcpp pack` in each mode, read from the extracted archive: the default (vendored)
         // repoints PT_INTERP and bundles nothing for a dependency-free program; static (where
         // a musl-gcc payload is installed) is statically linked; bundle-all carries the loader
         // and libc with a run.sh exporting MCPP_BUNDLE_DIR; system bundles nothing; the
         // bundle-project alias still packs. Every mode ships a top-level <name> entry.
-        s::needs({"pack", "patchelf", "elf"});
         const auto tmp = s::case_dir();
         auto app = s::project::scaffold("myapp");
         app.write("mcpp.toml", app.read("mcpp.toml") + "\n[toolchain]\nlinux = \"gcc@16.1.0\"\n");
@@ -159,12 +158,11 @@ E2E modes{"modes", [] {
         says_hello(sys / "bin/myapp", "system: extracted binary");
         pack({"--mode", "bundle-project"}, "alias bundle-project");
     };
-    "215 pack has no build machine paths"_test[tag{"requires:pack"}][tag{"requires:patchelf"}][tag{"requires:elf"}][tag{"requires:python3"}] = [] {
+    "215 pack has no build machine paths"_test[s::pack][s::patchelf][s::elf][s::python3] = [] {
         // A bundle does not depend on the machine that built it: no bundled object's search
         // path names the build machine's store; the executable carries DT_RPATH and each
         // bundled library DT_RUNPATH; a program with no host capabilities gets no
         // HOST-REQUIREMENTS file; --mode system's artifacts name no build-machine path either.
-        s::needs({"pack", "patchelf", "elf", "python3"});
         const auto tmp = s::case_dir();
         auto app = s::project::scaffold("bundled");
         app.write("mcpp.toml", app.read("mcpp.toml") + "\n[pack.bundle-project]\nforce_bundle = [\"libgcc_s.so.1\"]\n");
@@ -207,11 +205,10 @@ E2E modes{"modes", [] {
         }
         expect(sysfound) << "--mode system swept no ELF";
     };
-    "216 selfcontained refuses host capability"_test[tag{"requires:pack"}][tag{"requires:patchelf"}][tag{"requires:elf"}] = [] {
+    "216 selfcontained refuses host capability"_test[s::pack][s::patchelf][s::elf] = [] {
         // A bundle that carries its own libc cannot consume a capability the host must
         // satisfy: self-contained and static refuse, naming the capability and `vendored`;
         // vendored packs and states the capability and its discovery in HOST-REQUIREMENTS.
-        s::needs({"pack", "patchelf", "elf"});
         const auto tmp = s::case_dir();
         const auto index_dir = tmp / "local-index";
         s::project{index_dir, {{"pkgs/g/gfx-runtime.lua", R"cpp(package = {
@@ -286,10 +283,9 @@ main = "src/main.cpp"
         expect(fatal(e2e::contains(text, "capability=opengl.glx.driver"))) << "HOST-REQUIREMENTS does not list the capability\n" << text;
         expect(e2e::contains(text, "discovery=rpath-of-dispatch")) << "HOST-REQUIREMENTS states the capability but not how it is found\n" << text;
     };
-    "649 pack carries runtime deploy files"_test[tag{"requires:pack"}] = [] {
+    "649 pack carries runtime deploy files"_test[s::pack] = [] {
         // `mcpp pack` stages runtime.deploy_files and runtime.deploy (#615) at the same
         // relative path beside the packed executable.
-        s::needs({"pack"});
         const auto tmp = s::case_dir();
         auto app = s::project::scaffold("app");
         app.write("share/vulkan/icd.d/lvp_icd.json", "icd manifest\n");
@@ -316,11 +312,10 @@ deploy = [ { from = "share/vulkan/icd.d/lvp_icd.json", to = "vulkan/icd.d" } ]
         const auto notes = *root / "bin/notes.txt";
         expect(fs::exists(notes) && e2e::contains(s::read_file(notes), "notes")) << "runtime.deploy_files did not reach bin/ in the bundle\n" << s::text(r);
     };
-    "652 an application is a kind"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "652 an application is a kind"_test[s::elf][s::gcc] = [] {
         // `kind = "app"` (#622 A3): an unrecognized kind is refused listing every kind; on an
         // ELF host an app links as an executable beside a bin; `mcpp run` runs either and still
         // refuses an unknown target generically; `mcpp pack` routes an app as a program.
-        s::needs({"elf", "gcc"});
         s::project p{s::files{{"mcpp.toml", R"cpp([package]
 name    = "myapp"
 version = "0.1.0"
@@ -379,11 +374,10 @@ kind = "framework"
         expect(fatal(staged.has_value())) << "no staged tree under target/dist\n" << s::text(r);
         expect(executable(*staged / "bin/myapp")) << "the staged tree has no bin/myapp";
     };
-    "662 pack stages declared files before the closure"_test[tag{"requires:gcc"}] = [] {
+    "662 pack stages declared files before the closure"_test[s::gcc] = [] {
         // `mcpp pack` stages the program and its declared runtime files before it asks whether
         // the closure can be walked, and records the outcome on the stage manifest; a
         // dispatched format's action sees the deployed file and `closure = walked`.
-        s::needs({"gcc"});
         auto app = s::project::scaffold("app");
         app.write("share/notes.txt", "notes\n");
         app.write("mcpp.toml", app.read("mcpp.toml") + R"cpp(
@@ -462,12 +456,11 @@ int main() {
         expect(fatal(has_exact_line(*z, "notes.txt"))) << "the action's own view of the staged tree lacks the deploy file\n" << s::read_file(*z);
         expect(has_exact_line(*z, "closure = walked")) << "the manifest the action read does not say closure = walked\n" << s::read_file(*z);
     };
-    "669 an elf host pack states its closure"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "669 an elf host pack states its closure"_test[s::elf][s::gcc] = [] {
         // #634 A3/A4 on the ELF host row: a shared library without a declared soname records its
         // file name as DT_SONAME and a declared one keeps it; `--pkg-format dir` states a needs
         // line for each bundled and platform library before the file lines, and the tree runs;
         // a prebuilt library the loader can no longer find is refused by name.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project{tmp / "fw", {{"mcpp.toml", R"cpp([package]
 namespace = "demo"
@@ -554,12 +547,11 @@ ldflags = ["-L{0}/ext/lib", "-lext", "-Wl,-rpath,{0}/ext/lib"]
         expect(fatal(failed(r))) << "--format dir succeeded with libext.so gone\n" << s::text(r);
         expect(e2e::contains(s::text(r), "libext.so: the loader finds no file for it")) << "the refusal does not name libext.so\n" << s::text(r);
     };
-    "1043 several programs and a dotted name are packed as stated"_test[tag{"requires:elf"}][tag{"requires:unix-shell"}] = [] {
+    "1043 several programs and a dotted name are packed as stated"_test[s::elf][s::unix_shell] = [] {
         // Several programs, none named after the package: the first by name is packed and the
         // others and the ways to choose are said; --all-programs ships every one; a program
         // named with a dot is packed into one file that runs; the program named after the
         // package is packed and the ones left out are said.
-        s::needs({"elf", "unix-shell"});
         s::project p{s::files{{"mcpp.toml", R"cpp([package]
 name    = "multi"
 version = "0.1.0"
@@ -598,11 +590,10 @@ main = "src/command.cpp"
         expect(fatal(e2e::succeeded(r))) << "the program named after the package was not packed\n" << s::text(r);
         expect(e2e::contains(s::text(r), "packing alpha, the program named after the package; its other programs are not packed (COMMAND.COM)")) << "the programs left out are not said\n" << s::text(r);
     };
-    "1061 an artifact for another system is packed without running it"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1061 an artifact for another system is packed without running it"_test[s::elf][s::llvm] = [] {
         // An artifact for another system is packed from what its file states, without running
         // the host's ldd: the library the build produced travels with the program; with the
         // library static, --mode static packs a static program.
-        s::needs({"elf", "llvm"});
         const auto tmp = s::case_dir();
         const auto LLVM_VERSION = s::llvm_version();
         s::project{tmp / "plat", {{"mcpp.toml", std::format(R"cpp([package]

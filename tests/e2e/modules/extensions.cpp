@@ -67,11 +67,10 @@ s::project extfix(const fs::path& dir, std::string_view extra) {
 }
 
 E2E extensions{"extensions", [] {
-    "217 module extensions"_test[tag{"requires:gcc"}] = [] {
+    "217 module extensions"_test[s::gcc] = [] {
         // Undeclared, .ccm/.cxxm/.ixx are not compiled and the default glob is unchanged;
         // declared, they join the glob, take the module rule and their own object names, and
         // link and run, under GCC and (with its payload) Clang.
-        s::needs({"gcc"});
         auto nocfg = extfix(s::case_dir() / "nocfg", "");
         nocfg.write("src/main.cpp", "import std;\nimport extfix.a;\nint main(){ a(); std::println(\"NOCFG OK\"); }\n");
         auto r = nocfg.mcpp({"build"});
@@ -109,11 +108,10 @@ E2E extensions{"extensions", [] {
             std::println("  skip: no LLVM payload installed — clang leg not run");
     };
 
-    "218 module extensions graph shape"_test[tag{"requires:gcc"}] = [] {
+    "218 module extensions graph shape"_test[s::gcc] = [] {
         // A no-change build replays; a new import in a .ixx plans again and the edge is real;
         // module_extensions changes the graph in the same directory; a dead entry is reported; a
         // reserved extension is refused naming the key.
-        s::needs({"gcc"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\"]\n"},
                       {"src/helper.cppm", "export module gshape.helper;\nimport std;\nexport auto helper() -> int { return 41; }\n"},
                       {"src/face.ixx", "export module gshape.face;\nimport std;\nexport auto face() -> int { return 1; }\n"},

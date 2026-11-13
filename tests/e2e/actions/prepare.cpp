@@ -14,11 +14,10 @@ bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 constexpr std::string_view prep_manifest = "[package]\nname    = \"prep\"\nversion = \"0.1.0\"\n\n[toolchain]\nlinux = \"gcc@16.1.0\"\n\n[targets.prep]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
 
 E2E prepare{"prepare", [] {
-    "790 a prepare action populates an unknown directory"_test[tag{"requires:gcc"}] = [] {
+    "790 a prepare action populates an unknown directory"_test[s::gcc] = [] {
         // A `prepare` action declares only the directory a command fills; the build reads it by
         // directory. It runs on the first build, not on an unchanged one (nor does the compile),
         // again when an input changes, and not on the build after it passed.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", prep_manifest},
                       {"recipe.txt", "recipe v1\n"},
                       {"src/main.cpp", "#include <greet.h>\nint main() { return prep_greet() == 99 ? 0 : 1; }\n"},
@@ -83,11 +82,10 @@ gcc -shared -fPIC "$PREFIX/lib/greet.c" -o "$PREFIX/lib/libprepgreet.so"
         expect(e2e::succeeded(p.mcpp({"run"}))) << "run failed after the recipe changed";
     };
 
-    "791 a prepare action that creates nothing fails"_test[tag{"requires:gcc"}] = [] {
+    "791 a prepare action that creates nothing fails"_test[s::gcc] = [] {
         // A prepare command that succeeds and leaves its directory absent or holding only its
         // stamps fails the edge naming the directory, and writes no stamp; the stamp beside the
         // directory or inside it.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nint main(){ std::printf(\"ok\\n\"); }\n"}}};
         for (std::string_view where : {"beside", "inside"}) {
@@ -116,10 +114,9 @@ int main() {{
         }
     };
 
-    "792 a rerun input inside a prepare directory is warned"_test[tag{"requires:gcc"}] = [] {
+    "792 a rerun input inside a prepare directory is warned"_test[s::gcc] = [] {
         // A build program's re-run input inside a prepare action's directory (a file or a glob)
         // is warned about, naming the path, the directory and the package; one outside is not.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", prep_manifest},
                       {"src/main.cpp", "#include <cstdio>\nint main(){ std::printf(\"ok\\n\"); }\n"}}};
         s::write_executable(p.at("install.sh"), "#!/usr/bin/env bash\nset -e\nPREFIX=\"$1\"\nmkdir -p \"$PREFIX/include\"\necho '#define GREETING 1' > \"$PREFIX/include/greet.h\"\n");
@@ -162,10 +159,9 @@ int main() {{
         expect(!s::contains_nocase(s::text(b3), "prepare")) << "a re-run input OUTSIDE any prepare directory was warned about";
     };
 
-    "793 an unknown action role is refused"_test[tag{"requires:gcc"}] = [] {
+    "793 an unknown action role is refused"_test[s::gcc] = [] {
         // A role naming none of the five is refused naming the value and the list; each of the
         // five is accepted.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                       {"src/main.cpp", "#include <cstdio>\nint main(){ std::printf(\"ok\\n\"); }\n"}}};
         auto program = [](std::string_view role) {

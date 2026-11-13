@@ -33,11 +33,10 @@ std::string library(std::string_view name) {
 }
 
 E2E deps{"deps", [] {
-    "111 dep build mcpp"_test[tag{"requires:gcc"}] = [] {
+    "111 dep build mcpp"_test[s::gcc] = [] {
         // A dependency's build.mcpp runs with Cargo's scope: its define reaches only the
         // dependency's own units, its generated source (in MCPP_OUT_DIR) compiles into it, and
         // what it writes lives in the consuming project; the dependency's root is never written.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         s::project dep{root / "deplib", {{"mcpp.toml", "[package]\nname    = \"deplib\"\nversion = \"0.1.0\"\n\n[targets.deplib]\nkind = \"lib\"\n"},
                                          {"build.mcpp", R"cpp(#include <cstdio>
@@ -83,10 +82,9 @@ int main() {
         expect(found) << "dep OUT_DIR generated file not in project tree";
     };
 
-    "125 build mcpp dep dir"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "125 build mcpp dep dir"_test[s::elf][s::gcc] = [] {
         // mcpp#241: each resolved dependency's directory is MCPP_DEP_<NAME>_DIR
         // (mcpp::dep_dir("<name>")): consumer -> pkgp (a build.mcpp) -> datad.
-        s::needs({"elf", "gcc"});
         const auto root = s::case_dir();
         s::project datad{root / "datad", {{"src/d.cpp", "int datad_touch() { return 1; }\n"},
                                           {"mcpp.toml", "[package]\nname    = \"datad\"\nversion = \"0.1.0\"\n\n[modules]\nsources = [\"src/**/*.cpp\"]\n\n[targets.datad]\nkind = \"lib\"\n"}}};
@@ -123,10 +121,9 @@ int main() {
         expect(eq(d.filename().string(), std::string("datad"))) << "dep dir is not datad's root: " << dir;
     };
 
-    "145 root build mcpp dep dirs"_test[tag{"requires:gcc"}] = [] {
+    "145 root build mcpp dep dirs"_test[s::gcc] = [] {
         // The root's build.mcpp runs after resolution and is given MCPP_DEP_<NAME>_DIR as a
         // dependency's is: root -> datad.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         s::project datad{root / "datad", {{"src/d.cpp", "int datad_touch() { return 1; }\n"},
                                           {"mcpp.toml", "[package]\nname    = \"datad\"\nversion = \"0.1.0\"\n\n[modules]\nsources = [\"src/**/*.cpp\"]\n\n[targets.datad]\nkind = \"lib\"\n"}}};
@@ -160,12 +157,11 @@ int main() {
         expect(eq(d.filename().string(), std::string("datad"))) << "dep dir is not datad's root: " << dir;
     };
 
-    "310 build dependencies"_test[tag{"requires:gcc"}] = [] {
+    "310 build dependencies"_test[s::gcc] = [] {
         // `[build-dependencies]`: what serves the build and what reaches the target are two
         // questions. A rule's own [dependencies] and a build dependency (with what lies behind
         // them) stay out of the consumer's binary; a package the project depends on directly
         // still reaches it, also when named in both tables. The reading is the artifact.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         for (std::string n : {"behindrule", "buildside", "bothsides"}) {
             s::project lib{root / n, {}};
@@ -200,12 +196,11 @@ int main() {
         expect(has_symbol(bins.front(), "bothsides_symbol")) << "naming a library in [build-dependencies] too removed it from the target";
     };
 
-    "311 rule build dependencies"_test[tag{"requires:gcc"}] = [] {
+    "311 rule build dependencies"_test[s::gcc] = [] {
         // A rule may depend on another rule in its own [build-dependencies]; the consumer may not
         // import that one unless the edge says `reexport = true` (enforced on every platform, as
         // GCC's BMIs are reachable by name whatever the flags), also on a warm cache; a cycle is
         // reported as one, naming its packages.
-        s::needs({"gcc"});
         const auto root = s::case_dir();
         s::project globbing{root / "globbing", {{"mcpp.toml", library("globbing")},
                                                 {"src/globbing.cppm", "export module globbing;\nimport std;\nexport namespace globbing {\ninline int answer() { return 7; }\n}\n"}}};
@@ -262,12 +257,11 @@ inline void go() {
             << "the cycle diagnostic does not name the packages on it";
     };
 
-    "334 dependency declared tool is found"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "334 dependency declared tool is found"_test[s::gcc][s::unix_shell] = [] {
         // A runner named by bare name (mcpp::runner) is looked up through every package of the
         // graph, so a dependency (a board package) may declare it. With the program nowhere, the
         // run is an error naming it — not a fallback to executing the artifact. The stand-in
         // payload is never on PATH: a lookup through PATH would pass for the wrong reason.
-        s::needs({"gcc", "unix-shell"});
         const auto root = s::case_dir();
         s::write_executable(root / "fakepkg/bin/demo-tool", "#!/bin/sh\necho \"DEMO-TOOL ran with $*\"\n");
         if (s::on_path("demo-tool"))
@@ -285,12 +279,11 @@ inline void go() {
         expect(s::lacks(out, "DEMO-TOOL ran")) << "the artifact was executed anyway";
     };
 
-    "618 dependency feature tools reach its build program"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "618 dependency feature tools reach its build program"_test[s::elf][s::gcc] = [] {
         // A dependency's [feature-xlings.<f>] is installed before that dependency's build.mcpp
         // runs (it was provisioned after every build program had run). Only a registry that has
         // never seen the tool can tell, so the home is fresh, and the tool (shaderc) is one mcpp
         // does not install for its own reasons. The program writes what it found to a file.
-        s::needs({"elf", "gcc"});
         const auto root = s::case_dir();
         s::project dep{root / "dep", {{"src/lib.cpp", "int dep_touch() { return 1; }\n"},
                                       {"build.mcpp", R"cpp(#include <cstdio>
@@ -321,11 +314,10 @@ int main() {
         expect(e2e::contains(dep.read("tool-seen.txt"), "xim-x-shaderc")) << "the recorded path does not name shaderc";
     };
 
-    "622 rule declared payload reaches the consumers build program"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "622 rule declared payload reaches the consumers build program"_test[s::elf][s::gcc] = [] {
         // A rule package's [feature-xlings.<f>] is reachable from the consumer's build program,
         // where the rule's code runs (xpkg_dir read one manifest: "" while the payload sat on
         // disk). The reading is the path the rule answers with; a fresh home, for 618's reason.
-        s::needs({"elf", "gcc"});
         const auto root = s::case_dir();
         s::project rule{root / "rule", {{"src/rule.cppm", R"cpp(export module rule;
 import std;
@@ -360,13 +352,12 @@ int main() {
         expect(e2e::contains(answer, "xim-x-shaderc")) << "the answer does not name shaderc";
     };
 
-    "693 the root build program reads dependency link forms"_test[tag{"requires:elf"}] = [] {
+    "693 the root build program reads dependency link forms"_test[s::elf] = [] {
         // #642 E2: mcpp::dep_linkage(name) answers "static" or "shared" from the resolution that
         // decides what is linked, to the root's program only. A: a shared-by-default package and a
         // generated-only one asked shared; B: nothing changed, no re-run; C: the dependency's
         // default turns static; D: the edge asks shared; E: a dependency's program reads "" (gen
         // fails the build otherwise); F: `namespace` + `name` answer both spellings.
-        s::needs({"elf"});
         const auto root = s::case_dir();
         s::project leaf{root / "leaf", {{"mcpp.toml", "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\n[targets.leaf]\nkind = \"lib\"\n"},
                                         {"src/leaf.cpp", "int leaf_value() { return 1; }\n"}}};
@@ -569,12 +560,11 @@ int main() {
             expect(s::lacks(s::text(*r), "unsupported key 'metadata'")) << "F: metadata reported as unknown";
     };
 
-    "779 a build program declares a runtime search dir"_test[tag{"requires:pack"}][tag{"requires:gcc"}] = [] {
+    "779 a build program declares a runtime search dir"_test[s::pack][s::gcc] = [] {
         // mcpp::runtime_search_dir(dir), the build-program form of runtime_search_dirs (docs/04
         // §2.11, mcpp#701/#702): -Wl,-rpath in build.ninja, never -L; `mcpp run` finds the library
         // through that RUNPATH alone; a build.mcpp cache hit keeps it; pack stages it into lib/;
         // a dependency's declaration reaches its consumer's executable.
-        s::needs({"pack", "gcc"});
         const auto gcc = s::on_path("gcc");
         expect(fatal(gcc.has_value())) << "no gcc on PATH";
         const auto root = s::case_dir();
@@ -625,13 +615,12 @@ int main() {
         expect(e2e::succeeded(consumer.mcpp({"run"}))) << "consumer run failed to find the dependency's plugin";
     };
 
-    "873 payload overrides"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "873 payload overrides"_test[s::gcc][s::unix_shell] = [] {
         // mcpp#755: [xlings.overrides], MCPP_XLINGS_OVERRIDE_<NS>_<NAME> and config.toml state
         // where a declared payload comes from: it is not provisioned, the build program receives
         // the override, and the build says so on a `Using` line and in `Finished`. Every build
         // runs with MCPP_NO_AUTO_INSTALL=1 and the payload is in no index, so "built" means "not
         // asked for"; the baseline (no override, refused) is the control.
-        s::needs({"gcc", "unix-shell"});
         const auto work = s::case_dir();
         const auto w = work.generic_string();
         s::project plug{work / "plug", {{"mcpp.toml", "[package]\nname      = \"plug\"\nnamespace = \"e2e\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug.cppm\"]\n\n[features.tools-x]\nsources = [\"members/x.cppm\"]\n\n[feature-xlings.tools-x]\n\"xim:mcpp-e2e-absent-tool\" = \">=2.0\"\n\n[targets.plug]\nkind = \"lib\"\n"},
@@ -695,11 +684,10 @@ int main() {
         expect(e2e::contains(out, "is a dependency of this build")) << "a dependency's override was accepted";
     };
 
-    "874 payload on request"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "874 payload on request"_test[s::gcc][s::unix_shell] = [] {
         // mcpp#755 `provision = "on-request"`: a payload installed when a build program asks with
         // xpkg_request, not before it runs. Under MCPP_NO_AUTO_INSTALL=1 the project builds while
         // the program does not ask, and is refused naming the program when it does.
-        s::needs({"gcc", "unix-shell"});
         const auto work = s::case_dir();
         const auto w = work.generic_string();
         s::project plug{work / "plug", {{"mcpp.toml", "[package]\nname      = \"plug\"\nnamespace = \"e2e\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug.cppm\"]\n\n[features.tools-x]\nsources = [\"members/x.cppm\"]\n\n[feature-xlings.tools-x]\n\"xim:mcpp-e2e-absent-tool\" = { version = \"1.0.0\", provision = \"on-request\" }\n\n[targets.plug]\nkind = \"lib\"\n"},
@@ -743,10 +731,9 @@ int main() {
         expect(e2e::contains(db.out, "MCPP_BUILD_DATABASE_PAYLOAD_DEFERRED")) << "planning did not defer the request";
     };
 
-    "877 why sources"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "877 why sources"_test[s::gcc][s::unix_shell] = [] {
         // mcpp#755: `mcpp why sources|tool|payload` and `--format json`, the decision record of a
         // prepare as the build reported it. (The script read the JSON with python3.)
-        s::needs({"gcc", "unix-shell"});
         const auto work = s::case_dir();
         const auto w = work.generic_string();
         s::write_executable(work / "opt/bin/tool", "#!/bin/sh\n");
@@ -799,11 +786,10 @@ int main() {
         expect(!in_plan) << "C: the build dependency was compiled into the target's plan";
     };
 
-    "58 preinstall mcpp deps for hooks"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "58 preinstall mcpp deps for hooks"_test[s::gcc][s::fresh_sandbox] = [] {
         // A package installed from an mcpp index may need its mcpp.deps before its install hook
         // runs: they are installed first (library deps belong in mcpp.deps; only hook-time tools
         // are xpm deps). A fake xlings records the order of the installs.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto home = s::case_home(s::home::inherited);
         const auto seed = home / "registry/subos/default/.xlings.json";
         expect(fatal(fs::is_regular_file(seed))) << "inherited toolchain has no default SubOS runtime contract";

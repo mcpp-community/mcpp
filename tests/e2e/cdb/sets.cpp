@@ -21,7 +21,7 @@ std::string prefix_of(const std::string& n) { return n.contains('/') ? n.substr(
 std::string base_of(const std::string& n) { return n.substr(n.rfind('/') + 1); }
 
 E2E sets{"sets", [] {
-    "840 a workspace database describes each package once"_test[tag{"requires:python3"}] = [] {
+    "840 a workspace database describes each package once"_test[s::python3] = [] {
         // A: one configuration: each set and each source once, names unprefixed; B: two
         // configurations: names prefixed by their fingerprint, core once in each, the root
         // database one command per file and output; C: a member that fails is one error, the
@@ -124,7 +124,7 @@ E2E sets{"sets", [] {
         // Planned one by one, the members are still one configuration.
         expect(fatal(std::ranges::none_of(names, [](const std::string& n) { return n.contains('/'); }))) << "C: the fallback split the configuration";
     };
-    "913 the build database describes the build programs"_test[tag{"requires:python3"}] = [] {
+    "913 the build database describes the build programs"_test[s::python3] = [] {
         // A: the build programs' sets (the program, its build dependency, the mcpp core module
         // and the host std) are of the build-program configuration, beside the dev one; B: the
         // program's unit has the arguments the build programs' graph compiled it with; C: no
@@ -190,7 +190,7 @@ E2E sets{"sets", [] {
             expect(fatal(fs::weakly_canonical(fs::path(u["source"].get<std::string>()).parent_path()) == fs::weakly_canonical(engine))) << "D: " << u["source"].dump();
     };
 
-    "921 emit watches inputs not host outputs"_test[tag{"requires:python3"}] = [] {
+    "921 emit watches inputs not host outputs"_test[s::python3] = [] {
         // emit watches the project's and an editable build dependency's inputs, not the build
         // programs' outputs or an index payload; a repeated emit leaves the host lock it wrote
         // as it was (time and text) and the fingerprint the same; an edit of the editable

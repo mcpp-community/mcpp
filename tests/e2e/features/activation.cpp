@@ -76,9 +76,8 @@ E2E activation{"activation", [] {
         expect(e2e::contains(s::text(b9), "unknown platform 'web'")) << "missing platform refusal for 'web'";
     };
 
-    "71 required features gate"_test[tag{"requires:gcc"}] = [] {
+    "71 required features gate"_test[s::gcc] = [] {
         // A target is emitted only when all its required features are active.
-        s::needs({"gcc"});
         s::project p{s::files{{"src/common.cpp", "extern \"C\" int shared_answer(void) { return 0; }\n"},
                       {"bin/server.cpp", "extern \"C\" int shared_answer(void);\nint main() { return shared_answer(); }\n"},
                       {"bin/client.cpp", "extern \"C\" int shared_answer(void);\nint main() { return shared_answer(); }\n"},
@@ -167,10 +166,9 @@ E2E activation{"activation", [] {
         expect(e2e::contains(app.read("compile_commands.json"), "WIDGET_TURBO")) << "WIDGET_TURBO missing from consumer compile_commands.json";
         expect(e2e::succeeded(run_app(app))) << "binary did not observe WIDGET_TURBO";
     };
-    "308 dependency required features"_test[tag{"requires:elf"}] = [] {
+    "308 dependency required features"_test[s::elf] = [] {
         // A dependency's `[targets.<n>] required_features` gates its target for every consumer:
         // closed without the feature (the program still runs), open with it.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         s::project{tmp / "dep", {{"mcpp.toml", R"cpp([package]
 name    = "dep"
@@ -255,10 +253,9 @@ dep = { path = "../dep", features = ["plugin"] }
         mkpkg("blas-b", "blas", false);
         expect(e2e::succeeded(consumer({"blas-a", "blas-b"}).mcpp({"build"}))) << "two ordinary providers were refused";
     };
-    "615 feature deps shared library is linked"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "615 feature deps shared library is linked"_test[s::gcc][s::unix_shell] = [] {
         // A shared library a library package acquires through [feature-deps] reaches the link
         // line of its test binaries; the project builds without the feature too.
-        s::needs({"gcc", "unix-shell"});
         const auto tmp = s::case_dir();
         s::project{tmp / "greeter", {{"mcpp.toml", R"cpp([package]
 name    = "greeter"
@@ -307,11 +304,10 @@ int main() {
         expect(e2e::contains(loud, "greeter-from-the-shared-library")) << "the feature's shared library links and runs";
         expect(e2e::contains(quiet, "quiet")) << "and the same project builds without the feature";
     };
-    "711 a feature deps restatement names one source"_test[tag{"requires:gcc"}] = [] {
+    "711 a feature deps restatement names one source"_test[s::gcc] = [] {
         // A [feature-deps.<f>] entry adding `tools` to a dependency declared unconditionally
         // restates its source; another source (or constraint) is refused naming both; a build
         // program addresses a namespaced package's tool by both spellings, only with the feature.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         for (std::string_view d : {"installer", "other"})
@@ -410,11 +406,10 @@ main = "src/main.cpp"
         expect(e2e::contains(s::text(s2), "restates the dependency")) << "a restatement naming another constraint was not refused";
     };
 
-    "714 features names a dependency feature"_test[tag{"requires:gcc"}] = [] {
+    "714 features names a dependency feature"_test[s::gcc] = [] {
         // `--features <dependency>/<feature>` opens a feature of a dependency (no root macro), a
         // plain name without a [features] table is accepted, an unknown dependency is refused
         // under --strict; beside a [features] table too, and in `mcpp why deps`.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project{tmp / "fw", {{"mcpp.toml", R"cpp([package]
@@ -545,11 +540,10 @@ int main() { return 0; }
         manifest("public");
         expect(e2e::succeeded(app.mcpp({"build", "--cache", "off"}))) << "B: app failed to build once sdk is a PUBLIC feature-dep of lib_platform";
     };
-    "1012 capabilities bind in each consumer context"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "1012 capabilities bind in each consumer context"_test[s::gcc][s::unix_shell][s::python3] = [] {
         // Independent products may select different providers; a library requirement still
         // accepts a provider supplied by its final application's sibling edge, and each refusal
         // names the consumer whose closure it is about.
-        s::needs({"gcc", "unix-shell", "python3"});
         const s::options o{.where = s::home::inherited};
         s::project ws{s::files{{"mcpp.toml", R"cpp([workspace]
 members = ["app-a", "app-b", "helper", "provider-a", "provider-b"]

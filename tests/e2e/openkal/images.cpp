@@ -164,14 +164,13 @@ constexpr std::string_view caught_main = "import std;\nint main(int argc, char**
 constexpr std::string_view smoke_test = "import std;\nint main() { std::vector<int> v{2, 1}; std::ranges::sort(v); return v.front() == 1 ? 0 : 1; }\n";
 
 E2E images{"images", [] {
-    "942 an ok image is built once and run by okrun"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "942 an ok image is built once and run by okrun"_test[s::llvm][s::python3] = [] {
         // A both rows publish bin/app.oke, an ET_DYN of their architecture, and no unchecked
         // image; B okrun runs this machine's image with its arguments, environment, a callback,
         // TLS; E a second build is up to date; F pack stages the image in its platform's tree,
         // self-contained carries the runner, a single file carries the image; C an image
         // importing `puts` is refused by the seal and not published; D `import std` with the
         // C++ run-time switched off is refused saying where; G a workspace root's image runs.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         const std::string ht = std::string(host_arch) + "-openkal";
         const auto tmp = s::case_dir();
@@ -243,12 +242,11 @@ E2E images{"images", [] {
         expect(fatal(e2e::contains(s::text(r), "image: three arguments"))) << "G: the workspace root's image: " << s::text(r);
     };
 
-    "947 an image is entered at one stated symbol"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "947 an image is entered at one stated symbol"_test[s::llvm][s::unix_shell] = [] {
         // aarch64-none-elf: A `start = "_reset"` enters the image at _reset over the script's
         // ENTRY(_start), on an Entry line; B a `start` nothing defines fails the link naming the
         // statement; C a board's `mcpp:link-start` enters every image over it; D the program and
         // the board stating different symbols is refused naming both.
-        s::needs({"llvm", "unix-shell"});
         const auto nms = s::glob(s::shared_home() / "registry/data/xpkgs/xim-x-llvm", "*/bin/llvm-nm");
         expect(fatal(!nms.empty())) << "no llvm-nm in the llvm payload";
         const auto nm = nms.front();
@@ -314,12 +312,11 @@ asm(".section .text.entry,\"ax\",@progbits\n"
             << "D: the conflict does not name both statements: " << s::text(r);
     };
 
-    "953 the host graph runs build programs as images"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "953 the host graph runs build programs as images"_test[s::llvm][s::python3] = [] {
         // A `[host] platform = openkal-platform` runs the build program as an image (the
         // report names the host platform) and B its build-dependency's answer arrives; C the
         // host graph's runner is the platform's okrun, a program of this machine; D
         // `--host-platform none` runs it natively with the same answer.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         s::project app({{"mcpp.toml", "[package]\nname    = \"hostgraph\"\nversion = \"0.1.0\"\n\n[host]\nplatform = \"openkal-platform@0.18.0\"\n\n[build-dependencies]\nhelper = { path = \"helper\" }\n"},
                         {"helper/mcpp.toml", "[package]\nname = \"helper\"\nversion = \"0.1.0\"\n\n[targets.helper]\nkind = \"lib\"\n"},
@@ -347,12 +344,11 @@ asm(".section .text.entry,\"ax\",@progbits\n"
         expect(fatal(e2e::contains(s::text(r), "host graph: 1, answer 42"))) << "D: the answer differs without the host platform: " << s::text(r);
     };
 
-    "960 an image of another architecture runs through its execution host"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "960 an image of another architecture runs through its execution host"_test[s::llvm][s::python3] = [] {
         // A the build before a target's tests is recorded under the target; B the other
         // architecture's test is refused once, in full, exit 2; C self env states the refusal,
         // and with an execution host the other architecture's runner; D the execution host is
         // handed that runner (an ELF of that machine) and the image; with qemu it runs.
-        s::needs({"llvm", "python3"});
         needs_image_row();
         const std::string ht = std::string(host_arch) + "-openkal", ot = std::string(other_arch) + "-openkal";
         auto run_under_key = "MCPP_TARGET_" + ot + "_RUN_UNDER";
@@ -425,11 +421,10 @@ asm(".section .text.entry,\"ax\",@progbits\n"
         }
     };
 
-    "996 an ok image waits for a prepare action"_test[tag{"requires:llvm"}] = [] {
+    "996 an ok image waits for a prepare action"_test[s::llvm] = [] {
         // A an image whose build.mcpp declares a prepare action builds and runs (the ordering
         // guard does not refuse it); B its link edge waits for the action phony; C its debug
         // information is compressed by the link and its unit's is beside the object (.dwo).
-        s::needs({"llvm"});
         needs_image_row();
         const std::string t = std::string(host_arch) + "-openkal";
         s::project app({{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
@@ -464,11 +459,10 @@ int main() {
         expect(fatal(!s::find_files(app.at("target/" + t), R"(main.*\.dwo)").empty())) << "C: the image's unit has no .dwo";
     };
 
-    "1009 cache gc asks the runner"_test[tag{"requires:unix-shell"}] = [] {
+    "1009 cache gc asks the runner"_test[s::unix_shell] = [] {
         // A home with no okrun asks no runner; of the openkal-tools entries in a home, the
         // newest by numeric version (not one that names no released version) is asked
         // `cache gc`, and what it says is reported.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::fresh);
         const s::options fresh{.where = s::home::fresh};

@@ -29,10 +29,9 @@ std::string index_package(std::string_view ns, std::string_view name, std::strin
 }
 
 E2E path{"path", [] {
-    "09 path dependency"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "09 path dependency"_test[s::elf][s::gcc] = [] {
         // Package B imports modules of package A through `[dependencies.A] path`: the
         // multi-package scanner and link; a path whose manifest names another package is refused.
-        s::needs({"elf", "gcc"});
         auto a = s::project::scaffold("mylibA");
         a.write("src/greet.cppm", "export module mylibA.greet;\nimport std;\nexport auto greet(std::string_view who) -> void {\n    std::println(\"Hello {} from mylibA!\", who);\n}\n");
         a.remove("src/main.cpp");
@@ -186,10 +185,9 @@ E2E path{"path", [] {
         expect(!app.exists("mcpp.lock")) << "the lock was not removed";
     };
 
-    "27 namespace dependencies"_test[tag{"requires:fresh-sandbox"}] = [] {
+    "27 namespace dependencies"_test[s::fresh_sandbox] = [] {
         // `[dependencies.<ns>] name = { path = ... }` is parsed and built; the legacy quoted
         // `"<ns>.<name>"` key still round-trips; a flat key of the default namespace too.
-        s::needs({"fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto tmp = s::case_dir();
         auto lib = [&](std::string_view name, std::string_view module, std::string_view body) {
@@ -216,11 +214,10 @@ E2E path{"path", [] {
         expect(eq(s::last_line(app.mcpp({"run"}, home).out), std::string("two = 2"))) << "flat form";
     };
 
-    "31 transitive deps"_test[tag{"requires:musl"}] = [] {
+    "31 transitive deps"_test[s::musl] = [] {
         // A path dependency that declares a path dependency is resolved whole (the consumer need
         // not list the grandchild), and the grandchild's include_dirs reach its parent's compile;
         // naming both is consistent. A home with the payloads only; a skip without a musl payload.
-        s::needs({"musl"});
         const s::options home{.where = s::home::payloads};
         const auto musl = s::payload_root("xim-x-musl-gcc", s::musl_gcc_version()) / "bin/x86_64-linux-musl-g++";
         if (!fs::is_regular_file(musl))

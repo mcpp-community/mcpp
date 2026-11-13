@@ -130,11 +130,10 @@ defines = ["INPUTS_STILL_APPLY=1"]
         expect(e2e::contains(s::text(dc), "conditions dependencies on a target-side layer")) << "no diagnostic for a layer-conditioned dependency";
     };
 
-    "637 a conditional runtime table alone is applied"_test[tag{"requires:gcc"}] = [] {
+    "637 a conditional runtime table alone is applied"_test[s::gcc] = [] {
         // `[target.<pred>.runtime] libraries` reaches the link line when it is alone under its
         // predicate and beside another table; a non-matching predicate contributes nothing; a
         // typo in either runtime table is reported while the neighbouring key applies.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         auto graph = [](const s::project& p) {
             const auto nj = s::find_file(p.at("target"), "build.ninja");
@@ -182,12 +181,11 @@ framework = ["Cocoa"]
         expect(e2e::contains(s::text(t), "unsupported key 'framework'")) << "[typo] a plausible typo in [target.<pred>.runtime] was accepted in silence";
         expect(s::has_line(graph(typo), R"(-lm\b)")) << "[typo] the correctly spelled key stopped working";
     };
-    "654 a requirement on the target axis"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "654 a requirement on the target axis"_test[s::elf][s::gcc] = [] {
         // `requires_abi` under `[target.<sel>]` and `[target.<sel>.feature-requires-abi]` joins
         // the package's requirements only when the selector matches: a non-matching one imposes
         // nothing; a matching one is refused without the root's table, naming the dependency and
         // the selector, and satisfied by it (-pthread, its own fingerprint); per feature too.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project dep{tmp / "tgtdep", {{"src/tgtdep.cppm", "export module tgtdep;\nexport int tgt_value() { return 7; }\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", R"cpp(import tgtdep;
@@ -260,11 +258,10 @@ tgtdep = {0}
         expect(fatal(e2e::succeeded(app.mcpp({"build"}, cdb)))) << "the active feature's requirement was not satisfied by the root's table";
         expect(pthread_in_dep_command()) << "-pthread did not reach the dependency's compile command";
     };
-    "1007 a requirement a layer decides is checked"_test[tag{"requires:unix-shell"}] = [] {
+    "1007 a requirement a layer decides is checked"_test[s::unix_shell] = [] {
         // A requirement stated in a table whose selector names a layer is checked once the
         // layers are resolved, as a requirement of [package] is: refused before anything
         // compiles, naming the dependency and what it requires; a non-matching table states nothing.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         s::project needs{tmp / "needs", {{"src/needs.cpp", "int needs() { return 7; }\n"}}};
         auto write_needs = [&](std::string_view selector) { needs.write("mcpp.toml", std::format(R"cpp([package]

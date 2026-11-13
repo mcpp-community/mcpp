@@ -107,12 +107,11 @@ E2E members{"members", [] {
         expect(fatal(s::contains_nocase(s::text(r), "nope"))) << "expected an error mentioning the unknown member 'nope': " << s::text(r);
     };
 
-    "806 dash p resolves the package first"_test[tag{"requires:gcc"}] = [] {
+    "806 dash p resolves the package first"_test[s::gcc] = [] {
         // `-p` names a package first, then a directory: the package name, the last directory
         // component and the path each select a member, without a warning when nothing else could
         // match; a name two namespaces share is refused naming both qualified names; a directory
         // spelled as another member's package name warns and still selects the package.
-        s::needs({"gcc"});
         s::project ws(s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"modules/base\", \"ns1/common\", \"ns2/common\"]\n"}});
         auto member = [&](std::string dir, std::string name, std::string ns) {
             ws.write(dir + "/mcpp.toml", std::format("[package]\n{}name = \"{}\"\nversion = \"0.1.0\"\n\n[targets.{}]\nkind = \"lib\"\n\n[build]\nsources = [\"x.cpp\"]\n",
@@ -157,14 +156,13 @@ E2E members{"members", [] {
         expect(fatal(e2e::contains(s::text(r), "dup/ws-base"))) << "the warning must name the other member's path ('dup/ws-base'): " << s::text(r);
     };
 
-    "850 a selected member declares as the root"_test[tag{"requires:gcc"}] = [] {
+    "850 a selected member declares as the root"_test[s::gcc] = [] {
         // A: a rooted workspace whose root and member declare one dependency by path while a
         // shared dependency reaches it by git: the root's declaration wins, said so. B: `-p tool`
         // gives the selected member the same. C: two selected members that declare one dependency
         // by two kinds, or by two directories, are refused naming both. D, F: a member's linkage
         // request is honoured and its own dependencies reach the index refresh. E: two members
         // asking two forms of one dependency are refused naming both; one alone builds.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const auto fw = tmp / "framework";
         fs::create_directories(fw / "src");
@@ -263,7 +261,7 @@ E2E members{"members", [] {
         expect(fatal(e2e::succeeded(r))) << "E: one member alone did not build: " << s::text(r);
     };
 
-    "852 a repeated dash p selects every member it names"_test[tag{"requires:unix-shell"}] = [] {
+    "852 a repeated dash p selects every member it names"_test[s::unix_shell] = [] {
         // A repeated -p selects every member it names, in any order and named twice, in one
         // build directory; a -p that names no member is refused before planning, listing the
         // members, and leaves no build directory.
@@ -301,7 +299,7 @@ E2E members{"members", [] {
         expect(fatal(graphs(ws.dir()) == 1u)) << "B: the order made a second build directory";
     };
 
-    "853 run keeps one member and exclude removes members"_test[tag{"requires:unix-shell"}] = [] {
+    "853 run keeps one member and exclude removes members"_test[s::unix_shell] = [] {
         // D: `run` takes one member (two -p are refused naming both). E: --exclude removes
         // members from --workspace and at a virtual root, and is refused when it names no member,
         // beside -p, with nothing left, outside a workspace selection; --workspace with -p is

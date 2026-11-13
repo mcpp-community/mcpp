@@ -171,10 +171,9 @@ int main() {
         }
     };
 
-    "222 shared library cxx runtime contract"_test[tag{"requires:gcc"}][tag{"requires:elf"}][tag{"requires:python3"}] = [] {
+    "222 shared library cxx runtime contract"_test[s::gcc][s::elf][s::python3] = [] {
         // A shared library couples to the C++ runtime instead of exporting it; the executable
         // keeps its own contract; the self-contained opt-out stays hidden.
-        s::needs({"gcc", "elf", "python3"});
         const std::string crash = "_ZNKSt13runtime_error4whatEv";
         const std::string manifest_tail = "[targets.sharedrtlib]\nkind = \"shared\"\n\n[targets.sharedrt]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
         s::project p({{"mcpp.toml", "[package]\nname = \"sharedrt\"\nversion = \"0.1.0\"\n\n" + manifest_tail},
@@ -209,11 +208,10 @@ int main() {
         expect(fatal(!defines(*lib, crash))) << "FAIL: the embedded runtime is exported — " << crash;
     };
 
-    "690 a shared library over a graph cxx runtime"_test[tag{"requires:llvm"}][tag{"requires:elf"}] = [] {
+    "690 a shared library over a graph cxx runtime"_test[s::llvm][s::elf] = [] {
         // Over a graph C++ runtime a shared library is refused before compiling (naming the
         // package's own statement, or both remedies for a requested form); the static edge
         // builds; the stated private copy builds with no undefined libc++ reference and runs.
-        s::needs({"llvm", "elf"});
         const auto llvm = s::llvm_version();
         const auto tmp = s::case_dir();
         s::project fw(tmp / "fw", {{"src/fw.cppm", "export module fw;\nimport std;\nexport std::string fw_greet(int n);\nexport void fw_throw_runtime();\n"},
@@ -289,11 +287,10 @@ int main() {
         for (const auto& l : s::lines_with(out.out, "runtime_error")) std::println("READING private copy: {}", l);
     };
 
-    "700 a program over a cxx shared library has one cxx runtime"_test[tag{"requires:llvm"}][tag{"requires:elf"}] = [] {
+    "700 a program over a cxx shared library has one cxx runtime"_test[s::llvm][s::elf] = [] {
         // An unstated program contract takes the shared library's: the program runs on
         // libc++.so.1, the record says toolchain-coupled, --strict passes; a stated
         // self-contained program over the coupled library is refused before compiling.
-        s::needs({"llvm", "elf"});
         const auto llvm = s::llvm_version();
         const auto tmp = s::case_dir();
         s::project lib(tmp / "lib", {{"mcpp.toml", "[package]\nname    = \"lib\"\nversion = \"0.1.0\"\n\n[targets.lib]\nkind = \"shared\"\n"},
@@ -329,10 +326,9 @@ int main() {
         expect(fatal(reason == "program-cxx-runtime-split")) << "the machine reason was '" << reason << "', expected program-cxx-runtime-split";
     };
 
-    "701 symbol provision does not report what the build shares by construction"_test[tag{"requires:elf"}][tag{"requires:python3"}] = [] {
+    "701 symbol provision does not report what the build shares by construction"_test[s::elf][s::python3] = [] {
         // A program over a C++ shared library, both importing std, is clean in the record,
         // passes --strict and runs; the check measured it.
-        s::needs({"elf", "python3"});
         const auto tmp = s::case_dir();
         s::project lib(tmp / "lib", {{"mcpp.toml", "[package]\nname    = \"lib\"\nversion = \"0.1.0\"\n\n[targets.lib]\nkind = \"shared\"\n"},
                                      {"src/lib.cppm", "export module lib;\nimport std;\nexport [[gnu::visibility(\"default\")]] std::string lib_greet(int n);\n"},

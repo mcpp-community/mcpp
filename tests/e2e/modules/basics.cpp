@@ -62,9 +62,8 @@ main = "src/main.cpp"
 )";
 
 E2E basics{"basics", [] {
-    "03 multi module"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "03 multi module"_test[s::elf][s::gcc] = [] {
         // A package's module and main build and run; the graph names its BMI and the std BMI.
-        s::needs({"elf", "gcc"});
         auto p = s::project::scaffold("multi");
         p.write("src/greeter.cppm", "export module multi.greeter;\nimport std;\nexport auto greet(std::string_view who) -> void {\n    std::println(\"Hello, {}! (from multi.greeter)\", who);\n}\n");
         p.write("src/main.cpp", "import std;\nimport multi.greeter;\nint main() {\n    greet(\"modular C++23\");\n    std::println(\"multi-module build OK\");\n    return 0;\n}\n");
@@ -80,9 +79,8 @@ E2E basics{"basics", [] {
         expect(fatal(e2e::contains(text, "gcm.cache/std.gcm"))) << "ninja missing std BMI";
     };
 
-    "20 p1689 scanner"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "20 p1689 scanner"_test[s::elf][s::gcc] = [] {
         // The p1689 scanner builds what the regex scanner builds: the same output, the same BMIs.
-        s::needs({"elf", "gcc"});
         auto p = s::project::scaffold("myapp");
         p.write("src/lib.cppm", lib_cppm);
         p.write("src/lib-greet.cppm", greet_cppm);
@@ -101,10 +99,9 @@ E2E basics{"basics", [] {
         expect(fatal(gcm_p1689.contains("myapp.lib-greet.gcm"))) << "missing partition gcm";
     };
 
-    "21 ninja dyndep"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "21 ninja dyndep"_test[s::elf][s::gcc] = [] {
         // MCPP_NINJA_DYNDEP=1 builds what the static plan builds, through scan and dyndep edges
         // and their files; a rebuild finishes.
-        s::needs({"elf", "gcc"});
         auto p = s::project::scaffold("myapp");
         p.write("src/lib.cppm", lib_cppm);
         p.write("src/lib-greet.cppm", greet_cppm);
@@ -138,10 +135,9 @@ E2E basics{"basics", [] {
         expect(fatal(e2e::contains(out2, "Finished"))) << "incremental rebuild output: " << out2;
     };
 
-    "898 module units in cpp files"_test[tag{"requires:gcc"}][tag{"requires:llvm"}] = [] {
+    "898 module units in cpp files"_test[s::gcc][s::llvm] = [] {
         // Under Clang and GCC: an implementation partition in a .cpp, imported, builds and the
         // second build does nothing (M1, M3); an interface unit in a .cpp writes its BMI (M2).
-        s::needs({"gcc", "llvm"});
         const s::options home{.where = s::home::inherited};
         for (std::string_view tc : {"llvm@23.1.3", "gcc@16.1.0"}) {
             s::project parts(s::case_dir() / tc / "parts",
@@ -172,9 +168,8 @@ E2E basics{"basics", [] {
         }
     };
 
-    "924 visible imports resolve transitive modules"_test[tag{"requires:python3"}] = [] {
+    "924 visible imports resolve transitive modules"_test[s::python3] = [] {
         // A consumer's module map names the dependency it reaches through a visible import.
-        s::needs({"python3"});
         const s::options home{.where = s::home::inherited};
         s::project root({{"dependency/mcpp.toml", R"([package]
 name = "dependency"

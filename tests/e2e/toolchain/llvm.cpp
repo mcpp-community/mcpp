@@ -86,9 +86,8 @@ E2E llvm{"llvm", [] {
         expect(fatal(out == "llvm 42")) << "FAIL: wrong runtime output: " << out;
     };
 
-    "37 llvm import std"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "37 llvm import std"_test[s::import_std_libcxx] = [] {
         // An import-std package built with the LLVM payload and its libc++.
-        s::needs({"import-std-libcxx"});
         if (s::on_windows()) skip("libc++ std.cppm not available on Windows");
         needs_llvm_payload("std.cppm");
         auto p = llvm_project("hello_llvm_std", {{"src/main.cpp", "import std;\n\nint main() {\n    std::println(\"llvm std {}\", 23);\n    return 0;\n}\n"}});
@@ -100,9 +99,8 @@ E2E llvm{"llvm", [] {
         expect(fatal(out == "llvm std 23")) << "FAIL: wrong runtime output: " << out;
     };
 
-    "38 llvm modules"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "38 llvm modules"_test[s::import_std_libcxx] = [] {
         // A multi-module project with Clang: its BMIs are in pcm.cache, never gcm.cache.
-        s::needs({"import-std-libcxx"});
         if (s::on_windows()) skip("libc++ std.cppm not available on Windows");
         needs_llvm_payload("std.cppm");
         auto p = llvm_project("llvm_modules", {{"src/greet.cppm", "export module llvm_modules.greet;\nimport std;\n\nexport std::string greet(std::string_view name) {\n    return std::format(\"Hello, {}!\", name);\n}\n"},
@@ -123,10 +121,9 @@ E2E llvm{"llvm", [] {
         expect(fatal(!gcm)) << "FAIL: gcm.cache/ directory found (Clang should NOT use gcm.cache)";
     };
 
-    "39 llvm incremental"_test[tag{"requires:import-std-libcxx"}][tag{"requires:scan-deps"}] = [] {
+    "39 llvm incremental"_test[s::import_std_libcxx][s::scan_deps] = [] {
         // A change of one module interface rebuilds it, and not the unit that only imports it
         // (clang-scan-deps dyndep).
-        s::needs({"import-std-libcxx", "scan-deps"});
         needs_llvm_payload("std.cppm");
         auto p = llvm_project("llvm_inc", {{"src/greet.cppm", "export module llvm_inc.greet;\nimport std;\nexport std::string greet() { return \"hello\"; }\n"},
                                            {"src/main.cpp", "import std;\nimport llvm_inc.greet;\nint main() { std::println(\"{}\", greet()); }\n"}});
@@ -144,10 +141,9 @@ E2E llvm{"llvm", [] {
             expect(fatal(s::no_line(out, "-c.*main.cpp"))) << "FAIL: main.cpp was recompiled when only greet.cppm changed";
     };
 
-    "40 llvm bmi cache"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "40 llvm bmi cache"_test[s::import_std_libcxx] = [] {
         // A dependency's BMIs are cached: the second cold build stages them, has no compile edge
         // for the dependency, and sequences the staged artifacts before compilation.
-        s::needs({"import-std-libcxx"});
         if (s::on_windows()) skip("libc++ std.cppm not available on Windows");
         needs_llvm_payload("std.cppm");
         const auto home = s::case_home(s::home::inherited);
@@ -177,9 +173,8 @@ E2E llvm{"llvm", [] {
         expect(fatal(e2e::contains(s::text(r), "cache test ok"))) << "FAIL: run output: " << s::text(r);
     };
 
-    "41 llvm std compat"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "41 llvm std compat"_test[s::import_std_libcxx] = [] {
         // `import std.compat` with Clang gives the C library's functions.
-        s::needs({"import-std-libcxx"});
         if (s::on_windows()) skip("libc++ std.compat.cppm not available on Windows");
         needs_llvm_payload("std.compat.cppm");
         auto p = llvm_project("compat_test", {{"src/main.cpp", "import std.compat;\n\nint main() {\n    // std.compat provides C stdlib functions like printf\n    printf(\"compat %d\\n\", 42);\n    return 0;\n}\n"}});
@@ -191,10 +186,9 @@ E2E llvm{"llvm", [] {
         expect(fatal(out == "compat 42")) << "FAIL: wrong output: " << out;
     };
 
-    "47 llvm atomic link"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "47 llvm atomic link"_test[s::import_std_libcxx] = [] {
         // A 16-byte std::atomic lowers to __atomic_* libcalls that libatomic answers: the program
         // links and records DT_NEEDED libatomic.so; one without such atomics does not (--as-needed).
-        s::needs({"import-std-libcxx"});
         if (s::on_windows()) skip("libatomic/-latomic path is Linux-only");
         if (s::on_macos()) skip("libatomic is a GNU/Linux runtime; not applicable on macOS");
         needs_llvm_payload();
@@ -232,11 +226,10 @@ int main() {
         expect(fatal(!needs_libatomic(*binary))) << "FAIL: non-atomic binary should not depend on libatomic (--as-needed)";
     };
 
-    "86 llvm hermetic link"_test[tag{"requires:import-std-libcxx"}] = [] {
+    "86 llvm hermetic link"_test[s::import_std_libcxx] = [] {
         // The link flags carry the CRT discovery prefix and the build records a hermetic verdict;
         // the driver, given those flags, resolves every CRT object and the dynamic linker inside
         // the payload store (#195).
-        s::needs({"import-std-libcxx"});
         if (!s::on_linux()) skip("hermetic CRT/loader model is Linux-only");
         needs_llvm_payload("std.cppm");
         auto p = llvm_project("hermetic_hello", {{"src/main.cpp", "import std;\n\nint main() {\n    std::println(\"hermetic {}\", 195);\n    return 0;\n}\n"}});

@@ -14,11 +14,10 @@ namespace {
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 E2E graph{"graph", [] {
-    "945 a miss anywhere in the graph asks for a refresh"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "945 a miss anywhere in the graph asks for a refresh"_test[s::gcc][s::fresh_sandbox] = [] {
         // A request by version the local index cannot answer asks for a refresh wherever it is
         // in the graph, not only in the root's [dependencies]: declined offline, declined inside
         // the debounce window, and the refusal names the selector and the index.
-        s::needs({"gcc", "fresh-sandbox"});
         const auto index = s::case_home(s::home::inherited) / "indices/mcpplibs";
         fs::create_directories(index / "pkgs/w");
         s::project idx{index, {{".xlings-index-version", "abc1234\n"}, {".mcpp-index-updated", ""}}};
@@ -40,10 +39,9 @@ E2E graph{"graph", [] {
         expect(e2e::contains(s::text(b), "index: local index abc1234")) << "C: the refusal does not name the index";
     };
 
-    "948 an upgraded dependency is restaged at the same size"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "948 an upgraded dependency is restaged at the same size"_test[s::gcc][s::fresh_sandbox] = [] {
         // A dependency upgraded to a version the build cache already holds is staged over the
         // previous version's files, whatever their size (here the BMI's size does not change).
-        s::needs({"gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         const s::options inherited{.where = s::home::inherited};
         s::project{tmp / "local-index", {{"pkgs/c/constant.lua", R"cpp(package = {
@@ -111,11 +109,10 @@ E2E graph{"graph", [] {
         expect(cached.has_value() && s::read_file(*bmi) == s::read_file(*cached)) << "the staged BMI is not 1.0.1's";
     };
 
-    "980 an ambiguous dependency name is no packages"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "980 an ambiguous dependency name is no packages"_test[s::elf][s::gcc] = [] {
         // Two dependencies whose manifests both say `rules`: the bare name is no package's — not
         // published, not warned about on every run, MCPP_DEP_AMBIGUOUS_RULES names both — and
         // each qualified name still reaches its own directory; dep_dir("rules") is refused.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         for (std::string_view ns : {"openmui", "gongfu"}) {
             s::project rules{tmp / std::format("{}-rules", ns), {}};

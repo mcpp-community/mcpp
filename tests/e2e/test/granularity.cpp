@@ -25,8 +25,7 @@ std::string unit(std::string_view id) {
 }
 
 E2E granularity{"granularity", [] {
-    "1081 a package's tests are one program"_test[tag{"requires:gcc"}] = [] {
-        s::needs({"gcc"});
+    "1081 a package's tests are one program"_test[s::gcc] = [] {
         auto p = s::project::scaffold("app");
         p.write("tests/b.cpp", unit("top"));
         p.write("tests/unit/b.cpp", unit("nested"));
@@ -58,8 +57,7 @@ E2E granularity{"granularity", [] {
         expect(e2e::contains(s::text(d), "m1.cpp") && e2e::contains(s::text(d), "m2.cpp")) << s::text(d);
     };
 
-    "1082 programs by directory says what it leaves"_test[tag{"requires:gcc"}] = [] {
-        s::needs({"gcc"});
+    "1082 programs by directory says what it leaves"_test[s::gcc] = [] {
         auto p = s::project::scaffold("app");
         p.write("tests/unit/a.cpp", unit("a"));
         p.write("mcpp.toml", p.read("mcpp.toml") + "\n[test]\nprograms = \"directory\"\n");

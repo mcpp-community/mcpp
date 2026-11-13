@@ -71,10 +71,9 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
 }
 
 E2E flags{"flags", [] {
-    "50 package owned build flags"_test[tag{"requires:gcc"}] = [] {
+    "50 package owned build flags"_test[s::gcc] = [] {
         // A dependency's own cflags and cxxflags compile its C and C++ sources; the consumer
         // declares neither, and the graph carries both.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project{tmp / "depC", {{"src/dep_core.c", R"cpp(#ifndef DEP_C_BUILD
 #error "missing dependency-owned C flag"
@@ -129,10 +128,9 @@ path = "../depC"
         expect(e2e::contains(g, "-DDEP_CXX_BUILD=35")) << "dep cxxflags missing from build.ninja";
     };
 
-    "54 package owned ldflags"_test[tag{"requires:gcc"}] = [] {
+    "54 package owned ldflags"_test[s::gcc] = [] {
         // A dependency's ldflags reach the consumer's link: the program links against the
         // archive they name and runs, and the graph carries both flags.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         s::project native{tmp / "native", {{"answer.c", R"cpp(int dep_link_answer(void) {
     return 42;
@@ -178,10 +176,9 @@ path = "../depLink"
         expect(e2e::contains(g, "-lanswer")) << "dep -l flag missing from build.ninja\n" << g;
     };
 
-    "70 per target flags"_test[tag{"requires:gcc"}] = [] {
+    "70 per target flags"_test[s::gcc] = [] {
         // Two bin targets of one package carry their own defines and cxxflags on their own
         // entry only; a shared source compiled once sees neither (#131).
-        s::needs({"gcc"});
         s::project p{s::files{{"src/common.cpp", R"cpp(#if defined(ROLE_SERVER) || defined(ROLE_CLIENT)
 #error "per-target macro leaked into a shared compile unit"
 #endif
@@ -224,10 +221,9 @@ cxxflags = ["-DVIA_CXXFLAG"]
         expect(e2e::succeeded(p.mcpp({"run", "client"}))) << "client run failed (wrong/missing macro)";
     };
 
-    "73 issue131 per target cxxflag"_test[tag{"requires:gcc"}] = [] {
+    "73 issue131 per target cxxflag"_test[s::gcc] = [] {
         // A single bin target's codegen cxxflag (-fno-exceptions) reaches only its own entry,
         // not the shared code (#131 scenario 1).
-        s::needs({"gcc"});
         s::project p{s::files{{"src/shared.cpp", R"cpp(#ifndef __EXCEPTIONS
 #error "per-target cxxflag leaked into a shared compile unit"
 #endif
@@ -252,10 +248,9 @@ cxxflags = ["-fno-exceptions"]
         expect(e2e::succeeded(p.mcpp({"run", "test_contracts"}))) << "run failed";
     };
 
-    "109 per glob flags"_test[tag{"requires:gcc"}] = [] {
+    "109 per glob flags"_test[s::gcc] = [] {
         // [build] flags = [{ glob, ... }]: matched units get the flags, unmatched do not, a later
         // entry wins, and a glob matching nothing warns.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("globf");
         p.write("src/tagged.cpp", R"cpp(#ifndef TAG
 #error "per-glob define did not reach tagged.cpp"
@@ -292,10 +287,9 @@ flags = [
         r = p.mcpp({"run"});
         expect(s::last_line(r.out) == "tag = 3") << "unexpected output: " << s::last_line(r.out) << " (want later-entry override → 2+1)";
     };
-    "116 include family and define spaces"_test[tag{"requires:gcc"}] = [] {
+    "116 include family and define spaces"_test[s::gcc] = [] {
         // An -iquote flag in cflags finds a quoted header, and a per-glob define whose value
         // holds a space (T=long long) reaches its unit whole.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("incfam");
         p.write("hdr/magic.h", R"cpp(#define MAGIC 42
 )cpp");
@@ -333,10 +327,9 @@ flags = [
         expect(s::last_line(r.out) == "magic=42 big=123456789012") << "unexpected output: " << s::last_line(r.out);
     };
 
-    "141 include dirs after"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "141 include dirs after"_test[s::elf][s::gcc] = [] {
         // A dependency's include_dirs_after reaches its consumer as -idirafter, behind the
         // system headers (its poisoned stdlib.h is not found); as include_dirs it would be.
-        s::needs({"elf", "gcc"});
         auto lib = s::project::scaffold("poisonlib");
         lib.remove("src/main.cpp");
         lib.write("src/lib.cppm", R"cpp(export module poisonlib.lib;
@@ -434,9 +427,8 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "wide include run failed\n" << s::text(r);
         expect(e2e::contains(s::text(r), "wide_sum = 2080")) << "expected wide_sum = 2080 (every -I must be present)\n" << s::text(r);
     };
-    "620 link flag reaches the link line"_test[tag{"requires:gcc"}] = [] {
+    "620 link flag reaches the link line"_test[s::gcc] = [] {
         // A link flag a build program computes (mcpp::link_flag) reaches the linker.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", R"cpp([package]
 name    = "linkflag"
 version = "0.1.0"
@@ -467,13 +459,12 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "the project did not build or run\n" << s::text(r);
         expect(e2e::contains(s::text(r), "defsym=42")) << "the computed link flag did not reach the linker\n" << s::text(r);
     };
-    "765 a consumer include directory stays in the consumer"_test[tag{"requires:python3"}] = [] {
+    "765 a consumer include directory stays in the consumer"_test[s::python3] = [] {
         // The root's include directories reach its own units only: a private one does not
         // reach a dependency (a), the compile database gives the dependency's units none of the
         // root's directories and the root each of its own once plus the dependency's public one
         // (b), the dependency's words are the same under two roots (c), and a dependency that
         // needed its consumer's header fails naming the header and the consumer's directory (d).
-        s::needs({"python3"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project{tmp / "dep", {{"include/dep/api.h", R"cpp(#pragma once
@@ -626,10 +617,9 @@ main = "src/main.cpp"
             expect(fatal(e2e::contains(s::text(r), "no longer") && e2e::contains(s::text(r), "appinc"))) << "(d, " << pass << "): the advice naming the consumer's directory is missing\n" << s::text(r);
         }
     };
-    "777 c standard applies to the package that declares it"_test[tag{"requires:gcc"}] = [] {
+    "777 c standard applies to the package that declares it"_test[s::gcc] = [] {
         // Each package's C units compile at its own c_standard (the root c99, a dependency
         // gnu11, one declaring none the default c11), in the compile database too.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project{tmp / "cdep", {{"mcpp.toml", R"cpp([package]
@@ -687,10 +677,9 @@ int main() { return cdep_value() == 11 && plain_value() == 1 && root_value() == 
         expect(fatal(e2e::contains(s::read_file(*db), "-std=gnu11"))) << "the database does not carry cdep's standard";
         expect(e2e::contains(s::read_file(*db), "-std=c99")) << "the database does not carry app's standard";
     };
-    "1047 an artifact compiles its shared sources with its own flags"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "1047 an artifact compiles its shared sources with its own flags"_test[s::elf][s::gcc] = [] {
         // An artifact with build flags of its own compiles the package's shared sources as a
         // variant with them; one without links the package's object and has no variant.
-        s::needs({"elf", "gcc"});
         s::project p{s::files{{"mcpp.toml", R"cpp([package]
 name    = "shell"
 version = "0.1.0"
@@ -736,11 +725,10 @@ int autoexec() {
         expect(fatal(variant)) << "no variant object of COMMAND";
         expect(!cmd_variant) << "an artifact without flags of its own has a variant";
     };
-    "1054 programs that share an entry keep their own flags"_test[tag{"requires:gcc"}] = [] {
+    "1054 programs that share an entry keep their own flags"_test[s::gcc] = [] {
         // Three programs with one entry keep their own flags: plain, a target define on the
         // entry only, a [targets.<n>.build] define on the entry and the shared sources; the
         // shared entry object carries no program's define.
-        s::needs({"gcc"});
         s::project p{s::files{{"mcpp.toml", R"cpp([package]
 name    = "twin"
 version = "0.1.0"

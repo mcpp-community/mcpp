@@ -170,11 +170,10 @@ E2E hooks{"hooks", [] {
         expect(!ws.exists("root.log")) << "the workspace root's own hooks fired";
         expect(!ws.exists("hooks.log")) << "a member hook ran in the workspace root";
     };
-    "648 an install hook sees the build target"_test[tag{"requires:elf"}] = [] {
+    "648 an install hook sees the build target"_test[s::elf] = [] {
         // A dependency's install hook receives the build's target under the names a build
         // program uses, and the two toolchain names present and empty (the toolchain is resolved
         // after the graph), whatever the caller's environment holds.
-        s::needs({"elf"});
         s::project p{s::files{{"local-index/pkgs/h/acme.hookprobe.lua", R"cpp(package = {
     spec = "1",
     namespace = "acme",

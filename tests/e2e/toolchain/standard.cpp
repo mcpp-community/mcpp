@@ -87,10 +87,9 @@ struct Point { double x{}; double y{}; };
 )";
 
 E2E standard{"standard", [] {
-    "59 cpp standard config"_test[tag{"requires:gcc"}] = [] {
+    "59 cpp standard config"_test[s::gcc] = [] {
         // `[package].standard` drives the build flags, the compile database and the std BMI's
         // metadata, through the P1689 scanner too.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::inherited);
         const s::options o{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project p({{"mcpp.toml", "[package]\nname     = \"cpp26_std\"\nversion  = \"0.1.0\"\nstandard = \"c++26\"\n"},
@@ -122,9 +121,8 @@ E2E standard{"standard", [] {
         expect(fatal(s::lacks(s::text(r), "-std=c++23") && s::lacks(ninja, "-std=c++23") && s::lacks(cdb, "-std=c++23"))) << "FAIL: P1689 path still contains C++23";
     };
 
-    "98 reflection import std"_test[tag{"requires:gcc"}] = [] {
+    "98 reflection import std"_test[s::gcc] = [] {
         // A dialect flag (-freflection) reaches the std BMI and the whole module graph (#210).
-        s::needs({"gcc"});
         if (!reflection_gxx()) skip("no -freflection-capable gcc payload available");
         s::project p({{"meta_dep/mcpp.toml", "[package]\nname     = \"meta_dep\"\nversion  = \"0.1.0\"\nstandard = \"c++26\"\n\n[targets.meta_dep]\nkind = \"lib\"\n"},
                       {"meta_dep/src/meta_dep.cppm", "export module meta_dep;\nimport std;\nexport namespace meta_dep {\nstd::string tag() { return \"dep-ok\"; }\n}\n"},
@@ -139,10 +137,9 @@ E2E standard{"standard", [] {
         expect(fatal(!files_matching(s::shared_home() / "build-cache/v1/std", flag).empty())) << "FAIL: no std-module.json records -freflection in std_flag";
     };
 
-    "100 cppfly reflection"_test[tag{"requires:gcc"}] = [] {
+    "100 cppfly reflection"_test[s::gcc] = [] {
         // `standard = "c++fly"` is the latest standard with the experimental gates on (reflection
         // and contracts on gcc 16), never spelled -std=c++fly; `c++latest` resolves to -std=c++26.
-        s::needs({"gcc"});
         const auto gxx = reflection_gxx();
         if (!gxx) skip("no -freflection-capable gcc payload available");
         const auto gcc_ver = gxx->parent_path().parent_path().filename().string();
@@ -176,10 +173,9 @@ E2E standard{"standard", [] {
         expect(fatal(s::lacks(latest_ninja, "-std=c++latest") && s::lacks(read_if(latest.at("compile_commands.json")), "-std=c++latest"))) << "FAIL: invalid -std=c++latest spelling reached a command line";
     };
 
-    "135 diagnostic promise resolves"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "135 diagnostic promise resolves"_test[s::llvm][s::unix_shell] = [] {
         // The freestanding import-std diagnostic prints a dependency line to paste, and that line
         // resolves and enters the build graph.
-        s::needs({"llvm", "unix-shell"});
         auto p = s::project::scaffold("promise");
         for (const auto& t : s::glob(p.at("tests"), "*.cpp")) fs::remove(t);
         const std::string manifest = "[package]\nname    = \"promise\"\nversion = \"0.1.0\"\n\n[build]\ntarget = \"riscv64-none-elf\"\n";
@@ -202,11 +198,10 @@ E2E standard{"standard", [] {
         expect(fatal(s::has_line(paste, "(Downloading|Compiling).*std-freestanding"))) << "the pasted dependency never entered the build graph";
     };
 
-    "175 cpp20 import std"_test[tag{"requires:gcc"}] = [] {
+    "175 cpp20 import std"_test[s::gcc] = [] {
         // `standard = "c++20"` is a first-class level: import std works at it, -std=c++20 is on
         // every command and the std BMI records it; gnu++20 reaches cxxflags; c++17 is refused,
         // naming the c++20 floor.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::inherited);
         const s::options o{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         const auto tmp = s::case_dir();
@@ -236,10 +231,9 @@ E2E standard{"standard", [] {
         expect(fatal(e2e::contains(s::text(r), "c++20"))) << "FAIL: rejection message does not advertise the c++20 floor: " << s::text(r);
     };
 
-    "176 cpp20 std bmi isolation"_test[tag{"requires:gcc"}] = [] {
+    "176 cpp20 std bmi isolation"_test[s::gcc] = [] {
         // Switching `[package].standard` between c++20 and c++23 keeps a std BMI and a target
         // directory per level.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::inherited);
         const s::options o{.where = s::home::inherited};
         s::project p({{"src/main.cpp", "import std;\nint main() { std::cout << \"level ok\\n\"; return 0; }\n"}});
@@ -269,10 +263,9 @@ E2E standard{"standard", [] {
         expect(fatal(dirs >= 2u)) << "FAIL: expected separate target dirs per standard, found " << dirs;
     };
 
-    "235 std object only when needed"_test[tag{"requires:elf"}] = [] {
+    "235 std object only when needed"_test[s::elf] = [] {
         // std.o is in the graph of a project that reaches std, transitively too, and not in one
         // that imports it nowhere (#416).
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         const auto toolchain = std::format("[toolchain]\ndefault = \"gcc@16.1.0\"\nmacos   = \"llvm@{0}\"\nwindows = \"llvm@{0}\"\n", s::llvm_version());
         s::project nostd(tmp / "nostd", {{"mcpp.toml", "[package]\nname = \"nostd\"\nversion = \"0.1.0\"\n" + toolchain},
@@ -297,11 +290,10 @@ E2E standard{"standard", [] {
         expect(fatal(e2e::succeeded(ran))) << "FAIL: the transitive binary exited " << ran.status;
     };
 
-    "322 dialect flag refusal"_test[tag{"requires:gcc"}] = [] {
+    "322 dialect flag refusal"_test[s::gcc] = [] {
         // A dialect flag in cxxflags (or a profile's) beside import std is refused before the
         // compiler runs, naming dialect_cxxflags; dialect_cxxflags, an auto-promoted flag and a
         // project without import std build (#527).
-        s::needs({"gcc"});
         s::project p;
         auto writes_manifest = [&](std::string_view body) {
             p.write("mcpp.toml", std::format("[package]\nname = \"dia\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n\n[build]\n{}\n", body));
@@ -337,10 +329,9 @@ E2E standard{"standard", [] {
         expect(fatal(e2e::succeeded(r))) << "FAIL: without import std, -fno-exceptions is an ordinary per-unit flag: " << s::text(r);
     };
 
-    "886 std compat is built when imported"_test[tag{"requires:gcc"}] = [] {
+    "886 std compat is built when imported"_test[s::gcc] = [] {
         // On the GCC row std.compat is built in the cache when a unit imports it, and not for a
         // build that imports only std.
-        s::needs({"gcc"});
         const auto home = s::case_home(s::home::fresh);
         s::project(home, {{"config.toml", std::format("[xlings]\nhome = \"{}\"\n", (s::shared_home() / "registry").generic_string())}});
         const s::options o{.where = s::home::fresh};
@@ -365,11 +356,10 @@ E2E standard{"standard", [] {
         expect(fatal(compat_files() != 0u)) << "FAIL: std.compat was not built in the cache";
     };
 
-    "1010 the std module takes the platforms flags"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "1010 the std module takes the platforms flags"_test[s::llvm][s::unix_shell] = [] {
         // The std module is compiled with the compile words the platform states
         // (-fcf-protection=full), so a program importing std builds and runs under it.
-        s::needs({"llvm", "unix-shell"});
-        if (!s::has("x86_64-host")) skip("-fcf-protection is an x86_64 flag");
+        if (!s::on_x86_64()) skip("-fcf-protection is an x86_64 flag");
         const auto tmp = s::case_dir();
         s::project(tmp / "plat", {{"mcpp.toml", "[package]\nname    = \"cet-platform\"\nversion = \"0.1.0\"\n\n[platform]\ntargets = [\"x86_64-linux-gnu\"]\n\n[platform.build]\ncxxflags = [\"-fcf-protection=full\"]\n"}});
         s::project app(tmp / "app", {{"mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[toolchain]\ndefault = \"llvm@{}\"\n\n[target.'cfg(linux)']\nplatform = {{ path = \"../plat\" }}\n", s::llvm_version())},

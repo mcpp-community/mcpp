@@ -29,6 +29,8 @@ namespace e2e = mcpplibs::mtest::e2e;
 bool on_windows() noexcept;
 bool on_macos() noexcept;
 bool on_linux() noexcept;
+// Whether this build runs x86_64 code (the `x86_64-host` of a script's `# requires:`).
+bool on_x86_64() noexcept;
 // `name` as this system names an executable: `name.exe` on Windows.
 std::string exe(std::string_view name);
 // The value of the environment variable `name`, if set.
@@ -36,12 +38,54 @@ std::optional<std::string> env(std::string_view name);
 // The executable `name` as PATH finds it (`name.exe` too on Windows).
 std::optional<fs::path> on_path(std::string_view name);
 
-// A capability word of a script's `# requires:` line, as tests/e2e/run_all.sh detects it on this
-// machine (the same probes: a program on PATH, a payload in the home, the system). An unknown word
-// fails the case, so that a misspelt word cannot turn into a skip on every machine.
-bool has(std::string_view capability);
-// Ends the case as skipped ("missing capability: <word>") unless this machine has every word.
-void needs(std::initializer_list<std::string_view> capabilities);
+// ---- where a case runs, and what it needs of the machine (mtest 0.8.0) --------------------------
+//
+// A case states both as attributes, "x"_test[s::elf][s::gcc]; the program skips it elsewhere,
+// saying why, whichever runner starts it, and the case's tags carry `requires:<word>` for each
+// capability. The words are those of a script's `# requires:` line (tests/e2e/run_all.sh).
+
+using mcpplibs::mtest::architecture;
+using mcpplibs::mtest::capability;
+using mcpplibs::mtest::only;
+using mcpplibs::mtest::platform;
+
+// Places: the systems whose conventions a case's subject has.
+const only elf{platform::linux};                         // a host whose programs are ELF
+const only unix_shell{platform::linux, platform::macos};  // a POSIX shell and its tools
+const only fresh_sandbox{platform::linux, platform::macos};
+const only symlink{platform::linux, platform::macos};
+const only macos{platform::macos};
+const only windows{platform::windows};
+const only x86_64_host{architecture::x86_64};
+
+// What a payload or the system provides, which no word of the probe vocabulary states (a payload
+// of the home's registry or the user's xlings, a device adb answers, a Visual Studio vswhere names).
+bool provides(std::string_view word);
+
+// Capabilities: programs, payloads and devices.
+const capability gcc{"gcc", {.os = {platform::linux}, .program = {"g++"}}};
+const capability patchelf{"patchelf", {.os = {platform::linux}, .program = {"patchelf"}}};
+const capability pack{"pack", {.all = {patchelf}}};
+const capability python3{"python3", {.program = {"python3"}}};
+const capability jq{"jq", {.program = {"jq"}}};
+const capability wine{"wine", {.os = {platform::linux}, .program = {"wine"}}};
+const capability qemu_riscv{"qemu-riscv", {.os = {platform::linux}, .program = {"qemu-system-riscv64"}}};
+const capability xlings_msvc{"xlings-msvc", {.env = {{"MCPP_E2E_XLINGS_MSVC", "1"}}}};
+const capability musl{"musl", {.os = {platform::linux}, .test = [] { return provides("musl"); }}};
+const capability mingw_cross{"mingw-cross", {.os = {platform::linux}, .test = [] { return provides("mingw-cross"); }}};
+const capability mingw_host_headers{"mingw-host-headers",
+                                    {.os = {platform::linux}, .test = [] { return provides("mingw-host-headers"); }}};
+const capability llvm{"llvm", {.os = {platform::linux}, .test = [] { return provides("llvm"); }}};
+const capability qemu_arm{"qemu-arm", {.os = {platform::linux}, .test = [] { return provides("qemu-arm"); }}};
+const capability android_ndk{"android-ndk", {.os = {platform::linux}, .test = [] { return provides("android-ndk"); }}};
+const capability android_device{"android-device",
+                                {.os = {platform::linux}, .test = [] { return provides("android-device"); }}};
+const capability msvc{"msvc", {.os = {platform::windows}, .test = [] { return provides("msvc"); }}};
+const capability no_msvc{"no-msvc", {.os = {platform::windows}, .none = {msvc}}};
+const capability mingw{"mingw", {.os = {platform::windows}, .test = [] { return provides("mingw"); }}};
+const capability nasm{"nasm", {.test = [] { return provides("nasm"); }}};
+const capability scan_deps{"scan-deps", {.test = [] { return provides("scan-deps"); }}};
+const capability import_std_libcxx{"import-std-libcxx", {.test = [] { return provides("import-std-libcxx"); }}};
 
 // The newest version (by `sort -V`) of payload `package` (`xim-x-musl-gcc`) for which
 // `<version>/<probe>` (a glob) exists, in the shared home's registry or, failing that, the user's
@@ -56,6 +100,18 @@ inline std::string musl_gcc_version() { return family_version("xim-x-musl-gcc", 
 inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cross-gcc", "MCPP_E2E_MINGW_CROSS_VERSION", "16.1.0"); }
 // The directory of that payload's version.
 fs::path payload_root(std::string_view package, std::string_view version);
+
+// The shared home's `[toolchain] default`, restored when the object ends however the case ends: a
+// case that sets the machine's default (`mcpp toolchain default`) holds one, and resource{"machine"}.
+class default_kept {
+public:
+    default_kept();
+    default_kept(const default_kept&) = delete;
+    default_kept& operator=(const default_kept&) = delete;
+    ~default_kept();
+private:
+    std::string original_;
+};
 
 // The root of the mcpp repository these cases belong to (its examples, its fixtures).
 fs::path repository();
@@ -72,7 +128,9 @@ fs::file_time_type file_time(std::chrono::sys_time<Duration> t) {
 
 // ---- mcpp ----------------------------------------------------------------------------------------
 
-// The mcpp under test.
+// The mcpp under test: MCPP_E2E_MCPP when it is set (a released mcpp, tested by the cases of an
+// archive, which name the package's own build); else the package's program `mcpp test` built and
+// names MCPP_BIN_MCPP; else MCPP; else `mcpp` on PATH.
 std::string mcpp_path();
 
 // shared: the machine's home. fresh: an empty home of the case. linked: a home of the case whose

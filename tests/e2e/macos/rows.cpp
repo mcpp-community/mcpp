@@ -71,11 +71,10 @@ std::vector<std::uint32_t> section_words(const std::string& dump) {
 }
 
 E2E rows{"rows", [] {
-    "259 shared library macho"_test[tag{"requires:macos"}] = [] {
+    "259 shared library macho"_test[s::macos] = [] {
         // A Mach-O shared library's install name is @rpath/<file>, not the build directory, so
         // it loads where it is extracted: packed, the build tree removed, a consumer builds and
         // runs against the package.
-        s::needs({"macos"});
         const auto tmp = s::case_dir();
         s::project lib(tmp / "mathkit", {{"src/mathkit.cppm", mathkit_interface}, {"src/impl.cpp", mathkit_impl},
                                          {"mcpp.toml", "[package]\nname    = \"mathkit\"\nversion = \"0.1.0\"\n[build]\nsources = [\"src/*.cppm\", \"src/*.cpp\"]\n[targets.mathkit]\nkind = \"shared\"\n"}});
@@ -102,10 +101,9 @@ E2E rows{"rows", [] {
         expect(fatal(e2e::contains(s::text(r), "ok=42"))) << "wrong answer: " << s::text(r);
     };
 
-    "266 pack reads a macho program without running it"_test[tag{"requires:macos"}] = [] {
+    "266 pack reads a macho program without running it"_test[s::macos] = [] {
         // mcpp pack reads a Mach-O program's closure without running it (the program leaves a
         // marker when it runs), and a library target still packs.
-        s::needs({"macos"});
         s::project p{{"src/mathkit.cppm", mathkit_interface}, {"src/impl.cpp", mathkit_impl},
                      {"src/main.cpp", "#include <cstdio>\nimport mathkit;\nint main() {\n    if (std::FILE* f = std::fopen(\"ran.marker\", \"w\")) std::fclose(f);\n    std::printf(\"ok=%d\\n\", mk::answer());\n    return 0;\n}\n"},
                      {"mcpp.toml", "[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n[build]\nsources = [\"src/*.cppm\", \"src/*.cpp\"]\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n[targets.mathkit]\nkind = \"lib\"\n"}};
@@ -118,10 +116,9 @@ E2E rows{"rows", [] {
         expect(fatal(!s::find_files(p.at("target/dist"), "*.a").empty())) << "no archive in the library package";
     };
 
-    "666 a macho program reaches a dispatched format with its tree"_test[tag{"requires:macos"}] = [] {
+    "666 a macho program reaches a dispatched format with its tree"_test[s::macos] = [] {
         // --pkg-format dir stages a Mach-O program with `closure = walked`; a dispatched format's
         // action sees the program, the deployed file and the same closure, with no reason line.
-        s::needs({"macos"});
         auto p = s::project::scaffold("zapapp");
         p.write("share/notes.txt", "notes\n");
         p.write("mcpp.toml", p.read("mcpp.toml") + "\n[runtime]\ndeploy = [ { from = \"share/notes.txt\", to = \"data\" } ]\n");
@@ -165,12 +162,11 @@ int main() {
         expect(fatal(s::no_line(seen, "^reason = "))) << "a walked closure carries a reason line: " << seen;
     };
 
-    "668 a macho program is staged with its closure"_test[tag{"requires:macos"}] = [] {
+    "668 a macho program is staged with its closure"_test[s::macos] = [] {
         // A program with a shared path dependency: bin/libfw.dylib is staged beside it, the
         // manifest names the dylib and libSystem as the platform's; the staged program runs with
         // the build tree deleted (exit 7) and stops with "Library not loaded" without the dylib;
         // the archive carries both.
-        s::needs({"macos"});
         const auto tmp = s::case_dir();
         s::project fw(tmp / "fw", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"fw\"\nversion   = \"0.1.0\"\n[targets.fw]\nkind = \"lib\"\n"},
                                    {"src/fw.cppm", "export module fw;\nexport int fw_anchor() { return 41; }\n"}});
@@ -203,10 +199,9 @@ int main() {
         expect(fatal(lists(members, "/bin/libfw.dylib"))) << "the archive has no bin/libfw.dylib";
     };
 
-    "721 an android row links on a macos host"_test[tag{"requires:macos"}] = [] {
+    "721 an android row links on a macos host"_test[s::macos] = [] {
         // A the Android row links on a macOS host (libapp.so and libdep.so are x86-64 ELF shared
         // objects); B no Apple linker or Apple SDK token reaches the Android link.
-        s::needs({"macos"});
         const auto tmp = s::case_dir();
         s::project dep(tmp / "dep", {{"mcpp.toml", "[package]\nname     = \"dep\"\nversion  = \"0.1.0\"\nstandard = \"c++20\"\n\n[targets.dep]\nkind = \"shared\"\n\n[build]\nsources = [\"src/*.cpp\"]\n"},
                                      {"src/dep.cpp", "[[gnu::visibility(\"default\")]] int dep_answer() { return 42; }\n"}});
@@ -234,13 +229,12 @@ int main() {
                 expect(fatal(s::lacks(l, "mmacosx-version-min") && s::lacks(l, "MacOSX.sdk"))) << "B: the Android link line carries the macOS SDK or deployment floor: " << l;
     };
 
-    "746 macos deployment target is target keyed not host keyed"_test[tag{"requires:unix-shell"}] = [] {
+    "746 macos deployment target is target keyed not host keyed"_test[s::unix_shell] = [] {
         // mcpp#685: `macos_deployment_target` and MACOSX_DEPLOYMENT_TARGET reach the effective
         // triple, the flags and the fingerprint by the target on any host. 1 the manifest's 11.0
         // reaches the triple and the compile commands; 2 12.0 moves the flags and the output
         // directory; 3 MACOSX_DEPLOYMENT_TARGET beats the manifest. `--configure-only` stops
         // before any header is opened, so no macOS SDK is needed; an LLVM payload is.
-        s::needs({"unix-shell"});
         const auto v = s::newest_payload("xim-x-llvm", "bin/clang++");
         if (!v) skip("no xim-x-llvm payload on this host to cross-resolve aarch64-macos with");
         s::project p{{"src/main.cpp", "int main(){return 0;}\n"}};
@@ -281,12 +275,11 @@ int main() {
         expect(e2e::contains(p.read("compile_commands.json"), "--target=arm64-apple-macos13.0")) << "3: --target=arm64-apple-macos13.0 absent with the environment's value set";
     };
 
-    "928 an apple sdk is located on any host"_test[tag{"requires:unix-shell"}] = [] {
+    "928 an apple sdk is located on any host"_test[s::unix_shell] = [] {
         // SDKROOT is read on every host (design 2026-10-23 §4.4, D18, S12): without it the
         // refusal says where it looked and how to produce one off macOS; with it the SDK gate
         // opens; its slices decide the row; a version is matched; the family names the platform.
         // The non-Apple arm: on macOS xcrun answers first (the iOS workflow covers it).
-        s::needs({"unix-shell"});
         if (!s::on_linux()) skip("the non-Apple arm");
         const auto sdk = s::case_dir() / "iPhoneSimulator18.5.sdk";
         fs::create_directories(sdk / "usr/include");
@@ -312,11 +305,10 @@ int main() {
         expect(fatal(e2e::contains(out, "describes another platform"))) << "a locator of another platform was accepted: " << out;
     };
 
-    "1053 a mach o images c library is up before its initialisers"_test[tag{"requires:llvm"}][tag{"requires:unix-shell"}] = [] {
+    "1053 a mach o images c library is up before its initialisers"_test[s::llvm][s::unix_shell] = [] {
         // 2026.11.9.1: A in the image built for aarch64-macos-musl over the hosted arrangement,
         // the C library's initialiser (okm_early_init) precedes the program's own; B on an arm64
         // macOS host the program runs, its global constructor allocating before main.
-        s::needs({"llvm", "unix-shell"});
         s::project p{{"mcpp.toml", "[package]\nname    = \"early\"\nversion = \"0.1.0\"\n"},
                      {"src/main.cpp", "import std;\n// A global constructor that allocates, as a test framework's registration does.\n"
                                       "std::vector<std::string>* registered = new std::vector<std::string>{std::string(64, 'x')};\n"

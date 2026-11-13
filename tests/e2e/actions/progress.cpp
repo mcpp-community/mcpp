@@ -174,12 +174,11 @@ e2e::outcome python(std::string_view driver, std::vector<std::pair<std::string, 
 }
 
 E2E progress{"progress", [] {
-    "1013 optional action progress preserves outputs"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "1013 optional action progress preserves outputs"_test[s::gcc][s::unix_shell][s::python3] = [] {
         // An action that reports progress through its execution channel, for every role: the
         // channel is shown through a terminal (plain and verbose) and removed after; turning it
         // off leaves the outputs usable; a failure after a complete count is a failure; a
         // cancelled build removes its channel.
-        s::needs({"gcc", "unix-shell", "python3"});
         const auto work = s::case_dir() / "work";
         fs::create_directories(work);
         auto r = python(preserves, {{"MCPP", s::mcpp_path()}, {"MCPP_HOME", s::case_home(s::home::inherited).string()}, {"PROGRESS_TEST_WORK", work.string()}});
@@ -187,10 +186,9 @@ E2E progress{"progress", [] {
         expect(e2e::contains(r.out, "PASS: optional action progress preserves all role outputs and command results")) << "the driver did not finish";
     };
 
-    "1015 action progress paths are utf8 on every host"_test[tag{"requires:python3"}] = [] {
+    "1015 action progress paths are utf8 on every host"_test[s::python3] = [] {
         // The worker, environment and file transport of action progress in a non-ASCII project
         // directory, without a terminal or signals, so every host runs it.
-        s::needs({"python3"});
         auto r = python(portable, {{"MCPP_PROGRESS_TEST_EXE", fs::path(s::mcpp_path()).make_preferred().string()}});
         expect(e2e::succeeded(r)) << "the progress driver failed";
         expect(e2e::contains(r.out, "PASS: native action progress paths are UTF-8 and cleaned")) << "the driver did not finish";

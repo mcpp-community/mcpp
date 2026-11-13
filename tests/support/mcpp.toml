@@ -13,5 +13,5 @@ license     = "Apache-2.0"
 kind = "lib"
 
 [dependencies]
-mcpplibs.mtest = "0.7.1"
+mcpplibs.mtest = "0.8.0"
 nlohmann.json  = "3.12.0"

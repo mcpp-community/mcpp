@@ -67,11 +67,10 @@ graph make_graph(std::string_view dep_extra, std::string_view dep_dependency, st
 }
 
 E2E tools{"tools", [] {
-    "627 one package one version"_test[tag{"requires:gcc"}] = [] {
+    "627 one package one version"_test[s::gcc] = [] {
         // A project and one of its dependencies both name `xim:zoxide`, at different versions:
         // one package, so one version is installed (the declaration nearer the artifact), the
         // dependency's build program is answered that version, and the override is reported.
-        s::needs({"gcc"});
         auto g = make_graph("[xlings.workspace]\n\"xim:zoxide\" = \"0.9.7\"\n", "{ path = \"../dep\" }", "[xlings.workspace]\n\"xim:zoxide\" = \"0.9.9\"\n");
         g.dep.write("build.mcpp", recorder);
         auto b = g.app.mcpp({"build"}, fresh);
@@ -105,10 +104,9 @@ E2E tools{"tools", [] {
         expect(e2e::succeeded(g.app.mcpp({"build"}, fresh))) << "a pin that DOES satisfy the floor was still refused";
     };
 
-    "629 a version range is answered by xpkg dir"_test[tag{"requires:gcc"}] = [] {
+    "629 a version range is answered by xpkg dir"_test[s::gcc] = [] {
         // A range in an xlings address's version position is a constraint: installed, and
         // answered by `xpkg_dir`; an unsatisfiable one is refused, naming it.
-        s::needs({"gcc"});
         auto g = make_graph("[features]\ndefault  = []\nusestool = []\n[feature-xlings.usestool]\n\"xim:zoxide\" = \">=0.9.9\"\n", "{ path = \"../dep\", features = [\"usestool\"] }", "");
         g.dep.write("build.mcpp", refusing_recorder);
         expect(fatal(e2e::succeeded(g.app.mcpp({"build"}, fresh)))) << "the consumer did not build";

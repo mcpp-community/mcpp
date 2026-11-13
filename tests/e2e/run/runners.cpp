@@ -28,7 +28,7 @@ bool spoiled(const fs::path& file) {
 }
 
 E2E runners{"runners", [] {
-    "330 runner hosted targets"_test[tag{"requires:unix-shell"}] = [] {
+    "330 runner hosted targets"_test[s::unix_shell] = [] {
         // A runner declared under [target.<host>] runs the artifact (argv[0] the artifact), on
         // the fast path too; --no-runner bypasses it with a note; a missing runner exits 2 naming
         // it and what was searched, for `run` and `test`; an artifact this host cannot execute
@@ -137,13 +137,12 @@ E2E runners{"runners", [] {
             << "runner missing from the supported-keys list: " << s::text(r);
     };
 
-    "333 named runners locked and sbom"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "333 named runners locked and sbom"_test[s::gcc][s::unix_shell][s::python3] = [] {
         // Named runners ([target.*.runners]) run their own argv, an undeclared name is refused
         // listing those there are, the launch description names the custom profile and the
         // runners; --locked passes on a matching lock and names the package that moved; the SBOM
         // is CycloneDX 1.5 read from the lock; a dependency's features choose its default and
         // named runners, and a name the chosen environment lacks is refused.
-        s::needs({"gcc", "unix-shell", "python3"});
         const auto work = s::case_dir();
         s::project p(work / "p", {{"src/main.cpp", "int main() { return 0; }\n"},
                                   {"mcpp.toml", "[package]\nname    = \"p\"\nversion = \"0.1.0\"\n\n[target.x86_64-linux-gnu.runners]\n"
@@ -241,10 +240,9 @@ int main() {
         expect(fatal(failed(r))) << "--runner debug succeeded under emulator, which supplies none";
     };
 
-    "337 run takes features and profile"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}] = [] {
+    "337 run takes features and profile"_test[s::gcc][s::unix_shell] = [] {
         // `run --features` and `--release` take effect, alone and together, and a plain run
         // after them is plain again; the fast path's record keeps the features of the last build.
-        s::needs({"gcc", "unix-shell"});
         s::project p({{"mcpp.toml", "[package]\nname    = \"featrun\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/main.cpp\"]\n\n[features]\nloud = { defines = [\"LOUD=1\"] }\n"},
                       {"src/main.cpp", "#include <cstdio>\nint main() {\n#ifdef LOUD\n    std::printf(\"LOUD\\n\");\n#else\n    std::printf(\"quiet\\n\");\n#endif\n"
                                        "#ifdef NDEBUG\n    std::printf(\"release\\n\");\n#else\n    std::printf(\"dev\\n\");\n#endif\n    return 0;\n}\n"}});
@@ -278,12 +276,11 @@ int main() {
         p.mcpp({"build"});
         expect(fatal(mru_features().empty())) << "a plain build after --features matched an entry recorded as '" << mru_features() << "'";
     };
-    "656 run hands the distributable to the runner"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "656 run hands the distributable to the runner"_test[s::elf][s::gcc] = [] {
         // `run --pkg-format <f>` hands the runner the format's terminal artifact (not an
         // intermediate one) and reports it as packed; a plain run hands it bin/app; an unknown
         // format is refused naming what is available; --pkg-format with --no-runner is refused
         // before the program runs; a plain build afterwards has a plain graph (dist=none).
-        s::needs({"elf", "gcc"});
         s::project p({{"mcpp.toml", "[package]\nname        = \"app\"\nversion     = \"1.0.0\"\ndescription = \"a program with one dispatched distributable\"\n"
                                     "license     = \"Apache-2.0\"\nauthors     = [\"Ada <ada@example.org>\"]\nrepo        = \"https://example.org/app\"\n\n"
                                     "[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
@@ -373,7 +370,7 @@ int main() {
         expect(fatal(s::find_files(p.at("target"), R"(app\.blob)").empty())) << "a plain build regenerated the distributable";
     };
 
-    "684 a runner supplied twice is refused"_test[tag{"requires:unix-shell"}] = [] {
+    "684 a runner supplied twice is refused"_test[s::unix_shell] = [] {
         // A runner name a dependency's build program supplies alone is accepted (3); supplied
         // by the project's build program too, it is refused naming both (1); the manifest's
         // [target.<row>.runners] settles it and is used (2).

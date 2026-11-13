@@ -51,14 +51,13 @@ std::string tail_bytes(const fs::path& f, std::size_t n) {
 }
 
 E2E platforms{"platforms", [] {
-    "952 a platform package states a class of targets"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+    "952 a platform package states a class of targets"_test[s::unix_shell][s::python3] = [] {
         // A local platform for this machine's triples: A its flag, program name, seal step and
         // runner reach the program; B the report names it and its source; C an override under
         // `cfg(platform = "demo")` takes the field's place, and the JSON says where each field
         // came from; D `--platform none` builds without it; E a package without [platform] is
         // refused naming it; F a flag with `$`, quotes and a space arrives as written; G a
         // program linked again is sealed again, once.
-        s::needs({"unix-shell", "python3"});
         const auto tmp = s::case_dir();
         s::project(tmp / "plat", {{"mcpp.toml", R"([package]
 name    = "demo-platform"
@@ -145,12 +144,11 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "G: run: " << s::text(r);
     };
 
-    "1020 a platform version group chooses the version"_test[tag{"requires:unix-shell"}][tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "1020 a platform version group chooses the version"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
         // `[platform.versions]` takes part in resolution: A a range admitting the group's
         // version resolves to it though the index holds a newer one; B a request it does not
         // satisfy is refused before anything is built, naming the request, its requester and
         // the group; C a path dependency is not bound by the group.
-        s::needs({"unix-shell", "gcc", "fresh-sandbox"});
         const auto tmp = s::case_dir();
         s::project(tmp / "plat", {{"mcpp.toml", "[package]\nname    = \"group-platform\"\nversion = \"0.1.0\"\n\n[platform]\ntargets = [\"x86_64-linux-gnu\", \"aarch64-linux-gnu\", \"aarch64-macos\", \"x86_64-macos\"]\n\n[platform.versions]\nfam = \"1.1.0\"\n"}});
         s::project proj(tmp / "proj", {{"local-index/pkgs/a/acme.fam.lua", R"(package = {
@@ -194,12 +192,11 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "C: a development tree was bound by the group: " << s::text(r);
     };
 
-    "1021 a platform series is locked and skips newer engines"_test[tag{"requires:unix-shell"}][tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "1021 a platform series is locked and skips newer engines"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
         // A platform selected as a series (`acme.plat@^0`): A it takes its newest release whose
         // `[package] mcpp` floor this mcpp meets, naming the one it skips, and the lock records
         // it; B a newer release published later is not taken while the lock names one; C
         // `mcpp update` drops the record and the next build takes the newer one.
-        s::needs({"unix-shell", "gcc", "fresh-sandbox"});
         s::project proj(s::case_dir() / "proj", {{"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"release %s\\n\", PLAT_RELEASE); }\n"}});
         std::string entries;
         const auto release = [&](std::string_view version, std::string_view floor) {
@@ -240,11 +237,10 @@ int main() {
         expect(fatal(e2e::contains(s::text(r), "release 0.1.1"))) << "C: after mcpp update the newer release was not taken: " << s::text(r);
     };
 
-    "1025 the default platform is one release"_test[tag{"requires:llvm"}][tag{"requires:python3"}] = [] {
+    "1025 the default platform is one release"_test[s::llvm][s::python3] = [] {
         // A a project stating no platform builds x86_64-openkal over openkal-platform 0.27.1
         // and locks it; B a lock recording another release does not decide, and is rewritten;
         // C a platform the project states (a series) is taken as it is.
-        s::needs({"llvm", "python3"});
         auto app = s::project::scaffold("app");
         const std::regex record{R"rx((\[package\."openkal-platform"\][^\[]*?version\s*=\s*")([^"]+)("))rx"};
         const auto locked = [&] {
@@ -276,13 +272,12 @@ int main() {
         expect(fatal(s::lacks(s::text(r), "'s default"))) << "C: a stated platform was reported as the default: " << s::text(r);
     };
 
-    "1040 a platform defines a target"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1040 a platform defines a target"_test[s::elf][s::llvm] = [] {
         // `[[platform.define]]` x86_64-toyos (a static Linux ELF): it builds into
         // target/x86_64-toyos with `cfg(os = "toyos")` applied, and runs (exit 7) directly and by
         // `mcpp run`; a row for another system is not judged by this machine's loader, and is
         // built, not run, without a runner, run with one; the platform's program name stands
         // over a build program's; the row is packed; without the platform it is unknown.
-        s::needs({"elf", "llvm"});
         const auto t = s::case_dir();
         s::project toy(t / "toy", {{"mcpp.toml", std::format(R"([package]
 name    = "toy-platform"
@@ -386,12 +381,11 @@ cflags = ["-DTOY_SYSTEM=1"]
         expect(fatal(e2e::contains(s::text(r), "unknown target 'x86_64-toyos'"))) << "without the platform the request was not an unknown target: " << s::text(r);
     };
 
-    "1049 a platform skeleton is made and its statement read as the engine reads it"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1049 a platform skeleton is made and its statement read as the engine reads it"_test[s::elf][s::llvm] = [] {
         // `mcpp new <name> --template platform` serves <arch>-<name>, which `why platform` lists
         // with its provider and priority, in the platform and in a project selecting it; a
         // program builds for the row; a provider serving nothing is a warning of the platform's
         // build; a redefined built-in row fails the project's build naming it.
-        s::needs({"elf", "llvm"});
         const auto t = s::case_dir();
         const std::string arch(host_arch);
         auto r = s::mcpp({"new", "myos", "--template", "platform"}, t);
@@ -421,12 +415,11 @@ cflags = ["-DTOY_SYSTEM=1"]
         expect(fatal(e2e::contains(s::text(r), "'x86_64-linux-gnu' is a built-in row"))) << "the redefinition is not named: " << s::text(r);
     };
 
-    "1057 a platform row takes nothing of the payloads host"_test[tag{"requires:elf"}][tag{"requires:llvm"}] = [] {
+    "1057 a platform row takes nothing of the payloads host"_test[s::elf][s::llvm] = [] {
         // A row a platform defines (i386-toy32): its `march` and `link-emulation` are the row's
         // words of the compile and the ld.lld link; nothing of the payload's own target side
         // (libc++ headers, `lib/<host triple>`, the gcc runtime) reaches it; its program is
         // ELF32.
-        s::needs({"elf", "llvm"});
         const auto t = s::case_dir();
         s::project(t / "plat", {{"mcpp.toml", std::format(R"([package]
 name    = "toy32-platform"

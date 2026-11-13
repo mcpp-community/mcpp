@@ -85,10 +85,9 @@ E2E workspace{"workspace", [] {
         expect(s::contains_nocase(s::text(r4), "testing member 'liba'"));
     };
 
-    "854 a test over several members plans and builds once"_test[tag{"requires:unix-shell"}] = [] {
+    "854 a test over several members plans and builds once"_test[s::unix_shell] = [] {
         // `test --workspace` plans once per configuration group: a member two members use runs its
         // build program once, with the union of the features asked of it.
-        s::needs({"unix-shell"});
         s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"core\", \"a\", \"b\"]\n"},
                       {"core/mcpp.toml", R"([package]
 name    = "core"
@@ -187,10 +186,9 @@ kind = "lib"
         expect(e2e::contains(s::text(g), "workspace result ok. 3 member(s); 2 passed"));
     };
 
-    "855 a shared test build is reported once per group"_test[tag{"requires:unix-shell"}] = [] {
+    "855 a shared test build is reported once per group"_test[s::unix_shell] = [] {
         // A build several members' tests share is reported once, by addition: a group_build
         // record, a build_group on each member's summary, the members' build_ms its group's.
-        s::needs({"unix-shell"});
         auto ws = libraries(s::case_dir() / "ws", "855", {"a", "b", "c"});
 
         // H: the records, from stdout alone.
@@ -248,10 +246,9 @@ kind = "lib"
             expect(s::has_line(il, std::format(R"(member '{}' \([12]/2\) ok — 1 passed, run [0-9]+\.[0-9]+s)", m)));
     };
 
-    "856 a test over several members continues past a failing one"_test[tag{"requires:unix-shell"}] = [] {
+    "856 a test over several members continues past a failing one"_test[s::unix_shell] = [] {
         // `mcpp test -p a -p b` tests both (mcpp#750), and a member that fails -- its test, its
         // package's build or its plan -- fails alone.
-        s::needs({"unix-shell"});
         auto obj_c = [](const s::project& ws) {
             for (const auto& f : s::find_files(ws.at("target"), ".*"))
                 if (f.generic_string().contains("/obj/c")) return true;
@@ -354,10 +351,9 @@ int main() {{
         }
     };
 
-    "1034 a workspace members test finds its programs"_test[tag{"requires:gcc"}] = [] {
+    "1034 a workspace members test finds its programs"_test[s::gcc] = [] {
         // A member's test finds the member's programs (MCPP_BIN_<NAME>) under --workspace as
         // under -p; each finds its own program of one shared name.
-        s::needs({"gcc"});
         s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}};
         for (auto m : {"a", "b"}) {
             ws.write(std::format("{}/mcpp.toml", m),

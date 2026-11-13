@@ -63,12 +63,11 @@ bool version_less(std::string_view a, std::string_view b) {
 }  // namespace
 
 E2E fastpath{"fastpath", [] {
-    "173 build profile isolation"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
+    "173 build profile isolation"_test[s::gcc][s::fresh_sandbox] = [] {
         // The profile is an invalidation axis: --dev, --release and --profile dist have three build
         // directories (-O0, -O2, -O3, read from build.ninja), each announced as built; a bare
         // build after --release is dev, not the release graph's fast path; and switching back is
         // incremental.
-        s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         s::project app({{"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"hi\\n\"); return 0; }\n"},
                         {"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
@@ -127,10 +126,9 @@ E2E fastpath{"fastpath", [] {
         expect(fatal(e2e::contains(s::text(bare2), "Finished dev"))) << "wrong profile\n" << s::text(bare2);
     };
 
-    "324 fast path sees path deps"_test[tag{"requires:gcc"}] = [] {
+    "324 fast path sees path deps"_test[s::gcc] = [] {
         // A new file in a `path` dependency is compiled (the staleness sweep reaches the
         // dependency's tree), and an edit of the dependency's manifest plans again.
-        s::needs({"gcc"});
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         const auto tmp = s::case_dir();
         s::project dep(tmp / "dep", {{"mcpp.toml", "[package]\nname = \"dep\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n[targets.dep]\nkind = \"lib\"\n"},
@@ -243,10 +241,9 @@ E2E fastpath{"fastpath", [] {
             expect(fatal(e2e::contains(s::read_file(*artefact), other.substr(other.find('@') + 1)))) << "the artefact the build left does not carry " << other << "'s version string\n" << s::text(r);
     };
 
-    "832 the fast path resumes after an edit"_test[tag{"requires:unix-shell"}] = [] {
+    "832 the fast path resumes after an edit"_test[s::unix_shell] = [] {
         // #734: after an edit and one build, the next build is replayed by the fast path, and the
         // replay still sees the next edit.
-        s::needs({"unix-shell"});
         s::project p({{"mcpp.toml", "[package]\nname = \"resume832\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "#include <cstdio>\nint main() { std::puts(\"one\"); return 0; }\n"}});
         build_ok(p.mcpp({"build"}), "the first build failed");
         sleep_s(1.1);
@@ -262,11 +259,10 @@ E2E fastpath{"fastpath", [] {
         expect(fatal(s::has_line(s::text(r), "^three$"))) << "R2: the next edit did not reach the program\n" << s::text(r);
     };
 
-    "878 an upgraded engine does not replay the old graph"_test[tag{"requires:unix-shell"}] = [] {
+    "878 an upgraded engine does not replay the old graph"_test[s::unix_shell] = [] {
         // #757: the record carries the engine that wrote it, and every fast path compares it; the
         // graph runs the engine through the build directory's link (design 2026-11-12 §17). The
         // same binary run from another path is what a reinstall looks like to the record.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const auto at = [&](std::string_view d) { return tmp / d / s::exe("mcpp"); };
         fs::create_directories(tmp / "engine-one");
@@ -374,11 +370,10 @@ E2E fastpath{"fastpath", [] {
         expect(fatal(!names("engine-gone"))) << "E: a graph still names the engine that rewrote it";
     };
 
-    "879 a providers module extension reaches the fast path"_test[tag{"requires:unix-shell"}] = [] {
+    "879 a providers module extension reaches the fast path"_test[s::unix_shell] = [] {
         // #756: the sweep classifies a path dependency's files with that package's own extension
         // table, so an edit to a provider's `.ixx` re-runs the consumer's build program, as a
         // project (build and run) and as a workspace member.
-        s::needs({"unix-shell"});
         const auto tmp = s::case_dir();
         const auto value = [](const fs::path& rules, int v) {
             std::ofstream(rules / "rules.ixx", std::ios::binary) << std::format("export module repro.rules;\n\nexport const char* repro_definition() {{\n    return \"REPRO_VALUE={}\";\n}}\n", v);

@@ -29,10 +29,9 @@ std::vector<std::string> ids(const json& rec) {
 std::string generic(const fs::path& p) { return p.generic_string(); }
 
 E2E protocol{"protocol", [] {
-    "1035 a test program reports its cases"_test[tag{"requires:gcc"}] = [] {
+    "1035 a test program reports its cases"_test[s::gcc] = [] {
         // mcpp runs the runner's side of the mtest protocol, version 1; every other program is one
         // case judged by its exit status and is told none of the variables.
-        s::needs({"gcc"});
         s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"fw\", \"app\", \"plain\"]\n"},
                       {"fw/mcpp.toml", R"([package]
 name    = "fw"
@@ -172,8 +171,7 @@ int main() {
         expect(test_src && lib_src) << "the sources: " << rec["sources"].dump();
     };
 
-    "1065 test records carry parts live cases and metrics"_test[tag{"requires:gcc"}] = [] {
-        s::needs({"gcc"});
+    "1065 test records carry parts live cases and metrics"_test[s::gcc] = [] {
         auto p = s::project::scaffold("app");
         p.write("tests/unit/a.cpp", R"(import mcpplibs.mtest;
 import mcpplibs.mtest.bench;
@@ -246,9 +244,8 @@ UTest plain{"plain", tag{"quick"}, [] { expect(eq(1 + 1, 2)); }};
             expect(e2e::contains(s::text(d), std::format("\"{}\"", f)));
     };
 
-    "1070 the test spec launches frameworks checks and output"_test[tag{"requires:gcc"}] = [] {
+    "1070 the test spec launches frameworks checks and output"_test[s::gcc] = [] {
         // The mcpp test spec's B5, B6, O3 and O8 (docs/specs/test.md).
-        s::needs({"gcc"});
         s::project t(s::case_dir() / "t", {{"fw/mcpp.toml", R"([package]
 name    = "fw"
 version = "0.1.0"

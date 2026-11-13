@@ -41,12 +41,11 @@ std::string emscripten_abi_table(std::string_view member) {
 }
 
 E2E abi{"abi", [] {
-    "647 abi threads is one switch for the graph"_test[tag{"requires:elf"}] = [] {
+    "647 abi threads is one switch for the graph"_test[s::elf] = [] {
         // `[target.<selector>.abi] threads = true` in the root is one switch: -pthread reaches a
         // dependency's compile command and the fingerprint moves; a table scoped to another
         // system is inert; a requirement without the switch is refused, naming the package or the
         // feature; a dependency's own table is reported and ignored.
-        s::needs({"elf"});
         const s::options o{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         const auto tmp = s::case_dir();
         const std::string abi_table = "[target.'cfg(os = \"linux\")'.abi]\nthreads = true\n";
@@ -110,12 +109,11 @@ E2E abi{"abi", [] {
         expect(fatal(!pthread_in_dep_command())) << "FAIL: a dependency's abi table changed the dependency's compile command";
     };
 
-    "653 exceptions is the second abi member"_test[tag{"requires:elf"}] = [] {
+    "653 exceptions is the second abi member"_test[s::elf] = [] {
         // `[target.<selector>.abi] exceptions = true`: a Linux build is byte-identical with an
         // emscripten-only table; on the Web row the program builds without it and aborts at the
         // throw, and with it prints the marker, the flag reaching the dependency and the std
         // module and the fingerprint moving; a dependency requiring it is refused without it.
-        s::needs({"elf"});
         bool have_emsdk = false;
         for (const auto& root : {s::shared_home() / "registry/data/xpkgs", fs::path(s::env("HOME").value_or("")) / ".xlings/data/xpkgs"})
             for (const auto& em : s::glob(root, "xim-x-emsdk/*/emscripten/em++"))
@@ -199,12 +197,11 @@ int main() {
         expect(fatal(e2e::contains(s::text(r), "`excreq` requires the artefact's ABI to have exceptions (the package)"))) << "FAIL: the refusal does not name 'exceptions': " << s::text(r);
     };
 
-    "678 a row states a library form"_test[tag{"requires:elf"}] = [] {
+    "678 a row states a library form"_test[s::elf] = [] {
         // `[target.<selector>.targets.<name>] kind` is the per-row form of a library target: a
         // matching row builds it shared and records why, a non-matching one leaves it static, an
         // edge's `linkage = "static"` degrades it (refused by --strict), and a row naming no
         // target, a program or a non-library kind is refused.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         auto reason_of = [](const fs::path& resolution, std::string_view canonical) -> std::string {
             const auto doc = s::json_file(resolution);

@@ -70,11 +70,10 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
 }
 
 E2E sources{"sources", [] {
-    "104 asm sources gas"_test[tag{"requires:gcc"}] = [] {
+    "104 asm sources gas"_test[s::gcc] = [] {
         // GAS sources (.S) are globbed by default, routed to asm_object (no -std), preprocessed,
         // linked, rebuilt when touched, and covered on the test path too (x86_64 only).
-        s::needs({"gcc"});
-        if (!s::has("x86_64-host")) skip("x86_64-only asm");
+        if (!s::on_x86_64()) skip("x86_64-only asm");
         auto p = s::project::scaffold("gasmix");
         p.write("src/add3.S", R"cpp(#define ASM_BIAS 7
     .text
@@ -123,14 +122,13 @@ int main() { return asm_add3(2, 3, 4) == 16 ? 0 : 1; }
         r = p.mcpp({"test"});
         expect(e2e::succeeded(r)) << "mcpp test failed\n" << s::text(r);
     };
-    "105 asm sources nasm"_test[tag{"requires:gcc"}][tag{"requires:nasm"}] = [] {
+    "105 asm sources nasm"_test[s::gcc][s::nasm] = [] {
         // NASM sources (.asm) are globbed by default, routed to nasm_object with -f elf64, their
         // %include tracked through the depfile, kept out of compile_commands.json, and linked.
         // A broken home's bootstrap error is not swallowed into "no usable nasm" (#232, where a
         // host C++ compiler exists); with a too-old nasm on PATH, nasm is provisioned into the
         // home or the real provisioning failure is named.
-        s::needs({"gcc", "nasm"});
-        if (!s::has("x86_64-host")) skip("x86-only NASM");
+        if (!s::on_x86_64()) skip("x86-only NASM");
         const auto tmp = s::case_dir();
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         auto p = s::project::scaffold("nasmix");
@@ -255,10 +253,9 @@ include_dirs = ["inc"]
                 << "cold-env build failed without a real provisioning error message:\n" << s::text(r);
         }
     };
-    "115 manifest syntax aot brace"_test[tag{"requires:gcc"}] = [] {
+    "115 manifest syntax aot brace"_test[s::gcc] = [] {
         // A brace glob in [build] sources and in an array-of-tables [[build.flags]] entry
         // matches exactly its alternatives.
-        s::needs({"gcc"});
         auto p = s::project::scaffold("aotbrace");
         p.write("src/p/aac/aac.cpp", R"cpp(#ifndef CODEC
 #error "per-glob define (via [[build.flags]] AOT) did not reach aac.cpp"
@@ -337,10 +334,9 @@ main = "src/main.cpp"
         expect(s::last_line(r.out) == "sum=3") << "unexpected output: " << s::last_line(r.out);
     };
 
-    "123 same named main across dep"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "123 same named main across dep"_test[s::elf][s::gcc] = [] {
         // A dependency's src/main.cpp and the consumer's have objects of their own, and every
         // object the consumer's link names is produced by an edge.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         s::project{tmp / "mydep", {{"src/main.cpp", R"cpp(int dep_helper() { return 41; }
 )cpp"}, {"mcpp.toml", R"cpp([package]
@@ -457,10 +453,9 @@ main = "main.cpp"
         expect(hits() > 0u) << "omitting 'sources' stopped applying the default glob";
     };
 
-    "316 link unit with no inputs is refused"_test[tag{"requires:gcc"}] = [] {
+    "316 link unit with no inputs is refused"_test[s::gcc] = [] {
         // A shared or static library target with no sources is refused at plan time, naming
         // the target and its kind, producing nothing; one with a source builds.
-        s::needs({"gcc"});
         const auto tmp = s::case_dir();
         auto check_kind = [&](std::string_view kind, std::string_view human, std::string_view artifact) {
             s::project p{tmp / kind, {{"mcpp.toml", std::format(R"cpp([package]
@@ -492,12 +487,11 @@ kind = "shared"
         expect(fatal(e2e::succeeded(r))) << "a library target WITH sources was refused\n" << s::text(r);
         expect(!s::find_files(ok.dir(), R"(libok\.so.*)").empty()) << "the control target produced no library";
     };
-    "776 a path with no utf8 spelling is named"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
+    "776 a path with no utf8 spelling is named"_test[s::elf][s::gcc] = [] {
         // A path with no UTF-8 spelling is named where it enters: a project directory is refused
         // by name; a source file is skipped and reported under the nearest nameable directory
         // while the rest builds; a build program's directive is refused by its key; an MCPP_HOME
         // is refused before anything is written into it.
-        s::needs({"elf", "gcc"});
         const auto tmp = s::case_dir();
         const std::string bad = "caf\xe9";  // Latin-1 for U+00E9; not UTF-8
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
@@ -553,11 +547,10 @@ int main() {
         expect(fatal(s::has_line(s::text(r), "the mcpp home .* has no UTF-8 spelling"))) << "the refusal does not name the home\n" << s::text(r);
         expect(!fs::exists(home / "registry")) << "the refused home was written into";
     };
-    "907 the library interface is stated once"_test[tag{"requires:elf"}] = [] {
+    "907 the library interface is stated once"_test[s::elf] = [] {
         // A [lib] path naming no file is refused in the package's own build, naming it, and only
         // reported to a consumer, which builds; [modules] exports must list every public module
         // and may leave a private one out; importing a module that is not public is warned about.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         s::project lib{tmp / "lib", {{"src/lib.cppm", "export module acme.lib;\nexport import acme.lib.part;\nexport int lib_value() { return 40; }\n"},
@@ -597,12 +590,11 @@ kind = "lib"
         expect(e2e::contains(s::text(r), "acme.lib.detail") && s::contains_nocase(s::text(r), "not one of that package's public modules")) << "D: importing a module that is not public was not warned about\n" << s::text(r);
     };
 
-    "909 deprecated readings are registered and kept"_test[tag{"requires:elf"}] = [] {
+    "909 deprecated readings are registered and kept"_test[s::elf] = [] {
         // The deprecated host-module spellings still build (the plugin imports from its
         // [build-dependencies]) with a warning stating both releases and the canonical spelling,
         // the package stays off the target, `mcpp why compat` lists the use (JSON states the
         // floor), and --strict refuses the deprecated readings.
-        s::needs({"elf"});
         const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         s::project{tmp / "inner", {{"src/inner.cppm", "export module inner;\nexport int inner_value() { return 40; }\n"},
