@@ -106,6 +106,35 @@ $ mcpp toolchain install llvm 23.1.3
 修订修复的是每个已装载荷都有的缺陷时，索引同时提高该版本的 `floor`，低于它的已装载荷在下一次构建时被替换，
 并说明原因。替换失败时已装载荷保留；`mcpp toolchain install` 此时报错，并说明仍在使用的修订号。
 
+## 族名所对应的包，与作为工具链的任意包（2026.11.13.1+）
+
+族名（`gcc@16.1.0`、`llvm@23.1.3`）是简写。它在某台主机上为某个目标安装索引里的哪个包，是数据：
+`modules/toolchain-model/data/builtin.toml` 的 `[[toolchain.payload]]` 条目，按序尝试，取第一条在本机服务该目标的。
+Linux x86_64 上为 `x86_64-linux-musl` 的 `gcc` 是 `musl-gcc`，其他主机上是 `x86_64-linux-musl-gcc`；为
+`x86_64-windows-gnu` 的 `gcc` 在 Windows 上是 `mingw-gcc`，其他主机上是 `mingw-cross-gcc`。条目陈述的载荷名
+（`musl-gcc@16.1.0`、`emsdk@6.0.9`）可直接使用，`mcpp toolchain list` 也经同一组条目识别已安装的载荷。
+
+族的版本属于索引而不属于引擎：索引发布之后，清单或 `--toolchain` 直接写它，不需要新的 mcpp。部分版本取该系列最新的正式版
+（`gcc@16.2` 即 16.2.0）。主干快照按 GCC 自报的形式写作 `<major>.0.0-<YYYYMMDD>`；日期是预发布段，因此 `gcc@17` 不选中它，
+只有写全版本才使用：
+
+```toml
+[toolchain]
+default = "gcc@16.2"                    # 16.2.x 中最新的正式版
+# default = "xim:gcc@17.0.0-20261108"   # GCC 2026-11-08 的主干（实验性）
+```
+
+索引里的其他包只要描述自身，就是工具链。`xim:<name>@<version>` 安装它，并按 `path:<根>` 加它的
+`.mcpp-toolchain.json`（schema 2）所陈述的表解析；键即清单 `{ path = ... }` 表的键，各自相对载荷根，越出载荷即被拒绝：
+
+```json
+{ "schema": 2, "family": "gcc", "prefix": "riscv64-elf-",
+  "sysroot": "riscv64-elf", "tools": { "cxx": "bin/riscv64-elf-g++" } }
+```
+
+`family` 是其驱动程序的选项写法（`gcc` 或 `llvm`）；未写时由 C++ 驱动程序的名字判定。没有该文件的包被拒绝，并指出文件名。
+不带 `xim:` 的未知名字被拒绝，消息列出族、表中的载荷与这种写法。
+
 ## 切换默认工具链
 
 默认值是一*对*——toolchain 轴 + target 轴（省略 target 即宿主）：
