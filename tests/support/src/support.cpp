@@ -778,4 +778,91 @@ header read_header(const fs::path& file) {
     return h;
 }
 
+namespace {
+// One member of an `ar` archive: its raw name field and its contents.
+struct ar_member {
+    std::string name;
+    std::string data;
+};
+
+std::vector<ar_member> ar_members(const fs::path& file) {
+    const auto bytes = read_file(file);
+    std::vector<ar_member> out;
+    if (!bytes.starts_with("!<arch>\n")) return out;
+    std::size_t at = 8;
+    while (at + 60 <= bytes.size()) {
+        auto name = bytes.substr(at, 16);
+        const auto size = std::stoull(bytes.substr(at + 48, 10));
+        at += 60;
+        if (at + size > bytes.size()) break;
+        auto data = bytes.substr(at, size);
+        while (!name.empty() && name.back() == ' ') name.pop_back();
+        // BSD: `#1/<n>`, the name is the first n bytes of the data.
+        if (name.starts_with("#1/")) {
+            const auto n = std::stoull(name.substr(3));
+            name = data.substr(0, n);
+            data = data.substr(n);
+            while (!name.empty() && name.back() == '\0') name.pop_back();
+        }
+        out.push_back({std::move(name), std::move(data)});
+        at += size + (size % 2);
+    }
+    return out;
+}
+}  // namespace
+
+std::vector<std::string> archive_members(const fs::path& file) {
+    const auto all = ar_members(file);
+    std::string long_names;
+    for (const auto& m : all)
+        if (m.name == "//") long_names = m.data;
+    std::vector<std::string> out;
+    for (const auto& m : all) {
+        if (m.name == "/" || m.name == "//" || m.name == "/SYM64/" || m.name.starts_with("__.SYMDEF")) continue;
+        std::string name = m.name;
+        if (name.size() > 1 && name[0] == '/' && std::isdigit(static_cast<unsigned char>(name[1]))) {
+            const auto off = std::stoull(name.substr(1));
+            const auto end = long_names.find('\n', off);
+            name = long_names.substr(off, end == std::string::npos ? std::string::npos : end - off);
+        }
+        if (name.ends_with("/")) name.pop_back();
+        out.push_back(name);
+    }
+    return out;
+}
+
+std::vector<std::string> archive_symbols(const fs::path& file) {
+    std::vector<std::string> out;
+    for (const auto& m : ar_members(file)) {
+        // System V/GNU: a big-endian count (4 bytes; 8 in /SYM64/), as many offsets, the names.
+        const std::size_t width = m.name == "/" ? 4 : m.name == "/SYM64/" ? 8 : 0;
+        if (width != 0 && m.data.size() >= width) {
+            std::uint64_t n = 0;
+            for (std::size_t i = 0; i < width; ++i) n = (n << 8) | static_cast<unsigned char>(m.data[i]);
+            std::size_t at = width + n * width;
+            for (std::uint64_t i = 0; i < n && at < m.data.size(); ++i) {
+                const auto end = m.data.find('\0', at);
+                out.push_back(m.data.substr(at, end - at));
+                at = end == std::string::npos ? m.data.size() : end + 1;
+            }
+        }
+        // BSD `__.SYMDEF`: ranlib entries (string offset, member offset) and a string table.
+        if (m.name.starts_with("__.SYMDEF") && m.data.size() >= 4) {
+            auto le32 = [&](std::size_t at) {
+                std::uint32_t v = 0;
+                for (int i = 3; i >= 0; --i) v = (v << 8) | static_cast<unsigned char>(m.data[at + i]);
+                return v;
+            };
+            const auto ranlib = le32(0);
+            const std::size_t strings = 4 + ranlib + 4;
+            for (std::size_t e = 4; e + 8 <= 4 + ranlib && strings <= m.data.size(); e += 8) {
+                const auto at = strings + le32(e);
+                const auto end = m.data.find('\0', at);
+                if (at < m.data.size()) out.push_back(m.data.substr(at, end - at));
+            }
+        }
+    }
+    return out;
+}
+
 }  // namespace mcpp::test::support

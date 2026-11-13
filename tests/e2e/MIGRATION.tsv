@@ -55,7 +55,7 @@ script	subsystem	class	destination	note
 48_build_error_output.sh	cli	merge	e2e/cli	
 49_bmi_cache_nested_custom_index.sh	modules	merge	e2e/modules	
 50_package_owned_build_flags.sh	build	merge	e2e/build	
-51_package_generated_files.sh	actions	merge	e2e/actions	
+51_package_generated_files.sh	actions	merge	e2e/actions::generated/51 package generated files	migrated (batch 4); script removed
 52_local_path_namespaced_index.sh	index	merge	e2e/index	
 53_namespaced_cache_label.sh	index	merge	e2e/index	
 54_package_owned_ldflags.sh	build	merge	e2e/build	
@@ -115,7 +115,7 @@ script	subsystem	class	destination	note
 104_asm_sources_gas.sh	build	merge	e2e/build	
 105_asm_sources_nasm.sh	build	merge	e2e/build	
 106_feature_gated_sources_toml.sh	features	merge	e2e/features	
-107_generated_files_toml.sh	actions	merge	e2e/actions	
+107_generated_files_toml.sh	actions	merge	e2e/actions::generated/107 generated files toml	migrated (batch 4); script removed
 108_cfg_conditional_sources.sh	features	merge	e2e/features	
 109_per_glob_flags.sh	build	merge	e2e/build	
 110_build_mcpp_env_contract.sh	build-program	merge	e2e/build-program::protocol/110 build mcpp env contract	migrated (batch 2); script removed
@@ -132,7 +132,7 @@ script	subsystem	class	destination	note
 121_default_ns_redirect.sh	index	merge	e2e/index	
 122_run_member.sh	workspace	merge	e2e/workspace	
 123_same_named_main_across_dep.sh	build	merge	e2e/build	
-124_gen_source_out_of_root_object_path.sh	actions	merge	e2e/actions	
+124_gen_source_out_of_root_object_path.sh	actions	merge	e2e/actions::generated/124 gen source out of root object path	migrated (batch 4); script removed
 125_build_mcpp_dep_dir.sh	build-program	merge	e2e/build-program::deps/125 build mcpp dep dir	migrated (batch 2); script removed
 126_default_features_opt_out.sh	features	merge	e2e/features	
 127_transitive_default_features_optout.sh	features	merge	e2e/features	
@@ -148,7 +148,7 @@ script	subsystem	class	destination	note
 138_feature_sources_gate_vs_provider.sh	features	merge	e2e/features	
 139_build_program_advisory.sh	build-program	merge	e2e/build-program::protocol/139 build program advisory	migrated (batch 2); script removed
 141_include_dirs_after.sh	build	merge	e2e/build	
-142_generated_files_incremental.sh	actions	merge	e2e/actions	
+142_generated_files_incremental.sh	actions	merge	e2e/actions::generated/142 generated files incremental	migrated (batch 4); script removed
 143_build_mcpp_source_directive.sh	build-program	merge	e2e/build-program::protocol/143 build mcpp source directive	migrated (batch 2); script removed
 144_build_mcpp_include_dir.sh	build-program	merge	e2e/build-program::protocol/144 build mcpp include dir	migrated (batch 2); script removed
 145_root_build_mcpp_dep_dirs.sh	build-program	merge	e2e/build-program::deps/145 root build mcpp dep dirs	migrated (batch 2); script removed
@@ -196,7 +196,7 @@ script	subsystem	class	destination	note
 185_index_floor_degrades.sh	index	merge	e2e/index	
 186_build_mcpp_protocol_and_bound.sh	build-program	merge	e2e/build-program::protocol/186 build mcpp protocol and bound	migrated (batch 2); script removed
 187_dep_host_tool.sh	build-program	merge	e2e/build-program::hosttools/187 dep host tool	migrated (batch 2); script removed
-188_build_actions.sh	actions	merge	e2e/actions	
+188_build_actions.sh	actions	merge	e2e/actions::declared/188 build actions	migrated (batch 4); script removed
 189_host_module_rules.sh	build-program	merge	e2e/build-program::hosttools/189 host module rules	migrated (batch 2); script removed
 190_link_rspfile_newlines.sh	build	merge	e2e/build	
 191_link_scale.sh	build	merge	e2e/build	
@@ -304,11 +304,11 @@ script	subsystem	class	destination	note
 310_build_dependencies.sh	build-program	merge	e2e/build-program::deps/310 build dependencies	migrated (batch 2); script removed
 311_rule_build_dependencies.sh	build-program	merge	e2e/build-program::deps/311 rule build dependencies	migrated (batch 2); script removed
 312_build_rules_example.sh	build-program	merge	e2e/build-program::hosttools/312 build rules example	migrated (batch 2); script removed
-313_check_stamp_on_every_platform.sh	actions	merge	e2e/actions	
-314_dependency_action_generated_header.sh	actions	merge	e2e/actions	
-315_blocking_check_gates_compilation.sh	actions	merge	e2e/actions	
+313_check_stamp_on_every_platform.sh	actions	merge	e2e/actions::checks/313 check stamp on every platform	migrated (batch 4); script removed
+314_dependency_action_generated_header.sh	actions	merge	e2e/actions::generated/314 dependency action generated header	migrated (batch 4); script removed
+315_blocking_check_gates_compilation.sh	actions	merge	e2e/actions::checks/315 blocking check gates compilation	migrated (batch 4); script removed
 316_link_unit_with_no_inputs_is_refused.sh	build	merge	e2e/build	
-317_project_build_hooks.sh	actions	merge	e2e/actions	
+317_project_build_hooks.sh	actions	merge	e2e/actions::hooks/317 project build hooks	migrated (batch 4); script removed
 321_workspace_inheritance.sh	workspace	merge	e2e/workspace	
 322_dialect_flag_refusal.sh	toolchain	merge	e2e/toolchain	
 323_post_link_record_durability.sh	runtime	merge	e2e/runtime	
@@ -334,33 +334,33 @@ script	subsystem	class	destination	note
 603_version_floor.sh	deps	merge	e2e/deps::floors/603 version floor	migrated (batch 3); script removed
 604_offline_skips_sandbox_bootstrap.sh	self	merge	e2e/self	
 605_probe_channel_and_accel_reach_the_build_program.sh	build-program	merge	e2e/build-program::accel/605 probe channel and accel reach the build program	migrated (batch 2); script removed
-606_constrained_source_globs_narrow_to_the_build.sh	actions	merge	e2e/actions	
-607_chained_actions_form_the_device_link.sh	actions	merge	e2e/actions	
-608_object_actions_reach_a_static_library.sh	actions	merge	e2e/actions	
+606_constrained_source_globs_narrow_to_the_build.sh	actions	merge	e2e/actions::devices/606 constrained source globs narrow to the build	migrated (batch 4); script removed
+607_chained_actions_form_the_device_link.sh	actions	merge	e2e/actions::devices/607 chained actions form the device link	migrated (batch 4); script removed
+608_object_actions_reach_a_static_library.sh	actions	merge	e2e/actions::devices/608 object actions reach a static library	migrated (batch 4); script removed
 609_clean_stale.sh	cache	merge	e2e/cache	
-609_shader_sources_are_device_sources.sh	actions	merge	e2e/actions	
-610_feature_controlled_rule_collection.sh	actions	merge	e2e/actions	
-611_variant_switch_is_not_replayed.sh	actions	merge	e2e/actions	
+609_shader_sources_are_device_sources.sh	actions	merge	e2e/actions::devices/609 shader sources are device sources	migrated (batch 4); script removed
+610_feature_controlled_rule_collection.sh	actions	merge	e2e/actions::rules/610 feature controlled rule collection	migrated (batch 4); script removed
+611_variant_switch_is_not_replayed.sh	actions	merge	e2e/actions::devices/611 variant switch is not replayed	migrated (batch 4); script removed
 612_build_program_file_input_fast_path.sh	build-program	merge	e2e/build-program::protocol/612 build program file input fast path	migrated (batch 2); script removed
-613_sycl_sources_are_device_sources.sh	actions	merge	e2e/actions	
+613_sycl_sources_are_device_sources.sh	actions	merge	e2e/actions::devices/613 sycl sources are device sources	migrated (batch 4); script removed
 614_feature_xlings_reaches_xpkg_dir.sh	index	merge	e2e/index	
 615_feature_deps_shared_library_is_linked.sh	features	merge	e2e/features	
 616_examples_and_their_index_agree.sh	repo	sink	unit/test_repo_consistency	answers a parse/selection rule without a build: examples vs their index
 617_build_program_knows_the_cxx_stdlib.sh	build-program	merge	e2e/build-program::protocol/617 build program knows the cxx stdlib	migrated (batch 2); script removed
 618_dependency_feature_tools_reach_its_build_program.sh	build-program	merge	e2e/build-program::deps/618 dependency feature tools reach its build program	migrated (batch 2); script removed
-619_a_tool_may_not_be_conditioned_on_a_layer.sh	actions	merge	e2e/actions	
+619_a_tool_may_not_be_conditioned_on_a_layer.sh	actions	merge	e2e/actions::rules/619 a tool may not be conditioned on a layer	migrated (batch 4); script removed
 620_link_flag_reaches_the_link_line.sh	build	merge	e2e/build	
 621_exports_narrows_the_symbol_surface.sh	runtime	merge	e2e/runtime	
 622_rule_declared_payload_reaches_the_consumers_build_program.sh	build-program	merge	e2e/build-program::deps/622 rule declared payload reaches the consumers build program	migrated (batch 2); script removed
-623_device_sources_must_reach_an_action.sh	actions	merge	e2e/actions	
+623_device_sources_must_reach_an_action.sh	actions	merge	e2e/actions::devices/623 device sources must reach an action	migrated (batch 4); script removed
 624_a_missing_host_module_names_the_key.sh	build-program	merge	e2e/build-program::hosttools/624 a missing host module names the key	migrated (batch 2); script removed
 625_a_payload_can_be_gated_on_the_accelerator.sh	build-program	merge	e2e/build-program::accel/625 a payload can be gated on the accelerator	migrated (batch 2); script removed
 626_naming_a_subset_of_backends_is_not_a_mismatch.sh	build-program	merge	e2e/build-program::accel/626 naming a subset of backends is not a mismatch	migrated (batch 2); script removed
 627_one_package_one_version.sh	deps	merge	e2e/deps::tools/627 one package one version	migrated (batch 3); script removed
 628_a_pin_below_a_stated_floor_is_refused.sh	deps	merge	e2e/deps::tools/628 a pin below a stated floor is refused	migrated (batch 3); script removed
 629_a_version_range_is_answered_by_xpkg_dir.sh	deps	merge	e2e/deps::tools/629 a version range is answered by xpkg dir	migrated (batch 3); script removed
-630_a_rule_brings_its_own_environment.sh	actions	merge	e2e/actions	
-631_action_depfile_tracks_a_runtime_discovered_include.sh	actions	merge	e2e/actions	
+630_a_rule_brings_its_own_environment.sh	actions	merge	e2e/actions::rules/630 a rule brings its own environment	migrated (batch 4); script removed
+631_action_depfile_tracks_a_runtime_discovered_include.sh	actions	merge	e2e/actions::commands/631 action depfile tracks a runtime discovered include	migrated (batch 4); script removed
 632_a_build_program_is_told_its_package_name.sh	build-program	merge	e2e/build-program::protocol/632 a build program is told its package name	migrated (batch 2); script removed
 633_host_modules_are_ordered_by_what_they_import.sh	build-program	merge	e2e/build-program::hosttools/633 host modules are ordered by what they import	migrated (batch 2); script removed
 634_a_private_module_fragment_is_not_a_partition.sh	modules	merge	e2e/modules	
@@ -377,7 +377,7 @@ script	subsystem	class	destination	note
 645_the_fast_path_compares_the_toolchain_request.sh	cache	merge	e2e/cache	
 646_runtime_deploy_places_files_in_a_directory.sh	runtime	merge	e2e/runtime	
 647_abi_threads_is_one_switch_for_the_graph.sh	target	merge	e2e/target	
-648_an_install_hook_sees_the_build_target.sh	actions	merge	e2e/actions	
+648_an_install_hook_sees_the_build_target.sh	actions	merge	e2e/actions::hooks/648 an install hook sees the build target	migrated (batch 4); script removed
 649_pack_carries_runtime_deploy_files.sh	pack	merge	e2e/pack	
 650_wasm_row_names_its_launcher.sh	web	merge	e2e/web	
 651_a_build_program_deploys_what_it_generated.sh	build-program	merge	e2e/build-program::protocol/651 a build program deploys what it generated	migrated (batch 2); script removed
@@ -388,8 +388,8 @@ script	subsystem	class	destination	note
 656_run_hands_the_distributable_to_the_runner.sh	run	merge	e2e/run	
 657_a_build_program_under_the_web_row_uses_the_host_compiler.sh	web	merge	e2e/web	
 658_a_program_runs_on_an_attached_android_device.sh	android	keep	keep	a physical Android device over adb
-659_an_action_declaration_has_no_size_limit.sh	actions	merge	e2e/actions	
-660_an_action_names_the_engine_through_mcpp_self.sh	actions	merge	e2e/actions	
+659_an_action_declaration_has_no_size_limit.sh	actions	merge	e2e/actions::commands/659 an action declaration has no size limit	migrated (batch 4); script removed
+660_an_action_names_the_engine_through_mcpp_self.sh	actions	merge	e2e/actions::commands/660 an action names the engine through mcpp self	migrated (batch 4); script removed
 661_one_identity_two_declarations.sh	deps	merge	e2e/deps::git/661 one identity two declarations	migrated (batch 3); script removed
 662_pack_stages_declared_files_before_the_closure.sh	pack	merge	e2e/pack	
 663_a_graph_libcxx_over_the_payloads_c_library.sh	toolchain	merge	e2e/toolchain	
@@ -466,7 +466,7 @@ script	subsystem	class	destination	note
 777_c_standard_applies_to_the_package_that_declares_it.sh	build	merge	e2e/build	
 778_a_graph_link_searches_no_host_directory.sh	target	merge	e2e/target	
 779_a_build_program_declares_a_runtime_search_dir.sh	build-program	merge	e2e/build-program::deps/779 a build program declares a runtime search dir	migrated (batch 2); script removed
-780_a_passing_check_moves_its_stamp_past_a_changed_input.sh	actions	merge	e2e/actions	
+780_a_passing_check_moves_its_stamp_past_a_changed_input.sh	actions	merge	e2e/actions::checks/780 a passing check moves its stamp past a changed input	migrated (batch 4); script removed
 781_deleted_root_cdb_is_restored.sh	cdb	merge	e2e/cdb	
 782_foreign_root_cdb_entries_are_replaced.sh	cdb	merge	e2e/cdb	
 783_cdb_switches_whole_with_the_configuration.sh	cdb	merge	e2e/cdb	
@@ -476,16 +476,16 @@ script	subsystem	class	destination	note
 787_emit_plans_every_member_on_its_own.sh	cdb	merge	e2e/cdb	
 788_emit_defers_an_unbuilt_host_tool.sh	cdb	merge	e2e/cdb	
 789_emit_describes_a_member_past_a_failed_build_program.sh	cdb	merge	e2e/cdb	
-790_a_prepare_action_populates_an_unknown_directory.sh	actions	merge	e2e/actions	
-791_a_prepare_action_that_creates_nothing_fails.sh	actions	merge	e2e/actions	
-792_a_rerun_input_inside_a_prepare_directory_is_warned.sh	actions	merge	e2e/actions	
-793_an_unknown_action_role_is_refused.sh	actions	merge	e2e/actions	
+790_a_prepare_action_populates_an_unknown_directory.sh	actions	merge	e2e/actions::prepare/790 a prepare action populates an unknown directory	migrated (batch 4); script removed
+791_a_prepare_action_that_creates_nothing_fails.sh	actions	merge	e2e/actions::prepare/791 a prepare action that creates nothing fails	migrated (batch 4); script removed
+792_a_rerun_input_inside_a_prepare_directory_is_warned.sh	actions	merge	e2e/actions::prepare/792 a rerun input inside a prepare directory is warned	migrated (batch 4); script removed
+793_an_unknown_action_role_is_refused.sh	actions	merge	e2e/actions::prepare/793 an unknown action role is refused	migrated (batch 4); script removed
 794_a_windows_program_finds_a_dll_through_runtime_search_dir.sh	windows	merge	e2e/windows	
 795_a_link_flag_reaches_the_linker_as_written.sh	build	merge	e2e/build	
 796_runtime_search_dir_on_pe_under_wine.sh	windows	keep	keep	emulator: runs the PE program under wine
 797_a_windows_program_finds_its_dlls_beside_it.sh	windows	keep	keep	emulator: runs the PE program under wine
-798_a_rule_applies_through_a_source_it_claims.sh	actions	merge	e2e/actions	
-799_an_action_runs_with_its_env_and_cwd.sh	actions	merge	e2e/actions	
+798_a_rule_applies_through_a_source_it_claims.sh	actions	merge	e2e/actions::rules/798 a rule applies through a source it claims	migrated (batch 4); script removed
+799_an_action_runs_with_its_env_and_cwd.sh	actions	merge	e2e/actions::commands/799 an action runs with its env and cwd	migrated (batch 4); script removed
 800_a_feature_provides_its_host_tools.sh	build-program	merge	e2e/build-program::hosttools/800 a feature provides its host tools	migrated (batch 2); script removed
 801_a_dependency_program_is_shipped_with_the_consumer.sh	pack	merge	e2e/pack	
 802_a_host_build_applies_its_host_row.sh	build-program	merge	e2e/build-program::hosttools/802 a host build applies its host row	migrated (batch 2); script removed
@@ -494,7 +494,7 @@ script	subsystem	class	destination	note
 805_rooted_workspace_reaches_its_own_path_dependency.sh	workspace	merge	e2e/workspace	
 806_dash_p_resolves_the_package_first.sh	workspace	merge	e2e/workspace	
 807_a_lib_root_imports_its_own_package.sh	modules	merge	e2e/modules	
-808_device_source_is_not_a_compile_unit.sh	actions	merge	e2e/actions	
+808_device_source_is_not_a_compile_unit.sh	actions	merge	e2e/actions::rules/808 device source is not a compile unit	migrated (batch 4); script removed
 809_failed_build_program_hides_no_device_source.sh	cdb	merge	e2e/cdb	
 810_two_packages_deploy_the_same_bytes_to_one_name.sh	runtime	merge	e2e/runtime	
 811_place_dlls_never_overwrites_a_declared_deploy.sh	windows	merge	e2e/windows	
@@ -513,7 +513,7 @@ script	subsystem	class	destination	note
 824_a_build_program_reads_the_resolved_toolchain.sh	build-program	merge	e2e/build-program::protocol/824 a build program reads the resolved toolchain	migrated (batch 2); script removed
 825_a_build_program_reads_the_msvc_toolset.sh	windows	merge	e2e/windows	
 826_plugin_diagnostics_features_and_names.sh	build-program	merge	e2e/build-program::hosttools/826 plugin diagnostics features and names	migrated (batch 2); script removed
-827_many_placements_run_as_one_process.sh	actions	merge	e2e/actions	
+827_many_placements_run_as_one_process.sh	actions	merge	e2e/actions::outputs/827 many placements run as one process	migrated (batch 4); script removed
 828_a_library_states_its_interface.sh	pack	merge	e2e/pack	
 829_pack_takes_a_member.sh	pack	merge	e2e/pack	
 831_a_path_dependency_host_module_outside_src.sh	build-program	merge	e2e/build-program::hosttools/831 a path dependency host module outside src	migrated (batch 2); script removed
@@ -581,8 +581,8 @@ script	subsystem	class	destination	note
 893_the_workspace_prefix_carries_the_meaning.sh	workspace	merge	e2e/workspace	
 894_the_position_reading_is_kept_and_reported.sh	build	merge	e2e/build	
 895_conditional_configuration_rows_count_as_they_evaluate.sh	features	merge	e2e/features	
-896_an_action_output_has_one_writer.sh	actions	merge	e2e/actions	
-897_each_configuration_has_its_own_generated_output.sh	actions	merge	e2e/actions	
+896_an_action_output_has_one_writer.sh	actions	merge	e2e/actions::outputs/896 an action output has one writer	migrated (batch 4); script removed
+897_each_configuration_has_its_own_generated_output.sh	actions	merge	e2e/actions::outputs/897 each configuration has its own generated output	migrated (batch 4); script removed
 898_module_units_in_cpp_files.sh	modules	merge	e2e/modules	
 899_toolchain_flag_replacing_a_declared_toolchain_says_so.sh	toolchain	merge	e2e/toolchain	
 900_publish_writes_the_workspace_layer_into_the_member.sh	workspace	merge	e2e/workspace	
@@ -652,7 +652,7 @@ script	subsystem	class	destination	note
 964_tests_built_once_run_from_an_archive.sh	openkal	merge	e2e/openkal	
 980_an_ambiguous_dependency_name_is_no_packages.sh	deps	merge	e2e/deps::graph/980 an ambiguous dependency name is no packages	migrated (batch 3); script removed
 981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh	web	merge	e2e/web	
-982_an_action_reads_the_builds_contract.sh	actions	merge	e2e/actions	
+982_an_action_reads_the_builds_contract.sh	actions	merge	e2e/actions::outputs/982 an action reads the builds contract	migrated (batch 4); script removed
 983_a_pack_holds_the_legs_it_names.sh	openkal	merge	e2e/openkal	
 984_a_set_of_programs_is_a_package_per_leg.sh	openkal	merge	e2e/openkal	
 985_a_format_list_writes_each_container_of_one_tree.sh	openkal	merge	e2e/openkal	
@@ -683,9 +683,9 @@ script	subsystem	class	destination	note
 1010_the_std_module_takes_the_platforms_flags.sh	toolchain	merge	e2e/toolchain	
 1011_accelerator_requests_are_complete_and_canonical.sh	build-program	merge	e2e/build-program::accel/1011 accelerator requests are complete and canonical	migrated (batch 2); script removed
 1012_capabilities_bind_in_each_consumer_context.sh	features	merge	e2e/features	
-1013_optional_action_progress_preserves_outputs.sh	actions	merge	e2e/actions	
+1013_optional_action_progress_preserves_outputs.sh	actions	merge	e2e/actions::progress/1013 optional action progress preserves outputs	migrated (batch 4); script removed
 1014_host_only_layers_do_not_select_the_target_abi.sh	target	merge	e2e/target	
-1015_action_progress_paths_are_utf8_on_every_host.sh	actions	merge	e2e/actions	
+1015_action_progress_paths_are_utf8_on_every_host.sh	actions	merge	e2e/actions::progress/1015 action progress paths are utf8 on every host	migrated (batch 4); script removed
 1016_a_killed_build_does_not_race_the_next_one.sh	cli	merge	e2e/cli	
 1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows	
 1018_a_package_and_a_namespaced_package_of_one_name_both_link.sh	deps	merge	e2e/deps::graph/1018 a package and a namespaced package of one name both link	migrated (batch 3); script removed

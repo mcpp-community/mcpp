@@ -201,6 +201,11 @@ struct header {
 // `readelf` or `llvm-readobj`).
 header read_header(const fs::path& file);
 
+// The members of a static library (`ar t`) and the symbols its index names (`nm` of the
+// archive's defined globals), read by this process: System V/GNU and BSD archives.
+std::vector<std::string> archive_members(const fs::path& file);
+std::vector<std::string> archive_symbols(const fs::path& file);
+
 namespace elf_machine {
 inline constexpr std::uint32_t x86 = 3, arm = 40, x86_64 = 62, aarch64 = 183, riscv = 243;
 }

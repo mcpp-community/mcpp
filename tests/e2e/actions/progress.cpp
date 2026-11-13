@@ -1,14 +1,18 @@
-#!/usr/bin/env bash
-# requires: gcc unix-shell python3
-set -e
-export MCPP="${MCPP:-mcpp}"
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-export MCPP_HOME="$work/home"
-source "$(dirname "$0")/_inherit_toolchain.sh"
-export PROGRESS_TEST_WORK="$work"
-python3 - <<'PY'
-from pathlib import Path
+// Action progress: an optional execution channel that preserves every role's outputs and
+// results, and its paths on every host (formerly tests/e2e/1013, 1015). The action workers are
+// Python programs and the first case needs a terminal and a process group, so each case hands its
+// script's Python driver to python3, unchanged.
+import std;
+import mcpplibs.mtest;
+import mcpp.test.support;
+
+using namespace mcpplibs::mtest;
+namespace s = mcpp::test::support;
+namespace fs = std::filesystem;
+
+namespace {
+
+constexpr std::string_view preserves = R"py(from pathlib import Path
 import json,os,pty,subprocess,sys,time,select,fcntl,termios,struct,signal
 work=Path(os.environ['PROGRESS_TEST_WORK']);app=work/'app';(app/'src').mkdir(parents=True)
 (app/'mcpp.toml').write_text('[package]\nname="action-progress"\nversion="0.1.0"\n')
@@ -119,4 +123,78 @@ with (work/'cancel.log').open('w') as log:
  assert process.wait(timeout=15)!=0,'cancelled build succeeded'
  assert not channel.exists(),'cancelled execution channel remained'
 print('PASS: optional action progress preserves all role outputs and command results')
-PY
+)py";
+
+constexpr std::string_view portable = R"py(from pathlib import Path
+import json,os,subprocess,sys,tempfile
+with tempfile.TemporaryDirectory(prefix='mcpp-progress-') as temporary:
+    root=Path(temporary)/'项目-进度';(root/'src').mkdir(parents=True)
+    (root/'mcpp.toml').write_text('[package]\nname="portable-progress"\nversion="0.1.0"\n',encoding='utf-8')
+    (root/'src/main.cpp').write_text('int main(){return 0;}\n',encoding='utf-8')
+    worker=root/'worker.py';proof=root/'target/proof.json'
+    worker.write_text('''from pathlib import Path
+import json,os,sys,time
+file=os.environ.get('MCPP_ACTION_PROGRESS_FILE','')
+assert file, 'the enabled action has no execution channel'
+p=Path(file)
+for seq in range(2):
+    state=dict(v=1,seq=seq,phase='compile',done=seq,total=1)
+    staged=p.with_suffix('.tmp');staged.write_text(json.dumps(state),encoding='utf-8')
+    os.replace(staged,p);time.sleep(.25)
+Path(sys.argv[1]).write_text(json.dumps(dict(channel=file,snapshot=state)),encoding='utf-8')
+''',encoding='utf-8')
+    quote=lambda value:json.dumps(str(value),ensure_ascii=False)
+    (root/'build.mcpp').write_text('''import std;
+import mcpp;
+int main(){
+    mcpp::action action;
+    action.id="portable-worker";action.role=mcpp::roles::check;action.progress=true;
+    const auto stamp=std::string(mcpp::out_dir())+"/worker.stamp";
+    action.arg(PYTHON).arg(WORKER).arg(PROOF).input(WORKER).output(stamp.c_str());
+    action.submit();
+}
+'''.replace('PYTHON',quote(sys.executable)).replace('WORKER',quote(worker)).replace('PROOF',quote(proof)),encoding='utf-8')
+    exe=os.environ['MCPP_PROGRESS_TEST_EXE']
+    result=subprocess.run([exe,'build'],cwd=root,env=dict(os.environ,MCPP_PROGRESS='plain'),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=180)
+    assert result.returncode==0,result.stdout+result.stderr
+    result=json.loads(proof.read_text(encoding='utf-8'))
+    assert '项目-进度' in result['channel'],result
+    assert result['snapshot']==dict(v=1,seq=1,phase='compile',done=1,total=1),result
+    assert not Path(result['channel']).exists(),'execution channel was not cleaned'
+print('PASS: native action progress paths are UTF-8 and cleaned')
+)py";
+
+// python3 running `driver` (written to the case's directory) with `env`.
+e2e::outcome python(std::string_view driver, std::vector<std::pair<std::string, std::optional<std::string>>> env) {
+    const auto python3 = s::on_path("python3");
+    expect(fatal(python3.has_value())) << "python3 is not on PATH";
+    const auto file = temp_dir() / "driver.py";
+    s::project{file.parent_path(), {}}.write(file.filename().string(), driver);
+    return e2e::run({.argv = {python3->string(), file.string()}, .env = std::move(env), .timeout = std::chrono::minutes{10}});
+}
+
+E2E progress{"progress", [] {
+    "1013 optional action progress preserves outputs"_test[tag{"requires:gcc"}][tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+        // An action that reports progress through its execution channel, for every role: the
+        // channel is shown through a terminal (plain and verbose) and removed after; turning it
+        // off leaves the outputs usable; a failure after a complete count is a failure; a
+        // cancelled build removes its channel.
+        s::needs({"gcc", "unix-shell", "python3"});
+        const auto work = temp_dir() / "work";
+        fs::create_directories(work);
+        auto r = python(preserves, {{"MCPP", s::mcpp_path()}, {"MCPP_HOME", s::case_home(s::home::inherited).string()}, {"PROGRESS_TEST_WORK", work.string()}});
+        expect(e2e::succeeded(r)) << "the progress driver failed";
+        expect(e2e::contains(r.out, "PASS: optional action progress preserves all role outputs and command results")) << "the driver did not finish";
+    };
+
+    "1015 action progress paths are utf8 on every host"_test[tag{"requires:python3"}] = [] {
+        // The worker, environment and file transport of action progress in a non-ASCII project
+        // directory, without a terminal or signals, so every host runs it.
+        s::needs({"python3"});
+        auto r = python(portable, {{"MCPP_PROGRESS_TEST_EXE", fs::path(s::mcpp_path()).make_preferred().string()}});
+        expect(e2e::succeeded(r)) << "the progress driver failed";
+        expect(e2e::contains(r.out, "PASS: native action progress paths are UTF-8 and cleaned")) << "the driver did not finish";
+    };
+}};
+
+}  // namespace
