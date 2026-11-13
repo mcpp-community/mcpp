@@ -194,7 +194,10 @@ struct header {
     bool elf_interpreter = false;      // a PT_INTERP segment: a dynamic program
     std::string interpreter;           // its path
     std::vector<std::string> needed;   // ELF DT_NEEDED
-    std::string runpath;               // ELF DT_RUNPATH or DT_RPATH
+    std::string runpath;               // ELF DT_RUNPATH or DT_RPATH (both, `:`-joined, when both)
+    bool elf_rpath = false;            // a DT_RPATH entry
+    bool elf_runpath = false;          // a DT_RUNPATH entry
+    std::string soname;                // ELF DT_SONAME
 };
 
 // The header of an executable, an object or a library, read by this process (no `file`,
@@ -205,6 +208,29 @@ header read_header(const fs::path& file);
 // archive's defined globals), read by this process: System V/GNU and BSD archives.
 std::vector<std::string> archive_members(const fs::path& file);
 std::vector<std::string> archive_symbols(const fs::path& file);
+
+// The sections of an ELF file, by name and type (SHT_SYMTAB is 2), read by this process.
+struct elf_section {
+    std::string name;
+    std::uint32_t type = 0;
+};
+std::vector<elf_section> elf_sections(const fs::path& file);
+// The names an ELF symbol table (".symtab", or ".dynsym") holds (`nm`, `nm -D`); with
+// `defined_only`, those a section of the file defines (`nm --defined-only`).
+std::vector<std::string> elf_symbols(const fs::path& file, std::string_view table = ".symtab", bool defined_only = false);
+
+// An archive's members (`tar -tf`) and their extraction (`tar -xf <archive> -C <into> [members]`),
+// by the machine's `tar`, which reads every compression it writes.
+std::vector<std::string> tar_list(const fs::path& archive);
+void tar_extract(const fs::path& archive, const fs::path& into, std::vector<std::string> members = {});
+// A zip's entries from its central directory: the name and the compression method (8: deflated).
+struct zip_entry {
+    std::string name;
+    std::uint16_t method = 0;
+};
+std::vector<zip_entry> zip_entries(const fs::path& file);
+// The SHA-256 of `data`, in lower-case hex (`sha256sum`).
+std::string sha256(std::string_view data);
 
 namespace elf_machine {
 inline constexpr std::uint32_t x86 = 3, arm = 40, x86_64 = 62, aarch64 = 183, riscv = 243;

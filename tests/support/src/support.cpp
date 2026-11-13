@@ -714,15 +714,20 @@ void read_elf(const std::string& b, header& h) {
     const std::size_t entry = h.wide ? 16 : 8;
     std::uint64_t strtab = 0;
     std::vector<std::uint64_t> needed;
-    std::uint64_t runpath = 0;
-    bool has_runpath = false;
+    std::vector<std::uint64_t> paths;
+    std::uint64_t soname = 0;
+    bool has_soname = false;
     for (std::uint64_t at = dyn_off; at + entry <= dyn_off + dyn_size; at += entry) {
         const std::int64_t tag = h.wide ? get<std::int64_t>(b, at) : get<std::int32_t>(b, at);
         const std::uint64_t val = h.wide ? get<std::uint64_t>(b, at + 8) : get<std::uint32_t>(b, at + 4);
         if (tag == 0) break;
         if (tag == 5) strtab = val;
         else if (tag == 1) needed.push_back(val);
-        else if (tag == 29 || tag == 15) { runpath = val; has_runpath = true; }
+        else if (tag == 14) { soname = val; has_soname = true; }
+        else if (tag == 29 || tag == 15) {
+            paths.push_back(val);
+            (tag == 15 ? h.elf_rpath : h.elf_runpath) = true;
+        }
     }
     // The string table's address, as a file offset.
     std::uint64_t str_off = strtab;
@@ -731,8 +736,12 @@ void read_elf(const std::string& b, header& h) {
             str_off = strtab - l.vaddr + l.offset;
     for (auto n : needed)
         h.needed.push_back(cstring(b, static_cast<std::size_t>(str_off + n)));
-    if (has_runpath)
-        h.runpath = cstring(b, static_cast<std::size_t>(str_off + runpath));
+    for (auto p : paths) {
+        if (!h.runpath.empty()) h.runpath += ':';
+        h.runpath += cstring(b, static_cast<std::size_t>(str_off + p));
+    }
+    if (has_soname)
+        h.soname = cstring(b, static_cast<std::size_t>(str_off + soname));
 }
 
 void read_pe(const std::string& b, header& h) {
@@ -862,6 +871,159 @@ std::vector<std::string> archive_symbols(const fs::path& file) {
             }
         }
     }
+    return out;
+}
+
+namespace {
+struct raw_section {
+    std::string name;
+    std::uint32_t type = 0;
+    std::uint64_t offset = 0, size = 0, entsize = 0;
+    std::uint32_t link = 0;
+};
+
+// The section headers of an ELF file (either class, little-endian), named.
+std::vector<raw_section> raw_sections(const std::string& b) {
+    std::vector<raw_section> out;
+    if (b.size() < 64 || b.compare(0, 4, "\x7f" "ELF") != 0) return out;
+    const bool wide = b[4] == 2;
+    const std::uint64_t shoff = wide ? get<std::uint64_t>(b, 0x28) : get<std::uint32_t>(b, 0x20);
+    const std::uint16_t shentsize = get<std::uint16_t>(b, wide ? 0x3a : 0x2e);
+    const std::uint16_t shnum = get<std::uint16_t>(b, wide ? 0x3c : 0x30);
+    const std::uint16_t shstrndx = get<std::uint16_t>(b, wide ? 0x3e : 0x32);
+    std::vector<std::uint32_t> names;
+    for (std::uint16_t i = 0; i < shnum; ++i) {
+        const std::size_t o = static_cast<std::size_t>(shoff) + std::size_t(i) * shentsize;
+        raw_section s;
+        names.push_back(get<std::uint32_t>(b, o));
+        s.type = get<std::uint32_t>(b, o + 4);
+        s.offset = wide ? get<std::uint64_t>(b, o + 0x18) : get<std::uint32_t>(b, o + 0x10);
+        s.size = wide ? get<std::uint64_t>(b, o + 0x20) : get<std::uint32_t>(b, o + 0x14);
+        s.link = get<std::uint32_t>(b, o + (wide ? 0x28 : 0x18));
+        s.entsize = wide ? get<std::uint64_t>(b, o + 0x38) : get<std::uint32_t>(b, o + 0x24);
+        out.push_back(std::move(s));
+    }
+    if (shstrndx < out.size())
+        for (std::size_t i = 0; i < out.size(); ++i)
+            out[i].name = cstring(b, static_cast<std::size_t>(out[shstrndx].offset + names[i]));
+    return out;
+}
+}  // namespace
+
+std::vector<elf_section> elf_sections(const fs::path& file) {
+    std::vector<elf_section> out;
+    for (auto& s : raw_sections(read_file(file))) out.push_back({std::move(s.name), s.type});
+    return out;
+}
+
+std::vector<std::string> elf_symbols(const fs::path& file, std::string_view table, bool defined_only) {
+    const auto b = read_file(file);
+    const auto all = raw_sections(b);
+    std::vector<std::string> out;
+    const bool wide = b.size() > 4 && b[4] == 2;
+    for (const auto& s : all) {
+        if (s.name != table || s.entsize == 0 || s.link >= all.size()) continue;
+        const auto strings = all[s.link].offset;
+        for (std::uint64_t k = 0; k < s.size / s.entsize; ++k) {
+            const auto at = static_cast<std::size_t>(s.offset + k * s.entsize);
+            const auto st_name = get<std::uint32_t>(b, at);  // the first word in both classes
+            const auto st_shndx = get<std::uint16_t>(b, at + (wide ? 6 : 14));
+            if (st_name && (!defined_only || st_shndx != 0))
+                out.push_back(cstring(b, static_cast<std::size_t>(strings + st_name)));
+        }
+    }
+    return out;
+}
+
+namespace {
+e2e::outcome tar(std::vector<std::string> args, const fs::path& cwd = {}) {
+    e2e::command c;
+    c.argv.push_back("tar");
+    for (auto& a : args) c.argv.push_back(std::move(a));
+    c.cwd = cwd;
+    return e2e::run(std::move(c));
+}
+}  // namespace
+
+std::vector<std::string> tar_list(const fs::path& archive) {
+    auto r = tar({"-tf", archive.string()});
+    if (!r.started || r.status != 0)
+        throw std::runtime_error("tar -tf " + archive.string() + " failed: " + r.err);
+    std::vector<std::string> out;
+    for (auto l : split_lines(r.out)) {
+        if (l.ends_with('\r')) l.remove_suffix(1);
+        if (!l.empty()) out.emplace_back(l);
+    }
+    return out;
+}
+
+void tar_extract(const fs::path& archive, const fs::path& into, std::vector<std::string> members) {
+    fs::create_directories(into);
+    std::vector<std::string> args{"-xf", fs::absolute(archive).string(), "-C", into.string()};
+    for (auto& m : members) args.push_back(std::move(m));
+    auto r = tar(std::move(args));
+    if (!r.started || r.status != 0)
+        throw std::runtime_error("tar -xf " + archive.string() + " failed: " + r.err);
+}
+
+std::vector<zip_entry> zip_entries(const fs::path& file) {
+    const auto b = read_file(file);
+    std::vector<zip_entry> out;
+    // The end of central directory record: the last "PK\5\6".
+    const auto eocd = b.rfind(std::string("PK\x05\x06", 4));
+    if (eocd == std::string::npos) return out;
+    const auto count = get<std::uint16_t>(b, eocd + 10);
+    std::size_t at = get<std::uint32_t>(b, eocd + 16);
+    for (std::uint16_t i = 0; i < count && at + 46 <= b.size(); ++i) {
+        if (b.compare(at, 4, std::string("PK\x01\x02", 4)) != 0) break;
+        const auto method = get<std::uint16_t>(b, at + 10);
+        const auto name_len = get<std::uint16_t>(b, at + 28);
+        const auto extra_len = get<std::uint16_t>(b, at + 30);
+        const auto comment_len = get<std::uint16_t>(b, at + 32);
+        out.push_back({b.substr(at + 46, name_len), method});
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    return out;
+}
+
+std::string sha256(std::string_view data) {
+    static constexpr std::array<std::uint32_t, 64> k{
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+    std::array<std::uint32_t, 8> h{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                   0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    std::string m(data);
+    const std::uint64_t bits = static_cast<std::uint64_t>(data.size()) * 8;
+    m.push_back(static_cast<char>(0x80));
+    while (m.size() % 64 != 56) m.push_back('\0');
+    for (int i = 7; i >= 0; --i) m.push_back(static_cast<char>((bits >> (i * 8)) & 0xff));
+    auto rotr = [](std::uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+    for (std::size_t chunk = 0; chunk < m.size(); chunk += 64) {
+        std::array<std::uint32_t, 64> w{};
+        for (int i = 0; i < 16; ++i)
+            for (int j = 0; j < 4; ++j)
+                w[i] = (w[i] << 8) | static_cast<unsigned char>(m[chunk + i * 4 + j]);
+        for (int i = 16; i < 64; ++i) {
+            const auto s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const auto s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        auto [a, b, c, d, e, f, g, hh] = h;
+        for (int i = 0; i < 64; ++i) {
+            const auto t1 = hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            const auto t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+    std::string out;
+    for (auto v : h) out += std::format("{:08x}", v);
     return out;
 }
 
