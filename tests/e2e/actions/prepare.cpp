@@ -44,9 +44,10 @@ int main() {
     return 0;
 }
 )cpp"}}};
-        s::write_executable(p.at("install.sh"), R"cpp(#!/usr/bin/env bash
-set -e
-PREFIX="$1"
+        // The host's C compiler that links, named in the script: PATH may lead to one that does not.
+        const auto host_cc = s::host_cc();
+        expect(fatal(host_cc.has_value())) << "no host C compiler links a shared object";
+        s::write_executable(p.at("install.sh"), std::format("#!/usr/bin/env bash\nset -e\nCC='{}'\n", host_cc->string()) + R"cpp(PREFIX="$1"
 mkdir -p "$PREFIX/include" "$PREFIX/lib"
 cat > "$PREFIX/include/greet.h" <<HDR
 #ifdef __cplusplus
@@ -60,7 +61,7 @@ HDR
 cat > "$PREFIX/lib/greet.c" <<SRC
 int prep_greet(void) { return 99; }
 SRC
-gcc -shared -fPIC "$PREFIX/lib/greet.c" -o "$PREFIX/lib/libprepgreet.so"
+"$CC" -shared -fPIC "$PREFIX/lib/greet.c" -o "$PREFIX/lib/libprepgreet.so"
 )cpp");
         const std::string ran = R"(PREPARE prep:install|__action(-stamp)? .*install\.sh)";
         auto b1 = p.mcpp({"build", "-v"});

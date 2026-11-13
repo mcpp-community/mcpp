@@ -266,7 +266,12 @@ int main() {{
         expect(fatal(e2e::succeeded(p.mcpp({"build"})))) << "build failed";
         const auto first = probe();
         expect(eq(first[0], std::string{"hello"})) << "A: the command did not see GREETING";
-        expect(eq(first[1], fs::canonical(p.at("tools")).string())) << "A: the command did not run in tools";
+        // On Windows the command's `sh` (MSYS) prints `C:\x` as `/c/x`.
+        auto where = first[1];
+        if (s::on_windows() && where.size() > 2 && where[0] == '/' && where[2] == '/')
+            where = std::string(1, where[1]) + ":" + where.substr(2);
+        std::error_code ec;
+        expect(fs::equivalent(where, p.at("tools"), ec)) << "A: the command did not run in tools: " << first[1];
         expect(!p.exists("tools/probe.txt")) << "B: the output landed under cwd";
         program("goodbye");
         expect(fatal(e2e::succeeded(p.mcpp({"build"})))) << "rebuild failed";

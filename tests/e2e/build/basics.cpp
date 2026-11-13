@@ -169,11 +169,11 @@ kind = "shared"
             // `ls -d target/*/ | head -1`, then the one directory below it.
             auto first_dir = [](const fs::path& d) {
                 for (const auto& e : entries(d))
-                    if (fs::is_directory(e)) return e;
+                    if (fs::is_directory(e) && !e.filename().string().starts_with('.')) return e;
                 expect(fatal(false)) << "no directory under " << d.string();
                 return fs::path{};
             };
-            return output_of(first_dir(first_dir(p.at("target"))) / "bin" / name);
+            return output_of(first_dir(first_dir(p.at("target"))) / "bin" / s::exe(name));
         };
         s::project tiny{tmp / "tinyapp", {{"mcpp.toml", R"cpp([package]
 name    = "tinyapp"

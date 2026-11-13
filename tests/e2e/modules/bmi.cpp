@@ -329,7 +329,7 @@ bmi_schedule = "on"
         else mcpplibs::mtest::skip(std::format("the schedule resolved to '{}' on this host; this test covers the split strategies", sched_line.substr(sched_line.find("schedule: ") + 10)));
         const auto newest_bin = [&] {
             std::optional<fs::path> best;
-            for (const auto& b : s::glob(p.at("target"), "*/*/bin/schedon"))
+            for (const auto& b : s::glob(p.at("target"), "*/*/bin/" + s::exe("schedon")))
                 if (!best || fs::last_write_time(b) > fs::last_write_time(*best)) best = b;
             return best;
         };
@@ -453,7 +453,7 @@ int main() {
         r = app.mcpp({"build"}, home);
         expect(fatal(e2e::succeeded(r))) << "A: the build that stages the package failed\n" << s::text(r);
         expect(fatal(s::has_line(s::text(r), R"(Cached local-dev\.gen-dep v1\.0\.0)"))) << "A: the package was not staged from the cache, so nothing below is exercised\n" << s::text(r);
-        const auto bins = s::glob(app.at("target"), "*/*/bin/app");
+        const auto bins = s::glob(app.at("target"), "*/*/bin/" + s::exe("app"));
         expect(fatal(!bins.empty())) << "A: no program";
         auto out = s::run(bins.front()).out;
         std::erase(out, '\r');

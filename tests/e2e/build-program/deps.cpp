@@ -565,8 +565,8 @@ int main() {
         // §2.11, mcpp#701/#702): -Wl,-rpath in build.ninja, never -L; `mcpp run` finds the library
         // through that RUNPATH alone; a build.mcpp cache hit keeps it; pack stages it into lib/;
         // a dependency's declaration reaches its consumer's executable.
-        const auto gcc = s::on_path("gcc");
-        expect(fatal(gcc.has_value())) << "no gcc on PATH";
+        const auto gcc = s::host_cc();
+        expect(fatal(gcc.has_value())) << "no host C compiler links a shared object";
         const auto root = s::case_dir();
         auto graph = [](const s::project& p) {
             for (const auto& f : s::find_files(p.at("target"), R"(build\.ninja)"))

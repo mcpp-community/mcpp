@@ -219,7 +219,7 @@ main = "src/main.cpp"
         expect(end - *first_error >= 3.0) << std::format("R5: the failure was reported {:.1f}s before mcpp exited; it waited for ninja\n", end - *first_error) << p.piped();
     };
 
-    "864 a builds status is on standard error"_test = [] {
+    "864 a builds status is on standard error"_test[s::unix_shell] = [] {
         // A: the status of a build is on standard error; B: standard output stays empty for a
         // build that compiles, does nothing or is verbose; C: -q writes nothing; D: 2>&1 records
         // the steps; E: new and clean say what they did on standard error.

@@ -37,6 +37,10 @@ std::string exe(std::string_view name);
 std::optional<std::string> env(std::string_view name);
 // The executable `name` as PATH finds it (`name.exe` too on Windows).
 std::optional<fs::path> on_path(std::string_view name);
+// A C compiler of the host that links a shared object: `gcc`, then `cc`, as PATH finds them, then
+// /usr/bin's. PATH may lead first to a toolchain's wrapper that compiles but finds no C runtime to
+// link (a subos `gcc` outside its sysroot). Probed once; nothing when none links.
+std::optional<fs::path> host_cc();
 
 // ---- where a case runs, and what it needs of the machine (mtest 0.8.0) --------------------------
 //
@@ -171,6 +175,10 @@ e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, co
 // Standard output, then standard error: what a shell's `2>&1` would have collected, for a
 // message whose stream is not what the case asserts.
 std::string text(const e2e::outcome& r);
+// The outcome read as text: on Windows each "\r\n" of its streams becomes "\n", as the POSIX tools of
+// a Windows shell read lines; a bare "\r" (a redraw) is kept. `mcpp`, `run` and the archive helpers
+// return their outcomes so; a case that calls `e2e::run` itself and reads the streams applies it.
+e2e::outcome as_text(e2e::outcome r);
 
 // ---- a project -----------------------------------------------------------------------------------
 
@@ -187,6 +195,7 @@ public:
     const fs::path& dir() const noexcept { return dir_; }
     fs::path at(std::string_view relative) const;
     void write(std::string_view relative, std::string_view content) const;
+    // The file as text: on Windows each "\r\n" is read as "\n" (`as_text`).
     std::string read(std::string_view relative) const;
     bool exists(std::string_view relative) const;
     void remove(std::string_view relative) const;
@@ -301,17 +310,16 @@ namespace sig {
 inline constexpr int interrupt = 2, kill = 9, pipe = 13, terminate = 15;
 }
 
-// ---- a local TCP server (POSIX systems) ---------------------------------------------------------
+// ---- a local TCP server (BSD sockets; Winsock on Windows) ---------------------------------------
 //
 // A server on 127.0.0.1 at a port the system chooses (an oracle a case points mcpp at: an HTTP
 // resource that answers, stalls or trickles, a TLS peer that refuses). Each connection is handled
 // on a thread of its own by the handler, and closed when the handler returns; the server stops and
-// joins its threads when destroyed. Where the system has no such sockets (Windows), constructing
-// one ends the case as failed.
+// joins its threads when destroyed.
 
 class connection {
 public:
-    explicit connection(int fd) noexcept : fd_(fd) {}
+    explicit connection(std::intptr_t fd) noexcept : fd_(fd) {}
     // Up to `max` bytes, waiting at most `wait`; "" when the peer closed or nothing came.
     std::string receive(std::size_t max = 4096, std::chrono::milliseconds wait = std::chrono::seconds{2});
     // Bytes received until `end` was seen (an HTTP request's head: "\r\n\r\n"), or the peer closed.
@@ -320,7 +328,7 @@ public:
     bool send(std::string_view bytes);
 
 private:
-    int fd_;
+    std::intptr_t fd_;  // a socket: an int, or a Windows SOCKET
 };
 
 class local_server {
@@ -332,7 +340,7 @@ public:
     unsigned short port() const noexcept { return port_; }
 
 private:
-    int fd_ = -1;
+    std::intptr_t fd_ = -1;
     unsigned short port_ = 0;
     std::atomic<bool> stop_{false};
     std::function<void(connection&)> handler_;

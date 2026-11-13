@@ -131,8 +131,7 @@ int main(int, char** argv) {
         // A
         expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "tool", "--no-run", "--archive", archive.string()}))));
         const auto x = s::case_dir() / "x";
-        fs::create_directories(x);
-        expect(fatal(e2e::succeeded(e2e::run({.argv = {"tar", "-xzf", archive.string(), "-C", x.string()}}))));
+        s::tar_extract(archive, x);
         const auto manifests = s::glob(x, "*/mcpp-tests.json");
         expect(fatal(!manifests.empty())) << "no mcpp-tests.json in the archive";
         const auto d = s::json_file(manifests.front());

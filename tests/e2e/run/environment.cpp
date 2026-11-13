@@ -68,8 +68,10 @@ E2E environment{"environment", [] {
                         {"tests/test_runtime_plugin.cpp", dlopen_main(20)},
                         {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\nldflags = [\"-ldl\"]\n\n"
                                       "[runtime]\nlibrary_dirs = [\"runtime\"]\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
-        // The host's gcc makes the plugin, as the script's did.
-        auto cc = s::run(*s::on_path("gcc"), {"-shared", "-fPIC", "runtime/plugin.c", "-o", "runtime/libruntime_plugin.so"}, app.dir());
+        // The host's C compiler makes the plugin, as the script's gcc did.
+        const auto host_cc = s::host_cc();
+        expect(fatal(host_cc.has_value())) << "no host C compiler links a shared object";
+        auto cc = s::run(*host_cc, {"-shared", "-fPIC", "runtime/plugin.c", "-o", "runtime/libruntime_plugin.so"}, app.dir());
         expect(fatal(e2e::succeeded(cc))) << "the host gcc did not make the plugin: " << s::text(cc);
         auto r = app.mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "build failed: " << s::text(r);

@@ -649,8 +649,9 @@ int main() {
         // C: the root names a search path the dependency's library needs.
         const auto ext = (tmp / "b/ext").generic_string();
         s::project(tmp / "b/ext", {{"ext.c", "int ext_fn(void) { return 1; }\n"}});
-        auto cc = s::on_path("gcc") ? s::run(*s::on_path("gcc"), {"-shared", "-fPIC", "ext.c", "-o", "libt884ext.so"}, tmp / "b/ext") : e2e::outcome{};
-        if (!cc && s::on_path("cc")) cc = s::run(*s::on_path("cc"), {"-shared", "-fPIC", "ext.c", "-o", "libt884ext.so"}, tmp / "b/ext");
+        const auto host_cc = s::host_cc();
+        expect(fatal(host_cc.has_value())) << "C: no host C compiler links a shared object";
+        auto cc = s::run(*host_cc, {"-shared", "-fPIC", "ext.c", "-o", "libt884ext.so"}, tmp / "b/ext");
         expect(fatal(e2e::succeeded(cc))) << "the C compiler did not make libt884ext.so: " << s::text(cc);
         auto dep_manifest = dep.read("mcpp.toml");
         auto replace = [](std::string& text, std::string_view from, std::string_view to) {

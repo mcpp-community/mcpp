@@ -1,5 +1,11 @@
 module;
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -77,6 +83,29 @@ std::optional<fs::path> on_path(std::string_view name) {
                 return candidate;
     }
     return std::nullopt;
+}
+
+std::optional<fs::path> host_cc() {
+    static const std::optional<fs::path> found = [] () -> std::optional<fs::path> {
+        std::vector<fs::path> candidates;
+        for (std::string_view name : {"gcc", "cc"})
+            if (auto p = on_path(name)) candidates.push_back(*p);
+        for (std::string_view p : {"/usr/bin/gcc", "/usr/bin/cc"}) candidates.emplace_back(p);
+        const auto dir = fs::temp_directory_path() / std::format("mcpp-e2e-cc-{:x}", std::random_device{}());
+        fs::create_directories(dir);
+        { std::ofstream(dir / "probe.c") << "int probe(void) { return 1; }\n"; }
+        std::optional<fs::path> works;
+        for (const auto& c : candidates) {
+            std::error_code ec;
+            if (!fs::is_regular_file(c, ec)) continue;
+            auto r = e2e::run({.argv = {c.string(), "-shared", "-fPIC", (dir / "probe.c").string(), "-o", (dir / "libprobe.so").string()}});
+            if (r) { works = c; break; }
+        }
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        return works;
+    }();
+    return found;
 }
 
 // ---- what payloads and the system provide (the capabilities of support.cppm) ----------------
@@ -263,8 +292,26 @@ std::string mcpp_path() {
     return e2e::program("mcpp");
 }
 
+namespace {
+// "\r\n" read as "\n" on Windows, as the POSIX tools of a Windows shell read lines.
+std::string lines_as_text(std::string t) {
+    if (!on_windows()) return t;
+    std::string lf;
+    lf.reserve(t.size());
+    for (std::size_t i = 0; i < t.size(); ++i)
+        if (!(t[i] == '\r' && i + 1 < t.size() && t[i + 1] == '\n')) lf.push_back(t[i]);
+    return lf;
+}
+}  // namespace
+
+e2e::outcome as_text(e2e::outcome r) {
+    r.out = lines_as_text(std::move(r.out));
+    r.err = lines_as_text(std::move(r.err));
+    return r;
+}
+
 e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o) {
-    return e2e::run(mcpp_command(std::move(args), cwd, o));
+    return as_text(e2e::run(mcpp_command(std::move(args), cwd, o)));
 }
 
 e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, const options& o) {
@@ -278,6 +325,9 @@ e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, co
         if (auto u = env(on_windows() ? "USERPROFILE" : "HOME"))
             c.env.emplace_back("MCPP_HOME", (fs::path(*u) / ".mcpp").string());
     }
+    // A case reads mcpp's default output: the runner's MCPP_VERBOSE (a CI job sets it for its other
+    // steps) is not the case's, which states its own.
+    c.env.emplace_back("MCPP_VERBOSE", std::nullopt);
     for (const auto& kv : o.env) c.env.push_back(kv);
     c.input = o.input;
     c.timeout = o.timeout;
@@ -447,7 +497,7 @@ fs::path project::at(std::string_view relative) const {
     return dir_ / fs::path(std::u8string(relative.begin(), relative.end()));
 }
 void project::write(std::string_view relative, std::string_view content) const { write_into(dir_, relative, content); }
-std::string project::read(std::string_view relative) const { return read_file(at(relative)); }
+std::string project::read(std::string_view relative) const { return lines_as_text(read_file(at(relative))); }
 bool project::exists(std::string_view relative) const { return fs::exists(at(relative)); }
 void project::remove(std::string_view relative) const { fs::remove_all(at(relative)); }
 
@@ -542,7 +592,7 @@ e2e::outcome run(const fs::path& program, std::vector<std::string> args, const f
     for (auto& a : args) c.argv.push_back(std::move(a));
     c.cwd = cwd;
     c.env = std::move(env);
-    return e2e::run(std::move(c));
+    return as_text(e2e::run(std::move(c)));
 }
 
 namespace {
@@ -1045,12 +1095,21 @@ std::vector<elf_symbol> elf_symbol_table(const fs::path& file, std::string_view 
 }
 
 namespace {
+// On Windows the system's bsdtar: the GNU tar of a Git installation, often first on PATH, reads
+// the `C:` of an absolute path as a remote host.
+std::string tar_program() {
+    if (on_windows())
+        if (auto root = env("SystemRoot"); root && fs::is_regular_file(fs::path(*root) / "System32" / "tar.exe"))
+            return (fs::path(*root) / "System32" / "tar.exe").string();
+    return "tar";
+}
+
 e2e::outcome tar(std::vector<std::string> args, const fs::path& cwd = {}) {
     e2e::command c;
-    c.argv.push_back("tar");
+    c.argv.push_back(tar_program());
     for (auto& a : args) c.argv.push_back(std::move(a));
     c.cwd = cwd;
-    return e2e::run(std::move(c));
+    return as_text(e2e::run(std::move(c)));
 }
 }  // namespace
 
@@ -1163,20 +1222,51 @@ std::vector<process_entry> processes() {
     return out;
 }
 
-// ---- a local TCP server (POSIX systems) ---------------------------------------------------------
+// ---- a local TCP server ------------------------------------------------------------------------
+//
+// BSD sockets; on Windows through Winsock (`WSAPoll`, `closesocket`, a SOCKET as the handle).
 
-#if !defined(_WIN32)
 namespace {
-bool readable(int fd, std::chrono::milliseconds wait) {
-    pollfd p{.fd = fd, .events = POLLIN, .revents = 0};
+#if defined(_WIN32)
+using socket_t = SOCKET;
+constexpr socket_t no_socket = INVALID_SOCKET;
+using socket_len = int;
+bool readable(socket_t s, std::chrono::milliseconds wait) {
+    WSAPOLLFD p{.fd = s, .events = POLLRDNORM, .revents = 0};
+    return ::WSAPoll(&p, 1, static_cast<int>(wait.count())) > 0;
+}
+void close_socket(socket_t s) { ::closesocket(s); }
+bool sockets_started() {
+    static const bool started = [] {
+        WSADATA d;
+        return ::WSAStartup(MAKEWORD(2, 2), &d) == 0;
+    }();
+    return started;
+}
+constexpr int no_signal = 0;
+#else
+using socket_t = int;
+constexpr socket_t no_socket = -1;
+using socket_len = socklen_t;
+bool readable(socket_t s, std::chrono::milliseconds wait) {
+    pollfd p{.fd = s, .events = POLLIN, .revents = 0};
     return ::poll(&p, 1, static_cast<int>(wait.count())) > 0;
 }
+void close_socket(socket_t s) { ::close(s); }
+bool sockets_started() { return true; }
+#if defined(MSG_NOSIGNAL)
+constexpr int no_signal = MSG_NOSIGNAL;
+#else
+constexpr int no_signal = 0;
+#endif
+#endif
+socket_t as_socket(std::intptr_t h) { return static_cast<socket_t>(h); }
 }  // namespace
 
 std::string connection::receive(std::size_t max, std::chrono::milliseconds wait) {
-    if (!readable(fd_, wait)) return {};
+    if (!readable(as_socket(fd_), wait)) return {};
     std::string buf(max, '\0');
-    const auto n = ::recv(fd_, buf.data(), buf.size(), 0);
+    const auto n = ::recv(as_socket(fd_), buf.data(), static_cast<int>(buf.size()), 0);
     buf.resize(n > 0 ? static_cast<std::size_t>(n) : 0);
     return buf;
 }
@@ -1192,13 +1282,8 @@ std::string connection::receive_until(std::string_view end, std::chrono::millise
 }
 
 bool connection::send(std::string_view bytes) {
-#if defined(MSG_NOSIGNAL)
-    constexpr int flags = MSG_NOSIGNAL;
-#else
-    constexpr int flags = 0;
-#endif
     while (!bytes.empty()) {
-        const auto n = ::send(fd_, bytes.data(), bytes.size(), flags);
+        const auto n = ::send(as_socket(fd_), bytes.data(), static_cast<int>(bytes.size()), no_signal);
         if (n <= 0) return false;
         bytes.remove_prefix(static_cast<std::size_t>(n));
     }
@@ -1206,30 +1291,32 @@ bool connection::send(std::string_view bytes) {
 }
 
 local_server::local_server(std::function<void(connection&)> handler) : handler_(std::move(handler)) {
-    fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (!sockets_started()) mcpplibs::mtest::fail("local_server: the system's sockets did not start");
+    const socket_t l = ::socket(AF_INET, SOCK_STREAM, 0);
+    fd_ = static_cast<std::intptr_t>(l);
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     a.sin_port = 0;
-    socklen_t len = sizeof a;
-    if (fd_ < 0 || ::bind(fd_, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(fd_, 16) != 0 ||
-        ::getsockname(fd_, reinterpret_cast<sockaddr*>(&a), &len) != 0)
+    socket_len len = sizeof a;
+    if (l == no_socket || ::bind(l, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(l, 16) != 0 ||
+        ::getsockname(l, reinterpret_cast<sockaddr*>(&a), &len) != 0)
         mcpplibs::mtest::fail("local_server: cannot listen on 127.0.0.1");
     port_ = ntohs(a.sin_port);
-    acceptor_ = std::thread([this] {
+    acceptor_ = std::thread([this, l] {
         while (!stop_) {
-            if (!readable(fd_, std::chrono::milliseconds{50})) continue;
-            const int c = ::accept(fd_, nullptr, nullptr);
-            if (c < 0) continue;
+            if (!readable(l, std::chrono::milliseconds{50})) continue;
+            const socket_t c = ::accept(l, nullptr, nullptr);
+            if (c == no_socket) continue;
 #if defined(SO_NOSIGPIPE)
             int one = 1;
             ::setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
             std::scoped_lock lock(m_);
             threads_.emplace_back([this, c] {
-                connection conn(c);
+                connection conn(static_cast<std::intptr_t>(c));
                 handler_(conn);
-                ::close(c);
+                close_socket(c);
             });
         }
     });
@@ -1240,17 +1327,8 @@ local_server::~local_server() {
     if (acceptor_.joinable()) acceptor_.join();
     for (auto& t : threads_)
         if (t.joinable()) t.join();
-    if (fd_ >= 0) ::close(fd_);
+    if (as_socket(fd_) != no_socket) close_socket(as_socket(fd_));
 }
-#else
-std::string connection::receive(std::size_t, std::chrono::milliseconds) { return {}; }
-std::string connection::receive_until(std::string_view, std::chrono::milliseconds) { return {}; }
-bool connection::send(std::string_view) { return false; }
-local_server::local_server(std::function<void(connection&)> handler) : handler_(std::move(handler)) {
-    mcpplibs::mtest::fail("local_server: this system has no POSIX sockets");
-}
-local_server::~local_server() = default;
-#endif
 
 std::string file_identity(const fs::path& file) {
 #if defined(_WIN32)

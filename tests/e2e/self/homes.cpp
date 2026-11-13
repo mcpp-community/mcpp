@@ -157,16 +157,17 @@ E2E homes{"homes", [] {
         std::vector<fs::path> raced;
         for (int i = 0; i < 4; ++i) raced.push_back(root / ("concurrent home " + std::to_string(i)));
         {
-            std::vector<s::process> writers;
+            // Sessions, not processes held by their ids: the writers run at once on every system.
+            std::vector<e2e::session> writers;
             for (const auto& d : raced)
-                writers.push_back(s::process::start({.argv = {s::mcpp_path(), "self", "init", "--force", "--home", d.string()}, .cwd = root, .env = env}));
+                writers.push_back(e2e::session::start({.argv = {s::mcpp_path(), "self", "init", "--force", "--home", d.string()}, .cwd = root, .env = env}));
             for (int i = 0; i < 4; ++i) {
                 const auto h = as_path(home_of()["mcppHome"]);
                 expect(fatal(h == original || std::ranges::contains(raced, h))) << "a reader saw " << h;
             }
             for (auto& w : writers) {
-                const int st = w.wait(std::chrono::seconds{15});
-                expect(fatal(st == 0 || st == 1)) << "a writer exited " << st << ": " << w.piped();
+                const auto r = w.finish(std::chrono::seconds{15});
+                expect(fatal(r.started && !r.timed_out && (r.status == 0 || r.status == 1))) << "a writer exited " << r.status << ": " << s::text(r);
             }
         }
         expect(fatal(std::ranges::contains(raced, as_path(home_of()["mcppHome"])))) << "the last selection is none of the writers'";
@@ -219,7 +220,6 @@ E2E homes{"homes", [] {
         // refusal within 2 s each and changes nothing in the home; `self doctor` reaches the
         // resource server (exit 1, the corp rows, the build policy) within 7 s and changes
         // nothing; offline it skips the resources, makes no request and bootstraps nothing.
-        if (s::on_windows()) skip("the resource oracle is a POSIX socket server (tests/support local_server)");
         fs::path provider;
         for (std::string_view v : {"MCPP_NETWORK_PROVIDER", "MCPP_VENDORED_XLINGS", "XLINGS_BIN"})
             if (auto x = s::env(v); x && !x->empty() && fs::is_regular_file(*x)) { provider = *x; break; }

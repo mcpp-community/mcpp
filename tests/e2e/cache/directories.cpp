@@ -149,7 +149,7 @@ E2E directories{"directories", [] {
         // Survivors are intact: both profiles rebuild without relinking anything.
         const auto mtimes = [&] {
             std::map<fs::path, fs::file_time_type> m;
-            for (const auto& f : s::glob(triple, "*/bin/stale")) m[f] = fs::last_write_time(f);
+            for (const auto& f : s::glob(triple, "*/bin/" + s::exe("stale"))) m[f] = fs::last_write_time(f);
             return m;
         };
         const auto before = mtimes();

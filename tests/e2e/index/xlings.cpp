@@ -17,7 +17,7 @@ const s::options no_auto{.env = {{"MCPP_NO_AUTO_INSTALL", "1"}}};
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 E2E xlings{"xlings", [] {
-    "327 declared xlings deps report their own failure"_test = [] {
+    "327 declared xlings deps report their own failure"_test[s::unix_shell] = [] {
         // An unprovisionable [xlings] dependency: MCPP_NO_AUTO_INSTALL refuses naming the knob
         // and the package (announcing no provisioning); MCPP_OFFLINE refuses naming the offline
         // knob; a failed provisioning fails two builds in a row; a pre-upgrade stamp keeps an

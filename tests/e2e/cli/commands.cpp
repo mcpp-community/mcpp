@@ -19,10 +19,11 @@ std::string lower(std::string_view text) {
     return out;
 }
 
-// The first `Resolved <spec> ` of a build's output (`sed -n 's/.*Resolved \([^ ]*\) .*/\1/p' | head -1`).
+// The toolchain of a build's output: its first `Resolved <family>@<version> `, past a Windows build's
+// `Resolved sysroot msvc@system`.
 std::string resolved(std::string_view text) {
     std::match_results<std::string_view::const_iterator> m;
-    static const std::regex re{"Resolved ([^ \n]*) "};
+    static const std::regex re{"Resolved ([^ \n@]+@[^ \n]+) "};
     return std::regex_search(text.begin(), text.end(), m, re) ? m[1].str() : std::string();
 }
 

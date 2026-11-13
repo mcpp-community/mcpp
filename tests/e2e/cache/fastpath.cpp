@@ -169,9 +169,11 @@ E2E fastpath{"fastpath", [] {
         };
         auto a1 = p.mcpp({"build"});
         build_ok(a1, "the first build");
+        // The toolchain's line (`Resolved llvm@23.1.3 → ...`), not a sysroot's (`Resolved sysroot
+        // msvc@system → ...`), which a Windows build states as well.
         std::smatch m;
         const auto t1 = s::text(a1);
-        expect(fatal(std::regex_search(t1, m, std::regex{R"(Resolved ([^ ]*) )"}))) << "could not learn this platform's toolchain\n" << t1;
+        expect(fatal(std::regex_search(t1, m, std::regex{R"(Resolved ([^ \n@]+@[^ \n]+) )"}))) << "could not learn this platform's toolchain\n" << t1;
         const std::string own = m[1];
         const auto first_request = request();
         auto a2 = p.mcpp({"build"});
