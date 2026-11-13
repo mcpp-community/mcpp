@@ -1,0 +1,151 @@
+# canary	identity	host	step	expect	note
+c	x86_64-linux-gnu	linux-x86_64	build	ok	
+c	x86_64-linux-gnu	linux-x86_64	static	ok	
+c	x86_64-linux-gnu	linux-x86_64	run	ok	
+c	x86_64-linux-gnu	linux-x86_64	test	n/a	
+c	x86_64-linux-gnu	linux-x86_64	pack	ok	
+c	x86_64-linux-musl	linux-x86_64	build	ok	
+c	x86_64-linux-musl	linux-x86_64	static	ok	
+c	x86_64-linux-musl	linux-x86_64	run	ok	
+c	x86_64-linux-musl	linux-x86_64	test	n/a	
+c	x86_64-linux-musl	linux-x86_64	pack	ok	
+c	aarch64-linux-gnu	linux-x86_64	build	ok	
+c	aarch64-linux-gnu	linux-x86_64	static	ok	
+c	aarch64-linux-gnu	linux-x86_64	run	ok	
+c	aarch64-linux-gnu	linux-x86_64	test	n/a	
+c	aarch64-linux-gnu	linux-x86_64	pack	ok	
+c	aarch64-linux-musl	linux-x86_64	build	ok	
+c	aarch64-linux-musl	linux-x86_64	static	ok	
+c	aarch64-linux-musl	linux-x86_64	run	ok	
+c	aarch64-linux-musl	linux-x86_64	test	n/a	
+c	aarch64-linux-musl	linux-x86_64	pack	ok	
+c	x86_64-windows-gnu	linux-x86_64	build	n/a	a POSIX program; mingw's C library presents no sigsetjmp
+c	x86_64-windows-gnu	linux-x86_64	static	n/a	a POSIX program; mingw's C library presents no sigsetjmp
+c	x86_64-windows-gnu	linux-x86_64	run	n/a	a POSIX program; mingw's C library presents no sigsetjmp
+c	x86_64-windows-gnu	linux-x86_64	test	n/a	
+c	x86_64-windows-gnu	linux-x86_64	pack	n/a	a POSIX program; mingw's C library presents no sigsetjmp
+c	x86_64-windows-musl	linux-x86_64	build	ok	
+c	x86_64-windows-musl	linux-x86_64	static	ok	
+c	x86_64-windows-musl	linux-x86_64	run	fails	windows artifacts on a linux host: the run names the absent runner
+c	x86_64-windows-musl	linux-x86_64	test	n/a	
+c	x86_64-windows-musl	linux-x86_64	pack	ok	
+c	x86_64-openkal	linux-x86_64	build	ok	
+c	x86_64-openkal	linux-x86_64	static	ok	
+c	x86_64-openkal	linux-x86_64	run	ok	
+c	x86_64-openkal	linux-x86_64	test	n/a	
+c	x86_64-openkal	linux-x86_64	pack	ok	
+c	aarch64-openkal	linux-x86_64	build	ok	
+c	aarch64-openkal	linux-x86_64	static	ok	
+c	aarch64-openkal	linux-x86_64	run	fails	okrun runs an artifact on a machine of its architecture: the run names it
+c	aarch64-openkal	linux-x86_64	test	n/a	
+c	aarch64-openkal	linux-x86_64	pack	ok	
+cxx	x86_64-linux-gnu	linux-x86_64	build	ok	
+cxx	x86_64-linux-gnu	linux-x86_64	static	ok	
+cxx	x86_64-linux-gnu	linux-x86_64	run	ok	
+cxx	x86_64-linux-gnu	linux-x86_64	test	ok	
+cxx	x86_64-linux-gnu	linux-x86_64	pack	ok	
+cxx	x86_64-linux-musl	linux-x86_64	build	ok	
+cxx	x86_64-linux-musl	linux-x86_64	static	ok	
+cxx	x86_64-linux-musl	linux-x86_64	run	ok	
+cxx	x86_64-linux-musl	linux-x86_64	test	ok	
+cxx	x86_64-linux-musl	linux-x86_64	pack	ok	
+cxx	aarch64-linux-gnu	linux-x86_64	build	ok	
+cxx	aarch64-linux-gnu	linux-x86_64	static	ok	
+cxx	aarch64-linux-gnu	linux-x86_64	run	ok	
+cxx	aarch64-linux-gnu	linux-x86_64	test	ok	
+cxx	aarch64-linux-gnu	linux-x86_64	pack	ok	
+cxx	aarch64-linux-musl	linux-x86_64	build	ok	
+cxx	aarch64-linux-musl	linux-x86_64	static	ok	
+cxx	aarch64-linux-musl	linux-x86_64	run	ok	
+cxx	aarch64-linux-musl	linux-x86_64	test	ok	
+cxx	aarch64-linux-musl	linux-x86_64	pack	ok	
+cxx	x86_64-windows-gnu	linux-x86_64	build	ok	
+cxx	x86_64-windows-gnu	linux-x86_64	static	ok	
+cxx	x86_64-windows-gnu	linux-x86_64	run	fails	windows artifacts on a linux host: the run names the absent runner
+cxx	x86_64-windows-gnu	linux-x86_64	test	fails	GCC 16.1 for mingw defines std::_Sp_make_shared_tag::_S_ti()::__tag in a module unit outside a COMDAT; the test program's link refuses the second definition
+cxx	x86_64-windows-gnu	linux-x86_64	pack	ok	
+cxx	x86_64-windows-musl	linux-x86_64	build	ok	
+cxx	x86_64-windows-musl	linux-x86_64	static	ok	
+cxx	x86_64-windows-musl	linux-x86_64	run	fails	windows artifacts on a linux host: the run names the absent runner
+cxx	x86_64-windows-musl	linux-x86_64	test	fails	windows artifacts on a linux host: the run names the absent runner
+cxx	x86_64-windows-musl	linux-x86_64	pack	ok	
+cxx	x86_64-openkal	linux-x86_64	build	ok	
+cxx	x86_64-openkal	linux-x86_64	static	ok	
+cxx	x86_64-openkal	linux-x86_64	run	ok	
+cxx	x86_64-openkal	linux-x86_64	test	ok	
+cxx	x86_64-openkal	linux-x86_64	pack	ok	
+cxx	aarch64-openkal	linux-x86_64	build	ok	
+cxx	aarch64-openkal	linux-x86_64	static	ok	
+cxx	aarch64-openkal	linux-x86_64	run	fails	okrun runs an artifact on a machine of its architecture: the run names it
+cxx	aarch64-openkal	linux-x86_64	test	fails	okrun runs an artifact on a machine of its architecture: the run names it
+cxx	aarch64-openkal	linux-x86_64	pack	ok	
+c	aarch64-macos	macos-aarch64	build	ok	
+c	aarch64-macos	macos-aarch64	static	ok	
+c	aarch64-macos	macos-aarch64	run	ok	
+c	aarch64-macos	macos-aarch64	test	n/a	
+c	aarch64-macos	macos-aarch64	pack	ok	
+c	aarch64-macos-musl	macos-aarch64	build	ok	
+c	aarch64-macos-musl	macos-aarch64	static	ok	
+c	aarch64-macos-musl	macos-aarch64	run	ok	
+c	aarch64-macos-musl	macos-aarch64	test	n/a	
+c	aarch64-macos-musl	macos-aarch64	pack	ok	
+c	aarch64-openkal	macos-aarch64	build	ok	
+c	aarch64-openkal	macos-aarch64	static	ok	
+c	aarch64-openkal	macos-aarch64	run	ok	
+c	aarch64-openkal	macos-aarch64	test	n/a	
+c	aarch64-openkal	macos-aarch64	pack	ok	
+c	x86_64-windows-msvc	windows-x86_64	build	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-msvc	windows-x86_64	static	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-msvc	windows-x86_64	run	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-msvc	windows-x86_64	test	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-msvc	windows-x86_64	pack	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-gnu	windows-x86_64	build	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-gnu	windows-x86_64	static	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-gnu	windows-x86_64	run	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-gnu	windows-x86_64	test	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-gnu	windows-x86_64	pack	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	x86_64-windows-musl	windows-x86_64	build	ok	
+c	x86_64-windows-musl	windows-x86_64	static	ok	
+c	x86_64-windows-musl	windows-x86_64	run	ok	
+c	x86_64-windows-musl	windows-x86_64	test	n/a	
+c	x86_64-windows-musl	windows-x86_64	pack	ok	
+c	x86_64-openkal	windows-x86_64	build	ok	
+c	x86_64-openkal	windows-x86_64	static	ok	
+c	x86_64-openkal	windows-x86_64	run	ok	
+c	x86_64-openkal	windows-x86_64	test	n/a	
+c	x86_64-openkal	windows-x86_64	pack	ok	
+cxx	aarch64-macos	macos-aarch64	build	ok	
+cxx	aarch64-macos	macos-aarch64	static	ok	
+cxx	aarch64-macos	macos-aarch64	run	ok	
+cxx	aarch64-macos	macos-aarch64	test	ok	
+cxx	aarch64-macos	macos-aarch64	pack	ok	
+cxx	aarch64-macos-musl	macos-aarch64	build	ok	
+cxx	aarch64-macos-musl	macos-aarch64	static	ok	
+cxx	aarch64-macos-musl	macos-aarch64	run	ok	
+cxx	aarch64-macos-musl	macos-aarch64	test	ok	
+cxx	aarch64-macos-musl	macos-aarch64	pack	ok	
+cxx	aarch64-openkal	macos-aarch64	build	ok	
+cxx	aarch64-openkal	macos-aarch64	static	ok	
+cxx	aarch64-openkal	macos-aarch64	run	ok	
+cxx	aarch64-openkal	macos-aarch64	test	ok	
+cxx	aarch64-openkal	macos-aarch64	pack	ok	
+cxx	x86_64-windows-msvc	windows-x86_64	build	ok	
+cxx	x86_64-windows-msvc	windows-x86_64	static	ok	
+cxx	x86_64-windows-msvc	windows-x86_64	run	ok	
+cxx	x86_64-windows-msvc	windows-x86_64	test	ok	
+cxx	x86_64-windows-msvc	windows-x86_64	pack	ok	
+cxx	x86_64-windows-gnu	windows-x86_64	build	ok	
+cxx	x86_64-windows-gnu	windows-x86_64	static	ok	
+cxx	x86_64-windows-gnu	windows-x86_64	run	ok	
+cxx	x86_64-windows-gnu	windows-x86_64	test	ok	
+cxx	x86_64-windows-gnu	windows-x86_64	pack	ok	
+cxx	x86_64-windows-musl	windows-x86_64	build	ok	
+cxx	x86_64-windows-musl	windows-x86_64	static	ok	
+cxx	x86_64-windows-musl	windows-x86_64	run	ok	
+cxx	x86_64-windows-musl	windows-x86_64	test	ok	
+cxx	x86_64-windows-musl	windows-x86_64	pack	ok	
+cxx	x86_64-openkal	windows-x86_64	build	ok	
+cxx	x86_64-openkal	windows-x86_64	static	ok	
+cxx	x86_64-openkal	windows-x86_64	run	ok	
+cxx	x86_64-openkal	windows-x86_64	test	ok	
+cxx	x86_64-openkal	windows-x86_64	pack	ok	
