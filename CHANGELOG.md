@@ -69,6 +69,14 @@
   replaces.
 - A reader of the package index waits for a refresh in progress when an index
   it declares is absent, instead of reporting no local index.
+- A provider with `base = "none"` carries the platform's tools its own link,
+  seal and runner name; the platform's other rows no longer provision a tool
+  only such a provider names. Before, such a provider carried no tool, and its
+  seal's program was reported absent.
+- A row whose compile triple names no system (`<arch>-unknown-none-elf`) is
+  compiled as a bare machine is: the C environment's identity macros are the C
+  library's alone. Before, the realised environment declared `__unix__` that
+  the compiler did not define.
 
 ## [2026.11.12.1] - 2026-11-12
 

@@ -705,3 +705,61 @@ runner = { cmd = ["fwrun", "{}"] }
     expect(eq(toy.runner.cmd, std::vector<std::string>{"toyrun", "{}"}));
     expect(eq(toy.link.flags.value, std::vector<std::string>{"-shared"}));
 }};
+
+// The platform's tools a view carries (2026.11.13.1): a provider with `base =
+// "none"` carries those its own conventions name; the platform's own rows carry
+// every tool but those only such a provider names.
+UTest a_row_carries_the_tools_its_conventions_name{"PlatformMerge/ARowCarriesTheToolsItsConventionsName", [] {
+    auto m = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-toy"]
+toolchain = "llvm@23.1.3"
+runner    = ["toyrun", "{}"]
+
+[platform.tools]
+toyseal = "toy-tools@1.0.0"
+toyrun  = "toy-tools@1.0.0"
+toyprof = "toy-tools@1.0.0"
+dosseal = "dos-tools@1.0.0"
+
+[platform.link]
+driver = "lld"
+seal   = [["toyseal", "{}"]]
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple = "i686-dos"
+
+[[platform.define]]
+triple = "x86_64-fw"
+
+[[platform.provider]]
+serves = ["i686-dos"]
+base   = "none"
+link   = { driver = "lld", seal = [["dosseal", "{}"]] }
+runner = { cmd = ["dosrun", "{}"] }
+
+[[platform.provider]]
+serves = ["x86_64-fw"]
+base   = "none"
+link   = { driver = "lld", seal = [] }
+)");
+    auto names = [](const mcpp::manifest::platform::Statement& s) {
+        std::vector<std::string> out;
+        for (auto const& [k, _] : s.tools) out.push_back(k);
+        return out;
+    };
+    auto dos = pf::provider_view(m.platform, "i686-dos");
+    expect(eq(names(dos), std::vector<std::string>{"dosseal"})) << "its seal's program, and no other";
+    auto fw = pf::provider_view(m.platform, "x86_64-fw");
+    expect(fw.tools.empty()) << "a provider whose conventions run no tool carries none";
+    auto toy = pf::provider_view(m.platform, "x86_64-toy");
+    expect(eq(names(toy), std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
+        << "the platform's rows keep every tool but another row's seal";
+}};

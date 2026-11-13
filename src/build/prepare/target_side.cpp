@@ -499,8 +499,9 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
                 tt ? tt->arch : std::string{},
                 tt ? mcpp::toolchain::triple::to_string(tt->object_format()) : std::string_view{},
                 // A program its loader runs is told no operating system, as a
-                // bare machine is: the C library's identity macros are the only ones.
-                tt && (tt->is_freestanding() || tt->loader_supplies_os()));
+                // bare machine is, and so is a row whose compile triple names
+                // none: the C library's identity macros are the only ones.
+                tt && tt->compiler_told_no_os());
             if (!realised) {
                 refusal::record(refusal::Code::CEnvUnrealisable);
                 return std::unexpected(realised.error());

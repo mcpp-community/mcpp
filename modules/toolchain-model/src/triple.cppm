@@ -385,6 +385,22 @@ struct Triple {
     // is its platform's (SPEC-013).
     bool loader_supplies_os() const { return is_openkal(); }
 
+    // WHETHER THE COMPILER IS TOLD NO OPERATING SYSTEM: a bare machine, an ok
+    // image, or a row whose compile triple names none (`i686-dos-musl', which
+    // a platform defines over `i386-unknown-none-elf'). The C environment's
+    // identity macros are then the C library's alone (`cenv::realise').
+    bool compiler_told_no_os() const {
+        if (is_freestanding() || loader_supplies_os()) return true;
+        const std::string t = llvm_triple();
+        std::size_t first = t.find('-');
+        if (first == std::string::npos) return false;
+        std::size_t second = t.find('-', first + 1);
+        if (second == std::string::npos) return false;
+        const std::size_t third = t.find('-', second + 1);
+        return std::string_view(t).substr(second + 1, third == std::string::npos ? std::string::npos
+                                                                                 : third - second - 1) == "none";
+    }
+
     // WHETHER THIS ROW'S TOOLCHAIN PIN IS A CAPABILITY RATHER THAN A
     // CONVENTION — the distinction that decides whether an author may override
     // it.

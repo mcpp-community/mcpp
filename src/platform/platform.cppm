@@ -449,17 +449,58 @@ void take_provider_fields(mp::Statement& s, const mp::ProviderSpec& pr) {
     if (l.inputsSet) { s.link.inputs = l.inputs; s.link.inputsOrigin = l.inputsOrigin; s.link.inputsSet = true; }
     if (l.sealSet) { s.link.seal = l.seal; s.link.sealOrigin = l.sealOrigin; s.link.sealSet = true; }
 }
+
+// THE PROGRAMS A STATEMENT'S CONVENTIONS RUN: its link's inputs, its seal's steps,
+// its runner and its named runners, each by its first word.
+std::set<std::string> named_programs(const mp::Link& l, const mp::Runner& runner,
+                                     const std::map<std::string, mp::Words>& runners) {
+    std::set<std::string> out;
+    for (auto const& in : l.inputs) if (!in.from.empty()) out.insert(in.from.front());
+    for (auto const& step : l.seal) if (!step.empty()) out.insert(step.front());
+    if (!runner.cmd.empty()) out.insert(runner.cmd.front());
+    for (auto const& [_, w] : runners) if (!w.value.empty()) out.insert(w.value.front());
+    return out;
+}
+
+// WHICH OF THE PLATFORM'S TOOLS A VIEW CARRIES (2026.11.13.1). `[platform.tools]`
+// are programs for the building machine, and a build provisions each tool its view
+// carries. A provider with `base = "none"` carries the tools its own conventions
+// name (a row's seal, beside rows whose conventions are the platform's own); every
+// other view carries every tool but those that only such providers name, so the
+// programs of one row are not built for another.
+void select_tools(mp::Statement& s, const mp::Statement& p, const mp::ProviderSpec* own) {
+    if (own && own->base == "none") {
+        const auto named = named_programs(s.link, s.runner, s.runners);
+        s.tools.clear();
+        for (auto const& [name, e] : p.tools)
+            if (named.contains(name)) s.tools.emplace(name, e);
+        return;
+    }
+    std::set<std::string> foreign;
+    for (auto const& pr : p.providers)
+        if (&pr != own && pr.base == "none")
+            for (auto const& n : named_programs(pr.link, pr.runner, {})) foreign.insert(n);
+    if (foreign.empty()) return;
+    const auto named = named_programs(s.link, s.runner, s.runners);
+    for (auto const& n : foreign)
+        if (!named.contains(n)) s.tools.erase(n);
+}
 } // namespace
 
 mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
     const auto* pr = provider_of(p, identity);
-    if (!pr) return p;
+    if (!pr) {
+        auto s = p;
+        select_tools(s, p, nullptr);
+        return s;
+    }
     if (pr->base == "none") {
         auto s = hosted_view(p);
         s.cHosted = pr->hosted;
         if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
         if (!pr->layers.empty()) s.layers = pr->layers;
         take_provider_fields(s, *pr);
+        select_tools(s, p, pr);
         return s;
     }
     auto s = p;
@@ -467,6 +508,7 @@ mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
     if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
     if (!pr->layers.empty()) s.layers = pr->layers;
     take_provider_fields(s, *pr);
+    select_tools(s, p, pr);
     return s;
 }
 

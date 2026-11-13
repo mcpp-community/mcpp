@@ -4,9 +4,9 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.8 |
-| 版本 | 1.8 |
-| 最后修改 | 2026-11-12 |
+| 状态 | 评审中 v1.9 |
+| 版本 | 1.9 |
+| 最后修改 | 2026-11-14 |
 | 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
@@ -236,6 +236,10 @@ plugin    = "build.mcpp"
 `tools` 中的每个包引用作为根的构建依赖加入,带 `tools = [<names>]`,为本机构建;同一包的多个工具只构建一次。
 根已经以构建依赖请求同名工具时让位;`{ program = "<name>" }` 不构建,在声明的载荷与 `PATH` 中查找。
 **已实现**
+
+一行所带的工具(mcpp >= 2026.11.13.1):`base = "none"` 的提供者所服务的身份只带其自身 `link` 的 `inputs`、`seal` 与 `runner`
+以第一个词指名的工具;其余身份带全部工具,只由 `base = "none"` 的提供者指名、且该身份自身约定不指名的工具除外。
+一行的工具因此不为另一行构建。**已实现**
 
 ### 7.4 工作空间成员
 
@@ -555,3 +559,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.6 | 2026-11-09 | mcpp 2026.11.9.1(SPEC-016,mcpp#911):§1 `[[platform.define]]` 与 `[[platform.provider]]` 为一般形式,`[platform]`、`[platform.hosted]` 为其简写;§9.2 `driver = "compiler"` 在每一行生效,平台的产物名模式不被构建程序改变;§11 平台定义的系统上的载体与 `--systems`;主机对为任意系统词。 |
 | 1.7 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E8,mcpp#911 N6):§4 `link.flags` 在 `driver = "compiler"` 时给出警告。 |
 | 1.8 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 §5.2、§5.5):§10 运行器的 `requires` 与 `built-as`,模板占位 `{sysroot}`、`{pkg:<name>}`,提供者的 `runner` 为陈述的最低一级;`hosts` 的系统取自系统表。 |
+| 1.9 | 2026-11-14 | mcpp 2026.11.13.1:§7.3 一行所带的工具,`base = "none"` 的提供者只带其自身约定指名的工具,其余身份不带只由这类提供者指名的工具。 |
