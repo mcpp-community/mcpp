@@ -1127,3 +1127,47 @@ warning: the configuration changed (debug 1 → lines): 7a72… is built in full
   profile 决定。
 - **默认只剥离符号表而保留调试信息。** 符号表是调试器、性能分析器与回溯在没有 DWARF 时的依据，开发构建不默认去掉；需要时由
   `strip = true` 的 profile 选择。
+
+## 19. UEFI 收敛到 openkal：实施中测到的与据此的设计（2026-11-13 补充）
+
+本节记录"UEFI 收敛到 openkal"（第 5.12 节，用户决定：openkal-platform 接管 `x86_64-uefi` 行与载体，uefi-platform#1 关闭）
+实施时测到的三处缺口，以及按 P16（归属）与"不硬编码系统名"的规则给出的解法。
+
+### 19.1 测到的
+
+| 项 | 测到的（2026-11-13，llvm 23.1.3） | 缺口的归属 |
+|---|---|---|
+| C 环境的实现 | openkal-musl 声明 `presents = "posix"`、`data-model = "arch-default"`；对 `x86_64-uefi` 的构建被拒："this OS is outside the mapping table"。`cenv` 的映射以系统名为键（`windows`、`linux`、`macos`） | mcpp：映射的键应是行的容器格式 |
+| 包对 PE 的选择 | musl 与 llvm-runtime 的 PE 部分（setjmp 的记录、`.ctors` 的遍历、compiler-rt 的 PE 源、libunwind 的 PE 分支）以 `cfg(windows)` 选择；UEFI 是 PE 而不是 Windows | mcpp 缺少按容器选择的 cfg 键；包把"PE"写成了"Windows" |
+| 链接 | 以 `--target=x86_64-pc-cygwin` 编译的目标文件在 `lld-link`（MSVC 方式）下没有 `__CTOR_LIST__`；`ld.lld -m i386pep --subsystem efi_application` 链接出 EFI 应用（子系统 10）；openkal-platform 的 `[platform.link]` 与 `[platform.build]` 是 ok 镜像的 | 提供者的 `link`、`layers` 已由 `provider_view` 并入（SPEC-016 §3）；平台顶层的 `runner` 仍压过提供者自己的运行器 |
+
+### 19.2 方案
+
+1. **`cenv` 以容器为键（mcpp）。** 实现"呈现 POSIX"的代价是工具链对容器的约定：PE 为 LLP64、16 位 `wchar_t`，以 Cygwin 身份的
+   替换得到 LP64 与 `__unix__`；ELF 已有 `__unix__`；Mach-O 加 `-D__unix__`。`realise` 增加容器参数（由
+   `Triple::object_format()` 给出，平台定义的行亦然），系统名只用于消息。内置行的行为与命令行不变（单元测试 21 例，含新增的
+   "平台定义的 PE 行取 PE 的实现"与"未知容器被拒并指名"）。已实现。
+2. **`cfg(object-format = "...")`（mcpp）。** 三元组键增加 `object-format`，值为行数据的拼写（`elf`、`pe`、`mach-o`、`wasm`、
+   `coff`）；特异性为一个分量，低于 `os`。包需要的是同一容器的各系统共有的约定时按它选择。已实现，文档 docs/22（中英）。
+3. **一个平台按行给出约定（openkal-platform，数据；mcpp 一处）。** 提供者的 `link` 已在它服务的身份上取代平台的
+   `[platform.link]`：`x86_64-uefi` 的提供者陈述 `driver = "lld"`、`flags = ["--subsystem", "efi_application",
+   "--gc-sections"]`、`start = "efi_main"`、`exe = "{name}.efi"`、`inputs = []`、`seal = []`，行的
+   `link-emulation = "i386pep"` 选择 MinGW 方式的 COFF 链接；ok 镜像的编译约定移入 `[platform.build.'cfg(os = "openkal")']`。
+   mcpp 的一处：提供者陈述了 `runner` 时，`provider_view` 以它取代平台顶层的 `runner`（顶层的运行器属于 `[platform]
+   targets` 这个提供者），与 `link`、`layers` 的取代一致。
+4. **包按容器选择（openkal-musl 0.29.6、openkal-llvm-runtime 0.20.3）。** PE 共有的部分改为 `cfg(object-format = "pe")`，
+   私有宏为 `OKM_TARGET_PE`、`OPENKAL_TARGET_PE`；Windows 独有的部分（openkal-windows 依赖、`okw_start` 入口、`.exe` 的重试、
+   Windows 的链接词）仍为 `cfg(windows)`。安装的头文件不读系统名：musl 的 PE 记录放在只在 PE 行上进入包含路径的
+   `musl-generated/x86_64-pe`，llvm-runtime 以只在 PE 行上进入包含路径的 `port/include-pe/__openkal_target_pe.h` 标记容器。
+   两包的引擎下限为 2026.11.13.1。
+5. **openkal-uefi 0.10.0 的 `standalone`。** 与 openkal-windows 相同：`efi_main` 记录固件表与参数，交给 C 库的
+   `__libc_start_main`，初始化由 C 库完成；无 C 库时保持 0.9.0 的行为。openkal-musl 在 `cfg(os = "uefi")` 下以
+   `standalone` 依赖它，与其余系统的写法一致。
+6. **运行器。** xim 的 `ovmf` 9.2.4-1 携带 dirun 描述文件（`{profile-dir}`，dirun 0.3.2），运行器陈述只写
+   `dirun --payload {} --profile {pkg:ovmf}/dirun.toml --emulator {pkg:qemu-x86}/bin/qemu-system-x86_64`。
+
+### 19.3 不采纳
+
+- **为 UEFI 在包里加 `cfg(os = "uefi")` 的 PE 分支。** 每增加一个 PE 系统就要再改一次包；容器是这些分支真正问的事实。
+- **引擎为每个构建广播容器宏。** 改变所有目标的每条编译命令（升级即全量重编），而安装的头文件可由清单选择的包含目录回答。
+- **行声明 `family = "windows"`。** UEFI 不是 Windows 家族；`cfg(windows)` 下的 Windows 依赖与入口会被错误地选中。

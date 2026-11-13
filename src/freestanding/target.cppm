@@ -111,9 +111,14 @@ inline constexpr auto kTable = [] {
 // `link-emulation = "elf_i386"` were read and then reached no command line,
 // because the table above is compiled from the built-in rows alone. A defined
 // row lives in the registry for the rest of the process, so the views stay valid.
+//
+// A ROW MAY STATE ITS LINK WITHOUT ITS MACHINE (2026-11-13): `x86_64-uefi`
+// leaves the processor to the compiler's default for the clang triple and
+// states `link-emulation = "i386pep"`, the COFF link of ld.lld's MinGW driver.
+// Either column makes the description; `row_words` emits only what is stated.
 inline std::optional<Spec> defined_spec(std::string_view triple) {
     auto const* d = mcpp::toolchain::target::defined_row(triple);
-    if (!d || d->march.empty()) return std::nullopt;
+    if (!d || (d->march.empty() && d->linkEmulation.empty())) return std::nullopt;
     return Spec{ d->triple, d->march, d->mabi, d->codeModel, d->multilib, d->flags, d->linkEmulation };
 }
 
@@ -160,7 +165,7 @@ inline std::optional<Spec> resolve(std::string_view triple) {
 // after them is the engine's convention (`mcpp why flags` tells them apart).
 inline std::vector<std::string> row_words(const Spec& s) {
     std::vector<std::string> out;
-    out.emplace_back(std::string("-march=") + std::string(s.march));
+    if (!s.march.empty()) out.emplace_back(std::string("-march=") + std::string(s.march));
     if (!s.mabi.empty())
         out.emplace_back(std::string("-mabi=")  + std::string(s.mabi));
     if (!s.mcmodel.empty())
