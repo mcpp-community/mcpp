@@ -455,6 +455,11 @@ std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPat
 // missing" — see mcpp.pack.strip, which refuses only the second.
 std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name);
 
+// Whether the target's row states its GCC target (`gcc-triple`), so that the
+// payload is a self-contained cross GCC whose tools carry that prefix. The
+// target is read in either spelling: the row's, or the compiler's own.
+bool row_states_gcc_target(const Toolchain& tc);
+
 std::filesystem::path archive_tool(const Toolchain& tc);
 std::filesystem::path link_tool(const Toolchain& tc);
 std::filesystem::path staged_std_bmi_path(const Toolchain& tc,
@@ -877,6 +882,22 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     // Family::Gcc — the target decides the payload.
     const auto& t = spec.target;
 
+    // A ROW THAT STATES ITS GCC TARGET (`gcc-triple`, a built-in row or one a
+    // platform defines) names its payload as data: `<gcc-triple>-gcc`, whose
+    // frontends carry that prefix. A cross GCC for a system the engine has no
+    // convention for (DJGPP's `i586-pc-msdosdjgpp`) is then a row and a
+    // provider, and no branch here.
+    if (auto const* r = mcpp::toolchain::target::find_row(t.str()); r && !r->gccTriple.empty()) {
+        const std::string g(r->gccTriple);
+        pkg.ximName = g + "-gcc";
+        if constexpr (mcpplibs::os::is_windows) {
+            pkg.frontendCandidates = { g + "-g++.exe", g + "-g++" };
+        } else {
+            pkg.frontendCandidates = { g + "-g++" };
+        }
+        return pkg;
+    }
+
     // `&& t.os == "linux"` — AND THE PARAGRAPH BELOW ALREADY SAID SO.
     //
     // "Canonical linux-musl triples coincide with the GNU tool spelling" is a
@@ -1267,6 +1288,11 @@ std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName)
         return PayloadIdentity{ Family::Gcc, { "x86_64", "windows", "gnu" } };
     if (ends_with(ximDirName, "-gcc")) {
         auto prefix = ximDirName.substr(0, ximDirName.size() - 4);
+        // The payload of a row that states its GCC target is named by it.
+        for (auto const* r : mcpp::toolchain::target::rows())
+            if (r->gccTriple == prefix)
+                if (auto t = triple::parse(r->triple))
+                    return PayloadIdentity{ Family::Gcc, *t };
         if (auto t = triple::parse(prefix))
             return PayloadIdentity{ Family::Gcc, *t };
     }
@@ -1359,6 +1385,14 @@ std::filesystem::path derive_c_compiler(const Toolchain& tc) {
     return derive_c_compiler_path(tc.binaryPath);
 }
 
+bool row_states_gcc_target(const Toolchain& tc) {
+    if (tc.compiler != CompilerId::GCC || tc.targetTriple.empty()) return false;
+    for (auto const* r : mcpp::toolchain::target::rows())
+        if (!r->gccTriple.empty() && (r->gccTriple == tc.targetTriple || r->triple == tc.targetTriple))
+            return true;
+    return false;
+}
+
 std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) {
     // MSVC: no binutils, and none wanted — see the declaration.
     if (tc.compiler == CompilerId::MSVC) return {};
@@ -1386,6 +1420,21 @@ std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) 
         auto llvmTool = dir / (std::string("llvm-") + std::string(name)
                                + std::string(mcpplibs::os::exe_suffix));
         if (std::filesystem::exists(llvmTool, ec)) return llvmTool;
+        return {};
+    }
+
+    // A cross payload a row names by its GCC target (`gcc-triple`) carries its
+    // binutils beside the frontend under that prefix (`i586-pc-msdosdjgpp-ar`):
+    // the host's `ar` does not know the target's object format. The target is
+    // read in either spelling, as `gcc::binutils_prefix_dir` reads it.
+    for (auto const* r : mcpp::toolchain::target::rows()) {
+        if (r->gccTriple.empty() || (r->gccTriple != tc.targetTriple && r->triple != tc.targetTriple))
+            continue;
+        const auto base = std::string(r->gccTriple) + "-" + std::string(name);
+        if constexpr (mcpplibs::os::is_windows) {
+            if (auto exe = dir / (base + ".exe"); std::filesystem::exists(exe, ec)) return exe;
+        }
+        if (auto p = dir / base; std::filesystem::exists(p, ec)) return p;
         return {};
     }
 

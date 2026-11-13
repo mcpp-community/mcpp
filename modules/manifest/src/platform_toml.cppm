@@ -584,6 +584,7 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
                              list_of(kDefineKeys)));
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::string*>>{
              {"triple", &r.triple}, {"tier", &r.tier}, {"note", &r.note}, {"clang-triple", &r.clangTriple},
+             {"gcc-triple", &r.gccTriple},
              {"object-format", &r.objectFormat}, {"family", &r.family}, {"data-model", &r.dataModel},
              {"exe-suffix", &r.exeSuffix}, {"shared-suffix", &r.sharedSuffix}, {"loader", &r.loader},
              {"execution", &r.execution}, {"march", &r.march}, {"mabi", &r.mabi},
@@ -611,8 +612,9 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
                                            "\"x86_64-freebsd\"", where));
     if (r.tier != "verified" && r.tier != "preview" && r.tier != "planned")
         return std::unexpected(std::format("{}.tier is verified, preview or planned", where));
-    if (r.objectFormat != "elf" && r.objectFormat != "mach-o" && r.objectFormat != "pe" && r.objectFormat != "wasm")
-        return std::unexpected(std::format("{}.object-format is elf, mach-o, pe or wasm", where));
+    if (r.objectFormat != "elf" && r.objectFormat != "mach-o" && r.objectFormat != "pe" && r.objectFormat != "wasm"
+        && r.objectFormat != "coff")
+        return std::unexpected(std::format("{}.object-format is elf, mach-o, pe, wasm or coff", where));
     return r;
 }
 

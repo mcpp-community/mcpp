@@ -33,6 +33,11 @@ struct Row {
     // The facts of a defined row (a platform's). Empty on a built-in row,
     // whose system's conventions answer them.
     std::string_view clangTriple;     // `{version}` / `{version:<default>}`
+    // The target a cross GCC payload is built for, in GNU's spelling
+    // (`i586-pc-msdosdjgpp`): the payload is `<gcc-triple>-gcc` and its
+    // frontends are `<gcc-triple>-gcc` and `-g++`. Empty: the engine's
+    // conventions for the row's system name the payload.
+    std::string_view gccTriple;
     std::string_view objectFormat;    // elf | mach-o | pe | wasm
     std::string_view family;          // unix | windows | ""
     std::string_view dataModel;       // lp64 | llp64 | ilp32

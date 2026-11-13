@@ -1113,6 +1113,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
                     return LinkIntentFlavor::Wasm;
                 case mcpp::toolchain::triple::ObjectFormat::Elf:
                     return LinkIntentFlavor::Elf;
+                case mcpp::toolchain::triple::ObjectFormat::Coff:
+                    // DJGPP links with GNU ld, which takes a search path and a
+                    // library in ELF's spelling (`-L`, `-l<name>`).
+                    return LinkIntentFlavor::Elf;
             }
         }
         auto triple = plan.toolchain.targetTriple;
@@ -1170,7 +1174,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     f.ldRuntimeFallback = farm_ld;
 
     std::filesystem::path binutilsBin;
-    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
+    // A self-contained cross payload finds its own assembler and linker under
+    // its prefix: musl, MinGW, and a payload a row names by its GCC target.
+    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++"
+        && !mcpp::toolchain::row_states_gcc_target(plan.toolchain)) {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
         if (!ar.empty())
             binutilsBin = ar.parent_path();

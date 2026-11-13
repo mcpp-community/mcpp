@@ -204,6 +204,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.flags = set.keep(d.flags);
         r.linkEmulation = set.keep(d.linkEmulation);
         r.clangTriple = set.keep(d.clangTriple);
+        r.gccTriple = set.keep(d.gccTriple);
         r.objectFormat = set.keep(d.objectFormat);
         r.family = set.keep(d.family);
         r.dataModel = set.keep(d.dataModel);

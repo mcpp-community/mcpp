@@ -52,7 +52,9 @@ export namespace mcpp::toolchain::triple {
 // an operating system to link against" are different axes: a bare-metal
 // RISC-V image is ELF with no OS, and a wasm module has an OS-like layer
 // (Emscripten's POSIX emulation) and is not ELF.
-enum class ObjectFormat { Elf, MachO, Pe, Wasm };
+// COFF is the object format of a DJGPP program (go32: an MZ stub before a COFF
+// image), which no other row produces; it is never a shared object.
+enum class ObjectFormat { Elf, MachO, Pe, Wasm, Coff };
 
 std::string_view to_string(ObjectFormat f) {
     switch (f) {
@@ -60,6 +62,7 @@ std::string_view to_string(ObjectFormat f) {
         case ObjectFormat::MachO: return "Mach-O";
         case ObjectFormat::Pe:    return "PE";
         case ObjectFormat::Wasm:  return "wasm";
+        case ObjectFormat::Coff:  return "COFF";
     }
     return "ELF";
 }
@@ -259,12 +262,18 @@ struct Triple {
     // fallback would otherwise claim ELF for it -- the silent wrong answer this
     // whole axis exists to remove.
     ObjectFormat object_format() const {
-        if (auto* d = defined()) {
-            if (d->objectFormat == "pe") return ObjectFormat::Pe;
-            if (d->objectFormat == "mach-o") return ObjectFormat::MachO;
-            if (d->objectFormat == "wasm") return ObjectFormat::Wasm;
+        // A row that states its format -- one a platform defines, or a built-in
+        // row whose data carries `object-format` -- is taken as written.
+        auto stated = [](std::string_view f) {
+            if (f == "pe") return ObjectFormat::Pe;
+            if (f == "mach-o") return ObjectFormat::MachO;
+            if (f == "wasm") return ObjectFormat::Wasm;
+            if (f == "coff") return ObjectFormat::Coff;
             return ObjectFormat::Elf;
-        }
+        };
+        if (auto* d = defined()) return stated(d->objectFormat);
+        if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->objectFormat.empty())
+            return stated(r->objectFormat);
         if (os == "windows")                  return ObjectFormat::Pe;
         if (os == "macos" || os == "ios")     return ObjectFormat::MachO;
         if (arch.starts_with("wasm"))         return ObjectFormat::Wasm;
