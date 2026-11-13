@@ -299,7 +299,10 @@ jobs:
 
       - name: Unit + integration tests via `mcpp test`
         run: |
-          "$MCPP_FRESH" test ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
+          # --timeout: an e2e program runs its cases in one process (`programs =
+          # "directory"`), up to fifteen former scripts that had 600 s each; the
+          # longest measured 257 s on a Linux workstation and passed 300 s on macos-15.
+          "$MCPP_FRESH" test --timeout 1200 ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
       # The run `mcpp test` kept (target/mtest): this job's report in its
       # summary, and the store for the workflow run's report (ci.yml test-report).

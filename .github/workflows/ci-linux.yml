@@ -68,7 +68,10 @@ jobs:
 
       - name: Unit + integration tests via `mcpp test`
         run: |
-          "$MCPP_FRESH" test ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
+          # --timeout: an e2e program runs its cases in one process (`programs =
+          # "directory"`), up to fifteen former scripts that had 600 s each; the
+          # longest measured 257 s on a Linux workstation and passed 300 s on macos-15.
+          "$MCPP_FRESH" test --timeout 1200 ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
       # Each package under `modules/` carries its own tests, and they are built
       # as that package ALONE -- a configuration the root suite never produces,
