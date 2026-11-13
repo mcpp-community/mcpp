@@ -346,6 +346,20 @@ UTest msvc_has_nothing_in_band_to_remove{"PackStrip/MsvcHasNothingInBandToRemove
     expect(eq(r->outcome, mcpp::pack::StripOutcome::NotApplicable));
 }};
 
+// A seal's container (2026.11.13.1): the DOS row's program is an MZ stub before
+// an ELF32 executable, which no strip reads; it is packed as the seal left it,
+// and the strip is not run.
+UTest a_sealed_container_no_strip_reads_is_packed_as_sealed{"PackStrip/ASealedContainerNoStripReadsIsPackedAsSealed", [] {
+    std::string mz(64, '\0');
+    mz[0] = 'M'; mz[1] = 'Z';
+    mz[60] = 0x40;   // e_lfanew names offset 64, where no `PE\0\0' follows
+    auto path = write_temp(mz + "\x7f" "ELF", "sealed.exe");
+    mcpp::pack::StripTools tools{ "/nonexistent/strip", {}, /*inBandDebugInfo=*/true };
+    auto r = mcpp::pack::strip_artifact(path, mcpp::pack::ArtifactShape::Executable, tools, {});
+    expect(fatal(r.has_value())) << (r ? std::string() : r.error());
+    expect(eq(r->outcome, mcpp::pack::StripOutcome::NotApplicable));
+}};
+
 UTest a_missing_strip_tool_is_refused_where_debug_info_is_in_band{"PackStrip/AMissingStripToolIsRefusedWhereDebugInfoIsInBand", [] {
     auto path = write_temp("not an image", "notanimage2.bin");
     mcpp::pack::StripTools tools{ {}, {}, /*inBandDebugInfo=*/true };

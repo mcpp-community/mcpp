@@ -2384,10 +2384,19 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
     // program for that system is, and the engine holds no such table. One
     // static program over the platform's hosted arrangement, the same whichever
     // machine packs it.
+    // A row the platform defines rather than hosts (a provider's) is built over
+    // the platform itself, as the next rule builds a system's row.
     if (P && P->active)
         if (auto it = P->fields.runner.builtAs.find(std::format("{}-{}", system, arch));
-            it != P->fields.runner.builtAs.end())
-            return { it->second, "static", hosted_platform_for(P, it->second) };
+            it != P->fields.runner.builtAs.end()) {
+            auto over = hosted_platform_for(P, it->second);
+            if (over.empty())
+                for (auto const& d : P->fields.defines)
+                    if (auto t = mcpp::toolchain::triple::parse(d.triple), b = mcpp::toolchain::triple::parse(it->second);
+                        t && b && t->str() == b->str())
+                        over = platform_ref_of(*P);
+            return { it->second, "static", over };
+        }
     // A SYSTEM A PLATFORM DEFINES (mcpp#911 G10): its row of that architecture,
     // built over the platform that defines it, as the platform's carrier and
     // packs of every other row are. A system nothing states a row for has no
@@ -2423,11 +2432,19 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
 // its program's suffix are that row's statement and not its system's name: a
 // carrier for a system a platform defines (`x86_64-uefi`, PE) was written as
 // ELF and named without its suffix when the name decided.
-std::optional<mcpp::toolchain::triple::Triple> system_row(std::string_view system, std::string_view arch) {
+// A system the platform defines a row for is that row, whose name may carry an
+// environment (`dos` on i686 is `i686-dos-musl`), as program_row builds it.
+std::optional<mcpp::toolchain::triple::Triple> system_row(std::string_view system, std::string_view arch,
+                                                          const mcpp::platform::Resolved* P = nullptr) {
+    if (P && P->active)
+        for (auto const& d : P->fields.defines)
+            if (auto t = mcpp::toolchain::triple::parse(d.triple); t && t->os == system && t->arch == arch)
+                return t;
     return mcpp::toolchain::triple::parse(std::format("{}-{}", arch, system));
 }
-std::string program_suffix(std::string_view system, std::string_view arch) {
-    const auto row = system_row(system, arch);
+std::string program_suffix(std::string_view system, std::string_view arch,
+                           const mcpp::platform::Resolved* P = nullptr) {
+    const auto row = system_row(system, arch, P);
     return row ? std::string(mcpp::toolchain::triple::artifact_naming(*row, {}).exeSuffix) : std::string();
 }
 
@@ -2436,8 +2453,8 @@ std::string program_suffix(std::string_view system, std::string_view arch) {
 // empty `carried` places nothing: `mcpp_carried_begin == mcpp_carried_end`.
 std::string carried_assembly(std::string_view system, std::string_view arch, std::string_view sectionName,
                              const std::filesystem::path& carried, std::string_view name,
-                             std::string_view digest) {
-    const auto row   = system_row(system, arch);
+                             std::string_view digest, const mcpp::platform::Resolved* P = nullptr) {
+    const auto row   = system_row(system, arch, P);
     const bool macho = row && row->is_mach_o();
     const bool coff  = row && (row->is_pe() || row->object_format() == mcpp::toolchain::triple::ObjectFormat::Coff);
     const std::string sym = macho ? "_" : "";
@@ -2469,9 +2486,10 @@ std::filesystem::path packed_tree(const std::filesystem::path& dir) {
     return dir / "target" / "dist" / "packed";
 }
 std::filesystem::path packed_program(const std::filesystem::path& dir, std::string_view stem,
-                                     std::string_view system, std::string_view arch) {
-    const auto file = std::string(stem) + program_suffix(system, arch);
-    const auto row = system_row(system, arch);
+                                     std::string_view system, std::string_view arch,
+                                     const mcpp::platform::Resolved* P = nullptr) {
+    const auto file = std::string(stem) + program_suffix(system, arch, P);
+    const auto row = system_row(system, arch, P);
     if (row && row->is_pe()) return packed_tree(dir) / file;
     return packed_tree(dir) / "bin" / file;
 }
@@ -2659,7 +2677,7 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
     }
     if (!write(dir / "mcpp.toml", manifest)
         || !write(dir / "src" / "carried.S",
-                  carried_assembly(b.system, b.arch, c.section, b.carried, b.carriedName, {}))
+                  carried_assembly(b.system, b.arch, c.section, b.carried, b.carriedName, {}, &plan.platform))
         || !write(dir / "src" / "main.cpp", mainText))
         return std::unexpected(Error{std::format("cannot write the program's sources under {}", dir.string())});
 
@@ -3616,7 +3634,7 @@ runner_program(const mcpp::platform::Resolved& platform, const std::filesystem::
     if (auto why = detail::unbuilt_carrier(platform, system, arch, false))
         return std::unexpected(Error{*why});
     const auto program = detail::packed_program(detail::carrier_dir(projectRoot, name, system, arch),
-                                                name, system, arch);
+                                                name, system, arch, &platform);
     if (!build) return program;
     Plan plan;
     plan.platform = platform;
@@ -3708,7 +3726,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             const auto stem = fs::path(plan.binaryName).stem().string();
             auto packed = detail::carrier_build(plan, { f.carried, plan.binaryName, stem, f.system, f.arch, true });
             if (!packed) return std::unexpected(packed.error());
-            const auto suffix = detail::program_suffix(f.system, f.arch);
+            const auto suffix = detail::program_suffix(f.system, f.arch, &plan.platform);
             const auto program = *packed / (stem + suffix);
             if (!fs::is_regular_file(program, ec))
                 return std::unexpected(Error{std::format("the carrier built for {}-{} has no {}",
@@ -3813,7 +3831,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
                                               mcpp::pack::compress::name(c.algorithm), digest.substr(0, 12)));
         auto packed = detail::pack_generated_program(dir, row);
         if (!packed) return std::unexpected(packed.error());
-        const auto suffix = detail::program_suffix(system, arch);
+        const auto suffix = detail::program_suffix(system, arch, &plan.platform);
         const auto program = *packed / (stem + suffix);
         const auto out = output_for(t ? t->str() : plan.triple, suffix);
         fs::create_directories(out.parent_path(), ec);

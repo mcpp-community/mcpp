@@ -78,6 +78,22 @@
   compiled as a bare machine is: the C environment's identity macros are the C
   library's alone. Before, the realised environment declared `__unix__` that
   the compiler did not define.
+- A build of a platform's own row reads the platform's view of it, which
+  carries the tools of the platform's conventions and not a provider's. Before,
+  the statement was taken whole, and an ok image's build provisioned the DOS
+  row's seal.
+- A single file for a system a platform defines is the row the platform defines
+  for it, whose name may carry an environment (`dos` on i686 is
+  `i686-dos-musl`): its program is named with that row's suffix, and a runner's
+  `built-as` naming such a row builds over the platform. Before, the pack
+  refused the row as one this mcpp builds no program for, or looked for the
+  program without its suffix.
+- A pack reads the runtime facts (interpreter, needed libraries, run paths) of
+  an ELF32 program as of an ELF64 one. Before, an i386 program or image was
+  refused as "not ELF64 little-endian".
+- A file no strip reads is packed as its row's seal left it: a seal may wrap the
+  link's output in a container of its own (the DOS row's MZ stub before an ELF32
+  executable). Before, the pack failed in `llvm-strip`.
 
 ## [2026.11.12.1] - 2026-11-12
 
