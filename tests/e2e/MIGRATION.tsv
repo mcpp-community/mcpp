@@ -36,7 +36,7 @@ script	subsystem	class	destination	note
 31_transitive_deps.sh	deps	merge	e2e/deps::path/31 transitive deps	migrated (batch 3); script removed
 32_semver_merge.sh	deps	merge	e2e/deps::resolve/32 semver merge	migrated (batch 3); script removed
 33_multi_version_mangling.sh	deps	merge	e2e/deps::resolve/33 multi version mangling	migrated (batch 3); script removed
-35_workspace.sh	workspace	merge	e2e/workspace	
+35_workspace.sh	workspace	merge	e2e/workspace::members/35 workspace	migrated (batch 11); script removed
 36_llvm_toolchain.sh	toolchain	merge	e2e/toolchain	
 37_llvm_import_std.sh	toolchain	merge	e2e/toolchain	
 38_llvm_modules.sh	toolchain	merge	e2e/toolchain	
@@ -130,7 +130,7 @@ script	subsystem	class	destination	note
 119_dep_cfg_sources.sh	features	merge	e2e/features::conditional/119 dep cfg sources	migrated (batch 5); script removed
 120_ws_root_indices.sh	index	merge	e2e/index	
 121_default_ns_redirect.sh	index	merge	e2e/index	
-122_run_member.sh	workspace	merge	e2e/workspace	
+122_run_member.sh	workspace	merge	e2e/workspace::members/122 run member	migrated (batch 11); script removed
 123_same_named_main_across_dep.sh	build	merge	e2e/build::sources/123 same named main across dep	migrated (batch 7); script removed
 124_gen_source_out_of_root_object_path.sh	actions	merge	e2e/actions::generated/124 gen source out of root object path	migrated (batch 4); script removed
 125_build_mcpp_dep_dir.sh	build-program	merge	e2e/build-program::deps/125 build mcpp dep dir	migrated (batch 2); script removed
@@ -309,7 +309,7 @@ script	subsystem	class	destination	note
 315_blocking_check_gates_compilation.sh	actions	merge	e2e/actions::checks/315 blocking check gates compilation	migrated (batch 4); script removed
 316_link_unit_with_no_inputs_is_refused.sh	build	merge	e2e/build::sources/316 link unit with no inputs is refused	migrated (batch 7); script removed
 317_project_build_hooks.sh	actions	merge	e2e/actions::hooks/317 project build hooks	migrated (batch 4); script removed
-321_workspace_inheritance.sh	workspace	merge	e2e/workspace	
+321_workspace_inheritance.sh	workspace	merge	e2e/workspace::inheritance/321 workspace inheritance	migrated (batch 11); script removed
 322_dialect_flag_refusal.sh	toolchain	merge	e2e/toolchain	
 323_post_link_record_durability.sh	runtime	merge	e2e/runtime	
 324_fast_path_sees_path_deps.sh	cache	merge	e2e/cache::fastpath/324 fast path sees path deps	migrated (batch 10); script removed
@@ -457,10 +457,10 @@ script	subsystem	class	destination	note
 746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos	
 760_msvc_toolset_is_chosen_once.sh	windows	merge	e2e/windows	
 765_a_consumer_include_directory_stays_in_the_consumer.sh	build	merge	e2e/build::flags/765 a consumer include directory stays in the consumer	migrated (batch 7); script removed
-770_workspace_member_as_dependency.sh	workspace	merge	e2e/workspace	
-772_a_published_member_is_self_contained.sh	workspace	merge	e2e/workspace	
-773_commands_outside_the_build_read_the_effective_manifest.sh	workspace	merge	e2e/workspace	
-774_an_index_member_inherits_its_archive_workspace.sh	workspace	merge	e2e/workspace	
+770_workspace_member_as_dependency.sh	workspace	merge	e2e/workspace::inheritance/770 workspace member as dependency	migrated (batch 11); script removed
+772_a_published_member_is_self_contained.sh	workspace	merge	e2e/workspace::inheritance/772 a published member is self contained	migrated (batch 11); script removed
+773_commands_outside_the_build_read_the_effective_manifest.sh	workspace	merge	e2e/workspace::inheritance/773 commands outside the build read the effective manifest	migrated (batch 11); script removed
+774_an_index_member_inherits_its_archive_workspace.sh	workspace	merge	e2e/workspace::inheritance/774 an index member inherits its archive workspace	migrated (batch 11); script removed
 775_a_host_tool_merges_its_conditional_sections_once.sh	build-program	merge	e2e/build-program::hosttools/775 a host tool merges its conditional sections once	migrated (batch 2); script removed
 776_a_path_with_no_utf8_spelling_is_named.sh	build	merge	e2e/build::sources/776 a path with no utf8 spelling is named	migrated (batch 7); script removed
 777_c_standard_applies_to_the_package_that_declares_it.sh	build	merge	e2e/build::flags/777 c standard applies to the package that declares it	migrated (batch 7); script removed
@@ -491,8 +491,8 @@ script	subsystem	class	destination	note
 802_a_host_build_applies_its_host_row.sh	build-program	merge	e2e/build-program::hosttools/802 a host build applies its host row	migrated (batch 2); script removed
 803_a_recorded_payload_that_is_gone_is_refused_offline.sh	index	merge	e2e/index	
 804_a_path_host_tool_builds_with_its_chosen_toolchain.sh	build-program	merge	e2e/build-program::hosttools/804 a path host tool builds with its chosen toolchain	migrated (batch 2); script kept: .github/workflows/ci-aarch64-fresh-install.yml runs it by path
-805_rooted_workspace_reaches_its_own_path_dependency.sh	workspace	merge	e2e/workspace	
-806_dash_p_resolves_the_package_first.sh	workspace	merge	e2e/workspace	
+805_rooted_workspace_reaches_its_own_path_dependency.sh	workspace	merge	e2e/workspace::inheritance/805 rooted workspace reaches its own path dependency	migrated (batch 11); script removed
+806_dash_p_resolves_the_package_first.sh	workspace	merge	e2e/workspace::members/806 dash p resolves the package first	migrated (batch 11); script removed
 807_a_lib_root_imports_its_own_package.sh	modules	merge	e2e/modules::programs/807 a lib root imports its own package	migrated (batch 9); script removed
 808_device_source_is_not_a_compile_unit.sh	actions	merge	e2e/actions::rules/808 device source is not a compile unit	migrated (batch 4); script removed
 809_failed_build_program_hides_no_device_source.sh	cdb	merge	e2e/cdb	
@@ -518,13 +518,13 @@ script	subsystem	class	destination	note
 829_pack_takes_a_member.sh	pack	merge	e2e/pack::members/829 pack takes a member	migrated (batch 6); script removed
 831_a_path_dependency_host_module_outside_src.sh	build-program	merge	e2e/build-program::hosttools/831 a path dependency host module outside src	migrated (batch 2); script removed
 832_the_fast_path_resumes_after_an_edit.sh	cache	merge	e2e/cache::fastpath/832 the fast path resumes after an edit	migrated (batch 10); script removed
-833_a_workspace_is_one_graph_per_configuration.sh	workspace	merge	e2e/workspace	
-834_a_workspace_plans_once_and_replays_in_one_check.sh	workspace	merge	e2e/workspace	
+833_a_workspace_is_one_graph_per_configuration.sh	workspace	merge	e2e/workspace::graph/833 a workspace is one graph per configuration	migrated (batch 11); script removed
+834_a_workspace_plans_once_and_replays_in_one_check.sh	workspace	merge	e2e/workspace::graph/834 a workspace plans once and replays in one check	migrated (batch 11); script removed
 835_a_shared_library_is_placed_by_a_link.sh	runtime	merge	e2e/runtime	
-836_a_members_own_statements_reach_its_build.sh	workspace	merge	e2e/workspace	
+836_a_members_own_statements_reach_its_build.sh	workspace	merge	e2e/workspace::statements/836 a members own statements reach its build	migrated (batch 11); script removed
 837_a_members_resources_reach_its_image.sh	windows	merge	e2e/windows	
 838_a_program_shipped_through_artifacts_links_its_own_closure.sh	runtime	merge	e2e/runtime	
-839_a_workspaces_build_programs_are_named_ordered_and_cached.sh	workspace	merge	e2e/workspace	
+839_a_workspaces_build_programs_are_named_ordered_and_cached.sh	workspace	merge	e2e/workspace::graph/839 a workspaces build programs are named ordered and cached	migrated (batch 11); script removed
 840_a_workspace_database_describes_each_package_once.sh	cdb	merge	e2e/cdb	
 841_pack_summarizes_many_outputs.sh	pack	merge	e2e/pack::formats/841 pack summarizes many outputs	migrated (batch 6); script removed
 842_the_build_reports_each_step_once.sh	cli	merge	e2e/cli::output/842 the build reports each step once	migrated (batch 8); script removed
@@ -535,17 +535,17 @@ script	subsystem	class	destination	note
 847_a_module_name_is_unique_within_a_program.sh	modules	merge	e2e/modules::programs/847 a module name is unique within a program	migrated (batch 9); script removed
 848_msvc_binds_a_module_name_per_program.sh	windows	merge	e2e/windows	
 849_a_staged_bmi_waits_for_a_module_compiled_here.sh	modules	merge	e2e/modules::bmi/849 a staged bmi waits for a module compiled here	migrated (batch 9); script removed
-850_a_selected_member_declares_as_the_root.sh	workspace	merge	e2e/workspace	
-851_a_shared_member_is_compiled_once_per_configuration.sh	workspace	merge	e2e/workspace	
-852_a_repeated_dash_p_selects_every_member_it_names.sh	workspace	merge	e2e/workspace	
-853_run_keeps_one_member_and_exclude_removes_members.sh	workspace	merge	e2e/workspace	
+850_a_selected_member_declares_as_the_root.sh	workspace	merge	e2e/workspace::members/850 a selected member declares as the root	migrated (batch 11); script removed
+851_a_shared_member_is_compiled_once_per_configuration.sh	workspace	merge	e2e/workspace::graph/851 a shared member is compiled once per configuration	migrated (batch 11); script removed
+852_a_repeated_dash_p_selects_every_member_it_names.sh	workspace	merge	e2e/workspace::members/852 a repeated dash p selects every member it names	migrated (batch 11); script removed
+853_run_keeps_one_member_and_exclude_removes_members.sh	workspace	merge	e2e/workspace::members/853 run keeps one member and exclude removes members	migrated (batch 11); script removed
 854_a_test_over_several_members_plans_and_builds_once.sh	test	merge	e2e/test::workspace/854 a test over several members plans and builds once	migrated (batch 1); script removed
 855_a_shared_test_build_is_reported_once_per_group.sh	test	merge	e2e/test::workspace/855 a shared test build is reported once per group	migrated (batch 1); script removed
 856_a_test_over_several_members_continues_past_a_failing_one.sh	test	merge	e2e/test::workspace/856 a test over several members continues past a failing one	migrated (batch 1); script removed
 857_a_host_module_several_members_import_is_compiled_once.sh	modules	merge	e2e/modules::programs/857 a host module several members import is compiled once	migrated (batch 9); script removed
 858_the_engines_module_is_compiled_once_per_home.sh	modules	merge	e2e/modules::programs/858 the engines module is compiled once per home	migrated (batch 9); script removed
 859_a_host_module_entry_is_reused_while_its_inputs_agree.sh	build-program	merge	e2e/build-program::hosttools/859 a host module entry is reused while its inputs agree	migrated (batch 2); script removed
-860_a_workspaces_programs_compile_at_the_same_time.sh	workspace	merge	e2e/workspace	
+860_a_workspaces_programs_compile_at_the_same_time.sh	workspace	merge	e2e/workspace::graph/860 a workspaces programs compile at the same time	migrated (batch 11); script removed
 861_concurrent_compiles_plan_what_serial_compiles_plan.sh	build	merge	e2e/build::basics/861 concurrent compiles plan what serial compiles plan	migrated (batch 7); script removed
 862_run_q_writes_exactly_the_programs_stdout.sh	run	merge	e2e/run	
 863_a_run_whose_build_failed_exits_101.sh	run	merge	e2e/run	
@@ -557,7 +557,7 @@ script	subsystem	class	destination	note
 869_a_pack_over_several_members_names_each_member_in_its_report.sh	pack	merge	e2e/pack::members/869 a pack over several members names each member in its report	migrated (batch 6); script removed
 870_a_pack_over_several_members_resolves_and_fails_per_member.sh	pack	merge	e2e/pack::members/870 a pack over several members resolves and fails per member	migrated (batch 6); script removed
 871_a_pack_states_its_build_and_every_drive_takes_the_job_count.sh	pack	merge	e2e/pack::formats/871 a pack states its build and every drive takes the job count	migrated (batch 6); script removed
-872_a_member_compiles_once_whatever_the_selection.sh	workspace	merge	e2e/workspace	
+872_a_member_compiles_once_whatever_the_selection.sh	workspace	merge	e2e/workspace::graph/872 a member compiles once whatever the selection	migrated (batch 11); script removed
 873_payload_overrides.sh	build-program	merge	e2e/build-program::deps/873 payload overrides	migrated (batch 2); script removed
 874_payload_on_request.sh	build-program	merge	e2e/build-program::deps/874 payload on request	migrated (batch 2); script removed
 875_toolchain_by_path.sh	toolchain	merge	e2e/toolchain	
@@ -565,12 +565,12 @@ script	subsystem	class	destination	note
 877_why_sources.sh	build-program	merge	e2e/build-program::deps/877 why sources	migrated (batch 2); script removed
 878_an_upgraded_engine_does_not_replay_the_old_graph.sh	cache	merge	e2e/cache::fastpath/878 an upgraded engine does not replay the old graph	migrated (batch 10); script removed
 879_a_providers_module_extension_reaches_the_fast_path.sh	cache	merge	e2e/cache::fastpath/879 a providers module extension reaches the fast path	migrated (batch 10); script removed
-880_a_members_executable_keeps_its_own_implementation.sh	workspace	merge	e2e/workspace	
+880_a_members_executable_keeps_its_own_implementation.sh	workspace	merge	e2e/workspace::graph/880 a members executable keeps its own implementation	migrated (batch 11); script removed
 881_pe_auto_exports_accept_llvm_bitcode.sh	windows	merge	e2e/windows	
 882_parent_directory_glob_inputs.sh	build	merge	e2e/build::basics/882 parent directory glob inputs	migrated (batch 7); script removed
 883_run_hands_the_terminal_to_the_program.sh	run	merge	e2e/run	
 884_a_shared_library_links_with_its_own_closure.sh	runtime	merge	e2e/runtime	
-885_workspace_profiles_and_the_root_package.sh	workspace	merge	e2e/workspace	
+885_workspace_profiles_and_the_root_package.sh	workspace	merge	e2e/workspace::statements/885 workspace profiles and the root package	migrated (batch 11); script removed
 886_std_compat_is_built_when_imported.sh	toolchain	merge	e2e/toolchain	
 887_msvc_lto_and_export_discovery.sh	windows	merge	e2e/windows	
 888_the_llvm_row_in_a_developer_environment.sh	windows	merge	e2e/windows	
@@ -578,14 +578,14 @@ script	subsystem	class	destination	note
 890_a_toolchain_declared_for_an_unservable_target_is_still_installed.sh	toolchain	merge	e2e/toolchain	
 891_a_host_header_is_written_not_searched.sh	toolchain	merge	e2e/toolchain	
 892_coroutines_on_the_32_bit_msvc_abi_are_explained.sh	windows	merge	e2e/windows	
-893_the_workspace_prefix_carries_the_meaning.sh	workspace	merge	e2e/workspace	
+893_the_workspace_prefix_carries_the_meaning.sh	workspace	merge	e2e/workspace::statements/893 the workspace prefix carries the meaning	migrated (batch 11); script removed
 894_the_position_reading_is_kept_and_reported.sh	build	merge	e2e/build::basics/894 the position reading is kept and reported	migrated (batch 7); script removed
 895_conditional_configuration_rows_count_as_they_evaluate.sh	features	merge	e2e/features::conditional/895 conditional configuration rows count as they evaluate	migrated (batch 5); script removed
 896_an_action_output_has_one_writer.sh	actions	merge	e2e/actions::outputs/896 an action output has one writer	migrated (batch 4); script removed
 897_each_configuration_has_its_own_generated_output.sh	actions	merge	e2e/actions::outputs/897 each configuration has its own generated output	migrated (batch 4); script removed
 898_module_units_in_cpp_files.sh	modules	merge	e2e/modules::basics/898 module units in cpp files	migrated (batch 9); script removed
 899_toolchain_flag_replacing_a_declared_toolchain_says_so.sh	toolchain	merge	e2e/toolchain	
-900_publish_writes_the_workspace_layer_into_the_member.sh	workspace	merge	e2e/workspace	
+900_publish_writes_the_workspace_layer_into_the_member.sh	workspace	merge	e2e/workspace::statements/900 publish writes the workspace layer into the member	migrated (batch 11); script removed
 901_the_toolchain_library_path_stays_with_the_tools.sh	toolchain	keep	keep	container: a host whose /bin/sh is not the toolchain's (termux-style loader)
 902_a_build_dependency_library_is_compiled_as_its_package.sh	build-program	merge	e2e/build-program::deps/902 a build dependency library is compiled as its package	migrated (batch 2); script removed
 903_one_package_in_both_tables_has_two_instances.sh	build-program	merge	e2e/build-program::graph/903 one package in both tables has two instances	migrated (batch 2); script removed
@@ -596,8 +596,8 @@ script	subsystem	class	destination	note
 908_what_a_build_dependency_asks_for.sh	build-program	merge	e2e/build-program::graph/908 what a build dependency asks for	migrated (batch 2); script removed
 909_deprecated_readings_are_registered_and_kept.sh	build	merge	e2e/build::sources/909 deprecated readings are registered and kept	migrated (batch 7); script removed
 910_a_build_plugin_is_a_package_of_the_build_program.sh	build-program	merge	e2e/build-program::graph/910 a build plugin is a package of the build program	migrated (batch 2); script removed
-911_a_workspace_states_each_table_once.sh	workspace	merge	e2e/workspace	
-912_two_configuration_groups_share_the_build_programs_graph.sh	workspace	merge	e2e/workspace	
+911_a_workspace_states_each_table_once.sh	workspace	merge	e2e/workspace::statements/911 a workspace states each table once	migrated (batch 11); script removed
+912_two_configuration_groups_share_the_build_programs_graph.sh	workspace	merge	e2e/workspace::graph/912 two configuration groups share the build programs graph	migrated (batch 11); script removed
 913_the_build_database_describes_the_build_programs.sh	cdb	merge	e2e/cdb	
 914_an_upstream_home_is_linked_never_written.sh	self	keep	keep	machine state: a home linked to an upstream (system) home
 915_the_system_home_is_maintained_and_read.sh	self	keep	keep	machine state: the system home (--system, MCPP_SYSTEM_CONFIG)

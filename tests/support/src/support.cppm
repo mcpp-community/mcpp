@@ -285,6 +285,11 @@ std::size_t count_matching(std::string_view text, std::string_view pattern);
 // The outputs `.ninja_log` records, one per edge run (its fourth column), in order.
 std::vector<std::string> ninja_log_outputs(const fs::path& build_dir);
 
+// The words of the compile database `cdb`'s first entry whose `file` (with `\` read as `/`) ends
+// with `file_suffix`: its `arguments`, else its `command` split at spaces; nothing when no entry
+// does or the file is not a database.
+std::optional<std::vector<std::string>> cdb_arguments(const fs::path& cdb, std::string_view file_suffix);
+
 // ---- executables -------------------------------------------------------------------------------------
 
 enum class format { unknown, elf, pe, macho, macho_fat, archive, wasm };

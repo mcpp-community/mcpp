@@ -707,6 +707,30 @@ std::size_t count_lines(std::string_view text, std::string_view needle) {
     return static_cast<std::size_t>(std::ranges::count_if(split_lines(text), [&](auto l) { return l.contains(needle); }));
 }
 
+std::optional<std::vector<std::string>> cdb_arguments(const fs::path& cdb, std::string_view file_suffix) {
+    std::error_code ec;
+    if (!fs::is_regular_file(cdb, ec))
+        return std::nullopt;
+    const auto doc = nlohmann::json::parse(read_file(cdb), nullptr, false);
+    if (doc.is_discarded() || !doc.is_array())
+        return std::nullopt;
+    for (const auto& e : doc) {
+        auto file = e.value("file", std::string{});
+        std::ranges::replace(file, '\\', '/');
+        if (!file.ends_with(file_suffix))
+            continue;
+        std::vector<std::string> words;
+        if (e.contains("arguments") && e["arguments"].is_array()) {
+            for (const auto& w : e["arguments"]) words.push_back(w.get<std::string>());
+        } else {
+            for (auto w : std::views::split(std::string_view(e.value("command", std::string{})), ' '))
+                if (!std::string_view(w.begin(), w.end()).empty()) words.emplace_back(w.begin(), w.end());
+        }
+        return words;
+    }
+    return std::nullopt;
+}
+
 std::vector<std::string> ninja_log_outputs(const fs::path& build_dir) {
     std::vector<std::string> out;
     for (auto l : split_lines(read_file(build_dir / ".ninja_log"))) {
