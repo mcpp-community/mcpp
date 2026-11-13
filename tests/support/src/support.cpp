@@ -1,10 +1,13 @@
 module;
 #if !defined(_WIN32)
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -1141,6 +1144,95 @@ std::vector<process_entry> processes() {
     }
     return out;
 }
+
+// ---- a local TCP server (POSIX systems) ---------------------------------------------------------
+
+#if !defined(_WIN32)
+namespace {
+bool readable(int fd, std::chrono::milliseconds wait) {
+    pollfd p{.fd = fd, .events = POLLIN, .revents = 0};
+    return ::poll(&p, 1, static_cast<int>(wait.count())) > 0;
+}
+}  // namespace
+
+std::string connection::receive(std::size_t max, std::chrono::milliseconds wait) {
+    if (!readable(fd_, wait)) return {};
+    std::string buf(max, '\0');
+    const auto n = ::recv(fd_, buf.data(), buf.size(), 0);
+    buf.resize(n > 0 ? static_cast<std::size_t>(n) : 0);
+    return buf;
+}
+
+std::string connection::receive_until(std::string_view end, std::chrono::milliseconds wait) {
+    std::string all;
+    while (!all.contains(end)) {
+        auto more = receive(4096, wait);
+        if (more.empty()) break;
+        all += more;
+    }
+    return all;
+}
+
+bool connection::send(std::string_view bytes) {
+#if defined(MSG_NOSIGNAL)
+    constexpr int flags = MSG_NOSIGNAL;
+#else
+    constexpr int flags = 0;
+#endif
+    while (!bytes.empty()) {
+        const auto n = ::send(fd_, bytes.data(), bytes.size(), flags);
+        if (n <= 0) return false;
+        bytes.remove_prefix(static_cast<std::size_t>(n));
+    }
+    return true;
+}
+
+local_server::local_server(std::function<void(connection&)> handler) : handler_(std::move(handler)) {
+    fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    socklen_t len = sizeof a;
+    if (fd_ < 0 || ::bind(fd_, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(fd_, 16) != 0 ||
+        ::getsockname(fd_, reinterpret_cast<sockaddr*>(&a), &len) != 0)
+        mcpplibs::mtest::fail("local_server: cannot listen on 127.0.0.1");
+    port_ = ntohs(a.sin_port);
+    acceptor_ = std::thread([this] {
+        while (!stop_) {
+            if (!readable(fd_, std::chrono::milliseconds{50})) continue;
+            const int c = ::accept(fd_, nullptr, nullptr);
+            if (c < 0) continue;
+#if defined(SO_NOSIGPIPE)
+            int one = 1;
+            ::setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+            std::scoped_lock lock(m_);
+            threads_.emplace_back([this, c] {
+                connection conn(c);
+                handler_(conn);
+                ::close(c);
+            });
+        }
+    });
+}
+
+local_server::~local_server() {
+    stop_ = true;
+    if (acceptor_.joinable()) acceptor_.join();
+    for (auto& t : threads_)
+        if (t.joinable()) t.join();
+    if (fd_ >= 0) ::close(fd_);
+}
+#else
+std::string connection::receive(std::size_t, std::chrono::milliseconds) { return {}; }
+std::string connection::receive_until(std::string_view, std::chrono::milliseconds) { return {}; }
+bool connection::send(std::string_view) { return false; }
+local_server::local_server(std::function<void(connection&)> handler) : handler_(std::move(handler)) {
+    mcpplibs::mtest::fail("local_server: this system has no POSIX sockets");
+}
+local_server::~local_server() = default;
+#endif
 
 std::string file_identity(const fs::path& file) {
 #if defined(_WIN32)

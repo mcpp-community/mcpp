@@ -233,6 +233,46 @@ namespace sig {
 inline constexpr int interrupt = 2, kill = 9, pipe = 13, terminate = 15;
 }
 
+// ---- a local TCP server (POSIX systems) ---------------------------------------------------------
+//
+// A server on 127.0.0.1 at a port the system chooses (an oracle a case points mcpp at: an HTTP
+// resource that answers, stalls or trickles, a TLS peer that refuses). Each connection is handled
+// on a thread of its own by the handler, and closed when the handler returns; the server stops and
+// joins its threads when destroyed. Where the system has no such sockets (Windows), constructing
+// one ends the case as failed.
+
+class connection {
+public:
+    explicit connection(int fd) noexcept : fd_(fd) {}
+    // Up to `max` bytes, waiting at most `wait`; "" when the peer closed or nothing came.
+    std::string receive(std::size_t max = 4096, std::chrono::milliseconds wait = std::chrono::seconds{2});
+    // Bytes received until `end` was seen (an HTTP request's head: "\r\n\r\n"), or the peer closed.
+    std::string receive_until(std::string_view end, std::chrono::milliseconds wait = std::chrono::seconds{2});
+    // Whether every byte was written (false once the peer has closed).
+    bool send(std::string_view bytes);
+
+private:
+    int fd_;
+};
+
+class local_server {
+public:
+    explicit local_server(std::function<void(connection&)> handler);
+    local_server(const local_server&) = delete;
+    local_server& operator=(const local_server&) = delete;
+    ~local_server();
+    unsigned short port() const noexcept { return port_; }
+
+private:
+    int fd_ = -1;
+    unsigned short port_ = 0;
+    std::atomic<bool> stop_{false};
+    std::function<void(connection&)> handler_;
+    std::mutex m_;
+    std::vector<std::thread> threads_;
+    std::thread acceptor_;
+};
+
 // `stat -c '%i %Y %s'`: a file's inode, modification second and size (a rewrite changes the
 // first or the second even when the size is kept). The inode is 0 where the system has none.
 std::string file_identity(const fs::path& file);

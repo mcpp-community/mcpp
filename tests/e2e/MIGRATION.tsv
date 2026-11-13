@@ -9,7 +9,7 @@ script	subsystem	class	destination	note
 07_static_library.sh	build	merge	e2e/build::basics/07 static library	migrated (batch 7); script removed
 08_shared_library.sh	build	merge	e2e/build::basics/08 shared library	migrated (batch 7); script removed
 09_path_dependency.sh	deps	merge	e2e/deps::path/09 path dependency	migrated (batch 3); script removed
-10_env_command.sh	self	merge	e2e/self	
+10_env_command.sh	self	merge	e2e/self::config/10 env command	migrated (batch 15); script removed
 11_index_list.sh	index	merge	e2e/index::listing/11 index list	migrated (batch 14); script removed
 12_add_command.sh	deps	merge	e2e/deps::path/12 add command	migrated (batch 3); script removed
 13_toolchain_pin.sh	toolchain	merge	e2e/toolchain	
@@ -40,16 +40,16 @@ script	subsystem	class	destination	note
 36_llvm_toolchain.sh	toolchain	merge	e2e/toolchain	
 37_llvm_import_std.sh	toolchain	merge	e2e/toolchain	
 38_llvm_modules.sh	toolchain	merge	e2e/toolchain	
-38_self_config_mirror.sh	self	merge	e2e/self	
+38_self_config_mirror.sh	self	merge	e2e/self::config/38 self config mirror	migrated (batch 15); script removed
 39_llvm_incremental.sh	toolchain	merge	e2e/toolchain	
-39_xlings_index_migration.sh	self	merge	e2e/self	
+39_xlings_index_migration.sh	self	merge	e2e/self::config/39 xlings index migration	migrated (batch 15); script removed
 40_llvm_bmi_cache.sh	toolchain	merge	e2e/toolchain	
 41_llvm_std_compat.sh	toolchain	merge	e2e/toolchain	
 42_custom_local_index.sh	index	merge	e2e/index::listing/42 custom local index	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_indices: it asserts a command's output or file effect
 43_indices_lockfile.sh	index	merge	e2e/index::listing/43 indices lockfile	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_lockfile: it asserts a command's output or file effect
 44_indices_e2e_integration.sh	index	merge	e2e/index::listing/44 indices e2e integration	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_indices: it asserts a command's output or file effect
 45_install_platform_mapping.sh	repo	sink	unit/test_repo_consistency	answers a parse/selection rule without a build: install.sh platform ids vs release assets
-46_self_config_mirror_no_bootstrap.sh	self	merge	e2e/self	
+46_self_config_mirror_no_bootstrap.sh	self	merge	e2e/self::config/46 self config mirror no bootstrap	migrated (batch 15); script removed
 47_cdb_prebuilt_module_path_abs.sh	cdb	merge	e2e/cdb::root/47 cdb prebuilt module path abs	migrated (batch 13); script removed
 47_llvm_atomic_link.sh	toolchain	merge	e2e/toolchain	
 48_build_error_output.sh	cli	merge	e2e/cli::output/48 build error output	migrated (batch 8); script removed
@@ -95,7 +95,7 @@ script	subsystem	class	destination	note
 86_llvm_hermetic_link.sh	toolchain	merge	e2e/toolchain	
 86_target_cfg_dependencies.sh	features	merge	e2e/features::conditional/86 target cfg dependencies	migrated (batch 5); script removed
 87_build_default_profile.sh	build	merge	e2e/build::basics/87 build default profile	migrated (batch 7); script removed
-88_xlings_environment.sh	self	merge	e2e/self	
+88_xlings_environment.sh	self	merge	e2e/self::config/88 xlings environment	migrated (batch 15); script removed
 89_build_mcpp.sh	build-program	merge	e2e/build-program::protocol/89 build mcpp	migrated (batch 2); script removed
 90_workspace_test.sh	test	merge	e2e/test::workspace/90 workspace test	migrated (batch 1); script removed
 91_target_bare_alias.sh	target	merge	e2e/target	
@@ -157,7 +157,7 @@ script	subsystem	class	destination	note
 148_wide_include_list.sh	build	merge	e2e/build::flags/148 wide include list	migrated (batch 7); script removed
 149_conditional_glob_flags.sh	features	merge	e2e/features::conditional/149 conditional glob flags	migrated (batch 5); script removed
 150_clang_module_operator_template.sh	toolchain	keep	keep	a state canary of the bundled Clang (expected crash), not an assertion about mcpp
-151_index_url_artifact_migration.sh	self	merge	e2e/self	
+151_index_url_artifact_migration.sh	self	merge	e2e/self::config/151 index url artifact migration	migrated (batch 15); script removed
 152_test_subdir_names.sh	test	merge	e2e/test::selection/152 test subdir names	migrated (batch 1); script removed
 153_test_isolation.sh	test	merge	e2e/test::report/153 test isolation	migrated (batch 1); script removed
 154_test_filter.sh	test	merge	e2e/test::selection/154 test filter	migrated (batch 1); script removed
@@ -213,7 +213,7 @@ script	subsystem	class	destination	note
 202_machine_output_contract.sh	cli	merge	e2e/cli::commands/202 machine output contract	migrated (batch 8); script removed
 203_exact_selector_lock_migration.sh	deps	merge	e2e/deps::lock/203 exact selector lock migration	migrated (batch 3); script removed
 204_new_transactional_scaffold.sh	cli	merge	e2e/cli::templates/204 new transactional scaffold	migrated (batch 8); script removed
-205_root_local_subos.sh	self	merge	e2e/self	
+205_root_local_subos.sh	self	merge	e2e/self::machine/205 root local subos	migrated (batch 15); script removed
 206_runtime_binding_physics.sh	runtime	merge	e2e/runtime	
 207_runtime_contract_provenance.sh	runtime	merge	e2e/runtime	
 208_private_libc_stays_in_the_binary.sh	runtime	merge	e2e/runtime	
@@ -229,7 +229,7 @@ script	subsystem	class	destination	note
 218_module_extensions_graph_shape.sh	modules	merge	e2e/modules::extensions/218 module extensions graph shape	migrated (batch 9); script removed
 219_runtime_search_farm_is_last.sh	runtime	merge	e2e/runtime	
 220_farm_only_library_runs.sh	runtime	merge	e2e/runtime	
-221_subos_without_info_still_builds.sh	self	merge	e2e/self	
+221_subos_without_info_still_builds.sh	self	merge	e2e/self::subos/221 subos without info still builds	migrated (batch 15); script removed
 222_shared_library_cxx_runtime_contract.sh	runtime	merge	e2e/runtime	
 230_bench_harness.sh	repo	keep	keep	bench harness; converges with bench/ (design 5.9 bench), not the e2e migration
 231_jobs_option.sh	cli	merge	e2e/cli::commands/231 jobs option	migrated (batch 8); script removed
@@ -238,7 +238,7 @@ script	subsystem	class	destination	note
 234_bmi_schedule_on.sh	modules	merge	e2e/modules::bmi/234 bmi schedule on	migrated (batch 9); script removed
 235_std_object_only_when_needed.sh	toolchain	merge	e2e/toolchain	
 236_module_extensions_default_toolchain.sh	modules	merge	e2e/modules::extensions/236 module extensions default toolchain	migrated (batch 9); script removed
-237_default_subos_without_info.sh	self	merge	e2e/self	
+237_default_subos_without_info.sh	self	merge	e2e/self::subos/237 default subos without info	migrated (batch 15); script removed
 238_c_only_unit_links_with_c_driver.sh	build	merge	e2e/build::link/238 c only unit links with c driver	migrated (batch 7); script removed
 239_msvc_managed_toolset.sh	windows	keep	keep	CI-only: xlings-managed MSVC (opt-in MCPP_E2E_XLINGS_MSVC, ~380 MB download)
 240_pack_pe_zip_cross.sh	windows	merge	e2e/windows	
@@ -332,7 +332,7 @@ script	subsystem	class	destination	note
 600_accel_variant_selection.sh	build-program	merge	e2e/build-program::accel/600 accel variant selection	migrated (batch 2); script removed
 601_exclusive_capability.sh	features	merge	e2e/features::activation/601 exclusive capability	migrated (batch 5); script removed
 603_version_floor.sh	deps	merge	e2e/deps::floors/603 version floor	migrated (batch 3); script removed
-604_offline_skips_sandbox_bootstrap.sh	self	merge	e2e/self	
+604_offline_skips_sandbox_bootstrap.sh	self	merge	e2e/self::subos/604 offline skips sandbox bootstrap	migrated (batch 15); script removed
 605_probe_channel_and_accel_reach_the_build_program.sh	build-program	merge	e2e/build-program::accel/605 probe channel and accel reach the build program	migrated (batch 2); script removed
 606_constrained_source_globs_narrow_to_the_build.sh	actions	merge	e2e/actions::devices/606 constrained source globs narrow to the build	migrated (batch 4); script removed
 607_chained_actions_form_the_device_link.sh	actions	merge	e2e/actions::devices/607 chained actions form the device link	migrated (batch 4); script removed
@@ -409,13 +409,13 @@ script	subsystem	class	destination	note
 678_a_row_states_a_library_form.sh	target	merge	e2e/target	
 679_a_path_dependency_takes_its_manifests_identity.sh	deps	merge	e2e/deps::identity/679 a path dependency takes its manifests identity	migrated (batch 3); script removed
 680_a_dependency_floor_on_the_android_api_level.sh	android	merge	e2e/android	
-681_index_repos_reach_an_existing_home.sh	self	merge	e2e/self	
+681_index_repos_reach_an_existing_home.sh	self	merge	e2e/self::subos/681 index repos reach an existing home	migrated (batch 15); script removed
 682_why_deps_prints_the_resolved_graph.sh	deps	merge	e2e/deps::identity/682 why deps prints the resolved graph	migrated (batch 3); script removed
 683_a_build_program_reads_the_payload_pkg_config_view.sh	build-program	merge	e2e/build-program::protocol/683 a build program reads the payload pkg config view	migrated (batch 2); script removed
 684_a_runner_supplied_twice_is_refused.sh	run	merge	e2e/run::runners/684 a runner supplied twice is refused	migrated (batch 12); script removed
 685_a_nested_test_loads_a_graph_shared_library.sh	runtime	merge	e2e/runtime	
-686_an_activated_xlings_subos_does_not_redirect_the_registry.sh	self	merge	e2e/self	
-687_the_vendored_xlings_probe_is_an_argument_vector.sh	self	merge	e2e/self	
+686_an_activated_xlings_subos_does_not_redirect_the_registry.sh	self	merge	e2e/self::subos/686 an activated xlings subos does not redirect the registry	migrated (batch 15); script removed
+687_the_vendored_xlings_probe_is_an_argument_vector.sh	self	merge	e2e/self::homes/687 the vendored xlings probe is an argument vector	migrated (batch 15); script removed
 688_emit_build_database.sh	cdb	merge	e2e/cdb::emit/688 emit build database	migrated (batch 13); script removed
 689_pack_takes_features.sh	pack	merge	e2e/pack::formats/689 pack takes features	migrated (batch 6); script removed
 690_a_shared_library_over_a_graph_cxx_runtime.sh	runtime	merge	e2e/runtime	
@@ -604,8 +604,8 @@ script	subsystem	class	destination	note
 916_a_home_from_before_keeps_working.sh	self	keep	keep	upgrade: a home laid out by an earlier mcpp is migrated
 917_a_long_home_on_windows.sh	self	keep	keep	machine state: a long home path on Windows (MAX_PATH)
 918_an_older_packaging_is_used_not_replaced.sh	self	keep	keep	upgrade: an older packaging of a payload is used, not replaced
-919_a_home_selection_is_remembered_once.sh	self	merge	e2e/self	
-920_the_doctor_checks_resources_without_bootstrap.sh	self	merge	e2e/self	
+919_a_home_selection_is_remembered_once.sh	self	merge	e2e/self::homes/919 a home selection is remembered once	migrated (batch 15); script removed
+920_the_doctor_checks_resources_without_bootstrap.sh	self	merge	e2e/self::homes/920 the doctor checks resources without bootstrap	migrated (batch 15); script removed
 921_emit_watches_inputs_not_host_outputs.sh	cdb	merge	e2e/cdb::sets/921 emit watches inputs not host outputs	migrated (batch 13); script removed
 922_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
 923_cross_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
@@ -616,8 +616,8 @@ script	subsystem	class	destination	note
 928_an_apple_sdk_is_located_on_any_host.sh	macos	merge	e2e/macos	
 929_release_trims_paths_and_defines_ndebug.sh	build	merge	e2e/build::basics/929 release trims paths and defines ndebug	migrated (batch 7); script removed
 930_a_toolchain_phase_states_the_base.sh	openkal	merge	e2e/openkal	
-931_a_suggested_command_quotes_its_path.sh	self	merge	e2e/self	
-932_a_fresh_home_with_a_space_and_non_ascii_builds.sh	self	merge	e2e/self	
+931_a_suggested_command_quotes_its_path.sh	self	merge	e2e/self::machine/931 a suggested command quotes its path	migrated (batch 15); script removed
+932_a_fresh_home_with_a_space_and_non_ascii_builds.sh	self	merge	e2e/self::homes/932 a fresh home with a space and non ascii builds	migrated (batch 15); script removed
 933_one_cxx_runtime_per_process.sh	runtime	merge	e2e/runtime	
 934_llvm_with_a_graph_supplied_libstdcxx.sh	toolchain	merge	e2e/toolchain	
 935_two_builds_of_one_configuration.sh	cache	merge	e2e/cache::directories/935 two builds of one configuration	migrated (batch 10); script removed
