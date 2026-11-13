@@ -1062,6 +1062,10 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             s.runner = mp::Runner{};
         } else {
             s.runner.cmd = split_words(*e);
+            // The command replaces the runner whole, as every other tier's does
+            // (`merge`): the packages the replaced one was installed from are
+            // not this command's.
+            s.runner.requires_.clear();
             s.runner.origin = mp::Origin{ mp::Tier::Env, {}, 0, envKey };
             s.runner.set = !s.runner.cmd.empty();
         }
