@@ -143,7 +143,7 @@ UTest every_malformed_shape_is_refused_by_name{"PayloadDescriptor/EveryMalformed
         { "not an object",        "[1, 2, 3]",                         "object" },
         { "no schema",            R"({"frontend": "bin/clang++"})",    "schema" },
         { "schema not an int",    R"({"schema": "1"})",                "schema" },
-        { "a schema we lack",     R"({"schema": 2})",                  "schema 2" },
+        { "a schema we lack",     R"({"schema": 3})",                  "schema 3" },
         { "frontend not string",  R"({"schema":1,"frontend":42})",     "frontend" },
         { "frontend empty",       R"({"schema":1,"frontend":""})",     "frontend" },
         // ABSOLUTE BY EITHER CONVENTION, because a host's path type answers
@@ -383,4 +383,59 @@ UTest a_malformed_runner_is_refused_by_name_and_by_key{"PayloadDescriptor/AMalfo
         if (auto&& failed = expect(ne(d.error().find("\"runner\""), std::string::npos)); !failed) failed << d.error();
         if (auto&& failed = expect(ne(d.error().find(".mcpp-toolchain.json"), std::string::npos)); !failed) failed << d.error();
     }
+}};
+
+// ─── schema 2: the path table a payload states of itself (design §16 T1) ───
+
+UTest schema_two_states_the_path_table{"PayloadDescriptor/SchemaTwoStatesThePathTable", [] {
+    FakePayload p("schema2");
+    p.write_descriptor(R"({"schema": 2, "family": "gcc", "prefix": "riscv64-elf-",
+        "sysroot": "riscv64-elf", "tools": {"cxx": "bin/riscv64-elf-g++", "ar": "bin/riscv64-elf-ar"}})");
+    auto d = read_payload_descriptor(p.root);
+    expect(fatal(bool(d) && d->has_value()));
+    expect(eq((*d)->family, "gcc"));
+    expect(eq((*d)->prefix, "riscv64-elf-"));
+    expect(eq((*d)->sysroot, "riscv64-elf"));
+    expect(eq((*d)->tools.size(), 2u));
+    // The C++ driver stated as a tool is the payload's frontend.
+    expect(eq((*d)->frontend, "bin/riscv64-elf-g++"));
+}};
+
+UTest schema_two_keys_stay_inside_the_payload{"PayloadDescriptor/SchemaTwoKeysStayInsideThePayload", [] {
+    FakePayload p("schema2-out");
+    p.write_descriptor(R"({"schema": 2, "tools": {"cxx": "/usr/bin/g++"}})");
+    expect(!read_payload_descriptor(p.root));
+    p.write_descriptor(R"({"schema": 2, "sysroot": "../../.."})");
+    expect(!read_payload_descriptor(p.root));
+    p.write_descriptor(R"({"schema": 2, "prefix": "bin/x-"})");
+    expect(!read_payload_descriptor(p.root));
+    p.write_descriptor(R"({"schema": 2, "family": "msvc"})");
+    expect(!read_payload_descriptor(p.root));
+    // A schema 2 key under schema 1 is refused, naming the schema.
+    p.write_descriptor(R"({"schema": 1, "family": "gcc"})");
+    auto d = read_payload_descriptor(p.root);
+    expect(fatal(!d));
+    expect(ne(d.error().find("schema 2"), std::string::npos));
+}};
+
+// ─── a payload named outright (design §16 T2) ───────────────────────────────
+
+std::string spec_str_family(const ToolchainSpec& s) { return std::string(family_name(s.family)); }
+
+UTest any_package_of_the_index_is_a_toolchain{"PayloadDescriptor/AnyPackageOfTheIndexIsAToolchain", [] {
+    auto spec = parse_toolchain_spec("xim:riscv64-elf-gcc@15.2.0");
+    expect(fatal(bool(spec)));
+    expect(spec->describedPayload);
+    expect(eq(spec->payloadName, "riscv64-elf-gcc"));
+    expect(eq(spec->spec_str(), "xim:riscv64-elf-gcc@15.2.0"));
+    expect(eq(to_xim_package(*spec).target(), "xim:riscv64-elf-gcc@15.2.0"));
+    // Without the namespace an unknown name is still refused, naming the form.
+    auto bare = parse_toolchain_spec("riscv64-elf-gcc-x@15.2.0");
+    expect(fatal(!bare));
+    expect(ne(bare.error().find("xim:riscv64-elf-gcc-x@<version>"), std::string::npos));
+    // A family's name keeps its meaning with the namespace.
+    auto gcc = parse_toolchain_spec("xim:gcc@16.2.0");
+    expect(fatal(bool(gcc)));
+    expect(!gcc->describedPayload);
+    expect(eq(spec_str_family(*gcc), "gcc"));
 }};

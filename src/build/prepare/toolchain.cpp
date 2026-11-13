@@ -1715,6 +1715,55 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
                 "toolchain '{}': {}", *state.tcSpec, payload.error().message));
         }
 
+        // A PAYLOAD NAMED OUTRIGHT (`xim:<name>@<version>`, design 2026-11-12
+        // §16 T2) is resolved as `path:<root>` with the table it states of
+        // itself (`.mcpp-toolchain.json`, schema 2): the same step, the same
+        // probes and refusals as a directory a manifest names.
+        if (spec->describedPayload) {
+            auto d = mcpp::toolchain::read_payload_descriptor(payload->root);
+            if (!d) return std::unexpected(d.error());
+            if (!*d)
+                return std::unexpected(std::format(
+                    "toolchain '{}': the package has no {} at its root; a payload named "
+                    "outright states its drivers there (\"schema\": 2, with \"family\", "
+                    "\"prefix\", \"tools\")",
+                    *state.tcSpec, mcpp::toolchain::payload_descriptor_filename));
+            auto const& desc = **d;
+            mcpp::manifest::LocalToolchain lt;
+            lt.path   = payload->root.generic_string();
+            lt.prefix = desc.prefix;
+            lt.family = desc.family;
+            if (!desc.sysroot.empty()) lt.sysroot = (payload->root / desc.sysroot).generic_string();
+            for (auto const& [role, p] : desc.tools)
+                lt.tools.emplace_back(role, (payload->root / p).generic_string());
+            if (!desc.frontend.empty()
+                && std::ranges::none_of(lt.tools, [](auto const& t) { return t.first == "cxx"; }))
+                lt.tools.emplace_back("cxx", (payload->root / desc.frontend).generic_string());
+            if (lt.family.empty()) {
+                // The family is the drivers' when the payload does not say: its
+                // C++ driver's name, else the drivers in `bin/`.
+                for (auto const& [role, p] : lt.tools)
+                    if (role == "cxx") {
+                        auto stem = std::filesystem::path(p).stem().string();
+                        lt.family = stem.ends_with("clang++") ? "llvm" : stem.ends_with("g++") ? "gcc" : "";
+                    }
+                if (lt.family.empty())
+                    if (auto fam = mcpp::toolchain::parse_toolchain_spec("path:" + lt.path); fam)
+                        lt.family = mcpp::toolchain::family_name(fam->family);
+            }
+            SourceDecision origin;
+            origin.subject    = "toolchain.build";
+            origin.cls        = SourceClass::Pinned;
+            origin.originKind = "manifest";
+            origin.originKey  = *state.tcSpec;
+            state.localToolchain       = std::move(lt);
+            state.localToolchainOrigin = std::move(origin);
+            auto local = *spec;
+            local.localRoot = payload->root;
+            mcpp::ui::info("Resolved", std::format("{} → {}", spec->display(), payload->root.string()));
+            return step2_use_local_toolchain(state, local);
+        }
+
         // A pinned MSVC toolset: the payload root IS a VS-shaped root and the
         // package version IS the toolset directory name, so cl.exe is
         // derived, not searched for. Nothing here can silently pick a

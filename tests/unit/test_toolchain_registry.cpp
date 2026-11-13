@@ -7,6 +7,7 @@ import mcpp.toolchain.platform;
 import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.payloads;
 import mcpp.toolchain.triple;
 
 using namespace mcpplibs::mtest;
@@ -213,34 +214,66 @@ UTest identifies_toolchain_payloads_and_skips_others{"ToolchainRegistry/Identifi
 // host compile resolves the spec with no target injection and landed on the
 // glibc package.
 //
-// Tested through a free function taking the host arch rather than the
-// compile-time constant, precisely so the aarch64 answer is checkable from an
-// x86_64 machine.
+// Asked of the payload table (data/builtin.toml) for a host this machine need
+// not be, so the aarch64 answer is checkable from an x86_64 machine.
 UTest native_gcc_payload_follows_what_the_arch_actually_publishes{"ToolchainRegistry/NativeGccPayloadFollowsWhatTheArchActuallyPublishes", [] {
-    using mcpp::toolchain::gcc_native_payload_is_musl;
-    const mcpp::toolchain::triple::Triple none{};
+    namespace payloads = mcpp::toolchain::payloads;
+    using mcpp::toolchain::triple::Triple;
+    auto gcc = [](std::string os, std::string arch, Triple target) {
+        auto r = payloads::choose("gcc", {}, target, payloads::Host{ std::move(os), std::move(arch), "" });
+        return r ? r->name : std::string{};
+    };
+    const Triple none{};
 
     // x86_64: unchanged — the glibc package is the one that exists.
-    expect(!gcc_native_payload_is_musl("x86_64", true, none));
-    expect(!gcc_native_payload_is_musl(
-        "x86_64", true, {"x86_64", "linux", "gnu"}));
+    expect(eq(gcc("linux", "x86_64", none), "gcc"));
+    expect(eq(gcc("linux", "x86_64", {"x86_64", "linux", "gnu"}), "gcc"));
 
     // aarch64 with no target: musl-gcc, the payload every version publishes.
-    expect(gcc_native_payload_is_musl("aarch64", true, none));
-    expect(gcc_native_payload_is_musl(
-        "aarch64", true, {"aarch64", "linux", "musl"}));
+    expect(eq(gcc("linux", "aarch64", none), "musl-gcc"));
+    expect(eq(gcc("linux", "aarch64", {"aarch64", "linux", "musl"}), "musl-gcc"));
     // A target that names glibc asks for the glibc payload (xim:gcc publishes
     // aarch64 since 16.1.0; a Luban system's own gcc is that one).
-    expect(!gcc_native_payload_is_musl(
-        "aarch64", true, {"aarch64", "linux", "gnu"}));
+    expect(eq(gcc("linux", "aarch64", {"aarch64", "linux", "gnu"}), "gcc"));
 
-    // A CROSS target keeps its own payload rule — this is about the native
-    // one, and `<triple>-gcc` packages answer for the rest.
-    expect(!gcc_native_payload_is_musl(
-        "aarch64", true, {"x86_64", "linux", "gnu"}));
+    // A CROSS target keeps its own payload rule.
+    expect(eq(gcc("linux", "aarch64", {"x86_64", "linux", "gnu"}), "gcc"));
+    expect(eq(gcc("linux", "x86_64", {"aarch64", "linux", "musl"}), "aarch64-linux-musl-gcc"));
 
-    // Non-Linux hosts are out of scope: macOS uses llvm, Windows mingw/msvc.
-    expect(!gcc_native_payload_is_musl("aarch64", false, none));
+    // MinGW: Windows' own GCC there (also for the machine itself), the cross
+    // GCC elsewhere.
+    expect(eq(gcc("windows", "x86_64", none), "mingw-gcc"));
+    expect(eq(gcc("windows", "x86_64", {"x86_64", "windows", "gnu"}), "mingw-gcc"));
+    expect(eq(gcc("linux", "x86_64", {"x86_64", "windows", "gnu"}), "mingw-cross-gcc"));
+    expect(eq(gcc("macos", "aarch64", {"x86_64", "windows", "gnu"}), "mingw-cross-gcc"));
+
+    // Non-Linux hosts building for themselves: the glibc-named package.
+    expect(eq(gcc("macos", "aarch64", none), "gcc"));
+}};
+
+// The reverse reading and the offers come from the same entries.
+UTest the_table_reads_both_ways{"ToolchainRegistry/TheTableReadsBothWays", [] {
+    namespace payloads = mcpp::toolchain::payloads;
+    const payloads::Host linux64{ "linux", "x86_64", "" }, win{ "windows", "x86_64", ".exe" };
+    for (auto const& name : { "gcc", "musl-gcc", "mingw-gcc", "mingw-cross-gcc", "llvm", "msvc",
+                              "aarch64-linux-musl-gcc" })
+        expect(bool(payloads::identify(name, linux64)));
+    expect(!payloads::identify("emsdk", linux64));        // its version is the SDK's
+    expect(!payloads::identify("ninja", linux64));
+    expect(eq(payloads::named("emsdk")->target.str(), "wasm32-emscripten"));
+
+    auto offered = [](const payloads::Host& h) { return payloads::offered(h); };
+    auto has = [](const std::vector<std::string>& v, std::string_view n) {
+        return std::ranges::find(v, n) != v.end();
+    };
+    expect(has(offered(linux64), "mingw-cross-gcc") && !has(offered(linux64), "msvc"));
+    expect(has(offered(win), "msvc") && has(offered(win), "x86_64-linux-musl-gcc"));
+    expect(!has(offered({ "linux", "riscv64", "" }), "llvm"));
+    expect(has(offered({ "linux", "aarch64", "" }), "llvm"));
+
+    // A frontend named with the host's suffix.
+    auto r = payloads::choose("gcc", {}, {"x86_64", "windows", "gnu"}, win);
+    expect(bool(r) && eq(r->frontends.front(), "g++.exe"));
 }};
 
 // ─── the origin axis ─────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ import std;
 import mcpplibs.mwrap.libc;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.payloads;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -84,10 +85,6 @@ triple::Triple host_musl_triple() {
     return t;
 }
 
-triple::Triple windows_gnu_triple() {
-    return { "x86_64", "windows", "gnu" };
-}
-
 NormalizedSpec with_hint(NormalizedSpec s, std::string_view oldSpelling) {
     s.changed = true;
     std::string canonical = std::format("{}@{}", s.family,
@@ -140,55 +137,28 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     // already named the target. `with_hint` is deliberately not used: a hint
     // says "this spelling is old, here is the current one", and these are the
     // current ones.
-    if (compiler == "emsdk" || compiler == "emscripten") {
-        out.family = "llvm";
-        out.payload = "emsdk";
-        if (auto t = triple::parse("wasm32-emscripten")) out.target = *t;
+    // A PAYLOAD'S NAME (data/builtin.toml, `[[toolchain.payload]]`). One whose
+    // version is its family's (`musl-gcc@16.1.0`, `mingw@16.1.0`) is a spelling
+    // of the family for its target, and which package serves that is decided
+    // from the host by the payload mapping, never by the name typed. One whose
+    // version is its own SDK's (`emsdk@6.0.9`, `android-ndk@30.0.16248370`)
+    // stays that payload; the NDK serves both Android architectures, so it sets
+    // no target and the arch arrives from `--target` or `[target.<triple>]`.
+    if (auto id = mcpp::toolchain::payloads::named(compiler)) {
         if (muslVersionSuffix) return std::nullopt;
-        return out;
-    }
-    // The NDK serves BOTH Android arches from one payload, so it must NOT set
-    // a target: the arch arrives from `--target` or `[target.<triple>]`, and
-    // pinning one here would make `android-ndk@<v>` mean aarch64 to a reader
-    // who typed it for x86_64.
-    //
-    // ONE SPELLING. `ndk` was accepted here as an alias and the capability gate
-    // refuses it, because that gate compares the declared spelling against the
-    // ROW'S PIN -- `android-ndk@30.0.16248370` -- and `ndk@30.0.16248370` does
-    // not contain it. So the alias parsed and was then rejected at the point of
-    // use, which reads as a defect rather than as a naming choice.
-    //
-    // Withdrawn rather than completed. Teaching the gate to compare normalised
-    // payload names would make two spellings work and put the comparison in a
-    // second mechanism; one name makes the gate correct by construction. The
-    // name kept is the one the index uses, so there is a single string for this
-    // payload across the ecosystem.
-    if (compiler == "android-ndk") {
-        out.family = "llvm";
-        out.payload = "android-ndk";
-        if (muslVersionSuffix) return std::nullopt;
-        return out;
+        out.family = id->family;
+        out.target = id->target;
+        if (!id->familyVersion) {
+            out.payload = id->payload;
+            return out;
+        }
+        return with_hint(std::move(out), std::format("{}@{}", compiler, version));
     }
 
     // ── legacy spellings ─────────────────────────────────────────────────────
     if (compiler == "clang") {                      // alias family → llvm
         out.family = "llvm";
         return with_hint(std::move(out), std::format("clang@{}", version));
-    }
-    if (compiler == "musl-gcc") {                   // musl as compiler-name prefix
-        out.family = "gcc";
-        out.target = host_musl_triple();
-        return with_hint(std::move(out), std::format("musl-gcc@{}", version));
-    }
-    if (compiler == "mingw" || compiler == "mingw-cross"
-        || compiler == "mingw-gcc" || compiler == "mingw-cross-gcc") {
-        // One concept, two host-split legacy names: GCC targeting Windows PE
-        // (GNU CRT). Which payload serves it (native winlibs vs Linux-hosted
-        // cross) is decided by registry's payload mapping from the HOST —
-        // never by the name the user typed.
-        out.family = "gcc";
-        out.target = windows_gnu_triple();
-        return with_hint(std::move(out), std::format("{}@{}", compiler, version));
     }
     if (ends_with(compiler, "-gcc")) {              // triple-named: aarch64-linux-musl-gcc
         auto tripleStr = compiler.substr(0, compiler.size() - 4);
