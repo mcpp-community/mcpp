@@ -47,11 +47,12 @@ while IFS=$'\t' read -r canary identity row_host step expect note; do
   [ -z "$only" ] || [ "$only" = "$canary" ] || continue
   [ "$expect" = "n/a" ] && continue
   dir=$here/$canary
+  # `${prog[@]+...}` below: bash 3.2 (macOS) refuses an empty array under `set -u`.
   prog=(); [ "$canary" = c ] && prog=(canary-a)
   case "$step" in
     build)  cmd=("$MCPP" build --target "$identity") ;;
     static) cmd=("$MCPP" build --static --target "$identity") ;;
-    run)    cmd=("$MCPP" run "${prog[@]}" --target "$identity" -- x last) ;;
+    run)    cmd=("$MCPP" run ${prog[@]+"${prog[@]}"} --target "$identity" -- x last) ;;
     test)   cmd=("$MCPP" test --target "$identity") ;;
     pack)   cmd=("$MCPP" pack --target "$identity") ;;
     *) echo "matrix: unknown step '$step'" >&2; exit 2 ;;

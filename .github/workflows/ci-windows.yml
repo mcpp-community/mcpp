@@ -26,7 +26,10 @@ jobs:
   build-test:
     name: test + package (windows x64, self-host)
     runs-on: windows-latest
-    timeout-minutes: 45
+    # The C++ e2e programs run in this job (tests/e2e/*/, design 2026-11-12
+    # section 5.9); a change to tests/support runs them all, measured at 40
+    # minutes on xcode-27.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap-mcpp

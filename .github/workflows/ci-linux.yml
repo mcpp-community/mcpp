@@ -42,15 +42,18 @@ env:
   # mcpp resolves at runtime.
   MCPP_HOME: /home/runner/.mcpp
   # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
-  # Safe here: this workflow no longer runs the e2e suite, which is what
-  # asserts mcpp's default quiet output (tests 48/53).
+  # The e2e cases of the unit job read mcpp's default output; the case support
+  # removes MCPP_VERBOSE from the mcpp a case starts (tests/support).
   MCPP_VERBOSE: "1"
 
 jobs:
   build-test:
     name: unit tests (linux x86_64, self-host)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The C++ e2e programs run in this job (tests/e2e/*/, design 2026-11-12
+    # section 5.9); a change to tests/support runs them all, measured at 40
+    # minutes on xcode-27.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

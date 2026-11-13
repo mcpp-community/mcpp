@@ -42,7 +42,10 @@ jobs:
           - image: macos-15
           - image: xcode-27
     runs-on: ${{ matrix.image }}
-    timeout-minutes: 45
+    # The C++ e2e programs run in this job (tests/e2e/*/, design 2026-11-12
+    # section 5.9); a change to tests/support runs them all, measured at 40
+    # minutes on xcode-27.
+    timeout-minutes: 90
     # NOTE: no MCPP_VERBOSE here — keep this job's output shape identical to
     # ci-macos-e2e.yml, which asserts mcpp's default quiet output (48/53).
     steps:
