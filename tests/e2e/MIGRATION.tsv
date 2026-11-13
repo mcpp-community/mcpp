@@ -260,14 +260,14 @@ script	subsystem	class	destination	note
 256_pack_library_fat_windows.sh	windows	merge	e2e/windows	
 257_shared_library_pe.sh	windows	keep	keep	emulator: runs the PE DLL program under wine
 258_shared_library_msvc_auto_def.sh	windows	merge	e2e/windows	
-259_shared_library_macho.sh	macos	merge	e2e/macos	
+259_shared_library_macho.sh	macos	merge	e2e/macos::rows/259 shared library macho	migrated (batch 23); script removed
 260_module_extension_is_configuration.sh	modules	merge	e2e/modules::extensions/260 module extension is configuration	migrated (batch 9); script removed
 261_pack_follows_the_module_extension.sh	pack	merge	e2e/pack::library/261 pack follows the module extension	migrated (batch 6); script removed
 262_pack_consumed_by_native_cl.sh	windows	merge	e2e/windows	
 263_lib_root_follows_the_extension.sh	modules	merge	e2e/modules::extensions/263 lib root follows the extension	migrated (batch 9); script removed
 264_pack_library_is_relocatable.sh	pack	merge	e2e/pack::library/264 pack library is relocatable	migrated (batch 6); script removed
 265_pack_strips_but_stays_usable.sh	pack	merge	e2e/pack::library/265 pack strips but stays usable	migrated (batch 6); script removed
-266_pack_reads_a_macho_program_without_running_it.sh	macos	merge	e2e/macos	
+266_pack_reads_a_macho_program_without_running_it.sh	macos	merge	e2e/macos::rows/266 pack reads a macho program without running it	migrated (batch 23); script removed
 267_target_requested_is_empty_for_a_native_build.sh	target	merge	e2e/targets::rows/267 target requested is empty for a native build	migrated (batch 20); script removed
 268_target_side_resolution.sh	target	merge	e2e/targets::side/268 target side resolution	migrated (batch 20); script removed
 269_openkal_llvm_spelling_still_resolves.sh	openkal	merge	e2e/openkal::stack/269 openkal llvm spelling still resolves	migrated (batch 16); script removed
@@ -395,9 +395,9 @@ script	subsystem	class	destination	note
 663_a_graph_libcxx_over_the_payloads_c_library.sh	toolchain	merge	e2e/toolchain::layers/663 a graph libcxx over the payloads c library	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
 664_a_universal_apk_is_two_legs_in_one_tree.sh	android	merge	e2e/android::rows/664 a universal apk is two legs in one tree	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
 665_a_host_tool_follows_its_source.sh	build-program	merge	e2e/build-program::hosttools/665 a host tool follows its source	migrated (batch 2); script removed
-666_a_macho_program_reaches_a_dispatched_format_with_its_tree.sh	macos	merge	e2e/macos	
+666_a_macho_program_reaches_a_dispatched_format_with_its_tree.sh	macos	merge	e2e/macos::rows/666 a macho program reaches a dispatched format with its tree	migrated (batch 23); script removed
 667_an_android_pack_stages_its_closure.sh	android	merge	e2e/android::rows/667 an android pack stages its closure	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
-668_a_macho_program_is_staged_with_its_closure.sh	macos	merge	e2e/macos	
+668_a_macho_program_is_staged_with_its_closure.sh	macos	merge	e2e/macos::rows/668 a macho program is staged with its closure	migrated (batch 23); script removed
 669_an_elf_host_pack_states_its_closure.sh	pack	merge	e2e/pack::modes/669 an elf host pack states its closure	migrated (batch 6); script removed
 670_an_rpath_loader_token_is_left_as_written.sh	runtime	merge	e2e/runtime::packages/670 an rpath loader token is left as written	migrated (batch 17); script removed
 671_toolchain_is_an_option_of_run_test_and_pack.sh	cli	merge	e2e/cli::commands/671 toolchain is an option of run test and pack	migrated (batch 8); script removed
@@ -435,7 +435,7 @@ script	subsystem	class	destination	note
 713_a_git_dependency_selects_a_repository_member.sh	deps	merge	e2e/deps::git/713 a git dependency selects a repository member	migrated (batch 3); script removed
 714_features_names_a_dependency_feature.sh	features	merge	e2e/features::activation/714 features names a dependency feature	migrated (batch 5); script removed
 720_the_root_build_program_reads_the_resolved_graph.sh	build-program	merge	e2e/build-program::deps/720 the root build program reads the resolved graph	migrated (batch 2); script removed
-721_an_android_row_links_on_a_macos_host.sh	macos	merge	e2e/macos	
+721_an_android_row_links_on_a_macos_host.sh	macos	merge	e2e/macos::rows/721 an android row links on a macos host	migrated (batch 23); script removed
 722_pack_strips_what_the_graph_built.sh	pack	merge	e2e/pack::formats/722 pack strips what the graph built	migrated (batch 6); script removed
 723_pack_reports_what_it_produced.sh	pack	merge	e2e/pack::formats/723 pack reports what it produced	migrated (batch 6); script removed
 730_bare_compat_dependency_is_not_a_refresh_miss.sh	index	merge	e2e/index::refresh/730 bare compat dependency is not a refresh miss	migrated (batch 14); script removed
@@ -454,7 +454,7 @@ script	subsystem	class	destination	note
 743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh	openkal	merge	e2e/openkal::layers/743 kernel abi interfaces are resolved not preprocessed	migrated (batch 16); script removed
 744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/targets::side/744 a declared absence explains the link that asked for it	migrated (batch 20); script removed
 745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test::archive/745 no run builds the tests and says so	migrated (batch 1); script removed
-746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos	
+746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos::rows/746 macos deployment target is target keyed not host keyed	migrated (batch 23); script removed
 760_msvc_toolset_is_chosen_once.sh	windows	merge	e2e/windows	
 765_a_consumer_include_directory_stays_in_the_consumer.sh	build	merge	e2e/build::flags/765 a consumer include directory stays in the consumer	migrated (batch 7); script removed
 770_workspace_member_as_dependency.sh	workspace	merge	e2e/workspace::inheritance/770 workspace member as dependency	migrated (batch 11); script removed
@@ -613,7 +613,7 @@ script	subsystem	class	destination	note
 925_a_stated_sysroot_is_the_c_library.sh	openkal	merge	e2e/openkal::bases/925 a stated sysroot is the c library	migrated (batch 16); script removed
 926_the_hosts_own_root_is_a_base.sh	openkal	merge	e2e/openkal::bases/926 the hosts own root is a base	migrated (batch 16); script removed
 927_the_runner_contract.sh	run	merge	e2e/run::contract/927 the runner contract	migrated (batch 12); script removed
-928_an_apple_sdk_is_located_on_any_host.sh	macos	merge	e2e/macos	
+928_an_apple_sdk_is_located_on_any_host.sh	macos	merge	e2e/macos::rows/928 an apple sdk is located on any host	migrated (batch 23); script removed
 929_release_trims_paths_and_defines_ndebug.sh	build	merge	e2e/build::basics/929 release trims paths and defines ndebug	migrated (batch 7); script removed
 930_a_toolchain_phase_states_the_base.sh	openkal	merge	e2e/openkal::bases/930 a toolchain phase states the base	migrated (batch 16); script removed
 931_a_suggested_command_quotes_its_path.sh	self	merge	e2e/self::machine/931 a suggested command quotes its path	migrated (batch 15); script removed
@@ -723,7 +723,7 @@ script	subsystem	class	destination	note
 1050_a_test_run_is_kept_in_the_mtest_store.sh	test	merge	e2e/test::archive/1050 a test run is kept in the mtest store	migrated (batch 1); script removed
 1051_a_cross_targets_toolchain_section_is_not_the_build_programs.sh	build-program	merge	e2e/build-program::cross/1051 a cross targets toolchain section is not the build programs	migrated (batch 2); script removed
 1052_a_framework_that_uses_the_package_under_test_is_built_against_it.sh	test	merge	e2e/test::frameworks/1052 a framework that uses the package under test is built against it	migrated (batch 1); script removed
-1053_a_mach_o_images_c_library_is_up_before_its_initialisers.sh	macos	merge	e2e/macos	
+1053_a_mach_o_images_c_library_is_up_before_its_initialisers.sh	macos	merge	e2e/macos::rows/1053 a mach o images c library is up before its initialisers	migrated (batch 23); script removed
 1054_programs_that_share_an_entry_keep_their_own_flags.sh	build	merge	e2e/build::flags/1054 programs that share an entry keep their own flags	migrated (batch 7); script removed
 1055_layer_suppliers_that_require_one_another_are_refused.sh	target	merge	e2e/targets::side/1055 layer suppliers that require one another are refused	migrated (batch 20); script removed
 1056_a_runner_reads_the_interfaces_its_implementation_provides.sh	openkal	merge	e2e/openkal::layers/1056 a runner reads the interfaces its implementation provides	migrated (batch 16); script removed
