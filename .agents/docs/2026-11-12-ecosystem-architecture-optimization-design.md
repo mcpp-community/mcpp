@@ -1060,3 +1060,70 @@ ninja 按命令重编。随后的警告"fingerprint changed, full rebuild"不区
 - **测试程序默认以共享库链接成员的闭包。** 它去掉闭包的重复链接，但牵涉 Windows 的 DLL 导出语义与模块的符号导出，跨平台的
   代价大，不能作为通用的默认。
 - **默认剥离测试程序的符号表。** 调试器、sanitizer 与回溯依赖符号表；由 profile 的 `strip` 选择。
+
+## 18. 大工作区的测试反馈（mcpp-community/mcpp#927，2026-11-13 补充）
+
+反馈来自一个 143 个成员、339 个测试程序的工作区（2026.11.12.1、mtest 0.7.1、Linux x86_64、gcc 16.1.0、`dev`）。六项中，
+项目自身的部分不在此列：测试文件的放置、成员的分层、CI profile 的采用，以及测试本身 43 分钟的运行时间。
+
+### 18.1 归属与现状（代码核对）
+
+| 项 | 属于 mcpp 的部分 | 现状 |
+|---|---|---|
+| 1 `programs = "directory"` 对 `tests/` 根下的文件无效 | 语义的表达与提示 | 设计如此：固定目录下的子目录各成一个程序，直接位于固定目录中的文件仍各为程序；设置不改变任何程序时没有任何提示，`--strict` 亦然 |
+| 2 `mcpp test -p` 解析两遍、汇总有一段无名 | 一次调用的规划次数与时间的归属 | 测试先以 `mcpp build` 的方式构建包的程序（`MCPP_BIN_<NAME>`），其快速路径的条件要求 `package_filter` 为空，故 `-p` 必走完整的 `prepare_build`；随后带 dev 依赖再 `prepare_build` 一次。汇总只列 build 与 run |
+| 3 两个进程并发时一次 `no local package index` | 索引刷新与读取的并发 | 刷新锁是非阻塞的：拿不到锁的进程跳过刷新并立即读取。mcpp 拥有的索引在暂存目录取回后交换；文件系统不支持原子交换时退化为"旧目录移开、新目录改名"，其间索引不存在；provider 自己的索引原地刷新。两者都是读者可见的窗口 |
+| 4 测试程序占配置体积七成 | 调试信息的级别、链接形式、程序的粒度 | §17 已有 `debug = "lines"`；`dependency_linkage = "shared"` 按 profile 可写，实测对工作区成员生效（成员依赖成为共享库，放在产品目录中）；开发 profile 默认拆分并压缩 DWARF；文档未把它们组织为"开发时的测试体积"一节 |
+| 5 升级后 88 分钟全量重编 | 构建目录的身份 | §17 W1 已解决：目录以谱系命名，图经目录的引擎链接运行 mcpp；实测只改版本号的引擎重编 0 个 |
+| 6 `clean --stale` 需要人记得 | 被取代目录的回收 | W1 之后升级不再产生目录，编译器改变时原处替换；构建后的清扫（`keep_days`，默认 3 天）与 `target_budget` 已有。剩下的是：配置改变新开目录时，警告不说旧目录的大小 |
+
+### 18.2 方案
+
+**P1 测试程序的粒度：`programs = "package"`，与 `"directory"` 的提示。** `[test] programs` 是测试程序的粒度：`"file"`
+（默认）、`"directory"`、`"package"`。`"package"` 使一个包所发现的全部文件成为一个程序，以第一个 glob 的固定目录命名
+（`tests`），规则与 `"directory"` 相同：定义 `main` 的文件至多一个，否则拒绝并指出两者；按测试协议运行时仍是每个文件一个进程
+（`tests/<file>`），隔离与并行不变，链接一次。`"directory"` 的语义不变，并在设置留下了直接位于固定目录中的文件时说一行：
+
+```
+note: [test] programs = "directory": 12 files directly in tests/ stay programs of their own; "package" makes the suite one program
+```
+
+设置不改变任何程序时，`--strict` 拒绝。文档写明三种粒度与固定目录的含义。它同时是第 4 项的主要手段：程序数由测试文件数降为
+目录数或包数，闭包的重复链接随之减少。
+
+**P2 一次调用，每个配置规划一次；汇总给出每一段。**
+
+- 程序的预构建对 `-p` 与工作区选择也取快速路径：按所选成员的配置组匹配记录，与 `try_fast_workspace_build` 相同；
+- 需要规划时，同一次调用内的第二次 `prepare_build` 复用第一次的依赖解析与工具链解析（以清单、锁文件与覆盖项为键的进程内结果），
+  不再解析与打印第二遍。`mcpp run --format`（构建后打包）同样受益；
+- 测试的汇总与 `Finished` 一致地分解：`finished in 7.77s (plan 2.10s · programs 1.73s · build 1.60s · run 2.34s)`，各段之和
+  为总时长，等待构建目录时另列 `waited`（§17 W3）。
+
+**P3 索引：刷新可以跳过，读取不读替换中的树。** 刷新分两段：取回在暂存目录中进行，不阻塞任何人；交换在索引锁下进行，只持有
+毫秒。读取在索引的共享锁下进行，因此不会落在交换的窗口中（包括不支持原子交换的文件系统）。provider 自己的索引也按此取回到
+暂存目录再交换（`sync_index` 已接受目标目录），不再原地改写。拿不到刷新锁的进程仍跳过刷新，但它的读取等待交换完成。
+
+**P4 开发时测试的体积：已有能力的组织与文档。** 不新增引擎键：
+
+- `[workspace.profile.<name>] debug = "lines"`（§17 W5）：回溯与 sanitizer 仍有文件与行号；
+- `[workspace.profile.<name>] dependency_linkage = "shared"`：一个成员的测试链接其余成员的共享库，闭包在磁盘上只有一份；
+  这是可选的 profile，不是默认（§17.4 的理由不变：Windows 的 DLL 导出与模块符号导出）；
+- P1 的程序粒度。
+
+`docs/08-testing.md` 的"测试构建的体积"一节按上述顺序给出开发与 CI 两个 profile 的写法。
+
+**P5 升级。** 由 §17 W1 解决，不另立机制；`mtest` 升级只重编导入 mtest 的单元与重链接测试程序，这是必要的。
+
+**P6 新目录的提示。** 配置改变新开目录时，警告给出旧目录的大小与回收它的命令：
+
+```
+warning: the configuration changed (debug 1 → lines): 7a72… is built in full beside ed03… (2.1 GiB); `mcpp clean --stale` drops it once no build uses it
+```
+
+### 18.3 不采纳
+
+- **`[test] debug = "lines"`，测试专有的调试级别。** `mcpp build` 与 `mcpp test` 是同一配置（2026.11.8.1），被测代码的目标文件
+  由两者共用。测试专有的级别要么只作用于测试自己的翻译单元，体积几乎不变；要么使测试成为另一配置，切换即全量重编。级别由
+  profile 决定。
+- **默认只剥离符号表而保留调试信息。** 符号表是调试器、性能分析器与回溯在没有 DWARF 时的依据，开发构建不默认去掉；需要时由
+  `strip = true` 的 profile 选择。
