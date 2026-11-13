@@ -178,10 +178,10 @@ script	subsystem	class	destination	note
 169_semver_project_index.sh	index	merge	e2e/index	
 170_bmi_staging_no_cascade.sh	modules	merge	e2e/modules::bmi/170 bmi staging no cascade	migrated (batch 9); script removed
 171_bmi_staging_locked_dest.sh	modules	merge	e2e/modules::bmi/171 bmi staging locked dest	migrated (batch 9); script removed
-172_build_cache_cross_project.sh	cache	merge	e2e/cache	
-173_build_profile_isolation.sh	cache	merge	e2e/cache	
+172_build_cache_cross_project.sh	cache	merge	e2e/cache::entries/172 build cache cross project	migrated (batch 10); script removed
+173_build_profile_isolation.sh	cache	merge	e2e/cache::fastpath/173 build profile isolation	migrated (batch 10); script removed
 173_index_refresh_policy.sh	index	merge	e2e/index	
-174_cache_modes_and_commands.sh	cache	merge	e2e/cache	
+174_cache_modes_and_commands.sh	cache	merge	e2e/cache::entries/174 cache modes and commands	migrated (batch 10); script removed; a known gap until 2026-12-15: build --cache=off removes the engine link the graph runs
 175_cpp20_import_std.sh	toolchain	merge	e2e/toolchain	
 176_cpp20_std_bmi_isolation.sh	toolchain	merge	e2e/toolchain	
 177_cpp20_msvc.sh	windows	merge	e2e/windows	
@@ -192,7 +192,7 @@ script	subsystem	class	destination	note
 182_windows_no_msvc_fallback.sh	windows	merge	e2e/windows	
 183_cross_no_relink.sh	windows	merge	e2e/windows	
 183_cxx_runtime_contract.sh	runtime	merge	e2e/runtime	
-184_build_cache_object_layout.sh	cache	merge	e2e/cache	
+184_build_cache_object_layout.sh	cache	merge	e2e/cache::entries/184 build cache object layout	migrated (batch 10); script removed
 185_index_floor_degrades.sh	index	merge	e2e/index	
 186_build_mcpp_protocol_and_bound.sh	build-program	merge	e2e/build-program::protocol/186 build mcpp protocol and bound	migrated (batch 2); script removed
 187_dep_host_tool.sh	build-program	merge	e2e/build-program::hosttools/187 dep host tool	migrated (batch 2); script removed
@@ -220,7 +220,7 @@ script	subsystem	class	destination	note
 209_runtime_verdict_never_reruns_green.sh	runtime	merge	e2e/runtime	
 210_local_index_addressing_on_every_host.sh	index	merge	e2e/index	
 211_configure_only_cdb.sh	cdb	merge	e2e/cdb	
-212_cached_dep_std_is_ordered.sh	cache	merge	e2e/cache	
+212_cached_dep_std_is_ordered.sh	cache	merge	e2e/cache::entries/212 cached dep std is ordered	migrated (batch 10); script removed
 213_build_after_test_is_not_the_test_graph.sh	test	merge	e2e/test::graph/213 build after test is not the test graph	migrated (batch 1); script removed
 214_executable_carries_dt_rpath.sh	runtime	merge	e2e/runtime	
 215_pack_has_no_build_machine_paths.sh	pack	merge	e2e/pack::modes/215 pack has no build machine paths	migrated (batch 6); script removed
@@ -312,7 +312,7 @@ script	subsystem	class	destination	note
 321_workspace_inheritance.sh	workspace	merge	e2e/workspace	
 322_dialect_flag_refusal.sh	toolchain	merge	e2e/toolchain	
 323_post_link_record_durability.sh	runtime	merge	e2e/runtime	
-324_fast_path_sees_path_deps.sh	cache	merge	e2e/cache	
+324_fast_path_sees_path_deps.sh	cache	merge	e2e/cache::fastpath/324 fast path sees path deps	migrated (batch 10); script removed
 325_system_toolchain_refused.sh	toolchain	merge	e2e/toolchain	
 326_dependency_standard_floor.sh	deps	merge	e2e/deps::floors/326 dependency standard floor	migrated (batch 3); script removed
 327_declared_xlings_deps_report_their_own_failure.sh	index	merge	e2e/index	
@@ -337,7 +337,7 @@ script	subsystem	class	destination	note
 606_constrained_source_globs_narrow_to_the_build.sh	actions	merge	e2e/actions::devices/606 constrained source globs narrow to the build	migrated (batch 4); script removed
 607_chained_actions_form_the_device_link.sh	actions	merge	e2e/actions::devices/607 chained actions form the device link	migrated (batch 4); script removed
 608_object_actions_reach_a_static_library.sh	actions	merge	e2e/actions::devices/608 object actions reach a static library	migrated (batch 4); script removed
-609_clean_stale.sh	cache	merge	e2e/cache	
+609_clean_stale.sh	cache	merge	e2e/cache::directories/609 clean stale	migrated (batch 10); script removed
 609_shader_sources_are_device_sources.sh	actions	merge	e2e/actions::devices/609 shader sources are device sources	migrated (batch 4); script removed
 610_feature_controlled_rule_collection.sh	actions	merge	e2e/actions::rules/610 feature controlled rule collection	migrated (batch 4); script removed
 611_variant_switch_is_not_replayed.sh	actions	merge	e2e/actions::devices/611 variant switch is not replayed	migrated (batch 4); script removed
@@ -374,7 +374,7 @@ script	subsystem	class	destination	note
 642_windows_subsystem.sh	windows	merge	e2e/windows	
 643_windows_subsystem_cross.sh	windows	merge	e2e/windows	
 644_windows_keys_are_inert_elsewhere.sh	windows	merge	e2e/windows	
-645_the_fast_path_compares_the_toolchain_request.sh	cache	merge	e2e/cache	
+645_the_fast_path_compares_the_toolchain_request.sh	cache	merge	e2e/cache::fastpath/645 the fast path compares the toolchain request	migrated (batch 10); script removed
 646_runtime_deploy_places_files_in_a_directory.sh	runtime	merge	e2e/runtime	
 647_abi_threads_is_one_switch_for_the_graph.sh	target	merge	e2e/target	
 648_an_install_hook_sees_the_build_target.sh	actions	merge	e2e/actions::hooks/648 an install hook sees the build target	migrated (batch 4); script removed
@@ -517,7 +517,7 @@ script	subsystem	class	destination	note
 828_a_library_states_its_interface.sh	pack	merge	e2e/pack::library/828 a library states its interface	migrated (batch 6); script removed
 829_pack_takes_a_member.sh	pack	merge	e2e/pack::members/829 pack takes a member	migrated (batch 6); script removed
 831_a_path_dependency_host_module_outside_src.sh	build-program	merge	e2e/build-program::hosttools/831 a path dependency host module outside src	migrated (batch 2); script removed
-832_the_fast_path_resumes_after_an_edit.sh	cache	merge	e2e/cache	
+832_the_fast_path_resumes_after_an_edit.sh	cache	merge	e2e/cache::fastpath/832 the fast path resumes after an edit	migrated (batch 10); script removed
 833_a_workspace_is_one_graph_per_configuration.sh	workspace	merge	e2e/workspace	
 834_a_workspace_plans_once_and_replays_in_one_check.sh	workspace	merge	e2e/workspace	
 835_a_shared_library_is_placed_by_a_link.sh	runtime	merge	e2e/runtime	
@@ -563,8 +563,8 @@ script	subsystem	class	destination	note
 875_toolchain_by_path.sh	toolchain	merge	e2e/toolchain	
 876_toolchain_phase.sh	toolchain	merge	e2e/toolchain	
 877_why_sources.sh	build-program	merge	e2e/build-program::deps/877 why sources	migrated (batch 2); script removed
-878_an_upgraded_engine_does_not_replay_the_old_graph.sh	cache	merge	e2e/cache	
-879_a_providers_module_extension_reaches_the_fast_path.sh	cache	merge	e2e/cache	
+878_an_upgraded_engine_does_not_replay_the_old_graph.sh	cache	merge	e2e/cache::fastpath/878 an upgraded engine does not replay the old graph	migrated (batch 10); script removed
+879_a_providers_module_extension_reaches_the_fast_path.sh	cache	merge	e2e/cache::fastpath/879 a providers module extension reaches the fast path	migrated (batch 10); script removed
 880_a_members_executable_keeps_its_own_implementation.sh	workspace	merge	e2e/workspace	
 881_pe_auto_exports_accept_llvm_bitcode.sh	windows	merge	e2e/windows	
 882_parent_directory_glob_inputs.sh	build	merge	e2e/build::basics/882 parent directory glob inputs	migrated (batch 7); script removed
@@ -620,7 +620,7 @@ script	subsystem	class	destination	note
 932_a_fresh_home_with_a_space_and_non_ascii_builds.sh	self	merge	e2e/self	
 933_one_cxx_runtime_per_process.sh	runtime	merge	e2e/runtime	
 934_llvm_with_a_graph_supplied_libstdcxx.sh	toolchain	merge	e2e/toolchain	
-935_two_builds_of_one_configuration.sh	cache	merge	e2e/cache	
+935_two_builds_of_one_configuration.sh	cache	merge	e2e/cache::directories/935 two builds of one configuration	migrated (batch 10); script removed
 936_the_control_contract.sh	cli	merge	e2e/cli::output/936 the control contract	migrated (batch 8); script removed
 937_the_root_compile_database_is_opt_in.sh	cdb	merge	e2e/cdb	
 938_a_relink_never_exposes_a_partial_file.sh	build	merge	e2e/build::link/938 a relink never exposes a partial file	migrated (batch 7); script removed
@@ -644,7 +644,7 @@ script	subsystem	class	destination	note
 956_a_single_file_runs_without_unpacking.sh	openkal	merge	e2e/openkal	
 957_packages_merge_and_describe_themselves.sh	openkal	merge	e2e/openkal	
 958_a_build_program_runs_again_when_its_output_is_gone.sh	build-program	merge	e2e/build-program::protocol/958 a build program runs again when its output is gone	migrated (batch 2); script removed
-959_a_package_is_keyed_by_every_module_it_imports.sh	cache	merge	e2e/cache	
+959_a_package_is_keyed_by_every_module_it_imports.sh	cache	merge	e2e/cache::entries/959 a package is keyed by every module it imports	migrated (batch 10); script removed
 960_an_image_of_another_architecture_runs_through_its_execution_host.sh	openkal	merge	e2e/openkal	
 961_a_single_file_carries_the_image_in_a_program_of_its_architecture.sh	openkal	merge	e2e/openkal	
 962_a_webassembly_package_is_neither_an_xlings_entry_nor_a_single_file.sh	openkal	merge	e2e/openkal	
@@ -668,14 +668,14 @@ script	subsystem	class	destination	note
 995_the_windows_launcher_builds_over_any_platform_release.sh	openkal	merge	e2e/openkal	
 996_an_ok_image_waits_for_a_prepare_action.sh	openkal	merge	e2e/openkal	
 997_a_members_dev_dependencies_stay_out_of_a_host_tool.sh	build-program	merge	e2e/build-program::hosttools/997 a members dev dependencies stay out of a host tool	migrated (batch 2); script removed
-998_a_build_keeps_its_bytes_once.sh	cache	merge	e2e/cache	
-999_debug_information_is_stored_once.sh	cache	merge	e2e/cache	
-1000_a_configuration_keeps_one_directory.sh	cache	merge	e2e/cache	
+998_a_build_keeps_its_bytes_once.sh	cache	merge	e2e/cache::directories/998 a build keeps its bytes once	migrated (batch 10); script removed
+999_debug_information_is_stored_once.sh	cache	merge	e2e/cache::directories/999 debug information is stored once	migrated (batch 10); script removed
+1000_a_configuration_keeps_one_directory.sh	cache	merge	e2e/cache::directories/1000 a configuration keeps one directory	migrated (batch 10); script removed
 1001_a_dependency_carries_its_patches.sh	deps	merge	e2e/deps::edges/1001 a dependency carries its patches	migrated (batch 3); script removed
 1002_a_dependency_is_embedded.sh	deps	merge	e2e/deps::edges/1002 a dependency is embedded	migrated (batch 3); script removed
 1003_one_program_one_variant.sh	build	merge	e2e/build::basics/1003 one program one variant	migrated (batch 7); script removed
 1004_an_external_toolchain_finds_mcpps_ninja.sh	toolchain	merge	e2e/toolchain	
-1005_clean_stale_says_what_it_kept.sh	cache	merge	e2e/cache	
+1005_clean_stale_says_what_it_kept.sh	cache	merge	e2e/cache::directories/1005 clean stale says what it kept	migrated (batch 10); script removed
 1006_a_response_file_and_what_it_names_are_link_inputs.sh	build	merge	e2e/build::link/1006 a response file and what it names are link inputs	migrated (batch 7); script removed
 1007_a_requirement_a_layer_decides_is_checked.sh	features	merge	e2e/features::layers/1007 a requirement a layer decides is checked	migrated (batch 5); script removed
 1008_a_provided_format_is_told_the_compression.sh	pack	merge	e2e/pack::formats/1008 a provided format is told the compression	migrated (batch 6); script removed
@@ -692,16 +692,16 @@ script	subsystem	class	destination	note
 1019_a_later_edge_walks_the_feature_deps_it_activates.sh	features	merge	e2e/features::activation/1019 a later edge walks the feature deps it activates	migrated (batch 5); script removed
 1020_a_platform_version_group_chooses_the_version.sh	openkal	merge	e2e/openkal	
 1021_a_platform_series_is_locked_and_skips_newer_engines.sh	openkal	merge	e2e/openkal	
-1022_a_taken_over_directory_keeps_no_compiler_record_of_another.sh	cache	merge	e2e/cache	
+1022_a_taken_over_directory_keeps_no_compiler_record_of_another.sh	cache	merge	e2e/cache::directories/1022 a taken over directory keeps no compiler record of another	migrated (batch 10); script removed
 1023_msvc_objects_carry_their_own_debug_information.sh	windows	merge	e2e/windows	
 1024_a_launch_description_takes_the_fast_path.sh	run	merge	e2e/run	
 1025_the_default_platform_is_one_release.sh	openkal	merge	e2e/openkal	
 1026_an_archived_member_test_carries_its_members_files.sh	test	merge	e2e/test::archive/1026 an archived member test carries its members files	migrated (batch 1); script removed
 1027_a_configuration_group_keeps_the_other_groups_lock_entries.sh	deps	merge	e2e/deps::lock/1027 a configuration group keeps the other groups lock entries	migrated (batch 3); script removed
-1028_a_projects_state_directory_ignores_itself.sh	cache	merge	e2e/cache	
-1029_an_unused_std_module_is_collected_by_age.sh	cache	merge	e2e/cache	
-1030_the_low_space_warning_knows_what_the_last_build_took.sh	cache	merge	e2e/cache	
-1031_target_keeps_within_its_budget.sh	cache	merge	e2e/cache	
+1028_a_projects_state_directory_ignores_itself.sh	cache	merge	e2e/cache::directories/1028 a projects state directory ignores itself	migrated (batch 10); script removed
+1029_an_unused_std_module_is_collected_by_age.sh	cache	merge	e2e/cache::entries/1029 an unused std module is collected by age	migrated (batch 10); script removed
+1030_the_low_space_warning_knows_what_the_last_build_took.sh	cache	merge	e2e/cache::directories/1030 the low space warning knows what the last build took	migrated (batch 10); script removed
+1031_target_keeps_within_its_budget.sh	cache	merge	e2e/cache::directories/1031 target keeps within its budget	migrated (batch 10); script removed
 1032_a_quoted_dotted_dependency_key_is_deprecated.sh	deps	merge	e2e/deps::names/1032 a quoted dotted dependency key is deprecated	migrated (batch 3); script removed
 1033_an_ok_image_runs_on_the_system_that_built_it.sh	openkal	merge	e2e/openkal	
 1034_a_workspace_members_test_finds_its_programs.sh	test	merge	e2e/test::workspace/1034 a workspace members test finds its programs	migrated (batch 1); script removed
