@@ -957,9 +957,25 @@ glibc 修正，规则按序匹配，取第一条。表在 toolchain-model 的数
 **T5 机械门禁。** 统计 `src/` 中载荷名（`emsdk`、`android-ndk`、`musl-gcc`、`mingw-gcc`、`mingw-cross-gcc`）在规则表之外的出现次数，
 与基线文件比较，多于基线即失败。
 
-### 16.4 本轮的 gcc 16.2.0
+### 16.4 本轮的 gcc 16.2.0 与 17 的主干快照
 
-默认仍为 gcc 16.1.0。xim-pkgindex 以 `tools/res/build.sh gcc` 从源码构建 16.2.0（x86_64 与 aarch64，源码的 GNU 签名已核对），
-发布到 xlings-res 并镜像到 GitCode，`pkgs/g/gcc.lua` 增加该版本；`res-build` 的 `only` 接受 `what@version`，新版本的构建不重建
-已发布的版本。验证项：`gcc@16.2`、`xim:gcc@16.2.0` 的解析与构建，`import std`，`[toolchain] default` 与 `--toolchain` 两种写法，
-`toolchain list` 与 `doctor` 的枚举，默认（16.1.0）不变。
+默认仍为 gcc 16.1.0，xim 的 `latest` 仍指向正式版。xim-pkgindex 以 `tools/res/build.sh gcc` 从源码构建，两种来源：
+
+| 版本 | 来源 | 来源核对 | 平台 |
+|---|---|---|---|
+| `16.2.0` | GNU 的发布包（`ftpmirror.gnu.org`） | GNU 签名已核对（RSA 7F74F97C103468EE5D750B583AB00996FC26A641），摘要为实测 | Linux x86_64、aarch64 |
+| `17.0.0-20261108` | GCC 的快照目录（`gcc.gnu.org/pub/gcc/snapshots/17-20261108/`） | 上游不签快照，摘要为加入时实测；源码自述 `BASE-VER 17.0.0`、`DATESTAMP 20261108`、`DEV-PHASE experimental` | Linux x86_64、aarch64 |
+
+**主干快照的版本写法是 `<major>.0.0-<YYYYMMDD>`。** 它就是快照的编译器对自身的陈述（`17.0.0 20261108 (experimental)`），与上游
+快照名 `gcc-17-20261108` 一一对应。按 xpkg 版本的次序，日期段是预发布段：快照排在 `17.0.0` 与首个正式版 `17.1.0` 之前，
+快照之间按日期排序。等值匹配要求预发布段相同，因此 `gcc@17` 与 `gcc@17.0` 不选中快照，只有写全
+`xim:gcc@17.0.0-20261108`（或 `gcc@17.0.0-20261108`）才使用它：前沿的使用者显式选择，其余使用者不受影响。一个日期是一份不变
+的源码，锁文件、指纹与缓存因此可复现；不设滚动版本。索引只保留一个快照（本轮为 20261108），换新快照时替换条目，xlings-res 的
+资源保留。
+
+构建与正式版相同：C 程序与使用 `import std` 的 C++23 程序构建并运行，`--version` 报告所写的版本，二进制只依赖 glibc 的库；
+`res-build` 的 `only` 接受 `what@version`，新版本的构建不重建已发布的版本。产物发布到 xlings-res 并以 gtc 镜像到 GitCode，
+`pkgs/g/gcc.lua` 增加两个版本。
+
+验证项：`gcc@16.2`、`xim:gcc@16.2.0`、`xim:gcc@17.0.0-20261108` 的解析、安装与构建（含 `import std`），`gcc@17` 不选中快照，
+`[toolchain] default` 与 `--toolchain` 两种写法，`toolchain list` 与 `doctor` 的枚举，默认（16.1.0）不变。
