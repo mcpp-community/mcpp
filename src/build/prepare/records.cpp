@@ -459,8 +459,10 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // true and useless; which package moved, from which version to
             // which, is what the reader does something about.
             if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") {
+                // `load` reads a missing file as an empty lock, which would
+                // report every package as drift from a file that is not there.
                 auto prior = mcpp::lockfile::load(lockPath);
-                if (!prior) {
+                if (!prior || !std::filesystem::exists(lockPath)) {
                     return std::unexpected(std::format(
                         "--locked was given and there is no readable mcpp.lock at {}\n"
                         "       Run the same command without --locked once to record "
