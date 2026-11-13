@@ -22,7 +22,7 @@ script	subsystem	class	destination	note
 20_p1689_scanner.sh	modules	merge	e2e/modules::basics/20 p1689 scanner	migrated (batch 9); script removed
 21_ninja_dyndep.sh	modules	merge	e2e/modules::basics/21 ninja dyndep	migrated (batch 9); script removed
 22_doctor_cache_publish.sh	index	merge	e2e/index::listing/22 doctor cache publish	migrated (batch 14); script removed
-23_remove_update.sh	deps	sink	unit/test_manifest_edit	answers a parse/selection rule without a build: remove/update rewrite mcpp.toml
+23_remove_update.sh	deps	merge	e2e/deps::path/23 remove update	migrated (batch 19); script removed. A case rather than a unit test: the rewrite runs inside the remove and update commands, which export no function that answers it
 24_git_dependency.sh	deps	merge	e2e/deps::git/24 git dependency	migrated (batch 3); script removed
 25_convention_mode.sh	build	merge	e2e/build::basics/25 convention mode	migrated (batch 7); script removed
 26_c_language_support.sh	build	merge	e2e/build::basics/26 c language support	migrated (batch 7); script removed
@@ -48,7 +48,7 @@ script	subsystem	class	destination	note
 42_custom_local_index.sh	index	merge	e2e/index::listing/42 custom local index	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_indices: it asserts a command's output or file effect
 43_indices_lockfile.sh	index	merge	e2e/index::listing/43 indices lockfile	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_lockfile: it asserts a command's output or file effect
 44_indices_e2e_integration.sh	index	merge	e2e/index::listing/44 indices e2e integration	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_indices: it asserts a command's output or file effect
-45_install_platform_mapping.sh	repo	sink	unit/test_repo_consistency	answers a parse/selection rule without a build: install.sh platform ids vs release assets
+45_install_platform_mapping.sh	repo	sink	unit/test_repo_consistency::RepoConsistency/InstallScriptNamesThePublishedAssets	migrated (batch 19); script removed
 46_self_config_mirror_no_bootstrap.sh	self	merge	e2e/self::config/46 self config mirror no bootstrap	migrated (batch 15); script removed
 47_cdb_prebuilt_module_path_abs.sh	cdb	merge	e2e/cdb::root/47 cdb prebuilt module path abs	migrated (batch 13); script removed
 47_llvm_atomic_link.sh	toolchain	merge	e2e/toolchain	
@@ -345,7 +345,7 @@ script	subsystem	class	destination	note
 613_sycl_sources_are_device_sources.sh	actions	merge	e2e/actions::devices/613 sycl sources are device sources	migrated (batch 4); script removed
 614_feature_xlings_reaches_xpkg_dir.sh	index	merge	e2e/index::xlings/614 feature xlings reaches xpkg dir	migrated (batch 14); script removed
 615_feature_deps_shared_library_is_linked.sh	features	merge	e2e/features::activation/615 feature deps shared library is linked	migrated (batch 5); script removed
-616_examples_and_their_index_agree.sh	repo	sink	unit/test_repo_consistency	answers a parse/selection rule without a build: examples vs their index
+616_examples_and_their_index_agree.sh	repo	sink	unit/test_repo_consistency::RepoConsistency/ExamplesAndTheirIndexAgree	migrated (batch 19); script removed
 617_build_program_knows_the_cxx_stdlib.sh	build-program	merge	e2e/build-program::protocol/617 build program knows the cxx stdlib	migrated (batch 2); script removed
 618_dependency_feature_tools_reach_its_build_program.sh	build-program	merge	e2e/build-program::deps/618 dependency feature tools reach its build program	migrated (batch 2); script removed
 619_a_tool_may_not_be_conditioned_on_a_layer.sh	actions	merge	e2e/actions::rules/619 a tool may not be conditioned on a layer	migrated (batch 4); script removed

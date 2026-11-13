@@ -1,5 +1,5 @@
-// Path dependencies and the manifest's dependency tables as `mcpp add` and `mcpp remove` write
-// them (formerly tests/e2e/09, 12).
+// Path dependencies and the manifest's dependency tables as `mcpp add`, `mcpp remove` and
+// `mcpp update` write them (formerly tests/e2e/09, 12, 23).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -160,6 +160,30 @@ E2E path{"path", [] {
         upsert.mcpp({"remove", "widget"});
         expect(s::has_line(upsert.read("mcpp.toml"), R"(^widget = "0\.2\.0"$)")) << "remove escaped [dependencies] and deleted the dev dependency";
         expect(s::no_line(upsert.read("mcpp.toml"), R"(^widget = "0\.1\.0"$)")) << "regular dependency was not removed";
+    };
+
+    "23 remove update"_test = [] {
+        // `mcpp remove` deletes one entry of [dependencies] and keeps the others, and exits 1 for
+        // a name the manifest does not hold; `mcpp update <name>` drops that entry of mcpp.lock;
+        // `mcpp update` removes the lock. The dependencies are written into mcpp.toml rather than
+        // added, so the case exercises remove and update whatever the index holds.
+        const s::options fresh{.where = s::home::fresh};
+        auto app = s::project::scaffold("myapp");
+        app.write("mcpp.toml", app.read("mcpp.toml") + "\n[dependencies]\nfoo = \"1.0.0\"\nbar = \"2.0.0\"\n");
+        auto r = app.mcpp({"remove", "foo"}, fresh);
+        expect(fatal(e2e::contains(s::text(r), "Removing"))) << "remove foo: " << s::text(r);
+        expect(s::no_line(app.read("mcpp.toml"), R"(^("foo"|foo) = )")) << "foo not actually removed: " << app.read("mcpp.toml");
+        expect(s::has_line(app.read("mcpp.toml"), R"(^("bar"|bar) = "2\.0\.0")")) << "bar accidentally removed: " << app.read("mcpp.toml");
+        r = app.mcpp({"remove", "nonexistent"}, fresh);
+        expect(eq(r.status, 1)) << "remove nonexistent should exit 1: " << s::text(r);
+        app.write("mcpp.lock", "version = 1\n[package.bar]\nversion = \"2.0.0\"\nsource  = \"mcpplibs+https://example.com\"\nhash    = \"sha256:placeholder\"\n");
+        r = app.mcpp({"update", "bar"}, fresh);
+        expect(fatal(e2e::contains(s::text(r), "Updating"))) << "update bar: " << s::text(r);
+        expect(s::lacks(app.read("mcpp.lock"), "bar")) << "update bar did not drop bar from the lock: " << app.read("mcpp.lock");
+        app.write("mcpp.lock", "version = 1\n");
+        r = app.mcpp({"update"}, fresh);
+        expect(fatal(e2e::contains(s::text(r), "all dependencies"))) << "update: " << s::text(r);
+        expect(!app.exists("mcpp.lock")) << "the lock was not removed";
     };
 
     "27 namespace dependencies"_test[tag{"requires:fresh-sandbox"}] = [] {
