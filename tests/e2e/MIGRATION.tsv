@@ -439,12 +439,12 @@ script	subsystem	class	destination	note
 722_pack_strips_what_the_graph_built.sh	pack	merge	e2e/pack::formats/722 pack strips what the graph built	migrated (batch 6); script removed
 723_pack_reports_what_it_produced.sh	pack	merge	e2e/pack::formats/723 pack reports what it produced	migrated (batch 6); script removed
 730_bare_compat_dependency_is_not_a_refresh_miss.sh	index	merge	e2e/index	
-731_planning_children_do_not_inherit_the_callers_pipe.sh	cdb	merge	e2e/cdb	
+731_planning_children_do_not_inherit_the_callers_pipe.sh	cdb	merge	e2e/cdb::planning/731 planning children do not inherit the callers pipe	migrated (batch 13); script removed
 732_xlings_refresh_is_bounded_and_owned.sh	index	merge	e2e/index	
 733_envelope_reports_observed_network_access.sh	index	merge	e2e/index	
 734_auto_refresh_false_governs_first_index_sync.sh	index	merge	e2e/index	
 735_offline_missing_package_has_its_own_code.sh	index	merge	e2e/index	
-736_compile_flag_words_reach_the_compiler_and_the_databases.sh	cdb	merge	e2e/cdb	
+736_compile_flag_words_reach_the_compiler_and_the_databases.sh	cdb	merge	e2e/cdb::emit/736 compile flag words reach the compiler and the databases	migrated (batch 13); script removed
 737_the_declared_runtime_payload_is_installed.sh	index	merge	e2e/index	
 738_a_graph_supplied_target_closes_the_hosts_own_search.sh	target	merge	e2e/target	
 739_a_private_feature_dep_does_not_reach_the_consumer.sh	features	merge	e2e/features::activation/739 a private feature dep does not reach the consumer	migrated (batch 5); script removed
@@ -469,13 +469,13 @@ script	subsystem	class	destination	note
 780_a_passing_check_moves_its_stamp_past_a_changed_input.sh	actions	merge	e2e/actions::checks/780 a passing check moves its stamp past a changed input	migrated (batch 4); script removed
 781_deleted_root_cdb_is_restored.sh	cdb	merge	e2e/cdb::root/781 deleted root cdb is restored	migrated (batch 13); script removed
 782_foreign_root_cdb_entries_are_replaced.sh	cdb	merge	e2e/cdb::root/782 foreign root cdb entries are replaced	migrated (batch 13); script removed
-783_cdb_switches_whole_with_the_configuration.sh	cdb	merge	e2e/cdb	
-784_cdb_replays_from_its_directory.sh	cdb	merge	e2e/cdb	
-785_cdb_interface_flag_module_extensions.sh	cdb	merge	e2e/cdb	
-786_std_unit_in_the_database_and_build_id.sh	cdb	merge	e2e/cdb	
-787_emit_plans_every_member_on_its_own.sh	cdb	merge	e2e/cdb	
-788_emit_defers_an_unbuilt_host_tool.sh	cdb	merge	e2e/cdb	
-789_emit_describes_a_member_past_a_failed_build_program.sh	cdb	merge	e2e/cdb	
+783_cdb_switches_whole_with_the_configuration.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
+784_cdb_replays_from_its_directory.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
+785_cdb_interface_flag_module_extensions.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
+786_std_unit_in_the_database_and_build_id.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
+787_emit_plans_every_member_on_its_own.sh	cdb	merge	e2e/cdb::planning/787 emit plans every member on its own	migrated (batch 13); script removed
+788_emit_defers_an_unbuilt_host_tool.sh	cdb	merge	e2e/cdb::planning/788 emit defers an unbuilt host tool	migrated (batch 13); script removed
+789_emit_describes_a_member_past_a_failed_build_program.sh	cdb	merge	e2e/cdb::planning/789 emit describes a member past a failed build program	migrated (batch 13); script removed
 790_a_prepare_action_populates_an_unknown_directory.sh	actions	merge	e2e/actions::prepare/790 a prepare action populates an unknown directory	migrated (batch 4); script removed
 791_a_prepare_action_that_creates_nothing_fails.sh	actions	merge	e2e/actions::prepare/791 a prepare action that creates nothing fails	migrated (batch 4); script removed
 792_a_rerun_input_inside_a_prepare_directory_is_warned.sh	actions	merge	e2e/actions::prepare/792 a rerun input inside a prepare directory is warned	migrated (batch 4); script removed
@@ -495,15 +495,15 @@ script	subsystem	class	destination	note
 806_dash_p_resolves_the_package_first.sh	workspace	merge	e2e/workspace::members/806 dash p resolves the package first	migrated (batch 11); script removed
 807_a_lib_root_imports_its_own_package.sh	modules	merge	e2e/modules::programs/807 a lib root imports its own package	migrated (batch 9); script removed
 808_device_source_is_not_a_compile_unit.sh	actions	merge	e2e/actions::rules/808 device source is not a compile unit	migrated (batch 4); script removed
-809_failed_build_program_hides_no_device_source.sh	cdb	merge	e2e/cdb	
+809_failed_build_program_hides_no_device_source.sh	cdb	merge	e2e/cdb::planning/809 failed build program hides no device source	migrated (batch 13); script removed
 810_two_packages_deploy_the_same_bytes_to_one_name.sh	runtime	merge	e2e/runtime	
 811_place_dlls_never_overwrites_a_declared_deploy.sh	windows	merge	e2e/windows	
 812_an_index_floor_is_a_closing_tip.sh	index	merge	e2e/index	
 813_conditional_dialect_cxxflags_root_only.sh	features	merge	e2e/features::conditional/813 conditional dialect cxxflags root only	migrated (batch 5); script removed
 814_the_llvm_row_defaults_to_the_dynamic_crt.sh	windows	merge	e2e/windows	
-815_the_database_describes_what_a_rule_generates.sh	cdb	merge	e2e/cdb	
+815_the_database_describes_what_a_rule_generates.sh	cdb	merge	e2e/cdb::emit/815 the database describes what a rule generates	migrated (batch 13); script removed
 816_a_git_dependency_reports_its_fetch.sh	deps	merge	e2e/deps::git/816 a git dependency reports its fetch	migrated (batch 3); script removed
-817_emit_writes_no_xlings_json_under_private_work_dir.sh	cdb	merge	e2e/cdb	
+817_emit_writes_no_xlings_json_under_private_work_dir.sh	cdb	merge	e2e/cdb::emit/817 emit writes no xlings json under private work dir	migrated (batch 13); script removed
 818_a_declared_deploy_outranks_a_search_dir_dll_cross.sh	windows	merge	e2e/windows	
 819_the_crt_is_placed_by_its_rule_not_by_search_order.sh	windows	sink	unit/test_runtime_placement	answers a parse/selection rule without a build: CRT placed by its rule
 820_a_windows_program_takes_its_runtime_from_one_resolver.sh	windows	merge	e2e/windows	
@@ -525,7 +525,7 @@ script	subsystem	class	destination	note
 837_a_members_resources_reach_its_image.sh	windows	merge	e2e/windows	
 838_a_program_shipped_through_artifacts_links_its_own_closure.sh	runtime	merge	e2e/runtime	
 839_a_workspaces_build_programs_are_named_ordered_and_cached.sh	workspace	merge	e2e/workspace::graph/839 a workspaces build programs are named ordered and cached	migrated (batch 11); script removed
-840_a_workspace_database_describes_each_package_once.sh	cdb	merge	e2e/cdb	
+840_a_workspace_database_describes_each_package_once.sh	cdb	merge	e2e/cdb::sets/840 a workspace database describes each package once	migrated (batch 13); script removed
 841_pack_summarizes_many_outputs.sh	pack	merge	e2e/pack::formats/841 pack summarizes many outputs	migrated (batch 6); script removed
 842_the_build_reports_each_step_once.sh	cli	merge	e2e/cli::output/842 the build reports each step once	migrated (batch 8); script removed
 843_a_terminal_names_the_action_that_runs.sh	cli	merge	e2e/cli::terminal/843 a terminal names the action that runs	migrated (batch 8); script removed
@@ -598,7 +598,7 @@ script	subsystem	class	destination	note
 910_a_build_plugin_is_a_package_of_the_build_program.sh	build-program	merge	e2e/build-program::graph/910 a build plugin is a package of the build program	migrated (batch 2); script removed
 911_a_workspace_states_each_table_once.sh	workspace	merge	e2e/workspace::statements/911 a workspace states each table once	migrated (batch 11); script removed
 912_two_configuration_groups_share_the_build_programs_graph.sh	workspace	merge	e2e/workspace::graph/912 two configuration groups share the build programs graph	migrated (batch 11); script removed
-913_the_build_database_describes_the_build_programs.sh	cdb	merge	e2e/cdb	
+913_the_build_database_describes_the_build_programs.sh	cdb	merge	e2e/cdb::sets/913 the build database describes the build programs	migrated (batch 13); script removed
 914_an_upstream_home_is_linked_never_written.sh	self	keep	keep	machine state: a home linked to an upstream (system) home
 915_the_system_home_is_maintained_and_read.sh	self	keep	keep	machine state: the system home (--system, MCPP_SYSTEM_CONFIG)
 916_a_home_from_before_keeps_working.sh	self	keep	keep	upgrade: a home laid out by an earlier mcpp is migrated
@@ -606,7 +606,7 @@ script	subsystem	class	destination	note
 918_an_older_packaging_is_used_not_replaced.sh	self	keep	keep	upgrade: an older packaging of a payload is used, not replaced
 919_a_home_selection_is_remembered_once.sh	self	merge	e2e/self	
 920_the_doctor_checks_resources_without_bootstrap.sh	self	merge	e2e/self	
-921_emit_watches_inputs_not_host_outputs.sh	cdb	merge	e2e/cdb	
+921_emit_watches_inputs_not_host_outputs.sh	cdb	merge	e2e/cdb::sets/921 emit watches inputs not host outputs	migrated (batch 13); script removed
 922_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
 923_cross_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
 924_visible_imports_resolve_transitive_modules.sh	modules	merge	e2e/modules::basics/924 visible imports resolve transitive modules	migrated (batch 9); script removed

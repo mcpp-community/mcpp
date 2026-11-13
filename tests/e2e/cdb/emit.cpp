@@ -1,6 +1,7 @@
 // `emit build-database`: the S1 document and its envelope, what it leaves untouched, its sets,
 // roles and arguments, its compile-commands rendering, its refusals, its watch list and
-// fingerprint, and a planning pass that compiles nothing (formerly tests/e2e/688).
+// fingerprint, a planning pass that compiles nothing, the words of a flag, what a rule generates,
+// and the private work directory (formerly tests/e2e/688, 736, 815, 817).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -257,6 +258,200 @@ E2E emit{"emit", [] {
         expect(fatal(e2e::succeeded(r))) << "L control: configure-only in the cold home: " << s::text(r);
         expect(fatal(!compiled(cold, cold / "registry").empty())) << "L control: configure-only compiled nothing into the home";
     };
+    "736 compile flag words reach the compiler and the databases"_test[tag{"requires:python3"}] = [] {
+        // A: a cxxflags or defines element reaches the compiler as the words a shell would read
+        // from it (quotes removed, `\"` kept, a -D element with a space one word); B C: both
+        // databases list those words, with no quote left over; D: the first plan names an
+        // element whose words differ from its text, and no other; E: a repeated plan repeats
+        // no note.
+        s::project p({{"mcpp.toml", R"toml([package]
+name    = "flagwords"
+version = "0.1.0"
+
+[build]
+cxxflags = [
+  "-DV_ESC=\\\"esc.h\\\"",
+  "-DV_MID=\"mid\"",
+  "-DV_SQ='sq'",
+  "'-DV_SP=a b'",
+  "-DV_DOL=a$b",
+  "-O0 -DV_A=1",
+  "-DV_B=long long",
+]
+defines = [
+  "V_DEF=\"def\"",
+  "V_DSP=a b",
+]
+)toml"},
+                      {"src/main.cpp", R"(#include <cstdio>
+#define STR2(...) #__VA_ARGS__
+#define STR(...) STR2(__VA_ARGS__)
+static void show(const char* name, const char* value) {
+    std::printf("%s=[%s]\n", name, value);
+}
+int main() {
+    show("V_ESC", STR(V_ESC));
+    show("V_MID", STR(V_MID));
+    show("V_SQ",  STR(V_SQ));
+    show("V_SP",  STR(V_SP));
+    show("V_DOL", STR(V_DOL));
+    show("V_A",   STR(V_A));
+    show("V_B",   STR(V_B));
+    show("V_DEF", STR(V_DEF));
+    show("V_DSP", STR(V_DSP));
+    return 0;
+}
+)"}});
+        const auto b1 = p.mcpp({"build"}, at_root);
+        expect(fatal(e2e::succeeded(b1))) << "the first build failed: " << s::text(b1);
+        auto r = p.mcpp({"run"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the program did not run: " << s::text(r);
+        auto run = s::text(r);
+        std::erase(run, '\r');
+        for (std::string_view want : {R"(V_ESC=["esc.h"])", "V_MID=[mid]", "V_SQ=[sq]", "V_SP=[a b]", "V_DOL=[a$b]", "V_A=[1]", "V_B=[long long]",
+                                      R"(V_DEF=["def"])", "V_DSP=[a b]"})
+            expect(fatal(s::has_line(run, "^" + std::regex_replace(std::string(want), std::regex{R"([\[\]\.\$\"])"}, R"(\$&)") + "$"))) << "A: the program did not print " << want << ": " << run;
+        const std::vector<std::string> words{R"(-DV_ESC="esc.h")", "-DV_MID=mid", "-DV_SQ=sq", "-DV_SP=a b", "-DV_DOL=a$b", "-O0", "-DV_A=1", "-DV_B=long long",
+                                             R"(-DV_DEF="def")", "-DV_DSP=a b"};
+        auto lists_words = [&](const std::vector<std::string>& args) {
+            const bool all = std::ranges::all_of(words, [&](const std::string& w) { return std::ranges::find(args, w) != args.end(); });
+            const bool clean = std::ranges::none_of(args, [](const std::string& a) { return a.starts_with("-DV_") && (a.contains("\\\"") || a.ends_with('\'')); });
+            return all && clean;
+        };
+        std::optional<fs::path> cdb;
+        for (const auto& f : s::find_files(p.at("target"), R"(compile_commands\.json)"))
+            if (!f.generic_string().contains("/.build-mcpp/")) { cdb = f; break; }
+        if (!cdb) cdb = p.at("compile_commands.json");
+        expect(fatal(fs::is_regular_file(*cdb))) << "B: no compile_commands.json";
+        const auto main = s::cdb_arguments(*cdb, "src/main.cpp");
+        expect(fatal(main && lists_words(*main))) << "B: compile_commands.json does not list the words";
+        const auto db = p.mcpp({"emit", "build-database", "--format", "json"}, at_root);
+        expect(fatal(e2e::succeeded(db))) << "C: emit failed: " << db.err;
+        // S1 may split a unit's arguments into a set's baseline and the unit's own; the words
+        // are looked for across every list of strings that carries one.
+        std::vector<std::string> flat;
+        std::function<void(const nlohmann::json&)> walk = [&](const nlohmann::json& n) {
+            if (n.is_object()) for (const auto& v : n) walk(v);
+            if (!n.is_array()) return;
+            if (!n.empty() && std::ranges::all_of(n, [](const nlohmann::json& x) { return x.is_string(); }) &&
+                std::ranges::any_of(n, [](const nlohmann::json& x) { return x.get<std::string>().starts_with("-DV_"); }))
+                for (const auto& x : n) flat.push_back(x);
+            for (const auto& v : n) walk(v);
+        };
+        walk(s::json(db.out));
+        expect(fatal(lists_words(flat))) << "C: the build database does not list the words";
+        const auto t1 = s::text(b1);
+        for (std::string_view element : {R"(V_DEF="def")", "-DV_DOL=a$b"})
+            expect(fatal(e2e::contains(t1, std::format("element '{}' reaches the compiler as", element)))) << "D: the first plan does not name " << element << ": " << t1;
+        for (const auto& l : s::lines_with(t1, "reaches the compiler as"))
+            for (std::string_view element : {R"(-DV_MID="mid")", "V_DSP=a b", "-DV_ESC=", "-DV_B=long long", "-O0 -DV_A=1"})
+                expect(fatal(!l.contains(std::format("element '{}", element)))) << "D: the first plan names " << element << ", whose words did not change: " << l;
+        fs::last_write_time(p.at("src/main.cpp"), fs::file_time_type::clock::now());
+        r = p.mcpp({"build"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the second build failed: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "reaches the compiler as"))) << "E: a repeated plan repeated the notes: " << s::text(r);
+    };
+    "815 the database describes what a rule generates"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+        // A: each set the generated header reaches names it, its generator (id, inputs,
+        // arguments) and its directory; B: their build paths lie under the project's target, and
+        // the build writes the header there; C: compile_commands.json carries no such field.
+        s::project p({{"mcpp.toml", "[package]\nname    = \"gendb\"\nversion = \"0.1.0\"\n"},
+                      {"templates/answer.h.in", "#pragma once\ninline int generated_answer() { return 42; }\n"},
+                      {"src/main.cpp", "#include \"answer.h\"\nint main() { return generated_answer() == 42 ? 0 : 1; }\n"},
+                      {"tests/test_answer.cpp", "#include \"answer.h\"\nint main() { return generated_answer() == 42 ? 0 : 1; }\n"},
+                      {"build.mcpp", R"(import std;
+import mcpp;
+int main() {
+    const std::string gen = std::string(mcpp::out_dir()) + "/gen";
+    const std::string in  = std::string(mcpp::manifest_dir()) + "/templates/answer.h.in";
+    const std::string out = gen + "/answer.h";
+    mcpp::action a;
+    a.id   = "gen:answer";
+    a.role = mcpp::roles::source;
+    a.arg("cp").arg(in.c_str()).arg(out.c_str())
+     .input(in.c_str())
+     .output(out.c_str())
+     .submit();
+    mcpp::include_dir(gen.c_str());
+}
+)"}});
+        auto r = p.mcpp({"emit", "build-database", "--format", "json"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the plan failed: " << r.err;
+        const auto root = fs::canonical(p.dir());
+        const auto sets = s::json(r.out)["data"]["database"]["sets"];
+        std::vector<nlohmann::json> headers, dirs;
+        std::map<std::string, nlohmann::json> by_set;
+        for (const auto& st : sets) {
+            const auto gen = st.contains("ide") ? st["ide"].value("generated", nlohmann::json::array()) : nlohmann::json::array();
+            by_set[st["name"]] = gen;
+            for (const auto& g : gen) (g["kind"] == "header" ? headers : dirs).push_back(g);
+        }
+        expect(fatal(!headers.empty())) << "A: no generated header entry";
+        const auto h = headers[0];
+        expect(fatal(h["path"].get<std::string>().ends_with((fs::path("gen") / "answer.h").string()))) << "A: " << h.dump();
+        expect(fatal(h["generator"]["id"] == "gen:answer" && h["generator"]["arguments"][0] == "cp")) << "A: " << h.dump();
+        expect(fatal(std::ranges::any_of(h["generator"]["inputs"], [](const nlohmann::json& i) { return i.get<std::string>().ends_with("answer.h.in"); }))) << "A: " << h.dump();
+        expect(fatal(!dirs.empty() && dirs[0]["kind"] == "directory" && dirs[0]["path"].get<std::string>().ends_with("gen"))) << "A: no generated directory entry";
+        expect(fatal(by_set.contains("gendb:test"))) << "A: no test set";
+        for (std::string name : {"gendb", "gendb:test"})
+            expect(fatal(std::ranges::any_of(by_set[name], [](const nlohmann::json& g) { return g["kind"] == "header" && g["generator"]["id"] == "gen:answer"; })))
+                << "A: set " << name << " does not name the generated header";
+        for (const auto& g : {h, dirs[0]}) {
+            const auto bp = fs::weakly_canonical(g["build-path"].get<std::string>()).string();
+            expect(fatal(bp.starts_with((root / "target").string() + "/"))) << "B: " << g["build-path"].dump() << " is not under " << root << "/target";
+        }
+        r = p.mcpp({"build"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the build failed: " << s::text(r);
+        expect(fatal(fs::is_regular_file(h["build-path"].get<std::string>()))) << "B: the build did not write the header at the stated build-path";
+        r = p.mcpp({"emit", "build-database", "--spec", "compile-commands"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the compile database failed: " << r.err;
+        expect(fatal(s::lacks(r.out, R"("generated")"))) << "C: compile_commands.json carries a generated field";
+    };
+    "817 emit writes no xlings json under private work dir"_test[tag{"requires:unix-shell"}][tag{"requires:python3"}] = [] {
+        // A project declaring [xlings] deps: emit leaves the project tree as it was, writes no
+        // <root>/.mcpp/.xlings.json, states no write-project effect, and writes the declaration
+        // into its private work directory's .xlings.json instead (xlings a stub).
+        const auto tmp = s::case_dir() / "measured";
+        const auto out = s::case_dir() / "out";
+        const auto home = s::case_home(s::home::inherited);
+        s::write_executable(out / "bin/xlings", R"(#!/usr/bin/env bash
+[[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; }
+echo "$*" >> "${STUB_LOG:?}"
+exit 0
+)");
+        // config.toml without its `binary` lines and its [xlings] header, then [xlings] binary.
+        std::string config;
+        if (fs::exists(home / "config.toml"))
+            for (const auto& l : std::views::split(s::read_file(home / "config.toml"), '\n')) {
+                const std::string line(l.begin(), l.end());
+                if (!line.starts_with("binary") && !line.starts_with("[xlings]")) config += line + "\n";
+            }
+        config += std::format("\n[xlings]\nbinary = \"{}\"\n", (out / "bin/xlings").string());
+        std::ofstream(home / "config.toml", std::ios::trunc) << config;
+        s::project p(tmp / "proj", {{"mcpp.toml", "[package]\nname    = \"proj817\"\nversion = \"0.1.0\"\n\n[xlings]\ndeps = [\"definitely-not-a-real-package-817\"]\n"},
+                                    {"src/main.cpp", "int main() { return 0; }\n"}});
+        const auto before = tree_digest(tmp);
+        const auto r = p.mcpp({"emit", "build-database", "--format", "json"}, {.where = s::home::inherited, .env = {{"STUB_LOG", (out / "xlings.log").string()}}});
+        expect(fatal(e2e::succeeded(r))) << "emit build-database exited non-zero: " << r.err;
+        expect(fatal(tree_digest(tmp) == before)) << "A: the project tree changed";
+        expect(fatal(!p.exists(".mcpp/.xlings.json"))) << "B: emit wrote <root>/.mcpp/.xlings.json";
+        const auto e = s::json(r.out);
+        const auto effects = e["effects"].get<std::vector<std::string>>();
+        expect(fatal(std::ranges::find(effects, "write-project") == effects.end())) << "C: effects " << e["effects"].dump();
+        std::string work;
+        for (const auto& st : e["data"]["database"]["sets"])
+            for (const auto& u : st["translation-units"]) {
+                const auto norm = slash(u["object"]);
+                if (work.empty() && norm.contains("/target/")) work = norm.substr(0, norm.find("/target/"));
+            }
+        expect(fatal(!work.empty())) << "D: could not recover the private work directory";
+        const auto found = s::find_file(work, ".xlings.json");
+        expect(fatal(found.has_value())) << "D: no .xlings.json under the private work directory " << work;
+        expect(fatal(e2e::contains(s::read_file(*found), "definitely-not-a-real-package-817"))) << "D: the private .xlings.json does not name the declared dependency";
+    };
 }};
+
+
+
 
 }  // namespace
