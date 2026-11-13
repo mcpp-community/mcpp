@@ -904,12 +904,21 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 宿主一道闸；S5 的 K7、DOS 的 A 路线、UEFI 平台包与单任务环境的规范明示；S6 的新系统；xim 的第二个 PR（基座准入作业
 BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；openkal-freebsd 的运行器改用 dirun。
 
+第四版（2026.11.13.1）实施了其中的：e2e 向 mtest 的 C++ 用例的迁移（各宿主的单元作业以 `mcpp test` 运行）、两个金丝雀与夜间
+矩阵（5.7，`tests/canary/`、`canaries.yml`）、UEFI 收敛（第 19 节）、xim 的第二个 PR（wine、DOSBox、OVMF、djgpp 的包）。
+同版并入的两处缺陷：GCC 14 之前的编译器没有 C++ 模块与 P1689，规划时即拒绝图中的 C++ 源并指出第一个（C 源照常构建）；
+中断时先请每个程序结束、给两秒，再结束其单元，各等待以 `try_wait` 轮询而不持锁（此前 `wait_for` 持锁使终止拿不到锁，
+`mcpp __action-stamp` 的子进程成为孤儿）。
+
 实施中观察到而本轮没有处理的四点：
 
 - lld-link 为"本地定义却按导入引用"的符号所造的槽不算作引用（LNK4217 的情形），节回收之后槽为空。引擎可以拒绝报告了该警告的链接；头文件在 Windows 上缺省为 `dllimport` 的其他静态库属于同一类。
 - 在 openkal-windows 自身的目录里 `mcpp test --target x86_64-windows-musl`：测试单元与测试库的模块按两个三元组编译，模块不可用。已发布的引擎同样。
 - 一个 mcpp 读索引条目时，另一个 mcpp 正在刷新索引：读的一方报告"没有可读的索引条目"（Windows 上 e2e 1071 出现一次）。
 - 两条腿并行构建时出现一次"compiler-run owner refused unit admission"（Linux 上 e2e 963，一次）。
+- mingw 的 GCC 16.1 在模块单元中把内联函数的局部静态（`std::_Sp_make_shared_tag::_S_ti()::__tag`）定义在 COMDAT 之外：
+  两个模块单元都用到 `std::make_shared` 时链接因重复定义失败（金丝雀 `cxx` 的 `x86_64-windows-gnu` 测试程序）。属编译器；
+  矩阵以 `fails` 记录。
 
 ## 16. 工具链载荷即数据（2026-11-13 补充）
 
@@ -1120,7 +1129,26 @@ note: [test] programs = "directory": 12 files directly in tests/ stay programs o
 warning: the configuration changed (debug 1 → lines): 7a72… is built in full beside ed03… (2.1 GiB); `mcpp clean --stale` drops it once no build uses it
 ```
 
-### 18.3 不采纳
+### 18.3 实施记录（2026.11.13.1）
+
+| 项 | 实施 | 持有它的检查 |
+|---|---|---|
+| P1 | `programs = "package"`：一个包一个程序，以第一个 glob 的固定目录命名，定义 `main` 的文件至多一个；`"directory"` 留下固定目录中的文件时给出 note，不形成任何组时为 `degraded`（`--strict` 拒绝） | mcpp `test_targets.cppm`；e2e 的 C++ 用例 |
+| P2 的汇总 | `finished in X (plan · programs · build · run)`：plan 为总时长减去其余各段，programs 不足 5 ms 时不列 | mcpp `execute.cppm`；`tests/e2e/test/streams.cpp` |
+| P3 | 拿不到刷新锁、且所声明的索引目录有缺失的进程，等待刷新锁（显示 `Waiting`）后再读；索引完整时仍跳过刷新、立即读取 | mcpp `xlings.cpp` |
+| P4 | 文档：`docs/08-testing.md` 的"测试构建的体积"一节（中英） | — |
+| P6 | 警告给出旧目录的大小与回收命令 | mcpp `execute.cppm` |
+
+**P3 的范围比 18.2 小。** 18.2 的方案是读取持共享锁、刷新在暂存目录中进行后交换。#927 报告的现象只在"索引目录不存在"时出现：
+索引存在时，刷新以交换替换整棵树，读取者读到的是交换前或交换后的一棵完整的树。因此实施只关闭这一个窗口，读路径不加锁。
+不支持原子交换的文件系统上，"移开、改名"之间的窗口与目录不存在是同一情形，读取者同样等待。
+
+**P2 的另两项不在本版。** `-p` 的预构建取快速路径、同一次调用内复用解析：二者改变 `prepare_build` 的入口契约（解析结果的生命周期
+与键），在本轮之外；当前代价是 `-p` 多一次完整规划。
+
+**用户裁决。** P1、P2、P3、P6 的取舍向负责人提出过，未得到答复；以上按本文的推荐实施。
+
+### 18.4 不采纳
 
 - **`[test] debug = "lines"`，测试专有的调试级别。** `mcpp build` 与 `mcpp test` 是同一配置（2026.11.8.1），被测代码的目标文件
   由两者共用。测试专有的级别要么只作用于测试自己的翻译单元，体积几乎不变；要么使测试成为另一配置，切换即全量重编。级别由
@@ -1176,7 +1204,21 @@ warning: the configuration changed (debug 1 → lines): 7a72… is built in full
 `--target x86_64-uefi` 构建：release 产物 1.2 MB 的 PE32+ EFI 应用（子系统 10），在 OVMF 下经 dirun 与 ovmf 的描述文件运行，
 输出正确，状态 42 经调试端口回到宿主，墙钟 0.8 秒。
 
-### 19.3 不采纳
+### 19.3 载体：经 okrun 运行时测到的三处缺口（2026-11-13）
+
+载体是一个 `x86_64-uefi` 的 EFI 应用，它在固件中运行一个 openkal 映像。经 dirun 在 OVMF 下运行时，载体先是不输出任何内容直到
+超时。逐项测得：
+
+| 现象 | 原因 | 修正 |
+|---|---|---|
+| 2 GiB 时 `_mi_page_map_register` 中的 #GP | mimalloc 3.6.1 的页映射依赖"保留而未提交的内存读为零"；无区域的实现（UEFI）上，保留即分配，OVMF 以 0xAF 填充池 | openkal-musl 的 mimalloc 原语：无区域时，未提交的保留清零，`is_zero` 如实陈述 |
+| 512 MiB 时中止 | mimalloc 的 arena 以 256 MiB 对齐；`kal_alloc` 以超额分配实现对齐，32 MiB 的 arena 成为 288 MiB 的请求 | openkal-uefi：一页及以上的对齐读内存映射，在对齐的空闲范围以 `AllocateAddress` 分配页；openkal-musl：无虚拟保留时 arena 的预留为 1 GiB 的四分之一 |
+| 中止的消息不可见 | OVMF 的 StdErr 不写串口 | openkal-uefi 的弱钩子 `okuefi_board_errors_to_console()`：板子定义它，标准错误即 ConOut |
+
+载体与映像是两个分配器，各需要一个 256 MiB 对齐的 arena，因此 openkal-platform 的 UEFI 运行器给出 `--memory 2048`。测得：
+映像打印、写标准错误、抛出并捕获异常，以状态 7 返回，1 GiB 与 2 GiB 下均为 0.4 秒。
+
+### 19.4 不采纳
 
 - **为 UEFI 在包里加 `cfg(os = "uefi")` 的 PE 分支。** 每增加一个 PE 系统就要再改一次包；容器是这些分支真正问的事实。
 - **引擎为每个构建广播容器宏。** 改变所有目标的每条编译命令（升级即全量重编），而安装的头文件可由清单选择的包含目录回答。
