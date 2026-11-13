@@ -2418,14 +2418,28 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
     return { here ? std::string() : triple, mode };
 }
 
-// The bytes of `carried` as a section of a program of `system`, with the
-// symbols the carrier's entry reads; `name` and `digest` as strings. An empty
-// `carried` places nothing: `mcpp_carried_begin == mcpp_carried_end`.
-std::string carried_assembly(std::string_view system, std::string_view sectionName,
+// THE ROW A PROGRAM OF `system` ON `arch` IS BUILT FOR, as the vocabulary reads
+// `<arch>-<system>` -- a row a platform defines included. Its object format and
+// its program's suffix are that row's statement and not its system's name: a
+// carrier for a system a platform defines (`x86_64-uefi`, PE) was written as
+// ELF and named without its suffix when the name decided.
+std::optional<mcpp::toolchain::triple::Triple> system_row(std::string_view system, std::string_view arch) {
+    return mcpp::toolchain::triple::parse(std::format("{}-{}", arch, system));
+}
+std::string program_suffix(std::string_view system, std::string_view arch) {
+    const auto row = system_row(system, arch);
+    return row ? std::string(mcpp::toolchain::triple::artifact_naming(*row, {}).exeSuffix) : std::string();
+}
+
+// The bytes of `carried` as a section of a program of `system` on `arch`, with
+// the symbols the carrier's entry reads; `name` and `digest` as strings. An
+// empty `carried` places nothing: `mcpp_carried_begin == mcpp_carried_end`.
+std::string carried_assembly(std::string_view system, std::string_view arch, std::string_view sectionName,
                              const std::filesystem::path& carried, std::string_view name,
                              std::string_view digest) {
-    const bool macho = system == "macos";
-    const bool coff  = system == "windows";
+    const auto row   = system_row(system, arch);
+    const bool macho = row && row->is_mach_o();
+    const bool coff  = row && (row->is_pe() || row->object_format() == mcpp::toolchain::triple::ObjectFormat::Coff);
     const std::string sym = macho ? "_" : "";
     std::string bare(sectionName);
     while (!bare.empty() && bare.front() == '.') bare.erase(bare.begin());
@@ -2449,15 +2463,17 @@ std::string carried_assembly(std::string_view system, std::string_view sectionNa
 }
 
 // Where a program generated under `dir` is packed: the tree, and the program
-// in it -- under the tree's `bin/`, or, for a Windows program, whose tree is
-// flat, at its root.
+// in it -- under the tree's `bin/`, or, for a PE program, whose tree is flat,
+// at its root.
 std::filesystem::path packed_tree(const std::filesystem::path& dir) {
     return dir / "target" / "dist" / "packed";
 }
 std::filesystem::path packed_program(const std::filesystem::path& dir, std::string_view stem,
-                                     std::string_view system) {
-    if (system == "windows") return packed_tree(dir) / (std::string(stem) + ".exe");
-    return packed_tree(dir) / "bin" / std::string(stem);
+                                     std::string_view system, std::string_view arch) {
+    const auto file = std::string(stem) + program_suffix(system, arch);
+    const auto row = system_row(system, arch);
+    if (row && row->is_pe()) return packed_tree(dir) / file;
+    return packed_tree(dir) / "bin" / file;
 }
 
 // The generated project of the carrier named `stem` for `system` and `arch`.
@@ -2643,7 +2659,7 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
     }
     if (!write(dir / "mcpp.toml", manifest)
         || !write(dir / "src" / "carried.S",
-                  carried_assembly(b.system, c.section, b.carried, b.carriedName, {}))
+                  carried_assembly(b.system, b.arch, c.section, b.carried, b.carriedName, {}))
         || !write(dir / "src" / "main.cpp", mainText))
         return std::unexpected(Error{std::format("cannot write the program's sources under {}", dir.string())});
 
@@ -3600,7 +3616,7 @@ runner_program(const mcpp::platform::Resolved& platform, const std::filesystem::
     if (auto why = detail::unbuilt_carrier(platform, system, arch, false))
         return std::unexpected(Error{*why});
     const auto program = detail::packed_program(detail::carrier_dir(projectRoot, name, system, arch),
-                                                name, system);
+                                                name, system, arch);
     if (!build) return program;
     Plan plan;
     plan.platform = platform;
@@ -3692,7 +3708,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             const auto stem = fs::path(plan.binaryName).stem().string();
             auto packed = detail::carrier_build(plan, { f.carried, plan.binaryName, stem, f.system, f.arch, true });
             if (!packed) return std::unexpected(packed.error());
-            const auto suffix = f.system == "windows" ? std::string(".exe") : std::string();
+            const auto suffix = detail::program_suffix(f.system, f.arch);
             const auto program = *packed / (stem + suffix);
             if (!fs::is_regular_file(program, ec))
                 return std::unexpected(Error{std::format("the carrier built for {}-{} has no {}",
@@ -3790,14 +3806,14 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             || !write(dir / "mcpp.toml", d::launcher_manifest(stem, plan.packageVersion) + detail::static_row_pin(row))
             || !write(dir / "src" / "main.cpp", d::launcher_main())
             || !write(dir / "src" / "carried.S",
-                      detail::carried_assembly(system, ".mcppsf", dir / "payload.zst", entry, digest)))
+                      detail::carried_assembly(system, arch, ".mcppsf", dir / "payload.zst", entry, digest)))
             return std::unexpected(Error{std::format("cannot write the launcher's sources under {}", dir.string())});
         mcpp::ui::info("Packing", std::format("{} into one file for {}-{} ({} payload, sha256 {})",
                                               plan.binaryName, system, arch,
                                               mcpp::pack::compress::name(c.algorithm), digest.substr(0, 12)));
         auto packed = detail::pack_generated_program(dir, row);
         if (!packed) return std::unexpected(packed.error());
-        const auto suffix = system == "windows" ? std::string(".exe") : std::string();
+        const auto suffix = detail::program_suffix(system, arch);
         const auto program = *packed / (stem + suffix);
         const auto out = output_for(t ? t->str() : plan.triple, suffix);
         fs::create_directories(out.parent_path(), ec);

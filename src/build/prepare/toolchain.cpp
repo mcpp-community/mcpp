@@ -765,12 +765,12 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
     }
     // A TOOLCHAIN NAMED FOR THE BUILD IS AS EXPLICIT AS ONE THE SECTION NAMES.
     // The refusal says that no toolchain is published for the row; a build that
-    // names one for this build -- `[target.<row>] toolchain`, `--toolchain` --
-    // has one. MCPP_TOOLCHAIN is a standing preference of the environment, not
-    // a choice for this row, and does not opt in. Before 2026.11.13.1 only the
-    // section did, and a platform's conformance run that names its toolchain on
-    // the command line was refused.
-    const bool toolchainNamed = ctx.hasToolchainOverride || state.tcFromConsumer;
+    // names one -- `[target.<row>] toolchain`, or `--toolchain`, which the
+    // command line states as MCPP_TOOLCHAIN -- has one; so does a consumer's
+    // sub-build given its consumer's. Before 2026.11.13.1 only the section did,
+    // and a platform's conformance run that names its toolchain on the command
+    // line was refused.
+    const bool toolchainNamed = ctx.hasToolchainOverride || state.tcFromCommandLine || state.tcFromConsumer;
     if (ctx.known && ctx.known->tier == "planned" && !toolchainNamed) {
         refusal::record(refusal::Code::TierPlanned);
         // The subject is what the user wrote. When completion filled a

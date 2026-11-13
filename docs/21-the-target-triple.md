@@ -794,7 +794,8 @@ target does not determine a compiler.
 - A row at the `planned` tier is **registered in the vocabulary and nothing is
   wired yet**. Naming such a target is accepted by the parser and refused by the
   build, unless the build names a toolchain for it: `[target.X] toolchain`, or
-  `--toolchain` (2026.11.13.1+). `MCPP_TOOLCHAIN` does not opt in.
+  `--toolchain` (or `MCPP_TOOLCHAIN`, its statement in the environment;
+  2026.11.13.1+).
 - `host_can_serve` decides whether this machine can produce a target, and it is
   a different question from the tier. A target mcpp supports may still be
   unreachable from this host; the escape hatch is an explicit
