@@ -31,6 +31,11 @@ if "$MCPP" build --target riscv64-linux-musl > "$TMP/planned.log" 2>&1; then
 fi
 grep -q "not yet supported" "$TMP/planned.log" || {
     echo "FAIL: missing planned-tier error"; cat "$TMP/planned.log"; exit 1; }
+# A toolchain named for the build opts in (2026.11.13.1): the refusal is gone,
+# whatever the named toolchain then makes of the row.
+"$MCPP" build --target riscv64-linux-musl --toolchain gcc@16.1.0 > "$TMP/named.log" 2>&1 || true
+grep -q "not yet supported" "$TMP/named.log" && {
+    echo "FAIL: --toolchain did not opt a planned row in"; cat "$TMP/named.log"; exit 1; }
 
 # ── 3. escape hatch: custom triple with an explicit [target.X] section ──────
 # (pin the host gcc so resolution succeeds; the point is validation lets an
