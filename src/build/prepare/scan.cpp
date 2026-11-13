@@ -37,6 +37,7 @@ import mcpp.freestanding.target;   // the target sysroot layout (libdir)
 import mcpp.freestanding.linkline; // the ISA profile, for the std module command
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
+import mcpp.toolchain.provider;   // capabilities_for: whether C++ units can be built
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
@@ -1193,10 +1194,33 @@ static void step11_public_module_check(PrepareState& state) {
     }
 }
 
+// A C++ unit is built as a module unit and its dependencies are read by P1689
+// scanning; a compiler with neither can build the graph's C units and none of
+// its C++ ones. Refused here, naming the compiler and the first C++ source,
+// rather than at the first compile, where the compiler rejects `-fmodules`.
+static std::expected<void, std::string>
+step11_cxx_compiler_gate(PrepareState& state) {
+    if (!state.tc) return {};
+    const auto caps = mcpp::toolchain::capabilities_for(*state.tc);
+    if (caps.has_modules) return {};
+    for (auto const& u : state.scan.graph.units) {
+        if (u.kind != mcpp::SourceKind::Cxx && u.kind != mcpp::SourceKind::ModuleInterface)
+            continue;
+        return std::unexpected(std::format(
+            "{} cannot build the C++ sources of this graph ({} is the first): mcpp builds a C++ "
+            "unit as a module unit and reads its dependencies through P1689 scanning "
+            "(`-fmodules`, `-fdeps-format`), which GCC provides from 14. Its C sources build.\n"
+            "       help: a C++ program on {} needs a toolchain of GCC 14 or later, or Clang",
+            state.tc->label(), u.relPath.generic_string(), state.tc->targetTriple));
+    }
+    return {};
+}
+
 std::expected<void, std::string> phase11_scan(PrepareState& state) {
     auto needsStdModule = step11_scan_sources(state);
     if (!needsStdModule) return std::unexpected(needsStdModule.error());
     if (auto r = refuse_plugin_units_in_target(state); !r) return std::unexpected(r.error());
+    if (auto r = step11_cxx_compiler_gate(state); !r) return std::unexpected(r.error());
     step11_public_module_check(state);
 
     if (auto r = step11_dependency_standard_scope_check(state); !r)
