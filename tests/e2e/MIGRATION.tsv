@@ -143,8 +143,8 @@ script	subsystem	class	destination	note
 133_freestanding_std_subset.sh	baremetal	keep	keep	emulator: boots the image in qemu-system-riscv64
 134_target_sysroot_and_queries.sh	target	merge	e2e/target	
 135_diagnostic_promise_resolves.sh	toolchain	merge	e2e/toolchain	
-136_aarch64_zero_libc_target.sh	baremetal	merge	e2e/baremetal	
-137_x86_64_zero_libc_target.sh	baremetal	merge	e2e/baremetal	
+136_aarch64_zero_libc_target.sh	baremetal	merge	e2e/baremetal::rows/136 aarch64 zero libc target	migrated (batch 19); script removed
+137_x86_64_zero_libc_target.sh	baremetal	merge	e2e/baremetal::rows/137 x86_64 zero libc target	migrated (batch 19); script removed
 138_feature_sources_gate_vs_provider.sh	features	merge	e2e/features::sources/138 feature sources gate vs provider	migrated (batch 5); script removed
 139_build_program_advisory.sh	build-program	merge	e2e/build-program::protocol/139 build program advisory	migrated (batch 2); script removed
 141_include_dirs_after.sh	build	merge	e2e/build::flags/141 include dirs after	migrated (batch 7); script removed
@@ -711,7 +711,7 @@ script	subsystem	class	destination	note
 1038_test_programs_of_a_directory_and_the_tests_a_change_affects.sh	test	merge	e2e/test::affected/1038 test programs of a directory and the tests a change affects	migrated (batch 1); script removed
 1039_two_builds_that_find_the_std_module_missing_compile_it_once.sh	modules	merge	e2e/modules::bmi/1039 two builds that find the std module missing compile it once	migrated (batch 9); script removed
 1040_a_platform_defines_a_target.sh	openkal	merge	e2e/openkal::platforms/1040 a platform defines a target	migrated (batch 16); script removed
-1041_a_32_bit_x86_bare_target.sh	baremetal	merge	e2e/baremetal	
+1041_a_32_bit_x86_bare_target.sh	baremetal	merge	e2e/baremetal::rows/1041 a 32 bit x86 bare target	migrated (batch 19); script removed
 1042_each_flag_names_its_layer_and_a_request_its_selection.sh	target	merge	e2e/target	
 1043_several_programs_and_a_dotted_name_are_packed_as_stated.sh	pack	merge	e2e/pack::modes/1043 several programs and a dotted name are packed as stated	migrated (batch 6); script removed
 1044_clang_pairs_with_the_mingw_payload.sh	windows	keep	keep	emulator: runs the clang/mingw program under wine
