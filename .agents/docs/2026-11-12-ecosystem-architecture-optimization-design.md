@@ -912,6 +912,11 @@ BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；o
 （屏蔽 Visual Studio 的 Windows、只有交叉工具链的 Linux、ci-fresh-install 的已发布 mcpp）从构建作业写出的测试归档
 运行它们（`build.yml` 的 `tests`、`.github/actions/e2e-cases`），每个用例须打印其 `ok` 行；被测的 mcpp 缺省是归档自带的构建，
 `MCPP_E2E_MCPP` 另行指定。
+CI 的触发模型（5.11）随之实施：`changes` 作业给出本次运行的集合（PR 的推送为 `pr`，带 `ci:full` 标签的 PR、合入 main 与手动
+触发为 `full`），单元作业的 `--since` 与 e2e 分片的 `E2E_SET` 都取它；`e2e-plan` 作业以 `mtest ci plan` 按 main 存储中的
+测量历史给出每个宿主的分片数（`tests/e2e/mtest.toml` 的 `[ci.plan]`，每片 12 分钟，至多 8 片），集合不给工作的宿主不启动
+分片；每个宿主的构建作业在上传之后运行该宿主的闸（`e2e/basics`：本提交的 mcpp 新建、构建并运行一个程序），闸失败即该作业
+失败、其下游不启动，并取消整次运行。闸取 `e2e/basics` 而非单元测试：后者的构建要数分钟，超出 2–3 分钟的预算。
 同版并入的两处缺陷：GCC 14 之前的编译器没有 C++ 模块与 P1689，此前在第一次编译时因 `-fmodules` 失败；现在不声明、不导入
 模块的 C++ 单元以不带模块选项的翻译单元构建（图取 mcpp 自己的扫描），需要模块的第一个单元在规划时被拒绝并指出所需——8.2 的
 A 路线表"libstdc++ 12，无模块"由此成立（实测：DJGPP 的 GCC 12.2.0 构建异常、`std::vector`、`std::sort` 的程序，经 DOSBox 运行，状态 7）；

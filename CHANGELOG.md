@@ -63,9 +63,19 @@
   and program suffix from the row.
 - `--toolchain` opts a planned row in, as a `[target.<row>]` toolchain does.
 - mcpplibs.cmdline 0.0.4: every command's action returns its status.
+- CI follows the event: a pull request runs the `pr` set (the cases its
+  change affects), and one labelled `ci:full`, a push to main and a run started
+  by hand run `full`. Each host's e2e shard count is `mtest ci plan` over the
+  measured history of main's stores (`tests/e2e/mtest.toml` `[ci.plan]`), and
+  a host the set gives no work starts no shard. Each build job runs the host's
+  gate (`e2e/basics`) before its dependants start, and a failed gate cancels
+  the run.
 
 ### Fixed
 
+- `config.toml` is replaced whole: programs started at once on a fresh home
+  no longer read a part of another's write (`invalid config.toml: expected
+  '='`).
 - A compiler without C++ modules (GCC before 14) builds the C++ units that
   declare and import no module, without module flags, and refuses at planning
   the first unit that needs modules, naming what it needs. Before, the build
