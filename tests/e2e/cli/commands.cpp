@@ -236,6 +236,10 @@ xpm = { linux = { ["1.0.0"] = { url = "https://example.invalid/w.tar.gz", sha256
         expect(fatal(r.out.empty())) << "a usage error wrote to stdout: " << r.out;
         r = p.mcpp({"definitely-not-a-subcommand-540"});
         expect(fatal(e2e::exited(r, 127))) << "an unknown subcommand";
+        r = p.mcpp({"index"});
+        expect(fatal(e2e::exited(r, 2))) << "a command without its subcommand";
+        expect(fatal(e2e::contains(r.err, "a subcommand is required"))) << r.err;
+        expect(fatal(r.out.empty())) << "a usage error wrote to stdout: " << r.out;
         r = p.mcpp({"xpkg", "parse", "./no-such-descriptor.lua", "--format", "json"});
         expect(fatal(e2e::exited(r, 1))) << "xpkg parse on a missing file";
         expect(fatal(!r.err.empty())) << "a non-zero exit left stderr empty (SPEC-003 §3.5)";

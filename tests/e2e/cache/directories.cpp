@@ -467,6 +467,21 @@ E2E directories{"directories", [] {
         expect(fatal(!current.empty() && fs::is_directory(current))) << "clean --stale removed the rooted workspace's own build\n" << s::text(r);
     };
 
+    "1083 a configuration built beside another states the other's size"_test[tag{"requires:gcc"}] = [] {
+        // mcpp#927 (design 2026-11-12 §18 P6): a change of configuration that builds in a directory
+        // of its own names the directory it leaves beside it, its size and what reclaims it.
+        s::needs({"gcc"});
+        s::project app({{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
+                        {"src/main.cpp", "int main() { return 0; }\n"}});
+        build_ok(app.mcpp({"build"}), "the first build failed");
+        app.write("mcpp.toml", app.read("mcpp.toml") + "\n[profile.dev]\ndebug = \"lines\"\n");
+        auto r = app.mcpp({"build"});
+        build_ok(r, "the build of the changed configuration failed");
+        expect(fatal(s::has_line(s::text(r),
+            R"(configuration changed \([^)]*\): [0-9a-f]+ is built in full beside [0-9a-f]+ \([0-9.]+ [KMG]?i?B\); `mcpp clean --stale` drops it)")))
+            << s::text(r);
+    };
+
     "1005 clean stale says what it kept"_test[tag{"requires:gcc"}] = [] {
         // mcpp#881: `clean --stale` says what it kept and within what window, `[build] keep_days`.
         s::needs({"gcc"});

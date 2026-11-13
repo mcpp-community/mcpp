@@ -88,8 +88,8 @@ main = "src/main.cpp"
         auto t2 = ws.mcpp({"test", "-p", "fast"});
         expect(fatal(e2e::succeeded(t2)));
         expect(s::has_line(s::text(t2), R"(quick \.\.\. ok \([0-9]+\.[0-9]+s\))")) << "the test's line carries no duration";
-        expect(s::has_line(s::text(t2), R"(finished in [0-9]+\.[0-9]+s \(build [0-9]+\.[0-9]+s \+ run [0-9]+\.[0-9]+s\))"))
-            << "the summary carries no build/run split";
+        expect(s::has_line(s::text(t2), R"(finished in [0-9]+\.[0-9]+s \(plan [0-9]+\.[0-9]+s( · programs [0-9]+\.[0-9]+s)? · build [0-9]+\.[0-9]+s · run [0-9]+\.[0-9]+s\))"))
+            << "the summary does not divide its time into plan, build and run";
 
         // 3. --timeout bounds a hung run, and the fan-out continues.
         auto t3 = ws.mcpp({"test", "--workspace", "--timeout", "2"});
