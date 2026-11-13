@@ -348,18 +348,24 @@ UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
     {
         std::ofstream(cfg.configFile) << "[xlings]\nbinary = \"bundled\"\n" << padding << "\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
     }
-    std::atomic<bool> done{false};
     std::atomic<int> partial{0};
-    std::thread reader([&] {
-        while (!done.load()) {
-            std::ifstream in(cfg.configFile);
-            const std::string text{std::istreambuf_iterator<char>(in), {}};
-            if (!text.contains("[toolchain]\ndefault = \"")) ++partial;
+    // Windows refuses a rename over a file a reader holds open, and the writer retries
+    // (replace_file); a reader there pauses between reads, as the readers of a home do, where
+    // elsewhere it reads without a pause. A failed write stops and joins the reader (jthread).
+    const bool pauses = host() == platform::windows;
+    std::jthread reader([&](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            {
+                std::ifstream in(cfg.configFile);
+                const std::string text{std::istreambuf_iterator<char>(in), {}};
+                if (!text.contains("[toolchain]\ndefault = \"")) ++partial;
+            }
+            if (pauses) std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
     });
     for (int i = 0; i < 200; ++i)
         expect(fatal(mcpp::config::write_config_value(cfg, "toolchain", "default", i % 2 ? "\"llvm@23.1.3\"" : "\"gcc@16.1.0\"").has_value()));
-    done = true;
+    reader.request_stop();
     reader.join();
     expect(eq(partial.load(), 0)) << "a reader saw config.toml without its [toolchain] default";
     std::size_t files = 0;

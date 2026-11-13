@@ -72,24 +72,26 @@ std::string FileLock::holder(const std::filesystem::path& dir, std::string_view 
 
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec) {
-    // An editor or a virus scanner may hold the destination for a moment
-    // (Windows refuses the rename with a sharing violation): a few tries with
-    // a growing pause, then the failure.
-    auto delay = std::chrono::milliseconds{50};
-    for (int attempt = 0; attempt < 4; ++attempt) {
+    // Windows refuses the rename while another program holds the destination
+    // open (a sharing violation): an editor, a virus scanner, or another mcpp
+    // reading config.toml, which holds it for the length of one read. Tries
+    // with a pause that starts short and grows, for two seconds, then the
+    // failure.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    auto delay = std::chrono::milliseconds{5};
+    for (;;) {
         const auto r = mcpplibs::os::fs::rename(source, destination, true);
         if (r) { ec.clear(); return true; }
-        if (attempt == 3 || (r.error().code != mcpplibs::os::errc::permission
-                             && r.error().code != mcpplibs::os::errc::again)) {
+        if ((r.error().code != mcpplibs::os::errc::permission && r.error().code != mcpplibs::os::errc::again)
+            || std::chrono::steady_clock::now() + delay > deadline) {
             ec = std::make_error_code(r.error().code == mcpplibs::os::errc::not_found
                                           ? std::errc::no_such_file_or_directory
                                           : std::errc::permission_denied);
             return false;
         }
         std::this_thread::sleep_for(delay);
-        delay *= 3;
+        delay = std::min(delay * 2, std::chrono::milliseconds{200});
     }
-    return false;
 }
 
 bool write_replacing(const std::filesystem::path& file, std::string_view text) {

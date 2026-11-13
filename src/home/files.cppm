@@ -63,7 +63,8 @@ private:
 
 // `source` renamed over `destination`, which is not removed first: a failed
 // replacement leaves the last good copy (a compilation database an editor
-// reads). A destination another program holds open is retried briefly.
+// reads). A destination another program holds open is retried for up to two
+// seconds.
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec);
 
