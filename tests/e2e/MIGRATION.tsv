@@ -370,7 +370,7 @@ script	subsystem	class	destination	note
 638_pack_format_dispatch.sh	pack	merge	e2e/pack::formats/638 pack format dispatch	migrated (batch 6); script removed
 639_the_scanner_does_not_read_inside_a_comment.sh	modules	merge	e2e/modules::scanner/639 the scanner does not read inside a comment	migrated (batch 9); script removed
 640_a_capability_pin_explains_its_own_row.sh	target	merge	e2e/targets::selection/640 a capability pin explains its own row	migrated (batch 20); script removed
-641_the_android_rows_are_wired_and_the_simulator_is_a_row.sh	android	merge	e2e/android	
+641_the_android_rows_are_wired_and_the_simulator_is_a_row.sh	android	merge	e2e/android::rows/641 the android rows are wired and the simulator is a row	migrated (batch 22); script removed
 642_windows_subsystem.sh	windows	merge	e2e/windows	
 643_windows_subsystem_cross.sh	windows	merge	e2e/windows	
 644_windows_keys_are_inert_elsewhere.sh	windows	merge	e2e/windows	
@@ -382,7 +382,7 @@ script	subsystem	class	destination	note
 650_wasm_row_names_its_launcher.sh	web	merge	e2e/web::emscripten/650 wasm row names its launcher	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 651_a_build_program_deploys_what_it_generated.sh	build-program	merge	e2e/build-program::protocol/651 a build program deploys what it generated	migrated (batch 2); script removed
 652_an_application_is_a_kind.sh	pack	merge	e2e/pack::modes/652 an application is a kind	migrated (batch 6); script removed
-652b_an_application_on_android_is_a_shared_library.sh	android	merge	e2e/android	
+652b_an_application_on_android_is_a_shared_library.sh	android	merge	e2e/android::rows/652b an application on android is a shared library	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
 653_exceptions_is_the_second_abi_member.sh	target	merge	e2e/targets::abi/653 exceptions is the second abi member	migrated (batch 20); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
 654_a_requirement_on_the_target_axis.sh	features	merge	e2e/features::layers/654 a requirement on the target axis	migrated (batch 5); script removed
 656_run_hands_the_distributable_to_the_runner.sh	run	merge	e2e/run::runners/656 run hands the distributable to the runner	migrated (batch 12); script removed
@@ -393,10 +393,10 @@ script	subsystem	class	destination	note
 661_one_identity_two_declarations.sh	deps	merge	e2e/deps::git/661 one identity two declarations	migrated (batch 3); script removed
 662_pack_stages_declared_files_before_the_closure.sh	pack	merge	e2e/pack::modes/662 pack stages declared files before the closure	migrated (batch 6); script removed
 663_a_graph_libcxx_over_the_payloads_c_library.sh	toolchain	merge	e2e/toolchain::layers/663 a graph libcxx over the payloads c library	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
-664_a_universal_apk_is_two_legs_in_one_tree.sh	android	merge	e2e/android	
+664_a_universal_apk_is_two_legs_in_one_tree.sh	android	merge	e2e/android::rows/664 a universal apk is two legs in one tree	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
 665_a_host_tool_follows_its_source.sh	build-program	merge	e2e/build-program::hosttools/665 a host tool follows its source	migrated (batch 2); script removed
 666_a_macho_program_reaches_a_dispatched_format_with_its_tree.sh	macos	merge	e2e/macos	
-667_an_android_pack_stages_its_closure.sh	android	merge	e2e/android	
+667_an_android_pack_stages_its_closure.sh	android	merge	e2e/android::rows/667 an android pack stages its closure	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
 668_a_macho_program_is_staged_with_its_closure.sh	macos	merge	e2e/macos	
 669_an_elf_host_pack_states_its_closure.sh	pack	merge	e2e/pack::modes/669 an elf host pack states its closure	migrated (batch 6); script removed
 670_an_rpath_loader_token_is_left_as_written.sh	runtime	merge	e2e/runtime::packages/670 an rpath loader token is left as written	migrated (batch 17); script removed
@@ -404,11 +404,11 @@ script	subsystem	class	destination	note
 672_a_runner_receives_the_files_the_artifact_carries.sh	run	merge	e2e/run::contract/672 a runner receives the files the artifact carries	migrated (batch 12); script removed
 673_test_discover_names_where_tests_are.sh	test	merge	e2e/test::selection/673 test discover names where tests are	migrated (batch 1); script removed
 674_a_format_is_run_by_the_runner_named_after_it.sh	run	merge	e2e/run::contract/674 a format is run by the runner named after it	migrated (batch 12); script removed
-675_android_test_programs_carry_their_cxx_runtime.sh	android	merge	e2e/android	
+675_android_test_programs_carry_their_cxx_runtime.sh	android	merge	e2e/android::rows/675 android test programs carry their cxx runtime	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
 677_a_conditional_dependency_replaces_the_unconditional_one.sh	features	merge	e2e/features::conditional/677 a conditional dependency replaces the unconditional one	migrated (batch 5); script removed
 678_a_row_states_a_library_form.sh	target	merge	e2e/targets::abi/678 a row states a library form	migrated (batch 20); script removed
 679_a_path_dependency_takes_its_manifests_identity.sh	deps	merge	e2e/deps::identity/679 a path dependency takes its manifests identity	migrated (batch 3); script removed
-680_a_dependency_floor_on_the_android_api_level.sh	android	merge	e2e/android	
+680_a_dependency_floor_on_the_android_api_level.sh	android	merge	e2e/android::rows/680 a dependency floor on the android api level	migrated (batch 22); script kept: .github/workflows/ci-linux-e2e.yml (android) runs it by path and holds it to its PASS line
 681_index_repos_reach_an_existing_home.sh	self	merge	e2e/self::subos/681 index repos reach an existing home	migrated (batch 15); script removed
 682_why_deps_prints_the_resolved_graph.sh	deps	merge	e2e/deps::identity/682 why deps prints the resolved graph	migrated (batch 3); script removed
 683_a_build_program_reads_the_payload_pkg_config_view.sh	build-program	merge	e2e/build-program::protocol/683 a build program reads the payload pkg config view	migrated (batch 2); script removed
