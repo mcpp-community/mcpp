@@ -469,10 +469,10 @@ script	subsystem	class	destination	note
 780_a_passing_check_moves_its_stamp_past_a_changed_input.sh	actions	merge	e2e/actions::checks/780 a passing check moves its stamp past a changed input	migrated (batch 4); script removed
 781_deleted_root_cdb_is_restored.sh	cdb	merge	e2e/cdb::root/781 deleted root cdb is restored	migrated (batch 13); script removed
 782_foreign_root_cdb_entries_are_replaced.sh	cdb	merge	e2e/cdb::root/782 foreign root cdb entries are replaced	migrated (batch 13); script removed
-783_cdb_switches_whole_with_the_configuration.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
-784_cdb_replays_from_its_directory.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
-785_cdb_interface_flag_module_extensions.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
-786_std_unit_in_the_database_and_build_id.sh	cdb	keep	keep	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
+783_cdb_switches_whole_with_the_configuration.sh	cdb	merge	e2e/cdb::toolchains/783 cdb switches whole with the configuration	migrated (batch 13); script removed; the hermetic job runs the suite
+784_cdb_replays_from_its_directory.sh	cdb	merge	e2e/cdb::toolchains/784 cdb replays from its directory	migrated (batch 13); script removed; the hermetic job runs the suite
+785_cdb_interface_flag_module_extensions.sh	cdb	merge	e2e/cdb::toolchains/785 cdb interface flag module extensions	migrated (batch 13); script removed; the hermetic job runs the suite
+786_std_unit_in_the_database_and_build_id.sh	cdb	merge	e2e/cdb::toolchains/786 std unit in the database and build id	migrated (batch 13); script removed; the hermetic job runs the suite
 787_emit_plans_every_member_on_its_own.sh	cdb	merge	e2e/cdb::planning/787 emit plans every member on its own	migrated (batch 13); script removed
 788_emit_defers_an_unbuilt_host_tool.sh	cdb	merge	e2e/cdb::planning/788 emit defers an unbuilt host tool	migrated (batch 13); script removed
 789_emit_describes_a_member_past_a_failed_build_program.sh	cdb	merge	e2e/cdb::planning/789 emit describes a member past a failed build program	migrated (batch 13); script removed

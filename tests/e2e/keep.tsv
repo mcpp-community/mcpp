@@ -20,10 +20,6 @@ script	why
 658_a_program_runs_on_an_attached_android_device.sh	a physical Android device over adb
 704_cxx_identity_across_macho_images.sh	a measurement leg (prints a table, asserts nothing)
 705_cxx_identity_across_pe_images.sh	a measurement leg (prints a table, asserts nothing)
-783_cdb_switches_whole_with_the_configuration.sh	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
-784_cdb_replays_from_its_directory.sh	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
-785_cdb_interface_flag_module_extensions.sh	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
-786_std_unit_in_the_database_and_build_id.sh	ci-linux-e2e.yml's llvm step runs it by path and holds it to the lines it prints; retires when that step runs the e2e/cdb cases
 796_runtime_search_dir_on_pe_under_wine.sh	emulator: runs the PE program under wine
 797_a_windows_program_finds_its_dlls_beside_it.sh	emulator: runs the PE program under wine
 846_the_vendored_xlings_is_replaced_from_the_newest_source.sh	upgrade: the vendored xlings replaced from the newest source in a home
