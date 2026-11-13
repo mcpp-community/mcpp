@@ -1166,6 +1166,16 @@ warning: the configuration changed (debug 1 → lines): 7a72… is built in full
 6. **运行器。** xim 的 `ovmf` 9.2.4-1 携带 dirun 描述文件（`{profile-dir}`，dirun 0.3.2），运行器陈述只写
    `dirun --payload {} --profile {pkg:ovmf}/dirun.toml --emulator {pkg:qemu-x86}/bin/qemu-system-x86_64`。
 
+7. **可选接口按实现的陈述（openkal-musl、openkal-llvm-runtime）。** 两包的 `OKM_HAS_FS/PROCESS/TASK`、`OPENKAL_HAS_TASK`
+   原以目标为代理（`os = "none"` 为 0）；现以 `cfg(not(interface = "openkal.fs"))` 等读实现的 `provides-interfaces`
+   （ok 镜像仍在运行时询问）。`pthread_getattr_np` 对 `kal_task_stack` 的直接调用改经可选接口的接缝。
+8. **行可以只陈述链接的仿真而不陈述机器（mcpp）。** `defined_spec` 原要求 `march`；`x86_64-uefi` 只陈述
+   `link-emulation = "i386pep"`，处理器取 clang 三元组的默认。
+
+**测到的结果（2026-11-13，本地各仓库的工作树）。** `import std` 的 C++ 程序（`std::println`、`std::ranges::sort`）以
+`--target x86_64-uefi` 构建：release 产物 1.2 MB 的 PE32+ EFI 应用（子系统 10），在 OVMF 下经 dirun 与 ovmf 的描述文件运行，
+输出正确，状态 42 经调试端口回到宿主，墙钟 0.8 秒。
+
 ### 19.3 不采纳
 
 - **为 UEFI 在包里加 `cfg(os = "uefi")` 的 PE 分支。** 每增加一个 PE 系统就要再改一次包；容器是这些分支真正问的事实。
