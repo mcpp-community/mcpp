@@ -110,6 +110,7 @@ struct Test {
     std::vector<std::string> files;     // beside it, relative to the archive's directory
     int                      protocol = 0;
     int                      ownFiles = 1;  // the files that are the test's own
+    std::string              partRoot;      // the directory its parts are named below, as built
 };
 
 struct Leg {
@@ -176,7 +177,8 @@ nlohmann::json to_json(const Manifest& m) {
         nlohmann::json tests = nlohmann::json::array();
         for (auto const& t : l.tests)
             tests.push_back({{"name", t.name}, {"program", t.program}, {"files", t.files},
-                             {"protocol", t.protocol}, {"own_files", t.ownFiles}});
+                             {"protocol", t.protocol}, {"own_files", t.ownFiles},
+                             {"part_root", t.partRoot}});
         legs.push_back({{"triple", l.triple}, {"programs", std::move(programs)},
                         {"tests", std::move(tests)}});
     }
@@ -202,7 +204,7 @@ std::expected<Manifest, std::string> from_json(const nlohmann::json& d) {
         if (jl.contains("tests") && jl["tests"].is_array())
             for (auto const& jt : jl["tests"]) {
                 Test t{jt.value("name", ""), jt.value("program", ""), {}, jt.value("protocol", 0),
-                       jt.value("own_files", 1)};
+                       jt.value("own_files", 1), jt.value("part_root", std::string{})};
                 if (jt.contains("files") && jt["files"].is_array())
                     for (auto const& f : jt["files"]) t.files.push_back(f.get<std::string>());
                 l.tests.push_back(std::move(t));
@@ -4475,10 +4477,37 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
 // over several members; `run_tests` holds one for its one member.
 // WHETHER A PATTERN NAMES A TEST: its program, or a part of one run as a
 // process per file of its cases (`<program>/<file>'), as the run names them.
+//
+// A PART'S NAME is its file's path below the program's directory, the common
+// directory of the program's own files, without the extension: the stem in a
+// program of one directory, and `unit/b` for `tests/unit/b.cpp` in a package's
+// program, where two directories may each hold a `b.cpp` (2026.11.13.1+).
+static std::filesystem::path part_root(const std::vector<std::filesystem::path>& own) {
+    if (own.size() < 2) return {};
+    std::filesystem::path root = own.front().parent_path();
+    for (auto const& f : own) {
+        const auto dir = f.parent_path();
+        std::filesystem::path common;
+        for (auto a = root.begin(), b = dir.begin(); a != root.end() && b != dir.end() && *a == *b; ++a, ++b)
+            common /= *a;
+        root = std::move(common);
+    }
+    return root;
+}
+
+static std::string part_label(const std::filesystem::path& root, const std::filesystem::path& file) {
+    if (!root.empty()) {
+        auto below = file.lexically_relative(root);
+        if (!below.empty() && *below.begin() != "..") return below.replace_extension().generic_string();
+    }
+    return file.stem().generic_string();
+}
+
 static bool test_matches(const LinkUnit& lu, std::string_view filter) {
     if (filter.empty() || lu.targetName.find(filter) != std::string::npos) return true;
+    const auto root = part_root(lu.ownSources);
     return std::ranges::any_of(lu.ownSources, [&](const std::filesystem::path& f) {
-        return std::format("{}/{}", lu.targetName, f.stem().generic_string()).find(filter) != std::string::npos;
+        return std::format("{}/{}", lu.targetName, part_label(root, f)).find(filter) != std::string::npos;
     });
 }
 
@@ -4501,8 +4530,10 @@ struct TestRunnable {
     // The files that are the test's own: a program of one file has no other
     // file to run its cases in, and is not listed to be split by file.
     std::size_t ownFiles = 1;
-    // The program a part belongs to, when the run divides it (`[test] split`).
+    // The program a part belongs to, when the run divides it (`[test] split`),
+    // and the directory its parts are named below (`part_label`).
     std::string partOf;
+    std::filesystem::path partRoot;
 };
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
@@ -5465,6 +5496,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         added.sources = sources_of(lu);
         added.guide = guide_of(lu, version);
         added.ownFiles = std::max<std::size_t>(lu.ownSources.size(), 1);
+        added.partRoot = part_root(lu.ownSources);
     }
     // `mcpp test <name> --print-launch` (design 2026-10-30 part 2 §7.4): the one test the pattern
     // names, built, described as `mcpp run --print-launch` describes a program -- the `mcpp.launch`
@@ -5601,7 +5633,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (files.size() >= 2)
                         for (const auto& f : files)
                             results.back().parts.emplace_back(
-                                std::format("{}/{}", r.name, std::filesystem::path(f).stem().generic_string()), f);
+                                std::format("{}/{}", r.name, part_label(r.partRoot, f)), f);
                 }
                 if (!json) {
                     mcpp::ui::plain(std::format("{}: {} case{}", r.name, report.listed.size(),
@@ -5676,8 +5708,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 const bool whole = testOpts.filter.empty() || r.name.find(testOpts.filter) != std::string::npos;
                 for (auto& [key, ids] : ordered) {
                     Runnable part = r;
-                    const auto label = split == "case" ? key
-                                     : std::filesystem::path(key).stem().generic_string();
+                    const auto label = split == "case" ? key : part_label(r.partRoot, key);
                     part.name = std::format("{}/{}", r.name, label);
                     part.partOf = r.name;
                     if (!whole && part.name.find(testOpts.filter) == std::string::npos) continue;
@@ -5894,7 +5925,8 @@ int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
             if (!fs::is_regular_file(exe, ec)) continue;
             ta::Test t{lu.targetName, ta::test_dest(l.triple, lu.targetName, exe.filename().string()), {},
                        test_protocol_of(*l.ctx, lu, objectMarkers),
-                       static_cast<int>(std::max<std::size_t>(lu.ownSources.size(), 1))};
+                       static_cast<int>(std::max<std::size_t>(lu.ownSources.size(), 1)),
+                       part_root(lu.ownSources).generic_string()};
             copies.push_back({exe, t.program});
             // The files of the test's member, placed in its product directory.
             std::vector<std::pair<std::string, fs::path>> carried;
@@ -6019,6 +6051,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
             }
             r.protocol = t.protocol == mcpp::build::test_protocol::kVersion ? t.protocol : 0;
             r.ownFiles = static_cast<std::size_t>(std::max(t.ownFiles, 1));
+            r.partRoot = t.partRoot;
             r.cwd = cwd;
             runs.push_back(std::move(r));
         }
@@ -6108,7 +6141,8 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
         for (auto const& input : lu.implicitInputs)
             if (auto a = archiveOf.find(input); a != archiveOf.end()) add_objects(a->second->objects);
         json stems = json::array();
-        for (auto const& f : lu.ownSources) stems.push_back(f.stem().generic_string());
+        const auto root = part_root(lu.ownSources);
+        for (auto const& f : lu.ownSources) stems.push_back(part_label(root, f));
         const bool collected = std::ranges::any_of(lu.linkFlags, [](std::string_view f) {
             return f == "-Wl,--gc-sections" || f == "-Wl,-dead_strip";
         });
@@ -6128,7 +6162,8 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
                          {"sources", std::vector<std::string>(files.begin(), files.end())},
                          {"protocol", lu.testProtocol}, {"objects", objects},
                          {"guide", guide(mcpp::build::test_protocol::kVersion)}, {"guide_none", guide(0)},
-                         {"own_files", std::max<std::size_t>(lu.ownSources.size(), 1)}});
+                         {"own_files", std::max<std::size_t>(lu.ownSources.size(), 1)},
+                         {"part_root", root.generic_string()}});
     }
     json frameworks = json::array();
     for (auto const& f : ctx.plan.testFrameworks)
@@ -6244,6 +6279,7 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
         for (auto const& a : passthrough) r.argv.push_back(a);
         r.sources = t.value("sources", std::vector<std::string>{});
         r.ownFiles = t.value("own_files", std::size_t{1});
+        r.partRoot = t.value("part_root", std::string{});
         r.protocol = t.value("protocol", 0);
         if (!r.protocol) {
             r.protocol = mcpp::build::test_protocol::marker_version(r.program);
@@ -6873,9 +6909,11 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         // As `test_matches' asks of a planned test: the program, or a part of it.
         auto names_it = [&](const mcpp::manifest::Target& t) {
             if (t.name.find(testOpts.filter) != std::string::npos) return true;
+            std::vector<std::filesystem::path> own{std::filesystem::path(t.main)};
+            for (auto const& f : t.testSources) own.emplace_back(f);
+            const auto root = part_root(own);
             auto part = [&](const std::string& f) {
-                return std::format("{}/{}", t.name, std::filesystem::path(f).stem().generic_string())
-                    .find(testOpts.filter) != std::string::npos;
+                return std::format("{}/{}", t.name, part_label(root, f)).find(testOpts.filter) != std::string::npos;
             };
             return part(t.main) || std::ranges::any_of(t.testSources, part);
         };

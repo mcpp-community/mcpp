@@ -2368,8 +2368,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         if (!t.is_program() && t.kind != mcpp::manifest::Target::Entry
             && t.kind != mcpp::manifest::Target::TestBinary) continue;
         auto entry = projectRoot / t.main;
-        if (scannedSources.contains(entry)) continue;
-        rootBasenameCount[object_filename_for(entry, objExt)]++;
+        if (!scannedSources.contains(entry)) rootBasenameCount[object_filename_for(entry, objExt)]++;
+        // A test program's other files (`[test] programs`) are compiled as its
+        // entry is, and a package's program holds files of several directories
+        // (`tests/b.cpp`, `tests/unit/b.cpp`): they take part in the census.
+        for (auto const& source : t.testSources)
+            if (!scannedSources.contains(projectRoot / source))
+                rootBasenameCount[object_filename_for(projectRoot / source, objExt)]++;
     }
     auto sanitize = [](const std::string& s) {
         std::string out; out.reserve(s.size());
