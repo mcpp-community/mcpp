@@ -1,10 +1,10 @@
 script	subsystem	class	destination	note
 00_fixture_path_hygiene.sh	repo	keep	keep	lints the bash scripts' own fixture paths (Git Bash path forms); retires with the last script
-01_help_and_version.sh	cli	merge	e2e/cli	
+01_help_and_version.sh	cli	merge	e2e/cli::commands/01 help and version	migrated (batch 8); script removed
 02_new_build_run.sh	build	merge	e2e/build::basics/02 new build run	migrated (batch 7); script removed
 03_multi_module.sh	modules	merge	e2e/modules	
 04_incremental.sh	build	merge	e2e/build::basics/04 incremental	migrated (batch 7); script removed
-05_errors.sh	cli	merge	e2e/cli	
+05_errors.sh	cli	merge	e2e/cli::commands/05 errors	migrated (batch 8); script removed
 06_emit_xpkg.sh	index	sink	unit/test_emit_xpkg	answers a parse/selection rule without a build: Lua entry from a manifest
 07_static_library.sh	build	merge	e2e/build::basics/07 static library	migrated (batch 7); script removed
 08_shared_library.sh	build	merge	e2e/build::basics/08 shared library	migrated (batch 7); script removed
@@ -52,7 +52,7 @@ script	subsystem	class	destination	note
 46_self_config_mirror_no_bootstrap.sh	self	merge	e2e/self	
 47_cdb_prebuilt_module_path_abs.sh	cdb	merge	e2e/cdb	
 47_llvm_atomic_link.sh	toolchain	merge	e2e/toolchain	
-48_build_error_output.sh	cli	merge	e2e/cli	
+48_build_error_output.sh	cli	merge	e2e/cli::output/48 build error output	migrated (batch 8); script removed
 49_bmi_cache_nested_custom_index.sh	modules	merge	e2e/modules	
 50_package_owned_build_flags.sh	build	merge	e2e/build::flags/50 package owned build flags	migrated (batch 7); script removed
 51_package_generated_files.sh	actions	merge	e2e/actions::generated/51 package generated files	migrated (batch 4); script removed
@@ -74,7 +74,7 @@ script	subsystem	class	destination	note
 66_runtime_provides.sh	runtime	merge	e2e/runtime	
 67_features_strict.sh	features	merge	e2e/features::activation/67 features strict	migrated (batch 5); script removed
 68_profile_passthrough.sh	build	merge	e2e/build::basics/68 profile passthrough	migrated (batch 7); script removed
-69_package_templates.sh	cli	merge	e2e/cli	
+69_package_templates.sh	cli	merge	e2e/cli::templates/69 package templates	migrated (batch 8); script removed
 70_per_target_flags.sh	build	merge	e2e/build::flags/70 per target flags	migrated (batch 7); script removed
 71_required_features_gate.sh	features	merge	e2e/features::activation/71 required features gate	migrated (batch 5); script removed
 72_test_profile_features.sh	test	merge	e2e/test::graph/72 test profile features	migrated (batch 1); script removed
@@ -210,9 +210,9 @@ script	subsystem	class	destination	note
 199_resources_validation.sh	windows	merge	e2e/windows	
 200_subos_env_reaches_program.sh	runtime	merge	e2e/runtime	
 201_gcc_no_specs_pollution.sh	toolchain	merge	e2e/toolchain	
-202_machine_output_contract.sh	cli	merge	e2e/cli	
+202_machine_output_contract.sh	cli	merge	e2e/cli::commands/202 machine output contract	migrated (batch 8); script removed
 203_exact_selector_lock_migration.sh	deps	merge	e2e/deps::lock/203 exact selector lock migration	migrated (batch 3); script removed
-204_new_transactional_scaffold.sh	cli	merge	e2e/cli	
+204_new_transactional_scaffold.sh	cli	merge	e2e/cli::templates/204 new transactional scaffold	migrated (batch 8); script removed
 205_root_local_subos.sh	self	merge	e2e/self	
 206_runtime_binding_physics.sh	runtime	merge	e2e/runtime	
 207_runtime_contract_provenance.sh	runtime	merge	e2e/runtime	
@@ -232,7 +232,7 @@ script	subsystem	class	destination	note
 221_subos_without_info_still_builds.sh	self	merge	e2e/self	
 222_shared_library_cxx_runtime_contract.sh	runtime	merge	e2e/runtime	
 230_bench_harness.sh	repo	keep	keep	bench harness; converges with bench/ (design 5.9 bench), not the e2e migration
-231_jobs_option.sh	cli	merge	e2e/cli	
+231_jobs_option.sh	cli	merge	e2e/cli::commands/231 jobs option	migrated (batch 8); script removed
 232_workflow_syntax.sh	repo	keep	keep	lints .github/workflows YAML (CI configuration, needs a YAML reader)
 233_bench_matrix.sh	repo	keep	keep	bench/matrix.json single-source check; converges with bench/ (design 5.9 bench)
 234_bmi_schedule_on.sh	modules	merge	e2e/modules	
@@ -317,7 +317,7 @@ script	subsystem	class	destination	note
 326_dependency_standard_floor.sh	deps	merge	e2e/deps::floors/326 dependency standard floor	migrated (batch 3); script removed
 327_declared_xlings_deps_report_their_own_failure.sh	index	merge	e2e/index	
 328_layer_predicates_apply_and_unknown_ones_say_so.sh	features	merge	e2e/features::layers/328 layer predicates apply and unknown ones say so	migrated (batch 5); script removed
-329_exit_codes_match_the_contract.sh	cli	merge	e2e/cli	
+329_exit_codes_match_the_contract.sh	cli	merge	e2e/cli::commands/329 exit codes match the contract	migrated (batch 8); script removed
 330_runner_hosted_targets.sh	run	merge	e2e/run	
 331_xlings_workspace_one_table.sh	index	merge	e2e/index	
 332_cortex_m_builds_and_boots.sh	baremetal	keep	keep	emulator: boots the Cortex-M image in qemu-system-arm
@@ -328,7 +328,7 @@ script	subsystem	class	destination	note
 337_run_takes_features_and_profile.sh	run	merge	e2e/run	
 338_cortex_m_picolibc_sysroot.sh	baremetal	keep	keep	emulator: boots the Cortex-M picolibc image in qemu-system-arm
 339_run_reports_the_program_status.sh	run	merge	e2e/run	
-340_no_orphan_survives_a_killed_mcpp.sh	cli	merge	e2e/cli	
+340_no_orphan_survives_a_killed_mcpp.sh	cli	merge	e2e/cli::signals/340 no orphan survives a killed mcpp	migrated (batch 8); script removed
 600_accel_variant_selection.sh	build-program	merge	e2e/build-program::accel/600 accel variant selection	migrated (batch 2); script removed
 601_exclusive_capability.sh	features	merge	e2e/features::activation/601 exclusive capability	migrated (batch 5); script removed
 603_version_floor.sh	deps	merge	e2e/deps::floors/603 version floor	migrated (batch 3); script removed
@@ -400,7 +400,7 @@ script	subsystem	class	destination	note
 668_a_macho_program_is_staged_with_its_closure.sh	macos	merge	e2e/macos	
 669_an_elf_host_pack_states_its_closure.sh	pack	merge	e2e/pack::modes/669 an elf host pack states its closure	migrated (batch 6); script removed
 670_an_rpath_loader_token_is_left_as_written.sh	runtime	merge	e2e/runtime	
-671_toolchain_is_an_option_of_run_test_and_pack.sh	cli	merge	e2e/cli	
+671_toolchain_is_an_option_of_run_test_and_pack.sh	cli	merge	e2e/cli::commands/671 toolchain is an option of run test and pack	migrated (batch 8); script removed
 672_a_runner_receives_the_files_the_artifact_carries.sh	run	merge	e2e/run	
 673_test_discover_names_where_tests_are.sh	test	merge	e2e/test::selection/673 test discover names where tests are	migrated (batch 1); script removed
 674_a_format_is_run_by_the_runner_named_after_it.sh	run	merge	e2e/run	
@@ -527,10 +527,10 @@ script	subsystem	class	destination	note
 839_a_workspaces_build_programs_are_named_ordered_and_cached.sh	workspace	merge	e2e/workspace	
 840_a_workspace_database_describes_each_package_once.sh	cdb	merge	e2e/cdb	
 841_pack_summarizes_many_outputs.sh	pack	merge	e2e/pack::formats/841 pack summarizes many outputs	migrated (batch 6); script removed
-842_the_build_reports_each_step_once.sh	cli	merge	e2e/cli	
-843_a_terminal_names_the_action_that_runs.sh	cli	merge	e2e/cli	
+842_the_build_reports_each_step_once.sh	cli	merge	e2e/cli::output/842 the build reports each step once	migrated (batch 8); script removed
+843_a_terminal_names_the_action_that_runs.sh	cli	merge	e2e/cli::terminal/843 a terminal names the action that runs	migrated (batch 8); script removed
 844_a_planned_build_keeps_one_lock_entry_per_identity.sh	deps	merge	e2e/deps::lock/844 a planned build keeps one lock entry per identity	migrated (batch 3); script removed
-845_play_game_restores_the_terminal.sh	cli	merge	e2e/cli	
+845_play_game_restores_the_terminal.sh	cli	merge	e2e/cli	kept (batch 8): the case finds the prepare action alive 3 s after a Ctrl-C ended mcpp (G3); the script's own G3 check compares a directory name with pgrep's pids and cannot fail. Awaits the engine owner
 846_the_vendored_xlings_is_replaced_from_the_newest_source.sh	self	keep	keep	upgrade: the vendored xlings replaced from the newest source in a home
 847_a_module_name_is_unique_within_a_program.sh	modules	merge	e2e/modules	
 848_msvc_binds_a_module_name_per_program.sh	windows	merge	e2e/windows	
@@ -549,9 +549,9 @@ script	subsystem	class	destination	note
 861_concurrent_compiles_plan_what_serial_compiles_plan.sh	build	merge	e2e/build::basics/861 concurrent compiles plan what serial compiles plan	migrated (batch 7); script removed
 862_run_q_writes_exactly_the_programs_stdout.sh	run	merge	e2e/run	
 863_a_run_whose_build_failed_exits_101.sh	run	merge	e2e/run	
-864_a_builds_status_is_on_standard_error.sh	cli	merge	e2e/cli	
+864_a_builds_status_is_on_standard_error.sh	cli	merge	e2e/cli::output/864 a builds status is on standard error	migrated (batch 8); script removed
 865_mcpp_test_reports_its_steps_on_stderr_and_its_results_on_stdout.sh	test	merge	e2e/test::streams/865 mcpp test reports its steps on stderr and its results on stdout	migrated (batch 1); script removed
-866_both_streams_on_one_pipe_keep_their_order_and_json_stays_clean.sh	cli	merge	e2e/cli	
+866_both_streams_on_one_pipe_keep_their_order_and_json_stays_clean.sh	cli	merge	e2e/cli::output/866 both streams on one pipe keep their order and json stays clean	migrated (batch 8); script removed
 867_a_pack_over_several_members_plans_builds_and_runs_programs_once.sh	pack	merge	e2e/pack::members/867 a pack over several members plans builds and runs programs once	migrated (batch 6); script removed
 868_a_pack_over_several_members_is_refused_before_anything_is_compiled.sh	pack	merge	e2e/pack::members/868 a pack over several members is refused before anything is compiled	migrated (batch 6); script removed
 869_a_pack_over_several_members_names_each_member_in_its_report.sh	pack	merge	e2e/pack::members/869 a pack over several members names each member in its report	migrated (batch 6); script removed
@@ -621,12 +621,12 @@ script	subsystem	class	destination	note
 933_one_cxx_runtime_per_process.sh	runtime	merge	e2e/runtime	
 934_llvm_with_a_graph_supplied_libstdcxx.sh	toolchain	merge	e2e/toolchain	
 935_two_builds_of_one_configuration.sh	cache	merge	e2e/cache	
-936_the_control_contract.sh	cli	merge	e2e/cli	
+936_the_control_contract.sh	cli	merge	e2e/cli::output/936 the control contract	migrated (batch 8); script removed
 937_the_root_compile_database_is_opt_in.sh	cdb	merge	e2e/cdb	
 938_a_relink_never_exposes_a_partial_file.sh	build	merge	e2e/build::link/938 a relink never exposes a partial file	migrated (batch 7); script removed
 939_a_lock_written_meanwhile_is_not_overwritten.sh	deps	merge	e2e/deps::lock/939 a lock written meanwhile is not overwritten	migrated (batch 3); script removed
 940_an_indirect_import_is_found_whatever_map_its_importer_has.sh	modules	merge	e2e/modules	
-941_a_closed_reader_ends_mcpp_and_no_child_inherits_the_ignore.sh	cli	merge	e2e/cli	
+941_a_closed_reader_ends_mcpp_and_no_child_inherits_the_ignore.sh	cli	merge	e2e/cli::signals/941 a closed reader ends mcpp and no child inherits the ignore	migrated (batch 8); script removed
 942_an_ok_image_is_built_once_and_run_by_okrun.sh	openkal	merge	e2e/openkal	
 943_a_transitive_git_branch_is_locked.sh	deps	merge	e2e/deps::git/943 a transitive git branch is locked	migrated (batch 3); script removed
 944_a_root_checkout_answers_a_version_the_index_lacks.sh	deps	merge	e2e/deps::git/944 a root checkout answers a version the index lacks	migrated (batch 3); script removed
@@ -686,7 +686,7 @@ script	subsystem	class	destination	note
 1013_optional_action_progress_preserves_outputs.sh	actions	merge	e2e/actions::progress/1013 optional action progress preserves outputs	migrated (batch 4); script removed
 1014_host_only_layers_do_not_select_the_target_abi.sh	target	merge	e2e/target	
 1015_action_progress_paths_are_utf8_on_every_host.sh	actions	merge	e2e/actions::progress/1015 action progress paths are utf8 on every host	migrated (batch 4); script removed
-1016_a_killed_build_does_not_race_the_next_one.sh	cli	merge	e2e/cli	
+1016_a_killed_build_does_not_race_the_next_one.sh	cli	merge	e2e/cli::signals/1016 a killed build does not race the next one	migrated (batch 8); script removed
 1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows	
 1018_a_package_and_a_namespaced_package_of_one_name_both_link.sh	deps	merge	e2e/deps::graph/1018 a package and a namespaced package of one name both link	migrated (batch 3); script removed
 1019_a_later_edge_walks_the_feature_deps_it_activates.sh	features	merge	e2e/features::activation/1019 a later edge walks the feature deps it activates	migrated (batch 5); script removed

@@ -146,6 +146,95 @@ void write_executable(const fs::path& file, std::string_view content);
 e2e::outcome run(const fs::path& program, std::vector<std::string> args = {}, const fs::path& cwd = {},
                  std::vector<std::pair<std::string, std::optional<std::string>>> env = {});
 
+// ---- a process held by its pid (POSIX systems) -------------------------------------------------
+//
+// A program the case starts and holds by its process id: signalled alone (not its group), waited
+// for, its standard streams a terminal (a pseudo-terminal), a pipe, a file or nothing. The child
+// begins with every signal at its default and none blocked, whatever this program was given.
+// Where the system has no such processes (Windows), `start` ends the case as failed.
+
+enum class stream {
+    null,      // /dev/null
+    pipe,      // the pipe the case reads; standard output and standard error given `pipe` share it
+    file,      // a file the case names (truncated)
+    terminal,  // the pseudo-terminal
+    closed,    // a pipe whose reader has already ended
+};
+
+struct spawn {
+    std::vector<std::string> argv;  // a program without a `/` is looked up on PATH
+    fs::path cwd;
+    // Set (a value) or removed (nothing), over this program's environment.
+    std::vector<std::pair<std::string, std::optional<std::string>>> env;
+    stream in = stream::null, out = stream::pipe, err = stream::pipe;
+    fs::path out_file, err_file;
+    // A new session whose controlling terminal is the pseudo-terminal (the terminal's keys, ^C
+    // among them, reach the program's group).
+    bool session = false;
+    unsigned short rows = 40, cols = 120;
+};
+
+// The local modes and the input modes of a terminal (`stty -g`'s words), compared whole.
+struct terminal_mode {
+    unsigned long iflag = 0, oflag = 0, cflag = 0, lflag = 0;
+    std::vector<unsigned char> cc;
+    bool echo = false, canonical = false;
+    bool operator==(const terminal_mode&) const = default;
+};
+
+class process {
+public:
+    static process start(spawn s);
+    process() = default;
+    process(process&&) noexcept;
+    process& operator=(process&&) noexcept;
+    process(const process&) = delete;
+    process& operator=(const process&) = delete;
+    ~process();  // kills (SIGKILL) a program still running
+
+    int pid() const noexcept { return pid_; }
+    // Reads what the terminal and the pipe hold, for up to `wait`.
+    void pump(std::chrono::milliseconds wait = std::chrono::milliseconds{100});
+    // Pumps until `pattern` (ECMAScript) matches what the terminal or the pipe received with
+    // escape sequences removed, or `timeout`; whether it matched.
+    bool wait_for(std::string_view pattern, std::chrono::milliseconds timeout);
+    const std::string& terminal() const noexcept { return term_; }  // the bytes the terminal received
+    const std::string& piped() const noexcept { return piped_; }    // the bytes the pipe received
+    void send(std::string_view bytes);                                 // typed on the terminal
+    terminal_mode mode() const;                                        // the terminal's present mode
+    void signal(int sig) const;
+    // The status if the program ended (the shell's: 128 + a signal), nothing while it runs.
+    std::optional<int> poll();
+    // The signal that ended the program (0: it exited), once it ended.
+    int ended_by() const noexcept { return signal_; }
+    // Waits for the end, reading the streams, and drains them; kills the program at `timeout`.
+    int wait(std::chrono::milliseconds timeout = std::chrono::minutes{10});
+
+private:
+    int pid_ = -1, master_ = -1, slave_ = -1, pipe_ = -1;
+    std::optional<int> status_;
+    int signal_ = 0;
+    std::string term_, piped_;
+};
+
+// Signals by their POSIX numbers (the same on Linux and macOS).
+namespace sig {
+inline constexpr int interrupt = 2, kill = 9, pipe = 13, terminate = 15;
+}
+
+// `text` without its escape sequences (`CSI ... final`).
+std::string strip_escapes(std::string_view text);
+
+// The processes of this machine (Linux, /proc): their id, name (`comm`), working directory and
+// command line (the words joined by spaces).
+struct process_entry {
+    int pid = 0;
+    std::string name;
+    fs::path cwd;
+    std::string command_line;
+};
+std::vector<process_entry> processes();
+
 // ---- readings --------------------------------------------------------------------------------------
 
 std::string read_file(const fs::path& file);

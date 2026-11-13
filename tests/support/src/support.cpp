@@ -1,3 +1,15 @@
+module;
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <termios.h>
+#include <unistd.h>
+extern char** environ;
+#endif
 module mcpp.test.support;
 
 import std;
@@ -1026,5 +1038,270 @@ std::string sha256(std::string_view data) {
     for (auto v : h) out += std::format("{:08x}", v);
     return out;
 }
+
+// ---- a process held by its pid ---------------------------------------------------------------------
+
+std::string strip_escapes(std::string_view text) {
+    static const std::regex csi("\x1b\\[[0-9;?]*[A-Za-z]");
+    return std::regex_replace(std::string(text), csi, "");
+}
+
+std::vector<process_entry> processes() {
+    std::vector<process_entry> out;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator("/proc", ec)) {
+        const auto name = e.path().filename().string();
+        if (name.empty() || !std::ranges::all_of(name, [](char c) { return c >= '0' && c <= '9'; }))
+            continue;
+        process_entry p;
+        p.pid = std::stoi(name);
+        std::ifstream(e.path() / "comm") >> p.name;
+        std::error_code ec2;
+        p.cwd = fs::read_symlink(e.path() / "cwd", ec2);
+        std::ifstream cmd(e.path() / "cmdline", std::ios::binary);
+        p.command_line.assign(std::istreambuf_iterator<char>(cmd), std::istreambuf_iterator<char>());
+        std::ranges::replace(p.command_line, '\0', ' ');
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+process::process(process&& o) noexcept
+    : pid_(std::exchange(o.pid_, -1)), master_(std::exchange(o.master_, -1)), slave_(std::exchange(o.slave_, -1)),
+      pipe_(std::exchange(o.pipe_, -1)), status_(o.status_), signal_(o.signal_), term_(std::move(o.term_)), piped_(std::move(o.piped_)) {}
+
+process& process::operator=(process&& o) noexcept {
+    if (this != &o) {
+        this->~process();
+        new (this) process(std::move(o));
+    }
+    return *this;
+}
+
+#if defined(_WIN32)
+process process::start(spawn) { mcpplibs::mtest::fail("a process held by its pid needs a POSIX system"); }
+process::~process() = default;
+void process::pump(std::chrono::milliseconds) {}
+bool process::wait_for(std::string_view, std::chrono::milliseconds) { return false; }
+void process::send(std::string_view) {}
+terminal_mode process::mode() const { return {}; }
+void process::signal(int) const {}
+std::optional<int> process::poll() { return status_; }
+int process::wait(std::chrono::milliseconds) { return status_.value_or(-1); }
+#else
+namespace {
+int shell_status(int raw) {
+    if (WIFEXITED(raw)) return WEXITSTATUS(raw);
+    if (WIFSIGNALED(raw)) return 128 + WTERMSIG(raw);
+    return -1;
+}
+void cloexec(int fd) { ::fcntl(fd, F_SETFD, FD_CLOEXEC); }
+}  // namespace
+
+process process::start(spawn s) {
+    process p;
+    if (s.argv.empty()) mcpplibs::mtest::fail("process::start: no program");
+    std::string program = s.argv.front();
+    if (program.find('/') == std::string::npos) {
+        auto found = on_path(program);
+        if (!found) mcpplibs::mtest::fail(std::format("process::start: '{}' is not on PATH", program));
+        program = found->string();
+    }
+    // The environment, made before the fork.
+    std::map<std::string, std::string> vars;
+    for (char** e = environ; e && *e; ++e) {
+        std::string_view kv(*e);
+        const auto eq = kv.find('=');
+        if (eq != std::string_view::npos) vars[std::string(kv.substr(0, eq))] = std::string(kv.substr(eq + 1));
+    }
+    for (const auto& [k, v] : s.env) {
+        if (v) vars[k] = *v;
+        else vars.erase(k);
+    }
+    std::vector<std::string> env_words;
+    for (const auto& [k, v] : vars) env_words.push_back(k + "=" + v);
+    std::vector<char*> envp, argv;
+    for (auto& w : env_words) envp.push_back(w.data());
+    envp.push_back(nullptr);
+    for (auto& a : s.argv) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    const std::string cwd = s.cwd.empty() ? std::string() : s.cwd.string();
+
+    const bool wants_terminal = s.in == stream::terminal || s.out == stream::terminal || s.err == stream::terminal;
+    if (wants_terminal) {
+        p.master_ = ::posix_openpt(O_RDWR | O_NOCTTY);
+        if (p.master_ < 0 || ::grantpt(p.master_) != 0 || ::unlockpt(p.master_) != 0)
+            mcpplibs::mtest::fail("process::start: no pseudo-terminal");
+        p.slave_ = ::open(::ptsname(p.master_), O_RDWR | O_NOCTTY);
+        cloexec(p.master_);
+        cloexec(p.slave_);
+        winsize ws{};
+        ws.ws_row = s.rows;
+        ws.ws_col = s.cols;
+        ::ioctl(p.slave_, TIOCSWINSZ, &ws);
+    }
+    int pipe_fds[2] = {-1, -1}, closed_fds[2] = {-1, -1};
+    if (s.out == stream::pipe || s.err == stream::pipe) {
+        if (::pipe(pipe_fds) != 0) mcpplibs::mtest::fail("process::start: no pipe");
+        cloexec(pipe_fds[0]);
+        cloexec(pipe_fds[1]);
+    }
+    if (s.out == stream::closed || s.err == stream::closed) {
+        if (::pipe(closed_fds) != 0) mcpplibs::mtest::fail("process::start: no pipe");
+        ::close(closed_fds[0]);
+        cloexec(closed_fds[1]);
+    }
+    const auto open_file = [](const fs::path& f) { return ::open(f.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644); };
+    const int out_file = s.out == stream::file ? open_file(s.out_file) : -1;
+    const int err_file = s.err == stream::file ? open_file(s.err_file) : -1;
+    const int null_fd = ::open("/dev/null", O_RDWR | O_CLOEXEC);
+    const auto fd_for = [&](stream k, int file) {
+        switch (k) {
+        case stream::null: return null_fd;
+        case stream::pipe: return pipe_fds[1];
+        case stream::file: return file;
+        case stream::terminal: return p.slave_;
+        case stream::closed: return closed_fds[1];
+        }
+        return null_fd;
+    };
+    const int in_fd = fd_for(s.in, -1), out_fd = fd_for(s.out, out_file), err_fd = fd_for(s.err, err_file);
+
+    p.pid_ = ::fork();
+    if (p.pid_ == 0) {
+        if (s.session) {
+            ::setsid();
+            if (p.slave_ >= 0) ::ioctl(p.slave_, TIOCSCTTY, 0);
+        }
+        struct sigaction dfl {};
+        dfl.sa_handler = SIG_DFL;
+        for (int n = 1; n < 32; ++n) ::sigaction(n, &dfl, nullptr);
+        sigset_t none;
+        sigemptyset(&none);
+        ::sigprocmask(SIG_SETMASK, &none, nullptr);
+        ::dup2(in_fd, 0);
+        ::dup2(out_fd, 1);
+        ::dup2(err_fd, 2);
+        if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) ::_exit(127);
+        ::execve(program.c_str(), argv.data(), envp.data());
+        ::_exit(127);
+    }
+    for (int fd : {pipe_fds[1], closed_fds[1], out_file, err_file, null_fd})
+        if (fd >= 0) ::close(fd);
+    p.pipe_ = pipe_fds[0];
+    if (p.pid_ < 0) mcpplibs::mtest::fail("process::start: fork failed");
+    return p;
+}
+
+process::~process() {
+    if (pid_ > 0 && !status_) {
+        ::kill(pid_, SIGKILL);
+        int raw = 0;
+        ::waitpid(pid_, &raw, 0);
+    }
+    for (int fd : {master_, slave_, pipe_})
+        if (fd >= 0) ::close(fd);
+}
+
+void process::pump(std::chrono::milliseconds wait) {
+    const auto deadline = std::chrono::steady_clock::now() + wait;
+    for (;;) {
+        std::vector<pollfd> fds;
+        if (master_ >= 0) fds.push_back({master_, POLLIN, 0});
+        if (pipe_ >= 0) fds.push_back({pipe_, POLLIN, 0});
+        if (fds.empty()) return;
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        const int n = ::poll(fds.data(), fds.size(), static_cast<int>(std::max<long long>(left.count(), 0)));
+        if (n <= 0) return;
+        for (const auto& f : fds) {
+            if (!(f.revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            char buf[65536];
+            const auto got = ::read(f.fd, buf, sizeof buf);
+            auto& into = f.fd == master_ ? term_ : piped_;
+            if (got > 0) {
+                into.append(buf, static_cast<std::size_t>(got));
+            } else if (f.fd == pipe_) {
+                ::close(pipe_);
+                pipe_ = -1;
+            } else if (slave_ < 0) {
+                ::close(master_);
+                master_ = -1;
+            } else {
+                return;  // the terminal is held open by this process: nothing more now
+            }
+        }
+        if (std::chrono::steady_clock::now() >= deadline) return;
+    }
+}
+
+bool process::wait_for(std::string_view pattern, std::chrono::milliseconds timeout) {
+    const std::regex re{std::string(pattern)};
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (;;) {
+        if (std::regex_search(strip_escapes(term_), re) || std::regex_search(strip_escapes(piped_), re)) return true;
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        pump(std::chrono::milliseconds{100});
+        if (poll() && master_ < 0 && pipe_ < 0) return std::regex_search(strip_escapes(term_ + piped_), re);
+    }
+}
+
+void process::send(std::string_view bytes) {
+    if (master_ >= 0) (void)::write(master_, bytes.data(), bytes.size());
+}
+
+terminal_mode process::mode() const {
+    terminal_mode m;
+    termios t{};
+    if (slave_ < 0 || ::tcgetattr(slave_, &t) != 0) return m;
+    m.iflag = t.c_iflag;
+    m.oflag = t.c_oflag;
+    m.cflag = t.c_cflag;
+    // PENDIN is the kernel's own (macOS sets it while input is re-echoed): not a mode a program chose.
+    m.lflag = t.c_lflag & ~static_cast<unsigned long>(PENDIN);
+    m.cc.assign(std::begin(t.c_cc), std::end(t.c_cc));
+    m.echo = (t.c_lflag & ECHO) != 0;
+    m.canonical = (t.c_lflag & ICANON) != 0;
+    return m;
+}
+
+void process::signal(int sig) const {
+    if (pid_ > 0 && !status_) ::kill(pid_, sig);
+}
+
+std::optional<int> process::poll() {
+    if (!status_ && pid_ > 0) {
+        int raw = 0;
+        if (::waitpid(pid_, &raw, WNOHANG) == pid_) {
+            status_ = shell_status(raw);
+            signal_ = WIFSIGNALED(raw) ? WTERMSIG(raw) : 0;
+        }
+    }
+    return status_;
+}
+
+int process::wait(std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!poll()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            ::kill(pid_, SIGKILL);
+            int raw = 0;
+            ::waitpid(pid_, &raw, 0);
+            status_ = shell_status(raw);
+            signal_ = WIFSIGNALED(raw) ? WTERMSIG(raw) : 0;
+            break;
+        }
+        if (master_ >= 0 || pipe_ >= 0) pump(std::chrono::milliseconds{50});
+        else std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    }
+    // Drain: what the program wrote before it ended, and what a child of it still writes, until the
+    // streams are quiet.
+    for (int quiet = 0; quiet < 3 && (master_ >= 0 || pipe_ >= 0);) {
+        const auto before = term_.size() + piped_.size();
+        pump(std::chrono::milliseconds{100});
+        quiet = term_.size() + piped_.size() == before ? quiet + 1 : 0;
+    }
+    return *status_;
+}
+#endif
 
 }  // namespace mcpp::test::support
