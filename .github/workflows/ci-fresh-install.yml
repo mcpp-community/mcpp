@@ -279,9 +279,19 @@ jobs:
           - distro: arch
             image: archlinux:latest
             setup: pacman -Sy --noconfirm curl bash tar gzip xz git findutils binutils file
+          # The refresh is its own command, retried once, and the install runs
+          # only after it succeeds (#523). `zypper install` refreshes too, but
+          # when that refresh fails it continues on stale or empty metadata,
+          # and the leg went red with `No provider of 'binutils' found` --
+          # naming a package instead of the repository that could not be read.
+          # A rolling image can meet a repository's new signing key, which
+          # `-n` alone rejects; --gpg-auto-import-keys accepts it.
           - distro: tumbleweed
             image: opensuse/tumbleweed:latest
-            setup: zypper -n install curl bash tar gzip xz git findutils binutils file
+            setup: >-
+              { zypper -n --gpg-auto-import-keys refresh ||
+              { sleep 15; zypper -n --gpg-auto-import-keys refresh; }; } &&
+              zypper -n install curl bash tar gzip xz git findutils binutils file
           - distro: debian-testing
             image: debian:testing
             setup: apt-get update && apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
