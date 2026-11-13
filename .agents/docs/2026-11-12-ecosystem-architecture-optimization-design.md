@@ -1133,7 +1133,7 @@ warning: the configuration changed (debug 1 → lines): 7a72… is built in full
 
 | 项 | 实施 | 持有它的检查 |
 |---|---|---|
-| P1 | `programs = "package"`：一个包一个程序，以第一个 glob 的固定目录命名，定义 `main` 的文件至多一个；`"directory"` 留下固定目录中的文件时给出 note，不形成任何组时为 `degraded`（`--strict` 拒绝） | mcpp `test_targets.cppm`；e2e 的 C++ 用例 |
+| P1 | `programs = "package"`：一个包一个程序，以第一个 glob 的固定目录命名，定义 `main` 的文件至多一个；按文件运行的各部分以文件在程序目录（其文件的公共目录）之下的路径命名，不同子目录中的同名文件因此不冲突（目录模式下即文件名，与此前相同）；`"directory"` 留下固定目录中的文件时给出 note，不形成任何组时为 `degraded`（`--strict` 拒绝） | mcpp `test_targets.cppm`；e2e 的 C++ 用例 |
 | P2 的汇总 | `finished in X (plan · programs · build · run)`：plan 为总时长减去其余各段，programs 不足 5 ms 时不列 | mcpp `execute.cppm`；`tests/e2e/test/streams.cpp` |
 | P3 | 拿不到刷新锁、且所声明的索引目录有缺失的进程，等待刷新锁（显示 `Waiting`）后再读；索引完整时仍跳过刷新、立即读取 | mcpp `xlings.cpp` |
 | P4 | 文档：`docs/08-testing.md` 的"测试构建的体积"一节（中英） | — |

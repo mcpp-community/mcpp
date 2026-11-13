@@ -73,7 +73,8 @@ it forms no group at all, the note is a degradation, which `--strict` refuses
 `[test] programs = "package"` (2026.11.13.1+) makes every file the package
 discovers one program, named by the first glob's fixed directory (`tests`). At
 most one of its files defines `main`; two are refused, naming both. The program
-still runs one process per file, named `tests/<file>`, so isolation and
+still runs one process per file, named by the file's path below the
+fixed directory (`tests/unit/b` for `tests/unit/b.cpp`), so isolation and
 parallelism are those of a program per file, with one link for the suite. The
 three values are the granularity of a test program: `"file"` (the default),
 `"directory"` and `"package"`.
