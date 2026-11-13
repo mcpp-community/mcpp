@@ -72,11 +72,11 @@ script	subsystem	class	destination	note
 64_shared_soname_runtime_alias.sh	runtime	merge	e2e/runtime	
 65_toolchain_runtime_dirs_for_run.sh	run	merge	e2e/run	
 66_runtime_provides.sh	runtime	merge	e2e/runtime	
-67_features_strict.sh	features	merge	e2e/features	
+67_features_strict.sh	features	merge	e2e/features::activation/67 features strict	migrated (batch 5); script removed
 68_profile_passthrough.sh	build	merge	e2e/build	
 69_package_templates.sh	cli	merge	e2e/cli	
 70_per_target_flags.sh	build	merge	e2e/build	
-71_required_features_gate.sh	features	merge	e2e/features	
+71_required_features_gate.sh	features	merge	e2e/features::activation/71 required features gate	migrated (batch 5); script removed
 72_test_profile_features.sh	test	merge	e2e/test::graph/72 test profile features	migrated (batch 1); script removed
 73_issue131_per_target_cxxflag.sh	build	merge	e2e/build	
 74_run_no_loader_env_leak.sh	run	merge	e2e/run	
@@ -86,14 +86,14 @@ script	subsystem	class	destination	note
 77_cdb_preserves_test_entries.sh	cdb	merge	e2e/cdb	
 78_test_main_combinations.sh	test	merge	e2e/test::graph/78 test main combinations	migrated (batch 1); script removed
 79_gtest_regular_dep_feature_main.sh	deps	merge	e2e/deps::resolve/79 gtest regular dep feature main	migrated (batch 3); script removed
-80_feature_defines.sh	features	merge	e2e/features	
-81_capability_binding.sh	features	merge	e2e/features	
-82_feature_optional_deps.sh	features	merge	e2e/features	
-83_feature_defines_propagate.sh	features	merge	e2e/features	
+80_feature_defines.sh	features	merge	e2e/features::activation/80 feature defines	migrated (batch 5); script removed
+81_capability_binding.sh	features	merge	e2e/features::activation/81 capability binding	migrated (batch 5); script removed
+82_feature_optional_deps.sh	features	merge	e2e/features::activation/82 feature optional deps	migrated (batch 5); script removed
+83_feature_defines_propagate.sh	features	merge	e2e/features::activation/83 feature defines propagate	migrated (batch 5); script removed
 84_runtime_dll_deploy.sh	windows	merge	e2e/windows	
-85_target_cfg_build_flags.sh	features	merge	e2e/features	
+85_target_cfg_build_flags.sh	features	merge	e2e/features::conditional/85 target cfg build flags	migrated (batch 5); script removed
 86_llvm_hermetic_link.sh	toolchain	merge	e2e/toolchain	
-86_target_cfg_dependencies.sh	features	merge	e2e/features	
+86_target_cfg_dependencies.sh	features	merge	e2e/features::conditional/86 target cfg dependencies	migrated (batch 5); script removed
 87_build_default_profile.sh	build	merge	e2e/build	
 88_xlings_environment.sh	self	merge	e2e/self	
 89_build_mcpp.sh	build-program	merge	e2e/build-program::protocol/89 build mcpp	migrated (batch 2); script removed
@@ -108,15 +108,15 @@ script	subsystem	class	destination	note
 98_reflection_import_std.sh	toolchain	merge	e2e/toolchain	
 99_msvc_native_build.sh	windows	merge	e2e/windows	
 100_cppfly_reflection.sh	toolchain	merge	e2e/toolchain	
-100_feature_sources_test_mode.sh	features	merge	e2e/features	
+100_feature_sources_test_mode.sh	features	merge	e2e/features::sources/100 feature sources test mode	migrated (batch 5); script removed
 101_cppfly_llvm_soft.sh	toolchain	merge	e2e/toolchain	
 102_mingw_cross_wine.sh	windows	keep	keep	emulator: runs the cross-built PE under wine
 103_target_vocabulary.sh	target	merge	e2e/target	
 104_asm_sources_gas.sh	build	merge	e2e/build	
 105_asm_sources_nasm.sh	build	merge	e2e/build	
-106_feature_gated_sources_toml.sh	features	merge	e2e/features	
+106_feature_gated_sources_toml.sh	features	merge	e2e/features::sources/106 feature gated sources toml	migrated (batch 5); script removed
 107_generated_files_toml.sh	actions	merge	e2e/actions::generated/107 generated files toml	migrated (batch 4); script removed
-108_cfg_conditional_sources.sh	features	merge	e2e/features	
+108_cfg_conditional_sources.sh	features	merge	e2e/features::conditional/108 cfg conditional sources	migrated (batch 5); script removed
 109_per_glob_flags.sh	build	merge	e2e/build	
 110_build_mcpp_env_contract.sh	build-program	merge	e2e/build-program::protocol/110 build mcpp env contract	migrated (batch 2); script removed
 111_dep_build_mcpp.sh	build-program	merge	e2e/build-program::deps/111 dep build mcpp	migrated (batch 2); script removed
@@ -127,16 +127,16 @@ script	subsystem	class	destination	note
 116_include_family_and_define_spaces.sh	build	merge	e2e/build	
 117_object_path_collision.sh	build	merge	e2e/build	
 118_purview_include_rebuild.sh	modules	merge	e2e/modules	
-119_dep_cfg_sources.sh	features	merge	e2e/features	
+119_dep_cfg_sources.sh	features	merge	e2e/features::conditional/119 dep cfg sources	migrated (batch 5); script removed
 120_ws_root_indices.sh	index	merge	e2e/index	
 121_default_ns_redirect.sh	index	merge	e2e/index	
 122_run_member.sh	workspace	merge	e2e/workspace	
 123_same_named_main_across_dep.sh	build	merge	e2e/build	
 124_gen_source_out_of_root_object_path.sh	actions	merge	e2e/actions::generated/124 gen source out of root object path	migrated (batch 4); script removed
 125_build_mcpp_dep_dir.sh	build-program	merge	e2e/build-program::deps/125 build mcpp dep dir	migrated (batch 2); script removed
-126_default_features_opt_out.sh	features	merge	e2e/features	
-127_transitive_default_features_optout.sh	features	merge	e2e/features	
-128_feature_forwarding.sh	features	merge	e2e/features	
+126_default_features_opt_out.sh	features	merge	e2e/features::defaults/126 default features opt out	migrated (batch 5); script removed
+127_transitive_default_features_optout.sh	features	merge	e2e/features::defaults/127 transitive default features optout	migrated (batch 5); script removed
+128_feature_forwarding.sh	features	merge	e2e/features::defaults/128 feature forwarding	migrated (batch 5); script removed
 130_freestanding_riscv_build_and_run.sh	baremetal	keep	keep	emulator: boots the image in qemu-system-riscv64
 131_freestanding_bsp_supplies_everything.sh	baremetal	keep	keep	emulator: boots the image in qemu-system-riscv64
 132_freestanding_test_and_artifacts.sh	baremetal	keep	keep	emulator: runs the freestanding tests in qemu-system-riscv64
@@ -145,17 +145,17 @@ script	subsystem	class	destination	note
 135_diagnostic_promise_resolves.sh	toolchain	merge	e2e/toolchain	
 136_aarch64_zero_libc_target.sh	baremetal	merge	e2e/baremetal	
 137_x86_64_zero_libc_target.sh	baremetal	merge	e2e/baremetal	
-138_feature_sources_gate_vs_provider.sh	features	merge	e2e/features	
+138_feature_sources_gate_vs_provider.sh	features	merge	e2e/features::sources/138 feature sources gate vs provider	migrated (batch 5); script removed
 139_build_program_advisory.sh	build-program	merge	e2e/build-program::protocol/139 build program advisory	migrated (batch 2); script removed
 141_include_dirs_after.sh	build	merge	e2e/build	
 142_generated_files_incremental.sh	actions	merge	e2e/actions::generated/142 generated files incremental	migrated (batch 4); script removed
 143_build_mcpp_source_directive.sh	build-program	merge	e2e/build-program::protocol/143 build mcpp source directive	migrated (batch 2); script removed
 144_build_mcpp_include_dir.sh	build-program	merge	e2e/build-program::protocol/144 build mcpp include dir	migrated (batch 2); script removed
 145_root_build_mcpp_dep_dirs.sh	build-program	merge	e2e/build-program::deps/145 root build mcpp dep dirs	migrated (batch 2); script removed
-146_feature_flags.sh	features	merge	e2e/features	
+146_feature_flags.sh	features	merge	e2e/features::sources/146 feature flags	migrated (batch 5); script removed
 147_per_os_features_xpkg.sh	index	merge	e2e/index	
 148_wide_include_list.sh	build	merge	e2e/build	
-149_conditional_glob_flags.sh	features	merge	e2e/features	
+149_conditional_glob_flags.sh	features	merge	e2e/features::conditional/149 conditional glob flags	migrated (batch 5); script removed
 150_clang_module_operator_template.sh	toolchain	keep	keep	a state canary of the bundled Clang (expected crash), not an assertion about mcpp
 151_index_url_artifact_migration.sh	self	merge	e2e/self	
 152_test_subdir_names.sh	test	merge	e2e/test::selection/152 test subdir names	migrated (batch 1); script removed
@@ -203,7 +203,7 @@ script	subsystem	class	destination	note
 192_install_path_namespace.sh	index	merge	e2e/index	
 193_provision_reexport.sh	build-program	merge	e2e/build-program::hosttools/193 provision reexport	migrated (batch 2); script removed
 194_build_mcpp_glob_input.sh	build-program	merge	e2e/build-program::protocol/194 build mcpp glob input	migrated (batch 2); script removed
-195_target_cfg_feature_deps.sh	features	merge	e2e/features	
+195_target_cfg_feature_deps.sh	features	merge	e2e/features::conditional/195 target cfg feature deps	migrated (batch 5); script removed
 196_version_identity_and_lock.sh	deps	merge	e2e/deps::lock/196 version identity and lock	migrated (batch 3); script removed
 197_windows_resources.sh	windows	merge	e2e/windows	
 198_windows_resources_cross.sh	windows	merge	e2e/windows	
@@ -248,7 +248,7 @@ script	subsystem	class	destination	note
 244_pack_library_gate.sh	pack	merge	e2e/pack	
 245_pack_library_fat_target_selection.sh	pack	merge	e2e/pack	
 246_explicit_empty_sources.sh	build	merge	e2e/build	
-247_bare_triple_conditional_native.sh	features	merge	e2e/features	
+247_bare_triple_conditional_native.sh	features	merge	e2e/features::conditional/247 bare triple conditional native	migrated (batch 5); script removed
 248_pack_library_fat_pe_leg.sh	windows	merge	e2e/windows	
 249_pack_workspace_root_unchanged.sh	pack	merge	e2e/pack	
 250_pack_names_the_target.sh	pack	merge	e2e/pack	
@@ -299,7 +299,7 @@ script	subsystem	class	destination	note
 305_built_from_is_not_published.sh	openkal	merge	e2e/openkal	
 306_dependency_linkage_axis.sh	runtime	merge	e2e/runtime	
 307_symbol_provision.sh	runtime	merge	e2e/runtime	
-308_dependency_required_features.sh	features	merge	e2e/features	
+308_dependency_required_features.sh	features	merge	e2e/features::activation/308 dependency required features	migrated (batch 5); script removed
 309_host_module_identity.sh	build-program	merge	e2e/build-program::hosttools/309 host module identity	migrated (batch 2); script removed
 310_build_dependencies.sh	build-program	merge	e2e/build-program::deps/310 build dependencies	migrated (batch 2); script removed
 311_rule_build_dependencies.sh	build-program	merge	e2e/build-program::deps/311 rule build dependencies	migrated (batch 2); script removed
@@ -316,7 +316,7 @@ script	subsystem	class	destination	note
 325_system_toolchain_refused.sh	toolchain	merge	e2e/toolchain	
 326_dependency_standard_floor.sh	deps	merge	e2e/deps::floors/326 dependency standard floor	migrated (batch 3); script removed
 327_declared_xlings_deps_report_their_own_failure.sh	index	merge	e2e/index	
-328_layer_predicates_apply_and_unknown_ones_say_so.sh	features	merge	e2e/features	
+328_layer_predicates_apply_and_unknown_ones_say_so.sh	features	merge	e2e/features::layers/328 layer predicates apply and unknown ones say so	migrated (batch 5); script removed
 329_exit_codes_match_the_contract.sh	cli	merge	e2e/cli	
 330_runner_hosted_targets.sh	run	merge	e2e/run	
 331_xlings_workspace_one_table.sh	index	merge	e2e/index	
@@ -330,7 +330,7 @@ script	subsystem	class	destination	note
 339_run_reports_the_program_status.sh	run	merge	e2e/run	
 340_no_orphan_survives_a_killed_mcpp.sh	cli	merge	e2e/cli	
 600_accel_variant_selection.sh	build-program	merge	e2e/build-program::accel/600 accel variant selection	migrated (batch 2); script removed
-601_exclusive_capability.sh	features	merge	e2e/features	
+601_exclusive_capability.sh	features	merge	e2e/features::activation/601 exclusive capability	migrated (batch 5); script removed
 603_version_floor.sh	deps	merge	e2e/deps::floors/603 version floor	migrated (batch 3); script removed
 604_offline_skips_sandbox_bootstrap.sh	self	merge	e2e/self	
 605_probe_channel_and_accel_reach_the_build_program.sh	build-program	merge	e2e/build-program::accel/605 probe channel and accel reach the build program	migrated (batch 2); script removed
@@ -344,7 +344,7 @@ script	subsystem	class	destination	note
 612_build_program_file_input_fast_path.sh	build-program	merge	e2e/build-program::protocol/612 build program file input fast path	migrated (batch 2); script removed
 613_sycl_sources_are_device_sources.sh	actions	merge	e2e/actions::devices/613 sycl sources are device sources	migrated (batch 4); script removed
 614_feature_xlings_reaches_xpkg_dir.sh	index	merge	e2e/index	
-615_feature_deps_shared_library_is_linked.sh	features	merge	e2e/features	
+615_feature_deps_shared_library_is_linked.sh	features	merge	e2e/features::activation/615 feature deps shared library is linked	migrated (batch 5); script removed
 616_examples_and_their_index_agree.sh	repo	sink	unit/test_repo_consistency	answers a parse/selection rule without a build: examples vs their index
 617_build_program_knows_the_cxx_stdlib.sh	build-program	merge	e2e/build-program::protocol/617 build program knows the cxx stdlib	migrated (batch 2); script removed
 618_dependency_feature_tools_reach_its_build_program.sh	build-program	merge	e2e/build-program::deps/618 dependency feature tools reach its build program	migrated (batch 2); script removed
@@ -366,7 +366,7 @@ script	subsystem	class	destination	note
 634_a_private_module_fragment_is_not_a_partition.sh	modules	merge	e2e/modules	
 635_a_byte_order_mark_does_not_hide_a_module.sh	modules	merge	e2e/modules	
 636_a_module_extension_file_need_not_provide_a_module.sh	modules	merge	e2e/modules	
-637_a_conditional_runtime_table_alone_is_applied.sh	features	merge	e2e/features	
+637_a_conditional_runtime_table_alone_is_applied.sh	features	merge	e2e/features::layers/637 a conditional runtime table alone is applied	migrated (batch 5); script removed
 638_pack_format_dispatch.sh	pack	merge	e2e/pack	
 639_the_scanner_does_not_read_inside_a_comment.sh	modules	merge	e2e/modules	
 640_a_capability_pin_explains_its_own_row.sh	target	merge	e2e/target	
@@ -384,7 +384,7 @@ script	subsystem	class	destination	note
 652_an_application_is_a_kind.sh	pack	merge	e2e/pack	
 652b_an_application_on_android_is_a_shared_library.sh	android	merge	e2e/android	
 653_exceptions_is_the_second_abi_member.sh	target	merge	e2e/target	
-654_a_requirement_on_the_target_axis.sh	features	merge	e2e/features	
+654_a_requirement_on_the_target_axis.sh	features	merge	e2e/features::layers/654 a requirement on the target axis	migrated (batch 5); script removed
 656_run_hands_the_distributable_to_the_runner.sh	run	merge	e2e/run	
 657_a_build_program_under_the_web_row_uses_the_host_compiler.sh	web	merge	e2e/web	
 658_a_program_runs_on_an_attached_android_device.sh	android	keep	keep	a physical Android device over adb
@@ -405,7 +405,7 @@ script	subsystem	class	destination	note
 673_test_discover_names_where_tests_are.sh	test	merge	e2e/test::selection/673 test discover names where tests are	migrated (batch 1); script removed
 674_a_format_is_run_by_the_runner_named_after_it.sh	run	merge	e2e/run	
 675_android_test_programs_carry_their_cxx_runtime.sh	android	merge	e2e/android	
-677_a_conditional_dependency_replaces_the_unconditional_one.sh	features	merge	e2e/features	
+677_a_conditional_dependency_replaces_the_unconditional_one.sh	features	merge	e2e/features::conditional/677 a conditional dependency replaces the unconditional one	migrated (batch 5); script removed
 678_a_row_states_a_library_form.sh	target	merge	e2e/target	
 679_a_path_dependency_takes_its_manifests_identity.sh	deps	merge	e2e/deps::identity/679 a path dependency takes its manifests identity	migrated (batch 3); script removed
 680_a_dependency_floor_on_the_android_api_level.sh	android	merge	e2e/android	
@@ -429,11 +429,11 @@ script	subsystem	class	destination	note
 703_the_llvm_row_on_the_msvc_abi_records_its_static_crt.sh	windows	merge	e2e/windows	
 704_cxx_identity_across_macho_images.sh	macos	keep	keep	a measurement leg (prints a table, asserts nothing)
 705_cxx_identity_across_pe_images.sh	windows	keep	keep	a measurement leg (prints a table, asserts nothing)
-710_a_forward_reaches_every_dependency_table.sh	features	merge	e2e/features	
-711_a_feature_deps_restatement_names_one_source.sh	features	merge	e2e/features	
+710_a_forward_reaches_every_dependency_table.sh	features	merge	e2e/features::defaults/710 a forward reaches every dependency table	migrated (batch 5); script removed
+711_a_feature_deps_restatement_names_one_source.sh	features	merge	e2e/features::activation/711 a feature deps restatement names one source	migrated (batch 5); script removed
 712_a_tool_package_contributes_nothing_to_its_consumer.sh	build-program	merge	e2e/build-program::hosttools/712 a tool package contributes nothing to its consumer	migrated (batch 2); script removed
 713_a_git_dependency_selects_a_repository_member.sh	deps	merge	e2e/deps::git/713 a git dependency selects a repository member	migrated (batch 3); script removed
-714_features_names_a_dependency_feature.sh	features	merge	e2e/features	
+714_features_names_a_dependency_feature.sh	features	merge	e2e/features::activation/714 features names a dependency feature	migrated (batch 5); script removed
 720_the_root_build_program_reads_the_resolved_graph.sh	build-program	merge	e2e/build-program::deps/720 the root build program reads the resolved graph	migrated (batch 2); script removed
 721_an_android_row_links_on_a_macos_host.sh	macos	merge	e2e/macos	
 722_pack_strips_what_the_graph_built.sh	pack	merge	e2e/pack	
@@ -447,7 +447,7 @@ script	subsystem	class	destination	note
 736_compile_flag_words_reach_the_compiler_and_the_databases.sh	cdb	merge	e2e/cdb	
 737_the_declared_runtime_payload_is_installed.sh	index	merge	e2e/index	
 738_a_graph_supplied_target_closes_the_hosts_own_search.sh	target	merge	e2e/target	
-739_a_private_feature_dep_does_not_reach_the_consumer.sh	features	merge	e2e/features	
+739_a_private_feature_dep_does_not_reach_the_consumer.sh	features	merge	e2e/features::activation/739 a private feature dep does not reach the consumer	migrated (batch 5); script removed
 740_gcc_over_a_graph_c_library_is_degraded_not_refused.sh	toolchain	merge	e2e/toolchain	
 741_c_abi_environment_declared_by_the_c_library.sh	target	merge	e2e/target	
 742_gcc_accepted_when_the_realisation_is_empty.sh	toolchain	merge	e2e/toolchain	
@@ -499,7 +499,7 @@ script	subsystem	class	destination	note
 810_two_packages_deploy_the_same_bytes_to_one_name.sh	runtime	merge	e2e/runtime	
 811_place_dlls_never_overwrites_a_declared_deploy.sh	windows	merge	e2e/windows	
 812_an_index_floor_is_a_closing_tip.sh	index	merge	e2e/index	
-813_conditional_dialect_cxxflags_root_only.sh	features	merge	e2e/features	
+813_conditional_dialect_cxxflags_root_only.sh	features	merge	e2e/features::conditional/813 conditional dialect cxxflags root only	migrated (batch 5); script removed
 814_the_llvm_row_defaults_to_the_dynamic_crt.sh	windows	merge	e2e/windows	
 815_the_database_describes_what_a_rule_generates.sh	cdb	merge	e2e/cdb	
 816_a_git_dependency_reports_its_fetch.sh	deps	merge	e2e/deps::git/816 a git dependency reports its fetch	migrated (batch 3); script removed
@@ -580,7 +580,7 @@ script	subsystem	class	destination	note
 892_coroutines_on_the_32_bit_msvc_abi_are_explained.sh	windows	merge	e2e/windows	
 893_the_workspace_prefix_carries_the_meaning.sh	workspace	merge	e2e/workspace	
 894_the_position_reading_is_kept_and_reported.sh	build	merge	e2e/build	
-895_conditional_configuration_rows_count_as_they_evaluate.sh	features	merge	e2e/features	
+895_conditional_configuration_rows_count_as_they_evaluate.sh	features	merge	e2e/features::conditional/895 conditional configuration rows count as they evaluate	migrated (batch 5); script removed
 896_an_action_output_has_one_writer.sh	actions	merge	e2e/actions::outputs/896 an action output has one writer	migrated (batch 4); script removed
 897_each_configuration_has_its_own_generated_output.sh	actions	merge	e2e/actions::outputs/897 each configuration has its own generated output	migrated (batch 4); script removed
 898_module_units_in_cpp_files.sh	modules	merge	e2e/modules	
@@ -677,19 +677,19 @@ script	subsystem	class	destination	note
 1004_an_external_toolchain_finds_mcpps_ninja.sh	toolchain	merge	e2e/toolchain	
 1005_clean_stale_says_what_it_kept.sh	cache	merge	e2e/cache	
 1006_a_response_file_and_what_it_names_are_link_inputs.sh	build	merge	e2e/build	
-1007_a_requirement_a_layer_decides_is_checked.sh	features	merge	e2e/features	
+1007_a_requirement_a_layer_decides_is_checked.sh	features	merge	e2e/features::layers/1007 a requirement a layer decides is checked	migrated (batch 5); script removed
 1008_a_provided_format_is_told_the_compression.sh	pack	merge	e2e/pack	
 1009_cache_gc_asks_the_runner.sh	openkal	merge	e2e/openkal	
 1010_the_std_module_takes_the_platforms_flags.sh	toolchain	merge	e2e/toolchain	
 1011_accelerator_requests_are_complete_and_canonical.sh	build-program	merge	e2e/build-program::accel/1011 accelerator requests are complete and canonical	migrated (batch 2); script removed
-1012_capabilities_bind_in_each_consumer_context.sh	features	merge	e2e/features	
+1012_capabilities_bind_in_each_consumer_context.sh	features	merge	e2e/features::activation/1012 capabilities bind in each consumer context	migrated (batch 5); script removed
 1013_optional_action_progress_preserves_outputs.sh	actions	merge	e2e/actions::progress/1013 optional action progress preserves outputs	migrated (batch 4); script removed
 1014_host_only_layers_do_not_select_the_target_abi.sh	target	merge	e2e/target	
 1015_action_progress_paths_are_utf8_on_every_host.sh	actions	merge	e2e/actions::progress/1015 action progress paths are utf8 on every host	migrated (batch 4); script removed
 1016_a_killed_build_does_not_race_the_next_one.sh	cli	merge	e2e/cli	
 1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows	
 1018_a_package_and_a_namespaced_package_of_one_name_both_link.sh	deps	merge	e2e/deps::graph/1018 a package and a namespaced package of one name both link	migrated (batch 3); script removed
-1019_a_later_edge_walks_the_feature_deps_it_activates.sh	features	merge	e2e/features	
+1019_a_later_edge_walks_the_feature_deps_it_activates.sh	features	merge	e2e/features::activation/1019 a later edge walks the feature deps it activates	migrated (batch 5); script removed
 1020_a_platform_version_group_chooses_the_version.sh	openkal	merge	e2e/openkal	
 1021_a_platform_series_is_locked_and_skips_newer_engines.sh	openkal	merge	e2e/openkal	
 1022_a_taken_over_directory_keeps_no_compiler_record_of_another.sh	cache	merge	e2e/cache	
@@ -715,7 +715,7 @@ script	subsystem	class	destination	note
 1042_each_flag_names_its_layer_and_a_request_its_selection.sh	target	merge	e2e/target	
 1043_several_programs_and_a_dotted_name_are_packed_as_stated.sh	pack	merge	e2e/pack	
 1044_clang_pairs_with_the_mingw_payload.sh	windows	keep	keep	emulator: runs the clang/mingw program under wine
-1045_a_required_capability_takes_its_default_provider.sh	features	merge	e2e/features	
+1045_a_required_capability_takes_its_default_provider.sh	features	merge	e2e/features::defaults/1045 a required capability takes its default provider	migrated (batch 5); script removed
 1046_a_patch_made_with_git_diff_from_the_package_root_is_applied.sh	deps	merge	e2e/deps::edges/1046 a patch made with git diff from the package root is applied	migrated (batch 3); script removed
 1047_an_artifact_compiles_its_shared_sources_with_its_own_flags.sh	build	merge	e2e/build	
 1048_a_git_reference_follows_the_default_branch.sh	deps	merge	e2e/deps::git/1048 a git reference follows the default branch	migrated (batch 3); script removed
