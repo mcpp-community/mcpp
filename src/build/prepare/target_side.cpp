@@ -497,6 +497,7 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
             auto realised = mcpp::toolchain::cenv::realise(
                 *state.resolvedTargetSide.cAbiDecl, tt ? tt->os : std::string{},
                 tt ? tt->arch : std::string{},
+                tt ? mcpp::toolchain::triple::to_string(tt->object_format()) : std::string_view{},
                 // A program its loader runs is told no operating system, as a
                 // bare machine is: the C library's identity macros are the only ones.
                 tt && (tt->is_freestanding() || tt->loader_supplies_os()));

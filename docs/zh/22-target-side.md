@@ -1001,7 +1001,9 @@ arch/env 条件与组合子用 `cfg(...)`。2026.11.10.2 之前的 mcpp 仅将 `
   因此不会与检查本身漂移。
 - **按解析后的目标求值**——交叉构建取 `--target` 三元组，否则取宿主。因此
   原生 Linux 构建**根本不会下载** `[target.windows]` 依赖。
-- **谓词的键**：`os`、`arch`、`family`、`env`——三元组的坐标——以及自 mcpp
+- **谓词的键**：`os`、`arch`、`family`、`env`——三元组的坐标；`object-format`（mcpp 2026.11.13.1），
+  行的容器格式（`elf`、`pe`、`mach-o`、`wasm`、`coff`），包需要的是同一容器的各系统共有的约定
+  （PE 行：Microsoft x64 调用约定、COFF 节）而不是某个系统时按它选择——以及自 mcpp
   2026.9.1.1 起的五个目标侧层名 `compiler`、`compiler-runtime`、
   `kernel-abi`、`c-abi`、`c++-abi`（见 [22 —— 目标侧](22-target-side.md)）。
   `accelerator` 同样是这里的键，由本次构建自己的 `accel`（`--accel` 或

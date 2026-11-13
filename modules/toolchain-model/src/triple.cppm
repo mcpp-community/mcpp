@@ -67,6 +67,19 @@ std::string_view to_string(ObjectFormat f) {
     return "ELF";
 }
 
+// The container's word in row data and in `cfg(object-format = "...")`: the
+// spelling a platform writes in `[[platform.define]] object-format`.
+std::string_view object_format_word(ObjectFormat f) {
+    switch (f) {
+        case ObjectFormat::Elf:   return "elf";
+        case ObjectFormat::MachO: return "mach-o";
+        case ObjectFormat::Pe:    return "pe";
+        case ObjectFormat::Wasm:  return "wasm";
+        case ObjectFormat::Coff:  return "coff";
+    }
+    return "elf";
+}
+
 struct Triple {
     std::string arch;   // "x86_64" | "aarch64" | "riscv64" | ... (GNU spelling)
     std::string os;     // "linux" | "macos" | "windows"

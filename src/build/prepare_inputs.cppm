@@ -66,6 +66,7 @@ namespace cfgpred {
 // `requires = ["mcpp:compiler=llvm"]` permanently unsatisfiable.
 struct Ctx {
     std::string os, arch, family, env, triple;
+    std::string objectFormat;   // the row's container, `cfg(object-format = ...)`
     // The selected platform (SPEC-013 §3): the platform's name (`openkal`)
     // and its package's (`openkal-platform`); `cfg(platform = ...)` matches
     // either. Empty when the target uses none.
@@ -165,6 +166,7 @@ inline Ctx context_for(std::string_view targetTriple,
         c.arch   = t->arch;
         c.env    = t->env;
         c.family = t->family();
+        c.objectFormat = std::string(triple::object_format_word(t->object_format()));
         // Canonical spelling on BOTH sides of the later comparison, so an
         // `x86_64-w64-mingw32` key and an `x86_64-windows-gnu` build agree.
         c.triple = t->str();
@@ -292,6 +294,7 @@ struct Parser {
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
         if (k == "env")    return c.env == v;
+        if (k == "object-format") return c.objectFormat == v;
         if (k == "platform")
             return !c.platform.empty() && (c.platform == v || c.platformPackage == v);
         // `accelerator` is answerable whenever the context carries the build's

@@ -1192,8 +1192,11 @@ conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`
 - **Evaluated against the resolved target** — the `--target` triple for a cross
   build, otherwise the host. So a native Linux build never even *downloads* a
   `[target.windows]` dependency.
-- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates —
-  and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
+- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates;
+  `object-format` (mcpp 2026.11.13.1), the row's container (`elf`, `pe`,
+  `mach-o`, `wasm`, `coff`), which a package selects by when what it needs is a
+  convention every system of the container shares (the PE rows: the Microsoft
+  x64 calling convention, COFF sections) rather than a system — and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
   `compiler-runtime`, `kernel-abi`, `c-abi`, `c++-abi`
   ([22 — The Target Side](22-target-side.md)). `accelerator` is a key here too
   and is answered from this build's own `accel` — the backend names in
