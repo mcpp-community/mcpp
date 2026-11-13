@@ -270,17 +270,17 @@ script	subsystem	class	destination	note
 266_pack_reads_a_macho_program_without_running_it.sh	macos	merge	e2e/macos	
 267_target_requested_is_empty_for_a_native_build.sh	target	merge	e2e/target	
 268_target_side_resolution.sh	target	merge	e2e/target	
-269_openkal_llvm_spelling_still_resolves.sh	openkal	merge	e2e/openkal	
+269_openkal_llvm_spelling_still_resolves.sh	openkal	merge	e2e/openkal::stack/269 openkal llvm spelling still resolves	migrated (batch 16); script removed
 280_target_side_layers.sh	target	merge	e2e/target	
 281_target_side_rules.sh	target	merge	e2e/target	
 282_target_is_a_request.sh	target	merge	e2e/target	
 283_run_target_flag_owns_its_cache_slot.sh	target	merge	e2e/target	
 284_env_segment_is_optional_everywhere.sh	target	merge	e2e/target	
-285_kernel_abi_from_graph_keeps_the_payload_c_library.sh	openkal	merge	e2e/openkal	
-286_the_openkal_stack_still_builds.sh	openkal	merge	e2e/openkal	
-287_the_openkal_stack_crosses_to_aarch64.sh	openkal	merge	e2e/openkal	
+285_kernel_abi_from_graph_keeps_the_payload_c_library.sh	openkal	merge	e2e/openkal::stack/285 kernel abi from graph keeps the payload c library	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
+286_the_openkal_stack_still_builds.sh	openkal	merge	e2e/openkal::stack/286 the openkal stack still builds	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml, ci-aarch64-fresh-install.yml and .github/tools/check_published_arm64_cn_ecosystem.sh run it by path
+287_the_openkal_stack_crosses_to_aarch64.sh	openkal	merge	e2e/openkal::stack/287 the openkal stack crosses to aarch64	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 288_the_openkal_stack_on_a_machine_with_no_os.sh	openkal	keep	keep	emulator: boots the openkal stack in qemu-system-riscv64
-289_one_host_reaches_every_openkal_target.sh	openkal	merge	e2e/openkal	
+289_one_host_reaches_every_openkal_target.sh	openkal	merge	e2e/openkal::stack/289 one host reaches every openkal target	migrated (batch 16); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 290_the_declaration_puts_an_environment_in_front.sh	target	merge	e2e/target	
 291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh	target	merge	e2e/target	
 292_a_package_that_names_a_layer_does_not_lose_the_targets_compiler.sh	target	merge	e2e/target	
@@ -296,7 +296,7 @@ script	subsystem	class	destination	note
 302_a_stated_compiler_outranks_the_graph_and_two_requirements_do_not_stack.sh	target	sink	unit/test_toolchain_rank	answers a parse/selection rule without a build: stated compiler over the graph
 303_the_query_gives_one_answer_for_the_c_library.sh	target	sink	unit/test_why_toolchain	answers a parse/selection rule without a build: one C-library answer
 304_the_target_side_reaches_every_unit.sh	target	merge	e2e/target	
-305_built_from_is_not_published.sh	openkal	merge	e2e/openkal	
+305_built_from_is_not_published.sh	openkal	merge	e2e/openkal::layers/305 built from is not published	migrated (batch 16); script removed
 306_dependency_linkage_axis.sh	runtime	merge	e2e/runtime	
 307_symbol_provision.sh	runtime	merge	e2e/runtime	
 308_dependency_required_features.sh	features	merge	e2e/features::activation/308 dependency required features	migrated (batch 5); script removed
@@ -451,7 +451,7 @@ script	subsystem	class	destination	note
 740_gcc_over_a_graph_c_library_is_degraded_not_refused.sh	toolchain	merge	e2e/toolchain	
 741_c_abi_environment_declared_by_the_c_library.sh	target	merge	e2e/target	
 742_gcc_accepted_when_the_realisation_is_empty.sh	toolchain	merge	e2e/toolchain	
-743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh	openkal	merge	e2e/openkal	
+743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh	openkal	merge	e2e/openkal::layers/743 kernel abi interfaces are resolved not preprocessed	migrated (batch 16); script removed
 744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/target	
 745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test::archive/745 no run builds the tests and says so	migrated (batch 1); script removed
 746_macos_deployment_target_is_target_keyed_not_host_keyed.sh	macos	merge	e2e/macos	
@@ -610,12 +610,12 @@ script	subsystem	class	destination	note
 922_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
 923_cross_dependency_images_keep_their_resources.sh	windows	merge	e2e/windows	
 924_visible_imports_resolve_transitive_modules.sh	modules	merge	e2e/modules::basics/924 visible imports resolve transitive modules	migrated (batch 9); script removed
-925_a_stated_sysroot_is_the_c_library.sh	openkal	merge	e2e/openkal	
-926_the_hosts_own_root_is_a_base.sh	openkal	merge	e2e/openkal	
+925_a_stated_sysroot_is_the_c_library.sh	openkal	merge	e2e/openkal::bases/925 a stated sysroot is the c library	migrated (batch 16); script removed
+926_the_hosts_own_root_is_a_base.sh	openkal	merge	e2e/openkal::bases/926 the hosts own root is a base	migrated (batch 16); script removed
 927_the_runner_contract.sh	run	merge	e2e/run::contract/927 the runner contract	migrated (batch 12); script removed
 928_an_apple_sdk_is_located_on_any_host.sh	macos	merge	e2e/macos	
 929_release_trims_paths_and_defines_ndebug.sh	build	merge	e2e/build::basics/929 release trims paths and defines ndebug	migrated (batch 7); script removed
-930_a_toolchain_phase_states_the_base.sh	openkal	merge	e2e/openkal	
+930_a_toolchain_phase_states_the_base.sh	openkal	merge	e2e/openkal::bases/930 a toolchain phase states the base	migrated (batch 16); script removed
 931_a_suggested_command_quotes_its_path.sh	self	merge	e2e/self::machine/931 a suggested command quotes its path	migrated (batch 15); script removed
 932_a_fresh_home_with_a_space_and_non_ascii_builds.sh	self	merge	e2e/self::homes/932 a fresh home with a space and non ascii builds	migrated (batch 15); script removed
 933_one_cxx_runtime_per_process.sh	runtime	merge	e2e/runtime	
@@ -627,46 +627,46 @@ script	subsystem	class	destination	note
 939_a_lock_written_meanwhile_is_not_overwritten.sh	deps	merge	e2e/deps::lock/939 a lock written meanwhile is not overwritten	migrated (batch 3); script removed
 940_an_indirect_import_is_found_whatever_map_its_importer_has.sh	modules	merge	e2e/modules::basics/940 an indirect import is found whatever map its importer has	migrated (batch 9); script removed
 941_a_closed_reader_ends_mcpp_and_no_child_inherits_the_ignore.sh	cli	merge	e2e/cli::signals/941 a closed reader ends mcpp and no child inherits the ignore	migrated (batch 8); script removed
-942_an_ok_image_is_built_once_and_run_by_okrun.sh	openkal	merge	e2e/openkal	
+942_an_ok_image_is_built_once_and_run_by_okrun.sh	openkal	merge	e2e/openkal::images/942 an ok image is built once and run by okrun	migrated (batch 16); script removed
 943_a_transitive_git_branch_is_locked.sh	deps	merge	e2e/deps::git/943 a transitive git branch is locked	migrated (batch 3); script removed
 944_a_root_checkout_answers_a_version_the_index_lacks.sh	deps	merge	e2e/deps::git/944 a root checkout answers a version the index lacks	migrated (batch 3); script removed
 945_a_miss_anywhere_in_the_graph_asks_for_a_refresh.sh	deps	merge	e2e/deps::graph/945 a miss anywhere in the graph asks for a refresh	migrated (batch 3); script removed
 946_a_program_begins_in_a_dependency_entry.sh	deps	merge	e2e/deps::entry/946 a program begins in a dependency entry	migrated (batch 3); script removed
-947_an_image_is_entered_at_one_stated_symbol.sh	openkal	merge	e2e/openkal	
+947_an_image_is_entered_at_one_stated_symbol.sh	openkal	merge	e2e/openkal::images/947 an image is entered at one stated symbol	migrated (batch 16); script removed
 948_an_upgraded_dependency_is_restaged_at_the_same_size.sh	deps	merge	e2e/deps::graph/948 an upgraded dependency is restaged at the same size	migrated (batch 3); script removed
 949_a_version_the_index_lacks_refreshes_at_install.sh	index	merge	e2e/index::refresh/949 a version the index lacks refreshes at install	migrated (batch 14); script removed
-950_a_kernel_abi_package_over_the_system_c_library_is_in_the_shared_image.sh	openkal	merge	e2e/openkal	
-951_an_ok_image_needs_no_declaration.sh	openkal	merge	e2e/openkal	
-952_a_platform_package_states_a_class_of_targets.sh	openkal	merge	e2e/openkal	
-953_the_host_graph_runs_build_programs_as_images.sh	openkal	merge	e2e/openkal	
+950_a_kernel_abi_package_over_the_system_c_library_is_in_the_shared_image.sh	openkal	merge	e2e/openkal::layers/950 a kernel abi package over the system c library is in the shared image	migrated (batch 16); script removed
+951_an_ok_image_needs_no_declaration.sh	openkal	merge	e2e/openkal::machine/951 an ok image needs no declaration	migrated (batch 16); script removed
+952_a_platform_package_states_a_class_of_targets.sh	openkal	merge	e2e/openkal::platforms/952 a platform package states a class of targets	migrated (batch 16); script removed
+953_the_host_graph_runs_build_programs_as_images.sh	openkal	merge	e2e/openkal::images/953 the host graph runs build programs as images	migrated (batch 16); script removed
 954_pack_has_three_axes.sh	pack	merge	e2e/pack::formats/954 pack has three axes	migrated (batch 6); script removed
-955_the_openkal_set_is_one_tree_of_every_architecture.sh	openkal	merge	e2e/openkal	
-956_a_single_file_runs_without_unpacking.sh	openkal	merge	e2e/openkal	
-957_packages_merge_and_describe_themselves.sh	openkal	merge	e2e/openkal	
+955_the_openkal_set_is_one_tree_of_every_architecture.sh	openkal	merge	e2e/openkal::trees/955 the openkal set is one tree of every architecture	migrated (batch 16); script removed
+956_a_single_file_runs_without_unpacking.sh	openkal	merge	e2e/openkal::trees/956 a single file runs without unpacking	migrated (batch 16); script removed
+957_packages_merge_and_describe_themselves.sh	openkal	merge	e2e/openkal::trees/957 packages merge and describe themselves	migrated (batch 16); script removed
 958_a_build_program_runs_again_when_its_output_is_gone.sh	build-program	merge	e2e/build-program::protocol/958 a build program runs again when its output is gone	migrated (batch 2); script removed
 959_a_package_is_keyed_by_every_module_it_imports.sh	cache	merge	e2e/cache::entries/959 a package is keyed by every module it imports	migrated (batch 10); script removed
-960_an_image_of_another_architecture_runs_through_its_execution_host.sh	openkal	merge	e2e/openkal	
-961_a_single_file_carries_the_image_in_a_program_of_its_architecture.sh	openkal	merge	e2e/openkal	
-962_a_webassembly_package_is_neither_an_xlings_entry_nor_a_single_file.sh	openkal	merge	e2e/openkal	
-963_a_target_set_builds_every_member_and_runs_where_it_is_reached.sh	openkal	merge	e2e/openkal	
-964_tests_built_once_run_from_an_archive.sh	openkal	merge	e2e/openkal	
+960_an_image_of_another_architecture_runs_through_its_execution_host.sh	openkal	merge	e2e/openkal::images/960 an image of another architecture runs through its execution host	migrated (batch 16); script removed
+961_a_single_file_carries_the_image_in_a_program_of_its_architecture.sh	openkal	merge	e2e/openkal::trees/961 a single file carries the image in a program of its architecture	migrated (batch 16); script removed
+962_a_webassembly_package_is_neither_an_xlings_entry_nor_a_single_file.sh	openkal	merge	e2e/openkal::trees/962 a webassembly package is neither an xlings entry nor a single file	migrated (batch 16); script removed
+963_a_target_set_builds_every_member_and_runs_where_it_is_reached.sh	openkal	merge	e2e/openkal::sets/963 a target set builds every member and runs where it is reached	migrated (batch 16); script removed
+964_tests_built_once_run_from_an_archive.sh	openkal	merge	e2e/openkal::sets/964 tests built once run from an archive	migrated (batch 16); script removed
 980_an_ambiguous_dependency_name_is_no_packages.sh	deps	merge	e2e/deps::graph/980 an ambiguous dependency name is no packages	migrated (batch 3); script removed
 981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh	web	merge	e2e/web	
 982_an_action_reads_the_builds_contract.sh	actions	merge	e2e/actions::outputs/982 an action reads the builds contract	migrated (batch 4); script removed
-983_a_pack_holds_the_legs_it_names.sh	openkal	merge	e2e/openkal	
-984_a_set_of_programs_is_a_package_per_leg.sh	openkal	merge	e2e/openkal	
-985_a_format_list_writes_each_container_of_one_tree.sh	openkal	merge	e2e/openkal	
-986_single_files_cover_the_legs_and_systems.sh	openkal	merge	e2e/openkal	
-987_the_universal_spellings_are_migrated.sh	openkal	merge	e2e/openkal	
+983_a_pack_holds_the_legs_it_names.sh	openkal	merge	e2e/openkal::sets/983 a pack holds the legs it names	migrated (batch 16); script removed
+984_a_set_of_programs_is_a_package_per_leg.sh	openkal	merge	e2e/openkal::sets/984 a set of programs is a package per leg	migrated (batch 16); script removed
+985_a_format_list_writes_each_container_of_one_tree.sh	openkal	merge	e2e/openkal::sets/985 a format list writes each container of one tree	migrated (batch 16); script removed
+986_single_files_cover_the_legs_and_systems.sh	openkal	merge	e2e/openkal::sets/986 single files cover the legs and systems	migrated (batch 16); script removed
+987_the_universal_spellings_are_migrated.sh	openkal	merge	e2e/openkal::sets/987 the universal spellings are migrated	migrated (batch 16); script removed
 988_the_windows_launcher_finds_its_package_from_a_windows_path.sh	openkal	keep	keep	emulator: runs the Windows launcher under wine
 989_a_native_legs_tests_run_from_an_archive.sh	test	merge	e2e/test::archive/989 a native legs tests run from an archive	migrated (batch 1); script removed
 990_a_lock_key_does_not_depend_on_the_selected_members.sh	deps	merge	e2e/deps::lock/990 a lock key does not depend on the selected members	migrated (batch 3); script removed
 991_a_prebuilt_archive_in_ldflags_is_a_link_input.sh	build	merge	e2e/build::link/991 a prebuilt archive in ldflags is a link input	migrated (batch 7); script removed
-992_a_polyglot_file_runs_on_every_system_it_holds.sh	openkal	merge	e2e/openkal	
+992_a_polyglot_file_runs_on_every_system_it_holds.sh	openkal	merge	e2e/openkal::trees/992 a polyglot file runs on every system it holds	migrated (batch 16); script kept: .github/workflows/cross-build-test.yml runs it by path for its wine leg
 993_a_test_describes_its_launch.sh	test	merge	e2e/test::launch/993 a test describes its launch ; e2e/test::launch/993 a test describes its launch (a named runner)	migrated (batch 1); script removed
-994_the_contract_names_the_target_side.sh	openkal	merge	e2e/openkal	
-995_the_windows_launcher_builds_over_any_platform_release.sh	openkal	merge	e2e/openkal	
-996_an_ok_image_waits_for_a_prepare_action.sh	openkal	merge	e2e/openkal	
+994_the_contract_names_the_target_side.sh	openkal	merge	e2e/openkal::layers/994 the contract names the target side	migrated (batch 16); script removed
+995_the_windows_launcher_builds_over_any_platform_release.sh	openkal	merge	e2e/openkal::trees/995 the windows launcher builds over any platform release	migrated (batch 16); script removed
+996_an_ok_image_waits_for_a_prepare_action.sh	openkal	merge	e2e/openkal::images/996 an ok image waits for a prepare action	migrated (batch 16); script removed
 997_a_members_dev_dependencies_stay_out_of_a_host_tool.sh	build-program	merge	e2e/build-program::hosttools/997 a members dev dependencies stay out of a host tool	migrated (batch 2); script removed
 998_a_build_keeps_its_bytes_once.sh	cache	merge	e2e/cache::directories/998 a build keeps its bytes once	migrated (batch 10); script removed
 999_debug_information_is_stored_once.sh	cache	merge	e2e/cache::directories/999 debug information is stored once	migrated (batch 10); script removed
@@ -679,7 +679,7 @@ script	subsystem	class	destination	note
 1006_a_response_file_and_what_it_names_are_link_inputs.sh	build	merge	e2e/build::link/1006 a response file and what it names are link inputs	migrated (batch 7); script removed
 1007_a_requirement_a_layer_decides_is_checked.sh	features	merge	e2e/features::layers/1007 a requirement a layer decides is checked	migrated (batch 5); script removed
 1008_a_provided_format_is_told_the_compression.sh	pack	merge	e2e/pack::formats/1008 a provided format is told the compression	migrated (batch 6); script removed
-1009_cache_gc_asks_the_runner.sh	openkal	merge	e2e/openkal	
+1009_cache_gc_asks_the_runner.sh	openkal	merge	e2e/openkal::images/1009 cache gc asks the runner	migrated (batch 16); script removed
 1010_the_std_module_takes_the_platforms_flags.sh	toolchain	merge	e2e/toolchain	
 1011_accelerator_requests_are_complete_and_canonical.sh	build-program	merge	e2e/build-program::accel/1011 accelerator requests are complete and canonical	migrated (batch 2); script removed
 1012_capabilities_bind_in_each_consumer_context.sh	features	merge	e2e/features::activation/1012 capabilities bind in each consumer context	migrated (batch 5); script removed
@@ -690,12 +690,12 @@ script	subsystem	class	destination	note
 1017_a_system_msvc_builds_the_build_program_of_a_cross_target.sh	windows	merge	e2e/windows	
 1018_a_package_and_a_namespaced_package_of_one_name_both_link.sh	deps	merge	e2e/deps::graph/1018 a package and a namespaced package of one name both link	migrated (batch 3); script removed
 1019_a_later_edge_walks_the_feature_deps_it_activates.sh	features	merge	e2e/features::activation/1019 a later edge walks the feature deps it activates	migrated (batch 5); script removed
-1020_a_platform_version_group_chooses_the_version.sh	openkal	merge	e2e/openkal	
-1021_a_platform_series_is_locked_and_skips_newer_engines.sh	openkal	merge	e2e/openkal	
+1020_a_platform_version_group_chooses_the_version.sh	openkal	merge	e2e/openkal::platforms/1020 a platform version group chooses the version	migrated (batch 16); script removed
+1021_a_platform_series_is_locked_and_skips_newer_engines.sh	openkal	merge	e2e/openkal::platforms/1021 a platform series is locked and skips newer engines	migrated (batch 16); script removed
 1022_a_taken_over_directory_keeps_no_compiler_record_of_another.sh	cache	merge	e2e/cache::directories/1022 a taken over directory keeps no compiler record of another	migrated (batch 10); script removed
 1023_msvc_objects_carry_their_own_debug_information.sh	windows	merge	e2e/windows	
 1024_a_launch_description_takes_the_fast_path.sh	run	merge	e2e/run::contract/1024 a launch description takes the fast path	migrated (batch 12); script removed
-1025_the_default_platform_is_one_release.sh	openkal	merge	e2e/openkal	
+1025_the_default_platform_is_one_release.sh	openkal	merge	e2e/openkal::platforms/1025 the default platform is one release	migrated (batch 16); script removed
 1026_an_archived_member_test_carries_its_members_files.sh	test	merge	e2e/test::archive/1026 an archived member test carries its members files	migrated (batch 1); script removed
 1027_a_configuration_group_keeps_the_other_groups_lock_entries.sh	deps	merge	e2e/deps::lock/1027 a configuration group keeps the other groups lock entries	migrated (batch 3); script removed
 1028_a_projects_state_directory_ignores_itself.sh	cache	merge	e2e/cache::directories/1028 a projects state directory ignores itself	migrated (batch 10); script removed
@@ -703,14 +703,14 @@ script	subsystem	class	destination	note
 1030_the_low_space_warning_knows_what_the_last_build_took.sh	cache	merge	e2e/cache::directories/1030 the low space warning knows what the last build took	migrated (batch 10); script removed
 1031_target_keeps_within_its_budget.sh	cache	merge	e2e/cache::directories/1031 target keeps within its budget	migrated (batch 10); script removed
 1032_a_quoted_dotted_dependency_key_is_deprecated.sh	deps	merge	e2e/deps::names/1032 a quoted dotted dependency key is deprecated	migrated (batch 3); script removed
-1033_an_ok_image_runs_on_the_system_that_built_it.sh	openkal	merge	e2e/openkal	
+1033_an_ok_image_runs_on_the_system_that_built_it.sh	openkal	merge	e2e/openkal::images/1033 an ok image runs on the system that built it	migrated (batch 16); script kept: tests/e2e/host-requirements.tsv requires its result on linux, macos and windows
 1034_a_workspace_members_test_finds_its_programs.sh	test	merge	e2e/test::workspace/1034 a workspace members test finds its programs	migrated (batch 1); script removed
 1035_a_test_program_reports_its_cases.sh	test	merge	e2e/test::protocol/1035 a test program reports its cases	migrated (batch 1); script removed
 1036_a_context_states_the_engine_values_in_process.sh	build-program	merge	e2e/build-program::protocol/1036 a context states the engine values in process	migrated (batch 2); script removed
 1037_a_skeleton_tests_with_mtest_and_a_test_needs_no_main.sh	test	merge	e2e/test::skeleton/1037 a skeleton tests with mtest and a test needs no main	migrated (batch 1); script removed
 1038_test_programs_of_a_directory_and_the_tests_a_change_affects.sh	test	merge	e2e/test::affected/1038 test programs of a directory and the tests a change affects	migrated (batch 1); script removed
 1039_two_builds_that_find_the_std_module_missing_compile_it_once.sh	modules	merge	e2e/modules::bmi/1039 two builds that find the std module missing compile it once	migrated (batch 9); script removed
-1040_a_platform_defines_a_target.sh	openkal	merge	e2e/openkal	
+1040_a_platform_defines_a_target.sh	openkal	merge	e2e/openkal::platforms/1040 a platform defines a target	migrated (batch 16); script removed
 1041_a_32_bit_x86_bare_target.sh	baremetal	merge	e2e/baremetal	
 1042_each_flag_names_its_layer_and_a_request_its_selection.sh	target	merge	e2e/target	
 1043_several_programs_and_a_dotted_name_are_packed_as_stated.sh	pack	merge	e2e/pack::modes/1043 several programs and a dotted name are packed as stated	migrated (batch 6); script removed
@@ -719,17 +719,17 @@ script	subsystem	class	destination	note
 1046_a_patch_made_with_git_diff_from_the_package_root_is_applied.sh	deps	merge	e2e/deps::edges/1046 a patch made with git diff from the package root is applied	migrated (batch 3); script removed
 1047_an_artifact_compiles_its_shared_sources_with_its_own_flags.sh	build	merge	e2e/build::flags/1047 an artifact compiles its shared sources with its own flags	migrated (batch 7); script removed
 1048_a_git_reference_follows_the_default_branch.sh	deps	merge	e2e/deps::git/1048 a git reference follows the default branch	migrated (batch 3); script removed
-1049_a_platform_skeleton_is_made_and_its_statement_read_as_the_engine_reads_it.sh	openkal	merge	e2e/openkal	
+1049_a_platform_skeleton_is_made_and_its_statement_read_as_the_engine_reads_it.sh	openkal	merge	e2e/openkal::platforms/1049 a platform skeleton is made and its statement read as the engine reads it	migrated (batch 16); script removed
 1050_a_test_run_is_kept_in_the_mtest_store.sh	test	merge	e2e/test::archive/1050 a test run is kept in the mtest store	migrated (batch 1); script removed
 1051_a_cross_targets_toolchain_section_is_not_the_build_programs.sh	build-program	merge	e2e/build-program::cross/1051 a cross targets toolchain section is not the build programs	migrated (batch 2); script removed
 1052_a_framework_that_uses_the_package_under_test_is_built_against_it.sh	test	merge	e2e/test::frameworks/1052 a framework that uses the package under test is built against it	migrated (batch 1); script removed
 1053_a_mach_o_images_c_library_is_up_before_its_initialisers.sh	macos	merge	e2e/macos	
 1054_programs_that_share_an_entry_keep_their_own_flags.sh	build	merge	e2e/build::flags/1054 programs that share an entry keep their own flags	migrated (batch 7); script removed
 1055_layer_suppliers_that_require_one_another_are_refused.sh	target	merge	e2e/target	
-1056_a_runner_reads_the_interfaces_its_implementation_provides.sh	openkal	merge	e2e/openkal	
-1057_a_platform_row_takes_nothing_of_the_payloads_host.sh	openkal	merge	e2e/openkal	
+1056_a_runner_reads_the_interfaces_its_implementation_provides.sh	openkal	merge	e2e/openkal::layers/1056 a runner reads the interfaces its implementation provides	migrated (batch 16); script removed
+1057_a_platform_row_takes_nothing_of_the_payloads_host.sh	openkal	merge	e2e/openkal::platforms/1057 a platform row takes nothing of the payloads host	migrated (batch 16); script removed
 1058_a_gnu_abi_windows_row_compiles_its_resources.sh	windows	merge	e2e/windows	
-1059_a_base_package_states_the_layers_beside_its_c_library.sh	openkal	merge	e2e/openkal	
+1059_a_base_package_states_the_layers_beside_its_c_library.sh	openkal	merge	e2e/openkal::layers/1059 a base package states the layers beside its c library	migrated (batch 16); script removed
 1060_a_patched_member_of_a_repository_keeps_its_siblings.sh	deps	merge	e2e/deps::edges/1060 a patched member of a repository keeps its siblings	migrated (batch 3); script removed
 1061_an_artifact_for_another_system_is_packed_without_running_it.sh	pack	merge	e2e/pack::modes/1061 an artifact for another system is packed without running it	migrated (batch 6); script removed
 1062_link_flags_on_a_compiler_link_are_named_not_dropped.sh	build	merge	e2e/build::link/1062 link flags on a compiler link are named not dropped	migrated (batch 7); script removed
@@ -743,11 +743,11 @@ script	subsystem	class	destination	note
 1070_the_test_spec_launches_frameworks_checks_and_output.sh	test	merge	e2e/test::protocol/1070 the test spec launches frameworks checks and output	migrated (batch 1); script removed
 1071_the_root_overrides_a_dependency_for_the_whole_graph.sh	deps	merge	e2e/deps::graph/1071 the root overrides a dependency for the whole graph	migrated (batch 3); script removed
 1072_a_resource_include_nothing_provides_is_the_scripts_own.sh	windows	merge	e2e/windows	
-1073_the_freebsd_musl_identity_is_served_by_openkal.sh	openkal	merge	e2e/openkal	
+1073_the_freebsd_musl_identity_is_served_by_openkal.sh	openkal	merge	e2e/openkal::stack/1073 the freebsd musl identity is served by openkal	migrated (batch 16); script removed
 1074_a_namespace_package_named_like_a_spec_field.sh	deps	merge	e2e/deps::names/1074 a namespace package named like a spec field	migrated (batch 3); script removed
 1075_a_graph_supplied_windows_row_finds_its_resource_headers.sh	windows	merge	e2e/windows	
 1076_an_aarch64_linux_gnu_cross_comes_from_a_sysroot_payload.sh	target	merge	e2e/target	
 1077_a_program_of_another_system_is_built_not_run.sh	target	merge	e2e/target	
-1078_systems_all_carries_the_runners_the_platform_declares.sh	openkal	merge	e2e/openkal	
+1078_systems_all_carries_the_runners_the_platform_declares.sh	openkal	merge	e2e/openkal::trees/1078 systems all carries the runners the platform declares	migrated (batch 16); script removed
 1079_an_emscripten_rows_longjmp_model_round_trips.sh	web	merge	e2e/web	
 1080_gcc_over_the_hosts_payload_links_from_the_payload.sh	toolchain	merge	e2e/toolchain	
