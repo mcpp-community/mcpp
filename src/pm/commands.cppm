@@ -420,11 +420,12 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     bool changed = false;
+    // The entry's whole value goes: an inline table written over several
+    // lines (TOML 1.1) ends where its braces close, not at the first newline.
     auto erase_line_at = [&](std::size_t p) {
         auto bol = text.rfind('\n', p);
-        auto eol = text.find('\n', p);
         if (bol == std::string::npos) bol = 0; else ++bol;
-        if (eol == std::string::npos) eol = text.size();
+        const auto eol = mcpp::manifest::assignment_end(text, bol);
         text.erase(bol, (eol - bol) + (eol < text.size() ? 1 : 0));
         changed = true;
     };

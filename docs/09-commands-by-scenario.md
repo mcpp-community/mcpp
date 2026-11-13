@@ -288,7 +288,8 @@ of any run that read such an index, including runs that then succeeded.
 fails rather than fetch. `--locked` fails when resolution differs from
 `mcpp.lock` instead of rewriting it, which is the shape a CI job wants.
 `mcpp index pin <name> <rev>` records a commit for a custom index in
-`mcpp.toml`; `mcpp index unpin` removes it.
+`mcpp.toml`; `mcpp index unpin` removes it. Both edit an `[indices]` entry
+written on one line, and refuse one whose inline table spans several lines.
 
 ## Download progress
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # requires:
-# 23_remove_update.sh — M4 #3: mcpp remove / mcpp update.
+# 23_remove_update.sh — M4 #3: mcpp remove / mcpp update; a multi-line entry
+# is removed whole (#928).
 set -e
 
 TMP=$(mktemp -d)
@@ -17,6 +18,10 @@ cat >> mcpp.toml <<'EOF'
 
 [dependencies]
 foo = "1.0.0"
+baz = {
+    version  = "3.0.0",   # an inline table over several lines (TOML 1.1)
+    features = ["x"],
+}
 bar = "2.0.0"
 EOF
 
@@ -24,6 +29,12 @@ EOF
 "$MCPP" remove foo > /tmp/_r.log 2>&1
 grep -q 'Removing'        /tmp/_r.log || { cat /tmp/_r.log; exit 1; }
 if grep -qE '^("foo"|foo) = ' mcpp.toml; then echo "foo not actually removed"; cat mcpp.toml; exit 1; fi
+grep -qE '^("bar"|bar) = "2\.0\.0"' mcpp.toml || { echo "bar accidentally removed"; cat mcpp.toml; exit 1; }
+
+# remove baz: its whole value goes, not only the line that opens it (#928)
+"$MCPP" remove baz > /tmp/_r.log 2>&1
+grep -q 'Removing'        /tmp/_r.log || { cat /tmp/_r.log; exit 1; }
+if grep -qE 'baz|3\.0\.0|features|^\}' mcpp.toml; then echo "baz not wholly removed"; cat mcpp.toml; exit 1; fi
 grep -qE '^("bar"|bar) = "2\.0\.0"' mcpp.toml || { echo "bar accidentally removed"; cat mcpp.toml; exit 1; }
 
 # remove non-existent → exit code 1
