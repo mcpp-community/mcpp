@@ -40,6 +40,16 @@ bool replace_all(std::string& text, std::string_view from, std::string_view to) 
     return changed;
 }
 
+// The reader is closed before the file is replaced: Windows refuses to rename
+// over a file this process holds open.
+std::optional<std::string> read_whole(const std::filesystem::path& p) {
+    std::ifstream is(p);
+    if (!is) return std::nullopt;
+    std::stringstream ss;
+    ss << is.rdbuf();
+    return ss.str();
+}
+
 // Whole, never in place: every mcpp started on the home migrates the same file.
 void write_file(const std::filesystem::path& p, std::string_view content) {
     (void)mcpp::home::write_replacing(p, content);
@@ -56,11 +66,9 @@ bool write_text_if_changed(const std::filesystem::path& path,
 } // namespace
 
 bool migrate_config_toml_index_names(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto original = ss.str();
+    auto text = read_whole(path);
+    if (!text) return false;
+    const auto original = *text;
     auto updated = original;
 
     replace_all(updated, "default = \"mcpp-index\"", "default = \"mcpplibs\"");
@@ -73,11 +81,9 @@ bool migrate_config_toml_index_names(const std::filesystem::path& path) {
 }
 
 bool migrate_xlings_json_index_names(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto original = ss.str();
+    auto text = read_whole(path);
+    if (!text) return false;
+    const auto original = *text;
     auto updated = original;
 
     replace_all(updated, "\"name\": \"mcpp-index\"", "\"name\": \"mcpplibs\"");

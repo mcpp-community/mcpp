@@ -1433,11 +1433,16 @@ bool ensure_project_index_dir(
 std::expected<void, ConfigError>
 write_config_value(const GlobalConfig& cfg, std::string_view section, std::string_view key,
                    std::string_view literal) {
-    std::ifstream is(cfg.configFile);
-    if (!is) return std::unexpected(ConfigError{
-        std::format("cannot open '{}'", cfg.configFile.string())});
-    std::stringstream ss; ss << is.rdbuf();
-    std::string text = ss.str();
+    // The reader is closed before the file is replaced: Windows refuses to
+    // rename over a file this process holds open.
+    std::string text;
+    {
+        std::ifstream is(cfg.configFile);
+        if (!is) return std::unexpected(ConfigError{
+            std::format("cannot open '{}'", cfg.configFile.string())});
+        std::stringstream ss; ss << is.rdbuf();
+        text = ss.str();
+    }
 
     std::string line = std::format("{} = {}\n", key, literal);
     const auto header = std::format("[{}]", section);
