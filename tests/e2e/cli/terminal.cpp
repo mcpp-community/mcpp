@@ -1,4 +1,5 @@
-// A build on a terminal: the status row names the action that runs (formerly tests/e2e/843).
+// A build on a terminal: the status row names the action that runs, and `--play-game` restores the
+// terminal however the build ends (formerly tests/e2e/843, 845).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -167,6 +168,71 @@ s::spawn on_terminal(const s::project& p, std::vector<std::string> args,
     return sp;
 }
 
+// The words of `stty -g` in `file`, the kernel's PENDIN (0x20000000 in a BSD `gfmt1` lflag) left
+// out: macOS sets it whenever ICANON is turned back on and the next read clears it, so it is not
+// a mode mcpp left behind. Empty when the file is absent.
+std::string stty_mode(const fs::path& file) {
+    if (!fs::is_regular_file(file)) return {};
+    auto g = s::read_file(file);
+    while (!g.empty() && (g.back() == '\n' || g.back() == '\r')) g.pop_back();
+    if (!g.starts_with("gfmt1:")) return g;
+    std::string out;
+    for (auto part : std::views::split(std::string_view(g), ':')) {
+        std::string f(part.begin(), part.end());
+        if (f.starts_with("lflag="))
+            f = std::format("lflag={:x}", std::stoul(f.substr(6), nullptr, 16) & ~0x20000000ul);
+        out += (out.empty() ? "" : ":") + f;
+    }
+    return out;
+}
+
+// `--play-game=snake` in `p` through a shell in the terminal's session, which records the mode
+// before and after mcpp (`stty -g`): on macOS the terminal is revoked for everyone else once the
+// session leader exits, so the shell, still in the session, reads it. The shell traps SIGINT (a
+// trap, not an ignore, so mcpp starts with the default action) and exits with mcpp's status.
+struct played {
+    int status = -1;
+    std::string plain;
+    std::optional<s::terminal_mode> during;
+    std::string before, after;
+};
+played play(const s::project& p, bool interrupt) {
+    fs::remove(p.at("before.txt"));
+    fs::remove(p.at("after.txt"));
+    auto sp = on_terminal(p, {"build", "--play-game=snake"}, {{"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"}, {"NO_COLOR", std::nullopt}, {"LC_ALL", std::nullopt}});
+    const auto mcpp = sp.argv;
+    sp.argv = {"sh", "-c", "trap : INT; stty -g > before.txt; \"$0\" \"$@\"; code=$?; stty -g > after.txt; exit $code"};
+    sp.argv.insert(sp.argv.end(), mcpp.begin(), mcpp.end());
+    auto proc = s::process::start(sp);
+    played out;
+    // The keys go when the status row that carries the score first appears: the frame the
+    // build drew, not a wall-clock delay, which sent them into the Programs phase whenever the
+    // build program took that long. A build that never draws the row is a failure, not a hang.
+    proc.wait_for(R"(Building .* · snake \d+)", std::chrono::seconds{60});
+    out.during = proc.mode();
+    for (std::string_view key : {"\x1b[B", "\x1b[C", "\x1b[A"}) {
+        proc.send(key);
+        std::this_thread::sleep_for(std::chrono::milliseconds{150});
+    }
+    if (interrupt) proc.send("\x03");
+    out.status = proc.wait();
+    out.plain = s::strip_escapes(proc.terminal());
+    std::erase(out.plain, '\r');
+    out.before = stty_mode(p.at("before.txt"));
+    out.after = stty_mode(p.at("after.txt"));
+    return out;
+}
+
+// The processes still running the prepare action of the project at `dir` (`ps`, on Linux and
+// macOS): its command line names `time.sleep(4)` and a path under the project.
+std::vector<std::string> prepare_actions_alive(const fs::path& dir) {
+    auto r = e2e::run({.argv = {s::on_path("ps").value_or("/bin/ps").string(), "-axo", "pid=,command="}});
+    std::vector<std::string> alive;
+    for (auto& line : split_rows(r.out))
+        if (line.contains("time.sleep(4)") && line.contains(dir.string())) alive.push_back(line);
+    return alive;
+}
+
 E2E terminal{"terminal", [] {
     "843 a terminal names the action that runs"_test[tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
         // T1 the status row names a running prepare action, its package and clock; T2 the
@@ -208,6 +274,50 @@ E2E terminal{"terminal", [] {
             ++checked;
         }
         expect(fatal(checked >= 3)) << "T5: only " << checked << " frames were drawn";
+    };
+    "845 play game restores the terminal"_test[tag{"requires:python3"}][tag{"requires:unix-shell"}] = [] {
+        // Build output design 2026-09-30 (revision 3) §5.14, through a pseudo-terminal, with a
+        // prepare action that takes four seconds. G1 while the game plays the terminal reads keys
+        // without echo and without a line end, and the status row carries the score; G2 after
+        // the build the terminal's mode is the mode it had, and a line after Finished states the
+        // best round; G3 a Ctrl-C during the game ends mcpp by SIGINT, restores the mode, and
+        // the prepare action does not outlive mcpp; G4 with standard input not a terminal the
+        // game is off, a line says why, and the build succeeds.
+        s::needs({"python3", "unix-shell"});
+        auto p = app();
+        auto g = play(p, false);
+        expect(fatal(g.during.has_value())) << "the build ended before the game could be observed\n" << g.plain;
+        expect(fatal(!g.during->echo)) << "G1: echo stayed on during the game\n" << g.plain;
+        expect(fatal(!g.during->canonical)) << "G1: the terminal still waited for a line end\n" << g.plain;
+        expect(fatal(matches(g.plain, R"(Building .* · snake \d+)"))) << "G1: no status row carries the score\n" << g.plain;
+        expect(fatal(!g.before.empty() && g.after == g.before)) << "G2: the terminal's mode was not restored: " << g.before << " -> " << g.after;
+        expect(fatal(g.status == 0)) << "G2: the build failed (" << g.status << ")\n" << g.plain;
+        const auto rows = split_rows(g.plain);
+        std::optional<std::size_t> finished, best;
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            if (!finished && rows[i].contains("Finished")) finished = i;
+            if (!best && matches(rows[i], R"(^ +Played snake · best \d+$)")) best = i;
+        }
+        expect(fatal(best.has_value())) << "G2: no line states the best round\n" << g.plain;
+        expect(fatal(finished && *best > *finished)) << "G2: the best round is not stated after Finished\n" << g.plain;
+
+        fs::remove_all(p.at("target"));
+        g = play(p, true);
+        expect(fatal(!g.before.empty() && g.after == g.before)) << "G3: the terminal's mode was not restored: " << g.before << " -> " << g.after;
+        expect(fatal(g.status == 130)) << "G3: mcpp did not end by SIGINT (the shell reports " << g.status << ")\n" << g.plain;
+        std::this_thread::sleep_for(std::chrono::milliseconds{500});
+        const auto alive = prepare_actions_alive(p.dir());
+        expect(fatal(alive.empty())) << "G3: the prepare action outlived mcpp" << alive;
+
+        fs::remove_all(p.at("target"));
+        auto r = p.mcpp({"build", "--play-game"}, {.input = ""});
+        expect(fatal(e2e::succeeded(r))) << "G4: the build failed: " << s::text(r);
+        auto proc = s::process::start(on_terminal(p, {"build", "--play-game"}, {{"LANG", "C.UTF-8"}, {"LC_ALL", std::nullopt}}, true));
+        const int status = proc.wait();
+        const auto plain = s::strip_escapes(proc.terminal());
+        expect(fatal(status == 0)) << "G4: the build failed\n" << plain;
+        expect(fatal(plain.contains("standard input is not a terminal"))) << "G4: no line says why the game is off\n" << plain;
+        expect(fatal(!plain.contains("Played"))) << "G4: a game was played without keys\n" << plain;
     };
 }};
 

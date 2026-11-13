@@ -530,7 +530,7 @@ script	subsystem	class	destination	note
 842_the_build_reports_each_step_once.sh	cli	merge	e2e/cli::output/842 the build reports each step once	migrated (batch 8); script removed
 843_a_terminal_names_the_action_that_runs.sh	cli	merge	e2e/cli::terminal/843 a terminal names the action that runs	migrated (batch 8); script removed
 844_a_planned_build_keeps_one_lock_entry_per_identity.sh	deps	merge	e2e/deps::lock/844 a planned build keeps one lock entry per identity	migrated (batch 3); script removed
-845_play_game_restores_the_terminal.sh	cli	merge	e2e/cli	kept (batch 8): the case finds the prepare action alive 3 s after a Ctrl-C ended mcpp (G3); the script's own G3 check compares a directory name with pgrep's pids and cannot fail. Awaits the engine owner
+845_play_game_restores_the_terminal.sh	cli	merge	e2e/cli::terminal/845 play game restores the terminal	migrated (batch 19); script removed. G3 holds since the interrupt ends each running program before mcpp exits (2026.11.13.1)
 846_the_vendored_xlings_is_replaced_from_the_newest_source.sh	self	keep	keep	upgrade: the vendored xlings replaced from the newest source in a home
 847_a_module_name_is_unique_within_a_program.sh	modules	merge	e2e/modules::programs/847 a module name is unique within a program	migrated (batch 9); script removed
 848_msvc_binds_a_module_name_per_program.sh	windows	merge	e2e/windows	
