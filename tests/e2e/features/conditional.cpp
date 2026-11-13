@@ -351,7 +351,7 @@ kind = "lib"
             expect(fatal(json.has_value())) << "no resolution.json";
             std::string out;
             for (const auto& pkg : s::json_file(*json)["graph"]["packages"])
-                if (pkg["package"]["canonical"] == canonical)
+                if (pkg["package"]["canonical"].get<std::string>() == canonical)
                     for (const auto& r : pkg["requested_by"]) out += (out.empty() ? "" : " ") + r["table"].get<std::string>();
             return out;
         };

@@ -14,7 +14,7 @@ namespace {
 
 json record(std::string_view stream, std::string_view name) {
     for (const auto& r : s::json_lines(stream))
-        if (r.contains("test") && r["test"] == name) return r;
+        if (r.contains("test") && r["test"].get<std::string>() == name) return r;
     return {};
 }
 
