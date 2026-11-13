@@ -205,7 +205,7 @@ int main() {{
         auto again = p.mcpp({"build", "--accel", "newmodel2+{opaque},sycl+{sm_89,sm_90,sm_89}"}, home);
         expect(fatal(e2e::succeeded(again))) << "equivalent request did not build";
         expect(eq(s::glob(p.at("target"), "*/*/build.ninja"), before)) << "equivalent sets allocated different variants";
-        expect(s::lacks(s::text(again), "fingerprint changed")) << "equivalent sets changed the fingerprint";
+        expect(s::lacks(s::text(again), "the configuration changed")) << "equivalent sets changed the fingerprint";
         expect(e2e::succeeded(p.mcpp({"run", "--accel", "sycl+{sm_89,sm_90},newmodel2+{opaque}"}, home))) << "the canonical variant did not run";
     };
 }};

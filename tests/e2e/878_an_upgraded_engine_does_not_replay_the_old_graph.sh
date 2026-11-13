@@ -13,8 +13,10 @@
 # new front end drove the actions of an older engine without saying so.
 #
 # The record of a build now carries the engine that wrote it, its version and the
-# path of its executable (the path the graph uses), and one predicate
-# (`admit_recorded_build`) compares it for every fast path.
+# path of its executable, and one predicate (`admit_recorded_build`) compares it
+# for every fast path. Since 2026.11.13.1 the graph runs the engine through the
+# build directory's link to it (design 2026-11-12 §17): no command names the
+# path an install moves, and the link is made the running engine at each plan.
 #
 # One program is built with an engine copied to one path, and the same binary is
 # then run from another path, which is what a reinstall into another directory
@@ -52,6 +54,19 @@ replayed() {   # replayed <log>: the build was served by the fast path
 names() {      # names <dir>: does a graph under target/ name the directory
     grep -rl --include=build.ninja -F -- "$1" target 2>/dev/null | grep -q .
 }
+# runs <engine>: the program every graph under target/ runs as `$mcpp` is that
+# engine -- since 2026.11.13.1 the build directory's link to it (design
+# 2026-11-12 §17), the same file or a copy of it.
+runs() {
+    local g named found=1
+    for g in $(find target -name build.ninja -not -path '*/.build-mcpp/*'); do
+        named=$(sed -n 's/^mcpp *= *//p' "$g" | head -1)
+        [ -n "$named" ] || return 1
+        { [ "$named" -ef "$1" ] || cmp -s "$named" "$1"; } || return 1
+        found=0
+    done
+    return $found
+}
 
 mkdir -p "$TMP/engine-one" "$TMP/engine-two" "$TMP/engine-three" "$TMP/app/src" "$TMP/app/assets"
 cp "$MCPP" "$TMP/engine-one/mcpp$EXE"
@@ -72,7 +87,7 @@ ONE="$TMP/engine-one/mcpp$EXE"
 "$ONE" build > b0.log 2>&1 || fail "the first build failed" b0.log
 "$ONE" build -v > b1.log 2>&1 || fail "the warm build failed" b1.log
 replayed b1.log || fail "the warm build was not replayed, so nothing below is measured against the fast path" b1.log
-names "engine-one" || fail "the graph does not name the engine that wrote it, so the criterion has nothing to detect" b0.log
+runs "$ONE" || fail "the graph does not run the engine that wrote it, so the criterion has nothing to detect" b0.log
 grep -q '^engine=' target/.build_cache || fail "the record does not name the engine that wrote it" target/.build_cache
 
 # A. The engine moves; no source, manifest or deployed file changes.
@@ -80,7 +95,7 @@ mv "$TMP/engine-one/mcpp$EXE" "$TMP/engine-two/mcpp$EXE"
 TWO="$TMP/engine-two/mcpp$EXE"
 "$TWO" build -v > a1.log 2>&1 || fail "A: the build with the engine at its new path failed" a1.log
 names "engine-one" && fail "A: a graph still names the path the engine was moved from" a1.log
-names "engine-two" || fail "A: the regenerated graph does not name the engine that built it" a1.log
+runs "$TWO" || fail "A: the regenerated graph does not run the engine that built it" a1.log
 grep -q "fast-path: build declined" a1.log || fail "A: the build did not say that the fast path declined" a1.log
 
 # B. Replayed again, and an action that starts the engine runs.

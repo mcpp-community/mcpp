@@ -15,7 +15,7 @@
 #
 # Criteria:
 #   A. `mcpp run`, `mcpp test --target <this-arch>-openkal`, `mcpp run`: the
-#      third prints no "fingerprint changed": the build of the package's
+#      third prints no "the configuration changed": the build of the package's
 #      program before its tests is recorded under its target, not as this
 #      machine's.
 #   B. `mcpp test --target <other>-openkal` exits 2 and prints the refusal in
@@ -76,7 +76,7 @@ PY
 "$MCPP" run > a1.log 2>&1 || fail "A: mcpp run" a1.log
 "$MCPP" test --target "$HT" > a2.log 2>&1 || fail "A: mcpp test --target $HT" a2.log
 "$MCPP" run > a3.log 2>&1 || fail "A: mcpp run after the test" a3.log
-grep -q "fingerprint changed" a3.log && fail "A: the test's build was recorded as this machine's" a3.log
+grep -q "the configuration changed" a3.log && fail "A: the test's build was recorded as this machine's" a3.log
 grep -qx "\[target=$HT\]" target/.build_cache || fail "A: no cache entry for $HT" target/.build_cache
 echo "ok: the build before a target's tests is recorded under the target"
 

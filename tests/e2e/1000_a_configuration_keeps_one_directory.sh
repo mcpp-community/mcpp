@@ -22,6 +22,13 @@
 #   F. In a rooted workspace (`members = ["."]`), `clean --stale` keeps the
 #      configuration in use: the workspace's own directory is no member's
 #      leftover.
+#   G. The directory is named by the configuration's lineage and records the
+#      whole fingerprint; the graph runs mcpp through the directory's link,
+#      `engine/epoch-<N>/mcpp` (design 2026-11-12 §17).
+#   H. The same mcpp run from another path -- what an upgrade looks like to the
+#      graph -- compiles nothing again.
+#   I. A compiler build that differs empties the directory in place
+#      ("Replaced"), and the build continues under the same name.
 set -e
 
 TMP=$(mktemp -d)
@@ -85,6 +92,30 @@ rm -f target/.mcpp-swept
 "$MCPP" build > e1.log 2>&1 || fail "the build that sweeps failed" e1.log
 [ -n "$(find "$record" -mtime -1)" ] || fail "a replayed build did not mark its cache entry used" <(stat "$record")
 
+# G
+prints=$("$MCPP" build --print-fingerprint 2>&1) || fail "--print-fingerprint failed" <(echo "$prints")
+lineage=$(echo "$prints" | sed -n 's/^Lineage: \([0-9a-f]*\).*/\1/p' | head -1)
+fingerprint=$(echo "$prints" | sed -n 's/^Fingerprint: //p' | head -1)
+[ "$(basename "$dir")" = "$lineage" ] || fail "the directory is not named by the lineage ($lineage)" <(ls "$triple")
+[ "$(cat "$dir/fingerprint")" = "$fingerprint" ] || fail "the directory does not record the fingerprint" "$dir/fingerprint"
+grep -Eq "^mcpp +=.*/$(basename "$dir")/engine/epoch-[0-9]+/mcpp" "$dir/build.ninja" \
+    || fail "the graph does not run mcpp through the directory's link" "$dir/build.ninja"
+# H
+mkdir -p "$TMP/elsewhere"
+cp "$MCPP" "$TMP/elsewhere/"
+other="$TMP/elsewhere/$(basename "$MCPP")"
+echo '// another line' >> src/main.cpp
+"$MCPP" build > h0.log 2>&1 || fail "the build before the move failed" h0.log
+before=$(wc -l < "$dir/.ninja_log")
+"$other" build > h1.log 2>&1 || fail "the build with mcpp at another path failed" h1.log
+grep -E '^ *(Compiling|Linking)' h1.log && fail "mcpp at another path compiled again" h1.log
+[ "$(wc -l < "$dir/.ninja_log")" = "$before" ] || fail "mcpp at another path ran a step again" "$dir/.ninja_log"
+grep -q 'configuration changed' h1.log && fail "mcpp at another path was taken for another configuration" h1.log
+# I
+printf 'compiler another\n' > "$dir/toolchain"
+"$MCPP" build > i.log 2>&1 || fail "the build after an in-place toolchain change failed" i.log
+grep -q 'Replaced' i.log || fail "the replacement in place was not said" i.log
+[ -d "$dir" ] && [ "$(cat "$dir/fingerprint")" = "$fingerprint" ] || fail "the directory did not continue under its name" <(ls "$triple")
 # F
 mkdir -p "$TMP/ws/src" && cd "$TMP/ws"
 printf '[package]\nname    = "ws"\nversion = "0.1.0"\n\n[workspace]\nmembers = ["."]\n' > mcpp.toml
