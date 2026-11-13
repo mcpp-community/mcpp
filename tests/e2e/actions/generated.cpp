@@ -14,7 +14,9 @@ bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 // A file's modification time in whole seconds (`stat -c %Y`).
 long long mtime(const fs::path& p) {
-    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::file_clock::to_sys(fs::last_write_time(p)).time_since_epoch()).count();
+    // Compared with one another only: the file clock's own epoch serves, and
+    // file_clock::to_sys is optional (MSVC's library has to_utc instead).
+    return std::chrono::duration_cast<std::chrono::seconds>(fs::last_write_time(p).time_since_epoch()).count();
 }
 
 // The build.ninja of the build, not of a build program's.

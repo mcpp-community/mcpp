@@ -45,7 +45,7 @@ void set_time(const fs::path& p, fs::file_time_type t) { fs::last_write_time(p, 
 fs::file_time_type days_ago(int days) { return fs::file_time_type::clock::now() - std::chrono::hours{24 * days}; }
 // `touch -t 200001010000`.
 fs::file_time_type year_2000() {
-    return std::chrono::clock_cast<fs::file_time_type::clock>(std::chrono::sys_days{std::chrono::year{2000} / 1 / 1});
+    return s::file_time(std::chrono::sys_days{std::chrono::year{2000} / 1 / 1});
 }
 
 std::string trimmed(std::string text) {

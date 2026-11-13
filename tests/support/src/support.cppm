@@ -60,6 +60,16 @@ fs::path payload_root(std::string_view package, std::string_view version);
 // The root of the mcpp repository these cases belong to (its examples, its fixtures).
 fs::path repository();
 
+// The file time of a system time (`touch -d`, `touch -t`). The standard libraries convert between
+// the two clocks differently (libc++ has no clock_cast, MSVC's file_clock no to_sys), so the time
+// is carried across by the clocks' present instants, to within the time between the two reads.
+template <class Duration>
+fs::file_time_type file_time(std::chrono::sys_time<Duration> t) {
+    const auto sys_now = std::chrono::system_clock::now();
+    const auto file_now = fs::file_time_type::clock::now();
+    return file_now + std::chrono::duration_cast<fs::file_time_type::duration>(t - sys_now);
+}
+
 // ---- mcpp ----------------------------------------------------------------------------------------
 
 // The mcpp under test.

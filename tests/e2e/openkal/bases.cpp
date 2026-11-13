@@ -148,7 +148,7 @@ E2E bases{"bases", [] {
             std::tm when{};
             when.tm_year = 101, when.tm_mon = 0, when.tm_mday = 1, when.tm_isdst = -1;
             const auto t = std::chrono::system_clock::from_time_t(std::mktime(&when));
-            fs::last_write_time(sr / "usr/include/features.h", std::chrono::clock_cast<std::chrono::file_clock>(t));
+            fs::last_write_time(sr / "usr/include/features.h", s::file_time(t));
         }
         r = app.mcpp({"build"}, plain);
         expect(fatal(e2e::succeeded(r))) << "S4: the rebuild failed: " << s::text(r);

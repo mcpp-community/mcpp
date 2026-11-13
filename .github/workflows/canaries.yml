@@ -64,6 +64,15 @@ jobs:
       - uses: ./.github/actions/use-built-mcpp
         with:
           host: linux-x86_64
+      # The machine the rows of linux-x86_64 state: an aarch64 program runs
+      # through QEMU's user mode, registered with binfmt_misc, as it does where
+      # the matrix was measured. Without it the aarch64 Linux rows' run and test
+      # are refused by the system (Exec format error), which is not mcpp's to state.
+      - name: QEMU user mode for aarch64 programs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-user-static binfmt-support
+          test -e /proc/sys/fs/binfmt_misc/qemu-aarch64
       - name: The canaries over the matrix
         run: MCPP="$MCPP_FRESH" bash tests/canary/run.sh --host linux-x86_64 --report canary-report-linux-x86_64.tsv
       - name: Upload the report

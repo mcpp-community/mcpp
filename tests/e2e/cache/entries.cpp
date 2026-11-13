@@ -249,7 +249,7 @@ E2E entries{"entries", [] {
         auto doc = s::json_file(entry);
         doc["accessed"] = "1000";
         std::ofstream(entry, std::ios::binary) << doc.dump(2);
-        fs::last_write_time(entry, std::chrono::clock_cast<fs::file_time_type::clock>(std::chrono::sys_seconds{std::chrono::seconds{1000}}));
+        fs::last_write_time(entry, s::file_time(std::chrono::sys_seconds{std::chrono::seconds{1000}}));
         r = app.mcpp({"cache", "gc", "--older-than", "1s"}, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(entries() == 0u)) << "gc did not collect a long-unused entry\n" << s::text(r);

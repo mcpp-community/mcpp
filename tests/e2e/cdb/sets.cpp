@@ -227,7 +227,7 @@ E2E sets{"sets", [] {
         std::map<fs::path, std::pair<fs::file_time_type, std::string>> snapshot;
         // os.utime(ns=10**18): a time far from now, which a rewrite would replace.
         const auto stamp = std::chrono::time_point_cast<fs::file_time_type::duration>(
-            fs::file_time_type::clock::from_sys(std::chrono::sys_time<std::chrono::nanoseconds>{std::chrono::nanoseconds{1000000000000000000LL}}));
+            s::file_time(std::chrono::sys_time<std::chrono::nanoseconds>{std::chrono::nanoseconds{1000000000000000000LL}}));
         for (const auto& l : locks) {
             expect(fatal(e2e::contains(s::read_file(l), "[package."))) << "an empty lock " << l;
             fs::last_write_time(l, stamp);

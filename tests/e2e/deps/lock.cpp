@@ -230,7 +230,7 @@ hash    = "{}"
         expect(fatal(e2e::succeeded(ws.mcpp({"build"}, inherited)))) << "the second planned build did not succeed";
         expect(eq(entries(), std::size_t{1})) << "(b) the lock still holds " << entries() << " entries for one identity";
         expect(eq(ws.read("mcpp.lock"), before)) << "(b) the surviving entry is not the one 2026.9.28.3 wrote";
-        const auto stamp = std::chrono::file_clock::from_sys(std::chrono::sys_seconds{std::chrono::seconds{1000000000}});
+        const auto stamp = s::file_time(std::chrono::sys_seconds{std::chrono::seconds{1000000000}});
         fs::last_write_time(ws.at("mcpp.lock"), stamp);
         touch_main("// touched again");
         expect(fatal(e2e::succeeded(ws.mcpp({"build"}, inherited)))) << "the third planned build did not succeed";
