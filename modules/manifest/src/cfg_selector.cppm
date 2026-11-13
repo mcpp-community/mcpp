@@ -49,9 +49,11 @@ inline constexpr std::string_view kCfgTripleKeys[] = {
 inline constexpr std::string_view kCfgEarlyLayerKeys[] = {
     "accelerator",
 };
+// `interface` is the kernel-abi layer's second answer: an interface its
+// provider states it provides (`[kernel-abi] provides-interfaces`).
 inline constexpr std::string_view kCfgLayerKeys[] = {
     "c++-abi", "c-abi", "compiler", "compiler-runtime",
-    "kernel-abi",
+    "kernel-abi", "interface",
 };
 // A BAREWORD NAMES A SYSTEM, AND THE ROWS ARE ITS VOCABULARY. `unix` is the
 // one word that names a family (unix | windows, the row's `family`); every

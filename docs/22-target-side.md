@@ -1199,7 +1199,13 @@ conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`
   and is answered from this build's own `accel` — the backend names in
   `--accel` or `[build] accel` — so it is a membership test over a set, and
   `accelerator = "none"` is how a section says "this build named no backend"
-  without enumerating the ones it is not. Barewords `linux` / `macos` /
+  without enumerating the ones it is not. `interface` (mcpp 2026.11.13.1) is the kernel-abi
+  layer's second answer: an interface its provider states in `[kernel-abi]
+  provides-interfaces`, compared by membership as `accelerator` is. A provider
+  that states no list provides every interface; a graph without the layer
+  provides none. A package selects its sources by what the implementation
+  beneath it provides, and names no implementation:
+  `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`. Barewords `linux` / `macos` /
   `windows` / `unix` are sugar for the matching `os` / `family` test. A key
   outside this set is reported as a schema warning and the section does not
   apply — it used to answer false in silence, which is indistinguishable from

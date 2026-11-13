@@ -77,6 +77,14 @@ struct Ctx {
     // ROCm device code in one artifact requires, so this layer holds a set
     // rather than the single answer the other five hold.
     std::vector<std::string> accelerators;
+    // THE INTERFACES OF THE KERNEL-ABI LAYER (`cfg(interface = "<name>")`): the
+    // resolved provider's `[kernel-abi] provides-interfaces`, compared by
+    // membership as `accelerator` is. A provider that states none provides
+    // every one; a graph without the layer provides none. A package selects
+    // its sources by what the implementation beneath it provides, and names
+    // no implementation.
+    std::vector<std::string> interfaces;
+    bool interfacesStated = false;
 
     std::string_view layer_value(std::string_view k) const {
         if (k == "compiler")         return compiler;
@@ -127,6 +135,10 @@ struct Ctx {
         if (k == "accelerator") {
             if (v == "none") return accelerators.empty();
             return std::ranges::find(accelerators, v) != accelerators.end();
+        }
+        if (k == "interface") {
+            if (kernelAbi.empty()) return false;
+            return !interfacesStated || std::ranges::find(interfaces, v) != interfaces.end();
         }
         return layer_value(k) == v;
     }

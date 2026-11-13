@@ -712,6 +712,27 @@ static void for_tests(PrepareState& state, const mcpp::modgraph::UsageRequiremen
     }
 }
 
+// THE PACKAGE THAT RESOLVED AS THE KERNEL-ABI LAYER AND STATES ITS INTERFACES;
+// null when none states them. The list comes from the package that resolved as
+// the layer, not from the first one in the graph that stated one: a graph may
+// carry more than one candidate (a workspace member beside a dependency, a
+// second implementation behind a feature that did not activate), and only one
+// is the provider this build uses. `impl` is `name@version`; the name is what
+// precedes the separator, so `openkal` is not matched against `openkal-linux`.
+static const mcpp::modgraph::PackageRoot* kernel_abi_provider(const PrepareState& state) {
+    for (auto const& pkg : state.packages) {
+        if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
+        if (!state.resolvedTargetSide.kernelAbi.impl.empty()) {
+            auto const& impl = state.resolvedTargetSide.kernelAbi.impl;
+            const auto at = impl.find('@');
+            const auto implName = at == std::string::npos ? impl : impl.substr(0, at);
+            if (implName != pkg.manifest.package.name) continue;
+        }
+        return &pkg;
+    }
+    return nullptr;
+}
+
 static std::expected<void, std::string>
 step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -954,22 +975,9 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
         // rather than a missing one.
         std::vector<std::string> providedInterfaces;
         std::string providerId;
-        for (auto& pkg : state.packages) {
-            if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
-            // `impl` is `name@version`; the name is what precedes the
-            // separator. A substring test would match `openkal` against
-            // `openkal-linux@0.15.0` and read one implementation's list
-            // as another's.
-            if (!state.resolvedTargetSide.kernelAbi.impl.empty()) {
-                auto const& impl = state.resolvedTargetSide.kernelAbi.impl;
-                const auto at = impl.find('@');
-                const auto implName = at == std::string::npos
-                    ? impl : impl.substr(0, at);
-                if (implName != pkg.manifest.package.name) continue;
-            }
-            providedInterfaces = pkg.manifest.kernelAbiProvidesInterfaces;
-            providerId = pkg.manifest.package.name;
-            break;
+        if (auto const* pkg = kernel_abi_provider(state)) {
+            providedInterfaces = pkg->manifest.kernelAbiProvidesInterfaces;
+            providerId = pkg->manifest.package.name;
         }
         // A REQUIREMENT NOBODY ANSWERED IS SAID SO, because otherwise
         // "yes" and "never asked" are the same reading.
@@ -1510,6 +1518,10 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
         layerCtx.kernelAbi       = state.resolvedTargetSide.kernelAbi.interfaceName;
         layerCtx.cAbi            = state.resolvedTargetSide.cAbi.interfaceName;
         layerCtx.cxxAbi          = state.resolvedTargetSide.cxx.interfaceName;
+        if (auto const* pkg = kernel_abi_provider(state)) {
+            layerCtx.interfaces       = pkg->manifest.kernelAbiProvidesInterfaces;
+            layerCtx.interfacesStated = true;
+        }
         // A REQUIREMENT A LAYER DECIDES IS CHECKED NOW, WHEN THE LAYERS ARE
         // KNOWN. `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
         // ["mcpp:compiler-runtime=compiler-rt"]` states what one compiler needs
