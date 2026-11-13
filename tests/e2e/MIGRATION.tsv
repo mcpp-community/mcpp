@@ -12,8 +12,8 @@ script	subsystem	class	destination	note
 10_env_command.sh	self	merge	e2e/self::config/10 env command	migrated (batch 15); script removed
 11_index_list.sh	index	merge	e2e/index::listing/11 index list	migrated (batch 14); script removed
 12_add_command.sh	deps	merge	e2e/deps::path/12 add command	migrated (batch 3); script removed
-13_toolchain_pin.sh	toolchain	merge	e2e/toolchain	
-14_toolchain_fallback.sh	toolchain	merge	e2e/toolchain	
+13_toolchain_pin.sh	toolchain	merge	e2e/toolchain::management/13 toolchain pin	migrated (batch 21); script removed
+14_toolchain_fallback.sh	toolchain	merge	e2e/toolchain::management/14 toolchain fallback	migrated (batch 21); script removed
 15_test_passing.sh	test	merge	e2e/test::report/15 test passing	migrated (batch 1); script removed
 16_test_failing.sh	test	merge	e2e/test::report/16 test failing	migrated (batch 1); script removed
 17_test_no_tests.sh	test	merge	e2e/test::report/17 test no tests	migrated (batch 1); script removed
@@ -26,32 +26,32 @@ script	subsystem	class	destination	note
 24_git_dependency.sh	deps	merge	e2e/deps::git/24 git dependency	migrated (batch 3); script removed
 25_convention_mode.sh	build	merge	e2e/build::basics/25 convention mode	migrated (batch 7); script removed
 26_c_language_support.sh	build	merge	e2e/build::basics/26 c language support	migrated (batch 7); script removed
-26_toolchain_management.sh	toolchain	merge	e2e/toolchain	
+26_toolchain_management.sh	toolchain	merge	e2e/toolchain::management/26 toolchain management	migrated (batch 21); script removed
 27_namespace_dependencies.sh	deps	merge	e2e/deps::path/27 namespace dependencies	migrated (batch 3); script removed
 27_self_contained_home.sh	self	keep	keep	home located from the installed binary's own directory (<root>/bin/mcpp): a release-layout install
 28_target_static.sh	target	merge	e2e/targets::machine/28 target static	migrated (batch 20); script removed
-29_toolchain_partial_versions.sh	toolchain	merge	e2e/toolchain	
+29_toolchain_partial_versions.sh	toolchain	merge	e2e/toolchain::management/29 toolchain partial versions	migrated (batch 21); script removed
 30_dev_binary_home.sh	self	keep	keep	a dev binary's home when MCPP_HOME is unset: needs the real ~/.mcpp of the machine
 30_pack_modes.sh	pack	merge	e2e/pack::modes/30 pack modes	migrated (batch 6); script removed
 31_transitive_deps.sh	deps	merge	e2e/deps::path/31 transitive deps	migrated (batch 3); script removed
 32_semver_merge.sh	deps	merge	e2e/deps::resolve/32 semver merge	migrated (batch 3); script removed
 33_multi_version_mangling.sh	deps	merge	e2e/deps::resolve/33 multi version mangling	migrated (batch 3); script removed
 35_workspace.sh	workspace	merge	e2e/workspace::members/35 workspace	migrated (batch 11); script removed
-36_llvm_toolchain.sh	toolchain	merge	e2e/toolchain	
-37_llvm_import_std.sh	toolchain	merge	e2e/toolchain	
-38_llvm_modules.sh	toolchain	merge	e2e/toolchain	
+36_llvm_toolchain.sh	toolchain	merge	e2e/toolchain::llvm/36 llvm toolchain	migrated (batch 21); script removed
+37_llvm_import_std.sh	toolchain	merge	e2e/toolchain::llvm/37 llvm import std	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path
+38_llvm_modules.sh	toolchain	merge	e2e/toolchain::llvm/38 llvm modules	migrated (batch 21); script removed
 38_self_config_mirror.sh	self	merge	e2e/self::config/38 self config mirror	migrated (batch 15); script removed
-39_llvm_incremental.sh	toolchain	merge	e2e/toolchain	
+39_llvm_incremental.sh	toolchain	merge	e2e/toolchain::llvm/39 llvm incremental	migrated (batch 21); script removed
 39_xlings_index_migration.sh	self	merge	e2e/self::config/39 xlings index migration	migrated (batch 15); script removed
-40_llvm_bmi_cache.sh	toolchain	merge	e2e/toolchain	
-41_llvm_std_compat.sh	toolchain	merge	e2e/toolchain	
+40_llvm_bmi_cache.sh	toolchain	merge	e2e/toolchain::llvm/40 llvm bmi cache	migrated (batch 21); script removed
+41_llvm_std_compat.sh	toolchain	merge	e2e/toolchain::llvm/41 llvm std compat	migrated (batch 21); script removed
 42_custom_local_index.sh	index	merge	e2e/index::listing/42 custom local index	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_indices: it asserts a command's output or file effect
 43_indices_lockfile.sh	index	merge	e2e/index::listing/43 indices lockfile	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_lockfile: it asserts a command's output or file effect
 44_indices_e2e_integration.sh	index	merge	e2e/index::listing/44 indices e2e integration	migrated (batch 14); script removed; kept as an e2e case, not sunk into unit/test_indices: it asserts a command's output or file effect
 45_install_platform_mapping.sh	repo	sink	unit/test_repo_consistency::RepoConsistency/InstallScriptNamesThePublishedAssets	migrated (batch 19); script removed
 46_self_config_mirror_no_bootstrap.sh	self	merge	e2e/self::config/46 self config mirror no bootstrap	migrated (batch 15); script removed
 47_cdb_prebuilt_module_path_abs.sh	cdb	merge	e2e/cdb::root/47 cdb prebuilt module path abs	migrated (batch 13); script removed
-47_llvm_atomic_link.sh	toolchain	merge	e2e/toolchain	
+47_llvm_atomic_link.sh	toolchain	merge	e2e/toolchain::llvm/47 llvm atomic link	migrated (batch 21); script removed
 48_build_error_output.sh	cli	merge	e2e/cli::output/48 build error output	migrated (batch 8); script removed
 49_bmi_cache_nested_custom_index.sh	modules	merge	e2e/modules::bmi/49 bmi cache nested custom index	migrated (batch 9); script removed
 50_package_owned_build_flags.sh	build	merge	e2e/build::flags/50 package owned build flags	migrated (batch 7); script removed
@@ -63,7 +63,7 @@ script	subsystem	class	destination	note
 56_transitive_shared_artifact.sh	runtime	merge	e2e/runtime::packages/56 transitive shared artifact	migrated (batch 17); script removed
 57_static_dep_shared_artifact.sh	runtime	merge	e2e/runtime::packages/57 static dep shared artifact	migrated (batch 17); script removed
 58_preinstall_mcpp_deps_for_hooks.sh	build-program	merge	e2e/build-program::deps/58 preinstall mcpp deps for hooks	migrated (batch 2); script removed
-59_cpp_standard_config.sh	toolchain	merge	e2e/toolchain	
+59_cpp_standard_config.sh	toolchain	merge	e2e/toolchain::standard/59 cpp standard config	migrated (batch 21); script removed
 60_stale_xpkg_cache_reinstall.sh	index	merge	e2e/index::local/60 stale xpkg cache reinstall	migrated (batch 14); script removed
 61_dependency_visibility.sh	deps	merge	e2e/deps::resolve/61 dependency visibility	migrated (batch 3); script removed
 62_dotted_dependency_selector_priority.sh	deps	merge	e2e/deps::resolve/62 dotted dependency selector priority	migrated (batch 3); script removed
@@ -92,7 +92,7 @@ script	subsystem	class	destination	note
 83_feature_defines_propagate.sh	features	merge	e2e/features::activation/83 feature defines propagate	migrated (batch 5); script removed
 84_runtime_dll_deploy.sh	windows	merge	e2e/windows	
 85_target_cfg_build_flags.sh	features	merge	e2e/features::conditional/85 target cfg build flags	migrated (batch 5); script removed
-86_llvm_hermetic_link.sh	toolchain	merge	e2e/toolchain	
+86_llvm_hermetic_link.sh	toolchain	merge	e2e/toolchain::llvm/86 llvm hermetic link	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path
 86_target_cfg_dependencies.sh	features	merge	e2e/features::conditional/86 target cfg dependencies	migrated (batch 5); script removed
 87_build_default_profile.sh	build	merge	e2e/build::basics/87 build default profile	migrated (batch 7); script removed
 88_xlings_environment.sh	self	merge	e2e/self::config/88 xlings environment	migrated (batch 15); script removed
@@ -105,11 +105,11 @@ script	subsystem	class	destination	note
 95_msvc_system_toolchain.sh	windows	merge	e2e/windows	
 96_msvc_unavailable_nonwindows.sh	windows	merge	e2e/windows	
 97_mingw_toolchain.sh	windows	merge	e2e/windows	
-98_reflection_import_std.sh	toolchain	merge	e2e/toolchain	
+98_reflection_import_std.sh	toolchain	merge	e2e/toolchain::standard/98 reflection import std	migrated (batch 21); script removed
 99_msvc_native_build.sh	windows	merge	e2e/windows	
-100_cppfly_reflection.sh	toolchain	merge	e2e/toolchain	
+100_cppfly_reflection.sh	toolchain	merge	e2e/toolchain::standard/100 cppfly reflection	migrated (batch 21); script removed
 100_feature_sources_test_mode.sh	features	merge	e2e/features::sources/100 feature sources test mode	migrated (batch 5); script removed
-101_cppfly_llvm_soft.sh	toolchain	merge	e2e/toolchain	
+101_cppfly_llvm_soft.sh	toolchain	merge	e2e/toolchain::llvm/101 cppfly llvm soft	migrated (batch 21); script removed
 102_mingw_cross_wine.sh	windows	keep	keep	emulator: runs the cross-built PE under wine
 103_target_vocabulary.sh	target	merge	e2e/targets::rows/103 target vocabulary	migrated (batch 20); script removed
 104_asm_sources_gas.sh	build	merge	e2e/build::sources/104 asm sources gas	migrated (batch 7); script removed
@@ -142,7 +142,7 @@ script	subsystem	class	destination	note
 132_freestanding_test_and_artifacts.sh	baremetal	keep	keep	emulator: runs the freestanding tests in qemu-system-riscv64
 133_freestanding_std_subset.sh	baremetal	keep	keep	emulator: boots the image in qemu-system-riscv64
 134_target_sysroot_and_queries.sh	target	merge	e2e/targets::rows/134 target sysroot and queries	migrated (batch 20); script removed
-135_diagnostic_promise_resolves.sh	toolchain	merge	e2e/toolchain	
+135_diagnostic_promise_resolves.sh	toolchain	merge	e2e/toolchain::standard/135 diagnostic promise resolves	migrated (batch 21); script removed
 136_aarch64_zero_libc_target.sh	baremetal	merge	e2e/baremetal::rows/136 aarch64 zero libc target	migrated (batch 19); script removed
 137_x86_64_zero_libc_target.sh	baremetal	merge	e2e/baremetal::rows/137 x86_64 zero libc target	migrated (batch 19); script removed
 138_feature_sources_gate_vs_provider.sh	features	merge	e2e/features::sources/138 feature sources gate vs provider	migrated (batch 5); script removed
@@ -182,8 +182,8 @@ script	subsystem	class	destination	note
 173_build_profile_isolation.sh	cache	merge	e2e/cache::fastpath/173 build profile isolation	migrated (batch 10); script removed
 173_index_refresh_policy.sh	index	merge	e2e/index::refresh/173 index refresh policy	migrated (batch 14); script removed
 174_cache_modes_and_commands.sh	cache	merge	e2e/cache::entries/174 cache modes and commands	migrated (batch 10); script removed
-175_cpp20_import_std.sh	toolchain	merge	e2e/toolchain	
-176_cpp20_std_bmi_isolation.sh	toolchain	merge	e2e/toolchain	
+175_cpp20_import_std.sh	toolchain	merge	e2e/toolchain::standard/175 cpp20 import std	migrated (batch 21); script removed
+176_cpp20_std_bmi_isolation.sh	toolchain	merge	e2e/toolchain::standard/176 cpp20 std bmi isolation	migrated (batch 21); script removed
 177_cpp20_msvc.sh	windows	merge	e2e/windows	
 178_test_observability.sh	test	merge	e2e/test::streams/178 test observability	migrated (batch 1); script removed
 179_spaced_paths.sh	build	merge	e2e/build::sources/179 spaced paths	migrated (batch 7); script removed
@@ -209,7 +209,7 @@ script	subsystem	class	destination	note
 198_windows_resources_cross.sh	windows	merge	e2e/windows	
 199_resources_validation.sh	windows	merge	e2e/windows	
 200_subos_env_reaches_program.sh	runtime	merge	e2e/runtime::binding/200 subos env reaches program	migrated (batch 17); script removed
-201_gcc_no_specs_pollution.sh	toolchain	merge	e2e/toolchain	
+201_gcc_no_specs_pollution.sh	toolchain	merge	e2e/toolchain::layers/201 gcc no specs pollution	migrated (batch 21); script removed
 202_machine_output_contract.sh	cli	merge	e2e/cli::commands/202 machine output contract	migrated (batch 8); script removed
 203_exact_selector_lock_migration.sh	deps	merge	e2e/deps::lock/203 exact selector lock migration	migrated (batch 3); script removed
 204_new_transactional_scaffold.sh	cli	merge	e2e/cli::templates/204 new transactional scaffold	migrated (batch 8); script removed
@@ -236,7 +236,7 @@ script	subsystem	class	destination	note
 232_workflow_syntax.sh	repo	keep	keep	lints .github/workflows YAML (CI configuration, needs a YAML reader)
 233_bench_matrix.sh	repo	keep	keep	bench/matrix.json single-source check; converges with bench/ (design 5.9 bench)
 234_bmi_schedule_on.sh	modules	merge	e2e/modules::bmi/234 bmi schedule on	migrated (batch 9); script removed
-235_std_object_only_when_needed.sh	toolchain	merge	e2e/toolchain	
+235_std_object_only_when_needed.sh	toolchain	merge	e2e/toolchain::standard/235 std object only when needed	migrated (batch 21); script removed
 236_module_extensions_default_toolchain.sh	modules	merge	e2e/modules::extensions/236 module extensions default toolchain	migrated (batch 9); script removed
 237_default_subos_without_info.sh	self	merge	e2e/self::subos/237 default subos without info	migrated (batch 15); script removed
 238_c_only_unit_links_with_c_driver.sh	build	merge	e2e/build::link/238 c only unit links with c driver	migrated (batch 7); script removed
@@ -310,10 +310,10 @@ script	subsystem	class	destination	note
 316_link_unit_with_no_inputs_is_refused.sh	build	merge	e2e/build::sources/316 link unit with no inputs is refused	migrated (batch 7); script removed
 317_project_build_hooks.sh	actions	merge	e2e/actions::hooks/317 project build hooks	migrated (batch 4); script removed
 321_workspace_inheritance.sh	workspace	merge	e2e/workspace::inheritance/321 workspace inheritance	migrated (batch 11); script removed
-322_dialect_flag_refusal.sh	toolchain	merge	e2e/toolchain	
+322_dialect_flag_refusal.sh	toolchain	merge	e2e/toolchain::standard/322 dialect flag refusal	migrated (batch 21); script removed
 323_post_link_record_durability.sh	runtime	merge	e2e/runtime::records/323 post link record durability	migrated (batch 17); script removed
 324_fast_path_sees_path_deps.sh	cache	merge	e2e/cache::fastpath/324 fast path sees path deps	migrated (batch 10); script removed
-325_system_toolchain_refused.sh	toolchain	merge	e2e/toolchain	
+325_system_toolchain_refused.sh	toolchain	merge	e2e/toolchain::management/325 system toolchain refused	migrated (batch 21); script removed
 326_dependency_standard_floor.sh	deps	merge	e2e/deps::floors/326 dependency standard floor	migrated (batch 3); script removed
 327_declared_xlings_deps_report_their_own_failure.sh	index	merge	e2e/index::xlings/327 declared xlings deps report their own failure	migrated (batch 14); script removed
 328_layer_predicates_apply_and_unknown_ones_say_so.sh	features	merge	e2e/features::layers/328 layer predicates apply and unknown ones say so	migrated (batch 5); script removed
@@ -392,7 +392,7 @@ script	subsystem	class	destination	note
 660_an_action_names_the_engine_through_mcpp_self.sh	actions	merge	e2e/actions::commands/660 an action names the engine through mcpp self	migrated (batch 4); script removed
 661_one_identity_two_declarations.sh	deps	merge	e2e/deps::git/661 one identity two declarations	migrated (batch 3); script removed
 662_pack_stages_declared_files_before_the_closure.sh	pack	merge	e2e/pack::modes/662 pack stages declared files before the closure	migrated (batch 6); script removed
-663_a_graph_libcxx_over_the_payloads_c_library.sh	toolchain	merge	e2e/toolchain	
+663_a_graph_libcxx_over_the_payloads_c_library.sh	toolchain	merge	e2e/toolchain::layers/663 a graph libcxx over the payloads c library	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
 664_a_universal_apk_is_two_legs_in_one_tree.sh	android	merge	e2e/android	
 665_a_host_tool_follows_its_source.sh	build-program	merge	e2e/build-program::hosttools/665 a host tool follows its source	migrated (batch 2); script removed
 666_a_macho_program_reaches_a_dispatched_format_with_its_tree.sh	macos	merge	e2e/macos	
@@ -421,7 +421,7 @@ script	subsystem	class	destination	note
 690_a_shared_library_over_a_graph_cxx_runtime.sh	runtime	merge	e2e/runtime::contract/690 a shared library over a graph cxx runtime	migrated (batch 17); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
 692_a_package_states_its_default_link_form.sh	runtime	merge	e2e/runtime::packages/692 a package states its default link form	migrated (batch 17); script removed
 693_the_root_build_program_reads_dependency_link_forms.sh	build-program	merge	e2e/build-program::deps/693 the root build program reads dependency link forms	migrated (batch 2); script removed
-696_a_cxx_layer_provider_keeps_its_own_standard.sh	toolchain	merge	e2e/toolchain	
+696_a_cxx_layer_provider_keeps_its_own_standard.sh	toolchain	merge	e2e/toolchain::layers/696 a cxx layer provider keeps its own standard	migrated (batch 21); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
 698_a_tool_source_under_its_dependency_has_a_bounded_address.sh	build-program	merge	e2e/build-program::hosttools/698 a tool source under its dependency has a bounded address	migrated (batch 2); script removed
 700_a_program_over_a_cxx_shared_library_has_one_cxx_runtime.sh	runtime	merge	e2e/runtime::contract/700 a program over a cxx shared library has one cxx runtime	migrated (batch 17); script kept: .github/workflows/ci-linux-e2e.yml runs it by path and holds it to its lines
 701_symbol_provision_does_not_report_what_the_build_shares_by_construction.sh	runtime	merge	e2e/runtime::contract/701 symbol provision does not report what the build shares by construction	migrated (batch 17); script removed
@@ -448,9 +448,9 @@ script	subsystem	class	destination	note
 737_the_declared_runtime_payload_is_installed.sh	index	merge	e2e/index::xlings/737 the declared runtime payload is installed	migrated (batch 14); script removed
 738_a_graph_supplied_target_closes_the_hosts_own_search.sh	target	merge	e2e/targets::graph/738 a graph supplied target closes the hosts own search	migrated (batch 20); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 739_a_private_feature_dep_does_not_reach_the_consumer.sh	features	merge	e2e/features::activation/739 a private feature dep does not reach the consumer	migrated (batch 5); script removed
-740_gcc_over_a_graph_c_library_is_degraded_not_refused.sh	toolchain	merge	e2e/toolchain	
+740_gcc_over_a_graph_c_library_is_degraded_not_refused.sh	toolchain	merge	e2e/toolchain::layers/740 gcc over a graph c library is degraded not refused	migrated (batch 21); script removed
 741_c_abi_environment_declared_by_the_c_library.sh	target	merge	e2e/targets::side/741 c abi environment declared by the c library	migrated (batch 20); script removed
-742_gcc_accepted_when_the_realisation_is_empty.sh	toolchain	merge	e2e/toolchain	
+742_gcc_accepted_when_the_realisation_is_empty.sh	toolchain	merge	e2e/toolchain::layers/742 gcc accepted when the realisation is empty	migrated (batch 21); script removed
 743_kernel_abi_interfaces_are_resolved_not_preprocessed.sh	openkal	merge	e2e/openkal::layers/743 kernel abi interfaces are resolved not preprocessed	migrated (batch 16); script removed
 744_a_declared_absence_explains_the_link_that_asked_for_it.sh	target	merge	e2e/targets::side/744 a declared absence explains the link that asked for it	migrated (batch 20); script removed
 745_no_run_builds_the_tests_and_says_so.sh	test	merge	e2e/test::archive/745 no run builds the tests and says so	migrated (batch 1); script removed
@@ -560,8 +560,8 @@ script	subsystem	class	destination	note
 872_a_member_compiles_once_whatever_the_selection.sh	workspace	merge	e2e/workspace::graph/872 a member compiles once whatever the selection	migrated (batch 11); script removed
 873_payload_overrides.sh	build-program	merge	e2e/build-program::deps/873 payload overrides	migrated (batch 2); script removed
 874_payload_on_request.sh	build-program	merge	e2e/build-program::deps/874 payload on request	migrated (batch 2); script removed
-875_toolchain_by_path.sh	toolchain	merge	e2e/toolchain	
-876_toolchain_phase.sh	toolchain	merge	e2e/toolchain	
+875_toolchain_by_path.sh	toolchain	merge	e2e/toolchain::custom/875 toolchain by path	migrated (batch 21); script removed
+876_toolchain_phase.sh	toolchain	merge	e2e/toolchain::custom/876 toolchain phase	migrated (batch 21); script removed
 877_why_sources.sh	build-program	merge	e2e/build-program::deps/877 why sources	migrated (batch 2); script removed
 878_an_upgraded_engine_does_not_replay_the_old_graph.sh	cache	merge	e2e/cache::fastpath/878 an upgraded engine does not replay the old graph	migrated (batch 10); script removed
 879_a_providers_module_extension_reaches_the_fast_path.sh	cache	merge	e2e/cache::fastpath/879 a providers module extension reaches the fast path	migrated (batch 10); script removed
@@ -571,12 +571,12 @@ script	subsystem	class	destination	note
 883_run_hands_the_terminal_to_the_program.sh	run	merge	e2e/run::program/883 run hands the terminal to the program	migrated (batch 12); script removed
 884_a_shared_library_links_with_its_own_closure.sh	runtime	merge	e2e/runtime::packages/884 a shared library links with its own closure	migrated (batch 17); script removed
 885_workspace_profiles_and_the_root_package.sh	workspace	merge	e2e/workspace::statements/885 workspace profiles and the root package	migrated (batch 11); script removed
-886_std_compat_is_built_when_imported.sh	toolchain	merge	e2e/toolchain	
+886_std_compat_is_built_when_imported.sh	toolchain	merge	e2e/toolchain::standard/886 std compat is built when imported	migrated (batch 21); script removed
 887_msvc_lto_and_export_discovery.sh	windows	merge	e2e/windows	
 888_the_llvm_row_in_a_developer_environment.sh	windows	merge	e2e/windows	
 889_windows_driver_target_and_coff_resources.sh	windows	merge	e2e/windows	
-890_a_toolchain_declared_for_an_unservable_target_is_still_installed.sh	toolchain	merge	e2e/toolchain	
-891_a_host_header_is_written_not_searched.sh	toolchain	merge	e2e/toolchain	
+890_a_toolchain_declared_for_an_unservable_target_is_still_installed.sh	toolchain	merge	e2e/toolchain::management/890 a toolchain declared for an unservable target is still installed	migrated (batch 21); script removed
+891_a_host_header_is_written_not_searched.sh	toolchain	merge	e2e/toolchain::layers/891 a host header is written not searched	migrated (batch 21); script kept: .github/workflows/openkal-cross.yml runs it by path and holds it to its lines
 892_coroutines_on_the_32_bit_msvc_abi_are_explained.sh	windows	merge	e2e/windows	
 893_the_workspace_prefix_carries_the_meaning.sh	workspace	merge	e2e/workspace::statements/893 the workspace prefix carries the meaning	migrated (batch 11); script removed
 894_the_position_reading_is_kept_and_reported.sh	build	merge	e2e/build::basics/894 the position reading is kept and reported	migrated (batch 7); script removed
@@ -584,7 +584,7 @@ script	subsystem	class	destination	note
 896_an_action_output_has_one_writer.sh	actions	merge	e2e/actions::outputs/896 an action output has one writer	migrated (batch 4); script removed
 897_each_configuration_has_its_own_generated_output.sh	actions	merge	e2e/actions::outputs/897 each configuration has its own generated output	migrated (batch 4); script removed
 898_module_units_in_cpp_files.sh	modules	merge	e2e/modules::basics/898 module units in cpp files	migrated (batch 9); script removed
-899_toolchain_flag_replacing_a_declared_toolchain_says_so.sh	toolchain	merge	e2e/toolchain	
+899_toolchain_flag_replacing_a_declared_toolchain_says_so.sh	toolchain	merge	e2e/toolchain::management/899 toolchain flag replacing a declared toolchain says so	migrated (batch 21); script removed
 900_publish_writes_the_workspace_layer_into_the_member.sh	workspace	merge	e2e/workspace::statements/900 publish writes the workspace layer into the member	migrated (batch 11); script removed
 901_the_toolchain_library_path_stays_with_the_tools.sh	toolchain	keep	keep	container: a host whose /bin/sh is not the toolchain's (termux-style loader)
 902_a_build_dependency_library_is_compiled_as_its_package.sh	build-program	merge	e2e/build-program::deps/902 a build dependency library is compiled as its package	migrated (batch 2); script removed
@@ -619,7 +619,7 @@ script	subsystem	class	destination	note
 931_a_suggested_command_quotes_its_path.sh	self	merge	e2e/self::machine/931 a suggested command quotes its path	migrated (batch 15); script removed
 932_a_fresh_home_with_a_space_and_non_ascii_builds.sh	self	merge	e2e/self::homes/932 a fresh home with a space and non ascii builds	migrated (batch 15); script removed
 933_one_cxx_runtime_per_process.sh	runtime	merge	e2e/runtime::contract/933 one cxx runtime per process	migrated (batch 17); script removed
-934_llvm_with_a_graph_supplied_libstdcxx.sh	toolchain	merge	e2e/toolchain	
+934_llvm_with_a_graph_supplied_libstdcxx.sh	toolchain	merge	e2e/toolchain::layers/934 llvm with a graph supplied libstdcxx	migrated (batch 21); script removed
 935_two_builds_of_one_configuration.sh	cache	merge	e2e/cache::directories/935 two builds of one configuration	migrated (batch 10); script removed
 936_the_control_contract.sh	cli	merge	e2e/cli::output/936 the control contract	migrated (batch 8); script removed
 937_the_root_compile_database_is_opt_in.sh	cdb	merge	e2e/cdb::root/937 the root compile database is opt in	migrated (batch 13); script removed
@@ -674,13 +674,13 @@ script	subsystem	class	destination	note
 1001_a_dependency_carries_its_patches.sh	deps	merge	e2e/deps::edges/1001 a dependency carries its patches	migrated (batch 3); script removed
 1002_a_dependency_is_embedded.sh	deps	merge	e2e/deps::edges/1002 a dependency is embedded	migrated (batch 3); script removed
 1003_one_program_one_variant.sh	build	merge	e2e/build::basics/1003 one program one variant	migrated (batch 7); script removed
-1004_an_external_toolchain_finds_mcpps_ninja.sh	toolchain	merge	e2e/toolchain	
+1004_an_external_toolchain_finds_mcpps_ninja.sh	toolchain	merge	e2e/toolchain::custom/1004 an external toolchain finds mcpps ninja	migrated (batch 21); script removed
 1005_clean_stale_says_what_it_kept.sh	cache	merge	e2e/cache::directories/1005 clean stale says what it kept	migrated (batch 10); script removed
 1006_a_response_file_and_what_it_names_are_link_inputs.sh	build	merge	e2e/build::link/1006 a response file and what it names are link inputs	migrated (batch 7); script removed
 1007_a_requirement_a_layer_decides_is_checked.sh	features	merge	e2e/features::layers/1007 a requirement a layer decides is checked	migrated (batch 5); script removed
 1008_a_provided_format_is_told_the_compression.sh	pack	merge	e2e/pack::formats/1008 a provided format is told the compression	migrated (batch 6); script removed
 1009_cache_gc_asks_the_runner.sh	openkal	merge	e2e/openkal::images/1009 cache gc asks the runner	migrated (batch 16); script removed
-1010_the_std_module_takes_the_platforms_flags.sh	toolchain	merge	e2e/toolchain	
+1010_the_std_module_takes_the_platforms_flags.sh	toolchain	merge	e2e/toolchain::standard/1010 the std module takes the platforms flags	migrated (batch 21); script removed
 1011_accelerator_requests_are_complete_and_canonical.sh	build-program	merge	e2e/build-program::accel/1011 accelerator requests are complete and canonical	migrated (batch 2); script removed
 1012_capabilities_bind_in_each_consumer_context.sh	features	merge	e2e/features::activation/1012 capabilities bind in each consumer context	migrated (batch 5); script removed
 1013_optional_action_progress_preserves_outputs.sh	actions	merge	e2e/actions::progress/1013 optional action progress preserves outputs	migrated (batch 4); script removed
@@ -750,4 +750,4 @@ script	subsystem	class	destination	note
 1077_a_program_of_another_system_is_built_not_run.sh	target	merge	e2e/targets::rows/1077 a program of another system is built not run	migrated (batch 20); script removed
 1078_systems_all_carries_the_runners_the_platform_declares.sh	openkal	merge	e2e/openkal::trees/1078 systems all carries the runners the platform declares	migrated (batch 16); script removed
 1079_an_emscripten_rows_longjmp_model_round_trips.sh	web	merge	e2e/web::emscripten/1079 an emscripten rows longjmp model round trips	migrated (batch 18); script kept: .github/workflows/ci-target-matrix.yml runs it by path over the emsdk payload it installs
-1080_gcc_over_the_hosts_payload_links_from_the_payload.sh	toolchain	merge	e2e/toolchain	
+1080_gcc_over_the_hosts_payload_links_from_the_payload.sh	toolchain	merge	e2e/toolchain::layers/1080 gcc over the hosts payload links from the payload	migrated (batch 21); script removed
