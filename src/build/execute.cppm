@@ -34,6 +34,7 @@ import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
+import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
 import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
 import mcpp.wire;              // the mcpp.launch envelope
@@ -2764,7 +2765,7 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
     // only of the record: another engine's `--configure-only` rewrites the
     // graph and leaves the record that names this one.
     if (const auto named = mcpp::build::read_engine_binding(ninjaPath);
-        !named.empty() && named != mcpp_exe_path().generic_string())
+        !named.empty() && !mcpp::build::graph_engine::is_this_engine(named))
         return std::unexpected(std::format("build.ninja runs another engine ({})", named));
 
     // #407. Freshness is measured against the SOURCES, which says nothing

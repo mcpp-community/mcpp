@@ -371,6 +371,15 @@ int run(int argc, char** argv) {
         }
     }
 
+    // A SELF-CONTAINED HOME IS STATED for the programs mcpp starts. It is
+    // derived from where this engine is (`<home>/bin/mcpp`), and a build
+    // directory's graph runs the engine through its own link (2026-11-12 §17),
+    // from which the same home cannot be derived.
+    try {
+        if (!mcpp::invocation::get("MCPP_HOME") && mcpp::home::original_source() == "portable")
+            mcpp::invocation::set("MCPP_HOME", mcpp::home::original_root().string());
+    } catch (...) {}
+
     // ─── --deny <effects> (design 2026-10-26 §5.5) ───────────────────────
     // Published as MCPP_DENY_EFFECTS, the union of what the caller's
     // environment already denies and what the flag adds, for the reason

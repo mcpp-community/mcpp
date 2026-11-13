@@ -556,7 +556,10 @@ struct BuildPlan {
     std::string                     dialectFlags;
 
     std::filesystem::path           projectRoot;      // where mcpp.toml lives
-    std::filesystem::path           outputDir;        // target/<triple>/<fp>/
+    std::filesystem::path           outputDir;        // target/<triple>/<lineage>/
+    // The engine the graph's commands run: the directory's link to this
+    // engine (mcpp.build.graph_engine); empty, this engine's own path.
+    std::filesystem::path           engine;
     // Where compile_commands.json goes. Carried rather than derived from
     // projectRoot: under BuildOverrides::work_dir the package root is a shared
     // (possibly read-only) registry directory, and deriving the path would put

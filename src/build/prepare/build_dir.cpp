@@ -9,6 +9,8 @@ import :state;
 import std;
 import mcpp.bmi_cache.maintenance;   // dir_size, human_bytes
 import mcpp.build.dirlock;
+import mcpp.build.graph_engine;
+import mcpp.build.cache_key;         // kCacheEpoch: the epoch the graph's engine link carries
 import mcpp.home.files;
 import mcpp.log;
 import mcpp.toolchain.fingerprint;
@@ -103,23 +105,30 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
             mcpp::bmi_cache::human_bytes(bytes)));
 }
 
-void renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
+std::filesystem::path renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
     namespace fs = std::filesystem;
     const auto was = read_small(outputDir / "toolchain");
-    if (was.empty() || was == toolchain_text(state.fp)) return;
-    // Held by this build (dirlock): nothing else writes here.
-    const auto bytes = mcpp::bmi_cache::dir_size(outputDir);
-    const auto lock = std::string(mcpp::build::dirlock::kLockName);
-    std::error_code ec;
-    for (auto const& e : fs::directory_iterator(outputDir, ec)) {
-        const auto name = e.path().filename().string();
-        if (name == lock || name == lock + ".owner") continue;
-        std::error_code rec;
-        fs::remove_all(e.path(), rec);
+    if (!was.empty() && was != toolchain_text(state.fp)) {
+        // Held by this build (dirlock): nothing else writes here.
+        const auto bytes = mcpp::bmi_cache::dir_size(outputDir);
+        const auto lock = std::string(mcpp::build::dirlock::kLockName);
+        std::error_code ec;
+        for (auto const& e : fs::directory_iterator(outputDir, ec)) {
+            const auto name = e.path().filename().string();
+            if (name == lock || name == lock + ".owner") continue;
+            std::error_code rec;
+            fs::remove_all(e.path(), rec);
+        }
+        mcpp::ui::status("Replaced", std::format(
+            "{} ({}): the toolchain changed, and nothing compiled there is reused",
+            outputDir.lexically_relative(state.workRoot).generic_string(), mcpp::bmi_cache::human_bytes(bytes)));
+    } else if (const auto fp = read_small(outputDir / "fingerprint"); !fp.empty() && fp != state.fp.hex + "\n") {
+        // Another mcpp, std module or runtime contract continues here: the
+        // compiler records describe the attempts of the build before, as those
+        // of a directory taken over do.
+        drop_compiler_records(outputDir / "obj");
     }
-    mcpp::ui::status("Replaced", std::format(
-        "{} ({}): the toolchain changed, and nothing compiled there is reused",
-        outputDir.lexically_relative(state.workRoot).generic_string(), mcpp::bmi_cache::human_bytes(bytes)));
+    return mcpp::build::graph_engine::refresh(outputDir, mcpp::build::cache_key::kCacheEpoch);
 }
 
 // What this configuration uses beside its directory (`mcpp clean --stale`); its

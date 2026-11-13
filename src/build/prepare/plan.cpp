@@ -2250,7 +2250,8 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     }
     if (!state.overrides.plan_only) adopt_predecessor_dir(state, ctx.outputDir);
     if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
-    if (!state.overrides.plan_only) renew_build_dir(state, ctx.outputDir);
+    std::filesystem::path graphEngine;
+    if (!state.overrides.plan_only) graphEngine = renew_build_dir(state, ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).
@@ -2277,6 +2278,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         return std::unexpected(r.error());
     if (auto r = timed("make plan", [&] { return step13_make_plan(state, ctx); }); !r)
         return std::unexpected(r.error());
+    ctx.plan.engine = graphEngine;
     if (auto r = timed("cxx islands", [&] { return step13_cxx_islands(state, ctx); }); !r)
         return std::unexpected(r.error());
     if (auto r = timed("cxx private runtime", [&] { return step13_cxx_private_runtime(state, ctx); }); !r)

@@ -348,6 +348,7 @@ std::filesystem::path mcpp_exe_path() {
     return mcpp::invocation::self_exe_path();
 }
 
+
 namespace {
 
 // U+FEFF in UTF-8. The response files of the MSVC tools begin with it (#693).
@@ -1806,7 +1807,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append(std::format("ld_driver = {}{}\n", toolEnv, ninja_tool_word(flags.ldDriver)));
     // `$mcpp` is needed by stage_file in EVERY configuration (dyndep or not),
     // so the binding cannot live inside the `if (dyndep)` below.
-    append(std::format("mcpp      = {}\n", ninja_tool_word(mcpp_exe_path())));
+    // The engine the planner chose for this directory (mcpp.build.graph_engine).
+    append(std::format("mcpp      = {}\n",
+                       ninja_tool_word(plan.engine.empty() ? mcpp_exe_path() : plan.engine)));
     if (dyndep) {
         if (!plan.scanDepsPath.empty()) {
             append(std::format("scan_deps = {}{}\n", toolEnv, ninja_tool_word(plan.scanDepsPath)));
