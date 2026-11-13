@@ -73,7 +73,10 @@ namespace {
 std::filesystem::path source_of(const std::filesystem::path& self) {
     std::error_code ec;
     if (std::filesystem::is_regular_file(self, ec)) return self;
-    if constexpr (mcpplibs::os::is_linux) return "/proc/self/exe";
+    // A system that presents the running image as a file (procfs) reads it
+    // there whether or not its path still names it.
+    const std::filesystem::path image{"/proc/self/exe"};
+    if (std::filesystem::is_regular_file(image, ec)) return image;
     return self;
 }
 } // namespace
