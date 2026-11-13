@@ -181,7 +181,7 @@ script	subsystem	class	destination	note
 172_build_cache_cross_project.sh	cache	merge	e2e/cache::entries/172 build cache cross project	migrated (batch 10); script removed
 173_build_profile_isolation.sh	cache	merge	e2e/cache::fastpath/173 build profile isolation	migrated (batch 10); script removed
 173_index_refresh_policy.sh	index	merge	e2e/index	
-174_cache_modes_and_commands.sh	cache	merge	e2e/cache::entries/174 cache modes and commands	migrated (batch 10); script removed; a known gap until 2026-12-15: build --cache=off removes the engine link the graph runs
+174_cache_modes_and_commands.sh	cache	merge	e2e/cache::entries/174 cache modes and commands	migrated (batch 10); script removed
 175_cpp20_import_std.sh	toolchain	merge	e2e/toolchain	
 176_cpp20_std_bmi_isolation.sh	toolchain	merge	e2e/toolchain	
 177_cpp20_msvc.sh	windows	merge	e2e/windows	

@@ -137,11 +137,7 @@ E2E entries{"entries", [] {
         expect(fatal(s::count_matching(graph(one.dir()), compile_edges) > 0u)) << "a new dependency version was served from the old entry\n" << s::text(r);
     };
 
-    "174 cache modes and commands"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}]
-        // An engine defect of this branch: `build --cache=off` empties the build directory after
-        // the plan made its link to the engine (`engine/epoch-<N>/mcpp`, design 2026-11-12 §17),
-        // and every step of the graph then fails with "not found". The script fails the same way.
-        [known_gap{"build --cache=off removes the engine link the graph runs", "2026-12-15"}] = [] {
+    "174 cache modes and commands"_test[tag{"requires:gcc"}][tag{"requires:fresh-sandbox"}] = [] {
         // --cache=global|local|off, --no-cache, MCPP_BUILD_CACHE and [build] cache; the fast path
         // honours the mode; cache dir, list, info, verify, gc (by last use), clean.
         s::needs({"gcc", "fresh-sandbox"});
