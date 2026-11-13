@@ -2000,11 +2000,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                                                 after[i].substr(0, sp), before[i].substr(sp + 1),
                                                 after[i].substr(sp + 1));
                         }
+                    // The size of the directory left beside it (mcpp#927, 2026-11-12
+                    // §18 P6): what the reader decides about, with the command.
                     mcpp::ui::warning(std::format(
-                        "the configuration changed{}: {} is built in full beside {}; "
-                        "`mcpp clean --stale` drops the directories no build still uses",
+                        "the configuration changed{}: {} is built in full beside {} ({}); "
+                        "`mcpp clean --stale` drops it once no build uses it",
                         what.empty() ? std::string{} : " (" + what + ")",
-                        ctx.outputDir.filename().string(), was.filename().string()));
+                        ctx.outputDir.filename().string(), was.filename().string(),
+                        mcpp::bmi_cache::human_bytes(mcpp::bmi_cache::dir_size(was))));
                 }
                 break;
             }
@@ -4108,6 +4111,9 @@ export struct TestRunSummary {
     long long buildMs   = 0;
     long long runMs     = 0;   // the test binaries' own execution
     long long elapsedMs = 0;   // wall clock for the whole member
+    // The package's programs, built before its tests (MCPP_BIN_<NAME>), whose
+    // planning and build the summary states apart (mcpp#927, §18 P2).
+    long long programsMs = 0;
     bool      packageError = false;   // Phase A failed: no test ever ran
     // The configuration group whose one build this member's tests waited for,
     // when `mcpp test` planned several members together; -1 for a member
@@ -5724,13 +5730,20 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     summary.notRunReason = notRunReason;
     summary.built  = built;
 
-    // "build X + run Y" rather than one merged number: on a member whose tests
-    // are cheap but whose link is not, those two are three orders of magnitude
-    // apart, and only the split says which one to go look at.
-    auto timing = std::format("{:.2f}s (build {:.2f}s + run {:.2f}s)",
-                              static_cast<double>(summary.elapsedMs) / 1000.0,
-                              static_cast<double>(summary.buildMs)   / 1000.0,
-                              static_cast<double>(summary.runMs)     / 1000.0);
+    // Each segment rather than one merged number: on a member whose tests are
+    // cheap but whose link is not, those are orders of magnitude apart, and
+    // only the split says which one to go look at. The segments add up to the
+    // total (mcpp#927, §18 P2): planning is what the others leave, as
+    // `Finished` reads its `plan`; the programs appear when there were any.
+    auto secs = [](long long ms) { return static_cast<double>(ms) / 1000.0; };
+    const long long planMs = std::max(0LL, summary.elapsedMs - summary.programsMs
+                                               - summary.buildMs - summary.runMs);
+    auto timing = std::format("{:.2f}s (plan {:.2f}s{} · build {:.2f}s · run {:.2f}s)",
+                              secs(summary.elapsedMs), secs(planMs),
+                              summary.programsMs >= 5
+                                  ? std::format(" · programs {:.2f}s", secs(summary.programsMs))
+                                  : std::string{},
+                              secs(summary.buildMs), secs(summary.runMs));
 
     // 1 keeps meaning "a test ran and failed". 2 is "could not establish the
     // answer": the code the freestanding no-runner path already returns for
@@ -6411,6 +6424,14 @@ export int run_tests(std::span<const std::string> passthrough,
         // (cmd_build): a test of an unchanged project neither resolves nor
         // scans to learn that its programs are current. Measured on a project
         // of 1,500 sources: 2.65 s of a 5.8 s test of one case, before it.
+        const auto tPrograms = std::chrono::steady_clock::now();
+        struct ProgramsTime {
+            TestRunSummary& summary; std::chrono::steady_clock::time_point from;
+            ~ProgramsTime() {
+                summary.programsMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - from).count();
+            }
+        } programsTime{summary, tPrograms};
         std::vector<std::pair<std::string, std::string>> fastPrograms;
         if (hasPrograms && fastPossible) {
             if (auto rc = try_fast_build(testRoot, mcpp::log::is_verbose(), false, "", &fastPrograms)) {

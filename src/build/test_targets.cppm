@@ -8,6 +8,7 @@ import mcpp.modgraph.glob;
 import mcpp.modgraph.scanner;
 import mcpp.project;
 import mcpp.build.plan;   // source_defines_main
+import mcpp.diag;
 
 export namespace mcpp::build {
 
@@ -94,7 +95,33 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
     // `main` are two beginnings of one program and are refused. A file
     // directly in the fixed directory stays a program of its own.
     std::map<std::filesystem::path, std::vector<std::filesystem::path>> sourcesOf;
-    if (packageManifest && packageManifest->testPrograms == "directory") {
+    // The name of a program that is more than one file, by its main file.
+    std::map<std::filesystem::path, std::string> programNameOf;
+    const std::string programs = packageManifest ? packageManifest->testPrograms : std::string{};
+    // `[test] programs = "package"` (mcpp#927, 2026-11-12 §18 P1): every file
+    // the package discovers is one program, named by the fixed directory of
+    // the first glob that found one (`tests`), linked once. A test is still
+    // its own process, as every case of a program is.
+    if (programs == "package" && !testFiles.empty()) {
+        std::vector<std::filesystem::path> mains;
+        for (auto const& [file, base] : testFiles)
+            if (source_defines_main(file)) mains.push_back(file);
+        if (mains.size() > 1)
+            return std::unexpected(std::format(
+                "[test] programs = \"package\": '{}' and '{}' both define `main`, and the files the "
+                "package discovers are one program with one beginning",
+                mains[0].lexically_relative(packageRoot).generic_string(),
+                mains[1].lexically_relative(packageRoot).generic_string()));
+        const auto base = testFiles.front().second;
+        const auto main = mains.empty() ? testFiles.front().first : mains.front();
+        for (auto const& [file, b] : testFiles)
+            if (file != main) sourcesOf[main].push_back(file);
+        auto name = base.lexically_relative(packageRoot).generic_string();
+        if (name.empty() || name == ".") name = packageRoot.filename().generic_string();
+        programNameOf[main] = name;
+        testFiles = {{main, base}};
+    }
+    if (programs == "directory") {
         std::map<std::pair<std::filesystem::path, std::filesystem::path>, std::vector<std::filesystem::path>> groups;
         for (auto const& [file, base] : testFiles) {
             const auto dir = file.parent_path();
@@ -121,6 +148,28 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
             // The directory names the program: the main file's name is replaced
             // by the directory's when the name is formed below.
             merged.emplace_back(main, key.second);
+        }
+        // The files the setting leaves as programs of their own, said once:
+        // the reader of a suite that did not get one program per directory
+        // learns which files and what does (§18 P1). A setting that changes
+        // no program is a warning, which --strict refuses.
+        std::map<std::filesystem::path, std::size_t> direct;
+        for (auto const& [file, base] : testFiles)
+            if (!grouped.contains(file)) ++direct[base];
+        for (auto const& [base, n] : direct) {
+            const auto where = base.lexically_relative(packageRoot).generic_string();
+            if (groups.empty())
+                mcpp::diag::degraded("test/programs", std::format(
+                    "[test] programs = \"directory\" changes no program: the {} test file{} {} directly in {}/",
+                    n, n == 1 ? "" : "s", n == 1 ? "is" : "are", where),
+                    "each stays a program of its own, as without the setting",
+                    "\"package\" makes the suite one program; a directory below it makes one of its files");
+            else
+                mcpp::diag::note("test/programs", std::format(
+                    "[test] programs = \"directory\": {} file{} directly in {}/ stay{} program{} of {} own; "
+                    "\"package\" makes the suite one program",
+                    n, n == 1 ? "" : "s", where, n == 1 ? "s a" : "", n == 1 ? "" : "s",
+                    n == 1 ? "its" : "their"));
         }
         std::erase_if(testFiles, [&](auto const& fb) { return grouped.contains(fb.first); });
         testFiles.insert(testFiles.end(), merged.begin(), merged.end());
@@ -149,9 +198,11 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         if (!mainRelative) return std::unexpected(mainRelative.error());
 
         const auto merged = sourcesOf.find(file);
-        const bool directoryProgram = packageManifest && packageManifest->testPrograms == "directory"
+        const bool directoryProgram = programs == "directory"
             && file.parent_path().lexically_normal() != discoverBase.lexically_normal();
-        auto name = directoryProgram ? testRelative->parent_path().generic_string()
+        const auto named = programNameOf.find(file);
+        auto name = named != programNameOf.end() ? named->second
+                  : directoryProgram ? testRelative->parent_path().generic_string()
                                      : testRelative->replace_extension("").generic_string();
         if (auto [it, fresh] = seenNames.emplace(name, *mainRelative); !fresh) {
             return std::unexpected(std::format(

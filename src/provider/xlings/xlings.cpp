@@ -1954,8 +1954,25 @@ int update_index_unguarded(const Env& env, bool quiet) {
     std::filesystem::create_directories(paths::index_data(env), lockEc);
     auto lock = mcpp::home::FileLock::try_acquire(paths::index_data(env));
     if (!lock) {
-        mcpp::log::verbose("index",
-            "another process is refreshing the index — skipping this one");
+        // UNLESS THERE IS NO INDEX TO READ (mcpp#927, 2026-11-12 §18 P3). A
+        // process that skipped the refresh then read an index another process
+        // was still fetching, or exchanging on a volume without an atomic
+        // exchange, and reported "no local package index" for a home that had
+        // one a moment later. Such a reader waits for the refresh it skipped;
+        // one with an index skips as before.
+        bool absent = false;
+        for (const auto& d : paths::declared_indices(env))
+            if (!std::filesystem::exists(d.dir, lockEc)) absent = true;
+        if (!absent) {
+            mcpp::log::verbose("index",
+                "another process is refreshing the index — skipping this one");
+            return 0;
+        }
+        auto waited = mcpp::home::FileLock::acquire(
+            paths::index_data(env), ".lock", "a refresh of the package index",
+            std::chrono::milliseconds(500), [&](std::string_view) {
+                if (!quiet) print_status("Waiting", "for the package index another mcpp is refreshing");
+            });
         return 0;
     }
 

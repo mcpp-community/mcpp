@@ -3736,10 +3736,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 continue;
             }
             if (key == "programs") {
-                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"))
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"
+                                           && value.as_string() != "package"))
                     return std::unexpected(error(origin,
-                        "[test] programs is \"file\" (a test program per file, the default) or "
-                        "\"directory\" (the files of one directory are one program)"));
+                        "[test] programs is \"file\" (a test program per file, the default), "
+                        "\"directory\" (the files of one directory are one program) or \"package\" "
+                        "(the files the package discovers are one program)"));
                 m.testPrograms = value.as_string();
                 continue;
             }
