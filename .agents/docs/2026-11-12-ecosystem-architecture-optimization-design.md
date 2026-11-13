@@ -910,3 +910,56 @@ BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；o
 - 在 openkal-windows 自身的目录里 `mcpp test --target x86_64-windows-musl`：测试单元与测试库的模块按两个三元组编译，模块不可用。已发布的引擎同样。
 - 一个 mcpp 读索引条目时，另一个 mcpp 正在刷新索引：读的一方报告"没有可读的索引条目"（Windows 上 e2e 1071 出现一次）。
 - 两条腿并行构建时出现一次"compiler-run owner refused unit admission"（Linux 上 e2e 963，一次）。
+
+## 16. 工具链载荷即数据（2026-11-13 补充）
+
+### 16.1 现状（测）
+
+**版本已经是数据。** 发布的引擎（2026.11.10.2）：`--toolchain gcc@16.1` 解析为 `xim:gcc@16.1.0`，`xim:gcc@16.1.0` 原样可用，
+`gcc@16.9.0` 被拒绝并说明索引里没有该包。因此 xim-pkgindex 发布 `gcc 16.2.x` 之后，`[toolchain] default = "gcc@16.2"`（该系列在
+索引中的最新者）或 `"xim:gcc@16.2.0"` 不需要改动引擎即可使用。默认版本由内置行固定，改变默认需要发布引擎，使用则不需要。
+
+**名字不是数据。** 三处把载荷写在代码里：
+
+| 位置 | 写死的内容 |
+|---|---|
+| `compat::normalize_spec` | 可接受的名字：`gcc`、`llvm`、`msvc`、`emsdk`、`android-ndk` 与别名 `clang`、`musl-gcc`、`mingw*`、`<triple>-gcc`；其余名字（含 `xim:` 前缀）被拒绝 |
+| `to_xim_package` | （家族，目标，宿主）到包名的分支：gcc 到 `gcc`、`musl-gcc`、`mingw-gcc`、`mingw-cross-gcc`、`<gcc-triple>-gcc`；llvm 到 `llvm`、`emsdk`、`android-ndk`；每个分支各写前端候选与前端目录 |
+| `identify_xim_payload` | 上一项的反向映射，供 `toolchain list` 与 `doctor` 枚举 |
+
+新增一个工具链发行版（厂商的 clang、`riscv64-elf-gcc`、icx）因此仍要改引擎，与 R1"行是数据，读行的代码不是"不一致。已经数据化的
+部分是三项：载荷的描述文件 `.mcpp-toolchain.json`（schema 1：`frontend`、`platform_floor`、`std_module_defines`、`runner`），
+按路径命名的工具链（`path:<dir>` 与清单的 `[toolchain]` 路径表，家族由目录里的驱动判定），以及行的 `gcc-triple`。
+
+### 16.2 原则
+
+**家族是引擎的词汇，载荷是数据。** 家族回答"编译器说哪一套选项"（gcc、llvm、msvc），引擎为每一套各有一份实现，它保持封闭。
+载荷回答"哪个包、前端在哪里、带哪些工具"，它是包的事实，由包陈述。
+
+### 16.3 方案
+
+**T1 描述文件 schema 2 即路径表。** `.mcpp-toolchain.json` 增加清单 `[toolchain]` 路径表的键：`family`、`prefix`、`sysroot`、
+`tools`（角色到程序），路径相对载荷根。一个载荷对自身的陈述与一个项目对本机目录的陈述是同一张表，读同一个结构
+（`LocalToolchain`）。schema 1 的四个键不变；没有描述文件的已发布载荷按原样工作。
+
+**T2 `xim:<name>@<version>` 接受任何名字。** 名字在家族词汇（含别名）之外时，它指一个载荷：安装该包，读它的描述文件，然后按
+`path:<载荷根>` 加描述文件的表解析——家族由驱动判定（与表中的 `family` 不一致即拒绝），目标由驱动回答。描述文件缺失时拒绝，
+指出缺少的文件与键。不带 `xim:` 的未知名字仍被拒绝：命名空间是"这是一个包"的唯一说法。平台的 `toolchain` 键因此可以直接写
+任何载荷，平台定义的行不需要新键。
+
+**T3 默认映射是表。** 裸名（`gcc@16.1.0`、`llvm@23.1.3`）是简写：（家族，目标，宿主）经一张规则表得到包名、前端目录、前端候选与
+glibc 修正，规则按序匹配，取第一条。表在 toolchain-model 的数据文件里，`to_xim_package` 与 `identify_xim_payload` 都读它，
+正反两个方向不再各写一遍。别名（`clang`、`musl-gcc`、`mingw*`）保持兼容提示。
+
+**T4 验收：引擎零改动。** 新增一个工具链即发布一个带描述文件的 xim 包；以本轮的 gcc 16.2.0 验证版本开放，以一个词汇外名字的
+载荷验证 T2（e2e：仓库内的假载荷，带 schema 2 描述文件）。
+
+**T5 机械门禁。** 统计 `src/` 中载荷名（`emsdk`、`android-ndk`、`musl-gcc`、`mingw-gcc`、`mingw-cross-gcc`）在规则表之外的出现次数，
+与基线文件比较，多于基线即失败。
+
+### 16.4 本轮的 gcc 16.2.0
+
+默认仍为 gcc 16.1.0。xim-pkgindex 以 `tools/res/build.sh gcc` 从源码构建 16.2.0（x86_64 与 aarch64，源码的 GNU 签名已核对），
+发布到 xlings-res 并镜像到 GitCode，`pkgs/g/gcc.lua` 增加该版本；`res-build` 的 `only` 接受 `what@version`，新版本的构建不重建
+已发布的版本。验证项：`gcc@16.2`、`xim:gcc@16.2.0` 的解析与构建，`import std`，`[toolchain] default` 与 `--toolchain` 两种写法，
+`toolchain list` 与 `doctor` 的枚举，默认（16.1.0）不变。
