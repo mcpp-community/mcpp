@@ -27,7 +27,15 @@
   one file defines `main`.
 - The end-to-end cases are C++ test programs of mtest (`tests/e2e/**`, support
   in `tests/support`); each host's unit job runs them with `mcpp test`. Shell
-  scripts remain where a case needs a shell.
+  scripts remain where a case needs a shell. A case states where it runs and
+  what it needs of the machine as attributes of mtest 0.8.0
+  (`"x"_test[s::windows][s::msvc]`): the program skips it elsewhere, naming the
+  platform or the capability, whichever runner starts it. A job that runs named
+  cases on a host that cannot build them (Visual Studio masked, a cross
+  toolchain only, a released mcpp) takes them from the test archive build.yml
+  writes (`.github/actions/e2e-cases`), and holds each case to its `ok` line;
+  `MCPP_E2E_MCPP` names the mcpp such a run tests when it is not the archive's
+  own build.
 - Two canary projects (`tests/canary/c`, `tests/canary/cxx`) and a nightly
   matrix (`canaries.yml`): every identity a host offers is built, linked
   statically, run, tested and packed, and each cell is compared with

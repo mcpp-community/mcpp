@@ -906,6 +906,12 @@ BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；o
 
 第四版（2026.11.13.1）实施了其中的：e2e 向 mtest 的 C++ 用例的迁移（各宿主的单元作业以 `mcpp test` 运行）、两个金丝雀与夜间
 矩阵（5.7，`tests/canary/`、`canaries.yml`）、UEFI 收敛（第 19 节）、xim 的第二个 PR（wine、DOSBox、OVMF、djgpp 的包）。
+用例运行的位置与所需能力由用例以 mtest 0.8.0 的属性陈述（`"x"_test[s::windows][s::msvc]`；`only{}`、`except{}`
+取 mcpplibs.os 的平台与架构，`capability` 由程序在代码中回答一次），不再由脚本头的 `# requires:` 与运行器的探测表承担；
+只在 Windows 上运行的 45 个脚本随之迁移（`tests/e2e/windows/`，迁移表第 24 批）。需要指定用例而本机不能构建测试的作业
+（屏蔽 Visual Studio 的 Windows、只有交叉工具链的 Linux、ci-fresh-install 的已发布 mcpp）从构建作业写出的测试归档
+运行它们（`build.yml` 的 `tests`、`.github/actions/e2e-cases`），每个用例须打印其 `ok` 行；被测的 mcpp 缺省是归档自带的构建，
+`MCPP_E2E_MCPP` 另行指定。
 同版并入的两处缺陷：GCC 14 之前的编译器没有 C++ 模块与 P1689，此前在第一次编译时因 `-fmodules` 失败；现在不声明、不导入
 模块的 C++ 单元以不带模块选项的翻译单元构建（图取 mcpp 自己的扫描），需要模块的第一个单元在规划时被拒绝并指出所需——8.2 的
 A 路线表"libstdc++ 12，无模块"由此成立（实测：DJGPP 的 GCC 12.2.0 构建异常、`std::vector`、`std::sort` 的程序，经 DOSBox 运行，状态 7）；
