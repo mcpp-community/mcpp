@@ -74,6 +74,10 @@ enum class home { shared, fresh, linked, inherited, payloads };
 
 // The home of the case (fresh, linked, inherited): one directory per case, made on first use.
 fs::path case_home(home kind = home::fresh);
+// A further home of the case, made at each call (a case that moves between homes, as a script
+// that exported MCPP_HOME again did); removed with the case's other homes. mcpp runs in it with
+// `options::env` setting MCPP_HOME.
+fs::path another_home(home kind = home::fresh);
 // The shared home: `MCPP_HOME`, else `~/.mcpp`.
 fs::path shared_home();
 
@@ -221,6 +225,10 @@ private:
 namespace sig {
 inline constexpr int interrupt = 2, kill = 9, pipe = 13, terminate = 15;
 }
+
+// `stat -c '%i %Y %s'`: a file's inode, modification second and size (a rewrite changes the
+// first or the second even when the size is kept). The inode is 0 where the system has none.
+std::string file_identity(const fs::path& file);
 
 // `text` without its escape sequences (`CSI ... final`).
 std::string strip_escapes(std::string_view text);

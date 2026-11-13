@@ -5,6 +5,7 @@ module;
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -368,6 +369,22 @@ fs::path case_home(home kind) {
     do h = fs::temp_directory_path() / std::format("mcpp-e2e-home-{:08x}", rd());
     while (!fs::create_directory(h, ec) && !ec);
     all.of_case.emplace(key, h);
+    if (kind == home::linked && fs::is_directory(home_dir() / "registry", ec))
+        link_or_copy(home_dir() / "registry", h / "registry");
+    else if (kind == home::inherited || kind == home::payloads)
+        inherit(h, kind == home::inherited);
+    return h;
+}
+
+fs::path another_home(home kind) {
+    auto& all = case_homes();
+    std::scoped_lock lock(all.m);
+    std::random_device rd;
+    fs::path h;
+    std::error_code ec;
+    do h = fs::temp_directory_path() / std::format("mcpp-e2e-home-{:08x}", rd());
+    while (!fs::create_directory(h, ec) && !ec);
+    all.of_case.emplace(mcpplibs::mtest::temp_dir() / std::format("#home-{}", all.of_case.size()), h);
     if (kind == home::linked && fs::is_directory(home_dir() / "registry", ec))
         link_or_copy(home_dir() / "registry", h / "registry");
     else if (kind == home::inherited || kind == home::payloads)
@@ -1064,6 +1081,18 @@ std::vector<process_entry> processes() {
         out.push_back(std::move(p));
     }
     return out;
+}
+
+std::string file_identity(const fs::path& file) {
+#if defined(_WIN32)
+    const auto t = std::chrono::duration_cast<std::chrono::seconds>(fs::last_write_time(file).time_since_epoch()).count();
+    return std::format("0 {} {}", t, fs::file_size(file));
+#else
+    struct stat st {};
+    if (::stat(file.c_str(), &st) != 0) return {};
+    return std::format("{} {} {}", static_cast<unsigned long long>(st.st_ino), static_cast<long long>(st.st_mtime),
+                       static_cast<long long>(st.st_size));
+#endif
 }
 
 process::process(process&& o) noexcept
