@@ -50,7 +50,7 @@ script	subsystem	class	destination	note
 44_indices_e2e_integration.sh	index	sink	unit/test_indices	answers a parse/selection rule without a build: workspace inheritance of [indices]
 45_install_platform_mapping.sh	repo	sink	unit/test_repo_consistency	answers a parse/selection rule without a build: install.sh platform ids vs release assets
 46_self_config_mirror_no_bootstrap.sh	self	merge	e2e/self	
-47_cdb_prebuilt_module_path_abs.sh	cdb	merge	e2e/cdb	
+47_cdb_prebuilt_module_path_abs.sh	cdb	merge	e2e/cdb::root/47 cdb prebuilt module path abs	migrated (batch 13); script removed
 47_llvm_atomic_link.sh	toolchain	merge	e2e/toolchain	
 48_build_error_output.sh	cli	merge	e2e/cli::output/48 build error output	migrated (batch 8); script removed
 49_bmi_cache_nested_custom_index.sh	modules	merge	e2e/modules::bmi/49 bmi cache nested custom index	migrated (batch 9); script removed
@@ -81,9 +81,9 @@ script	subsystem	class	destination	note
 73_issue131_per_target_cxxflag.sh	build	merge	e2e/build::flags/73 issue131 per target cxxflag	migrated (batch 7); script removed
 74_run_no_loader_env_leak.sh	run	merge	e2e/run::environment/74 run no loader env leak	migrated (batch 12); script removed
 75_index_status_offline.sh	index	merge	e2e/index	
-76_compile_commands_generated.sh	cdb	merge	e2e/cdb	
+76_compile_commands_generated.sh	cdb	merge	e2e/cdb::root/76 compile commands generated	migrated (batch 13); script removed
 76_qualified_custom_ns_noncanonical_filename.sh	index	merge	e2e/index	
-77_cdb_preserves_test_entries.sh	cdb	merge	e2e/cdb	
+77_cdb_preserves_test_entries.sh	cdb	merge	e2e/cdb::root/77 cdb preserves test entries	migrated (batch 13); script removed
 78_test_main_combinations.sh	test	merge	e2e/test::graph/78 test main combinations	migrated (batch 1); script removed
 79_gtest_regular_dep_feature_main.sh	deps	merge	e2e/deps::resolve/79 gtest regular dep feature main	migrated (batch 3); script removed
 80_feature_defines.sh	features	merge	e2e/features::activation/80 feature defines	migrated (batch 5); script removed
@@ -219,7 +219,7 @@ script	subsystem	class	destination	note
 208_private_libc_stays_in_the_binary.sh	runtime	merge	e2e/runtime	
 209_runtime_verdict_never_reruns_green.sh	runtime	merge	e2e/runtime	
 210_local_index_addressing_on_every_host.sh	index	merge	e2e/index	
-211_configure_only_cdb.sh	cdb	merge	e2e/cdb	
+211_configure_only_cdb.sh	cdb	merge	e2e/cdb::configure/211 configure only cdb	migrated (batch 13); script removed
 212_cached_dep_std_is_ordered.sh	cache	merge	e2e/cache::entries/212 cached dep std is ordered	migrated (batch 10); script removed
 213_build_after_test_is_not_the_test_graph.sh	test	merge	e2e/test::graph/213 build after test is not the test graph	migrated (batch 1); script removed
 214_executable_carries_dt_rpath.sh	runtime	merge	e2e/runtime	
@@ -416,7 +416,7 @@ script	subsystem	class	destination	note
 685_a_nested_test_loads_a_graph_shared_library.sh	runtime	merge	e2e/runtime	
 686_an_activated_xlings_subos_does_not_redirect_the_registry.sh	self	merge	e2e/self	
 687_the_vendored_xlings_probe_is_an_argument_vector.sh	self	merge	e2e/self	
-688_emit_build_database.sh	cdb	merge	e2e/cdb	
+688_emit_build_database.sh	cdb	merge	e2e/cdb::emit/688 emit build database	migrated (batch 13); script removed
 689_pack_takes_features.sh	pack	merge	e2e/pack::formats/689 pack takes features	migrated (batch 6); script removed
 690_a_shared_library_over_a_graph_cxx_runtime.sh	runtime	merge	e2e/runtime	
 692_a_package_states_its_default_link_form.sh	runtime	merge	e2e/runtime	
@@ -467,8 +467,8 @@ script	subsystem	class	destination	note
 778_a_graph_link_searches_no_host_directory.sh	target	merge	e2e/target	
 779_a_build_program_declares_a_runtime_search_dir.sh	build-program	merge	e2e/build-program::deps/779 a build program declares a runtime search dir	migrated (batch 2); script removed
 780_a_passing_check_moves_its_stamp_past_a_changed_input.sh	actions	merge	e2e/actions::checks/780 a passing check moves its stamp past a changed input	migrated (batch 4); script removed
-781_deleted_root_cdb_is_restored.sh	cdb	merge	e2e/cdb	
-782_foreign_root_cdb_entries_are_replaced.sh	cdb	merge	e2e/cdb	
+781_deleted_root_cdb_is_restored.sh	cdb	merge	e2e/cdb::root/781 deleted root cdb is restored	migrated (batch 13); script removed
+782_foreign_root_cdb_entries_are_replaced.sh	cdb	merge	e2e/cdb::root/782 foreign root cdb entries are replaced	migrated (batch 13); script removed
 783_cdb_switches_whole_with_the_configuration.sh	cdb	merge	e2e/cdb	
 784_cdb_replays_from_its_directory.sh	cdb	merge	e2e/cdb	
 785_cdb_interface_flag_module_extensions.sh	cdb	merge	e2e/cdb	
@@ -622,7 +622,7 @@ script	subsystem	class	destination	note
 934_llvm_with_a_graph_supplied_libstdcxx.sh	toolchain	merge	e2e/toolchain	
 935_two_builds_of_one_configuration.sh	cache	merge	e2e/cache::directories/935 two builds of one configuration	migrated (batch 10); script removed
 936_the_control_contract.sh	cli	merge	e2e/cli::output/936 the control contract	migrated (batch 8); script removed
-937_the_root_compile_database_is_opt_in.sh	cdb	merge	e2e/cdb	
+937_the_root_compile_database_is_opt_in.sh	cdb	merge	e2e/cdb::root/937 the root compile database is opt in	migrated (batch 13); script removed
 938_a_relink_never_exposes_a_partial_file.sh	build	merge	e2e/build::link/938 a relink never exposes a partial file	migrated (batch 7); script removed
 939_a_lock_written_meanwhile_is_not_overwritten.sh	deps	merge	e2e/deps::lock/939 a lock written meanwhile is not overwritten	migrated (batch 3); script removed
 940_an_indirect_import_is_found_whatever_map_its_importer_has.sh	modules	merge	e2e/modules::basics/940 an indirect import is found whatever map its importer has	migrated (batch 9); script removed
