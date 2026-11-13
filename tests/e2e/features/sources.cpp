@@ -67,7 +67,7 @@ E2E sources{"sources", [] {
         // A feature that gates a source (in no base list, but under the inferred `src/**`) and a
         // feature that switches a source the package provides, under build and test.
         s::needs({"unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project provider{tmp / "provider", {{"mcpp.toml", R"cpp([package]
 name    = "provider"
 version = "0.1.0"
@@ -182,7 +182,7 @@ int main() { return 0; }
         expect(fatal(e2e::succeeded(test_off))) << "mcpp test (off) failed";
         expect(fatal(s::lacks(s::text(test_off), "matched no source file"))) << "feature-off test must not warn about feature flag globs";
         expect(fatal(e2e::succeeded(p.mcpp({"test", "--features", "simd"})))) << "mcpp test (on) failed";
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", R"cpp([package]
 name    = "widget"
 version = "0.1.0"

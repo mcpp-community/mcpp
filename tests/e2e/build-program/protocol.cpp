@@ -221,7 +221,7 @@ int main() {
         expect(s::has_line(second, R"(^ *build\.mcpp .* cached)")) << "the second build re-ran the program; the replay path was not exercised";
         expect(e2e::contains(second, "advisory: no emulator found")) << "the advisory was lost on a cache hit";
         // 3. Two members, two advisories, each named.
-        s::project ws{temp_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}}};
+        s::project ws{s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}}};
         for (std::string m : {"a", "b"}) {
             ws.write(m + "/mcpp.toml", std::format("[package]\nname    = \"{}\"\nversion = \"0.1.0\"\n", m));
             ws.write(m + "/src/main.cpp", "int main() { return 0; }\n");
@@ -603,7 +603,7 @@ int main() {
         // directory (`app`) and the package (`vulkan-saxpy`) differ on purpose, or the case would
         // pass against a directory-derived answer. The answer is written to a file.
         s::needs({"gcc"});
-        s::project p{temp_dir() / "app",
+        s::project p{s::case_dir() / "app",
                      {{"src/main.cpp", "int main() { return 0; }\n"},
                       {"build.mcpp", R"cpp(#include <cstdio>
 #include <string>
@@ -656,7 +656,7 @@ int main() {
 }
 )cpp";
         const std::string manifest = "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[toolchain]\nlinux = \"gcc@16.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
-        s::project p{temp_dir() / "app", {{"mcpp.toml", manifest},
+        s::project p{s::case_dir() / "app", {{"mcpp.toml", manifest},
                                           {"src/main.cpp", "#include <cstdio>\nint main() { std::puts(\"app\"); return 0; }\n"},
                                           {"res.txt", "hello resource\n"},
                                           {"build.mcpp", build}}};
@@ -707,8 +707,8 @@ int main() {
         expect(fatal(staged.has_value())) << "mcpp pack --pkg-format dir did not stage the deployed file";
         expect(staged->generic_string().ends_with("/bin/app.resources/res.bin")) << "the staged file is not at bin/app.resources/res.bin";
         // 6. `to = "../x"` is refused.
-        fs::copy(p.dir(), temp_dir() / "escapes", fs::copy_options::recursive);
-        s::project esc{temp_dir() / "escapes", {}};
+        fs::copy(p.dir(), s::case_dir() / "escapes", fs::copy_options::recursive);
+        s::project esc{s::case_dir() / "escapes", {}};
         esc.write("mcpp.toml", std::regex_replace(manifest, std::regex("name    = \"app\""), "name    = \"escapes\""));
         esc.write("build.mcpp", std::regex_replace(build, std::regex(R"re(mcpp::deploy\(out\.c_str\(\), "app\.resources"\))re"), "mcpp::deploy(out.c_str(), \"../x\")"));
         auto b5 = esc.mcpp({"build"});
@@ -758,7 +758,7 @@ int main() {
         s::needs({"unix-shell"});
         for (auto [label, imports] : {std::pair{"C1", "import mcpp.core;"}, std::pair{"C2", "import mcpp;"},
                                       std::pair{"C3", "import mcpp.core;\nimport mcpp;"}}) {
-            s::project p{temp_dir() / label, {{"mcpp.toml", "[package]\nname = \"core823\"\nversion = \"0.1.0\"\n"},
+            s::project p{s::case_dir() / label, {{"mcpp.toml", "[package]\nname = \"core823\"\nversion = \"0.1.0\"\n"},
                                               {"src/main.cpp", "#include <cstdio>\nint main() { std::printf(\"%d\\n\", CORE823); return 0; }\n"}}};
             p.write("build.mcpp", std::format("{}\nint main() {{\n    mcpp::cxxflag(\"-DCORE823=823\");\n    return 0;\n}}\n", imports));
             expect(fatal(e2e::succeeded(p.mcpp({"build"})))) << label << ": the build failed";

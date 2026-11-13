@@ -20,7 +20,7 @@ E2E layers{"layers", [] {
         // beside a triple leg, in a dependency too; an unknown cfg key is named with the
         // vocabulary (an error under --strict); a layer-conditioned dependency is reported while
         // the section's build inputs still apply.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project probe{tmp / "probe", {{"mcpp.toml", R"cpp([package]
 name    = "probe"
 version = "0.1.0"
@@ -135,7 +135,7 @@ defines = ["INPUTS_STILL_APPLY=1"]
         // predicate and beside another table; a non-matching predicate contributes nothing; a
         // typo in either runtime table is reported while the neighbouring key applies.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto graph = [](const s::project& p) {
             const auto nj = s::find_file(p.at("target"), "build.ninja");
             expect(fatal(nj.has_value())) << "no build graph";
@@ -188,7 +188,7 @@ framework = ["Cocoa"]
         // nothing; a matching one is refused without the root's table, naming the dependency and
         // the selector, and satisfied by it (-pthread, its own fingerprint); per feature too.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project dep{tmp / "tgtdep", {{"src/tgtdep.cppm", "export module tgtdep;\nexport int tgt_value() { return 7; }\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", R"cpp(import tgtdep;
 int main() { return tgt_value() == 7 ? 0 : 1; }
@@ -265,7 +265,7 @@ tgtdep = {0}
         // layers are resolved, as a requirement of [package] is: refused before anything
         // compiles, naming the dependency and what it requires; a non-matching table states nothing.
         s::needs({"unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project needs{tmp / "needs", {{"src/needs.cpp", "int needs() { return 7; }\n"}}};
         auto write_needs = [&](std::string_view selector) { needs.write("mcpp.toml", std::format(R"cpp([package]
 name    = "needs"

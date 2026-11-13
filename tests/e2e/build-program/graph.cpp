@@ -29,7 +29,7 @@ E2E graph{"graph", [] {
         // has a target set and a `:host` set, compile_commands the target units only; M10 a header
         // edit recompiles both and reruns the program. (The script read the database with python3.)
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         const std::string header = "#pragma once\nnamespace hl {\ninline int answer() { return 42; }\ninline int x_on() {\n#ifdef HL_X\n    return 1;\n#else\n    return 0;\n#endif\n}\n}\n";
         s::project hl{root / "hl", {{"include/hl/hl.hpp", header},
                                     {"src/hl.cppm", "module;\n#include <hl/hl.hpp>\nexport module hl;\nexport namespace hl { using hl::answer; using hl::x_on; }\n"},
@@ -97,7 +97,7 @@ E2E graph{"graph", [] {
         // a request of the program's instance: the target instance does not have it (A), the
         // program's does (B).
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project hl{root / "hl", {{"src/hl.cppm", "export module hl;\nexport namespace hl {\ninline int x_on() {\n#ifdef HL_X\n    return 1;\n#else\n    return 0;\n#endif\n}\n}\n"},
                                     {"mcpp.toml", "[package]\nname = \"hl\"\nversion = \"0.1.0\"\n[features]\nx = { defines = [\"HL_X\"] }\n[targets.hl]\nkind = \"lib\"\n"}}};
         s::project mid{root / "mid", {{"mcpp.toml", "[package]\nname = \"mid\"\nversion = \"0.1.0\"\n[build-dependencies]\nhl = { path = \"../hl\", features = [\"x\"] }\n[targets.mid]\nkind = \"lib\"\n"},
@@ -113,7 +113,7 @@ E2E graph{"graph", [] {
         // mcpp#797 Q4/Q5: a library a build program uses is compiled and linked whole: its
         // implementation units, its C sources and its own dependencies.
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project base{root / "base", {{"src/base.cppm", "export module acme.base;\nexport int base_two();\n"},
                                         {"src/base_impl.cpp", "module acme.base;\nint base_two() { return 2; }\n"},
                                         {"mcpp.toml", "[package]\nname = \"base\"\nversion = \"0.1.0\"\n[targets.base]\nkind = \"lib\"\n"}}};
@@ -134,7 +134,7 @@ E2E graph{"graph", [] {
         // new value; B nothing changed, the identity current, no graph planned; C both stated in
         // the verbose log.
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project hl{root / "hl", {{"src/value.h", "#define HL_VALUE 42\n"},
                                     {"src/hl.cppm", "module;\n#include \"value.h\"\nexport module hl;\nexport int hl_value() { return HL_VALUE; }\n"},
                                     {"mcpp.toml", "[package]\nname = \"hl\"\nversion = \"0.1.0\"\n[targets.hl]\nkind = \"lib\"\n"}}};
@@ -165,7 +165,7 @@ E2E graph{"graph", [] {
         // name before the compiler (B); both keys give both (C); `host-module = false` declines
         // the library (D).
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project gen{root / "gen", {{"src/gen.cppm", "export module acme.gen;\nexport int gen_value() { return 42; }\n"},
                                       {"tools/gen_main.cpp", "#include <cstdio>\nint main() { std::puts(\"generated\"); }\n"},
                                       {"mcpp.toml", "[package]\nnamespace = \"acme\"\nname      = \"gen\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/gen.cppm\"]\n\n[targets.gen]\nkind = \"lib\"\n\n[targets.gentool]\nkind = \"bin\"\nmain = \"tools/gen_main.cpp\"\n"}}};
@@ -199,7 +199,7 @@ E2E graph{"graph", [] {
         // refused; F pack refuses a plugin; G a library the plugin depends on is importable by its
         // consumers' programs only when handed on with `reexport = true`.
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         auto lib = [&](std::string_view name, std::string_view deps) {
             return s::project{root / name, {{"mcpp.toml", std::format("[package]\nnamespace = \"acme\"\nname = \"{0}\"\nversion = \"0.1.0\"\n[dependencies.acme]\n{1}\n[targets.{0}]\nkind = \"lib\"\n", name, deps)}}};
         };

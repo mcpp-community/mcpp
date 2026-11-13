@@ -18,7 +18,7 @@ bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 fs::path example_copy() {
     const auto src = s::repository() / "examples/12-a-new-device-language";
     expect(fatal(fs::is_directory(src))) << src.string() << " is missing";
-    const auto ex = temp_dir() / "ex";
+    const auto ex = s::case_dir() / "ex";
     fs::copy(src, ex, fs::copy_options::recursive);
     std::vector<fs::path> doomed;
     for (auto it = fs::recursive_directory_iterator(ex); it != fs::recursive_directory_iterator(); ++it) {
@@ -41,7 +41,7 @@ E2E rules{"rules", [] {
         // not compiled; the mcpp namespace draws no reserved-prefix warning, another draws one
         // per unit; a lib whose only unit implements an undeclared module keeps its diagnostic.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto collection = [&](std::string_view ns) {
             fs::remove_all(tmp / "plugins");
             s::project p{tmp / "plugins", {{"src/plugins.cppm", "export module mcpp.plugins;\nimport std;\nexport namespace mcpp::plugins {\ninline constexpr std::string_view version = \"0.1.0\";\n}\n"},
@@ -142,7 +142,7 @@ int main() { std::printf("A=%d B=%d V=%s\n", RULE_A, RULE_B, STR(PLUGINS_VERSION
         // feature: a build naming no accelerator installs nothing; a device build installs the
         // payload and the rule's build program finds it.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options fresh{.where = s::home::fresh};
         s::project dep{tmp / "dep", {{"src/lib.cpp", "int dep_touch() { return 1; }\n"},
                                      {"build.mcpp", R"cpp(#include <cstdio>

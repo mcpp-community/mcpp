@@ -58,7 +58,7 @@ struct graph {
 };
 
 graph make_graph(std::string_view dep_extra, std::string_view dep_dependency, std::string_view app_extra) {
-    const auto tmp = temp_dir();
+    const auto tmp = s::case_dir();
     graph g{s::project{tmp / "dep", {{"src/lib.cpp", "int dep_touch() { return 1; }\n"}}},
             s::project{tmp / "app", {{"src/main.cpp", "int main() { return 0; }\n"}}}};
     g.dep.write("mcpp.toml", std::format("[package]\nname    = \"toolowner\"\nversion = \"0.1.0\"\n[modules]\nsources = [\"src/**/*.cpp\"]\n{}[targets.toolowner]\nkind = \"lib\"\n", dep_extra));

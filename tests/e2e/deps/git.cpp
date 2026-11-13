@@ -47,7 +47,7 @@ E2E git_deps{"git", [] {
         // offline from the lock, kept at the locked commit when the clone cache is evicted, and
         // advanced by `mcpp update`. HOME is the case's own, so the caches resolve there.
         s::needs({"fresh-sandbox"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto mhome = s::case_home(s::home::inherited);
         fs::create_directories(tmp / "home");
         auto opts = [&](std::vector<std::pair<std::string, std::optional<std::string>>> extra = {}) {
@@ -110,7 +110,7 @@ E2E git_deps{"git", [] {
         // hint; a root pin below a library's SemVer floor is refused naming both; the same
         // reference declared twice is silent, under --strict too.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto fw_git = tmp / "framework-git";
         const auto fw_host = fw_git.generic_string();
         s::project fw{fw_git, {{"mcpp.toml", "[package]\nname    = \"framework\"\nversion = \"0.1.0\"\n[build]\nsources = [\"src/*.c\"]\n[targets.framework]\nkind = \"lib\"\n"}}};
@@ -237,7 +237,7 @@ E2E git_deps{"git", [] {
         // dependency by one consumer keeps its requests; a git dependency's compile banner names
         // its reference.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project repo{tmp / "repo", {{"mcpp.toml", "[package]\nname      = \"fw\"\nnamespace = \"spike\"\nversion   = \"0.1.0\"\n[targets.fw]\nkind = \"lib\"\n[build]\nsources = [\"src/*.cpp\"]\n[workspace]\nmembers = [\"tool\"]\n"},
                                        {"src/fw.cpp", "int fw_answer() { return 42; }\n"},
@@ -292,7 +292,7 @@ int main() {
         // Fetching a git dependency is reported with the renderer every other acquisition uses:
         // a start and a finish line when stdout is not a terminal, without CR or ESC bytes.
         s::needs({"unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project repo{tmp / "repo", {{"mcpp.toml", "[package]\nnamespace = \"probe816\"\nname = \"gdep\"\nversion = \"0.1.0\"\n[targets.gdep]\nkind = \"lib\"\n"},
                                        {"src/gdep.cppm", "export module probe816.gdep;\nexport int gdep_value() { return 7; }\n"}}};
         git(repo.dir(), {"init", "-q", "-b", "main", "."});
@@ -314,7 +314,7 @@ int main() {
         // A git branch reached through another package is locked as the root's own are: a later
         // commit on it is not taken until `mcpp update`.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto repo = [](const fs::path& dir) {
             git(dir, {"init", "--quiet", "-b", "main"});
             git(dir, {"add", "-A"});
@@ -348,7 +348,7 @@ int main() {
         // the package, whether or not the index carries it; an unsatisfied requirement is still
         // refused.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto host = tmp.generic_string();
         const std::string os = s::on_linux() ? "linux" : s::on_macos() ? "macos" : "windows";
         s::project ws{tmp / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"m944leaf\"]\n"},
@@ -382,7 +382,7 @@ int main() {
         // `trunk`), reported, locked with its commit and read offline; two references are
         // refused; `--platform git+<url>#tag=<t>` takes a platform from its repository.
         s::needs({"elf", "llvm"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto repo = [](const fs::path& dir, std::string_view message) {
             git(dir, {"-c", "init.defaultBranch=trunk", "init", "-q", "."});
             git(dir, {"add", "-A"});

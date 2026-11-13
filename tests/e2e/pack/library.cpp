@@ -72,7 +72,7 @@ E2E library{"library", [] {
         // A library package carries its module interface and its headers; a consumer by
         // header, by module and by both at once builds and runs against it. --compress zstd
         // writes a zstd frame, --pkg-format zip a zip, and single-file is refused for a library.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export import :api;
 )cpp"}, {"src/api.cppm", R"cpp(export module mathkit:api;
@@ -142,7 +142,7 @@ main = "src/main.cpp"
         // implementation partition's source is withheld and its object kept in the archive;
         // the published units' objects leave it; a root that imports the partition publishes
         // it with a warning; restoring the root withholds it again; the consumer links.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export import :api;
 )cpp"}, {"src/api.cppm", R"cpp(export module mathkit:api;
@@ -214,7 +214,7 @@ main = "src/main.cpp"
         // The three refusals a prebuilt package makes: an edited interface (its digest), a
         // package for another compiler (its abi tag, listing the published tags and naming
         // the one found), and a build inside the package; restored, the consumer runs again.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -279,7 +279,7 @@ main = "src/main.cpp"
         // One package, several targets: legs selected by cfg() predicates, never a bare
         // triple, and each build (native included) picks exactly its own leg.
         s::needs({"gcc", "musl"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -340,7 +340,7 @@ main = "src/main.cpp"
         // carries a .dylib or .dll. On ELF it carries the SONAME the loader asks for, records
         // the artifact as a shared library with runtime_search_dirs, and the consumer runs
         // and needs the soname.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -401,7 +401,7 @@ main = "src/main.cpp"
         // An mcpp that predates library packaging still builds against a package this one
         // produces: the generated manifest uses only sections an older mcpp reads, and when
         // $MCPP_BOOT names a released mcpp of another version, that client runs the consumer.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -459,7 +459,7 @@ main = "src/main.cpp"
         // A scanned implementation partition is named as one and not as undetermined; a
         // partition declared in [scan_overrides] is published with "cannot tell which kind"
         // and not called an implementation partition; the consumer builds against it.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 import :secret;
 export namespace mk { int answer(); }
@@ -514,7 +514,7 @@ main = "src/main.cpp"
         // `[package] platforms` is checked against the legs packed: a platform the package
         // serves but does not claim is reported; an unservable claimed platform stays quiet;
         // a servable claimed platform with no leg is reported.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -564,7 +564,7 @@ kind = "lib"
         // and not the implementation, keeps a C++ abi tag, states module_extensions for its
         // consumers (who then build without being told), and a .cppm-only package gains no
         // such key.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.ixx", R"cpp(export module mathkit;
 export import :api;
 )cpp"}, {"src/api.ixx", R"cpp(export module mathkit:api;
@@ -627,7 +627,7 @@ kind = "lib"
         // against it with no injected environment; restoring a stale RUNPATH on the library
         // makes the consumer fail (the guard can see the defect), and the packed file restores it.
         s::needs({"pack", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -698,7 +698,7 @@ main = "src/main.cpp"
         // --no-strip and `[pack] strip = false` keep them; --debug-symbols separates them into
         // a per-triple directory and leaves a .gnu_debuglink.
         s::needs({"pack", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "mathkit", {{"src/mathkit.cppm", R"cpp(export module mathkit;
 export namespace mk { int answer(); }
 )cpp"}, {"src/impl.cpp", R"cpp(module mathkit;
@@ -780,7 +780,7 @@ main = "src/main.cpp"
         // withholds both units; with a facade both ship; a consumer importing a non-public
         // module is warned (W3) naming the public ones.
         s::needs({"unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "lib", {{"mcpp.toml", R"cpp([package]
 namespace = "probe"
 name      = "flatlib"

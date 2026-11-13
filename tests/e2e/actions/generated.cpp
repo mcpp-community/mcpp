@@ -29,7 +29,7 @@ E2E generated{"generated", [] {
         // A package descriptor's generated_files are materialized in the package before it is
         // scanned and compiled.
         s::needs({"gcc", "fresh-sandbox"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "local-index", {{"pkgs/t/tinycfg.lua", R"cpp(package = {
     spec = "1",
     name = "tinycfg",
@@ -94,7 +94,7 @@ E2E generated{"generated", [] {
         // root; its object path stays under obj/ (no `..`, not absolute), beside the consumer's
         // own gen.cpp.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "gdep", {{"build.mcpp", R"cpp(#include <cstdio>
 #include <string>
 import mcpp;
@@ -167,7 +167,7 @@ int main() {
         // header is the generator's output, and every compile edge of the package waits for
         // the package's action phony, of which there is one.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project proto{tmp / "proto", {{"mcpp.toml", "[package]\nname    = \"proto\"\nversion = \"0.1.0\"\n[targets.proto]\nkind = \"lib\"\n"},
                                          {"src/proto.cppm", "module;\n#include \"proto_generated.h\"\nexport module proto;\nexport int proto_answer() { return PROTO_ANSWER; }\n"},
                                          {"build.mcpp", R"cpp(#include <string>

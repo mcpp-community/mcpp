@@ -19,7 +19,7 @@ E2E defaults{"defaults", [] {
     "126 default features opt out"_test = [] {
         // `default-features = false` keeps a dependency's default feature (and its define) off;
         // the default is on otherwise; an explicit request activates it beside the opt-out.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", R"cpp([package]
 name    = "widget"
 version = "0.1.0"
@@ -93,7 +93,7 @@ int main() { return widget_mode() == 1 ? 0 : 2; }
     "127 transitive default features optout"_test[tag{"requires:elf"}][tag{"requires:gcc"}] = [] {
         // A consumer's `default-features = false` holds when the consumer is itself a dependency.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "B", {{"mcpp.toml", R"cpp([package]
 name    = "B"
 version = "0.1.0"
@@ -158,7 +158,7 @@ kind = "lib"
     "128 feature forwarding"_test = [] {
         // A feature may open a feature of a dependency (`withextra = ["leaf/extra"]`), under
         // build and test, and only when it is requested.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "leaf", {{"mcpp.toml", R"cpp([package]
 name    = "leaf"
 version = "0.1.0"
@@ -230,7 +230,7 @@ mid = { path = "../mid" }
         // leaf's tool; a row-declared dependency's forward is not reported; a forward to a key
         // no table declares is named, and refused under --strict.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project{tmp / "kt", {{"mcpp.toml", R"cpp([package]
 name      = "kt"
@@ -345,7 +345,7 @@ int main() { return fw_answer() == 42 ? 0 : 1; }
         // [defaults] table names for the target (over `*`), reported; a provider the consumer
         // supplies is used instead, and no default is added.
         s::needs({"elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         for (std::string_view p : {"a", "b"})
             s::project{tmp / std::format("greet-{}", p), {{"mcpp.toml", std::format(R"cpp([package]
 name     = "greet-{0}"

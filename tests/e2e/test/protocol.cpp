@@ -152,7 +152,7 @@ int main() {
         expect(e2e::contains(s::text(c), "bare: one case"));
         // D, E: mcpp's own environment has the protocol's variables.
         auto d = ws.mcpp({"test", "-p", "plain", "--message-format", "json"},
-                         {.env = {{"MTEST_PROTOCOL", "1"}, {"MTEST_MODE", "list"}, {"MTEST_REPORT", (temp_dir() / "outer.ndjson").string()}}});
+                         {.env = {{"MTEST_PROTOCOL", "1"}, {"MTEST_MODE", "list"}, {"MTEST_REPORT", (s::case_dir() / "outer.ndjson").string()}}});
         expect(fatal(e2e::succeeded(d)));
         expect(record(d.out, "bare")["status"] == "pass") << "the protocol's variables reached a program with none (P1.2)";
         expect(record(d.out, "marked")["protocol"] == 1) << "the marker";
@@ -249,7 +249,7 @@ UTest plain{"plain", tag{"quick"}, [] { expect(eq(1 + 1, 2)); }};
     "1070 the test spec launches frameworks checks and output"_test[tag{"requires:gcc"}] = [] {
         // The mcpp test spec's B5, B6, O3 and O8 (docs/specs/test.md).
         s::needs({"gcc"});
-        s::project t(temp_dir() / "t", {{"fw/mcpp.toml", R"([package]
+        s::project t(s::case_dir() / "t", {{"fw/mcpp.toml", R"([package]
 name    = "fw"
 version = "0.1.0"
 

@@ -80,15 +80,15 @@ runner = ["mcpp-no-such-runner-exists"]
     "989 a native legs tests run from an archive"_test = [] {
         // A leg of the host's own system, archived, runs from the archive in a checkout with
         // nothing built (macOS once refused such a program: "invalid argument").
-        const auto archive = temp_dir() / "t.tar.gz";
-        s::project app(temp_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
+        const auto archive = s::case_dir() / "t.tar.gz";
+        s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                                             {"src/main.cpp", "import std;\nint main() { std::println(\"app\"); }\n"},
                                             {"tests/smoke.cpp", "import std;\nint main() { std::vector<int> v{2, 1}; std::ranges::sort(v); return v.front() == 1 ? 0 : 1; }\n"}});
         // A
         expect(fatal(e2e::succeeded(app.mcpp({"test", "--no-run", "--archive", archive.string()}))));
         expect(fatal(fs::is_regular_file(archive) && fs::file_size(archive) > 0)) << "no archive written";
         // B: a checkout without target/.
-        s::project co(temp_dir() / "co", {});
+        s::project co(s::case_dir() / "co", {});
         for (auto f : {"src", "tests", "mcpp.toml"})
             fs::copy(app.at(f), co.at(f), fs::copy_options::recursive);
         auto b = co.mcpp({"test", "--archive", archive.string()});
@@ -107,8 +107,8 @@ runner = ["mcpp-no-such-runner-exists"]
     "1026 an archived member test carries its members files"_test = [] {
         // A member's archived test carries the files its `[runtime] deploy` names, from the member's
         // own product directory, and finds them beside it in a checkout without target/.
-        const auto archive = temp_dir() / "a.tar.gz";
-        s::project ws(temp_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"app\", \"tool\"]\n"},
+        const auto archive = s::case_dir() / "a.tar.gz";
+        s::project ws(s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"app\", \"tool\"]\n"},
                                           {"app/mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                                           {"app/src/main.cpp", "int main() { return 0; }\n"},
                                           {"tool/mcpp.toml", R"([package]
@@ -131,7 +131,7 @@ int main(int, char** argv) {
 )"}});
         // A
         expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "tool", "--no-run", "--archive", archive.string()}))));
-        const auto x = temp_dir() / "x";
+        const auto x = s::case_dir() / "x";
         fs::create_directories(x);
         expect(fatal(e2e::succeeded(e2e::run({.argv = {"tar", "-xzf", archive.string(), "-C", x.string()}}))));
         const auto manifests = s::glob(x, "*/mcpp-tests.json");
@@ -148,7 +148,7 @@ int main(int, char** argv) {
         expect(fatal(!file.empty())) << "the archive does not carry the member's file: " << test.dump();
         expect(eq(s::read_file(manifests.front().parent_path() / file), std::string("tool license\n")));
         // B
-        s::project co(temp_dir() / "co", {});
+        s::project co(s::case_dir() / "co", {});
         for (auto f : {"mcpp.toml", "app", "tool"})
             fs::copy(ws.at(f), co.at(f), fs::copy_options::recursive);
         for (auto t : {"target", "app/target", "tool/target"}) co.remove(t);
@@ -184,7 +184,7 @@ int main(int, char** argv) {
         auto lines = [&] { return s::count_lines(s::read_file(store / "index.ndjson"), "{"); };
         expect(fatal(e2e::succeeded(p.mcpp({"test"}))));
         expect(eq(lines(), 2u)) << "a second run is not a second record";
-        const auto archive = temp_dir() / "tests.tar.gz";
+        const auto archive = s::case_dir() / "tests.tar.gz";
         expect(fatal(e2e::succeeded(p.mcpp({"test", "--no-run", "--archive", archive.string()}))));
         auto a2 = p.mcpp({"test", "--archive", archive.string()});
         expect(fatal(e2e::succeeded(a2)));

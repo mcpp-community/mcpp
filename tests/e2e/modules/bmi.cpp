@@ -103,7 +103,7 @@ E2E bmi{"bmi", [] {
         // list`, and an edit to a transitive one reaches the binary.
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
-        const auto tmp = mcpplibs::mtest::temp_dir();
+        const auto tmp = s::case_dir();
         const auto run = [&](const fs::path& dir, std::vector<std::string> args) { return s::mcpp(std::move(args), dir, home); };
         expect(fatal(e2e::succeeded(run(tmp, {"new", "mylibA"}))));
         s::project a(tmp / "mylibA", {{"src/greet.cppm", "export module mylibA.greet;\nimport std;\nexport auto greet() -> void { std::println(\"hi\"); }\n"},
@@ -144,7 +144,7 @@ E2E bmi{"bmi", [] {
         s::needs({"gcc", "fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
-        const auto tmp = mcpplibs::mtest::temp_dir();
+        const auto tmp = s::case_dir();
         const auto index = tmp / "local-index";
         s::project idx(index, {});
         idx.write("pkgs/c/collision-lib.lua", "package = {\n    spec = \"1\",\n    name = \"collision-lib\",\n    description = \"Collision object path package\",\n" + lua_xpm("collision-lib") +
@@ -233,7 +233,7 @@ E2E bmi{"bmi", [] {
         const auto cache_root = slashes(cache_dir.substr(0, cache_dir.find('\n')));
         expect(fatal(!cache_root.empty())) << "mcpp cache dir printed nothing";
         expect(fatal(slashes(src).starts_with(cache_root + "/std/"))) << "std BMI cache is '" << src << "', expected under '" << cache_root << "/std'";
-        for (const auto& leftover : {mcpplibs::mtest::temp_dir() / ".mcpp-bmi", p.at(".mcpp-bmi")})
+        for (const auto& leftover : {s::case_dir() / ".mcpp-bmi", p.at(".mcpp-bmi")})
             expect(fatal(!fs::is_directory(leftover))) << "legacy cache dir created at " << leftover.string();
         touch_now(src);
         r = p.mcpp({"build", "-v"});
@@ -265,7 +265,7 @@ E2E bmi{"bmi", [] {
         touch_now(src);
         std::optional<e2e::session> holder;
         if (s::on_windows()) {
-            const auto ready = mcpplibs::mtest::temp_dir() / "mapped.flag";
+            const auto ready = s::case_dir() / "mapped.flag";
             holder = e2e::session::start({.argv = {"powershell", "-NoProfile", "-Command",
                                                    std::format("$mm = [System.IO.MemoryMappedFiles.MemoryMappedFile]::CreateFromFile('{}', [System.IO.FileMode]::Open); Set-Content -Path '{}' -Value 'mapped'; Start-Sleep -Seconds 120",
                                                                dst.string(), ready.string())},
@@ -393,7 +393,7 @@ bmi_schedule = "on"
             auto h = e2e::run({.argv = argv, .cwd = p.dir(), .timeout = std::chrono::minutes{10}});
             expect(fatal(e2e::succeeded(h))) << name << "\n" << s::text(h);
         };
-        helper("check_shared_compiler_cap.py", {(mcpplibs::mtest::temp_dir() / "cap-load").string()});
+        helper("check_shared_compiler_cap.py", {(s::case_dir() / "cap-load").string()});
 
         // 7. Cached replays, plain and quiet, keep the graph, the objects and the BMIs.
         const auto graph = build_dir / "build.ninja";
@@ -419,7 +419,7 @@ bmi_schedule = "on"
         expect(fatal(s::lacks(graph_before.second, ".mcpp/compiler-runs"))) << "the graph persists a compiler-run directory";
 
         helper("check_cached_object_recovery.py", {p.dir().string(), build_dir.string()});
-        helper("check_completion_observation.py", {(mcpplibs::mtest::temp_dir() / "completion-observation").string()});
+        helper("check_completion_observation.py", {(s::case_dir() / "completion-observation").string()});
     };
 
     "849 a staged bmi waits for a module compiled here"_test = [] {
@@ -428,7 +428,7 @@ bmi_schedule = "on"
         // stage, and the consumer compiles after the generated module.
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
-        const auto tmp = mcpplibs::mtest::temp_dir();
+        const auto tmp = s::case_dir();
         s::project idx(tmp / "local-index", {});
         idx.write("pkgs/g/gen-dep.lua", "package = {\n    spec = \"1\",\n    name = \"gen-dep\",\n    description = \"A package whose module imports a module its build program generates\",\n" + lua_xpm("gen-dep") + "}\n");
         const std::string payload = ".mcpp/.xlings/data/xpkgs/local-dev.gen-dep/1.0.0";

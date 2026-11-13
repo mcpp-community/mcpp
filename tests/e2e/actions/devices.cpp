@@ -277,7 +277,7 @@ int main() {
         // A device-kind source no action compiles is refused naming the file: without a build
         // program, and with one that declared no action; --no-accel leaves it out and builds.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto mk = [&] {
             fs::remove_all(tmp / "p");
             return s::project{tmp / "p", {{"src/main.cpp", "extern \"C\" void k();\nint main() { return 0; }\n"},

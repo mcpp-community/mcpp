@@ -144,7 +144,7 @@ E2E basics{"basics", [] {
         s::needs({"gcc", "llvm"});
         const s::options home{.where = s::home::inherited};
         for (std::string_view tc : {"llvm@23.1.3", "gcc@16.1.0"}) {
-            s::project parts(mcpplibs::mtest::temp_dir() / tc / "parts",
+            s::project parts(s::case_dir() / tc / "parts",
                              {{"src/repro.cppm", "export module repro;\nexport import :api;\nimport :api_impl;\n"},
                               {"src/api.cppm", "export module repro:api;\nexport auto answer() -> int;\n"},
                               {"src/api_impl.cpp", "module repro:api_impl;\nimport :api;\nauto answer() -> int { return 42; }\n"},
@@ -160,7 +160,7 @@ E2E basics{"basics", [] {
                 if (f.generic_string().contains("/bin/repro")) answers += output_of(f);
             expect(fatal(answers == "42")) << tc << ": wrong answer: " << answers;
 
-            s::project iface(mcpplibs::mtest::temp_dir() / tc / "iface",
+            s::project iface(s::case_dir() / tc / "iface",
                              {{"src/r5.cpp", "export module r5;\nexport auto answer() -> int { return 42; }\n"},
                               {"src/main.cpp", "import r5;\nimport std;\nauto main() -> int { std::println(\"{}\", answer()); }\n"}});
             iface.write("mcpp.toml", std::format("[package]\nname = \"r5\"\nversion = \"0.1.0\"\n[toolchain]\ndefault = \"{}\"\n[targets.r5]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", tc));

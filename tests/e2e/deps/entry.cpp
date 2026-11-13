@@ -62,7 +62,7 @@ E2E entry{"entry", [] {
         // follows the entry; a platform row replaces its file; test programs begin in an entry;
         // `start` on a hosted target is refused; the result record names the beginning.
         s::needs({"gcc", "elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project fw{tmp / "fw", {{"mcpp.toml", fw_manifest},
                                    {"src/fw.cppm", fw_module},
                                    {"src/entry/player.cpp", player},

@@ -27,7 +27,7 @@ E2E skeleton{"skeleton", [] {
         // `mcpp new` scaffolds a program or a library whose test is mtest's, and a test file with no
         // `main` begins at the entry a dependency offers.
         s::needs({"gcc"});
-        s::project t(temp_dir() / "t", {});
+        s::project t(s::case_dir() / "t", {});
         auto in = [&](std::string_view sub, std::vector<std::string> args) { return t.mcpp_in(sub, std::move(args)); };
 
         // A

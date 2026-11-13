@@ -72,7 +72,7 @@ E2E extensions{"extensions", [] {
         // declared, they join the glob, take the module rule and their own object names, and
         // link and run, under GCC and (with its payload) Clang.
         s::needs({"gcc"});
-        auto nocfg = extfix(mcpplibs::mtest::temp_dir() / "nocfg", "");
+        auto nocfg = extfix(s::case_dir() / "nocfg", "");
         nocfg.write("src/main.cpp", "import std;\nimport extfix.a;\nint main(){ a(); std::println(\"NOCFG OK\"); }\n");
         auto r = nocfg.mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "default build broke\n" << s::text(r);
@@ -83,7 +83,7 @@ E2E extensions{"extensions", [] {
         expect(fatal(e2e::contains(s::text(nocfg.mcpp({"run"})), "NOCFG OK"))) << "the un-configured program did not run";
 
         const auto leg = [](std::string_view name, std::string_view extra) {
-            auto p = extfix(mcpplibs::mtest::temp_dir() / std::format("leg_{}", name),
+            auto p = extfix(s::case_dir() / std::format("leg_{}", name),
                             std::format("\n[build]\nmodule_extensions = [\".ccm\", \".cxxm\", \".ixx\"]\n{}", extra));
             p.write("src/main.cpp", "import std;\nimport extfix.a;\nimport extfix.b;\nimport extfix.c;\nimport extfix.d;\nint main(){ a(); b(); c(); d(); std::println(\"ALL OK\"); }\n");
             auto r = p.mcpp({"build"});

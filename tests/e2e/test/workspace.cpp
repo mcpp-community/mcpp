@@ -191,7 +191,7 @@ kind = "lib"
         // A build several members' tests share is reported once, by addition: a group_build
         // record, a build_group on each member's summary, the members' build_ms its group's.
         s::needs({"unix-shell"});
-        auto ws = libraries(temp_dir() / "ws", "855", {"a", "b", "c"});
+        auto ws = libraries(s::case_dir() / "ws", "855", {"a", "b", "c"});
 
         // H: the records, from stdout alone.
         auto h = ws.mcpp({"test", "-p", "a", "-p", "b", "--message-format", "json"});
@@ -259,7 +259,7 @@ kind = "lib"
         };
         // I
         {
-            auto ws = libraries(temp_dir() / "w1", "856", {"a", "b", "c"});
+            auto ws = libraries(s::case_dir() / "w1", "856", {"a", "b", "c"});
             auto i1 = ws.mcpp({"test", "-p", "a", "-p", "b"});
             expect(fatal(e2e::succeeded(i1)));
             const auto l = s::text(i1);
@@ -277,7 +277,7 @@ kind = "lib"
         }
         // K
         {
-            auto ws = libraries(temp_dir() / "w2", "856", {"a", "b", "c"});
+            auto ws = libraries(s::case_dir() / "w2", "856", {"a", "b", "c"});
             ws.write("c/tests/test_c.cpp", "int main() { return 1; }\n");
             auto k = ws.mcpp({"test", "--workspace"});
             expect(e2e::exited(k, 1));
@@ -290,7 +290,7 @@ kind = "lib"
         }
         // L
         {
-            auto ws = libraries(temp_dir() / "w3", "856", {"a", "b", "c"});
+            auto ws = libraries(s::case_dir() / "w3", "856", {"a", "b", "c"});
             ws.write("c/src/c.cppm", "export module sel856_c;\nexport int c_v() { return \"not an int\"; }\n");
             auto r = ws.mcpp({"test", "--workspace"});
             expect(r.started && r.status != 0) << "a member whose package does not compile exited 0";
@@ -304,7 +304,7 @@ kind = "lib"
         }
         // M
         {
-            auto ws = libraries(temp_dir() / "w4", "856", {"a", "b", "d", "c"});
+            auto ws = libraries(s::case_dir() / "w4", "856", {"a", "b", "d", "c"});
             ws.write("d/mcpp.toml", R"([package]
 name    = "d"
 version = "0.1.0"
@@ -326,7 +326,7 @@ kind = "lib"
         }
         // N (Linux: LD_LIBRARY_PATH is the runtime search variable)
         if (s::on_linux()) {
-            s::project ws(temp_dir() / "w5", {{"mcpp.toml", "[workspace]\nmembers = [\"x\", \"y\"]\n"}});
+            s::project ws(s::case_dir() / "w5", {{"mcpp.toml", "[workspace]\nmembers = [\"x\", \"y\"]\n"}});
             for (auto [m, other] : {std::pair{"x", "y"}, std::pair{"y", "x"}}) {
                 ws.write(std::format("{}/rt856{}/keep", m, m), "");
                 ws.write(std::format("{}/mcpp.toml", m),

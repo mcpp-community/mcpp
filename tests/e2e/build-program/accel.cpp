@@ -13,7 +13,7 @@ namespace {
 
 // `mcpp new <name>` with only src/main.cpp (`int main`) and `manifest`.
 s::project scaffold_plain(std::string_view name, const std::string& manifest) {
-    fs::remove_all(temp_dir() / "new" / name);
+    fs::remove_all(s::case_dir() / "new" / name);
     auto p = s::project::scaffold(name);
     p.write("mcpp.toml", manifest);
     p.write("src/main.cpp", "int main() { return 0; }\n");
@@ -27,7 +27,7 @@ E2E accel{"accel", [] {
         // dimension. gpukit publishes a CPU-only artifact first: the same build takes it (the
         // order that keeps an mcpp predating the field working).
         s::needs({"elf"});
-        const auto root = temp_dir() / "new";
+        const auto root = s::case_dir() / "new";
         constexpr std::string_view triple = "x86_64-linux-gnu";
         auto artifact = [&](std::string_view name, bool device) {
             return std::format("[[runtime.artifacts]]\nrole       = \"static-library\"\npath       = \"lib/lib{}.a\"\nprovenance = \"mcpp-pack/1\"\nabi        = \"{}\"\n{}",
@@ -147,8 +147,8 @@ int main() {{
         // declared is refused, naming the misspelling.
         s::needs({"elf", "gcc"});
         auto mk = [](std::string_view accel) {
-            fs::remove_all(temp_dir() / "p");
-            s::project p{temp_dir() / "p", {{"src/main.cpp", "int main() { return 0; }\n"},
+            fs::remove_all(s::case_dir() / "p");
+            s::project p{s::case_dir() / "p", {{"src/main.cpp", "int main() { return 0; }\n"},
                                             {"src/kernels/k.cu", "extern \"C\" __global__ void k() {}\n"},
                                             {"build.mcpp", "import std;\nimport mcpp;\nint main() { return 0; }\n"}}};
             p.write("mcpp.toml", std::format("[package]\nname         = \"subset\"\nversion      = \"0.1.0\"\naccelerators = [\"cuda\"]\n\n[build]\nsources = [\n  \"src/*.cpp\",\n  {{ glob = \"src/kernels/*.cu\", accel = \"{}\" }},\n]\n\n[targets.subset]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", accel));

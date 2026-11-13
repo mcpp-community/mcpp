@@ -72,6 +72,12 @@ std::string mcpp_path();
 // payloads: inherited without config.toml and subos (MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0).
 enum class home { shared, fresh, linked, inherited, payloads };
 
+// The directory of the case, under the system's temporary directory: made on first use and removed
+// once the case has ended. Not under the repository, so that mcpp run in a directory of the case
+// with no manifest of its own finds no mcpp.toml above it (the repository's). A case makes its
+// files here, not in mtest::temp_dir(), which a runner places under the repository's target/.
+fs::path case_dir();
+
 // The home of the case (fresh, linked, inherited): one directory per case, made on first use.
 fs::path case_home(home kind = home::fresh);
 // A further home of the case, made at each call (a case that moves between homes, as a script
@@ -102,7 +108,8 @@ std::string text(const e2e::outcome& r);
 
 using files = std::initializer_list<std::pair<std::string_view, std::string_view>>;
 
-// A directory of the case holding `files` (relative path, content); the directories are made.
+// A directory of the case (`case_dir() / "project"`) holding `files` (relative path, content); the
+// directories are made.
 class project {
 public:
     explicit project(files contents = {});

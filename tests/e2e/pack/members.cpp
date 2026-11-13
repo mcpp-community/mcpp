@@ -194,7 +194,7 @@ kind = "lib"
         // ${mcpp.artifact:} reaches an action, the pack ships it, and a musl build (where a
         // musl toolchain is installed) builds it for musl.
         s::needs({"gcc", "elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "updater", {{"mcpp.toml", R"cpp([package]
 name    = "updater"
 version = "0.1.0"
@@ -503,7 +503,7 @@ int main() {{
         // which serves one member alone (J); a member that claimed nothing, or a configuration
         // that cannot be planned, fails alone while the others are packed (K).
         s::needs({"unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         auto program_member = [](const s::project& ws, std::string_view m, std::string_view deps) {
             std::string manifest = std::format("[package]\nname    = \"{}\"\nversion = \"0.1.0\"\n", m);
@@ -696,7 +696,7 @@ main = "src/main.cpp"
         // stages and keeps the single-member shape for one (O); members of two configurations
         // are each packed from their own build (P).
         s::needs({"unix-shell", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         s::project ws{tmp / "ws", {{"mcpp.toml", R"cpp([workspace]
 members = ["core", "gui", "cli"]

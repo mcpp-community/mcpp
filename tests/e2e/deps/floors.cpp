@@ -19,7 +19,7 @@ E2E floors{"floors", [] {
         // the package, the level and the one-place fix. Silent when it declared nothing, the
         // graph's own level, or once the root is raised.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project lib{tmp / "lib", {{"mcpp.toml", "[package]\nname = \"flib\"\nversion = \"0.1.0\"\nstandard = \"c++26\"\n[targets.flib]\nkind = \"lib\"\n"},
                                      {"src/flib.cppm", "export module flib;\nexport int f(){ return 1; }\n"}}};
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname = \"fapp\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n[dependencies]\nflib = { path = \"../lib\" }\n"},
@@ -48,7 +48,7 @@ E2E floors{"floors", [] {
         // A package needing more of the machine than it has is refused before compiling, naming
         // the requirement, both versions and who stated the fact; a met floor builds, and a
         // floor nobody answered is silent.
-        const auto parent = temp_dir() / "new";
+        const auto parent = s::case_dir() / "new";
         fs::create_directories(parent);
         auto mkfact = [&](std::string_view name, std::string_view fact) {
             s::project{parent / name, {}}.write("mcpp.toml", std::format("[package]\nname = \"{0}\"\nversion = \"0.1.0\"\n[language]\nstandard = \"c++23\"\n[runtime]\nprovides = [\"{1}\"]\n[targets.{0}]\nkind = \"lib\"\n", name, fact));
@@ -88,7 +88,7 @@ E2E floors{"floors", [] {
         // upgrade; a bare release or a non-release is explained; a workspace floor reaches its
         // members; an unknown [lib] key is named.
         s::needs({"unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         std::string have;
         {
             auto v = s::mcpp({"--version"}, tmp);

@@ -134,7 +134,7 @@ E2E link{"link", [] {
         // libstdc++, libm or libgcc_s, its symbol exported); one C++ object makes it a C++ link
         // (cxx_shared); a C++ program links with cxx_link and runs; c_ldflags is defined.
         s::needs({"elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto llvm = s::llvm_version();
         const auto tc = std::format("[toolchain]\ndefault = \"gcc@16.1.0\"\nmacos   = \"llvm@{0}\"\nwindows = \"llvm@{0}\"\n", llvm);
         s::project purec{tmp / "purec", {{"mcpp.toml", "[package]\nname = \"purec\"\nversion = \"0.1.0\"\n\n" + tc + "\n[targets.purec]\nkind = \"shared\"\n"}, {"src/purec.c", R"cpp(int purec_add(int a, int b) { return a + b; }
@@ -178,7 +178,7 @@ int main() { std::println("cdriver-ok"); return 0; }
         // run path unexpanded; a search directory with a space is one argument; an element
         // escaped by hand reads as written and the first plan (only) says what the linker gets.
         s::needs({"elf", "unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto program = [](const s::project& p, std::string_view name) {
             for (const auto& f : s::find_files(p.at("target"), std::string(name)))
                 if (f.parent_path().filename() == "bin" || f.generic_string().find("/bin/") != std::string::npos) return f;
@@ -312,7 +312,7 @@ ldflags = ["-Wl,-rpath='$$ORIGIN/../x'"]
         // An archive named in [build] ldflags is a link input: replacing it relinks the program,
         // and a build with nothing changed links nothing.
         s::needs({"gcc", "unix-shell"});
-        const auto work = temp_dir();
+        const auto work = s::case_dir();
         s::project val{work / "val", {{"mcpp.toml", R"cpp([package]
 name    = "val"
 version = "0.1.0"
@@ -360,7 +360,7 @@ int main() { std::println("val {}", val()); }
         // A response file in [build] ldflags and the archive it names are link inputs:
         // replacing the archive relinks the program, and a build with nothing changed links nothing.
         s::needs({"gcc", "unix-shell"});
-        const auto work = temp_dir();
+        const auto work = s::case_dir();
         s::project val{work / "val", {{"mcpp.toml", R"cpp([package]
 name    = "val"
 version = "0.1.0"
@@ -409,7 +409,7 @@ int main() { std::println("val {}", val()); }
         // [platform.link] flags a compiler-driven link does not use are named with the remedy
         // ([platform.build] ldflags); an ld.lld link takes them without a word.
         s::needs({"elf", "llvm"});
-        const auto t = temp_dir();
+        const auto t = s::case_dir();
         const auto LLVM_VERSION = s::llvm_version();
         s::project plat{t / "plat", {{"mcpp.toml", std::format(R"cpp([package]
 name    = "words-platform"

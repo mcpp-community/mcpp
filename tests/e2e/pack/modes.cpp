@@ -87,7 +87,7 @@ E2E modes{"modes", [] {
         // and libc with a run.sh exporting MCPP_BUNDLE_DIR; system bundles nothing; the
         // bundle-project alias still packs. Every mode ships a top-level <name> entry.
         s::needs({"pack", "patchelf", "elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto app = s::project::scaffold("myapp");
         app.write("mcpp.toml", app.read("mcpp.toml") + "\n[toolchain]\nlinux = \"gcc@16.1.0\"\n");
         auto pack = [&](std::vector<std::string> args, std::string_view what) {
@@ -165,7 +165,7 @@ E2E modes{"modes", [] {
         // bundled library DT_RUNPATH; a program with no host capabilities gets no
         // HOST-REQUIREMENTS file; --mode system's artifacts name no build-machine path either.
         s::needs({"pack", "patchelf", "elf", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto app = s::project::scaffold("bundled");
         app.write("mcpp.toml", app.read("mcpp.toml") + "\n[pack.bundle-project]\nforce_bundle = [\"libgcc_s.so.1\"]\n");
         auto r = app.mcpp({"pack"});
@@ -212,7 +212,7 @@ E2E modes{"modes", [] {
         // satisfy: self-contained and static refuse, naming the capability and `vendored`;
         // vendored packs and states the capability and its discovery in HOST-REQUIREMENTS.
         s::needs({"pack", "patchelf", "elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto index_dir = tmp / "local-index";
         s::project{index_dir, {{"pkgs/g/gfx-runtime.lua", R"cpp(package = {
     spec = "1",
@@ -290,7 +290,7 @@ main = "src/main.cpp"
         // `mcpp pack` stages runtime.deploy_files and runtime.deploy (#615) at the same
         // relative path beside the packed executable.
         s::needs({"pack"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto app = s::project::scaffold("app");
         app.write("share/vulkan/icd.d/lvp_icd.json", "icd manifest\n");
         app.write("share/notes.txt", "notes\n");
@@ -468,7 +468,7 @@ int main() {
         // line for each bundled and platform library before the file lines, and the tree runs;
         // a prebuilt library the loader can no longer find is refused by name.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "fw", {{"mcpp.toml", R"cpp([package]
 namespace = "demo"
 name      = "fw"
@@ -603,7 +603,7 @@ main = "src/command.cpp"
         // the host's ldd: the library the build produced travels with the program; with the
         // library static, --mode static packs a static program.
         s::needs({"elf", "llvm"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto LLVM_VERSION = s::llvm_version();
         s::project{tmp / "plat", {{"mcpp.toml", std::format(R"cpp([package]
 name    = "away-platform"

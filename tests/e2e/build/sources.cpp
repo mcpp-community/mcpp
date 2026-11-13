@@ -131,7 +131,7 @@ int main() { return asm_add3(2, 3, 4) == 16 ? 0 : 1; }
         // home or the real provisioning failure is named.
         s::needs({"gcc", "nasm"});
         if (!s::has("x86_64-host")) skip("x86-only NASM");
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         auto p = s::project::scaffold("nasmix");
         p.write("inc/consts.inc", R"cpp(%define MUL_BIAS 5
@@ -341,7 +341,7 @@ main = "src/main.cpp"
         // A dependency's src/main.cpp and the consumer's have objects of their own, and every
         // object the consumer's link names is produced by an edge.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "mydep", {{"src/main.cpp", R"cpp(int dep_helper() { return 41; }
 )cpp"}, {"mcpp.toml", R"cpp([package]
 name    = "mydep"
@@ -389,7 +389,7 @@ main = "src/main.cpp"
     "179 spaced paths"_test = [] {
         // A project in a directory with spaces, with an include directory with spaces and a
         // build program, builds and runs; the include flag is quoted whole with its prefix.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         fs::create_directories(tmp / "my work dir");
         expect(fatal(e2e::succeeded(s::mcpp({"new", "spaced_proj"}, tmp / "my work dir")))) << "mcpp new failed";
         s::project p{tmp / "my work dir/spaced_proj", {{"vendor inc/deep dir/spaced_header.hpp", R"cpp(#pragma once
@@ -461,7 +461,7 @@ main = "main.cpp"
         // A shared or static library target with no sources is refused at plan time, naming
         // the target and its kind, producing nothing; one with a source builds.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto check_kind = [&](std::string_view kind, std::string_view human, std::string_view artifact) {
             s::project p{tmp / kind, {{"mcpp.toml", std::format(R"cpp([package]
 name    = "ghost"
@@ -498,7 +498,7 @@ kind = "shared"
         // while the rest builds; a build program's directive is refused by its key; an MCPP_HOME
         // is refused before anything is written into it.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const std::string bad = "caf\xe9";  // Latin-1 for U+00E9; not UTF-8
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         auto put = [](const fs::path& f, std::string_view text) {
@@ -558,7 +558,7 @@ int main() {
         // reported to a consumer, which builds; [modules] exports must list every public module
         // and may leave a private one out; importing a module that is not public is warned about.
         s::needs({"elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         s::project lib{tmp / "lib", {{"src/lib.cppm", "export module acme.lib;\nexport import acme.lib.part;\nexport int lib_value() { return 40; }\n"},
                                      {"src/part.cppm", "export module acme.lib.part;\nexport int part_value() { return 2; }\n"},
@@ -603,7 +603,7 @@ kind = "lib"
         // the package stays off the target, `mcpp why compat` lists the use (JSON states the
         // floor), and --strict refuses the deprecated readings.
         s::needs({"elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         s::project{tmp / "inner", {{"src/inner.cppm", "export module inner;\nexport int inner_value() { return 40; }\n"},
                                    {"mcpp.toml", "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n[targets.inner]\nkind = \"lib\"\n"}}};

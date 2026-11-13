@@ -197,7 +197,7 @@ main = "src/main.cpp"
         expect(fatal(count_exact(b4, "       Fresh core v0.1.0 (core)") >= 1u)) << "R4: --verbose does not name core as fresh\n" << b4;
         expect(fatal(s::has_line(b4, R"(^ +Compiled util v0\.2\.0 \(\.\./util\) · [0-9]+ steps? · [0-9])"))) << "R4: --verbose does not state util's steps and span";
 
-        s::project r5(mcpplibs::mtest::temp_dir() / "r5",
+        s::project r5(s::case_dir() / "r5",
                       {{"slow/mcpp.toml", "[package]\nname = \"slow\"\nversion = \"0.1.0\"\n\n[targets.slow]\nkind = \"lib\"\n"},
                        {"slow/src/slow.cppm", "export module rp_slow;\nexport int slow_v() { return 3; }\n"},
                        {"app/mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nslow = { path = \"../slow\" }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
@@ -261,7 +261,7 @@ main = "src/main.cpp"
         expect(fatal(e2e::contains(d, "Compiling p v0.1.0"))) << "D: 2>&1 | tee did not record the steps\n" << d;
         expect(fatal(e2e::contains(d, "Finished "))) << "D: 2>&1 | tee did not record Finished\n" << d;
 
-        r = s::mcpp({"new", "q"}, mcpplibs::mtest::temp_dir());
+        r = s::mcpp({"new", "q"}, s::case_dir());
         expect(fatal(e2e::succeeded(r))) << "E: mcpp new failed\n" << r.err;
         expect(fatal(r.out.empty())) << "E: mcpp new wrote to standard output\n" << r.out;
         expect(fatal(e2e::contains(r.err, "Created"))) << "E: mcpp new does not say on standard error what it created";
@@ -432,7 +432,7 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "D: the build failed\n" << r.err;
         expect(fatal(s::lacks(r.err, "\x1b["))) << "D: NO_COLOR did not win";
 
-        const auto other = mcpplibs::mtest::temp_dir() / "other-home";
+        const auto other = s::case_dir() / "other-home";
         fs::create_directories(other);
         r = p.mcpp({"--home", other.string(), "self", "env", "--format", "json"});
         {
@@ -469,7 +469,7 @@ int main() {
             expect(fatal(e2e::contains(r.out, std::format("\"{}\"", k)))) << "G: --protocol-version does not list " << k;
 
         if (s::on_windows()) return;  // H is POSIX
-        s::project h(mcpplibs::mtest::temp_dir() / "h", {{"mcpp.toml", "[package]\nname = \"h\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"}});
+        s::project h(s::case_dir() / "h", {{"mcpp.toml", "[package]\nname = \"h\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"}});
         std::string main_cpp = "import std;\n";
         for (int i = 1; i <= 40; ++i) {
             h.write(std::format("src/m{}.cppm", i), std::format("export module m{0};\nimport std;\nexport int f{0}(){{ std::vector<int> v({0}); return (int)v.size(); }}\n", i));

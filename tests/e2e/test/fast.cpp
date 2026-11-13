@@ -20,7 +20,7 @@ E2E fast{"fast", [] {
         // test waits for a file only the commands started beside it create.
         auto p = s::project::scaffold("app");
         for (const auto& f : s::glob(p.at("tests"), "*.cpp")) fs::remove(f);
-        const auto gate = temp_dir() / "gate";
+        const auto gate = s::case_dir() / "gate";
         p.write("tests/waits.cpp", std::format(R"(import std;
 int main() {{
     for (int i = 0; i < 600; ++i) {{
@@ -77,7 +77,7 @@ int main() {{
         // The issue's own shape: a test that builds its own project with mcpp. The inner build has
         // the test's environment; it finds the directory free, the configuration built and its
         // graph current, so it neither waits nor plans.
-        const auto inner_log = temp_dir() / "inner.log";
+        const auto inner_log = s::case_dir() / "inner.log";
         p.write("tests/inner.cpp", std::format(R"(#include <cstdlib>
 #ifdef _WIN32
 #define WHOLE(s) "\"" s "\""   // cmd /c drops the outer pair of quotes

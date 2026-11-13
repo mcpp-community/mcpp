@@ -46,7 +46,7 @@ E2E hooks{"hooks", [] {
         // fires when prepare fails; during_build ends with the build (grandchildren included),
         // loops on request and gives up warning; loop is refused elsewhere; Ctrl-C ends it; a
         // dependency's hooks and a workspace root's own hooks do not fire.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"src/main.cpp", "int main() { return 0; }\n"}}};
         fs::create_directories(app.at("nested"));
         auto manifest = [&](std::string_view hooks, std::string_view rest = "") {

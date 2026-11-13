@@ -63,7 +63,7 @@ E2E resolve{"resolve", [] {
         // one satisfying version instead of erroring out.
         s::needs({"fresh-sandbox"});
         with_user_index();
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project mylib{tmp / "mylib/mylib", {{"src/mylib.cppm", "export module mylib;\nexport int mylib_answer() { return 1; }\n"},
                                                {"mcpp.toml", "[package]\nname    = \"mylib\"\nversion = \"0.1.0\"\n\n[targets.mylib]\nkind = \"lib\"\n\n[dependencies.mcpplibs]\ncmdline = \"=0.0.1\"\n"}}};
         s::project app{tmp / "app/app", {{"src/main.cpp", "import std;\nimport mylib;\nint main() {\n    std::println(\"ok={}\", mylib_answer());\n    return mylib_answer() == 1 ? 0 : 1;\n}\n"},
@@ -80,7 +80,7 @@ E2E resolve{"resolve", [] {
         // staged with it.
         s::needs({"elf", "gcc"});
         with_user_index();
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project liba{tmp / "libA/libA", {{"src/libA.cppm", "export module libA;\nimport mcpplibs.cmdline;\nimport std;\nexport int libA_v() { return 1; }\n"},
                                             {"mcpp.toml", "[package]\nname    = \"libA\"\nversion = \"0.1.0\"\n\n[targets.libA]\nkind = \"lib\"\n\n[dependencies.mcpplibs]\ncmdline = \"=0.0.1\"\n"}}};
         s::project libb{tmp / "libB/libB", {{"src/libB.cppm", "module;\nint libB_impl_v();\nexport module libB;\nimport mcpplibs.cmdline;\nimport std;\nexport int libB_v() { return libB_impl_v(); }\n"},
@@ -102,7 +102,7 @@ E2E resolve{"resolve", [] {
         // A private dependency is available while compiling its dependent, and its include
         // directories do not leak to that package's consumers.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project hidden{tmp / "hidden", {{"include/hidden/value.hpp", "#pragma once\ninline int hidden_value() { return 7; }\n"},
                                            {"src/hidden.cppm", "module;\n#include <hidden/value.hpp>\nexport module hidden;\nexport int hidden_answer() { return hidden_value(); }\n"},
                                            {"mcpp.toml", "[package]\nname    = \"hidden\"\nversion = \"0.1.0\"\n\n[build]\ninclude_dirs = [\"include\"]\n\n[modules]\nsources = [\"src/*.cppm\"]\n\n[targets.hidden]\nkind = \"lib\"\n"}}};
@@ -122,7 +122,7 @@ E2E resolve{"resolve", [] {
         // A dotted selector in [dependencies] is exact: imgui.core -> (imgui, core), never
         // mcpplibs.imgui/core. The package is provided, so the build stays offline.
         s::needs({"gcc", "fresh-sandbox"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project index{tmp / "imgui-index", {{"pkgs/i/imgui.core.lua", local_package("imgui", "imgui.core", "Exact dotted selector test package", "imgui-core", "src/core.cppm", "core")}}};
         s::project app{tmp / "project/app", {{".mcpp/.xlings/data/xpkgs/imgui-x-imgui.core/1.0.0/src/core.cppm", "export module imgui.core;\nexport int imgui_core_value() {\n    return 42;\n}\n"},
                                              {"src/main.cpp", "import imgui.core;\nint main() {\n    return imgui_core_value() == 42 ? 0 : 1;\n}\n"}}};
@@ -141,7 +141,7 @@ E2E resolve{"resolve", [] {
                                                   {"pkgs/i/imgui.lua", local_package("mcpplibs", "imgui", "Default-namespace exact selector test package", "imgui", "src/imgui.cppm", "imgui")}}};
         s::project payload{h / "registry/data/xpkgs/mcpplibs-x-imgui/1.0.0", {{"src/imgui.cppm", "export module imgui;\nexport int imgui_value() {\n    return 42;\n}\n"},
                                                                               {".mcpp_ok", "ok\n"}}};
-        s::project app{temp_dir() / "project/app", {{"src/main.cpp", "import imgui;\nint main() {\n    return imgui_value() == 42 ? 0 : 1;\n}\n"},
+        s::project app{s::case_dir() / "project/app", {{"src/main.cpp", "import imgui;\nint main() {\n    return imgui_value() == 42 ? 0 : 1;\n}\n"},
                                                     {"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nimgui = \"1.0.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}}};
         expect(fatal(e2e::succeeded(app.mcpp({"build"}, inherited)))) << "build failed";
         expect(fatal(e2e::succeeded(app.mcpp({"run"}, inherited)))) << "run failed";

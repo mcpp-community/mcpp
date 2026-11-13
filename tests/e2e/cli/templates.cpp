@@ -54,7 +54,7 @@ E2E templates{"templates", [] {
         // provider errors, and the wire address of a package not installed.
         const s::options o{.where = s::home::fresh};
         const auto home = s::case_home();
-        const auto work = mcpplibs::mtest::temp_dir() / "work";
+        const auto work = s::case_dir() / "work";
         fs::create_directories(work);
         configure_mirror(work, o);
         const auto index = home / "indices/mcpplibs/pkgs";
@@ -271,7 +271,7 @@ self = {{ features = ["alpha", "beta"] }}
         // A project name is validated before anything else; a builtin and a package scaffold
         // publish every file and identity; an unknown token, a destination collision and a
         // symbolic link roll the whole staging tree back.
-        const auto tmp = mcpplibs::mtest::temp_dir();
+        const auto tmp = s::case_dir();
         const auto pre_home = tmp / "prevalidation-home";
         const auto pre_work = tmp / "prevalidation-work";
         fs::create_directories(pre_work);

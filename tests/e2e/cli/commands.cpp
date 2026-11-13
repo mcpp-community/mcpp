@@ -78,7 +78,7 @@ E2E commands{"commands", [] {
         expect(fatal(failed(r))) << "expected failure but build succeeded";
         expect(fatal(e2e::contains(s::text(r), "no mcpp.toml"))) << "wrong error: " << s::text(r);
 
-        s::project bad(mcpplibs::mtest::temp_dir() / "bad-manifest", {{"mcpp.toml", R"([package]
+        s::project bad(s::case_dir() / "bad-manifest", {{"mcpp.toml", R"([package]
 name = "bad"
 [language]
 [modules]

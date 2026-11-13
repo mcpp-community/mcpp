@@ -75,7 +75,7 @@ E2E flags{"flags", [] {
         // A dependency's own cflags and cxxflags compile its C and C++ sources; the consumer
         // declares neither, and the graph carries both.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "depC", {{"src/dep_core.c", R"cpp(#ifndef DEP_C_BUILD
 #error "missing dependency-owned C flag"
 #endif
@@ -133,7 +133,7 @@ path = "../depC"
         // A dependency's ldflags reach the consumer's link: the program links against the
         // archive they name and runs, and the graph carries both flags.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project native{tmp / "native", {{"answer.c", R"cpp(int dep_link_answer(void) {
     return 42;
 }
@@ -474,7 +474,7 @@ int main() {
         // (b), the dependency's words are the same under two roots (c), and a dependency that
         // needed its consumer's header fails naming the header and the consumer's directory (d).
         s::needs({"python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project{tmp / "dep", {{"include/dep/api.h", R"cpp(#pragma once
 #ifdef __cplusplus
@@ -630,7 +630,7 @@ main = "src/main.cpp"
         // Each package's C units compile at its own c_standard (the root c99, a dependency
         // gnu11, one declaring none the default c11), in the compile database too.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project{tmp / "cdep", {{"mcpp.toml", R"cpp([package]
 name    = "cdep"

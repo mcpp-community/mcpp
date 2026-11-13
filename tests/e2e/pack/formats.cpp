@@ -71,7 +71,7 @@ E2E formats{"formats", [] {
         // an ungated artifact action is not the package; a provider reading no staged tree
         // gains no stage dependency.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name        = "app"
 version     = "2.5.0"
@@ -281,7 +281,7 @@ int main() {
         // the tool is built and its output reaches the packed program; a plain build without the
         // feature builds no host tool.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project{tmp / "toolpkg", {{"mcpp.toml", R"cpp([package]
 name    = "toolpkg"
@@ -374,7 +374,7 @@ int main() {
         // the strip decision; on the Android row (where the NDK is installed) the program, the
         // graph's library and the NDK runtime are stripped.
         s::needs({"pack", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         struct facts { int symtab = 0, debug = 0; bool debuglink = false; std::vector<std::string> dynsym; };
         auto elf_facts = [](const fs::path& f) {
             facts out;
@@ -518,7 +518,7 @@ int main() { return app_entry() == 43 ? 0 : 1; }
         // profile shorthands with --profile winning, as run and build do; an unknown message
         // format is refused with exit 2; the protocol document declares the kind and command.
         s::needs({"pack", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name    = "app"
 version = "0.3.0"
@@ -587,7 +587,7 @@ main = "src/main.cpp"
         // directory with its file count (and a single file by name); --verbose names every
         // file; the JSON report lists every artifact.
         s::needs({"python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name = "app"
 version = "1.0.0"
@@ -639,7 +639,7 @@ int main() {
         // its JSON output is one document, and build, test and pack each run at most
         // `[build] jobs` (1) compiles at once, read from the build's .ninja_log (mcpp#753).
         s::needs({"pack", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name    = "app"
 version = "0.1.0"
@@ -725,7 +725,7 @@ unsigned long long value{0}() {{ constexpr auto v = spin{0}(); return v; }}
         // --format is the earlier spelling; [pack] include/exclude stage resources; [pack] sign
         // signs each program and the digests are the signed files'; -o with dots names a directory.
         s::needs({"unix-shell", "python3"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"axes\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "int main() { return 0; }\n"}}};
         const auto dist = app.at("target/dist");
         for (std::string_view c : {"zstd", "xz", "none"}) {
@@ -848,7 +848,7 @@ exclude = ["share/**/*.tmp"]
         // states (mcpp::pack_compress()), nothing when none is stated; a directory writes no
         // container and --compress on it is refused.
         s::needs({"pack"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
 name     = "app"
 version  = "0.1.0"

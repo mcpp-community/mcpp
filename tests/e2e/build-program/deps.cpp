@@ -38,7 +38,7 @@ E2E deps{"deps", [] {
         // dependency's own units, its generated source (in MCPP_OUT_DIR) compiles into it, and
         // what it writes lives in the consuming project; the dependency's root is never written.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project dep{root / "deplib", {{"mcpp.toml", "[package]\nname    = \"deplib\"\nversion = \"0.1.0\"\n\n[targets.deplib]\nkind = \"lib\"\n"},
                                          {"build.mcpp", R"cpp(#include <cstdio>
 #include <cstdlib>
@@ -87,7 +87,7 @@ int main() {
         // mcpp#241: each resolved dependency's directory is MCPP_DEP_<NAME>_DIR
         // (mcpp::dep_dir("<name>")): consumer -> pkgp (a build.mcpp) -> datad.
         s::needs({"elf", "gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project datad{root / "datad", {{"src/d.cpp", "int datad_touch() { return 1; }\n"},
                                           {"mcpp.toml", "[package]\nname    = \"datad\"\nversion = \"0.1.0\"\n\n[modules]\nsources = [\"src/**/*.cpp\"]\n\n[targets.datad]\nkind = \"lib\"\n"}}};
         s::project pkgp{root / "pkgp", {{"src/lib.cpp", "extern const char* dep_datad_dir();\nconst char* pkgp_datad_dir() { return dep_datad_dir(); }\n"},
@@ -127,7 +127,7 @@ int main() {
         // The root's build.mcpp runs after resolution and is given MCPP_DEP_<NAME>_DIR as a
         // dependency's is: root -> datad.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project datad{root / "datad", {{"src/d.cpp", "int datad_touch() { return 1; }\n"},
                                           {"mcpp.toml", "[package]\nname    = \"datad\"\nversion = \"0.1.0\"\n\n[modules]\nsources = [\"src/**/*.cpp\"]\n\n[targets.datad]\nkind = \"lib\"\n"}}};
         s::project rootp{root / "rootp", {{"build.mcpp", R"cpp(#include <cstdio>
@@ -166,7 +166,7 @@ int main() {
         // them) stay out of the consumer's binary; a package the project depends on directly
         // still reaches it, also when named in both tables. The reading is the artifact.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         for (std::string n : {"behindrule", "buildside", "bothsides"}) {
             s::project lib{root / n, {}};
             lib.write("mcpp.toml", library(n));
@@ -206,7 +206,7 @@ int main() {
         // GCC's BMIs are reachable by name whatever the flags), also on a warm cache; a cycle is
         // reported as one, naming its packages.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project globbing{root / "globbing", {{"mcpp.toml", library("globbing")},
                                                 {"src/globbing.cppm", "export module globbing;\nimport std;\nexport namespace globbing {\ninline int answer() { return 7; }\n}\n"}}};
         s::project tidy{root / "tidyrule", {{"src/tidyrule.cppm", R"cpp(export module tidyrule;
@@ -268,7 +268,7 @@ inline void go() {
         // run is an error naming it — not a fallback to executing the artifact. The stand-in
         // payload is never on PATH: a lookup through PATH would pass for the wrong reason.
         s::needs({"gcc", "unix-shell"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::write_executable(root / "fakepkg/bin/demo-tool", "#!/bin/sh\necho \"DEMO-TOOL ran with $*\"\n");
         if (s::on_path("demo-tool"))
             skip("a demo-tool already on PATH");
@@ -291,7 +291,7 @@ inline void go() {
         // never seen the tool can tell, so the home is fresh, and the tool (shaderc) is one mcpp
         // does not install for its own reasons. The program writes what it found to a file.
         s::needs({"elf", "gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project dep{root / "dep", {{"src/lib.cpp", "int dep_touch() { return 1; }\n"},
                                       {"build.mcpp", R"cpp(#include <cstdio>
 #include <string>
@@ -326,7 +326,7 @@ int main() {
         // where the rule's code runs (xpkg_dir read one manifest: "" while the payload sat on
         // disk). The reading is the path the rule answers with; a fresh home, for 618's reason.
         s::needs({"elf", "gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project rule{root / "rule", {{"src/rule.cppm", R"cpp(export module rule;
 import std;
 import mcpp;
@@ -367,7 +367,7 @@ int main() {
         // default turns static; D: the edge asks shared; E: a dependency's program reads "" (gen
         // fails the build otherwise); F: `namespace` + `name` answer both spellings.
         s::needs({"elf"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project leaf{root / "leaf", {{"mcpp.toml", "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\n[targets.leaf]\nkind = \"lib\"\n"},
                                         {"src/leaf.cpp", "int leaf_value() { return 1; }\n"}}};
         s::project fw{root / "fw", {{"src/fw.cpp", "int fw_value() { return 40; }\n"}}};
@@ -475,7 +475,7 @@ int main() {
         // changed, no re-run; C: a metadata edit re-runs with the new value; D: a source edit does
         // not; E: a dependency's program reads ""; F: an unknown [package] key warns, fails under
         // --strict, and `metadata` is known. (The script read the document with python3.)
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project b{root / "b", {{"src/b.cpp", "int b_answer() { return 40; }\n"}}};
         auto write_b = [&](std::string_view resources) {
             b.write("mcpp.toml", std::format("[package]\nname      = \"b\"\nnamespace = \"spike\"\nversion   = \"0.2.0\"\n\n[package.metadata.demo]\nresources = \"{}\"\nlanguages = [\"en\", \"zh\"]\n\n[targets.b]\nkind = \"lib\"\n", resources));
@@ -577,7 +577,7 @@ int main() {
         s::needs({"pack", "gcc"});
         const auto gcc = s::on_path("gcc");
         expect(fatal(gcc.has_value())) << "no gcc on PATH";
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         auto graph = [](const s::project& p) {
             for (const auto& f : s::find_files(p.at("target"), R"(build\.ninja)"))
                 if (!f.generic_string().contains("/.build-mcpp/")) return s::read_file(f);
@@ -632,7 +632,7 @@ int main() {
         // runs with MCPP_NO_AUTO_INSTALL=1 and the payload is in no index, so "built" means "not
         // asked for"; the baseline (no override, refused) is the control.
         s::needs({"gcc", "unix-shell"});
-        const auto work = temp_dir();
+        const auto work = s::case_dir();
         const auto w = work.generic_string();
         s::project plug{work / "plug", {{"mcpp.toml", "[package]\nname      = \"plug\"\nnamespace = \"e2e\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug.cppm\"]\n\n[features.tools-x]\nsources = [\"members/x.cppm\"]\n\n[feature-xlings.tools-x]\n\"xim:mcpp-e2e-absent-tool\" = \">=2.0\"\n\n[targets.plug]\nkind = \"lib\"\n"},
                                         {"src/plug.cppm", "export module e2e.plug;\n"},
@@ -700,7 +700,7 @@ int main() {
         // xpkg_request, not before it runs. Under MCPP_NO_AUTO_INSTALL=1 the project builds while
         // the program does not ask, and is refused naming the program when it does.
         s::needs({"gcc", "unix-shell"});
-        const auto work = temp_dir();
+        const auto work = s::case_dir();
         const auto w = work.generic_string();
         s::project plug{work / "plug", {{"mcpp.toml", "[package]\nname      = \"plug\"\nnamespace = \"e2e\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug.cppm\"]\n\n[features.tools-x]\nsources = [\"members/x.cppm\"]\n\n[feature-xlings.tools-x]\n\"xim:mcpp-e2e-absent-tool\" = { version = \"1.0.0\", provision = \"on-request\" }\n\n[targets.plug]\nkind = \"lib\"\n"},
                                         {"src/plug.cppm", "export module e2e.plug;\n"},
@@ -747,7 +747,7 @@ int main() {
         // mcpp#755: `mcpp why sources|tool|payload` and `--format json`, the decision record of a
         // prepare as the build reported it. (The script read the JSON with python3.)
         s::needs({"gcc", "unix-shell"});
-        const auto work = temp_dir();
+        const auto work = s::case_dir();
         const auto w = work.generic_string();
         s::write_executable(work / "opt/bin/tool", "#!/bin/sh\n");
         s::project app{work / "app", {{"mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[xlings.workspace]\n\"xim:mcpp-e2e-absent-tool\" = \"1.0.0\"\n\n[xlings.overrides]\n\"xim:mcpp-e2e-absent-tool\" = \"{}/opt/bin/tool\"\n", w)},
@@ -778,7 +778,7 @@ int main() {
         // its defines apply; B: [lib] path outside src/, imported by its declared name; C: no
         // object of it in the target's plan.
         const s::options home{.where = s::home::inherited};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project hl{root / "hl", {{"include/hl/hl.hpp", "#pragma once\nnamespace hl { inline int answer() { return HL_BASE + 2; } }\n"},
                                     {"modules/hl.cppm", "module;\n#include <hl/hl.hpp>\nexport module acme.hl;\nexport namespace hl { using hl::answer; }\n"},
                                     {"mcpp.toml", "[package]\nnamespace = \"acme\"\nname      = \"hl\"\nversion   = \"0.1.0\"\n\n[lib]\npath = \"modules/hl.cppm\"\n\n[build]\nsources      = [\"modules/hl.cppm\"]\ninclude_dirs = [\"include\"]\ndefines      = [\"HL_BASE=40\"]\n\n[targets.hl]\nkind = \"lib\"\n"}}};
@@ -807,7 +807,7 @@ int main() {
         const auto home = s::case_home(s::home::inherited);
         const auto seed = home / "registry/subos/default/.xlings.json";
         expect(fatal(fs::is_regular_file(seed))) << "inherited toolchain has no default SubOS runtime contract";
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto package = [](std::string_view name, std::string_view description, std::string_view source,
                           std::string_view target, std::string_view deps) {
             return std::format(R"lua(package = {{

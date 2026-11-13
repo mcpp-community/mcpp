@@ -166,7 +166,7 @@ E2E lock{"lock", [] {
         // an existing lock keeps the identity it selected. Both identities exist, so index order
         // cannot make the assertion pass.
         s::needs({"gcc", "fresh-sandbox"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto descriptor = [](std::string_view ns, std::string_view desc) {
             return std::format("package = {{\n    spec = \"1\",\n    namespace = \"{0}\",\n    name = \"lua\",\n    description = \"{1}\",\n    licenses = {{\"MIT\"}},\n    type = \"package\",\n    xpm = {{ linux = {{ [\"1.0.0\"] = {{\n        url = \"https://example.invalid/{0}-lua.tar.gz\",\n        sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\",\n    }} }} }},\n    mcpp = {{\n        language = \"c++23\",\n        import_std = false,\n        sources = {{ \"src/lua.cppm\" }},\n        targets = {{ [\"lua\"] = {{ kind = \"lib\" }} }},\n        deps = {{}},\n    }},\n}}\n", ns, desc);
         };

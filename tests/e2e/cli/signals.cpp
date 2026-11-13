@@ -109,7 +109,7 @@ int main() {
         // second build waits; the waiting build succeeds, the next does nothing, the program runs.
         s::needs({"gcc"});
         for (std::string_view schedule : {"default", "split"}) {
-            s::project p(mcpplibs::mtest::temp_dir() / schedule, {});
+            s::project p(s::case_dir() / schedule, {});
             std::string manifest = "[package]\nname = \"kg\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
             if (schedule == "split") manifest += "[build]\nbmi_schedule = \"on\"\n";
             p.write("mcpp.toml", manifest);

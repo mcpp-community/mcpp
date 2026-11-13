@@ -128,7 +128,7 @@ defines = ["COND_WIN"]
         s::needs({"gcc"});
         int k = 0;
         for (std::string_view spelling : {"module : private;", "module :private;"}) {
-            s::project p(mcpplibs::mtest::temp_dir() / std::format("proj{}", k++),
+            s::project p(s::case_dir() / std::format("proj{}", k++),
                          {{"src/main.cpp", "import pf;\nint main() { return pf() == 42 ? 0 : 1; }\n"},
                           {"mcpp.toml", "[package]\nname    = \"pf\"\nversion = \"0.1.0\"\n"}});
             p.write("src/pf.cppm", std::format("export module pf;\nexport int pf();\n\n{}\n\nint pf() {{ return 42; }}\n", spelling));
@@ -200,11 +200,11 @@ defines = ["COND_WIN"]
         s::needs({"gcc"});
         int n = 0;
         const auto sees_import = [&](std::string_view source) {
-            s::project p(mcpplibs::mtest::temp_dir() / std::format("s{}", n++),
+            s::project p(s::case_dir() / std::format("s{}", n++),
                          {{"mcpp.toml", "[package]\nname = \"s\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", source}});
             return s::text(p.mcpp({"build"})).contains("imported but not provided");
         };
-        s::project refusal(mcpplibs::mtest::temp_dir() / "refusal",
+        s::project refusal(s::case_dir() / "refusal",
                            {{"mcpp.toml", "[package]\nname = \"r\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "/*\n  module (exe)\n*/\nint main() { return 0; }\n"}});
         auto r = refusal.mcpp({"build"});
         expect(e2e::succeeded(r) && s::lacks(s::text(r), "scanner errors")) << "the four-line file from the issue was refused:\n" << s::text(r);
@@ -214,7 +214,7 @@ defines = ["COND_WIN"]
         expect(sees_import("/* */ import x;\nint main() { return 0; }\n")) << "code after a closed block comment is still code — the scanner did not record the import";
         expect(sees_import("const char* s = \"a /* b\";\nimport x;\nint main() { return 0; }\n")) << "a /* inside a string literal opens nothing — the scanner did not record the import";
         expect(!sees_import("const char* s = R\"(\nimport x;\n)\";\nint main() { return 0; }\n")) << "a raw-string body is still not code — the scanner recorded an import that is not code";
-        s::project g(mcpplibs::mtest::temp_dir() / "graph",
+        s::project g(s::case_dir() / "graph",
                      {{"mcpp.toml", "[package]\nname = \"g\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "/*\n  export module y;\n*/\nint main() { return 0; }\n"}});
         (void)g.mcpp({"build"});
         const auto graphs = s::find_files(g.at("target"), R"(build\.ninja)");

@@ -167,7 +167,7 @@ kind = "shared"
     "25 convention mode"_test = [] {
         // A manifest with only [package] infers its sources, a bin from src/main.cpp, include/
         // and a lib from a .cppm in src/, each announced; a legacy explicit schema infers nothing.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto program = [](const s::project& p, std::string_view name) {
             // `ls -d target/*/ | head -1`, then the one directory below it.
             auto first_dir = [](const fs::path& d) {
@@ -316,7 +316,7 @@ cxxflags = ["-fno-plt"]
     "87 build default profile"_test = [] {
         // The global default profile is dev (-O0 -g) and --release gives -O2; a project's
         // [build] default-profile = "release" gives -O2 and --dev overrides it.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project plain{tmp / "plain", {{"mcpp.toml", "[package]\nname    = \"plain\"\nversion = \"0.1.0\"\n"}, {"src/main.cpp", "int main() { return 0; }\n"}}};
         auto cc = [](const s::project& p) { return p.read("compile_commands.json"); };
@@ -431,7 +431,7 @@ int main() {{
         // membership changes (appears, added, removed) and not for content or non-members;
         // an absolute pattern works alike; a glob under target/ is reported as unwatchable; a
         // git dependency's glob that leaves its package is refused.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const auto REGISTRY_HOST = (s::shared_home() / "registry").generic_string();
         const auto home = tmp / "mcpp-home";
         s::project{home, {{"config.toml", std::format(R"cpp([xlings]
@@ -549,7 +549,7 @@ sealed = {{ git = "{0}", rev = "{1}" }}
         // says so naming [workspace.profile.<name>]; a member's own table replaces it whole; a
         // root package's own table is not a position reading, while its member is told.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited};
         auto flags_of = [](const s::project& ws, std::string_view suffix) {
             std::string out;
@@ -597,7 +597,7 @@ sealed = {{ git = "{0}", rev = "{1}" }}
         // two checkouts, no project path) and defines NDEBUG; dev keeps both; [profile.release]
         // ndebug/trim_paths = false keep them; debug = true writes a source map back to the root.
         s::needs({"gcc", "elf", "unix-shell"});
-        const auto work = temp_dir();
+        const auto work = s::case_dir();
         const s::options o{.env = {{"NO_COLOR", "1"}}};
         const auto GCC_VERSION = s::gcc_version();
         auto mk = [&](std::string_view dir, std::string_view extra) {

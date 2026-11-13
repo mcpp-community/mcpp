@@ -118,7 +118,7 @@ int main() {
         // `embed`; a program reaching it holds its embedder or is refused; its link flags and
         // runtime libraries do not reach the program's link.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project zip{tmp / "zip", {{"mcpp.toml", "[package]\nname    = \"zip\"\nversion = \"0.1.0\"\n[dependencies]\n\"compat.zlib\" = { version = \"1.3.2\", embed = true, exclude = [\"*/uncompr.c\"] }\n"},
                                      {"src/zip.cppm", "module;\n#include <zlib.h>\nexport module zip;\nexport int zip_bound(int n) { return static_cast<int>(compressBound(static_cast<uLong>(n))); }\nexport const char* zip_version() { return zlibVersion(); }\n"},
                                      {"build.mcpp", "import std;\nint main() { return 0; }\n"}}};
@@ -176,7 +176,7 @@ int main() {
         // `mcpp why deps` reports an index dependency's root; a patch made there with `git diff`
         // applies, and the variant is then the root the build reads.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nmcpplibs.cmdline = \"0.0.1\"\n"},
                                      {"src/main.cpp", "int main() { return 0; }\n"}}};
         auto why = app.mcpp({"why", "deps"});
@@ -207,7 +207,7 @@ int main() {
         // A patch on a member of a git repository applies to that member, and its path
         // dependency on a sibling still reaches the sibling.
         s::needs({"gcc", "unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project repo{tmp / "repo", {{"mcpp.toml", "[workspace]\nmembers = [\"core\", \"front\"]\n"},
                                        {"core/mcpp.toml", "[package]\nname    = \"toy-core\"\nversion = \"0.1.0\"\n[targets.toy-core]\nkind = \"lib\"\n"},
                                        {"core/src/core.c", "int core_value(void) { return 40; }\n"},

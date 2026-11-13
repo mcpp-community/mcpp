@@ -150,7 +150,7 @@ int main() {{
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "rebuild after an unrelated source failed";
         expect(eq(count_in_edge(R"(output-[0-9]*\.txt)"), std::size_t{n})) << "after a replay build.ninja does not name every declared output";
 
-        s::project too_long{temp_dir() / "too-long", {{"mcpp.toml", app.read("mcpp.toml")}, {"src/main.cpp", app.read("src/main.cpp")}}};
+        s::project too_long{s::case_dir() / "too-long", {{"mcpp.toml", app.read("mcpp.toml")}, {"src/main.cpp", app.read("src/main.cpp")}}};
         too_long.write("build.mcpp", std::format(R"cpp(import std;
 import mcpp;
 int main() {{
@@ -271,7 +271,7 @@ int main() {{
         expect(fatal(e2e::succeeded(p.mcpp({"build"})))) << "rebuild failed";
         expect(eq(probe()[0], std::string{"goodbye"})) << "C: a changed value did not re-run the action";
         if (s::on_windows()) return;  // D is not read on this host; the graph half is unit-tested
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto d1 = p.mcpp({"__action", "--env", "PATH=/declared/bin", "--path-prepend", "/first/bin", "--", "/bin/sh", "-c", "printf \"%s\" \"$PATH\" > \"$1\"", "sh", (tmp / "d1.txt").string()});
         expect(fatal(e2e::succeeded(d1))) << "D: the wrapper failed";
         expect(eq(s::read_file(tmp / "d1.txt"), std::string{"/first/bin:/declared/bin"})) << "D: with a declared PATH";

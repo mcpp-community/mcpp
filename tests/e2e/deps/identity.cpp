@@ -24,7 +24,7 @@ E2E identity{"identity", [] {
         // A `path` or `git` dependency's identity is the one its manifest declares, whatever key
         // reached it: one package, compiled once, recorded with both keys; two identities over one
         // source are refused before scanning; a namespace mismatch is one grouped warning.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const std::string fw_manifest = "[package]\nnamespace = \"huxdemo\"\nname      = \"fw\"\nversion   = \"0.1.0\"\n[targets.fw]\nkind = \"lib\"\n";
         const std::string fw_module = "export module fw;\nexport int fw_anchor() { return 7; }\n";
         const std::string comp_manifest = "[package]\nnamespace = \"huxdemo\"\nname      = \"comp\"\nversion   = \"0.1.0\"\n[targets.comp]\nkind = \"lib\"\n[dependencies]\nfw = { path = \"../fw\" }\n";
@@ -94,7 +94,7 @@ E2E identity{"identity", [] {
     "682 why deps prints the resolved graph"_test = [] {
         // `resolution.json` records the resolved dependency graph and `mcpp why deps` prints it,
         // path dependencies included.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "fw", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname = \"fw\"\nversion = \"0.1.0\"\n[targets.fw]\nkind = \"lib\"\n"},
                                 {"src/fw.cppm", "export module fw;\nexport int fw_anchor() { return 41; }\n"}}};
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\ndemo.fw = { path = \"../fw\" }\n"},

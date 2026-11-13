@@ -50,7 +50,7 @@ main = "src/main.cpp"
         expect(s::has_line(c.out, "^t_ok$"));
         expect(s::lacks(c.err, "t_ok")) << "a name is on standard error";
         // D: a workspace.
-        s::project ws(temp_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}});
+        s::project ws(s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}});
         for (auto m : {"a", "b"}) {
             ws.write(std::format("{}/mcpp.toml", m),
                      std::format("[package]\nname    = \"{}\"\nversion = \"0.1.0\"\n\n[targets.{}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", m, m));

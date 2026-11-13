@@ -340,55 +340,90 @@ void inherit(const fs::path& h, bool whole) {
 }  // namespace
 
 namespace {
-// The homes of the cases, made under the system's temporary directory: a payload may hold its
-// install directory in a fixed space (glibc's binaries hold 255 bytes), and a case's own directory
-// is too long for it, where the scripts' `mktemp -d` was not. Removed when the program ends.
-struct homes {
+// The directories of the cases (their own directory and their homes), made under the system's
+// temporary directory. Not the runner's case directory: that lies under the repository's target/,
+// and mcpp run in a directory with no manifest of its own would find the repository's mcpp.toml
+// and build it; and a payload may hold its install directory in a fixed space (glibc's binaries
+// hold 255 bytes), which a case directory under target/ exceeds where `mktemp -d` did not.
+//
+// Each is filed under the runner's directory of the case that made it (mtest::temp_dir(), which
+// mtest removes when the case ends): a directory whose case has ended is removed by the next use
+// of this registry, and the rest when the program ends.
+struct case_dirs {
     std::mutex m;
-    std::map<fs::path, fs::path> of_case;
-    ~homes() {
+    std::vector<std::pair<fs::path, fs::path>> made;  // (the case's runner directory, the directory)
+    std::map<fs::path, fs::path> own;                 // the case's own directory, by its runner directory
+    std::map<fs::path, fs::path> home;                // the case's home, by its runner directory
+    ~case_dirs() {
         std::error_code ec;
-        for (const auto& [_, h] : of_case) fs::remove_all(h, ec);
+        for (const auto& [_, d] : made) fs::remove_all(d, ec);
+    }
+    // Removes the directories of the cases that have ended. Called with `m` held.
+    void sweep() {
+        std::error_code ec;
+        std::erase_if(made, [&](const auto& e) {
+            if (fs::exists(e.first, ec)) return false;
+            fs::remove_all(e.second, ec);
+            own.erase(e.first);
+            home.erase(e.first);
+            return true;
+        });
+    }
+    // A new directory `<temp>/<prefix>-XXXXXXXX` of the current case. Called with `m` held.
+    fs::path make(std::string_view prefix) {
+        const auto key = mcpplibs::mtest::temp_dir();
+        sweep();
+        std::random_device rd;
+        fs::path d;
+        std::error_code ec;
+        do d = fs::temp_directory_path() / std::format("{}-{:08x}", prefix, rd());
+        while (!fs::create_directory(d, ec) && !ec);
+        made.emplace_back(key, d);
+        return d;
     }
 };
-homes& case_homes() {
-    static homes h;
+case_dirs& registry_of_cases() {
+    static case_dirs h;
     return h;
 }
-}  // namespace
 
-fs::path case_home(home kind) {
-    auto& all = case_homes();
-    const auto key = mcpplibs::mtest::temp_dir();
-    std::scoped_lock lock(all.m);
-    if (auto it = all.of_case.find(key); it != all.of_case.end())
-        return it->second;
-    std::random_device rd;
-    fs::path h;
+void populate_home(const fs::path& h, home kind) {
     std::error_code ec;
-    do h = fs::temp_directory_path() / std::format("mcpp-e2e-home-{:08x}", rd());
-    while (!fs::create_directory(h, ec) && !ec);
-    all.of_case.emplace(key, h);
     if (kind == home::linked && fs::is_directory(home_dir() / "registry", ec))
         link_or_copy(home_dir() / "registry", h / "registry");
     else if (kind == home::inherited || kind == home::payloads)
         inherit(h, kind == home::inherited);
+}
+}  // namespace
+
+fs::path case_dir() {
+    auto& all = registry_of_cases();
+    const auto key = mcpplibs::mtest::temp_dir();
+    std::scoped_lock lock(all.m);
+    if (auto it = all.own.find(key); it != all.own.end() && fs::exists(it->second))
+        return it->second;
+    const auto d = all.make("mcpp-e2e-case");
+    all.own[key] = d;
+    return d;
+}
+
+fs::path case_home(home kind) {
+    auto& all = registry_of_cases();
+    const auto key = mcpplibs::mtest::temp_dir();
+    std::scoped_lock lock(all.m);
+    if (auto it = all.home.find(key); it != all.home.end() && fs::exists(it->second))
+        return it->second;
+    const auto h = all.make("mcpp-e2e-home");
+    all.home[key] = h;
+    populate_home(h, kind);
     return h;
 }
 
 fs::path another_home(home kind) {
-    auto& all = case_homes();
+    auto& all = registry_of_cases();
     std::scoped_lock lock(all.m);
-    std::random_device rd;
-    fs::path h;
-    std::error_code ec;
-    do h = fs::temp_directory_path() / std::format("mcpp-e2e-home-{:08x}", rd());
-    while (!fs::create_directory(h, ec) && !ec);
-    all.of_case.emplace(mcpplibs::mtest::temp_dir() / std::format("#home-{}", all.of_case.size()), h);
-    if (kind == home::linked && fs::is_directory(home_dir() / "registry", ec))
-        link_or_copy(home_dir() / "registry", h / "registry");
-    else if (kind == home::inherited || kind == home::payloads)
-        inherit(h, kind == home::inherited);
+    const auto h = all.make("mcpp-e2e-home");
+    populate_home(h, kind);
     return h;
 }
 
@@ -403,7 +438,7 @@ void write_into(const fs::path& dir, std::string_view relative, std::string_view
 }
 }  // namespace
 
-project::project(files contents) : project(mcpplibs::mtest::temp_dir() / "project", contents) {}
+project::project(files contents) : project(case_dir() / "project", contents) {}
 
 project::project(fs::path dir, files contents) : dir_(std::move(dir)) {
     fs::create_directories(dir_);
@@ -431,7 +466,7 @@ std::optional<fs::path> project::artifact(std::string_view name) const {
 }
 
 project project::scaffold(std::string_view name, std::vector<std::string> args) {
-    const auto parent = mcpplibs::mtest::temp_dir() / "new";
+    const auto parent = case_dir() / "new";
     fs::create_directories(parent);
     std::vector<std::string> argv{"new", std::string(name)};
     argv.insert(argv.end(), args.begin(), args.end());

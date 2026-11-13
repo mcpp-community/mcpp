@@ -126,7 +126,7 @@ E2E names{"names", [] {
         const auto asio = s::shared_home() / "indices/mcpplibs/pkgs/c/chriskohlhoff.asio.lua";
         if (!fs::is_regular_file(asio))
             skip("no asio descriptor in registry");
-        s::project root{temp_dir(), {}};
+        s::project root{s::case_dir(), {}};
         auto mkidx = [&](std::string_view dir, std::string_view rel, std::string_view ns, std::string_view name) {
             root.write(std::format("{}/pkgs/{}", dir, rel), renamed_asio(ns, name));
         };
@@ -201,7 +201,7 @@ E2E names{"names", [] {
         // `"acme.lib" = ...` is read as the selector `acme.lib` and is the deprecated reading
         // quoted-dotted-dependency-key: warned with the unquoted key, listed by `mcpp why compat`;
         // the unquoted key, and a package beside its parent, are not warned about.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "lib", {{"mcpp.toml", "[package]\nnamespace = \"acme\"\nname      = \"lib\"\nversion   = \"0.1.0\"\n"},
                                  {"src/lib.cppm", "export module acme.lib;\nexport int answer() { return 42; }\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", "import acme.lib;\nint main() { return answer() == 42 ? 0 : 1; }\n"},
@@ -226,7 +226,7 @@ E2E names{"names", [] {
     "1074 a namespace package named like a spec field"_test = [] {
         // `gpp.version = { path = ... }` is the package `version` in the namespace `gpp`: only a
         // string `path`/`version`/`git` or a boolean `workspace` makes a table one specification.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "version", {{"mcpp.toml", "[package]\nnamespace = \"gpp\"\nname      = \"version\"\nversion   = \"0.1.0\"\n"},
                                      {"src/version.cppm", "export module gpp.version;\nexport int gpp_version() { return 7; }\n"}}};
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[dependencies]\ngpp.version = { path = \"../version\" }\n"},

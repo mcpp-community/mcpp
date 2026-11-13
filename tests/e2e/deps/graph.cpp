@@ -23,7 +23,7 @@ E2E graph{"graph", [] {
         fs::create_directories(index / "pkgs/w");
         s::project idx{index, {{".xlings-index-version", "abc1234\n"}, {".mcpp-index-updated", ""}}};
         fs::last_write_time(idx.at(".mcpp-index-updated"), fs::file_time_type::clock::now() - std::chrono::days{30});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "mid", {{"mcpp.toml", "[package]\nname    = \"mid\"\nversion = \"0.1.0\"\n[targets.mid]\nkind = \"lib\"\n[dependencies]\nabsentpkg = \"1.0.0\"\n"},
                                  {"src/mid.cppm", "export module mid;\nexport int mid_value() { return 1; }\n"}}};
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n[dependencies]\nmid = { path = \"../mid\" }\n"},
@@ -44,7 +44,7 @@ E2E graph{"graph", [] {
         // A dependency upgraded to a version the build cache already holds is staged over the
         // previous version's files, whatever their size (here the BMI's size does not change).
         s::needs({"gcc", "fresh-sandbox"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options inherited{.where = s::home::inherited};
         s::project{tmp / "local-index", {{"pkgs/c/constant.lua", R"cpp(package = {
     spec = "1",
@@ -116,7 +116,7 @@ E2E graph{"graph", [] {
         // published, not warned about on every run, MCPP_DEP_AMBIGUOUS_RULES names both — and
         // each qualified name still reaches its own directory; dep_dir("rules") is refused.
         s::needs({"elf", "gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         for (std::string_view ns : {"openmui", "gongfu"}) {
             s::project rules{tmp / std::format("{}-rules", ns), {}};
             rules.write("mcpp.toml", std::format("[package]\nnamespace = \"{}\"\nname      = \"rules\"\nversion   = \"0.1.0\"\n[modules]\nsources = [\"src/**/*.cpp\"]\n[targets.rules]\nkind = \"lib\"\n", ns));
@@ -178,7 +178,7 @@ int main() {
         // The app asks for mcpplibs.os ^0.4.1 (the newest, over openkal 0.25); a path library pins
         // 0.4.1 (over openkal 0.24). The merge takes os down to 0.4.1, and the requests the newer
         // version made leave the graph with it.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "anchor", {{"mcpp.toml", "[package]\nname    = \"anchor\"\nversion = \"0.1.0\"\n[targets.anchor]\nkind = \"lib\"\n[dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
                                     {"src/anchor.cppm", "export module anchor;\nexport int anchor_answer() { return 1; }\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", "import anchor;\nint main() { return anchor_answer() == 1 ? 0 : 1; }\n"}}};
@@ -208,7 +208,7 @@ int main() {
         // Two requests no merge reconciles are refused naming the override line; the root's
         // `override = true` chooses one version for the whole graph, names the replaced request
         // once, is locked and checked by --locked; a library's override is ignored, reported.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project anchor{tmp / "anchor", {{"mcpp.toml", "[package]\nname    = \"anchor\"\nversion = \"0.1.0\"\n[targets.anchor]\nkind = \"lib\"\n[dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
                                            {"src/anchor.cppm", "export module anchor;\nexport int anchor_answer() { return 1; }\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", "import anchor;\nint main() { return anchor_answer() == 1 ? 0 : 1; }\n"}}};

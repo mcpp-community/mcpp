@@ -168,7 +168,7 @@ print('PASS: native action progress paths are UTF-8 and cleaned')
 e2e::outcome python(std::string_view driver, std::vector<std::pair<std::string, std::optional<std::string>>> env) {
     const auto python3 = s::on_path("python3");
     expect(fatal(python3.has_value())) << "python3 is not on PATH";
-    const auto file = temp_dir() / "driver.py";
+    const auto file = s::case_dir() / "driver.py";
     s::project{file.parent_path(), {}}.write(file.filename().string(), driver);
     return e2e::run({.argv = {python3->string(), file.string()}, .env = std::move(env), .timeout = std::chrono::minutes{10}});
 }
@@ -180,7 +180,7 @@ E2E progress{"progress", [] {
         // off leaves the outputs usable; a failure after a complete count is a failure; a
         // cancelled build removes its channel.
         s::needs({"gcc", "unix-shell", "python3"});
-        const auto work = temp_dir() / "work";
+        const auto work = s::case_dir() / "work";
         fs::create_directories(work);
         auto r = python(preserves, {{"MCPP", s::mcpp_path()}, {"MCPP_HOME", s::case_home(s::home::inherited).string()}, {"PROGRESS_TEST_WORK", work.string()}});
         expect(e2e::succeeded(r)) << "the progress driver failed";

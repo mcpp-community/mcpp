@@ -15,7 +15,7 @@ E2E frameworks{"frameworks", [] {
         // mtest uses mcpplibs.os, which is tested with mtest: the package being built stands for
         // itself in its own graph, whatever version the framework's edge asked for.
         s::needs({"gcc"});
-        s::project t(temp_dir() / "t", {{"core/mcpp.toml", R"([package]
+        s::project t(s::case_dir() / "t", {{"core/mcpp.toml", R"([package]
 namespace = "acme"
 name      = "core"
 version   = "0.2.0"

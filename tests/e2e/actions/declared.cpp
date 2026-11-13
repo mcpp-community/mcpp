@@ -33,7 +33,7 @@ E2E declared{"declared", [] {
         // action reaches the link, the tests and is reported when no target takes it; a
         // malformed action is refused.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project app{tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
                                      {"src/main.cpp", "#include <cstdio>\nint generated_value();\nint main() { std::printf(\"VALUE=%d\\n\", generated_value()); }\n"},
                                      {"data/value.txt", "11\n"},

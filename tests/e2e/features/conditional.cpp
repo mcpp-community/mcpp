@@ -77,7 +77,7 @@ int main() { return 0; }
     "86 target cfg dependencies"_test = [] {
         // `[target.'cfg(...)'.dependencies]`: a matching predicate's dependency resolves, a
         // non-matching one is never resolved (its path does not exist).
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", R"cpp([package]
 name    = "widget"
 version = "0.1.0"
@@ -144,7 +144,7 @@ int main() {
         // A path dependency's `[target.'cfg(...)'.build]` sources are compiled under build and
         // under test (#229).
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "mylib", {{"mcpp.toml", R"cpp([package]
 name    = "mylib"
 version = "0.1.0"
@@ -234,7 +234,7 @@ defines = ["NEVER=1"]
         // `[target.<sel>.feature-deps.<f>]`: a matching section is merged, a non-matching one is
         // not; an inactive feature's conditional dep is not resolved; a feature populated only
         // by non-matching sections is still declared.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", R"cpp([package]
 name    = "widget"
 version = "0.1.0"
@@ -334,7 +334,7 @@ nomatchlib = { path = "../nomatch", features = ["codegen"] }
         // one does not; a table naming no source is refused with the restated line; a misspelt
         // section is reported.
         s::needs({"elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "fw", {{"mcpp.toml", R"cpp([package]
 namespace = "demo"
 name      = "fw"
@@ -384,7 +384,7 @@ kind = "lib"
         // root's own [build]; a non-matching one contributes nothing; switching rows rebuilds the
         // std BMI and switching back reuses it; a dependency's own key reaches no command.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options o{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         const std::vector<std::string> build{"build", "--toolchain", "gcc@16.1.0"};
         const std::string main_cpp = "import std;\nint main() { std::println(\"ok\"); return 0; }\n";
@@ -537,7 +537,7 @@ main = "src/main.cpp"
         // row for another target does not split the members (R2); rows that evaluate
         // differently do, each member keeping its own dialect (R3).
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options inherited{.where = s::home::inherited};
         const std::string host = R"(cfg(any(os = "linux", os = "macos", os = "windows")))";
         auto member = [](const s::project& ws, std::string_view name, std::string_view extra) {

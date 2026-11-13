@@ -54,7 +54,7 @@ E2E path{"path", [] {
         expect(s::has_line(ninja, "mylibA.*greet.cppm")) << "ninja missing dep package source";
         expect(s::has_line(ninja, "gcm.cache/[^ /]*mylibA/mylibA.greet.gcm")) << "ninja missing dep BMI";
         // A path whose manifest names another package.
-        const auto wrong = temp_dir() / "elsewhere/wrongname";
+        const auto wrong = s::case_dir() / "elsewhere/wrongname";
         fs::create_directories(wrong.parent_path());
         fs::copy(a.dir(), wrong, fs::copy_options::recursive);
         s::project{wrong, {}}.write("mcpp.toml", std::regex_replace(lib_manifest, std::regex("name        = \"mylibA\""), "name        = \"differentname\""));
@@ -136,7 +136,7 @@ E2E path{"path", [] {
         expect(s::has_line(manifest(), R"(^widget = "9\.9\.9"$)")) << "widget@9.9.9 should still be written";
 
         // A workspace member reads its root's [workspace.indices].
-        const auto ws_dir = temp_dir() / "ws";
+        const auto ws_dir = s::case_dir() / "ws";
         fs::create_directories(ws_dir);
         fs::copy(app.at("index"), ws_dir / "index", fs::copy_options::recursive);
         expect(fatal(fs::is_regular_file(ws_dir / "index/pkgs/a/acme.util.lua"))) << "workspace index fixture copy is incomplete";
@@ -150,7 +150,7 @@ E2E path{"path", [] {
         expect(e2e::contains(s::text(mnope), "(acme, nope)")) << "wrong error";
 
         // A legacy flat selector is migrated, not duplicated.
-        s::project upsert{temp_dir() / "upsert", {}};
+        s::project upsert{s::case_dir() / "upsert", {}};
         upsert.write("mcpp.toml", std::format("[package]\nname = \"upsert\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"{}\" }}\n\n[dependencies]\n\"acme.util\" = \"1.0.0\"\n", app.at("index").generic_string()));
         upsert.mcpp({"add", "acme.util@2.0.0"});
         expect(s::no_line(upsert.read("mcpp.toml"), R"(^"acme\.util" = )")) << "legacy flat selector was duplicated instead of migrated";
@@ -167,7 +167,7 @@ E2E path{"path", [] {
         // `"<ns>.<name>"` key still round-trips; a flat key of the default namespace too.
         s::needs({"fresh-sandbox"});
         const s::options home{.where = s::home::inherited};
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         auto lib = [&](std::string_view name, std::string_view module, std::string_view body) {
             s::project p{tmp / std::format("{}-pkg/{}", name, name), {}};
             p.write("src/" + std::string(name) + ".cppm", std::format("export module {};\nimport std;\n{}\n", module, body));
@@ -201,7 +201,7 @@ E2E path{"path", [] {
         const auto musl = s::payload_root("xim-x-musl-gcc", s::musl_gcc_version()) / "bin/x86_64-linux-musl-g++";
         if (!fs::is_regular_file(musl))
             skip("no reusable musl-gcc xpkg payload");
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project gc{tmp / "grandchild/gc", {{"include/gc/gc.h", "#pragma once\ninline int gc_answer(void) { return 42; }\n"},
                                                {"src/gc.cppm", "export module gc;\n"},
                                                {"mcpp.toml", "[package]\nname    = \"gc\"\nversion = \"0.1.0\"\n\n[build]\ninclude_dirs = [\"include\"]\n\n[targets.gc]\nkind = \"lib\"\n"}}};

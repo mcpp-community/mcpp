@@ -30,7 +30,7 @@ E2E activation{"activation", [] {
     "67 features strict"_test = [] {
         // Feature activation, `backend=` sugar, and the --strict schema gate: an unknown feature
         // or platform warns, and --strict refuses; the six platform names are known.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", "[package]\nname    = \"widget\"\nversion = \"0.1.0\"\n\n[targets.widget]\nkind = \"lib\"\n\n[features]\ndefault   = []\nbackend-a = []\nbackend-b = []\n"},
                                     {"src/widget.cppm", "export module widget;\nexport int widget_backend() {\n#if defined(MCPP_FEATURE_BACKEND_A)\n    return 1;\n#elif defined(MCPP_FEATURE_BACKEND_B)\n    return 2;\n#else\n    return 0;\n#endif\n}\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", "import std;\nimport widget;\nint main() {\n#ifdef MCPP_FEATURE_BASE\n    std::println(\"base\");\n#endif\n#ifdef MCPP_FEATURE_EXTRA\n    std::println(\"extra\");\n#endif\n    std::println(\"backend={}\", widget_backend());\n    return 0;\n}\n"}}};
@@ -108,7 +108,7 @@ E2E activation{"activation", [] {
         // A feature's `requires` binds exactly one provider of the graph: none is an error, one
         // binds, two unpinned are an error listing both; [capabilities] and --cap pin one; an
         // inactive feature requires nothing.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         for (std::string_view impl : {"alpha", "beta"}) {
             s::project blas{tmp / std::format("blas_{}", impl), {}};
             blas.write("mcpp.toml", std::format("[package]\nname    = \"blas_{0}\"\nversion = \"0.1.0\"\nprovides = [\"blas\"]\n\n[targets.blas_{0}]\nkind = \"lib\"\n", impl));
@@ -141,7 +141,7 @@ E2E activation{"activation", [] {
 
     "82 feature optional deps"_test = [] {
         // A dependency declared under a feature is pulled only when the feature is active.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", "[package]\nname    = \"widget\"\nversion = \"0.1.0\"\n\n[targets.widget]\nkind = \"lib\"\n"},
                                     {"src/widget.cppm", "export module widget;\nexport int widget_answer() { return 42; }\n"}}};
         s::project app{tmp / "app", {{"src/main.cpp", "int main() { return 0; }\n"},
@@ -157,7 +157,7 @@ E2E activation{"activation", [] {
 
     "83 feature defines propagate"_test = [] {
         // A dependency's active-feature `defines` reach the consumer's own translation units.
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "widget", {{"mcpp.toml", "[package]\nname    = \"widget\"\nversion = \"0.1.0\"\n\n[features]\ndefault = []\nturbo   = { defines = [\"WIDGET_TURBO=1\"] }\n\n[build]\ninclude_dirs = [\"include\"]\n\n[targets.widget]\nkind = \"lib\"\n"},
                                     {"include/widget/widget.hpp", "#pragma once\n// The macro's value is only meaningful in the TU that includes this header —\n// exactly the header-only library situation.\ninline int widget_mode() {\n#ifdef WIDGET_TURBO\n    return 1;\n#else\n    return 0;\n#endif\n}\n"},
                                     {"src/widget.cppm", "export module widget;\nexport int widget_anchor() { return 0; }\n"}}};
@@ -171,7 +171,7 @@ E2E activation{"activation", [] {
         // A dependency's `[targets.<n>] required_features` gates its target for every consumer:
         // closed without the feature (the program still runs), open with it.
         s::needs({"elf"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "dep", {{"mcpp.toml", R"cpp([package]
 name    = "dep"
 version = "0.1.0"
@@ -224,7 +224,7 @@ dep = { path = "../dep", features = ["plugin"] }
     "601 exclusive capability"_test = [] {
         // Two exclusive providers of one capability are refused at binding, naming it, both and
         // why; two ordinary providers coexist.
-        const auto parent = temp_dir() / "new";
+        const auto parent = s::case_dir() / "new";
         fs::create_directories(parent);
         auto mkpkg = [&](std::string_view name, std::string_view cap, bool exclusive) {
             s::project p{parent / name, {}};
@@ -259,7 +259,7 @@ dep = { path = "../dep", features = ["plugin"] }
         // A shared library a library package acquires through [feature-deps] reaches the link
         // line of its test binaries; the project builds without the feature too.
         s::needs({"gcc", "unix-shell"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "greeter", {{"mcpp.toml", R"cpp([package]
 name    = "greeter"
 version = "0.1.0"
@@ -312,7 +312,7 @@ int main() {
         // restates its source; another source (or constraint) is refused naming both; a build
         // program addresses a namespaced package's tool by both spellings, only with the feature.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         for (std::string_view d : {"installer", "other"})
             s::project{tmp / d, {{"mcpp.toml", R"cpp([package]
@@ -415,7 +415,7 @@ main = "src/main.cpp"
         // plain name without a [features] table is accepted, an unknown dependency is refused
         // under --strict; beside a [features] table too, and in `mcpp why deps`.
         s::needs({"gcc"});
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         const s::options linked{.where = s::home::linked};
         s::project{tmp / "fw", {{"mcpp.toml", R"cpp([package]
 name      = "fw"
@@ -492,7 +492,7 @@ windows-installer = []
         // A platform SDK under [feature-deps.<f>] with visibility = "private" reaches only the
         // declaring package's own units: the consumer fails on the missing header, the declaring
         // package builds, and with "public" the consumer builds (the harness is not vacuous).
-        const auto tmp = temp_dir();
+        const auto tmp = s::case_dir();
         s::project{tmp / "sdk", {{"mcpp.toml", R"cpp([package]
 name    = "sdk"
 version = "0.1.0"

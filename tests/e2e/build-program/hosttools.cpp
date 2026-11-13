@@ -50,7 +50,7 @@ E2E hosttools{"hosttools", [] {
         // the case's own (a linked home), so a stale entry cannot make a broken build look green.
         s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project toolpkg{root / "toolpkg", {{"mcpp.toml", R"cpp([package]
 name    = "toolpkg"
 version = "0.1.0"
@@ -133,7 +133,7 @@ required_features = ["codegen"]
         // build.mcpp: a rule written once, as a C++ module in an ordinary package, compiled in the
         // same command as build.mcpp.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         auto rule = [](std::string_view param, std::string_view value) {
             return std::format(R"cpp(module;
 #include <cstdio>
@@ -208,7 +208,7 @@ inline void define_answer(int n) {
         // package's directory through one dependency; a feature can add the request to an edge.
         s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project toolpkg{root / "toolpkg", {{"mcpp.toml", "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/lib.cpp\"]\n\n[targets.codegen]\nkind = \"bin\"\nmain = \"src/codegen.cpp\"\n"},
                                               {"src/lib.cpp", "int toolpkg_lib(){return 1;}\n"},
                                               {"src/codegen.cpp", generator("generated_answer", 42)}}};
@@ -287,7 +287,7 @@ int main() {
         // GCC); a dotted name survives whole; two rules declaring one name are refused naming both
         // packages; an `mcpp.` name from another namespace warns and still builds.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         // 1. Package `protobufgen`, module `acme.rules.protobuf`.
         s::project rules{root / "rules", {{"mcpp.toml", "[package]\nname    = \"protobufgen\"\nversion = \"0.1.0\"\n\n[targets.protobufgen]\nkind = \"lib\"\n"},
                                           {"src/protobufgen.cppm", "export module acme.rules.protobuf;\nimport std;\nimport mcpp;\nexport namespace acme::rules::protobuf {\ninline void apply() { mcpp::cxxflag(\"-DDIVERGENT_NAME_REACHED=1\"); }\n}\n"}}};
@@ -344,7 +344,7 @@ int main() {
         s::needs({"gcc"});
         const auto src = s::repository() / "examples/08-build-rules";
         expect(fatal(fs::is_directory(src))) << src.string() << " is missing";
-        const auto ex = temp_dir() / "ex";
+        const auto ex = s::case_dir() / "ex";
         fs::copy(src, ex, fs::copy_options::recursive);
         for (const auto& t : s::glob(ex, "target")) fs::remove_all(t);
         for (const auto& t : s::glob(ex, "*/target")) fs::remove_all(t);
@@ -385,7 +385,7 @@ int main() {
         // (whose message names neither the package nor the key); the names that can compile are
         // a closed set. The fix the message names is the fix that works.
         s::needs({"elf", "gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project rule{root / "rule", {{"src/rule.cppm", "export module rule;\nexport namespace testrule { inline int answer() { return 42; } }\n"},
                                         {"mcpp.toml", "[package]\nname    = \"rule\"\nversion = \"0.1.0\"\n\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n\n[build]\nsources = [\"src/rule.cppm\"]\n\n[targets.rule]\nkind = \"lib\"\n"}}};
         auto manifest = [](std::string_view host) {
@@ -411,7 +411,7 @@ int main() {
         // the order their paths sort; with no internal imports, path order survives. The reading
         // is a value the modules compute together, printed through mcpp::warning.
         s::needs({"gcc"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         const std::string head = "[package]\nname      = \"probe\"\nnamespace = \"ex\"\nversion   = \"0.1.0\"\n\n[language]\nstandard = \"c++23\"\nmodules  = true\n\n[build]\n";
         const std::string tail = "\n[features]\ndefault = []\nthing = { sources = [\"rules/thing.cppm\"] }\n";
         // Leg 1: import order is the reverse of path order.
@@ -446,7 +446,7 @@ int main() {
         // rebuilt. The store is the case's own.
         s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         auto write_tool = [&](const fs::path& dir, int value) {
             s::project t{dir, {{"mcpp.toml", "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[targets.gen]\nkind = \"bin\"\nmain = \"src/gen.cpp\"\n"},
                                {"src/gen.cpp", generator("generated_answer", value)}}};
@@ -524,7 +524,7 @@ int main() {
         // `tools = [...]` (B), also with the file nested deep, which on Windows passes 260
         // characters in the tool store's scratch (C: asserted wherever the runner enables long
         // paths; the readings say which case this runner is).
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         auto write_dep = [&](const fs::path& dir, std::string_view inner) {
             s::project d{dir, {{"mcpp.toml", "[package]\nname    = \"dep\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n[targets.dep]\nkind = \"lib\"\n"},
                                {"src/dep.cpp", "int dep_base() { return 40; }\n"}}};
@@ -677,7 +677,7 @@ int main() {
 }
 )cpp"}}};
         };
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         // 1. The SDK shape: the tool depends on the package declaring it.
         auto app1 = fixture(root / "s1", "spike.fw = { path = \"..\" }");
         app1.write("../fw/tool/src/main.cpp", "#include <cstdio>\nint fw_answer();\nint main() { std::printf(\"fw-installer ran %d\\n\", fw_answer()); return 0; }\n");
@@ -737,7 +737,7 @@ int main() {
         // The entry is `-include once.h`, whose variable has no include guard; the package builds
         // on its own (the control).
         const s::options home{.where = s::home::inherited};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project toolpkg{root / "toolpkg", {{"inc/once.h", "int once_counter = 1;\n"},
                                               {"mcpp.toml", "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[targets.gen]\nkind = \"bin\"\nmain = \"src/gen.cpp\"\n\n[build]\ninclude_dirs = [\"inc\"]\n\n[target.'cfg(not(os = \"none\"))'.build]\ncxxflags = [\"-include once.h\"]\n"},
                                               {"src/gen.cpp", R"cpp(#include <cstdio>
@@ -781,7 +781,7 @@ int main() {
         // nothing built; an entry naming no bin target is refused, naming the bin targets.
         s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         const std::string tool_manifest = "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/lib.cpp\"]\n\n[features.codegen]\ntools = [\"codegen\"]\n\n[targets.codegen]\nkind = \"bin\"\nmain = \"src/codegen.cpp\"\n\n[targets.toolpkg]\nkind = \"lib\"\n";
         s::project toolpkg{root / "toolpkg", {{"mcpp.toml", tool_manifest},
                                               {"src/lib.cpp", "int toolpkg_lib() { return 1; }\n"},
@@ -861,7 +861,7 @@ int main() {
             expect(fatal(e2e::succeeded(s::run(*python, {(s::repository() / ".github/tools/seed_native_xim_index.py").string(),
                                                           s::case_home(s::home::linked).string(), *index}))));
         }
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project toolpkg{root / "toolpkg", {{"src/stamp.cpp", "int main() { return 0; }\n"}}};
         auto write_tool = [&](std::string_view body) {
             std::string m = "[package]\nname    = \"toolpkg\"\nversion = \"0.1.0\"\n\n[targets.stamp]\nkind = \"bin\"\nmain = \"src/stamp.cpp\"\n";
@@ -904,7 +904,7 @@ int main() {
         // feature; R1 `mcpp.acme.*` from `acme` draws no warning; R2 `mcpp.rules.*` from `acme`
         // does, naming `mcpp.acme.*`.
         s::needs({"unix-shell"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project gen{root / "gen", {{"mcpp.toml", "[package]\nnamespace = \"acme\"\nname      = \"gen\"\nversion   = \"0.1.0\"\n\n[lib]\npath = \"src/gen.cppm\"\n\n[features.extra]\nsources = [\"src/extra.cppm\"]\n\n[features.bad]\nsources = [\"src/bad.cppm\"]\n"},
                                       {"src/gen.cppm", R"cpp(export module mcpp.acme.gen;
 import mcpp.core;
@@ -960,7 +960,7 @@ inline void tell() {
         // only src/). S1 an edit to rules/hm.cppm re-runs the program; S2 a newer file of a
         // package nested in the dependency does not decline the fast path.
         s::needs({"unix-shell"});
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project plug{root / "plug", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"plug831\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug831.cppm\"]\n\n[features.hm]\nsources = [\"rules/hm.cppm\"]\n"},
                                         {"src/plug831.cppm", "export module probe.plug831;\nexport int plug_root() { return 0; }\n"},
                                         {"rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 1; }\n"},
@@ -995,7 +995,7 @@ inline void tell() {
         // program compiles nothing; B: an interface edit compiles both; C: a header edit does,
         // and the program reads the new value; D: a record that disagrees is a miss, replaced.
         const s::options home{.where = s::home::inherited, .env = {{"MCPP_VERBOSE", "1"}}};
-        const auto root = temp_dir();
+        const auto root = s::case_dir();
         s::project rules{root / "rules", {{"mcpp.toml", "[package]\nname    = \"rule859\"\nversion = \"0.1.0\"\n\n[targets.rule859]\nkind = \"lib\"\n"},
                                           {"src/value.h", "#define T859_VALUE 1\n"},
                                           {"src/rule859.cppm", "module;\n#include \"value.h\"\nexport module t859.rules;\nimport mcpp;\nexport int rule_value() { return T859_VALUE; }\n"}}};
@@ -1076,7 +1076,7 @@ int main() {
         // naming `lib` and not `testing`; B: a second test --workspace builds no host tool.
         s::needs({"gcc"});
         const s::options home{.where = s::home::linked};
-        s::project ws{temp_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"testing\", \"lib\", \"toolpkg\", \"app\"]\n"},
+        s::project ws{s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"testing\", \"lib\", \"toolpkg\", \"app\"]\n"},
                                           {"testing/mcpp.toml", "[package]\nname    = \"testing\"\nversion = \"0.1.0\"\n\n[targets.testing]\nkind = \"lib\"\n"},
                                           {"testing/src/testing.cpp", "int testing_ok() { return 0; }\n"},
                                           {"lib/mcpp.toml", "[package]\nname    = \"lib\"\nversion = \"0.1.0\"\n\n[targets.lib]\nkind = \"lib\"\n\n[dev-dependencies]\ntesting = { path = \"../testing\" }\n"},

@@ -55,7 +55,7 @@ E2E programs{"programs", [] {
         // its own package builds, and the build program runs.
         s::needs({"gcc"});
         for (std::string_view form : {"explicit", "convention"}) {
-            s::project root(mcpplibs::mtest::temp_dir() / form, {});
+            s::project root(s::case_dir() / form, {});
             std::string rules = "[package]\nnamespace = \"repro\"\nname = \"rules\"\nversion = \"0.1.0\"\n\n";
             if (form == "explicit") rules += "[lib]\npath = \"src/rules.cppm\"\n\n";
             rules += "[build]\nsources = [\"src/*.cppm\"]\n\n[targets.rules]\nkind = \"lib\"\n";
@@ -88,7 +88,7 @@ main = "main.cpp"
         // file in two programs builds; E: two providers in one program are refused naming it;
         // F: one file reached as two packages is refused as such; G: a plan of the root's own
         // modules writes no module map and binds no name.
-        const auto tmp = mcpplibs::mtest::temp_dir();
+        const auto tmp = s::case_dir();
         s::project a(tmp / "a", {{"app/src/main.cpp", main_file}, {"updater/src/main.cpp", main_file},
                                  {"updater/mcpp.toml", "[package]\nname    = \"updater\"\nversion = \"0.1.0\"\n[targets.updater]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                                  {"app/mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nupdater = { path = \"../updater\", artifacts = [\"updater\"] }\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
@@ -225,7 +225,7 @@ main = "main.cpp"
         // cache by the second; B: one entry, complete, recording its sources and no project; C: gc
         // collects it and the next build compiles it again; D: --cache local writes no entry; E: an
         // index package's library a build program imports is cached at its package address.
-        const auto tmp = mcpplibs::mtest::temp_dir();
+        const auto tmp = s::case_dir();
         const auto project = [&](const fs::path& dir, std::string_view name) {
             return s::project(dir, {{"mcpp.toml", std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", name)},
                                     {"src/main.cpp", "int main() { return 0; }\n"},
