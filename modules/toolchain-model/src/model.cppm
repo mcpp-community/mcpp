@@ -506,6 +506,13 @@ struct BmiTraits {
 
 BmiTraits bmi_traits(const Toolchain& tc);
 
+// Whether the compiler has C++ named modules: every family mcpp drives does,
+// except a GCC before 14, which accepts neither `-fmodules` nor P1689 (DJGPP's
+// GCC 12.2.0, measured). A GCC version that does not parse is taken as current.
+// Its C++ units that declare and import no module still build, as translation
+// units without module flags.
+bool compiles_modules(const Toolchain& tc);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -625,6 +632,12 @@ bool target_supports_full_static(std::string_view targetTriple, bool hostCapabil
     return t->os == "linux" || t->c_library_by_platform();
 }
 
+bool compiles_modules(const Toolchain& tc) {
+    if (tc.compiler != CompilerId::GCC) return true;
+    const int major = std::atoi(tc.version.c_str());
+    return major == 0 || major >= 14;
+}
+
 BmiTraits bmi_traits(const Toolchain& tc) {
     if (tc.compiler == CompilerId::MSVC) {
         // Native cl.exe builds are gated off until the .ifc pipeline lands;
@@ -681,8 +694,8 @@ BmiTraits bmi_traits(const Toolchain& tc) {
         .needsPrebuiltModulePath = false,
         .scanNeedsFModules = true,
         // GCC: -fmodules on every TU; BMIs implicit in cwd/gcm.cache, no
-        // std=/search flags needed.
-        .compileModulesFlag = " -fmodules",
+        // std=/search flags needed. A GCC without modules is given none.
+        .compileModulesFlag = compiles_modules(tc) ? " -fmodules" : "",
         .stdBmiUsePrefix = "",
         .stdCompatBmiUsePrefix = "",
         .moduleFileUsePrefix = "",

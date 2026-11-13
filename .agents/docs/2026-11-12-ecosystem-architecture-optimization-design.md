@@ -906,7 +906,9 @@ BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；o
 
 第四版（2026.11.13.1）实施了其中的：e2e 向 mtest 的 C++ 用例的迁移（各宿主的单元作业以 `mcpp test` 运行）、两个金丝雀与夜间
 矩阵（5.7，`tests/canary/`、`canaries.yml`）、UEFI 收敛（第 19 节）、xim 的第二个 PR（wine、DOSBox、OVMF、djgpp 的包）。
-同版并入的两处缺陷：GCC 14 之前的编译器没有 C++ 模块与 P1689，规划时即拒绝图中的 C++ 源并指出第一个（C 源照常构建）；
+同版并入的两处缺陷：GCC 14 之前的编译器没有 C++ 模块与 P1689，此前在第一次编译时因 `-fmodules` 失败；现在不声明、不导入
+模块的 C++ 单元以不带模块选项的翻译单元构建（图取 mcpp 自己的扫描），需要模块的第一个单元在规划时被拒绝并指出所需——8.2 的
+A 路线表"libstdc++ 12，无模块"由此成立（实测：DJGPP 的 GCC 12.2.0 构建异常、`std::vector`、`std::sort` 的程序，经 DOSBox 运行，状态 7）；
 中断时先请每个程序结束、给两秒，再结束其单元，各等待以 `try_wait` 轮询而不持锁（此前 `wait_for` 持锁使终止拿不到锁，
 `mcpp __action-stamp` 的子进程成为孤儿）。
 

@@ -156,6 +156,15 @@ the family is the C++ driver's name. A package without the file is refused,
 naming the file. Without `xim:` an unknown name is refused, and the message
 lists the families, the payloads of the table and this form.
 
+### A compiler without C++ modules (2026.11.13.1+)
+
+A GCC before 14 has neither `-fmodules` nor P1689 scanning (DJGPP's GCC 12.2.0,
+measured). With it, mcpp builds the C++ units that declare and import no module
+as translation units without module flags, from its own scan of the sources,
+and the C units as with any compiler. A unit that declares a module, is a
+module unit or imports one (`import std;` included) is refused at planning,
+naming the file and what it needs.
+
 ## Switching the Default Toolchain
 
 The default is a *pair* — toolchain axis + target axis (target omitted = host):

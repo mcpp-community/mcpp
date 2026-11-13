@@ -1,6 +1,6 @@
 // A GCC's C++ modules by its version: P1689 and -fmodules arrived together in GCC 14, and an
-// earlier GCC (DJGPP's 12.2.0, measured) refuses both, so its graph's C++ units are refused at
-// planning while its C units build (design 2026-11-12 §15.3).
+// earlier GCC (DJGPP's 12.2.0, measured) refuses both, so it is given no module flag, its units
+// that need modules are refused at planning, and the rest build (design 2026-11-12 §15.3).
 import std;
 import mcpplibs.mtest;
 import mcpp.toolchain.model;
@@ -32,6 +32,15 @@ UTest gcc_14_and_later_has_modules{"ToolchainCapabilities/Gcc14AndLaterHasModule
         expect(caps.has_modules) << v;
         expect(caps.has_builtin_p1689_scan) << v;
     }
+}};
+
+UTest gcc_without_modules_is_given_no_module_flag{"ToolchainCapabilities/GccWithoutModulesIsGivenNoModuleFlag", [] {
+    Toolchain tc;
+    tc.compiler = CompilerId::GCC;
+    tc.version = "12.2.0";
+    expect(eq(std::string(bmi_traits(tc).compileModulesFlag), std::string{}));
+    tc.version = "16.1.0";
+    expect(eq(std::string(bmi_traits(tc).compileModulesFlag), std::string{" -fmodules"}));
 }};
 
 UTest an_unparsed_gcc_version_is_current{"ToolchainCapabilities/AnUnparsedGccVersionIsCurrent", [] {

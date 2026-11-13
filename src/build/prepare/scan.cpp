@@ -1203,15 +1203,26 @@ step11_cxx_compiler_gate(PrepareState& state) {
     if (!state.tc) return {};
     const auto caps = mcpp::toolchain::capabilities_for(*state.tc);
     if (caps.has_modules) return {};
+    // A compiler without C++ modules builds the units that declare and import
+    // none, as translation units without module flags; the graph is mcpp's own
+    // scan. The first unit that needs modules is named, with what it needs.
     for (auto const& u : state.scan.graph.units) {
         if (u.kind != mcpp::SourceKind::Cxx && u.kind != mcpp::SourceKind::ModuleInterface)
             continue;
+        std::string needs;
+        if (u.provides) needs = std::format("declares the module `{}`", u.provides->logicalName);
+        else if (u.declaration != mcpp::modgraph::ModuleDeclaration::None)
+            needs = "is a module unit";
+        else if (!u.requires_.empty())
+            needs = std::format("imports `{}`", u.requires_.front().logicalName);
+        else if (u.kind == mcpp::SourceKind::ModuleInterface)
+            needs = "is a module interface by its extension";
+        if (needs.empty()) continue;
         return std::unexpected(std::format(
-            "{} cannot build the C++ sources of this graph ({} is the first): mcpp builds a C++ "
-            "unit as a module unit and reads its dependencies through P1689 scanning "
-            "(`-fmodules`, `-fdeps-format`), which GCC provides from 14. Its C sources build.\n"
-            "       help: a C++ program on {} needs a toolchain of GCC 14 or later, or Clang",
-            state.tc->label(), u.relPath.generic_string(), state.tc->targetTriple));
+            "{} has no C++ modules, which GCC provides from 14: {} {}. C++ sources that declare "
+            "and import no module, and C sources, build with it.\n"
+            "       help: a program of modules on {} needs a toolchain of GCC 14 or later, or Clang",
+            state.tc->label(), u.relPath.generic_string(), needs, state.tc->targetTriple));
     }
     return {};
 }

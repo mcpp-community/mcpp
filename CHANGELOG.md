@@ -57,8 +57,10 @@
 
 ### Fixed
 
-- A compiler without C++ modules (GCC before 14) refuses the graph's C++
-  sources at planning, naming the first and the remedy; its C sources build.
+- A compiler without C++ modules (GCC before 14) builds the C++ units that
+  declare and import no module, without module flags, and refuses at planning
+  the first unit that needs modules, naming what it needs. Before, the build
+  failed on `-fmodules` at the first compile.
 - An interrupt asks each running program to end and allows two seconds before
   ending its unit; waits poll without holding the lock. Before, a program
   started by `mcpp __action-stamp` outlived Ctrl-C.

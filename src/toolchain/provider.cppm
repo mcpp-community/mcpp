@@ -77,12 +77,10 @@ ProviderCapabilities capabilities_for(const Toolchain& tc) {
     switch (tc.compiler) {
         case CompilerId::GCC: {
             caps.has_scan_deps   = false;   // GCC has no clang-scan-deps equivalent
-            // P1689 (`-fdeps-format`) and `-fmodules` arrived together in GCC 14.
-            // An earlier GCC (12.2.0, DJGPP's, measured) refuses both words, so
-            // its C++ units cannot be built the way every C++ unit is; its C
-            // units can. A version that does not parse is taken as current.
-            const int major = std::atoi(tc.version.c_str());
-            caps.has_builtin_p1689_scan = major == 0 || major >= 14;
+            // P1689 (`-fdeps-format`) and `-fmodules` arrived together in GCC 14
+            // (`compiles_modules`): without them the graph is built from mcpp's
+            // own scan, and units that declare or import a module are refused.
+            caps.has_builtin_p1689_scan = compiles_modules(tc);
             caps.has_modules            = caps.has_builtin_p1689_scan;
             caps.stdlib_id       = "libstdc++";
             caps.archive_format  = "ar";
