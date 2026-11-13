@@ -432,11 +432,11 @@ void print_status(std::string_view verb, std::string_view msg) {
     }
 }
 
-void write_file(const std::filesystem::path& p, std::string_view content) {
-    std::error_code ec;
-    std::filesystem::create_directories(p.parent_path(), ec);
-    std::ofstream os(p);
-    os << content;
+// config.toml and .xlings.json are read by every mcpp of the home: programs that
+// start at once on a fresh home each write config.toml, and an in-place rewrite
+// let one read a part of another's ("invalid config.toml: expected '='").
+bool write_file(const std::filesystem::path& p, std::string_view content) {
+    return mcpp::home::write_replacing(p, content);
 }
 
 std::string_view default_config_toml() {
@@ -486,8 +486,7 @@ keep_days       = 3
 }
 
 bool write_default_config_toml(const std::filesystem::path& path) {
-    write_file(path, default_config_toml());
-    return std::filesystem::exists(path);
+    return write_file(path, default_config_toml());
 }
 
 bool write_default_xlings_json(const std::filesystem::path& path,
@@ -548,16 +547,7 @@ std::optional<nlohmann::json> read_json_file(const std::filesystem::path& path) 
 }
 
 bool write_json_file(const std::filesystem::path& path, const nlohmann::json& doc) {
-    auto tmp = path;
-    tmp += ".tmp";
-    {
-        std::ofstream out(tmp);
-        if (!out) return false;
-        out << doc.dump(2) << "\n";
-    }
-    std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
-    return !ec;
+    return write_file(path, doc.dump(2) + "\n");
 }
 
 nlohmann::json index_repo_entry(const IndexRepo& r) {
@@ -1502,10 +1492,8 @@ write_config_value(const GlobalConfig& cfg, std::string_view section, std::strin
         }
     }
 
-    std::ofstream os(cfg.configFile);
-    if (!os) return std::unexpected(ConfigError{
+    if (!write_file(cfg.configFile, text)) return std::unexpected(ConfigError{
         std::format("cannot write '{}'", cfg.configFile.string())});
-    os << text;
     return {};
 }
 

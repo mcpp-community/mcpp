@@ -92,6 +92,28 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     return false;
 }
 
+bool write_replacing(const std::filesystem::path& file, std::string_view text) {
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    auto tmp = file;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    {
+        std::ofstream os(tmp);
+        if (!os) return false;
+        os << text;
+        if (!os.flush()) {
+            os.close();
+            std::filesystem::remove(tmp, ec);
+            return false;
+        }
+    }
+    if (!replace_file(tmp, file, ec)) {
+        std::filesystem::remove(tmp, ec);
+        return false;
+    }
+    return true;
+}
+
 std::string untrusted_because(const std::filesystem::path& dir) {
     std::error_code ec;
     if (!std::filesystem::is_directory(dir, ec)) return "it is not a directory";

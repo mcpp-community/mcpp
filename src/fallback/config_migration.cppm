@@ -11,6 +11,7 @@
 export module mcpp.fallback.config_migration;
 
 import std;
+import mcpp.home.files;
 
 export namespace mcpp::fallback {
 
@@ -39,11 +40,9 @@ bool replace_all(std::string& text, std::string_view from, std::string_view to) 
     return changed;
 }
 
+// Whole, never in place: every mcpp started on the home migrates the same file.
 void write_file(const std::filesystem::path& p, std::string_view content) {
-    std::error_code ec;
-    std::filesystem::create_directories(p.parent_path(), ec);
-    std::ofstream os(p);
-    os << content;
+    (void)mcpp::home::write_replacing(p, content);
 }
 
 bool write_text_if_changed(const std::filesystem::path& path,

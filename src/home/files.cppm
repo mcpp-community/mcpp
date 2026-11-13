@@ -67,6 +67,13 @@ private:
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec);
 
+// `text` written beside `file` under a name of this writer's own and renamed over
+// it (replace_file): a process reading the file while this one writes it sees the
+// previous copy or the new one, never a part. False when it could not be written,
+// the previous copy then unchanged. For the files of a home that processes started
+// at once each write (config.toml, .xlings.json).
+bool write_replacing(const std::filesystem::path& file, std::string_view text);
+
 // Whether a directory another program wrote may be read and run from: it
 // belongs to this user or to the system (root; on Windows also Administrators
 // and SYSTEM), and when it is not this user's, this user cannot write it.

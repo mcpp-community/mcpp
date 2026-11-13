@@ -335,3 +335,35 @@ UTest xlings_json_leaves_a_user_artifact_base_alone{"ConfigIndexMigration/Xlings
     expect(eq(read_all(p), body));
     std::filesystem::remove_all(dir);
 }};
+
+// A value written while another reader reads the file: the reader sees the previous copy or the
+// new one, whole, and the writer leaves no file of its own beside it. Programs started at once on
+// a fresh home each write config.toml; a rewrite in place (truncate, then write) let one read a
+// part of another's ("invalid config.toml: expected '='").
+UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
+    const auto home = make_tempdir("mcpp-config-replace");
+    mcpp::config::GlobalConfig cfg;
+    cfg.configFile = home / "config.toml";
+    const std::string padding(64 * 1024, '#');
+    {
+        std::ofstream(cfg.configFile) << "[xlings]\nbinary = \"bundled\"\n" << padding << "\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
+    }
+    std::atomic<bool> done{false};
+    std::atomic<int> partial{0};
+    std::thread reader([&] {
+        while (!done.load()) {
+            std::ifstream in(cfg.configFile);
+            const std::string text{std::istreambuf_iterator<char>(in), {}};
+            if (!text.contains("[toolchain]\ndefault = \"")) ++partial;
+        }
+    });
+    for (int i = 0; i < 200; ++i)
+        expect(fatal(mcpp::config::write_config_value(cfg, "toolchain", "default", i % 2 ? "\"llvm@23.1.3\"" : "\"gcc@16.1.0\"").has_value()));
+    done = true;
+    reader.join();
+    expect(eq(partial.load(), 0)) << "a reader saw config.toml without its [toolchain] default";
+    std::size_t files = 0;
+    for ([[maybe_unused]] const auto& e : std::filesystem::directory_iterator(home)) ++files;
+    expect(eq(files, std::size_t{1})) << "a writer left a file beside config.toml";
+    std::filesystem::remove_all(home);
+}};
