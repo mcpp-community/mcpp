@@ -161,10 +161,14 @@
   '='`). On Windows, which refuses a rename over a file a reader holds open,
   `mcpp toolchain default` and the other writers no longer fail with `cannot
   write config.toml`: the writer closes its own reader first and waits up to
-  two seconds for the others; a reader whose open Windows refuses while the
-  file is being replaced waits for the replacement as well, rather than
-  reading the file as absent. A `config.toml` that is a symbolic link is
-  written through, and the file keeps its permissions.
+  two seconds for the others, and a reader whose open is refused while the
+  file is being replaced waits for the replacement as well. The file is
+  written as given: on Windows a text-mode write had ended each line in
+  `\r\n`, after which a value set again found no `[toolchain]` and appended a
+  second one; a `config.toml` an editor wrote with `\r\n` has its value
+  replaced where it stands, and an added line ends as the file's others do.
+  A `config.toml` that is a symbolic link is written through, and the file
+  keeps its permissions.
 - `mcpp test` runs a case that holds the machine (P7.1, resource `machine`)
   with no other test beside it: the listed cases of a file that hold it are a
   part of their own (`<program>/<file> (machine)` beside the file's other

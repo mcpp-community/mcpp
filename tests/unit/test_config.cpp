@@ -338,6 +338,29 @@ UTest xlings_json_leaves_a_user_artifact_base_alone{"ConfigIndexMigration/Xlings
     std::filesystem::remove_all(dir);
 }};
 
+// A config.toml whose lines end in `\r\n` (an editor on Windows) has its value replaced where it
+// stands, and a line the writer adds ends as the file's others do. A writer that matched only
+// `\n` found no `[toolchain]` and appended a second one, which the parser refuses.
+UTest config_value_keeps_the_files_line_ending{"Config/ConfigValueKeepsTheFilesLineEnding", [] {
+    const auto home = make_tempdir("mcpp-config-crlf");
+    mcpp::config::GlobalConfig cfg;
+    cfg.configFile = home / "config.toml";
+    std::ofstream(cfg.configFile, std::ios::binary) << "[xlings]\r\nbinary = \"bundled\"\r\n\r\n[toolchain]\r\ndefault = \"gcc@16.1.0\"\r\n";
+    for (auto value : {"\"llvm@23.1.3\"", "\"gcc@16.1.0\""})
+        expect(fatal(mcpp::config::write_config_value(cfg, "toolchain", "default", value).has_value()));
+    expect(fatal(mcpp::config::write_config_value(cfg, "build", "default_jobs", "4").has_value()));
+    const auto text = mcpp::home::read_whole(cfg.configFile).value_or("");
+    std::size_t headers = 0;
+    for (auto p = text.find("[toolchain]"); p != std::string::npos; p = text.find("[toolchain]", p + 1)) ++headers;
+    expect(eq(headers, std::size_t{1})) << text;
+    expect(text.contains("[toolchain]\r\ndefault = \"gcc@16.1.0\"\r\n")) << text;
+    expect(text.contains("\r\n[build]\r\ndefault_jobs = 4\r\n")) << text;
+    bool bare = false;
+    for (std::size_t i = 0; i < text.size(); ++i) bare = bare || (text[i] == '\n' && (i == 0 || text[i - 1] != '\r'));
+    expect(!bare) << "a line ends in a bare \\n: " << text;
+    std::filesystem::remove_all(home);
+}};
+
 // A value written while another reader reads the file: the reader sees the previous copy or the
 // new one, whole, and the writer leaves no file of its own beside it. Programs started at once on
 // a fresh home each write config.toml; a rewrite in place (truncate, then write) let one read a
@@ -348,7 +371,7 @@ UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
     cfg.configFile = home / "config.toml";
     const std::string padding(64 * 1024, '#');
     {
-        std::ofstream(cfg.configFile) << "[xlings]\nbinary = \"bundled\"\n" << padding << "\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
+        std::ofstream(cfg.configFile, std::ios::binary) << "[xlings]\nbinary = \"bundled\"\n" << padding << "\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
     }
     std::atomic<int> partial{0};
     // What the first reader that missed the value saw: the failure should say

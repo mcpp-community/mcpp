@@ -151,7 +151,10 @@ bool write_replacing(const std::filesystem::path& path, std::string_view text) {
     auto tmp = file;
     tmp += std::format(".{:x}.tmp", std::random_device{}());
     {
-        std::ofstream os(tmp);
+        // The bytes as given: a text-mode stream on Windows writes each `\n`
+        // as `\r\n`, and a reader that looks for `\n` (write_config_value)
+        // no longer finds the line it wrote.
+        std::ofstream os(tmp, std::ios::binary);
         if (!os) return false;
         os << text;
         if (!os.flush()) {

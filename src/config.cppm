@@ -1472,29 +1472,35 @@ write_config_value(const GlobalConfig& cfg, std::string_view section, std::strin
         std::format("cannot open '{}'", cfg.configFile.string())});
     std::string text = std::move(*read);
 
-    std::string line = std::format("{} = {}\n", key, literal);
+    // The file's own line ending: a config.toml written on Windows by an
+    // editor ends its lines with `\r\n`, and a line this writer adds ends as
+    // the others do. A header or a key is matched before either ending.
+    const std::string_view eol = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    std::string line = std::format("{} = {}{}", key, literal, eol);
     const auto header = std::format("[{}]", section);
+    auto ends_line = [&](std::size_t at) {
+        return at == text.size() || text[at] == '\n' || (text[at] == '\r' && at + 1 < text.size() && text[at + 1] == '\n');
+    };
 
     // The header at the start of a line, so `[toolchain]` is not found inside
     // `[toolchain.x]` or a comment.
     auto sectionPos = std::string::npos;
     for (auto p = text.find(header); p != std::string::npos; p = text.find(header, p + 1))
-        if ((p == 0 || text[p - 1] == '\n')
-            && (p + header.size() == text.size() || text[p + header.size()] == '\n')) {
+        if ((p == 0 || text[p - 1] == '\n') && ends_line(p + header.size())) {
             sectionPos = p;
             break;
         }
     if (sectionPos == std::string::npos) {
         // Append the section's block at end.
-        if (!text.empty() && text.back() != '\n') text += '\n';
-        text += std::format("\n{}\n{}", header, line);
+        if (!text.empty() && text.back() != '\n') text += eol;
+        text += std::format("{}{}{}{}", eol, header, eol, line);
     } else {
         // Locate an existing `<key> = ...` line within the section. Match at
         // line starts with a word boundary after the key, so `default` never
         // matches the `default_target` line (and vice versa).
-        auto eol = text.find('\n', sectionPos);
-        if (eol == std::string::npos) eol = text.size();
-        auto bodyStart = (eol == text.size()) ? text.size() : eol + 1;
+        auto headerEnd = text.find('\n', sectionPos);
+        if (headerEnd == std::string::npos) headerEnd = text.size();
+        auto bodyStart = (headerEnd == text.size()) ? text.size() : headerEnd + 1;
         auto nextSec = text.find("\n[", bodyStart);
         auto bodyEnd = (nextSec == std::string::npos) ? text.size() : nextSec;
         auto body = std::string_view(text).substr(bodyStart, bodyEnd - bodyStart);
