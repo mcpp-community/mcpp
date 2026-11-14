@@ -145,7 +145,10 @@
   20 ms at most within its two seconds.
 - `mcpp test --archive` compiles nothing: no build program or host tool of the
   project is compiled or run, so the tests of an MSVC-ABI archive run on a
-  machine without Visual Studio. A test run through a runner receives what a
+  machine without Visual Studio. It asks for none of the platform's link and
+  seal programs, and a runner that is the platform's tool is the platform's
+  runner for this machine's architecture, made as another architecture's is
+  (`okrun` for an ok image). A test run through a runner receives what a
   build's test run hands one (`MCPP_RUNTIME_FILES`, each file named by its
   place beside the program, and `MCPP_RUN_*`); one run directly receives
   neither. Before, every archived program received the list, named by file

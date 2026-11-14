@@ -1090,6 +1090,14 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     auto P = state.platform;
     const auto t = target_of(state);
 
+    // A preparation links when it compiles and does not only describe: the
+    // run of an archive (RunBuilt) links nothing, and its link and seal
+    // programs were the machine's that wrote the archive.
+    const bool linksSomething = state.overrides.compiles() && !state.overrides.describes()
+        && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
+               return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
+           });
+
     // ── The programs the link and the seal run (§4.4, §4.6) ───────────────
     if (P.active) {
         std::set<std::string> needed;
@@ -1100,16 +1108,13 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
         for (auto const& [name, e] : P.fields.tools)
             if (auto found = locate_program(state, ctx, e.ref.program.empty() ? name : e.ref.program))
                 P.tools[name] = found->generic_string();
-        const bool linksSomething = std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-            return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
-        });
         for (auto const& name : needed) {
             if (P.tools.contains(name)) continue;
             if (auto found = locate_program(state, ctx, name)) {
                 P.tools[name] = found->generic_string();
                 continue;
             }
-            if (!linksSomething || state.overrides.describes()) continue;
+            if (!linksSomething) continue;
             refusal::record(refusal::Code::PlatformToolAbsent);
             auto it = P.fields.tools.find(name);
             const std::string from = it == P.fields.tools.end()
@@ -1129,9 +1134,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     }
     // A platform that links with ld.lld needs one beside the compiler; its
     // absence is said here, not as a link line that starts with a flag.
-    if (P.active && P.fields.link.driver.value == "lld" && !state.overrides.describes()
-        && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-               return lu.kind != mcpp::build::LinkUnit::StaticLibrary; })
+    if (P.active && P.fields.link.driver.value == "lld" && linksSomething
         && mcpp::freestanding::resolve_lld_any(state.tc->binaryPath).empty()) {
         refusal::record(refusal::Code::LldRequiredAbsent);
         return std::unexpected(std::format(

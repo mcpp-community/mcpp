@@ -1183,20 +1183,23 @@ runtime_files_for(const mcpp::build::BuildContext& ctx,
     return out;
 }
 
-// Writes the list for `artifact` under the output tree and returns its path.
-// `carried` is empty for a distributable, which holds its own files.
+// Writes the list for `artifact` under the tree that holds it -- the output
+// tree, or `tree` when the caller names another (the directory an archive's
+// tests are run from) -- and returns its path. `carried` is empty for a
+// distributable, which holds its own files.
 std::expected<std::filesystem::path, std::string>
 write_runtime_files_list(
     const mcpp::build::BuildContext& ctx,
     const std::filesystem::path& artifact,
-    const std::vector<std::pair<std::string, std::filesystem::path>>& carried) {
+    const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
+    std::filesystem::path tree = {}) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    auto rel = artifact.lexically_normal().lexically_relative(
-        ctx.outputDir.lexically_normal());
+    if (tree.empty()) tree = ctx.outputDir;
+    auto rel = artifact.lexically_normal().lexically_relative(tree.lexically_normal());
     if (rel.empty() || *rel.begin() == "..")
         rel = fs::path("distributable") / artifact.filename();
-    auto listPath = ctx.outputDir / ".mcpp-runtime-files" / rel;
+    auto listPath = tree / ".mcpp-runtime-files" / rel;
     listPath += ".tsv";
     fs::create_directories(listPath.parent_path(), ec);
     std::ofstream os(listPath, std::ios::binary | std::ios::trunc);
@@ -1234,12 +1237,13 @@ std::expected<std::filesystem::path, std::string>
 write_run_closure(const mcpp::build::BuildContext& ctx,
                   const std::filesystem::path& artifact,
                   const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
-                  std::string_view mode, std::string_view triple) {
+                  std::string_view mode, std::string_view triple, std::filesystem::path tree = {}) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    auto rel = artifact.lexically_normal().lexically_relative(ctx.outputDir.lexically_normal());
+    if (tree.empty()) tree = ctx.outputDir;
+    auto rel = artifact.lexically_normal().lexically_relative(tree.lexically_normal());
     if (rel.empty() || *rel.begin() == "..") rel = fs::path("distributable") / artifact.filename();
-    auto path = ctx.outputDir / ".mcpp-runtime-files" / rel;
+    auto path = tree / ".mcpp-runtime-files" / rel;
     path += ".closure.json";
     fs::create_directories(path.parent_path(), ec);
     auto quote = [](std::string_view s) {
@@ -1302,12 +1306,12 @@ run_contract_env(const mcpp::build::BuildContext& ctx, const std::filesystem::pa
 std::expected<std::vector<std::pair<std::string, std::string>>, std::string>
 runner_handoff_env(const mcpp::build::BuildContext& ctx, const std::filesystem::path& artifact,
                    const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
-                   std::string_view mode, std::string_view triple) {
+                   std::string_view mode, std::string_view triple, const std::filesystem::path& tree = {}) {
     std::vector<std::pair<std::string, std::string>> env;
-    auto listed = write_runtime_files_list(ctx, artifact, carried);
+    auto listed = write_runtime_files_list(ctx, artifact, carried, tree);
     if (!listed) return std::unexpected(listed.error());
     env.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
-    auto closure = write_run_closure(ctx, artifact, carried, mode, triple);
+    auto closure = write_run_closure(ctx, artifact, carried, mode, triple, tree);
     if (!closure) return std::unexpected(closure.error());
     for (auto& kv : run_contract_env(ctx, artifact, mode, triple, *closure)) env.push_back(std::move(kv));
     return env;
@@ -1342,6 +1346,11 @@ std::optional<std::filesystem::path> platform_tool(const mcpp::build::BuildConte
 // "Invalid ELF image for this architecture". `build = false` locates it
 // without building it (`mcpp self env`). nullopt: the word is no platform
 // tool, and is looked up as any runner's program is.
+//
+// A preparation that provisions no tool -- the run of an archive
+// (PrepareIntent::RunBuilt) -- has not located the platform's tool for this
+// machine either. Its runner is then the platform's runner for this machine's
+// architecture, the same program, made the way another architecture's is.
 struct RunnerTool {
     std::filesystem::path program;
     std::string           arch;   // the architecture it is built for
@@ -1350,16 +1359,20 @@ std::expected<std::optional<RunnerTool>, std::string>
 runner_tool(const mcpp::build::BuildContext& ctx, std::string_view word, std::string_view tripleKey,
             bool noRunner, bool build = true) {
     auto tool = platform_tool(ctx, word);
-    if (!tool) return std::nullopt;
+    if (!tool && !ctx.plan.platform.fields.tools.contains(std::string(word))) return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
+    std::string arch = t ? std::string(t->arch) : std::string{};
     if (!t || mcpp::platform::runner_reach(ctx.plan.platform.fields.runner, t->arch,
                                            mcpp::toolchain::platform::host_arch,
                                            !ctx.runUnder.empty(), noRunner)
-                  != mcpp::platform::RunnerReach::TargetArchitecture)
-        return RunnerTool{ *tool, std::string(mcpp::toolchain::platform::host_arch) };
-    auto program = mcpp::pack::runner_program(ctx.plan.platform, ctx.projectRoot, word, t->arch, build);
+                  != mcpp::platform::RunnerReach::TargetArchitecture) {
+        if (tool) return RunnerTool{ *tool, std::string(mcpp::toolchain::platform::host_arch) };
+        if (!t) return std::nullopt;
+        arch = mcpp::toolchain::platform::host_arch;
+    }
+    auto program = mcpp::pack::runner_program(ctx.plan.platform, ctx.projectRoot, word, arch, build);
     if (!program) return std::unexpected(program.error().message);
-    return RunnerTool{ std::move(*program), t->arch };
+    return RunnerTool{ std::move(*program), arch };
 }
 
 ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string_view tripleKey) {
@@ -6337,14 +6350,18 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
                 r.env.emplace_back(key, mcpp::runtime::launch_env::prepend_path_list(key, dir));
             // ...and, through a runner, what a build's test run hands one
             // (runner_handoff_env): the files the program carries, each named
-            // by its place beside the program, as the archive keeps it.
+            // by its place beside the program, as the archive keeps it. The
+            // records are written in the archive's run directory, beside the
+            // programs they describe: the checkout's output tree is not
+            // touched by a run that builds nothing.
             if (!tb.runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
                 std::vector<std::pair<std::string, fs::path>> carried;
                 for (auto const& f : t.files) {
                     const auto source = (opened->root / f).lexically_normal();
                     carried.emplace_back(source.lexically_relative(r.program.parent_path()).generic_string(), source);
                 }
-                auto handoff = runner_handoff_env(*tb.ctx, r.program, carried, "test", tb.runnerChoice.tripleKey);
+                auto handoff = runner_handoff_env(*tb.ctx, r.program, carried, "test", tb.runnerChoice.tripleKey,
+                                                  opened->root);
                 if (!handoff) {
                     reasons.push_back(std::format("{}: {}", t.name, handoff.error()));
                     ++notRun;

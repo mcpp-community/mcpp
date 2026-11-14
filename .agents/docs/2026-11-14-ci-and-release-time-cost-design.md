@@ -186,3 +186,15 @@ I 使从缓存恢复的 emsdk 在 mcpp 2026.11.13.1 起自动重建链接；K �
 | unit RuntimePayload/APayloadStartsThroughItsHome | 用例在每个宿主上期望 `elf`；Windows 上 `runtime_payload_kind` 按设计为空（I：PE 不指名加载器，不钉运行库） | 期望随宿主，Windows 上为空；`starts_through_its_home` 的判定在各宿主上相同 |
 | unit Config/ConfigValueIsReplacedWhole（本分支五次完成的 Windows 运行中四次失败） | 写者以重命名替换文件期间，Windows 对读者的打开与对该名字的查询都给出拒绝（被替换的副本处于待删除状态）。`read_whole` 以 `exists` 的失败判定文件不存在，在重命名期间放弃，读者得到空内容。5.1 记录的写者一侧（两秒内未替换成功）已由写者的重试解决，剩下的是读者一侧 | `read_whole` 以打开本身的错误判断：Windows 上除“不存在”以外的拒绝在两秒内重试；其他系统的重命名立即替换名字，读取失败即为最终结果 |
 | e2e run/contract 1024 | 用例断言快速路径重放，却不持有 machine；并行程序向共享 home 安装、改变运行环境描述时，完整路径按设计重新规划（E 的约定）。其上方的注释称其写 config.toml，与内容不符 | 移入 contract-machine 套件，注释改为其持有 machine 的原因 |
+| e2e openkal/sets 964 B（Linux 分片 2） | 本 PR 引入（5.2 B）。`RunBuilt` 不再供给宿主工具，归档的运行因此既找不到平台链接用的 `okld`，也找不到 runner `okrun`；此前的通过依赖共享 home 中别处留下的程序。本机可稳定复现：`runner 'okrun' for 'x86_64-openkal' was not found` | 两处按意图回答。不链接的准备（`compiles()` 为假或只描述）不要求链接与封装程序：`linksSomething` 一处计算，平台工具缺失与 ld.lld 缺失两个拒绝共用。平台声明为工具、本次准备未定位的 runner，取平台为本机架构构建的 runner 程序（`pack::runner_program`），与其他架构的 runner 同一机制。交给 runner 的文件清单与闭包记录写在归档的运行目录中、所描述的程序旁，不写入检出目录的输出树（用例 B 断言该树中没有测试的产物） |
+
+**macOS canary（cxx aarch64-macos test）。** 自 canary 加入起，该格在 macOS runner 上每次都失败（9 次），矩阵所写的 `ok`
+未经测量。测试程序经 mtest 依赖 mcpplibs.os → openkal-macos。openkal-macos 的构建程序在 `MCPP_TARGET_REQUESTED`
+非空时把 `port/`（只列三个名字的 `libSystem.tbd`）加入链接搜索路径，依据是 mcpp 在构建程序契约中的陈述：在 Mac 上
+`--target aarch64-macos` 时 mcpp 不把系统 SDK 放上链接（`build_program.cppm`）。而 mcpp 的链接参数在每个 macOS 链接上
+都给出 `-isysroot <SDK>`（`flags.cppm`，2026-08-25 起在图供给 C 库时也保留）。`-L` 先于 SDK 被搜索，存根遮蔽了 SDK 的完整
+`libSystem`，`strlen` 等因此未定义。缺陷不由本 PR 引入：mcpp 的两处陈述自 2026-08-25 起互相矛盾，canary 首次测量了这一组合。
+
+解决需要一项跨仓库的契约：mcpp 向构建程序陈述链接所用的 SDK（为空即链接中没有系统的存根），由 `flags.cppm` 的同一判定给出；
+openkal-macos 仅在其为空时提供自己的存根，旧版 mcpp 不设该变量时行为不变；同时更正 `build_program.cppm` 的陈述。该契约待负责人确认；
+在此之前矩阵按测量记为 `fails` 并注明原因，修复后 canary 报告该格与矩阵不符，矩阵随之改回 `ok`。
