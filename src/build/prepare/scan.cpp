@@ -910,8 +910,11 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
                 state.tc->targetTriple, why, remedy));
         }
         return std::unexpected(std::format(
-            "source imports std but toolchain '{}' provides no std module source",
-            state.tc->label()));
+            "source imports std but toolchain '{}' provides no std module source{}",
+            state.tc->label(),
+            state.tc->stdModuleUnanswered.empty()
+                ? std::string{}
+                : std::format("\n       the compiler did not answer: {}", state.tc->stdModuleUnanswered)));
     }
     // `std.compat` is a second module of the same library, and not every
     // library has it: a package that supplies `std` alone, or a toolset without

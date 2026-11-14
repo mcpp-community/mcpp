@@ -616,7 +616,8 @@ struct PrepareState {
     std::string runtimePayload;
     std::filesystem::path runtimeLibDir;
     bool runtimePayloadProvided = false;
-    std::function<std::expected<void, std::string>(const mcpp::toolchain::XimToolchainPackage&)> provide_runtime_payload;
+    std::function<std::expected<void, std::string>(const mcpp::toolchain::XimToolchainPackage&,
+                                                   const std::filesystem::path&)> provide_runtime_payload;
     std::string effectiveProfile;
     std::vector<std::filesystem::path> storeRoots;
     std::optional<std::string> tcSpec;

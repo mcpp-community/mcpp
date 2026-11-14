@@ -327,11 +327,22 @@ from an upstream home runs on that home's runtime; what it produces is the same,
 because the artifact's loader, run paths and sysroot come from the build's own
 command lines (§5).
 
+The loader a payload names may be the home's link to it (`<home>/abi/<abi>/`)
+rather than the runtime payload itself. The links are state of the home, made
+by the pin; a store restored without them (a CI cache of `data/xpkgs` alone)
+holds payloads that do not start. So whenever a payload that runs on the
+runtime is taken -- installed, or found already placed -- mcpp asks the
+provider to keep the pin (`ensure_declared_runtime`), which makes the links
+again when they are missing. Which payloads run on the runtime is read from the
+payload's programs, not from its name (2026.11.13.1): one of `bin/` whose
+`PT_INTERP` lies in its own provider home. A Mach-O or PE program names no
+loader, so the question has the same form on every system.
+
 **What mcpp still does here** (`post_install.cppm`, all read-only):
 
 | function | answer |
 |---|---|
-| `runtime_payload_kind` | whether a toolchain runs on a C runtime payload: `gcc`, `llvm` on Linux; nothing for musl-gcc, a system compiler or a PE toolchain |
+| `runtime_payload_kind` | whether a toolchain runs on a C runtime payload: `gcc`, `llvm` on Linux by their recipes; once placed, any payload whose programs start through its home's loader (`starts_through_its_home`, the emsdk payload among them); nothing for musl-gcc, a system compiler or a PE toolchain |
 | `select_glibc_payload_lib` | the library directory of exactly `glibc@<version>` (never another installed version) |
 | `detect_baked_loader`, `baked_runtime_binding` | the loader and runtime a payload was bound to, read from its ELF headers |
 | `write_clean_link_specs` | the per-build `-specs=` file in the build directory (§5) |
@@ -502,8 +513,9 @@ loader coupling, so a host binary that stumbles onto them is at worst confused.
 3. **Capabilities** (`src/toolchain/provider.cppm`): stdlib identity, BMI
    traits, and feature switches consumed by `flags.cppm`.
 4. **Runtime kind** (`post_install.cppm`): whether the payload runs on a C
-   runtime payload (`runtime_payload_kind`); the provider binds it to the
-   pinned runtime at install, and mcpp writes nothing into it.
+   runtime payload (`runtime_payload_kind`), read from its programs once it
+   is placed; the provider binds it to the pinned runtime at install, and mcpp
+   writes nothing into it. A new family needs no entry here.
 5. **e2e**: a hermetic-link test in the spirit of
    `86_llvm_hermetic_link.sh`, and coverage in the no-host-toolchain CI job.
 

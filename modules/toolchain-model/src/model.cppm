@@ -240,6 +240,9 @@ struct Toolchain {
     // GCC/libc++ answer 20; MSVC answers 20 from cl 19.38 (VS 2022 17.8,
     // microsoft/STL#3977) and 23 below that.
     int                                 importStdMinLevel = 0;
+    // Why no std module was found, when the compiler did not answer the
+    // question (its probe failed); empty when it answered that it has none.
+    std::string                         stdModuleUnanswered;
 
     // Something about HOW this toolchain was resolved that the user has to be
     // told, but which is not a failure. Non-empty ⇒ the caller MUST surface it.

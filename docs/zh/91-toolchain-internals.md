@@ -296,11 +296,17 @@ payload 由提供者（xlings）在安装时写入，此后没有任何程序写
 （`glibc@2.44.3`，`xlings config --runtime`，只设一次），提供者把工具链链接到该运行库的加载器与库。从上游 home
 借来的工具链运行在那个 home 的运行库上；它的产物不变，因为产物的加载器、运行路径与 sysroot 来自构建自己的命令行（§5）。
 
+payload 指名的加载器可能是 home 指向它的链接（`<home>/abi/<abi>/`），而不是运行库 payload 本身。这些链接是 home 的状态，
+由钉版本建立；不带它们恢复的 store（只缓存 `data/xpkgs` 的 CI 缓存）中的 payload 无法启动。因此，凡取用一个运行在该运行库
+上的 payload——新安装的，或已经就位的——mcpp 都请提供者保持钉版本（`ensure_declared_runtime`），链接缺失时随之重建。
+哪些 payload 运行在运行库上，由 payload 的程序而不是其名字回答（2026.11.13.1）：`bin/` 中 `PT_INTERP` 位于其自身
+提供者 home 内的程序。Mach-O 与 PE 程序不指名加载器，因此这一问题在各系统上形式相同。
+
 **mcpp 在这里仍做的事**（`post_install.cppm`，全部只读）：
 
 | 函数 | 回答 |
 |---|---|
-| `runtime_payload_kind` | 工具链是否运行在 C 运行库 payload 上：Linux 上的 `gcc`、`llvm`；musl-gcc、系统编译器与 PE 工具链为否 |
+| `runtime_payload_kind` | 工具链是否运行在 C 运行库 payload 上：Linux 上的 `gcc`、`llvm` 按其配方；就位之后，任何程序经其 home 的加载器启动的 payload（`starts_through_its_home`，emsdk payload 即在其中）；musl-gcc、系统编译器与 PE 工具链为否 |
 | `select_glibc_payload_lib` | 恰好 `glibc@<版本>` 的库目录（绝不取另一个已安装版本） |
 | `detect_baked_loader`、`baked_runtime_binding` | payload 绑定的加载器与运行库，读自其 ELF 头 |
 | `write_clean_link_specs` | 构建目录中每次构建的 `-specs=` 文件（§5） |
@@ -459,7 +465,8 @@ loader，任何环境变量都无法覆盖它，因此一个 `popen()`/`system()
 3. **能力**（`src/toolchain/provider.cppm`）：stdlib 身份、BMI 特性，
    以及 `flags.cppm` 消费的 feature 开关。
 4. **运行库类别**（`post_install.cppm`）：payload 是否运行在 C 运行库 payload 上
-   （`runtime_payload_kind`）；提供者在安装时把它绑定到钉住的运行库，mcpp 不往其中写入任何东西。
+   （`runtime_payload_kind`），就位后由其程序回答；提供者在安装时把它绑定到钉住的运行库，mcpp 不往其中写入任何东西。
+   新的工具链族无需在此登记。
 5. **e2e**：按 `86_llvm_hermetic_link.sh` 的思路写一个 hermetic 链接
    测试，并纳入无宿主工具链的 CI job。
 

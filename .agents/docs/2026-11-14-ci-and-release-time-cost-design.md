@@ -145,3 +145,36 @@ graph 778 已改为读取构建图，不依赖输出的完整性。
 本地核验：`mcpp test e2e/basics --no-run --no-programs --archive` 的程序阶段 0.96 s（只规划），归档不含程序；
 未指定 `MCPP_BIN_MCPP` 的运行以退出码 2 被拒绝；指定 `/bin/false` 时 basics 失败，说明测试使用的是所指定的程序。
 用例 1085（重放构建报告产物，包与工作区）与 1086（`--no-programs` 的写出、拒绝、运行与本地运行）通过。
+
+### 5.5 从缓存恢复的 store 中无法启动的工具链（mtest 0.8.4 发布）
+
+**现象。** mtest v0.8.4 的发布运行（43556169215）在 web 行失败：`source imports std but toolchain 'clang 6.0.9
+(wasm32-emscripten)' provides no std module source`。同一提交在 PR 运行（43554279064）中通过。
+
+**与此前版本的对比。** 0.8.3 及以前没有 web 行；0.8.4 首次以 emsdk 构建。三次运行的区别只在缓存：PR 运行恢复的
+store 不含 emsdk，现场安装后通过；main 运行同样现场安装、通过，并保存了含 emsdk 的 store（键 `722042…`）；tag 运行与
+mtest#23 的 PR 运行恢复这份 store，emsdk 被视为已就位，均失败。失败与 mtest 的代码无关，是任何恢复含 emsdk 的 store
+的运行都会遇到的。在 runner 上诊断：`bin/clang` 存在，执行时 `ENOENT`；其 `PT_INTERP` 为
+`<home>/abi/linux-x86_64-glibc/ld-linux-x86-64.so.2`，`RUNPATH` 同样经过 `<home>/abi`，而 `<home>/abi` 不在缓存路径中。
+
+**是否为引入的缺陷。** 是，但不是本 PR 引入，也不在 mtest：
+- 本机 2026-09-01 安装的 emsdk（当时 mcpp 自行修补 payload），其 clang 的 `PT_INTERP` 直接指向 store 中的 glibc
+  payload，store 是自包含的；自运行库钉版本由提供者绑定（设计 2026-10-16 §7.1–7.2）起，xlings 2026.10.26.1 安装的
+  同一 payload 指向 home 的链接 `<home>/abi`。store 因此不再自包含，链接属于 home 的状态。
+- mcpp 在取用工具链时确保运行库存在并保持钉版本（`ensure_declared_runtime` → `pin_runtime`，链接缺失则重建），
+  但“哪些 payload 运行在运行库上”由一张名单回答（`runtime_payload_kind`：gcc、llvm）。emsdk 的 clang 同样运行在
+  该运行库上，却不在名单中；新安装时 xlings 安装其 glibc 依赖顺带建立链接，掩盖了这一点，从缓存恢复时便暴露。
+  缺陷自 store 改为经 `<home>/abi` 链接时即潜伏，emsdk 首次从缓存恢复时显现。
+- `em++ --version` 由 emcc 自己回答而不启动 clang，探测因此“成功”；随后两个 std 探测失败的原因被丢弃，报告只剩
+  “没有 std 模块”，指向了错误的方向。
+
+**设计层面的解决。**
+
+| 编号 | 机制 | 实现 |
+|---|---|---|
+| I | 运行在运行库上的 payload 由事实回答 | `runtime_payload_kind(pkg, root)`：gcc、llvm 在安装前按配方回答；payload 就位后按其程序回答（`starts_through_its_home`：`bin/` 中第一个指名加载器的 ELF，其 `PT_INTERP` 是否位于该 payload 自身的提供者 home 内，home 由提供者的 layout 给出，两侧按文件系统解析）。不列名字，不写系统加载器路径；Mach-O 与 PE 不指名加载器，答案为否，各系统形式相同；新的工具链族无需登记。各取用点把 payload 目录传入 |
+| J | 探测失败如实报告 | 带错误输出的探测失败时，错误信息附上其输出的最后一行；clang 的 std 探测未得到回答时，工具链记下原因（`stdModuleUnanswered`），`import std` 的拒绝信息随之给出“编译器未回答：…” |
+| K | 提供者状态整体缓存 | mtest 的 CI 把 `data/xpkgs` 与 `abi` 一并缓存（mtest 0.8.5）；mcpp 自己的 CI 缓存整个 home，不受影响。缓存路径改变后旧的缓存条目不再被恢复 |
+| L | 不依赖解释器的产物查询 | hermetic 容器中没有 python，`built_artifact.sh` 改为以 grep 与 sed（`-E`，GNU 与 BSD 相同）读取 `artifact` 事件：每行一个产物，其对象只有一个 `path` 键，不依赖键序 |
+
+I 使从缓存恢复的 emsdk 在 mcpp 2026.11.13.1 起自动重建链接；K 使 mtest 在其固定的 mcpp 版本上即可工作。二者互不依赖。

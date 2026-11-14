@@ -147,6 +147,13 @@ void enrich_toolchain(Toolchain& tc, const mcpp::run::Env& env) {
         // std.cppm carries no __cplusplus guard. Verified on clang 22.1.8 +
         // libc++ (std and std.compat) at -std=c++20 (design §2.2).
         tc.importStdMinLevel = 20;
+    } else if (auto r = mcpp::toolchain::run_capture(
+                   { tc.binaryPath.string(), "--print-file-name=libc++.a" }, env,
+                   /*withErrors=*/true); !r) {
+        // Not an answer: the driver failed the question the second probe
+        // asks (a compiler that does not start, a broken payload). Said by
+        // the refusal of `import std`, which otherwise names only its absence.
+        tc.stdModuleUnanswered = r.error().message;
     }
 
     if constexpr (mcpplibs::os::is_windows) {

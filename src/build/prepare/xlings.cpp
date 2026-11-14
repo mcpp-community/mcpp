@@ -285,7 +285,7 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
                 pkg.target(),
                     mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
         }
-        if (auto provided = state.provide_runtime_payload(pkg); !provided)
+        if (auto provided = state.provide_runtime_payload(pkg, payload->root); !provided)
             return std::unexpected(provided.error());
         // SAME THREE ARGUMENTS THE NATIVE CALL USES (line ~3550), not the
         // one-argument form. `detect()` probes `payloadPaths` — the

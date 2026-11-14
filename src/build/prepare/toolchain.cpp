@@ -213,10 +213,11 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // refreshed with the binding, because detection and the fingerprint read
     // them afterwards.
     state.runtimePayloadProvided = false;
-    state.provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg)
+    state.provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg,
+                                        const std::filesystem::path& payloadRoot)
         -> std::expected<void, std::string> {
         if (state.runtimePayloadProvided) return {};
-        if (mcpp::toolchain::runtime_payload_kind(pkg).empty()) return {};
+        if (mcpp::toolchain::runtime_payload_kind(pkg, payloadRoot).empty()) return {};
         state.runtimePayloadProvided = true;
         auto cfgP = state.get_cfg(true);
         if (!cfgP) return {};
@@ -1813,7 +1814,7 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
             // manifest [toolchain] path previously ran none, so a freshly
             // auto-installed payload kept its stale install-time cfg /
             // unpatched runtime libs.
-            if (auto provided = state.provide_runtime_payload(pkg); !provided)
+            if (auto provided = state.provide_runtime_payload(pkg, payload->root); !provided)
                 return std::unexpected(provided.error());
             // Canonical rendering, whatever spelling the manifest/config used:
             // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
@@ -2047,7 +2048,7 @@ step2_first_run_auto_install(PrepareState& state) {
         // `mcpp toolchain install` performs — without it a fresh sandbox
         // gcc cannot find the C library (stdlib.h: No such file or
         // directory) and a fresh llvm keeps its stale install-time cfg.
-        if (auto provided = state.provide_runtime_payload(defaultPkg); !provided)
+        if (auto provided = state.provide_runtime_payload(defaultPkg, payload->root); !provided)
             return std::unexpected(provided.error());
 
         // Persist the default so we don't ask again next time.
@@ -2307,7 +2308,7 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
                   gnuPkg.target(),
                   mcpp::toolchain::payload_frontend_dir(payloadR->root, gnuPkg).string()));
           }
-          if (auto provided = state.provide_runtime_payload(gnuPkg); !provided)
+          if (auto provided = state.provide_runtime_payload(gnuPkg, payloadR->root); !provided)
               return std::unexpected(provided.error());
 
           // Persist both axes so the repair happens once, not on every build.

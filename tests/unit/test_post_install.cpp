@@ -154,3 +154,54 @@ UTest a_payload_without_a_loader_is_incomplete{"GlibcPayload/APayloadWithoutALoa
     expect(fatal(!got.has_value()));
     if (auto&& failed = expect(ne(got.error().find("stale/incomplete"), std::string::npos)); !failed) failed << got.error();
 }};
+
+namespace {
+// A 64-bit little-endian ELF whose one program header is PT_INTERP naming
+// `interp` (or that has none when `interp` is empty): what read_elf_interp reads.
+void write_elf(const std::filesystem::path& file, std::string_view interp) {
+    std::filesystem::create_directories(file.parent_path());
+    std::string b(0x40 + 0x38, '\0');
+    auto put = [&](std::size_t at, std::uint64_t v, int n) {
+        for (int i = 0; i < n; ++i) b[at + i] = static_cast<char>((v >> (8 * i)) & 0xff);
+    };
+    b[0] = 0x7f; b[1] = 'E'; b[2] = 'L'; b[3] = 'F'; b[4] = 2; b[5] = 1; b[6] = 1;
+    put(0x10, 2, 2);      // ET_EXEC
+    put(0x20, 0x40, 8);   // e_phoff
+    put(0x34, 0x40, 2);   // e_ehsize
+    put(0x36, 0x38, 2);   // e_phentsize
+    put(0x38, 1, 2);      // e_phnum
+    put(0x40, interp.empty() ? 1 : 3, 4);           // PT_LOAD or PT_INTERP
+    put(0x48, b.size(), 8);                         // p_offset
+    put(0x60, interp.size() + 1, 8);                // p_filesz
+    b += interp;
+    b.push_back('\0');
+    std::ofstream(file, std::ios::binary) << b;
+}
+}  // namespace
+
+// WHETHER A PAYLOAD STARTS THROUGH ITS HOME'S LOADER is read from its programs
+// and the provider's layout, not from its name (design 2026-11-14 §5.5): the
+// emsdk payload's clang names `<home>/abi/...`, and a cache that restored the
+// store without that link held a compiler that did not start.
+UTest a_payload_starts_through_its_home{"RuntimePayload/APayloadStartsThroughItsHome", [] {
+    GlibcRootFixture fx{"mcpp_payload_loader"};
+    const auto home = fx.root / "home";
+    const auto payload = home / "data" / "xpkgs" / "xim-x-emsdk" / "6.0.9";
+    write_elf(payload / "bin" / "clang-24", (home / "abi" / "linux-x86_64-glibc" / "ld-linux-x86-64.so.2").string());
+    expect(mcpp::toolchain::starts_through_its_home(payload));
+    mcpp::toolchain::XimToolchainPackage pkg;
+    pkg.ximName = "emsdk";
+    expect(eq(mcpp::toolchain::runtime_payload_kind(pkg, payload), std::string_view("elf")));
+    expect(mcpp::toolchain::runtime_payload_kind(pkg).empty());   // not known before it is placed
+}};
+
+UTest a_payload_on_the_systems_loader_does_not{"RuntimePayload/APayloadOnTheSystemsLoaderDoesNot", [] {
+    GlibcRootFixture fx{"mcpp_payload_system_loader"};
+    const auto payload = fx.root / "home" / "data" / "xpkgs" / "xim-x-tool" / "1.0";
+    write_elf(payload / "bin" / "static-helper", "");
+    write_elf(payload / "bin" / "tool", "/lib64/ld-linux-x86-64.so.2");
+    expect(!mcpp::toolchain::starts_through_its_home(payload));
+    // Outside a store there is no home to start through.
+    write_elf(fx.root / "loose" / "bin" / "tool", (fx.root / "loose" / "ld.so").string());
+    expect(!mcpp::toolchain::starts_through_its_home(fx.root / "loose"));
+}};

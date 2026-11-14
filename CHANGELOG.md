@@ -112,6 +112,16 @@
 
 ### Fixed
 
+- A toolchain payload whose programs start through its home's loader runs on
+  the home's C runtime, whatever its name: taken from a store restored without
+  the home's loader links (`<home>/abi`), it has the runtime pinned and the
+  links made again, as a gcc or llvm payload had. Which payloads run on the
+  runtime is read from their programs (`PT_INTERP` inside their provider
+  home), not from a list; the emsdk payload restored from a CI cache did not
+  start, and was reported as providing no std module.
+- `import std` refused for a toolchain whose compiler did not answer the
+  question says why (the probe's last line of output), instead of only that
+  no std module source was found.
 - `mcpp build --message-format json` of an unchanged workspace reports the
   artifacts of the build it replays, as a package's fast path did; it
   reported none, and its envelope carried no record.
