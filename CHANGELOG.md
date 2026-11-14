@@ -50,6 +50,12 @@
   environment (`subos/default/.xlings.json`) as well as the project's, and with
   the turn in the project's directory it collided on Windows with an install of
   another project ("Failed to write file"). One turn per home orders both.
+- `mcpp pack --pkg-format polyglot --systems all` leaves out the systems a
+  polyglot file is not started on: openkal-platform 0.28.0 names `uefi-x86_64`
+  and `dos-i686` among its runner hosts, and the pack refused ("a polyglot file
+  holds no program of uefi"). They are reported as not covered, with
+  `--pkg-format single-file` as the way to make them; naming one of them
+  explicitly is still refused.
 - A host tool built by two builds of one home at once is published by both:
   each writes through a temporary of its own (`mcpp.build.stage`), and a store
   entry already equal to the tool is published. With one temporary name for

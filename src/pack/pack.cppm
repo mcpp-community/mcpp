@@ -3592,6 +3592,10 @@ std::vector<SingleFileRow> single_file_rows(const Plan& plan) {
             if (all && r.skipped.empty() && plan.platform.active)
                 if (auto why = detail::unbuilt_carrier(plan.platform, system, arch, true))
                     r.skipped = *why;
+            // `all` in one polyglot file: the systems the file is started on.
+            if (all && r.skipped.empty() && plan.opts.polyglot && !polyglot::holds(system))
+                r.skipped = std::format("a polyglot file is started by a shell or by the Windows loader, "
+                                        "and {} starts a program of its own (--pkg-format single-file)", system);
             rows.push_back(std::move(r));
         }
     return rows;

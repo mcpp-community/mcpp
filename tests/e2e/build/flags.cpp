@@ -60,8 +60,7 @@ std::vector<std::string> lines_of(std::string_view text) {
     return out;
 }
 
-// A file's modification time moved past its present one (`sleep 1; touch file`).
-void touch(const fs::path& f) { fs::last_write_time(f, fs::last_write_time(f) + std::chrono::seconds(2)); }
+using s::touch;
 
 // The first file under `root` whose path ends with `tail` (`find <root> -path '*<tail>'`).
 std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail) {
