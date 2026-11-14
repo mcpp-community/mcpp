@@ -73,6 +73,10 @@ jobs:
         uses: ./.github/actions/mcpp-unit
         with:
           name: windows
+          # -O0 without debug information (mcpp.toml `[profile.ci]`): the
+          # package's default is release, and its tests took twice the compiler
+          # time with it (design 2026-11-14 §6).
+          profile: ci
           history: windows
           mcpp: ${{ env.MCPP_SELF }}
           since: ${{ env.MCPP_TEST_SINCE }}

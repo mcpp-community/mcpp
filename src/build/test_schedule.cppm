@@ -11,8 +11,9 @@ import nlohmann.json;
 
 export namespace mcpp::build::test_schedule {
 
-// What earlier runs measured: the newest duration of each program record and
-// of each case, by name and by case id.
+// What earlier runs measured: the newest duration of each program record, by
+// its name, and of each case, by its program and its id (`case_key`): two
+// programs may each have a case `layers`.
 struct History {
     std::map<std::string, double> programs;
     std::map<std::string, double> cases;
@@ -27,8 +28,18 @@ struct History {
 History read_history(const std::filesystem::path& store, std::size_t maxRuns = 30,
                      std::optional<std::string> shardsOf = std::nullopt);
 
+// The key of a case in `History::cases`: its program (the program a part is of)
+// and its id.
+std::string case_key(std::string_view program, std::string_view id);
+
+// THE CASES A CASE DECLARES, AS RUNS MEASURED THEM (P3.4: a list does not name
+// them): the innermost below `id` in program `program`, in id order. A runner
+// divides a long case by them (P4.3).
+std::vector<std::string> measured_within(const History& h, std::string_view program, std::string_view id);
+
 // The duration a run of `cases` of the program record `name` is expected to
-// take; with no cases, the program run whole.
+// take; with no cases, the program run whole. A case written `!<id>` is left
+// out of the cases that declare it (P4.3).
 //
 // WHAT NO RUN MEASURED. A program no run measured takes the mean of the
 // measured programs of its nearest directory (`e2e/run/x`: of `e2e/run/`,
@@ -120,7 +131,10 @@ History read_history(const std::filesystem::path& store, std::size_t maxRuns,
         const auto dir = store / "runs" / text(run, "id");
         if (!std::filesystem::is_directory(dir, ec)) continue;
         ++h.runs;
+        std::map<std::string, std::string> programOf;   // a part's record -> its program
         for (const auto& p : read_lines(dir / "programs.ndjson")) {
+            const auto of = text(p, "part_of");
+            programOf[text(p, "name")] = of.empty() ? text(p, "name") : of;
             const auto status = text(p, "status");
             const double ms = number(p, "ms");
             // A test built and not run, or not run, measured nothing.
@@ -129,7 +143,10 @@ History read_history(const std::filesystem::path& store, std::size_t maxRuns,
         }
         for (const auto& c : read_lines(dir / "cases.ndjson")) {
             const double ms = number(c, "ms");
-            if (ms >= 0 && text(c, "status") != "skip") h.cases.try_emplace(text(c, "id"), ms);
+            if (ms < 0 || text(c, "status") == "skip") continue;
+            const auto record = text(c, "program");
+            const auto of = programOf.find(record);
+            h.cases.try_emplace(case_key(of != programOf.end() ? of->second : record, text(c, "id")), ms);
         }
     }
     return h;
@@ -165,12 +182,20 @@ std::vector<double> case_estimates(const History& h, std::string_view name, std:
     std::vector<double> est(ids.size(), -1);
     double sum = 0;
     std::size_t known = 0;
-    for (std::size_t i = 0; i < ids.size(); ++i)
-        if (auto it = h.cases.find(ids[i]); it != h.cases.end()) {
-            est[i] = it->second;
-            sum += it->second;
-            ++known;
-        }
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        // `?<id>` (P4.3) is the case where it is declared.
+        const std::string_view id = ids[i].starts_with('?') ? std::string_view(ids[i]).substr(1) : ids[i];
+        auto it = h.cases.find(case_key(name, id));
+        if (it == h.cases.end()) continue;
+        // A case a run divided measured only its rest there: it takes at
+        // least what the cases it declared took.
+        double inner = 0;
+        for (auto const& c : measured_within(h, name, id))
+            if (auto m = h.cases.find(case_key(name, c)); m != h.cases.end()) inner += m->second;
+        est[i] = (std::max)(it->second, inner);
+        sum += est[i];
+        ++known;
+    }
     if (known == ids.size()) return est;
     const double each = known ? sum / static_cast<double>(known)
                               : program_estimate(h, name) / static_cast<double>(ids.size());
@@ -181,11 +206,34 @@ std::vector<double> case_estimates(const History& h, std::string_view name, std:
 
 }  // namespace
 
+std::string case_key(std::string_view program, std::string_view id) {
+    return std::format("{}\n{}", program, id);
+}
+
+std::vector<std::string> measured_within(const History& h, std::string_view program, std::string_view id) {
+    const auto prefix = case_key(program, id) + "/";
+    const auto skip = case_key(program, "").size();
+    std::vector<std::string> keys;
+    for (auto it = h.cases.lower_bound(prefix); it != h.cases.end() && it->first.starts_with(prefix); ++it)
+        keys.push_back(it->first);
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        // A case that declares a measured case is not one of the innermost.
+        if (i + 1 < keys.size() && keys[i + 1].starts_with(keys[i] + "/")) continue;
+        out.push_back(keys[i].substr(skip));
+    }
+    return out;
+}
+
 double estimate(const History& h, std::string_view name, std::span<const std::string> cases) {
     if (cases.empty()) return program_estimate(h, name);
+    std::vector<std::string> in, out;
+    for (const auto& c : cases) (c.starts_with('!') ? out : in).push_back(c.starts_with('!') ? c.substr(1) : c);
     double sum = 0;
-    for (double e : case_estimates(h, name, cases)) sum += e;
-    return sum;
+    for (double e : case_estimates(h, name, in)) sum += e;
+    if (!out.empty())
+        for (double e : case_estimates(h, name, out)) sum -= e;
+    return (std::max)(sum, 0.0);
 }
 
 std::vector<std::size_t> assign(std::span<const double> estimates, std::span<const std::string> names,

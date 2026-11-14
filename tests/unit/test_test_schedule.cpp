@@ -113,6 +113,48 @@ UTest a_long_part_divides_into_equal_groups{"TestSchedule/ALongPartDividesIntoEq
     expect(eq(ts::divide(h, "p", ids, 9).size(), std::size_t{3}));
 }};
 
+UTest a_case_is_divided_by_the_cases_it_declared{"TestSchedule/ACaseIsDividedByTheCasesItDeclared", [] {
+    // The store names a part's cases under its own record; they are cases of
+    // the program the part is of. Two programs may each have a case `trees`.
+    Store s;
+    s.run("a", "2026-11-01T00:00:00Z",
+          R"({"name":"e2e/openkal/trees","part_of":"e2e/openkal","status":"pass","ms":1400})" "\n"
+          R"({"name":"e2e/other","status":"pass","ms":5})" "\n",
+          R"({"program":"e2e/openkal/trees","id":"trees","status":"pass","ms":1373})" "\n"
+          R"({"program":"e2e/openkal/trees","id":"trees/955","status":"pass","ms":564})" "\n"
+          R"({"program":"e2e/openkal/trees","id":"trees/992","status":"pass","ms":202})" "\n"
+          R"({"program":"e2e/openkal/trees","id":"trees/992/inner","status":"pass","ms":200})" "\n"
+          R"({"program":"e2e/openkal/trees","id":"trees/1078","status":"pass","ms":177})" "\n"
+          R"({"program":"e2e/other","id":"trees","status":"pass","ms":5})" "\n");
+    const auto h = ts::read_history(s.dir);
+    // The innermost cases it declared, in id order.
+    expect(ts::measured_within(h, "e2e/openkal", "trees") ==
+           std::vector<std::string>{"trees/1078", "trees/955", "trees/992/inner"});
+    expect(ts::measured_within(h, "e2e/other", "trees").empty());
+    const std::vector<std::string> one{"trees"};
+    expect(eq(ts::estimate(h, "e2e/openkal", one), 1373.0));
+    expect(eq(ts::estimate(h, "e2e/other", one), 5.0));
+    // The rest of a divided case: the case without what the other parts run.
+    const std::vector<std::string> rest{"trees", "!trees/955"};
+    expect(eq(ts::estimate(h, "e2e/openkal", rest), 1373.0 - 564.0));
+    const std::vector<std::string> given{"?trees/955", "?trees/since-removed"};
+    expect(eq(ts::estimate(h, "e2e/openkal", given), 564.0 + 564.0));
+
+    // A run that divided it measured the case's rest alone: the case takes at
+    // least what the cases it declared took.
+    Store d;
+    d.run("a", "2026-11-01T00:00:00Z",
+          R"j({"name":"p (1/3)","part_of":"p","status":"pass","ms":500})j" "\n"
+          R"j({"name":"p (2/3)","part_of":"p","status":"pass","ms":400})j" "\n"
+          R"j({"name":"p (3/3)","part_of":"p","status":"pass","ms":100})j" "\n",
+          R"j({"program":"p (3/3)","id":"t","status":"pass","ms":100})j" "\n"
+          R"j({"program":"p (1/3)","id":"t/x","status":"pass","ms":500})j" "\n"
+          R"j({"program":"p (2/3)","id":"t/y","status":"pass","ms":400})j" "\n");
+    const auto hd = ts::read_history(d.dir);
+    const std::vector<std::string> t{"t"};
+    expect(eq(ts::estimate(hd, "p", t), 900.0));
+}};
+
 UTest a_shard_is_i_of_n{"TestSchedule/AShardIsIOfN", [] {
     const auto shard = ts::parse_shard("2/4");
     expect(fatal(shard.has_value()));

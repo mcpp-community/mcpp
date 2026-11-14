@@ -153,9 +153,15 @@ emit() {
     printf 'scan: %s %s × %s: %s/%s (%ss)\n' "$1" "$3" "$4" "${10}" "${11}" "$((SECONDS - cell_began))" >&2
 }
 
-cell_began=$SECONDS
-for tc in $(compilers); do
-  for t in $(targets); do
+# ONE CELL, IN A DIRECTORY OF ITS OWN: its row on standard output, its notes on
+# standard error. The cells are independent builds, so they run side by side
+# (MATRIX_JOBS, the processors by default) and are printed in the table's
+# order. Measured on macos-arm64 (run 43602794812): 59 cells one after another,
+# 1762 s, of which no cell used more than one compiler at a time for long.
+scan_cell() {
+    local tc="$1" t="$2" dir
+    dir="$(mktemp -d "$work/cell.XXXXXX")" && cd "$dir" || return
+    mkdir -p src
     cell_began=$SECONDS
     # graph 体系不覆盖裸机行,而这是一句声明,不是一次省略。
     #
@@ -174,7 +180,7 @@ for tc in $(compilers); do
     # changing one and missing the other is how it failed.
     if [ "$MODE" = graph ] && printf '%s' "$t" | grep -qE -- '-none-[a-z0-9]+$'; then
         echo "scan: 略过 graph × $t —— 裸机行不在这套依赖的论域内" >&2
-        continue
+        return
     fi
 
     # iOS 行同理,而**理由是被实测出来的一条缺陷,不是一句论域声明**。
@@ -200,7 +206,7 @@ for tc in $(compilers); do
     # 期望。缺陷记在 .agents/docs 的 gap 表里,属于 openkal-musl。
     if [ "$MODE" = graph ] && printf '%s' "$t" | grep -qE -- '-ios(-sim)?$'; then
         echo "scan: 略过 graph × $t —— openkal-musl 0.3.5 编不过 Apple cross(uint64_t/kal_u64 类型身份不同),见 scan.sh 注释" >&2
-        continue
+        return
     fi
 
     # The compiler is the project's default, for the query and the build alike. A toolchain named
@@ -243,13 +249,13 @@ for tc in $(compilers); do
     # 全红,原因(`timeout` 不存在)被这个重定向吞掉了。
     q="$(run_limited "${MATRIX_QUERY_TIMEOUT:-300}" \
          "$MCPP" why toolchain --target "$t" --format json \
-         2>"$work/q.err" | tr -d '\r')"
+         2>q.err | tr -d '\r')"
     if [ -z "$q" ]; then
         # 查询本身没跑起来。这不是「这一格不支持」,而是「不知道」—— 两者必须
         # 分开,否则一次环境故障会被整片读成「不支持」。
-        echo "scan: $t × $tc 查询无输出: $(head -2 "$work/q.err" | tr '\n' ' ')" >&2
+        echo "scan: $t × $tc 查询无输出: $(head -2 q.err | tr '\n' ' ')" >&2
         emit "$MODE" "$HOST" "$t" "$tc" - - - - - mismatch query-failed
-        continue
+        return
     fi
     jq_get() { printf '%s' "$q" | jq_r "$1" 2>/dev/null; }
     st="$(jq_get '.data.status // "-"')"
@@ -276,7 +282,7 @@ for tc in $(compilers); do
         fi
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              unsupported "$rs"
-        continue
+        return
     fi
 
     # ── 第二问:解析说可以,那它建得出来吗 ────────────────────────────
@@ -285,7 +291,7 @@ for tc in $(compilers); do
     #    读任何一行输出。
     rm -rf target
     if run_limited "${MATRIX_TIMEOUT:-600}" "$MCPP" build --target "$t" \
-         >"$work/b.out" 2>&1; then
+         >b.out 2>&1; then
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" ok none
     else
         # 与查询失败同型:`build-failed` 是对的分类,而没有证据说明为什么。
@@ -296,9 +302,25 @@ for tc in $(compilers); do
         # 而要看的正是后半截。判据的单位是一整行输出。`mcpp:` 行是编译器
         # 监督自身的陈述(哪一次观察判定了失败),它不带 `error:`,却是原因。
         echo "scan: $t × $tc 构建失败:" >&2
-        grep -m4 -iE '^error|error:|^mcpp: ' "$work/b.out" | sed 's/^/    /' >&2
+        grep -m4 -iE '^error|error:|^mcpp: ' b.out | sed 's/^/    /' >&2
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              mismatch build-failed
     fi
+}
+
+jobs="${MATRIX_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
+n=0
+for tc in $(compilers); do
+  for t in $(targets); do
+    n=$((n + 1)); id="$(printf '%04d' "$n")"
+    ( scan_cell "$tc" "$t" > "$work/$id.row" 2> "$work/$id.log" ) &
+    # bash 3.2 (macOS's /bin/bash) has no `wait -n`.
+    while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$jobs" ]; do sleep 1; done
   done
+done
+wait
+for row in "$work"/*.row; do
+    [ -e "$row" ] || continue
+    cat "${row%.row}.log" >&2
+    cat "$row"
 done

@@ -121,6 +121,10 @@ struct Report {
     // framework's library): it is one case, judged by its exit status.
     bool                       spoke = false;
     std::string                framework;
+    // The program's selection leaves out what a line `!<id>` names and selects
+    // what a line `?<id>` names only where it is declared (P4.3, `"selection":
+    // ["except", "optional"]` in its `program` event; mtest 0.9.0).
+    bool                       selectsWithin = false;
     bool                       done = false;   // the `done` event came
     std::vector<Case>          listed;         // `case` events (list mode)
     std::vector<CaseResult>    cases;          // in the order they began
@@ -289,6 +293,9 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
         r.spoke = true;
         r.level = number(e, "level");
         r.framework = text(e, "framework");
+        const auto selection = strings(e, "selection");
+        r.selectsWithin = std::ranges::contains(selection, std::string("except"))
+                       && std::ranges::contains(selection, std::string("optional"));
     } else if (kind == "case") {
         r.listed.push_back({id, text(e, "name"), text(e, "file"), number(e, "line"),
                             text(e, "kind"), strings(e, "tags"), text(e, "expect"), bounds_of(e),

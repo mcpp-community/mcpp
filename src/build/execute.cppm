@@ -5166,7 +5166,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 for (std::string line; std::getline(in, line);)
                     if (!line.empty()) ids.push_back(line);
             }
-            r.estimateMs = ts::estimate(history, r.name, ids);
+            // A part's cases are measured as cases of the program it is of.
+            r.estimateMs = ts::estimate(history, r.partOf.empty() ? r.name : r.partOf, ids);
         }
         // THE SHARD: every test assigned, longest first, to the shard with the
         // least work; this command runs its own. The assignment reads only the
@@ -5952,8 +5953,44 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 // A group the store measured longer than its share, as groups
                 // `(i/k)` of its cases of about equal measured duration.
-                struct Part { std::string where; bool machine; std::vector<std::string> ids; std::size_t index = 0, of = 1; };
+                struct Part { std::string where; bool machine; std::vector<std::string> ids; std::size_t index = 0, of = 1;
+                              std::string within; };
                 std::vector<Part> parts;
+                // A CASE LONGER THAN ITS SHARE, DIVIDED BY THE CASES IT DECLARES
+                // (P3.4, P4.3). A list names only the cases a program declares
+                // at its top; the store names the cases they declared when they
+                // ran. Each part but the last selects the measured cases it was
+                // given where they are still declared (`?`); the last selects
+                // the case without them (`!`), so a case no run measured runs
+                // once, in it. Only a program whose selection understands both
+                // (mtest 0.9.0) is divided so.
+                if (measured && share > 0 && report.selectsWithin) {
+                    for (auto& [key, ids] : groups) {
+                        std::vector<std::string> rest;
+                        for (auto& id : ids) {
+                            const auto inner = ts::measured_within(history, r.name, id);
+                            const std::vector<std::string> one{id};
+                            std::size_t k = 1;
+                            if (inner.size() >= 2)
+                                k = std::min<std::size_t>(inner.size(), static_cast<std::size_t>(
+                                        std::ceil(ts::estimate(history, r.name, one) / share)));
+                            if (k <= 1) { rest.push_back(id); continue; }
+                            auto chunks = ts::divide(history, r.name, inner, k);
+                            std::vector<std::string> last{id};
+                            for (std::size_t i = 0; i + 1 < chunks.size(); ++i) {
+                                std::vector<std::string> given;
+                                for (auto const& c : chunks[i]) {
+                                    last.push_back("!" + c);
+                                    given.push_back("?" + c);
+                                }
+                                parts.push_back({key.first, key.second, std::move(given), i + 1, chunks.size(), id});
+                            }
+                            parts.push_back({key.first, key.second, std::move(last), chunks.size(), chunks.size(), id});
+                        }
+                        ids = std::move(rest);
+                    }
+                    std::erase_if(groups, [](auto const& g) { return g.second.empty(); });
+                }
                 for (auto& [key, ids] : groups) {
                     std::size_t k = 1;
                     if (measured && share > 0 && ids.size() > 1)
@@ -5975,16 +6012,22 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 std::size_t n = 0;
                 // A pattern that named a part, not its program, keeps that part.
                 const bool whole = selected_by(testOpts.filters, r.name);
-                for (auto& [where, machine, ids, index, of] : parts) {
+                for (auto& [where, machine, ids, index, of, within] : parts) {
                     Runnable part = r;
                     const auto label = split == "case" ? where : part_label(r.partRoot, where);
                     part.name = std::format("{}/{}", r.name, label);
+                    // A part of a divided case is named by it as well.
+                    if (!within.empty()) part.name += std::format(" [{}]", within);
                     // Named apart only when its file has cases of both kinds.
                     if (machine && groups.contains({where, false})) part.name += " (machine)";
                     if (of > 1) part.name += std::format(" ({}/{})", index, of);
                     part.partOf = r.name;
                     part.alone = machine;
-                    part.declaredSecs = declared(&ids);
+                    {
+                        // A part of a divided case may run as long as the case states.
+                        const std::vector<std::string> whose{within};
+                        part.declaredSecs = declared(within.empty() ? &ids : &whose);
+                    }
                     if (!whole && !selected_by(testOpts.filters, part.name)) continue;
                     part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
                     std::error_code ec;

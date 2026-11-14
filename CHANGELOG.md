@@ -4,6 +4,34 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.15.1] - 2026-11-15
+
+### Added
+
+- `[test] split = "auto"` divides a listed case longer than its share by the
+  cases it declared, as the run store measured them (SPEC-017 O10, P4.3), when
+  the program's selection excludes and selects where declared (mtest 0.9.0):
+  `<program>/<file> [<case>] (i/k)`. Each part but the last selects the cases it
+  was given where they are still declared (`?<id>`); the last selects the case
+  without them (`!<id>`), so a case no run measured runs once. Two e2e suites
+  of 1373 s and 1375 s ran their cases one after another while the longest of
+  those cases takes 564 s.
+- `[profile.ci]` in this package's manifest: the tests as CI builds them, -O0
+  without debug information (the library and its unit tests: 8988 s of compiler
+  time at the default release profile, 4183 s with it).
+
+### Changed
+
+- The run store's case durations are kept by program and case id; two programs
+  with a case of one name (`layers`, `sets`) read each other's.
+- CI: the archive stage reuses main's test build: an artifact of its build
+  directory with the blob of each tracked file, whose unchanged files are given
+  a time older than every output (`.github/tools/source_mtimes.py`); the tests
+  are built with `--profile ci` on Linux, macOS and Windows; the target-matrix
+  scan builds its cells side by side (`MATRIX_JOBS`); a cancelled run's
+  `coverage` job no longer waits for a runner and holds the concurrency group
+  (it held it 9.1 minutes in run 43599371222).
+
 ## [2026.11.14.1] - 2026-11-14
 
 ### Added

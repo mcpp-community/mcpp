@@ -321,6 +321,10 @@ jobs:
         uses: ./.github/actions/mcpp-unit
         with:
           name: ${{ matrix.image }}
+          # -O0 without debug information (mcpp.toml `[profile.ci]`): the
+          # package's default is release, and its tests took twice the compiler
+          # time with it (design 2026-11-14 §6).
+          profile: ci
           history: ${{ matrix.image }}
           since: ${{ env.MCPP_TEST_SINCE }}
           patterns: ${{ (matrix.image == 'xcode-27' && inputs.set == 'pr') && 'unit e2e/basics e2e/build e2e/macos e2e/modules e2e/runtime e2e/toolchain' || '' }}
