@@ -111,7 +111,7 @@ v2026.11.12.1 的运行。
 | A | registry 的归属 | `GlobalConfig::registryBorrowed` 在加载配置时判定一次（`[xlings] home` 指向别处，或 `registry` 经链接到达，且已有配置）；索引位置、`[index.repos]` 表的位置与上游的每个写入者都只问它 |
 | B | 准备的意图 | `PrepareIntent {Build, Describe, Configure, RunBuilt}` 取代 `plan_only`、`configuration_only`、`runs_built_tests` 三个开关；各阶段读 `describes()`、`configures()`、`compiles()`；构建程序与宿主工具的阶段在驱动处按 `compiles()` 一次跳过 |
 | C | 交给 runner 的内容 | `runner_handoff_env`：文件清单与运行契约（`MCPP_RUN_*`），构建的测试运行与归档运行共用；直接运行的程序两者都不得到；归档中的文件按其相对程序的位置命名 |
-| D | provider 状态的写入次序 | `mcpp::home::Turn`（跨进程与线程、同一线程可重入）；锁位于 provider 状态的真实目录（`Provider::state_dir`，解析链接），安装、增删索引仓库、选择运行时、初始化沙箱都取它；读者在 Windows 上以可删除共享打开文件。xlings 侧的原子写入另提 issue，上游实现后本次序仍成立 |
+| D | provider 状态的写入次序 | `mcpp::home::Turn`（跨进程与线程、同一线程可重入）；锁位于 provider 状态的真实目录（`Provider::state_dir`，解析链接），安装、增删索引仓库、选择运行时、初始化沙箱都取它；读者在 Windows 上以可删除共享打开文件。xlings 已以暂存文件加 `MoveFileExW` 替换，Windows 拒绝替换他人未以可删除共享打开的文件，且只试一次；重试与 POSIX 语义的替换见 openxlings/xlings#715，上游实现后本次序不需改动 |
 | E | CI 与测试的约定 | `install_pinned_mcpp.sh` 导出 payload 中的发布二进制为 `MCPP_BOOT`；`.github/tools/built_artifact.sh` 取构建报告（`--message-format json`）中的产物路径，取代对 `target/` 的搜索；测试以 mtest `timeout{}` 声明自身时长，运行器取其与 `--timeout` 的较大者（trees 40 分钟、sets 30 分钟），全局时限不变；断言重放的测试持有 `machine`；778 读取构建图而非输出 |
 
 快速路径以共享 SubOS 描述的修改时间判定运行环境未变，是保守而正确的：并行安装可能改变程序加载时解析到的
@@ -125,3 +125,23 @@ v2026.11.12.1 的运行。
 | archive 阶段 | 38.5 分钟：gate 2103 s（构建 1118 s），归档 129 s；gate 先以 bootstrap 构建本包程序 mcpp，其工作与构建作业重复 |
 | 四个分片 | 8.3、16.1、22.5、24.3 分钟；最长的单测为 openkal/sets 1242 s、openkal/trees 1023 s |
 | 分片工作量 | 325 条记录合计 10770 s |
+
+### 5.4 被测程序只构建一次（负责人 2026-11-14 要求完成）
+
+第二次运行中 archive 阶段的 38.5 分钟里，gate 先以 bootstrap 构建本包程序 mcpp（1118 s），archive 再把这个构建
+作为 `MCPP_BIN_MCPP` 带给分片。于是该程序被构建两次（构建作业一次，archive 阶段一次），分片测试的是 archive
+阶段的构建，而不是构建作业产出、其余作业都使用的二进制（规则 R1）。macOS 与 Windows 的单元作业同样在
+`mcpp test` 的程序阶段以本提交的 mcpp 再构建一次（macos-15 上 331 s）。
+
+| 编号 | 机制 | 实现 |
+|---|---|---|
+| F | 在别处构建的程序 | `mcpp test --no-programs`：本包程序只为名字而规划，不构建；测试从环境的 `MCPP_BIN_<NAME>` 取得各程序，环境未指定者在任何测试运行前被拒绝，不会从 `PATH` 取到同名程序。与 `--no-run --archive` 同用时归档不携带程序，清单以 `named_programs` 列出其变量，归档的运行从自身环境取得；归档的运行不接受该选项；环境对每个名字只指定一个程序，多腿被拒绝。`MCPP_BIN_<NAME>` 的拼写收敛为 `program_env_key` |
+| G | CI 中被测的 mcpp | archive 阶段以 `--no-programs` 只构建测试；gate 移到 run 阶段的第一个分片，从归档运行；分片、gate 与 MinGW 用例作业以 `MCPP_BIN_MCPP` 指定构建作业的二进制；`mcpp-unit` 在构建模式下传 `--no-programs`，macOS 与 Windows 单元作业不再构建 mcpp。archive 阶段的 bootstrap 认识该选项时才使用它：固定版本升至 2026.11.13.1 后生效，无需修改工作流；此前归档携带 bootstrap 对本提交源码的构建，与本节之前相同 |
+| H | 重放构建的产物报告 | 工作区的快速路径与单包的一样重述所重放构建的记录：`--message-format json` 给出 `artifact` 事件与信封中的 `data`。此前它不写记录，`built_artifact.sh` 在已构建的工作区上取不到产物 |
+
+`mtest::e2e::run` 丢弃 `os::process::run` 报告的截断标志（标准错误保留 1 MiB），见 mcpp-community/mtest#22；
+graph 778 已改为读取构建图，不依赖输出的完整性。
+
+本地核验：`mcpp test e2e/basics --no-run --no-programs --archive` 的程序阶段 0.96 s（只规划），归档不含程序；
+未指定 `MCPP_BIN_MCPP` 的运行以退出码 2 被拒绝；指定 `/bin/false` 时 basics 失败，说明测试使用的是所指定的程序。
+用例 1085（重放构建报告产物，包与工作区）与 1086（`--no-programs` 的写出、拒绝、运行与本地运行）通过。

@@ -117,6 +117,9 @@ struct Test {
 struct Leg {
     std::string                                      triple;
     std::vector<std::pair<std::string, std::string>> programs;   // MCPP_BIN_<NAME> -> path
+    // The package's programs the archive does not carry (`--no-programs`):
+    // their MCPP_BIN_<NAME>, which the environment of the run names.
+    std::vector<std::string>                         named;
     std::vector<Test>                                tests;
 };
 
@@ -180,8 +183,10 @@ nlohmann::json to_json(const Manifest& m) {
             tests.push_back({{"name", t.name}, {"program", t.program}, {"files", t.files},
                              {"protocol", t.protocol}, {"own_files", t.ownFiles},
                              {"part_root", t.partRoot}});
-        legs.push_back({{"triple", l.triple}, {"programs", std::move(programs)},
-                        {"tests", std::move(tests)}});
+        nlohmann::json leg = {{"triple", l.triple}, {"programs", std::move(programs)},
+                              {"tests", std::move(tests)}};
+        if (!l.named.empty()) leg["named_programs"] = l.named;
+        legs.push_back(std::move(leg));
     }
     return {{"schema", kSchema}, {"mcpp", std::string(mcpp::MCPP_VERSION)},
             {"package", m.package}, {"cwd", m.cwd}, {"legs", std::move(legs)}};
@@ -202,6 +207,8 @@ std::expected<Manifest, std::string> from_json(const nlohmann::json& d) {
         if (jl.contains("programs") && jl["programs"].is_object())
             for (auto it = jl["programs"].begin(); it != jl["programs"].end(); ++it)
                 l.programs.emplace_back(it.key(), it.value().get<std::string>());
+        if (jl.contains("named_programs") && jl["named_programs"].is_array())
+            for (auto const& n : jl["named_programs"]) l.named.push_back(n.get<std::string>());
         if (jl.contains("tests") && jl["tests"].is_array())
             for (auto const& jt : jl["tests"]) {
                 Test t{jt.value("name", ""), jt.value("program", ""), {}, jt.value("protocol", 0),
@@ -3091,12 +3098,20 @@ export std::optional<int> try_fast_workspace_build(
     for (auto& r : ready) {
         if (ready.size() == 1) restore_root_compile_commands(wsRoot, r.outputDir, r.rootCompileDb);
         std::chrono::milliseconds elapsed{};
+        // The group's record, restated as the single project's fast path
+        // restates it: `--message-format json` reports the artifacts of a
+        // workspace replayed as it reports those of a package (docs/50 §9).
+        auto record = fast_path_begin(wsRoot, r.outputDir);
         auto rc = run_ninja_fast(r.ninjaProgram, r.outputDir, r.outputDir / "build.ninja",
                                  verbose, r.runtimeEnvKey, r.runtimeEnvValue, &elapsed);
         if (!rc) return fast_path_declined("workspace", "ninja reported a stale graph");
-        if (*rc != 0) return rc;
+        if (*rc != 0) {
+            fast_path_end(record, false);
+            return rc;
+        }
         if (!mcpp::build::runtime_validation::artifact_snapshot_unchanged(r.validated))
             return fast_path_declined("workspace", "ninja relinked an artifact, whose closure the full path validates");
+        fast_path_end(record, true);
         mcpp::build::progress::note_sources(r.outputDir);
     }
     // The groups share the profile, and so its descriptor.
@@ -4081,6 +4096,12 @@ export struct TestOptions {
     // `--no-run` makes the narrower claim available as its own answer: every
     // selected test compiled and linked for the target, and none was executed.
     bool               noRun = false;
+    // `--no-programs`: the package's programs are planned for their names and
+    // not built; the tests take each from the environment's MCPP_BIN_<NAME>,
+    // of this run or, with `--no-run --archive`, of the archive's run (the
+    // archive does not carry them). For programs built elsewhere -- a CI job
+    // that tests the binary another job built.
+    bool               noPrograms = false;
     // A target this machine's runner cannot reach -- a `same-arch` runner on
     // another architecture with no execution host named -- is reported built
     // and not run, as `--no-run` reports, rather than not run: `mcpp test` in
@@ -6120,7 +6141,36 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 
 // ─── the test archive (SPEC-015 §4) ─────────────────────────────────────────
 
-// One leg's built tests, for the archive.
+// The variable a test finds the package's program `name` in: MCPP_BIN_ and the
+// name, upper-cased, every other character `_` (docs/08; mtest e2e::program).
+std::string program_env_key(std::string_view name) {
+    std::string key = "MCPP_BIN_";
+    for (char c : name)
+        key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+             : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    return key;
+}
+
+// `--no-programs`: each of the package's programs, planned and not built, is
+// the one the environment's MCPP_BIN_<NAME> names -- at the run of an archive
+// written so, or at this run. One the environment does not name is refused,
+// before a test could take another program of that name from PATH.
+std::optional<std::string>
+programs_from_environment(std::vector<std::pair<std::string, std::string>>& programEnv) {
+    for (auto& [key, path] : programEnv) {
+        if (!path.empty()) continue;
+        auto v = mcpp::invocation::get(key);
+        if (!v || v->empty())
+            return std::format("the package's program {} is not built here (--no-programs): "
+                               "name it in the environment, {}=<path>", key, key);
+        std::error_code ec;
+        path = std::filesystem::absolute(*v, ec).lexically_normal().string();
+    }
+    return std::nullopt;
+}
+
+// One leg's built tests, for the archive. A program of `programEnv` with no
+// path was planned and not built (`--no-programs`): the run names it.
 struct ArchiveLeg {
     std::string                                             triple;
     BuildContext*                                           ctx = nullptr;
@@ -6175,6 +6225,7 @@ int write_test_archive(const TestOptions& o, std::span<const ArchiveLeg> legs) {
         }
         if (l.programEnv)
             for (auto const& [env, path] : *l.programEnv) {
+                if (path.empty()) { leg.named.push_back(env); continue; }
                 auto dest = ta::program_dest(l.triple, fs::path(path).filename().string());
                 copies.push_back({path, dest});
                 leg.programs.emplace_back(env, dest);
@@ -6216,6 +6267,19 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
     auto opened = ta::open(fs::absolute(testOpts.archive, ec), into);
     if (!opened) { mcpp::ui::error(std::format("--archive {}: {}", testOpts.archive.string(), opened.error())); return 2; }
     const auto cwd = opened->manifest.cwd.empty() ? *root : *root / opened->manifest.cwd;
+    // THE PROGRAMS THE RUN NAMES: an archive written with `--no-programs`
+    // carries none of the package's programs.
+    std::map<std::string, std::string> namedPrograms;
+    {
+        std::vector<std::pair<std::string, std::string>> named;
+        for (auto const& leg : opened->manifest.legs)
+            for (auto const& env : leg.named) named.emplace_back(env, "");
+        if (auto why = programs_from_environment(named)) {
+            mcpp::ui::error(std::format("--archive {}: {}", testOpts.archive.string(), *why));
+            return 2;
+        }
+        namedPrograms.insert(named.begin(), named.end());
+    }
     int passed = 0, failed = 0, notRun = 0, notReached = 0;
     std::vector<std::string> reasons;
     for (auto const& leg : opened->manifest.legs) {
@@ -6248,6 +6312,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
         std::vector<std::pair<std::string, std::string>> legEnv;
         for (auto const& [env, path] : leg.programs)
             legEnv.emplace_back(env, (opened->root / path).lexically_normal().string());
+        for (auto const& env : leg.named) legEnv.emplace_back(env, namedPrograms[env]);
         // THE LEG'S TESTS, RUN AS A BUILD'S ARE: through the runner, the
         // protocol each implements, a process per file of its cases, the
         // workers, the store (SPEC-015 §4; docs/08).
@@ -6706,16 +6771,12 @@ export int run_tests(std::span<const std::string> passthrough,
             }
         } programsTime{summary, tPrograms};
         std::vector<std::pair<std::string, std::string>> fastPrograms;
-        if (hasPrograms && fastPossible) {
+        if (hasPrograms && fastPossible && !testOpts.noPrograms) {
             if (auto rc = try_fast_build(testRoot, mcpp::log::is_verbose(), false, "", &fastPrograms)) {
                 if (*rc != 0) return *rc;
                 hasPrograms = false;
                 for (auto const& [name, exe] : fastPrograms) {
-                    std::string key = "MCPP_BIN_";
-                    for (char c : name)
-                        key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-                             : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-                    programEnv.emplace_back(std::move(key), exe);
+                    programEnv.emplace_back(program_env_key(name), exe);
                 }
             }
         }
@@ -6728,20 +6789,23 @@ export int run_tests(std::span<const std::string> passthrough,
                 // `mcpp run` (see `build_run_target`): without it this build
                 // of another target was recorded as the host's, and the next
                 // bare `mcpp run` warned "fingerprint changed" and rebuilt.
-                if (int rc = run_build_plan(*binCtx, mcpp::log::is_verbose(), false,
-                                            overrides.target_triple); rc != 0)
-                    return rc;
+                // `--no-programs`: planned for their names, not built.
+                if (!testOpts.noPrograms)
+                    if (int rc = run_build_plan(*binCtx, mcpp::log::is_verbose(), false,
+                                                overrides.target_triple); rc != 0)
+                        return rc;
                 for (auto const& lu : binCtx->plan.linkUnits) {
                     if (lu.kind != LinkUnit::Binary) continue;
-                    std::string key = "MCPP_BIN_";
-                    for (char c : lu.targetName)
-                        key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-                             : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-                    programEnv.emplace_back(std::move(key),
-                                            (binCtx->outputDir / lu.output).lexically_normal().string());
+                    programEnv.emplace_back(program_env_key(lu.targetName),
+                        testOpts.noPrograms ? std::string{}
+                                            : (binCtx->outputDir / lu.output).lexically_normal().string());
                 }
             }
         }
+        // Run here, the programs are the environment's; written into an
+        // archive, its run's.
+        if (testOpts.noPrograms && testOpts.archive.empty() && !testOpts.noRun)
+            if (auto why = programs_from_environment(programEnv)) { mcpp::ui::error(*why); return 2; }
     }
 
     // 3. prepare_build with dev-deps enabled + synthetic targets.
@@ -6904,6 +6968,13 @@ export int run_test_legs(std::span<const std::string> passthrough,
         base.target_triple = requested.front().triple;
         return run_tests(passthrough, std::move(base), testOpts);
     }
+    // The environment names one program per MCPP_BIN_<NAME>, and each leg
+    // tests a program of its own target.
+    if (testOpts.noPrograms && requested.size() > 1) {
+        mcpp::ui::error("--no-programs tests one target: the environment names each program once "
+                        "(MCPP_BIN_<NAME>), and each leg tests a program of its own target");
+        return 2;
+    }
     bool hasPrograms = false;
     if (auto m = mcpp::manifest::load(discovered->packageRoot / "mcpp.toml")) {
         hasPrograms = std::ranges::any_of(m->targets, [](auto const& t) {
@@ -6993,18 +7064,17 @@ export int run_test_legs(std::span<const std::string> passthrough,
     auto built = mcpp::build::legs::run_by_directory(dirs, [&](std::size_t i) -> int {
         auto& l = *legs[i];
         if (l.programs) {
-            if (run_build_plan(*l.programs, mcpp::log::is_verbose(), false, l.triple) != 0) {
+            // `--no-programs`: planned for their names, not built.
+            if (!testOpts.noPrograms
+                && run_build_plan(*l.programs, mcpp::log::is_verbose(), false, l.triple) != 0) {
                 l.programsFailed = true;
                 return 1;
             }
             for (auto const& lu : l.programs->plan.linkUnits) {
                 if (lu.kind != LinkUnit::Binary) continue;
-                std::string key = "MCPP_BIN_";
-                for (char c : lu.targetName)
-                    key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-                         : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-                l.programEnv.emplace_back(std::move(key),
-                                          (l.programs->outputDir / lu.output).lexically_normal().string());
+                l.programEnv.emplace_back(program_env_key(lu.targetName),
+                    testOpts.noPrograms ? std::string{}
+                                        : (l.programs->outputDir / lu.output).lexically_normal().string());
             }
         }
         if (auto a = test_phase_a(l.tb, testOpts, json)) {
@@ -7049,6 +7119,12 @@ export int run_test_legs(std::span<const std::string> passthrough,
             worse(1);
             continue;
         }
+        if (testOpts.noPrograms && testOpts.archive.empty() && !testOpts.noRun)
+            if (auto why = programs_from_environment(l.programEnv)) {
+                mcpp::ui::error(std::format("the {} leg: {}", l.triple, *why));
+                worse(2);
+                continue;
+            }
         l.tb.programEnv = std::move(l.programEnv);
         test_resolve_runner(l.tb, legOpts, json);
         if (l.tb.builtNotRunHere) {
@@ -7323,7 +7399,9 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
                 slots[i].packageOutput = binCtx.error();
                 continue;
             }
-            if (run_build_plan(*binCtx, mcpp::log::is_verbose(), false, base.target_triple) != 0) {
+            // `--no-programs`: planned for their names, and the environment's.
+            if (!testOpts.noPrograms
+                && run_build_plan(*binCtx, mcpp::log::is_verbose(), false, base.target_triple) != 0) {
                 slots[i].packageFailed = true;
                 slots[i].packageOutput = std::format("the programs of member '{}' did not build", members[i].path);
                 continue;
@@ -7331,12 +7409,16 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
             auto& env = tb.memberProgramEnv[slots[i].owner];
             for (auto const& lu : binCtx->plan.linkUnits) {
                 if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
-                std::string key = "MCPP_BIN_";
-                for (char c : lu.targetName)
-                    key += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
-                         : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
-                env.emplace_back(std::move(key), (binCtx->outputDir / lu.output).lexically_normal().string());
+                env.emplace_back(program_env_key(lu.targetName),
+                                 testOpts.noPrograms ? std::string{}
+                                                     : (binCtx->outputDir / lu.output).lexically_normal().string());
             }
+            if (testOpts.noPrograms && !testOpts.noRun)
+                if (auto why = programs_from_environment(env)) {
+                    slots[i].packageFailed = true;
+                    slots[i].packageOutput = *why;
+                    continue;
+                }
         }
         // The test goals of the members that can run.
         std::set<std::string> runnable;

@@ -854,6 +854,8 @@ int run(int argc, char** argv) {
                 .help("Build the tests for --target and stop; a build that succeeds is the result (for a target this host cannot execute)"))
             .option(cl::Option("archive").takes_value().value_name("FILE")
                 .help("With --no-run: write the built tests to FILE. Without: run the tests FILE holds, building nothing (in a checkout of the same project)"))
+            .option(cl::Option("no-programs")
+                .help("Build none of the package's programs: the tests take each from the environment's MCPP_BIN_<NAME> (a program built elsewhere); with --no-run --archive, the archive does not carry them and its run's environment names them"))
             .option(cl::Option("shard").takes_value().value_name("I/N")
                 .help("Run the I-th of N shards: the run's tests divided by the durations its store measured, longest first, so that N machines running 1/N to N/N run every test once"))
             .option(cl::Option("split").takes_value().value_name("MODE")

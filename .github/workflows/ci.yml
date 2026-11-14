@@ -307,14 +307,15 @@ jobs:
 
   # THE LINUX UNIT AND C++ E2E TESTS, built once beside the build and run in
   # shards (ci-unit.yml; design 2026-11-14). The archive stage needs no build
-  # of this commit: the bootstrap mcpp builds the tests, as build.yml's gate
-  # did; the shards run them with this commit's mcpp.
+  # of this commit: the bootstrap mcpp builds the tests, and not the package's
+  # program; the gate and the shards run them against build-linux's mcpp.
   unit-linux-archive:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # main's measured history is read from its last run.
     permissions:
       contents: read
-      actions: write
+      actions: read
     uses: ./.github/workflows/ci-unit.yml
     with:
       stage: archive
@@ -326,6 +327,10 @@ jobs:
 
   unit-linux:
     needs: [build-linux, unit-linux-archive, changes]
+    # A failed gate cancels the run (ci-unit.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ci-unit.yml
     with:
       stage: run

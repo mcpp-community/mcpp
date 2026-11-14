@@ -271,6 +271,14 @@ the package's programs first, as `mcpp build` does, and gives each test
 other than a letter or a digit written `_` (`MCPP_BIN_MY_TOOL` for `my-tool`).
 A test that runs the program it tests reads it from there.
 
+`--no-programs` (2026.11.13.1+) builds none of them: the programs are planned
+for their names, and each test takes each program from the environment's
+`MCPP_BIN_<NAME>`, for a program built elsewhere (a CI job that tests the
+binary another job built). A program the environment does not name is refused
+before any test runs, so that no test takes another program of that name from
+`PATH`. The environment names one program for each name, so the option tests
+one target.
+
 **A platform package is tested on its targets** (2026.10.27.1+). `mcpp test` in a
 package with a `[platform]` section, with no `--target`, builds the tests for
 each of the platform's `targets` with the package itself as the platform. The
@@ -441,6 +449,18 @@ no test ran. Legs this machine does not reach are reported as not run
 ([SPEC-015 §4](specs/target-sets.md)). The archive is a tar compressed as its
 name states: `.tar.gz` (or `.tgz`), `.tar.zst`, `.tar.xz` or `.tar`; another
 name is refused before anything is built.
+
+The archive carries the package's programs beside the tests, and its run gives
+each test `MCPP_BIN_<NAME>` as the build would. Written with `--no-programs`,
+the archive carries none of them and its manifest names their variables
+(`named_programs`); its run takes each from its own environment and refuses one
+the environment does not name (2026.11.13.1+). The run of an archive builds
+nothing, and is refused `--no-programs`.
+
+```bash
+mcpp test --no-run --no-programs --archive tests.tar.gz      # the tests only
+MCPP_BIN_MCPP=/path/to/mcpp mcpp test --archive tests.tar.gz # their program, named by the run
+```
 
 ## Tests that cannot run beside each other
 

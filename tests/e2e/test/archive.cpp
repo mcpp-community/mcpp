@@ -103,6 +103,56 @@ runner = ["mcpp-no-such-runner-exists"]
         expect(rebuilt.empty()) << "the archive's tests were built again: " << (rebuilt.empty() ? "" : rebuilt.front().string());
     };
 
+    "1086 the package's programs built elsewhere are named by the environment"_test = [] {
+        // `--no-programs`. A `--no-run --archive`: the tests are archived, the program is neither
+        // built nor carried, and the manifest names it for the run; B a run of the archive whose
+        // environment does not name it is refused; C one that names it runs the tests with that
+        // program; D a run here takes it from the environment as well, and refuses without it; E an
+        // archive's run builds nothing, and is refused the option.
+        const auto archive = s::case_dir() / "np.tar.gz";
+        s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
+                                            {"src/main.cpp", "int main() { return 0; }\n"},
+                                            {"tests/named.cpp", "import std;\nint main() {\n"
+                                             "    const char* p = std::getenv(\"MCPP_BIN_APP\");\n"
+                                             "    return p && std::filesystem::path(p).filename() == \"named-app\" ? 0 : 1;\n}\n"}});
+        // A
+        auto a = app.mcpp({"test", "--no-run", "--no-programs", "--archive", archive.string()});
+        expect(fatal(e2e::succeeded(a))) << "A: the archive was not written\n" << s::text(a);
+        std::vector<fs::path> built;
+        for (auto it = fs::recursive_directory_iterator(app.at("target")); it != fs::recursive_directory_iterator(); ++it)
+            if (it->is_regular_file() && it->path().stem() == "app" && it->path().parent_path().filename() == "bin")
+                built.push_back(it->path());
+        expect(fatal(built.empty())) << "A: the program was built: " << (built.empty() ? "" : built.front().string());
+        const auto x = s::case_dir() / "x";
+        s::tar_extract(archive, x);
+        nlohmann::json manifest;
+        for (auto it = fs::recursive_directory_iterator(x); it != fs::recursive_directory_iterator(); ++it)
+            if (it->path().filename() == "mcpp-tests.json") manifest = s::json_file(it->path());
+        expect(fatal(manifest.is_object() && manifest["legs"].size() == 1)) << "A: " << manifest.dump();
+        const auto& leg = manifest["legs"][0];
+        expect(fatal(leg["programs"].empty() && leg["named_programs"] == nlohmann::json{"MCPP_BIN_APP"}))
+            << "A: the leg does not name the program for the run: " << leg.dump();
+        // B
+        auto b = app.mcpp({"test", "--archive", archive.string()}, {.env = {{"MCPP_BIN_APP", std::nullopt}}});
+        expect(fatal(e2e::exited(b, 2))) << "B: a run with the program unnamed\n" << s::text(b);
+        expect(e2e::contains(b.err, "MCPP_BIN_APP")) << "B: the refusal does not name the variable\n" << b.err;
+        // C
+        const auto named = s::case_dir() / "named-app";
+        std::ofstream{named}.put('\n');
+        auto c = app.mcpp({"test", "--archive", archive.string()}, {.env = {{"MCPP_BIN_APP", named.string()}}});
+        expect(e2e::succeeded(c)) << "C: the test did not find the named program\n" << s::text(c);
+        expect(e2e::contains(s::text(c), "named ... ok")) << "C\n" << s::text(c);
+        // D
+        auto d = app.mcpp({"test", "--no-programs"}, {.env = {{"MCPP_BIN_APP", named.string()}}});
+        expect(e2e::succeeded(d)) << "D: a run here with the program named\n" << s::text(d);
+        expect(e2e::contains(s::text(d), "named ... ok")) << "D\n" << s::text(d);
+        auto d2 = app.mcpp({"test", "--no-programs"}, {.env = {{"MCPP_BIN_APP", std::nullopt}}});
+        expect(e2e::exited(d2, 2) && e2e::contains(d2.err, "MCPP_BIN_APP")) << "D: a run here with the program unnamed\n" << s::text(d2);
+        // E
+        auto e = app.mcpp({"test", "--archive", archive.string(), "--no-programs"});
+        expect(e2e::exited(e, 2)) << "E: --no-programs on an archive's run\n" << s::text(e);
+    };
+
     "1026 an archived member test carries its members files"_test = [] {
         // A member's archived test carries the files its `[runtime] deploy` names, from the member's
         // own product directory, and finds them beside it in a checkout without target/.

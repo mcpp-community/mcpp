@@ -25,8 +25,9 @@ inputs:
     default: 'false'
   under-test:
     description: >
-      The mcpp the cases test (MCPP_E2E_MCPP). Empty: the archive's own build
-      (MCPP_BIN_MCPP).
+      The mcpp the cases test: MCPP_E2E_MCPP, which the cases' support reads
+      before the archive's program, and MCPP_BIN_MCPP, which an archive written
+      with --no-programs takes. Empty: the archive's own build.
     required: false
     default: ''
   token:
@@ -75,7 +76,7 @@ runs:
         [ "${#cases[@]}" -gt 0 ] || { echo "::error::no case named"; exit 1; }
         args=(--archive "$RUNNER_TEMP/mcpp-tests/mcpp-tests.tar.gz")
         for c in "${cases[@]}"; do args+=(--case "$c"); done
-        [ -z "$UNDER_TEST" ] || export MCPP_E2E_MCPP="$UNDER_TEST"
+        [ -z "$UNDER_TEST" ] || export MCPP_E2E_MCPP="$UNDER_TEST" MCPP_BIN_MCPP="$UNDER_TEST"
         log="$RUNNER_TEMP/e2e-cases.log"
         status=0
         "$RUNNER_MCPP" test "${args[@]}" 2>&1 | tee "$log" || status=$?

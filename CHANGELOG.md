@@ -17,6 +17,12 @@
   one invocation) divides a file the store measured longer than its share of
   the run into groups of its cases. The store's program records state
   `part_of`, and a shard's run states `shard`.
+- `mcpp test --no-programs` builds none of the package's programs: the tests
+  take each from the environment's `MCPP_BIN_<NAME>`, for a program built
+  elsewhere, and one the environment does not name is refused before a test
+  runs. With `--no-run --archive` the archive carries none of them and names
+  their variables (`named_programs`); its run takes each from its own
+  environment.
 - Toolchain payloads are data. Which package serves a family for a target on a
   host is the `[[toolchain.payload]]` table of the built-in data, read in both
   directions; `xim:<name>@<version>` accepts any package of the index and
@@ -62,7 +68,9 @@
   Studio is no longer refused when nothing is compiled.
 - CI: the Linux unit and C++ e2e tests are built once beside the build and run
   in four shards assigned by main's measured history (`ci-unit.yml`), and the
-  gate left the Linux build job, which it held for 18.6 minutes; every unit
+  gate left the Linux build job, which it held for 18.6 minutes; the tests are
+  archived without the package's program and run, as every unit job's are,
+  against the binary the build job made, which no job builds again; every unit
   job orders its tests by that history and re-runs only what a failed
   attempt failed; the macOS 27 image runs the SDK-dependent subset on a pull
   request; `bench.yml` measures the engine alone for a commit whose CI
@@ -104,6 +112,9 @@
 
 ### Fixed
 
+- `mcpp build --message-format json` of an unchanged workspace reports the
+  artifacts of the build it replays, as a package's fast path did; it
+  reported none, and its envelope carried no record.
 - A home whose `registry` is a link to another home's borrows that registry,
   as a home whose `[xlings] home` names it does; whether a home borrows its
   registry is decided once, and every writer of the registry's configuration

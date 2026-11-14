@@ -991,7 +991,10 @@ Standard output is NDJSON. Each line but the last is an event:
 
 The last line is the `mcpp.build` envelope, on one line. Its `data` is the
 result record this run wrote (below); a run that failed before it entered a
-build directory omits `data`. Its `diagnostics` are mcpp's own errors, each
+build directory omits `data`. A build that replays the recorded build of an
+unchanged tree (the fast path, of a package or of a workspace's members)
+restates that build's artifacts, as events and in `data` (a workspace's,
+2026.11.13.1+). Its `diagnostics` are mcpp's own errors, each
 located where its message says (§2), with the code `MCPP_BUILD_FAILED`, or
 `MCPP_EFFECT_DENIED` for a run that stopped before a denied effect. The
 narration goes to standard error, as for every machine-readable mode.

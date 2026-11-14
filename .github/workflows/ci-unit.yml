@@ -3,18 +3,22 @@ name: ci-unit
 # THE UNIT AND C++ E2E TESTS OF ONE HOST, BUILT ONCE AND RUN IN SHARDS (design
 # 2026-11-14). Called twice by ci.yml, as two stages:
 #
-#   archive  the host's gate, then every test built once by the bootstrap mcpp
-#            (`mcpp test --no-run --archive`, SPEC-015 §4), with the measured
-#            history of main's last run beside it: artifact `mcpp-unit-<host>`.
+#   archive  every test built once by the bootstrap mcpp (`mcpp test --no-run
+#            --no-programs --archive`, SPEC-015 §4), with the measured history
+#            of main's last run beside it: artifact `mcpp-unit-<host>`. The
+#            package's program is not built here: the tests run build.yml's.
 #            It needs no build of this commit, so it runs beside build.yml.
-#   run      the shards: each runs its part of the archive with this commit's
-#            mcpp (`mcpp test --archive --shard I/N --split auto`), the tests
+#   run      the host's gate, then the shards: each runs its part of the
+#            archive (`mcpp test --archive --shard I/N --split auto`) against
+#            this commit's mcpp as build.yml built it (MCPP_BIN_MCPP), the tests
 #            assigned longest first by that one history, so the shards together
 #            run each test once; a re-run of a failed shard runs what it failed.
 #
 # Measured on 2026-11-14 (Linux x86_64, GCC): the gate held the build job 18.6
 # minutes after the binary was built, every Linux job waited for it, and the
-# one job that then built and ran every test passed its 45-minute limit.
+# one job that then built and ran every test passed its 45-minute limit. In the
+# archive stage the gate and the archive built the package's program again
+# (1118 s of a 38.5-minute stage), and the shards tested that build.
 
 on:
   workflow_call:
@@ -71,9 +75,6 @@ jobs:
     if: inputs.stage == 'archive'
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 60
-    # The caller grants `actions: write`: a failed gate cancels the run. A job
-    # of a called workflow that asks for more than its caller grants fails the
-    # whole run at its start, the stage that does not run it included.
     outputs:
       archived: ${{ steps.archive.outputs.archived }}
     steps:
@@ -81,28 +82,20 @@ jobs:
 
       - uses: ./.github/actions/bootstrap-mcpp
 
-      # THE HOST'S GATE (build.yml): a new program scaffolded, built and run by
-      # this commit's mcpp (MCPP_BIN_MCPP). A red commit stops here, before the
-      # shards start, and the run is cancelled.
-      - name: The host's gate
-        id: gate
-        if: inputs.gate != ''
+      # THE PACKAGE'S PROGRAM IS BUILD.YML'S. `--no-programs` (2026.11.13.1)
+      # plans the package's programs for their names and neither builds nor
+      # carries them; the run takes each from MCPP_BIN_<NAME>. A bootstrap
+      # without the option builds and carries the program, as before it, and
+      # the tests run that build of this commit's sources.
+      - name: The archive's programs
+        id: programs
         shell: bash
         run: |
-          set -euo pipefail
-          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          # shellcheck disable=SC2086 -- the input is a list of test paths
-          "$MCPP" test ${{ inputs.gate }}
-
-      - name: A failed gate cancels the run
-        if: ${{ failure() && steps.gate.outcome == 'failure' }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "::error::the gate of ${{ inputs.host }} failed: the run is cancelled"
-          gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" \
-            || echo "::warning::the run could not be cancelled (the token's actions permission)"
+          if "$MCPP" test --help 2>/dev/null | grep -q -- '--no-programs'; then
+            echo "flag=--no-programs" >> "$GITHUB_OUTPUT"
+          else
+            echo "the bootstrap $("$MCPP" --version 2>/dev/null | head -1) builds the package's program into the archive"
+          fi
 
       # EVERY TEST, ON EVERY SET. The bootstrap mcpp that builds them selects
       # by change without the rule that a test running the package's program
@@ -116,7 +109,8 @@ jobs:
           set -euo pipefail
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           mkdir -p "$RUNNER_TEMP/unit"
-          "$MCPP" test --no-run --archive "$RUNNER_TEMP/unit/unit.tar.gz" 2>&1 | tee "$RUNNER_TEMP/archive.log"
+          # shellcheck disable=SC2086 -- the flag is one word or none
+          "$MCPP" test --no-run ${{ steps.programs.outputs.flag }} --archive "$RUNNER_TEMP/unit/unit.tar.gz" 2>&1 | tee "$RUNNER_TEMP/archive.log"
           n=$(sed -n 's/.*Archived \([0-9][0-9]*\) test.*/\1/p' "$RUNNER_TEMP/archive.log" | tail -1)
           [ -f "$RUNNER_TEMP/unit/unit.tar.gz" ] || n=0
           echo "archived=${n:-0}" >> "$GITHUB_OUTPUT"
@@ -152,8 +146,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      # The tests a job that runs named cases takes (e2e-cases): built here,
-      # where the package is already built.
+      # The tests a job that runs named cases takes (e2e-cases), built here
+      # beside the others; the job names the program they test.
       - name: Write the tests other jobs run
         if: inputs.tests != ''
         shell: bash
@@ -161,7 +155,7 @@ jobs:
           set -euo pipefail
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           # shellcheck disable=SC2086 -- the input is a list of test paths
-          "$MCPP" test ${{ inputs.tests }} --no-run --archive "dist/mcpp-tests.tar.gz"
+          "$MCPP" test ${{ inputs.tests }} --no-run ${{ steps.programs.outputs.flag }} --archive "dist/mcpp-tests.tar.gz"
 
       - name: Upload the tests other jobs run
         if: inputs.tests != ''
@@ -177,6 +171,9 @@ jobs:
     name: unit tests ${{ matrix.shard }}/${{ strategy.job-total }} (${{ inputs.host }}, self-host)
     if: inputs.stage == 'run' && inputs.archived != '0'
     runs-on: ${{ inputs.runs-on }}
+    # The caller grants `actions: write`: a failed gate cancels the run. A job
+    # of a called workflow that asks for more than its caller grants fails the
+    # whole run at its start, the stage that does not run it included.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -197,11 +194,37 @@ jobs:
           name: mcpp-unit-${{ inputs.host }}
           path: ${{ runner.temp }}/unit
 
+      # The program the tests run is this commit's, as build.yml built it: an
+      # archive written with --no-programs takes it from MCPP_BIN_MCPP.
       - name: The history the shards share
         shell: bash
         run: |
           echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
+          echo "MCPP_BIN_MCPP=$MCPP" >> "$GITHUB_ENV"
           python3 .github/tools/test_history.py take target/mtest "$RUNNER_TEMP/unit/history"
+
+      # THE HOST'S GATE (build.yml): a new program scaffolded, built and run by
+      # this commit's mcpp, seconds of running, from the archive. A red commit
+      # stops here, as the shards start, and the run is cancelled. The first
+      # shard runs it; the gate's tests run again in their own shard.
+      - name: The host's gate
+        id: gate
+        if: inputs.gate != '' && matrix.shard == 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086 -- the input is a list of test paths
+          "$MCPP" test --archive "$RUNNER_TEMP/unit/unit.tar.gz" ${{ inputs.gate }}
+
+      - name: A failed gate cancels the run
+        if: ${{ failure() && steps.gate.outcome == 'failure' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::error::the gate of ${{ inputs.host }} failed: the run is cancelled"
+          gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" \
+            || echo "::warning::the run could not be cancelled (the token's actions permission)"
 
       - name: Unit + integration tests via `mcpp test`
         uses: ./.github/actions/mcpp-unit
@@ -236,5 +259,6 @@ jobs:
       - uses: ./.github/actions/e2e-cases
         with:
           mcpp: ${{ env.MCPP }}
+          under-test: ${{ env.MCPP }}
           host: ${{ inputs.host }}
           cases: ${{ inputs.cases }}

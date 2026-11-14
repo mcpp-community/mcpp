@@ -110,7 +110,14 @@ runs:
       run: |
         set -euo pipefail
         args=(test --timeout "$TIMEOUT" --split auto)
-        [ -z "$ARCHIVE" ] || args+=(--archive "$ARCHIVE")
+        # THE PROGRAM THE TESTS RUN IS THIS COMMIT'S, AS BUILD.YML BUILT IT
+        # (rule R1): it is not built again here (`--no-programs`), and an
+        # archive written without it takes it from the same variable. A native
+        # path: on Windows the variable is read by mcpp and the tests, not bash.
+        fresh="$MCPP_FRESH"
+        if command -v cygpath >/dev/null 2>&1; then fresh="$(cygpath -w "$fresh")"; fi
+        export MCPP_BIN_MCPP="${MCPP_BIN_MCPP:-$fresh}"
+        if [ -n "$ARCHIVE" ]; then args+=(--archive "$ARCHIVE"); else args+=(--no-programs); fi
         if [ -n "${MCPP_UNIT_FAILED:-}" ]; then
           args+=(--failed)
         else

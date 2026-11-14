@@ -205,6 +205,10 @@ test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.
 `MCPP_BIN_<NAME>`：程序 `<name>` 的路径，名字转为大写，字母与数字之外的字符写作 `_`（`my-tool` 为
 `MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。
 
+`--no-programs`（2026.11.13.1+）不构建它们：程序只为得到名字而规划，每个测试从环境的 `MCPP_BIN_<NAME>`
+取得各程序，用于在别处构建的程序（一个 CI 作业测试另一个作业构建的二进制）。环境未指定的程序在任何测试运行前
+被拒绝，测试因而不会从 `PATH` 取到同名的另一个程序。环境中每个名字只指定一个程序，因此该选项只测试一个目标。
+
 **平台包在它的目标上测试**（2026.10.27.1+）。在带 `[platform]` 段的包中执行 `mcpp test` 而不给 `--target` 时，
 以该包本身为平台，为平台的每个 `targets` 构建测试。其 runner 能在本机运行的目标被运行；其余已构建、报告为未运行
 （[35](35-platforms.md)）。
@@ -337,6 +341,15 @@ mcpp test --archive tests.tar.gz                             # 在检出中运�
 失败时退出码为 1，一个测试都没运行的归档也是 1。本机到达不了的腿报告为未运行
 （[SPEC-015 §4](../specs/target-sets.md)）。归档是 tar，压缩方式由文件名决定：`.tar.gz`（或
 `.tgz`）、`.tar.zst`、`.tar.xz` 或 `.tar`；其他名称在构建前即被拒绝。
+
+归档在测试旁携带包的程序，其运行像构建那样给每个测试 `MCPP_BIN_<NAME>`。以 `--no-programs` 写出的归档
+不携带它们，清单列出其变量（`named_programs`）；运行从自身的环境取得各程序，环境未指定者被拒绝
+（2026.11.13.1+）。归档的运行不构建任何东西，不接受 `--no-programs`。
+
+```bash
+mcpp test --no-run --no-programs --archive tests.tar.gz      # 只有测试
+MCPP_BIN_MCPP=/path/to/mcpp mcpp test --archive tests.tar.gz # 其程序由运行方指定
+```
 
 ## 不能彼此并排运行的测试
 

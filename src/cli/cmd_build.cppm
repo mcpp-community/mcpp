@@ -1253,6 +1253,14 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // nothing.
     if (auto a = parsed.value("archive")) to.archive = *a;
     const bool runArchive = !to.archive.empty() && !to.noRun;
+    // The package's programs, built elsewhere: named by the environment
+    // (MCPP_BIN_<NAME>) of this run, or of the run of the archive written.
+    to.noPrograms = parsed.is_flag_set("no-programs");
+    if (to.noPrograms && runArchive) {
+        mcpp::ui::error("--no-programs leaves the package's programs unbuilt; the run of an archive builds "
+                        "nothing (an archive written with --no-programs takes them from MCPP_BIN_<NAME>)");
+        return 2;
+    }
     // The three deadlines share one parser: they differ only in what they
     // bound, not in how they are spelled. 0 always means "no limit" — for
     // --timeout that now has to be asked for rather than being the default.

@@ -350,6 +350,36 @@ int main() {
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
 E2E output_machine{"output-machine", resource{"machine"}, [] {
+    "1085 a replayed build reports its artifacts"_test = [] {
+        // The second `mcpp build --message-format json` of an unchanged tree replays the recorded
+        // build; its stream and envelope name the program as the first build's did. A of a
+        // package, B of a workspace's member (its replay is the workspace's own fast path).
+        const auto artifact_named = [](const e2e::outcome& r, std::string_view name) {
+            bool event = false, record = false;
+            for (const auto& e : s::json_lines(r.out)) {
+                if (e.value("event", "") == "artifact" && e["artifact"].value("name", "") == name) event = true;
+                if (e.value("kind", "") == "mcpp.build" && e["data"].is_object())
+                    for (const auto& a : e["data"]["artifacts"])
+                        if (a.value("name", "") == name) record = true;
+            }
+            return event && record;
+        };
+        auto p = s::project::scaffold("replayed");
+        for (int i = 0; i < 2; ++i) {
+            auto r = p.mcpp({"build", "--message-format", "json"});
+            expect(fatal(e2e::succeeded(r))) << "A: build " << i + 1 << " failed\n" << r.err;
+            expect(fatal(artifact_named(r, "replayed"))) << "A: build " << i + 1 << " names no artifact\n" << r.out;
+        }
+        s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"tool\"]\n"},
+                      {"tool/mcpp.toml", "[package]\nname = \"tool\"\nversion = \"0.1.0\"\n"},
+                      {"tool/src/main.cpp", "int main() { return 0; }\n"}};
+        for (int i = 0; i < 2; ++i) {
+            auto r = ws.mcpp({"build", "--message-format", "json"});
+            expect(fatal(e2e::succeeded(r))) << "B: build " << i + 1 << " failed\n" << r.err;
+            expect(fatal(artifact_named(r, "tool"))) << "B: build " << i + 1 << " names no artifact\n" << r.out;
+        }
+    };
+
     "936 the control contract"_test[s::python3] = [] {
         // A the JSON event stream and the build envelope, a failure's located diagnostic; B
         // --print-launch; C --deny; D CLICOLOR_FORCE and NO_COLOR; E --home; F the envelopes of
