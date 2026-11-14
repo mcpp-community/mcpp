@@ -851,9 +851,14 @@ jobs:
             dist/SHA256SUMS
             dist/mcpp.lua
 
+  # A job's default condition is that every job before it, transitively,
+  # succeeded: the canaries, skipped in a release started without them, would
+  # skip the seal and the publication after a release was created. Each states
+  # the one job it follows (v2026.11.13.1 was created and not sealed).
   release-manifest:
     name: validate + seal release manifest
     needs: [create-release]
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -978,6 +983,7 @@ jobs:
   # Shared vendored scripts live in .github/tools/ (kept in sync with xlings).
   publish-ecosystem:
     needs: release-manifest
+    if: ${{ !cancelled() && needs.release-manifest.result == 'success' }}
     runs-on: ubuntu-latest
     # A4 hardening: a single stuck upload once held this job >1h (6h default
     # ceiling). The mirror script has per-file timeouts and (post-0.0.89)

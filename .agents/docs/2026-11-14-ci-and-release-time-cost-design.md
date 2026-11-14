@@ -220,3 +220,9 @@ Windows 把每个 `\n` 写成 `\r\n`；`write_config_value` 只认 `\n` 结尾�
 重复的表。这是用户可见的缺陷（Windows 上第二次 `mcpp toolchain default` 之后 config.toml 无效），此前读者偶尔未在写入期间读取时
 用例通过。处理：`write_replacing` 按给定字节写出；`write_config_value` 在两种行尾之前匹配表头与键，新增的行沿用文件自身的行尾
 （Config/ConfigValueKeepsTheFilesLineEnding）。读者对拒绝的重试保留，它对应 Windows 替换期间真实存在的拒绝。
+
+### 5.7 发布运行（43590596177）
+
+四个构建同时开始（最长为 Linux aarch64 交叉构建 39 分钟），`create-release` 在四者通过后创建 release，自分派至创建共 40 分钟；v2026.11.12.1 的构建依次进行，至最后一个构建结束约 104 分钟。
+封存与发布两个作业被跳过：未带条件的作业只在其之前的全部作业（含间接的）成功时运行，未请求时被跳过的 canaries 因此跳过了二者。
+二者改为各自声明所跟随的那一个作业（mcpp#933）；v2026.11.13.1 以 `tag: v2026.11.13.1` 再次分派完成，该分派重建该 tag 的提交。
