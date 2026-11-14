@@ -6,6 +6,7 @@ import std;
 import mcpplibs.mtest;
 import mcpp.config;
 import mcpp.home.files;
+import mcpplibs.os.fs;
 import mcpp.fallback.config_migration;
 import mcpp.pm.index_spec;
 
@@ -350,6 +351,9 @@ UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
         std::ofstream(cfg.configFile) << "[xlings]\nbinary = \"bundled\"\n" << padding << "\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
     }
     std::atomic<int> partial{0};
+    // What the first reader that missed the value saw: the failure should say
+    // whether the read was refused or read something else.
+    std::string first;
     // Windows refuses a rename over a file a reader holds open, and the writer retries
     // (replace_file); a reader there pauses between reads, as the readers of a home do, where
     // elsewhere it reads without a pause. A failed write stops and joins the reader (jthread).
@@ -357,7 +361,21 @@ UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
     std::jthread reader([&](std::stop_token stop) {
         while (!stop.stop_requested()) {
             // As mcpp reads it (read_whole), which waits out a replacement on Windows.
-            if (!mcpp::home::read_whole(cfg.configFile).value_or("").contains("[toolchain]\ndefault = \"")) ++partial;
+            const auto text = mcpp::home::read_whole(cfg.configFile);
+            if (!text.value_or("").contains("[toolchain]\ndefault = \"") && partial++ == 0) {
+                if (!text) {
+                    const auto again = mcpplibs::os::fs::read(cfg.configFile);
+                    first = std::format("no text; read at once after it: {}",
+                                        again ? std::format("{} bytes", again->size()) : again.error().message());
+                } else {
+                    const auto at = text->find("[toolchain]");
+                    std::string excerpt;
+                    for (char c : text->substr(at == std::string::npos ? 0 : at, 48))
+                        excerpt += c == '\n' ? std::string("\\n") : c == '\r' ? std::string("\\r") : std::string(1, c);
+                    first = std::format("{} bytes, at [toolchain]: {}", text->size(),
+                                        at == std::string::npos ? std::string("(absent)") : excerpt);
+                }
+            }
             if (pauses) std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
     });
@@ -365,7 +383,7 @@ UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
         expect(fatal(mcpp::config::write_config_value(cfg, "toolchain", "default", i % 2 ? "\"llvm@23.1.3\"" : "\"gcc@16.1.0\"").has_value()));
     reader.request_stop();
     reader.join();
-    expect(eq(partial.load(), 0)) << "a reader saw config.toml without its [toolchain] default";
+    expect(eq(partial.load(), 0)) << "a reader saw config.toml without its [toolchain] default; the first saw: " << first;
     std::size_t files = 0;
     for ([[maybe_unused]] const auto& e : std::filesystem::directory_iterator(home)) ++files;
     expect(eq(files, std::size_t{1})) << "a writer left a file beside config.toml";
