@@ -59,7 +59,16 @@ Outcome run_when_open(const std::atomic<bool>& gate, const std::vector<std::stri
 // instant, which makes an overlap likely, and the rounds are repeated. With the
 // launcher as it was, an overlap turns the quick reader's return into the slow
 // child's exit; with it fixed, no round can.
+//
+// The first start of a program on a fresh machine loads its image and has it
+// scanned, which on a Windows runner took the quick child longer than the slow
+// child's whole life (round 0 of run 43626158365: the quick reader returned
+// 427 ms after the slow one, where a shared pipe returns both together). Both
+// programs are started once before the rounds, so every round compares warm
+// starts and only a shared pipe can close the gap.
 UTest a_reader_returns_when_its_own_child_exits{"ConcurrentChildren/AReaderReturnsWhenItsOwnChildExits", [] {
+    expect(fatal(eq(proc::capture_exec(kQuick).exit_code, 0)));
+    expect(fatal(eq(proc::capture_exec(kSlow).exit_code, 0)));
     for (int round = 0; round < kRounds; ++round) {
         std::atomic<bool> gate{false};
         Outcome quick, slow;
