@@ -71,9 +71,9 @@ jobs:
     if: inputs.stage == 'archive'
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 60
-    permissions:
-      contents: read
-      actions: write   # a failed gate cancels the run
+    # The caller grants `actions: write`: a failed gate cancels the run. A job
+    # of a called workflow that asks for more than its caller grants fails the
+    # whole run at its start, the stage that does not run it included.
     outputs:
       archived: ${{ steps.archive.outputs.archived }}
     steps:
