@@ -95,9 +95,15 @@ mcpp::manifest::platform::Statement hosted_view(const mcpp::manifest::platform::
 // The statement that applies to `identity` (SPEC-016 §3): the platform's, with the
 // fields of the `[[platform.provider]]` that serves it in place of the platform's
 // own (its toolchain, layers and link), or the hosted view when that provider is
-// hosted. The platform's own statement when no provider of it names the identity.
+// hosted. The platform's own statement when no provider of it names the identity,
+// without the tools only another row's provider names.
 mcpp::manifest::platform::Statement provider_view(const mcpp::manifest::platform::Statement& platform,
                                                   std::string_view identity);
+// The statement a build of `identity` reads, `hosted` as serves() answered: the
+// hosted view where the platform hosts the identity and no provider names it,
+// the provider view otherwise (a row of the platform's own conventions included).
+mcpp::manifest::platform::Statement view_of(const mcpp::manifest::platform::Statement& platform,
+                                            std::string_view identity, bool hosted);
 // The `[[platform.provider]]` of a platform that serves `identity`; null when none.
 const mcpp::manifest::platform::ProviderSpec* provider_of(const mcpp::manifest::platform::Statement& platform,
                                                           std::string_view identity);
@@ -427,22 +433,18 @@ const mp::ProviderSpec* provider_of(const mp::Statement& p, std::string_view ide
     return nullptr;
 }
 
-mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
-    const auto* pr = provider_of(p, identity);
-    if (!pr) return p;
-    if (pr->base == "none") {
-        auto s = hosted_view(p);
-        s.cHosted = pr->hosted;
-        if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
-        if (!pr->layers.empty()) s.layers = pr->layers;
-        return s;
-    }
-    auto s = p;
-    s.cHosted = pr->hosted;
-    if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
-    if (!pr->layers.empty()) s.layers = pr->layers;
-    if (!pr->sysroot.empty()) s.sysroot = mp::Text{ pr->sysroot, pr->origin, true };
-    auto const& l = pr->link;
+// THE PROVIDER'S OWN FIELDS, OVER WHICHEVER BASE (2026-11-13). `link`, `sysroot`
+// and `runner` are what a provider states for the identities it serves; with
+// `base = "none"` they were dropped with the platform's, so a provider could not
+// state the link of a row whose conventions are not the platform's own (the
+// openkal platform's `x86_64-uefi` beside its ok images). The platform's top-level
+// `runner` belongs to `[platform] targets`; a provider that states one runs its
+// identities by it.
+namespace {
+void take_provider_fields(mp::Statement& s, const mp::ProviderSpec& pr) {
+    if (!pr.sysroot.empty()) s.sysroot = mp::Text{ pr.sysroot, pr.origin, true };
+    if (!pr.runner.cmd.empty()) s.runner = pr.runner;
+    auto const& l = pr.link;
     auto text = [](mp::Text& to, const mp::Text& from) { if (from.set) to = from; };
     text(s.link.driver, l.driver);
     text(s.link.start, l.start);
@@ -452,7 +454,72 @@ mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
     if (l.flags.set) s.link.flags = l.flags;
     if (l.inputsSet) { s.link.inputs = l.inputs; s.link.inputsOrigin = l.inputsOrigin; s.link.inputsSet = true; }
     if (l.sealSet) { s.link.seal = l.seal; s.link.sealOrigin = l.sealOrigin; s.link.sealSet = true; }
+}
+
+// THE PROGRAMS A STATEMENT'S CONVENTIONS RUN: its link's inputs, its seal's steps,
+// its runner and its named runners, each by its first word.
+std::set<std::string> named_programs(const mp::Link& l, const mp::Runner& runner,
+                                     const std::map<std::string, mp::Words>& runners) {
+    std::set<std::string> out;
+    for (auto const& in : l.inputs) if (!in.from.empty()) out.insert(in.from.front());
+    for (auto const& step : l.seal) if (!step.empty()) out.insert(step.front());
+    if (!runner.cmd.empty()) out.insert(runner.cmd.front());
+    for (auto const& [_, w] : runners) if (!w.value.empty()) out.insert(w.value.front());
+    return out;
+}
+
+// WHICH OF THE PLATFORM'S TOOLS A VIEW CARRIES (2026.11.13.1). `[platform.tools]`
+// are programs for the building machine, and a build provisions each tool its view
+// carries. A provider with `base = "none"` carries the tools its own conventions
+// name (a row's seal, beside rows whose conventions are the platform's own); every
+// other view carries every tool but those that only such providers name, so the
+// programs of one row are not built for another.
+void select_tools(mp::Statement& s, const mp::Statement& p, const mp::ProviderSpec* own) {
+    if (own && own->base == "none") {
+        const auto named = named_programs(s.link, s.runner, s.runners);
+        s.tools.clear();
+        for (auto const& [name, e] : p.tools)
+            if (named.contains(name)) s.tools.emplace(name, e);
+        return;
+    }
+    std::set<std::string> foreign;
+    for (auto const& pr : p.providers)
+        if (&pr != own && pr.base == "none")
+            for (auto const& n : named_programs(pr.link, pr.runner, {})) foreign.insert(n);
+    if (foreign.empty()) return;
+    const auto named = named_programs(s.link, s.runner, s.runners);
+    for (auto const& n : foreign)
+        if (!named.contains(n)) s.tools.erase(n);
+}
+} // namespace
+
+mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
+    const auto* pr = provider_of(p, identity);
+    if (!pr) {
+        auto s = p;
+        select_tools(s, p, nullptr);
+        return s;
+    }
+    if (pr->base == "none") {
+        auto s = hosted_view(p);
+        s.cHosted = pr->hosted;
+        if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+        if (!pr->layers.empty()) s.layers = pr->layers;
+        take_provider_fields(s, *pr);
+        select_tools(s, p, pr);
+        return s;
+    }
+    auto s = p;
+    s.cHosted = pr->hosted;
+    if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+    if (!pr->layers.empty()) s.layers = pr->layers;
+    take_provider_fields(s, *pr);
+    select_tools(s, p, pr);
     return s;
+}
+
+mp::Statement view_of(const mp::Statement& p, std::string_view identity, bool hosted) {
+    return hosted && !provider_of(p, identity) ? hosted_view(p) : provider_view(p, identity);
 }
 
 std::expected<bool, std::string>

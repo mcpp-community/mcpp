@@ -309,10 +309,16 @@ name  = "haiku"
 uname = "Haiku"                                  # `uname -s` 在该系统上的回答
 ```
 
-提供者的 `runner` 是运行器陈述的最低一级：平台的 `runner`、构建程序的、本机 `config.toml` 的、项目的
-`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
+提供者的 `runner` 是运行器陈述的最低一级：构建程序的、本机 `config.toml` 的、项目的
+`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。平台自己的 `runner` 属于 `[platform] targets`，
+不替换它（2026.11.13.1）：提供者陈述它所服务的身份的运行器、链接（`link`）与基座（`sysroot`），`base = "platform"` 与
+`base = "none"` 相同，因此一个平台可以陈述约定不同的行（openkal 平台的 ok 镜像与 `x86_64-uefi`）。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
 模板中 `{}` 是产物，`{sysroot}` 是产物链接时所用的基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在
 `requires` 的包中查找，再查 `PATH`。`requires` 的包由第一次需要它们的 `mcpp run` 或 `mcpp test` 安装，构建不安装。
+
+`[platform.tools]` 为构建机器构建，构建只准备它的行所带的工具（2026.11.13.1）。`base = "none"` 的提供者带它自己的链接、
+封装（seal）与运行器所指名的工具；其余的行带全部工具，只由这类提供者指名的工具除外。因此 openkal 平台的 DOS 行
+（`i686-dos-musl`，其封装为 `okdos`）只构建 `okdos`，其 ok 镜像不构建它。
 
 一条提供者条目陈述一种载荷安排：原生安排与交叉安排是两条条目，各有自己的 `hosts`、基座与优先级。新增的条目不改变
 此前已有回答的请求，所以它以低于现有 `<arch>-<os>` 回答的优先级进入

@@ -45,17 +45,24 @@ POSIX `sh`/dash 解析不了——`sh check_version_pins.sh` 会在第 95 行附
 推导 tag）会做完这些：
 
 ```
-四平台构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
-  → GitHub Release v<version>，含 tarball 与 .sha256 边车文件
+四平台同时构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
+  [手动发布且带 `canaries` 时，canaries 与之并行]
+  → create-release：GitHub Release v<version>，含全部归档与 .sha256 边车文件
   → 重新计算每个载荷的哈希并发布不可变 mcpp-release.json
   → 镜像到 xlings-res/mcpp 的 GitHub 与 GitCode 双端
   → 向 openxlings/xim-pkgindex 开版本 bump PR
   → workflow_run 钩子触发 ci-fresh-install
 ```
 
+四个构建同时开始，各自把归档留作 artifact；`create-release` 在每个构建都通过后一次创建带全部归档的
+release，因此不存在缺少某个平台的 release（2026.11.13.1+）。生态 canaries（xlings、mcppls；
+`.github/release-canaries.toml`）只在手动发布且带 `canaries` 时用候选版本构建
+（`gh workflow run release.yml -f canaries=true`），此时它们是创建 release 的前提；v2026.11.12.1 的
+109 分钟中它们占 48 分钟，各项目在发布后以自己的 CI 验证该版本。
+
 ### 2.1 不可变 release manifest
 
-`release-manifest` 会等待四个平台上传 job 全部结束，然后下载最终的非
+`release-manifest` 等待 `create-release` 结束，然后下载最终的非
 draft、非 prerelease GitHub Release，重新计算每个带版本平台载荷的
 SHA256，校验对应的 `.sha256` 边车文件，并发布 schema 1 的
 `mcpp-release.json`：

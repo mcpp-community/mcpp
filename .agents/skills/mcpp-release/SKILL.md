@@ -115,15 +115,26 @@ Tag push 会自动触发 `release.yml` workflow。
 
 ### 4. 监控 Release CI
 
-Release workflow 包含**四个平台**的构建，外加一个生态发布 job：
+Release workflow 的四个平台构建**同时开始**，各自把归档留作 artifact；`create-release`
+在四个构建都通过后一次创建带全部归档的 GitHub release（设计 2026-11-14）：
 
 | Job | 平台 | 产物 | 依赖 |
 |-----|------|------|------|
-| `build-release` | Linux x86_64 | `mcpp-X.Y.Z-linux-x86_64.tar.gz` | 无（先执行） |
-| `build-linux-aarch64` | Linux aarch64（交叉） | `mcpp-X.Y.Z-linux-aarch64.tar.gz` | 等 Linux x86_64 完成 |
-| `build-macos` | macOS ARM64 | `mcpp-X.Y.Z-macosx-arm64.tar.gz` | 等 Linux 完成 |
-| `build-windows` | Windows x86_64 | `mcpp-X.Y.Z-windows-x86_64.zip` | 等 Linux 完成 |
-| `publish-ecosystem` | — | 镜像到 xlings-res 双端 + 开索引 bump PR | 等**全部四个**构建完成 |
+| `canaries` | — | 生态项目（xlings、mcppls）用候选版本构建 | 仅手动发布且勾选 `canaries` 时运行 |
+| `build-release` | Linux x86_64 | `mcpp-X.Y.Z-linux-x86_64.tar.gz`、源码包、`mcpp.lua`、`install.sh` | 无 |
+| `build-linux-aarch64` | Linux aarch64（交叉） | `mcpp-X.Y.Z-linux-aarch64.tar.gz` | 无 |
+| `build-macos` | macOS ARM64 | `mcpp-X.Y.Z-macosx-arm64.tar.gz` | 无 |
+| `build-windows` | Windows x86_64 | `mcpp-X.Y.Z-windows-x86_64.zip` | 无 |
+| `create-release` | — | GitHub release、覆盖全部归档的 `SHA256SUMS` | 四个构建（及运行时的 canaries） |
+| `release-manifest` | — | `mcpp-release.json` | `create-release` |
+| `publish-ecosystem` | — | 镜像到 xlings-res 双端 + 开索引 bump PR | `release-manifest` |
+
+canaries 默认不运行（tag push 与未勾选的手动发布）：xlings 与 mcppls 的构建约 40 分钟，
+由各项目在发布后以自己的 CI 固定新版本验证。需要在创建 release 前验证时，手动发布：
+
+```bash
+gh workflow run release.yml --repo mcpp-community/mcpp -f canaries=true
+```
 
 `build-linux-aarch64` 是两段式的（bootstrap 先构出本 release 的 x86_64 mcpp，再用它交叉构建
 aarch64），因为 bootstrap 装的是**上一个已发布版本**，可能不认新特性。
@@ -138,7 +149,7 @@ gh run view <run-id>
 # 如果失败，下载日志分析
 gh api repos/mcpp-community/mcpp/actions/runs/<run-id>/logs \
   -H "Accept: application/vnd.github+json" > /tmp/release-logs.zip
-unzip -p /tmp/release-logs.zip "build + upload (linux _ x86_64)/8_Smoke-test the bundled tarball.txt"
+unzip -p /tmp/release-logs.zip "build (linux _ x86_64)/8_Smoke-test the bundled tarball.txt"
 ```
 
 ### 5. 验证 Release 产物
@@ -189,7 +200,7 @@ release 规则验证最终资产，不要套用 Linux 的 strip 判断。
 
 ### publish-ecosystem：镜像 + 索引（发布的后半程）
 
-四个构建 job 全绿后自动执行，做两件事：
+`release-manifest` 封存之后自动执行，做两件事：
 
 1. **镜像到 `xlings-res/mcpp` 双端**（GitHub + GitCode），由
    `.github/tools/mirror_res.sh` 完成 —— 单 leg 内资产**并发上传**

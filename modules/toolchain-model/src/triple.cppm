@@ -52,7 +52,9 @@ export namespace mcpp::toolchain::triple {
 // an operating system to link against" are different axes: a bare-metal
 // RISC-V image is ELF with no OS, and a wasm module has an OS-like layer
 // (Emscripten's POSIX emulation) and is not ELF.
-enum class ObjectFormat { Elf, MachO, Pe, Wasm };
+// COFF is the object format of a DJGPP program (go32: an MZ stub before a COFF
+// image), which no other row produces; it is never a shared object.
+enum class ObjectFormat { Elf, MachO, Pe, Wasm, Coff };
 
 std::string_view to_string(ObjectFormat f) {
     switch (f) {
@@ -60,8 +62,22 @@ std::string_view to_string(ObjectFormat f) {
         case ObjectFormat::MachO: return "Mach-O";
         case ObjectFormat::Pe:    return "PE";
         case ObjectFormat::Wasm:  return "wasm";
+        case ObjectFormat::Coff:  return "COFF";
     }
     return "ELF";
+}
+
+// The container's word in row data and in `cfg(object-format = "...")`: the
+// spelling a platform writes in `[[platform.define]] object-format`.
+std::string_view object_format_word(ObjectFormat f) {
+    switch (f) {
+        case ObjectFormat::Elf:   return "elf";
+        case ObjectFormat::MachO: return "mach-o";
+        case ObjectFormat::Pe:    return "pe";
+        case ObjectFormat::Wasm:  return "wasm";
+        case ObjectFormat::Coff:  return "coff";
+    }
+    return "elf";
 }
 
 struct Triple {
@@ -259,12 +275,18 @@ struct Triple {
     // fallback would otherwise claim ELF for it -- the silent wrong answer this
     // whole axis exists to remove.
     ObjectFormat object_format() const {
-        if (auto* d = defined()) {
-            if (d->objectFormat == "pe") return ObjectFormat::Pe;
-            if (d->objectFormat == "mach-o") return ObjectFormat::MachO;
-            if (d->objectFormat == "wasm") return ObjectFormat::Wasm;
+        // A row that states its format -- one a platform defines, or a built-in
+        // row whose data carries `object-format` -- is taken as written.
+        auto stated = [](std::string_view f) {
+            if (f == "pe") return ObjectFormat::Pe;
+            if (f == "mach-o") return ObjectFormat::MachO;
+            if (f == "wasm") return ObjectFormat::Wasm;
+            if (f == "coff") return ObjectFormat::Coff;
             return ObjectFormat::Elf;
-        }
+        };
+        if (auto* d = defined()) return stated(d->objectFormat);
+        if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->objectFormat.empty())
+            return stated(r->objectFormat);
         if (os == "windows")                  return ObjectFormat::Pe;
         if (os == "macos" || os == "ios")     return ObjectFormat::MachO;
         if (arch.starts_with("wasm"))         return ObjectFormat::Wasm;
@@ -362,6 +384,22 @@ struct Triple {
     // C library); everything else about it -- flags, link, naming, runner --
     // is its platform's (SPEC-013).
     bool loader_supplies_os() const { return is_openkal(); }
+
+    // WHETHER THE COMPILER IS TOLD NO OPERATING SYSTEM: a bare machine, an ok
+    // image, or a row whose compile triple names none (`i686-dos-musl', which
+    // a platform defines over `i386-unknown-none-elf'). The C environment's
+    // identity macros are then the C library's alone (`cenv::realise').
+    bool compiler_told_no_os() const {
+        if (is_freestanding() || loader_supplies_os()) return true;
+        const std::string t = llvm_triple();
+        std::size_t first = t.find('-');
+        if (first == std::string::npos) return false;
+        std::size_t second = t.find('-', first + 1);
+        if (second == std::string::npos) return false;
+        const std::size_t third = t.find('-', second + 1);
+        return std::string_view(t).substr(second + 1, third == std::string::npos ? std::string::npos
+                                                                                 : third - second - 1) == "none";
+    }
 
     // WHETHER THIS ROW'S TOOLCHAIN PIN IS A CAPABILITY RATHER THAN A
     // CONVENTION — the distinction that decides whether an author may override

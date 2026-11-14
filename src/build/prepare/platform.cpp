@@ -204,6 +204,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.flags = set.keep(d.flags);
         r.linkEmulation = set.keep(d.linkEmulation);
         r.clangTriple = set.keep(d.clangTriple);
+        r.gccTriple = set.keep(d.gccTriple);
         r.objectFormat = set.keep(d.objectFormat);
         r.family = set.keep(d.family);
         r.dataModel = set.keep(d.dataModel);
@@ -528,10 +529,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
                 mcpp::platform::origin_text(P.selection.origin)));
         }
         P.selection.hosted = *hosted;
-        state.platformData = mcpp::platform::provider_of(found->manifest.platform, t.str())
-            ? mcpp::platform::provider_view(found->manifest.platform, t.str())
-            : *hosted ? mcpp::platform::hosted_view(found->manifest.platform)
-                      : found->manifest.platform;
+        state.platformData = mcpp::platform::view_of(found->manifest.platform, t.str(), *hosted);
         P.fields = state.platformData;
         const auto ctx = platform_cfg_context(state);
         std::vector<mp::Override> config;
@@ -1061,6 +1059,10 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             s.runner = mp::Runner{};
         } else {
             s.runner.cmd = split_words(*e);
+            // The command replaces the runner whole, as every other tier's does
+            // (`merge`): the packages the replaced one was installed from are
+            // not this command's.
+            s.runner.requires_.clear();
             s.runner.origin = mp::Origin{ mp::Tier::Env, {}, 0, envKey };
             s.runner.set = !s.runner.cmd.empty();
         }
@@ -1088,6 +1090,14 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     auto P = state.platform;
     const auto t = target_of(state);
 
+    // A preparation links when it compiles and does not only describe: the
+    // run of an archive (RunBuilt) links nothing, and its link and seal
+    // programs were the machine's that wrote the archive.
+    const bool linksSomething = state.overrides.compiles() && !state.overrides.describes()
+        && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
+               return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
+           });
+
     // ── The programs the link and the seal run (§4.4, §4.6) ───────────────
     if (P.active) {
         std::set<std::string> needed;
@@ -1098,16 +1108,13 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
         for (auto const& [name, e] : P.fields.tools)
             if (auto found = locate_program(state, ctx, e.ref.program.empty() ? name : e.ref.program))
                 P.tools[name] = found->generic_string();
-        const bool linksSomething = std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-            return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
-        });
         for (auto const& name : needed) {
             if (P.tools.contains(name)) continue;
             if (auto found = locate_program(state, ctx, name)) {
                 P.tools[name] = found->generic_string();
                 continue;
             }
-            if (!linksSomething || state.overrides.plan_only) continue;
+            if (!linksSomething) continue;
             refusal::record(refusal::Code::PlatformToolAbsent);
             auto it = P.fields.tools.find(name);
             const std::string from = it == P.fields.tools.end()
@@ -1127,9 +1134,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     }
     // A platform that links with ld.lld needs one beside the compiler; its
     // absence is said here, not as a link line that starts with a flag.
-    if (P.active && P.fields.link.driver.value == "lld" && !state.overrides.plan_only
-        && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-               return lu.kind != mcpp::build::LinkUnit::StaticLibrary; })
+    if (P.active && P.fields.link.driver.value == "lld" && linksSomething
         && mcpp::freestanding::resolve_lld_any(state.tc->binaryPath).empty()) {
         refusal::record(refusal::Code::LldRequiredAbsent);
         return std::unexpected(std::format(
@@ -1169,7 +1174,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             state.hostPlatformTarget,
             state.hostPlatformRunner.empty() ? std::string("its runner")
                 : std::filesystem::path(state.hostPlatformRunner.front()).filename().string()));
-    if (state.overrides.configuration_only) {
+    if (state.overrides.configures()) {
         if (ctx.hostPlatform.active) {
             ctx.hostTriple = state.hostPlatformTarget;
             ctx.hostCompiler = ctx.hostPlatform.fields.toolchain.value;

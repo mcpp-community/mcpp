@@ -303,7 +303,7 @@ step2_use_local_toolchain(PrepareState& state, const mcpp::toolchain::ToolchainS
         pkg.ximName = family;
         pkg.family  = family == "llvm" ? mcpp::toolchain::Family::Llvm : mcpp::toolchain::Family::Gcc;
         pkg.needsGccPostInstallFixup = family == "gcc";
-        if (auto provided = state.provide_runtime_payload(pkg); !provided)
+        if (auto provided = state.provide_runtime_payload(pkg, {}); !provided)
             return std::unexpected(provided.error());
     }
     return {};

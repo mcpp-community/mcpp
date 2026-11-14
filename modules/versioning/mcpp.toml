@@ -25,4 +25,4 @@ license     = "Apache-2.0"
 # state its contract in isolation; the root `tests/unit/` states the same facts
 # as the engine consumes them, and the pair is the cross-check.
 [dev-dependencies]
-mcpplibs.mtest = "0.5.2"
+mcpplibs.mtest = "0.8.5"

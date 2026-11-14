@@ -883,7 +883,9 @@ mcpp build [target] [-p <member>] [--release] --message-format json
 | `artifact` | `artifact`：一个产物，形状同下文记录的 `artifacts[]` |
 
 最后一行是 `mcpp.build` 信封，占一行。它的 `data` 是本次运行写下的结果记录（见
-下文）；在进入构建目录之前就失败的运行省略 `data`。它的 `diagnostics` 是 mcpp
+下文）；在进入构建目录之前就失败的运行省略 `data`。重放未变化的树已记录的构建（快速路径，
+包的或工作区成员的）时，重述该构建的产物，既作为事件也在 `data` 中（工作区的，2026.11.13.1+）。
+它的 `diagnostics` 是 mcpp
 自己的错误，每条按其消息定位（§2），代码为 `MCPP_BUILD_FAILED`；在被拒绝的副作
 用之前停下的运行为 `MCPP_EFFECT_DENIED`。叙述写到标准错误，与每一种机器可读模式
 相同。

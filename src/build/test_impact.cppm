@@ -3,8 +3,10 @@
 // file it is built from -- its own files, the module units it imports and
 // the units they import in turn, and every unit of its closure that is not a
 // module unit -- and by a change of what decides how everything is built
-// (a manifest, a lock, a build program, a header). Another file affects the
-// tests whose own files name it. Selection by change narrows; it never adds
+// (a manifest, a lock, a build program, a header). A test that runs a program
+// of the package (a file it is built from names `MCPP_BIN_`) is affected by a
+// change of any source of the package that is not a test's own. Another file
+// affects the tests whose own files name it. Selection by change narrows; it never adds
 // a test that a pattern or `-p` left out.
 export module mcpp.build.test_impact;
 
@@ -131,6 +133,23 @@ Affected affected_tests(const BuildPlan& plan, const std::vector<std::string>& c
         if (lu.kind == LinkUnit::TestBinary) tests.emplace_back(&lu, closure_of(plan, lu, units, byObject));
 
     auto affect = [&](const std::string& test, std::string why) { out.tests.emplace(test, std::move(why)); };
+    // THE TESTS THAT RUN THE PACKAGE'S PROGRAMS. An end-to-end test is built
+    // from its own files and the support it imports, and runs the program it
+    // tests from `MCPP_BIN_<NAME>`: nothing of the program is in its closure,
+    // and a change of the program selected none of them (measured on the e2e
+    // programs of mcpp: a change of src/ selected the unit tests alone).
+    std::map<std::filesystem::path, bool> namesProgram;
+    auto names_program = [&](const std::filesystem::path& f) {
+        auto [it, fresh] = namesProgram.try_emplace(f, false);
+        if (fresh) it->second = read_text(f).find("MCPP_BIN_") != std::string::npos;
+        return it->second;
+    };
+    std::vector<const LinkUnit*> runners;
+    std::set<std::filesystem::path> testsOwn;
+    for (auto const& [lu, files] : tests) {
+        for (auto const& own : lu->ownSources) testsOwn.insert(own.lexically_normal());
+        if (std::ranges::any_of(files, names_program)) runners.push_back(lu);
+    }
     for (auto const& rel : changed) {
         const auto path = (plan.projectRoot / mcpplibs::os::fs::from_utf8(rel)).lexically_normal();
         if (decides_the_build(path) || is_header(path)
@@ -148,6 +167,12 @@ Affected affected_tests(const BuildPlan& plan, const std::vector<std::string>& c
                 affect(lu->targetName, std::format("it is built from {}", rel));
                 ++hits;
             }
+        if (bySource.contains(path) && !testsOwn.contains(path))
+            for (const auto* lu : runners)
+                if (!out.tests.contains(lu->targetName)) {
+                    affect(lu->targetName, std::format("it runs a program of the package, and {} is a source of it", rel));
+                    ++hits;
+                }
         if (bySource.contains(path)) {
             out.notes.push_back(std::format("{}: {} test{}", rel, hits, hits == 1 ? "" : "s"));
             continue;

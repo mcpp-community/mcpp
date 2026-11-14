@@ -660,7 +660,7 @@ bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
 
 std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc) {
     std::string d = realises_optimization(bc) ? "optimized" : "unoptimized";
-    if (bc.debug) d += " + debuginfo";
+    if (bc.debug) d += bc.debugLines ? " + line tables" : " + debuginfo";
     if (bc.lto)   d += bc.ltoPartial ? " + lto (partial)" : " + lto";
     return d;
 }
@@ -1113,6 +1113,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
                     return LinkIntentFlavor::Wasm;
                 case mcpp::toolchain::triple::ObjectFormat::Elf:
                     return LinkIntentFlavor::Elf;
+                case mcpp::toolchain::triple::ObjectFormat::Coff:
+                    // DJGPP links with GNU ld, which takes a search path and a
+                    // library in ELF's spelling (`-L`, `-l<name>`).
+                    return LinkIntentFlavor::Elf;
             }
         }
         auto triple = plan.toolchain.targetTriple;
@@ -1170,7 +1174,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     f.ldRuntimeFallback = farm_ld;
 
     std::filesystem::path binutilsBin;
-    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
+    // A self-contained cross payload finds its own assembler and linker under
+    // its prefix: musl, MinGW, and a payload a row names by its GCC target.
+    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++"
+        && !mcpp::toolchain::row_states_gcc_target(plan.toolchain)) {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
         if (!ar.empty())
             binutilsBin = ar.parent_path();
@@ -1193,7 +1200,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     std::string opt_flag = (isMsvcDialect && optLevel == "0")
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
         : std::format(" {}{}", d.optPrefix, optLevel);
-    if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
+    if (prof.debug) opt_flag += std::format(" {}", prof.debugLines ? d.lineDebugFlags : d.debugFlags);
     // DEBUG INFORMATION IS COMPRESSED where the linker copies it into every
     // artifact (mcpp#874): on ELF each program of a member, every test among
     // them, carries the DWARF of its whole closure, and zlib halves it (a

@@ -1366,7 +1366,7 @@ test` 把它报告为**未运行**，在原因确定时打印一次，在摘要�
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
 smoke ... not run
-error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (plan 0.02s · build 0.39s · run 0.00s)
 ```
 
 退出码 1 保留原有含义——一个测试运行过并失败；0 意味着每个测试都
@@ -1515,7 +1515,7 @@ GCC 16.1 报告 `sorry, unimplemented: private module fragment`，mcpp
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g;cl.exe 上为 /Z7
+debug    = false          # -g;cl.exe 上为 /Z7;"lines":只含行表
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
@@ -1569,14 +1569,19 @@ ldflags  = []
   它只在 `trim_paths` 关闭时生效,因为调试器经骨架所记的构建目录查找单元的 `.dwo`。`"off"` 把全部调试信息
   留在产物中。Mach-O(debug map)、PDB、MinGW、WebAssembly 与裸机目标不变。在包的 flags 中写 `-gz=none`
   可关闭压缩。
+- **`debug = "lines"`(2026.11.13.1+)** 只保留行表:GCC 为 `-g1`,clang 即 `-gline-tables-only`。回溯、sanitizer 报告与
+  性能分析器仍给出文件与行号;调试器看不到变量与类型。闭包大的测试程序只有 `debug = true` 时的一部分大小,这正是 CI 与全量测试的
+  profile 所需(见 [08 —— 测试构建的体积](08-testing.md#测试构建的体积))。cl.exe 没有低于 `/Z7` 的级别,`"lines"` 在其上以 `/Z7`
+  编译。其他字符串被拒绝。
 - **每个 profile 拥有自己的构建目录。** 解析出的 profile 旋钮参与
   指纹，所以 `target/<triple>/` 下每个 profile 各有一个哈希目录，在
   它们之间切换是增量的，不是一次完整重建。这也意味着磁盘开销随实际
   用到的 profile 数量而增长。
 - **一个配置在时间上只占一个目录(2026.10.31.3+)。** 指纹中开发者在其间切换的部分——编译器族、目标、
-  标准库族、语言标准与配置级选项——是目录的谱系;编译器版本、mcpp 版本、std 模块与运行时契约随时间演进。
+  标准库族、语言标准、配置级选项与所陈述的基座——是目录的谱系;编译器版本、mcpp 版本、std 模块与运行时契约
+  (基座的内容)随时间演进。
   同一谱系的新指纹接管该谱系最近使用的目录,由 ninja 重建命令变化的边:编译选项不变的 mcpp 升级之后,
-  没有单元被重新编译。编译器构建不同的前驱则被删除(其中的对象不可复用)。构建或测试成功后,每天至多一次,
+  没有单元被重新编译。编译器构建不同、或基于基座的其他内容构建的前驱则被删除(其中的对象不可复用)。构建或测试成功后,每天至多一次,
   删除 `[build] keep_days` 天(config.toml;默认 3,`0` 全部保留)内没有配置使用过的目录。
 - **`[build] target_budget` 限定 `target/` 的大小(2026.11.8.1+)。** 在 `mcpp.toml`(或 config.toml)
   中写 `target_budget = "20GiB"` 这样的大小:每次构建或测试后,若 `target/` 超过该大小,没有任何配置
@@ -1981,7 +1986,7 @@ discover = ["tests/**/*.cpp"]    # the default
 | `main` | `{ from = "<依赖>/<入口>" }` | 每个测试程序的起点所在的入口目标；测试文件随之成为程序的普通翻译单元，不定义 `main`（§2.2，`kind = "entry"`） *(2026.10.26.2+)* |
 | `start` | 符号 | 独立目标上每个测试镜像的入口符号（§2.2，`start`） *(2026.10.26.2+)* |
 | `programs` | `"file"` 或 `"directory"` | `"file"`（默认）：每个被发现的文件是一个程序；`"directory"`：glob 固定目录之下同一目录的文件是一个程序，以目录命名，有文件定义 `main` 时以它为起点 *(2026.11.8.1+)* |
-| `split` | `"file"`、`"case"` 或 `"none"` | 使用测试协议的程序的运行方式：按用例所在文件各一个进程（默认）、每个用例一个进程，或只运行一次 *(2026.11.9.1+)* |
+| `split` | `"file"`、`"case"`、`"auto"` 或 `"none"` | 使用测试协议的程序的运行方式：按用例所在文件各一个进程（默认）、每个用例一个进程、按文件且把运行存储测得长于其份额的文件划分为用例组（`"auto"`，2026.11.13.1+），或只运行一次 *(2026.11.9.1+)* |
 | `link` | `"used"` 或 `"objects"` | `"used"`（默认）：测试只链接它用到的部分（`--gc-sections`、`-dead_strip`）；`"objects"`：保留每个目标文件的全部内容 *(2026.11.9.1+)* |
 | `store` | 目录或 `"none"` | 运行以 mtest 存储的形式保存的位置，相对项目；默认 `target/mtest`；`"none"` 不保存 *(2026.11.9.1+)* |
 

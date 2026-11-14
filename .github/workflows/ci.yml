@@ -55,8 +55,24 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      set: ${{ steps.set.outputs.set }}
     steps:
       - uses: actions/checkout@v4
+
+      # The set of cases this run runs (design 2026-11-12 §5.11): a pull
+      # request's push runs `pr`, the cases its change affects; a pull request
+      # labelled `ci:full`, a push to main and a run started by hand run `full`.
+      # The label is read when a push starts the run, as `ci:bench` is.
+      - name: The set of this run
+        id: set
+        env:
+          EVENT: ${{ github.event_name }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          set=full
+          if [ "$EVENT" = pull_request ] && [[ " $LABELS " != *" ci:full "* ]]; then set=pr; fi
+          echo "set=$set" >> "$GITHUB_OUTPUT"
+          echo "the set of this run: $set"
 
       - name: Classify the changed paths
         id: classify
@@ -94,6 +110,53 @@ jobs:
           esac
           python3 .github/tools/classify_changes.py --github-output "$GITHUB_OUTPUT" < changed.txt
 
+  # Each host's e2e shards, by the work its set gives it there (design
+  # 2026-11-12 §5.11): `mtest ci plan` divides the selection by the measured
+  # history of main's stores (tests/e2e/mtest.toml [ci.plan]), so the shard
+  # count follows the work, and a host the set gives nothing starts no shard.
+  # A plan that cannot be made gives every host three shards.
+  e2e-plan:
+    name: the e2e shards of each host
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      linux: ${{ steps.plan.outputs.linux }}
+      linux_work: ${{ steps.plan.outputs.linux_work }}
+      linux_count: ${{ steps.plan.outputs.linux_count }}
+      macos: ${{ steps.plan.outputs.macos }}
+      macos_work: ${{ steps.plan.outputs.macos_work }}
+      macos_count: ${{ steps.plan.outputs.macos_count }}
+      windows: ${{ steps.plan.outputs.windows }}
+      windows_work: ${{ steps.plan.outputs.windows_work }}
+      windows_count: ${{ steps.plan.outputs.windows_count }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/e2e-mtest
+        with:
+          host: '*'
+      - name: The plan
+        id: plan
+        env:
+          SET: ${{ needs.changes.outputs.set }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/plan.out"
+          if (cd tests/e2e && GITHUB_OUTPUT="$out" "$E2E_MTEST" ci plan --set "$SET" --format github); then
+            # A host given no work keeps a list a matrix accepts; `work` skips it.
+            sed 's/=\[\]$/=[1]/' "$out" >> "$GITHUB_OUTPUT"
+            for h in linux macos windows; do
+              n=$(sed -n "s/^$h=\[\(.*\)\]$/\1/p" "$out" | tr ',' '\n' | grep -c . || true)
+              echo "${h}_count=${n:-0}" >> "$GITHUB_OUTPUT"
+            done
+          else
+            echo "::warning::mtest ci plan failed: every host takes three shards"
+            for h in linux macos windows; do
+              printf '%s=[1,2,3]\n%s_work=true\n%s_count=3\n' "$h" "$h" "$h" >> "$GITHUB_OUTPUT"
+            done
+          fi
+
   docs:
     name: documentation and repository checks
     runs-on: ubuntu-24.04
@@ -109,6 +172,9 @@ jobs:
 
       - name: Check that the engine's sources name no more systems than the baseline
         run: python3 .github/tools/check_system_names.py
+
+      - name: Check that the engine's sources name no more toolchain payloads than the baseline
+        run: python3 .github/tools/check_payload_names.py
 
       - name: Check that headers and conditional directives appear only in the system lock files
         run: bash .github/tools/check_include_regions.sh
@@ -165,6 +231,7 @@ jobs:
           python3 tests/scripts/test_classify_changes.py
           python3 tests/scripts/test_notify_packages.py
           python3 tests/scripts/test_check_e2e_coverage.py
+          python3 tests/scripts/test_test_history.py
           python3 tests/scripts/test_check_default_toolchain_docs.py
           python3 tests/scripts/test_check_provider_boundary.py
           python3 tests/scripts/test_native_candidate_admission.py
@@ -173,6 +240,10 @@ jobs:
   build-linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: linux-x86_64
@@ -180,10 +251,18 @@ jobs:
       # What the Linux consumers install beyond the build's own toolchain: the
       # e2e shards (musl, llvm, mingw-cross), the toolchain legs (musl, llvm).
       prewarm: gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.1.0
+      # The gate and the tests the Windows cases need are unit-linux-archive's
+      # (ci-unit.yml), beside this build: with GCC the gate held this job 18.6
+      # minutes after the binary was built, and every Linux job waited for it.
+      gate: ''
 
   build-linux-arm:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: linux-aarch64
@@ -193,6 +272,10 @@ jobs:
   build-macos:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: macos-arm64
@@ -201,12 +284,19 @@ jobs:
   build-windows:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    # A failed gate cancels the run (build.yml).
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/build.yml
     with:
       host: windows-x86_64
       runs-on: windows-latest
       # The MinGW payload every Windows e2e shard installs.
       prewarm: mingw 16.1.0
+      # The Windows cases the jobs with Visual Studio masked run (no compiler
+      # there), and ci-fresh-install's released mcpp.
+      tests: e2e/windows
 
   # The mcpp .xlings.json names builds the tree as a developer's clone does,
   # and so does the newest release while the pin lags it (ci-bootstrap.yml).
@@ -215,37 +305,105 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/ci-bootstrap.yml
 
+  # THE LINUX UNIT AND C++ E2E TESTS, built once beside the build and run in
+  # shards (ci-unit.yml; design 2026-11-14). The archive stage needs no build
+  # of this commit: the bootstrap mcpp builds the tests, and not the package's
+  # program; the gate and the shards run them against build-linux's mcpp.
+  unit-linux-archive:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    # main's measured history is read from its last run.
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/ci-unit.yml
+    with:
+      stage: archive
+      host: linux-x86_64
+      name: linux
+      runs-on: ubuntu-24.04
+      # The Windows cases the MinGW cross job runs (the run stage's `cases`).
+      tests: e2e/windows
+
+  unit-linux:
+    needs: [build-linux, unit-linux-archive, changes]
+    # A failed gate cancels the run (ci-unit.yml).
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ci-unit.yml
+    with:
+      stage: run
+      host: linux-x86_64
+      name: linux
+      runs-on: ubuntu-24.04
+      archived: ${{ needs.unit-linux-archive.outputs.archived }}
+      # Four shards of four workers: the measured run of 2026-11-13 reached 65
+      # of its programs, 3970 s of work, in the 45 minutes of one job.
+      shards: '[1,2,3,4]'
+      # The Windows cases only a MinGW cross toolchain runs, from Linux:
+      # resources (windres -O coff, since GNU ld cannot consume a .res;
+      # mcpp#365) on the GNU and clang + MinGW rows, a Windows program packed
+      # from Linux (the import table read, not the artifact run), and a
+      # library whose legs cross a binary format.
+      cases: |
+        rows/1058 a gnu abi windows row compiles its resources
+        resources/198 windows resources cross
+        resources/923 cross dependency images keep their resources
+        pack/240 pack pe zip cross
+        pack/248 pack library fat pe leg
+
   linux:
-    needs: build-linux
+    needs: [build-linux, changes]
     uses: ./.github/workflows/ci-linux.yml
     with:
       # A pull request's label is read when a push starts its run; a run
       # started by hand states it as an input.
       bench: ${{ github.event_name == 'push' || inputs.bench == true || contains(github.event.pull_request.labels.*.name, 'ci:bench') }}
+      set: ${{ needs.changes.outputs.set }}
 
   linux-e2e:
-    needs: build-linux
+    needs: [build-linux, changes, e2e-plan]
     uses: ./.github/workflows/ci-linux-e2e.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
+      shards: ${{ needs.e2e-plan.outputs.linux || '[1,2,3]' }}
+      count: ${{ needs.e2e-plan.outputs.linux_count || '3' }}
+      work: ${{ needs.e2e-plan.outputs.linux_work != 'false' }}
 
   macos:
-    needs: build-macos
+    needs: [build-macos, changes]
     uses: ./.github/workflows/ci-macos.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
 
   macos-e2e:
-    needs: build-macos
+    needs: [build-macos, changes, e2e-plan]
     uses: ./.github/workflows/ci-macos-e2e.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
+      shards: ${{ needs.e2e-plan.outputs.macos || '[1,2,3]' }}
+      count: ${{ needs.e2e-plan.outputs.macos_count || '3' }}
+      work: ${{ needs.e2e-plan.outputs.macos_work != 'false' }}
 
   macos-ios:
     needs: build-macos
     uses: ./.github/workflows/ci-macos-ios.yml
 
   windows:
-    needs: build-windows
+    needs: [build-windows, changes]
     uses: ./.github/workflows/ci-windows.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
 
   windows-e2e:
-    needs: build-windows
+    needs: [build-windows, changes, e2e-plan]
     uses: ./.github/workflows/ci-windows-e2e.yml
+    with:
+      set: ${{ needs.changes.outputs.set }}
+      shards: ${{ needs.e2e-plan.outputs.windows || '[1,2,3]' }}
+      count: ${{ needs.e2e-plan.outputs.windows_count || '3' }}
+      work: ${{ needs.e2e-plan.outputs.windows_work != 'false' }}
 
   windows-msvc-xlings:
     needs: build-windows
@@ -307,7 +465,7 @@ jobs:
   # summary, the failures, the slowest cases and the metrics.
   test-report:
     name: the run's tests, reported
-    needs: [changes, linux, macos, windows, linux-e2e, macos-e2e, windows-e2e]
+    needs: [changes, linux, unit-linux, macos, windows, linux-e2e, macos-e2e, windows-e2e]
     if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

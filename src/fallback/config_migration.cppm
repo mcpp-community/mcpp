@@ -11,6 +11,7 @@
 export module mcpp.fallback.config_migration;
 
 import std;
+import mcpp.home.files;
 
 export namespace mcpp::fallback {
 
@@ -39,11 +40,9 @@ bool replace_all(std::string& text, std::string_view from, std::string_view to) 
     return changed;
 }
 
+// Whole, never in place: every mcpp started on the home migrates the same file.
 void write_file(const std::filesystem::path& p, std::string_view content) {
-    std::error_code ec;
-    std::filesystem::create_directories(p.parent_path(), ec);
-    std::ofstream os(p);
-    os << content;
+    (void)mcpp::home::write_replacing(p, content);
 }
 
 bool write_text_if_changed(const std::filesystem::path& path,
@@ -57,11 +56,11 @@ bool write_text_if_changed(const std::filesystem::path& path,
 } // namespace
 
 bool migrate_config_toml_index_names(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto original = ss.str();
+    // Read whole and closed before the file is replaced: Windows refuses to
+    // rename over a file this process holds open.
+    auto text = mcpp::home::read_whole(path);
+    if (!text) return false;
+    const auto original = *text;
     auto updated = original;
 
     replace_all(updated, "default = \"mcpp-index\"", "default = \"mcpplibs\"");
@@ -74,11 +73,9 @@ bool migrate_config_toml_index_names(const std::filesystem::path& path) {
 }
 
 bool migrate_xlings_json_index_names(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-    std::stringstream ss;
-    ss << is.rdbuf();
-    auto original = ss.str();
+    auto text = mcpp::home::read_whole(path);
+    if (!text) return false;
+    const auto original = *text;
     auto updated = original;
 
     replace_all(updated, "\"name\": \"mcpp-index\"", "\"name\": \"mcpplibs\"");

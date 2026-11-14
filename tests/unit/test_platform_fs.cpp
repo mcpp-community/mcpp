@@ -127,3 +127,49 @@ UTest which_resolves_a_name_that_is_also_a_shell_builtin{"PlatformFs/WhichResolv
 UTest which_still_answers_nothing_for_a_name_no_host_has{"PlatformFs/WhichStillAnswersNothingForANameNoHostHas", [] {
     expect(!(mcpp::invocation::which("mcpp-no-such-program-7c25d9f6").has_value()));
 }};
+
+// THE STATE TURN (mcpp::home::Turn): one holder at a time across threads, as across processes, and
+// a holder that takes the turn again nests in it. A turn reached through a link to its directory is
+// the same turn.
+UTest a_turn_is_held_once_and_nests{"PlatformFs/ATurnIsHeldOnceAndNests", [] {
+    TempDir dir;
+    std::atomic<bool> inside{false};
+    std::atomic<int> overlaps{0};
+    auto hold = [&](bool* waited) {
+        mcpp::home::Turn outer(dir.path, ".turn", "test", std::chrono::seconds(60), {}, waited);
+        {
+            mcpp::home::Turn inner(dir.path, ".turn", "test", std::chrono::seconds(60), {});
+            if (inside.exchange(true)) ++overlaps;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            inside = false;
+        }
+    };
+    bool firstWaited = true, secondWaited = false;
+    std::jthread first([&] { hold(&firstWaited); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::jthread second([&] { hold(&secondWaited); });
+    first.join();
+    second.join();
+    expect(eq(overlaps.load(), 0)) << "two holders held the turn at once";
+    expect(!firstWaited) << "the first holder reports a wait it did not have";
+    expect(secondWaited) << "the second holder does not report the wait";
+
+    std::error_code ec;
+    const auto link = dir.path.parent_path() / (dir.path.filename().string() + "-link");
+    std::filesystem::create_directory_symlink(dir.path, link, ec);
+    if (ec) return;
+    bool linkedWaited = false;
+    {
+        std::optional<mcpp::home::Turn> held;
+        held.emplace(dir.path, ".turn", "test", std::chrono::seconds(60), std::function<void(std::string_view)>{});
+        std::jthread other([&] {
+            mcpp::home::Turn through(std::filesystem::canonical(link), ".turn", "test", std::chrono::seconds(60), {},
+                                     &linkedWaited);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        held.reset();
+        other.join();
+    }
+    std::filesystem::remove(link, ec);
+    expect(linkedWaited) << "a turn reached through a link was not the same turn";
+}};

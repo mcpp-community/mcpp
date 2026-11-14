@@ -129,3 +129,59 @@ UTest hash_string_matches_hash_file{"Fingerprint/HashStringMatchesHashFile", [] 
     expect(eq(h1, h2));
     expect(ne(hash_string("hello"), hash_string("hellp")));
 }};
+
+// THE LINEAGE NAMES THE BUILD DIRECTORY (2026-11-12 §17, W1). What evolves --
+// mcpp's version, the compiler's version and build, the standard library's
+// version, the std module, the runtime contract -- changes the fingerprint and
+// not the lineage, so an upgrade keeps every path the commands name; what a
+// developer switches between changes both.
+UTest an_upgrade_keeps_the_lineage{"Fingerprint/AnUpgradeKeepsTheLineage", [] {
+    const auto a = compute_fingerprint(baseline());
+    auto in = baseline();
+    in.toolchain.version = "16.2.0";
+    in.toolchain.driverIdent = "g++ (xim-x-gcc 16.2.0) 16.2.0";
+    in.toolchain.stdlibVersion = "16.2.0";
+    in.stdBmiHash = "fedcba9876543210";
+    const auto b = compute_fingerprint(in);
+    expect(ne(a.hex, b.hex));
+    expect(eq(a.lineage, b.lineage));
+    expect(eq(a.lineage.size(), 16u));
+    expect(ne(toolchain_text(a), toolchain_text(b)));
+}};
+
+UTest a_configuration_is_another_lineage{"Fingerprint/AConfigurationIsAnotherLineage", [] {
+    const auto a = compute_fingerprint(baseline());
+    for (auto change : std::initializer_list<void (*)(FingerprintInputs&)>{
+             [](FingerprintInputs& in) { in.compileFlags = "-O0"; },
+             [](FingerprintInputs& in) { in.cppStandard = "c++26"; },
+             [](FingerprintInputs& in) { in.toolchain.targetTriple = "aarch64-linux-gnu"; },
+             [](FingerprintInputs& in) { in.toolchain.compiler = CompilerId::Clang; },
+             [](FingerprintInputs& in) { in.toolchain.stdlibId = "libc++"; },
+             [](FingerprintInputs& in) {
+                 in.toolchain.base.form = mcpp::toolchain::base::Form::Path;
+                 in.toolchain.base.text = "third_party/sysroot";
+             }}) {
+        auto in = baseline();
+        change(in);
+        expect(ne(compute_fingerprint(in).lineage, a.lineage));
+    }
+}};
+
+// THE BASE AS STATED IS A CONFIGURATION; WHAT IT HOLDS EVOLVES. A program built
+// against the default base and against a stated sysroot are kept side by side;
+// a stated base whose contents change (its runtime contract) is built again in
+// its own directory.
+UTest a_rewritten_base_keeps_its_lineage{"Fingerprint/ARewrittenBaseKeepsItsLineage", [] {
+    auto in = baseline();
+    in.toolchain.base.form = mcpp::toolchain::base::Form::Path;
+    in.toolchain.base.text = "third_party/sysroot";
+    in.toolchain.runtimeContractHash = "0123456789abcdef";
+    const auto a = compute_fingerprint(in);
+    in.toolchain.runtimeContractHash = "fedcba9876543210";
+    const auto b = compute_fingerprint(in);
+    expect(ne(a.hex, b.hex));
+    expect(eq(a.lineage, b.lineage));
+    expect(ne(toolchain_text(a), toolchain_text(b))) << "the directory is emptied and built again";
+    expect(eq(a.base, std::string("path third_party/sysroot")));
+    expect(eq(compute_fingerprint(baseline()).base, std::string("default")));
+}};

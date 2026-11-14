@@ -657,3 +657,115 @@ serves = ["riscv64-nosuch"]
     expect(eq(served[0].provider, "second"));
     expect(eq(served[1].provider, "toy"));
 }};
+
+// A provider states the link and the runner of the identities it serves, over
+// either base: one platform states rows whose conventions differ (2026.11.13.1).
+UTest a_provider_states_its_link_and_runner{"PlatformMerge/AProviderStatesItsLinkAndRunner", [] {
+    auto m = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-toy"]
+toolchain = "llvm@23.1.3"
+runner    = ["toyrun", "{}"]
+
+[platform.build]
+cflags = ["-fPIC"]
+
+[platform.link]
+driver = "lld"
+flags  = ["-shared"]
+exe    = "{name}.toy"
+seal   = [["toyseal", "{}"]]
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple        = "x86_64-fw"
+object-format = "pe"
+exe-suffix    = ".efi"
+
+[[platform.provider]]
+serves = ["x86_64-fw"]
+base   = "none"
+hosted = true
+link   = { driver = "lld", flags = ["--subsystem", "efi_application"], exe = "{name}.efi", seal = [] }
+runner = { cmd = ["fwrun", "{}"] }
+)");
+    auto fw = pf::provider_view(m.platform, "x86_64-fw");
+    expect(eq(fw.link.flags.value, std::vector<std::string>{"--subsystem", "efi_application"}));
+    expect(eq(fw.link.exe.value, "{name}.efi"));
+    expect(fw.link.sealSet && fw.link.seal.empty()) << "the provider's empty seal replaces the platform's";
+    expect(eq(fw.runner.cmd, std::vector<std::string>{"fwrun", "{}"}));
+    expect(fw.build.cflags.empty()) << "base none takes none of the platform's compile";
+    auto toy = pf::provider_view(m.platform, "x86_64-toy");
+    expect(eq(toy.runner.cmd, std::vector<std::string>{"toyrun", "{}"}));
+    expect(eq(toy.link.flags.value, std::vector<std::string>{"-shared"}));
+}};
+
+// The platform's tools a view carries (2026.11.13.1): a provider with `base =
+// "none"` carries those its own conventions name; the platform's own rows carry
+// every tool but those only such a provider names.
+UTest a_row_carries_the_tools_its_conventions_name{"PlatformMerge/ARowCarriesTheToolsItsConventionsName", [] {
+    auto m = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-toy"]
+toolchain = "llvm@23.1.3"
+runner    = ["toyrun", "{}"]
+
+[platform.tools]
+toyseal = "toy-tools@1.0.0"
+toyrun  = "toy-tools@1.0.0"
+toyprof = "toy-tools@1.0.0"
+dosseal = "dos-tools@1.0.0"
+
+[platform.link]
+driver = "lld"
+seal   = [["toyseal", "{}"]]
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple = "i686-dos"
+
+[[platform.define]]
+triple = "x86_64-fw"
+
+[[platform.provider]]
+serves = ["i686-dos"]
+base   = "none"
+link   = { driver = "lld", seal = [["dosseal", "{}"]] }
+runner = { cmd = ["dosrun", "{}"] }
+
+[[platform.provider]]
+serves = ["x86_64-fw"]
+base   = "none"
+link   = { driver = "lld", seal = [] }
+)");
+    auto names = [](const mcpp::manifest::platform::Statement& s) {
+        std::vector<std::string> out;
+        for (auto const& [k, _] : s.tools) out.push_back(k);
+        return out;
+    };
+    auto dos = pf::provider_view(m.platform, "i686-dos");
+    expect(eq(names(dos), std::vector<std::string>{"dosseal"})) << "its seal's program, and no other";
+    auto fw = pf::provider_view(m.platform, "x86_64-fw");
+    expect(fw.tools.empty()) << "a provider whose conventions run no tool carries none";
+    auto toy = pf::provider_view(m.platform, "x86_64-toy");
+    expect(eq(names(toy), std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
+        << "the platform's rows keep every tool but another row's seal";
+    // What a build of each row reads (2026.11.13.1): a row of the platform's own
+    // conventions is a view too, not the whole statement.
+    expect(eq(names(pf::view_of(m.platform, "x86_64-toy", false)),
+              std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
+        << "a build of the platform's own row provisions no other row's tool";
+    expect(eq(names(pf::view_of(m.platform, "i686-dos", false)), std::vector<std::string>{"dosseal"}));
+}};

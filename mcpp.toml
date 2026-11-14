@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.11.12.1"
+version     = "2026.11.13.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -60,6 +60,10 @@ ldflags  = ["--coverage"]
 [test]
 windows_code_page = "utf-8"
 programs = "directory"
+# The unit tests, and the end-to-end cases (tests/e2e/<subsystem>/*.cpp, one program per
+# subsystem); the support package, the scripts' fixtures and the canaries (projects of their own,
+# tests/canary) are not tests.
+discover = ["tests/**/*.cpp", "!tests/support/**", "!tests/e2e/fixtures/**", "!tests/fixtures/**", "!tests/canary/**"]
 
 # Each entry equals its row's Default (SPEC-009 §12): the LLVM line moved to
 # 23.1.3 — the first release carrying the macOS 27 arm64e.x1 linker fix
@@ -93,11 +97,11 @@ linkage = "static"
 
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
 # TOML-native namespaced form: `mcpplibs.cmdline` is the dotted subtable
-# `[dependencies.mcpplibs] cmdline = "0.0.1"` ⇒ identity (mcpplibs, cmdline).
+# `[dependencies.mcpplibs] cmdline = "0.0.4"` ⇒ identity (mcpplibs, cmdline).
 # The bootstrap mcpp used by the self-host build (xlings install mcpp, well
 # past 0.0.6) understands this, so the legacy quoted form is no longer needed.
 [dependencies]
-mcpplibs.cmdline = "0.0.1"
+mcpplibs.cmdline = "0.0.4"
 # JSON for Modern C++, as the index's module package (no copied header).
 nlohmann.json = "3.12.0"
 # The C library's macros (`stdout`, `stderr`, `EOF`, `errno` …) as C++ names:
@@ -165,7 +169,9 @@ members = [
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
-mcpplibs.mtest = "0.5.2"
+mcpplibs.mtest = "0.8.5"
+# The support of the end-to-end cases (tests/support, design 2026-11-12 §5.9).
+mcpp.test-support = { path = "tests/support" }
 
 # Everything else uses M5.0 conventions:
 # - target        = mcpp (kind=bin inferred from src/main.cpp)

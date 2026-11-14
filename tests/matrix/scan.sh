@@ -3,7 +3,7 @@
 #
 # 两个入口,各回答自己那半:
 #
-#   mcpp why toolchain --target T --toolchain C --format json
+#   mcpp why toolchain --target T --format json   (C the project's [toolchain] default)
 #       这一格**会解析成什么**,以及如果不解析,是因为哪一条规则。结构化,
 #       不构建。
 #
@@ -203,7 +203,11 @@ for tc in $(compilers); do
         continue
     fi
 
+    # The compiler is the project's default, for the query and the build alike. A toolchain named
+    # for the build (`--toolchain`) opts a planned row in (2026.11.13.1), so a query that named it
+    # would answer a question the build below does not ask.
     { printf '[package]\nname = "mxscan"\nversion = "0.1.0"\n'
+      printf '\n[toolchain]\ndefault = "%s"\n' "$tc"
       [ "$MODE" = graph ] && printf '\n[dependencies]\nopenkal-musl = "0.3.5"\nopenkal-llvm-runtime = "0.1.3"\n'
     } > mcpp.toml
 
@@ -238,7 +242,7 @@ for tc in $(compilers); do
     # `query-failed` 是对的分类而**没有任何证据**说明为什么 —— macOS 上 20 格
     # 全红,原因(`timeout` 不存在)被这个重定向吞掉了。
     q="$(run_limited "${MATRIX_QUERY_TIMEOUT:-300}" \
-         "$MCPP" why toolchain --target "$t" --toolchain "$tc" --format json \
+         "$MCPP" why toolchain --target "$t" --format json \
          2>"$work/q.err" | tr -d '\r')"
     if [ -z "$q" ]; then
         # 查询本身没跑起来。这不是「这一格不支持」,而是「不知道」—— 两者必须
@@ -279,7 +283,6 @@ for tc in $(compilers); do
     #
     # 退出码就是判据。`why` 已经回答了「为什么不」那一半,所以这里不需要再去
     #    读任何一行输出。
-    printf '\n[toolchain]\ndefault = "%s"\n' "$tc" >> mcpp.toml
     rm -rf target
     if run_limited "${MATRIX_TIMEOUT:-600}" "$MCPP" build --target "$t" \
          >"$work/b.out" 2>&1; then

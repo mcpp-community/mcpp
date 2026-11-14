@@ -1248,6 +1248,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) {
                 pr.debug = it->second.as_bool();
                 pr.debugDeclared = true;
+            } else if (it != tt.end() && it->second.is_string()) {
+                pr.debugWritten = it->second.as_string();
+                pr.debug = pr.debugLines = pr.debugWritten == "lines";
+                pr.debugDeclared = true;
             }
             if (auto it = tt.find("lto"); it != tt.end() && it->second.is_bool()) {
                 pr.lto = it->second.as_bool();
@@ -3732,10 +3736,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 continue;
             }
             if (key == "programs") {
-                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"))
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"
+                                           && value.as_string() != "package"))
                     return std::unexpected(error(origin,
-                        "[test] programs is \"file\" (a test program per file, the default) or "
-                        "\"directory\" (the files of one directory are one program)"));
+                        "[test] programs is \"file\" (a test program per file, the default), "
+                        "\"directory\" (the files of one directory are one program) or \"package\" "
+                        "(the files the package discovers are one program)"));
                 m.testPrograms = value.as_string();
                 continue;
             }
@@ -3748,10 +3754,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             }
             if (key == "split") {
                 if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "case"
-                                           && value.as_string() != "none"))
+                                           && value.as_string() != "none" && value.as_string() != "auto"))
                     return std::unexpected(error(origin,
                         "[test] split is \"file\" (a process per file of a program's cases, the default), "
-                        "\"case\" (a process per case) or \"none\" (one process)"));
+                        "\"case\" (a process per case), \"auto\" (a process per file, and a file the run "
+                        "store measured longer than its share divided into groups of its cases) or \"none\" "
+                        "(one process)"));
                 m.testSplit = value.as_string();
                 continue;
             }

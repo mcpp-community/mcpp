@@ -1,0 +1,17 @@
+# The support of the end-to-end cases (design 2026-11-12 §5.9): a project as a table of files, mcpp
+# run in it with the shared home or a fresh one, and the readings a case makes of what mcpp wrote
+# (lines of a file, a JSON document, the header of an executable). Built on mtest's e2e module; a
+# failure prints the command line that repeats it.
+[package]
+namespace   = "mcpp"
+name        = "test-support"
+version     = "0.1.0"
+description = "The support of mcpp's end-to-end cases"
+license     = "Apache-2.0"
+
+[targets.test-support]
+kind = "lib"
+
+[dependencies]
+mcpplibs.mtest = "0.8.5"
+nlohmann.json  = "3.12.0"

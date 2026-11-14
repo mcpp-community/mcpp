@@ -17,7 +17,7 @@
 //   a bare triple (`x86_64-unknown-linux-gnu`)   every component; above any cfg
 //   `os = "…"`, a bareword naming a system         the OS and its family
 //   `family = "…"`, `unix`                        the family
-//   `arch = "…"`, `env = "…"`                     that component
+//   `arch = "…"`, `env = "…"`, `object-format = "…"`   that component
 //   `all(a, b, …)`                                the union of its terms
 //   `any(…)`, `not(…)`, a layer key, `accelerator`   no component
 //
@@ -43,15 +43,20 @@ export namespace mcpp::manifest::cfg {
 // `platform` is answered by the platform selection (SPEC-013 §3), which is
 // made from the triple and the configuration before resolution, so it is read
 // in the same pass as the triple's own keys.
+// `object-format` is the row's container (`elf`, `pe`, `mach-o`, `wasm`,
+// `coff`): what a package selects by when the question is the container's
+// conventions, which systems of one container share, rather than a system.
 inline constexpr std::string_view kCfgTripleKeys[] = {
-    "arch", "env", "family", "os", "platform",
+    "arch", "env", "family", "object-format", "os", "platform",
 };
 inline constexpr std::string_view kCfgEarlyLayerKeys[] = {
     "accelerator",
 };
+// `interface` is the kernel-abi layer's second answer: an interface its
+// provider states it provides (`[kernel-abi] provides-interfaces`).
 inline constexpr std::string_view kCfgLayerKeys[] = {
     "c++-abi", "c-abi", "compiler", "compiler-runtime",
-    "kernel-abi",
+    "kernel-abi", "interface",
 };
 // A BAREWORD NAMES A SYSTEM, AND THE ROWS ARE ITS VOCABULARY. `unix` is the
 // one word that names a family (unix | windows, the row's `family`); every
@@ -66,7 +71,7 @@ constexpr bool is_bareword(std::string_view word) {
 
 // The rank of a selector: the number of target-triple components it fixes, or
 // `kTripleRank` for a bare triple. Larger is more specific.
-inline constexpr int kTripleRank = 5;
+inline constexpr int kTripleRank = 6;
 int specificity(std::string_view selector);
 
 // Order conditional tables so that a more specific selector applies later,
@@ -82,7 +87,7 @@ namespace mcpp::manifest::cfg {
 
 namespace {
 
-constexpr unsigned kArch = 1, kOs = 2, kEnv = 4, kFamily = 8, kPlatform = 16;
+constexpr unsigned kArch = 1, kOs = 2, kEnv = 4, kFamily = 8, kPlatform = 16, kFormat = 32;
 
 unsigned component_of_key(std::string_view key) {
     if (key == "arch")   return kArch;
@@ -92,6 +97,8 @@ unsigned component_of_key(std::string_view key) {
     // A platform names a class of targets: one component, less specific than
     // an operating system (two) and than a triple.
     if (key == "platform") return kPlatform;
+    // A container is shared by several systems: one component, as a family is.
+    if (key == "object-format") return kFormat;
     return 0;   // a layer key, `accelerator`, or an unknown key
 }
 

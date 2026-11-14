@@ -947,7 +947,36 @@ Invocation invocation(const Env& env, std::vector<std::string> args) {
     return inv;
 }
 
+std::filesystem::path state_dir(const Env& env) {
+    const auto dir = env.projectDir.empty() ? env.home / "subos" : env.projectDir;
+    std::error_code ec;
+    auto real = std::filesystem::weakly_canonical(dir, ec);
+    return ec ? dir : real;
+}
+
+namespace {
+// THE PROVIDER'S STATE, ONE WRITER AT A TIME (kStateTurn). xlings saves a
+// SubOS description by writing it in place, and on Windows a save while
+// another process of the same state held the file was refused: the install
+// failed after its payload was placed. Every invocation that writes the state
+// takes the turn; a caller already holding it (an install in prepare) nests.
+// When the provider writes atomically, the turn orders writers that no longer
+// collide, and costs a lock per install.
+void hold_state_turn(std::optional<mcpp::home::Turn>& t, const Env& env, std::string_view what) {
+    t.emplace(state_dir(env), mcpp::provider::kStateTurn, what, std::chrono::seconds(2),
+              [](std::string_view holder) {
+                  mcpp::log::verbose("xlings", std::format("waiting for the provider's state turn{}{}",
+                                                           holder.empty() ? "" : ", held by ", holder));
+              });
+}
+bool writes_state(std::string_view capability) {
+    return capability == "install_packages" || capability == "add_repo" || capability == "remove_repo";
+}
+}  // namespace
+
 void select_runtime(const Env& env, std::string_view runtimeId) {
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, "choosing the runtime");
     auto inv = invocation(env, { "config", "--runtime", std::string(runtimeId) });
     inv.options.streams = mcpp::run::Streams::discard;
     (void)mcpp::run::execute(inv.argv, inv.options);
@@ -1131,6 +1160,8 @@ call(const Env& env, std::string_view capability,
     // Stdout is parsed line by line as NDJSON, so merging stderr into it could
     // split an event; discarding it lost the one line that names a rejection.
     // It is read only when the call fails.
+    std::optional<mcpp::home::Turn> turn;
+    if (writes_state(capability)) hold_state_turn(turn, env, std::format("xlings {}", capability));
     auto inv = invocation(env, { "interface", std::string(capability), "--args", std::string(argsJson) });
     const auto cmd = mcpp::build::command_line::display(inv.argv);
 
@@ -1483,6 +1514,8 @@ int install_with_progress(const Env& env, std::string_view target,
     // the interface only retries the same operation and hides its first error.
     if (!quiet) print_status("Installing", target);
     mcpp::effects::note_network_access();
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, std::format("installing {}", target));
     auto inv = invocation(env, { "interface", "install_packages", "--args", argsJson });
 
     int resultExitCode = -1;
@@ -1550,6 +1583,8 @@ int install_with_progress(const Env& env, std::string_view target,
 }
 
 int install_direct(const Env& env, std::string_view target, bool quiet) {
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, std::format("installing {}", target));
     auto inv = invocation(env, { "install", std::string(target), "-y" });
     mcpp::effects::note_network_access();
     // An empty standard input. Lines are passed through as the inherited
@@ -1679,6 +1714,8 @@ void ensure_init(const Env& env, bool quiet) {
     // whatever the caller's project directory is.
     Env globalEnv = env;
     globalEnv.projectDir.clear();
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, globalEnv, "initialising the sandbox");
     auto inv = invocation(globalEnv, { "self", "init" });
     inv.options.streams = mcpp::run::Streams::discard;
     inv.options.total = std::chrono::seconds{120};
@@ -1954,8 +1991,25 @@ int update_index_unguarded(const Env& env, bool quiet) {
     std::filesystem::create_directories(paths::index_data(env), lockEc);
     auto lock = mcpp::home::FileLock::try_acquire(paths::index_data(env));
     if (!lock) {
-        mcpp::log::verbose("index",
-            "another process is refreshing the index — skipping this one");
+        // UNLESS THERE IS NO INDEX TO READ (mcpp#927, 2026-11-12 §18 P3). A
+        // process that skipped the refresh then read an index another process
+        // was still fetching, or exchanging on a volume without an atomic
+        // exchange, and reported "no local package index" for a home that had
+        // one a moment later. Such a reader waits for the refresh it skipped;
+        // one with an index skips as before.
+        bool absent = false;
+        for (const auto& d : paths::declared_indices(env))
+            if (!std::filesystem::exists(d.dir, lockEc)) absent = true;
+        if (!absent) {
+            mcpp::log::verbose("index",
+                "another process is refreshing the index — skipping this one");
+            return 0;
+        }
+        auto waited = mcpp::home::FileLock::acquire(
+            paths::index_data(env), ".lock", "a refresh of the package index",
+            std::chrono::milliseconds(500), [&](std::string_view) {
+                if (!quiet) print_status("Waiting", "for the package index another mcpp is refreshing");
+            });
         return 0;
     }
 

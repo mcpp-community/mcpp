@@ -31,6 +31,7 @@ import mcpp.toolchain.msvc;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.target_schema;
 import mcpp.toolchain.target_rows;
+import mcpp.toolchain.payloads;
 import mcpp.toolchain.target_select;
 
 export namespace mcpp::toolchain {
@@ -108,6 +109,12 @@ struct ToolchainSpec {
     // `msvc@<version>` takes an installed toolset of that version first.
     bool ecosystemOnly = false;
 
+    // A PAYLOAD NAMED OUTRIGHT (`xim:<name>@<version>`, design 2026-11-12 §16
+    // T2): a package outside the family vocabulary, `payloadName`. It is
+    // installed and then resolved as `path:<root>` with the table its
+    // `.mcpp-toolchain.json` states; its family is its drivers'.
+    bool describedPayload = false;
+
     // A TOOLCHAIN NAMED BY PATH (mcpp#755): `path:<dir>`, the spelling a
     // `[toolchain]` table and `MCPP_TOOLCHAIN=path:<dir>` reach the resolver
     // as. Empty for every managed spec. The family is the drivers' (a
@@ -121,7 +128,7 @@ struct ToolchainSpec {
                                 payloadName.empty() ? family_name(family)
                                                     : std::string_view(payloadName),
                                 version);
-        return ecosystemOnly && family == Family::Msvc ? "xim:" + base : base;
+        return ecosystemOnly && (family == Family::Msvc || describedPayload) ? "xim:" + base : base;
     }
 
     // "gcc@16.1.0" or "gcc@16.1.0 → x86_64-windows-gnu" — user-facing.
@@ -190,19 +197,6 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec);
 // makes, so the two sources of a family's version answer the same question.
 std::vector<std::string> pinned_versions_for(const ToolchainSpec& requested);
 
-// #367: does a GCC spec aimed at the NATIVE Linux host resolve to the
-// `musl-gcc` payload rather than the glibc `gcc` one?
-//
-// `xim:gcc` publishes x86_64 assets only (`archs = { "x86_64" }`); the GCC the
-// ecosystem ships for other Linux architectures is `musl-gcc`, which does
-// publish them (aarch64 included, verified against xlings-res). Asking for
-// `gcc` on aarch64 404s.
-//
-// A free function taking the host arch rather than reading the compile-time
-// constant, so the aarch64 answer is testable on an x86_64 machine — the whole
-// point being an architecture the developer is not sitting in front of.
-bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
-                                const triple::Triple& target);
 
 ToolchainSpec with_resolved_xim_version(const ToolchainSpec& spec,
                                         std::string_view ximVersion);
@@ -295,6 +289,15 @@ struct PayloadDescriptor {
     // where it is used (`payload_default_runner`), because where a store lives
     // is a property of the machine and not of this file.
     std::string              runner;
+    // SCHEMA 2 IS THE PATH TABLE (design 2026-11-12 §16, T1): what a project's
+    // `[toolchain]` table states of a directory, a payload states of itself --
+    // the family its drivers speak, their prefix, the sysroot and the tools by
+    // role, each relative to the payload root. A payload named outright
+    // (`xim:<name>@<version>`) is resolved as `path:<root>` with this table.
+    std::string                                      family;
+    std::string                                      prefix;
+    std::string                                      sysroot;
+    std::vector<std::pair<std::string, std::string>> tools;
     // The directory the descriptor was read from. Not a key: filled by the
     // reader, so that a relative `runner` resolves against the payload it was
     // written for, including when the descriptor was found by walking up from
@@ -455,6 +458,11 @@ std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPat
 // missing" — see mcpp.pack.strip, which refuses only the second.
 std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name);
 
+// Whether the target's row states its GCC target (`gcc-triple`), so that the
+// payload is a self-contained cross GCC whose tools carry that prefix. The
+// target is read in either spelling: the row's, or the compiler's own.
+bool row_states_gcc_target(const Toolchain& tc);
+
 std::filesystem::path archive_tool(const Toolchain& tc);
 std::filesystem::path link_tool(const Toolchain& tc);
 std::filesystem::path staged_std_bmi_path(const Toolchain& tc,
@@ -606,11 +614,28 @@ parse_toolchain_spec(std::string compilerArg,
     }
 
     auto norm = compat::normalize_spec(compilerArg, versionArg);
+    if (!norm && ecosystemOnly) {
+        // Any package of the index, which describes itself (T2). The family
+        // is its drivers', read once the payload is installed.
+        if (versionArg.empty() || versionArg == "system")
+            return std::unexpected(std::format(
+                "'xim:{}' names a package and no version; write xim:{}@<version>",
+                compilerArg, compilerArg));
+        ToolchainSpec spec;
+        spec.payloadName      = compilerArg;
+        spec.version          = versionArg;
+        spec.ecosystemOnly    = true;
+        spec.describedPayload = true;
+        return spec;
+    }
     if (!norm) {
+        std::string payloads;
+        for (auto const& n : mcpp::toolchain::payloads::names())
+            payloads += (payloads.empty() ? "" : ", ") + n;
         return std::unexpected(std::format(
-            "unknown toolchain '{}' (expected gcc | llvm | msvc | emsdk | "
-            "android-ndk, or a supported alias like mingw / musl-gcc)",
-            compilerArg));
+            "unknown toolchain '{0}': a family (gcc, llvm, msvc), a payload ({1}), or any "
+            "package of the index as xim:{0}@<version>",
+            compilerArg, payloads));
     }
 
     ToolchainSpec spec;
@@ -693,21 +718,6 @@ void print_compat_hint(const ToolchainSpec& spec) {
     compat::print_hint_once(spec.compatHint);
 }
 
-bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
-                                const triple::Triple& target) {
-    if (!isLinux) return false;
-    if (hostArch == "x86_64") return false;      // the glibc payload exists here
-    // "Native" = no explicit target, or one naming this same machine. A CROSS
-    // target keeps its own payload rule (the `<triple>-gcc` packages above).
-    //
-    // A target that names glibc (`aarch64-linux-gnu`) asks for the glibc
-    // payload, which `xim:gcc` publishes for aarch64 since 16.1.0 (a Luban
-    // system's own gcc is that one): answering it with musl-gcc built for
-    // another C library than the one named.
-    if (target.env == "gnu") return false;
-    return target.empty()
-        || (target.os == "linux" && target.arch == hostArch);
-}
 
 // The NDK's own name for the HOST it runs on, which is the directory component
 // under `toolchains/llvm/prebuilt/`. Upstream ships `linux-x86_64`,
@@ -785,186 +795,27 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     pkg.displaySpec = spec.display();
     pkg.ximVersion  = spec.version;
     pkg.family      = spec.family;
-
-    if (spec.family == Family::Msvc) {
-        // `xim:msvc@<toolset>`. Only reached for a VERSIONED spec —
-        // `msvc@system` never gets here, because nothing about it is a
-        // package (see is_system_toolchain).
-        //
-        // frontendCandidates is what the generic bin/-shaped resolution
-        // looks for, and an msvc payload is not bin/-shaped: cl.exe lives at
-        // VC/Tools/MSVC/<ver>/bin/Hostx64/x64/. The managed path therefore
-        // resolves through msvc::installation_at() instead — the same code
-        // that describes a system install. Keeping the candidate here means
-        // a caller that does use the generic path gets nothing rather than
-        // the wrong thing.
-        pkg.ximName = "msvc";
-        pkg.ximVersion = spec.version;
-        pkg.frontendCandidates = {"cl.exe"};
+    // A PAYLOAD NAMED OUTRIGHT (`xim:<name>@<version>`, design §16 T2) is that
+    // package; it describes its own frontend (`.mcpp-toolchain.json`).
+    if (spec.describedPayload) {
+        pkg.ximName = spec.payloadName;
         return pkg;
     }
-    if (spec.family == Family::Llvm) {
-        // THE TARGET DECIDES THE PAYLOAD HERE TOO, and it did not used to.
-        //
-        // This returned the generic llvm payload unconditionally, which is
-        // right for every target llvm itself serves and wrong for the two that
-        // arrive with their own clang. `em++` and the NDK's `clang++` ARE
-        // clang -- same family, same flag vocabulary, same `import std` path
-        // -- and each is a clang whose target is fixed by its payload, which
-        // is the shape `src/toolchain/hostflags.cppm` already describes:
-        // "every hosted cross this build tool could do was served by a payload
-        // whose driver had exactly one target". So the family stays `Llvm` and
-        // no fourth value is invented; what changes is which package answers.
-        const auto& lt = spec.target;
-
-        // AND THE PAYLOAD THE SPEC NAMED DECIDES BEFORE THE TARGET DOES.
-        //
-        // `emsdk@6.0.9` names a payload. The target is the OTHER way to reach
-        // the same answer -- `--target wasm32-emscripten` with nothing
-        // declared -- and reading only the target meant a spec that named the
-        // payload and no target resolved the generic llvm shape:
-        //
-        //   $ mcpp toolchain install emsdk 6.0.9
-        //     error: installed package has no known C++ frontend in
-        //            '.../xim-x-emsdk/6.0.9/bin'
-        //
-        // The archive was fetched correctly and then looked for `clang++` in
-        // `bin/`, because `frontendSubdir` had been decided by a target that
-        // was not given. `payloadName` is the field `parse_toolchain_spec`
-        // fills from the spelling, and it is the more direct statement of the
-        // two: a spec that names a payload has answered this question.
-        const std::string_view named = spec.payloadName;
-
-        if (named == "emsdk" || lt.os == "emscripten") {
-            // `em++` is a `#!/bin/sh` wrapper beside the Python it execs, in
-            // `emscripten/` rather than `bin/` -- `bin/` holds the raw clang,
-            // which would compile for wasm and then link like an ordinary
-            // clang, producing a `.wasm` with no JavaScript and none of
-            // Emscripten's own glue. Naming the wrapper is the whole point.
-            pkg.ximName = "emsdk";
-            pkg.frontendSubdir = "emscripten";
-            pkg.frontendCandidates = { "em++", "emcc" };
-            return pkg;
-        }
-
-        if (named == "android-ndk" || lt.is_android()) {
-            // One NDK payload serves every Android arch and API level: the
-            // arch arrives as `--target=<arch>-linux-android<api>` on the
-            // command line, not as a different package. The host tuple in the
-            // path is the HOST's, not the target's -- a Linux x86_64 machine
-            // cross-compiling for aarch64 still reads
-            // `prebuilt/linux-x86_64/`.
-            pkg.ximName = "android-ndk";
-            pkg.frontendSubdir = std::format("toolchains/llvm/prebuilt/{}/bin",
-                                             ndk_host_tag());
-            if constexpr (mcpplibs::os::is_windows) {
-                pkg.frontendCandidates = { "clang++.exe", "clang++" };
-            } else {
-                pkg.frontendCandidates = { "clang++", "clang" };
-            }
-            return pkg;
-        }
-
-        // ONE PAYLOAD for everything else. The `openkal-llvm` spelling
-        // normalises to this family and installs nothing of its own — it is a
-        // statement about where the TARGET SIDE comes from, and the compiler is
-        // the llvm payload either way. A user who has one has both.
-        pkg.ximName = mcpp::toolchain::llvm::package_name();
-        pkg.frontendCandidates = mcpp::toolchain::llvm::frontend_candidates();
-        return pkg;
-    }
-
-    // Family::Gcc — the target decides the payload.
-    const auto& t = spec.target;
-
-    // `&& t.os == "linux"` — AND THE PARAGRAPH BELOW ALREADY SAID SO.
-    //
-    // "Canonical linux-musl triples coincide with the GNU tool spelling" is a
-    // statement about linux-musl, and the condition asked only whether the C
-    // library is musl. `x86_64-windows-musl` was added later and walked in.
-    // Measured 2026-08-26 on a Linux x86_64 host:
-    //
-    //     $ mcpp build --target x86_64-windows-musl   ([toolchain] gcc@16.1.0)
-    //       fetcher: resolve: target='xim:musl-gcc@16.1.0'
-    //       error: toolchain payload 'xim:musl-gcc@16.1.0' has no known C++
-    //              frontend in …/xim-x-musl-gcc/16.1.0/bin
-    //
-    // `native` read `t.arch == host_arch` and got true, so a PE target resolved
-    // the host's ELF Linux payload. The message names a missing frontend, which
-    // is true of that payload and says nothing about the decision that reached
-    // for it — the same shape as the rest of this release.
-    if (t.is_musl() && t.os == "linux") {
-        // Same target, two payload shapes: the host-native `musl-gcc` package
-        // (XLINGS_RES picks the host-matching asset) when target arch == host
-        // arch, else the triple-named cross package. Canonical linux-musl
-        // triples coincide with the GNU tool spelling, so `<triple>-g++` is
-        // the frontend either way.
-        bool native = mcpplibs::os::is_linux
-                   && t.arch == mcpp::toolchain::platform::host_arch;
-        pkg.ximName = native ? "musl-gcc" : t.str() + "-gcc";
-        // Frontend candidates are resolved with filesystem::exists, so on a
-        // Windows host the bare name never matches — the file on disk is
-        // `<triple>-g++.exe`. The mingw branch below has carried the `.exe`
-        // spelling since it shipped; this one had not, which made a
-        // windows-hosted musl payload install fine and then be unusable.
-        // `.exe` first: on a case-insensitive filesystem both would match, and
-        // the executable is the one we want.
-        if constexpr (mcpplibs::os::is_windows) {
-            pkg.frontendCandidates = { t.str() + "-g++.exe", t.str() + "-g++",
-                                       "g++.exe", "g++" };
-        } else {
-            pkg.frontendCandidates = { t.str() + "-g++", "g++" };
-        }
-        return pkg;
-    }
-
-    if (t.is_windows_gnu()
-        || (t.empty() && mcpplibs::os::is_windows)) {
-        // GCC targeting Windows PE (GNU CRT) — ONE user-facing identity,
-        // host-split at the distribution layer only:
-        //   Windows host → native winlibs UCRT build (PE frontend g++.exe)
-        //   other hosts  → Linux-hosted MSVCRT cross (ELF frontend, triple-
-        //                  prefixed so a cross build never silently falls
-        //                  back to a native g++)
-        if constexpr (mcpplibs::os::is_windows) {
-            pkg.ximName = "mingw-gcc";
-            pkg.frontendCandidates = {"g++.exe", "g++"};
-        } else {
-            pkg.ximName = "mingw-cross-gcc";
-            pkg.frontendCandidates = {"x86_64-w64-mingw32-g++"};
-        }
-        return pkg;
-    }
-
-    // Host target (or linux-gnu): the glibc gcc package — on x86_64.
-    //
-    // #367: `xim:gcc` declares `archs = { "x86_64" }` and publishes assets for
-    // that arch only. The GCC the ecosystem ships for other Linux
-    // architectures is `musl-gcc`, which does publish them (aarch64 included).
-    // Asking for `gcc` on aarch64 therefore 404s — and because a `build.mcpp`
-    // host compile resolves the toolchain spec with NO target injection, it
-    // landed here and made every project whose graph contains a build program
-    // unbuildable on aarch64, with `--target aarch64-linux-musl` fixing only
-    // the target half.
-    //
-    // "Which payload backs this spec on this machine" is exactly the question
-    // this function exists to answer — the musl branch above already answers
-    // its half the same way ("same target, two payload shapes"). The knowledge
-    // belongs here rather than in every manifest: a user should not have to
-    // encode which architectures a toolchain package was built for.
-    if (gcc_native_payload_is_musl(mcpp::toolchain::platform::host_arch,
-                                   mcpplibs::os::is_linux, t)) {
-        const auto mt = host_musl_triple();
-        pkg.ximName = "musl-gcc";
-        pkg.frontendCandidates = { mt.str() + "-g++", "g++" };
-        return pkg;   // no glibc specs fixup: that payload is not glibc-linked
-    }
-
-    pkg.ximName = "gcc";
-    pkg.frontendCandidates = {"g++"};
-    pkg.needsGccPostInstallFixup = true;
+    // WHICH PACKAGE IS DATA (design §16 T3): the entries of the family in
+    // data/builtin.toml, the first that serves the target on this machine. A
+    // payload the spec named (`emsdk@6.0.9`) is taken whatever the target. The
+    // NDK's host directory is for a released NDK without a descriptor.
+    auto r = mcpp::toolchain::payloads::choose(family_name(spec.family), spec.payloadName, spec.target,
+                                               mcpp::toolchain::payloads::this_host(),
+                                               {{"ndk-host", ndk_host_tag()}});
+    if (!r) return pkg;   // no entry: an empty name, which the install reports
+    pkg.ximName = r->name;
+    pkg.frontendSubdir = r->frontendDir;
+    pkg.frontendCandidates = std::move(r->frontends);
+    pkg.needsGccPostInstallFixup = r->glibcFixup;
     return pkg;
 }
+
 
 ToolchainSpec with_resolved_xim_version(const ToolchainSpec& spec,
                                         std::string_view ximVersion) {
@@ -1058,11 +909,15 @@ read_payload_descriptor(const std::filesystem::path& payloadRoot) {
     // descriptor was added to prevent. The obligation is therefore on the
     // recipe: a schema bump comes with a floor on the mcpp version that reads
     // it, the same way an index descriptor's syntax does.
-    if (d.schema != 1)
+    if (d.schema != 1 && d.schema != 2)
         return refuse(std::format(
             "declares schema {}, which this mcpp does not implement "
-            "(expected 1); upgrade mcpp to build with this payload",
+            "(expected 1 or 2); upgrade mcpp to build with this payload",
             d.schema));
+    if (d.schema == 1)
+        for (auto key : { "family", "prefix", "sysroot", "tools" })
+            if (j.contains(key))
+                return refuse(std::format("\"{}\" is a schema 2 key; write \"schema\": 2", key));
 
     if (j.contains("frontend")) {
         if (!j["frontend"].is_string())
@@ -1148,6 +1003,41 @@ read_payload_descriptor(const std::filesystem::path& payloadRoot) {
                                                    /*rootedOk=*/true))
             return refuse(*problem);
     }
+    if (j.contains("family")) {
+        if (!j["family"].is_string()) return refuse("\"family\" is not a string");
+        d.family = j["family"].get<std::string>();
+        if (d.family != "gcc" && d.family != "llvm")
+            return refuse("\"family\" is gcc or llvm, the option vocabulary of its drivers");
+    }
+    if (j.contains("prefix")) {
+        if (!j["prefix"].is_string()) return refuse("\"prefix\" is not a string");
+        d.prefix = j["prefix"].get<std::string>();
+        if (d.prefix.find_first_of("/\\") != std::string::npos)
+            return refuse("\"prefix\" names a directory; it is the drivers' name prefix "
+                          "(`aarch64-none-elf-`)");
+    }
+    if (j.contains("sysroot")) {
+        if (!j["sysroot"].is_string()) return refuse("\"sysroot\" is not a string");
+        d.sysroot = j["sysroot"].get<std::string>();
+        if (auto problem = descriptor_path_problem("sysroot", d.sysroot, /*rootedOk=*/false))
+            return refuse(*problem);
+    }
+    if (j.contains("tools")) {
+        if (!j["tools"].is_object()) return refuse("\"tools\" is not an object of role to program");
+        for (auto it = j["tools"].begin(); it != j["tools"].end(); ++it) {
+            const std::string role = it.key();
+            if (!it->is_string())
+                return refuse(std::format("\"tools\".{} is not a string", role));
+            auto p = it->get<std::string>();
+            if (auto problem = descriptor_path_problem("tools." + role, p, /*rootedOk=*/false))
+                return refuse(*problem);
+            d.tools.emplace_back(role, std::move(p));
+        }
+    }
+    // The frontend of a payload that states its C++ driver as a tool.
+    if (d.frontend.empty())
+        for (auto const& [role, p] : d.tools)
+            if (role == "cxx") d.frontend = p;
     d.root = payloadRoot;
     return d;
 }
@@ -1248,30 +1138,13 @@ payload_frontend(const std::filesystem::path& payloadRoot,
 }
 
 std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName) {
-    if (ximDirName == "gcc")
-        return PayloadIdentity{ Family::Gcc, {} };
-    // A pinned toolset is an installed payload like any other, so it shows up
-    // in `toolchain list` under its toolset version. Without this row the
-    // install would succeed and then be invisible.
-    //
-    // Host-target (empty triple), like gcc and llvm: an msvc payload only
-    // ever targets the machine it runs on, and a spec for it carries no
-    // target axis either — so the two sides compare equal.
-    if (ximDirName == "msvc")
-        return PayloadIdentity{ Family::Msvc, {} };
-    if (ximDirName == mcpp::toolchain::llvm::package_name())
-        return PayloadIdentity{ Family::Llvm, {} };
-    if (ximDirName == "musl-gcc")
-        return PayloadIdentity{ Family::Gcc, host_musl_triple() };
-    if (ximDirName == "mingw-gcc" || ximDirName == "mingw-cross-gcc")
-        return PayloadIdentity{ Family::Gcc, { "x86_64", "windows", "gnu" } };
-    if (ends_with(ximDirName, "-gcc")) {
-        auto prefix = ximDirName.substr(0, ximDirName.size() - 4);
-        if (auto t = triple::parse(prefix))
-            return PayloadIdentity{ Family::Gcc, *t };
-    }
-    return std::nullopt;   // not a toolchain payload (ninja, glibc, …)
+    // The reverse reading of the same entries (design §16 T3).
+    auto id = mcpp::toolchain::payloads::identify(ximDirName);
+    if (!id) return std::nullopt;   // not a toolchain payload (ninja, glibc, …)
+    return PayloadIdentity{ id->family == "llvm" ? Family::Llvm : id->family == "msvc" ? Family::Msvc : Family::Gcc,
+                            id->target };
 }
+
 
 bool spec_matches_payload(const ToolchainSpec& def,
                           const PayloadIdentity& id,
@@ -1321,42 +1194,24 @@ bool host_can_serve(const triple::Triple& target) {
 }
 
 std::vector<AvailableIndex> available_toolchain_indexes() {
-    // LLVM payloads are published for Linux x86_64 and aarch64. Other
-    // Linux architectures retain the musl GCC default and omit LLVM.
-    const bool linuxWithoutLlvm = mcpplibs::os::is_linux
-        && mcpp::toolchain::platform::host_arch != "x86_64"
-        && mcpp::toolchain::platform::host_arch != "aarch64";
-
-    std::vector<AvailableIndex> out{
-        { "gcc",      Family::Gcc },
-        { "musl-gcc", Family::Gcc },
-    };
-    if (!linuxWithoutLlvm)
-        out.push_back({ mcpp::toolchain::llvm::package_name(), Family::Llvm });
-    // The Windows-PE gcc payload is host-split at the distribution layer
-    // (§4.3); each host lists the package it would actually install.
-    if constexpr (mcpplibs::os::is_windows) {
-        // Pinned MSVC toolsets. Listing them is what makes the managed origin
-        // discoverable at all: without a row here `toolchain list --available`
-        // says gcc and llvm can be pinned and msvc cannot, which stopped being
-        // true. `msvc@system` is reported separately, as an installation.
-        out.push_back({ "msvc", Family::Msvc });
-        out.push_back({ "mingw-gcc", Family::Gcc });
-        // The windows-hosted canadian cross to Linux. Named by triple, exactly
-        // as to_xim_package() derives it (`<triple>-gcc`), so the Available
-        // listing and the install path cannot disagree about the package name.
-        out.push_back({ std::string(mcpp::toolchain::platform::host_arch) + "-linux-musl-gcc",
-                        Family::Gcc });
-    } else if constexpr (mcpplibs::os::is_linux) {
-        // Same gate: `mingw-cross-gcc` publishes x86_64 only.
-        if (mcpp::toolchain::platform::host_arch == "x86_64")
-            out.push_back({ "mingw-cross-gcc", Family::Gcc });
-    }
+    // `[[toolchain.offer]]` (data/builtin.toml): what this machine is offered.
+    std::vector<AvailableIndex> out;
+    for (auto const& name : mcpp::toolchain::payloads::offered())
+        if (auto id = identify_xim_payload(name)) out.push_back({ name, id->family });
     return out;
 }
 
+
 std::filesystem::path derive_c_compiler(const Toolchain& tc) {
     return derive_c_compiler_path(tc.binaryPath);
+}
+
+bool row_states_gcc_target(const Toolchain& tc) {
+    if (tc.compiler != CompilerId::GCC || tc.targetTriple.empty()) return false;
+    for (auto const* r : mcpp::toolchain::target::rows())
+        if (!r->gccTriple.empty() && (r->gccTriple == tc.targetTriple || r->triple == tc.targetTriple))
+            return true;
+    return false;
 }
 
 std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) {
@@ -1386,6 +1241,21 @@ std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) 
         auto llvmTool = dir / (std::string("llvm-") + std::string(name)
                                + std::string(mcpplibs::os::exe_suffix));
         if (std::filesystem::exists(llvmTool, ec)) return llvmTool;
+        return {};
+    }
+
+    // A cross payload a row names by its GCC target (`gcc-triple`) carries its
+    // binutils beside the frontend under that prefix (`i586-pc-msdosdjgpp-ar`):
+    // the host's `ar` does not know the target's object format. The target is
+    // read in either spelling, as `gcc::binutils_prefix_dir` reads it.
+    for (auto const* r : mcpp::toolchain::target::rows()) {
+        if (r->gccTriple.empty() || (r->gccTriple != tc.targetTriple && r->triple != tc.targetTriple))
+            continue;
+        const auto base = std::string(r->gccTriple) + "-" + std::string(name);
+        if constexpr (mcpplibs::os::is_windows) {
+            if (auto exe = dir / (base + ".exe"); std::filesystem::exists(exe, ec)) return exe;
+        }
+        if (auto p = dir / base; std::filesystem::exists(p, ec)) return p;
         return {};
     }
 

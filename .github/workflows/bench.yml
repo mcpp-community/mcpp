@@ -1,0 +1,71 @@
+name: bench
+
+# THE ENGINE'S OWN COSTS, MEASURED ALONE (bench/tests, mtest Bench cases;
+# design 2026-11-10 §16 and 2026-11-14). The measurement a release is merged
+# with, for a commit whose CI already passed: the Linux binary that run built
+# (`mcpp-built-linux-x86_64`), timed on the bench fixture, instead of the whole
+# CI started again with `bench`. A commit no successful CI run built is built
+# here. Main's CI measures every push, which is the history kept.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bench:
+    name: the engine's costs (linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: This commit's mcpp, from its CI run
+        id: built
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --status success \
+                  --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          if [ -n "$run" ] && gh run download "$run" -R "$GITHUB_REPOSITORY" -n mcpp-built-linux-x86_64 \
+               -D "$RUNNER_TEMP/mcpp-built" 2>/dev/null; then
+            echo "this commit's mcpp from CI run $run"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no successful CI run of $GITHUB_SHA kept its binary: it is built here"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Use this commit's mcpp
+        if: steps.built.outputs.found == 'true'
+        shell: bash
+        run: bash .github/actions/use-built-mcpp/use.sh linux-x86_64 GLOBAL
+
+      - name: Build this commit's mcpp
+        if: steps.built.outputs.found != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          built=$(bash "$GITHUB_WORKSPACE/.github/tools/built_artifact.sh" "$MCPP" mcpp)
+          echo "MCPP_FRESH=$built" >> "$GITHUB_ENV"
+
+      - name: The engine's costs (bench, mtest Bench)
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd bench && MCPP="$MCPP_FRESH" "$MCPP_FRESH" test
+
+      - uses: ./.github/actions/test-report
+        if: always()
+        with:
+          name: mtest-bench-linux
+          stores: bench/target/mtest

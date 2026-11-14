@@ -62,8 +62,8 @@ mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自
 
 ```toml
 [dev-dependencies]
-mcpplibs.mtest         = "0.5.2"
-"mcpplibs.mtest.gtest" = "0.5.2"
+mcpplibs.mtest         = "0.8.5"
+"mcpplibs.mtest.gtest" = "0.8.5"
 ```
 
 ```toml

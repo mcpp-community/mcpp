@@ -656,8 +656,8 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     // this function emits, both taken from the root manifest's [dependencies].
     {
         // Read where the project keeps it. A planning pass that writes
-        // elsewhere (plan_only) still resolves against the project's lock.
-        auto lockPath = (state.overrides.plan_only ? *state.root : state.workRoot) / "mcpp.lock";
+        // elsewhere (PrepareIntent::Describe) still resolves against the project's lock.
+        auto lockPath = (state.overrides.describes() ? *state.root : state.workRoot) / "mcpp.lock";
         // A workspace keeps one lock at its root (§15). Until its first build
         // has written it, a selected member's own lock from before is read in
         // its place, so the upgrade does not move a git dependency.

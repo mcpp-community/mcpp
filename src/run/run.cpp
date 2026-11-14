@@ -44,11 +44,20 @@ std::map<int, std::function<void()>>& cleanups() {
     return c;
 }
 
+std::atomic<bool> g_finishing{false};
+
 // A started program, ended with mcpp at a request for as long as this lives.
+// One that ends while mcpp ends at a request (it was asked to, below) leaves
+// nothing of its unit: what it started is ended with it, as it would have
+// been had the program still run when the request's moment was over.
 struct Registered {
     Process* p;
     explicit Registered(Process* q) : p(q) { std::lock_guard g(g_live); live().insert(p); }
-    ~Registered() { std::lock_guard g(g_live); live().erase(p); }
+    ~Registered() {
+        if (g_finishing.load()) p->end_unit();
+        std::lock_guard g(g_live);
+        live().erase(p);
+    }
     Registered(const Registered&) = delete;
     Registered& operator=(const Registered&) = delete;
 };
@@ -57,7 +66,6 @@ struct Registered {
 // A second caller returns when the first has finished: what it ends then is
 // the state the request left. A cleanup that reaches it again from within (a
 // terminal's mode restored onto an output with no reader) returns at once.
-std::atomic<bool> g_finishing{false};
 std::once_flag g_finished;
 thread_local bool t_finishing = false;
 void finish_once() {
@@ -70,6 +78,25 @@ void finish_once() {
         std::lock_guard g(g_files);
         for (auto const& [path, content] : interrupt_files())
             (void)os::fs::write_atomic(path, content);
+    }
+    // A REQUEST FIRST, THEN THE END. A program asked to end ends what it
+    // started: ninja ends each command it started, in a process group of the
+    // command's own, which ending ninja's unit outright does not reach, and a
+    // Ctrl-C left them running (a prepare action alive 3 s after mcpp ended,
+    // e2e 845). Each program is asked, the programs are given a moment to
+    // end, and what still runs is then ended with its unit.
+    {
+        std::lock_guard g(g_live);
+        for (auto* p : live()) p->terminate();
+    }
+    const auto grace = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+        {
+            std::lock_guard g(g_live);
+            if (live().empty()) break;
+        }
+        if (std::chrono::steady_clock::now() >= grace) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     {
         std::lock_guard g(g_live);
@@ -325,10 +352,13 @@ Outcome launch(const Spec& s) {
                   || (s.shouldStop && *s.shouldStop))) {
         // Stream EOF is independent of child completion. Keep the same bounds
         // through the final wait, including inherited and discarded streams.
-        for (;;) {
-            auto waited = p->wait_for(std::chrono::milliseconds(20));
+        // Polled with the wait lock free between polls (see below), from 1 ms
+        // growing to 20 ms: a program that ends at once is seen at once.
+        for (auto pause = std::chrono::milliseconds(1);; pause = std::min(pause * 2, std::chrono::milliseconds(20))) {
+            auto waited = p->try_wait();
             if (!waited || waited->has_value()) break;
             if (should_stop()) { stop = true; break; }
+            std::this_thread::sleep_for(pause);
         }
     }
     if (stop) {
@@ -336,7 +366,19 @@ Outcome launch(const Spec& s) {
         p->kill();
         out.timed_out = true;
     }
-    auto st = p->wait();
+    // POLLED, NOT ONE BLOCKING WAIT: a wait holds the program's wait lock for
+    // as long as it blocks, and the request to end it (`terminate', above)
+    // takes that lock, so an interrupt waited behind the program it was to
+    // end. Between the polls the lock is free: a timed wait that releases it
+    // only to take it again at once starved the request (measured: an action
+    // ignored SIGTERM for as long as its program ran).
+    std::optional<os::process::exit_status> st;
+    for (auto pause = std::chrono::milliseconds(1);; pause = std::min(pause * 2, std::chrono::milliseconds(20))) {
+        auto waited = p->try_wait();
+        if (!waited) break;
+        if (waited->has_value()) { st = **waited; break; }
+        std::this_thread::sleep_for(pause);
+    }
     out.exit_code = st ? st->shell_code() : 127;
     return out;
 }

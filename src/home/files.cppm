@@ -40,10 +40,12 @@ public:
     // waiter killed by a signal holds nothing either way. nullopt only when
     // the lock file cannot be created at all (an unwritable directory, whose
     // build fails on its own terms).
+    // `waited`, when given, is set when the lock was held by another at the
+    // first try, however short the wait.
     static std::optional<FileLock> acquire(
         const std::filesystem::path& dir, std::string_view name, std::string_view owner,
         std::chrono::milliseconds notice,
-        const std::function<void(std::string_view holder)>& waiting);
+        const std::function<void(std::string_view holder)>& waiting, bool* waited = nullptr);
 
     // What the current holder of <dir>/<name> published (see acquire).
     static std::string holder(const std::filesystem::path& dir, std::string_view name);
@@ -61,11 +63,49 @@ private:
     explicit FileLock(std::intptr_t native) : native_(native) {}
 };
 
+// ── Turn ──────────────────────────────────────────────────────────────────
+//
+// ONE WRITER OF A SHARED STATE AT A TIME, ACROSS PROCESSES AND THREADS: the
+// exclusive lock <dir>/<name> (FileLock::acquire), held by one thread, and
+// taken again by that thread without waiting -- a holder that calls a writer
+// which takes the same turn nests in it. `dir` names the state's real
+// directory, so every path that reaches the state through a link takes one
+// turn. `waited` is set when another holder was waited out: what that holder
+// wrote is then looked for again. `dir` is made when the directory above it
+// exists; a relative `dir`, or one whose lock cannot be created, gives no turn,
+// and the caller goes on as before the turn existed.
+class Turn {
+public:
+    Turn(const std::filesystem::path& dir, std::string_view name, std::string_view what,
+         std::chrono::milliseconds notice,
+         const std::function<void(std::string_view holder)>& waiting, bool* waited = nullptr);
+    ~Turn();
+    Turn(const Turn&) = delete;
+    Turn& operator=(const Turn&) = delete;
+
+private:
+    std::string key_;
+};
+
 // `source` renamed over `destination`, which is not removed first: a failed
 // replacement leaves the last good copy (a compilation database an editor
-// reads). A destination another program holds open is retried briefly.
+// reads). A destination another program holds open is retried for up to two
+// seconds.
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec);
+
+// `text` written beside `file` under a name of this writer's own and renamed over
+// it (replace_file): a process reading the file while this one writes it sees the
+// previous copy or the new one, never a part. False when it could not be written,
+// the previous copy then unchanged. For the files of a home that processes started
+// at once each write (config.toml, .xlings.json).
+bool write_replacing(const std::filesystem::path& file, std::string_view text);
+
+// The text of `file`, or nothing when it cannot be read. Windows refuses an
+// open for a moment while another program renames over the file
+// (write_replacing): an open refused for the reason another program's hold
+// gives is retried, for up to two seconds, as the writer's rename is.
+std::optional<std::string> read_whole(const std::filesystem::path& file);
 
 // Whether a directory another program wrote may be read and run from: it
 // belongs to this user or to the system (root; on Windows also Administrators

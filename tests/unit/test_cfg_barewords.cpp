@@ -50,3 +50,15 @@ UTest an_unknown_word_is_reported{"CfgBarewords/AnUnknownWordIsReported", [] {
     expect(std::ranges::find(words, "freebsd") != words.end());
     expect(std::ranges::find(words, "linux") != words.end());
 }};
+
+// `object-format` is the row's container, which several systems share: the PE
+// rows are Windows's, and a row a platform defines states its own.
+UTest the_container_is_a_key{"CfgBarewords/TheContainerIsAKey", [] {
+    expect(m(R"(cfg(object-format = "pe"))", "x86_64-windows-gnu"));
+    expect(m(R"(cfg(object-format = "elf"))", "x86_64-linux-gnu"));
+    expect(m(R"(cfg(object-format = "mach-o"))", "aarch64-macos"));
+    expect(!m(R"(cfg(object-format = "pe"))", "x86_64-linux-musl"));
+    expect(cfgpred::unknown_tokens(R"(cfg(object-format = "pe"))").empty());
+    expect(eq(mcpp::manifest::cfg::specificity(R"(cfg(object-format = "pe"))"), 1));
+    expect(mcpp::manifest::cfg::specificity("windows") > mcpp::manifest::cfg::specificity(R"(cfg(object-format = "pe"))"));
+}};

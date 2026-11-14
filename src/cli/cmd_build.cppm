@@ -23,6 +23,7 @@ import mcpp.modgraph.glob;          // escaped_spelling, for coff-def's warning
 import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
+import mcpp.build.test_schedule;   // --shard, --failed
 import mcpp.cli.selection;
 import mcpp.build.build_database;
 import mcpp.build.build_program;
@@ -901,7 +902,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 discovery = std::move(tests->discovery);
                 mo.member_targets = std::move(tests->targets);
             }
-            mo.plan_only = true;
+            mo.intent = mcpp::build::PrepareIntent::Describe;
             std::string workKey = mo.package_filter;
             for (auto const& mp : req.group) workKey += (workKey.empty() ? "" : ",") + mp;
             mo.work_dir = build_database_work_dir(req.group.empty() ? *root : wsRoot, workKey);
@@ -1206,7 +1207,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         for (auto const& l : *legs) testLegs.push_back({l.triple, l.fromSet});
 
     mcpp::build::TestOptions to;
-    if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
+    for (std::size_t i = 0; i < parsed.positional_count(); ++i) to.filters.push_back(parsed.positional(i));
     to.list = parsed.is_flag_set("list");
     to.noRunner = parsed.is_flag_set("no-runner");   // see cmd_run
     if (auto runner = parsed.value("runner")) to.runnerName = *runner;
@@ -1252,6 +1253,14 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // nothing.
     if (auto a = parsed.value("archive")) to.archive = *a;
     const bool runArchive = !to.archive.empty() && !to.noRun;
+    // The package's programs, built elsewhere: named by the environment
+    // (MCPP_BIN_<NAME>) of this run, or of the run of the archive written.
+    to.noPrograms = parsed.is_flag_set("no-programs");
+    if (to.noPrograms && runArchive) {
+        mcpp::ui::error("--no-programs leaves the package's programs unbuilt; the run of an archive builds "
+                        "nothing (an archive written with --no-programs takes them from MCPP_BIN_<NAME>)");
+        return 2;
+    }
     // The three deadlines share one parser: they differ only in what they
     // bound, not in how they are spelled. 0 always means "no limit" — for
     // --timeout that now has to be asked for rather than being the default.
@@ -1268,6 +1277,53 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         out = secs;
         return true;
     };
+    if (auto sh = parsed.value("shard")) {
+        to.shard = mcpp::build::test_schedule::parse_shard(*sh);
+        if (!to.shard) {
+            mcpp::ui::error(std::format("invalid --shard '{}' (I/N, 1 <= I <= N)", *sh));
+            return 2;
+        }
+    }
+    if (auto sp = parsed.value("split")) {
+        if (*sp != "file" && *sp != "case" && *sp != "auto" && *sp != "none") {
+            mcpp::ui::error(std::format("invalid --split '{}' (file | case | auto | none)", *sp));
+            return 2;
+        }
+        to.split = *sp;
+    }
+    // THE FAILURES OF THE LAST RUN (`--failed`), read from the store before
+    // anything is built, so that only the programs that failed are built.
+    if (parsed.is_flag_set("failed")) {
+        if (!to.filters.empty() || !to.cases.empty() || to.listCases || to.noRun) {
+            mcpp::ui::error("--failed selects the tests itself; it is not combined with a PATTERN, --case, --cases or --no-run");
+            return 2;
+        }
+        std::error_code ec;
+        auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec));
+        auto m = root ? mcpp::manifest::load(*root / "mcpp.toml")
+                      : std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
+                            std::unexpected(mcpp::manifest::ManifestError{}));
+        if (!m) { mcpp::ui::error("--failed reads the run store of a project: no mcpp.toml here"); return 2; }
+        if (m->testStore == "none") {
+            mcpp::ui::error("--failed reads the run store, and [test] store = \"none\" keeps no run");
+            return 2;
+        }
+        const auto store = *root / (m->testStore.empty() ? std::string("target/mtest") : m->testStore);
+        auto f = mcpp::build::test_schedule::last_failures(store);
+        if (!f) {
+            mcpp::ui::error(std::format("--failed: the store {} holds no run", store.generic_string()));
+            return 2;
+        }
+        if (f->programs.empty()) {
+            mcpp::ui::info("Finished", std::format("the store's last run ({}) failed nothing: no test to run", f->run));
+            return 0;
+        }
+        to.filters = f->programs;
+        if (!f->whole) to.cases = f->cases;
+        mcpp::ui::info("Selected", std::format("what failed in run {}: {} program(s){}", f->run, f->programs.size(),
+                                               f->whole ? std::string{}
+                                                        : std::format(", {} case(s)", f->cases.size())));
+    }
     if (!read_secs("timeout", to.timeoutSecs)) return 2;
     if (!read_secs("build-timeout", to.buildTimeoutSecs)) return 2;
     if (!read_secs("workspace-timeout", workspaceTimeoutSecs)) return 2;
@@ -1290,7 +1346,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // package on one target, built and not run, and nothing else on stdout.
     if (parsed.is_flag_set("print-launch")) {
         std::string refused;
-        if (to.filter.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        if (to.filters.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        else if (to.filters.size() > 1) refused = "describes one test, and the command names several PATTERNs: name one";
         else if (to.list || to.noRun || !to.archive.empty()) refused = "describes a test to run; --list, --no-run and --archive do not run one";
         else if (to.format == mcpp::build::TestMessageFormat::Json) refused = "prints the mcpp.launch envelope; --message-format json prints records";
         else if (!testLegs.empty()) refused = "describes one test on one target, and --target names several legs";

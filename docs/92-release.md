@@ -48,17 +48,27 @@ install a version that did not exist yet.
 tag from `mcpp.toml`) does all of this:
 
 ```
-build ×4 (linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64)
-  → GitHub Release v<version> with tarballs + .sha256 sidecars
+build ×4 at once (linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64)
+  [canaries beside them, when started by hand with `canaries`]
+  → create-release: GitHub Release v<version> with every archive + .sha256 sidecars
   → recompute every payload hash and publish immutable mcpp-release.json
   → mirror to xlings-res/mcpp on BOTH GitHub and GitCode
   → open the version-bump PR against openxlings/xim-pkgindex
   → workflow_run hook fires ci-fresh-install
 ```
 
+The four builds start together and keep their archives as artifacts;
+`create-release` creates the release with all of them once every build has
+passed, so no release exists with a platform missing (2026.11.13.1+). The
+ecosystem canaries (xlings, mcppls; `.github/release-canaries.toml`) build with
+the candidate only in a release started by hand with `canaries`
+(`gh workflow run release.yml -f canaries=true`), and then gate the creation of
+the release; their build took 48 of the 109 minutes of v2026.11.12.1, and each
+project's own CI validates the release after it.
+
 ### 2.1 The immutable release manifest
 
-`release-manifest` waits for all four platform upload jobs. It downloads the
+`release-manifest` waits for `create-release`. It downloads the
 final non-draft, non-prerelease GitHub Release, recomputes each versioned
 platform payload's SHA256, verifies the corresponding `.sha256` sidecar, and
 publishes `mcpp-release.json` schema 1:

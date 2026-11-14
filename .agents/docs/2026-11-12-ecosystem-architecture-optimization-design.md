@@ -904,9 +904,335 @@ S1 与 S2 之间不插入新能力。S3 之后的每个新系统是对架构的�
 宿主一道闸；S5 的 K7、DOS 的 A 路线、UEFI 平台包与单任务环境的规范明示；S6 的新系统；xim 的第二个 PR（基座准入作业
 BP3–BP7、wine、DOSBox、OVMF 的包、`<system>-disk-image` 的正名）；openkal-freebsd 的运行器改用 dirun。
 
+第四版（2026.11.13.1）实施了其中的：e2e 向 mtest 的 C++ 用例的迁移（各宿主的单元作业以 `mcpp test` 运行）、两个金丝雀与夜间
+矩阵（5.7，`tests/canary/`、`canaries.yml`）、UEFI 收敛（第 19 节）、xim 的第二个 PR（wine、DOSBox、OVMF、djgpp 的包）。
+用例运行的位置与所需能力由用例以 mtest 0.8.0 的属性陈述（`"x"_test[s::windows][s::msvc]`；`only{}`、`except{}`
+取 mcpplibs.os 的平台与架构，`capability` 由程序在代码中回答一次），不再由脚本头的 `# requires:` 与运行器的探测表承担；
+只在 Windows 上运行的 45 个脚本随之迁移（`tests/e2e/windows/`，迁移表第 24 批）。需要指定用例而本机不能构建测试的作业
+（屏蔽 Visual Studio 的 Windows、只有交叉工具链的 Linux、ci-fresh-install 的已发布 mcpp）从构建作业写出的测试归档
+运行它们（`build.yml` 的 `tests`、`.github/actions/e2e-cases`），每个用例须打印其 `ok` 行；被测的 mcpp 缺省是归档自带的构建，
+`MCPP_E2E_MCPP` 另行指定。
+CI 的触发模型（5.11）随之实施：`changes` 作业给出本次运行的集合（PR 的推送为 `pr`，带 `ci:full` 标签的 PR、合入 main 与手动
+触发为 `full`），单元作业的 `--since` 与 e2e 分片的 `E2E_SET` 都取它；`e2e-plan` 作业以 `mtest ci plan` 按 main 存储中的
+测量历史给出每个宿主的分片数（`tests/e2e/mtest.toml` 的 `[ci.plan]`，每片 12 分钟，至多 8 片），集合不给工作的宿主不启动
+分片；每个宿主的构建作业在上传之后运行该宿主的闸（`e2e/basics`：本提交的 mcpp 新建、构建并运行一个程序），闸失败即该作业
+失败、其下游不启动，并取消整次运行。闸取 `e2e/basics` 而非单元测试：后者的构建要数分钟，超出 2–3 分钟的预算。
+同版并入的两处缺陷：GCC 14 之前的编译器没有 C++ 模块与 P1689，此前在第一次编译时因 `-fmodules` 失败；现在不声明、不导入
+模块的 C++ 单元以不带模块选项的翻译单元构建（图取 mcpp 自己的扫描），需要模块的第一个单元在规划时被拒绝并指出所需——8.2 的
+A 路线表"libstdc++ 12，无模块"由此成立（实测：DJGPP 的 GCC 12.2.0 构建异常、`std::vector`、`std::sort` 的程序，经 DOSBox 运行，状态 7）；
+中断时先请每个程序结束、给两秒，再结束其单元，各等待以 `try_wait` 轮询而不持锁（此前 `wait_for` 持锁使终止拿不到锁，
+`mcpp __action-stamp` 的子进程成为孤儿）。
+
 实施中观察到而本轮没有处理的四点：
 
 - lld-link 为"本地定义却按导入引用"的符号所造的槽不算作引用（LNK4217 的情形），节回收之后槽为空。引擎可以拒绝报告了该警告的链接；头文件在 Windows 上缺省为 `dllimport` 的其他静态库属于同一类。
 - 在 openkal-windows 自身的目录里 `mcpp test --target x86_64-windows-musl`：测试单元与测试库的模块按两个三元组编译，模块不可用。已发布的引擎同样。
 - 一个 mcpp 读索引条目时，另一个 mcpp 正在刷新索引：读的一方报告"没有可读的索引条目"（Windows 上 e2e 1071 出现一次）。
 - 两条腿并行构建时出现一次"compiler-run owner refused unit admission"（Linux 上 e2e 963，一次）。
+- mingw 的 GCC 16.1 在模块单元中把内联函数的局部静态（`std::_Sp_make_shared_tag::_S_ti()::__tag`）定义在 COMDAT 之外：
+  两个模块单元都用到 `std::make_shared` 时链接因重复定义失败（金丝雀 `cxx` 的 `x86_64-windows-gnu` 测试程序）。属编译器；
+  矩阵以 `fails` 记录。
+
+## 16. 工具链载荷即数据（2026-11-13 补充）
+
+### 16.1 现状（测）
+
+**版本已经是数据。** 发布的引擎（2026.11.10.2）：`--toolchain gcc@16.1` 解析为 `xim:gcc@16.1.0`，`xim:gcc@16.1.0` 原样可用，
+`gcc@16.9.0` 被拒绝并说明索引里没有该包。因此 xim-pkgindex 发布 `gcc 16.2.x` 之后，`[toolchain] default = "gcc@16.2"`（该系列在
+索引中的最新者）或 `"xim:gcc@16.2.0"` 不需要改动引擎即可使用。默认版本由内置行固定，改变默认需要发布引擎，使用则不需要。
+
+**名字不是数据。** 三处把载荷写在代码里：
+
+| 位置 | 写死的内容 |
+|---|---|
+| `compat::normalize_spec` | 可接受的名字：`gcc`、`llvm`、`msvc`、`emsdk`、`android-ndk` 与别名 `clang`、`musl-gcc`、`mingw*`、`<triple>-gcc`；其余名字（含 `xim:` 前缀）被拒绝 |
+| `to_xim_package` | （家族，目标，宿主）到包名的分支：gcc 到 `gcc`、`musl-gcc`、`mingw-gcc`、`mingw-cross-gcc`、`<gcc-triple>-gcc`；llvm 到 `llvm`、`emsdk`、`android-ndk`；每个分支各写前端候选与前端目录 |
+| `identify_xim_payload` | 上一项的反向映射，供 `toolchain list` 与 `doctor` 枚举 |
+
+新增一个工具链发行版（厂商的 clang、`riscv64-elf-gcc`、icx）因此仍要改引擎，与 R1"行是数据，读行的代码不是"不一致。已经数据化的
+部分是三项：载荷的描述文件 `.mcpp-toolchain.json`（schema 1：`frontend`、`platform_floor`、`std_module_defines`、`runner`），
+按路径命名的工具链（`path:<dir>` 与清单的 `[toolchain]` 路径表，家族由目录里的驱动判定），以及行的 `gcc-triple`。
+
+### 16.2 原则
+
+**家族是引擎的词汇，载荷是数据。** 家族回答"编译器说哪一套选项"（gcc、llvm、msvc），引擎为每一套各有一份实现，它保持封闭。
+载荷回答"哪个包、前端在哪里、带哪些工具"，它是包的事实，由包陈述。
+
+### 16.3 方案
+
+**T1 描述文件 schema 2 即路径表。** `.mcpp-toolchain.json` 增加清单 `[toolchain]` 路径表的键：`family`、`prefix`、`sysroot`、
+`tools`（角色到程序），路径相对载荷根。一个载荷对自身的陈述与一个项目对本机目录的陈述是同一张表，读同一个结构
+（`LocalToolchain`）。schema 1 的四个键不变；没有描述文件的已发布载荷按原样工作。
+
+**T2 `xim:<name>@<version>` 接受任何名字。** 名字在家族词汇（含别名）之外时，它指一个载荷：安装该包，读它的描述文件，然后按
+`path:<载荷根>` 加描述文件的表解析——家族由驱动判定（与表中的 `family` 不一致即拒绝），目标由驱动回答。描述文件缺失时拒绝，
+指出缺少的文件与键。不带 `xim:` 的未知名字仍被拒绝：命名空间是"这是一个包"的唯一说法。平台的 `toolchain` 键因此可以直接写
+任何载荷，平台定义的行不需要新键。
+
+**T3 默认映射是表。** 裸名（`gcc@16.1.0`、`llvm@23.1.3`）是简写：（家族，目标，宿主）经一张规则表得到包名、前端目录、前端候选与
+glibc 修正，规则按序匹配，取第一条。表在 toolchain-model 的数据文件里，`to_xim_package` 与 `identify_xim_payload` 都读它，
+正反两个方向不再各写一遍。别名（`clang`、`musl-gcc`、`mingw*`）保持兼容提示。
+
+**T4 验收：引擎零改动。** 新增一个工具链即发布一个带描述文件的 xim 包；以本轮的 gcc 16.2.0 验证版本开放，以一个词汇外名字的
+载荷验证 T2（e2e：仓库内的假载荷，带 schema 2 描述文件）。
+
+**T5 机械门禁。** 统计 `src/` 中载荷名（`emsdk`、`android-ndk`、`musl-gcc`、`mingw-gcc`、`mingw-cross-gcc`）在规则表之外的出现次数，
+与基线文件比较，多于基线即失败。
+
+### 16.4 本轮的 gcc 16.2.0 与 17 的主干快照
+
+默认仍为 gcc 16.1.0，xim 的 `latest` 仍指向正式版。xim-pkgindex 以 `tools/res/build.sh gcc` 从源码构建，两种来源：
+
+| 版本 | 来源 | 来源核对 | 平台 |
+|---|---|---|---|
+| `16.2.0` | GNU 的发布包（`ftpmirror.gnu.org`） | GNU 签名已核对（RSA 7F74F97C103468EE5D750B583AB00996FC26A641），摘要为实测 | Linux x86_64、aarch64 |
+| `17.0.0-20261108` | GCC 的快照目录（`gcc.gnu.org/pub/gcc/snapshots/17-20261108/`） | 上游不签快照，摘要为加入时实测；源码自述 `BASE-VER 17.0.0`、`DATESTAMP 20261108`、`DEV-PHASE experimental` | Linux x86_64、aarch64 |
+
+**主干快照的版本写法是 `<major>.0.0-<YYYYMMDD>`。** 它就是快照的编译器对自身的陈述（`17.0.0 20261108 (experimental)`），与上游
+快照名 `gcc-17-20261108` 一一对应。按 xpkg 版本的次序，日期段是预发布段：快照排在 `17.0.0` 与首个正式版 `17.1.0` 之前，
+快照之间按日期排序。等值匹配要求预发布段相同，因此 `gcc@17` 与 `gcc@17.0` 不选中快照，只有写全
+`xim:gcc@17.0.0-20261108`（或 `gcc@17.0.0-20261108`）才使用它：前沿的使用者显式选择，其余使用者不受影响。一个日期是一份不变
+的源码，锁文件、指纹与缓存因此可复现；不设滚动版本。索引只保留一个快照（本轮为 20261108），换新快照时替换条目，xlings-res 的
+资源保留。
+
+构建与正式版相同：C 程序与使用 `import std` 的 C++23 程序构建并运行，`--version` 报告所写的版本，二进制只依赖 glibc 的库；
+`res-build` 的 `only` 接受 `what@version`，新版本的构建不重建已发布的版本。产物发布到 xlings-res 并以 gtc 镜像到 GitCode，
+`pkgs/g/gcc.lua` 增加两个版本。
+
+验证项：`gcc@16.2`、`xim:gcc@16.2.0`、`xim:gcc@17.0.0-20261108` 的解析、安装与构建（含 `import std`），`gcc@17` 不选中快照，
+`[toolchain] default` 与 `--toolchain` 两种写法，`toolchain list` 与 `doctor` 的枚举，默认（16.1.0）不变。
+
+## 17. 工作区的并发、升级后的重编与构建目录的体积（2026-11-13 补充）
+
+### 17.1 现状（测）
+
+**并发的契约。** 一个配置一个构建目录，一把锁（`dirlock`），只在写目录时持有：清单、解析、网络、工具链与扫描不持锁，
+`mcpp test` 在第一个测试运行之前释放，`mcpp run` 在程序启动之前释放。同一配置的两个命令只在编译与链接时排队，等待方显示
+持有者；不同配置（profile、目标、选择）是不同的目录，互不等待。一个配置只有一份 `build.ninja` 与 ninja 状态，两个 ninja 同写
+即互相破坏（mcpp#839），因此锁的粒度是配置而不是成员。
+
+**升级后的重编。** 两个成员的工作区（一个库成员带 mtest 测试，一个程序成员），以 2026.11.10.2 构建并测试，再以 2026.11.12.1
+构建：153 个目标文件与 BMI 中 18 个重编，即两个成员与 mtest 的全部；全局缓存供给的依赖未重编。原因不是指纹的内容：
+锁文件的哈希不在指纹中（该字段为空），同一谱系的新指纹接管旧目录（2026-10-31 §8，目录改名而非复制）。原因在命令中的两个
+路径：
+
+- 目录的名字：编译命令含绝对的输出路径，链接命令含目录内的 specs 路径，路径含指纹，目录改名使这些命令全部改变；
+- 引擎的路径：图在命令中运行引擎（`$mcpp __compiler-cap … -- <编译器>`、BMI 比较、链接包装、暂存、模块绑定），
+  `$mcpp` 是引擎的绝对路径，经 xlings 安装时含版本（`xim-x-mcpp/<版本>/bin/mcpp`）。只改目录名之后仍是 18 个重编（实测）。
+
+ninja 按命令重编。随后的警告"fingerprint changed, full rebuild"不区分"接管并按命令重编"与"新目录"。
+
+**体积。** 已有：`-ffunction-sections -fdata-sections` 与测试程序链接的 `--gc-sections`，ELF 上的 `-gz=zlib`（mcpp#874），
+开发 profile 的拆分 DWARF（`.dwo`），`mcpp clean --report`（每个配置的 obj、bmi、bin），构建后的过期清扫（`[build] keep_days`）
+与 `[build] target_budget`。`debug` 只有开与关。程序与测试链接目标文件，不经静态库：构建目录中的 `.a` 只是库成员的交付物
+（`bin/`），mcpp 自身的两个构建目录（638 MB、466 MB）中归档为零。
+
+### 17.2 方案
+
+**W1 构建目录以配置的谱系命名。** 目录名是谱系（编译器家族、目标、标准库家族、语言标准、配置的选项；2026-10-31 §8.2）的哈希，
+演进的部分（编译器的版本与驱动、标准库的版本、mcpp 的版本、运行时契约）记在目录内：`toolchain` 已有，完整指纹另记于
+`fingerprint`。于是：
+
+- mcpp 或依赖升级不改变任何路径，ninja 只重编命令真正改变的边；
+- 图经构建目录自己的引擎链接运行引擎：`<目录>/engine/epoch-<N>/mcpp`，硬链接（不能时复制）到当前引擎，规划者在目录锁下
+  使之为当前引擎；一条命令只随编译器、选项与文件改变。链接的路径含 `kCacheEpoch`：引擎各步所写内容的含义改变的版本提升它，
+  各边随之重新运行，与依赖缓存以 epoch 而不以版本号为键是同一原则。快速路径接受指向本引擎的链接。自包含的家目录由引擎的位置
+  推出，经链接运行的子命令推不出，因此此时 mcpp 为其启动的程序陈述 `MCPP_HOME`；
+- 编译器的构建改变时，目录的内容在原处替换（锁文件除外），与现在"移除前任"的结果相同，状态行不变；引擎或演进部分改变时，
+  编译器的在途记录（`.sched`）删除，与接管时相同；
+- 以指纹命名的既有目录由现有的接管逻辑按谱系文件接管一次，此后路径稳定；
+- 快速路径的记录保存完整指纹，入口检查读目录内的 `fingerprint`，不再比较目录名；
+- 警告只在谱系改变（配置改变，新目录、全量构建）时出现，并说明是哪一项改变；同一目录的继续不发警告，重编的内容由 ninja 的
+  进度说明。
+
+指纹本身不变，仍是键（打包的 `buildKey`、`--print-fingerprint`）；改变的只是它不再兼作路径。实测（同一工作区，引擎只改版本号）：
+重编由 153 个中的 18 个降为 0，构建 0.22 s，测试 0.43 s；源码改动、profile 切换与 `debug = "lines"` 仍按预期重编或新开目录。
+
+**W2 被取代的目录。** 不另立机制。升级本来就不复制目录（接管），W1 之后连改名也没有；配置的改变产生的新目录是开发者会切回的
+目录，按 `keep_days` 清扫。
+
+**W3 时间与体积可见。**
+
+- 等待构建目录的时间进入 `Finished` 的分解（`waited 1m30s for the build directory`），从"plan"中扣除；
+- `mcpp clean --report` 增加一列 `debug`，即拆分出的调试信息（`.dwo`）。
+
+**W4 契约成文。** 17.1 的并发契约写入 `docs/07-workspace.md` 与 `docs/08-testing.md`（中英），包括"测一个成员、同时改另一个
+成员"的可行性与等待的条件。
+
+**W5 调试级别 `"lines"`。** `[profile.<name>] debug = "lines"` 只保留行表：GNU 与 LLVM 方言为 `-g1`（clang 即
+`-gline-tables-only`），回溯与 sanitizer 报告仍有文件与行号，没有变量与类型信息。cl.exe 没有只含行表的级别，`"lines"` 在其上即
+`/Z7`。其余字符串被拒绝。默认不变；配置字符串中 `debug=1` 不变，`"lines"` 为 `debug=lines`，既有目录的身份不变。
+
+**W6 薄归档：测后不采纳。** 构建内的链接输入是目标文件，归档只作交付物，薄归档引用构建目录中的路径，作为交付物是错的；
+可节省的体积为零。
+
+### 17.3 推荐的做法（文档，不改引擎）
+
+写入 `docs/08-testing.md` 与 `docs/04-mcpp-toml.md` 的 profile 一节：
+
+1. 全量测试与 CI 使用单独的 profile，例如 `[profile.ci]` 写 `debug = "lines"`（或 `false`）与 `strip = true`。日常开发保留完整的
+   调试信息。
+2. 测试多的包使用 `[test] programs = "directory"`：一个目录一个程序，链接次数由文件数降到目录数。
+3. 模块的实现放在实现单元（`module X;`）：函数体的改动不改变 BMI，导入方不重编。
+4. 成员分层：逻辑放在不依赖 UI 与渲染的成员中，多数测试只链接逻辑层。
+5. 体积以 `mcpp clean --report` 读取，以 `mcpp clean --stale` 回收。
+
+### 17.4 考虑过、不采纳
+
+- **测试程序默认以共享库链接成员的闭包。** 它去掉闭包的重复链接，但牵涉 Windows 的 DLL 导出语义与模块的符号导出，跨平台的
+  代价大，不能作为通用的默认。
+- **默认剥离测试程序的符号表。** 调试器、sanitizer 与回溯依赖符号表；由 profile 的 `strip` 选择。
+
+## 18. 大工作区的测试反馈（mcpp-community/mcpp#927，2026-11-13 补充）
+
+反馈来自一个 143 个成员、339 个测试程序的工作区（2026.11.12.1、mtest 0.7.1、Linux x86_64、gcc 16.1.0、`dev`）。六项中，
+项目自身的部分不在此列：测试文件的放置、成员的分层、CI profile 的采用，以及测试本身 43 分钟的运行时间。
+
+### 18.1 归属与现状（代码核对）
+
+| 项 | 属于 mcpp 的部分 | 现状 |
+|---|---|---|
+| 1 `programs = "directory"` 对 `tests/` 根下的文件无效 | 语义的表达与提示 | 设计如此：固定目录下的子目录各成一个程序，直接位于固定目录中的文件仍各为程序；设置不改变任何程序时没有任何提示，`--strict` 亦然 |
+| 2 `mcpp test -p` 解析两遍、汇总有一段无名 | 一次调用的规划次数与时间的归属 | 测试先以 `mcpp build` 的方式构建包的程序（`MCPP_BIN_<NAME>`），其快速路径的条件要求 `package_filter` 为空，故 `-p` 必走完整的 `prepare_build`；随后带 dev 依赖再 `prepare_build` 一次。汇总只列 build 与 run |
+| 3 两个进程并发时一次 `no local package index` | 索引刷新与读取的并发 | 刷新锁是非阻塞的：拿不到锁的进程跳过刷新并立即读取。mcpp 拥有的索引在暂存目录取回后交换；文件系统不支持原子交换时退化为"旧目录移开、新目录改名"，其间索引不存在；provider 自己的索引原地刷新。两者都是读者可见的窗口 |
+| 4 测试程序占配置体积七成 | 调试信息的级别、链接形式、程序的粒度 | §17 已有 `debug = "lines"`；`dependency_linkage = "shared"` 按 profile 可写，实测对工作区成员生效（成员依赖成为共享库，放在产品目录中）；开发 profile 默认拆分并压缩 DWARF；文档未把它们组织为"开发时的测试体积"一节 |
+| 5 升级后 88 分钟全量重编 | 构建目录的身份 | §17 W1 已解决：目录以谱系命名，图经目录的引擎链接运行 mcpp；实测只改版本号的引擎重编 0 个 |
+| 6 `clean --stale` 需要人记得 | 被取代目录的回收 | W1 之后升级不再产生目录，编译器改变时原处替换；构建后的清扫（`keep_days`，默认 3 天）与 `target_budget` 已有。剩下的是：配置改变新开目录时，警告不说旧目录的大小 |
+
+### 18.2 方案
+
+**P1 测试程序的粒度：`programs = "package"`，与 `"directory"` 的提示。** `[test] programs` 是测试程序的粒度：`"file"`
+（默认）、`"directory"`、`"package"`。`"package"` 使一个包所发现的全部文件成为一个程序，以第一个 glob 的固定目录命名
+（`tests`），规则与 `"directory"` 相同：定义 `main` 的文件至多一个，否则拒绝并指出两者；按测试协议运行时仍是每个文件一个进程
+（`tests/<file>`），隔离与并行不变，链接一次。`"directory"` 的语义不变，并在设置留下了直接位于固定目录中的文件时说一行：
+
+```
+note: [test] programs = "directory": 12 files directly in tests/ stay programs of their own; "package" makes the suite one program
+```
+
+设置不改变任何程序时，`--strict` 拒绝。文档写明三种粒度与固定目录的含义。它同时是第 4 项的主要手段：程序数由测试文件数降为
+目录数或包数，闭包的重复链接随之减少。
+
+**P2 一次调用，每个配置规划一次；汇总给出每一段。**
+
+- 程序的预构建对 `-p` 与工作区选择也取快速路径：按所选成员的配置组匹配记录，与 `try_fast_workspace_build` 相同；
+- 需要规划时，同一次调用内的第二次 `prepare_build` 复用第一次的依赖解析与工具链解析（以清单、锁文件与覆盖项为键的进程内结果），
+  不再解析与打印第二遍。`mcpp run --format`（构建后打包）同样受益；
+- 测试的汇总与 `Finished` 一致地分解：`finished in 7.77s (plan 2.10s · programs 1.73s · build 1.60s · run 2.34s)`，各段之和
+  为总时长，等待构建目录时另列 `waited`（§17 W3）。
+
+**P3 索引：刷新可以跳过，读取不读替换中的树。** 刷新分两段：取回在暂存目录中进行，不阻塞任何人；交换在索引锁下进行，只持有
+毫秒。读取在索引的共享锁下进行，因此不会落在交换的窗口中（包括不支持原子交换的文件系统）。provider 自己的索引也按此取回到
+暂存目录再交换（`sync_index` 已接受目标目录），不再原地改写。拿不到刷新锁的进程仍跳过刷新，但它的读取等待交换完成。
+
+**P4 开发时测试的体积：已有能力的组织与文档。** 不新增引擎键：
+
+- `[workspace.profile.<name>] debug = "lines"`（§17 W5）：回溯与 sanitizer 仍有文件与行号；
+- `[workspace.profile.<name>] dependency_linkage = "shared"`：一个成员的测试链接其余成员的共享库，闭包在磁盘上只有一份；
+  这是可选的 profile，不是默认（§17.4 的理由不变：Windows 的 DLL 导出与模块符号导出）；
+- P1 的程序粒度。
+
+`docs/08-testing.md` 的"测试构建的体积"一节按上述顺序给出开发与 CI 两个 profile 的写法。
+
+**P5 升级。** 由 §17 W1 解决，不另立机制；`mtest` 升级只重编导入 mtest 的单元与重链接测试程序，这是必要的。
+
+**P6 新目录的提示。** 配置改变新开目录时，警告给出旧目录的大小与回收它的命令：
+
+```
+warning: the configuration changed (debug 1 → lines): 7a72… is built in full beside ed03… (2.1 GiB); `mcpp clean --stale` drops it once no build uses it
+```
+
+### 18.3 实施记录（2026.11.13.1）
+
+| 项 | 实施 | 持有它的检查 |
+|---|---|---|
+| P1 | `programs = "package"`：一个包一个程序，以第一个 glob 的固定目录命名，定义 `main` 的文件至多一个；按文件运行的各部分以文件在程序目录（其文件的公共目录）之下的路径命名，不同子目录中的同名文件因此不冲突（目录模式下即文件名，与此前相同）；`"directory"` 留下固定目录中的文件时给出 note，不形成任何组时为 `degraded`（`--strict` 拒绝） | mcpp `test_targets.cppm`；e2e 的 C++ 用例 |
+| P2 的汇总 | `finished in X (plan · programs · build · run)`：plan 为总时长减去其余各段，programs 不足 5 ms 时不列 | mcpp `execute.cppm`；`tests/e2e/test/streams.cpp` |
+| P3 | 拿不到刷新锁、且所声明的索引目录有缺失的进程，等待刷新锁（显示 `Waiting`）后再读；索引完整时仍跳过刷新、立即读取 | mcpp `xlings.cpp` |
+| P4 | 文档：`docs/08-testing.md` 的"测试构建的体积"一节（中英） | — |
+| P6 | 警告给出旧目录的大小与回收命令 | mcpp `execute.cppm` |
+
+**P3 的范围比 18.2 小。** 18.2 的方案是读取持共享锁、刷新在暂存目录中进行后交换。#927 报告的现象只在"索引目录不存在"时出现：
+索引存在时，刷新以交换替换整棵树，读取者读到的是交换前或交换后的一棵完整的树。因此实施只关闭这一个窗口，读路径不加锁。
+不支持原子交换的文件系统上，"移开、改名"之间的窗口与目录不存在是同一情形，读取者同样等待。
+
+**P2 的另两项不在本版。** `-p` 的预构建取快速路径、同一次调用内复用解析：二者改变 `prepare_build` 的入口契约（解析结果的生命周期
+与键），在本轮之外；当前代价是 `-p` 多一次完整规划。
+
+**用户裁决。** P1、P2、P3、P6 的取舍向负责人提出过，未得到答复；以上按本文的推荐实施。
+
+### 18.4 不采纳
+
+- **`[test] debug = "lines"`，测试专有的调试级别。** `mcpp build` 与 `mcpp test` 是同一配置（2026.11.8.1），被测代码的目标文件
+  由两者共用。测试专有的级别要么只作用于测试自己的翻译单元，体积几乎不变；要么使测试成为另一配置，切换即全量重编。级别由
+  profile 决定。
+- **默认只剥离符号表而保留调试信息。** 符号表是调试器、性能分析器与回溯在没有 DWARF 时的依据，开发构建不默认去掉；需要时由
+  `strip = true` 的 profile 选择。
+
+## 19. UEFI 收敛到 openkal：实施中测到的与据此的设计（2026-11-13 补充）
+
+本节记录"UEFI 收敛到 openkal"（第 5.12 节，用户决定：openkal-platform 接管 `x86_64-uefi` 行与载体，uefi-platform#1 关闭）
+实施时测到的三处缺口，以及按 P16（归属）与"不硬编码系统名"的规则给出的解法。
+
+### 19.1 测到的
+
+| 项 | 测到的（2026-11-13，llvm 23.1.3） | 缺口的归属 |
+|---|---|---|
+| C 环境的实现 | openkal-musl 声明 `presents = "posix"`、`data-model = "arch-default"`；对 `x86_64-uefi` 的构建被拒："this OS is outside the mapping table"。`cenv` 的映射以系统名为键（`windows`、`linux`、`macos`） | mcpp：映射的键应是行的容器格式 |
+| 包对 PE 的选择 | musl 与 llvm-runtime 的 PE 部分（setjmp 的记录、`.ctors` 的遍历、compiler-rt 的 PE 源、libunwind 的 PE 分支）以 `cfg(windows)` 选择；UEFI 是 PE 而不是 Windows | mcpp 缺少按容器选择的 cfg 键；包把"PE"写成了"Windows" |
+| 链接 | 以 `--target=x86_64-pc-cygwin` 编译的目标文件在 `lld-link`（MSVC 方式）下没有 `__CTOR_LIST__`；`ld.lld -m i386pep --subsystem efi_application` 链接出 EFI 应用（子系统 10）；openkal-platform 的 `[platform.link]` 与 `[platform.build]` 是 ok 镜像的 | 提供者的 `link`、`layers` 已由 `provider_view` 并入（SPEC-016 §3）；平台顶层的 `runner` 仍压过提供者自己的运行器 |
+
+### 19.2 方案
+
+1. **`cenv` 以容器为键（mcpp）。** 实现"呈现 POSIX"的代价是工具链对容器的约定：PE 为 LLP64、16 位 `wchar_t`，以 Cygwin 身份的
+   替换得到 LP64 与 `__unix__`；ELF 已有 `__unix__`；Mach-O 加 `-D__unix__`。`realise` 增加容器参数（由
+   `Triple::object_format()` 给出，平台定义的行亦然），系统名只用于消息。内置行的行为与命令行不变（单元测试 21 例，含新增的
+   "平台定义的 PE 行取 PE 的实现"与"未知容器被拒并指名"）。已实现。
+2. **`cfg(object-format = "...")`（mcpp）。** 三元组键增加 `object-format`，值为行数据的拼写（`elf`、`pe`、`mach-o`、`wasm`、
+   `coff`）；特异性为一个分量，低于 `os`。包需要的是同一容器的各系统共有的约定时按它选择。已实现，文档 docs/22（中英）。
+3. **一个平台按行给出约定（openkal-platform，数据；mcpp 一处）。** 提供者的 `link` 已在它服务的身份上取代平台的
+   `[platform.link]`：`x86_64-uefi` 的提供者陈述 `driver = "lld"`、`flags = ["--subsystem", "efi_application",
+   "--gc-sections"]`、`start = "efi_main"`、`exe = "{name}.efi"`、`inputs = []`、`seal = []`，行的
+   `link-emulation = "i386pep"` 选择 MinGW 方式的 COFF 链接；ok 镜像的编译约定移入 `[platform.build.'cfg(os = "openkal")']`。
+   mcpp 的一处：提供者陈述了 `runner` 时，`provider_view` 以它取代平台顶层的 `runner`（顶层的运行器属于 `[platform]
+   targets` 这个提供者），与 `link`、`layers` 的取代一致。
+4. **包按容器选择（openkal-musl 0.29.6、openkal-llvm-runtime 0.20.3）。** PE 共有的部分改为 `cfg(object-format = "pe")`，
+   私有宏为 `OKM_TARGET_PE`、`OPENKAL_TARGET_PE`；Windows 独有的部分（openkal-windows 依赖、`okw_start` 入口、`.exe` 的重试、
+   Windows 的链接词）仍为 `cfg(windows)`。安装的头文件不读系统名：musl 的 PE 记录放在只在 PE 行上进入包含路径的
+   `musl-generated/x86_64-pe`，llvm-runtime 以只在 PE 行上进入包含路径的 `port/include-pe/__openkal_target_pe.h` 标记容器。
+   两包的引擎下限为 2026.11.13.1。
+5. **openkal-uefi 0.10.0 的 `standalone`。** 与 openkal-windows 相同：`efi_main` 记录固件表与参数，交给 C 库的
+   `__libc_start_main`，初始化由 C 库完成；无 C 库时保持 0.9.0 的行为。openkal-musl 在 `cfg(os = "uefi")` 下以
+   `standalone` 依赖它，与其余系统的写法一致。
+6. **运行器。** xim 的 `ovmf` 9.2.4-1 携带 dirun 描述文件（`{profile-dir}`，dirun 0.3.2），运行器陈述只写
+   `dirun --payload {} --profile {pkg:ovmf}/dirun.toml --emulator {pkg:qemu-x86}/bin/qemu-system-x86_64`。
+
+7. **可选接口按实现的陈述（openkal-musl、openkal-llvm-runtime）。** 两包的 `OKM_HAS_FS/PROCESS/TASK`、`OPENKAL_HAS_TASK`
+   原以目标为代理（`os = "none"` 为 0）；现以 `cfg(not(interface = "openkal.fs"))` 等读实现的 `provides-interfaces`
+   （ok 镜像仍在运行时询问）。`pthread_getattr_np` 对 `kal_task_stack` 的直接调用改经可选接口的接缝。
+8. **行可以只陈述链接的仿真而不陈述机器（mcpp）。** `defined_spec` 原要求 `march`；`x86_64-uefi` 只陈述
+   `link-emulation = "i386pep"`，处理器取 clang 三元组的默认。
+
+**测到的结果（2026-11-13，本地各仓库的工作树）。** `import std` 的 C++ 程序（`std::println`、`std::ranges::sort`）以
+`--target x86_64-uefi` 构建：release 产物 1.2 MB 的 PE32+ EFI 应用（子系统 10），在 OVMF 下经 dirun 与 ovmf 的描述文件运行，
+输出正确，状态 42 经调试端口回到宿主，墙钟 0.8 秒。
+
+### 19.3 载体：经 okrun 运行时测到的三处缺口（2026-11-13）
+
+载体是一个 `x86_64-uefi` 的 EFI 应用，它在固件中运行一个 openkal 映像。经 dirun 在 OVMF 下运行时，载体先是不输出任何内容直到
+超时。逐项测得：
+
+| 现象 | 原因 | 修正 |
+|---|---|---|
+| 2 GiB 时 `_mi_page_map_register` 中的 #GP | mimalloc 3.6.1 的页映射依赖"保留而未提交的内存读为零"；无区域的实现（UEFI）上，保留即分配，OVMF 以 0xAF 填充池 | openkal-musl 的 mimalloc 原语：无区域时，未提交的保留清零，`is_zero` 如实陈述 |
+| 512 MiB 时中止 | mimalloc 的 arena 以 256 MiB 对齐；`kal_alloc` 以超额分配实现对齐，32 MiB 的 arena 成为 288 MiB 的请求 | openkal-uefi：一页及以上的对齐读内存映射，在对齐的空闲范围以 `AllocateAddress` 分配页；openkal-musl：无虚拟保留时 arena 的预留为 1 GiB 的四分之一 |
+| 中止的消息不可见 | OVMF 的 StdErr 不写串口 | openkal-uefi 的弱钩子 `okuefi_board_errors_to_console()`：板子定义它，标准错误即 ConOut |
+
+载体与映像是两个分配器，各需要一个 256 MiB 对齐的 arena，因此 openkal-platform 的 UEFI 运行器给出 `--memory 2048`。测得：
+映像打印、写标准错误、抛出并捕获异常，以状态 7 返回，1 GiB 与 2 GiB 下均为 0.4 秒。
+
+### 19.4 不采纳
+
+- **为 UEFI 在包里加 `cfg(os = "uefi")` 的 PE 分支。** 每增加一个 PE 系统就要再改一次包；容器是这些分支真正问的事实。
+- **引擎为每个构建广播容器宏。** 改变所有目标的每条编译命令（升级即全量重编），而安装的头文件可由清单选择的包含目录回答。
+- **行声明 `family = "windows"`。** UEFI 不是 Windows 家族；`cfg(windows)` 下的 Windows 依赖与入口会被错误地选中。

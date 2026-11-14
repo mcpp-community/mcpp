@@ -1021,6 +1021,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     if (auto c = state.get_cfg(/*requireBootstrap=*/false))
         globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
     ctx.globalDefaultJobs = globalDefaultJobs;
+    ctx.intent = state.overrides.intent;
 
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and
     // the manifest are in hand. The backend writes the graph in this shape, the
@@ -1081,17 +1082,17 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     // moved in — an earlier assignment was silently overwritten by that move,
     // which produced a generated file that nothing ever passed to the driver.
     // Generated here rather than in compute_flags, which runs twice per build.
-    // A link input only: a plan that builds nothing (`plan_only`) neither reads
+    // A link input only: a plan that builds nothing (`PrepareIntent::Describe`) neither reads
     // it nor runs the driver to produce it, and its compile arguments are the
     // same without it.
-    if (state.tc->compiler == mcpp::toolchain::CompilerId::GCC && !state.overrides.plan_only)
+    if (state.tc->compiler == mcpp::toolchain::CompilerId::GCC && !state.overrides.describes())
         ctx.plan.gccCleanSpecs = mcpp::toolchain::write_clean_link_specs(
             state.tc->binaryPath, ctx.outputDir);
     // THE WAY BACK FROM A TRIMMED PATH (design 2026-10-23 §15.3): a debugger
     // loads these and finds the sources the debug information names by
     // `<name>@<version>/…`. Written with the build that produced them, and
     // only when there is debug information for them to serve.
-    if (!ctx.plan.trimMap.empty() && state.m->buildConfig.debug && !state.overrides.plan_only) {
+    if (!ctx.plan.trimMap.empty() && state.m->buildConfig.debug && !state.overrides.describes()) {
         std::error_code ec;
         std::filesystem::create_directories(ctx.outputDir, ec);
         std::ofstream gdb(ctx.outputDir / "source-map.gdbinit", std::ios::binary | std::ios::trunc);
@@ -2239,17 +2240,19 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     // before this line -- the manifest, resolution, the network, the
     // toolchain, the scan -- ran holding nothing, and a second build of the
     // same configuration waits here, then finds ninja with little to do. A
-    // pass that only describes (plan_only) plans into its own directory.
+    // pass that only describes (PrepareIntent::Describe) plans into its own directory.
     // `--deny write-project` stops here, before the first write (design
     // 2026-10-26 §5.5).
-    if (!state.overrides.plan_only && mcpp::effects::effect_denied("write-project")) {
+    if (!state.overrides.describes() && mcpp::effects::effect_denied("write-project")) {
         mcpp::effects::note_effect_refused("write-project", ctx.outputDir.generic_string());
         return std::unexpected(std::format(
             "effect denied: write-project -- the build writes {}, and the caller denied writing "
             "the project (--deny write-project)", ctx.outputDir.generic_string()));
     }
-    if (!state.overrides.plan_only) adopt_predecessor_dir(state, ctx.outputDir);
-    if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
+    if (!state.overrides.describes()) adopt_predecessor_dir(state, ctx.outputDir);
+    if (!state.overrides.describes()) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
+    std::filesystem::path graphEngine;
+    if (!state.overrides.describes()) graphEngine = renew_build_dir(state, ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).
@@ -2276,6 +2279,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         return std::unexpected(r.error());
     if (auto r = timed("make plan", [&] { return step13_make_plan(state, ctx); }); !r)
         return std::unexpected(r.error());
+    ctx.plan.engine = graphEngine;
     if (auto r = timed("cxx islands", [&] { return step13_cxx_islands(state, ctx); }); !r)
         return std::unexpected(r.error());
     if (auto r = timed("cxx private runtime", [&] { return step13_cxx_private_runtime(state, ctx); }); !r)
@@ -2303,7 +2307,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         return std::unexpected(r.error());
     timed("report packages", [&] { step13_report_packages(state, ctx); return 0; });
     // Last: what the plan used is known only now (the dependency cache's hits).
-    if (!state.overrides.plan_only) record_build_dir(state, ctx.outputDir);
+    if (!state.overrides.describes()) record_build_dir(state, ctx.outputDir);
 
     ctx.planNotes = std::move(state.planNotes);
     return ctx;

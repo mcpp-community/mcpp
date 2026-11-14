@@ -1222,6 +1222,7 @@ struct BuildConfig : BuildInputs {
     // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
+    bool                                debugLines = false; // -g1: the line tables alone
     bool                                lto      = false; // -flto, /GL + /LTCG on cl.exe
     // LTO was requested and some objects of the plan are compiled without it:
     // those that feed a PE shared library whose exports are discovered, or a
@@ -2147,6 +2148,11 @@ struct Hooks {
 struct Profile {
     std::string optLevel = "2";
     bool        debug    = false;
+    // `debug = "lines"` (2026-11-12 §17, W5): debug information, the line
+    // tables alone. `debugWritten` is a string as the table wrote it, which
+    // prepare refuses unless it is "lines".
+    bool        debugLines = false;
+    std::string debugWritten;
     bool        lto      = false;
     bool        strip    = false;
     // Which scalars the table WROTE: a profile inherited from the workspace

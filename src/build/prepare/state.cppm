@@ -616,7 +616,8 @@ struct PrepareState {
     std::string runtimePayload;
     std::filesystem::path runtimeLibDir;
     bool runtimePayloadProvided = false;
-    std::function<std::expected<void, std::string>(const mcpp::toolchain::XimToolchainPackage&)> provide_runtime_payload;
+    std::function<std::expected<void, std::string>(const mcpp::toolchain::XimToolchainPackage&,
+                                                   const std::filesystem::path&)> provide_runtime_payload;
     std::string effectiveProfile;
     std::vector<std::filesystem::path> storeRoots;
     std::optional<std::string> tcSpec;
@@ -793,7 +794,7 @@ struct PrepareState {
     std::map<std::size_t, BuildProgramBinary> buildProgramBinaries;
     // The roots (package directories) planned as build plugins (P3).
     std::set<std::string> buildPluginRoots;
-    // The build programs' graphs planned for description (`plan_only`).
+    // The build programs' graphs planned for description (`PrepareIntent::Describe`).
     std::vector<BuildProgramGraph> buildProgramGraphs;
     // A use of a deprecated reading (mcpp.pm.compat.registry) by the manifest
     // of package `i`: warned where that manifest can be edited -- the root, a
@@ -967,7 +968,7 @@ struct PrepareState {
     std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     // Keyed like `deviceSourcesByPackage`, by `pkg.root.string()` (root
     // package included: `packages[0].root == *root`). Holds a package whose
-    // build program failed IN THIS PASS, under `plan_only` (`emit
+    // build program failed IN THIS PASS, under `PrepareIntent::Describe` (`emit
     // build-database`) — the one case a failed program does not already end
     // the whole call (SPEC-005 R5.2, #699 item 2, E3). A check whose premise
     // is that program's directives must not run for such a package: with no
@@ -1216,6 +1217,11 @@ std::string with_index_cause(std::string msg);
 // A new fingerprint of a lineage takes over its predecessor's directory, or
 // removes it when the toolchain changed (design 2026-10-31 §8.2).
 void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::path& outputDir);
+// The configuration's directory, under its lock (2026-11-12 §17, W1): emptied
+// when the compiler build it records is not this one's, its compiler records
+// dropped when another engine wrote them; returns the engine its graph names,
+// made this one.
+std::filesystem::path renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 // `uses.list`, `lineage` and `toolchain` in the directory.
 void record_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 
@@ -1263,7 +1269,7 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
                    const mcpp::manifest::Manifest& owner, std::size_t consumer);
 // After a run of `who`'s build program into `m`: when it asked for payloads,
 // install them in one batch and refill `e`; true when the program must run
-// again. Under `plan_only` nothing is installed: a note is recorded and false
+// again. Under `PrepareIntent::Describe` nothing is installed: a note is recorded and false
 // is returned.
 std::expected<bool, std::string>
 answer_payload_requests(PrepareState& state, mcpp::manifest::Manifest& m,

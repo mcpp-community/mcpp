@@ -9,7 +9,9 @@ description: >
 
 inputs:
   host:
-    description: the host's name in the stores' artifact names (linux, macos, windows)
+    description: >
+      the host's name in the stores' artifact names (linux, macos, windows), or
+      `*` for every host's (the plan of ci.yml)
     required: true
   token:
     description: a token that reads this repository's actions
@@ -55,7 +57,7 @@ runs:
     # Another host's own sources (src/native/windows/...) run on no Linux test,
     # so its suite has no map and every test of it is affected.
     - name: The coverage map
-      if: inputs.host == 'linux'
+      if: inputs.host == 'linux' || inputs.host == '*'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}

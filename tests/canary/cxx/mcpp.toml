@@ -1,0 +1,12 @@
+# canary-cxx: C++23 modules, `import std`, exceptions and threads, with a test
+# (design 2026-11-12 §5.7): what every arrangement that declares a c++-abi carries.
+[package]
+name    = "canary-cxx"
+version = "1.0.0"
+
+[targets.canary-cxx]
+kind = "bin"
+main = "src/main.cpp"
+
+[dev-dependencies]
+mcpplibs.mtest = "0.8.5"

@@ -246,7 +246,7 @@ struct Hosted {
 // engine's table does not have, with the facts a build of it needs.
 struct RowSpec {
     std::string triple;
-    std::string tier = "preview", note, clangTriple, objectFormat = "elf", family, dataModel,
+    std::string tier = "preview", note, clangTriple, gccTriple, objectFormat = "elf", family, dataModel,
                 exeSuffix, sharedSuffix, loader, execution;
     std::string march, mabi, codeModel, multilib, linkEmulation;
     std::vector<std::string> flags, descriptorKeys;
@@ -373,7 +373,7 @@ inline constexpr std::string_view kPlatformKeys[] = {
     "define", "provider", "system", "priority",
 };
 inline constexpr std::string_view kDefineKeys[] = {
-    "triple", "tier", "note", "standard", "exact", "clang-triple", "object-format", "family",
+    "triple", "tier", "note", "standard", "exact", "clang-triple", "gcc-triple", "object-format", "family",
     "data-model", "exe-suffix", "shared-suffix", "loader", "execution", "march", "mabi",
     "code-model", "multilib", "flags", "link-emulation", "descriptor-keys",
 };

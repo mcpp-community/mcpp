@@ -161,10 +161,11 @@ loader   = "/lib/ld-musl-riscv64.so.1"
 tier     = "planned"
 standard = true
 
-# 32-BIT HOSTED ROWS (E11): registered intent, refused until served. No payload of
-# the index targets them, and openkal has no 32-bit class yet (the image
-# convention, the loader and the system calls of ELF32 are a design discussion);
-# an explicit `[target.<row>] toolchain` opts in early.
+# 32-BIT ROWS (E11): registered intent, refused until served. No payload of the
+# index targets them. openkal states its 32-bit class (0.25.1, clause 5.5), and
+# openkal-platform 0.28.0 serves `i686-linux-musl` and `i686-openkal` with the
+# LLVM toolchain; the rows stay planned here until the engine's pin of that
+# platform serves them. An explicit `[target.<row>] toolchain` opts in early.
 [[platform.define]]
 triple   = "i686-linux-musl"
 loader   = "/lib/ld-musl-i386.so.1"
@@ -643,3 +644,176 @@ uname = "FreeBSD"
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
 name  = "windows"
+
+# ── Toolchain payloads ───────────────────────────────────────────────────────
+#
+# A toolchain named by its family (`gcc@16.1.0`, `llvm@23.1.3`) is a package of
+# the ecosystem's index, and which package is data (design 2026-11-12 §16): the
+# entries of a family are tried in order and the first that serves the target
+# on this host is taken. A payload named outright (`xim:<name>@<version>`) needs
+# no entry: it describes itself (`.mcpp-toolchain.json`).
+#
+# Payload keys
+#   name          the package; `{triple}` is the target, `{gcc-triple}` its row's
+#                 GCC triple, `{host-arch}` this machine's architecture. An entry
+#                 whose placeholder has no value does not apply
+#   aliases       other names a request may give it (`emscripten`)
+#   family        gcc | llvm | msvc: the option vocabulary of its compiler
+#   serves        target patterns, as a provider's (`*-linux-musl`); `*` any
+#                 target, `host` a build for this machine
+#   hosts         `<os>-<arch>` patterns of the machines it is published for;
+#                 `{arch}` the target's architecture, `!` excludes, the last
+#                 pattern that matches stands
+#   frontend-dir  where its C++ frontend is under the payload root (default
+#                 `bin`); `{ndk-host}` the NDK's directory for this host
+#   frontends     the frontend names, tried in order; `{exe}` the host's
+#                 executable suffix, `{host-musl}` this machine's musl triple
+#   builds-for    the target a request that names the payload builds for
+#                 (`musl-gcc@16.1.0`), and what `toolchain list` reads it as:
+#                 a triple, `host`, `host-musl`; empty: the request decides
+#   glibc-fixup   the glibc payload's install-time specs fixup
+#   family-version  the payload's version is its family's (default true):
+#                 `musl-gcc@16.1.0` is gcc 16.1.0 for its target, and
+#                 `toolchain list` shows it; false where the version is the
+#                 payload's own SDK's (`emsdk@6.0.9`), which a request names
+#                 as the payload
+#
+# Offer keys (`toolchain list --available`)
+#   name, hosts   a payload and the machines on which it is offered
+
+[[toolchain.payload]]
+name         = "emsdk"
+aliases      = ["emscripten"]
+family       = "llvm"
+serves       = ["*-emscripten"]
+hosts        = ["*"]
+frontend-dir = "emscripten"
+frontends    = ["em++", "emcc"]
+builds-for     = "wasm32-emscripten"
+family-version = false
+
+[[toolchain.payload]]
+name         = "android-ndk"
+family       = "llvm"
+serves       = ["*-linux-android"]
+hosts        = ["*"]
+frontend-dir = "toolchains/llvm/prebuilt/{ndk-host}/bin"
+frontends      = ["clang++{exe}", "clang++", "clang"]
+family-version = false
+
+[[toolchain.payload]]
+name       = "llvm"
+family     = "llvm"
+serves     = ["*", "host"]
+hosts      = ["*"]
+frontends  = ["clang++{exe}"]
+builds-for = "host"
+
+# A row that states its GCC triple (`i586-pc-msdosdjgpp`) names its cross GCC.
+[[toolchain.payload]]
+name      = "{gcc-triple}-gcc"
+family    = "gcc"
+serves    = ["*"]
+hosts     = ["*"]
+frontends = ["{gcc-triple}-g++{exe}", "{gcc-triple}-g++"]
+
+# musl for this machine's own architecture on Linux; a cross musl GCC otherwise.
+[[toolchain.payload]]
+name       = "musl-gcc"
+family     = "gcc"
+serves     = ["*-linux-musl"]
+hosts      = ["linux-{arch}"]
+frontends  = ["{triple}-g++{exe}", "{triple}-g++", "g++{exe}", "g++"]
+builds-for = "host-musl"
+
+[[toolchain.payload]]
+name      = "{triple}-gcc"
+family    = "gcc"
+serves    = ["*-linux-musl"]
+hosts     = ["*"]
+frontends = ["{triple}-g++{exe}", "{triple}-g++", "g++{exe}", "g++"]
+
+# MinGW: Windows' own GCC on Windows (also for a build for the machine itself),
+# the cross GCC elsewhere.
+[[toolchain.payload]]
+name       = "mingw-gcc"
+aliases    = ["mingw"]
+family     = "gcc"
+serves     = ["*-windows-gnu", "host"]
+hosts      = ["windows-*"]
+frontends  = ["g++{exe}", "g++"]
+builds-for = "x86_64-windows-gnu"
+
+[[toolchain.payload]]
+name       = "mingw-cross-gcc"
+aliases    = ["mingw-cross"]
+family     = "gcc"
+serves     = ["*-windows-gnu"]
+hosts      = ["*", "!windows-*"]
+frontends  = ["x86_64-w64-mingw32-g++"]
+builds-for = "x86_64-windows-gnu"
+
+# The glibc GCC is published for x86_64 Linux and, from 16.1.0, aarch64 when a
+# target names glibc; a build for the machine itself on another Linux
+# architecture takes the musl GCC, which is published there.
+[[toolchain.payload]]
+name        = "gcc"
+family      = "gcc"
+serves      = ["host"]
+hosts       = ["*", "!linux-*", "linux-x86_64"]
+frontends   = ["g++"]
+builds-for  = "host"
+glibc-fixup = true
+
+[[toolchain.payload]]
+name       = "musl-gcc"
+family     = "gcc"
+serves     = ["host"]
+hosts      = ["linux-*"]
+frontends  = ["{host-musl}-g++", "g++"]
+builds-for = "host-musl"
+
+[[toolchain.payload]]
+name        = "gcc"
+family      = "gcc"
+serves      = ["*"]
+hosts       = ["*"]
+frontends   = ["g++"]
+builds-for  = "host"
+glibc-fixup = true
+
+[[toolchain.payload]]
+name       = "msvc"
+family     = "msvc"
+serves     = ["*", "host"]
+hosts      = ["*"]
+frontends  = ["cl.exe"]
+builds-for = "host"
+
+[[toolchain.offer]]
+name  = "gcc"
+hosts = ["*"]
+
+[[toolchain.offer]]
+name  = "musl-gcc"
+hosts = ["*"]
+
+[[toolchain.offer]]
+name  = "llvm"
+hosts = ["*", "!linux-*", "linux-x86_64", "linux-aarch64"]
+
+[[toolchain.offer]]
+name  = "msvc"
+hosts = ["windows-*"]
+
+[[toolchain.offer]]
+name  = "mingw-gcc"
+hosts = ["windows-*"]
+
+[[toolchain.offer]]
+name  = "{host-arch}-linux-musl-gcc"
+hosts = ["windows-*"]
+
+[[toolchain.offer]]
+name  = "mingw-cross-gcc"
+hosts = ["linux-x86_64"]

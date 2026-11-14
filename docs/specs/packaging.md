@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-014 |
 | 标题 | 打包与分发:链接、闭包、容器三个维度与构建腿,腿的合并,暂存树与包元数据,运行覆盖、单文件、容器列表、签名、压缩、合并与分发描述 |
-| 状态 | 评审中 v2.3 |
-| 版本 | 2.3 |
-| 最后修改 | 2026-11-10 |
-| 对应实现 | mcpp >= 2026.10.31.1;v2.2 条款 mcpp >= 2026.11.10.1 |
+| 状态 | 评审中 v2.4 |
+| 版本 | 2.4 |
+| 最后修改 | 2026-11-14 |
+| 对应实现 | mcpp >= 2026.10.31.1;v2.2 条款 mcpp >= 2026.11.10.1;v2.3 条款 mcpp >= 2026.11.12.1;v2.4 条款 mcpp >= 2026.11.13.1 |
 | 相关设计文档 | `.agents/docs/2026-10-30-ecosystem-part2-ide-and-language-service-design.md`(§19.6)、`.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
 | 相关 issue | mcpp#847、mcpp#849、mcpp#860 |
 | 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、运行器、载体)、[SPEC-015](target-sets.md)(目标集合与腿) |
@@ -236,7 +236,10 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 按惯常行构建,与本机系统和架构相同时取本机的行。本 mcpp 不构建程序的行(目标表标为 planned 或未列出)不放入包,并
 写出该系统与行。引擎只对 `linux`、`macos`、`windows` 持有"该系统的程序是哪一行"的约定;其余系统的程序是平台运行器
 为该宿主对陈述的身份(`runner.built-as`,SPEC-013 §10),无此陈述、平台也未为它定义行的系统没有程序
-(**mcpp >= 2026.11.12.1**)。
+(**mcpp >= 2026.11.12.1**)。平台为某系统定义的行即该系统的程序之行,行名可带环境段(i686 上的 `dos` 即
+`i686-dos-musl`):程序以该行的后缀命名;`built-as` 指向平台定义而非托管的行时,在该平台之上构建。封装把链接
+产物包进自己的容器时(DOS 行的 MZ 存根后接 ELF32 可执行文件),strip 不读的文件按封装的结果打包
+(**mcpp >= 2026.11.13.1**)。
 
 ### 4.5 `mcpp-package.json`
 
@@ -491,3 +494,4 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 | 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;§4.3 macOS 上带 quarantine 标记的运行器;判据 14(e2e 992)。 |
 | 2.2 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E7,mcpp#911 N8):§1.2 另一系统的产物从文件读取闭包,不运行本机加载器;`--mode static` 链接全静态程序并在打包前核对。 |
 | 2.3 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 C6、C7):§4.4 `--systems all` 取系统表,无程序可构建的对写为未覆盖;三个系统之外的程序按 `runner.built-as` 构建;单文件按系统表的 `uname` 选择程序(SPEC-016 §2.3)。 |
+| 2.4 | 2026-11-14 | mcpp 2026.11.13.1:§4.4 平台定义的行即该系统的程序之行(行名可带环境段),`built-as` 指向定义的行时在平台之上构建;strip 不读的封装容器按封装结果打包。 |

@@ -1,7 +1,7 @@
 name: ci-windows-e2e
 
 # The e2e suite on Windows x64, called by ci.yml beside ci-windows.yml after
-# the Windows build. Three shards, assigned by measured duration
+# the Windows build. Shards as ci.yml's plan gives them (design 2026-11-12 §5.11), by measured duration
 # (by mtest, from the measured history of main's stores; rule R4 of the 2026-10-02 CI record): about
 # fifteen tests of over thirty seconds took 58 to 64 percent of a round-robin
 # shard, and the two shards differed by 3.6 minutes on average. Each shard runs
@@ -12,26 +12,44 @@ name: ci-windows-e2e
 
 on:
   workflow_call:
+    inputs:
+      set:
+        description: the set of cases (`pr` or `full`; ci.yml's changes job)
+        type: string
+        default: full
+      shards:
+        description: the shards of this host (`mtest ci plan`), a JSON list
+        type: string
+        default: '[1,2,3]'
+      count:
+        description: how many shards the list holds
+        type: string
+        default: '3'
+      work:
+        description: whether the set gives this host any case
+        type: boolean
+        default: true
 
 jobs:
   e2e:
-    name: e2e ${{ matrix.shard }}/3 (windows x64, self-host)
+    name: e2e ${{ matrix.shard }}/${{ inputs.count }} (windows x64, self-host)
+    if: inputs.work
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ${{ fromJSON(inputs.shards) }}
     env:
       MCPP_HOME: C:\Users\runneradmin\.mcpp
       # Round-robin slice of tests/e2e (see run_all.sh).
-      E2E_SHARD: ${{ matrix.shard }}/3
+      E2E_SHARD: ${{ matrix.shard }}/${{ inputs.count }}
       # By mtest (design 2026-11-08 W8; .github/actions/e2e-mtest): parts by
       # the measured history of main's stores, two tests at a time (measured on
       # one Linux shard: 220 s against 424 s one at a time, three no faster),
       # and on a pull request the tests its change affects.
       E2E_JOBS: '2'
-      E2E_SET: ${{ github.event_name == 'pull_request' && 'pr' || '' }}
+      E2E_SET: ${{ inputs.set == 'pr' && 'pr' || '' }}
       E2E_REPORT: ${{ github.workspace }}/e2e-report-windows-${{ matrix.shard }}.tsv
       # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
       # assert mcpp's DEFAULT (quiet) output — e.g. 48_build_error_output and

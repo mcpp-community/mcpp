@@ -88,7 +88,8 @@ if [ -n "$tc" ]; then
 fi
 
 {
-    echo "MCPP_BOOT=$boot"
+    # The released binary install_pinned_mcpp.sh named, when it named one.
+    echo "MCPP_BOOT=${MCPP_BOOT:-$boot}"
     echo "MCPP=$bin"
     echo "MCPP_FRESH=$bin"
     if [ -n "${XLINGS_BIN:-}" ]; then echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN"; fi

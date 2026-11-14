@@ -734,7 +734,9 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 ## 当前边界
 
 - 处于 `planned` 档位的行，含义是**词汇表里已登记，还没有任何东西
-  接线**。点名这样一个目标会被解析器接受、被构建拒绝。
+  接线**。点名这样一个目标会被解析器接受、被构建拒绝，除非构建为它指定了
+  工具链：`[target.X] toolchain` 或 `--toolchain`（或其在环境中的陈述
+  `MCPP_TOOLCHAIN`；2026.11.13.1+）。
 - `host_can_serve` 判断的是「这台机器能不能产出这个目标」，这与档位
   是两个不同的问题。mcpp 支持的目标仍可能从这台宿主够不着；出口是
   显式的 `[target.X] toolchain = "…"`。

@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-360 records.
+361 records.
 
 ## By subject
 
@@ -41,6 +41,10 @@ Records that declare one. Everything else is listed by date below.
 ### build-progress-and-scheduling
 
 - [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
+
+### ci
+
+- [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
 
 ### compiler-scheduling
 
@@ -193,6 +197,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
 - [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
 - [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active

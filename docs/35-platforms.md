@@ -372,15 +372,26 @@ name  = "haiku"
 uname = "Haiku"                                  # what `uname -s` answers there
 ```
 
-A provider's `runner` is the lowest tier of the runner statement: the
-platform's `runner`, a build program's, this machine's `config.toml`, the
-project's `[target.<selector>] runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each
-replace it. `hosts` are the machines the runner exists on (unset: any). In the
+A provider's `runner` is the lowest tier of the runner statement: a build
+program's, this machine's `config.toml`, the project's `[target.<selector>]
+runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each replace it. The platform's own
+`runner` belongs to `[platform] targets` and does not replace it (2026.11.13.1):
+a provider states the runner, the link (`link`) and the base (`sysroot`) of the
+identities it serves, with `base = "platform"` and with `base = "none"` alike,
+so one platform states rows whose conventions differ (the openkal platform's ok
+images and `x86_64-uefi`). `hosts` are the machines the runner exists on (unset: any). In the
 template `{}` is the artifact, `{sysroot}` the base the artifact was linked
 against, and `{pkg:<name>}` the root of the package of that name among
 `requires`; the template's program is looked for in the required packages
 before `PATH`. The packages of `requires` are installed by the first `mcpp
 run` or `mcpp test` that needs them, never by a build.
+
+`[platform.tools]` are built for the building machine, and a build provisions
+the tools its row carries (2026.11.13.1). A provider with `base = "none"` carries
+those its own link, seal and runner name; every other row carries every tool
+but those only such a provider names. So the openkal platform's DOS row
+(`i686-dos-musl`, whose seal is `okdos`) builds `okdos` alone, and its ok images
+do not build it.
 
 One provider entry states one arrangement of payloads: a native arrangement and
 a cross one are two entries, each with its `hosts`, base and priority. A new

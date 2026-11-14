@@ -1192,14 +1192,23 @@ conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`
 - **Evaluated against the resolved target** — the `--target` triple for a cross
   build, otherwise the host. So a native Linux build never even *downloads* a
   `[target.windows]` dependency.
-- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates —
-  and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
+- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates;
+  `object-format` (mcpp 2026.11.13.1), the row's container (`elf`, `pe`,
+  `mach-o`, `wasm`, `coff`), which a package selects by when what it needs is a
+  convention every system of the container shares (the PE rows: the Microsoft
+  x64 calling convention, COFF sections) rather than a system — and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
   `compiler-runtime`, `kernel-abi`, `c-abi`, `c++-abi`
   ([22 — The Target Side](22-target-side.md)). `accelerator` is a key here too
   and is answered from this build's own `accel` — the backend names in
   `--accel` or `[build] accel` — so it is a membership test over a set, and
   `accelerator = "none"` is how a section says "this build named no backend"
-  without enumerating the ones it is not. Barewords `linux` / `macos` /
+  without enumerating the ones it is not. `interface` (mcpp 2026.11.13.1) is the kernel-abi
+  layer's second answer: an interface its provider states in `[kernel-abi]
+  provides-interfaces`, compared by membership as `accelerator` is. A provider
+  that states no list provides every interface; a graph without the layer
+  provides none. A package selects its sources by what the implementation
+  beneath it provides, and names no implementation:
+  `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`. Barewords `linux` / `macos` /
   `windows` / `unix` are sugar for the matching `os` / `family` test. A key
   outside this set is reported as a schema warning and the section does not
   apply — it used to answer false in silence, which is indistinguishable from

@@ -71,7 +71,7 @@ void print_usage() {
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
-    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --timeout, --build-timeout, --message-format json, --no-runner)");
+    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --shard, --failed, --timeout, --build-timeout, --message-format json, --no-runner)");
     std::println("  mcpp clean [--stale] [--bmi-cache]   Remove target/ (or, with --stale, only its non-current fingerprint dirs)");
     std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
     std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
@@ -371,6 +371,12 @@ int run(int argc, char** argv) {
         }
     }
 
+    // A SELF-CONTAINED HOME IS STATED for the programs mcpp starts. It is
+    // derived from where this engine is (`<home>/bin/mcpp`), and a build
+    // directory's graph runs the engine through its own link (2026-11-12 §17),
+    // from which the same home cannot be derived.
+    mcpp::home::state_portable_home();
+
     // ─── --deny <effects> (design 2026-10-26 §5.5) ───────────────────────
     // Published as MCPP_DENY_EFFECTS, the union of what the caller's
     // environment already denies and what the flag adds, for the reason
@@ -567,48 +573,9 @@ int run(int argc, char** argv) {
         }
     }
 
-    // ─── action_rc plumbing ─────────────────────────────────────────────
-    // cmdline's action callback returns void. Capture int return codes
-    // via a shared local; `wrap_rc` adapts an `int(ParsedArgs&)` lambda
-    // into the void-returning shape cmdline expects.
-    int action_rc = 0;
-    auto wrap_rc = [&action_rc](auto&& fn) {
-        return [fn = std::forward<decltype(fn)>(fn), &action_rc]
-               (const cl::ParsedArgs& args) {
-            action_rc = fn(args);
-        };
-    };
-
-    // ─── nested-subcommand dispatcher ───────────────────────────────────
-    // cmdline's run() only dispatches one level — when a parent subcommand
-    // (e.g. `self`, `cache`, `index`, `emit`) has its own children but no
-    // parent action, the matched leaf never gets invoked. We give every
-    // such parent an action that switches on the parsed child name and
-    // forwards to the right cmd_* directly.
-    using cmd_fn = int(*)(const cl::ParsedArgs&);
-    auto dispatch_sub = [](std::string_view parent,
-                           const cl::ParsedArgs& parsed,
-                           std::initializer_list<std::pair<std::string_view, cmd_fn>> table) -> int {
-        if (!parsed.has_subcommand()) {
-            std::string usage = std::format("`mcpp {}` requires a subcommand: ", parent);
-            bool first = true;
-            for (auto& [n, _] : table) {
-                if (!first) usage += " / ";
-                usage += n;
-                first = false;
-            }
-            mcpp::ui::error(usage);
-            return 2;
-        }
-        auto name    = parsed.subcommand_name();
-        auto sub_ref = parsed.subcommand();
-        if (!sub_ref) return 2;
-        for (auto& [n, fn] : table) {
-            if (n == name) return fn(sub_ref->get());
-        }
-        mcpp::ui::error(std::format("unknown `mcpp {} {}` subcommand", parent, name));
-        return 2;
-    };
+    // Every action returns its status, and `App::run` dispatches to the
+    // deepest named command at any depth (mcpplibs.cmdline 0.0.4): a parent
+    // such as `cache` or `self` carries no dispatch table of its own.
 
     // ─── `--` passthrough for `mcpp run` / `mcpp test` ──────────────────
     // cmdline natively recognises `--` and dumps everything after it
@@ -683,7 +650,7 @@ int run(int argc, char** argv) {
                 .help("bin (default) | lib | platform | [ns.]pkg[@ver][:template] — exact package template"))
             .option(cl::Option("list-templates").takes_value().value_name("PKG")
                 .help("List templates from exact [ns.]pkg[@ver]"))
-            .action(wrap_rc(cmd_new)))
+            .action(cmd_new))
         .subcommand(cl::App("build")
             .description("Build the current package")
             .option(cl::Option("configure-only")
@@ -733,11 +700,11 @@ int run(int argc, char** argv) {
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("human (default) | json: NDJSON events on stdout, then the mcpp.build envelope"))
-            .action(wrap_rc([](const cl::ParsedArgs& p) {
+            .action([](const cl::ParsedArgs& p) {
                 const int rc = cmd_build(p);
                 if (rc == 0) mcpp::build::sweep_after_build();
                 return rc;
-            })))
+            }))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
             // Named `bin`, NOT `target`, and the rename is load-bearing.
@@ -847,13 +814,13 @@ int run(int argc, char** argv) {
                 .help("Build, then print how the program would be started (argv, the environment mcpp adds, cwd, runner) as the mcpp.launch envelope, instead of starting it"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("With --print-launch: human (default) | json (the build's events as NDJSON, then the envelope as the last line)"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+            .action([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
-            })))
+            }))
         .subcommand(cl::App("test")
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
             .arg(cl::Arg("pattern")
-                .help("Run only tests whose name contains PATTERN (optional)"))
+                .help("Run only tests whose name contains a PATTERN; several select every test one of them names (optional)"))
             .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
                 .help("Cross target triple or target set (same axis as `mcpp build --target`); "
                       "repeatable: every leg is built, and run where this host reaches it"))
@@ -887,6 +854,14 @@ int run(int argc, char** argv) {
                 .help("Build the tests for --target and stop; a build that succeeds is the result (for a target this host cannot execute)"))
             .option(cl::Option("archive").takes_value().value_name("FILE")
                 .help("With --no-run: write the built tests to FILE. Without: run the tests FILE holds, building nothing (in a checkout of the same project)"))
+            .option(cl::Option("no-programs")
+                .help("Build none of the package's programs: the tests take each from the environment's MCPP_BIN_<NAME> (a program built elsewhere); with --no-run --archive, the archive does not carry them and its run's environment names them"))
+            .option(cl::Option("shard").takes_value().value_name("I/N")
+                .help("Run the I-th of N shards: the run's tests divided by the durations its store measured, longest first, so that N machines running 1/N to N/N run every test once"))
+            .option(cl::Option("split").takes_value().value_name("MODE")
+                .help("How a test program's cases are run as processes, for this invocation ([test] split): file | case | auto | none"))
+            .option(cl::Option("failed")
+                .help("Run what failed in the store's last run: its failed cases, or the program whole when it failed outside its cases"))
             .option(cl::Option("timeout").takes_value().value_name("SECS")
                 .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
             .option(cl::Option("build-timeout").takes_value().value_name("SECS")
@@ -921,11 +896,11 @@ int run(int argc, char** argv) {
                 .help("With --workspace (or at a virtual workspace root), leave the named member out; repeatable, refused with -p"))
             .option(cl::Option("play-game")
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+            .action([&passthrough](const cl::ParsedArgs& p) {
                 const int rc = cmd_test(p, std::span<const std::string>(passthrough));
                 if (rc == 0) mcpp::build::sweep_after_build();
                 return rc;
-            })))
+            }))
         .subcommand(cl::App("clean")
             .description("Remove target/, or with --stale only what no configuration still uses: fingerprint directories, generated sources, build-program groups")
             .option(cl::Option("bmi-cache").help("Also wipe the global build cache (see `mcpp cache clean`)"))
@@ -934,7 +909,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("report").help("Show where target/ holds its bytes, per configuration and area; removes nothing"))
             .option(cl::Option("older-than").takes_value().value_name("DURATION")
                 .help("Keep unrecorded directories written more recently than this, e.g. 12h, 3d (default [build] keep_days, 3d; 0 keeps none; implies --stale)"))
-            .action(wrap_rc(cmd_clean)))
+            .action(cmd_clean))
         .subcommand(cl::App("why")
             .description("Explain how the target / toolchain / runtime / deps / runners / sources / flags were resolved")
             .arg(cl::Arg("topic").help("target | toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat | flags | platform (default: all but flags and platform)"))
@@ -957,11 +932,11 @@ int run(int argc, char** argv) {
                 .help("Resolve with these features, as `build --features` does (root features and <dependency>/<feature>)"))
             .option(cl::Option("format").takes_value().value_name("json")
                 .help("Machine-readable output (enveloped; see docs/50-machine-output.md)"))
-            .action(wrap_rc(cmd_why)))
+            .action(cmd_why))
         .subcommand(cl::App("resolve")
             .description("Re-resolve the build plan and explain it")
             .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps / runners"))
-            .action(wrap_rc(cmd_why)))
+            .action(cmd_why))
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")
             .arg(cl::Arg("pkg").help(
@@ -969,15 +944,15 @@ int run(int argc, char** argv) {
                 .required())
             .option(cl::Option("dev").help(
                 "Add to [dev-dependencies] (test-only, e.g. compat.gtest)"))
-            .action(wrap_rc(mcpp::pm::commands::cmd_add)))
+            .action(mcpp::pm::commands::cmd_add))
         .subcommand(cl::App("remove")
             .description("Remove a dependency from mcpp.toml")
             .arg(cl::Arg("pkg").help("Exact package selector [ns.]name").required())
-            .action(wrap_rc(mcpp::pm::commands::cmd_remove)))
+            .action(mcpp::pm::commands::cmd_remove))
         .subcommand(cl::App("update")
             .description("Re-resolve dependencies and rewrite mcpp.lock")
             .arg(cl::Arg("pkg").help("If given, update only that package"))
-            .action(wrap_rc(mcpp::pm::commands::cmd_update)))
+            .action(mcpp::pm::commands::cmd_update))
         .subcommand(cl::App("search")
             .description("Search packages in configured registries")
             .arg(cl::Arg("keyword").help("Search keyword (substring match); optional with --format json, which then lists every package"))
@@ -985,12 +960,12 @@ int run(int argc, char** argv) {
                 .help("List every published version instead of the latest few"))
             .option(cl::Option("format").takes_value().value_name("FMT")
                 .help("json: the mcpp.search envelope (every version, licenses, repo)"))
-            .action(wrap_rc(cmd_search)))
+            .action(cmd_search))
         .subcommand(cl::App("publish")
             .description("Publish package to default registry")
             .option(cl::Option("dry-run").help("Print xpkg.lua without uploading"))
             .option(cl::Option("allow-dirty").help("Allow uncommitted changes"))
-            .action(wrap_rc(cmd_publish)))
+            .action(cmd_publish))
         .subcommand(cl::App("pack")
             // "archive", not "tarball": a Windows target produces a .zip, and
             // the help said tarball while the code had already stopped
@@ -1080,7 +1055,7 @@ int run(int argc, char** argv) {
                 .help("With --workspace, leave the named member out; repeatable, refused with -p"))
             .option(cl::Option("debug-symbols").takes_value().value_name("DIR")
                 .help("Write the separated *.debug files here (default: discard)"))
-            .action(wrap_rc(cmd_pack)))
+            .action(cmd_pack))
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────
         .subcommand(cl::App("emit")
@@ -1099,7 +1074,8 @@ int run(int argc, char** argv) {
                     .help("Describe packages `mcpp pack` wrote (repeatable): an xim-pkgindex entry "
                           "of the program, from their mcpp-package.json"))
                 .option(cl::Option("url").takes_value().value_name("PREFIX")
-                    .help("With --package: where the packages are published (<PREFIX>/<file>)")))
+                    .help("With --package: where the packages are published (<PREFIX>/<file>)"))
+                .action(cmd_emit_xpkg))
             // `sbom` belongs HERE rather than at the top level: `emit`
             // already means "generate a document describing this project" and
             // already carries `-o`. A separate `mcpp sbom` would be a second
@@ -1107,7 +1083,8 @@ int run(int argc, char** argv) {
             .subcommand(cl::App("sbom")
                 .description("Write a CycloneDX bill of materials for the recorded resolution")
                 .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
-                    .help("Write to file instead of stdout")))
+                    .help("Write to file instead of stdout"))
+                .action(mcpp::cli::cmd_sbom))
             // The plan as an S1 build database, planned as `build
             // --configure-only` plans it and written into nothing; the build
             // selectors are `build`'s own (docs/specs/build-database.md).
@@ -1149,13 +1126,8 @@ int run(int argc, char** argv) {
                 .option(cl::Option("workspace")
                     .help("Describe all workspace members in one document"))
                 .option(cl::Option("exclude").takes_value().multiple().value_name("NAME")
-                    .help("With --workspace (or at a virtual workspace root), leave the named member out; repeatable, refused with -p")))
-            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg},
-                                                {"sbom", mcpp::cli::cmd_sbom},
-                                                {"build-database",
-                                                 mcpp::cli::cmd_emit_build_database}});
-            })))
+                    .help("With --workspace (or at a virtual workspace root), leave the named member out; repeatable, refused with -p"))
+                .action(mcpp::cli::cmd_emit_build_database)))
 
         // ─── xpkg (descriptor tooling: parse) ──────────────────────────
         .subcommand(cl::App("xpkg")
@@ -1175,10 +1147,8 @@ int run(int argc, char** argv) {
                     .help("OBSOLETE (kept accepted so 0.0.105-era index CI keeps "
                           "working): skip the package.name form check. Since "
                           "0.0.106 the canonical form IS the short name, so "
-                          "xlings-native descriptors pass without this flag")))
-            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("xpkg", p, {{"parse", cmd_xpkg_parse}});
-            })))
+                          "xlings-native descriptors pass without this flag"))
+                .action(cmd_xpkg_parse)))
 
         // ─── resource management ───────────────────────────────────────
         .subcommand(cl::App("toolchain")
@@ -1220,30 +1190,35 @@ int run(int argc, char** argv) {
                 .arg(cl::Arg("version").help("(optional, alternative to @-form)"))
                 .option(cl::Option("target").takes_value().help(
                     "Remove the payload for <triple> instead of the host one")))
-            .action(wrap_rc(cmd_toolchain_any)))
+            .action(cmd_toolchain_any))
         .subcommand(cl::App("cache")
             .description("Inspect and manage the global build cache")
             .subcommand(cl::App("dir")
-                .description("Print the cache root (and any pre-v1 cache)"))
+                .description("Print the cache root (and any pre-v1 cache)")
+                .action(cmd_cache_dir))
             .subcommand(cl::App("list")
                 .description("List cache entries with size + last-use")
                 .option(cl::Option("json")
                     .help("Emit machine-readable JSON (legacy payload, kept for ever)"))
                 .option(cl::Option("format").takes_value().value_name("json")
-                    .help("Machine-readable output (enveloped; see docs/50-machine-output.md)")))
+                    .help("Machine-readable output (enveloped; see docs/50-machine-output.md)"))
+                .action(cmd_cache_list))
             .subcommand(cl::App("info")
                 .description("Show details (incl. key inputs) for a cached package")
-                .arg(cl::Arg("pkg").help("<pkg>@<ver>").required()))
+                .arg(cl::Arg("pkg").help("<pkg>@<ver>").required())
+                .action(cmd_cache_info))
             .subcommand(cl::App("prune")
                 .description("Drop entries not used within a threshold")
                 .option(cl::Option("older-than").takes_value().value_name("N{s|m|h|d}")
-                    .help("Age threshold (e.g. 30d)")))
+                    .help("Age threshold (e.g. 30d)"))
+                .action(cmd_cache_prune))
             .subcommand(cl::App("gc")
                 .description("LRU-collect package and host tool entries to a size and/or age budget")
                 .option(cl::Option("max-size").takes_value().value_name("N{MiB|GiB}")
                     .help("Keep the package cache under this size (e.g. 5GiB)"))
                 .option(cl::Option("older-than").takes_value().value_name("N{s|m|h|d}")
-                    .help("Also drop entries unused for longer than this")))
+                    .help("Also drop entries unused for longer than this"))
+                .action(cmd_cache_gc))
             .subcommand(cl::App("clean")
                 .description("Drop cache entries (default: package entries only)")
                 .option(cl::Option("deps").help("Drop package entries (default)"))
@@ -1251,33 +1226,27 @@ int run(int argc, char** argv) {
                 .option(cl::Option("tools").help("Drop host tool entries"))
                 .option(cl::Option("all").help("Drop every kind of entry"))
                 .option(cl::Option("legacy")
-                    .help("Remove the unused pre-v1 cache at $MCPP_HOME/bmi")))
+                    .help("Remove the unused pre-v1 cache at $MCPP_HOME/bmi"))
+                .action(cmd_cache_clean))
             .subcommand(cl::App("verify")
-                .description("Check every entry's manifest against the files on disk"))
-            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("cache", p, {
-                    {"dir",    cmd_cache_dir},
-                    {"list",   cmd_cache_list},
-                    {"info",   cmd_cache_info},
-                    {"prune",  cmd_cache_prune},
-                    {"gc",     cmd_cache_gc},
-                    {"clean",  cmd_cache_clean},
-                    {"verify", cmd_cache_verify},
-                });
-            })))
+                .description("Check every entry's manifest against the files on disk")
+                .action(cmd_cache_verify)))
         .subcommand(cl::App("index")
             .description("Manage configured package registries")
             .subcommand(cl::App("list")
                 .description("List configured registries")
                 .option(cl::Option("format").takes_value().value_name("FMT")
-                    .help("json: the mcpp.index envelope")))
+                    .help("json: the mcpp.index envelope"))
+                .action(cmd_index_list))
             .subcommand(cl::App("add")
                 .description("Add a custom registry")
                 .arg(cl::Arg("name").help("Registry name").required())
-                .arg(cl::Arg("url").help("Registry URL").required()))
+                .arg(cl::Arg("url").help("Registry URL").required())
+                .action(cmd_index_add))
             .subcommand(cl::App("remove")
                 .description("Remove a registry")
-                .arg(cl::Arg("name").help("Registry name").required()))
+                .arg(cl::Arg("name").help("Registry name").required())
+                .action(cmd_index_remove))
             .subcommand(cl::App("update")
                 // #540: the argument selects among the PROJECT's custom
                 // indices only. The global repos are always synced wholesale,
@@ -1290,27 +1259,20 @@ int run(int argc, char** argv) {
                              "(global repos always sync in full)")
                 .arg(cl::Arg("name").help(
                     "Update only this PROJECT-level custom index "
-                    "(the global repos sync regardless)")))
+                    "(the global repos sync regardless)"))
+                .action(cmd_index_update))
             .subcommand(cl::App("status")
-                .description("Show local index presence/freshness (offline)"))
+                .description("Show local index presence/freshness (offline)")
+                .action(cmd_index_status))
             .subcommand(cl::App("pin")
                 .description("Pin a custom index to a commit rev in mcpp.toml")
                 .arg(cl::Arg("name").help("Index name").required())
-                .arg(cl::Arg("rev").help("Commit sha (defaults to current lock rev)")))
+                .arg(cl::Arg("rev").help("Commit sha (defaults to current lock rev)"))
+                .action(cmd_index_pin))
             .subcommand(cl::App("unpin")
                 .description("Remove rev pin from a custom index in mcpp.toml")
-                .arg(cl::Arg("name").help("Index name").required()))
-            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("index", p, {
-                    {"list",   cmd_index_list},
-                    {"add",    cmd_index_add},
-                    {"remove", cmd_index_remove},
-                    {"update", cmd_index_update},
-                    {"status", cmd_index_status},
-                    {"pin",    cmd_index_pin},
-                    {"unpin",  cmd_index_unpin},
-                });
-            })))
+                .arg(cl::Arg("name").help("Index name").required())
+                .action(cmd_index_unpin)))
 
         // ─── about mcpp itself ─────────────────────────────────────────
         .subcommand(cl::App("self")
@@ -1320,9 +1282,11 @@ int run(int argc, char** argv) {
                 .option(cl::Option("home").takes_value().value_name("PATH")
                     .help("Initialize PATH and remember it from the original home (does not migrate data)"))
                 .option(cl::Option("force")
-                    .help("Rebuild registry/caches; with --home, replace the default without deleting data")))
+                    .help("Rebuild registry/caches; with --home, replace the default without deleting data"))
+                .action(cmd_self_init))
             .subcommand(cl::App("doctor")
-                .description("Diagnose mcpp environment health"))
+                .description("Diagnose mcpp environment health")
+                .action(cmd_doctor))
             .subcommand(cl::App("env")
                 .description("Print mcpp paths and configuration; with --target, one configuration: toolchain, platform, tools, runner")
                 .option(cl::Option("target").takes_value().multiple().value_name("TRIPLE")
@@ -1335,7 +1299,8 @@ int run(int argc, char** argv) {
                 .option(cl::Option("host-platform").takes_value().value_name("SPEC")
                     .help("The host graph's platform for this invocation (= MCPP_HOST_PLATFORM)"))
                 .option(cl::Option("format").takes_value().value_name("json")
-                    .help("Machine-readable output (enveloped; see docs/50-machine-output.md)")))
+                    .help("Machine-readable output (enveloped; see docs/50-machine-output.md)"))
+                .action(cmd_env_any))
             .subcommand(cl::App("config")
                 .description("Show or modify mcpp's configuration: the xlings mirror and the retention of build outputs")
                 .option(cl::Option("mirror").takes_value().value_name("auto|CN|GLOBAL")
@@ -1343,28 +1308,21 @@ int run(int argc, char** argv) {
                 .option(cl::Option("cache-unused-days").takes_value().value_name("DAYS")
                     .help("Collect build-cache entries no build used for DAYS days (default 30; 0 keeps all)"))
                 .option(cl::Option("keep-days").takes_value().value_name("DAYS")
-                    .help("Sweep a project's build directories no configuration used for DAYS days (default 3; 0 keeps all)")))
+                    .help("Sweep a project's build directories no configuration used for DAYS days (default 3; 0 keeps all)"))
+                .action(cmd_self_config))
             .subcommand(cl::App("version")
-                .description("Show mcpp version"))
+                .description("Show mcpp version")
+                .action(cmd_self_version))
             .subcommand(cl::App("explain")
                 .description("Show extended description for an error code")
-                .arg(cl::Arg("code").help("Error code such as E0001, or a refusal's reason token such as platform-version-group").required()))
+                .arg(cl::Arg("code").help("Error code such as E0001, or a refusal's reason token such as platform-version-group").required())
+                .action(cmd_explain_action))
             .subcommand(cl::App("store")
                 .description("Compare this home's payloads with its upstreams")
                 .subcommand(cl::App("dedupe")
                     .description("List payloads an upstream has the same of; --apply links them")
-                    .option(cl::Option("apply").help("Replace each by a link to the upstream's"))))
-            .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("self", p, {
-                    {"store",     cmd_self_store},
-                    {"init",      cmd_self_init},
-                    {"doctor",    cmd_doctor},
-                    {"env",       cmd_env_any},
-                    {"config",    cmd_self_config},
-                    {"version",   cmd_self_version},
-                    {"explain",   cmd_explain_action},
-                });
-            })))
+                    .option(cl::Option("apply").help("Replace each by a link to the upstream's")))
+                .action(cmd_self_store)))
 
         // ─── top-level explain alias ──────────────────────────────────
         // Preserves `mcpp explain E0001` as a shortcut for
@@ -1372,7 +1330,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("explain")
             .description("Show extended description for an error code")
             .arg(cl::Arg("code").help("Error code such as E0001, or a refusal's reason token such as platform-version-group").required())
-            .action(wrap_rc(cmd_explain_action)))
+            .action(cmd_explain_action))
 
         // ─── bareword `version` alias ─────────────────────────────────
         // cmdline natively handles `--help`/`--version`/`-h`; the bareword
@@ -1381,7 +1339,7 @@ int run(int argc, char** argv) {
         // App so it shows up in the auto-generated subcommand list.
         .subcommand(cl::App("version")
             .description("Show mcpp version")
-            .action(wrap_rc(cmd_self_version)))
+            .action(cmd_self_version))
 
         // ─── hidden / internal ─────────────────────────────────────────
         .subcommand(cl::App("dyndep")
@@ -1404,7 +1362,7 @@ int run(int argc, char** argv) {
                 .help("(verification) planned imports for this TU, comma-separated"))
             .option(cl::Option("expect-none")
                 .help("(verification) planner assumed no provides/imports"))
-            .action(wrap_rc(cmd_dyndep)))
+            .action(cmd_dyndep))
         // Named by generated build.ninja edges and, since 2026.9.13.1, by a
         // build program's own actions through `${mcpp.self}` (docs/30), so
         // the argument shape below is a contract: `stage --verify content
@@ -1418,21 +1376,21 @@ int run(int argc, char** argv) {
                 .help("How an existing destination is judged up to date: content (default) | size"))
             .option(cl::Option("list").takes_value().value_name("FILE")
                 .help("Place every `<source>\\t<destination>` pair of FILE in one process (#734 E4); several lines naming one destination are its sources"))
-            .action(wrap_rc(cmd_stage)))
+            .action(cmd_stage))
         .subcommand(cl::App("link-output")
             .description("(internal: invoked by ninja on Windows) Move a linked artifact aside, then run the linker command after `--` (a running program keeps its file)")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the artifact the command links"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+            .action([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_link_output(p, std::span<const std::string>(passthrough));
-            })))
+            }))
         .subcommand(cl::App("platform-step")
             .description("(internal: invoked by ninja for a platform's link) `capture --out F -- argv…` saves a program's output; `seal --steps F -- <linked> <artifact> [needed…]` runs the platform's seal steps, then publishes")
             .arg(cl::Arg("mode").help("capture | seal"))
             .option(cl::Option("out").takes_value().value_name("PATH").help("capture: the file the output is saved as"))
             .option(cl::Option("steps-hex").takes_value().value_name("HEX").help("seal: the steps, one per line, words separated by a tab, hex-encoded (the command is the steps, so a changed step reseals)"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+            .action([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_platform_step(p, std::span<const std::string>(passthrough));
-            })))
+            }))
         .subcommand(cl::App("place-dlls")
             .description("(internal: invoked by ninja) Place beside a Windows program the DLLs it imports from its runtime search directories")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the stamp to write"))
@@ -1441,7 +1399,7 @@ int run(int argc, char** argv) {
                 .help("how the contract governs the MSVC C++ runtime's names: carry | system | static | not-applicable"))
             .option(cl::Option("toolset-crt").takes_value().value_name("DIR")
                 .help("the selected toolset's C++ runtime directory"))
-            .action(wrap_rc(cmd_place_dlls)))
+            .action(cmd_place_dlls))
         .subcommand(cl::App("coff-def")
             .description("(internal: invoked by ninja) Discover exports in COFF and LLVM bitcode objects")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the .def to write"))
@@ -1451,10 +1409,10 @@ int run(int argc, char** argv) {
             .option(cl::Option("llvm-target").takes_value().value_name("TRIPLE").help("selected target triple"))
             .option(cl::Option("exports-file").takes_value().value_name("PATH").help("the target's `exports` patterns, one per line"))
             .option(cl::Option("required").help("a consumer of this build links the DLL: an empty export surface is an error"))
-            .action(wrap_rc(cmd_coff_def)))
+            .action(cmd_coff_def))
         .subcommand(cl::App("bmi-equal")
             .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")
-            .action(wrap_rc(cmd_bmi_equal)))
+            .action(cmd_bmi_equal))
         // The three edges of the detach-codegen schedule. Internal, and named as
         // such: they are only ever invoked by a generated build.ninja.
         .subcommand(cl::App("bmi-compile")
@@ -1468,7 +1426,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("command-file").takes_value().value_name("PATH").help("file holding the compiler command line"))
             .option(cl::Option("dep-from").takes_value().value_name("PATH").help("scanner depfile to adopt"))
             .option(cl::Option("dep-to").takes_value().value_name("PATH").help("where ninja expects this edge's depfile"))
-            .action(wrap_rc(cmd_bmi_compile)))
+            .action(cmd_bmi_compile))
         .subcommand(cl::App("bmi-supervise")
             .description("(internal) Run a compiler to completion and record its status")
             .option(cl::Option("slot").takes_value().value_name("PATH"))
@@ -1476,12 +1434,12 @@ int run(int argc, char** argv) {
             .option(cl::Option("cap").takes_value().value_name("N"))
             .option(cl::Option("object").takes_value().value_name("PATH"))
             .option(cl::Option("command-file").takes_value().value_name("PATH"))
-            .action(wrap_rc(cmd_bmi_supervise)))
+            .action(cmd_bmi_supervise))
         .subcommand(cl::App("bmi-await")
             .description("(internal) Join a detached compiler and replay its diagnostics")
             .option(cl::Option("slot").takes_value().value_name("PATH"))
             .option(cl::Option("object").takes_value().value_name("PATH"))
-            .action(wrap_rc(cmd_bmi_await)))
+            .action(cmd_bmi_await))
     ;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
@@ -1962,7 +1920,7 @@ int run(int argc, char** argv) {
         mcpp::ui::error(parsed.error().message);
         return 2;
     }
-    app.run(*parsed);
+    const int action_rc = app.run(*parsed);
     // The run's closing notices come last, after everything the command
     // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
     mcpp::ui::print_closing_notices(action_rc != 0);

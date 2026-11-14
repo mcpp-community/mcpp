@@ -38,9 +38,8 @@ struct ProviderCapabilities {
     // MSVC's /scanDependencies is compiler-integrated but not wired yet.
     bool has_builtin_p1689_scan = false;
 
-    // True when the compiler supports C++ named modules at all.
-    // All three supported compilers do; kept for future use when we add
-    // compilers that don't (e.g. old MSVC versions, ICC).
+    // True when the compiler supports C++ named modules at all, which is what
+    // every C++ unit is built through. GCC before 14 does not.
     bool has_modules = true;
 
     // Canonical stdlib identifier:
@@ -73,12 +72,16 @@ ProviderCapabilities capabilities_for(const Toolchain& tc) {
     ProviderCapabilities caps;
 
     caps.has_import_std = tc.hasImportStd;
-    caps.has_modules    = true;   // all supported compilers handle modules
+    caps.has_modules    = true;
 
     switch (tc.compiler) {
         case CompilerId::GCC: {
             caps.has_scan_deps   = false;   // GCC has no clang-scan-deps equivalent
-            caps.has_builtin_p1689_scan = true;
+            // P1689 (`-fdeps-format`) and `-fmodules` arrived together in GCC 14
+            // (`compiles_modules`): without them the graph is built from mcpp's
+            // own scan, and units that declare or import a module are refused.
+            caps.has_builtin_p1689_scan = compiles_modules(tc);
+            caps.has_modules            = caps.has_builtin_p1689_scan;
             caps.stdlib_id       = "libstdc++";
             caps.archive_format  = "ar";
             break;
