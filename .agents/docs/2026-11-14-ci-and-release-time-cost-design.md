@@ -269,3 +269,36 @@ Windows 把每个 `\n` 写成 `\r\n`；`write_config_value` 只认 `\n` 结尾�
 本地核验：W1 恢复后无改动的重建 0.4 s，改动一个接口模块的重建 88 s（冷构建 248 s）；W3 演示工程四个子用例
 8.2 s → 3.0 s，改名的子用例只在余下组中运行，旧名在 `?` 组中不报告 `missing`；单元
 `TestSchedule/ACaseIsDividedByTheCasesItDeclared`、`TestTargets` 与 mtest `suites` 通过。
+
+### 6.3 CI 上的测量（PR 运行 43626158365 与 43641874830）
+
+两次运行均在 main 尚无 `mcpp-unit-build-<host>` artifact 时进行，W1 的复用在合入后的第一次 main 运行产生 artifact
+之后才生效。
+
+| 项 | 此前（43602794812） | 本 PR | 说明 |
+|---|---|---|---|
+| archive 构建（W2） | 39.4 分钟 | 14.3 分钟（855 s、862 s） | 冷构建，`--profile ci` |
+| `target-matrix / scan (macos-arm64)`（M1） | 1762 s | 912 s | 59 格并行 |
+| 整次运行墙钟 | 97.6 分钟 | 62.6 分钟 | 排队 89 分钟（此前 265 分钟），受组织内并发影响 |
+| 分片（W3） | 28.0 / 27.9 / 12.4 / 9.8 分钟 | 24.4 / 21.9 / 20.0 / 22.0 分钟 | 见下 |
+
+**W3 的测量否定了按声明的用例无条件划分。** `e2e/openkal/sets` 整体 1375 s，划分为三组后各为 909、1109、1306 s；
+`trees` 整体 1373 s，两组为 1070、1247 s。同一用例声明的用例共享第一个用例填充的状态（下载的工具链与包、构建
+缓存），每一组在各自的 runner 上重新付出，关键路径没有缩短，runner 时间约为两倍。而且划分后测得的内层用例
+用时偏大，用例的估计随之增大，下一次会划得更细。
+
+**决定。** 划分以测量判定：各组在程序进程一行写 `divides`；存储同时记取用例最近一次整体运行的用时与最近一次
+划分中最长一组的用时；从未被划分的用例划分一次以取得测量，此后仅当最长一组不超过整体的五分之四时继续划分；
+用例的估计取整体运行的用时（`test_schedule::division_pays`，单元 `TestSchedule/ADivisionIsKeptWhileItPays`）。
+合入后 main 的存储中这两个套件各有一次划分的记录，此后整体运行，直到记录移出 30 次运行的窗口后再测一次。
+缩短这两个套件的途径是其共享状态的复用（预填充的 home），不是划分。
+
+**并行暴露的两个缺陷**（均已修复并有单元测试）：
+
+- 项目范围的安装同时写 home 的环境（`subos/default/.xlings.json`），状态锁却取在项目目录，Windows 上与另一项目的
+  安装冲突（`images/1033`，运行 43632995462）。锁改为每个 home 一个（`XlingsState/AProjectsInstallTakesTheHomesTurn`）。
+- 两次构建同时发布同一宿主工具时共用一个临时文件名，一方在另一方改名前删除了它（macOS 扫描，运行 43636471152）。
+  发布改用 `mcpp.build.stage::stage_file`，临时文件名带随机部分（`BuildStage/WritersOfOneDestinationDoNotCollide`）。
+
+Windows 的旧代码页检查此前以缺省 profile 运行两个用例，在 `--profile ci` 构建之后会重建全部测试并超时；现以同一
+profile 运行。

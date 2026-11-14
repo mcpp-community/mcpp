@@ -4287,8 +4287,10 @@ struct TestResult {
     int                                 protocol = 0;
     mcpp::build::test_protocol::Report  report;
     // The program this record is a part of (`[test] split`), empty for a
-    // program run whole (feature `test-parts`).
+    // program run whole (feature `test-parts`), and the case the part divides
+    // (P4.3), empty for a part of whole cases.
     std::string                         partOf;
+    std::string                         divides;
     // The parts a listing (`--cases`) divides the program into: name and file.
     std::vector<std::pair<std::string, std::string>> parts;
     // Where it ran in the run's schedule, for the mtest store (P12): its start
@@ -4353,6 +4355,9 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
             if (t.buildMs > 0) p["build_ms"] = t.buildMs;
             // The program a part is of: what `--failed` builds again.
             if (!t.partOf.empty()) p["part_of"] = t.partOf;
+            // The case it divides, so that a later run compares the division
+            // with the case run whole (`test_schedule::division_pays`).
+            if (!t.divides.empty()) p["divides"] = t.divides;
             if (t.report.usage.set) {
                 auto u = mcpp::build::test_protocol::usage_json(t.report.usage);
                 u["source"] = "program";
@@ -4438,6 +4443,7 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
         {"protocol", r.protocol ? nlohmann::ordered_json(r.protocol) : nlohmann::ordered_json(nullptr)},
     };
     if (!r.partOf.empty()) record["part_of"] = r.partOf;
+    if (!r.divides.empty()) record["divides"] = r.divides;
     if (!r.parts.empty()) {
         auto parts = nlohmann::ordered_json::array();
         for (auto const& [name, file] : r.parts) parts.push_back({{"name", name}, {"file", file}});
@@ -4640,6 +4646,7 @@ struct TestRunnable {
     // The program a part belongs to, when the run divides it (`[test] split`),
     // and the directory its parts are named below (`part_label`).
     std::string partOf;
+    std::string divides;   // the case a part divides (P4.3)
     std::filesystem::path partRoot;
     // Its cases hold the machine (P7.1 `machine`): it runs with no other test
     // beside it.
@@ -5244,6 +5251,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     t.startedMs = std::chrono::duration_cast<std::chrono::milliseconds>(startedAt - tLoop).count();
                     t.worker = workerId;
                     t.partOf = r.partOf;
+                    t.divides = r.divides;
                     t.alone = r.alone;
                     if (r.select) {
                         std::ifstream in(*r.select);
@@ -5963,7 +5971,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // given where they are still declared (`?`); the last selects
                 // the case without them (`!`), so a case no run measured runs
                 // once, in it. Only a program whose selection understands both
-                // (mtest 0.9.0) is divided so.
+                // (mtest 0.9.0) is divided so, and a case only while the runs
+                // measured its division shorter than the case whole
+                // (`division_pays`): its cases may share what the first fills.
                 if (measured && share > 0 && report.selectsWithin) {
                     for (auto& [key, ids] : groups) {
                         std::vector<std::string> rest;
@@ -5971,7 +5981,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                             const auto inner = ts::measured_within(history, r.name, id);
                             const std::vector<std::string> one{id};
                             std::size_t k = 1;
-                            if (inner.size() >= 2)
+                            if (inner.size() >= 2 && ts::division_pays(history, r.name, id))
                                 k = std::min<std::size_t>(inner.size(), static_cast<std::size_t>(
                                         std::ceil(ts::estimate(history, r.name, one) / share)));
                             if (k <= 1) { rest.push_back(id); continue; }
@@ -6022,6 +6032,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (machine && groups.contains({where, false})) part.name += " (machine)";
                     if (of > 1) part.name += std::format(" ({}/{})", index, of);
                     part.partOf = r.name;
+                    part.divides = within;
                     part.alone = machine;
                     {
                         // A part of a divided case may run as long as the case states.

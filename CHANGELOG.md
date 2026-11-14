@@ -13,9 +13,12 @@
   the program's selection excludes and selects where declared (mtest 0.9.0):
   `<program>/<file> [<case>] (i/k)`. Each part but the last selects the cases it
   was given where they are still declared (`?<id>`); the last selects the case
-  without them (`!<id>`), so a case no run measured runs once. Two e2e suites
-  of 1373 s and 1375 s ran their cases one after another while the longest of
-  those cases takes 564 s.
+  without them (`!<id>`), so a case no run measured runs once. A division is
+  kept while it pays: the cases of one case may share what the first fills, and
+  each part pays it again (`e2e/openkal/sets`, 1375 s whole, took 909, 1109 and
+  1306 s as three parts). Each part records the case it divides (`divides`); a
+  case is divided once to be measured so, then only while its longest part took
+  at most four fifths of the case whole, and is estimated by its whole run.
 - `[profile.ci]` in this package's manifest: the tests as CI builds them, -O0
   without debug information (the library and its unit tests: 8988 s of compiler
   time at the default release profile, 4183 s with it).
