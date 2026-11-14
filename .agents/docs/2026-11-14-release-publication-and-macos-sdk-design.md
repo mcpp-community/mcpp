@@ -160,3 +160,14 @@ mcpp 的内建数据仍把该行登记为 `planned`，未指定工具链的构�
 - 本机：`--target i686-openkal --platform path:<openkal-platform>` 与 `--target openkal` 构建成功；
   `--target riscv64-linux-musl --platform path:<openkal-platform>` 与 `--platform openkal-platform@0.27.1 --target i686-openkal`
   （索引包，本遍获取）均被拒绝并指名平台。
+
+## 4. 测试发现不进入另一个包
+
+mtest 的标准布局把需要构建之外输入的一类测试放成独立成员包（`tests/cts/mcpp.toml`）。默认的
+`tests/**/*.cpp` 此前会把这样一个包的源文件（`tests/cts/src/main.cpp`）当作根包的测试编译。
+
+- 规则：包根之下含有 `mcpp.toml` 的目录是另一个包；任何 `[test] discover` glob 都不发现其中的文件。
+  规则以清单文件为依据，不依赖目录名，夹具工程（`tests/e2e/<data>/app/mcpp.toml`）同样适用。
+- 实现：`discover_test_targets` 对每个候选文件沿父目录向上检查到包根，结果按目录缓存。
+- 验证：单元 `TestTargets/APackageBelowTestsIsNotItsTests`；本机一个含 `tests/cts/mcpp.toml` 的工程，
+  `mcpp test --list` 只列出根包的测试。

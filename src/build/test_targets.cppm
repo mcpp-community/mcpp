@@ -64,6 +64,26 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
     // name every earlier release gave it.
     std::vector<std::pair<std::filesystem::path, std::filesystem::path>> testFiles;
     {
+        // A DIRECTORY WITH A MANIFEST OF ITS OWN IS ANOTHER PACKAGE. Its files
+        // are that package's sources, built by it and tested by it, whichever
+        // glob reaches them: a suite that needs inputs from outside the build
+        // is a package below `tests/` (`tests/cts/mcpp.toml`), and a fixture
+        // project is one below a test's data directory.
+        std::map<std::filesystem::path, bool> packageDir;
+        auto in_other_package = [&](const std::filesystem::path& file) {
+            const auto root = packageRoot.lexically_normal();
+            for (auto dir = file.parent_path().lexically_normal();
+                 dir != root && dir.has_relative_path() && dir != dir.parent_path();
+                 dir = dir.parent_path()) {
+                auto [it, fresh] = packageDir.try_emplace(dir, false);
+                if (fresh) {
+                    std::error_code ec;
+                    it->second = std::filesystem::is_regular_file(dir / "mcpp.toml", ec);
+                }
+                if (it->second) return true;
+            }
+            return false;
+        };
         std::set<std::filesystem::path> excluded;
         for (auto const& g : result.discover) {
             if (g.starts_with('!'))
@@ -76,7 +96,7 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
             const auto prefix = mcpp::modgraph::glob_literal_prefix(g);
             const auto base = prefix.empty() ? packageRoot : packageRoot / prefix;
             for (auto& p : mcpp::modgraph::expand_glob(packageRoot, g)) {
-                if (excluded.contains(p) || !seenFiles.insert(p).second) continue;
+                if (excluded.contains(p) || in_other_package(p) || !seenFiles.insert(p).second) continue;
                 testFiles.emplace_back(p, base);
             }
         }

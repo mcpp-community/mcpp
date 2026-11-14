@@ -36,6 +36,10 @@
   toolchain named for the build. A platform that lists the row nowhere is named
   in the refusal. `--target openkal` with openkal-platform 0.28.0, whose
   targets include `i686-openkal`, was refused on that leg.
+- Test discovery leaves out every directory below the package root that holds
+  an `mcpp.toml`: such a directory is a package of its own. The default
+  `tests/**/*.cpp` compiled the sources of a member suite (`tests/cts/src/main.cpp`,
+  the layout mtest states for a suite with outside inputs) as tests of the root.
 
 ### Fixed
 
