@@ -17,4 +17,4 @@ description = "Algorithms over index-addressed directed graphs: topological orde
 license     = "Apache-2.0"
 
 [dev-dependencies]
-mcpplibs.mtest = "0.8.3"
+mcpplibs.mtest = "0.8.5"

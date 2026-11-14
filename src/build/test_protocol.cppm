@@ -18,7 +18,7 @@ inline constexpr int kVersion = 1;
 
 // The framework mcpp scaffolds tests with and suggests where a package has
 // none (docs/01, docs/08): mtest, by this release, from its repository.
-inline constexpr std::string_view kMtestRelease = "0.8.3";
+inline constexpr std::string_view kMtestRelease = "0.8.5";
 inline constexpr std::string_view kMtestRepo    = "https://github.com/mcpp-community/mtest";
 
 // The protocol's variables, removed from the environment a program inherits

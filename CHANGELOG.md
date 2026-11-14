@@ -77,9 +77,10 @@
   passed. The release builds its four platforms at once and creates the
   release with every archive in one job; the ecosystem canaries run only in a
   release started with `canaries`.
-- `mcpp new` scaffolds tests with mtest 0.8.3 (was 0.5.2), and `mcpp test
+- `mcpp new` scaffolds tests with mtest 0.8.5 (was 0.5.2), and `mcpp test
   --guide` suggests it; mcpp's own tests, its modules' tests, the canaries and
-  the engine benchmark use it. The benchmark times each call by itself
+  the engine benchmark use it. Its end-to-end outcomes say when an output was
+  cut at its limit (mtest 0.8.5). The benchmark times each call by itself
   (`bench::each`): the median as before, with the 95th percentile, the maximum
   and the two slowest calls.
 - A configuration's build directory is named by its lineage, which includes the
