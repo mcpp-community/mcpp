@@ -283,7 +283,16 @@ vocabulary, in four statuses:
 | `installed` | a payload here already produces it | nothing |
 | `available` | a payload exists for this host | `mcpp toolchain install` |
 | `via dependency graph` | the compiler is here; the target's system is not, and packages can supply it | depend on an implementation of the target's kernel interface and C library |
-| `planned` | registered in the vocabulary, not yet shipped | — |
+| `planned` | registered in the vocabulary, not yet shipped | name a toolchain for the build, or choose a platform that serves the row |
+
+A `planned` row is built when the build names its toolchain
+(`[target.<row>] toolchain`, `--toolchain`), or when the platform chosen for the
+request (`--platform`, `[target.<row>] platform`, the configuration) lists the
+row with a toolchain: among `[platform] targets` beside its `toolchain`, or in a
+`[[platform.provider]]` that names one (2026.11.14.1+). The platform's
+statement decides, and a platform that does not list the row is named in the
+refusal. A set of targets (`--target openkal`) is served leg by leg the same
+way.
 
 **A target absent from this block cannot be built here at all** — and that
 is a narrower statement than it used to be. Until mcpp 2026.8.25.2 the block

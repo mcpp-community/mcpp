@@ -30,6 +30,13 @@
   updater waited for both mirrors, and its run for v2026.11.13.1 failed.
   `bump_index.sh` is removed.
 
+- A `planned` row is served by the platform chosen for the request when the
+  platform's statement lists it with a toolchain (`[platform] targets` beside
+  its `toolchain`, or a `[[platform.provider]]` that names one), as by a
+  toolchain named for the build. A platform that lists the row nowhere is named
+  in the refusal. `--target openkal` with openkal-platform 0.28.0, whose
+  targets include `i686-openkal`, was refused on that leg.
+
 ### Fixed
 
 - On Windows a runner's bare first word is the program with the system's

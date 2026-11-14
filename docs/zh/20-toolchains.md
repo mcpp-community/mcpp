@@ -253,7 +253,12 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 | `installed` | 本机已有的载荷就能产出它 | 无 |
 | `available` | 本宿主上存在可安装的载荷 | `mcpp toolchain install` |
 | `via dependency graph` | 编译器在本机，而该 target 的系统不在，由包供给 | 依赖一个实现该 target 内核接口与 C 库的包 |
-| `planned` | 已登记在词汇表中，尚未发布 | — |
+| `planned` | 已登记在词汇表中，尚未发布 | 为构建指定工具链，或选择服务该行的平台 |
+
+`planned` 行在两种情形下构建：构建指定了工具链（`[target.<row>] toolchain`、`--toolchain`），或为该请求选择的
+平台（`--platform`、`[target.<row>] platform`、配置）以工具链列出该行——列在 `[platform] targets` 中且有
+`toolchain`，或列在指定了工具链的 `[[platform.provider]]` 中（2026.11.14.1+）。由平台的陈述决定；不列出该行的
+平台会在拒绝信息中被指名。目标集合（`--target openkal`）的各个分支按同一规则逐一判断。
 
 **不出现在这个块里的 target，在本机根本构建不了**——而这句话现在比以前更窄。
 在 mcpp 2026.8.25.2 之前，这个块只列出载荷能服务的那些，于是「系统来自依赖图」

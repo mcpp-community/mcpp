@@ -130,3 +130,33 @@ openkal-macos 要回答的问题是"链接中有没有系统自己的 `libSystem
   mcpp 知道。
 - **openkal-macos 自行探测 SDK（`xcrun --show-sdk-path`）。** 它重复 mcpp 的判断，且与 mcpp 实际所用的 SDK（`SDKROOT`、
   基座陈述）可能不同。
+
+## 3. 平台服务 `planned` 行（负责人 2026-11-15 确认）
+
+### 3.1 现象
+
+openkal-platform 0.28.0 在 `[platform] targets` 中列出 `i686-openkal`，并以 `toolchain = "llvm@23.1.3"` 陈述其工具链。
+mcpp 的内建数据仍把该行登记为 `planned`，未指定工具链的构建一律拒绝。以 `--target openkal`（平台各 target 组成的集合）
+构建的每个使用者因此在 `i686-openkal` 一支上被拒绝，除非逐个项目写 `[target.i686-openkal] toolchain`。
+
+### 3.2 规则
+
+`planned` 表示引擎自己的提供者尚未服务该行，不表示该行不可构建。已有的例外是"为构建指定的工具链"
+（`[target.<row>] toolchain`、`--toolchain`、使用者传给子构建的工具链）。本节增加第二个同等明确的来源：
+为该请求选择的平台（`--platform`、`[target.<row>] platform`、配置），其陈述以工具链服务该行——该行列在
+`[platform] targets` 且有 `toolchain`，或列在指定了工具链的 `[[platform.provider]]` 中。
+
+- 判定读平台的陈述（`mcpp.manifest.platform_providers::serves_with_toolchain`），与 `mcpp why platform`、
+  语句检查共用同一份提供者列表，不按平台名或行名硬编码。
+- 时机：目标层级检查时平台尚未读入，故记录待定的行（`PrepareState::plannedRow`）；平台为目录或第二遍已在
+  P1 读入时在 `step1_select_platform` 判定；由本遍获取的包在 `step4b_apply_platform` 判定，服务则以平台已读入
+  的状态重新准备一遍（既有的 platform restart），不服务则拒绝。
+- 拒绝信息指名该平台及其来源，并给出两条出路（指定工具链，或选择服务该行的平台）。未选择平台时信息不变。
+- 兼容：只放宽，不改变已能构建的请求；旧 mcpp 对同一平台仍按原规则拒绝，平台以 `mcpp >= 2026.11.14.1` 声明下限。
+
+### 3.3 验证
+
+- 单元：`PlatformManifest/APlannedRowIsServedByAStatementWithAToolchain`（有工具链则服务，未列出或无工具链则不服务）。
+- 本机：`--target i686-openkal --platform path:<openkal-platform>` 与 `--target openkal` 构建成功；
+  `--target riscv64-linux-musl --platform path:<openkal-platform>` 与 `--platform openkal-platform@0.27.1 --target i686-openkal`
+  （索引包，本遍获取）均被拒绝并指名平台。

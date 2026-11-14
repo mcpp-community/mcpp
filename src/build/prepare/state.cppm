@@ -938,6 +938,11 @@ struct PrepareState {
     // `platformData` was read in P1 (a directory, or a second pass), so the
     // target base reads the platform's `sysroot` (base.cpp, tier four).
     bool platformEarly = false;
+    // A `planned` row requested with a platform chosen for it and no toolchain
+    // named: the platform serves it when its statement lists the row with a
+    // toolchain, which is known once the platform is read (P1 for a directory
+    // or a second pass, P4 for a package fetched by this pass).
+    std::string plannedRow;
     // What build programs stated with the platform's directives (Tier::Program):
     // a dependency's, the root's, and the platform's plugin.
     mcpp::manifest::platform::Statement programPlatform;
@@ -1333,9 +1338,13 @@ void define_early_platform(PrepareState& state);
 // a built-in provider names); `none` for `--platform none`. A platform package no
 // built-in provider names leaves it empty and is reported in `platform` (its
 // short name).
+// `platform`: the short name of a chosen platform the engine's providers do not
+// name. `chosen`: the short name of any platform chosen for the request (the
+// flag, the environment or a table; not the built-in column), whichever
+// providers serve it.
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
                            std::span<const mcpp::manifest::platform::Override> config,
-                           std::string* platform = nullptr);
+                           std::string* platform = nullptr, std::string* chosen = nullptr);
 // The short name of the package a reference names (`path:<dir>` reads its manifest).
 std::string platform_short_name(std::string_view ref);
 
