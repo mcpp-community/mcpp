@@ -35,6 +35,13 @@
   `coverage` job no longer waits for a runner and holds the concurrency group
   (it held it 9.1 minutes in run 43599371222).
 
+### Fixed
+
+- An install for a project takes the home's state turn: it saves the home's
+  environment (`subos/default/.xlings.json`) as well as the project's, and with
+  the turn in the project's directory it collided on Windows with an install of
+  another project ("Failed to write file"). One turn per home orders both.
+
 ## [2026.11.14.1] - 2026-11-14
 
 ### Added

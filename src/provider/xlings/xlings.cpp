@@ -948,7 +948,12 @@ Invocation invocation(const Env& env, std::vector<std::string> args) {
 }
 
 std::filesystem::path state_dir(const Env& env) {
-    const auto dir = env.projectDir.empty() ? env.home / "subos" : env.projectDir;
+    // The home's, for a project's install as well: an install at project scope
+    // also saves the home's environment (subos/default/.xlings.json), so a turn
+    // in the project's directory let it collide with an install of another
+    // project, or of none, on Windows (e2e images/1033, run 43632995462). One
+    // turn per home orders every writer of either state.
+    const auto dir = env.home / "subos";
     std::error_code ec;
     auto real = std::filesystem::weakly_canonical(dir, ec);
     return ec ? dir : real;

@@ -783,3 +783,19 @@ UTest the_shells_active_subos_is_never_inherited{"XlingsInvocationEnv/TheShellsA
     expect(!project.present);
 
 }};
+
+// An install for a project saves the home's environment too, so its writers
+// and the home's take one turn: the state directory is the home's whichever
+// scope the call is for.
+UTest a_projects_install_takes_the_homes_turn{"XlingsState/AProjectsInstallTakesTheHomesTurn", [] {
+    auto home = make_tempdir("mcpp-state-home");
+    auto project = make_tempdir("mcpp-state-project");
+    std::filesystem::create_directories(home / "subos");
+    const mcpp::provider::xlings::Env global{.home = home};
+    const mcpp::provider::xlings::Env scoped{.home = home, .projectDir = project / ".mcpp"};
+    expect(eq(mcpp::provider::xlings::state_dir(scoped), mcpp::provider::xlings::state_dir(global)));
+    expect(eq(mcpp::provider::xlings::state_dir(global),
+              std::filesystem::weakly_canonical(home / "subos")));
+    std::filesystem::remove_all(home);
+    std::filesystem::remove_all(project);
+}};
