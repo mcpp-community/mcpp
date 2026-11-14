@@ -265,82 +265,6 @@ int main() {{
     };
 
     // It writes the shared home's config.toml (restored at its end): the machine resource.
-    "927 the runner contract"_test[s::gcc][s::unix_shell][resource{"machine"}] = [] {
-        // run_under composes in front of the artifact with the contract variables and a closure
-        // manifest, returns the program's status and states where it was declared; the
-        // environment's `..._RUN_UNDER=none` and --no-runner drop it; config.toml's run_under is
-        // the default; a missing program fails with 2 naming it; `test` runs through it too.
-        const auto work = s::case_dir();
-        const auto record = work / "record";
-        s::write_executable(work / "bin/via-host", R"(#!/bin/sh
-{
-  echo "argv: $*"
-  echo "triple=$MCPP_RUN_TRIPLE kind=$MCPP_RUN_KIND mode=$MCPP_RUN_MODE"
-  echo "id=$MCPP_RUN_ID"
-  echo "closure=$MCPP_RUN_CLOSURE"
-} >> "$RECORD"
-shift
-exec "$@"
-)");
-        const auto path = (work / "bin").string() + ":" + s::env("PATH").value_or("");
-        const s::options o{.env = {{"NO_COLOR", "1"}, {"PATH", path}, {"RECORD", record.string()}}};
-        s::project app(work / "app", {{"src/main.cpp", "int main(int argc, char**) { return argc == 2 ? 7 : 3; }\n"}});
-        auto machine = s::run(*s::on_path("uname"), {"-m"}).out;
-        machine.erase(machine.find_last_not_of("\r\n") + 1);
-        const auto triple = machine + "-linux-gnu";
-        auto manifest = [&](std::string_view row) {
-            app.write("mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[toolchain]\ndefault = \"gcc@{}\"\n[target.{}]\n{}\n",
-                                               s::gcc_version(), triple, row));
-        };
-        manifest(R"(run_under = ["via-host", "team-mac"])");
-        fs::remove(record);
-        auto r = app.mcpp({"run", "--", "one"}, o);
-        auto t = s::text(r);
-        expect(fatal(e2e::exited(r, 7))) << "the program's exit status did not come back through run_under: " << t;
-        expect(fatal(s::has_line(t, R"(Via via-host team-mac  \[.*mcpp.toml:7\])"))) << "no Via line naming where run_under was stated: " << t;
-        const auto rec = s::read_file(record);
-        expect(fatal(s::has_line(rec, "argv: team-mac .*/bin/app one"))) << "run_under was not composed in front of the artifact: " << rec;
-        expect(fatal(e2e::contains(rec, "triple=" + triple + " kind=exe mode=run"))) << "the contract variables are missing: " << rec;
-        const auto closure = s::last_starting(rec, "closure=").substr(8);
-        expect(fatal(fs::is_regular_file(closure))) << "MCPP_RUN_CLOSURE names no file";
-        const auto cl = s::read_file(closure);
-        expect(fatal(e2e::contains(cl, R"("schema": 1)"))) << "the closure manifest carries no schema: " << cl;
-        expect(fatal(s::has_line(cl, R"("artifact": ".*/bin/app")"))) << "the closure manifest does not name the artifact: " << cl;
-        fs::remove(record);
-        std::string var = "MCPP_TARGET_" + triple + "_RUN_UNDER";
-        for (auto& c : var) c = c == '-' ? '_' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        auto none = o;
-        none.env.emplace_back(var, "none");
-        r = app.mcpp({"run", "--", "one"}, none);
-        expect(fatal(e2e::exited(r, 7) && !fs::exists(record))) << "`..._RUN_UNDER=none` did not clear run_under";
-        r = app.mcpp({"run", "--no-runner", "--", "one"}, o);
-        expect(fatal(e2e::exited(r, 7) && !fs::exists(record))) << "--no-runner did not drop run_under";
-
-        manifest("");
-        const auto config = s::shared_home() / "config.toml";
-        const auto saved = s::read_file(config);
-        {
-            std::ofstream out(config, std::ios::app);
-            out << std::format("\n[target.{}]\nrun_under = [\"via-host\", \"my-vm\"]\n", triple);
-        }
-        r = app.mcpp({"run", "--", "one"}, o);
-        {
-            std::ofstream out(config, std::ios::trunc | std::ios::binary);
-            out << saved;
-        }
-        expect(fatal(e2e::exited(r, 7))) << "config.toml's run_under failed: " << s::text(r);
-        expect(fatal(e2e::contains(s::read_file(record), "argv: my-vm "))) << "config.toml's [target.<triple>].run_under was not the default";
-        manifest(R"(run_under = ["no-such-wrapper", "x"])");
-        r = app.mcpp({"run"}, o);
-        expect(fatal(e2e::exited(r, 2))) << "a missing run_under program did not fail with 2: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "no-such-wrapper"))) << "the missing program was not named: " << s::text(r);
-        manifest(R"(run_under = ["via-host", "team-mac"])");
-        app.write("tests/t.cpp", "int main() { return 0; }\n");
-        fs::remove(record);
-        r = app.mcpp({"test"}, o);
-        expect(fatal(e2e::succeeded(r))) << "mcpp test through run_under failed: " << s::text(r);
-        expect(fatal(e2e::contains(s::read_file(record), "mode=test"))) << "a test was not run through run_under with MCPP_RUN_MODE=test";
-    };
     "1024 a launch description takes the fast path"_test[s::python3] = [] {
         // A: `run --print-launch` of an unchanged project takes the fast path where `run` does,
         // and describes what the full path does (plus the program's arguments). B: after a
@@ -419,6 +343,85 @@ exec "$@"
     };
 }};
 
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E contract_machine{"contract-machine", resource{"machine"}, [] {
+    "927 the runner contract"_test[s::gcc][s::unix_shell] = [] {
+        // run_under composes in front of the artifact with the contract variables and a closure
+        // manifest, returns the program's status and states where it was declared; the
+        // environment's `..._RUN_UNDER=none` and --no-runner drop it; config.toml's run_under is
+        // the default; a missing program fails with 2 naming it; `test` runs through it too.
+        const auto work = s::case_dir();
+        const auto record = work / "record";
+        s::write_executable(work / "bin/via-host", R"(#!/bin/sh
+{
+  echo "argv: $*"
+  echo "triple=$MCPP_RUN_TRIPLE kind=$MCPP_RUN_KIND mode=$MCPP_RUN_MODE"
+  echo "id=$MCPP_RUN_ID"
+  echo "closure=$MCPP_RUN_CLOSURE"
+} >> "$RECORD"
+shift
+exec "$@"
+)");
+        const auto path = (work / "bin").string() + ":" + s::env("PATH").value_or("");
+        const s::options o{.env = {{"NO_COLOR", "1"}, {"PATH", path}, {"RECORD", record.string()}}};
+        s::project app(work / "app", {{"src/main.cpp", "int main(int argc, char**) { return argc == 2 ? 7 : 3; }\n"}});
+        auto machine = s::run(*s::on_path("uname"), {"-m"}).out;
+        machine.erase(machine.find_last_not_of("\r\n") + 1);
+        const auto triple = machine + "-linux-gnu";
+        auto manifest = [&](std::string_view row) {
+            app.write("mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[toolchain]\ndefault = \"gcc@{}\"\n[target.{}]\n{}\n",
+                                               s::gcc_version(), triple, row));
+        };
+        manifest(R"(run_under = ["via-host", "team-mac"])");
+        fs::remove(record);
+        auto r = app.mcpp({"run", "--", "one"}, o);
+        auto t = s::text(r);
+        expect(fatal(e2e::exited(r, 7))) << "the program's exit status did not come back through run_under: " << t;
+        expect(fatal(s::has_line(t, R"(Via via-host team-mac  \[.*mcpp.toml:7\])"))) << "no Via line naming where run_under was stated: " << t;
+        const auto rec = s::read_file(record);
+        expect(fatal(s::has_line(rec, "argv: team-mac .*/bin/app one"))) << "run_under was not composed in front of the artifact: " << rec;
+        expect(fatal(e2e::contains(rec, "triple=" + triple + " kind=exe mode=run"))) << "the contract variables are missing: " << rec;
+        const auto closure = s::last_starting(rec, "closure=").substr(8);
+        expect(fatal(fs::is_regular_file(closure))) << "MCPP_RUN_CLOSURE names no file";
+        const auto cl = s::read_file(closure);
+        expect(fatal(e2e::contains(cl, R"("schema": 1)"))) << "the closure manifest carries no schema: " << cl;
+        expect(fatal(s::has_line(cl, R"("artifact": ".*/bin/app")"))) << "the closure manifest does not name the artifact: " << cl;
+        fs::remove(record);
+        std::string var = "MCPP_TARGET_" + triple + "_RUN_UNDER";
+        for (auto& c : var) c = c == '-' ? '_' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        auto none = o;
+        none.env.emplace_back(var, "none");
+        r = app.mcpp({"run", "--", "one"}, none);
+        expect(fatal(e2e::exited(r, 7) && !fs::exists(record))) << "`..._RUN_UNDER=none` did not clear run_under";
+        r = app.mcpp({"run", "--no-runner", "--", "one"}, o);
+        expect(fatal(e2e::exited(r, 7) && !fs::exists(record))) << "--no-runner did not drop run_under";
 
+        manifest("");
+        const auto config = s::shared_home() / "config.toml";
+        const auto saved = s::read_file(config);
+        {
+            std::ofstream out(config, std::ios::app);
+            out << std::format("\n[target.{}]\nrun_under = [\"via-host\", \"my-vm\"]\n", triple);
+        }
+        r = app.mcpp({"run", "--", "one"}, o);
+        {
+            std::ofstream out(config, std::ios::trunc | std::ios::binary);
+            out << saved;
+        }
+        expect(fatal(e2e::exited(r, 7))) << "config.toml's run_under failed: " << s::text(r);
+        expect(fatal(e2e::contains(s::read_file(record), "argv: my-vm "))) << "config.toml's [target.<triple>].run_under was not the default";
+        manifest(R"(run_under = ["no-such-wrapper", "x"])");
+        r = app.mcpp({"run"}, o);
+        expect(fatal(e2e::exited(r, 2))) << "a missing run_under program did not fail with 2: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "no-such-wrapper"))) << "the missing program was not named: " << s::text(r);
+        manifest(R"(run_under = ["via-host", "team-mac"])");
+        app.write("tests/t.cpp", "int main() { return 0; }\n");
+        fs::remove(record);
+        r = app.mcpp({"test"}, o);
+        expect(fatal(e2e::succeeded(r))) << "mcpp test through run_under failed: " << s::text(r);
+        expect(fatal(e2e::contains(s::read_file(record), "mode=test"))) << "a test was not run through run_under with MCPP_RUN_MODE=test";
+    };
+}};
 
 }  // namespace

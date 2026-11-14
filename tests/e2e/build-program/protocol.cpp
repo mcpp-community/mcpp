@@ -190,44 +190,6 @@ int main() {
         expect(e2e::contains(s::last_line(s::run(*bin).out), "profile=release")) << "profile not visible";
     };
 
-    "139 build program advisory"_test[s::unix_shell][resource{"machine"}] = [] {
-        // A program that succeeds and still says something (`mcpp:warning=`). The second build is
-        // the test: the program's result is cached, and an advisory printed only where the
-        // program ran would appear once and never again.
-        s::project p{{"mcpp.toml", "[package]\nname    = \"advisory\"\nversion = \"0.1.0\"\n"},
-                     {"src/main.cpp", "int main() { return 0; }\n"},
-                     {"build.mcpp", R"cpp(import mcpp;
-import std;
-int main() {
-    mcpp::warning("no emulator found; `xlings install qemu-riscv -y` enables `mcpp run`");
-    mcpp::define("ADVISORY_RAN");
-    return 0;
-}
-)cpp"}};
-        // 1. The advisory reaches the user on a build that succeeded, named by its package.
-        const auto first = s::text(p.mcpp({"build"}));
-        expect(e2e::contains(first, "no emulator found")) << "the advisory did not reach the output";
-        expect(e2e::contains(first, "advisory: no emulator found")) << "the advisory was not attributed to its package";
-        expect(s::contains_nocase(first, "Finished")) << "the build did not finish";
-        // 2. A touched source makes the project stale and leaves the program's inputs unchanged:
-        // a cache hit, which still carries the line (an unmodified build would take the
-        // whole-project fast path and reach neither).
-        fs::last_write_time(p.at("src/main.cpp"), fs::file_time_type::clock::now());
-        const auto second = s::text(p.mcpp({"build", "-v"}));
-        expect(s::has_line(second, R"(^ *build\.mcpp .* cached)")) << "the second build re-ran the program; the replay path was not exercised";
-        expect(e2e::contains(second, "advisory: no emulator found")) << "the advisory was lost on a cache hit";
-        // 3. Two members, two advisories, each named.
-        s::project ws{s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}}};
-        for (std::string m : {"a", "b"}) {
-            ws.write(m + "/mcpp.toml", std::format("[package]\nname    = \"{}\"\nversion = \"0.1.0\"\n", m));
-            ws.write(m + "/src/main.cpp", "int main() { return 0; }\n");
-            ws.write(m + "/build.mcpp", std::format("import mcpp;\nimport std;\nint main() {{ mcpp::warning(\"advisory from {}\"); return 0; }}\n", m));
-        }
-        const auto all = s::text(ws.mcpp({"build"}));
-        expect(e2e::contains(all, "a: advisory from a")) << "member a's advisory is missing or unattributed";
-        expect(e2e::contains(all, "b: advisory from b")) << "member b's advisory is missing or unattributed";
-    };
-
     "143 build mcpp source directive"_test[s::gcc] = [] {
         // `mcpp:source=` selects a source that already exists, outside every sources glob, into
         // the compile set (typed: mcpp::source); the cached record keeps it there.
@@ -875,6 +837,48 @@ int main() {
         auto r = p.mcpp({"run"});
         expect(fatal(e2e::succeeded(r))) << "the build or the program failed";
         expect(e2e::contains(s::text(r), "plan9 fast plan9 inner /z restored environment")) << "the values in scope";
+    };
+}};
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E protocol_machine{"protocol-machine", resource{"machine"}, [] {
+    "139 build program advisory"_test[s::unix_shell] = [] {
+        // A program that succeeds and still says something (`mcpp:warning=`). The second build is
+        // the test: the program's result is cached, and an advisory printed only where the
+        // program ran would appear once and never again.
+        s::project p{{"mcpp.toml", "[package]\nname    = \"advisory\"\nversion = \"0.1.0\"\n"},
+                     {"src/main.cpp", "int main() { return 0; }\n"},
+                     {"build.mcpp", R"cpp(import mcpp;
+import std;
+int main() {
+    mcpp::warning("no emulator found; `xlings install qemu-riscv -y` enables `mcpp run`");
+    mcpp::define("ADVISORY_RAN");
+    return 0;
+}
+)cpp"}};
+        // 1. The advisory reaches the user on a build that succeeded, named by its package.
+        const auto first = s::text(p.mcpp({"build"}));
+        expect(e2e::contains(first, "no emulator found")) << "the advisory did not reach the output";
+        expect(e2e::contains(first, "advisory: no emulator found")) << "the advisory was not attributed to its package";
+        expect(s::contains_nocase(first, "Finished")) << "the build did not finish";
+        // 2. A touched source makes the project stale and leaves the program's inputs unchanged:
+        // a cache hit, which still carries the line (an unmodified build would take the
+        // whole-project fast path and reach neither).
+        fs::last_write_time(p.at("src/main.cpp"), fs::file_time_type::clock::now());
+        const auto second = s::text(p.mcpp({"build", "-v"}));
+        expect(s::has_line(second, R"(^ *build\.mcpp .* cached)")) << "the second build re-ran the program; the replay path was not exercised";
+        expect(e2e::contains(second, "advisory: no emulator found")) << "the advisory was lost on a cache hit";
+        // 3. Two members, two advisories, each named.
+        s::project ws{s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"}}};
+        for (std::string m : {"a", "b"}) {
+            ws.write(m + "/mcpp.toml", std::format("[package]\nname    = \"{}\"\nversion = \"0.1.0\"\n", m));
+            ws.write(m + "/src/main.cpp", "int main() { return 0; }\n");
+            ws.write(m + "/build.mcpp", std::format("import mcpp;\nimport std;\nint main() {{ mcpp::warning(\"advisory from {}\"); return 0; }}\n", m));
+        }
+        const auto all = s::text(ws.mcpp({"build"}));
+        expect(e2e::contains(all, "a: advisory from a")) << "member a's advisory is missing or unattributed";
+        expect(e2e::contains(all, "b: advisory from b")) << "member b's advisory is missing or unattributed";
     };
 }};
 

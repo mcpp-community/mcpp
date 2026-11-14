@@ -217,35 +217,6 @@ E2E bmi{"bmi", [] {
             std::println("  clang leg skipped (no llvm payload installed)");
     };
 
-    "170 bmi staging no cascade"_test[resource{"machine"}] = [] {
-        // The std BMI is staged from the home's cache; a re-staged, unchanged BMI does not
-        // recompile its importer, and a settled staging edge stays clean.
-        s::project p({{"src/main.cpp", "import std;\nint main() { std::println(\"staged\"); return 0; }\n"},
-                      {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"}});
-        auto r = p.mcpp({"build"});
-        expect(fatal(e2e::succeeded(r))) << "initial build\n" << s::text(r);
-        const auto g = graph_of(p.dir());
-        expect(fatal(g.has_value())) << "no build.ninja produced";
-        const auto [dst, src] = first_stage(s::read_file(*g));
-        expect(fatal(!dst.empty())) << "no stage_file edge for the std BMI (did import std resolve?)";
-        const auto cache_dir = s::mcpp({"cache", "dir"}, p.dir()).out;
-        const auto cache_root = slashes(cache_dir.substr(0, cache_dir.find('\n')));
-        expect(fatal(!cache_root.empty())) << "mcpp cache dir printed nothing";
-        expect(fatal(slashes(src).starts_with(cache_root + "/std/"))) << "std BMI cache is '" << src << "', expected under '" << cache_root << "/std'";
-        for (const auto& leftover : {s::case_dir() / ".mcpp-bmi", p.at(".mcpp-bmi")})
-            expect(fatal(!fs::is_directory(leftover))) << "legacy cache dir created at " << leftover.string();
-        touch_now(src);
-        r = p.mcpp({"build", "-v"});
-        expect(fatal(e2e::succeeded(r))) << "rebuild after re-stage\n" << s::text(r);
-        expect(fatal(s::has_line(s::text(r), "stage .*--output"))) << "the staging edge did not re-run at all\n" << s::text(r);
-        expect(fatal(s::no_line(s::text(r), R"((-c|/c) .*main\.cpp)"))) << "re-staging an unchanged std BMI recompiled main.cpp (cascade)\n" << s::text(r);
-        expect(fatal(s::read_file(src) == s::read_file(g->parent_path() / dst))) << "staged BMI differs from the cache after staging";
-        r = p.mcpp({"build", "-v"});
-        expect(fatal(e2e::succeeded(r))) << "third build\n" << s::text(r);
-        expect(fatal(s::no_line(s::text(r), "stage .*--output"))) << "staging edge stayed dirty after a settled re-stage\n" << s::text(r);
-        expect(fatal(s::no_line(s::text(r), R"((-c|/c) .*main\.cpp)"))) << "settled staging edge recompiled main.cpp on the third build\n" << s::text(r);
-    };
-
     "171 bmi staging locked dest"_test = [] {
         // Staging an equivalent BMI onto a destination that cannot be written (read-only; on
         // Windows, mapped by another process) succeeds without rewriting it; staging onto an
@@ -297,7 +268,112 @@ E2E bmi{"bmi", [] {
         expect(fatal(fs::is_regular_file(tmp / "occupied/child/keep.txt"))) << "failed staging clobbered the destination";
     };
 
-    "234 bmi schedule on"_test[resource{"machine"}] = [] {
+    "849 a staged bmi waits for a module compiled here"_test = [] {
+        // A cached package whose module imports a module its build program generates is staged;
+        // the stage edge waits for the generated module's BMI, the aggregate holds no such
+        // stage, and the consumer compiles after the generated module.
+        const s::options home{.where = s::home::inherited};
+        const auto mcpp_home = s::case_home(s::home::inherited);
+        const auto tmp = s::case_dir();
+        s::project idx(tmp / "local-index", {});
+        idx.write("pkgs/g/gen-dep.lua", "package = {\n    spec = \"1\",\n    name = \"gen-dep\",\n    description = \"A package whose module imports a module its build program generates\",\n" + lua_xpm("gen-dep") + "}\n");
+        const std::string payload = ".mcpp/.xlings/data/xpkgs/local-dev.gen-dep/1.0.0";
+        s::project app(tmp / "app", {{"src/main.cpp", "#include <cstdio>\nimport gen.dep;\nint main() { std::printf(\"%d\\n\", dep_value()); }\n"}});
+        app.write(payload + "/mcpp.toml", "[package]\nname    = \"gen-dep\"\nversion = \"1.0.0\"\n[targets.gen-dep]\nkind = \"lib\"\n");
+        app.write(payload + "/build.mcpp", R"cpp(#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    std::string p = std::string(mcpp::out_dir()) + "/gen-table.cppm";
+    std::FILE* f = std::fopen(p.c_str(), "w");
+    std::fputs("export module gen.dep.table;\nexport int table_value() { return 42; }\n", f);
+    std::fclose(f);
+    mcpp::generated(p.c_str());
+    return 0;
+}
+)cpp");
+        app.write(payload + "/src/gen.dep.cppm", "export module gen.dep;\nimport gen.dep.table;\nexport int dep_value() { return table_value(); }\n");
+        app.write("mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[indices]\nlocal-dev = {{ path = \"{}\" }}\n[dependencies]\n\"local-dev.gen-dep\" = \"1.0.0\"\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", idx.dir().generic_string()));
+        auto r = app.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << "the first build failed (a fixture problem)\n" << s::text(r);
+        (void)app.mcpp({"clean"}, home);
+        r = app.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << "A: the build that stages the package failed\n" << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Cached local-dev\.gen-dep v1\.0\.0)"))) << "A: the package was not staged from the cache, so nothing below is exercised\n" << s::text(r);
+        const auto bins = s::glob(app.at("target"), "*/*/bin/" + s::exe("app"));
+        expect(fatal(!bins.empty())) << "A: no program";
+        auto out = s::run(bins.front()).out;
+        std::erase(out, '\r');
+        expect(fatal(s::last_line(out) == "42")) << "A: the program does not print 42";
+
+        const auto n = graph_of(app.dir());
+        expect(fatal(n.has_value())) << "B: no build.ninja";
+        const auto d = n->parent_path();
+        const auto graph = s::read_file(*n);
+        std::string stage;
+        for (const auto& l : s::lines_with(graph, " : stage_file "))
+            if (std::regex_search(l, std::regex{R"(^build [a-z]+\.cache/[^ ]*gen\.dep\.[a-z]+ : stage_file )"})) stage = l;
+        expect(fatal(!stage.empty())) << "B: the cached BMI has no stage edge";
+        const auto bmi = words(stage)[1];
+        const auto ext = bmi.substr(bmi.rfind('.') + 1);
+        const auto table = (fs::path(bmi).parent_path() / std::format("gen.dep.table.{}", ext)).generic_string();
+        expect(fatal(stage.contains("|| " + table))) << "B: the stage edge does not wait for the generated module's BMI: " << stage;
+        const auto phony = s::lines_with(graph, "build _mcpp_staged_cache : phony");
+        for (const auto& l : phony)
+            if (l.starts_with("build _mcpp_staged_cache : phony"))
+                expect(fatal(!(" " + l + " ").contains(" " + bmi + " "))) << "B: the aggregate holds a stage that waits for a compile: " << l;
+
+        std::optional<fs::path> ninja;
+        for (const auto& pattern : {"xim-x-ninja/*/" + s::exe("ninja"), "xim-x-ninja/*/bin/" + s::exe("ninja")})
+            for (const auto& c : s::glob(mcpp_home / "registry/data/xpkgs", pattern))
+                if (!ninja && fs::is_regular_file(c)) ninja = c;
+        expect(fatal(ninja.has_value())) << "C: no ninja binary";
+        std::string main_obj;
+        for (const auto& l : s::lines_with(graph, " : cxx_object "))
+            if (main_obj.empty() && std::regex_search(l, std::regex{R"(^build [^ ]*main\.[a-z.]+ : cxx_object )"})) main_obj = words(l)[1];
+        expect(fatal(!main_obj.empty())) << "C: no compile edge for main.cpp";
+        std::error_code ec;
+        fs::remove(d / ".ninja_deps", ec);
+        fs::remove(d / table, ec);
+        fs::remove(d / main_obj, ec);
+        auto c = e2e::run({.argv = {ninja->string(), "-C", d.string(), main_obj}, .timeout = std::chrono::minutes{10}});
+        expect(fatal(e2e::succeeded(c))) << "C: the consumer compiled before the module it reaches\n" << s::text(c);
+        expect(fatal(fs::is_regular_file(d / table))) << "C: the generated module was not compiled";
+    };
+}};
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E bmi_machine{"bmi-machine", resource{"machine"}, [] {
+    "170 bmi staging no cascade"_test = [] {
+        // The std BMI is staged from the home's cache; a re-staged, unchanged BMI does not
+        // recompile its importer, and a settled staging edge stays clean.
+        s::project p({{"src/main.cpp", "import std;\nint main() { std::println(\"staged\"); return 0; }\n"},
+                      {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"}});
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "initial build\n" << s::text(r);
+        const auto g = graph_of(p.dir());
+        expect(fatal(g.has_value())) << "no build.ninja produced";
+        const auto [dst, src] = first_stage(s::read_file(*g));
+        expect(fatal(!dst.empty())) << "no stage_file edge for the std BMI (did import std resolve?)";
+        const auto cache_dir = s::mcpp({"cache", "dir"}, p.dir()).out;
+        const auto cache_root = slashes(cache_dir.substr(0, cache_dir.find('\n')));
+        expect(fatal(!cache_root.empty())) << "mcpp cache dir printed nothing";
+        expect(fatal(slashes(src).starts_with(cache_root + "/std/"))) << "std BMI cache is '" << src << "', expected under '" << cache_root << "/std'";
+        for (const auto& leftover : {s::case_dir() / ".mcpp-bmi", p.at(".mcpp-bmi")})
+            expect(fatal(!fs::is_directory(leftover))) << "legacy cache dir created at " << leftover.string();
+        touch_now(src);
+        r = p.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "rebuild after re-stage\n" << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "stage .*--output"))) << "the staging edge did not re-run at all\n" << s::text(r);
+        expect(fatal(s::no_line(s::text(r), R"((-c|/c) .*main\.cpp)"))) << "re-staging an unchanged std BMI recompiled main.cpp (cascade)\n" << s::text(r);
+        expect(fatal(s::read_file(src) == s::read_file(g->parent_path() / dst))) << "staged BMI differs from the cache after staging";
+        r = p.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "third build\n" << s::text(r);
+        expect(fatal(s::no_line(s::text(r), "stage .*--output"))) << "staging edge stayed dirty after a settled re-stage\n" << s::text(r);
+        expect(fatal(s::no_line(s::text(r), R"((-c|/c) .*main\.cpp)"))) << "settled staging edge recompiled main.cpp on the third build\n" << s::text(r);
+    };
+    "234 bmi schedule on"_test = [] {
         // bmi_schedule = "on": the schedule is reported and the program runs; the graph declares
         // its shape; under detach-codegen an incremental build works, a full set of stale tokens
         // neither hangs a build nor survives it, a BMI's removal is not its publication, the
@@ -420,81 +496,7 @@ bmi_schedule = "on"
         helper("check_cached_object_recovery.py", {p.dir().string(), build_dir.string()});
         helper("check_completion_observation.py", {(s::case_dir() / "completion-observation").string()});
     };
-
-    "849 a staged bmi waits for a module compiled here"_test = [] {
-        // A cached package whose module imports a module its build program generates is staged;
-        // the stage edge waits for the generated module's BMI, the aggregate holds no such
-        // stage, and the consumer compiles after the generated module.
-        const s::options home{.where = s::home::inherited};
-        const auto mcpp_home = s::case_home(s::home::inherited);
-        const auto tmp = s::case_dir();
-        s::project idx(tmp / "local-index", {});
-        idx.write("pkgs/g/gen-dep.lua", "package = {\n    spec = \"1\",\n    name = \"gen-dep\",\n    description = \"A package whose module imports a module its build program generates\",\n" + lua_xpm("gen-dep") + "}\n");
-        const std::string payload = ".mcpp/.xlings/data/xpkgs/local-dev.gen-dep/1.0.0";
-        s::project app(tmp / "app", {{"src/main.cpp", "#include <cstdio>\nimport gen.dep;\nint main() { std::printf(\"%d\\n\", dep_value()); }\n"}});
-        app.write(payload + "/mcpp.toml", "[package]\nname    = \"gen-dep\"\nversion = \"1.0.0\"\n[targets.gen-dep]\nkind = \"lib\"\n");
-        app.write(payload + "/build.mcpp", R"cpp(#include <cstdio>
-#include <string>
-import mcpp;
-int main() {
-    std::string p = std::string(mcpp::out_dir()) + "/gen-table.cppm";
-    std::FILE* f = std::fopen(p.c_str(), "w");
-    std::fputs("export module gen.dep.table;\nexport int table_value() { return 42; }\n", f);
-    std::fclose(f);
-    mcpp::generated(p.c_str());
-    return 0;
-}
-)cpp");
-        app.write(payload + "/src/gen.dep.cppm", "export module gen.dep;\nimport gen.dep.table;\nexport int dep_value() { return table_value(); }\n");
-        app.write("mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[indices]\nlocal-dev = {{ path = \"{}\" }}\n[dependencies]\n\"local-dev.gen-dep\" = \"1.0.0\"\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", idx.dir().generic_string()));
-        auto r = app.mcpp({"build"}, home);
-        expect(fatal(e2e::succeeded(r))) << "the first build failed (a fixture problem)\n" << s::text(r);
-        (void)app.mcpp({"clean"}, home);
-        r = app.mcpp({"build"}, home);
-        expect(fatal(e2e::succeeded(r))) << "A: the build that stages the package failed\n" << s::text(r);
-        expect(fatal(s::has_line(s::text(r), R"(Cached local-dev\.gen-dep v1\.0\.0)"))) << "A: the package was not staged from the cache, so nothing below is exercised\n" << s::text(r);
-        const auto bins = s::glob(app.at("target"), "*/*/bin/" + s::exe("app"));
-        expect(fatal(!bins.empty())) << "A: no program";
-        auto out = s::run(bins.front()).out;
-        std::erase(out, '\r');
-        expect(fatal(s::last_line(out) == "42")) << "A: the program does not print 42";
-
-        const auto n = graph_of(app.dir());
-        expect(fatal(n.has_value())) << "B: no build.ninja";
-        const auto d = n->parent_path();
-        const auto graph = s::read_file(*n);
-        std::string stage;
-        for (const auto& l : s::lines_with(graph, " : stage_file "))
-            if (std::regex_search(l, std::regex{R"(^build [a-z]+\.cache/[^ ]*gen\.dep\.[a-z]+ : stage_file )"})) stage = l;
-        expect(fatal(!stage.empty())) << "B: the cached BMI has no stage edge";
-        const auto bmi = words(stage)[1];
-        const auto ext = bmi.substr(bmi.rfind('.') + 1);
-        const auto table = (fs::path(bmi).parent_path() / std::format("gen.dep.table.{}", ext)).generic_string();
-        expect(fatal(stage.contains("|| " + table))) << "B: the stage edge does not wait for the generated module's BMI: " << stage;
-        const auto phony = s::lines_with(graph, "build _mcpp_staged_cache : phony");
-        for (const auto& l : phony)
-            if (l.starts_with("build _mcpp_staged_cache : phony"))
-                expect(fatal(!(" " + l + " ").contains(" " + bmi + " "))) << "B: the aggregate holds a stage that waits for a compile: " << l;
-
-        std::optional<fs::path> ninja;
-        for (const auto& pattern : {"xim-x-ninja/*/" + s::exe("ninja"), "xim-x-ninja/*/bin/" + s::exe("ninja")})
-            for (const auto& c : s::glob(mcpp_home / "registry/data/xpkgs", pattern))
-                if (!ninja && fs::is_regular_file(c)) ninja = c;
-        expect(fatal(ninja.has_value())) << "C: no ninja binary";
-        std::string main_obj;
-        for (const auto& l : s::lines_with(graph, " : cxx_object "))
-            if (main_obj.empty() && std::regex_search(l, std::regex{R"(^build [^ ]*main\.[a-z.]+ : cxx_object )"})) main_obj = words(l)[1];
-        expect(fatal(!main_obj.empty())) << "C: no compile edge for main.cpp";
-        std::error_code ec;
-        fs::remove(d / ".ninja_deps", ec);
-        fs::remove(d / table, ec);
-        fs::remove(d / main_obj, ec);
-        auto c = e2e::run({.argv = {ninja->string(), "-C", d.string(), main_obj}, .timeout = std::chrono::minutes{10}});
-        expect(fatal(e2e::succeeded(c))) << "C: the consumer compiled before the module it reaches\n" << s::text(c);
-        expect(fatal(fs::is_regular_file(d / table))) << "C: the generated module was not compiled";
-    };
-
-    "1039 two builds that find the std module missing compile it once"_test[resource{"machine"}] = [] {
+    "1039 two builds that find the std module missing compile it once"_test = [] {
         // With the std module entry two projects use removed, the two build at once and both
         // succeed; the entry is whole afterwards (its record and its object).
         auto one = s::project::scaffold("one");

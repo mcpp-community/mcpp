@@ -345,8 +345,12 @@ int main() {
         expect(fatal(s::lacks(err, "\x1b"))) << "D2: the file on standard error holds an escape sequence";
         expect(fatal(e2e::contains(err, "Finished"))) << "D2: Finished is not in the file on standard error";
     };
+}};
 
-    "936 the control contract"_test[s::python3][resource{"machine"}] = [] {
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E output_machine{"output-machine", resource{"machine"}, [] {
+    "936 the control contract"_test[s::python3] = [] {
         // A the JSON event stream and the build envelope, a failure's located diagnostic; B
         // --print-launch; C --deny; D CLICOLOR_FORCE and NO_COLOR; E --home; F the envelopes of
         // search, index list and pack --list-formats; G --protocol-version; H a build ended by

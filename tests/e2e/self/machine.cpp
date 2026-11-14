@@ -23,8 +23,8 @@ std::string field11(std::string_view out) {
     return last;
 }
 
-E2E machine{"machine", [] {
-    "205 root local subos"_test[s::elf][s::gcc][resource{"machine"}] = [] {
+E2E machine{"machine", resource{"machine"}, [] {
+    "205 root local subos"_test[s::elf][s::gcc] = [] {
         // The default SubOS's binding ignores XLINGS_ACTIVE_SUBOS, and an explicit "default" is
         // not its absence; a workspace root owns the members' SubOS (materialised at the root
         // only); the member alone selects its own; a dependency's SubOS does not reach its
@@ -83,7 +83,7 @@ E2E machine{"machine", [] {
         expect(fatal(e2e::succeeded(r))) << "the dependency's SubOS leaked into the consumer: " << s::text(r);
     };
 
-    "931 a suggested command quotes its path"_test[s::unix_shell][s::fresh_sandbox][resource{"machine"}] = [] {
+    "931 a suggested command quotes its path"_test[s::unix_shell][s::fresh_sandbox] = [] {
         // With a home selected, `self init --home '<spaced path>'` suggests a command that quotes
         // the path, and that command, pasted, succeeds.
         const auto work = s::case_dir();

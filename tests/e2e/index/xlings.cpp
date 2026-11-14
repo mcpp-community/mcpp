@@ -127,44 +127,6 @@ hardware = {}
         expect(fatal(e2e::contains(hw, "tier-hardware"))) << "[feature-xlings.hardware] did not apply with --features hardware: " << hw;
     };
 
-    "614 feature xlings reaches xpkg dir"_test[s::gcc][s::unix_shell][resource{"machine"}] = [] {
-        // A [feature-xlings.<f>] tool's MCPP_XPKG_<NS>_<NAME>_DIR is its payload with the feature
-        // on and empty with it off.
-        auto st = s::mcpp({"index", "status"}, s::case_dir());
-        fs::path registry;
-        std::smatch m;
-        if (std::regex_search(st.out, m, std::regex{R"((/[^ \n]*/registry))"})) registry = m[1].str();
-        if (registry.empty()) registry = s::shared_home() / "registry";
-        const auto store = registry / "data/xpkgs/xim-x-ninja";
-        if (!fs::is_directory(store)) skip(std::format("{} is absent, so there is no installed payload to look up", store.string()));
-        std::vector<std::string> versions;
-        for (const auto& e : fs::directory_iterator(store)) versions.push_back(e.path().filename().string());
-        // `sort -V -r`: by numeric components, highest first.
-        const auto key = [](const std::string& v) {
-            std::vector<long> k;
-            for (auto part : std::views::split(v, '.')) {
-                long n = 0;
-                std::from_chars(&*part.begin(), &*part.begin() + std::ranges::distance(part), n);
-                k.push_back(n);
-            }
-            return k;
-        };
-        std::ranges::sort(versions, [&](const std::string& a, const std::string& b) { return key(a) > key(b); });
-        std::string version;
-        for (const auto& v : versions)
-            if (fs::is_directory(store / v) && !fs::is_empty(store / v)) { version = v; break; }
-        if (version.empty()) skip(std::format("every version under {} is empty", store.string()));
-        s::project p(s::case_dir() / "app", {
-            {"mcpp.toml", std::format("[package]\nname    = \"featurexlings\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/main.cpp\"]\n\n[features]\ndefault = {{}}\ngpu     = {{}}\n\n[feature-xlings.gpu]\n\"xim:ninja\" = \"{}\"\n", version)},
-            {"src/main.cpp", "int main() { return 0; }\n"},
-            {"build.mcpp", "#include <cstdio>\n#include <cstdlib>\nint main() {\n    const char* dir = std::getenv(\"MCPP_XPKG_XIM_NINJA_DIR\");\n    std::printf(\"mcpp:warning=xpkg_dir=[%s]\\n\", (dir && *dir) ? dir : \"\");\n    return 0;\n}\n"}});
-        const auto with_gpu = s::text(p.mcpp({"build", "--features", "gpu"}));
-        fs::remove_all(p.at("target"));
-        const auto without = s::text(p.mcpp({"build"}));
-        expect(e2e::contains(with_gpu, std::format("xpkg_dir=[{}]", (store / version).string()))) << "the feature's tool does not resolve to its payload: " << with_gpu;
-        expect(e2e::contains(without, "xpkg_dir=[]")) << "the tool does not answer empty when the feature is off: " << without;
-    };
-
     "737 the declared runtime payload is installed"_test[s::gcc] = [] {
         // The default SubOS declares a glibc runtime. With that payload gone from the cache: A an
         // offline build fails naming xim:<runtime>; B an online build installs it (its loader)
@@ -247,6 +209,48 @@ hardware = {}
         expect(fatal(e2e::succeeded(r))) << "the borrowing home did not start: " << s::text(r);
         expect(fatal(s::read_file(config) == before)) << "the borrowing home rewrote the registry's index places:\n" << before << "\n---\n" << s::read_file(config);
         expect(fatal(s::lacks(s::read_file(config), borrower.filename().string()))) << "the registry names the borrowing home: " << s::read_file(config);
+    };
+}};
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E xlings_machine{"xlings-machine", resource{"machine"}, [] {
+    "614 feature xlings reaches xpkg dir"_test[s::gcc][s::unix_shell] = [] {
+        // A [feature-xlings.<f>] tool's MCPP_XPKG_<NS>_<NAME>_DIR is its payload with the feature
+        // on and empty with it off.
+        auto st = s::mcpp({"index", "status"}, s::case_dir());
+        fs::path registry;
+        std::smatch m;
+        if (std::regex_search(st.out, m, std::regex{R"((/[^ \n]*/registry))"})) registry = m[1].str();
+        if (registry.empty()) registry = s::shared_home() / "registry";
+        const auto store = registry / "data/xpkgs/xim-x-ninja";
+        if (!fs::is_directory(store)) skip(std::format("{} is absent, so there is no installed payload to look up", store.string()));
+        std::vector<std::string> versions;
+        for (const auto& e : fs::directory_iterator(store)) versions.push_back(e.path().filename().string());
+        // `sort -V -r`: by numeric components, highest first.
+        const auto key = [](const std::string& v) {
+            std::vector<long> k;
+            for (auto part : std::views::split(v, '.')) {
+                long n = 0;
+                std::from_chars(&*part.begin(), &*part.begin() + std::ranges::distance(part), n);
+                k.push_back(n);
+            }
+            return k;
+        };
+        std::ranges::sort(versions, [&](const std::string& a, const std::string& b) { return key(a) > key(b); });
+        std::string version;
+        for (const auto& v : versions)
+            if (fs::is_directory(store / v) && !fs::is_empty(store / v)) { version = v; break; }
+        if (version.empty()) skip(std::format("every version under {} is empty", store.string()));
+        s::project p(s::case_dir() / "app", {
+            {"mcpp.toml", std::format("[package]\nname    = \"featurexlings\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/main.cpp\"]\n\n[features]\ndefault = {{}}\ngpu     = {{}}\n\n[feature-xlings.gpu]\n\"xim:ninja\" = \"{}\"\n", version)},
+            {"src/main.cpp", "int main() { return 0; }\n"},
+            {"build.mcpp", "#include <cstdio>\n#include <cstdlib>\nint main() {\n    const char* dir = std::getenv(\"MCPP_XPKG_XIM_NINJA_DIR\");\n    std::printf(\"mcpp:warning=xpkg_dir=[%s]\\n\", (dir && *dir) ? dir : \"\");\n    return 0;\n}\n"}});
+        const auto with_gpu = s::text(p.mcpp({"build", "--features", "gpu"}));
+        fs::remove_all(p.at("target"));
+        const auto without = s::text(p.mcpp({"build"}));
+        expect(e2e::contains(with_gpu, std::format("xpkg_dir=[{}]", (store / version).string()))) << "the feature's tool does not resolve to its payload: " << with_gpu;
+        expect(e2e::contains(without, "xpkg_dir=[]")) << "the tool does not answer empty when the feature is off: " << without;
     };
 }};
 

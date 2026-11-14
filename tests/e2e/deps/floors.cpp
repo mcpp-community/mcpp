@@ -80,8 +80,12 @@ E2E floors{"floors", [] {
         mkneed("futureneed", "some.future.thing >= 4.2.1");
         expect(e2e::succeeded(consumer({"futureneed"}).mcpp({"build"}))) << "a floor nobody answered was refused";
     };
+}};
 
-    "822 a package states the oldest mcpp it supports"_test[s::unix_shell][resource{"machine"}] = [] {
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E floors_machine{"floors-machine", resource{"machine"}, [] {
+    "822 a package states the oldest mcpp it supports"_test[s::unix_shell] = [] {
         // `[package] mcpp = ">=V"` states the oldest mcpp release a package supports: an engine
         // below it stops first, naming the package, the floor, its own release and the way to
         // upgrade; a bare release or a non-release is explained; a workspace floor reaches its

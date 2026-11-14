@@ -93,8 +93,12 @@ int main() {{ return std::system(WHOLE("\"{}\" build > \"{}\" 2>&1")) == 0 ? 0 :
         expect(fatal(e2e::succeeded(again))) << "a test that builds its project failed\n" << s::read_file(inner_log);
         expect(s::no_line(s::read_file(inner_log), "Waiting for the build directory|Resolving")) << "the inner build waited or planned";
     };
+}};
 
-    "1069 an unchanged project tests without planning"_test[resource{"machine"}] = [] {
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E fast_machine{"fast-machine", resource{"machine"}, [] {
+    "1069 an unchanged project tests without planning"_test = [] {
         // A full `mcpp test` records what it planned beside test.ninja; the next one runs the
         // selected tests from it, resolving no dev-dependency. An edited test, a test added or
         // removed and an edited source each take the full path again. Alone on the machine: the

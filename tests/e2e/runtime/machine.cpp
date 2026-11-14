@@ -24,8 +24,8 @@ std::vector<std::string> split(std::string_view text, char sep) {
     return out;
 }
 
-E2E machine{"machine", [] {
-    "219 runtime search farm is last"_test[s::gcc][s::elf][s::python3][resource{"machine"}] = [] {
+E2E machine{"machine", resource{"machine"}, [] {
+    "219 runtime search farm is last"_test[s::gcc][s::elf][s::python3] = [] {
         const auto tmp = s::case_dir();
         // A dependency that ships a shared library, so that the program carries `$ORIGIN`.
         s::project greetdep(tmp / "greetdep", {{"mcpp.toml", "[package]\nname = \"greetdep\"\nversion = \"0.1.0\"\n\n[targets.greetdep]\nkind = \"shared\"\n"},

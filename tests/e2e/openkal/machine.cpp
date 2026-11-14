@@ -26,8 +26,8 @@ bool locked_as_platforms(std::string_view lock, std::string_view name) {
     return false;
 }
 
-E2E machine{"machine", [] {
-    "951 an ok image needs no declaration"_test[s::llvm][s::python3][resource{"machine"}] = [] {
+E2E machine{"machine", resource{"machine"}, [] {
+    "951 an ok image needs no declaration"_test[s::llvm][s::python3] = [] {
         // The target table pins openkal-platform for the ok-image rows: A a project naming only
         // its sources runs as an image; B the report names the platform and what it added; C
         // the lock records those packages as the platform's, and a build for this machine
