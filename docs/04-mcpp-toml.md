@@ -2179,7 +2179,7 @@ discover = ["tests/**/*.cpp"]    # the default
 | `main` | `{ from = "<dependency>/<entry>" }` | the entry target every test program begins in; each test file is then an ordinary translation unit of its program and defines no `main` (§2.2, `kind = "entry"`) *(2026.10.26.2+)* |
 | `start` | symbol | the symbol every test image is entered at, on a freestanding target (§2.2, `start`) *(2026.10.26.2+)* |
 | `programs` | `"file"` or `"directory"` | `"file"` (the default): every discovered file is a program; `"directory"`: the files of one directory below a glob's fixed directory are one program, named by the directory, beginning at the file that defines `main` when one does *(2026.11.8.1+)* |
-| `split` | `"file"`, `"case"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, or once *(2026.11.9.1+)* |
+| `split` | `"file"`, `"case"`, `"auto"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, per file with a file the run store measured longer than its share divided into groups of its cases (`"auto"`, 2026.11.13.1+), or once *(2026.11.9.1+)* |
 | `link` | `"used"` or `"objects"` | `"used"` (the default): a test links what it reaches (`--gc-sections`, `-dead_strip`); `"objects"`: every object whole *(2026.11.9.1+)* |
 | `store` | directory or `"none"` | where a run is kept in the mtest store's form, relative to the project; the default is `target/mtest`; `"none"` keeps nothing *(2026.11.9.1+)* |
 

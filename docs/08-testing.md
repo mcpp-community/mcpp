@@ -83,8 +83,12 @@ A program that speaks the test protocol runs as **one process per file of its
 cases** (2026.11.9.1+): mcpp lists the cases of a program of several files, and
 each file's run selects its own (P4) and is scheduled across the workers as a program is, named
 `<program>/<file>` -- the isolation and the parallelism of a program per file,
-with one link. `[test] split = "case"` gives each case its own process, and
-`"none"` runs the program once. A pattern names a program or a part of one as
+with one link. `[test] split = "case"` gives each case its own process,
+`"none"` runs the program once, and `"auto"` (2026.11.13.1+) divides by file and
+then divides a file the run store measured longer than its share of the run
+(the run's measured work over its workers and shards) into groups of its listed
+cases of about equal measured duration, named `<program>/<file> (i/k)`.
+`--split <mode>` states the value for one invocation. A pattern names a program or a part of one as
 the run names it: `mcpp test unit/test_home` (or `home`) runs that file's part.
 
 A case that holds the machine (P7.1, resource `machine`) runs with no other test
@@ -99,6 +103,22 @@ one file) runs whole, alone when one of its cases holds `machine`. What holds
 `machine` is queued after every other test and runs alone. The run's record states
 `machine` among the part's resources. A resource stated on a case inside a suite
 is not listed, so it holds nothing across processes.
+
+**The order of a run** (2026.11.13.1+). Before anything runs, mcpp reads the run
+store (`[test] store`, below): of each test, the newest duration its runs
+measured, of the cases it selects or of the program whole, and the mean for a
+test no run measured. The tests start longest first, so the longest work does
+not start last. `--shard I/N` runs the I-th of N shards: every test, longest
+first, is assigned to the shard with the least measured work, and this command
+runs its own; the assignment reads only the store and the run's list, so N
+commands on N machines, each with the same store, run every test once. A shard
+reads no run of a shard of its own group (`GITHUB_RUN_ID`, or none), so the
+shards of one run started one after another on one store read it as the first
+of them did. `--failed` runs what the store's last run failed: the programs
+that failed and, when every failure names its cases, only those cases; a
+program that failed outside its cases runs whole. It is not combined with a
+pattern, `--case`, `--cases` or `--no-run`, and a last run that failed nothing
+runs nothing and exits 0.
 
 A test program keeps what it reaches (2026.11.9.1+): units are compiled with one
 section per function and per object, and a test links with `--gc-sections`
@@ -223,6 +243,10 @@ the tests a change affects, read from the plan before anything is built:
   of its link that belongs to no module;
 - a change of a manifest, a lock, a build program, a header, or a source the
   plan does not hold affects every test;
+- a test that runs a program of the package (a file it is built from names
+  `MCPP_BIN_`) is affected by a change of any source of the package that is
+  not a test's own (2026.11.13.1+): an end-to-end test runs the program it
+  tests and is built from none of its sources;
 - another file affects the tests whose own files name it (a fixture), and no
   other test.
 

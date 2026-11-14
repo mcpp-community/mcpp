@@ -17,6 +17,7 @@ import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
 import mcpp.build.test_protocol;   // the runner's side of the test protocol (docs/08 "Cases")
 import mcpp.build.test_impact;     // the tests a change affects (docs/08)
+import mcpp.build.test_schedule;   // the order, division and shards of a run (docs/08)
 import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
@@ -4102,6 +4103,13 @@ export struct TestOptions {
     // write a test (docs/08 "Writing a test"). Plans; builds and runs nothing.
     bool                          guide = false;
     std::optional<std::uint64_t>  seed;
+    // `--shard I/N`: of the run's tests, assigned to N shards longest first by
+    // the durations the store measured, the I-th's (docs/08 "The order of a
+    // run"). Every shard reads one store and one list, so the N shards run
+    // every test once.
+    std::optional<std::pair<int, int>> shard;
+    // `--split MODE`: the invocation's `[test] split` (file, case, auto, none).
+    std::string                   split;
 };
 
 // What one member's `run_tests` actually did. `--workspace` fans out over
@@ -4241,7 +4249,7 @@ struct TestResult {
 // engine's own. Written whole into `runs/<id>/` and then appended to the index.
 void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestResult>& results,
                        std::chrono::system_clock::time_point started, long long ms, int jobs,
-                       std::string_view selection) {
+                       std::string_view selection, std::string_view shard = {}) {
     namespace fs = std::filesystem;
     using nlohmann::json;
     const auto finished = std::chrono::system_clock::now();
@@ -4277,6 +4285,8 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                    {"started_ms", t.startedMs}, {"worker", t.worker}, {"select", t.select},
                    {"resources", t.alone ? json::array({"machine"}) : json::array()}, {"fixtures", json::array()}};
             if (t.buildMs > 0) p["build_ms"] = t.buildMs;
+            // The program a part is of: what `--failed` builds again.
+            if (!t.partOf.empty()) p["part_of"] = t.partOf;
             if (t.report.usage.set) {
                 auto u = mcpp::build::test_protocol::usage_json(t.report.usage);
                 u["source"] = "program";
@@ -4328,6 +4338,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
              {"set", "mcpp test"}, {"selection", std::string(selection)},
              {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", "off"},
              {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
+    if (!shard.empty()) run["shard"] = std::string(shard);
     { std::ofstream(runDir / "run.json", std::ios::binary) << run.dump(2) << "\n"; }
     std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << run.dump() << "\n";
 }
@@ -4567,6 +4578,8 @@ struct TestRunnable {
     // Its cases hold the machine (P7.1 `machine`): it runs with no other test
     // beside it.
     bool alone = false;
+    // The duration the store's runs measured for it (-1: not yet estimated).
+    double estimateMs = -1;
 };
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
@@ -5019,6 +5032,20 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         return j > 0 ? j : 1;
     }();
 
+    // THE DURATIONS EARLIER RUNS MEASURED (docs/08 "The order of a run"): the
+    // run store, read once before anything runs. A run orders its tests
+    // longest first by them, `[test] split = "auto"` divides a part longer
+    // than its share, and `--shard` assigns the tests to shards. Measured on
+    // the e2e programs (design 2026-11-14): one file of two cases ran 807 s at
+    // the end of a 1931 s run while the other workers stood idle.
+    const auto storeDir = ctx->manifest.testStore.empty() ? ctx->projectRoot / "target" / "mtest"
+                                                          : ctx->projectRoot / ctx->manifest.testStore;
+    const auto history = ctx->manifest.testStore == "none"
+        ? mcpp::build::test_schedule::History{}
+        : mcpp::build::test_schedule::read_history(
+              storeDir, 30, testOpts.shard ? std::optional(mcpp::invocation::get("GITHUB_RUN_ID").value_or(""))
+                                           : std::nullopt);
+
     using Runnable = TestRunnable;
     std::vector<Runnable> runnable;
 
@@ -5057,6 +5084,39 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                               && !runnerChoice.tmpl.empty();
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
+        // Each test's measured duration: of the cases it selects, or of the
+        // program whole.
+        namespace ts = mcpp::build::test_schedule;
+        for (auto& r : list) {
+            if (r.estimateMs >= 0) continue;
+            std::vector<std::string> ids;
+            if (r.select) {
+                std::ifstream in(*r.select);
+                for (std::string line; std::getline(in, line);)
+                    if (!line.empty()) ids.push_back(line);
+            }
+            r.estimateMs = ts::estimate(history, r.name, ids);
+        }
+        // THE SHARD: every test assigned, longest first, to the shard with the
+        // least work; this command runs its own. The assignment reads only the
+        // store and the list, so each shard computes the same one.
+        if (testOpts.shard) {
+            const auto [index, count] = *testOpts.shard;
+            std::vector<double> est;
+            std::vector<std::string> names;
+            for (const auto& r : list) { est.push_back(r.estimateMs); names.push_back(r.name); }
+            const auto bin = ts::assign(est, names, static_cast<std::size_t>(count));
+            std::vector<Runnable> mine;
+            for (std::size_t i = 0; i < list.size(); ++i)
+                if (bin[i] == static_cast<std::size_t>(index - 1)) mine.push_back(std::move(list[i]));
+            if (!json)
+                mcpp::ui::info("Shard", std::format("{}/{}: {} of {} test(s){}", index, count, mine.size(),
+                                                   list.size(), history.empty() ? ", no measured run in the store" : ""));
+            list = std::move(mine);
+            if (list.empty()) return;
+        }
+        // The longest first, so that the longest work does not start last.
+        std::ranges::stable_sort(list, std::greater{}, &Runnable::estimateMs);
         const bool capture = json || list.size() > 1;
         const auto deadline = std::chrono::milliseconds(
             static_cast<long long>(testOpts.timeoutSecs) * 1000);
@@ -5670,8 +5730,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // `[test] split = "file"` a program of several files with cases
                 // in several of them runs as one process per file, each named
                 // `<program>/<file stem>` as the run's records name it.
-                const auto split = ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
-                if (split == "file" && r.ownFiles >= 2) {
+                const auto split = !testOpts.split.empty() ? testOpts.split
+                                 : ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
+                if ((split == "file" || split == "auto") && r.ownFiles >= 2) {
                     std::set<std::string> files;
                     for (const auto& c : report.listed)
                         if (!c.file.empty()) files.insert(c.file);
@@ -5720,11 +5781,15 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // (P4), scheduled across the workers as the programs are -- the
         // parallelism and the isolation of a program per file, with one link.
         // `[test] split = "case"` gives each case its own process; "none" runs
-        // the program once.
-        const auto split = ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
+        // the program once; "auto" divides by file, and a part the store
+        // measured longer than its share of the run into groups of its cases.
+        const auto split = !testOpts.split.empty() ? testOpts.split
+                                 : ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
+        const bool measured = split == "auto" && !history.empty();
         if (invocationNotRunReason.empty()) {
             const auto divides = [&](const Runnable& r) {
-                return split != "none" && !(split == "file" && r.ownFiles < 2);
+                if (split == "none") return false;
+                return split == "case" || r.ownFiles >= 2 || measured;
             };
             // A program the run does not divide is listed only for its
             // resources; behind a runner (an emulator, a board) that start is
@@ -5757,6 +5822,21 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 const int listJobs = exclusiveDevice ? 1 : std::min<int>(runJobs, static_cast<int>(runnable.size()));
                 for (int w = 1; w < listJobs; ++w) listers.emplace_back(lister);
                 lister();
+            }
+            // THE SHARE OF A PART (`split = "auto"`): the run's measured work
+            // over its workers, and over the shards when the run is one of
+            // several. A part longer than it is divided into groups of cases.
+            namespace ts = mcpp::build::test_schedule;
+            double share = 0;
+            if (measured) {
+                double total = 0;
+                for (std::size_t at = 0; at < runnable.size(); ++at) {
+                    if (!listings[at]) { total += ts::estimate(history, runnable[at].name, {}); continue; }
+                    std::vector<std::string> ids;
+                    for (auto const& c : listings[at]->listed) ids.push_back(c.id);
+                    total += ts::estimate(history, "", ids);
+                }
+                share = total / (runJobs * (testOpts.shard ? testOpts.shard->second : 1));
             }
             std::vector<Runnable> expanded;
             for (std::size_t at = 0; at < runnable.size(); ++at) {
@@ -5792,24 +5872,37 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     const auto key = split == "case" ? c.id : (c.file.empty() ? std::string("-") : c.file);
                     groups[{key, holds_machine(c)}].push_back(c.id);
                 }
-                if (groups.size() < 2) {
-                    r.alone = groups.begin()->first.second;
+                // A group the store measured longer than its share, as groups
+                // `(i/k)` of its cases of about equal measured duration.
+                struct Part { std::string where; bool machine; std::vector<std::string> ids; std::size_t index = 0, of = 1; };
+                std::vector<Part> parts;
+                for (auto& [key, ids] : groups) {
+                    std::size_t k = 1;
+                    if (measured && share > 0 && ids.size() > 1)
+                        k = std::min<std::size_t>(ids.size(), static_cast<std::size_t>(
+                                                                  std::ceil(ts::estimate(history, "", ids) / share)));
+                    if (k <= 1) { parts.push_back({key.first, key.second, std::move(ids)}); continue; }
+                    auto chunks = ts::divide(history, ids, k);
+                    for (std::size_t i = 0; i < chunks.size(); ++i)
+                        parts.push_back({key.first, key.second, std::move(chunks[i]), i + 1, chunks.size()});
+                }
+                if (parts.size() < 2) {
+                    r.alone = parts.front().machine;
                     expanded.push_back(std::move(r));
                     continue;
                 }
-                std::vector<std::pair<std::pair<std::string, bool>, std::vector<std::string>>> ordered(groups.begin(), groups.end());
-                // The largest first, so the longest work starts first.
-                std::ranges::stable_sort(ordered, std::greater{}, [](auto const& g) { return g.second.size(); });
+                // The largest first; the run orders them again by measured duration.
+                std::ranges::stable_sort(parts, std::greater{}, [](auto const& p) { return p.ids.size(); });
                 std::size_t n = 0;
                 // A pattern that named a part, not its program, keeps that part.
                 const bool whole = selected_by(testOpts.filters, r.name);
-                for (auto& [key, ids] : ordered) {
-                    const auto& [where, machine] = key;
+                for (auto& [where, machine, ids, index, of] : parts) {
                     Runnable part = r;
                     const auto label = split == "case" ? where : part_label(r.partRoot, where);
                     part.name = std::format("{}/{}", r.name, label);
                     // Named apart only when its file has cases of both kinds.
                     if (machine && groups.contains({where, false})) part.name += " (machine)";
+                    if (of > 1) part.name += std::format(" ({}/{})", index, of);
                     part.partOf = r.name;
                     part.alone = machine;
                     if (!whole && !selected_by(testOpts.filters, part.name)) continue;
@@ -5831,11 +5924,13 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // program, and not a listing.
     if (const auto& st = ctx->manifest.testStore; st != "none" && !testOpts.listCases
         && std::ranges::any_of(results, [](const TestResult& r) { return r.status != TestResult::St::Built; }))
-        write_mtest_store(st.empty() ? ctx->projectRoot / "target" / "mtest" : ctx->projectRoot / st, results,
+        write_mtest_store(storeDir, results,
                           testStartedWall,
                           std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - tLoop).count(),
-                          runJobs, patterns_text(testOpts.filters));
+                          runJobs, patterns_text(testOpts.filters),
+                          testOpts.shard ? std::format("{}/{}", testOpts.shard->first, testOpts.shard->second)
+                                         : std::string{});
     summary.elapsedMs = carriedMs + std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - tLoop).count();
 
@@ -6091,7 +6186,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
     for (auto const& leg : opened->manifest.legs) {
         if (json) std::println("{{\"leg\":{{\"triple\":\"{}\"}}}}", test_json_escape(leg.triple));
         else mcpp::ui::info("Testing", std::format("on {} (from {})", leg.triple, testOpts.archive.string()));
-        auto ctx = prepare_configuration(leg.triple);
+        auto ctx = prepare_configuration(leg.triple, /*runsBuiltTests=*/true);
         if (!ctx) {
             reasons.push_back(std::format("{}: {}", leg.triple, ctx.error().substr(0, ctx.error().find('\n'))));
             notRun += static_cast<int>(leg.tests.size());

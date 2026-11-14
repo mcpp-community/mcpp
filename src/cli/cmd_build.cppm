@@ -23,6 +23,7 @@ import mcpp.modgraph.glob;          // escaped_spelling, for coff-def's warning
 import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
+import mcpp.build.test_schedule;   // --shard, --failed
 import mcpp.cli.selection;
 import mcpp.build.build_database;
 import mcpp.build.build_program;
@@ -1268,6 +1269,53 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         out = secs;
         return true;
     };
+    if (auto sh = parsed.value("shard")) {
+        to.shard = mcpp::build::test_schedule::parse_shard(*sh);
+        if (!to.shard) {
+            mcpp::ui::error(std::format("invalid --shard '{}' (I/N, 1 <= I <= N)", *sh));
+            return 2;
+        }
+    }
+    if (auto sp = parsed.value("split")) {
+        if (*sp != "file" && *sp != "case" && *sp != "auto" && *sp != "none") {
+            mcpp::ui::error(std::format("invalid --split '{}' (file | case | auto | none)", *sp));
+            return 2;
+        }
+        to.split = *sp;
+    }
+    // THE FAILURES OF THE LAST RUN (`--failed`), read from the store before
+    // anything is built, so that only the programs that failed are built.
+    if (parsed.is_flag_set("failed")) {
+        if (!to.filters.empty() || !to.cases.empty() || to.listCases || to.noRun) {
+            mcpp::ui::error("--failed selects the tests itself; it is not combined with a PATTERN, --case, --cases or --no-run");
+            return 2;
+        }
+        std::error_code ec;
+        auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec));
+        auto m = root ? mcpp::manifest::load(*root / "mcpp.toml")
+                      : std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
+                            std::unexpected(mcpp::manifest::ManifestError{}));
+        if (!m) { mcpp::ui::error("--failed reads the run store of a project: no mcpp.toml here"); return 2; }
+        if (m->testStore == "none") {
+            mcpp::ui::error("--failed reads the run store, and [test] store = \"none\" keeps no run");
+            return 2;
+        }
+        const auto store = *root / (m->testStore.empty() ? std::string("target/mtest") : m->testStore);
+        auto f = mcpp::build::test_schedule::last_failures(store);
+        if (!f) {
+            mcpp::ui::error(std::format("--failed: the store {} holds no run", store.generic_string()));
+            return 2;
+        }
+        if (f->programs.empty()) {
+            mcpp::ui::info("Finished", std::format("the store's last run ({}) failed nothing: no test to run", f->run));
+            return 0;
+        }
+        to.filters = f->programs;
+        if (!f->whole) to.cases = f->cases;
+        mcpp::ui::info("Selected", std::format("what failed in run {}: {} program(s){}", f->run, f->programs.size(),
+                                               f->whole ? std::string{}
+                                                        : std::format(", {} case(s)", f->cases.size())));
+    }
     if (!read_secs("timeout", to.timeoutSecs)) return 2;
     if (!read_secs("build-timeout", to.buildTimeoutSecs)) return 2;
     if (!read_secs("workspace-timeout", workspaceTimeoutSecs)) return 2;

@@ -71,7 +71,7 @@ void print_usage() {
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
-    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --timeout, --build-timeout, --message-format json, --no-runner)");
+    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --shard, --failed, --timeout, --build-timeout, --message-format json, --no-runner)");
     std::println("  mcpp clean [--stale] [--bmi-cache]   Remove target/ (or, with --stale, only its non-current fingerprint dirs)");
     std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
     std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
@@ -854,6 +854,12 @@ int run(int argc, char** argv) {
                 .help("Build the tests for --target and stop; a build that succeeds is the result (for a target this host cannot execute)"))
             .option(cl::Option("archive").takes_value().value_name("FILE")
                 .help("With --no-run: write the built tests to FILE. Without: run the tests FILE holds, building nothing (in a checkout of the same project)"))
+            .option(cl::Option("shard").takes_value().value_name("I/N")
+                .help("Run the I-th of N shards: the run's tests divided by the durations its store measured, longest first, so that N machines running 1/N to N/N run every test once"))
+            .option(cl::Option("split").takes_value().value_name("MODE")
+                .help("How a test program's cases are run as processes, for this invocation ([test] split): file | case | auto | none"))
+            .option(cl::Option("failed")
+                .help("Run what failed in the store's last run: its failed cases, or the program whole when it failed outside its cases"))
             .option(cl::Option("timeout").takes_value().value_name("SECS")
                 .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
             .option(cl::Option("build-timeout").takes_value().value_name("SECS")

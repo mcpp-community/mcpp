@@ -3754,10 +3754,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             }
             if (key == "split") {
                 if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "case"
-                                           && value.as_string() != "none"))
+                                           && value.as_string() != "none" && value.as_string() != "auto"))
                     return std::unexpected(error(origin,
                         "[test] split is \"file\" (a process per file of a program's cases, the default), "
-                        "\"case\" (a process per case) or \"none\" (one process)"));
+                        "\"case\" (a process per case), \"auto\" (a process per file, and a file the run "
+                        "store measured longer than its share divided into groups of its cases) or \"none\" "
+                        "(one process)"));
                 m.testSplit = value.as_string();
                 continue;
             }

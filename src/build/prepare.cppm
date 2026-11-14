@@ -846,6 +846,10 @@ export struct BuildOverrides {
     // with no C++ run-time in the graph -- is a note of the report, and the
     // configuration is still reported.
     bool        configuration_only = false;
+    // THE CONFIGURATION TESTS BUILT ELSEWHERE RUN IN (`mcpp test --archive`,
+    // SPEC-015 §4): nothing is compiled, so a toolchain this machine cannot
+    // compile with -- the MSVC ABI with no Visual Studio -- is no refusal.
+    bool        runs_built_tests = false;
     // #355 tool provisioning re-enters prepare_build for the tool package. A
     // tool package's own build.mcpp may legitimately want another tool (gRPC's
     // wants protoc), so the depth cannot be 1 — but an unbounded chain is a
@@ -1115,7 +1119,7 @@ prepare_build(bool print_fingerprint, bool includeDevDeps = false,
 // `[target.<selector>]` tables apply); elsewhere an empty program in the
 // home's cache stands for one. Nothing is compiled but the tools.
 export std::expected<BuildContext, std::string>
-prepare_configuration(std::string_view targetTriple);
+prepare_configuration(std::string_view targetTriple, bool runsBuiltTests = false);
 
 // THE PLATFORM A TARGET SELECTS, ASKED WITHOUT PREPARING IT (SPEC-015 §1): the
 // selection the first phase makes -- `--platform`, the target's environment

@@ -2222,6 +2222,11 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
           state.tc->compiler == mcpp::toolchain::CompilerId::MSVC
           || mcpp::toolchain::is_msvc_target(*state.tc);
       if (targetsMsvcAbi && !state.msvc_usable_either_origin()) {
+          // Tests built on another machine run here and nothing is compiled
+          // (`mcpp test --archive`): the toolchain is neither refused nor
+          // replaced. Measured on a Windows runner with Visual Studio masked:
+          // every archived test was "not run" for the compiler it did not use.
+          if (state.overrides.runs_built_tests) return {};
           // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
           // msvc@system on its own — it cannot install one — so the only way it
           // reaches config.toml is a user typing `mcpp toolchain default msvc`.
