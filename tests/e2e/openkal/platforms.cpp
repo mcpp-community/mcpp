@@ -238,9 +238,18 @@ int main() {
     };
 
     "1025 the default platform is one release"_test[s::llvm][s::python3] = [] {
-        // A a project stating no platform builds x86_64-openkal over openkal-platform 0.27.1
-        // and locks it; B a lock recording another release does not decide, and is rewritten;
-        // C a platform the project states (a series) is taken as it is.
+        // A a project stating no platform builds x86_64-openkal over the engine's pin of
+        // openkal-platform and locks it; B a lock recording another release does not decide,
+        // and is rewritten; C a platform the project states (a series) is taken as it is.
+        // The pin is the engine's data (modules/toolchain-model/data/builtin.toml).
+        const auto pin = [] {
+            std::ifstream in(s::repository() / "modules/toolchain-model/data/builtin.toml", std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>{in}, {}};
+            std::smatch m;
+            const std::regex line{R"rx(platform\s*=\s*"mcpplibs\.openkal-platform@([0-9.]+)")rx"};
+            return std::regex_search(text, m, line) ? m[1].str() : std::string{};
+        }();
+        expect(fatal(!pin.empty())) << "builtin.toml names no openkal-platform release";
         auto app = s::project::scaffold("app");
         const std::regex record{R"rx((\[package\."openkal-platform"\][^\[]*?version\s*=\s*")([^"]+)("))rx"};
         const auto locked = [&] {
@@ -250,20 +259,20 @@ int main() {
         };
         auto r = app.mcpp({"build", "--target", "x86_64-openkal"});
         expect(fatal(e2e::succeeded(r))) << "A: the openkal build failed: " << s::text(r);
-        expect(fatal(s::has_line(s::text(r), "Platform *openkal-platform 0.27.1"))) << "A: the build does not use openkal-platform 0.27.1: " << s::text(r);
-        expect(fatal(locked() == "0.27.1")) << "A: mcpp.lock does not record 0.27.1: " << app.read("mcpp.lock");
+        expect(fatal(s::has_line(s::text(r), "Platform *openkal-platform " + pin))) << "A: the build does not use openkal-platform " << pin << ": " << s::text(r);
+        expect(fatal(locked() == pin)) << "A: mcpp.lock does not record " << pin << ": " << app.read("mcpp.lock");
         // B
         {
             const auto text = app.read("mcpp.lock");
             std::smatch m;
-            expect(fatal(std::regex_search(text, m, record) && m[2] == "0.27.1")) << "B: the fixture could not edit mcpp.lock: " << text;
+            expect(fatal(std::regex_search(text, m, record) && m[2] == pin)) << "B: the fixture could not edit mcpp.lock: " << text;
             app.write("mcpp.lock", m.prefix().str() + m[1].str() + "0.24.3" + m[3].str() + m.suffix().str());
         }
         expect(fatal(locked() == "0.24.3")) << "B: the fixture could not edit mcpp.lock: " << app.read("mcpp.lock");
         r = app.mcpp({"build", "--target", "x86_64-openkal"});
         expect(fatal(e2e::succeeded(r))) << "B: the openkal build failed: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "default; mcpp.lock recorded v0.24.3"))) << "B: the build does not say which release it takes over the lock's: " << s::text(r);
-        expect(fatal(locked() == "0.27.1")) << "B: mcpp.lock was not rewritten to 0.27.1: " << app.read("mcpp.lock");
+        expect(fatal(locked() == pin)) << "B: mcpp.lock was not rewritten to " << pin << ": " << app.read("mcpp.lock");
         // C
         app.write("mcpp.toml", app.read("mcpp.toml") + "\n[target.'cfg(os = \"openkal\")']\nplatform = \"openkal-platform@^0.24\"\n");
         r = app.mcpp({"build", "--target", "x86_64-openkal"});

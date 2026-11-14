@@ -25,6 +25,12 @@
 
 ### Changed
 
+- The built-in platform of the ok images and of the musl identities is
+  openkal-platform 0.28.0 (was 0.27.1): the group on openkal 0.25.3, and the
+  rows `i686-linux-musl`, `i686-openkal`, `x86_64-uefi` and `i686-dos-musl`
+  (a technical experiment). A project that names openkal 0.25.3 builds for
+  `x86_64-openkal` without stating a platform; with 0.27.1 the group's openkal
+  0.25.0 refused it.
 - `mcpp new` scaffolds tests with mtest 0.9.0, the version this package's own
   tests use, so a new package's long cases are divisible by the cases they
   declare.
