@@ -209,6 +209,9 @@ jobs:
           name: ${{ inputs.name }}-${{ matrix.shard }}
           archive: ${{ runner.temp }}/unit/unit.tar.gz
           shard: ${{ matrix.shard }}/${{ strategy.job-total }}
+          # e2e/openkal/trees builds the openkal set for every architecture:
+          # beside three other programs it ran past 1200 s on Linux (2026-11-14).
+          timeout: '2400'
 
   # The Windows cases only a job with the MinGW cross toolchain runs, from the
   # tests the archive stage wrote (no build here); each case is held to its

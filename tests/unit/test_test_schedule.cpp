@@ -39,10 +39,34 @@ UTest the_newest_measurement_is_the_estimate{"TestSchedule/TheNewestMeasurementI
     const auto h = ts::read_history(s.dir);
     expect(eq(h.runs, std::size_t{2}));
     expect(eq(ts::estimate(h, "p", {}), 300.0));
-    // A test built and not run measured nothing: the mean of the others.
+    // A test built and not run measured nothing: the estimate of a program
+    // no run measured.
     expect(eq(ts::estimate(h, "q", {}), 300.0));
+    // A case no run measured: the mean of the measured cases beside it.
     const std::vector<std::string> ids{"c1", "unmeasured"};
-    expect(eq(ts::estimate(h, "", ids), 90.0 + 90.0));
+    expect(eq(ts::estimate(h, "p", ids), 90.0 + 90.0));
+}};
+
+UTest an_unmeasured_test_takes_its_nearest_measured_directory{
+    "TestSchedule/AnUnmeasuredTestTakesItsNearestMeasuredDirectory", [] {
+    Store s;
+    s.run("a", "2026-11-01T00:00:00Z",
+          R"({"name":"unit/a","status":"pass","ms":10})" "\n"
+          R"({"name":"unit/b","status":"pass","ms":30})" "\n"
+          R"({"name":"e2e/run/x","status":"pass","ms":400})" "\n"
+          R"({"name":"e2e/test/y","status":"pass","ms":200})" "\n", "");
+    const auto h = ts::read_history(s.dir);
+    // Its directory, then the directory above it.
+    expect(eq(ts::estimate(h, "unit/c", {}), 20.0));
+    expect(eq(ts::estimate(h, "e2e/run/z", {}), 400.0));
+    expect(eq(ts::estimate(h, "e2e/pack/w", {}), 300.0));
+    // A directory the history never measured: the longest measured program,
+    // so that such tests spread over the shards by count.
+    expect(eq(ts::estimate(h, "examples/v", {}), 400.0));
+    // Cases none of which a run measured: equal parts of their program.
+    const std::vector<std::string> ids{"n1", "n2", "n3", "n4"};
+    expect(eq(ts::estimate(h, "e2e/run/x", ids), 400.0));
+    expect(eq(ts::divide(h, "e2e/run/x", ids, 2).size(), std::size_t{2}));
 }};
 
 UTest a_shard_reads_no_run_of_its_own_group{"TestSchedule/AShardReadsNoRunOfItsOwnGroup", [] {
@@ -81,12 +105,12 @@ UTest a_long_part_divides_into_equal_groups{"TestSchedule/ALongPartDividesIntoEq
           R"({"program":"p","id":"z","status":"pass","ms":300})" "\n");
     const auto h = ts::read_history(s.dir);
     const std::vector<std::string> ids{"x", "y", "z"};
-    const auto groups = ts::divide(h, ids, 2);
+    const auto groups = ts::divide(h, "p", ids, 2);
     expect(eq(groups.size(), std::size_t{2}));
     expect(groups[0] == std::vector<std::string>{"x"});
     // Each group keeps the order the cases were listed in.
     expect(groups[1] == std::vector<std::string>{"y", "z"});
-    expect(eq(ts::divide(h, ids, 9).size(), std::size_t{3}));
+    expect(eq(ts::divide(h, "p", ids, 9).size(), std::size_t{3}));
 }};
 
 UTest a_shard_is_i_of_n{"TestSchedule/AShardIsIOfN", [] {

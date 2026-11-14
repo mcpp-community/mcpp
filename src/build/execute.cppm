@@ -5834,7 +5834,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (!listings[at]) { total += ts::estimate(history, runnable[at].name, {}); continue; }
                     std::vector<std::string> ids;
                     for (auto const& c : listings[at]->listed) ids.push_back(c.id);
-                    total += ts::estimate(history, "", ids);
+                    total += ts::estimate(history, runnable[at].name, ids);
                 }
                 share = total / (runJobs * (testOpts.shard ? testOpts.shard->second : 1));
             }
@@ -5880,9 +5880,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     std::size_t k = 1;
                     if (measured && share > 0 && ids.size() > 1)
                         k = std::min<std::size_t>(ids.size(), static_cast<std::size_t>(
-                                                                  std::ceil(ts::estimate(history, "", ids) / share)));
+                                                                  std::ceil(ts::estimate(history, r.name, ids) / share)));
                     if (k <= 1) { parts.push_back({key.first, key.second, std::move(ids)}); continue; }
-                    auto chunks = ts::divide(history, ids, k);
+                    auto chunks = ts::divide(history, r.name, ids, k);
                     for (std::size_t i = 0; i < chunks.size(); ++i)
                         parts.push_back({key.first, key.second, std::move(chunks[i]), i + 1, chunks.size()});
                 }
@@ -6237,7 +6237,10 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
             std::array<fs::path, 1> dir{r.program.parent_path()};
             if (const auto key = mcpp::runtime::launch_env::runtime_library_path_key(); !key.empty())
                 r.env.emplace_back(key, mcpp::runtime::launch_env::prepend_path_list(key, dir));
-            {
+            // ...and, through a runner, the files the program carries, as a
+            // build's test run hands them over: a program run directly is not
+            // handed the variable, and passes none on to the programs it runs.
+            if (!tb.runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
                 const auto list = r.program.parent_path() / ".mcpp-runtime-files.tsv";
                 std::ofstream os(list, std::ios::binary | std::ios::trunc);
                 for (auto const& f : t.files)

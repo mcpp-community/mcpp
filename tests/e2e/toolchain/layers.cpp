@@ -150,9 +150,13 @@ E2E layers{"layers", [] {
         expect(fatal(e2e::contains(ninja, "-nostdinc++"))) << "FAIL: the compile lines carry no -nostdinc++";
         expect(fatal(e2e::contains(ninja, "-nostdlib++"))) << "FAIL: the link line carries no -nostdlib++";
         expect(fatal(s::no_line(ninja, R"(xim-x-llvm[^ ]*libc\+\+(abi)?\.a)"))) << "FAIL: the link line still names the payload's libc++ archives";
+        // The std module this build's graph names: the cache is the shared home's, where the
+        // programs beside this one write theirs (an x86_64-openkal one was read here, on Linux CI).
         std::optional<fs::path> stdjson;
-        for (const auto& f : s::glob(s::shared_home() / "build-cache/v1/std", "*/std-module.json"))
-            if (e2e::contains(s::read_file(f), "libcxx") && (!stdjson || fs::last_write_time(f) > fs::last_write_time(*stdjson))) stdjson = f;
+        std::smatch key;
+        if (std::regex_search(ninja, key, std::regex{R"(build-cache/v1/std/([0-9a-f]+))"}))
+            if (const auto f = s::shared_home() / "build-cache/v1/std" / key[1].str() / "std-module.json"; fs::is_regular_file(f))
+                stdjson = f;
         expect(fatal(stdjson.has_value())) << "FAIL: no std-module.json records the package's module under " << (s::shared_home() / "build-cache/v1/std").string();
         expect(fatal(e2e::contains(s::read_file(*stdjson), "xim-x-glibc"))) << "FAIL: the package std module's command does not name the payload's glibc: " << s::read_file(*stdjson);
         const auto bin = first(p.at("target"), "*/*/bin/app");

@@ -87,6 +87,18 @@ if [ -n "$tc" ]; then
     MCPP_VENDORED_XLINGS="${XLINGS_BIN:-}" "$bin" toolchain install "${tc%@*}" "${tc#*@}"
 fi
 
+# MCPP_BOOT IS THE RELEASED BINARY, NOT THE XLINGS SHIM. The shim takes the
+# version from the project of its working directory; a case that runs the
+# bootstrap in a directory of its own (e2e 772, a released client builds a
+# published archive) found no project there and "mcpp is not installed in this
+# subos". The shim sits at <xlings home>/subos/<name>/bin, the payload at
+# <xlings home>/data/xpkgs/xim-x-mcpp/<version>/bin.
+ver=$("$boot" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+payload="$(dirname "$boot")/../../../data/xpkgs/xim-x-mcpp/$ver/bin/$(basename "$boot")"
+if [ -n "$ver" ] && [ -f "$payload" ]; then
+    boot="$(cd "$(dirname "$payload")" && pwd)/$(basename "$payload")"
+fi
+
 {
     echo "MCPP_BOOT=$boot"
     echo "MCPP=$bin"

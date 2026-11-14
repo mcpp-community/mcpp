@@ -104,6 +104,15 @@
 
 ### Fixed
 
+- A home whose `registry` is a link to another home's borrows that registry,
+  as a home whose `[xlings] home` names it does: the places the owner recorded
+  for its indices stay, and the home's `[index.repos]` tables no longer rewrite
+  them. Before, such a home recorded its own store in the shared registry, and
+  every later install of the shared home went to that store after the home had
+  been removed (`install path missing after fetch`).
+- `mcpp test --archive` hands `MCPP_RUNTIME_FILES` to a test only through a
+  runner, as a test run of a build does. Before, every archived program
+  received it and passed it on to the programs it ran.
 - `config.toml` is replaced whole: programs started at once on a fresh home
   no longer read a part of another's write (`invalid config.toml: expected
   '='`). On Windows, which refuses a rename over a file a reader holds open,

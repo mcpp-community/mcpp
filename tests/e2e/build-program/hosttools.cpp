@@ -941,39 +941,6 @@ inline void tell() {
         expect(e2e::contains(s::text(r2), "'mcpp.acme.*'")) << "R2: the warning does not name the accepted form";
     };
 
-    "831 a path dependency host module outside src"_test[s::unix_shell] = [] {
-        // #734: a path dependency's host module is compiled into the consumer's build program,
-        // which no edge of build.ninja names, so the fast path sees an edit to it itself (it swept
-        // only src/). S1 an edit to rules/hm.cppm re-runs the program; S2 a newer file of a
-        // package nested in the dependency does not decline the fast path.
-        const auto root = s::case_dir();
-        s::project plug{root / "plug", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"plug831\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug831.cppm\"]\n\n[features.hm]\nsources = [\"rules/hm.cppm\"]\n"},
-                                        {"src/plug831.cppm", "export module probe.plug831;\nexport int plug_root() { return 0; }\n"},
-                                        {"rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 1; }\n"},
-                                        {"tests/fixture/mcpp.toml", "[package]\nname = \"fixture831\"\nversion = \"0.1.0\"\n"},
-                                        {"tests/fixture/src/main.cpp", "int main() { return 0; }\n"}}};
-        s::project app{root / "app", {{"mcpp.toml", "[package]\nname    = \"app831\"\nversion = \"0.1.0\"\n\n[build-dependencies.probe]\nplug831 = { path = \"../plug\", features = [\"hm\"], host-module = true }\n"},
-                                      {"build.mcpp", "import std;\nimport mcpp;\nimport probe.hm831;\nint main() {\n    if (value() != 1) { std::println(\"host module value {}\", value()); return 1; }\n    return 0;\n}\n"},
-                                      {"src/main.cpp", "int main() { return 0; }\n"}}};
-        expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "the first build failed";
-        expect(fatal(e2e::succeeded(app.mcpp({"build", "-v"})))) << "the second build failed";
-        // S1.
-        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-        plug.write("rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 2; }\n");
-        auto s1 = app.mcpp({"build"});
-        expect(s1.started && s1.status != 0) << "S1: the build after an edit to rules/hm.cppm succeeded without re-running the build program";
-        expect(e2e::contains(s::text(s1), "host module value 2")) << "S1: the build program did not read the edited host module";
-        // S2.
-        plug.write("rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 1; }\n");
-        expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "S2: the build after restoring the host module failed";
-        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-        fs::last_write_time(plug.at("tests/fixture/src/main.cpp"), fs::file_time_type::clock::now());
-        auto s2 = app.mcpp({"build", "-v"});
-        expect(fatal(e2e::succeeded(s2))) << "S2: the build failed";
-        expect(s::lacks(s::text(s2), "declined")) << "S2: the fast path declined after a file of a package nested in the dependency changed";
-        expect(s::lacks(s::text(s2), "Resolving toolchain")) << "S2: the build was planned instead of replayed";
-    };
-
     "859 a host module entry is reused while its inputs agree"_test = [] {
         // #748 (B1), mcpp#797 (R6): a build program's library is compiled again exactly when what
         // it is compiled from changed (the identity holds the digest of the package's tree, so an
@@ -1105,6 +1072,45 @@ int main() {
         auto t2 = ws.mcpp({"test", "--workspace"}, home);
         expect(fatal(e2e::succeeded(t2))) << "the second test run failed";
         expect(s::no_line(s::text(t2), "Building.*host tool")) << "the second test run built a host tool again";
+    };
+}};
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it. 831 states that the fast path replays the build, and the fast path declines
+// when the runtime environment's description changed: another program installing into the shared
+// home beside it rewrote that description (measured on Linux CI, 2026-11-14).
+E2E hosttools_machine{"hosttools-machine", resource{"machine"}, [] {
+    "831 a path dependency host module outside src"_test[s::unix_shell] = [] {
+        // #734: a path dependency's host module is compiled into the consumer's build program,
+        // which no edge of build.ninja names, so the fast path sees an edit to it itself (it swept
+        // only src/). S1 an edit to rules/hm.cppm re-runs the program; S2 a newer file of a
+        // package nested in the dependency does not decline the fast path.
+        const auto root = s::case_dir();
+        s::project plug{root / "plug", {{"mcpp.toml", "[package]\nnamespace = \"probe\"\nname      = \"plug831\"\nversion   = \"0.1.0\"\n\n[build]\nsources = [\"src/plug831.cppm\"]\n\n[features.hm]\nsources = [\"rules/hm.cppm\"]\n"},
+                                        {"src/plug831.cppm", "export module probe.plug831;\nexport int plug_root() { return 0; }\n"},
+                                        {"rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 1; }\n"},
+                                        {"tests/fixture/mcpp.toml", "[package]\nname = \"fixture831\"\nversion = \"0.1.0\"\n"},
+                                        {"tests/fixture/src/main.cpp", "int main() { return 0; }\n"}}};
+        s::project app{root / "app", {{"mcpp.toml", "[package]\nname    = \"app831\"\nversion = \"0.1.0\"\n\n[build-dependencies.probe]\nplug831 = { path = \"../plug\", features = [\"hm\"], host-module = true }\n"},
+                                      {"build.mcpp", "import std;\nimport mcpp;\nimport probe.hm831;\nint main() {\n    if (value() != 1) { std::println(\"host module value {}\", value()); return 1; }\n    return 0;\n}\n"},
+                                      {"src/main.cpp", "int main() { return 0; }\n"}}};
+        expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "the first build failed";
+        expect(fatal(e2e::succeeded(app.mcpp({"build", "-v"})))) << "the second build failed";
+        // S1.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        plug.write("rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 2; }\n");
+        auto s1 = app.mcpp({"build"});
+        expect(s1.started && s1.status != 0) << "S1: the build after an edit to rules/hm.cppm succeeded without re-running the build program";
+        expect(e2e::contains(s::text(s1), "host module value 2")) << "S1: the build program did not read the edited host module";
+        // S2.
+        plug.write("rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 1; }\n");
+        expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "S2: the build after restoring the host module failed";
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        fs::last_write_time(plug.at("tests/fixture/src/main.cpp"), fs::file_time_type::clock::now());
+        auto s2 = app.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(s2))) << "S2: the build failed";
+        expect(s::lacks(s::text(s2), "declined")) << "S2: the fast path declined after a file of a package nested in the dependency changed";
+        expect(s::lacks(s::text(s2), "Resolving toolchain")) << "S2: the build was planned instead of replayed";
     };
 }};
 

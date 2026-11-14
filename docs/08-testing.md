@@ -106,8 +106,13 @@ is not listed, so it holds nothing across processes.
 
 **The order of a run** (2026.11.13.1+). Before anything runs, mcpp reads the run
 store (`[test] store`, below): of each test, the newest duration its runs
-measured, of the cases it selects or of the program whole, and the mean for a
-test no run measured. The tests start longest first, so the longest work does
+measured, of the cases it selects or of the program whole. A test no run
+measured takes the mean of the measured tests of its nearest directory
+(`e2e/run/x`: of `e2e/run/`, then of `e2e/`), and the longest measured test when
+no run measured a test of its directories; a case no run measured takes the mean
+of the measured cases beside it, or an equal part of its program. A store kept
+by a run of another selection thus spreads the tests it never saw over the
+shards by count. The tests start longest first, so the longest work does
 not start last. `--shard I/N` runs the I-th of N shards: every test, longest
 first, is assigned to the shard with the least measured work, and this command
 runs its own; the assignment reads only the store and the run's list, so N

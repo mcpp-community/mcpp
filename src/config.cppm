@@ -614,8 +614,14 @@ void reconcile_index_repos(const std::filesystem::path& xjson,
     bool fileChanged = false, recordChanged = false;
     for (auto const& r : repos) {
         if (!r.fromConfig) continue;
-        const auto want = index_repo_entry(r);
+        auto want = index_repo_entry(r);
         auto* have = find(r.name);
+        // The places of the index (its data, its store) are the registry's
+        // owner's: a home that borrows the registry states none, and the ones
+        // the owner recorded stay (see `borrowedRegistry`).
+        if (have)
+            for (const char* place : {"dir", "store"})
+                if (!want.contains(place) && have->contains(place)) want[place] = (*have)[place];
         if (have && *have == want) continue;
         if (!record.contains(r.name))
             record[r.name] = { {"previous", have ? *have : nlohmann::json(nullptr)} };
@@ -1146,12 +1152,22 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // (`[xlings] home` naming an existing one) keeps the places that home
     // recorded: writing this home's there sent every later user of the
     // registry to this home's store, which ended with it (the e2e homes under
-    // a temporary directory, measured on Windows and macOS).
+    // a temporary directory, measured on Windows and macOS). A home whose
+    // `registry` is a link to another home's borrows it the same way: its
+    // writes reached the other home's configuration through the link, and on
+    // Linux every install of the shared home went to a case's store after the
+    // case had removed it ("install path missing after fetch", 2026-11-14).
     const bool borrowedRegistry = [&] {
-        if (cfg.xlingsHomeOverride.empty()) return false;
         std::error_code ec;
-        if (std::filesystem::equivalent(cfg.xlingsHomeOverride, cfg.registryDir, ec)) return false;
-        return std::filesystem::exists(mcpp::provider::open(make_xlings_env(cfg))->config_file(), ec);
+        if (!std::filesystem::exists(mcpp::provider::open(make_xlings_env(cfg))->config_file(), ec)) return false;
+        if (!cfg.xlingsHomeOverride.empty())
+            return !std::filesystem::equivalent(cfg.xlingsHomeOverride, cfg.registryDir, ec);
+        const auto real = std::filesystem::canonical(cfg.registryDir, ec);
+        if (ec) return false;
+        const auto home = std::filesystem::canonical(cfg.mcppHome, ec);
+        if (ec) return false;
+        const auto rel = real.lexically_relative(home);
+        return rel.empty() || *rel.begin() == "..";
     }();
     for (auto& r : cfg.indexRepos) {
         if (borrowedRegistry || mcpp::provider::layout().is_provider_index(r.name)) continue;

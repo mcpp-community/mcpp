@@ -17,9 +17,6 @@ struct History {
     std::map<std::string, double> programs;
     std::map<std::string, double> cases;
     std::size_t runs = 0;
-    // The means, the estimate of a program or a case no run measured.
-    double meanProgram = 1000;
-    double meanCase = 1000;
     bool empty() const { return programs.empty() && cases.empty(); }
 };
 
@@ -32,6 +29,14 @@ History read_history(const std::filesystem::path& store, std::size_t maxRuns = 3
 
 // The duration a run of `cases` of the program record `name` is expected to
 // take; with no cases, the program run whole.
+//
+// WHAT NO RUN MEASURED. A program no run measured takes the mean of the
+// measured programs of its nearest directory (`e2e/run/x`: of `e2e/run/`,
+// then of `e2e/`); with none measured there, the longest measured program, so
+// that tests a history never saw (a store kept by a run of another selection)
+// are spread over the shards by count rather than gathered in one. A case no
+// run measured takes the mean of the measured cases beside it; with none, an
+// equal part of its program's estimate.
 double estimate(const History& h, std::string_view name, std::span<const std::string> cases);
 
 // LONGEST PROCESSING TIME FIRST: each item, longest first (ties by name),
@@ -39,9 +44,10 @@ double estimate(const History& h, std::string_view name, std::span<const std::st
 std::vector<std::size_t> assign(std::span<const double> estimates, std::span<const std::string> names,
                                 std::size_t bins);
 
-// The cases of one part divided into `k` groups of about equal measured
-// duration, each group in the order the cases were listed.
-std::vector<std::vector<std::string>> divide(const History& h, std::span<const std::string> ids, std::size_t k);
+// The cases `ids` of the program record `name` divided into `k` groups of
+// about equal measured duration, each group in the order the cases were listed.
+std::vector<std::vector<std::string>> divide(const History& h, std::string_view name,
+                                             std::span<const std::string> ids, std::size_t k);
 
 // `I/N`, 1 <= I <= N.
 std::optional<std::pair<int, int>> parse_shard(std::string_view text);
@@ -126,27 +132,59 @@ History read_history(const std::filesystem::path& store, std::size_t maxRuns,
             if (ms >= 0 && text(c, "status") != "skip") h.cases.try_emplace(text(c, "id"), ms);
         }
     }
-    auto mean = [](const std::map<std::string, double>& m, double none) {
-        if (m.empty()) return none;
-        double sum = 0;
-        for (const auto& [_, v] : m) sum += v;
-        return sum / static_cast<double>(m.size());
-    };
-    h.meanProgram = mean(h.programs, 1000);
-    h.meanCase = mean(h.cases, 1000);
     return h;
 }
 
-double estimate(const History& h, std::string_view name, std::span<const std::string> cases) {
-    if (cases.empty()) {
-        auto it = h.programs.find(std::string(name));
-        return it != h.programs.end() ? it->second : h.meanProgram;
+namespace {
+
+// A program no run measured: the mean of its nearest measured directory, else
+// the longest measured program (see `estimate`).
+double unmeasured_program(const History& h, std::string_view name) {
+    if (h.programs.empty()) return 1000;
+    for (auto slash = name.rfind('/'); slash != std::string_view::npos && slash > 0;
+         slash = name.rfind('/', slash - 1)) {
+        const auto dir = std::string(name.substr(0, slash + 1));
+        double sum = 0;
+        std::size_t n = 0;
+        for (auto it = h.programs.lower_bound(dir); it != h.programs.end() && it->first.starts_with(dir); ++it) {
+            sum += it->second;
+            ++n;
+        }
+        if (n) return sum / static_cast<double>(n);
     }
+    return std::ranges::max(h.programs | std::views::values);
+}
+
+double program_estimate(const History& h, std::string_view name) {
+    auto it = h.programs.find(std::string(name));
+    return it != h.programs.end() ? it->second : unmeasured_program(h, name);
+}
+
+// Each case's estimate (see `estimate`).
+std::vector<double> case_estimates(const History& h, std::string_view name, std::span<const std::string> ids) {
+    std::vector<double> est(ids.size(), -1);
     double sum = 0;
-    for (const auto& id : cases) {
-        auto it = h.cases.find(id);
-        sum += it != h.cases.end() ? it->second : h.meanCase;
-    }
+    std::size_t known = 0;
+    for (std::size_t i = 0; i < ids.size(); ++i)
+        if (auto it = h.cases.find(ids[i]); it != h.cases.end()) {
+            est[i] = it->second;
+            sum += it->second;
+            ++known;
+        }
+    if (known == ids.size()) return est;
+    const double each = known ? sum / static_cast<double>(known)
+                              : program_estimate(h, name) / static_cast<double>(ids.size());
+    for (auto& e : est)
+        if (e < 0) e = each;
+    return est;
+}
+
+}  // namespace
+
+double estimate(const History& h, std::string_view name, std::span<const std::string> cases) {
+    if (cases.empty()) return program_estimate(h, name);
+    double sum = 0;
+    for (double e : case_estimates(h, name, cases)) sum += e;
     return sum;
 }
 
@@ -168,11 +206,11 @@ std::vector<std::size_t> assign(std::span<const double> estimates, std::span<con
     return bin;
 }
 
-std::vector<std::vector<std::string>> divide(const History& h, std::span<const std::string> ids, std::size_t k) {
+std::vector<std::vector<std::string>> divide(const History& h, std::string_view name,
+                                             std::span<const std::string> ids, std::size_t k) {
     k = std::clamp<std::size_t>(k, 1, (std::max)(ids.size(), std::size_t{1}));
-    std::vector<double> est;
+    const auto est = case_estimates(h, name, ids);
     std::vector<std::string> names(ids.begin(), ids.end());
-    for (const auto& id : ids) est.push_back(estimate(h, "", std::span<const std::string>(&id, 1)));
     const auto bin = assign(est, names, k);
     std::vector<std::vector<std::string>> groups(k);
     for (std::size_t i = 0; i < ids.size(); ++i) groups[bin[i]].push_back(ids[i]);

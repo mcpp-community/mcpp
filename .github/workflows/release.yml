@@ -160,7 +160,7 @@ jobs:
           # Build first so we can strip the ELF before pack copies it.
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" build --target x86_64-linux-musl
-          ARTIFACT=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
+          ARTIFACT=$(find target/x86_64-linux-musl -type f -path "*/bin/mcpp" | head -1)
           test -n "$ARTIFACT"
           file "$ARTIFACT" | grep -q 'statically linked'
           # NB: stripping here is pointless — `mcpp pack` below rebuilds the
@@ -376,10 +376,10 @@ jobs:
           # x86_64 host musl-gcc for an aarch64 target. Two-stage instead: build
           # THIS release's x86_64 mcpp first, then cross-build aarch64 with it.
           "$MCPP" build --target x86_64-linux-musl
-          FRESH=$(find target/x86_64-linux-musl -type f -name mcpp | head -1)
+          FRESH=$(find target/x86_64-linux-musl -type f -path "*/bin/mcpp" | head -1)
           test -n "$FRESH"
           "$FRESH" build --target aarch64-linux-musl
-          BIN=$(find target/aarch64-linux-musl -type f -name mcpp | head -1)
+          BIN=$(find target/aarch64-linux-musl -type f -path "*/bin/mcpp" | head -1)
           test -n "$BIN"
           file "$BIN" | grep -q 'ARM aarch64'
           file "$BIN" | grep -q 'statically linked'

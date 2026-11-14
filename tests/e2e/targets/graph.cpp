@@ -152,7 +152,16 @@ E2E graph{"graph", [] {
         auto r = a.mcpp({"build", "--target", target, "--verbose"});
         if (!r && unreachable(s::text(r))) skip("the openkal packages are not reachable from here");
         expect(fatal(e2e::succeeded(r))) << "FAIL: with openkal-musl 0.19.2, -lm must be answered by the graph: " << s::text(r);
-        expect(fatal(s::has_line(s::text(r), "--sysroot=[^ ]*graph-sysroot"))) << "FAIL: the graph link does not carry the empty sysroot";
+        // The lines that link the program, named on a failure: a cold build prints some thousand
+        // compile lines before them, and the tail a failure shows holds none.
+        const auto links = [](const std::string& text) {
+            std::string out;
+            for (auto line : std::views::split(std::string_view(text), '\n'))
+                if (std::string_view l(line.begin(), line.end()); l.contains("lmprobe") && l.contains(" -o "))
+                    out += std::string(l.substr(0, 4000)) + "\n";
+            return out.empty() ? std::string("(no line links lmprobe)") : out;
+        };
+        expect(fatal(s::has_line(s::text(r), "--sysroot=[^ ]*graph-sysroot"))) << "FAIL: the graph link does not carry the empty sysroot; the link lines:\n" << links(s::text(r));
         r = a.mcpp({"run", "--target", target});
         expect(fatal(e2e::succeeded(r))) << "FAIL: the program did not run: " << s::text(r);
         expect(fatal(s::has_line(s::text(r), "^2$"))) << "FAIL: unexpected output: " << s::text(r);

@@ -209,6 +209,15 @@ hardware = {}
         expect(fatal(e2e::succeeded(r))) << "the borrowing home did not start: " << s::text(r);
         expect(fatal(s::read_file(config) == before)) << "the borrowing home rewrote the registry's index places:\n" << before << "\n---\n" << s::read_file(config);
         expect(fatal(s::lacks(s::read_file(config), borrower.filename().string()))) << "the registry names the borrowing home: " << s::read_file(config);
+        // A home whose `registry` is a link to the owner's borrows it the same way.
+        const auto linked = s::another_home(s::home::fresh);
+        std::error_code ec;
+        fs::create_directory_symlink(owner / "registry", linked / "registry", ec);
+        if (ec) skip(std::format("no directory link here: {}", ec.message()));
+        r = s::mcpp({"index", "list"}, s::case_dir(), {.env = {{"MCPP_HOME", linked.string()}}});
+        expect(fatal(e2e::succeeded(r))) << "the linking home did not start: " << s::text(r);
+        expect(fatal(s::read_file(config) == before)) << "the linking home rewrote the registry's index places:\n" << before << "\n---\n" << s::read_file(config);
+        expect(fatal(s::lacks(s::read_file(config), linked.filename().string()))) << "the registry names the linking home: " << s::read_file(config);
     };
 }};
 

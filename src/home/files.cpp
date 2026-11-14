@@ -75,10 +75,13 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     // Windows refuses the rename while another program holds the destination
     // open (a sharing violation): an editor, a virus scanner, or another mcpp
     // reading config.toml, which holds it for the length of one read. Tries
-    // with a pause that starts short and grows, for two seconds, then the
-    // failure.
+    // with a pause that starts short and grows to 20 ms, for two seconds, then
+    // the failure. A longer pause lost to readers that hold the file most of
+    // the time: programs started at once on a loaded Windows runner each read
+    // config.toml, and a writer that tried a dozen times in two seconds found
+    // it held at each (unit Config/ConfigValueIsReplacedWhole, 2026-11-14).
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
-    auto delay = std::chrono::milliseconds{5};
+    auto delay = std::chrono::milliseconds{1};
     for (;;) {
         const auto r = mcpplibs::os::fs::rename(source, destination, true);
         if (r) { ec.clear(); return true; }
@@ -93,7 +96,7 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
             return false;
         }
         std::this_thread::sleep_for(delay);
-        delay = std::min(delay * 2, std::chrono::milliseconds{200});
+        delay = std::min(delay * 2, std::chrono::milliseconds{20});
     }
 }
 

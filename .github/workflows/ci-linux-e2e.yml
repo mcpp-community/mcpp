@@ -488,7 +488,7 @@ jobs:
       - name: Build PR mcpp from source (sandbox gcc only)
         run: |
           "$MCPP_BOOT" build
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          MCPP=$(realpath "$(find target -type f -path '*/bin/mcpp' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
           test -x "$MCPP"
           "$MCPP" --version
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
