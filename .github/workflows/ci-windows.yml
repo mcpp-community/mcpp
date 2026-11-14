@@ -59,21 +59,23 @@ jobs:
             echo "MCPP_TEST_SINCE=origin/$GITHUB_BASE_REF" >> "$GITHUB_ENV"
           fi
 
-      - name: Unit + integration tests via mcpp test
+      - name: The xlings the tests' mcpp uses
         shell: bash
-        run: |
-          export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          # --timeout: an e2e program runs its cases in one process (`programs =
-          # "directory"`), up to fifteen former scripts that had 600 s each; the
-          # longest measured 257 s on a Linux workstation and passed 300 s on macos-15.
-          "$MCPP_SELF" test --timeout 1200 ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
+        run: echo "MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")" >> "$GITHUB_ENV"
 
-      # The run `mcpp test` kept (target/mtest): this job's report in its
-      # summary, and the store for the workflow run's report (ci.yml test-report).
-      - uses: ./.github/actions/test-report
-        if: always()
+      # The unit and C++ e2e tests, longest first by main's measured history,
+      # and on a re-run only what the attempt before failed (mcpp-unit). One
+      # job: measured on 2026-11-14 the run takes 8 minutes of the job's 19, the
+      # build of the tests most of the rest, which a shard would pay again.
+      # --timeout: an e2e program runs its cases in one process (`programs =
+      # "directory"`), up to fifteen former scripts that had 600 s each.
+      - name: Unit + integration tests via mcpp test
+        uses: ./.github/actions/mcpp-unit
         with:
-          name: mtest-unit-windows
+          name: windows
+          history: windows
+          mcpp: ${{ env.MCPP_SELF }}
+          since: ${{ env.MCPP_TEST_SINCE }}
 
       - name: Home and runner-cache paths preserve Unicode under a legacy Windows code page
         shell: bash

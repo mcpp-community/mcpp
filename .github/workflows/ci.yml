@@ -231,6 +231,7 @@ jobs:
           python3 tests/scripts/test_classify_changes.py
           python3 tests/scripts/test_notify_packages.py
           python3 tests/scripts/test_check_e2e_coverage.py
+          python3 tests/scripts/test_test_history.py
           python3 tests/scripts/test_check_default_toolchain_docs.py
           python3 tests/scripts/test_check_provider_boundary.py
           python3 tests/scripts/test_native_candidate_admission.py
@@ -250,8 +251,10 @@ jobs:
       # What the Linux consumers install beyond the build's own toolchain: the
       # e2e shards (musl, llvm, mingw-cross), the toolchain legs (musl, llvm).
       prewarm: gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.1.0
-      # The Windows cases the cross job runs with the MinGW cross toolchain.
-      tests: e2e/windows
+      # The gate and the tests the Windows cases need are unit-linux-archive's
+      # (ci-unit.yml), beside this build: with GCC the gate held this job 18.6
+      # minutes after the binary was built, and every Linux job waited for it.
+      gate: ''
 
   build-linux-arm:
     needs: changes
@@ -301,6 +304,49 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/ci-bootstrap.yml
+
+  # THE LINUX UNIT AND C++ E2E TESTS, built once beside the build and run in
+  # shards (ci-unit.yml; design 2026-11-14). The archive stage needs no build
+  # of this commit: the bootstrap mcpp builds the tests, as build.yml's gate
+  # did; the shards run them with this commit's mcpp.
+  unit-linux-archive:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ci-unit.yml
+    with:
+      stage: archive
+      host: linux-x86_64
+      name: linux
+      runs-on: ubuntu-24.04
+      # The Windows cases the MinGW cross job runs (the run stage's `cases`).
+      tests: e2e/windows
+
+  unit-linux:
+    needs: [build-linux, unit-linux-archive, changes]
+    uses: ./.github/workflows/ci-unit.yml
+    with:
+      stage: run
+      host: linux-x86_64
+      name: linux
+      runs-on: ubuntu-24.04
+      archived: ${{ needs.unit-linux-archive.outputs.archived }}
+      # Four shards of four workers: the measured run of 2026-11-13 reached 65
+      # of its programs, 3970 s of work, in the 45 minutes of one job.
+      shards: '[1,2,3,4]'
+      # The Windows cases only a MinGW cross toolchain runs, from Linux:
+      # resources (windres -O coff, since GNU ld cannot consume a .res;
+      # mcpp#365) on the GNU and clang + MinGW rows, a Windows program packed
+      # from Linux (the import table read, not the artifact run), and a
+      # library whose legs cross a binary format.
+      cases: |
+        rows/1058 a gnu abi windows row compiles its resources
+        resources/198 windows resources cross
+        resources/923 cross dependency images keep their resources
+        pack/240 pack pe zip cross
+        pack/248 pack library fat pe leg
 
   linux:
     needs: [build-linux, changes]
@@ -414,7 +460,7 @@ jobs:
   # summary, the failures, the slowest cases and the metrics.
   test-report:
     name: the run's tests, reported
-    needs: [changes, linux, macos, windows, linux-e2e, macos-e2e, windows-e2e]
+    needs: [changes, linux, unit-linux, macos, windows, linux-e2e, macos-e2e, windows-e2e]
     if: ${{ always() && needs.changes.outputs.code == 'true' && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

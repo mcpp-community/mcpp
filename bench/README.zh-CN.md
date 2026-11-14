@@ -119,7 +119,9 @@ BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
 CI 保留的是 mcpp 自身开销的历史。`bench/tests/engine.cpp` 中的 mtest Bench 用例在一个小的模块
 工程上计时被测的 mcpp（`MCPP`）：无事可做的构建、`mcpp why flags`、修改一个接口之后的重建，
 每次调用单独计时（`bench::each`；修改文件本身被暂停计时，不计入重建）。
-Linux 的单元测试 job 运行它们（`cd bench && mcpp test`），每项开销作为指标（中位数，以及
+Linux 的子系统测试 job 在推送到 main、带 `ci:bench` 标签的 PR 与带 `bench` 启动的 CI 运行中运行它们
+（`cd bench && mcpp test`）；手动启动的 `bench.yml` 只运行它们，所用的是该提交一次成功 CI 运行构建的
+Linux 二进制，发版合入时的测量即取自它。每项开销作为指标（中位数，以及
 `.p95`、`.max`，并列出最慢的两次调用）进入
 mtest 的存储，`mtest analyze trend` 与工作流运行的报告据此给出它的历史走势。这些是同一 runner
 上的趋势，不是引擎之间的比较；公开的数字仍只出自上面的标准集。

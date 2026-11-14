@@ -18,7 +18,9 @@ name: ci-linux
 #
 # The checks that need no binary run in the `docs` job of ci.yml.
 #
-# The e2e suite is ci-linux-e2e.yml, called beside this one.
+# The e2e suite is ci-linux-e2e.yml, called beside this one; the root suite of
+# `mcpp test` (the unit tests and the C++ e2e programs) is ci-unit.yml, built
+# once and run in shards.
 #
 # Paired workflows: ci-linux-e2e.yml, ci-macos.yml, ci-windows.yml.
 
@@ -48,12 +50,9 @@ env:
 
 jobs:
   build-test:
-    name: unit tests (linux x86_64, self-host)
+    name: subsystem tests (linux x86_64, self-host)
     runs-on: ubuntu-24.04
-    # The C++ e2e programs run in this job (tests/e2e/*/, design 2026-11-12
-    # section 5.9); a change to tests/support runs them all, measured at 40
-    # minutes on xcode-27.
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -73,13 +72,6 @@ jobs:
           if git fetch --no-tags --depth=1 origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF"; then
             echo "MCPP_TEST_SINCE=origin/$GITHUB_BASE_REF" >> "$GITHUB_ENV"
           fi
-
-      - name: Unit + integration tests via `mcpp test`
-        run: |
-          # --timeout: an e2e program runs its cases in one process (`programs =
-          # "directory"`), up to fifteen former scripts that had 600 s each; the
-          # longest measured 257 s on a Linux workstation and passed 300 s on macos-15.
-          "$MCPP_FRESH" test --timeout 1200 ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
       # Each package under `modules/` carries its own tests, and they are built
       # as that package ALONE -- a configuration the root suite never produces,
@@ -127,7 +119,7 @@ jobs:
       - uses: ./.github/actions/test-report
         if: always()
         with:
-          name: mtest-unit-linux
+          name: mtest-unit-linux-subsystems
           stores: target/mtest bench/target/mtest
 
   # A cold, from-scratch self-host build by this commit's binary with the

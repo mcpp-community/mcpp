@@ -8,6 +8,15 @@
 
 ### Added
 
+- `mcpp test` orders a run by the durations its store measured: the tests
+  start longest first. `--shard I/N` runs the I-th of N shards, each test
+  assigned longest first to the shard with the least measured work, so that N
+  machines with one store run every test once; `--failed` runs what the
+  store's last run failed (its failed cases, or the program whole when it
+  failed outside its cases). `[test] split = "auto"` (and `--split <mode>` for
+  one invocation) divides a file the store measured longer than its share of
+  the run into groups of its cases. The store's program records state
+  `part_of`, and a shard's run states `shard`.
 - Toolchain payloads are data. Which package serves a family for a target on a
   host is the `[[toolchain.payload]]` table of the built-in data, read in both
   directions; `xim:<name>@<version>` accepts any package of the index and
@@ -43,6 +52,23 @@
 
 ### Changed
 
+- A test that runs a program of the package (a file it is built from names
+  `MCPP_BIN_`) is affected, for `--since` and `--changed`, by a change of any
+  source of the package that is not a test's own. An end-to-end test is
+  built from none of the program's sources, and a change of `src/` selected
+  none of them.
+- `mcpp test --archive` runs archived tests on a machine whose toolchain could
+  not compile them: a configuration that targets the MSVC ABI with no Visual
+  Studio is no longer refused when nothing is compiled.
+- CI: the Linux unit and C++ e2e tests are built once beside the build and run
+  in four shards assigned by main's measured history (`ci-unit.yml`), and the
+  gate left the Linux build job, which it held for 18.6 minutes; every unit
+  job orders its tests by that history and re-runs only what a failed
+  attempt failed; the macOS 27 image runs the SDK-dependent subset on a pull
+  request; `bench.yml` measures the engine alone for a commit whose CI
+  passed. The release builds its four platforms at once and creates the
+  release with every archive in one job; the ecosystem canaries run only in a
+  release started with `canaries`.
 - `mcpp new` scaffolds tests with mtest 0.8.3 (was 0.5.2), and `mcpp test
   --guide` suggests it; mcpp's own tests, its modules' tests, the canaries and
   the engine benchmark use it. The benchmark times each call by itself

@@ -13,22 +13,37 @@ on:
       tag:
         description: 'tag to (re)build — leave blank to derive `v<version>` from mcpp.toml and create the tag automatically'
         required: false
+      canaries:
+        description: 'build the ecosystem canaries (xlings, mcppls) with the candidate before the release is created'
+        type: boolean
+        default: false
 
+# THE BUILDS RUN AT ONCE, AND ONE JOB CREATES THE RELEASE (design 2026-11-14).
+# The four platform builds start together and keep their archives as
+# artifacts; `create-release` creates the GitHub release with every archive
+# when all four have passed, so no release exists with a platform missing. The
+# release v2026.11.12.1 took 109 minutes, its jobs one after another: the
+# canaries 48, the Linux build 27 (it created the release the others waited
+# for), the aarch64 build 29, the seal and the publication 5.
 jobs:
-  # A RELEASE IS GATED BY THE ECOSYSTEM'S OWN PROJECTS (the 2026-09-28 design,
-  # WS10): they are built with the candidate first
-  # (.github/release-canaries.toml), and the job that creates the tag needs
-  # them. A downstream project validates the release in its own pull request.
+  # THE ECOSYSTEM'S OWN PROJECTS, BUILT WITH THE CANDIDATE (the 2026-09-28
+  # design, WS10; .github/release-canaries.toml), when the release is started
+  # by hand with `canaries`. They gate the creation of the release, beside the
+  # builds; a tag pushed creates its release without them. Each project's own
+  # CI validates the release after it, pinning it.
   canaries:
+    if: github.event_name == 'workflow_dispatch' && inputs.canaries
     uses: ./.github/workflows/release-canaries.yml
 
   build-release:
-    name: build + upload (linux / x86_64)
-    needs: canaries
+    name: build (linux / x86_64)
     runs-on: ubuntu-24.04
     permissions:
-      contents: write   # required to create releases + push tags
+      contents: read
     timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.stage.outputs.tag }}
+      version: ${{ steps.stage.outputs.version }}
     env:
       # mcpp resolves MCPP_HOME from the binary's location by default,
       # but here we want to share toolchains with the bootstrap sandbox,
@@ -275,30 +290,27 @@ jobs:
           echo "--- RELEASE_NOTES.md ---"
           cat dist/RELEASE_NOTES.md
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Keep the Linux archives for the release
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.stage.outputs.tag }}
-          name: ${{ steps.stage.outputs.tag }}
-          body_path: dist/RELEASE_NOTES.md
-          draft: false
-          prerelease: false
-          files: |
+          name: release-linux-x86_64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
             dist/mcpp-${{ steps.stage.outputs.version }}-linux-x86_64.tar.gz
             dist/mcpp-${{ steps.stage.outputs.version }}-linux-x86_64.tar.gz.sha256
             dist/mcpp-linux-x86_64.tar.gz
             dist/mcpp-linux-x86_64.tar.gz.sha256
             dist/install.sh
-            dist/SHA256SUMS
             dist/mcpp-${{ steps.stage.outputs.version }}.tar.gz
             dist/mcpp.lua
+            dist/RELEASE_NOTES.md
 
   build-linux-aarch64:
     name: build (linux / aarch64, cross)
     runs-on: ubuntu-24.04
-    needs: build-release
     permissions:
-      contents: write
+      contents: read
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
@@ -441,11 +453,13 @@ jobs:
           ver=$(qemu-aarch64-static "$SMOKE/$WRAPPER/bin/mcpp" --version)
           echo "$ver"; echo "$ver" | grep -q 'mcpp'
 
-      - name: Upload aarch64 artifacts to release
-        uses: softprops/action-gh-release@v2
+      - name: Keep the aarch64 archives for the release
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.resolve.outputs.tag }}
-          files: |
+          name: release-linux-aarch64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
             dist/mcpp-${{ steps.resolve.outputs.version }}-linux-aarch64.tar.gz
             dist/mcpp-${{ steps.resolve.outputs.version }}-linux-aarch64.tar.gz.sha256
             dist/mcpp-linux-aarch64.tar.gz
@@ -454,9 +468,8 @@ jobs:
   build-macos:
     name: build (macOS / ARM64)
     runs-on: macos-15
-    needs: build-release
     permissions:
-      contents: write
+      contents: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -625,11 +638,13 @@ jobs:
           # the paths the binary carries.
           bash .github/tools/check_release_paths.sh "$SMOKE/$WRAPPER/bin/mcpp"
 
-      - name: Upload macOS artifacts to release
-        uses: softprops/action-gh-release@v2
+      - name: Keep the macOS archives for the release
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.resolve.outputs.tag }}
-          files: |
+          name: release-macosx-arm64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
             dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz
             dist/mcpp-${{ steps.resolve.outputs.version }}-macosx-arm64.tar.gz.sha256
             dist/mcpp-macosx-arm64.tar.gz
@@ -638,9 +653,8 @@ jobs:
   build-windows:
     name: build (Windows / x86_64)
     runs-on: windows-latest
-    needs: build-release
     permissions:
-      contents: write
+      contents: read
     timeout-minutes: 45
     env:
       MCPP_HOME: C:\Users\runneradmin\.mcpp
@@ -784,11 +798,13 @@ jobs:
           test -f "$SMOKE/$WRAPPER/mcpp.bat"
           echo "Smoke-test passed"
 
-      - name: Upload Windows artifacts to release
-        uses: softprops/action-gh-release@v2
+      - name: Keep the Windows archives for the release
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.resolve.outputs.tag }}
-          files: |
+          name: release-windows-x86_64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
             dist/mcpp-${{ steps.resolve.outputs.version }}-windows-x86_64.zip
             dist/mcpp-${{ steps.resolve.outputs.version }}-windows-x86_64.zip.sha256
             dist/mcpp-windows-x86_64.zip
@@ -798,9 +814,54 @@ jobs:
   # uploader has finished.  The manifest is desired state for downstream
   # reconcilers: a rerun may reproduce it byte-for-byte, but may never replace
   # it with different bytes for the same tag.
+  # THE RELEASE, CREATED ONCE WITH EVERY ARCHIVE: after the four builds and,
+  # when they ran, the canaries. SHA256SUMS names every archive of the
+  # release, the four builds and the source.
+  create-release:
+    name: create the release
+    needs: [canaries, build-release, build-linux-aarch64, build-macos, build-windows]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # required to create releases + push tags
+    timeout-minutes: 15
+    steps:
+      - name: The archives of the four builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS over every archive
+        run: |
+          set -euo pipefail
+          cd dist
+          ls mcpp-*.tar.gz mcpp-*.zip | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-release.outputs.tag }}
+          name: ${{ needs.build-release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: dist/RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/mcpp-*.tar.gz
+            dist/mcpp-*.tar.gz.sha256
+            dist/mcpp-*.zip
+            dist/mcpp-*.zip.sha256
+            dist/install.sh
+            dist/SHA256SUMS
+            dist/mcpp.lua
+
   release-manifest:
     name: validate + seal release manifest
-    needs: [build-release, build-linux-aarch64, build-macos, build-windows]
+    needs: [create-release]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

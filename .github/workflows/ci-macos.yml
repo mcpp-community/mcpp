@@ -306,19 +306,24 @@ jobs:
             echo "MCPP_TEST_SINCE=origin/$GITHUB_BASE_REF" >> "$GITHUB_ENV"
           fi
 
+      # The unit and C++ e2e tests, longest first by main's measured history,
+      # and on a re-run only what the attempt before failed (mcpp-unit).
+      # Measured on 2026-11-13 (macos-15): one case (openkal/trees 956) ran
+      # 806 s of a 1196 s run, and started when the other workers had half
+      # the run behind them.
+      #
+      # THE NEWEST macOS ON A PULL REQUEST: the tests whose subject is the
+      # SDK, the system's libc++ headers and the loader (the unit tests, and the
+      # e2e programs that build, link and load on this host), every test on
+      # main and on a pull request labelled `ci:full`. The rest of the e2e
+      # programs state what mcpp decides, which macos-15 runs on every change.
       - name: Unit + integration tests via `mcpp test`
-        run: |
-          # --timeout: an e2e program runs its cases in one process (`programs =
-          # "directory"`), up to fifteen former scripts that had 600 s each; the
-          # longest measured 257 s on a Linux workstation and passed 300 s on macos-15.
-          "$MCPP_FRESH" test --timeout 1200 ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
-
-      # The run `mcpp test` kept (target/mtest): this job's report in its
-      # summary, and the store for the workflow run's report (ci.yml test-report).
-      - uses: ./.github/actions/test-report
-        if: always()
+        uses: ./.github/actions/mcpp-unit
         with:
-          name: mtest-unit-macos
+          name: ${{ matrix.image }}
+          history: ${{ matrix.image }}
+          since: ${{ env.MCPP_TEST_SINCE }}
+          patterns: ${{ (matrix.image == 'xcode-27' && inputs.set == 'pr') && 'unit e2e/basics e2e/build e2e/macos e2e/modules e2e/runtime e2e/toolchain' || '' }}
 
       # WS8: this host's row of docs/01 and docs/20 is checked against the
       # one answer the resolver gives (`self env --format json`).

@@ -1,0 +1,240 @@
+name: ci-unit
+
+# THE UNIT AND C++ E2E TESTS OF ONE HOST, BUILT ONCE AND RUN IN SHARDS (design
+# 2026-11-14). Called twice by ci.yml, as two stages:
+#
+#   archive  the host's gate, then every test built once by the bootstrap mcpp
+#            (`mcpp test --no-run --archive`, SPEC-015 §4), with the measured
+#            history of main's last run beside it: artifact `mcpp-unit-<host>`.
+#            It needs no build of this commit, so it runs beside build.yml.
+#   run      the shards: each runs its part of the archive with this commit's
+#            mcpp (`mcpp test --archive --shard I/N --split auto`), the tests
+#            assigned longest first by that one history, so the shards together
+#            run each test once; a re-run of a failed shard runs what it failed.
+#
+# Measured on 2026-11-14 (Linux x86_64, GCC): the gate held the build job 18.6
+# minutes after the binary was built, every Linux job waited for it, and the
+# one job that then built and ran every test passed its 45-minute limit.
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: archive | run
+        type: string
+        required: true
+      host:
+        description: the host of build.yml's artifact (linux-x86_64)
+        type: string
+        required: true
+      name:
+        description: the host's name in the stores' artifact names (linux)
+        type: string
+        required: true
+      runs-on:
+        type: string
+        required: true
+      gate:
+        description: the tests that must pass before the run goes on (build.yml `gate`)
+        type: string
+        default: e2e/basics
+      tests:
+        description: the tests written as `mcpp-tests-<host>` for the jobs that run named cases (e2e-cases)
+        type: string
+        default: ''
+      shards:
+        description: the run stage's shards, a JSON list of 1..N
+        type: string
+        default: '[1]'
+      archived:
+        description: the number of tests the archive stage built; 0 starts no shard
+        type: string
+        default: '1'
+      cases:
+        description: the run stage's cases of `mcpp-tests-<host>` that need the MinGW cross toolchain, one per line
+        type: string
+        default: ''
+    outputs:
+      archived:
+        description: the number of tests the archive holds
+        value: ${{ jobs.archive.outputs.archived }}
+
+env:
+  MCPP_HOME: /home/runner/.mcpp
+  # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm). The
+  # e2e cases read mcpp's default output; the case support removes it.
+  MCPP_VERBOSE: "1"
+
+jobs:
+  archive:
+    name: unit tests, built (${{ inputs.host }})
+    if: inputs.stage == 'archive'
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write   # a failed gate cancels the run
+    outputs:
+      archived: ${{ steps.archive.outputs.archived }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      # THE HOST'S GATE (build.yml): a new program scaffolded, built and run by
+      # this commit's mcpp (MCPP_BIN_MCPP). A red commit stops here, before the
+      # shards start, and the run is cancelled.
+      - name: The host's gate
+        id: gate
+        if: inputs.gate != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # shellcheck disable=SC2086 -- the input is a list of test paths
+          "$MCPP" test ${{ inputs.gate }}
+
+      - name: A failed gate cancels the run
+        if: ${{ failure() && steps.gate.outcome == 'failure' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::error::the gate of ${{ inputs.host }} failed: the run is cancelled"
+          gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" \
+            || echo "::warning::the run could not be cancelled (the token's actions permission)"
+
+      # EVERY TEST, ON EVERY SET. The bootstrap mcpp that builds them selects
+      # by change without the rule that a test running the package's program
+      # is affected by the program's sources (2026.11.13.1), so it would leave
+      # the e2e programs out of a pull request that changes src/; with that
+      # rule nearly every change selects them all.
+      - name: The tests, built once
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          mkdir -p "$RUNNER_TEMP/unit"
+          "$MCPP" test --no-run --archive "$RUNNER_TEMP/unit/unit.tar.gz" 2>&1 | tee "$RUNNER_TEMP/archive.log"
+          n=$(sed -n 's/.*Archived \([0-9][0-9]*\) test.*/\1/p' "$RUNNER_TEMP/archive.log" | tail -1)
+          [ -f "$RUNNER_TEMP/unit/unit.tar.gz" ] || n=0
+          echo "archived=${n:-0}" >> "$GITHUB_OUTPUT"
+          echo "the archive holds ${n:-0} test(s)"
+
+      # One history for every shard: the shards of one run assign the tests
+      # from it, so a run of main that finishes while they start changes none
+      # of their assignments.
+      - name: The measured history of main's last CI run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ inputs.name }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/unit/history"
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
+                  --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          if [ -z "$run" ]; then echo "no successful run of main: the shards divide by count"; exit 0; fi
+          d="$RUNNER_TEMP/unit-stores"
+          if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -p "mtest-unit-$KEY*" -D "$d" 2>/dev/null; then
+            echo "main's run $run kept no store for $KEY: the shards divide by count"; exit 0
+          fi
+          python3 .github/tools/test_history.py take "$RUNNER_TEMP/unit/history" "$d" "$d"/*/
+
+      - name: Upload the tests and their history
+        if: steps.archive.outputs.archived != '0'
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-unit-${{ inputs.host }}
+          path: ${{ runner.temp }}/unit
+          if-no-files-found: error
+          retention-days: 3
+
+      # The tests a job that runs named cases takes (e2e-cases): built here,
+      # where the package is already built.
+      - name: Write the tests other jobs run
+        if: inputs.tests != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # shellcheck disable=SC2086 -- the input is a list of test paths
+          "$MCPP" test ${{ inputs.tests }} --no-run --archive "dist/mcpp-tests.tar.gz"
+
+      - name: Upload the tests other jobs run
+        if: inputs.tests != ''
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-tests-${{ inputs.host }}
+          path: dist/mcpp-tests.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  shard:
+    name: unit tests ${{ matrix.shard }}/${{ strategy.job-total }} (${{ inputs.host }}, self-host)
+    if: inputs.stage == 'run' && inputs.archived != '0'
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(inputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: ${{ inputs.host }}
+
+      - name: The tests of this run
+        uses: actions/download-artifact@v4
+        with:
+          name: mcpp-unit-${{ inputs.host }}
+          path: ${{ runner.temp }}/unit
+
+      - name: The history the shards share
+        shell: bash
+        run: |
+          echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
+          python3 .github/tools/test_history.py take target/mtest "$RUNNER_TEMP/unit/history"
+
+      - name: Unit + integration tests via `mcpp test`
+        uses: ./.github/actions/mcpp-unit
+        with:
+          name: ${{ inputs.name }}-${{ matrix.shard }}
+          archive: ${{ runner.temp }}/unit/unit.tar.gz
+          shard: ${{ matrix.shard }}/${{ strategy.job-total }}
+
+  # The Windows cases only a job with the MinGW cross toolchain runs, from the
+  # tests the archive stage wrote (no build here); each case is held to its
+  # `ok` line, so a skip cannot pass as a run.
+  cases:
+    name: Windows cases from ${{ inputs.host }} (mingw-cross)
+    if: inputs.stage == 'run' && inputs.cases != ''
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: ${{ inputs.host }}
+      # llvm beside it: the case that pairs clang with the MinGW payload reads
+      # the program's resources with the payload's llvm-readobj (`llvm`).
+      - name: Install mingw-cross toolchain
+        shell: bash
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" toolchain install mingw-cross 16.1.0
+          "$MCPP" toolchain install llvm 23.1.3
+          echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/e2e-cases
+        with:
+          mcpp: ${{ env.MCPP }}
+          host: ${{ inputs.host }}
+          cases: ${{ inputs.cases }}

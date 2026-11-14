@@ -1,0 +1,139 @@
+name: mcpp-unit
+description: >
+  The unit and C++ e2e tests by `mcpp test` (docs/08 "The order of a run";
+  design 2026-11-14): the measured history of main's last CI run taken into the
+  run store, so that the tests run longest first, a part longer than its share
+  runs as groups of its cases (`--split auto`) and `--shard` assigns tests by
+  duration; on a re-run of a failed job, only what its previous attempt failed
+  (`--failed`); the job's own runs kept as `mtest-unit-<name>-a<attempt>`.
+  Run it after use-built-mcpp, from the repository's root.
+
+inputs:
+  name:
+    description: the job's name in the stores' artifact names (linux-1, macos-15, windows)
+    required: true
+  history:
+    description: >
+      the stores of main's last CI run to read the measured durations from
+      (`mtest-unit-<history>*`); empty when the job was given its history
+      (the shards of one run take it from their archive job)
+    required: false
+    default: ''
+  archive:
+    description: the test archive to run (`mcpp test --archive`); empty to build the tests here
+    required: false
+    default: ''
+  shard:
+    description: I/N, this job's shard of the tests (`mcpp test --shard`)
+    required: false
+    default: ''
+  since:
+    description: the commit a pull request's change is read from (`mcpp test --since`)
+    required: false
+    default: ''
+  patterns:
+    description: the tests to run, as `mcpp test` patterns separated by spaces; empty for all
+    required: false
+    default: ''
+  mcpp:
+    description: the mcpp that runs the tests; empty for this commit's (MCPP_FRESH)
+    required: false
+    default: ''
+  timeout:
+    description: the seconds a test may run (`mcpp test --timeout`)
+    required: false
+    default: '1200'
+  stores:
+    description: the stores to keep, relative to the workspace, separated by spaces
+    required: false
+    default: target/mtest
+  token:
+    description: a token that reads this repository's actions
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: The measured history of main's last CI run
+      if: inputs.history != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        KEY: ${{ inputs.history }}
+      run: |
+        set -uo pipefail
+        py=python3; command -v python3 >/dev/null 2>&1 || py=python
+        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
+                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        if [ -z "$run" ]; then echo "no successful run of main: the tests run in the order they are listed"; exit 0; fi
+        d="$RUNNER_TEMP/unit-history"
+        rm -rf "$d"
+        if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -p "mtest-unit-$KEY*" -D "$d" 2>/dev/null; then
+          echo "main's run $run kept no store for $KEY: the tests run in the order they are listed"; exit 0
+        fi
+        "$py" .github/tools/test_history.py take target/mtest "$d" "$d"/*/
+
+    # A RE-RUN RUNS WHAT FAILED. The store of the attempt before this one, when
+    # it kept one, names what failed; a job that failed before its tests ran
+    # kept none and runs them all again.
+    - name: The attempt before this one
+      if: github.run_attempt != '1'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        NAME: ${{ inputs.name }}
+      run: |
+        set -uo pipefail
+        py=python3; command -v python3 >/dev/null 2>&1 || py=python
+        prev="mtest-unit-$NAME-a$((GITHUB_RUN_ATTEMPT - 1))"
+        d="$RUNNER_TEMP/unit-previous"
+        rm -rf "$d"
+        if gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "$prev" -D "$d" 2>/dev/null \
+           && [ -f "$d/index.ndjson" ]; then
+          "$py" .github/tools/test_history.py take target/mtest "$d"
+          echo "MCPP_UNIT_FAILED=1" >> "$GITHUB_ENV"
+          echo "the attempt before kept $prev: what it failed runs again"
+        else
+          echo "the attempt before kept no store: every test runs"
+        fi
+
+    - name: The tests via `mcpp test`
+      shell: bash
+      env:
+        ARCHIVE: ${{ inputs.archive }}
+        SHARD: ${{ inputs.shard }}
+        SINCE: ${{ inputs.since }}
+        PATTERNS: ${{ inputs.patterns }}
+        TIMEOUT: ${{ inputs.timeout }}
+        RUNS: ${{ inputs.mcpp }}
+      run: |
+        set -euo pipefail
+        args=(test --timeout "$TIMEOUT" --split auto)
+        [ -z "$ARCHIVE" ] || args+=(--archive "$ARCHIVE")
+        if [ -n "${MCPP_UNIT_FAILED:-}" ]; then
+          args+=(--failed)
+        else
+          [ -z "$SHARD" ] || args+=(--shard "$SHARD")
+          [ -z "$SINCE" ] || args+=(--since "$SINCE")
+          # shellcheck disable=SC2206 -- the patterns are words
+          [ -z "$PATTERNS" ] || args+=($PATTERNS)
+        fi
+        echo "mcpp ${args[*]}"
+        "${RUNS:-$MCPP_FRESH}" "${args[@]}"
+
+    # The job's own runs, and not the history it was given, are kept.
+    - name: The runs of this job
+      if: always()
+      shell: bash
+      env:
+        STORES: ${{ inputs.stores }}
+      run: |
+        py=python3; command -v python3 >/dev/null 2>&1 || py=python
+        for s in $STORES; do [ ! -d "$s" ] || "$py" .github/tools/test_history.py own "$s" "$GITHUB_RUN_ID"; done
+
+    - uses: ./.github/actions/test-report
+      if: always()
+      with:
+        name: mtest-unit-${{ inputs.name }}-a${{ github.run_attempt }}
+        stores: ${{ inputs.stores }}

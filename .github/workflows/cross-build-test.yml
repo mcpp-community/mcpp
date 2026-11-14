@@ -34,10 +34,11 @@ name: cross-build-test
 # qemu-aarch64 is the CI proxy for "does this cross artefact actually execute".
 #
 # ── NOT here ───────────────────────────────────────────────────────────────
-#   * The e2e scripts this job names explicitly (102, 198, 240, 248) are the
+#   * The e2e scripts this job names explicitly (102, 1044, ...) are the
 #     ones the ordinary Linux shards SKIP for want of `mingw-cross`. They are
 #     listed in the job rather than left to run_all's cap gating precisely so
-#     they cannot end up skipping everywhere at once.
+#     they cannot end up skipping everywhere at once. The C++ e2e cases of
+#     that kind (198, 240, 248, 923, 1058) are ci-unit.yml's `cases`.
 #   * Same-arch builds (host arch == target arch) are NOT cross. The native musl
 #     static build `--target x86_64-linux-musl` (x86_64 host) is exercised by
 #     ci-linux.yml's "Toolchain: musl-gcc" step, and release.yml for the static
@@ -371,31 +372,8 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash tests/e2e/1044_clang_pairs_with_the_mingw_payload.sh
 
-      # The Windows cases only this job can run, for the reason 102 is: it is
-      # the one job with a MinGW cross toolchain, which the Linux shards lack.
-      # - resources: the GNU half of resource compilation (windres -O coff,
-      #   since GNU ld cannot consume a .res; mcpp#365), on the clang + MinGW
-      #   pairing as well (design 2026-11-10 E3), and kept by a dependency's
-      #   images across the cross build;
-      # - pack: a Windows program packed FROM LINUX, which reads the import
-      #   table instead of executing the artifact (mcpp.pack.binfmt), so a
-      #   same-OS pack could not tell the two implementations apart;
-      # - a library package whose legs cross a binary format: MinGW and MSVC
-      #   are both "windows" and write libfoo.a and foo.lib, which is why
-      #   `lib/` is keyed by triple, not by OS (245 covers gnu + musl).
-      # Run from the test archive build.yml wrote (no build here); each case
-      # is held to its `ok` line, so a skip cannot pass as a run.
-      - name: "e2e: Windows resources, packing and a PE leg, from Linux"
-        uses: ./.github/actions/e2e-cases
-        with:
-          mcpp: ${{ env.MCPP }}
-          host: linux-x86_64
-          cases: |
-            rows/1058 a gnu abi windows row compiles its resources
-            resources/198 windows resources cross
-            resources/923 cross dependency images keep their resources
-            pack/240 pack pe zip cross
-            pack/248 pack library fat pe leg
+      # The Windows cases of the C++ e2e suite that need this toolchain run
+      # from the test archive in ci-unit.yml (`cases`), beside the Linux shards.
 
       # SPEC-007 R4.3: the engine places a Windows program's runtime DLLs
       # beside it after its link, so a program started by hand finds them.
