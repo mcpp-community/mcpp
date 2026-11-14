@@ -79,6 +79,11 @@
   `mcpp toolchain default` and the other writers no longer fail with `cannot
   write config.toml`: the writer closes its own reader first and waits up to
   two seconds for the others.
+- `mcpp test` runs a case that holds the machine (P7.1, resource `machine`)
+  with no other test beside it: the listed cases of a file that hold it are a
+  part of their own (`<program>/<file> (machine)` beside the file's other
+  cases), queued last and run alone.
+  Before, the resource was recorded and not kept across processes (docs/08).
 - A compiler without C++ modules (GCC before 14) builds the C++ units that
   declare and import no module, without module flags, and refuses at planning
   the first unit that needs modules, naming what it needs. Before, the build

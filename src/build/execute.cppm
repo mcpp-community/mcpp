@@ -4211,6 +4211,7 @@ struct TestResult {
     long long                           startedMs = -1;
     int                                 worker = -1;
     std::vector<std::string>            select;
+    bool                                alone = false;   // it held the machine (P7.1)
     // The program and the files it is compiled from, for a test built and not
     // run (`--no-run`): what a runner that selects by change reads (docs/50).
     std::string                         program;
@@ -4262,7 +4263,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
             json p{{"name", t.name}, {"argv", json::array({t.program.empty() ? t.name : t.program})},
                    {"status", status_of(t)}, {"exit", t.exitCode}, {"ms", t.durationMs},
                    {"started_ms", t.startedMs}, {"worker", t.worker}, {"select", t.select},
-                   {"resources", json::array()}, {"fixtures", json::array()}};
+                   {"resources", t.alone ? json::array({"machine"}) : json::array()}, {"fixtures", json::array()}};
             if (t.buildMs > 0) p["build_ms"] = t.buildMs;
             if (t.report.usage.set) {
                 auto u = mcpp::build::test_protocol::usage_json(t.report.usage);
@@ -4551,6 +4552,9 @@ struct TestRunnable {
     // and the directory its parts are named below (`part_label`).
     std::string partOf;
     std::filesystem::path partRoot;
+    // Its cases hold the machine (P7.1 `machine`): it runs with no other test
+    // beside it.
+    bool alone = false;
 };
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
@@ -5066,6 +5070,13 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         const int workers = capture
             ? std::min<int>(runJobsHere, static_cast<int>(list.size())) : 1;
 
+        // A test that holds the machine (P7.1) runs with no other beside it:
+        // those tests are queued last and take the gate whole, every other test
+        // shares it. Queued last, no test that shares the gate starts after one
+        // that waits for it.
+        std::ranges::stable_partition(list, [](const Runnable& r) { return !r.alone; });
+        std::shared_mutex machineGate;
+
         auto tRunPhase = std::chrono::steady_clock::now();
         std::atomic<std::size_t> next{0};
         std::mutex reportMutex;
@@ -5075,12 +5086,17 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 std::size_t i = next.fetch_add(1);
                 if (i >= list.size()) return;
                 auto& r = list[i];
+                std::unique_lock<std::shared_mutex> holdsMachine(machineGate, std::defer_lock);
+                std::shared_lock<std::shared_mutex> besideOthers(machineGate, std::defer_lock);
+                if (r.alone) holdsMachine.lock();
+                else besideOthers.lock();
                 // The schedule, recorded with the result (the mtest store).
                 const auto stamp_schedule = [&, startedAt = std::chrono::steady_clock::now()] {
                     auto& t = results.back();
                     t.startedMs = std::chrono::duration_cast<std::chrono::milliseconds>(startedAt - tLoop).count();
                     t.worker = workerId;
                     t.partOf = r.partOf;
+                    t.alone = r.alone;
                     if (r.select) {
                         std::ifstream in(*r.select);
                         for (std::string line; std::getline(in, line);)
@@ -5663,8 +5679,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 continue;
             }
             std::string lines;
-            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases))
+            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases)) {
                 lines += id + "\n";
+                // A selected case that holds the machine (P7.1) runs the program alone.
+                for (const auto& c : report.listed)
+                    if (c.id == id && std::ranges::find(c.resources, "machine") != c.resources.end()) r.alone = true;
+            }
             if (lines.empty()) { ++notSelected; continue; }
             r.select = r.protocolDir / "select.txt";
             std::ofstream(*r.select, std::ios::binary) << lines;
@@ -5690,10 +5710,16 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // `[test] split = "case"` gives each case its own process; "none" runs
         // the program once.
         const auto split = ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
-        if (invocationNotRunReason.empty() && split != "none") {
+        if (invocationNotRunReason.empty()) {
             std::vector<Runnable> expanded;
             for (auto& r : runnable) {
-                if (!r.protocol || (split == "file" && r.ownFiles < 2)) {
+                const bool divide = split != "none" && !(split == "file" && r.ownFiles < 2);
+                // A program the run does not divide is listed only for its
+                // resources, which costs a process start; behind a runner (an
+                // emulator, a board) that start is the runner's, and the program
+                // runs whole, as it did before.
+                const bool direct = !r.argv.empty() && std::filesystem::path(r.argv.front()) == r.program;
+                if (!r.protocol || (!divide && !direct)) {
                     expanded.push_back(std::move(r));
                     continue;
                 }
@@ -5710,24 +5736,46 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     expanded.push_back(std::move(r));   // its run reports what is wrong
                     continue;
                 }
-                std::map<std::string, std::vector<std::string>> groups;
-                for (auto const& c : report.listed)
-                    groups[split == "case" ? c.id : (c.file.empty() ? std::string("-") : c.file)].push_back(c.id);
+                // THE MACHINE, HELD ALONE (P7.1). A case that holds `machine`
+                // states a property that holds only while nothing beside it
+                // changes the machine (the shared home, its caches, the default
+                // toolchain). The cases of a process run one after another, so
+                // the property is the run's to keep across processes: the cases
+                // that hold it are a part of their own, run with no other test
+                // beside it, and the rest of their file runs as before; a file
+                // of both kinds names that part `<part> (machine)`. Measured on the e2e cases in one `mcpp test`: 234
+                // and 1039 failed beside the other programs, and passed alone.
+                const auto holds_machine = [](const mcpp::build::test_protocol::Case& c) {
+                    return std::ranges::find(c.resources, "machine") != c.resources.end();
+                };
+                std::map<std::pair<std::string, bool>, std::vector<std::string>> groups;
+                for (auto const& c : report.listed) {
+                    const auto key = !divide ? std::string("-")
+                                   : split == "case" ? c.id
+                                   : (c.file.empty() ? std::string("-") : c.file);
+                    groups[{key, holds_machine(c)}].push_back(c.id);
+                }
                 if (groups.size() < 2) {
+                    r.alone = groups.begin()->first.second;
                     expanded.push_back(std::move(r));
                     continue;
                 }
-                std::vector<std::pair<std::string, std::vector<std::string>>> ordered(groups.begin(), groups.end());
+                std::vector<std::pair<std::pair<std::string, bool>, std::vector<std::string>>> ordered(groups.begin(), groups.end());
                 // The largest first, so the longest work starts first.
                 std::ranges::stable_sort(ordered, std::greater{}, [](auto const& g) { return g.second.size(); });
                 std::size_t n = 0;
                 // A pattern that named a part, not its program, keeps that part.
                 const bool whole = selected_by(testOpts.filters, r.name);
                 for (auto& [key, ids] : ordered) {
+                    const auto& [where, machine] = key;
                     Runnable part = r;
-                    const auto label = split == "case" ? key : part_label(r.partRoot, key);
-                    part.name = std::format("{}/{}", r.name, label);
+                    const auto label = !divide ? std::string{}
+                                     : split == "case" ? where : part_label(r.partRoot, where);
+                    part.name = label.empty() ? r.name : std::format("{}/{}", r.name, label);
+                    // Named apart only when its file has cases of both kinds.
+                    if (machine && groups.contains({where, false})) part.name += " (machine)";
                     part.partOf = r.name;
+                    part.alone = machine;
                     if (!whole && !selected_by(testOpts.filters, part.name)) continue;
                     part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
                     std::error_code ec;
