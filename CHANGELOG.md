@@ -158,7 +158,9 @@
   '='`). On Windows, which refuses a rename over a file a reader holds open,
   `mcpp toolchain default` and the other writers no longer fail with `cannot
   write config.toml`: the writer closes its own reader first and waits up to
-  two seconds for the others. A `config.toml` that is a symbolic link is
+  two seconds for the others; a reader whose open Windows refuses while the
+  file is being replaced waits for the replacement as well, rather than
+  reading the file as absent. A `config.toml` that is a symbolic link is
   written through, and the file keeps its permissions.
 - `mcpp test` runs a case that holds the machine (P7.1, resource `machine`)
   with no other test beside it: the listed cases of a file that hold it are a

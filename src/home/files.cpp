@@ -4,6 +4,7 @@ module mcpp.home.files;
 
 import std;
 import mcpplibs.os.fs;
+import mcpplibs.os.platform;
 
 namespace mcpp::home {
 
@@ -170,9 +171,16 @@ std::optional<std::string> read_whole(const std::filesystem::path& file) {
         // Through mcpplibs.os, whose Windows open shares the file for reading,
         // writing and deletion: a writer's rename over it is not refused for
         // this reader's sake, as it was for a std::ifstream's.
-        if (auto text = mcpplibs::os::fs::read(file)) return std::move(*text);
-        std::error_code ec;
-        if (!std::filesystem::exists(file, ec)
+        auto text = mcpplibs::os::fs::read(file);
+        if (text) return std::move(*text);
+        // The refusal is read from the open's own error, not from a second
+        // question: while a writer renames over the file, Windows answers the
+        // reader's open and the query of the name alike with a refusal (the
+        // copy being replaced is pending deletion), and a reader that took the
+        // query's failure for absence gave up within the rename (unit
+        // Config/ConfigValueIsReplacedWhole, 2026-11-14). Elsewhere a rename
+        // replaces the name at once, and a refused read is final.
+        if (!mcpplibs::os::is_windows || text.error().code == mcpplibs::os::errc::not_found
             || std::chrono::steady_clock::now() + delay > deadline)
             return std::nullopt;
         std::this_thread::sleep_for(delay);

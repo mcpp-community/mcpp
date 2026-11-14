@@ -178,3 +178,11 @@ mtest#23 的 PR 运行恢复这份 store，emsdk 被视为已就位，均失败�
 | L | 不依赖解释器的产物查询 | hermetic 容器中没有 python，`built_artifact.sh` 改为以 grep 与 sed（`-E`，GNU 与 BSD 相同）读取 `artifact` 事件：每行一个产物，其对象只有一个 `path` 键，不依赖键序 |
 
 I 使从缓存恢复的 emsdk 在 mcpp 2026.11.13.1 起自动重建链接；K 使 mtest 在其固定的 mcpp 版本上即可工作。二者互不依赖。
+
+### 5.6 第三次运行的 Windows 作业（43568062909）
+
+| 失败 | 原因 | 处理 |
+|---|---|---|
+| unit RuntimePayload/APayloadStartsThroughItsHome | 用例在每个宿主上期望 `elf`；Windows 上 `runtime_payload_kind` 按设计为空（I：PE 不指名加载器，不钉运行库） | 期望随宿主，Windows 上为空；`starts_through_its_home` 的判定在各宿主上相同 |
+| unit Config/ConfigValueIsReplacedWhole（本分支五次完成的 Windows 运行中四次失败） | 写者以重命名替换文件期间，Windows 对读者的打开与对该名字的查询都给出拒绝（被替换的副本处于待删除状态）。`read_whole` 以 `exists` 的失败判定文件不存在，在重命名期间放弃，读者得到空内容。5.1 记录的写者一侧（两秒内未替换成功）已由写者的重试解决，剩下的是读者一侧 | `read_whole` 以打开本身的错误判断：Windows 上除“不存在”以外的拒绝在两秒内重试；其他系统的重命名立即替换名字，读取失败即为最终结果 |
+| e2e run/contract 1024 | 用例断言快速路径重放，却不持有 machine；并行程序向共享 home 安装、改变运行环境描述时，完整路径按设计重新规划（E 的约定）。其上方的注释称其写 config.toml，与内容不符 | 移入 contract-machine 套件，注释改为其持有 machine 的原因 |

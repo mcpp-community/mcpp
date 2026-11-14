@@ -191,7 +191,9 @@ UTest a_payload_starts_through_its_home{"RuntimePayload/APayloadStartsThroughIts
     expect(mcpp::toolchain::starts_through_its_home(payload));
     mcpp::toolchain::XimToolchainPackage pkg;
     pkg.ximName = "emsdk";
-    expect(eq(mcpp::toolchain::runtime_payload_kind(pkg, payload), std::string_view("elf")));
+    // Windows runs a payload on the system's loader: no runtime is pinned there.
+    const auto kind = host() == platform::windows ? std::string_view{} : std::string_view("elf");
+    expect(eq(mcpp::toolchain::runtime_payload_kind(pkg, payload), kind));
     expect(mcpp::toolchain::runtime_payload_kind(pkg).empty());   // not known before it is placed
 }};
 

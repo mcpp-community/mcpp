@@ -263,8 +263,13 @@ int main() {{
         expect(fatal(s::lacks(t, "no runner reaches it"))) << "a refusal was printed although a default runner exists: " << t;
         expect(fatal(e2e::exited(r, 7))) << "the default runner lost the status: " << t;
     };
+}};
 
-    // It writes the shared home's config.toml (restored at its end): the machine resource.
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it.
+E2E contract_machine{"contract-machine", resource{"machine"}, [] {
+    // It asserts a replay: an install into the shared home by a program beside it changes the
+    // runtime's description, and the full path then plans again (design 2026-11-14 §5.2 E).
     "1024 a launch description takes the fast path"_test[s::python3] = [] {
         // A: `run --print-launch` of an unchanged project takes the fast path where `run` does,
         // and describes what the full path does (plus the program's arguments). B: after a
@@ -341,11 +346,7 @@ int main() {{
         expect(fatal(e2e::succeeded(r))) << "E: --protocol-version failed: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), R"("launch-stream")"))) << "E: launch-stream is not stated: " << s::text(r);
     };
-}};
 
-// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
-// other test beside it.
-E2E contract_machine{"contract-machine", resource{"machine"}, [] {
     "927 the runner contract"_test[s::gcc][s::unix_shell] = [] {
         // run_under composes in front of the artifact with the contract variables and a closure
         // manifest, returns the program's status and states where it was declared; the
