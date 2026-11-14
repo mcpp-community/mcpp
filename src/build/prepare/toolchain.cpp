@@ -538,6 +538,9 @@ struct TargetOverrideCtx {
     // `[toolchain] default`: a pair the configuration states.
     bool targetFromGlobalDefault = false;
     const mcpp::toolchain::triple::TargetInfo* known = nullptr;
+    // The platform the project, the command line or the machine chose for the
+    // request (its short name), or empty.
+    std::string chosenPlatform;
 };
 
 // The body of the `apply_target_section` closure the single-function version
@@ -622,7 +625,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
         std::vector<mcpp::manifest::platform::Override> config;
         if (auto cfg = state.get_cfg(true); cfg) config = (*cfg)->platformOverrides;
         std::string platform;
-        const std::string provider = named_provider(state, *ctx.parsed, config, &platform);
+        const std::string provider = named_provider(state, *ctx.parsed, config, &platform, &ctx.chosenPlatform);
         auto sctx = target_context(state.m->platformOverrides, config, family,
                                    provider == "none" ? std::string{} : provider,
                                    state.msvc_usable_either_origin);
@@ -772,6 +775,18 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
     // and a platform's conformance run that names its toolchain on the command
     // line was refused.
     const bool toolchainNamed = ctx.hasToolchainOverride || state.tcFromCommandLine || state.tcFromConsumer;
+    // AND SO IS ONE A PLATFORM CHOSEN FOR THE REQUEST NAMES FOR THE ROW
+    // (2026.11.14.1). A platform that lists the row among its targets with its
+    // toolchain serves it; the row's `planned` says only that the engine's own
+    // providers do not yet. The platform's statement is read with the platform
+    // (`step1_select_platform`, or `step4b_apply_platform` for a package this
+    // pass fetches), and the build is refused there when it does not list the
+    // row. openkal-platform 0.28.0 lists `i686-openkal`, and `--target openkal`
+    // (its targets as one set) was refused on that leg.
+    if (ctx.known && ctx.known->tier == "planned" && !toolchainNamed && !ctx.chosenPlatform.empty()) {
+        state.plannedRow = ctx.parsed->str();
+        return {};
+    }
     if (ctx.known && ctx.known->tier == "planned" && !toolchainNamed) {
         refusal::record(refusal::Code::TierPlanned);
         // The subject is what the user wrote. When completion filled a

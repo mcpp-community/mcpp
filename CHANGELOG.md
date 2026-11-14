@@ -4,6 +4,51 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.14.1] - 2026-11-14
+
+### Added
+
+- A build program reads `MCPP_TARGET_SDK`: the Apple SDK directory the link
+  names with `-isysroot`, empty when the link names none (`target_sdk()` in
+  `mcpp.hostprogram`). The link line and the variable are read from one
+  function, so they name the same SDK. A package that supplies its own
+  `libSystem` stub for a link without an SDK (a cross link to macOS from another
+  host) now has the fact it needs; it used to infer it from
+  `MCPP_TARGET_REQUESTED`, which on a Mac with `--target aarch64-macos` said the
+  SDK was absent while the link carried it.
+
+### Changed
+
+- The release publishes in the order GitHub mirror, index pull request, then
+  GitCode, and mirrors GitCode only when started with `gitcode`
+  (`gh workflow run release.yml -f gitcode=true`). A GitHub runner uploaded each
+  archive of v2026.11.13.1 to GitCode in about 604 s; the owner mirrors GitCode
+  locally with `MIRROR_HOSTS=gtc .github/tools/mirror_res.sh` (docs/92-release.md).
+- The release opens the xim-pkgindex pull request itself
+  (`.github/tools/index_pr.py`) from the sealed `mcpp-release.json`, with the
+  index updater's marker, instead of asking the updater to propose it; the
+  updater waited for both mirrors, and its run for v2026.11.13.1 failed.
+  `bump_index.sh` is removed.
+
+- A `planned` row is served by the platform chosen for the request when the
+  platform's statement lists it with a toolchain (`[platform] targets` beside
+  its `toolchain`, or a `[[platform.provider]]` that names one), as by a
+  toolchain named for the build. A platform that lists the row nowhere is named
+  in the refusal. `--target openkal` with openkal-platform 0.28.0, whose
+  targets include `i686-openkal`, was refused on that leg.
+- Test discovery leaves out every directory below the package root that holds
+  an `mcpp.toml`: such a directory is a package of its own. The default
+  `tests/**/*.cpp` compiled the sources of a member suite (`tests/cts/src/main.cpp`,
+  the layout mtest states for a suite with outside inputs) as tests of the root.
+
+### Fixed
+
+- On Windows a runner's bare first word is the program with the system's
+  suffix (`.exe`, `.cmd`, `.bat`) and never a file without one. A package for
+  every system that carries a POSIX launcher beside its program (dirun's
+  `bin/dirun` and `bin/dirun.exe`) had the launcher taken, and the run refused
+  with `executable format error`.
+
 ## [2026.11.13.1] - 2026-11-13
 
 ### Added

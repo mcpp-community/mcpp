@@ -53,7 +53,10 @@ files it matches from the set, whichever glob found them. A test's name is its
 path relative to the fixed directory of the first glob that matched it, without
 the extension, so the default names `tests/unit/test_span.cpp` `unit/test_span`.
 `discover = []` discovers no test. Two files whose names coincide are refused,
-naming both.
+naming both. A directory below the package root that holds an `mcpp.toml` is a
+package of its own, and no glob discovers its files (2026.11.14.1+): a suite that
+needs inputs from outside the build (`tests/cts/mcpp.toml`) and a fixture
+project below a test's data directory are built and tested as packages.
 
 `[test] programs = "directory"` (2026.11.8.1+) makes the files of one directory
 below a glob's fixed directory one program, named by the directory

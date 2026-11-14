@@ -52,9 +52,21 @@ build ×4 at once (linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64)
   [canaries beside them, when started by hand with `canaries`]
   → create-release: GitHub Release v<version> with every archive + .sha256 sidecars
   → recompute every payload hash and publish immutable mcpp-release.json
-  → mirror to xlings-res/mcpp on BOTH GitHub and GitCode
-  → open the version-bump PR against openxlings/xim-pkgindex
+  → mirror to xlings-res/mcpp on GitHub
+  → open the index PR against openxlings/xim-pkgindex from the sealed manifest
+  → [mirror to xlings-res/mcpp on GitCode, when started by hand with `gitcode`]
   → workflow_run hook fires ci-fresh-install
+```
+
+GitCode is mirrored by the release only when it is started with `gitcode`
+(`gh workflow run release.yml -f gitcode=true`; 2026.11.14.1+). A GitHub runner
+uploads to GitCode at about 0.012 MB/s: v2026.11.13.1 spent 713 s there, 604 s
+per archive, against 64 s for all eight assets on GitHub. Otherwise the owner
+mirrors GitCode from a host with a usable route, with the same script, and
+merges the index PR after that (§3):
+
+```bash
+GITCODE_TOKEN=... MIRROR_HOSTS=gtc bash .github/tools/mirror_res.sh mcpp <version>   # gtc on PATH
 ```
 
 The four builds start together and keep their archives as artifacts;
@@ -104,16 +116,22 @@ from a moving workspace or from a subset of release assets.
 
 Two steps are **not** automated:
 
-- **merging the xim-pkgindex bump PR** — a maintainer does it. Until it lands,
+- **merging the xim-pkgindex index PR** — a maintainer does it. Until it lands,
   the released version is downloadable but not installable via `xlings install`.
 - **bumping `.xlings.json`** — see §4.
 
-The bump PR is machine-authored: branch `bump/mcpp-<version>`, commits by
-`xlings-ci <ci@xlings.dev>`, and a diff that is invariably +22/-3. The three
-deletions are the load-bearing part — the generator *replaces* each platform
+The index PR is written by the release itself (`.github/tools/index_pr.py`,
+2026.11.14.1+; it used to ask the index's updater, which waited for both
+mirrors): branch `auto/bump-xim-mcpp`, commits by `mcpp-release`, the digests
+those of the sealed `mcpp-release.json`, and a diff that is invariably +22/-3.
+Its body starts with the updater's marker
+(`<!-- xpkgindex-update: {"id":"xim:mcpp","candidate":"<version>"} -->`), by
+which the updater makes no proposal of its own, and states whether the run
+mirrored GitCode. A run started again finds the marker and opens nothing. The
+three deletions are the load-bearing part — the script *replaces* each platform
 table's `["latest"]` line rather than adding one. A hand-written index PR is not
-an equivalent shortcut, and filing one alongside the bot's carries two distinct
-costs, both incurred on 2026-09-05 by `xim-pkgindex#764`:
+an equivalent shortcut, and filing one alongside the release's carries two
+distinct costs, both incurred on 2026-09-05 by `xim-pkgindex#764`:
 
 - The hand-written diff appended `["latest"] = { ref = "<new>" }` above the
   existing line instead of replacing it, leaving two `["latest"]` keys in every
@@ -122,11 +140,11 @@ costs, both incurred on 2026-09-05 by `xim-pkgindex#764`:
   correct, so every pinned consumer stayed green — mcpp's own CI pins exactly and
   never saw it. Only `xlings install mcpp` without a version served the stale
   binary.
-- Landing ahead of the bot's PR left that PR conflicting. The resolution is to
-  take the bot branch's side of `pkgs/m/mcpp.lua`; it differs from the
+- Landing ahead of the generated PR left that PR conflicting. The resolution is to
+  take the generated branch's side of `pkgs/m/mcpp.lua`; it differs from the
   hand-written `main` only by the stale `["latest"]` lines.
 
-A merged bump PR is therefore confirmed by what `latest` resolves to, which the
+A merged index PR is therefore confirmed by what `latest` resolves to, which the
 presence of the version string elsewhere in the file does not answer:
 
 ```bash
@@ -305,8 +323,9 @@ would again let the index guard and the installed version drift apart.
 [ ] gh workflow run release.yml --ref main
 [ ] release.yml green (4 builds + immutable manifest + publish-ecosystem)
 [ ] downloaded mcpp-release.json regenerates byte-identically from public assets
+[ ] GitCode mirrored (release started with `gitcode`, or MIRROR_HOSTS=gtc locally)
 [ ] mirrors serve all four platforms on BOTH hosts, sha256 recomputed
-[ ] merge the xim-pkgindex bump PR
+[ ] merge the xim-pkgindex index PR
 [ ] index `latest` resolves to the new version in all three platform tables
 [ ] xim-index-latest.json's `index_version` equals xim-pkgindex `main`
 [ ] clean-room XLINGS_HOME: xlings install mcpp@<version> succeeds

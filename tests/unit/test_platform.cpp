@@ -658,6 +658,34 @@ serves = ["riscv64-nosuch"]
     expect(eq(served[1].provider, "toy"));
 }};
 
+// A planned row is served by a platform whose statement lists it with a
+// toolchain (2026.11.14.1): `[platform] targets` with its `toolchain`, or a
+// provider that names one. A row it lists nowhere, or lists with no toolchain,
+// is not served.
+UTest a_planned_row_is_served_by_a_statement_with_a_toolchain{"PlatformManifest/APlannedRowIsServedByAStatementWithAToolchain", [] {
+    auto with = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-openkal", "i686-openkal"]
+toolchain = "llvm@23.1.3"
+)");
+    expect(mp::serves_with_toolchain(with.platform, "toy-platform", "i686-openkal"));
+    expect(!mp::serves_with_toolchain(with.platform, "toy-platform", "riscv64-linux-musl"));
+
+    auto without = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets = ["i686-openkal"]
+)");
+    expect(!mp::serves_with_toolchain(without.platform, "toy-platform", "i686-openkal"));
+}};
+
 // A provider states the link and the runner of the identities it serves, over
 // either base: one platform states rows whose conventions differ (2026.11.13.1).
 UTest a_provider_states_its_link_and_runner{"PlatformMerge/AProviderStatesItsLinkAndRunner", [] {

@@ -210,6 +210,27 @@ version = "0.1.0"
     expect(eq(result->targets[0].name, "unit/a"));
 }};
 
+UTest a_package_below_tests_is_not_its_tests{"TestTargets/APackageBelowTestsIsNotItsTests", [] {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+discover = ["tests/**/*.cpp"]
+)");
+    write_file(tmp.path / "tests/unit/a.cpp", "int main() {}\n");
+    write_manifest(tmp.path / "tests/cts", "[package]\nname = \"cts\"\nversion = \"0.1.0\"\n");
+    write_file(tmp.path / "tests/cts/src/main.cpp", "int main() {}\n");
+    write_manifest(tmp.path / "tests/e2e/data/app", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n");
+    write_file(tmp.path / "tests/e2e/data/app/src/main.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    if (auto&& failed = expect(fatal(result.has_value())); !failed) failed << result.error();
+    expect(fatal(eq(result->targets.size(), 1u)));
+    expect(eq(result->targets[0].name, "unit/a"));
+}};
+
 UTest broken_manifest_still_returns_inventory{"TestTargets/BrokenManifestStillReturnsInventory", [] {
     Tmp tmp;
     write_file(tmp.path / "mcpp.toml", "this is not valid TOML\n");

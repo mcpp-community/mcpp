@@ -86,14 +86,21 @@ inline Lookup locate(std::string_view argv0,
         return out;
     }
     // A bare name on Windows is a program with the system's suffix, as the
-    // shell finds it: `okrun` is `okrun.exe`.
+    // shell finds it: `okrun` is `okrun.exe`. The file without a suffix is not
+    // one: the system starts no file without one (`CreateProcess` appends
+    // `.exe`), and every file is "executable" there. A package for every
+    // system carries both -- dirun's `bin/dirun`, a POSIX launcher, beside
+    // `bin/dirun.exe` -- and the launcher was taken and refused
+    // (`executable format error`, 2026-11-14).
     auto in_dir = [&](const std::filesystem::path& d) -> std::optional<std::filesystem::path> {
-        if (auto c = d / a0; detail::executable_file(c)) return c;
         if constexpr (mcpplibs::os::is_windows) {
-            if (!a0.has_extension())
+            if (!a0.has_extension()) {
                 for (auto ext : { ".exe", ".cmd", ".bat" })
                     if (auto c = d / (a0.string() + ext); detail::executable_file(c)) return c;
+                return std::nullopt;
+            }
         }
+        if (auto c = d / a0; detail::executable_file(c)) return c;
         return std::nullopt;
     };
     for (auto const& d : depBinDirs) {

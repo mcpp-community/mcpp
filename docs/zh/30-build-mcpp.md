@@ -1151,6 +1151,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 | `MCPP_KERNEL_ABI_INTERFACES` *(2026.11.10.1+)* | `mcpp::kernel_abi_interfaces()` | 声明 `requires = ["mcpp:kernel-abi=..."]` 的包：所解析的 kernel-abi 提供者的 `provides-interfaces`，以 `;` 连接（`openkal.fs;openkal.process;...`）。总是设置；提供者未声明清单或包没有该需求时为空，程序把空读作「未知」，按全部接口绑定 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名（`dev`/`release`/…） |
+| `MCPP_TARGET_SDK` *(2026.11.14.1+)* | `mcpp::target_sdk()` | 链接以 `-isysroot` 指名的 SDK（macOS 主机上的 Mach-O 链接）；不指名时为空串。提供某个系统库存根的包只在它为空时提供：不为空时链接中已有 SDK 的完整库 |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`；不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录；不指时为空串（musl 与 MinGW 载荷自带汇编器与链接器） |
 | `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | 解析出的工具链使用的 C++ 标准库 —— `libstdc++`、`libc++`、`msvc-stl`；没有工具链解析时为空串。与 `MCPP_TARGET_LIBC` 不是同一个问题，后者是 C 库 |

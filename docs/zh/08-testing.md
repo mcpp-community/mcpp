@@ -48,7 +48,9 @@ discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
 被哪个 glob 找到的。一个测试的名字，是它相对于第一个匹配它的 glob 所在固定目录的
 路径，去掉扩展名 —— 因此默认配置下 `tests/unit/test_span.cpp` 的名字是
 `unit/test_span`。`discover = []` 不发现任何测试。两个名字相同的文件会被拒绝，并
-点出这两者。
+点出这两者。包根之下含有 `mcpp.toml` 的目录是另一个包，任何 glob 都不会发现其中的
+文件（2026.11.14.1+）：需要构建之外输入的套件（`tests/cts/mcpp.toml`）以及测试数据
+目录下的夹具工程，按包构建和测试。
 
 `[test] programs = "directory"`（2026.11.8.1+）使 glob 固定目录之下同一目录的文件成为
 一个程序，以目录命名（`tests/unit/*.cpp` 为程序 `unit`）：每个文件是它的一个翻译单元，

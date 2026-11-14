@@ -41,6 +41,11 @@ struct ServedIdentity {
 // rows it defines, by identity, then priority (highest first), then provider.
 std::vector<ServedIdentity> served_identities(const Statement& s, std::string_view name);
 
+// Whether a provider of the statement serves `identity` and names the toolchain
+// it is built with: the statement then serves a row the engine registers as
+// `planned`, as a toolchain named for the build does (SPEC-016 §5).
+bool serves_with_toolchain(const Statement& s, std::string_view name, std::string_view identity);
+
 // The statement checked against the rows: a row defined twice, or a definition
 // of a built-in row, is an error; a provider that serves no row, and two
 // providers that serve one identity at one priority, are warnings.
@@ -120,6 +125,12 @@ std::vector<ServedIdentity> served_identities(const Statement& s, std::string_vi
         return std::tie(a.identity, b.priority, a.provider) < std::tie(b.identity, a.priority, b.provider);
     });
     return out;
+}
+
+bool serves_with_toolchain(const Statement& s, std::string_view name, std::string_view identity) {
+    return std::ranges::any_of(stated_providers(s, name), [&](auto const& p) {
+        return !p.toolchain.empty() && std::ranges::contains(rows_served(s, p), identity);
+    });
 }
 
 StatementFindings check_statement(const Statement& s, std::string_view name) {

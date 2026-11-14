@@ -308,7 +308,7 @@ std::string platform_short_name(std::string_view ref) {
 }
 
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
-                           std::span<const mp::Override> config, std::string* platform) {
+                           std::span<const mp::Override> config, std::string* platform, std::string* chosenOut) {
     const auto flag = !state.overrides.platform_choice.empty()
         ? state.overrides.platform_choice
         : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
@@ -321,6 +321,7 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
     if (!sel->builtin.empty()) return sel->builtin;
     if (sel->none) return "none";
     const auto chosen = known_short_name(sel->ref);
+    if (chosenOut) *chosenOut = chosen;
     for (auto const* p : mcpp::toolchain::target::providers()) {
         if (p->platform.empty()) continue;
         auto ref = mp::parse_ref_text(p->platform);
@@ -332,6 +333,22 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
 
 cfgpred::Ctx platform_cfg_context(const PrepareState& state) {
     return cfgpred::context_for(target_of(state).str(), state.platformPackageShortName);
+}
+
+// A `planned` row the chosen platform was to serve (`state.plannedRow`), checked
+// against the platform's statement once it is read: served when a provider of the
+// statement lists the row with a toolchain; refused, naming the platform, when not.
+static std::expected<void, std::string> planned_row_served(PrepareState& state, const mp::Statement& s,
+                                                           std::string_view platformName, std::string_view shown) {
+    if (state.plannedRow.empty()) return {};
+    const auto row = state.plannedRow;
+    if (mp::serves_with_toolchain(s, platformName, row)) return {};
+    refusal::record(refusal::Code::TierPlanned);
+    return std::unexpected(std::format(
+        "target '{}' is registered but not yet supported (planned), and the platform {} does not serve it:\n"
+        "       its statement lists no provider of the row with a toolchain.\n"
+        "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.",
+        row, shown, row));
 }
 
 std::expected<void, std::string> step1_select_platform(PrepareState& state) {
@@ -373,6 +390,13 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     if (!sel) return std::unexpected(sel.error());
     state.platform = mcpp::platform::Resolved{};
     state.platform.selection = std::move(*sel);
+    if (state.platform.selection.none && !state.plannedRow.empty()) {
+        refusal::record(refusal::Code::TierPlanned);
+        return std::unexpected(std::format(
+            "target '{}' is registered but not yet supported (planned) — no toolchain is published for it yet.\n"
+            "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.",
+            state.plannedRow, state.plannedRow));
+    }
     if (!state.platform.selection.none) {
         auto const& ref = state.platform.selection.ref;
         // A directory is read now, and its manifest's own error is the answer
@@ -400,6 +424,9 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
             if (auto m = mcpp::manifest::load(early / "mcpp.toml"); m && m->platformDeclared) {
                 state.platformData = mcpp::platform::provider_view(m->platform, t.str());
                 state.platformEarly = true;
+                auto n = mcpp::pm::compat::resolve_package_name(m->package.name, m->package.namespace_);
+                if (auto r = planned_row_served(state, m->platform, n.shortName, mp::display(state.platform.selection.ref)); !r)
+                    return r;
             }
     }
     return {};
@@ -497,6 +524,18 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         P.package = qualified(found->manifest);
         P.version = found->manifest.package.version;
         P.root = found->root;
+        // A planned row this platform was to serve: refused now when it does not;
+        // when it does and the first pass fetched it, prepared again with the
+        // platform read in P1, where its toolchain is the build's.
+        if (!state.plannedRow.empty() && !state.platformEarly) {
+            auto n = mcpp::pm::compat::resolve_package_name(found->manifest.package.name,
+                                                            found->manifest.package.namespace_);
+            if (auto r = planned_row_served(state, found->manifest.platform, n.shortName,
+                                            std::format("{}@{}", P.package, P.version)); !r)
+                return std::unexpected(r.error());
+            g_platformRestart = P.root;
+            return std::unexpected(std::string("mcpp:platform-restart"));
+        }
         define_platform(found->manifest.platform, state.platformPackageShortName,
                         ref.spec.path.empty() ? std::format("{}@{}", P.package, P.version)
                                               : "path:" + ref.spec.path);

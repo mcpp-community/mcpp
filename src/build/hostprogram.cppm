@@ -646,6 +646,12 @@ inline const char* cxx_abi_root()                 { return env_or("MCPP_CXX_ABI_
 // through the runtime binding, and nothing has to look for it.
 inline const char* sysroot_dir()                  { return env_or("MCPP_TARGET_SYSROOT"); }
 
+// The SDK the link names with `-isysroot` (a Mach-O link on a macOS host), or
+// "" when it names none. A package that supplies a stub of a system library
+// supplies it only where this is empty: where it is not, the SDK's complete
+// library is on the link, and the stub, searched first, would shadow it.
+inline const char* target_sdk()                   { return env_or("MCPP_TARGET_SDK"); }
+
 // ── The build information of the resolved toolchain (#734 E2, protocol 14) ──
 //
 // Facts, never interpretations: which tools this row runs, which tools are the
