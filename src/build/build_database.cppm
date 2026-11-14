@@ -611,7 +611,7 @@ Rendered render(std::span<const Member> members,
             for (auto const& g : declared.globs) watch_glob(declared.root, g);
         }
         for (auto note : ctx.planNotes) {
-            // `note.path`, when set, is the absolute path a `plan_only`
+            // `note.path`, when set, is the absolute path a `PrepareIntent::Describe`
             // branch recorded (#699 item 2, E3); every other `path` in this
             // document is relative to the workspace root, and a note's is
             // rewritten to match before it reaches the command.

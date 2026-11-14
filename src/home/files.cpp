@@ -31,8 +31,9 @@ FileLock& FileLock::operator=(FileLock&& o) noexcept {
 std::optional<FileLock> FileLock::acquire(
     const std::filesystem::path& dir, std::string_view name, std::string_view owner,
     std::chrono::milliseconds notice,
-    const std::function<void(std::string_view holder)>& waiting) {
+    const std::function<void(std::string_view holder)>& waiting, bool* waited) {
     namespace fs = std::filesystem;
+    if (waited) *waited = false;
     const auto start = std::chrono::steady_clock::now();
     auto pause = std::chrono::milliseconds(20);
     bool told = false;
@@ -55,6 +56,7 @@ std::optional<FileLock> FileLock::acquire(
         // try_acquire could not even create the file: nothing to wait for.
         std::error_code ec;
         if (!fs::exists(dir / std::string(name), ec)) return std::nullopt;
+        if (waited) *waited = true;
         if (!told && std::chrono::steady_clock::now() - start >= notice) {
             told = true;
             if (waiting) waiting(holder(dir, name));
@@ -69,6 +71,37 @@ std::string FileLock::holder(const std::filesystem::path& dir, std::string_view 
     return in ? std::string(std::istreambuf_iterator<char>(in), {}) : std::string{};
 }
 
+
+namespace {
+// The turns this thread holds, by lock: how deeply, and the lock.
+struct HeldTurn { int depth = 0; std::optional<FileLock> lock; };
+std::map<std::string, HeldTurn>& held_turns() {
+    thread_local std::map<std::string, HeldTurn> turns;
+    return turns;
+}
+}  // namespace
+
+Turn::Turn(const std::filesystem::path& dir, std::string_view name, std::string_view what,
+           std::chrono::milliseconds notice,
+           const std::function<void(std::string_view holder)>& waiting, bool* waited) {
+    if (waited) *waited = false;
+    // A state not yet made has its directory made here when the directory
+    // above it exists (a home's first install, before the provider wrote its
+    // state); a relative or unrooted directory names no state, and gives no turn.
+    std::error_code ec;
+    if (!dir.is_absolute() || !std::filesystem::is_directory(dir.parent_path(), ec)) return;
+    std::filesystem::create_directory(dir, ec);
+    key_ = (dir / std::string(name)).lexically_normal().generic_string();
+    auto& t = held_turns()[key_];
+    if (t.depth++ > 0) return;
+    t.lock = FileLock::acquire(dir, name, what, notice, waiting, waited);
+}
+
+Turn::~Turn() {
+    if (key_.empty()) return;
+    auto& turns = held_turns();
+    if (auto it = turns.find(key_); it != turns.end() && --it->second.depth == 0) turns.erase(it);
+}
 
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec) {
@@ -134,11 +167,10 @@ std::optional<std::string> read_whole(const std::filesystem::path& file) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
     auto delay = std::chrono::milliseconds{5};
     for (;;) {
-        if (std::ifstream in{file}) {
-            std::ostringstream text;
-            text << in.rdbuf();
-            return text.str();
-        }
+        // Through mcpplibs.os, whose Windows open shares the file for reading,
+        // writing and deletion: a writer's rename over it is not refused for
+        // this reader's sake, as it was for a std::ifstream's.
+        if (auto text = mcpplibs::os::fs::read(file)) return std::move(*text);
         std::error_code ec;
         if (!std::filesystem::exists(file, ec)
             || std::chrono::steady_clock::now() + delay > deadline)

@@ -203,7 +203,11 @@ configuration it is meant to check rather than against the default one:
 
 `--timeout <secs>` kills a test still running (default 300; `0` disables it) and
 `--build-timeout <secs>` bounds the compile. A test that hangs is reported as a
-failure with its own name, not as a job that stopped.
+failure with its own name, not as a job that stopped. A case or a suite that
+states its own length (mtest `timeout{...}`, listed with its cases) raises the
+limit of its process to the sum its cases state, when that is longer
+(2026.11.13.1+): a long test states its length, and the limit of the others
+stays.
 
 The report is the command's result and is written to standard output: each
 test's verdict, the output of a test that failed, the `test result` line and, for

@@ -1285,6 +1285,27 @@ run_contract_env(const mcpp::build::BuildContext& ctx, const std::filesystem::pa
     return env;
 }
 
+// THE HAND-OFF TO A RUNNER, of a test however it was built: the list of the
+// files the program carries (MCPP_RUNTIME_FILES) and the run contract
+// (MCPP_RUN_*, the closure written beside the list). Only a program run through
+// a runner or `run_under` is handed them; one run directly receives neither,
+// and passes neither on to the programs it runs. The test run of a build and
+// the run of an archive's tests both take it from here: two copies of it had
+// differed in which programs received the list (e2e 672, 2026-11-14).
+std::expected<std::vector<std::pair<std::string, std::string>>, std::string>
+runner_handoff_env(const mcpp::build::BuildContext& ctx, const std::filesystem::path& artifact,
+                   const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
+                   std::string_view mode, std::string_view triple) {
+    std::vector<std::pair<std::string, std::string>> env;
+    auto listed = write_runtime_files_list(ctx, artifact, carried);
+    if (!listed) return std::unexpected(listed.error());
+    env.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
+    auto closure = write_run_closure(ctx, artifact, carried, mode, triple);
+    if (!closure) return std::unexpected(closure.error());
+    for (auto& kv : run_contract_env(ctx, artifact, mode, triple, *closure)) env.push_back(std::move(kv));
+    return env;
+}
+
 // `run_under`, its program located as a runner's is (the payloads the project
 // declared, then PATH). An empty result with an empty error is "this
 // machine".
@@ -4580,6 +4601,11 @@ struct TestRunnable {
     bool alone = false;
     // The duration the store's runs measured for it (-1: not yet estimated).
     double estimateMs = -1;
+    // The seconds its cases state they may run, together (a case's
+    // `timeout`, listed): the limit of its process is the larger of this and
+    // `--timeout`, so that a test that states its length is not ended at the
+    // limit the rest are held to (P-limit, docs/08).
+    double declaredSecs = 0;
 };
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
@@ -5118,8 +5144,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // The longest first, so that the longest work does not start last.
         std::ranges::stable_sort(list, std::greater{}, &Runnable::estimateMs);
         const bool capture = json || list.size() > 1;
-        const auto deadline = std::chrono::milliseconds(
-            static_cast<long long>(testOpts.timeoutSecs) * 1000);
+        // The limit of one test's process: `--timeout`, or what its cases
+        // state when that is longer; `--timeout 0` disables both.
+        const auto limit_of = [&](const Runnable& r) {
+            if (testOpts.timeoutSecs <= 0) return 0.0;
+            return (std::max)(static_cast<double>(testOpts.timeoutSecs), r.declaredSecs);
+        };
         // A PHYSICAL BOARD IS A MUTEX, AND NOTHING ELSE THIS POOL HAS EVER
         // SCHEDULED WAS ONE.
         //
@@ -5214,7 +5244,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 runOpts.cwd = r.cwd.string();
                 runOpts.input = mcpp::run::Input::inherit;
                 runOpts.streams = capture ? mcpp::run::Streams::merged : mcpp::run::Streams::inherit;
-                runOpts.total = deadline;
+                runOpts.total = std::chrono::milliseconds(static_cast<long long>(limit_of(r) * 1000));
                 runOpts.report_spawn_failure = false;
                 if (r.protocol) {
                     state_protocol(r, "run", runOpts);
@@ -5338,7 +5368,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 if (timedOut) {
                     if (!json) mcpp::ui::plain(std::format(
-                        "{} ... FAIL (timeout after {}s)", r.name, testOpts.timeoutSecs));
+                        "{} ... FAIL (timeout after {}s)", r.name, static_cast<long long>(limit_of(r))));
                     results.push_back({r.name, TestResult::St::RunFail, exitCode, {},
                                        runOutput, ms, true, {}, r.buildMs});
                 } else if (exitCode == 0) {
@@ -5562,15 +5592,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             // own product directory with that group's deploy set.
             const std::string_view of = owner.empty() ? std::string_view(lu.memberOf) : owner;
             with_member(*ctx, of, [&] { carried = runtime_files_for(*ctx, exe, of); });
-            if (auto listed = write_runtime_files_list(*ctx, exe, carried))
-                childEnv.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
+            if (auto handoff = runner_handoff_env(*ctx, exe, carried, "test", runnerChoice.tripleKey))
+                for (auto& kv : *handoff) childEnv.push_back(std::move(kv));
             else if (invocationNotRunReason.empty())
-                invocationNotRunReason = listed.error();
-            if (auto closure = write_run_closure(*ctx, exe, carried, "test", runnerChoice.tripleKey))
-                for (auto& kv : run_contract_env(*ctx, exe, "test", runnerChoice.tripleKey, *closure))
-                    childEnv.push_back(std::move(kv));
-            else if (invocationNotRunReason.empty())
-                invocationNotRunReason = closure.error();
+                invocationNotRunReason = handoff.error();
         }
 
         // Prepend the toolchain's environment's bin to the CHILD PATH so test
@@ -5862,8 +5887,16 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 };
                 // A program the run does not divide runs once, alone when one
                 // of its cases holds the machine.
+                // What the cases of `ids` (all, when none named) state they may run.
+                const auto declared = [&](const std::vector<std::string>* ids) {
+                    double s = 0;
+                    for (auto const& c : report.listed)
+                        if (!ids || std::ranges::find(*ids, c.id) != ids->end()) s += c.timeout;
+                    return s;
+                };
                 if (!divide) {
                     r.alone = std::ranges::any_of(report.listed, holds_machine);
+                    r.declaredSecs = declared(nullptr);
                     expanded.push_back(std::move(r));
                     continue;
                 }
@@ -5888,6 +5921,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 if (parts.size() < 2) {
                     r.alone = parts.front().machine;
+                    r.declaredSecs = declared(nullptr);
                     expanded.push_back(std::move(r));
                     continue;
                 }
@@ -5905,6 +5939,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (of > 1) part.name += std::format(" ({}/{})", index, of);
                     part.partOf = r.name;
                     part.alone = machine;
+                    part.declaredSecs = declared(&ids);
                     if (!whole && !selected_by(testOpts.filters, part.name)) continue;
                     part.protocolDir = r.protocolDir / "split" / std::to_string(n++);
                     std::error_code ec;
@@ -6186,7 +6221,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
     for (auto const& leg : opened->manifest.legs) {
         if (json) std::println("{{\"leg\":{{\"triple\":\"{}\"}}}}", test_json_escape(leg.triple));
         else mcpp::ui::info("Testing", std::format("on {} (from {})", leg.triple, testOpts.archive.string()));
-        auto ctx = prepare_configuration(leg.triple, /*runsBuiltTests=*/true);
+        auto ctx = prepare_configuration(leg.triple, PrepareIntent::RunBuilt);
         if (!ctx) {
             reasons.push_back(std::format("{}: {}", leg.triple, ctx.error().substr(0, ctx.error().find('\n'))));
             notRun += static_cast<int>(leg.tests.size());
@@ -6213,8 +6248,6 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
         std::vector<std::pair<std::string, std::string>> legEnv;
         for (auto const& [env, path] : leg.programs)
             legEnv.emplace_back(env, (opened->root / path).lexically_normal().string());
-        legEnv.emplace_back("MCPP_RUN_TRIPLE", tb.runnerChoice.tripleKey);
-        legEnv.emplace_back("MCPP_RUN_MODE", "test");
         // THE LEG'S TESTS, RUN AS A BUILD'S ARE: through the runner, the
         // protocol each implements, a process per file of its cases, the
         // workers, the store (SPEC-015 §4; docs/08).
@@ -6237,16 +6270,22 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
             std::array<fs::path, 1> dir{r.program.parent_path()};
             if (const auto key = mcpp::runtime::launch_env::runtime_library_path_key(); !key.empty())
                 r.env.emplace_back(key, mcpp::runtime::launch_env::prepend_path_list(key, dir));
-            // ...and, through a runner, the files the program carries, as a
-            // build's test run hands them over: a program run directly is not
-            // handed the variable, and passes none on to the programs it runs.
+            // ...and, through a runner, what a build's test run hands one
+            // (runner_handoff_env): the files the program carries, each named
+            // by its place beside the program, as the archive keeps it.
             if (!tb.runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
-                const auto list = r.program.parent_path() / ".mcpp-runtime-files.tsv";
-                std::ofstream os(list, std::ios::binary | std::ios::trunc);
-                for (auto const& f : t.files)
-                    os << fs::path(f).filename().generic_string() << '\t'
-                       << (opened->root / f).lexically_normal().string() << '\n';
-                r.env.emplace_back(std::string(kRuntimeFilesEnv), list.string());
+                std::vector<std::pair<std::string, fs::path>> carried;
+                for (auto const& f : t.files) {
+                    const auto source = (opened->root / f).lexically_normal();
+                    carried.emplace_back(source.lexically_relative(r.program.parent_path()).generic_string(), source);
+                }
+                auto handoff = runner_handoff_env(*tb.ctx, r.program, carried, "test", tb.runnerChoice.tripleKey);
+                if (!handoff) {
+                    reasons.push_back(std::format("{}: {}", t.name, handoff.error()));
+                    ++notRun;
+                    continue;
+                }
+                for (auto& kv : *handoff) r.env.push_back(std::move(kv));
             }
             r.protocol = t.protocol == mcpp::build::test_protocol::kVersion ? t.protocol : 0;
             r.ownFiles = static_cast<std::size_t>(std::max(t.ownFiles, 1));

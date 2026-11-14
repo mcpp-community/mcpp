@@ -1563,7 +1563,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     // build program that must RUN the tool while configuring
     // meets the same missing file it meets when the tool fails
     // to build (SPEC-007 R5.3), so no new contract follows.
-    if (state.overrides.plan_only) {
+    if (state.overrides.describes()) {
         state.planNotes.push_back({"MCPP_BUILD_DATABASE_HOST_TOOL_DEFERRED",
             std::format("host tool '{}' of package '{}' is not in "
                         "the tool store and is not built while "
@@ -1953,7 +1953,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                 bpEnv.toolPaths = tit->second;
             // The program, as the build programs' graph compiled it (mcpp#797).
             auto program = build_program_binary(state, i);
-            if (!program && !state.overrides.plan_only) return std::unexpected(program.error());
+            if (!program && !state.overrides.describes()) return std::unexpected(program.error());
             if (program) {
                 bpEnv.programBinary   = program->path;
                 bpEnv.programRunner   = program->runner;
@@ -1978,7 +1978,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                             pkg.manifest.cppStandard, bpEnv);
                     });
                 !r) {
-                // #699 item 2 (E3): under `emit build-database` (`plan_only`),
+                // #699 item 2 (E3): under `emit build-database` (`PrepareIntent::Describe`),
                 // a failing build program describes its package without that
                 // program's directives, instead of costing the whole plan —
                 // the manifest's own configuration, the toolchain and the
@@ -1988,7 +1988,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                 // that follows from the missing directives (a source the
                 // program would have added, say) fails the member under the
                 // ordinary rule (E1).
-                if (state.overrides.plan_only) {
+                if (state.overrides.describes()) {
                     state.planNotes.push_back({"MCPP_BUILD_DATABASE_PROGRAM_FAILED",
                         std::format("dependency '{}': {}",
                                     pkg.manifest.package.name, r.error()),
@@ -2334,16 +2334,19 @@ std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& st
     if (auto r = step6_device_extensions_and_rules(state); !r) return std::unexpected(r.error());
     if (auto r = step6_xlings_workspace_from_graph(state); !r) return std::unexpected(r.error());
 
-    auto toolRequests = step6_tool_requests(state);
-    if (!toolRequests) return std::unexpected(toolRequests.error());
-    // The root build program's toolchain phase (mcpp#755): its host modules
-    // are registered, and nothing that depends on the build toolchain has
-    // been built. A statement ends this pass; prepare starts again with it.
-    if (auto r = step6_toolchain_phase(state); !r) return std::unexpected(r.error());
-    if (auto r = step6_provision_host_tools(state, *toolRequests); !r)
-        return std::unexpected(r.error());
-
-    if (auto r = step6_dependency_build_programs(state); !r) return std::unexpected(r.error());
+    // THE PACKAGES' PROGRAMS AND TOOLS, compiled and run here: a preparation
+    // that compiles nothing (PrepareIntent::RunBuilt) has none to run.
+    if (state.overrides.compiles()) {
+        auto toolRequests = step6_tool_requests(state);
+        if (!toolRequests) return std::unexpected(toolRequests.error());
+        // The root build program's toolchain phase (mcpp#755): its host modules
+        // are registered, and nothing that depends on the build toolchain has
+        // been built. A statement ends this pass; prepare starts again with it.
+        if (auto r = step6_toolchain_phase(state); !r) return std::unexpected(r.error());
+        if (auto r = step6_provision_host_tools(state, *toolRequests); !r)
+            return std::unexpected(r.error());
+        if (auto r = step6_dependency_build_programs(state); !r) return std::unexpected(r.error());
+    }
     if (auto r = step6_capability_binding(state); !r) return std::unexpected(r.error());
 
 

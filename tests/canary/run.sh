@@ -77,6 +77,14 @@ while IFS=$'\t' read -r canary identity row_host step expect note; do
     if [ "$got" = fails ]; then
       echo "--- again, with --verbose: the commands ---"
       (cd "$dir" && "${cmd[0]}" "${cmd[1]}" --verbose "${cmd[@]:2}") 2>&1 | grep -E '(clang|g\+\+|gcc|ld|lld)[^ ]* .* -o ' | tail -5 | cut -c1-4000
+      # ...and the link edges of the graphs the cell wrote, with the flags
+      # they read: a link line run through a response file names few of them.
+      find "$dir/target" \( -name build.ninja -o -name test.ninja \) -not -path '*/.build-mcpp/*' 2>/dev/null |
+        while read -r g; do
+          echo "--- $g ---"
+          grep -E '^[a-z_]*ldflags = |^rule (link|cxx_link|c_link)|^  command = .*-o \$out' "$g" | cut -c1-3000 | head -12
+          awk '/^build bin\//{p=1} p&&/^$/{p=0} p' "$g" | cut -c1-3000 | head -20
+        done
     fi
     echo "::endgroup::"
   fi

@@ -155,7 +155,7 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
             bpEnv.programRunner   = program->runner;
             bpEnv.programIdentity = program->identity;
             bpEnv.programCompile  = program->compile;
-        } else if (!state.overrides.plan_only) {
+        } else if (!state.overrides.describes()) {
             return std::unexpected(program.error());
         } else {
             bpEnv.programError = program.error();
@@ -247,10 +247,10 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
                     *state.m, *state.root, host->first, host->second,
                     state.m->cppStandard, bpEnv);
             });
-        if (!bp && !state.overrides.plan_only) {
+        if (!bp && !state.overrides.describes()) {
             return std::unexpected(bp.error());
         }
-        // #699 item 2 (E3): under `emit build-database` (`plan_only`), a
+        // #699 item 2 (E3): under `emit build-database` (`PrepareIntent::Describe`), a
         // failing root build program describes the package without its
         // directives rather than costing the whole plan. Every mirror below
         // reads what the program would have added to `*m`, so skipping
@@ -591,7 +591,7 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
                     pkg.manifest.cppStandard, bpEnv);
             });
         if (!bp) {
-            if (!state.overrides.plan_only)
+            if (!state.overrides.describes())
                 return std::unexpected(std::format(
                     "workspace member '{}': {}", pkg.manifest.package.name, bp.error()));
             state.planNotes.push_back({"MCPP_BUILD_DATABASE_PROGRAM_FAILED",

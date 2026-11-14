@@ -1034,7 +1034,7 @@ step11_prebuild_std_module(PrepareState& state, bool needsStdModule) {
             auto stdTt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             return stdTt && stdTt->os == "macos";
         }();
-        if (state.overrides.plan_only) {
+        if (state.overrides.describes()) {
             // Described, not compiled: the paths and commands are the ones
             // ensure_built would use, from the one derivation in stdmod.cppm.
             auto described = mcpp::toolchain::describe_std_module(
@@ -1250,7 +1250,7 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
         return std::unexpected(r.error());
 
     if (auto r = step11_std_module_availability_gate(state, *needsStdModule); !r) {
-        if (!state.overrides.configuration_only) return std::unexpected(r.error());
+        if (!state.overrides.configures()) return std::unexpected(r.error());
         // The configuration is reported; the sources' refusal travels with it.
         PlanNote note;   // a warning: the document is complete without the sources
         note.code = "MCPP_CONFIGURATION_SOURCES_REFUSED";

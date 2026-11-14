@@ -35,11 +35,15 @@ stated on the build's own command lines.
   xpkgs/                    the payloads they serve
 ```
 
-Processes share a home. Installing a package is one process at a time
-(2026.11.10.1+): a process takes the home's install turn
-(`registry/.install.lock`) before it installs, keeps it for the package's own
-dependencies, and a process that waited for the turn looks for the package
-again first, so a package two builds ask for at once is installed once.
+Processes share a home. Writing the provider's state is one process at a time
+(2026.11.10.1+): a process takes the state turn before it installs a package,
+adds or removes an index repository, or chooses the runtime; it keeps the turn
+for the package's own dependencies, and a process that waited for it looks for
+the package again first, so a package two builds ask for at once is installed
+once. The turn is the lock `.mcpp-state.lock` in the real directory of the
+state (`registry/subos`, every link resolved; 2026.11.13.1+), so homes that
+reach one state through a link take one turn. Releases before 2026.11.13.1
+took `registry/.install.lock`, for installs only.
 
 `<project>/.mcpp/` is the machine's state of the project, never its sources.
 mcpp writes `.gitignore` with the one line `*` into it whenever it creates or
@@ -261,7 +265,10 @@ not make (an `~/.xlings`) is refused there: reusing its packages is what
 `upstream` is for (§3).
 A registry that already exists keeps the places of its indices as the home that
 made it recorded them: a second home that names it reads those indices and
-stores and records none of its own there (2026.11.10.1).
+stores and records none of its own there (2026.11.10.1). A home whose
+`registry` is a link to another home's borrows that registry the same way
+(2026.11.13.1): it writes neither the places of the indices, nor the
+upstreams, nor its `[index.repos]` tables' places into it.
 
 ## 6. Filesystems and long paths
 

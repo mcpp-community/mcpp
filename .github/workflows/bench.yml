@@ -55,9 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP" build
-          built=$(find target -type f -name mcpp -path '*/bin/*' | head -1)
-          echo "MCPP_FRESH=$PWD/$built" >> "$GITHUB_ENV"
+          built=$(bash "$GITHUB_WORKSPACE/.github/tools/built_artifact.sh" "$MCPP" mcpp)
+          echo "MCPP_FRESH=$built" >> "$GITHUB_ENV"
 
       - name: The engine's costs (bench, mtest Bench)
         shell: bash

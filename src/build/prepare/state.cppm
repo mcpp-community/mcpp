@@ -793,7 +793,7 @@ struct PrepareState {
     std::map<std::size_t, BuildProgramBinary> buildProgramBinaries;
     // The roots (package directories) planned as build plugins (P3).
     std::set<std::string> buildPluginRoots;
-    // The build programs' graphs planned for description (`plan_only`).
+    // The build programs' graphs planned for description (`PrepareIntent::Describe`).
     std::vector<BuildProgramGraph> buildProgramGraphs;
     // A use of a deprecated reading (mcpp.pm.compat.registry) by the manifest
     // of package `i`: warned where that manifest can be edited -- the root, a
@@ -967,7 +967,7 @@ struct PrepareState {
     std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     // Keyed like `deviceSourcesByPackage`, by `pkg.root.string()` (root
     // package included: `packages[0].root == *root`). Holds a package whose
-    // build program failed IN THIS PASS, under `plan_only` (`emit
+    // build program failed IN THIS PASS, under `PrepareIntent::Describe` (`emit
     // build-database`) — the one case a failed program does not already end
     // the whole call (SPEC-005 R5.2, #699 item 2, E3). A check whose premise
     // is that program's directives must not run for such a package: with no
@@ -1268,7 +1268,7 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
                    const mcpp::manifest::Manifest& owner, std::size_t consumer);
 // After a run of `who`'s build program into `m`: when it asked for payloads,
 // install them in one batch and refill `e`; true when the program must run
-// again. Under `plan_only` nothing is installed: a note is recorded and false
+// again. Under `PrepareIntent::Describe` nothing is installed: a note is recorded and false
 // is returned.
 std::expected<bool, std::string>
 answer_payload_requests(PrepareState& state, mcpp::manifest::Manifest& m,

@@ -233,7 +233,7 @@ export int doctor_report() {
     //
     // Offline for the call: nothing is downloaded, installed or replaced, so
     // a build that would install first is reported as exactly that. Planned
-    // to describe, not to build (`plan_only`, as `mcpp emit build-database`
+    // to describe, not to build (`PrepareIntent::Describe`, as `mcpp emit build-database`
     // plans): the std module is described rather than compiled, generated
     // files are compared rather than written, and the lock this planning
     // produces goes to a scratch directory, not the project.
@@ -246,7 +246,7 @@ export int doctor_report() {
         mcpp::ui::set_quiet(true);
         (void)mcpp::build::refusal::take();
         mcpp::build::BuildOverrides ov;
-        ov.plan_only = true;
+        ov.intent = mcpp::build::PrepareIntent::Describe;
         std::error_code tec;
         ov.work_dir = std::filesystem::temp_directory_path(tec)
             / std::format("mcpp-doctor-{}", std::chrono::steady_clock::now().time_since_epoch().count());

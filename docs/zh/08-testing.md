@@ -158,7 +158,9 @@ mcpp test -- --verbose    # everything after `--` goes to each test binary
 | `--toolchain <spec>` | 本次调用使用的工具链，例如 `llvm@23.1.3` |
 
 `--timeout <secs>` 杀掉仍在运行的测试（默认 300；`0` 关闭），`--build-timeout <secs>`
-限制编译耗时。挂起的测试以它自己的名字被报为失败，而不是报成一个停止的任务。
+限制编译耗时。挂起的测试以它自己的名字被报为失败，而不是报成一个停止的任务。声明了自身时长的用例或套件
+（mtest `timeout{...}`，随用例列出）把其进程的时限提高到其各用例声明之和（若更长；2026.11.13.1+）：长测试
+声明自己的时长，其余测试的时限不变。
 
 报告是命令的结果，写到标准输出：每个测试的结论、失败测试的输出、`test result` 行，
 以及 `--workspace` 时的 `workspace result` 行。构建的各步骤（`Compiling`、`Running`）

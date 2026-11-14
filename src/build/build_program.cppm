@@ -342,7 +342,7 @@ struct BuildProgramEnv {
     // A run that asked for a payload (`mcpp:xpkg-request=`) is normally
     // DISCARDED: the requests are handed back in `xpkgRequests`, nothing else
     // is applied and nothing is cached, because the engine installs the
-    // payloads and runs the program again. Under `plan_only` no payload is
+    // payloads and runs the program again. Under `PrepareIntent::Describe` no payload is
     // installed, so the run is kept -- applied, reported, and still not cached,
     // so the next build asks again.
     bool keepRequestingRun = false;
@@ -1478,7 +1478,7 @@ std::expected<void, std::string> run_build_program_impl(
     for (auto const& a : dirs::advisories(m.package.name, d))
         mcpp::ui::warning(a);
     report_stated_diagnostics(m.package.name, d);
-    // A run kept although it asked for a payload (`plan_only`) is never
+    // A run kept although it asked for a payload (`PrepareIntent::Describe`) is never
     // cached: replaying it would keep the build from ever asking again.
     if (cacheThisRun) {
         write_cache(bdir, root, programHash, compilerHash, ctxHash, d);

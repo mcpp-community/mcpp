@@ -244,8 +244,7 @@ jobs:
           # above, same reason as install_released_mcpp.sh point 1.
           rm -f .xlings.json
           # Two compiles at a time, for the reason of the self-host step above.
-          MCPP_JOBS=2 mcpp build --target aarch64-linux-musl
-          self=$(find target/aarch64-linux-musl -type f -path '*/bin/mcpp' | head -1)
+          self=$(MCPP_JOBS=2 bash "$GITHUB_WORKSPACE/.github/tools/built_artifact.sh" mcpp mcpp --target aarch64-linux-musl)
           test -x "$self"
           self=$(realpath "$self")
           "$self" --version

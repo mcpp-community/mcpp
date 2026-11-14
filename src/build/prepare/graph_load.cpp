@@ -861,35 +861,12 @@ step4a_load_version_dep_locate(PrepareState& state, LoadVersionDepCtx& ctx) {
 // one package at once both ran the provider, and the second was told the
 // install succeeded while the first was still placing it: "install path
 // missing after fetch" (measured in CI, two e2e workers fetching compat.gtest
-// into one home). A process takes the home's install turn before it installs a
-// package and keeps it for the package's own dependencies, which its install
-// hooks install first in the same process. A turn that had to be waited for
-// is reported, so that what its holder installed is looked for again.
-namespace {
-thread_local int g_installTurnDepth = 0;
-thread_local std::optional<mcpp::home::FileLock> g_installTurn;
-
-class InstallTurn {
-public:
-    InstallTurn(const mcpp::config::GlobalConfig& cfg, const std::string& what, bool& waited) {
-        waited = false;
-        if (g_installTurnDepth++ > 0) return;
-        std::error_code ec;
-        std::filesystem::create_directories(cfg.registryDir, ec);
-        g_installTurn = mcpp::home::FileLock::acquire(
-            cfg.registryDir, ".install.lock", std::format("installing {}", what),
-            std::chrono::milliseconds(0), [&](std::string_view holder) {
-                waited = true;
-                mcpp::ui::status("Waiting", holder.empty()
-                    ? std::string("for another mcpp of this home to finish an install")
-                    : std::format("for another mcpp of this home, {}", holder));
-            });
-    }
-    ~InstallTurn() { if (--g_installTurnDepth == 0) g_installTurn.reset(); }
-    InstallTurn(const InstallTurn&) = delete;
-    InstallTurn& operator=(const InstallTurn&) = delete;
-};
-}  // namespace
+// into one home). A process takes the provider's state turn (Provider::
+// state_dir) before it installs a package and keeps it for the package's own
+// dependencies, which its install hooks install first in the same process;
+// the provider's own writers take the same turn, nested. A turn that had to be
+// waited for is reported, so that what its holder installed is looked for
+// again.
 
 static std::expected<void, std::string>
 step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
@@ -917,10 +894,19 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             }
         }
 
-        std::optional<InstallTurn> turn;
+        std::optional<mcpp::home::Turn> turn;
         if (!ctx.installed && !mcpp::effects::offline_mode()) {
             bool waited = false;
-            turn.emplace(**cfg, std::format("{}@{}", depName, version), waited);
+            const auto provider = mcpp::provider::open(ctx.useProjectEnv
+                ? mcpp::config::make_project_xlings_env(**cfg, state.projectIndexRoot())
+                : mcpp::config::make_xlings_env(**cfg));
+            turn.emplace(provider->state_dir(), mcpp::provider::kStateTurn,
+                         std::format("installing {}@{}", depName, version), std::chrono::milliseconds(0),
+                         [](std::string_view holder) {
+                             mcpp::ui::status("Waiting", holder.empty()
+                                 ? std::string("for another mcpp of this home to finish an install")
+                                 : std::format("for another mcpp of this home, {}", holder));
+                         }, &waited);
             if (waited)
                 if (auto again = step4a_load_version_dep_locate(state, ctx); !again) return again;
         }

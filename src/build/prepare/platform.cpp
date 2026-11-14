@@ -1109,7 +1109,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
                 P.tools[name] = found->generic_string();
                 continue;
             }
-            if (!linksSomething || state.overrides.plan_only) continue;
+            if (!linksSomething || state.overrides.describes()) continue;
             refusal::record(refusal::Code::PlatformToolAbsent);
             auto it = P.fields.tools.find(name);
             const std::string from = it == P.fields.tools.end()
@@ -1129,7 +1129,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     }
     // A platform that links with ld.lld needs one beside the compiler; its
     // absence is said here, not as a link line that starts with a flag.
-    if (P.active && P.fields.link.driver.value == "lld" && !state.overrides.plan_only
+    if (P.active && P.fields.link.driver.value == "lld" && !state.overrides.describes()
         && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
                return lu.kind != mcpp::build::LinkUnit::StaticLibrary; })
         && mcpp::freestanding::resolve_lld_any(state.tc->binaryPath).empty()) {
@@ -1171,7 +1171,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             state.hostPlatformTarget,
             state.hostPlatformRunner.empty() ? std::string("its runner")
                 : std::filesystem::path(state.hostPlatformRunner.front()).filename().string()));
-    if (state.overrides.configuration_only) {
+    if (state.overrides.configures()) {
         if (ctx.hostPlatform.active) {
             ctx.hostTriple = state.hostPlatformTarget;
             ctx.hostCompiler = ctx.hostPlatform.fields.toolchain.value;

@@ -40,10 +40,12 @@ public:
     // waiter killed by a signal holds nothing either way. nullopt only when
     // the lock file cannot be created at all (an unwritable directory, whose
     // build fails on its own terms).
+    // `waited`, when given, is set when the lock was held by another at the
+    // first try, however short the wait.
     static std::optional<FileLock> acquire(
         const std::filesystem::path& dir, std::string_view name, std::string_view owner,
         std::chrono::milliseconds notice,
-        const std::function<void(std::string_view holder)>& waiting);
+        const std::function<void(std::string_view holder)>& waiting, bool* waited = nullptr);
 
     // What the current holder of <dir>/<name> published (see acquire).
     static std::string holder(const std::filesystem::path& dir, std::string_view name);
@@ -59,6 +61,30 @@ private:
     // A descriptor, or a HANDLE; -1 is neither (INVALID_HANDLE_VALUE).
     std::intptr_t native_ = -1;
     explicit FileLock(std::intptr_t native) : native_(native) {}
+};
+
+// ── Turn ──────────────────────────────────────────────────────────────────
+//
+// ONE WRITER OF A SHARED STATE AT A TIME, ACROSS PROCESSES AND THREADS: the
+// exclusive lock <dir>/<name> (FileLock::acquire), held by one thread, and
+// taken again by that thread without waiting -- a holder that calls a writer
+// which takes the same turn nests in it. `dir` names the state's real
+// directory, so every path that reaches the state through a link takes one
+// turn. `waited` is set when another holder was waited out: what that holder
+// wrote is then looked for again. `dir` is made when the directory above it
+// exists; a relative `dir`, or one whose lock cannot be created, gives no turn,
+// and the caller goes on as before the turn existed.
+class Turn {
+public:
+    Turn(const std::filesystem::path& dir, std::string_view name, std::string_view what,
+         std::chrono::milliseconds notice,
+         const std::function<void(std::string_view holder)>& waiting, bool* waited = nullptr);
+    ~Turn();
+    Turn(const Turn&) = delete;
+    Turn& operator=(const Turn&) = delete;
+
+private:
+    std::string key_;
 };
 
 // `source` renamed over `destination`, which is not removed first: a failed

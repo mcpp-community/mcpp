@@ -105,14 +105,32 @@
 ### Fixed
 
 - A home whose `registry` is a link to another home's borrows that registry,
-  as a home whose `[xlings] home` names it does: the places the owner recorded
-  for its indices stay, and the home's `[index.repos]` tables no longer rewrite
-  them. Before, such a home recorded its own store in the shared registry, and
-  every later install of the shared home went to that store after the home had
-  been removed (`install path missing after fetch`).
-- `mcpp test --archive` hands `MCPP_RUNTIME_FILES` to a test only through a
-  runner, as a test run of a build does. Before, every archived program
-  received it and passed it on to the programs it ran.
+  as a home whose `[xlings] home` names it does; whether a home borrows its
+  registry is decided once, and every writer of the registry's configuration
+  asks it. A borrowing home writes neither the places of the indices, nor its
+  `[index.repos]` tables' places, nor its upstreams there. Before, such a home
+  recorded its own store in the shared registry, and every later install of the
+  shared home went to that store after the home had been removed (`install path
+  missing after fetch`).
+- Every write of the provider's state takes one turn (`.mcpp-state.lock` in
+  the state's real directory, every link resolved): an install, an index
+  repository added or removed, the runtime chosen, the sandbox initialised.
+  Homes that reach one state through a link take one turn. Before, only the
+  installs of dependencies took a turn, in `registry/`, and on Windows a second
+  writer's save of the SubOS description was refused (`Failed to write file`).
+- A reader of a home's files on Windows opens them shared for deletion, so a
+  writer's replacement is not refused for its sake; a writer retries every
+  20 ms at most within its two seconds.
+- `mcpp test --archive` compiles nothing: no build program or host tool of the
+  project is compiled or run, so the tests of an MSVC-ABI archive run on a
+  machine without Visual Studio. A test run through a runner receives what a
+  build's test run hands one (`MCPP_RUNTIME_FILES`, each file named by its
+  place beside the program, and `MCPP_RUN_*`); one run directly receives
+  neither. Before, every archived program received the list, named by file
+  name alone, and `MCPP_RUN_TRIPLE` and `MCPP_RUN_MODE`.
+- A case or suite that states its length (mtest `timeout{...}`) raises the
+  limit of its process to the sum its cases state, when that is longer than
+  `--timeout`.
 - `config.toml` is replaced whole: programs started at once on a fresh home
   no longer read a part of another's write (`invalid config.toml: expected
   '='`). On Windows, which refuses a rename over a file a reader holds open,

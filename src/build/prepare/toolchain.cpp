@@ -136,7 +136,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         if (!state.cfg_opt) {
             auto c = mcpp::config::load_or_init(/*quiet=*/false,
                 mcpp::fetcher::make_bootstrap_progress_callback(), {},
-                state.overrides.plan_only ? mcpp::config::Initialization::ReadOnly
+                state.overrides.describes() ? mcpp::config::Initialization::ReadOnly
                                           : mcpp::config::Initialization::Bootstrap);
             if (!c) return std::unexpected(c.error().message);
             state.cfg_opt = std::move(*c);
@@ -144,7 +144,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // Execution requires the bootstrap tools. A planning pass reads the
         // installed toolchain without requiring an initialized provider or
         // installing tools it will not execute.
-        if (requireBootstrap && !state.overrides.plan_only && !state.bootstrap_checked) {
+        if (requireBootstrap && !state.overrides.describes() && !state.bootstrap_checked) {
             state.bootstrap_checked = true;
             auto problem = mcpp::config::check_base_init(*state.cfg_opt);
             if (!problem.empty()) {
@@ -302,7 +302,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // SAID ONCE PER HOME, the first time a shipping profile takes the new
         // defaults without stating them: the artifact changed, and the line
         // that changes it back is one key.
-        if (shipping && !(pr.ndebugDeclared && pr.trimPathsDeclared) && !state.overrides.plan_only
+        if (shipping && !(pr.ndebugDeclared && pr.trimPathsDeclared) && !state.overrides.describes()
             && state.overrides.tool_depth == 0 && !state.overrides.host_target) {
             std::error_code ec;
             const auto marker = mcpp::home::root() / "cache" / "notes" / "profile-ndebug-trim-paths";
@@ -2226,7 +2226,7 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
           // (`mcpp test --archive`): the toolchain is neither refused nor
           // replaced. Measured on a Windows runner with Visual Studio masked:
           // every archived test was "not run" for the compiler it did not use.
-          if (state.overrides.runs_built_tests) return {};
+          if (!state.overrides.compiles()) return {};
           // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
           // msvc@system on its own — it cannot install one — so the only way it
           // reaches config.toml is a user typing `mcpp toolchain default msvc`.

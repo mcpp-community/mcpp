@@ -88,15 +88,40 @@ v2026.11.12.1 的运行。
 
 - **共享 registry 被案例 home 改写。** registry 链接到共享 home 的案例 home 把自己的 store 写进共享
   registry 的配置，之后共享 home 的安装落入已删除的案例目录（`install path missing after fetch`，
-  openkal/sets 963、openkal/layers 994）。修正：registry 是链接的 home 与 `[xlings] home` 一样视为借用，
-  索引的位置保留所有者记录的（e2e 1067 增加此形态）。
-- **归档运行把 `MCPP_RUNTIME_FILES` 交给每个测试。** 修正为只经 runner 交付，与构建的测试运行一致
-  （run/contract 672）。
-- **MCPP_BOOT 是 xlings shim。** shim 按工作目录的项目解析版本，在临时目录中找不到；改为 payload 中的
-  发布二进制（workspace/inheritance 772）。
-- **测试读取共享状态。** toolchain/layers 663 取共享缓存中最新的 std 元数据，读到并行程序的；改为本次
-  构建图所指的那一份。build-program/hosttools 831 断言快速路径重放，而并行安装会改写运行环境描述；
-  移入持有 `machine` 的套件。
-- **openkal/trees** 在四个工作线程旁超过 1200 s；Linux 分片的单测时限设为 2400 s。
-- **交叉构建取错二进制。** `find -name mcpp` 可能取到自举构建保留的引擎副本 `engine/epoch-N/mcpp`；
-  cross-build、release（三处）与 linux-e2e 改为 `*/bin/mcpp`。
+  openkal/sets 963、openkal/layers 994）。
+- **归档运行把 `MCPP_RUNTIME_FILES` 交给每个测试**（run/contract 672）。
+- **MCPP_BOOT 是 xlings shim。** shim 按工作目录的项目解析版本，在测试自己的目录中找不到（workspace/inheritance 772）。
+- **测试读取共享状态。** toolchain/layers 663 取共享缓存中最新的 std 元数据，读到并行程序的；cdb/root 781、
+  build-program/hosttools 831、runtime/binding 200 与 cache/fastpath 断言构建被重放，而并行安装改写运行环境
+  描述时构建按设计重新规划。
+- **targets/graph 778** 从 mcpp 的输出中找链接行；冷构建的输出超过运行 mcpp 的 e2e 进程保留的 1 MiB
+  标准错误（mtest `os::process::bounds::err_limit`），链接行被截去。
+- **openkal/trees** 在四个工作线程旁超过 1200 s。
+- **交叉构建与发布取错二进制。** `find -name mcpp` 可能取到自举构建保留的引擎副本 `engine/epoch-N/mcpp`。
+- **Windows 写入冲突。** xlings 原地写 SubOS 描述，另一进程打开该文件时保存被拒（images/1033
+  `Failed to write file`）；`config.toml` 的替换在读者频繁打开时两秒内未成功（unit ConfigValueIsReplacedWhole）。
+- **无 Visual Studio 的 Windows 上运行 MSVC ABI 归档。** 归档运行仍编译项目的构建程序（mingw/182）。
+
+### 5.2 收敛（负责人 2026-11-14 确认）
+
+上述问题不逐点修补，按其所属的机制收敛：
+
+| 编号 | 机制 | 实现 |
+|---|---|---|
+| A | registry 的归属 | `GlobalConfig::registryBorrowed` 在加载配置时判定一次（`[xlings] home` 指向别处，或 `registry` 经链接到达，且已有配置）；索引位置、`[index.repos]` 表的位置与上游的每个写入者都只问它 |
+| B | 准备的意图 | `PrepareIntent {Build, Describe, Configure, RunBuilt}` 取代 `plan_only`、`configuration_only`、`runs_built_tests` 三个开关；各阶段读 `describes()`、`configures()`、`compiles()`；构建程序与宿主工具的阶段在驱动处按 `compiles()` 一次跳过 |
+| C | 交给 runner 的内容 | `runner_handoff_env`：文件清单与运行契约（`MCPP_RUN_*`），构建的测试运行与归档运行共用；直接运行的程序两者都不得到；归档中的文件按其相对程序的位置命名 |
+| D | provider 状态的写入次序 | `mcpp::home::Turn`（跨进程与线程、同一线程可重入）；锁位于 provider 状态的真实目录（`Provider::state_dir`，解析链接），安装、增删索引仓库、选择运行时、初始化沙箱都取它；读者在 Windows 上以可删除共享打开文件。xlings 侧的原子写入另提 issue，上游实现后本次序仍成立 |
+| E | CI 与测试的约定 | `install_pinned_mcpp.sh` 导出 payload 中的发布二进制为 `MCPP_BOOT`；`.github/tools/built_artifact.sh` 取构建报告（`--message-format json`）中的产物路径，取代对 `target/` 的搜索；测试以 mtest `timeout{}` 声明自身时长，运行器取其与 `--timeout` 的较大者（trees 40 分钟、sets 30 分钟），全局时限不变；断言重放的测试持有 `machine`；778 读取构建图而非输出 |
+
+快速路径以共享 SubOS 描述的修改时间判定运行环境未变，是保守而正确的：并行安装可能改变程序加载时解析到的
+库。按内容判定需要知道程序用到描述中的哪些条目，不在本次范围。
+
+### 5.3 第二次运行（43553119208）
+
+| 对象 | 测量 |
+|---|---|
+| Linux 构建作业 | 17.1 分钟（runner 间差异；上一次 10.4） |
+| archive 阶段 | 38.5 分钟：gate 2103 s（构建 1118 s），归档 129 s；gate 先以 bootstrap 构建本包程序 mcpp，其工作与构建作业重复 |
+| 四个分片 | 8.3、16.1、22.5、24.3 分钟；最长的单测为 openkal/sets 1242 s、openkal/trees 1023 s |
+| 分片工作量 | 325 条记录合计 10770 s |

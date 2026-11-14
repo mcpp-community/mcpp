@@ -56,91 +56,6 @@ std::string with_following(std::string_view text, std::string_view pattern, std:
 }
 
 E2E binding{"binding", [] {
-    "200 subos env reaches program"_test[s::elf] = [] {
-        // One selected RuntimeBinding reaches the full-path and the cached `run`; the legacy
-        // MCPP_SUBOS_DIR is ignored; a changed contract, an aged cache and no selection are
-        // each taken as they are; a SubOS that cannot answer the contract is refused.
-        const auto default_manifest = s::shared_home() / "registry/subos/default/.xlings.json";
-        expect(fatal(fs::is_regular_file(default_manifest))) << "FAIL: mcpp default SubOS is missing";
-        const auto default_subos = default_manifest.parent_path();
-        std::string runtime;
-        static const std::regex runtime_re{R"re(.*"runtime"[[:space:]]*:[[:space:]]*"([^"]*)".*)re"};
-        for (const auto& line : split(s::read_file(default_manifest), '\n')) {
-            std::smatch m;
-            if (std::regex_match(line, m, runtime_re)) { runtime = m[1]; break; }
-        }
-        expect(fatal(!runtime.empty())) << "FAIL: default SubOS has no runtime identity";
-        auto p = s::project::scaffold("hello");
-        p.write("mcpp.toml", p.read("mcpp.toml") + "\n[xlings]\nsubos = \"probe\"\n");
-        p.write("src/main.cpp", "#include <cstdio>\n#include <cstdlib>\nint main() {\n    const char* v = std::getenv(\"MCPP_E2E_PROBE\");\n    std::printf(\"PROBE=%s\\n\", v ? v : \"(unset)\");\n    return 0;\n}\n");
-        const auto subos = p.dir() / ".mcpp/.xlings/subos/probe";
-        const auto subos_text = subos.generic_string();
-        fs::create_directories(subos / "usr/lib/dri");
-        fs::create_directory_symlink(default_subos / "lib", subos / "lib");
-        auto write_contract = [&](std::string_view suffix) {
-            s::project(subos, {{".xlings.json", std::format(R"({{ "workspace": {{}},
-  "subos_info": {{ "schema_version": 1, "runtime": "{}",
-    "envs": {{ "probe@1": [
-      {{ "var": "MCPP_E2E_PROBE", "op": "prepend",
-        "value": "${{subosdir}}/usr/lib/{}" }} ] }} }} }}
-)", runtime, suffix)}});
-        };
-        write_contract("dri");
-        const auto probe = "PROBE=" + subos_text + "/usr/lib/dri";
-        auto r = p.mcpp({"run"});
-        expect(fatal(e2e::succeeded(r))) << "FAIL: first run: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: selected environment did not reach program: " << s::text(r);
-        r = p.mcpp({"run"});
-        expect(fatal(e2e::succeeded(r))) << "FAIL: cached run: " << s::text(r);
-        expect(fatal(s::lacks(s::text(r), "Resolving toolchain"))) << "FAIL: second run did not take fast path: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: fast path changed the runtime environment: " << s::text(r);
-        const auto evil = s::case_dir() / "evil";
-        s::project(evil, {{".xlings.json", std::format(R"({{ "workspace": {{}}, "subos_info": {{ "schema_version": 1,
-  "runtime": "{}", "envs": {{ "evil@1": [
-    {{ "var": "MCPP_E2E_PROBE", "op": "set", "value": "EVIL" }} ] }} }} }}
-)", runtime)}});
-        r = p.mcpp({"run"}, {.env = {{"MCPP_SUBOS_DIR", evil.string()}}});
-        expect(fatal(e2e::succeeded(r))) << "FAIL: run with ignored legacy variable: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: MCPP_SUBOS_DIR overrode mcpp.toml: " << s::text(r);
-        std::this_thread::sleep_for(1s);
-        write_contract("dri2");
-        r = p.mcpp({"run"});
-        expect(fatal(e2e::succeeded(r))) << "FAIL: changed contract run: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "Resolving toolchain"))) << "FAIL: contract mutation did not invalidate fast path: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "PROBE=" + subos_text + "/usr/lib/dri2"))) << "FAIL: new snapshot was not applied: " << s::text(r);
-        // `sed -i '/^\[xlings\]/,$d'`: the manifest up to its [xlings] line.
-        auto manifest = p.read("mcpp.toml");
-        const auto at = manifest.starts_with("[xlings]") ? 0 : manifest.find("\n[xlings]");
-        if (at != std::string::npos) manifest.resize(at == 0 ? 0 : at + 1);
-        p.write("mcpp.toml", manifest);
-        r = p.mcpp({"run"});
-        expect(fatal(e2e::succeeded(r))) << "FAIL: McppDefault run: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "PROBE=(unset)"))) << "FAIL: named environment leaked into McppDefault: " << s::text(r);
-        p.write("mcpp.toml", p.read("mcpp.toml") + "\n[xlings]\nsubos = \"probe\"\n");
-        write_contract("dri");
-        r = p.mcpp({"run"});
-        expect(fatal(e2e::succeeded(r))) << "run: " << s::text(r);
-        const auto cache = p.at("target/.build_cache");
-        expect(fatal(s::has_line(s::read_file(cache), "^runtimeBinding="))) << "FAIL: cache has no RuntimeBinding";
-        std::string aged;
-        for (const auto& line : split(s::read_file(cache), '\n'))
-            if (!line.starts_with("runtimeBinding=")) aged += line + "\n";
-        if (aged.ends_with("\n\n")) aged.pop_back();
-        s::project(cache.parent_path(), {{".build_cache", aged}});
-        r = p.mcpp({"run"});
-        expect(fatal(e2e::succeeded(r))) << "FAIL: aged-cache run: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "Resolving toolchain"))) << "FAIL: cache without RuntimeBinding was replayed: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: aged cache rebuild lost selected environment: " << s::text(r);
-        expect(fatal(s::has_line(s::read_file(cache), "^runtimeBinding="))) << "FAIL: rebuilt cache did not record RuntimeBinding";
-        manifest = p.read("mcpp.toml");
-        manifest.replace(manifest.find("subos = \"probe\""), 15, "subos = \"bare\"");
-        p.write("mcpp.toml", manifest);
-        s::project(p.dir() / ".mcpp/.xlings/subos/bare", {{".xlings.json", "{ \"workspace\": {} }\n"}});
-        r = p.mcpp({"run"});
-        expect(fatal(!r)) << "FAIL: named SubOS without RuntimeBinding was accepted: " << s::text(r);
-        expect(fatal(s::has_line(s::text(r), "RuntimeBinding|no `subos_info`|does not describe itself"))) << "FAIL: missing-contract diagnostic is not actionable: " << s::text(r);
-    };
-
     "206 runtime binding physics"_test[s::elf][s::gcc] = [] {
         // A host library linked under `allow_host_libs` builds and its verdict is what the
         // artifact's own search path decides; a hot no-op neither relinks nor re-probes; the
@@ -462,6 +377,97 @@ int main() {
         r = needs.mcpp({"build"});
         expect(fatal(!r)) << "FAIL: a DT_NEEDED that nothing can provide built successfully: " << s::text(r);
         expect(fatal(s::contains_nocase(s::text(r), "libmcpp_ghost_probe.so.1"))) << "FAIL: the build failed, but not for the unresolvable DT_NEEDED: " << s::text(r);
+    };
+}};
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it. Each states that a build is replayed, and a build is planned again when
+// the runtime environment description changed: another program installing into the shared home
+// beside it rewrote that description (measured on Linux CI, 2026-11-14).
+E2E binding_machine{"binding-machine", resource{"machine"}, [] {
+    "200 subos env reaches program"_test[s::elf] = [] {
+        // One selected RuntimeBinding reaches the full-path and the cached `run`; the legacy
+        // MCPP_SUBOS_DIR is ignored; a changed contract, an aged cache and no selection are
+        // each taken as they are; a SubOS that cannot answer the contract is refused.
+        const auto default_manifest = s::shared_home() / "registry/subos/default/.xlings.json";
+        expect(fatal(fs::is_regular_file(default_manifest))) << "FAIL: mcpp default SubOS is missing";
+        const auto default_subos = default_manifest.parent_path();
+        std::string runtime;
+        static const std::regex runtime_re{R"re(.*"runtime"[[:space:]]*:[[:space:]]*"([^"]*)".*)re"};
+        for (const auto& line : split(s::read_file(default_manifest), '\n')) {
+            std::smatch m;
+            if (std::regex_match(line, m, runtime_re)) { runtime = m[1]; break; }
+        }
+        expect(fatal(!runtime.empty())) << "FAIL: default SubOS has no runtime identity";
+        auto p = s::project::scaffold("hello");
+        p.write("mcpp.toml", p.read("mcpp.toml") + "\n[xlings]\nsubos = \"probe\"\n");
+        p.write("src/main.cpp", "#include <cstdio>\n#include <cstdlib>\nint main() {\n    const char* v = std::getenv(\"MCPP_E2E_PROBE\");\n    std::printf(\"PROBE=%s\\n\", v ? v : \"(unset)\");\n    return 0;\n}\n");
+        const auto subos = p.dir() / ".mcpp/.xlings/subos/probe";
+        const auto subos_text = subos.generic_string();
+        fs::create_directories(subos / "usr/lib/dri");
+        fs::create_directory_symlink(default_subos / "lib", subos / "lib");
+        auto write_contract = [&](std::string_view suffix) {
+            s::project(subos, {{".xlings.json", std::format(R"({{ "workspace": {{}},
+  "subos_info": {{ "schema_version": 1, "runtime": "{}",
+    "envs": {{ "probe@1": [
+      {{ "var": "MCPP_E2E_PROBE", "op": "prepend",
+        "value": "${{subosdir}}/usr/lib/{}" }} ] }} }} }}
+)", runtime, suffix)}});
+        };
+        write_contract("dri");
+        const auto probe = "PROBE=" + subos_text + "/usr/lib/dri";
+        auto r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "FAIL: first run: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: selected environment did not reach program: " << s::text(r);
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "FAIL: cached run: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "Resolving toolchain"))) << "FAIL: second run did not take fast path: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: fast path changed the runtime environment: " << s::text(r);
+        const auto evil = s::case_dir() / "evil";
+        s::project(evil, {{".xlings.json", std::format(R"({{ "workspace": {{}}, "subos_info": {{ "schema_version": 1,
+  "runtime": "{}", "envs": {{ "evil@1": [
+    {{ "var": "MCPP_E2E_PROBE", "op": "set", "value": "EVIL" }} ] }} }} }}
+)", runtime)}});
+        r = p.mcpp({"run"}, {.env = {{"MCPP_SUBOS_DIR", evil.string()}}});
+        expect(fatal(e2e::succeeded(r))) << "FAIL: run with ignored legacy variable: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: MCPP_SUBOS_DIR overrode mcpp.toml: " << s::text(r);
+        std::this_thread::sleep_for(1s);
+        write_contract("dri2");
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "FAIL: changed contract run: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "Resolving toolchain"))) << "FAIL: contract mutation did not invalidate fast path: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "PROBE=" + subos_text + "/usr/lib/dri2"))) << "FAIL: new snapshot was not applied: " << s::text(r);
+        // `sed -i '/^\[xlings\]/,$d'`: the manifest up to its [xlings] line.
+        auto manifest = p.read("mcpp.toml");
+        const auto at = manifest.starts_with("[xlings]") ? 0 : manifest.find("\n[xlings]");
+        if (at != std::string::npos) manifest.resize(at == 0 ? 0 : at + 1);
+        p.write("mcpp.toml", manifest);
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "FAIL: McppDefault run: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "PROBE=(unset)"))) << "FAIL: named environment leaked into McppDefault: " << s::text(r);
+        p.write("mcpp.toml", p.read("mcpp.toml") + "\n[xlings]\nsubos = \"probe\"\n");
+        write_contract("dri");
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "run: " << s::text(r);
+        const auto cache = p.at("target/.build_cache");
+        expect(fatal(s::has_line(s::read_file(cache), "^runtimeBinding="))) << "FAIL: cache has no RuntimeBinding";
+        std::string aged;
+        for (const auto& line : split(s::read_file(cache), '\n'))
+            if (!line.starts_with("runtimeBinding=")) aged += line + "\n";
+        if (aged.ends_with("\n\n")) aged.pop_back();
+        s::project(cache.parent_path(), {{".build_cache", aged}});
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "FAIL: aged-cache run: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "Resolving toolchain"))) << "FAIL: cache without RuntimeBinding was replayed: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), probe))) << "FAIL: aged cache rebuild lost selected environment: " << s::text(r);
+        expect(fatal(s::has_line(s::read_file(cache), "^runtimeBinding="))) << "FAIL: rebuilt cache did not record RuntimeBinding";
+        manifest = p.read("mcpp.toml");
+        manifest.replace(manifest.find("subos = \"probe\""), 15, "subos = \"bare\"");
+        p.write("mcpp.toml", manifest);
+        s::project(p.dir() / ".mcpp/.xlings/subos/bare", {{".xlings.json", "{ \"workspace\": {} }\n"}});
+        r = p.mcpp({"run"});
+        expect(fatal(!r)) << "FAIL: named SubOS without RuntimeBinding was accepted: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "RuntimeBinding|no `subos_info`|does not describe itself"))) << "FAIL: missing-contract diagnostic is not actionable: " << s::text(r);
     };
 }};
 

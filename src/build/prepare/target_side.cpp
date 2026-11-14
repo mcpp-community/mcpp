@@ -1895,7 +1895,7 @@ static std::expected<void, std::string> step9_device_sources_reach_an_action(Pre
     //
     // THE PREMISE OF THIS CHECK IS THE BUILD PROGRAM'S DIRECTIVES: an action
     // consuming a device source is one such directive. A package whose program
-    // failed in this pass (`plan_only`, above) applied none of them, so every
+    // failed in this pass (`PrepareIntent::Describe`, above) applied none of them, so every
     // device source would read as an orphan -- not a second defect, only the
     // shape the first one takes here. Such a package already carries its one
     // diagnostic, `MCPP_BUILD_DATABASE_PROGRAM_FAILED`; this check does not run
@@ -2110,8 +2110,11 @@ std::expected<void, std::string> phase9_target_side(PrepareState& state) {
     if (auto r = step9_layer_conditional_config(state); !r) return std::unexpected(r.error());
     if (auto r = step9_dependency_link_forms(state); !r) return std::unexpected(r.error());
     step9_define_graph_package_entry_closure(state);
-    if (auto r = step9_root_build_program(state); !r) return std::unexpected(r.error());
-    if (auto r = step9_member_build_programs(state); !r) return std::unexpected(r.error());
+    // The root's and the members' programs (see phase 6): none where nothing is compiled.
+    if (state.overrides.compiles()) {
+        if (auto r = step9_root_build_program(state); !r) return std::unexpected(r.error());
+        if (auto r = step9_member_build_programs(state); !r) return std::unexpected(r.error());
+    }
     if (auto r = step9_device_sources_reach_an_action(state); !r) return std::unexpected(r.error());
     if (auto r = step9_rerun_input_prepare_dir(state); !r) return std::unexpected(r.error());
 

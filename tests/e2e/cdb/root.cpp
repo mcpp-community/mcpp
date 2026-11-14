@@ -81,35 +81,6 @@ E2E root{"root", [] {
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(s::lacks(p.read("compile_commands.json"), "test_smoke.cpp"))) << "a removed test's entry stayed";
     };
-    "781 deleted root cdb is restored"_test = [] {
-        // A root database removed by hand is restored by the next build, without a full plan,
-        // equal to the configuration's own; a second removal likewise.
-        auto p = s::project::scaffold("app");
-        auto r = p.mcpp({"build"}, at_root);
-        expect(fatal(e2e::succeeded(r))) << "the first build failed: " << s::text(r);
-        expect(fatal(p.exists("compile_commands.json") && !p.read("compile_commands.json").empty())) << "no compile_commands.json after the first build";
-        std::optional<fs::path> config;
-        for (const auto& f : s::find_files(p.at("target"), R"(compile_commands\.json)"))
-            if (!f.generic_string().contains("/.build-mcpp/")) { config = f; break; }
-        expect(fatal(config.has_value())) << "no configuration database under target/";
-        const auto before = s::read_file(*config);
-        p.remove("compile_commands.json");
-        // `touch .before-build2; sleep 1; find -newer`: the clock before a second's wait.
-        const auto marker = fs::file_time_type::clock::now();
-        std::this_thread::sleep_for(std::chrono::seconds{1});
-        r = p.mcpp({"build"}, at_root);
-        expect(fatal(e2e::succeeded(r))) << "the build after deleting the root database failed: " << s::text(r);
-        expect(fatal(p.exists("compile_commands.json"))) << "compile_commands.json was not restored: " << s::text(r);
-        if (s::on_linux())
-            for (const auto& g : s::find_files(p.at("target"), R"(build\.ninja)"))
-                expect(fatal(g.generic_string().contains("/.build-mcpp/") || fs::last_write_time(g) <= marker)) << "restoring the root database ran a full plan: " << s::text(r);
-        expect(fatal(p.read("compile_commands.json") == before)) << "the restored root file differs from the configuration's database";
-        p.remove("compile_commands.json");
-        r = p.mcpp({"build"}, at_root);
-        expect(fatal(e2e::succeeded(r))) << "the third build failed: " << s::text(r);
-        expect(fatal(p.exists("compile_commands.json"))) << "the second delete was not restored";
-    };
-
     "782 foreign root cdb entries are replaced"_test = [] {
         // A root database holding entries mcpp did not write is replaced by the configuration's,
         // with one warning naming their count; a file holding only mcpp's draws no warning.
@@ -175,5 +146,40 @@ E2E root{"root", [] {
     };
 }};
 
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it. Each states that a build is replayed, and a build is planned again when
+// the runtime environment description changed: another program installing into the shared home
+// beside it rewrote that description (measured on Linux CI, 2026-11-14).
+E2E root_machine{"root-machine", resource{"machine"}, [] {
+    "781 deleted root cdb is restored"_test = [] {
+        // A root database removed by hand is restored by the next build, without a full plan,
+        // equal to the configuration's own; a second removal likewise.
+        auto p = s::project::scaffold("app");
+        auto r = p.mcpp({"build"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the first build failed: " << s::text(r);
+        expect(fatal(p.exists("compile_commands.json") && !p.read("compile_commands.json").empty())) << "no compile_commands.json after the first build";
+        std::optional<fs::path> config;
+        for (const auto& f : s::find_files(p.at("target"), R"(compile_commands\.json)"))
+            if (!f.generic_string().contains("/.build-mcpp/")) { config = f; break; }
+        expect(fatal(config.has_value())) << "no configuration database under target/";
+        const auto before = s::read_file(*config);
+        p.remove("compile_commands.json");
+        // `touch .before-build2; sleep 1; find -newer`: the clock before a second's wait.
+        const auto marker = fs::file_time_type::clock::now();
+        std::this_thread::sleep_for(std::chrono::seconds{1});
+        r = p.mcpp({"build"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the build after deleting the root database failed: " << s::text(r);
+        expect(fatal(p.exists("compile_commands.json"))) << "compile_commands.json was not restored: " << s::text(r);
+        if (s::on_linux())
+            for (const auto& g : s::find_files(p.at("target"), R"(build\.ninja)"))
+                expect(fatal(g.generic_string().contains("/.build-mcpp/") || fs::last_write_time(g) <= marker)) << "restoring the root database ran a full plan: " << s::text(r);
+        expect(fatal(p.read("compile_commands.json") == before)) << "the restored root file differs from the configuration's database";
+        p.remove("compile_commands.json");
+        r = p.mcpp({"build"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the third build failed: " << s::text(r);
+        expect(fatal(p.exists("compile_commands.json"))) << "the second delete was not restored";
+    };
+}};
 
 }  // namespace

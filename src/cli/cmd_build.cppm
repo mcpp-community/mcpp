@@ -902,7 +902,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 discovery = std::move(tests->discovery);
                 mo.member_targets = std::move(tests->targets);
             }
-            mo.plan_only = true;
+            mo.intent = mcpp::build::PrepareIntent::Describe;
             std::string workKey = mo.package_filter;
             for (auto const& mp : req.group) workKey += (workKey.empty() ? "" : ",") + mp;
             mo.work_dir = build_database_work_dir(req.group.empty() ? *root : wsRoot, workKey);

@@ -165,9 +165,7 @@ jobs:
       - name: "Cross-build mcpp -> ${{ matrix.target }}"
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP" build --target ${{ matrix.target }}
-          # the product, not the engine copy a self-build keeps beside it (engine/epoch-N/mcpp)
-          bin=$(find target/${{ matrix.target }} -type f -path "*/bin/mcpp" | head -1)
+          bin=$(bash "$GITHUB_WORKSPACE/.github/tools/built_artifact.sh" "$MCPP" mcpp --target ${{ matrix.target }})
           [ -n "$bin" ] || { echo "no mcpp artefact for ${{ matrix.target }}"; exit 1; }
           echo "== file =="; file "$bin"
           file "$bin" | grep -q "${{ matrix.file_arch }}" || { echo "expected ${{ matrix.file_arch }}"; exit 1; }
@@ -183,8 +181,7 @@ jobs:
             --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          "$MCPP" build --target ${{ matrix.target }}
-          xbin=$(find target/${{ matrix.target }} -type f -path "*/bin/xlings" | head -1)
+          xbin=$(bash "$GITHUB_WORKSPACE/.github/tools/built_artifact.sh" "$MCPP" xlings --target ${{ matrix.target }})
           [ -n "$xbin" ] || { echo "no xlings artefact for ${{ matrix.target }}"; exit 1; }
           echo "== file =="; file "$xbin"
           file "$xbin" | grep -q "${{ matrix.file_arch }}" || { echo "expected ${{ matrix.file_arch }}"; exit 1; }

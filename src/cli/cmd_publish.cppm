@@ -106,7 +106,7 @@ static int refuse_shared_exact_pins() {
           });
     if (!library) return 0;
     mcpp::build::BuildOverrides ov;
-    ov.plan_only = true;
+    ov.intent = mcpp::build::PrepareIntent::Describe;
     ov.work_dir = mcpp::home::root() / "cache" / "publish-plan"
                 / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
@@ -335,7 +335,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
 // accepts here -- the engine's own (`tar`, `dir`) and each one a package of
 // the resolved graph declares with `mcpp::provides_pack_format`, with the
 // packages that provide it -- as the `mcpp.pack.formats` envelope. A plan
-// that describes (plan_only) in a directory of the mcpp home, as `emit
+// that describes (PrepareIntent::Describe) in a directory of the mcpp home, as `emit
 // build-database` plans: the build programs run, because they are what
 // declares a format, and nothing is written into the project. The plan is
 // the target's the pack would build (`--target`, the last when repeated, as
@@ -354,7 +354,7 @@ int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto v = parsed.value("features")) ov.features = *v;
     if (auto o = parsed.option("target"); o && !o->get().values.empty())
         ov.target_triple = o->get().values.back();
-    ov.plan_only = true;
+    ov.intent = mcpp::build::PrepareIntent::Describe;
     ov.work_dir = mcpp::home::root() / "cache" / "pack-formats"
                 / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});

@@ -88,7 +88,7 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
     if (!state.m->buildConfig.generatedFiles.empty()) {
         std::vector<std::filesystem::path> staleGenerated;
         if (auto r = materialize_generated_files(
-                *state.root, *state.m, state.overrides.plan_only ? &staleGenerated : nullptr); !r) {
+                *state.root, *state.m, state.overrides.describes() ? &staleGenerated : nullptr); !r) {
             return std::unexpected(r.error());
         }
         for (auto const& path : staleGenerated)
@@ -559,12 +559,12 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
             // environment half (`penv`: deps/subos/workspace) belongs to the
             // runtime's owner, `runtimeSelection.ownerRoot`: the workspace
             // root when a member builds (e2e 205), the project root otherwise.
-            // Under `plan_only` (`emit build-database`) nothing is written
+            // Under `PrepareIntent::Describe` (`emit build-database`) nothing is written
             // into the project (SPEC-005 R2.1, mcpp#724 side finding B, e2e
             // 817), so the owner's half goes to the planning directory too.
             // The build programs' graph shares the indices of the build that
             // asked, whose project already holds them (`project_index_root`).
-            const auto& runtimeRoot = state.overrides.plan_only
+            const auto& runtimeRoot = state.overrides.describes()
                 ? state.workRoot : state.runtimeSelection.ownerRoot;
             const auto indices = state.overrides.project_index_root.empty()
                 ? state.m->indices : decltype(state.m->indices){};

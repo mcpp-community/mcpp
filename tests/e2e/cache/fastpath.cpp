@@ -62,7 +62,10 @@ bool version_less(std::string_view a, std::string_view b) {
 
 }  // namespace
 
-E2E fastpath{"fastpath", [] {
+// It holds the machine (P7.1): each case states that a build is replayed, and a build is planned
+// again when the runtime environment description changed -- another program installing into the
+// shared home beside it rewrites that description (measured on Linux CI, 2026-11-14).
+E2E fastpath{"fastpath", resource{"machine"}, [] {
     "173 build profile isolation"_test[s::gcc][s::fresh_sandbox] = [] {
         // The profile is an invalidation axis: --dev, --release and --profile dist have three build
         // directories (-O0, -O2, -O3, read from build.ninja), each announced as built; a bare

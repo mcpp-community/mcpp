@@ -15,11 +15,10 @@ namespace mcpp::build {
 namespace fs = std::filesystem;
 
 std::expected<BuildContext, std::string> prepare_configuration(std::string_view targetTriple,
-                                                              bool runsBuiltTests) {
+                                                              PrepareIntent intent) {
     BuildOverrides ov;
     ov.target_triple = std::string(targetTriple);
-    ov.configuration_only = true;
-    ov.runs_built_tests = runsBuiltTests;
+    ov.intent = intent == PrepareIntent::RunBuilt ? intent : PrepareIntent::Configure;
     std::error_code ec;
     if (auto root = mcpp::project::find_manifest_root(fs::current_path(ec))) {
         ov.project_root = *root;

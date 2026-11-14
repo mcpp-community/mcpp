@@ -97,6 +97,13 @@ struct GlobalConfig {
     // From config.toml [xlings]
     std::string                     xlingsBinaryMode;    // "bundled" | "system" | absolute path
     std::filesystem::path           xlingsHomeOverride;  // empty = use registryDir
+    // THE REGISTRY IS ANOTHER HOME'S. Its configuration -- the places of its
+    // indices, its upstreams -- is its owner's, and this home writes none of
+    // it. Decided once, where the configuration is loaded: a registry that
+    // `[xlings] home` names, or that `registry` reaches through a link, and
+    // that holds a configuration already. Every writer of the registry's
+    // configuration asks this, and no other test.
+    bool                            registryBorrowed = false;
 
     // From config.toml [index]
     std::string                     defaultIndex;        // "mcpplibs"
@@ -587,7 +594,7 @@ void record_seeded_index_repos(const std::filesystem::path& xjson,
 
 void reconcile_index_repos(const std::filesystem::path& xjson,
                            const std::vector<IndexRepo>& repos,
-                           bool quiet)
+                           bool quiet, bool borrowed)
 {
     auto doc = read_json_file(xjson);
     if (!doc || !doc->is_object()) return;
@@ -617,11 +624,13 @@ void reconcile_index_repos(const std::filesystem::path& xjson,
         auto want = index_repo_entry(r);
         auto* have = find(r.name);
         // The places of the index (its data, its store) are the registry's
-        // owner's: a home that borrows the registry states none, and the ones
-        // the owner recorded stay (see `borrowedRegistry`).
-        if (have)
-            for (const char* place : {"dir", "store"})
-                if (!want.contains(place) && have->contains(place)) want[place] = (*have)[place];
+        // owner's: a home that borrows the registry keeps the ones the owner
+        // recorded (GlobalConfig::registryBorrowed).
+        if (have && borrowed)
+            for (const char* place : {"dir", "store"}) {
+                want.erase(place);
+                if (have->contains(place)) want[place] = (*have)[place];
+            }
         if (have && *have == want) continue;
         if (!record.contains(r.name))
             record[r.name] = { {"previous", have ? *have : nlohmann::json(nullptr)} };
@@ -1157,7 +1166,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // writes reached the other home's configuration through the link, and on
     // Linux every install of the shared home went to a case's store after the
     // case had removed it ("install path missing after fetch", 2026-11-14).
-    const bool borrowedRegistry = [&] {
+    cfg.registryBorrowed = [&] {
         std::error_code ec;
         if (!std::filesystem::exists(mcpp::provider::open(make_xlings_env(cfg))->config_file(), ec)) return false;
         if (!cfg.xlingsHomeOverride.empty())
@@ -1170,7 +1179,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         return rel.empty() || *rel.begin() == "..";
     }();
     for (auto& r : cfg.indexRepos) {
-        if (borrowedRegistry || mcpp::provider::layout().is_provider_index(r.name)) continue;
+        if (cfg.registryBorrowed || mcpp::provider::layout().is_provider_index(r.name)) continue;
         r.dir = cfg.mcppHome / "indices" / r.name;
         r.store = mcpp::provider::layout().own_store(cfg.mcppHome);
     }
@@ -1208,7 +1217,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         record_seeded_index_repos(xjson, cfg.indexRepos, quiet);
     } else {
         mcpp::fallback::migrate_xlings_json_index_names(xjson);
-        reconcile_index_repos(xjson, cfg.indexRepos, quiet);
+        reconcile_index_repos(xjson, cfg.indexRepos, quiet, cfg.registryBorrowed);
     }
     {
         // A home from before: its indices' places recorded, their data moved
@@ -1217,10 +1226,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         std::vector<mcpp::provider::SeedRepo> owned;
         for (auto& r : cfg.indexRepos)
             if (!r.dir.empty()) owned.push_back({ r.name, r.url, {}, {}, {}, r.dir, r.store });
-        mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
+        if (!cfg.registryBorrowed) mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
     }
 
-    {
+    // The upstreams are the registry's too: a borrowing home's `[xlings]
+    // upstream` would replace its owner's.
+    if (!cfg.registryBorrowed) {
         std::vector<mcpp::provider::Upstream> upstreams;
         for (auto& dir : cfg.upstreams)
             for (auto& u : mcpp::provider::layout().upstream_of(dir)) upstreams.push_back(std::move(u));
