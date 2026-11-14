@@ -46,6 +46,7 @@ import mcpp.build.build_program;
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
+import mcpp.build.stage;        // publishing a built tool into the store
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
@@ -1731,9 +1732,14 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
 
 static std::expected<void, std::string>
 step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
-    // Publish into the store: build out of place, then move —
-    // the same discipline mcpp.build.stage follows, so a
-    // concurrent consumer never observes a half-written entry.
+    // Publish into the store through mcpp.build.stage: a temporary of this
+    // writer's own beside the entry, then a rename, so a concurrent consumer
+    // never observes a half-written entry. Two processes that built the same
+    // key publish the same bytes; a destination already equal to them is
+    // published. With one temporary name for every writer, one writer removed
+    // the other's temporary before its rename ("publishing host tool
+    // 'openkal-tools:okld' failed: No such file or directory", the target
+    // matrix's cells side by side, run 43636471152).
     std::error_code cpEc;
     auto produced = ctx.subOutputDir / ctx.goal;
     if (!std::filesystem::exists(produced, cpEc)) {
@@ -1742,27 +1748,16 @@ step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
             ctx.depName, ctx.toolName, produced.string()));
     }
     std::filesystem::create_directories(ctx.binOut.parent_path(), cpEc);
-    auto tmp = ctx.binOut;
-    tmp += ".tmp";
-    std::filesystem::remove(tmp, cpEc);
-    std::filesystem::copy_file(produced, tmp,
-        std::filesystem::copy_options::overwrite_existing, cpEc);
-    if (cpEc) {
+    if (auto staged = mcpp::build::stage::stage_file(produced, ctx.binOut); !staged) {
         return std::unexpected(std::format(
-            "staging host tool '{}:{}' failed: {}",
-            ctx.depName, ctx.toolName, cpEc.message()));
+            "publishing host tool '{}:{}' failed: {}",
+            ctx.depName, ctx.toolName, staged.error().message));
     }
-    std::filesystem::permissions(tmp,
+    std::filesystem::permissions(ctx.binOut,
         std::filesystem::perms::owner_exec
         | std::filesystem::perms::group_exec
         | std::filesystem::perms::others_exec,
         std::filesystem::perm_options::add, cpEc);
-    std::filesystem::rename(tmp, ctx.binOut, cpEc);
-    if (cpEc) {
-        return std::unexpected(std::format(
-            "publishing host tool '{}:{}' failed: {}",
-            ctx.depName, ctx.toolName, cpEc.message()));
-    }
     // A path package's tree, so that its superseded entries are collected.
     std::filesystem::path toolSource;
     if (ctx.depIdx >= 1 && ctx.depIdx - 1 < state.dep_cache_identities.size()

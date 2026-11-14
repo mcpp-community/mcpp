@@ -154,8 +154,12 @@ namespace {
 
 std::filesystem::path temp_sibling(const std::filesystem::path& dst) {
     // Same directory as the destination so the rename stays on one filesystem.
+    // The writer's own name: processes that publish one destination at once
+    // (a host tool built by two builds of one home) must not share a temporary,
+    // and a clock alone is a microsecond on macOS.
     auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
-    auto name = dst.filename().string() + std::format(".tmp.{}", stamp);
+    auto name = dst.filename().string()
+              + std::format(".tmp.{}.{:x}", stamp, std::random_device{}());
     return dst.parent_path() / name;
 }
 

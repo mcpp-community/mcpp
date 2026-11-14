@@ -14,9 +14,18 @@ marker = b'windows_code_page = "utf-8"'
 assert original.count(marker) == 1, 'identify the test-only code-page setting explicitly'
 
 
+# The profile the job built the tests with (MCPP_TEST_PROFILE; empty: the
+# manifest's default). Another profile builds every test again, which outlasted
+# the timeout on the Windows row (run 43636471152).
+profile = os.environ.get('MCPP_TEST_PROFILE', '')
+
+
 def run_case(passed_case):
     # The case by its identifier (mtest's): it runs in the process of its file.
-    result = subprocess.run([os.environ['MCPP'], '--offline', 'test', '--case', passed_case], cwd=root,
+    command = [os.environ['MCPP'], '--offline', 'test', '--case', passed_case]
+    if profile:
+        command += ['--profile', profile]
+    result = subprocess.run(command, cwd=root,
                             capture_output=True, text=True, encoding='utf-8', errors='replace',
                             timeout=600)
     sys.stdout.write(result.stdout)

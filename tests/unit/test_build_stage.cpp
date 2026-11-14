@@ -370,3 +370,36 @@ UTest empty_source_list_is_an_error{"BuildStageFiles/EmptySourceListIsAnError", 
     auto r = stage_files({}, tmp.path / "dst.bin", no_retry());
     expect(fatal(!r.has_value()));
 }};
+
+// Writers that publish one destination at once each succeed, and the
+// destination is the source: each writes through a temporary of its own, so
+// none removes another's before that one's rename (two builds of one home
+// publishing a host tool they both built).
+UTest writers_of_one_destination_do_not_collide{"BuildStage/WritersOfOneDestinationDoNotCollide", [] {
+    Tmp t;
+    const auto body = std::string(1 << 20, 'x');
+    constexpr int kWriters = 8;
+    std::vector<std::filesystem::path> srcs;
+    for (int i = 0; i < kWriters; ++i) {
+        srcs.push_back(t.path / std::format("src{}", i) / "tool");
+        write_file(srcs.back(), body);
+    }
+    const auto dst = t.path / "store" / "tool";
+    std::filesystem::create_directories(dst.parent_path());
+    std::atomic<bool> gate{false};
+    std::array<bool, kWriters> ok{};
+    std::vector<std::thread> writers;
+    for (int i = 0; i < kWriters; ++i)
+        writers.emplace_back([&, i] {
+            while (!gate.load(std::memory_order_acquire)) std::this_thread::yield();
+            ok[i] = stage_file(srcs[i], dst).has_value();
+        });
+    gate.store(true, std::memory_order_release);
+    for (auto& w : writers) w.join();
+    for (int i = 0; i < kWriters; ++i) expect(ok[i]) << "writer " << i;
+    expect(read_file(dst) == body);
+    std::size_t left = 0;
+    for (const auto& e : std::filesystem::directory_iterator(dst.parent_path()))
+        left += e.path().filename() != "tool";
+    expect(eq(left, std::size_t{0})) << "a temporary was left beside the destination";
+}};

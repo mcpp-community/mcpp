@@ -41,6 +41,12 @@
   environment (`subos/default/.xlings.json`) as well as the project's, and with
   the turn in the project's directory it collided on Windows with an install of
   another project ("Failed to write file"). One turn per home orders both.
+- A host tool built by two builds of one home at once is published by both:
+  each writes through a temporary of its own (`mcpp.build.stage`), and a store
+  entry already equal to the tool is published. With one temporary name for
+  every writer, one removed the other's before its rename ("publishing host
+  tool ... failed: No such file or directory", the target matrix's cells side
+  by side).
 
 ## [2026.11.14.1] - 2026-11-14
 

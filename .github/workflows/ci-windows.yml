@@ -85,7 +85,8 @@ jobs:
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          MCPP="$MCPP_SELF" python .github/tools/check_windows_home_legacy.py
+          # The tests as the step above built them (profile ci).
+          MCPP="$MCPP_SELF" MCPP_TEST_PROFILE=ci python .github/tools/check_windows_home_legacy.py
 
       # WS8: this row has Visual Studio, so its answer is the "Windows with
       # usable MSVC" row of docs/01 and docs/20.
