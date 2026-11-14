@@ -22,6 +22,9 @@
 
 ### Changed
 
+- `mcpp new` scaffolds tests with mtest 0.9.0, the version this package's own
+  tests use, so a new package's long cases are divisible by the cases they
+  declare.
 - The run store's case durations are kept by program and case id; two programs
   with a case of one name (`layers`, `sets`) read each other's.
 - CI: the archive stage reuses main's test build: an artifact of its build
