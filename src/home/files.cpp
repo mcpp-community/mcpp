@@ -4,7 +4,6 @@ module mcpp.home.files;
 
 import std;
 import mcpplibs.os.fs;
-import mcpplibs.os.platform;
 
 namespace mcpp::home {
 
@@ -104,6 +103,17 @@ Turn::~Turn() {
     if (auto it = turns.find(key_); it != turns.end() && --it->second.depth == 0) turns.erase(it);
 }
 
+// A refusal another program's hold on the file explains, which a moment
+// later may not be there: Windows refuses an open or a rename while another
+// program holds the file, or while a rename over it leaves the replaced copy
+// pending deletion (a sharing violation, or access denied). Elsewhere these
+// answers are final, and cost the failing call the wait.
+namespace {
+bool refused_for_now(const mcpplibs::os::error& e) {
+    return e.code == mcpplibs::os::errc::again || e.code == mcpplibs::os::errc::permission;
+}
+}  // namespace
+
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec) {
     // Windows refuses the rename while another program holds the destination
@@ -119,11 +129,7 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     for (;;) {
         const auto r = mcpplibs::os::fs::rename(source, destination, true);
         if (r) { ec.clear(); return true; }
-        // A refusal is retried as the sharing violation it is on Windows;
-        // elsewhere it is final, and costs the failing write the wait.
-        const bool held = r.error().code == mcpplibs::os::errc::again
-                       || r.error().code == mcpplibs::os::errc::permission;
-        if (!held || std::chrono::steady_clock::now() + delay > deadline) {
+        if (!refused_for_now(r.error()) || std::chrono::steady_clock::now() + delay > deadline) {
             ec = std::make_error_code(r.error().code == mcpplibs::os::errc::not_found
                                           ? std::errc::no_such_file_or_directory
                                           : std::errc::permission_denied);
@@ -178,10 +184,8 @@ std::optional<std::string> read_whole(const std::filesystem::path& file) {
         // reader's open and the query of the name alike with a refusal (the
         // copy being replaced is pending deletion), and a reader that took the
         // query's failure for absence gave up within the rename (unit
-        // Config/ConfigValueIsReplacedWhole, 2026-11-14). Elsewhere a rename
-        // replaces the name at once, and a refused read is final.
-        if (!mcpplibs::os::is_windows || text.error().code == mcpplibs::os::errc::not_found
-            || std::chrono::steady_clock::now() + delay > deadline)
+        // Config/ConfigValueIsReplacedWhole, 2026-11-14).
+        if (!refused_for_now(text.error()) || std::chrono::steady_clock::now() + delay > deadline)
             return std::nullopt;
         std::this_thread::sleep_for(delay);
         delay = std::min(delay * 2, std::chrono::milliseconds{200});

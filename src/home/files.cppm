@@ -103,8 +103,8 @@ bool write_replacing(const std::filesystem::path& file, std::string_view text);
 
 // The text of `file`, or nothing when it cannot be read. Windows refuses an
 // open for a moment while another program renames over the file
-// (write_replacing): there an open refused for any reason but absence is
-// retried, for up to two seconds, as the writer's rename is.
+// (write_replacing): an open refused for the reason another program's hold
+// gives is retried, for up to two seconds, as the writer's rename is.
 std::optional<std::string> read_whole(const std::filesystem::path& file);
 
 // Whether a directory another program wrote may be read and run from: it
