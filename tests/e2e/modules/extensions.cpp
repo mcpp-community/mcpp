@@ -108,53 +108,6 @@ E2E extensions{"extensions", [] {
             std::println("  skip: no LLVM payload installed — clang leg not run");
     };
 
-    "218 module extensions graph shape"_test[s::gcc] = [] {
-        // A no-change build replays; a new import in a .ixx plans again and the edge is real;
-        // module_extensions changes the graph in the same directory; a dead entry is reported; a
-        // reserved extension is refused naming the key.
-        s::project p({{"mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\"]\n"},
-                      {"src/helper.cppm", "export module gshape.helper;\nimport std;\nexport auto helper() -> int { return 41; }\n"},
-                      {"src/face.ixx", "export module gshape.face;\nimport std;\nexport auto face() -> int { return 1; }\n"},
-                      {"src/main.cpp", "import std;\nimport gshape.face;\nint main(){ std::println(\"{}\", face()); }\n"}});
-        auto r = p.mcpp({"build"});
-        expect(fatal(e2e::succeeded(r))) << "first build\n" << s::text(r);
-        const auto fp_before = printed(p, "Fingerprint");
-        expect(fatal(!fp_before.empty())) << "could not read the fingerprint";
-        auto mark = mark_then_wait();
-        r = p.mcpp({"build"});
-        expect(fatal(e2e::succeeded(r))) << "no-change build\n" << s::text(r);
-        expect(fatal(!planned_since(p, mark))) << "fast path did not engage — the rest proves nothing\n" << s::text(r);
-
-        mark = mark_then_wait();
-        p.write("src/face.ixx", "export module gshape.face;\nimport std;\nimport gshape.helper;\nexport auto face() -> int { return helper() + 1; }\n");
-        r = p.mcpp({"build"});
-        expect(fatal(e2e::succeeded(r))) << "build after .ixx edit\n" << s::text(r);
-        expect(fatal(planned_since(p, mark))) << "editing a .ixx did not invalidate the fast path\n" << s::text(r);
-        expect(fatal(e2e::contains(s::text(p.mcpp({"run"})), "42"))) << "expected 42 (41+1)";
-
-        p.write("src/extra.ccm", "export module gshape.extra;\nexport auto extra() -> int { return 2; }\n");
-        p.write("mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\", \".ccm\"]\n");
-        r = p.mcpp({"build"});
-        expect(fatal(e2e::succeeded(r))) << "build after key change\n" << s::text(r);
-        const auto fp_after = printed(p, "Fingerprint");
-        expect(fatal(fp_before == fp_after)) << "module_extensions moved the build directory (" << fp_before << " -> " << fp_after << ")";
-        // The build directory is named by the configuration's lineage (`Lineage:`), not by the
-        // whole fingerprint (2026.11.13.1).
-        const auto lineage = printed(p, "Lineage");
-        const auto graphs = s::glob(p.at("target"), std::format("*/{}/build.ninja", lineage));
-        expect(fatal(!graphs.empty() && e2e::matches(s::read_file(graphs.front()), R"(gshape\.extra)")))
-            << "the .ccm named by module_extensions is not a module interface of the graph (lineage " << lineage << ")";
-
-        p.write("mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\", \".nosuchext\"]\n");
-        r = p.mcpp({"build"});
-        expect(fatal(e2e::succeeded(r))) << "build with a dead entry\n" << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "nosuchext"))) << "a module_extensions entry matching nothing was not reported\n" << s::text(r);
-        p.write("mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".c\"]\n");
-        r = p.mcpp({"build"});
-        expect(fatal(failed(r))) << "[build] module_extensions = [\".c\"] was accepted";
-        expect(fatal(e2e::contains(s::text(r), "module_extensions"))) << "the error does not name the offending key\n" << s::text(r);
-    };
-
     "236 module extensions default toolchain"_test = [] {
         // On this platform's default toolchain a declared .ixx is a module interface: its BMI is
         // written and the program runs.
@@ -237,3 +190,55 @@ module_extensions = [".ixx"]
 }};
 
 }  // namespace
+
+// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
+// other test beside it. 218 asserts a replay: an install into the shared home by a program beside
+// it changes the runtime's description, and the build then plans again (design 2026-11-14 §5.2 E).
+E2E extensions_machine{"extensions-machine", resource{"machine"}, [] {
+    "218 module extensions graph shape"_test[s::gcc] = [] {
+        // A no-change build replays; a new import in a .ixx plans again and the edge is real;
+        // module_extensions changes the graph in the same directory; a dead entry is reported; a
+        // reserved extension is refused naming the key.
+        s::project p({{"mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\"]\n"},
+                      {"src/helper.cppm", "export module gshape.helper;\nimport std;\nexport auto helper() -> int { return 41; }\n"},
+                      {"src/face.ixx", "export module gshape.face;\nimport std;\nexport auto face() -> int { return 1; }\n"},
+                      {"src/main.cpp", "import std;\nimport gshape.face;\nint main(){ std::println(\"{}\", face()); }\n"}});
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "first build\n" << s::text(r);
+        const auto fp_before = printed(p, "Fingerprint");
+        expect(fatal(!fp_before.empty())) << "could not read the fingerprint";
+        auto mark = mark_then_wait();
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "no-change build\n" << s::text(r);
+        expect(fatal(!planned_since(p, mark))) << "fast path did not engage — the rest proves nothing\n" << s::text(r);
+
+        mark = mark_then_wait();
+        p.write("src/face.ixx", "export module gshape.face;\nimport std;\nimport gshape.helper;\nexport auto face() -> int { return helper() + 1; }\n");
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "build after .ixx edit\n" << s::text(r);
+        expect(fatal(planned_since(p, mark))) << "editing a .ixx did not invalidate the fast path\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(p.mcpp({"run"})), "42"))) << "expected 42 (41+1)";
+
+        p.write("src/extra.ccm", "export module gshape.extra;\nexport auto extra() -> int { return 2; }\n");
+        p.write("mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\", \".ccm\"]\n");
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "build after key change\n" << s::text(r);
+        const auto fp_after = printed(p, "Fingerprint");
+        expect(fatal(fp_before == fp_after)) << "module_extensions moved the build directory (" << fp_before << " -> " << fp_after << ")";
+        // The build directory is named by the configuration's lineage (`Lineage:`), not by the
+        // whole fingerprint (2026.11.13.1).
+        const auto lineage = printed(p, "Lineage");
+        const auto graphs = s::glob(p.at("target"), std::format("*/{}/build.ninja", lineage));
+        expect(fatal(!graphs.empty() && e2e::matches(s::read_file(graphs.front()), R"(gshape\.extra)")))
+            << "the .ccm named by module_extensions is not a module interface of the graph (lineage " << lineage << ")";
+
+        p.write("mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".ixx\", \".nosuchext\"]\n");
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "build with a dead entry\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "nosuchext"))) << "a module_extensions entry matching nothing was not reported\n" << s::text(r);
+        p.write("mcpp.toml", "[package]\nname    = \"gshape\"\nversion = \"0.1.0\"\n\n[build]\nmodule_extensions = [\".c\"]\n");
+        r = p.mcpp({"build"});
+        expect(fatal(failed(r))) << "[build] module_extensions = [\".c\"] was accepted";
+        expect(fatal(e2e::contains(s::text(r), "module_extensions"))) << "the error does not name the offending key\n" << s::text(r);
+    };
+}};

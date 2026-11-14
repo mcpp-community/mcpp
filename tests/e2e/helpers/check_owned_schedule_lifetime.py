@@ -305,9 +305,15 @@ def hard_controller_loss(root, binary, kind):
         controller=int(unit[1]);os.kill(controller,signal.SIGKILL)
         reservation=Path(record(attempt/"reservation","mcpp-reservation-pointer-v1")[0])
         lock=reservation.with_suffix(".lock")
-        time.sleep(.15)
+        # The killed controller's lock is released when the kernel has ended
+        # it, which a loaded machine does later than a fixed pause.
         with lock.open("a+") as handle:
-            fcntl.lockf(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            def taken():
+                try:
+                    fcntl.lockf(handle,fcntl.LOCK_EX|fcntl.LOCK_NB);return True
+                except BlockingIOError:
+                    return False
+            until(taken,"the killed controller's reservation lock was not released")
         assert alive(writer),"descendant control ended too early"
         assert reservation.exists(),"live descendant lost its logical reservation"
         obj=case.out/("ordinary.o" if kind=="ordinary" else "module.o")

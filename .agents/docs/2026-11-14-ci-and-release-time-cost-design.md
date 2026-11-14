@@ -209,3 +209,7 @@ openkal-macos 仅在其为空时提供自己的存根，旧版 mcpp 不设该变
 | 归档的运行在任何腿运行前要求全部所列程序，另一台机器运行的腿也被要求 | 在腿确定于本机运行后才向环境要求该腿的程序 |
 | e2e-cases 以 MSYS 形式导出 `MCPP_BIN_MCPP` | 与 mcpp-unit 相同，以 `cygpath -w` 给出系统自身的拼写 |
 | MSVC ABI 的 clang 也运行 libc++ 探测，可能记下不相干的“未回答” | 不对 MSVC ABI 的驱动提出该问题，其 std 模块按 STL 查找 |
+
+**第四次运行（43576630955，含 bench）。** 另有两处与本 PR 改动无关、由负载暴露的用例缺陷：modules/extensions 218 断言无改动的构建被重放，
+却不持有 machine（与 1024 同类，移入 extensions-machine 套件）；DetachLifetime 的辅助脚本在杀死控制进程后固定等待 0.15 s 再要求其锁，
+负载下内核结束该进程晚于此，改为在时限内等到锁被释放。
