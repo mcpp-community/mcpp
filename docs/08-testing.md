@@ -88,16 +88,17 @@ with one link. `[test] split = "case"` gives each case its own process, and
 the run names it: `mcpp test unit/test_home` (or `home`) runs that file's part.
 
 A case that holds the machine (P7.1, resource `machine`) runs with no other test
-beside it (2026.11.13.1+). mcpp lists every program that speaks the protocol and
-that it divides or that runs without a runner (a program of one file behind a
-runner runs whole, as before); the
-listed cases of a file that hold `machine` (a suite that states it,
-`E2E bmi_machine{"bmi-machine", resource{"machine"}, [] { ... }}`, or a bench)
-are a part of their own, queued after every other test and run alone, named
-`<program>/<file> (machine)` when the file has other cases, which run beside the
-other tests. The run's
-record states `machine` among the part's resources. A resource stated on a case
-inside a suite is not listed, so it holds nothing across processes.
+beside it (2026.11.13.1+). mcpp lists, on the run's workers, every program that
+speaks the protocol and that it divides or that runs without a runner; a program
+of one file behind a runner is not listed and runs whole, as before. In a program
+the run divides, the listed cases of a file that hold `machine` (a suite that
+states it, `E2E bmi_machine{"bmi-machine", resource{"machine"}, [] { ... }}`, or a
+bench) are a part of their own, named `<program>/<file> (machine)` when the file
+has other cases; a program the run does not divide (`split = "none"`, a program of
+one file) runs whole, alone when one of its cases holds `machine`. What holds
+`machine` is queued after every other test and runs alone. The run's record states
+`machine` among the part's resources. A resource stated on a case inside a suite
+is not listed, so it holds nothing across processes.
 
 A test program keeps what it reaches (2026.11.9.1+): units are compiled with one
 section per function and per object, and a test links with `--gc-sections`

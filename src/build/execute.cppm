@@ -1870,8 +1870,20 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     // which is exactly what `--no-cache` has always done, hence the alias.
     const bool coldBuild = no_cache || ctx.cacheMode == CacheMode::Off;
     if (coldBuild) {
+        // Everything but the directory's records and its lock: the records
+        // (written by the plan, for this configuration) are what the next build
+        // reads to tell that the compiler or the base changed, and without them
+        // it would reuse what another compiler built in this directory.
         std::error_code ec;
-        std::filesystem::remove_all(ctx.outputDir, ec);
+        const std::string lock(mcpp::build::dirlock::kLockName);
+        for (auto const& e : std::filesystem::directory_iterator(ctx.outputDir, ec)) {
+            const auto name = e.path().filename().string();
+            if (name == "lineage" || name == "toolchain" || name == "fingerprint" || name == "uses.list"
+                || name == lock || name == lock + ".owner")
+                continue;
+            std::error_code rec;
+            std::filesystem::remove_all(e.path(), rec);
+        }
         // The graph names the directory's link to this engine (design §17,
         // W1), which the line above removed with everything else: made again,
         // as the link spec below is, or every step of a cold build fails on a
@@ -5040,6 +5052,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 o.unset.emplace_back(v);
         for (auto& kv : stated) o.env.push_back(std::move(kv));
     };
+    const bool exclusiveDevice = (ctx->manifest.buildConfig.runExclusive
+                                  || ctx->plan.platform.fields.runner.exclusive)
+                              && !runnerChoice.tmpl.empty();
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
         const bool capture = json || list.size() > 1;
@@ -5058,9 +5073,6 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // Clamped rather than made an error: an exclusive target with one test
         // is an ordinary run, and refusing it would turn a correct
         // configuration into a failure.
-        const bool exclusiveDevice = (ctx->manifest.buildConfig.runExclusive
-                                      || ctx->plan.platform.fields.runner.exclusive)
-                                  && !runnerChoice.tmpl.empty();
         const int runJobsHere = exclusiveDevice ? 1 : runJobs;
         if (exclusiveDevice && runJobs > 1 && list.size() > 1) {
             mcpp::ui::info("note", std::format(
@@ -5711,31 +5723,50 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // the program once.
         const auto split = ctx->manifest.testSplit.empty() ? std::string("file") : ctx->manifest.testSplit;
         if (invocationNotRunReason.empty()) {
-            std::vector<Runnable> expanded;
-            for (auto& r : runnable) {
-                const bool divide = split != "none" && !(split == "file" && r.ownFiles < 2);
-                // A program the run does not divide is listed only for its
-                // resources, which costs a process start; behind a runner (an
-                // emulator, a board) that start is the runner's, and the program
-                // runs whole, as it did before.
+            const auto divides = [&](const Runnable& r) {
+                return split != "none" && !(split == "file" && r.ownFiles < 2);
+            };
+            // A program the run does not divide is listed only for its
+            // resources; behind a runner (an emulator, a board) that start is
+            // the runner's, and the program runs whole, as it did before.
+            const auto listed_here = [&](const Runnable& r) {
                 const bool direct = !r.argv.empty() && std::filesystem::path(r.argv.front()) == r.program;
-                if (!r.protocol || (!divide && !direct)) {
-                    expanded.push_back(std::move(r));
+                return r.protocol && (divides(r) || direct);
+            };
+            // The listings, each a process start, run on the run's workers.
+            std::vector<std::optional<mcpp::build::test_protocol::Report>> listings(runnable.size());
+            {
+                std::atomic<std::size_t> nextListing{0};
+                auto lister = [&] {
+                    for (std::size_t i; (i = nextListing.fetch_add(1)) < runnable.size();) {
+                        const auto& r = runnable[i];
+                        if (!listed_here(r)) continue;
+                        mcpp::run::Options listOpts;
+                        listOpts.env = r.env;
+                        listOpts.cwd = r.cwd.string();
+                        state_protocol(r, "list", listOpts);
+                        listOpts.streams = mcpp::run::Streams::merged;
+                        listOpts.total = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
+                        listOpts.report_spawn_failure = false;
+                        auto listed = mcpp::run::execute(r.argv, listOpts);
+                        auto report = mcpp::build::test_protocol::read_report(r.protocolDir / "list.ndjson", listed.exit_code);
+                        if (listed.exit_code == 0 && report.done && !report.listed.empty()) listings[i] = std::move(report);
+                    }
+                };
+                std::vector<std::jthread> listers;
+                const int listJobs = exclusiveDevice ? 1 : std::min<int>(runJobs, static_cast<int>(runnable.size()));
+                for (int w = 1; w < listJobs; ++w) listers.emplace_back(lister);
+                lister();
+            }
+            std::vector<Runnable> expanded;
+            for (std::size_t at = 0; at < runnable.size(); ++at) {
+                auto& r = runnable[at];
+                const bool divide = divides(r);
+                if (!listings[at]) {
+                    expanded.push_back(std::move(r));   // not listed, or its run reports what is wrong
                     continue;
                 }
-                mcpp::run::Options listOpts;
-                listOpts.env = r.env;
-                listOpts.cwd = r.cwd.string();
-                state_protocol(r, "list", listOpts);
-                listOpts.streams = mcpp::run::Streams::merged;
-                listOpts.total = std::chrono::milliseconds(static_cast<long long>(testOpts.timeoutSecs) * 1000);
-                listOpts.report_spawn_failure = false;
-                auto listed = mcpp::run::execute(r.argv, listOpts);
-                auto report = mcpp::build::test_protocol::read_report(r.protocolDir / "list.ndjson", listed.exit_code);
-                if (listed.exit_code != 0 || !report.done || report.listed.empty()) {
-                    expanded.push_back(std::move(r));   // its run reports what is wrong
-                    continue;
-                }
+                const auto& report = *listings[at];
                 // THE MACHINE, HELD ALONE (P7.1). A case that holds `machine`
                 // states a property that holds only while nothing beside it
                 // changes the machine (the shared home, its caches, the default
@@ -5743,16 +5774,22 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // the property is the run's to keep across processes: the cases
                 // that hold it are a part of their own, run with no other test
                 // beside it, and the rest of their file runs as before; a file
-                // of both kinds names that part `<part> (machine)`. Measured on the e2e cases in one `mcpp test`: 234
-                // and 1039 failed beside the other programs, and passed alone.
+                // of both kinds names that part `<part> (machine)`. Measured on
+                // the e2e cases in one `mcpp test`: 234 and 1039 failed beside
+                // the other programs, and passed alone.
                 const auto holds_machine = [](const mcpp::build::test_protocol::Case& c) {
                     return std::ranges::find(c.resources, "machine") != c.resources.end();
                 };
+                // A program the run does not divide runs once, alone when one
+                // of its cases holds the machine.
+                if (!divide) {
+                    r.alone = std::ranges::any_of(report.listed, holds_machine);
+                    expanded.push_back(std::move(r));
+                    continue;
+                }
                 std::map<std::pair<std::string, bool>, std::vector<std::string>> groups;
                 for (auto const& c : report.listed) {
-                    const auto key = !divide ? std::string("-")
-                                   : split == "case" ? c.id
-                                   : (c.file.empty() ? std::string("-") : c.file);
+                    const auto key = split == "case" ? c.id : (c.file.empty() ? std::string("-") : c.file);
                     groups[{key, holds_machine(c)}].push_back(c.id);
                 }
                 if (groups.size() < 2) {
@@ -5769,9 +5806,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 for (auto& [key, ids] : ordered) {
                     const auto& [where, machine] = key;
                     Runnable part = r;
-                    const auto label = !divide ? std::string{}
-                                     : split == "case" ? where : part_label(r.partRoot, where);
-                    part.name = label.empty() ? r.name : std::format("{}/{}", r.name, label);
+                    const auto label = split == "case" ? where : part_label(r.partRoot, where);
+                    part.name = std::format("{}/{}", r.name, label);
                     // Named apart only when its file has cases of both kinds.
                     if (machine && groups.contains({where, false})) part.name += " (machine)";
                     part.partOf = r.name;

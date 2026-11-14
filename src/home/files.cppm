@@ -75,6 +75,12 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
 // at once each write (config.toml, .xlings.json).
 bool write_replacing(const std::filesystem::path& file, std::string_view text);
 
+// The text of `file`, or nothing when it cannot be read. Windows refuses an
+// open for a moment while another program renames over the file
+// (write_replacing): the open is retried there, for up to two seconds, as the
+// writer's rename is.
+std::optional<std::string> read_whole(const std::filesystem::path& file);
+
 // Whether a directory another program wrote may be read and run from: it
 // belongs to this user or to the system (root; on Windows also Administrators
 // and SYSTEM), and when it is not this user's, this user cannot write it.

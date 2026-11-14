@@ -57,6 +57,10 @@ std::string spelling(const std::filesystem::path& path);
 std::filesystem::path from_utf8(std::string_view value);
 std::filesystem::path original_root();
 std::string original_source();
+// A self-contained home (`<home>/bin/mcpp`), stated as MCPP_HOME for the programs
+// this mcpp starts: a build directory's graph runs the engine through its own
+// link, from which the home cannot be derived. Its source stays `portable`.
+void state_portable_home();
 std::expected<Selection, std::string> inspect(const std::filesystem::path& original);
 Selection selection();
 bool initialized(const std::filesystem::path& path);
@@ -155,9 +159,23 @@ std::filesystem::path original_root() {
     return portable.empty() ? default_home() : portable;
 }
 
+namespace {
+// MCPP_HOME was set by state_portable_home, not by the caller.
+bool portable_stated = false;
+} // namespace
+
 std::string original_source() {
+    if (portable_stated) return "portable";
     if (mcpp::invocation::get("MCPP_HOME")) return "environment";
     return portable_root().empty() ? "user" : "portable";
+}
+
+void state_portable_home() {
+    if (mcpp::invocation::get("MCPP_HOME")) return;
+    const auto portable = portable_root();
+    if (portable.empty()) return;
+    mcpp::invocation::set("MCPP_HOME", spelling(portable));
+    portable_stated = true;
 }
 
 std::string spelling(const std::filesystem::path& path) {

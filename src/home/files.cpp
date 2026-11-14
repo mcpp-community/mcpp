@@ -4,6 +4,7 @@ module mcpp.home.files;
 
 import std;
 import mcpplibs.os.fs;
+import mcpplibs.os.platform;
 
 namespace mcpp::home {
 
@@ -82,8 +83,10 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     for (;;) {
         const auto r = mcpplibs::os::fs::rename(source, destination, true);
         if (r) { ec.clear(); return true; }
-        if ((r.error().code != mcpplibs::os::errc::permission && r.error().code != mcpplibs::os::errc::again)
-            || std::chrono::steady_clock::now() + delay > deadline) {
+        // A refusal is the sharing violation on Windows; elsewhere it is final.
+        const bool held = r.error().code == mcpplibs::os::errc::again
+                       || (mcpplibs::os::is_windows && r.error().code == mcpplibs::os::errc::permission);
+        if (!held || std::chrono::steady_clock::now() + delay > deadline) {
             ec = std::make_error_code(r.error().code == mcpplibs::os::errc::not_found
                                           ? std::errc::no_such_file_or_directory
                                           : std::errc::permission_denied);
@@ -94,8 +97,13 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     }
 }
 
-bool write_replacing(const std::filesystem::path& file, std::string_view text) {
+bool write_replacing(const std::filesystem::path& path, std::string_view text) {
     std::error_code ec;
+    // A link (a config.toml a dotfile manager keeps elsewhere) is written
+    // through: the file it names is replaced, and the link stays.
+    auto file = path;
+    if (std::filesystem::is_symlink(path, ec))
+        if (auto target = std::filesystem::canonical(path, ec); !ec) file = std::move(target);
     std::filesystem::create_directories(file.parent_path(), ec);
     auto tmp = file;
     tmp += std::format(".{:x}.tmp", std::random_device{}());
@@ -109,11 +117,32 @@ bool write_replacing(const std::filesystem::path& file, std::string_view text) {
             return false;
         }
     }
+    // The replaced file's permissions carry over (a config.toml kept private).
+    if (const auto st = std::filesystem::status(file, ec); !ec && std::filesystem::exists(st))
+        std::filesystem::permissions(tmp, st.permissions(), std::filesystem::perm_options::replace, ec);
     if (!replace_file(tmp, file, ec)) {
         std::filesystem::remove(tmp, ec);
         return false;
     }
     return true;
+}
+
+std::optional<std::string> read_whole(const std::filesystem::path& file) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    auto delay = std::chrono::milliseconds{5};
+    for (;;) {
+        if (std::ifstream in{file}) {
+            std::ostringstream text;
+            text << in.rdbuf();
+            return text.str();
+        }
+        std::error_code ec;
+        if (!mcpplibs::os::is_windows || !std::filesystem::exists(file, ec)
+            || std::chrono::steady_clock::now() + delay > deadline)
+            return std::nullopt;
+        std::this_thread::sleep_for(delay);
+        delay = std::min(delay * 2, std::chrono::milliseconds{200});
+    }
 }
 
 std::string untrusted_because(const std::filesystem::path& dir) {

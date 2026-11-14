@@ -352,12 +352,13 @@ Outcome launch(const Spec& s) {
                   || (s.shouldStop && *s.shouldStop))) {
         // Stream EOF is independent of child completion. Keep the same bounds
         // through the final wait, including inherited and discarded streams.
-        for (;;) {
-            // Polled with the wait lock free between polls (see below).
+        // Polled with the wait lock free between polls (see below), from 1 ms
+        // growing to 20 ms: a program that ends at once is seen at once.
+        for (auto pause = std::chrono::milliseconds(1);; pause = std::min(pause * 2, std::chrono::milliseconds(20))) {
             auto waited = p->try_wait();
             if (!waited || waited->has_value()) break;
             if (should_stop()) { stop = true; break; }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(pause);
         }
     }
     if (stop) {
@@ -372,11 +373,11 @@ Outcome launch(const Spec& s) {
     // only to take it again at once starved the request (measured: an action
     // ignored SIGTERM for as long as its program ran).
     std::optional<os::process::exit_status> st;
-    for (;;) {
+    for (auto pause = std::chrono::milliseconds(1);; pause = std::min(pause * 2, std::chrono::milliseconds(20))) {
         auto waited = p->try_wait();
         if (!waited) break;
         if (waited->has_value()) { st = **waited; break; }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(pause);
     }
     out.exit_code = st ? st->shell_code() : 127;
     return out;

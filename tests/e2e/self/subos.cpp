@@ -21,7 +21,10 @@ std::string entry_url(const fs::path& xj, std::string_view name) {
 }
 
 void rewrite(const fs::path& file, const std::string& pattern) {
-    s::project(file.parent_path(), {{file.filename().string(), std::regex_replace(s::read_file(file), std::regex{pattern}, "\n")}});
+    // Read as text: mcpp writes config.toml with the system's line ends.
+    const s::project dir(file.parent_path(), {});
+    const auto name = file.filename().string();
+    dir.write(name, std::regex_replace(dir.read(name), std::regex{pattern}, "\n"));
 }
 
 E2E subos{"subos", [] {

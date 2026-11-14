@@ -956,7 +956,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     }
 
     // 4. Load config.toml
-    auto doc = fresh_config ? t::parse(default_config_toml()) : t::parse_file(cfg.configFile);
+    // Read as a writer leaves it (read_whole): another mcpp may be replacing it.
+    const auto configText = fresh_config ? std::optional<std::string>(default_config_toml())
+                                         : mcpp::home::read_whole(cfg.configFile);
+    if (!configText)
+        return std::unexpected(ConfigError{std::format("invalid config.toml: cannot open '{}'", cfg.configFile.string())});
+    auto doc = t::parse(*configText);
     if (!doc) {
         return std::unexpected(ConfigError{
             std::format("invalid config.toml: {}", doc.error().message)});
@@ -1435,14 +1440,10 @@ write_config_value(const GlobalConfig& cfg, std::string_view section, std::strin
                    std::string_view literal) {
     // The reader is closed before the file is replaced: Windows refuses to
     // rename over a file this process holds open.
-    std::string text;
-    {
-        std::ifstream is(cfg.configFile);
-        if (!is) return std::unexpected(ConfigError{
-            std::format("cannot open '{}'", cfg.configFile.string())});
-        std::stringstream ss; ss << is.rdbuf();
-        text = ss.str();
-    }
+    auto read = mcpp::home::read_whole(cfg.configFile);
+    if (!read) return std::unexpected(ConfigError{
+        std::format("cannot open '{}'", cfg.configFile.string())});
+    std::string text = std::move(*read);
 
     std::string line = std::format("{} = {}\n", key, literal);
     const auto header = std::format("[{}]", section);

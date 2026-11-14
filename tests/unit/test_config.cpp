@@ -5,6 +5,7 @@
 import std;
 import mcpplibs.mtest;
 import mcpp.config;
+import mcpp.home.files;
 import mcpp.fallback.config_migration;
 import mcpp.pm.index_spec;
 
@@ -355,11 +356,8 @@ UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
     const bool pauses = host() == platform::windows;
     std::jthread reader([&](std::stop_token stop) {
         while (!stop.stop_requested()) {
-            {
-                std::ifstream in(cfg.configFile);
-                const std::string text{std::istreambuf_iterator<char>(in), {}};
-                if (!text.contains("[toolchain]\ndefault = \"")) ++partial;
-            }
+            // As mcpp reads it (read_whole), which waits out a replacement on Windows.
+            if (!mcpp::home::read_whole(cfg.configFile).value_or("").contains("[toolchain]\ndefault = \"")) ++partial;
             if (pauses) std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
     });

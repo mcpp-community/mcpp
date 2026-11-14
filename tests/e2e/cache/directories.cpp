@@ -361,8 +361,8 @@ E2E directories{"directories", [] {
     };
 
     "1000 a configuration keeps one directory"_test[s::gcc] = [] {
-        // design 2026-10-31 §8 and 2026-11-12 §17: a predecessor of the lineage is taken over, one
-        // of another toolchain replaced, another lineage kept; the sweep by keep_days; uses.list
+        // design 2026-10-31 §8 and 2026-11-12 §17: a predecessor of the lineage is taken over, also
+        // one whose records an earlier mcpp wrote with fewer lines, one of another toolchain replaced, another lineage kept; the sweep by keep_days; uses.list
         // marks the cache entries used; the directory is named by the lineage and the graph runs
         // mcpp through its link; mcpp at another path compiles nothing again; a rooted workspace
         // keeps its configuration under clean --stale.
@@ -384,6 +384,20 @@ E2E directories{"directories", [] {
         build_ok(r, "the build after the move failed");
         expect(fatal(fs::is_directory(dir) && !fs::exists(zeros))) << "the predecessor was not taken over\n" << names(triple);
         expect(fatal(compiles() == before)) << "taking the predecessor over compiled again\n" << s::read_file(dir / ".ninja_log");
+        // A2: the records an mcpp before 2026.11.13.1 wrote, without `base` and `runtime` lines.
+        fs::rename(dir, zeros);
+        const auto without = [](const std::string& text, std::string_view key) {
+            std::string out;
+            for (const auto& line : s::lines_with(text, ""))
+                if (!line.empty() && !line.starts_with(std::string(key) + " ")) out += line + "\n";
+            return out;
+        };
+        s::project(zeros, {{"lineage", without(s::read_file(zeros / "lineage"), "base")},
+                           {"toolchain", without(s::read_file(zeros / "toolchain"), "runtime")}});
+        r = app.mcpp({"build"}, home);
+        build_ok(r, "the build after the upgrade failed");
+        expect(fatal(fs::is_directory(dir) && !fs::exists(zeros))) << "an earlier mcpp's directory was not taken over\n" << names(triple);
+        expect(fatal(compiles() == before)) << "taking an earlier mcpp's directory over compiled again\n" << s::read_file(dir / ".ninja_log");
         // B
         fs::rename(dir, zeros);
         std::ofstream(zeros / "toolchain") << "compiler another\n";

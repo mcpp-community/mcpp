@@ -18,6 +18,7 @@ export module mcpp.build.graph_engine;
 
 import std;
 import mcpplibs.os;
+import mcpp.diag;
 import mcpp.invocation;
 
 export namespace mcpp::build::graph_engine {
@@ -98,6 +99,9 @@ std::filesystem::path place(const std::filesystem::path& to) {
     if (!ec) return to;
     std::error_code rec;
     fs::remove(to, rec);
+    mcpp::diag::degraded("build/engine",
+                         std::format("the build directory's link to this mcpp could not be made: {}", ec.message()),
+                         "the graph names this mcpp's own path, so the next mcpp compiles every unit again");
     return self;
 }
 

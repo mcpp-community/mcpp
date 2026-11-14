@@ -51,6 +51,31 @@ std::string read_small(const std::filesystem::path& file) {
     return {std::istreambuf_iterator<char>(in), {}};
 }
 
+// `text` without its line `<key> ...`.
+std::string without_line(std::string_view text, std::string_view key) {
+    std::string out;
+    for (auto const part : std::views::split(text, '\n')) {
+        const std::string_view line(part.begin(), part.end());
+        if (line.empty() || (line.starts_with(key) && line.substr(key.size()).starts_with(' '))) continue;
+        out += line;
+        out += '\n';
+    }
+    return out;
+}
+
+// A RECORD AN EARLIER MCPP WROTE (before 2026.11.13.1) states fewer lines: its
+// lineage no `base`, its toolchain no `runtime`. It is read on the lines it
+// states, so that an upgrade takes the directory over rather than leaving it
+// beside a new one (measured: the 753 MB directory of mcpp's own build an
+// earlier mcpp of this release wrote, left). A base switched since is in the
+// commands that name it, which ninja compiles again.
+bool same_record(std::string_view was, std::string_view now, std::string_view added) {
+    if (was == now) return true;
+    const bool states = was.starts_with(std::string(added) + " ")
+                     || was.find(std::format("\n{} ", added)) != std::string_view::npos;
+    return !was.empty() && !states && was == without_line(now, added);
+}
+
 } // namespace
 
 // A DIRECTORY AN EARLIER MCPP NAMED BY THE WHOLE FINGERPRINT (before
@@ -78,7 +103,7 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     for (auto const& d : fs::directory_iterator(outputDir.parent_path(), ec)) {
         std::error_code dec;
         if (d.path() == outputDir || !d.is_directory(dec)
-            || read_small(d.path() / "lineage") != lineage)
+            || !same_record(read_small(d.path() / "lineage"), lineage, "base"))
             continue;
         // The one this configuration used last: build.ninja is written by every plan.
         const auto t = fs::last_write_time(d.path() / "build.ninja", dec);
@@ -90,7 +115,7 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     if (!held) return;
     const auto shown = best->lexically_relative(state.workRoot).generic_string();
     const auto was_toolchain = read_small(*best / "toolchain");
-    const bool sameToolchain = was_toolchain == toolchain_text(state.fp);
+    const bool sameToolchain = same_record(was_toolchain, toolchain_text(state.fp), "runtime");
     if (sameToolchain) {
         // Its entries move in, one rename each, beside the lock this build
         // may already have created there.
