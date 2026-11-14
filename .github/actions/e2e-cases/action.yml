@@ -76,7 +76,13 @@ runs:
         [ "${#cases[@]}" -gt 0 ] || { echo "::error::no case named"; exit 1; }
         args=(--archive "$RUNNER_TEMP/mcpp-tests/mcpp-tests.tar.gz")
         for c in "${cases[@]}"; do args+=(--case "$c"); done
-        [ -z "$UNDER_TEST" ] || export MCPP_E2E_MCPP="$UNDER_TEST" MCPP_BIN_MCPP="$UNDER_TEST"
+        # The system's own spelling of the path: mcpp reads MCPP_BIN_MCPP
+        # itself, and a Windows mcpp does not read an MSYS path.
+        if [ -n "$UNDER_TEST" ]; then
+          under="$UNDER_TEST"
+          if command -v cygpath >/dev/null 2>&1; then under="$(cygpath -w "$under")"; fi
+          export MCPP_E2E_MCPP="$under" MCPP_BIN_MCPP="$under"
+        fi
         log="$RUNNER_TEMP/e2e-cases.log"
         status=0
         "$RUNNER_MCPP" test "${args[@]}" 2>&1 | tee "$log" || status=$?

@@ -453,8 +453,9 @@ name is refused before anything is built.
 The archive carries the package's programs beside the tests, and its run gives
 each test `MCPP_BIN_<NAME>` as the build would. Written with `--no-programs`,
 the archive carries none of them and its manifest names their variables
-(`named_programs`); its run takes each from its own environment and refuses one
-the environment does not name (2026.11.13.1+). The run of an archive builds
+(`named_programs`, schema 2, which an mcpp that reads only schema 1 refuses);
+the run of a leg that runs here takes each from its own environment and refuses
+one the environment does not name (2026.11.13.1+). The run of an archive builds
 nothing, and is refused `--no-programs`.
 
 ```bash

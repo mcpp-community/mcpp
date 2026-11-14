@@ -94,7 +94,7 @@ namespace libc = mcpplibs::mwrap::libc::macros;
 //   legs/<triple>/programs/<program>      the package's own programs, which a
 //                                         test finds as MCPP_BIN_<NAME> (L5)
 //
-// `mcpp-tests.json` (schema 1): `package`, `cwd` (the directory the tests run
+// `mcpp-tests.json` (schema 1, or 2 with `named_programs`): `package`, `cwd` (the directory the tests run
 // in, relative to the project root: the package's own), and `legs`, each with
 // its `triple`, `programs` (environment name to path) and `tests` (`name`,
 // `program`, the `files` beside it, the test `protocol` it implements, 0 for
@@ -102,7 +102,12 @@ namespace libc = mcpplibs::mwrap::libc::macros;
 // an archive is run by the same runner as a build's tests). Paths are relative to the archive's directory and use `/`.
 export namespace mcpp::build::test_archive {
 
+// Schema 2 is an archive whose legs name programs it does not carry
+// (`named_programs`, `--no-programs`): an mcpp that reads only schema 1 refuses
+// it, rather than running its tests without the programs they test. Every
+// other archive is written as schema 1, and both are read.
 inline constexpr int kSchema = 1;
+inline constexpr int kSchemaNamed = 2;
 inline constexpr std::string_view kManifestName = "mcpp-tests.json";
 
 struct Test {
@@ -188,14 +193,16 @@ nlohmann::json to_json(const Manifest& m) {
         if (!l.named.empty()) leg["named_programs"] = l.named;
         legs.push_back(std::move(leg));
     }
-    return {{"schema", kSchema}, {"mcpp", std::string(mcpp::MCPP_VERSION)},
+    const bool named = std::ranges::any_of(m.legs, [](auto const& l) { return !l.named.empty(); });
+    return {{"schema", named ? kSchemaNamed : kSchema}, {"mcpp", std::string(mcpp::MCPP_VERSION)},
             {"package", m.package}, {"cwd", m.cwd}, {"legs", std::move(legs)}};
 }
 
 std::expected<Manifest, std::string> from_json(const nlohmann::json& d) {
-    if (!d.is_object() || d.value("schema", 0) != kSchema)
-        return std::unexpected(std::format("{} is not a schema-{} test archive manifest",
-                                           kManifestName, kSchema));
+    const int schema = d.is_object() ? d.value("schema", 0) : 0;
+    if (schema != kSchema && schema != kSchemaNamed)
+        return std::unexpected(std::format("{} is not a schema-{} or schema-{} test archive manifest",
+                                           kManifestName, kSchema, kSchemaNamed));
     Manifest m;
     m.package = d.value("package", "");
     m.cwd = d.value("cwd", "");
@@ -1350,7 +1357,9 @@ std::optional<std::filesystem::path> platform_tool(const mcpp::build::BuildConte
 // A preparation that provisions no tool -- the run of an archive
 // (PrepareIntent::RunBuilt) -- has not located the platform's tool for this
 // machine either. Its runner is then the platform's runner for this machine's
-// architecture, the same program, made the way another architecture's is.
+// architecture, the same program, made the way another architecture's is
+// (under the checkout's target/carrier-pack/). Any other preparation that did
+// not locate the tool reports the runner not found, as before.
 struct RunnerTool {
     std::filesystem::path program;
     std::string           arch;   // the architecture it is built for
@@ -1359,7 +1368,9 @@ std::expected<std::optional<RunnerTool>, std::string>
 runner_tool(const mcpp::build::BuildContext& ctx, std::string_view word, std::string_view tripleKey,
             bool noRunner, bool build = true) {
     auto tool = platform_tool(ctx, word);
-    if (!tool && !ctx.plan.platform.fields.tools.contains(std::string(word))) return std::nullopt;
+    const bool provisionedNone = ctx.intent == mcpp::build::PrepareIntent::RunBuilt;
+    if (!tool && !(provisionedNone && ctx.plan.platform.fields.tools.contains(std::string(word))))
+        return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
     std::string arch = t ? std::string(t->arch) : std::string{};
     if (!t || mcpp::platform::runner_reach(ctx.plan.platform.fields.runner, t->arch,
@@ -6282,17 +6293,6 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
     const auto cwd = opened->manifest.cwd.empty() ? *root : *root / opened->manifest.cwd;
     // THE PROGRAMS THE RUN NAMES: an archive written with `--no-programs`
     // carries none of the package's programs.
-    std::map<std::string, std::string> namedPrograms;
-    {
-        std::vector<std::pair<std::string, std::string>> named;
-        for (auto const& leg : opened->manifest.legs)
-            for (auto const& env : leg.named) named.emplace_back(env, "");
-        if (auto why = programs_from_environment(named)) {
-            mcpp::ui::error(std::format("--archive {}: {}", testOpts.archive.string(), *why));
-            return 2;
-        }
-        namedPrograms.insert(named.begin(), named.end());
-    }
     int passed = 0, failed = 0, notRun = 0, notReached = 0;
     std::vector<std::string> reasons;
     for (auto const& leg : opened->manifest.legs) {
@@ -6325,7 +6325,20 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
         std::vector<std::pair<std::string, std::string>> legEnv;
         for (auto const& [env, path] : leg.programs)
             legEnv.emplace_back(env, (opened->root / path).lexically_normal().string());
-        for (auto const& env : leg.named) legEnv.emplace_back(env, namedPrograms[env]);
+        // THE PROGRAMS THE LEG NAMES, from this run's environment, asked for
+        // once the leg is known to run here: a leg another machine runs needs
+        // none of them. One the environment does not name is refused before
+        // any of the leg's tests run.
+        if (!leg.named.empty()) {
+            std::vector<std::pair<std::string, std::string>> named;
+            for (auto const& env : leg.named) named.emplace_back(env, "");
+            if (auto why = programs_from_environment(named)) {
+                mcpp::ui::error(std::format("--archive {}: the {} leg: {}", testOpts.archive.string(),
+                                            leg.triple, *why));
+                return 2;
+            }
+            legEnv.insert(legEnv.end(), named.begin(), named.end());
+        }
         // THE LEG'S TESTS, RUN AS A BUILD'S ARE: through the runner, the
         // protocol each implements, a process per file of its cases, the
         // workers, the store (SPEC-015 §4; docs/08).
@@ -6352,8 +6365,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
             // (runner_handoff_env): the files the program carries, each named
             // by its place beside the program, as the archive keeps it. The
             // records are written in the archive's run directory, beside the
-            // programs they describe: the checkout's output tree is not
-            // touched by a run that builds nothing.
+            // programs they describe, not among the checkout's build outputs.
             if (!tb.runnerTmpl.empty() || !tb.runUnderPrefix.empty()) {
                 std::vector<std::pair<std::string, fs::path>> carried;
                 for (auto const& f : t.files) {

@@ -1021,6 +1021,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     if (auto c = state.get_cfg(/*requireBootstrap=*/false))
         globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
     ctx.globalDefaultJobs = globalDefaultJobs;
+    ctx.intent = state.overrides.intent;
 
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and
     // the manifest are in hand. The backend writes the graph in this shape, the

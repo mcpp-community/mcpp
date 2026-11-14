@@ -196,12 +196,11 @@ jobs:
 
       # The program the tests run is this commit's, as build.yml built it: an
       # archive written with --no-programs takes it from MCPP_BIN_MCPP.
-      - name: The history the shards share
+      - name: The program under test
         shell: bash
         run: |
           echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
           echo "MCPP_BIN_MCPP=$MCPP" >> "$GITHUB_ENV"
-          python3 .github/tools/test_history.py take target/mtest "$RUNNER_TEMP/unit/history"
 
       # THE HOST'S GATE (build.yml): a new program scaffolded, built and run by
       # this commit's mcpp, seconds of running, from the archive. A red commit
@@ -225,6 +224,16 @@ jobs:
           echo "::error::the gate of ${{ inputs.host }} failed: the run is cancelled"
           gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" \
             || echo "::warning::the run could not be cancelled (the token's actions permission)"
+
+      # One history for every shard, taken after the gate: the gate's run is
+      # not the shard's, and a record of it in the store would be the newest,
+      # sizing this shard's tests unlike the others' and answering a re-run's
+      # `--failed` in place of the attempt that failed.
+      - name: The history the shards share
+        shell: bash
+        run: |
+          rm -rf -- "$GITHUB_WORKSPACE/target/mtest"
+          python3 .github/tools/test_history.py take target/mtest "$RUNNER_TEMP/unit/history"
 
       - name: Unit + integration tests via `mcpp test`
         uses: ./.github/actions/mcpp-unit

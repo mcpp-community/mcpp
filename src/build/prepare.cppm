@@ -448,6 +448,38 @@ export struct DepSourceRoot {
     bool operator==(const DepSourceRoot&) const = default;
 };
 
+// WHAT A PREPARATION IS FOR. One answer, from which each phase reads what it may
+// do: whether it compiles, whether it runs the package's programs, whether it
+// writes the project. Three switches that grew one per caller had answered it
+// before, each phase asking the ones it knew of (2026-11-14).
+export enum class PrepareIntent {
+    // Plan, then build.
+    Build,
+    // PLANNING TO DESCRIBE, NOT TO BUILD (`mcpp emit build-database`, publish,
+    // the doctor). With `work_dir` pointed outside the project, three things
+    // still reached it or ran a compiler, and this intent settles each: the std
+    // module is described (mcpp::toolchain::describe_std_module) instead of
+    // compiled; the root package's `[build] generated_files`, which are sources
+    // and live in the source tree, are compared instead of written, and a
+    // missing or stale one is recorded in BuildContext::planNotes; and mcpp.lock
+    // is READ from the project root, as the resolution input it is, while the
+    // lock this planning produces is written under `work_dir`. Build programs
+    // still run.
+    Describe,
+    // THE CONFIGURATION, NOT THE SOURCES (`prepare_configuration`, SPEC-013
+    // §9): what the project's sources would be refused for -- `import std`
+    // with no C++ run-time in the graph -- is a note of the report, and the
+    // configuration is still reported.
+    Configure,
+    // THE CONFIGURATION TESTS BUILT ELSEWHERE RUN IN (`mcpp test --archive`,
+    // SPEC-015 §4): a configuration that compiles nothing. A toolchain this
+    // machine cannot compile with -- the MSVC ABI with no Visual Studio -- is
+    // no refusal, and no build program or host tool is compiled or run: their
+    // directives and outputs shape compiles, and the tests' programs and
+    // files are the archive's.
+    RunBuilt,
+};
+
 export struct BuildContext;
 
 // A BUILD PROGRAMS' GRAPH a prepare planned (mcpp#797), for the readers that
@@ -495,6 +527,10 @@ export struct BuildContext {
     // parser of one file, and because the two readers must not be able to
     // disagree about the machine.
     int                             globalDefaultJobs = 0;
+    // What the preparation was for: a preparation that compiles nothing
+    // (`PrepareIntent::RunBuilt`) provisioned no tool, and its readers find
+    // the programs it would have built another way.
+    PrepareIntent                   intent = PrepareIntent::Build;
     // The root's exact pins of packages every consumer shares (T3): what
     // `mcpp publish` refuses in a library, one line each.
     std::vector<std::string>        sharedExactPins;
@@ -810,37 +846,6 @@ export std::string profile_override_from_flags(std::string_view profileOption,
 export std::expected<std::filesystem::path, std::string>
 package_root(const std::string& ref, bool install);
 
-// WHAT A PREPARATION IS FOR. One answer, from which each phase reads what it may
-// do: whether it compiles, whether it runs the package's programs, whether it
-// writes the project. Three switches that grew one per caller had answered it
-// before, each phase asking the ones it knew of (2026-11-14).
-export enum class PrepareIntent {
-    // Plan, then build.
-    Build,
-    // PLANNING TO DESCRIBE, NOT TO BUILD (`mcpp emit build-database`, publish,
-    // the doctor). With `work_dir` pointed outside the project, three things
-    // still reached it or ran a compiler, and this intent settles each: the std
-    // module is described (mcpp::toolchain::describe_std_module) instead of
-    // compiled; the root package's `[build] generated_files`, which are sources
-    // and live in the source tree, are compared instead of written, and a
-    // missing or stale one is recorded in BuildContext::planNotes; and mcpp.lock
-    // is READ from the project root, as the resolution input it is, while the
-    // lock this planning produces is written under `work_dir`. Build programs
-    // still run.
-    Describe,
-    // THE CONFIGURATION, NOT THE SOURCES (`prepare_configuration`, SPEC-013
-    // §9): what the project's sources would be refused for -- `import std`
-    // with no C++ run-time in the graph -- is a note of the report, and the
-    // configuration is still reported.
-    Configure,
-    // THE CONFIGURATION TESTS BUILT ELSEWHERE RUN IN (`mcpp test --archive`,
-    // SPEC-015 §4): a configuration that compiles nothing. A toolchain this
-    // machine cannot compile with -- the MSVC ABI with no Visual Studio -- is
-    // no refusal, and no build program or host tool is compiled or run: their
-    // directives and outputs shape compiles, and the tests' programs and
-    // files are the archive's.
-    RunBuilt,
-};
 
 export struct BuildOverrides {
     // Where the package being built LIVES (its mcpp.toml). Empty = walk up from

@@ -343,8 +343,8 @@ mcpp test --archive tests.tar.gz                             # 在检出中运�
 `.tgz`）、`.tar.zst`、`.tar.xz` 或 `.tar`；其他名称在构建前即被拒绝。
 
 归档在测试旁携带包的程序，其运行像构建那样给每个测试 `MCPP_BIN_<NAME>`。以 `--no-programs` 写出的归档
-不携带它们，清单列出其变量（`named_programs`）；运行从自身的环境取得各程序，环境未指定者被拒绝
-（2026.11.13.1+）。归档的运行不构建任何东西，不接受 `--no-programs`。
+不携带它们，清单列出其变量（`named_programs`，schema 2，只读 schema 1 的 mcpp 拒绝它）；在本机运行的腿
+从自身的环境取得各程序，环境未指定者被拒绝（2026.11.13.1+）。归档的运行不构建任何东西，不接受 `--no-programs`。
 
 ```bash
 mcpp test --no-run --no-programs --archive tests.tar.gz      # 只有测试
