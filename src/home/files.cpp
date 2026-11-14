@@ -4,7 +4,6 @@ module mcpp.home.files;
 
 import std;
 import mcpplibs.os.fs;
-import mcpplibs.os.platform;
 
 namespace mcpp::home {
 
@@ -83,9 +82,10 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     for (;;) {
         const auto r = mcpplibs::os::fs::rename(source, destination, true);
         if (r) { ec.clear(); return true; }
-        // A refusal is the sharing violation on Windows; elsewhere it is final.
+        // A refusal is retried as the sharing violation it is on Windows;
+        // elsewhere it is final, and costs the failing write the wait.
         const bool held = r.error().code == mcpplibs::os::errc::again
-                       || (mcpplibs::os::is_windows && r.error().code == mcpplibs::os::errc::permission);
+                       || r.error().code == mcpplibs::os::errc::permission;
         if (!held || std::chrono::steady_clock::now() + delay > deadline) {
             ec = std::make_error_code(r.error().code == mcpplibs::os::errc::not_found
                                           ? std::errc::no_such_file_or_directory
@@ -137,7 +137,7 @@ std::optional<std::string> read_whole(const std::filesystem::path& file) {
             return text.str();
         }
         std::error_code ec;
-        if (!mcpplibs::os::is_windows || !std::filesystem::exists(file, ec)
+        if (!std::filesystem::exists(file, ec)
             || std::chrono::steady_clock::now() + delay > deadline)
             return std::nullopt;
         std::this_thread::sleep_for(delay);
