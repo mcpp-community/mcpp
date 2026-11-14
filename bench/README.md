@@ -141,8 +141,10 @@ performance effect.**
 What CI does keep is a history of mcpp's own costs. `bench/tests/engine.cpp`
 holds mtest Bench cases that time the mcpp under test (`MCPP`) on a small module
 fixture: a build with nothing to do, `mcpp why flags`, and a rebuild after one
-interface edit. The Linux unit job runs them (`cd bench && mcpp test`), and each
-cost enters mtest's store as a metric with its samples, so that
+interface edit, each call timed by itself (`bench::each`; the edit itself is
+paused out of the rebuild's time). The Linux unit job runs them
+(`cd bench && mcpp test`), and each cost enters mtest's store as a metric -- the
+median, with `.p95`, `.max` and the two slowest calls stated -- so that
 `mtest analyze trend` and the workflow run's report show it against its history.
 These are trends on one runner, not comparisons between engines; the standard
 set above remains the source of every published number.

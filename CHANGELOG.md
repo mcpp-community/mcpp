@@ -43,6 +43,11 @@
 
 ### Changed
 
+- `mcpp new` scaffolds tests with mtest 0.8.3 (was 0.5.2), and `mcpp test
+  --guide` suggests it; mcpp's own tests, its modules' tests, the canaries and
+  the engine benchmark use it. The benchmark times each call by itself
+  (`bench::each`): the median as before, with the 95th percentile, the maximum
+  and the two slowest calls.
 - A configuration's build directory is named by its lineage, which includes the
   base as stated; the evolving parts (mcpp, the compiler build, the standard
   library version, what the base contains) are recorded inside it, a compiler
@@ -78,7 +83,8 @@
   '='`). On Windows, which refuses a rename over a file a reader holds open,
   `mcpp toolchain default` and the other writers no longer fail with `cannot
   write config.toml`: the writer closes its own reader first and waits up to
-  two seconds for the others.
+  two seconds for the others. A `config.toml` that is a symbolic link is
+  written through, and the file keeps its permissions.
 - `mcpp test` runs a case that holds the machine (P7.1, resource `machine`)
   with no other test beside it: the listed cases of a file that hold it are a
   part of their own (`<program>/<file> (machine)` beside the file's other
