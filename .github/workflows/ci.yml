@@ -199,6 +199,9 @@ jobs:
       - name: The release canary runner runs each command under the named bash
         run: python3 tests/scripts/test_release_canaries.py
 
+      - name: The release proposes its index entry from the sealed manifest, GitCode last
+        run: python3 tests/scripts/test_index_pr.py
+
       - name: The protocol table of SPEC-007 names the engine's protocol
         run: python3 tests/scripts/test_protocol_table.py
 

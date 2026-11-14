@@ -17,6 +17,10 @@ on:
         description: 'build the ecosystem canaries (xlings, mcppls) with the candidate before the release is created'
         type: boolean
         default: false
+      gitcode:
+        description: 'also mirror the archives to GitCode (about 10 minutes per archive from a GitHub runner); off, the owner mirrors GitCode locally (docs/92-release.md)'
+        type: boolean
+        default: false
 
 # THE BUILDS RUN AT ONCE, AND ONE JOB CREATES THE RELEASE (design 2026-11-14).
 # The four platform builds start together and keep their archives as
@@ -971,81 +975,74 @@ jobs:
           overwrite: true # A rerun has already proved the public bytes identical.
           retention-days: 30
 
-  # Publish this release into the xlings ecosystem, after ALL platform builds
-  # have uploaded their assets and the immutable manifest gate has passed:
-  #   ① mirror binaries → xlings-res/mcpp (GitHub + GitCode) so XLINGS_RES
-  #      downloads resolve on every platform (incl. the CN/GitCode path);
-  #   ② open a PR against openxlings/xim-pkgindex bumping mcpp to this version
-  #      (a maintainer merges it — index git source is not on the critical path).
-  # These publication steps are required for ecosystem completeness: their
-  # failure leaves the GitHub Release object available but keeps this workflow
-  # red, so post-release verification cannot report a complete release.
+  # PUBLISH THE RELEASE INTO THE XLINGS ECOSYSTEM (design 2026-11-14
+  # release-publication, B1-B3), after every platform archive is in the release
+  # and the manifest is sealed:
+  #   1. mirror the archives to xlings-res/mcpp on GitHub (about a minute);
+  #   2. open the index pull request on openxlings/xim-pkgindex from the sealed
+  #      manifest (`index_pr.py`; seconds, no other repository's workflow);
+  #   3. mirror GitCode, only when the run is dispatched with `gitcode`. A
+  #      GitHub runner uploads there at about 0.012 MB/s: v2026.11.13.1 spent
+  #      713 s on it, 604 s per archive. Without it the owner mirrors GitCode
+  #      locally and merges the index pull request after that (docs/92-release.md).
+  # A failed step keeps the workflow red; the steps before it stand.
   # Shared vendored scripts live in .github/tools/ (kept in sync with xlings).
   publish-ecosystem:
     needs: release-manifest
     if: ${{ !cancelled() && needs.release-manifest.result == 'success' }}
     runs-on: ubuntu-latest
-    # A4 hardening: a single stuck upload once held this job >1h (6h default
-    # ceiling). The mirror script has per-file timeouts and (post-0.0.89)
-    # batch-upload + ranged-GET verification — normal runs are minutes; 30
-    # is the generous backstop (20 was hit by the old per-asset verify loop).
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       XLINGS_RES_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       XIM_PKGINDEX_TOKEN: ${{ secrets.XIM_PKGINDEX_TOKEN }}
+      # A tag push has no inputs: `inputs.gitcode` is empty and GitCode is not mirrored.
+      WITH_GITCODE: ${{ github.event_name == 'workflow_dispatch' && inputs.gitcode }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: The sealed manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: mcpp-release-manifest
+          path: sealed
       - name: Determine version
         id: version
-        run: echo "version=$(awk -F '\"' '/^version[[:space:]]*=/{print $2; exit}' mcpp.toml)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(python3 -c 'import json; print(json.load(open("sealed/mcpp-release.json"))["version"])')" >> "$GITHUB_OUTPUT"
 
-      - name: Mirror binaries to xlings-res/mcpp (gh + gtc)
+      - name: Mirror the archives to xlings-res/mcpp on GitHub
         if: ${{ env.XLINGS_RES_TOKEN != '' }}
-        # THIS MUST BE LONGER THAN THE SCRIPT'S OWN LEG DEADLINE, AND FOR
-        # A LONG TIME IT WAS SHORTER.
-        #
-        # `mirror_res.sh` gives GitCode `MIRROR_LEG_DEADLINE_GTC=2400s` because
-        # that host shapes inbound traffic; this step killed it at 600s, so the
-        # script's budget could never be spent and the shorter of two
-        # disagreeing limits always won. Every release since has ended the same
-        # way — `The action … has timed out after 10 minutes`, GitHub's eight
-        # assets uploaded in seconds and GitCode's three large ones cut off,
-        # with only the small `.sha256` files through. v2026.8.25.1 and
-        # v2026.8.25.2 both, measured.
-        #
-        # The paragraph this replaces described a design that no longer
-        # exists: a per-asset `MIRROR_UPLOAD_TIMEOUT` of 180s. The script's own
-        # comment records why it went ("the old per-asset cap failed four
-        # releases in a row") — but this value, calibrated to it, stayed.
-        #
-        # 45 > 40 leaves the script room to reach its own deadline and report
-        # what it abandoned by name, which is the visibility the value exists
-        # for; the job's `timeout-minutes: 30` above is the outer backstop.
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
+          MIRROR_HOSTS: gh
+        run: |
+          chmod +x .github/tools/mirror_res.sh
+          bash .github/tools/mirror_res.sh mcpp "${{ steps.version.outputs.version }}"
+
+      - name: Open the index pull request (xim-pkgindex)
+        if: ${{ env.XIM_PKGINDEX_TOKEN != '' }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.XIM_PKGINDEX_TOKEN }}
+        run: |
+          # The push of the index branch authenticates through gh.
+          gh auth setup-git
+          python3 .github/tools/index_pr.py --manifest sealed/mcpp-release.json \
+            --gitcode "${{ env.WITH_GITCODE == 'true' && 'pending' || 'absent' }}"
+
+      - name: Mirror the archives to GitCode
+        if: ${{ env.XLINGS_RES_TOKEN != '' && env.WITH_GITCODE == 'true' }}
+        # Longer than the script's own GitCode deadline (MIRROR_LEG_DEADLINE_GTC,
+        # 2400 s), so the script reaches it and names what it abandoned.
         timeout-minutes: 45
         env:
           GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
+          MIRROR_HOSTS: gtc
         run: |
           chmod +x .github/tools/gtc .github/tools/mirror_res.sh
           export PATH="$PWD/.github/tools:$PATH"
-          # A4: BLOCKING. Both mirror hosts serve users (GLOBAL + CN install
-          # paths); an incomplete mirror must fail here, visibly, instead of
-          # surfacing as a 404 in the first user's install (or fresh-install CI).
           bash .github/tools/mirror_res.sh mcpp "${{ steps.version.outputs.version }}"
-
-      - name: Open index bump PR (xim-pkgindex)
-        if: ${{ env.XIM_PKGINDEX_TOKEN != '' }}
-        env:
-          PKGINDEX_TOKEN: ${{ secrets.XIM_PKGINDEX_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          chmod +x .github/tools/bump_index.sh
-          # A4: BLOCKING — a missing bump PR means the index never learns the
-          # release exists and every post-release install of the new version 404s.
-          # The index's own updater writes the PR (bump_index.sh says why);
-          # it needs the GitCode mirror above to be complete.
-          bash .github/tools/bump_index.sh mcpp "${{ steps.version.outputs.version }}"
 
       # Post-release verification (ci-fresh-install) is triggered via its
       # `workflow_run: [release]` hook — a platform-generated event that is

@@ -197,3 +197,25 @@ UTest the_graph_supplies_the_c_library{"LinkLineGolden/TheGraphSuppliesTheCLibra
     const auto f = compute_flags(plan);
     expect_words("the link's own group", c_library_words(f.sysroot, t.root), Words{});
 }};
+
+// THE SDK OF A MACH-O LINK IS ONE ANSWER (design 2026-11-14 release-publication
+// §2.3): the link line names with `-isysroot` the SDK the build programs read
+// as `MCPP_TARGET_SDK` (`link_sdk`). A package that supplies a stub of a system
+// library asks it whether the system's own is on the link; two answers had
+// disagreed since 2026.8.25.2. An ELF link names none on every host.
+UTest the_link_and_the_build_programs_name_one_sdk{"LinkLineGolden/TheLinkAndTheBuildProgramsNameOneSdk", [] {
+    Tree t;
+    t.file("llvm/bin/clang++.cfg");
+    t.dir("llvm/include/c++/v1");
+    auto elf = plan_for(tc::CompilerId::Clang, t.file("llvm/bin/clang++"), "x86_64-linux-gnu");
+    expect(link_sdk(elf.toolchain).empty()) << link_sdk(elf.toolchain);
+    auto macho = plan_for(tc::CompilerId::Clang, t.root / "llvm/bin/clang++", "aarch64-apple-darwin");
+    const auto sdk = link_sdk(macho.toolchain);
+    if constexpr (!mcpplibs::os::is_macos) {
+        expect(sdk.empty()) << "a link on this host names no SDK: " << sdk;
+    } else {
+        if (sdk.empty()) skip("no Apple SDK on this machine");
+        const auto f = compute_flags(macho);
+        expect(f.ld.contains(" -isysroot " + sdk.string())) << f.ld;
+    }
+}};

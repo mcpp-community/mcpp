@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-361 records.
+362 records.
 
 ## By subject
 
@@ -144,6 +144,10 @@ Records that declare one. Everything else is listed by date below.
 
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
 
+### release
+
+- [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
+
 ### review
 
 - [Two days of mcpp and xlings: a review of what merged, what is known, and what is open](2026-09-28-ecosystem-review-of-two-days-of-mcpp-and-xlings.md) — active
@@ -197,6 +201,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
 - [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
 - [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
