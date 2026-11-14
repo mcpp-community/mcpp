@@ -30,6 +30,14 @@
   updater waited for both mirrors, and its run for v2026.11.13.1 failed.
   `bump_index.sh` is removed.
 
+### Fixed
+
+- On Windows a runner's bare first word is the program with the system's
+  suffix (`.exe`, `.cmd`, `.bat`) and never a file without one. A package for
+  every system that carries a POSIX launcher beside its program (dirun's
+  `bin/dirun` and `bin/dirun.exe`) had the launcher taken, and the run refused
+  with `executable format error`.
+
 ## [2026.11.13.1] - 2026-11-13
 
 ### Added

@@ -153,6 +153,36 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
 
 #else
 
-UTest runner_lookup_windows_covered_by_integration{"RunnerLookup/WindowsCoveredByIntegration", [] { /* passes */; }};
+namespace {
+std::filesystem::path file_in(const std::filesystem::path& dir, std::string_view name) {
+    std::filesystem::create_directories(dir);
+    auto p = dir / name;
+    { std::ofstream o(p, std::ios::binary); o << "x"; }
+    return p;
+}
+std::filesystem::path fresh_root(std::string_view name) {
+    auto root = std::filesystem::temp_directory_path() / name;
+    std::filesystem::remove_all(root);
+    return root;
+}
+} // namespace
+
+// A package for every system carries a POSIX launcher beside the program:
+// the bare name is the program with the system's suffix, never the launcher.
+UTest a_bare_name_is_the_suffixed_program{"RunnerLookup/ABareNameIsTheSuffixedProgram", [] {
+    auto root = fresh_root("mcpp-runner-lookup-win-1");
+    file_in(root / "bin", "dirun");
+    auto exe = file_in(root / "bin", "dirun.exe");
+    auto l = locate("dirun", payload_search_dirs(root), "");
+    expect(fatal(l.program.has_value()));
+    expect(eq(*l.program, exe));
+}};
+
+UTest a_file_without_a_suffix_is_no_program{"RunnerLookup/AFileWithoutASuffixIsNoProgram", [] {
+    auto root = fresh_root("mcpp-runner-lookup-win-2");
+    file_in(root / "bin", "tool");
+    auto l = locate("tool", payload_search_dirs(root), "");
+    expect(!l.program.has_value());
+}};
 
 #endif
