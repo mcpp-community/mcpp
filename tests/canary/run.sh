@@ -72,6 +72,12 @@ while IFS=$'\t' read -r canary identity row_host step expect note; do
     # command, which a tail of linker errors pushes out.
     echo "::group::$canary $identity $step: $got (the row states $expect)"
     if [ "$(wc -l < "$log")" -le 300 ]; then cat "$log"; else head -150 "$log"; echo "[...]"; tail -100 "$log"; fi
+    # A cell that fails where its row states ok is run again with --verbose:
+    # the commands it ran (a link line's flags) say why.
+    if [ "$got" = fails ]; then
+      echo "--- again, with --verbose: the commands ---"
+      (cd "$dir" && "${cmd[0]}" "${cmd[1]}" --verbose "${cmd[@]:2}") 2>&1 | grep -E '(clang|g\+\+|gcc|ld|lld)[^ ]* .* -o ' | tail -5 | cut -c1-4000
+    fi
     echo "::endgroup::"
   fi
   printf '%-4s %-22s %-7s %-6s %3ss%s\n' "$canary" "$identity" "$step" "$got" "$seconds" "$mark"
