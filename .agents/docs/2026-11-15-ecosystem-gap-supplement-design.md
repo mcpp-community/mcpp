@@ -89,7 +89,7 @@ mcpp、openkal、xlings/xim 的包、dirun 与 mcpp:plugins 是通用基础设�
 | W1 | `mcpp pack --pkg-format web` 的产物没有“打开即可用”的方式 | 页面须经 HTTP 提供；没有以格式命名的 runner | 插件 · mcpp:plugins |
 | X2 | Windows 上 `write_file_atomic` 单次 `MoveFileExW` | openxlings/xlings#715 | **xlings** |
 | X5 | Windows 上经 xlings 的 shim 启动程序，参数含 `"` 与 `&` 时被拆开，其后的内容被当作命令执行 | shim 经命令解释器转交参数（实测）；影响所有经 shim 启动的工具，含 mcpp | **xlings** |
-| X3 | subos 的 `cc` 与主机库错配（`__isoc23_strtol`、`libc.so`） | 未定位 | 待定位，可能是 xim 包数据 |
+| X3 | subos 的 `cc` 与主机库错配（`__isoc23_strtol`、`libc.so`） | 已定位：xim `musl` 配方把 11 个与 glibc 同名的链接文件（`crt1.o`、`libc.so` 等）注册进共享 `lib/`，安装 musl 即改变 `cc` 的链接 | xim-pkgindex#1162（已合并）：共享 `lib/` 只留加载器 `ld-musl-<arch>.so.1`；链接文件入 `usr/lib/musl/`，头文件在 `usr/include/musl/`；修订号 2 修复已有 home |
 
 已解决、仅留档：G1、G2、G3、G8。
 
