@@ -163,11 +163,12 @@ standard = true
 
 # 32-BIT ROWS (E11): registered intent, refused until served. No payload of the
 # index targets them. openkal states its 32-bit class (0.25.1, clause 5.5), and
-# openkal-platform 0.28.0, the engine's pin, serves `i686-linux-musl` and
-# `i686-openkal` with the LLVM toolchain: a planned row its targets name is
-# served by the platform (2026.11.14.1). The rows stay planned here, as a row
-# no payload of the index serves; an explicit `[target.<row>] toolchain` opts
-# in as well.
+# openkal-platform 0.28.0 serves `i686-linux-musl` and `i686-openkal` with the
+# LLVM toolchain when a project states it (`[target.<sel>] platform`): a
+# planned row the stated platform's targets name is served by it
+# (2026.11.14.1). The built-in platform does not serve a planned row, so the
+# rows stay planned here; an explicit `[target.<row>] toolchain` opts in as
+# well.
 [[platform.define]]
 triple   = "i686-linux-musl"
 loader   = "/lib/ld-musl-i386.so.1"
