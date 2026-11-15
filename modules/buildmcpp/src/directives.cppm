@@ -206,6 +206,13 @@ enum class Slot : std::size_t {
     ArtifactNames,
     Seal,
     RunHost,
+    // Protocol 19 (design 2026-11-15 N30): the program of the package being
+    // packed that a provider of a pack format assembles its distributable
+    // from. `mcpp pack --pkg-format <format>` with no program named packs the
+    // one the format's provider stated. A name, carried and compared with the
+    // packed member's programs at pack time: the provider is a dependency and
+    // names a program of the package that depends on it.
+    PackPrograms,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -304,7 +311,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 37> kTable{{
+inline constexpr std::array<Def, 38> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -438,6 +445,10 @@ inline constexpr std::array<Def, 37> kTable{{
     // newer entry already discards the whole record through the unknown-tag
     // path.
     {"pack-format",         "pack-format",       Slot::PackFormats,      Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              9},
+    // v19 (N30). Collected on every pass, as `pack-format` is and for its
+    // reason: program selection reads it from the build that precedes the
+    // packaging pass.
+    {"pack-program",        "pack-program",      Slot::PackPrograms,     Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              19},
     // v10 (#618). The value names a target, and `target_directive_error`
     // refuses a name this package does not declare as an executable before
     // anything is applied. Persisted like every row but the re-run keys, so a
@@ -1161,6 +1172,15 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     // engine than a language does, and Slang is already supported without one.
     for (auto const& f : d.at(Slot::PackFormats))
         bc.packFormats.push_back(f);
+    for (auto const& p : d.at(Slot::PackPrograms))
+        bc.packPrograms.push_back(p);
+    // What the program said, kept with the declaration it explains: a pack
+    // whose provider submitted nothing names these in its refusal (N30).
+    for (auto const& sd : stated_diagnostics(d))
+        if (sd.severity != "note")
+            bc.statedReasons.push_back(sd.message);
+    for (auto const& w : d.at(Slot::Warnings))
+        bc.statedReasons.push_back(w);
 
     // Sources (mcpp#755). Carried, not interpreted: prepare turns decisions
     // into the decision record, requests into one installation, and the

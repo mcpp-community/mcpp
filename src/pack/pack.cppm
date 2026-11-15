@@ -256,6 +256,9 @@ struct Options {
     // `--all-programs` (mcpp#911 B3): every program of the package, the
     // chosen one and the others beside it.
     bool                                 allPrograms = false;
+    // The others' file names, which are also in `runtimeFiles`: a tree of
+    // images gives each of them a launcher, as it gives the chosen one.
+    std::vector<std::string>             otherPrograms;
 };
 
 // The strip decision for this run: `--strip`/`--no-strip` > `[pack] strip` >
@@ -2821,54 +2824,67 @@ run_loaded(const Plan& plan)
                         "cannot place the runner for {}-{}: {}", system, leg.arch, ec.message())});
                 }
         }
-        const auto posix = plan.stagingRoot / "bin" / launch.name;
-        {
-            std::ofstream out(posix, std::ios::binary | std::ios::trunc);
-            out << mcpp::pack::distribution::posix_launcher(launch);
+        // EVERY PROGRAM HAS A LAUNCHER (N11). Under `--all-programs` the others
+        // are images beside the chosen one in each `lib/<arch>/`, and each is
+        // started as the chosen one is: by its name in `bin/`.
+        std::vector<mcpp::pack::distribution::Launch> launches{ launch };
+        for (auto const& other : plan.opts.otherPrograms) {
+            auto l = launch;
+            l.name = fs::path(other).stem().string();
+            for (auto& [arch, file] : l.entry) file = other;
+            launches.push_back(std::move(l));
         }
-        fs::permissions(posix, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
-                               | fs::perms::others_read | fs::perms::others_exec,
-                        fs::perm_options::replace, ec);
-        // The Windows launcher, a program (design 2026-10-29 §4.3): built for
-        // x86_64 Windows, which an arm64 Windows machine also runs. A host
-        // that builds no program for that row leaves it out, says so, and
-        // the package's `runs_on` names no Windows pair.
-        // Over a platform's hosted arrangement where the build's platform
-        // serves the row, as the runners are: the same program whichever
-        // machine packs it. The launcher is mcpp's program and not the
-        // project's: its `mcpplibs.os` pins one openkal release, which only the
-        // platform mcpp's own openkal rows name agrees with, so it is built
-        // over that platform whichever release the project selected (a newer
-        // version group named another openkal, and the launcher's graph held
-        // two; openkal-platform 0.19.0's CI, 2026-10-30).
-        auto row = program_row("windows", "x86_64", true, &plan.platform);
-        if (!row.platform.empty()) row.platform = std::string(launcher_platform());
-        if (!row_is_built(row)) {
-            mcpp::ui::warning(std::format(
-                "no Windows launcher in the package: this mcpp builds no program for {}; the package "
-                "does not run on Windows", row.triple));
-        } else {
-            const auto dir = plan.projectRoot / "target" / "launcher-pack" / launch.name;
-            fs::create_directories(dir / "src", ec);
-            fs::remove(dir / "mcpp.lock", ec);
-            auto write = [&](const fs::path& p, std::string_view text) -> bool {
-                std::ofstream out(p, std::ios::binary | std::ios::trunc);
-                out.write(text.data(), static_cast<std::streamsize>(text.size()));
-                return bool(out);
-            };
-            if (!write(dir / "mcpp.toml", mcpp::pack::distribution::exe_launcher_manifest(
-                           launch.name, plan.packageVersion)
-                           + static_row_pin(row, plan.platform.fields.toolchain.set
-                                                     ? plan.platform.fields.toolchain.value : std::string()))
-                || !write(dir / "src" / "main.cpp", mcpp::pack::distribution::exe_launcher_main(launch)))
-                return std::unexpected(Error{std::format("cannot write the launcher's sources under {}",
-                                                         dir.string())});
-            auto packed = pack_generated_program(dir, row);
-            if (!packed) return std::unexpected(packed.error());
-            fs::copy_file(*packed / (launch.name + ".exe"), plan.stagingRoot / "bin" / (launch.name + ".exe"),
-                          fs::copy_options::overwrite_existing, ec);
-            if (ec) return std::unexpected(Error{std::format("cannot place the Windows launcher: {}",
-                                                             ec.message())});
+        for (auto const& launch : launches) {
+            const auto posix = plan.stagingRoot / "bin" / launch.name;
+            {
+                std::ofstream out(posix, std::ios::binary | std::ios::trunc);
+                out << mcpp::pack::distribution::posix_launcher(launch);
+            }
+            fs::permissions(posix, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                   | fs::perms::others_read | fs::perms::others_exec,
+                            fs::perm_options::replace, ec);
+            // The Windows launcher, a program (design 2026-10-29 §4.3): built for
+            // x86_64 Windows, which an arm64 Windows machine also runs. A host
+            // that builds no program for that row leaves it out, says so, and
+            // the package's `runs_on` names no Windows pair.
+            // Over a platform's hosted arrangement where the build's platform
+            // serves the row, as the runners are: the same program whichever
+            // machine packs it. The launcher is mcpp's program and not the
+            // project's: its `mcpplibs.os` pins one openkal release, which only the
+            // platform mcpp's own openkal rows name agrees with, so it is built
+            // over that platform whichever release the project selected (a newer
+            // version group named another openkal, and the launcher's graph held
+            // two; openkal-platform 0.19.0's CI, 2026-10-30).
+            auto row = program_row("windows", "x86_64", true, &plan.platform);
+            if (!row.platform.empty()) row.platform = std::string(launcher_platform());
+            if (!row_is_built(row)) {
+                if (&launch == &launches.front())
+                    mcpp::ui::warning(std::format(
+                        "no Windows launcher in the package: this mcpp builds no program for {}; the package "
+                        "does not run on Windows", row.triple));
+            } else {
+                const auto dir = plan.projectRoot / "target" / "launcher-pack" / launch.name;
+                fs::create_directories(dir / "src", ec);
+                fs::remove(dir / "mcpp.lock", ec);
+                auto write = [&](const fs::path& p, std::string_view text) -> bool {
+                    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+                    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+                    return bool(out);
+                };
+                if (!write(dir / "mcpp.toml", mcpp::pack::distribution::exe_launcher_manifest(
+                               launch.name, plan.packageVersion)
+                               + static_row_pin(row, plan.platform.fields.toolchain.set
+                                                         ? plan.platform.fields.toolchain.value : std::string()))
+                    || !write(dir / "src" / "main.cpp", mcpp::pack::distribution::exe_launcher_main(launch)))
+                    return std::unexpected(Error{std::format("cannot write the launcher's sources under {}",
+                                                             dir.string())});
+                auto packed = pack_generated_program(dir, row);
+                if (!packed) return std::unexpected(packed.error());
+                fs::copy_file(*packed / (launch.name + ".exe"), plan.stagingRoot / "bin" / (launch.name + ".exe"),
+                              fs::copy_options::overwrite_existing, ec);
+                if (ec) return std::unexpected(Error{std::format("cannot place the Windows launcher: {}",
+                                                                 ec.message())});
+            }
         }
     }
 

@@ -178,6 +178,19 @@ inline void provides_pack_format(const char* name) {
     std::printf("mcpp:pack-format=%s\n", name);
 }
 
+// The program of the package being packed that this provider assembles its
+// distributable from (protocol 19). `mcpp pack --pkg-format <format>` with no
+// program named packs this one, as `mcpp pack <program>` would; a named
+// program outranks it. Declared unconditionally, as `provides_pack_format`
+// is, for the same reason: the program is chosen from the build that precedes
+// the packaging pass.
+//
+//     mcpp::provides_pack_format("web");
+//     mcpp::pack_program("app");
+inline void pack_program(const char* name) {
+    std::printf("mcpp:pack-program=%s\n", name);
+}
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.

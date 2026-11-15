@@ -515,19 +515,58 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                 return t.kind == mcpp::manifest::Target::Application;
         return false;
     };
+    // THE PROGRAM A FORMAT'S PROVIDER ASSEMBLES FROM (design 2026-11-15 N30).
+    // A provider that states `mcpp::pack_program` is followed when no program
+    // is named: the convention below knows nothing of the provider's own
+    // choice (a web directory configured for `app`), and packing another
+    // program left the provider nothing to wrap. A named program outranks it.
+    std::string want = run.wantTarget;
+    std::string wantFrom;
+    if (want.empty()) {
+        std::vector<std::pair<std::string, std::string>> stated;   // provider, program
+        const auto& asked = run.opts.formats.empty() ? std::vector<std::string>{ run.opts.formatName }
+                                                     : run.opts.formats;
+        for (auto const& format : asked) {
+            auto it = ctx.packFormatProviders.find(format);
+            if (format.empty() || mcpp::pack::is_builtin_pack_format(format)
+                || it == ctx.packFormatProviders.end()) continue;
+            for (auto const& p : it->second) {
+                if (sharedPlan) {
+                    auto reach = ctx.packReach.find(p);
+                    if (reach == ctx.packReach.end() || mcpp::build::pack_owner(p, reach->second) != m.name)
+                        continue;
+                }
+                auto pp = ctx.packPrograms.find(p);
+                if (pp == ctx.packPrograms.end()) continue;
+                for (auto const& name : pp->second)
+                    if (std::ranges::none_of(stated, [&](auto const& e) { return e.second == name; }))
+                        stated.emplace_back(p, name);
+            }
+        }
+        if (stated.size() > 1) {
+            std::string list;
+            for (auto const& [p, name] : stated) list += std::format("\n  {} (stated by {})", name, p);
+            return Refusal{2, about(run, m, std::format(
+                "the providers of the requested formats state different programs:{}\n"
+                "  name one: mcpp pack <program> --pkg-format <format>", list))};
+        }
+        if (!stated.empty()) { want = stated.front().second; wantFrom = stated.front().first; }
+    }
     std::filesystem::path mainBinary;
     const mcpp::build::LinkUnit* chosenLu = nullptr;
-    if (!run.wantTarget.empty()) {
+    if (!want.empty()) {
         for (auto& lu : ctx.plan.linkUnits) {
-            if (is_program_link_unit(lu) && lu.targetName == run.wantTarget) {
+            if (is_program_link_unit(lu) && lu.targetName == want) {
                 mainBinary = ctx.outputDir / lu.output;
                 chosenLu = &lu;
                 break;
             }
         }
         if (mainBinary.empty())
-            return Refusal{2, about(run, m, std::format(
-                "target '{}' is not a program in this build", run.wantTarget))};
+            return Refusal{2, about(run, m, wantFrom.empty()
+                ? std::format("target '{}' is not a program in this build", want)
+                : std::format("{} states the program '{}' (mcpp::pack_program), which is not a program "
+                              "in this build", wantFrom, want))};
     }
     for (auto& lu : ctx.plan.linkUnits) {
         if (!mainBinary.empty()) break;
@@ -551,7 +590,9 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     }
     if (mainBinary.empty())
         return Refusal{1, about(run, m, "no binary target to pack")};
-    if (programs.size() > 1 && !opts.allPrograms && run.wantTarget.empty()) {
+    if (programs.size() > 1 && !opts.allPrograms && !wantFrom.empty())
+        mcpp::ui::note(std::format("packing {}, the program {} states for its format", want, wantFrom));
+    if (programs.size() > 1 && !opts.allPrograms && want.empty()) {
         std::string others;
         for (auto const* lu : programs)
             if (lu != chosenLu) others += (others.empty() ? "" : ", ") + lu->targetName;
@@ -648,10 +689,12 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         // `--all-programs`: the package's other programs, beside the chosen one.
         if (opts.allPrograms)
             for (auto const* u : programs)
-                if (u != chosenLu && u->kind == mcpp::build::LinkUnit::Binary)
+                if (u != chosenLu && u->kind == mcpp::build::LinkUnit::Binary) {
                     opts.runtimeFiles.push_back(productDir == "bin"
                         ? u->output.lexically_relative("bin")
                         : std::filesystem::path(u->output.filename()));
+                    opts.otherPrograms.push_back(u->output.filename().string());
+                }
         // #634 A3: the Android row reads its closure against the directories
         // its link declared -- a prebuilt library named through `[runtime]
         // link_library_dirs` is a file the link used and the device does not
@@ -1487,7 +1530,22 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         if (m.result.rc != 0) continue;
         auto it = submitted.find(m.name);
         if (it != submitted.end() && !it->second.outputs.empty()) { any = true; continue; }
-        mcpp::ui::error(about(run, m, std::format(
+        // THE PROVIDER'S OWN REASON IS THE ANSWER (N30): what a provider
+        // of this format acting for the member stated in this pass, as a
+        // warning or a degradation, explains why it submitted nothing.
+        std::string said;
+        if (auto it = distCtx->packFormatProviders.find(run.opts.formatName);
+            it != distCtx->packFormatProviders.end())
+            for (auto const& p : it->second) {
+                if (sharedPlan) {
+                    auto reach = distCtx->packReach.find(p);
+                    if (reach == distCtx->packReach.end()
+                        || mcpp::build::pack_owner(p, reach->second) != m.name) continue;
+                }
+                if (auto r = distCtx->packReasons.find(p); r != distCtx->packReasons.end())
+                    for (auto const& reason : r->second) said += std::format("\n  {} said: {}", p, reason);
+            }
+        mcpp::ui::error(about(run, m, said.empty() ? std::format(
             "no action claimed --pkg-format '{}'.\n"
             "  A package declared it provides this format, and no build "
             "program submitted a new\n"
@@ -1498,7 +1556,8 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
             "// always\n"
             "      if (std::string_view(mcpp::pack_format()) == \"{}\") ..."
             "   // then submit",
-            run.opts.formatName, run.opts.formatName, run.opts.formatName)));
+            run.opts.formatName, run.opts.formatName, run.opts.formatName)
+            : std::format("no action claimed --pkg-format '{}'.{}", run.opts.formatName, said)));
         m.result.rc = 1;
     }
     if (!any) return std::nullopt;

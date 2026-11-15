@@ -320,6 +320,27 @@ UTest a_pack_format_declaration_is_persisted{"BuildDirectives/APackFormatDeclara
     expect(eq(def->scope, dirs::Scope::Claim));
 }};
 
+UTest a_pack_program_and_the_reasons_are_carried{"BuildDirectives/APackProgramAndTheReasonsAreCarried", [] {
+    // N30: the program a provider assembles from is carried as stated, and is
+    // persisted as `pack-format` is, for the same reason (the pass that reads
+    // it is never the first build); the warnings and degradations the program
+    // stated are kept as its reasons, notes are not.
+    auto d = parse("mcpp:pack-format=web\n"
+                   "mcpp:pack-program=app\n"
+                   "mcpp:warning=not the emscripten target\n"
+                   "mcpp:diagnostic=note\tthe web directory\t\t\n"
+                   "mcpp:diagnostic=degraded\tno launcher\t\t\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    expect(eq(m.buildConfig.packPrograms, (std::vector<std::string>{"app"})));
+    expect(eq(m.buildConfig.statedReasons, (std::vector<std::string>{"no launcher", "not the emscripten target"})));
+    expect(m.buildConfig.ldflags.empty());
+    const auto* def = dirs::find_by_wire("pack-program");
+    expect(fatal(ne(def, nullptr)));
+    expect(!(def->tag.empty())) << "a tag-less row is not replayed on a cache hit";
+    expect(eq(def->scope, dirs::Scope::Claim));
+}};
+
 UTest a_claim_reaches_neither_compile_nor_link{"BuildDirectives/AClaimReachesNeitherCompileNorLink", [] {
     auto d = parse("mcpp:fact=widget.driver=1.2\n"
                    "mcpp:floor=widget.driver >= 2.0\n");

@@ -1085,6 +1085,14 @@ struct BuildConfig : BuildInputs {
     // notarisation each couple a release to a release mcpp does not control,
     // and a name here is the whole of what the engine learns.
     std::vector<std::string>            packFormats;
+    // The program of the depending package this package's pack format is
+    // assembled from (`mcpp:pack-program=`, protocol 19, design 2026-11-15
+    // N30): `mcpp pack --pkg-format <format>` with no program named packs it.
+    std::vector<std::string>            packPrograms;
+    // The warnings and degradations the program stated in its last run, in
+    // order. A packaging pass whose provider submitted nothing states them as
+    // the provider's reasons (N30).
+    std::vector<std::string>            statedReasons;
     // mcpp#755, protocol 15. What a build program stated about SOURCES, carried
     // to prepare the way every other directive is: folded in here, read back
     // after the program ran, replayed with it on a cache hit.

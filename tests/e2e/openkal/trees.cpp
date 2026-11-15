@@ -155,6 +155,12 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         d = s::json_file(sc / "mcpp-package.json");
         const auto carried = names_in(sc / "libexec/okrun");
         expect(fatal(d["mode"] == "self-contained" && strings(d["systems"]) == carried && std::ranges::contains(carried, std::format("{}-{}", os, host_arch)))) << "C: systems: " << d.dump();
+        // C': a package that carries its runner runs no other: with this machine's runner moved
+        // away and one on PATH, the launcher exits 126 naming what the package holds (N20).
+        fs::rename(sc / std::format("libexec/okrun/{}-{}", os, host_arch), sc / "libexec/okrun/elsewhere");
+        ran = s::run(sc / "bin/uni", {}, {}, {{"PATH", okrun.parent_path().string() + ":" + s::env("PATH").value_or("")}});
+        expect(fatal(ran.status == 126 && e2e::contains(s::text(ran), "the package holds okrun for: elsewhere"))) << "C': a runner on PATH was used for a package that carries its own: " << ran.status << " " << s::text(ran);
+        fs::rename(sc / "libexec/okrun/elsewhere", sc / std::format("libexec/okrun/{}-{}", os, host_arch));
         // D
         r = app.mcpp({"pack", "--target", t, "--pkg-format", "dir", "-o", "one"});
         expect(fatal(e2e::succeeded(r))) << "D: one target: " << s::text(r);
@@ -174,6 +180,24 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         }
     };
 
+    "1087 every program of an image package has its launchers"_test[s::llvm][s::unix_shell] = [] {
+        // `--all-programs` of an ok image: each program has bin/<name> and bin/<name>.exe, and
+        // each launcher runs its own image (N11).
+        needs_image_row();
+        if (posix_system().empty()) skip("a POSIX launcher");
+        const std::string t = std::string(host_arch) + "-openkal";
+        s::project app({{"mcpp.toml", "[package]\nname    = \"multi\"\nversion = \"0.1.0\"\n\n[targets.alpha]\nkind = \"bin\"\nmain = \"src/alpha.cpp\"\n\n[targets.beta]\nkind = \"bin\"\nmain = \"src/beta.cpp\"\n"},
+                        {"src/alpha.cpp", "int main() { return 4; }\n"}, {"src/beta.cpp", "int main() { return 5; }\n"}});
+        auto r = app.mcpp({"pack", "alpha", "--all-programs", "--target", t, "--pkg-format", "dir"});
+        expect(fatal(e2e::succeeded(r))) << "pack --all-programs: " << s::text(r);
+        const auto p = app.at("target/dist/multi-0.1.0-" + t);
+        for (std::string_view f : {"bin/alpha", "bin/beta", "bin/alpha.exe", "bin/beta.exe"})
+            expect(fatal(fs::is_regular_file(p / f) || (f.ends_with(".exe") && e2e::contains(s::text(r), "no Windows launcher")))) << "the package has no " << f << ": " << s::text(r);
+        const auto okrun = runner_of(app, t);
+        const std::string path = okrun.parent_path().string() + ":" + s::env("PATH").value_or("");
+        expect(fatal(s::run(p / "bin/alpha", {}, {}, {{"PATH", path}}).status == 4)) << "bin/alpha did not run alpha";
+        expect(fatal(s::run(p / "bin/beta", {}, {}, {{"PATH", path}}).status == 5)) << "bin/beta did not run beta";
+    };
     "956 a single file runs without unpacking"_test[s::unix_shell][s::python3] = [] {
         // A a native single file runs with its arguments and exit status, extracting its tree
         // into the cache once; B (Linux) `--linkage static` makes a file with no interpreter;

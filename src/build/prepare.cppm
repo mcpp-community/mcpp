@@ -715,6 +715,12 @@ export struct BuildContext {
     // refines: the plan knows the set of formats and this knows who provides
     // each.
     std::map<std::string, std::vector<std::string>> packFormatProviders;
+    // By provider (a package in `packFormatProviders`): the programs it stated
+    // with `mcpp::pack_program`, and the warnings it stated in this pass, which
+    // a pack whose provider submitted nothing gives as the provider's reasons
+    // (design 2026-11-15 N30).
+    std::map<std::string, std::vector<std::string>> packPrograms;
+    std::map<std::string, std::vector<std::string>> packReasons;
 };
 
 // The selected member a package acts for in a packaging pass: the package

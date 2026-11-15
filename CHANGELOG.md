@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- `mcpp::pack_program("<program>")` (build-program protocol 19): a pack-format
+  provider states the program of the package being packed that it assembles
+  from, and `mcpp pack --pkg-format <format>` with no program named packs that
+  program. A program named on the command line outranks it; providers that
+  state different programs, or a program the build does not have, are refused
+  by name (design 2026-11-15 N30).
+- A pack whose format provider submitted nothing lists, in the refusal, the
+  warnings the provider stated in that pass (`mcpp::warning`, `mcpp::report`)
+  as its reasons (N30).
+
+### Changed
+
+- A package that carries its runner (`--mode self-contained`) starts only the
+  runner it carries for this machine, and a machine it holds none for exits
+  with status 126, naming the machine and the systems the package holds. The
+  POSIX and the Windows launcher fell back to a runner on `PATH`, which ran
+  another release's runner (design 2026-11-15 N20).
+- The POSIX launcher names the system by the system table's `uname` column, so
+  a FreeBSD machine finds `libexec/<runner>/freebsd-<arch>/`; it looked for
+  `FreeBSD-<arch>` (N20).
+
 ### Fixed
 
 - Two `[build-dependencies]` requests of one package that no version
@@ -15,6 +38,9 @@
   requester's sources with a message about staging (a project asking for
   `mcpp:plugins` 0.21.0 over a platform asking for 0.20.0: `stage: no source
   files found under '<platform>'`) (design 2026-11-15 N29).
+- `mcpp pack --all-programs` of an ok image gives every program its own pair of
+  launchers, `bin/<name>` and `bin/<name>.exe`; only the chosen program had them
+  (N11).
 
 ## [2026.11.15.1] - 2026-11-15
 

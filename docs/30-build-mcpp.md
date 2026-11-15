@@ -1033,6 +1033,21 @@ pass their own format — and makes the set unknowable for everyone else. mcpp
 refuses a format nothing submitted for, rather than reporting a pack that
 produced no package.
 
+**The program a provider assembles from.** A provider that wraps one program of
+the package being packed states which, unconditionally, beside the declaration:
+
+```cpp
+mcpp::provides_pack_format("web");
+mcpp::pack_program("app");          // protocol 19, mcpp 2026.11.16.1
+```
+
+`mcpp pack --pkg-format web` with no program named then packs `app`; a program
+named on the command line outranks it, and a stated program the build does not
+have is refused by the provider's name. When a provider submits nothing in the
+second pass, the refusal lists the warnings it stated there (`mcpp::warning`,
+`mcpp::report`) as its reasons, so a provider explains a decline with either and
+not with its standard error, which mcpp shows only for a program that fails.
+
 **`mcpp pack --pkg-format <name>` prepares twice.** An `artifact` action is a ninja
 edge and the staged tree is produced by mcpp *after* the link, so the tree
 cannot be an input of the pass that built it. The first pass collects the
