@@ -161,7 +161,15 @@ namespace pinned {
     // are proven by its registrations; `--home` selects one run's home; and a
     // hook in a project's store finds `xlings` in its bin directory, which
     // `gcc.libstdcxx` (an `xim:gcc` edge) needs.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.26.1";
+    //
+    // Fourteenth, at 2026.11.16.1 (openxlings/xlings#716). On Windows a SubOS
+    // description and the other state files are replaced while another
+    // process reads them (bounded retry on a sharing conflict, POSIX rename
+    // semantics where offered); a concurrent install failed with "Failed to
+    // write file: ...\.xlings.json" (xlings#715, measured in mcpp's Windows
+    // e2e). A shim starts its program without cmd.exe, so an argument holding
+    // `"`, `&`, `%` or `^` reaches it whole.
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.16.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

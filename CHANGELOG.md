@@ -8,6 +8,13 @@
 
 ## [2026.11.16.1] - 2026-11-16
 
+### Changed
+
+- The bundled xlings is 2026.11.16.1. On Windows it replaces a SubOS
+  description while another process reads it, where a concurrent install
+  failed with `Failed to write file: ...\.xlings.json` (xlings#715), and a shim
+  passes an argument holding `"`, `&`, `%` or `^` whole.
+
 ### Added
 
 - `x86_64-linux-android` runs in the Android Emulator on an x86_64 Linux
