@@ -253,7 +253,7 @@ mcpp cache list --json            ->  {"root": …, "entries": [ … ]}
 | `0`–`124` | 程序运行过了；这是它自己的状态，原样透传。例外是 `101`，见下一行 |
 | `101` | `mcpp run` 无法构建程序：规划或构建失败，没有启动任何东西。这是 `cargo run` 构建失败时 Cargo 给出的状态 |
 | `125`–`127` | 尝试过启动但被拒绝 —— `127` 是找不到，`126` 是找到了但不可执行，`125` 是其他原因；对 `mcpp run --pkg-format <f>` 而言，一个是目录、且没有任何 runner 能到达的分发物同样得到 `126`，它在启动之前就被拒绝，含义相同（2026.9.14.2+） |
-| `2` | mcpp 在构建任何东西之前拒绝了请求，或在构建之后、启动任何东西之前拒绝了请求：用法错误、`--pkg-format` 与 `--no-runner` 同用、项目没有声明的程序或 runner |
+| `2` | mcpp 在构建任何东西之前拒绝了请求，或在构建之后、启动任何东西之前拒绝了请求：用法错误、`--pkg-format` 与 `--no-runner` 同用、项目没有声明的程序或 runner、未启用的 runner（消息带 `[runner-not-enabled]`；2026.11.16.1+） |
 
 在 2026.9.30.2 之前，构建失败退出 `1`，规划失败退出 `2`，脚本因此无法区分
 一次编译错误和一个返回 `1` 的程序。现在构建失败是 `101`；`mcpp build`、
@@ -356,7 +356,7 @@ mcpp self env --format json
 `runner.program` 为该工具，否则为本机找到的程序。对目标图（2026.10.29.1+），该程序就是 `mcpp run` 与
 `mcpp test` 会启动的程序：`runner.arch` 为其架构；产物属于另一架构、运行器为 `same-arch` 且给出了执行宿主时，
 它是平台为该架构准备的运行器，报告第一次运行构建它的位置（此前 `built: false`；`self env` 不构建任何东西）。
-`runUnderProgram` 为执行宿主的程序，`runner.refusal` 为本机拒绝运行的原因（不拒绝时为 `null`）。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
+`runUnderProgram` 为执行宿主的程序，`runner.refusal` 为本机拒绝运行的原因（不拒绝时为 `null`；未启用的 runner 亦是，带 `[runner-not-enabled]`）。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
 的 `runner` 与 `tools`。工程源码会被拒绝的原因
 （图中没有 C++ 运行时而 `import std`）是一条代码为 `MCPP_CONFIGURATION_SOURCES_REFUSED` 的
 `warning` 诊断，配置照常报告。无法准备的配置带 `MCPP_CONFIGURATION_FAILED`，没有 `data`。

@@ -1422,7 +1422,8 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 | `tools.<name>` | 为本机构建一个工具的包，或 `{ program = "<name>" }` |
 | `link` | `driver`、`flags`、`start`、`script`、`inputs`、`exe`、`shared`、`seal` |
 | `carrier` | `{ package, section, main }`：`--mode self-contained` 构建的程序 |
-| `runner` | 一个 argv，或 `{ cmd, host, exclusive }`：`host = "same-arch"` 只在产物架构的机器上运行它 |
+| `runner` | 一个 argv，或 `{ cmd, host, hosts, exclusive, requires, enabled, longlived }`：`host = "same-arch"` 只在产物架构的机器上运行它；不含 `cmd` 的表调整其下一层的 runner，如 `{ enabled = true }` 启用数据陈述 `enabled = false` 的 runner（2026.11.16.1） |
+| `runners.<name>` | 具名 runner 的同一种 argv 或表（表形式 2026.11.16.1） |
 
 `cfg(platform = "<name>")` 按平台选择；`platform` 本身不能写在这样的选择器下。同样的键也从
 `~/.mcpp/config.toml` 读取。平台包在 `[platform]` 下陈述它们，`[host] platform` 选择构建程序的平台。

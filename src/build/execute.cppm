@@ -1514,6 +1514,13 @@ struct RunnerChoice {
     // with no base, `{pkg:<name>}` outside `requires`): the launch is refused
     // naming it, since the word would reach the runner as it is written.
     std::string unplaced;
+    // THE RUNNER IS NOT ENABLED (R1): stated `enabled = false` and not enabled
+    // by this machine, the project, the environment or `--runner <name>`. A
+    // run and a test refuse before installing anything; `requires` is what
+    // its first use would install.
+    bool notEnabled = false;
+    std::vector<std::string> requires_;
+    std::string name;                   // the named runner; empty: the default
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -1565,6 +1572,39 @@ void settle_runner_places(const BuildContext& ctx, RunnerChoice& c,
     }
 }
 
+// MCPP_TARGET_<TRIPLE>_<KEY>, the spelling of the target's variables.
+std::string target_variable(std::string_view triple, std::string_view key) {
+    std::string out = "MCPP_TARGET_";
+    for (char c : triple)
+        out += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+             : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    return out + "_" + std::string(key);
+}
+
+// The refusal of a runner that is not enabled (R1, design 2026-11-15 §5.1):
+// what it needs, and the two ways of enabling it. The token is the one a
+// program reads (docs/50).
+std::string not_enabled_message(const RunnerChoice& c) {
+    std::string needs;
+    for (auto const& r : c.requires_) needs += (needs.empty() ? "" : ", ") + r;
+    const std::string what = c.name.empty()
+        ? std::format("{} runs through a runner that is not enabled", c.tripleKey)
+        : std::format("the runner '{}' of {} is not enabled", c.name, c.tripleKey);
+    std::string out = what + " [runner-not-enabled]";
+    if (!needs.empty()) out += std::format("\n  it needs: {} (installed on first use)", needs);
+    if (c.name.empty()) {
+        out += std::format("\n  enable:   [target.{}] runner = {{ enabled = true }}   # mcpp.toml, or config.toml "
+                           "for this machine", c.tripleKey);
+        out += std::format("\n  once:     {}=true mcpp run --target {}",
+                           target_variable(c.tripleKey, "RUNNER_ENABLED"), c.tripleKey);
+    } else {
+        out += std::format("\n  enable:   [target.{}.runners] {} = {{ enabled = true }}   # mcpp.toml, or "
+                           "config.toml for this machine", c.tripleKey, c.name);
+        out += std::format("\n  once:     mcpp run --target {} --runner {}", c.tripleKey, c.name);
+    }
+    return out;
+}
+
 // The refusal of a template whose place this build does not have.
 std::string unplaced_message(const RunnerChoice& c) {
     return std::format(
@@ -1596,9 +1636,13 @@ std::string install_runner_packages(const RunnerChoice& c) {
 // `which` selects the slot; everything else is shared.
 RunnerChoice choose_device_action(const BuildContext& ctx,
                                   std::string_view which,
-                                  bool noRunner = false) {
+                                  bool noRunner = false,
+                                  // `--runner <name>` typed: naming a runner
+                                  // enables it for this run (R1).
+                                  bool named = false) {
     RunnerChoice c;
     const bool isDefault = which.empty();
+    c.name = std::string(which);
     const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (ft) c.freestanding = ft->is_freestanding();
     c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
@@ -1612,20 +1656,33 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
         using T = mcpp::manifest::platform::Tier;
         return programHad && (o.tier == T::Manifest || o.tier == T::Config || o.tier == T::Env);
     };
+    // A RUNNER THAT IS NOT ENABLED IS NOT SETTLED (R1): its packages are
+    // what its first use would install, and nothing is installed for it.
+    // A runner that does not reach the artifact from this machine (`host =
+    // "same-arch"` and another architecture) is not offered for enabling: the
+    // run is refused for the reach (`unreachable_execution`).
+    auto take = [&](const mcpp::manifest::platform::Runner& r) {
+        c.requires_ = r.requires_;
+        const bool reaches = !ft || mcpp::platform::runner_reach(r, ft->arch, mcpp::toolchain::platform::host_arch,
+                                                                 !ctx.runUnder.empty(), noRunner)
+                                        != mcpp::platform::RunnerReach::Refused;
+        c.notEnabled = !r.enabled && !named && reaches;
+        if (!c.notEnabled) settle_runner_places(ctx, c, r.requires_);
+    };
     if (isDefault) {
         if (pf.runner.set) {
             c.tmpl = pf.runner.cmd;
             c.fromManifest = overrides_program(pf.runner.origin,
                                                !ctx.manifest.buildConfig.runner.empty());
-            settle_runner_places(ctx, c, pf.runner.requires_);
+            take(pf.runner);
         }
-    } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end()) {
-        c.tmpl = it->second.value;
+    } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end() && it->second.set) {
+        c.tmpl = it->second.cmd;
         auto nr = ctx.manifest.buildConfig.namedRunners.find(std::string(which));
         c.fromManifest = overrides_program(it->second.origin,
                                            nr != ctx.manifest.buildConfig.namedRunners.end());
-        if (nr != ctx.manifest.buildConfig.namedRunners.end() && !c.fromManifest)
-            c.longLived = nr->second.longLived;
+        c.longLived = it->second.longlived;
+        take(it->second);
     }
     // AND THE TOOLCHAIN'S OWN ANSWER, WHEN NOTHING ABOVE GAVE ONE.
     //
@@ -1647,7 +1704,7 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
     // manifest cannot carry: the triple is native here. On a freestanding
     // target that leaves nothing to execute, and the caller's existing
     // no-runner error is the correct answer.
-    if (noRunner && !c.tmpl.empty()) { c.tmpl.clear(); c.ignored = true; }
+    if (noRunner && !c.tmpl.empty()) { c.tmpl.clear(); c.ignored = true; c.notEnabled = false; }
     return c;
 }
 
@@ -1675,7 +1732,7 @@ export struct RunnerOnThisMachine {
 nlohmann::json launch_configuration(const BuildContext& ctx) {
     auto runners = nlohmann::json::array();
     for (const auto& [name, entry] : ctx.plan.platform.fields.runners)
-        if (!entry.value.empty()) runners.push_back(name);
+        if (!entry.cmd.empty()) runners.push_back(name);
     return {{"triple", ctx.tc.targetTriple}, {"profile", ctx.profile},
             {"platform", nlohmann::json::parse(mcpp::platform::to_json(ctx.plan.platform), nullptr, false)},
             {"runners", std::move(runners)}};
@@ -1685,6 +1742,10 @@ export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
     RunnerOnThisMachine out;
     const auto choice = choose_runner(ctx);
     out.arch = std::string(mcpp::toolchain::platform::host_arch);
+    if (choice.notEnabled) {
+        out.refusal = not_enabled_message(choice);
+        return out;
+    }
     if (auto why = unreachable_execution(ctx, choice.tripleKey, false, !choice.tmpl.empty())) out.refusal = *why;
     if (!ctx.runUnder.empty()) {
         auto host = locate_run_under(ctx, choice.tripleKey);
@@ -2637,19 +2698,20 @@ export int list_runners(const std::string& package_filter,
     const std::string key = ft ? ft->str() : ctx->tc.targetTriple;
     std::println("Target {}", key);
 
-    if (!pf.runner.set && pf.runners.empty()) {
+    const bool anyNamed = std::ranges::any_of(pf.runners, [](auto const& e) { return e.second.set; });
+    if (!pf.runner.set && !anyNamed) {
         std::println("  (none — this project reaches its artifact by executing it)");
         return 0;
     }
     if (pf.runner.set)
-        std::println("  {:<12} {}   ({})", "(default)", pf.runner.cmd.front(),
-                     mcpp::platform::origin_text(pf.runner.origin));
+        std::println("  {:<12} {}   ({}){}", "(default)", pf.runner.cmd.front(),
+                     mcpp::platform::origin_text(pf.runner.origin),
+                     pf.runner.enabled ? "" : "   [not enabled]");
     for (auto const& [name, w] : pf.runners) {
-        auto nr = bc.namedRunners.find(name);
-        const bool longLived = nr != bc.namedRunners.end() && nr->second.longLived;
-        std::println("  {:<12} {}   ({}){}", name,
-                     w.value.empty() ? std::string("(no argv)") : w.value.front(),
-                     mcpp::platform::origin_text(w.origin), longLived ? "   [long-lived]" : "");
+        if (!w.set) continue;
+        std::println("  {:<12} {}   ({}){}{}", name, w.cmd.front(),
+                     mcpp::platform::origin_text(w.origin), w.longlived ? "   [long-lived]" : "",
+                     w.enabled ? "" : "   [not enabled]");
     }
     if (bc.runExclusive || pf.runner.exclusive)
         std::println("  note: this target's runs cannot overlap; `mcpp test` "
@@ -3469,13 +3531,18 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     // while debugging, or naming `qemu-aarch64-static` for a cross target.
     const bool isRunSlot = runner_name.empty();
     const std::string slotName{runner_name};
-    auto choice = choose_device_action(ctx, runner_name, no_runner);
+    const bool namedRunner = !runner_name.empty() && !runner_from_format;
+    auto choice = choose_device_action(ctx, runner_name, no_runner, namedRunner);
+    if (choice.notEnabled) {
+        std::println(libc::stderr(), "error: {}", not_enabled_message(choice));
+        return 2;
+    }
     if (!choice.missing.empty()) {
         if (auto why = install_runner_packages(choice); !why.empty()) {
             std::println(libc::stderr(), "error: {}", why);
             return 2;
         }
-        choice = choose_device_action(ctx, runner_name, no_runner);
+        choice = choose_device_action(ctx, runner_name, no_runner, namedRunner);
     }
     if (!choice.unplaced.empty()) {
         std::println(libc::stderr(), "error: {}", unplaced_message(choice));
@@ -4908,7 +4975,21 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
 // holds under a runner exactly as it does on the host.
 static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool json) {
     auto* ctx = &*tb.ctx;
-    tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+    const bool namedRunner = !testOpts.runnerName.empty();
+    tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner, namedRunner);
+    // A runner that is not enabled leaves the tests built and not run, with
+    // the way to enable it, as an artifact this machine does not reach does
+    // (below); nothing is installed for it.
+    if (tb.runnerChoice.notEnabled) {
+        const auto why = not_enabled_message(tb.runnerChoice);
+        if (testOpts.unreachableIsBuilt) {
+            tb.builtNotRunHere = true;
+            if (!json) mcpp::ui::info("note", std::format("built, not run on this host: {}", why));
+            return;
+        }
+        tb.invocationNotRunReason = why;
+        return;
+    }
     if (!tb.runnerChoice.missing.empty()) {
         // A package that cannot be installed leaves the tests not run, said
         // once for the build as a missing program is.
@@ -4918,7 +4999,7 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
             tb.runnerFatal = 2;
             return;
         }
-        tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+        tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner, namedRunner);
     }
     if (!tb.runnerChoice.unplaced.empty()) {
         tb.invocationNotRunReason = unplaced_message(tb.runnerChoice);

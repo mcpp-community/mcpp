@@ -126,7 +126,21 @@ struct Runner {
     std::map<std::string, std::string> builtAs;
     // The packages the runner is installed from on the first run.
     std::vector<std::string> requires_;
+    // WHETHER THE RUNNER IS USED (R1, design 2026-11-15 §5.1). A runner whose
+    // first use fetches a whole machine image or an emulator, or leaves state
+    // outside the build tree and the package store, is stated `enabled = false`
+    // by its data: `mcpp run` and `mcpp test` refuse it and say how to enable
+    // it. It belongs to the command, as `requires` does: a statement that
+    // replaces `cmd` states it anew (true unless written).
+    bool                     enabled    = true;
+    bool                     enabledSet = false;
+    // THE RUNNER DOES NOT END BY ITSELF (R2): a server an operator stops. Its
+    // status is not a verdict, and `mcpp test` does not use it.
+    bool                     longlived    = false;
+    bool                     longlivedSet = false;
     Origin                   origin;
+    // `cmd` is stated. An override table may state `enabled` alone (`runner =
+    // { enabled = true }`), which adjusts the runner below it.
     bool                     set = false;
 };
 
@@ -294,7 +308,8 @@ struct Statement {
     Text                          sysroot;
     std::vector<std::string>      sysrootProvides;
     Runner                        runner;
-    std::map<std::string, Words>  runners;
+    // The named runners (`runners.<name>`), each the same table as `runner`.
+    std::map<std::string, Runner> runners;
     // Every carrier entry, in the order stated; `carrier_for` picks one.
     std::vector<Carrier>          carriers;
     // The descriptor blocks the platform's targets read, in order (design

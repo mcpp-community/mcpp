@@ -100,8 +100,8 @@ runner = ["my-okrun", "{}"]
 |---|---|
 | compile flags, `link.flags` | appended after the platform's; a convention cannot be removed |
 | `link.inputs`, `link.seal` | replaced whole |
-| `layers`, `tools`, `runners` | replaced key by key; `<layer> = false` leaves the layer out |
-| `runner` | the argv is replaced; `host` and `exclusive` are kept unless stated |
+| `layers`, `tools` | replaced key by key; `<layer> = false` leaves the layer out |
+| `runner`, each of `runners` | `cmd`, `requires` and `enabled` are replaced together, and a runner whose `cmd` is replaced is enabled unless stated; `host`, `hosts`, `exclusive` and `longlived` are kept unless stated; a table without `cmd` in `config.toml` or the project adjusts the keys it writes (2026.11.16.1) |
 | every other field | replaced |
 
 The same tables are accepted in `~/.mcpp/config.toml` for one machine. A layer

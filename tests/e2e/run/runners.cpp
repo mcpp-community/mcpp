@@ -370,6 +370,56 @@ int main() {
         expect(fatal(s::find_files(p.at("target"), R"(app\.blob)").empty())) << "a plain build regenerated the distributable";
     };
 
+    "1092 a runner that is not enabled is refused until it is enabled"_test[s::unix_shell] = [] {
+        // R1: a runner stated `enabled = false` is refused by `run` (exit 2) and leaves the tests
+        // not run, naming the token, what it would install and how to enable it; nothing is
+        // installed. The environment enables it once; naming a runner with `--runner` enables it;
+        // `--list-runners` marks it.
+        auto p = s::project::scaffold("app");
+        for (const auto& t : s::glob(p.at("tests"), "*.cpp")) fs::remove(t);
+        p.write("src/main.cpp", "#include <cstdio>\nint main() { std::puts(\"ARTIFACT-RAN\"); return 0; }\n");
+        p.write("tests/one.cpp", "int main() { return 0; }\n");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "initial build: " << s::text(r);
+        std::vector<std::string> triples;
+        for (const auto& e : fs::directory_iterator(p.at("target")))
+            if (!e.path().filename().string().starts_with(".")) triples.push_back(e.path().filename().string());
+        std::ranges::sort(triples);
+        expect(fatal(!triples.empty())) << "could not determine the host triple from target/";
+        const auto host = triples.front();
+        std::string variable = "MCPP_TARGET_";
+        for (char c : host) variable += std::isalnum(static_cast<unsigned char>(c)) ? char(std::toupper(c)) : '_';
+        variable += "_RUNNER_ENABLED";
+        const auto runner = (s::case_dir() / "runner.sh").string();
+        s::write_executable(runner, "#!/bin/sh\necho RUNNER-RAN\nexec \"$@\"\n");
+        const auto base = p.read("mcpp.toml");
+        p.write("mcpp.toml", base + std::format(
+            "\n[target.{}]\nrunner = {{ cmd = [\"{}\"], requires = [\"xim:mcpp-e2e-not-installed@1.0\"], enabled = false }}\n",
+            host, runner));
+        r = p.mcpp({"run"});
+        expect(fatal(r.started && r.status == 2)) << "A: a runner that is not enabled was not refused with 2: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "[runner-not-enabled]"))) << "A: no token: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "it needs: xim:mcpp-e2e-not-installed@1.0"))) << "A: the packages are not named: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), variable + "=true"))) << "A: the one-off variable is not named: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "RUNNER-RAN") && s::lacks(s::text(r), "ARTIFACT-RAN"))) << "A: something ran: " << s::text(r);
+        r = p.mcpp({"test"});
+        expect(fatal(r.started && r.status != 0)) << "B: the tests ran through a runner that is not enabled: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "[runner-not-enabled]"))) << "B: the tests' reason has no token: " << s::text(r);
+
+        p.write("mcpp.toml", base + std::format(
+            "\n[target.{}]\nrunner = {{ cmd = [\"{}\"], enabled = false }}\n[target.{}.runners]\nprobe = {{ cmd = [\"{}\"], enabled = false }}\n",
+            host, runner, host, runner));
+        r = p.mcpp({"run"}, s::options{.env = {{variable, "true"}}});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "C: the variable did not enable it: " << s::text(r);
+        r = p.mcpp({"run", "--runner", "probe"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "D: naming the runner did not enable it: " << s::text(r);
+        r = p.mcpp({"run", "--list-runners"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "[not enabled]"))) << "E: the list does not mark it: " << s::text(r);
+        p.write("mcpp.toml", base + std::format("\n[target.{}]\nrunner = [\"{}\"]\n", host, runner));
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "F: an argv runner is enabled: " << s::text(r);
+    };
+
     "684 a runner supplied twice is refused"_test[s::unix_shell] = [] {
         // A runner name a dependency's build program supplies alone is accepted (3); supplied
         // by the project's build program too, it is refused naming both (1); the manifest's

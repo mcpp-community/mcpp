@@ -97,6 +97,21 @@ runner 能从任何机器抵达产物。给出执行宿主（`run_under`）时�
 [24](24-openkal-cross.md) 中的 `run_under = ["qemu-aarch64"]`）。目标的平台提供它的缺省 runner（[35](35-platforms.md)）；依赖的构建程序、本机的
 `config.toml`、工程与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它，只写 argv 时保留平台的 `host` 与 `exclusive`。
 
+**按需启用的 runner（2026.11.16.1+）。** 首次使用需取得整机镜像或模拟器、或在构建树与包仓库之外留下状态的 runner，
+由其数据陈述 `enabled = false`：虚拟机、Android 模拟器，以及 x86_64 Linux 上 Windows 行的 Wine。`mcpp run` 以状态 2
+拒绝它，`mcpp test` 使测试已构建而未运行。消息带有 token `[runner-not-enabled]`、首次使用安装的包与两种启用写法；
+启用之前不安装任何包。
+
+```toml
+[target.x86_64-windows-gnu]
+runner = { enabled = true }      # mcpp.toml，或本机的 config.toml
+```
+
+不含 `cmd` 的表调整其下一层的 runner。`cmd`、`requires` 与 `enabled` 是一条陈述：替换 `cmd` 的层陈述另一个 runner，
+除非写出否则为启用，因此已写 `runner = ["wine", "{}"]` 的工程行为不变。`MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`
+为一次调用启用缺省 runner，`mcpp run --runner <name>` 启用它指名的 runner。具名 runner 取同一种表
+（`[target.<sel>.runners] web = { cmd = [...], longlived = true }`），按同一规则合并。
+
 ## runner 收到的内容
 
 runner 收到一段 argv——它自己的 token，产物路径被追加或替换 `{}`——
@@ -171,6 +186,7 @@ mcpp run --pkg-format app --runner other    # a typed --runner still wins
 |---|---|
 | default | runs to completion; the exit code is the verdict |
 | `runner_longlived(name)` | has no natural end; the operator ends it |
+| runner 表中的 `longlived = true` | 同上，以数据陈述（2026.11.16.1+） |
 
 `openocd -c "program image.elf verify reset exit"` 会终止，
 `openocd -c "init"` 不会，两者的拼写直到包所选的那个参数为止都一样。

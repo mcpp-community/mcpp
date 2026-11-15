@@ -86,8 +86,8 @@ runner = ["my-okrun", "{}"]
 |---|---|
 | 编译标志、`link.flags` | 追加在平台的之后;约定不能删除 |
 | `link.inputs`、`link.seal` | 整体替换 |
-| `layers`、`tools`、`runners` | 按键替换;`<layer> = false` 不提供该层 |
-| `runner` | argv 替换;未写出时保留 `host` 与 `exclusive` |
+| `layers`、`tools` | 按键替换;`<layer> = false` 不提供该层 |
+| `runner`、`runners` 的每个名字 | `cmd`、`requires` 与 `enabled` 一起替换,`cmd` 被替换的 runner 未写出时为启用;`host`、`hosts`、`exclusive`、`longlived` 未写出时保留;`config.toml` 或工程中不含 `cmd` 的表只改它写出的键(2026.11.16.1) |
 | 其余字段 | 替换 |
 
 同样的表也可以写在 `~/.mcpp/config.toml` 中,对一台机器生效。图中已有包提供的层交给该包,报告为 `graph`。

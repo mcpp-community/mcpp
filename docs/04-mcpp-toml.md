@@ -1546,7 +1546,8 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 | `tools.<name>` | the package that builds a tool for this machine, or `{ program = "<name>" }` |
 | `link` | `driver`, `flags`, `start`, `script`, `inputs`, `exe`, `shared`, `seal` |
 | `carrier` | `{ package, section, main }`: the program `--mode self-contained` builds |
-| `runner` | an argv, or `{ cmd, host, exclusive }`: `host = "same-arch"` runs an artifact only on a machine of its architecture |
+| `runner` | an argv, or `{ cmd, host, hosts, exclusive, requires, enabled, longlived }`: `host = "same-arch"` runs an artifact only on a machine of its architecture; a table without `cmd` adjusts the runner below it, as `{ enabled = true }` enables a runner its data states `enabled = false` (2026.11.16.1) |
+| `runners.<name>` | the same argv or table, for a named runner (the table form 2026.11.16.1) |
 
 `cfg(platform = "<name>")` selects by platform; `platform` itself is not
 accepted under such a selector. The same keys are read from

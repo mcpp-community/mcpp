@@ -4242,6 +4242,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // artefact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
             // of the conditional sub-table channel.
+            bool runnerAdjusts = false;   // a table without `cmd` (`{ enabled = true }`)
             if (auto it = body.find("runner"); it != body.end()) {
                 // The table form, `{ cmd = [...], host = "same-arch", exclusive =
                 // true }`, is the platform reader's (SPEC-013 §2.3); its command
@@ -4249,9 +4250,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 if (!it->second.is_array() && it->second.is_table()) {
                     mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                         &m.schemaWarnings};
-                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple));
+                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple), true);
                     if (!r) return std::unexpected(error(origin, r.error()));
                     e.runner = r->cmd;
+                    runnerAdjusts = !r->set;
                 } else if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner must be an array of strings or {{ cmd = [...], "
@@ -4265,7 +4267,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     }
                     e.runner.push_back(el.as_string());
                 }
-                if (e.runner.empty()) {
+                if (e.runner.empty() && !runnerAdjusts) {
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner is empty — an empty template would "
                         "run nothing and report success", triple)));
@@ -4288,9 +4290,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "\"download\", \"{{}}\"]", triple, triple)));
                 }
                 for (auto& [name, val] : it->second.as_table()) {
+                    // The table form is the default runner's (R2): the same keys.
+                    if (val.is_table()) {
+                        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                                            &m.schemaWarnings};
+                        auto r = rd.runner(val, std::format("[target.{}.runners].{}", triple, name), true);
+                        if (!r) return std::unexpected(error(origin, r.error()));
+                        if (r->set) e.namedRunners[name] = r->cmd;
+                        continue;
+                    }
                     if (!val.is_array()) {
                         return std::unexpected(error(origin, std::format(
-                            "[target.{}.runners].{} must be an array of strings",
+                            "[target.{}.runners].{} must be an array of strings or {{ cmd = [...] }}",
                             triple, name)));
                     }
                     std::vector<std::string> argv;

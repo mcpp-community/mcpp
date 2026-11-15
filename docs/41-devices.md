@@ -114,6 +114,29 @@ machine's `config.toml`, the project and `MCPP_TARGET_<TRIPLE>_RUNNER` each
 replace it in that order, and an argv alone keeps the platform's `host` and
 `exclusive`.
 
+**A runner enabled on request (2026.11.16.1+).** A runner whose first use
+fetches a whole machine image or an emulator, or leaves state outside the build
+tree and the package store, is stated `enabled = false` by its data: a virtual
+machine, an Android emulator, and Wine for the Windows rows on an x86_64 Linux
+machine. `mcpp run` refuses it with status 2, and `mcpp test` leaves the tests
+built and not run. The message carries the token `[runner-not-enabled]`, the
+packages the first use installs, and the two ways of enabling it; nothing is
+installed before it is enabled.
+
+```toml
+[target.x86_64-windows-gnu]
+runner = { enabled = true }      # mcpp.toml, or config.toml for this machine
+```
+
+A table without `cmd` adjusts the runner below it. `cmd`, `requires` and
+`enabled` are one statement: a tier that replaces `cmd` states another runner,
+enabled unless it says otherwise, so a project that writes `runner = ["wine",
+"{}"]` behaves as before. `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true` enables
+the default runner for one invocation, and `mcpp run --runner <name>` enables
+the runner it names. A named runner takes the same table
+(`[target.<sel>.runners] web = { cmd = [...], longlived = true }`), merged by
+the same rule.
+
 ## What a runner receives
 
 A runner receives an argv — its own tokens, with the artifact's path appended
@@ -202,6 +225,7 @@ and the manifest table that would declare it.
 |---|---|
 | default | runs to completion; the exit code is the verdict |
 | `runner_longlived(name)` | has no natural end; the operator ends it |
+| `longlived = true` in a runner table | the same, stated in data (2026.11.16.1+) |
 
 `openocd -c "program image.elf verify reset exit"` terminates and `openocd -c
 "init"` does not, and the two are spelled alike up to the argument the package

@@ -8,6 +8,21 @@
 
 ### Added
 
+- A runner states `enabled = false` when its first use fetches a whole machine
+  image or an emulator, or leaves state outside the build tree and the package
+  store. `mcpp run` refuses it with status 2 and `mcpp test` leaves the tests
+  built and not run, naming `[runner-not-enabled]`, the packages its first use
+  installs and the ways of enabling it; nothing is installed first. A table
+  without `cmd` in `config.toml` or the project enables it (`runner = { enabled
+  = true }`), `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true` enables it once, and
+  `mcpp run --runner <name>` enables the runner it names. A runner whose `cmd`
+  a nearer tier replaces is enabled unless stated (R1).
+- The Windows rows on an x86_64 Linux machine state Wine as their runner
+  (`xim:wine@11.0`, `host = "same-arch"`), not enabled by default (X1).
+- A named runner takes the table of the default runner (`runners.<name> = {
+  cmd = [...], longlived = true, enabled = false }`) and merges by the same
+  rule; `longlived` states in data what `runner_longlived` states in a build
+  program. A provider's runner states `host` and `enabled` (R2).
 - The execution table (`[[platform.executes]]`, SPEC-016 §2.4): a machine runs
   the programs of another architecture where it is stated, `linux-x86_64`
   executing `i686`. There a `same-arch` runner is built for the artifact's

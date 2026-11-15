@@ -361,6 +361,70 @@ UTest the_rules_of_section45{"PlatformMerge/TheRulesOfSection45", [] {
     expect(eq(base.link.start.value, "ok_main"));
 }};
 
+UTest enabled_belongs_to_the_command{"PlatformMerge/EnabledBelongsToTheCommand", [] {
+    // R1, R2: `cmd`, `requires` and `enabled` are one statement; a table without `cmd`
+    // adjusts the runner below it; `longlived` stands until a nearer statement writes it.
+    mp::Statement base;
+    base.runner.cmd = {"dirun", "{}"};
+    base.runner.requires_ = {"xim:dirun@0.4.0"};
+    base.runner.enabled = false;
+    base.runner.enabledSet = true;
+    base.runner.set = true;
+    base.runners["web"].cmd = {"emrun", "{}"};
+    base.runners["web"].longlived = base.runners["web"].longlivedSet = true;
+    base.runners["web"].set = true;
+
+    mp::Statement enable;                        // `runner = { enabled = true }`
+    enable.runner.enabled = true;
+    enable.runner.enabledSet = true;
+    enable.runners["web"].enabled = false;       // `runners.web = { enabled = false }`
+    enable.runners["web"].enabledSet = true;
+    auto a = base;
+    pf::merge(a, enable);
+    expect(bool(a.runner.enabled));
+    expect(eq(a.runner.cmd.front(), "dirun"));
+    expect(eq(a.runner.requires_.size(), 1u));
+    expect(!a.runners.at("web").enabled);
+    expect(eq(a.runners.at("web").cmd.front(), "emrun"));
+    expect(bool(a.runners.at("web").longlived));
+
+    mp::Statement replace;                       // `runner = ["wine", "{}"]`: a new statement
+    replace.runner.cmd = {"wine", "{}"};
+    replace.runner.set = true;
+    auto b = base;
+    pf::merge(b, replace);
+    expect(bool(b.runner.enabled));
+    expect(b.runner.requires_.empty());
+}};
+
+UTest a_runner_table_states_enabled_and_longlived{"PlatformManifest/ARunnerTableStatesEnabledAndLonglived", [] {
+    auto m = parse(R"(
+[package]
+name = "app"
+version = "0.1.0"
+
+[target.x86_64-freebsd]
+runner = { enabled = true }
+
+[target.wasm32-emscripten.runners]
+web = { cmd = ["emrun", "{}"], longlived = true, enabled = false }
+)");
+    for (auto const& w : m.schemaWarnings) expect(false) << "unexpected warning: " << w;
+    expect(fatal(eq(m.platformOverrides.size(), 2u)));
+    auto of = [&](std::string_view selector) -> const mp::Statement& {
+        for (auto const& o : m.platformOverrides)
+            if (o.selector == selector) return o.fields;
+        expect(fatal(false)) << "no override for " << selector;
+        return m.platformOverrides.front().fields;
+    };
+    auto const& f = of("x86_64-freebsd").runner;
+    expect(!f.set);
+    expect(bool(f.enabledSet) && bool(f.enabled));
+    auto const& web = of("wasm32-emscripten").runners.at("web");
+    expect(bool(web.set) && bool(web.longlived) && !web.enabled);
+    expect(eq(m.targetOverrides.at("wasm32-emscripten").namedRunners.at("web").front(), "emrun"));
+}};
+
 UTest a_host_triple_takes_the_hosted_part_only{"PlatformMerge/AHostTripleTakesTheHostedPartOnly", [] {
     auto p = parse(kPlatform).platform;
     auto h = pf::hosted_view(p);

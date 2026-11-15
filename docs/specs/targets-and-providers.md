@@ -190,6 +190,12 @@
   环境变量（SPEC-013 §4.5）。`hosts` 列出该运行器所在的宿主，空为任一宿主。模板中 `{}` 是产物，`{sysroot}` 是该安排的
   基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在 `requires` 的包中查找，再查 PATH。`requires` 的包
   在第一次 `mcpp run` 或 `mcpp test` 时按工具链的同一方式安装；构建不安装它们。
+- **提供者运行器的 `host` 与 `enabled`（v1.3）。** 提供者的 `runner` 取平台运行器的 `host`（`same-arch`、`any`）与
+  `enabled`（SPEC-013 §10）。首次使用需取得整机镜像或模拟器、或在构建树与包仓库之外留下状态的运行器，数据**应当**陈述
+  `enabled = false`：虚拟机、Android 模拟器与 Wine（在家目录建立 prefix）关闭；用户态模拟器（qemu-user）、okrun、node
+  不关闭。内置数据：`x86_64-windows-gnu` 与 `aarch64-windows-gnu` 的 MinGW 提供者在 `linux-x86_64` 上陈述
+  `{ cmd = ["wine", "{}"], host = "same-arch", requires = ["xim:wine@11.0"], enabled = false }`；`same-arch` 使 aarch64 的
+  Windows 程序不经它运行。
 - **运行器的身份（v1.2）。** 平台的 `runner` 可陈述 `built-as = { "<os>-<arch>" = "<身份>" }`：为该宿主对构建的运行器程序
   是哪个身份。自带运行器的包按它为各系统构建运行器；引擎只对它一向认识的三个系统保留约定，其余系统无此陈述即无程序。
 - **`link.flags` 与链接驱动（v1.1）。** `[platform.link] flags` 只交给 ld.lld；`driver = "compiler"` 的平台陈述它时，构建
@@ -224,4 +230,4 @@
 | 1.0 | 2026-11-09 | 初版：行、提供者、选择、平台定义的行、C 环境、执行、报告与锁 |
 | 1.1 | 2026-11-10 | `clang-triple`；内置行的系统词；FreeBSD 两种身份与 32 位 planned 行；提供者 sysroot 为基座陈述的最后一级；`mingw-llvm` 与 `aarch64-windows-gnu`；C 库由平台描述的行与内置行同一读法；打包读文件闭包；`link.flags` 的警告；构建程序的 `MCPP_KERNEL_ABI_INTERFACES` |
 | 1.2 | 2026-11-12 | 行的 `loader` 与 `execution` 为内置行所读；系统表（`uname`）；提供者的 `tier`、`system-headers`、`runner`；一条条目一种安排；请求的回答是契约；`glibc-sysroot`；一个执行谓词，另一系统的程序不被启动；程序解释器与基座包的单一读法；运行器的占位、`requires` 与 `built-as` |
-| 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 N16、N23、N26、N33）：执行关系表（§2.4）；系统表的 `resources`（§2.3）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |
+| 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 N16、N23、N26、N33、R1、X1）：执行关系表（§2.4）；系统表的 `resources`（§2.3）；提供者运行器的 `host` 与 `enabled`（§6）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |

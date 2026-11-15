@@ -84,6 +84,10 @@ struct Provider {
     std::span<const std::string_view> runner;
     std::span<const std::string_view> runnerHosts;
     std::span<const std::string_view> runnerRequires;
+    // `same-arch` or `any` (empty: unstated), as a platform's runner states it,
+    // and whether it is used before a project or this machine enables it (R1).
+    std::string_view                  runnerHost;
+    bool                              runnerEnabled = true;
 };
 
 // A TOOLCHAIN PAYLOAD (design 2026-11-12 §16, T3): the package a family's
