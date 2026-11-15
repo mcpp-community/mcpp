@@ -24,7 +24,7 @@ constexpr std::string_view kProviderKeys[] = {
     "platform", "tier", "system-headers", "runner",
 };
 constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled" };
-constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources" };
+constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources", "command-scripts" };
 constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
 constexpr std::string_view kPayloadKeys[] = {
     "name", "aliases", "family", "serves", "hosts", "frontend-dir", "frontends", "builds-for", "glibc-fixup", "family-version",
@@ -198,7 +198,7 @@ std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<
         runnerEnabled);
 }
 
-std::string system_entry(const toml::Table& t, std::set<std::string>& seen) {
+std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
     known_keys(t, kSystemKeys, "[[platform.system]]");
     const auto name = text(t, "name", "[[platform.system]]");
     if (name.empty()) throw Failure{"[[platform.system]]: an entry without `name`"};
@@ -209,8 +209,8 @@ std::string system_entry(const toml::Table& t, std::set<std::string>& seen) {
         if (!it->second.is_bool()) throw Failure{std::format("{}: `resources` is not true or false", where)};
         resources = it->second.as_bool();
     }
-    return std::format("    {{ .name = {}, .uname = {}, .resources = {} }},\n", lit(name),
-                       lit(text(t, "uname", where)), resources);
+    return std::format("    {{ .name = {}, .uname = {}, .resources = {}, .commandScripts = {} }},\n", lit(name),
+                       lit(text(t, "uname", where)), resources, arrays.add(words(t, "command-scripts", where)));
 }
 
 std::string executes_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
@@ -282,7 +282,7 @@ std::string generate(const toml::Document& doc) {
     }
     for (auto const& e : entries(doc, "platform.system")) {
         if (!e.is_table()) throw Failure{"[[platform.system]]: an entry that is not a table"};
-        systems += system_entry(e.as_table(), systemNames);
+        systems += system_entry(e.as_table(), arrays, systemNames);
     }
     for (auto const& e : entries(doc, "platform.executes")) {
         if (!e.is_table()) throw Failure{"[[platform.executes]]: an entry that is not a table"};

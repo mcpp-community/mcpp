@@ -8,6 +8,11 @@
 
 ### Added
 
+- `mcpp::runner_spec` states a runner in a build program as the table of
+  data: `.arg()`, `.require()`, `.hosts()`, and `host`, `longlived`,
+  `exclusive`, `enabled` (protocol 19). `{pkg:<name>}` names a program outside
+  a package's `bin/`, installed by the first run. A name stated by
+  `runner_spec` and by the token calls is refused (R2).
 - A runner states `enabled = false` when its first use fetches a whole machine
   image or an emulator, or leaves state outside the build tree and the package
   store. `mcpp run` refuses it with status 2 and `mcpp test` leaves the tests
@@ -62,6 +67,12 @@
 
 ### Fixed
 
+- On Windows a runner named with a directory and no suffix (`../tools/x`)
+  takes the system's suffixes as a bare name does; it could not be started.
+  A `.bat` or `.cmd` program, which the system starts through its command
+  interpreter (the system table's `command-scripts`), is refused an argument
+  holding `%`, `^`, `&`, `|`, `<`, `>`, `"` or a line end, which the
+  interpreter rewrote or ran as a command (R2).
 - A name a build program, this machine or the project states for a program
   (`mcpp::artifact_name("exe", "{name}")`) is followed on a built-in row as on
   a platform's: a program named `cmd.exe` was `cmd.exe.exe` on

@@ -298,6 +298,7 @@ struct ProviderSpec {
 struct SystemSpec {
     std::string name, uname;
     bool resources = false;
+    std::vector<std::string> commandScripts;
     Origin origin;
 };
 
@@ -397,7 +398,7 @@ inline constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
     "hosted", "layers", "link", "execution", "tier", "system-headers", "runner",
 };
-inline constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources" };
+inline constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources", "command-scripts" };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
     "driver", "flags", "start", "script", "inputs", "exe", "shared", "seal",

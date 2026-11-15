@@ -1528,6 +1528,9 @@ cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
 
+**标志列表的顺序。** `cflags`、`cxxflags` 与 `ldflags` 各自按 `[build]` 的、profile 的、`[target.<selector>.build]` 的
+顺序进入命令：编译器或链接器取两个词中后者时，目标块的生效（2026.11.16.1 实测）。
+
 **cl.exe 上的调试信息（2026.11.7.1+）。**`debug = true` 以 `/Z7` 编译：每个对象携带自己的调试信息。
 `/Zi` 与 `/ZI` 把全部编译的调试信息经由 mspdbsrv.exe 写入同一个 PDB；该服务在启动它的编译结束后继续存在，
 并随那个编译的进程单元一同结束。包的标志中的 `/Zi`、`/ZI`、`/FS` 在编译开始前被拒绝。

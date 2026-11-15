@@ -615,6 +615,7 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
                     state.runnerProvider, pkg.manifest.package.name));
             rootBc.runner.assign(bc.runner.begin() + static_cast<std::ptrdiff_t>(runnerN),
                                  bc.runner.end());
+            rootBc.runnerFields = bc.runnerFields;
             state.runnerProvider = pkg.manifest.package.name;
         }
         for (auto const& [name, nr] : bc.namedRunners) {

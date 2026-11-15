@@ -420,6 +420,47 @@ int main() {
         expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "F: an argv runner is enabled: " << s::text(r);
     };
 
+    "1093 a build program states a runner as its table"_test[s::unix_shell] = [] {
+        // R2: a dependency's `mcpp::runner_spec` states the default runner with `requires` and
+        // `enabled = false`, and a named long-lived one. The run is refused naming the package,
+        // enabling it installs from it, `--list-runners` marks both, and the named one runs.
+        const auto tmp = s::case_dir();
+        const auto runner = (tmp / "runner.sh").string();
+        s::write_executable(runner, "#!/bin/sh\necho RUNNER-RAN\nexec \"$@\"\n");
+        s::project(tmp / "dep", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"dep\"\nversion   = \"0.1.0\"\n[targets.dep]\nkind = \"lib\"\n"},
+                                 {"src/dep.cppm", "export module dep;\nexport int dep_anchor() { return 0; }\n"},
+                                 {"build.mcpp", std::format(
+                                     "import std;\nimport mcpp;\nint main() {{\n"
+                                     "    mcpp::runner_spec run;\n    run.enabled = false;\n"
+                                     "    run.arg(\"{0}\").require(\"xim:mcpp-e2e-not-installed@1.0\");\n    run.submit();\n"
+                                     "    mcpp::runner_spec serve;\n    serve.name = \"serve\";\n    serve.longlived = true;\n"
+                                     "    serve.arg(\"{0}\");\n    serve.submit();\n    return 0;\n}}\n", runner)}});
+        s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[dependencies]\ndemo.dep = { path = \"../dep\" }\n"},
+                                     {"src/main.cpp", "import dep;\nint main() { return dep_anchor(); }\n"}});
+        auto r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build failed: " << s::text(r);
+        r = app.mcpp({"run"});
+        expect(fatal(r.started && r.status == 2 && e2e::contains(s::text(r), "[runner-not-enabled]")))
+            << "A: the program's runner that is not enabled was not refused: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "it needs: xim:mcpp-e2e-not-installed@1.0"))) << "A: its requires did not arrive: " << s::text(r);
+        std::string variable;
+        for (const auto& e : fs::directory_iterator(app.at("target")))
+            if (!e.path().filename().string().starts_with(".")) {
+                variable = "MCPP_TARGET_";
+                for (char c : e.path().filename().string())
+                    variable += std::isalnum(static_cast<unsigned char>(c)) ? char(std::toupper(c)) : '_';
+                variable += "_RUNNER_ENABLED";
+            }
+        r = app.mcpp({"run"}, s::options{.env = {{variable, "true"}}});
+        expect(fatal(r.started && r.status != 0 && e2e::contains(s::text(r), "installed from xim:mcpp-e2e-not-installed@1.0")))
+            << "B: enabling it did not install from its package: " << s::text(r);
+        r = app.mcpp({"run", "--list-runners"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "[not enabled]") && e2e::contains(s::text(r), "[long-lived]")))
+            << "C: the list does not show the table: " << s::text(r);
+        r = app.mcpp({"run", "--runner", "serve"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "D: the named runner did not run: " << s::text(r);
+    };
+
     "684 a runner supplied twice is refused"_test[s::unix_shell] = [] {
         // A runner name a dependency's build program supplies alone is accepted (3); supplied
         // by the project's build program too, it is refused naming both (1); the manifest's

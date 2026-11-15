@@ -213,6 +213,10 @@ enum class Slot : std::size_t {
     // packed member's programs at pack time: the provider is a dependency and
     // names a program of the package that depends on it.
     PackPrograms,
+    // Protocol 19 (design 2026-11-15 R2): one runner, default or named, as the
+    // table it is in data -- `cmd`, `host`, `hosts`, `requires`, `enabled`,
+    // `longlived`, `exclusive` -- in one JSON payload (`mcpp::runner_spec`).
+    RunnerSpecs,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -311,7 +315,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 38> kTable{{
+inline constexpr std::array<Def, 39> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -449,6 +453,7 @@ inline constexpr std::array<Def, 38> kTable{{
     // reason: program selection reads it from the build that precedes the
     // packaging pass.
     {"pack-program",        "pack-program",      Slot::PackPrograms,     Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              19},
+    {"runner-spec",         "runner-spec",       Slot::RunnerSpecs,      Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              19},
     // v10 (#618). The value names a target, and `target_directive_error`
     // refuses a name this package does not declare as an executable before
     // anything is applied. Persisted like every row but the re-run keys, so a
@@ -701,6 +706,11 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
 // `apply` on both the run path and the cache-hit path, and the message names
 // both the directive and the declaring package, like `target_directive_error`.
 std::string deploy_directive_error(const mcpp::manifest::Manifest& m, const Directives& d);
+// A `runner-spec` payload that is not a runner (R2): not JSON, cut short, no
+// command, an unknown `host`, a name with a colon, a name stated twice, or a
+// name the token calls (`runner`, `runner-named`) state as well. Checked
+// before anything is applied.
+std::string runner_spec_error(const Directives& d);
 
 // Resolve an action's paths against `pkgRoot`.
 //
@@ -1116,6 +1126,38 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     }
     for (auto const& name : d.at(Slot::RunnerLongLived))
         bc.namedRunners[name].longLived = true;
+    // A runner as one statement (`mcpp::runner_spec`, R2), checked by
+    // `runner_spec_error`. Its command is appended as the tokens are, so one
+    // supplier per runner is decided by the same rule.
+    for (auto const& payload : d.at(Slot::RunnerSpecs)) {
+        auto j = nlohmann::json::parse(payload, nullptr, false);
+        if (j.is_discarded() || !j.is_object()) continue;
+        auto words = [&](const char* key) {
+            std::vector<std::string> out;
+            if (auto it = j.find(key); it != j.end() && it->is_array())
+                for (auto const& w : *it) if (w.is_string()) out.push_back(w.get<std::string>());
+            return out;
+        };
+        const auto name = j.value("name", std::string());
+        const auto cmd = words("cmd");
+        mcpp::manifest::NamedRunner fields;
+        fields.requires_ = words("requires");
+        fields.hosts     = words("hosts");
+        fields.host      = j.value("host", std::string());
+        fields.enabled   = j.value("enabled", true);
+        fields.exclusive = j.value("exclusive", false);
+        fields.longLived = j.value("longlived", false);
+        if (name.empty()) {
+            bc.runner.insert(bc.runner.end(), cmd.begin(), cmd.end());
+            if (fields.exclusive) bc.runExclusive = true;
+            bc.runnerFields = std::move(fields);
+        } else {
+            auto& nr = bc.namedRunners[name];
+            fields.argv = nr.argv;
+            fields.argv.insert(fields.argv.end(), cmd.begin(), cmd.end());
+            nr = std::move(fields);
+        }
+    }
     // ANY non-empty value sets it, and nothing can unset it. Exclusivity is a
     // claim about the DEVICE: if one package knows the target is a mutex, it is
     // one, and a later package saying nothing must not relax that.
@@ -1505,6 +1547,38 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
             return std::format(
                 "build.mcpp emitted `mcpp:link-start` twice, as \"{}\" and as \"{}\"; an "
                 "image is entered at one symbol.", starts.front(), symbol);
+    }
+    return {};
+}
+
+std::string runner_spec_error(const Directives& d) {
+    std::set<std::string> seen;
+    for (auto const& payload : d.at(Slot::RunnerSpecs)) {
+        auto j = nlohmann::json::parse(payload, nullptr, false);
+        if (j.is_discarded() || !j.is_object())
+            return std::format("build.mcpp emitted `mcpp:runner-spec={}`, which is not a runner_spec payload.", payload);
+        const auto name = j.value("name", std::string());
+        const auto shown = name.empty() ? std::string("the default runner") : std::format("the runner '{}'", name);
+        if (j.value("overflow", false))
+            return std::format("build.mcpp's runner_spec for {} was cut short: the allocator refused a list.", shown);
+        if (name.find(':') != std::string::npos)
+            return std::format("build.mcpp's runner_spec names '{}'; a runner's name has no colon.", name);
+        if (auto it = j.find("cmd"); it == j.end() || !it->is_array() || it->empty())
+            return std::format("build.mcpp's runner_spec for {} has no command: call arg() for each word.", shown);
+        if (auto h = j.value("host", std::string()); !h.empty() && h != "same-arch" && h != "any")
+            return std::format("build.mcpp's runner_spec for {} states host \"{}\"; it is \"same-arch\" or \"any\".",
+                               shown, h);
+        if (!seen.insert(name).second)
+            return std::format("build.mcpp submitted a runner_spec for {} twice; a runner is one statement.", shown);
+        const bool tokens = name.empty()
+            ? !d.at(Slot::Runner).empty()
+            : std::ranges::any_of(d.at(Slot::NamedRunner), [&](std::string const& e) {
+                  return e.starts_with(name + ":");
+              });
+        if (tokens)
+            return std::format(
+                "build.mcpp states {} both with runner_spec and with mcpp::runner(...); a runner is "
+                "stated one way.", shown);
     }
     return {};
 }

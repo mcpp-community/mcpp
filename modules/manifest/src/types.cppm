@@ -869,6 +869,13 @@ struct Resources {
 struct NamedRunner {
     std::vector<std::string> argv;
     bool                     longLived = false;
+    // The rest of the runner's table (`mcpp::runner_spec`, protocol 19; R2):
+    // the packages it is installed from, where it exists, how it reaches the
+    // artifact, whether runs overlap and whether it is enabled.
+    std::vector<std::string> requires_, hosts;
+    std::string              host;
+    bool                     exclusive = false;
+    bool                     enabled   = true;
 };
 
 // THE C STANDARD OF A PACKAGE THAT DECLARES NONE (#695).
@@ -941,6 +948,9 @@ struct BuildConfig : BuildInputs {
     // gets the same flow.
     std::map<std::string, NamedRunner> namedRunners;
     bool                                runExclusive = false;
+    // The default runner's table besides its command (`runner_spec` with no
+    // name); `argv` is unused, the command being `runner` above.
+    NamedRunner                         runnerFields;
 
     // Was `sources` WRITTEN, as opposed to merely being empty?
     //

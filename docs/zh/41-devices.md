@@ -61,13 +61,16 @@ mcpp::runner_longlived("monitor");      // no natural end
 mcpp::run_exclusive();                  // this target's runs cannot overlap
 ```
 
+`mcpp::runner_spec` 以数据中的表陈述一个 runner，含 `requires` 与 `enabled`（2026.11.16.1+，[30](30-build-mcpp.md)）。
+
 **写程序名，不要写路径。** mcpp 会定位它：先找**图中任何一个包**在
 `[xlings.workspace]` 下声明的载荷的 `bin/`（消费工程优先，然后是它的
 依赖），再找 `PATH`。板级包正是那个知道哪个模拟器或探针能抵达这台机器
 的东西，所以由它自己声明该载荷，**消费者什么都不用声明**。用
 `mcpp::xpkg_dir` 拼出绝对路径是多余的，而且会引入一个失败模式——声明
 不是安装，查询可能返回空，于是没有配置任何 runner，也没有任何话说明
-原因。写程序名则让 mcpp 能报出它究竟搜过哪些目录。
+原因。写程序名则让 mcpp 能报出它究竟搜过哪些目录。不在载荷 `bin/` 下的程序写作 `{pkg:<name>}/<路径>`，
+其包列入 runner 的 `requires`，并最先被查找。
 
 ## 工程的覆盖项
 
@@ -111,6 +114,18 @@ runner = { enabled = true }      # mcpp.toml，或本机的 config.toml
 除非写出否则为启用，因此已写 `runner = ["wine", "{}"]` 的工程行为不变。`MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`
 为一次调用启用缺省 runner，`mcpp run --runner <name>` 启用它指名的 runner。具名 runner 取同一种表
 （`[target.<sel>.runners] web = { cmd = [...], longlived = true }`），按同一规则合并。
+
+## runner 所指名的程序（2026.11.16.1+）
+
+| | 规则 |
+|---|---|
+| 查找 | 先 `requires` 的包，再图中各载荷的 `bin/`，最后 `PATH`；不查当前目录 |
+| 不在 `bin/` 下的程序 | `{pkg:<name>}/<路径>`，其包列入 `requires` |
+| Windows 上无后缀的名字 | 取系统的后缀 `.exe`、`.cmd`、`.bat`，裸名字与带目录的名字相同（`../tools/x` 即 `../tools/x.cmd`）；无后缀的文件在那里不是程序 |
+| 执行 | argv，不经 shell |
+| 系统经命令解释器启动的脚本 | Windows 上的 `.bat` 与 `.cmd`（系统表的 `command-scripts`）：参数含 `%`、`^`、`&`、`\|`、`<`、`>`、`"` 或换行时在启动前拒绝，因为解释器不论怎样引用都把它们读作语法（CVE-2024-24576 一类） |
+| 占位符 | `{}`、`{sysroot}` 与 `{pkg:<name>}`，可位于词中（`{}/index.html`）；其余花括号原样保留；没有 `{}` 时产物附在末尾 |
+| 状态 | runner 的状态即运行的状态；长驻 runner 的状态不是结论，`mcpp test` 不使用它 |
 
 ## runner 收到的内容
 

@@ -239,7 +239,8 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         set.providers.push_back(p);
     };
     for (auto const& sys : s.systems)
-        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname), sys.resources });
+        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname), sys.resources,
+                                set.keep(sys.commandScripts) });
     // A platform the engine's own providers name (openkal-platform) is served by
     // those; its shorthands are not registered twice.
     const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {
@@ -1077,6 +1078,16 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
     mcpp::platform::merge(program, state.m->buildConfig.programPlatform);
     // A build program's runner and named runners (`mcpp::runner`), the BSP
     // spelling of the same fields.
+    // The rest of a runner's table (`runner_spec`, R2): the same fields as
+    // data, so `{pkg:<name>}` and `enabled` mean in a build program what they
+    // mean in a platform.
+    auto table = [](mp::Runner& r, const mcpp::manifest::NamedRunner& f) {
+        r.requires_ = f.requires_;
+        if (!f.hosts.empty()) { r.hosts = f.hosts; r.hostsSet = true; }
+        if (!f.host.empty()) r.host = f.host;
+        if (!f.enabled) { r.enabled = false; r.enabledSet = true; }
+        if (f.exclusive) { r.exclusive = true; r.exclusiveSet = true; }
+    };
     if (!state.m->buildConfig.runner.empty()) {
         program.runner.cmd = state.m->buildConfig.runner;
         program.runner.set = true;
@@ -1086,6 +1097,7 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             program.runner.exclusive = true;
             program.runner.exclusiveSet = true;
         }
+        table(program.runner, state.m->buildConfig.runnerFields);
     }
     for (auto const& [name, nr] : state.m->buildConfig.namedRunners) {
         auto it = state.namedRunnerProvider.find(name);
@@ -1096,6 +1108,7 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
         r.set = !nr.argv.empty();
         r.longlived = nr.longLived;
         r.longlivedSet = nr.longLived;
+        table(r, nr);
         program.runners[name] = std::move(r);
     }
     mcpp::platform::merge(s, program);

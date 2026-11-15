@@ -92,7 +92,7 @@ mcpp build      # compiles + runs build.mcpp, then builds the project
 | `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建（绝对路径，或相对包根）。下游效果与 `generated=` 相同；语义区别在于文件是程序*选中*的（tarball payload / vendored 源树）而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录（`-I`；绝对路径或相对包根，自动规范化）。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`，但排在系统目录**之后**搜索（`-idirafter`）——用于会遮蔽系统头的 payload 源树 |
-| `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**（宿主跑不了它时）。一个 token 一次调用、按顺序；产物路径会被追加（或替换 `{}`）。**到达消费者**。可执行文件要发**绝对路径**，且**只能有一个**依赖提供它 |
+| `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**（宿主跑不了它时）。一个 token 一次调用、按顺序；产物路径会被追加（或替换 `{}`）。**到达消费者**。写程序名（按 [41](41-devices.md) 所述查找），且**只能有一个**依赖提供它 |
 | `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | 加一条本程序**算出来的**链接标志，原样传递。这是 `link-lib` / `link-search` / `link-script` 各自命名一类东西之后留下的出口：生成的版本脚本（`-Wl,--version-script=`）、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、以及 `-Wl,--exclude-libs,ALL`（静态吞入的第三方不得成为本包 ABI 的一部分）。按发出顺序追加在 `[build] ldflags` 之后。**到达消费者**，与 `[build] ldflags` 一致 —— 理由见下 |
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | 设置**本包**可执行目标 `<target>` 的 PE 子系统（`console` 或 `windows`），与 `[targets.<target>] windows_subsystem`（docs/04）是同一字段。只到达该目标的链接，不到达其他目标或消费者，在非 PE 目标上不产生任何标志。本包未以 `kind = "bin"` 声明该目标、取值不在集合内、取值与 mcpp.toml 的声明矛盾，这三种情形都在应用任何指令之前被拒绝 |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | 设置可执行目标 `<target>` 的入口函数（`main`、`wmain`、`WinMain` 或 `wWinMain`），与 `windows_entry` 是同一字段；作用域与拒绝条件同 `windows-subsystem` |
@@ -171,6 +171,7 @@ int main() {
 | `mcpp::seal(step, token)` *(协议 17)* | `mcpp:seal=` —— 封装步骤 `step` 的一个 token，在链接出的文件（`{}`）发布之前运行；即 `link.seal` |
 | `mcpp::run_host(h)` *(协议 17)* | `mcpp:run-host=` —— `"same-arch"` 或 `"any"`；即 `runner.host` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
+| `mcpp::runner_spec` *(协议 19)* | `mcpp:runner-spec=` —— 一条陈述的 runner，与数据中的表逐字段对应；见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的，或编进本构建程序的某个依赖声明的（2026.9.6.6+）；没声明或没安装时返回 `""`（见下） |
 | `mcpp::xpkg_source(ns, name)` / `mcpp::xpkg_program(ns, name)` *(协议 15)* | 该载荷从哪里来 —— `payload`、`override`、`pending` 或 `""` —— 以及一条覆盖点名的程序 |
 | `mcpp::xpkg_request(ns, name)` / `mcpp::xpkg_pending()` *(协议 15)* | 一个声明了 `provision = "on-request"` 的载荷的目录；尚未安装时请求它，此时 `xpkg_pending()` 为真，程序应当返回（见下） |
@@ -258,8 +259,9 @@ for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
 调试时把 `-bios default` 换成 `-bios none -semihosting` 是正当需求 —— 且 mcpp 会说明
 它覆盖了哪个依赖。
 
-**可执行文件要发绝对路径。** 裸名会经 `PATH` 解析到一个 shim，而 shim 按**拥有它
-的 home** 派发，那未必是本次构建用的 home。
+**写程序名，不写路径。** 首个词先在 runner 的 `requires` 的包中查找，再在图中各载荷的 `bin/` 中查找，最后查 `PATH`，
+不查当前目录（[41 —— 抵达一台设备](41-devices.md)）。不在包的 `bin/` 下的程序写作 `{pkg:<name>}/<路径>`，包写入
+`requires`（见下文 `runner_spec`），在运行开始时解析；构建时拼出的绝对路径把 home 与版本固化在陈述中。
 
 **只能有一个依赖提供 runner。** 两个板级支持包都声称知道怎么跑这个产物是配置
 错误；mcpp 会**同时点名两个**并报错，而不是把它们并成一个谁也不是的 argv。
@@ -270,7 +272,32 @@ runner，按发出顺序，无论调用来自这个程序的哪个库。要在�
 之间选择的程序，在发出任何一个之前完成选择。以打包格式命名的 runner 在
 `mcpp run --pkg-format <name>` 下抵达该格式的可分发物（[41 —— 抵达一台设备](41-devices.md)）。
 
-### 问，而不是声明：`toolchain_dir` / `sysroot_dir`（2026.8.19.4+）
+### `runner_spec` —— 一条陈述的 runner（2026.11.16.1+，协议 19）
+
+数据中的 runner 是一张表（`runner = { cmd = [...], requires = [...], ... }`，[41](41-devices.md)）；`mcpp::runner_spec`
+是构建程序中的同一张表，逐字段对应，作为一条指令提交：
+
+```cpp
+mcpp::runner_spec web;
+web.name      = "web";                          // 空：缺省 runner
+web.longlived = true;                           // 没有自然结束
+web.arg("{pkg:emsdk}/emscripten/emrun").arg("{}")
+   .require("xim:emsdk");
+web.submit();
+```
+
+| 表的键 | `runner_spec` |
+|---|---|
+| `cmd` | `.arg(tok)`，与 `action.arg()` 相同 |
+| `longlived`、`exclusive`、`enabled` | 同名字段（`enabled` 缺省为 `true`） |
+| `host` | 同名字段（`"same-arch"`、`"any"`） |
+| `hosts` | `.hosts(pair)`，每次一个 `<os>-<arch>` |
+| `requires` | `.require(pkg)`：`requires` 是 C++ 关键字 |
+
+`{}` 是产物，`{pkg:<name>}` 是 `require()` 中该包的根，由第一次使用该 runner 的 `mcpp run` 或 `mcpp test` 安装，构建
+不安装。一个 runner 只用一种方式陈述：同一名字既由 `runner_spec` 又由逐词调用陈述、同一名字提交两次、没有命令、或
+`host` 不是两个词之一时，在应用任何指令之前拒绝。逐词调用保持原义；覆盖、`enabled` 与每个名字一个提供者遵循数据的规则。
+：`toolchain_dir` / `sysroot_dir`（2026.8.19.4+）
 
 ```cpp
 const char* tc = mcpp::toolchain_dir();   // the resolved toolchain's payload root

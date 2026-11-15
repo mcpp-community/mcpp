@@ -92,6 +92,9 @@
 #   resources       the system's loader reads a program's resource section: a
 #                   project's `[resources]` compile into its programs (false
 #                   when absent)
+#   command-scripts the suffixes of the files the system starts through its
+#                   command interpreter; an argument holding the interpreter's
+#                   syntax (`%`, `^`, `&`, `|`, `<`, `>`, `"`) is refused
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
@@ -677,8 +680,9 @@ uname = "FreeBSD"
 
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
-name      = "windows"
-resources = true
+name            = "windows"
+resources       = true
+command-scripts = [".bat", ".cmd"]
 
 # ── Execution relations ──────────────────────────────────────────────────────
 #

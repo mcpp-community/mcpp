@@ -816,6 +816,12 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                                          where, sk, list_of(kSystemKeys)));
                         continue;
                     }
+                    if (sk == "command-scripts") {
+                        auto w = strings(sv, std::format("{}.command-scripts", where));
+                        if (!w) return std::unexpected(w.error());
+                        sys.commandScripts = std::move(*w);
+                        continue;
+                    }
                     if (sk == "resources") {
                         if (!sv.is_bool())
                             return std::unexpected(std::format("{}.resources must be a boolean", where));

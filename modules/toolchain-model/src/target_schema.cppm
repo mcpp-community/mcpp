@@ -132,6 +132,12 @@ struct System {
     // 2026-11-15 N16): a project's `[resources]` compile into the programs of
     // its rows. A PE image another system loads (a UEFI application) has none.
     bool             resources = false;
+    // THE FILES THE SYSTEM STARTS THROUGH ITS COMMAND INTERPRETER (design
+    // 2026-11-15 R2, A3), by suffix (`.bat`, `.cmd` on Windows): the
+    // interpreter reads `%`, `^`, `&`, `|`, `<`, `>` and `"` in an argument
+    // as its own syntax, so an argument holding one is refused before the
+    // start rather than passed to be rewritten or run as a command.
+    std::span<const std::string_view> commandScripts;
 };
 
 // AN ARCHITECTURE A MACHINE EXECUTES BESIDES ITS OWN (design 2026-11-15 N23):

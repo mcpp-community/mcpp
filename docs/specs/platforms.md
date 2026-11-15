@@ -323,6 +323,17 @@ plugin    = "build.mcpp"
 | `enabled` | 是否使用该运行器,缺省为真。为假时 `mcpp run` 以状态 2 拒绝,`mcpp test` 使测试已构建而未运行(`unreachableIsBuilt` 的调用为"已构建、本机不运行"),消息带 `[runner-not-enabled]`、`requires` 与两种启用写法;拒绝在安装 `requires` 之前。`mcpp run --runner <name>` 指名的运行器视为启用;`--pkg-format` 找到的同名运行器不算指名。以 `host = "same-arch"` 到达不了产物的运行器不以此拒绝,而按到达拒绝。**mcpp >= 2026.11.16.1** |
 | `longlived` | 运行器没有自然结束,状态不是结论;`mcpp test` 不使用它。与构建程序的 `runner_longlived` 同义。**mcpp >= 2026.11.16.1** |
 
+运行器的程序(**mcpp >= 2026.11.16.1**):
+
+1. **查找。** `cmd` 首项先在 `requires` 的包中查找,再在图中各载荷的 `bin/` 与载荷根中查找,最后查 PATH;**禁止**查找
+   当前目录。不在 `bin/` 下的程序写作 `{pkg:<name>}/<路径>`。Windows 上无后缀的名字取系统的后缀(`.exe`、`.cmd`、
+   `.bat`),裸名字与带目录的名字相同;无后缀的同名文件不是程序。
+2. **执行。** argv 不经 shell。系统表为本机系统陈述 `command-scripts`(SPEC-016 §2.3)时,后缀属于它的程序由命令解释器
+   启动;参数含 `%`、`^`、`&`、`|`、`<`、`>`、`"`、回车或换行时**必须**在启动前拒绝并指出该参数,**禁止**把它交给
+   解释器改写或执行。
+3. **占位符。** 只替换 `{}`、`{sysroot}`、`{pkg:<name>}`,可位于词中;其余花括号原样保留;没有 `{}` 时产物附在末尾。
+4. **状态。** 运行器的退出状态是 `mcpp run` 的状态;`longlived` 的运行器的状态不是结论,`mcpp test` 不使用它。
+
 具名运行器 `runners.<name>` 取与 `runner` 相同的数组或表形式(**mcpp >= 2026.11.16.1**;此前只有数组)。平台与提供者
 陈述的运行器**必须**有 `cmd`;本机配置与工程的表可以只写 `enabled` 等键,调整其下一层的运行器。
 
@@ -566,4 +577,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.7 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E8,mcpp#911 N6):§4 `link.flags` 在 `driver = "compiler"` 时给出警告。 |
 | 1.8 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 §5.2、§5.5):§10 运行器的 `requires` 与 `built-as`,模板占位 `{sysroot}`、`{pkg:<name>}`,提供者的 `runner` 为陈述的最低一级;`hosts` 的系统取自系统表。 |
 | 1.9 | 2026-11-14 | mcpp 2026.11.13.1:§7.3 一行所带的工具,`base = "none"` 的提供者只带其自身约定指名的工具,其余身份不带只由这类提供者指名的工具。 |
-| 1.10 | 2026-11-16 | mcpp 2026.11.16.1(设计 2026-11-15 R1、R2):§10 运行器的 `enabled` 与 `longlived`;具名运行器与 `runner` 同一种表;§6 覆盖层不含 `cmd` 的表、`enabled` 随 `cmd` 的陈述、`MCPP_TARGET_<T>_RUNNER_ENABLED`。 |
+| 1.10 | 2026-11-16 | mcpp 2026.11.16.1(设计 2026-11-15 R1、R2):§10 运行器的 `enabled` 与 `longlived`;具名运行器与 `runner` 同一种表;§6 覆盖层不含 `cmd` 的表、`enabled` 随 `cmd` 的陈述、`MCPP_TARGET_<T>_RUNNER_ENABLED`。;运行器的程序:查找、Windows 的后缀、命令解释器启动的脚本的参数、占位符与状态(R2)。 |

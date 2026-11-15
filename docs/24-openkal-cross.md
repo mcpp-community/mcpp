@@ -363,6 +363,14 @@ returned an error would be the shape the specification forbids — present and
 always failing, which the caller cannot tell from a condition — and it would
 move a fact known at link time to run time.
 
+**The terminal under node has no raw mode.** Emscripten reads standard input
+with a synchronous read, which node serves from a pipe or a file and refuses on
+a terminal: `read(0, ...)` fails with `EIO` there, with or without
+`tcsetattr`, which returns 0 and changes nothing; `isatty(0)` is 1 in every
+case. A program reads its input piped (`printf 'keys' | mcpp run --target
+wasm32-emscripten`), and one that needs key-by-key input on the web reads it in
+its page as key events (measured with emsdk 6.0.9 under node 26).
+
 `openkal.task` is carried by a feature for a reason specific to this platform:
 threads need `-pthread`, which selects a different C library build, a different
 memory model and a different loader contract. Without the feature the

@@ -1334,6 +1334,9 @@ std::expected<void, std::string> run_build_program_impl(
     if (auto derr = dirs::deploy_directive_error(m, d); !derr.empty()) {
         return std::unexpected(derr);
     }
+    if (auto rerr = dirs::runner_spec_error(d); !rerr.empty()) {
+        return std::unexpected(rerr);
+    }
     // GLOB INPUTS OUTSIDE THE PACKAGE (#766). A registry or git dependency's
     // tree sits in the package store, whose other contents depend on what
     // else is installed: a pattern leaving that package would make its re-run

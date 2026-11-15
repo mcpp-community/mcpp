@@ -271,3 +271,17 @@ UTest an_argument_ending_in_a_backslash_does_not_swallow_the_next{"WindowsComman
                     + mcpp::build::command_line::quote_windows("-o");
     expect(eq(argv_of(line), (std::vector<std::string>{"C:\\Kits\\10\\", "-o"}))) << line;
 }};
+
+UTest a_script_argument_with_interpreter_syntax_is_named{"WindowsCommandLine/AScriptArgumentWithInterpreterSyntaxIsNamed", [] {
+    // R2, A3: an argument a command interpreter would read as syntax is named, the first one;
+    // ordinary paths, spaces, `=` and `!` pass.
+    namespace cl = mcpp::build::command_line;
+    const std::vector<std::string> plain{"C:\\Program Files\\app.exe", "--level=3", "hello world!", "a,b;c"};
+    expect(eq(cl::command_script_problem(plain), std::string()));
+    for (std::string_view bad : {"100%", "a^b", "x&calc", "a|b", "<in", ">out", "say \"hi\"", "line\nfeed"}) {
+        const std::vector<std::string> args{"ok", std::string(bad)};
+        const auto why = cl::command_script_problem(args);
+        expect(ne(why.find("argument 2"), std::string::npos)) << bad << " => " << why;
+    }
+}};
+

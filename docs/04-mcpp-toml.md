@@ -1680,6 +1680,10 @@ anything compiles.
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
+- **The order of the flag lists.** Each of `cflags`, `cxxflags` and `ldflags`
+  reaches a command as `[build]`'s, then the profile's, then
+  `[target.<selector>.build]`'s: where a compiler or a linker takes the last of
+  two words, the target block's wins (measured on 2026.11.16.1).
 - **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in

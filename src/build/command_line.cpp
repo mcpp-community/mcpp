@@ -183,3 +183,21 @@ std::string clean_ld_library_path_prefix(const std::vector<std::filesystem::path
 }
 
 } // namespace mcpp::build::command_line
+
+namespace mcpp::build::command_line {
+
+std::string command_script_problem(std::span<const std::string> args) {
+    constexpr std::string_view syntax = "%^&|<>\"\r\n";
+    for (std::size_t i = 0; i < args.size(); ++i)
+        if (auto at = args[i].find_first_of(syntax); at != std::string::npos) {
+            const char c = args[i][at];
+            const auto shown = c == '\r' ? std::string("a carriage return")
+                             : c == '\n' ? std::string("a line feed")
+                             : std::format("`{}`", c);
+            return std::format("argument {} ('{}') holds {}, which the command interpreter reads as its "
+                               "own syntax", i + 1, args[i], shown);
+        }
+    return {};
+}
+
+} // namespace mcpp::build::command_line

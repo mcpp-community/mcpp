@@ -341,6 +341,44 @@ UTest a_pack_program_and_the_reasons_are_carried{"BuildDirectives/APackProgramAn
     expect(eq(def->scope, dirs::Scope::Claim));
 }};
 
+UTest a_runner_spec_is_the_runners_table{"BuildDirectives/ARunnerSpecIsTheRunnersTable", [] {
+    // R2: one payload states a runner as its table; the default's command is the runner, a
+    // named one's its argv; the rest of the table is carried.
+    auto d = parse("mcpp:runner-spec={\"name\":\"web\",\"host\":\"\",\"longlived\":true,\"exclusive\":false,"
+                   "\"enabled\":false,\"cmd\":[\"{pkg:emsdk}/emscripten/emrun\",\"{}\"],\"hosts\":[\"linux-x86_64\"],"
+                   "\"requires\":[\"xim:emsdk\"]}\n"
+                   "mcpp:runner-spec={\"name\":\"\",\"host\":\"same-arch\",\"longlived\":false,\"exclusive\":true,"
+                   "\"enabled\":true,\"cmd\":[\"okrun\",\"{}\"],\"hosts\":[],\"requires\":[]}\n");
+    expect(eq(dirs::runner_spec_error(d), std::string()));
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    auto const& web = m.buildConfig.namedRunners.at("web");
+    expect(eq(web.argv, (std::vector<std::string>{"{pkg:emsdk}/emscripten/emrun", "{}"})));
+    expect(bool(web.longLived) && !web.enabled);
+    expect(eq(web.requires_, (std::vector<std::string>{"xim:emsdk"})));
+    expect(eq(web.hosts, (std::vector<std::string>{"linux-x86_64"})));
+    expect(eq(m.buildConfig.runner, (std::vector<std::string>{"okrun", "{}"})));
+    expect(eq(m.buildConfig.runnerFields.host, "same-arch"));
+    expect(bool(m.buildConfig.runExclusive));
+}};
+
+UTest a_runner_is_stated_one_way{"BuildDirectives/ARunnerIsStatedOneWay", [] {
+    // R2: a name stated by runner_spec and by the token calls, twice, without a command, or
+    // with an unknown host, is refused before anything is applied.
+    auto spec = [](std::string name, std::string cmd, std::string host = "") {
+        return std::format("mcpp:runner-spec={{\"name\":\"{}\",\"host\":\"{}\",\"longlived\":false,\"exclusive\":false,"
+                           "\"enabled\":true,\"cmd\":[{}],\"hosts\":[],\"requires\":[]}}\n", name, host, cmd);
+    };
+    expect(ne(dirs::runner_spec_error(parse(spec("web", "\"emrun\"") + "mcpp:runner-named=web:x\n")).find("one way"),
+              std::string::npos));
+    expect(ne(dirs::runner_spec_error(parse(spec("", "\"okrun\"") + "mcpp:runner=okrun\n")).find("one way"),
+              std::string::npos));
+    expect(ne(dirs::runner_spec_error(parse(spec("web", "\"a\"") + spec("web", "\"b\""))).find("twice"),
+              std::string::npos));
+    expect(ne(dirs::runner_spec_error(parse(spec("web", ""))).find("no command"), std::string::npos));
+    expect(ne(dirs::runner_spec_error(parse(spec("web", "\"a\"", "near"))).find("same-arch"), std::string::npos));
+}};
+
 UTest a_claim_reaches_neither_compile_nor_link{"BuildDirectives/AClaimReachesNeitherCompileNorLink", [] {
     auto d = parse("mcpp:fact=widget.driver=1.2\n"
                    "mcpp:floor=widget.driver >= 2.0\n");
@@ -1066,13 +1104,13 @@ UTest deploy_row_is_protocol_eleven_with_link_global_scope_and_a_tag{"BuildDirec
     expect(eq(def->scope, dirs::Scope::LinkGlobal));
     expect(eq(def->sinceProtocol, 11));
     expect(!(def->tag.empty()));
-    expect(eq(dirs::kProtocolVersion, 18));
+    expect(eq(dirs::kProtocolVersion, 19));
 }};
 
-UTest protocol_eighteen_is_accepted_and_nineteen_is_not{"BuildDirectives/ProtocolEighteenIsAcceptedAndNineteenIsNot", [] {
-    auto ok = parse("mcpp:protocol=18\n");
+UTest protocol_nineteen_is_accepted_and_twenty_is_not{"BuildDirectives/ProtocolNineteenIsAcceptedAndTwentyIsNot", [] {
+    auto ok = parse("mcpp:protocol=19\n");
     expect(!(dirs::protocol_error(ok).has_value()));
-    auto no = parse("mcpp:protocol=19\n");
+    auto no = parse("mcpp:protocol=20\n");
     expect(dirs::protocol_error(no).has_value());
 }};
 
