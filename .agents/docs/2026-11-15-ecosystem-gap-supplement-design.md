@@ -640,3 +640,10 @@ profile 给出一次提示。需要评审后实现，不在本轮。
   - `ci-unit.yml` 按 bootstrap 的版本判断：早于 2026.11.16.1 时以 `MCPP_BMI_SCHEDULE=off` 构建归档，此时 ninja 的作业数（核数 + 2）约束链接；固定版本前移后自动恢复分离调度。
 - 测试：单元 `NinjaBackend/LinksHoldAPermitOfTheScheduleBound`；e2e 938（重链不暴露半个文件）、861（图与作业数无关）。
   - 实测（从 main 的测试构建恢复，`MCPP_JOBS=4`）：bootstrap 同时运行的 `ld` 最多 7 个，超过上限 4，用时 539 s；本分支最多 4 个，用时 360 s。
+
+### 13.7 N41：mcpp 捆绑的 xlings 前移到 2026.11.16.1（待评审）
+
+- X2（xlings#715）在 xlings 2026.11.16.1 中修复，但 mcpp 捆绑并在 CI 中使用的 xlings 仍是 2026.10.26.1（`pinned::kXlingsVersion` 及 `.github` 中的 21 处）。
+- 实测：本 PR 的完整 CI 中，Windows 的 e2e `sources/100` 一次失败，原因正是 #715：`Failed to write file: ...\registry\subos\default\.xlings.json`。重跑后通过，与本 PR 的改动无关。
+- 建议：下一个 mcpp 版本把捆绑的 xlings 移到 2026.11.16.1，使 mcpp 的用户得到 X2 与 X5 的修复。
+- 需评审的理由：这次前移跨越一个月的 xlings 版本，涉及 mcpp 调用的接口约定（`interface` 调用）；CI 的沙箱缓存键随 xlings 版本变化，首轮为冷缓存。它是独立的决定，不并入本 PR。
