@@ -2200,6 +2200,14 @@ discover = ["tests/**/*.cpp"]    # the default
 | `split` | `"file"`, `"case"`, `"auto"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, per file with a file the run store measured longer than its share divided into groups of its cases (`"auto"`, 2026.11.13.1+), or once *(2026.11.9.1+)* |
 | `link` | `"used"` or `"objects"` | `"used"` (the default): a test links what it reaches (`--gc-sections`, `-dead_strip`); `"objects"`: every object whole *(2026.11.9.1+)* |
 | `store` | directory or `"none"` | where a run is kept in the mtest store's form, relative to the project; the default is `target/mtest`; `"none"` keeps nothing *(2026.11.9.1+)* |
+| `features` | array of feature names | the features the package's own test build turns on, beside its defaults and `--features`; each is a feature `[features]` declares *(2026.11.16.1+)* |
+
+`[target.'<sel>'.test] discover` adds globs to `discover` for the targets the
+predicate selects, as a conditional `[build] sources` adds sources; a `!` glob
+removes the files it matches from the whole set *(2026.11.16.1+)*. It is the
+one key such a table holds: the others shape the test build rather than add to
+its inputs. The tests are discovered before dependencies resolve, so a
+predicate on a target-side layer (`kernel-abi`, `c-abi`, ...) is refused.
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

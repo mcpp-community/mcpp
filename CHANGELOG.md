@@ -17,6 +17,15 @@
 
 ### Added
 
+- `[target.'<sel>'.test] discover` selects a package's test programs by
+  target: its globs join `[test] discover` for the targets the predicate
+  selects, and a `!` glob removes tests there. A package on the Web holds a
+  test that needs a native-only dev-dependency without a second package (#942).
+- `[test] features` names the features a package's own test build turns on.
+  The tests are a consumer of the package and this is their request: `mcpp
+  build`, the programs the tests run and every other consumer keep the
+  package's defaults, and in a workspace each member's request stays on its own
+  edge (#941).
 - `x86_64-linux-android` runs in the Android Emulator on an x86_64 Linux
   machine, once enabled: dirun (>= 0.4.0) boots the API 34 system image
   through the image package's profile, and the target's runs do not overlap.

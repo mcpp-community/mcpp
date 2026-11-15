@@ -118,6 +118,39 @@ mtest 自身的运行一样读取它们（Markdown 报告、最慢的用例、�
 `[build] sources` 承载整套套件，其唯一的测试程序驱动套件，用
 `mcpp test -p <member>` 选中。
 
+### 目标的测试，以及测试构建打开的 feature（2026.11.16.1+）
+
+包的测试程序是测试构建的输入，所以目标像选择源文件一样选择它们：
+
+```toml
+[target.'cfg(os = "emscripten")'.test]
+discover = ["!tests/native/**"]      # 不为 Web 构建
+
+[target.'cfg(os = "emscripten")'.dev-dependencies]
+# ……它们导入的包写在 `[target.'cfg(not(os = "emscripten"))'.dev-dependencies]`
+```
+
+谓词与目标相符的 `[target.'<sel>'.test]` 表，其 glob 追加到 `[test] discover`；`!` 开头的 glob 从整个集合中
+移除它匹配的文件，正向的 glob 只在它选中的目标上增加测试（`discover = ["tests/*.cpp"]` 配合
+`[target.'cfg(not(os = "emscripten"))'.test] discover = ["tests/native/*.cpp"]`）。目标是 `--target`，否则是包的
+`[build] target`，否则是本机。在某个目标上被排除的测试不是该目标的测试：`mcpp test --list --target <triple>`
+给出这个集合。处处都能构建、只在部分机器上成立的用例属于测试协议（带原因的跳过），不属于这张表。
+
+测试是其包的消费者，`[test] features` 就是这个消费者的请求：
+
+```toml
+[features]
+ktx2 = { sources = ["src/ktx2/*.cppm"] }
+
+[test]
+features = ["ktx2"]
+```
+
+测试规划在默认 feature 与 `--features` 之外打开它们，见于 `mcpp test`、`mcpp test -p <member>` 与
+`mcpp test --workspace`。在工作空间中，它们在该成员自己的边上请求，声明了同名 feature 的另一个成员不被请求。
+`mcpp build`、测试运行的程序（`MCPP_BIN_<NAME>`）以及包的其它消费者保持默认 feature。测试与 `mcpp build`
+共用一个构建目录，所以先后构建两者会重新编译 feature 改变的部分，与交替使用 `--features` 相同。
+
 ### 测试程序的起点
 
 提供 `main` 的测试框架把它声明为入口目标（`kind = "entry"`，docs/04 §2.2），包为

@@ -3771,10 +3771,41 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testLink = value.as_string();
                 continue;
             }
+            if (key == "features") {
+                // A feature the package does not declare is refused, as
+                // `--features` refuses it: the table is read only when this
+                // package is tested, so no consumer's engine reads it.
+                bool listOk = value.is_array();
+                if (listOk)
+                    for (auto& e : value.as_array())
+                        if (!e.is_string() || e.as_string().empty()) { listOk = false; break; }
+                if (!listOk)
+                    return std::unexpected(error(origin,
+                        "[test] features must be an array of feature names, e.g. [\"ktx2\"]"));
+                m.testFeatures.clear();
+                for (auto& e : value.as_array()) {
+                    const auto& f = e.as_string();
+                    if (!m.featuresMap.contains(f)) {
+                        std::string known;
+                        for (auto const& [name, _] : m.featuresMap) {
+                            if (name == "default") continue;
+                            known += (known.empty() ? "" : ", ") + name;
+                        }
+                        return std::unexpected(error(origin, std::format(
+                            "[test] features names '{}', which [features] does not declare{}", f,
+                            known.empty() ? std::string("; this package declares no features")
+                                          : std::format(" (declared: {})", known))));
+                    }
+                    if (std::ranges::find(m.testFeatures, f) == m.testFeatures.end())
+                        m.testFeatures.push_back(f);
+                }
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, link, main, programs, split, start, store, windows_code_page, windows_long_paths.", key));
+                    "discover, features, link, main, programs, split, start, store, windows_code_page, "
+                    "windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -4421,7 +4452,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
                 "feature-xlings", "layers", "link", "priority", "requires_abi", "runners", "runtime",
-                "targets", "tools", "xlings",
+                "targets", "test", "tools", "xlings",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) {
@@ -4885,6 +4916,33 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 }
                 return {};
             };
+            // [target.<predicate>.test] (mcpp#942): the test programs of the
+            // targets the predicate selects, appended to `[test] discover`.
+            // Only `discover`: the other `[test]` keys shape the test build
+            // rather than add to its inputs, which is all a conditional
+            // section contributes.
+            if (auto t = body.find("test"); t != body.end()) {
+                if (!t->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}.test] must be a table", triple)));
+                for (auto& [tk, tv] : t->second.as_table()) {
+                    if (tk != "discover") {
+                        m.schemaWarnings.push_back(std::format(
+                            "[target.{}.test] has unsupported key '{}' (ignored). A conditional "
+                            "section contributes test programs only: discover.", triple, tk));
+                        continue;
+                    }
+                    bool listOk = tv.is_array();
+                    if (listOk)
+                        for (auto& e : tv.as_array())
+                            if (!e.is_string() || e.as_string().empty()) { listOk = false; break; }
+                    if (!listOk)
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.test] discover must be an array of non-empty glob strings, "
+                            "e.g. [\"!tests/native/**\"]", triple)));
+                    for (auto& e : tv.as_array()) cc.testDiscover.push_back(e.as_string());
+                }
+            }
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
             if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());

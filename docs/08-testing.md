@@ -163,6 +163,48 @@ A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
 
+### The tests of a target and the features they are built with (2026.11.16.1+)
+
+The test programs of a package are the test build's inputs, so the target
+selects them as it selects sources:
+
+```toml
+[target.'cfg(os = "emscripten")'.test]
+discover = ["!tests/native/**"]      # not built for the Web
+
+[target.'cfg(os = "emscripten")'.dev-dependencies]
+# ... and `[target.'cfg(not(os = "emscripten"))'.dev-dependencies]` for what they import
+```
+
+The globs of a `[target.'<sel>'.test]` table whose predicate the target matches
+are added to `[test] discover`; a `!` glob removes what it matches from the
+whole set, and a positive glob adds tests on the targets it selects
+(`discover = ["tests/*.cpp"]` with `[target.'cfg(not(os = "emscripten"))'.test]
+discover = ["tests/native/*.cpp"]`). The target is `--target`, else the
+package's `[build] target`, else this machine. A test excluded on a target is
+not one of its tests: `mcpp test --list --target <triple>` names the set, and a
+case that is built everywhere and holds on some machines only is the test
+protocol's (a skip with its reason), not this table's.
+
+The tests are a consumer of their package, and `[test] features` is that
+consumer's request:
+
+```toml
+[features]
+ktx2 = { sources = ["src/ktx2/*.cppm"] }
+
+[test]
+features = ["ktx2"]
+```
+
+A test plan turns them on beside the defaults and `--features`, in `mcpp test`,
+`mcpp test -p <member>` and `mcpp test --workspace`. In a workspace they are
+requested on the member's own edge, so another member that declares a feature
+of the same name is not asked for it. `mcpp build`, the programs the tests run
+(`MCPP_BIN_<NAME>`) and every other consumer of the package keep its defaults.
+The tests and `mcpp build` share one build directory, so building one after the
+other compiles again what the features change, as alternating `--features` does.
+
 ### Where a test program begins
 
 A test framework that supplies `main` declares it as an entry target

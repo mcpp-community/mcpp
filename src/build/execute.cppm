@@ -2633,6 +2633,9 @@ struct FastPathIdentity {
     std::string features;
     // See toolchain_request_identity.
     std::string toolchainRequest;
+    // `[test] features` (mcpp#941), normalised: what a test plan of this
+    // package adds to `features`, and so what its recorded graph names.
+    std::string testFeatures;
 };
 
 std::optional<FastPathIdentity>
@@ -2655,6 +2658,11 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         m->hooks.active(),
         normalize_features(featuresRequested),
         toolchain_request_identity(),
+        normalize_features([&] {
+            std::string joined;
+            for (auto const& f : m->testFeatures) joined += (joined.empty() ? "" : ",") + f;
+            return joined;
+        }()),
     };
 }
 
@@ -6740,11 +6748,13 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     if (!want) return declined("the manifest or the request could not be read");
     if (want->hooksActive) return declined("the project declares [hooks]");
     if (!want->defaultTarget.empty()) return declined("the project names a default target");
+    // A test plan names the package's `[test] features` beside the request.
+    const auto testRequest = normalize_features(want->features + "," + want->testFeatures);
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries)
         if (e.targetTriple.empty() && e.profile == want->profile && e.cacheMode == want->cacheMode
-            && e.features == want->features && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
+            && e.features == testRequest && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
             && e.selection == kTestPlanSelection) { match = &e; break; }
     if (!match) return declined("no recorded test graph matches this request");
     if (match->runtimeBinding && !match->runtimeBinding->baseIdentity.empty())
@@ -6764,7 +6774,7 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     if (test_graph_stamp(outputDir / graphFile) != record.value("graph_stamp", ""))
         return declined("the test graph is not the one the record was written with");
     auto admitted = admit_recorded_build(*match, {
-        .request = mcpp::build::request_tag(record.value("group", ""), want->features),
+        .request = mcpp::build::request_tag(record.value("group", ""), testRequest),
         .manifest = projectRoot / "mcpp.toml",
         .projectSourcesNewer = [&](fs::file_time_type graphTime) {
             if (sources_newer_than(projectRoot, graphTime, want->resourceScripts, want->extTable)) return true;
@@ -6905,7 +6915,7 @@ export int run_tests(std::span<const std::string> passthrough,
     }
 
     auto discovered = mcpp::build::discover_test_targets(
-        *root, overrides.package_filter);
+        *root, overrides.package_filter, overrides.target_triple);
     if (!discovered) {
         mcpp::ui::error(discovered.error());
         return 2;
@@ -7168,7 +7178,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
         mcpp::ui::error("no mcpp.toml found in current directory or any parent");
         return 2;
     }
-    auto discovered = mcpp::build::discover_test_targets(*root, base.package_filter);
+    auto discovered = mcpp::build::discover_test_targets(*root, base.package_filter, base.target_triple);
     if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
     // Nothing to build, a listing, or a filter that selects nothing: the
     // answer does not depend on the target, and is the one-leg answer.

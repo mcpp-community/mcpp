@@ -459,6 +459,7 @@ runner 的启动与结束（第 9 节）。
 | 10 | R1 的一次性覆盖用环境变量 `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED` |
 | 11 | Android 的 runner 数据留在 builtin.toml 的提供者条目，是 mcpp 同一个 PR 的最后一个检查点（m8）。mcpp 侧统一为单 PR：只有依赖 mcpp 自己发布的内容才拆；不阻塞开发的外部依赖不拆 |
 | 12 | mcpp#932、#936、#938 并入本 PR（m9），按设计规范取最佳方案，不取 issue 的临时建议（13.4）；N39 待评审 |
+| 13 | mcpp#942、#941 并入本 PR：`[target.'<sel>'.test] discover` 与 `[test] features`，复用条件输入与 dev-dependency 的解析，不改 mtest（13.8） |
 
 ## 12. 被否定的方案与自我评审
 
@@ -647,3 +648,42 @@ profile 给出一次提示。需要评审后实现，不在本轮。
 - 实测：本 PR 的完整 CI 中，Windows 的 e2e `sources/100` 失败，原因正是 #715：`Failed to write file: ...\registry\subos\default\.xlings.json`。
 - 设计：`pinned::kXlingsVersion` 与 `.github` 中的固定版本一并前移到 2026.11.16.1（`check_version_pins.sh` 校验一致），mcpp 的用户因此得到 X2 与 X5 的修复。
 - 风险评估：两个版本之间只有三个提交（xlings#716、#717、#718），后两个只改发布流程，mcpp 调用的接口约定不变。
+
+### 13.8 mcpp#942 与 #941：目标的测试，以及测试构建打开的 feature（本 PR 实现）
+
+两个问题同源：测试的配置无法表达，只能为每种组合另建一个包（一个 179 个成员的 workspace 中占相当比例）。两者都是通用缺陷，用 mcpp 已有的两种机制补齐，不新增概念，也不改 mtest。
+
+**#942 `[target.'<sel>'.test] discover`。**
+- 现状：源文件（`[target.'<sel>'.build] sources`）、dev-dependency（`[target.'<sel>'.dev-dependencies]`）与单个 target（`[target.'<sel>'.targets.<t>]`）都可按目标变化，测试程序集合不能；dev-dependency 已可在 Web 上去掉，引用它的测试文件仍在每个目标上编译。
+- 规范依据：条件节只贡献构建输入；测试文件是测试构建的输入，所以条件 `test` 表只承载 `discover`；`programs`、`split`、`link`、`store`、`main`、`start` 决定形态，不进入条件表（其它键为警告）。
+- 语义：谓词与目标相符的表，其 glob 追加到 `[test] discover`，整体求值；`!` 从整个集合中移除，与条件 `sources` 相同。两种写法都成立：在 Web 上移除（`!tests/native/**`），或只在原生目标上增加（`tests/native/*.cpp`）。
+- 目标：`--target`，否则包的 `[build] target`，否则本机，与 `workspace_groups` 的规则相同（W4）。
+- 测试在依赖解析之前发现，目标侧层（`kernel-abi`、`c-abi` 等）尚无值；这类谓词被拒绝，而不是按假处理把测试静默去掉。
+- 修正 issue 的示例：`programs` 已是粒度键（`"file"`/`"directory"`/`"package"`），不能复用，键为 `discover`。
+- 不采用 C++ 的 `#if __EMSCRIPTEN__`：测试会在 Web 上编成空程序并“通过”（虚绿）；导入一个在该目标上被去掉的 dev-dependency 的模块也无提供者。
+- 实现：`ConditionalConfig::testDiscover`；`conditional_test_globs` 位于 `mcpp.build.test_targets` 的实现单元中，用 prepare 的谓词求值器（`cfgpred`）。
+  - 求值器不进入接口单元：接口单元导入 `prepare_inputs` 时，GCC 16.1 在导入 `mcpp.cli` 的 `main.cpp` 处内部错误（实测）；放入实现单元后，导入者读到的接口不变。
+
+**#941 `[test] features`。**
+- 语义：测试是其包的消费者，`[test] features` 是这个消费者的 feature 请求，在测试构建中解析，与 dev-dependency 相同，不进入产物，其它消费者看不到。
+- 规则：
+  - 未声明的 feature 在加载时拒绝（与 `--features` 相同；该表只在测试本包时读取，没有兼容性顾虑）。
+  - 与 `--features` 相加；只在测试规划（`includeDevDeps`）中生效；`mcpp build` 与测试运行的程序（L5，`MCPP_BIN_<NAME>`）保持默认 feature。
+- 单个包：在 prepare 的第 0 步之后并入被测包的请求，所有读取根请求的地方一致看到；记录的图写明它们。
+  - “未改动的工程”快速路径按请求加 `[test] features` 比对，保持可用（e2e 1099 B 断言第二次运行不重新规划）。
+- workspace：在该成员自己的边上请求。另一个声明同名 feature 的成员不受影响（e2e 1100：成员 b 的同名 feature 源文件不能编译，`mcpp test --workspace` 通过）。
+  - 组内其它成员的测试经由依赖看到被打开 feature 的包，与 dev-dependency 的 feature 在测试构建中统一的现行行为一致。
+- 与 docs/08“被测代码即发布代码、共用一个构建目录”的关系：feature 请求记录在图上，不移动构建目录（`request_tag`），所以先后构建 `mcpp build` 与 `mcpp test` 会重编 feature 改变的部分，与交替使用 `--features` 相同。消除这种重编的是 N39（配置身份进入输出路径），仍待评审。
+- 未做的门控：只在某 feature 下才有意义的测试，若以后需要，可由 feature 自己声明（`[features.<f>] tests`，与 `[features.<f>] sources` 对称），而不放进 `cfg(...)`。cfg 在 feature 解析之前求值，Cargo 同样不支持在 target 表中以 feature 为谓词。本轮的 `[test] features` 总是打开所列 feature，不需要门控。
+
+**与 mtest 的关系。**
+- 分工：mcpp 决定构建什么（程序与翻译单元，按目标与 feature，编译期）；mtest 决定运行什么（用例，按机器能力，运行期：`requires:` 标签、带原因的跳过、`resource{"machine"}`）。
+- 两个问题都在编译期，运行期跳过无法替代：依赖不能为该目标构建。协议（SPEC-017）不变。
+- 运行存储也不需要“排除”状态：某目标上被排除的测试只是不在该次运行的列表中，按名称的测量历史、`--shard`、`--failed` 都按列表工作。
+- 可选的后续联动（不在本轮）：把构建事实（目标的 cfg 值、激活的 feature）交给测试进程，使用例可声明 `requires:os=…` / `requires:feature=…`。用于“处处能编译、只在某配置下有意义”的用例；目前 feature 已能生成宏，暂无需求。
+
+**测试。**
+- 单元：`Manifest/TestFeaturesNameDeclaredFeatures`、`Manifest/AConditionalTestTableCarriesDiscoverAlone`。
+- e2e 1098：Web 上移除、原生上增加、层谓词拒绝、其它键警告。
+- e2e 1099：无 feature 时失败；有 feature 时通过，第二次运行走记录；`mcpp build` 的图不含 feature 源文件；未声明的 feature 被拒绝。
+- e2e 1100：workspace 中成员各自的边。

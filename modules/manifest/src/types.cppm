@@ -1735,6 +1735,14 @@ struct ConditionalConfig {
     // `!`-exclusion globs work there too (the scanner handles positive+
     // negative sets).
     BuildInputs                         inputs;
+    // `[target.<sel>.test] discover` (mcpp#942): globs appended to the
+    // package's `[test] discover` when the predicate matches the target the
+    // tests are built for. The test programs are the test build's inputs, so
+    // the cfg axis carries them as it carries `[build] sources`; a `!` entry
+    // removes the files it matches from the whole set. Evaluated when the
+    // tests are discovered, before dependencies resolve: a predicate on a
+    // target-side layer cannot select them.
+    std::vector<std::string>            testDiscover;
     // `[target.<sel>.runtime]` — the DIALECT-NEUTRAL half of a link line.
     //
     // `inputs.ldflags` above is spelled the GNU way and native `cl.exe` rejects
@@ -1885,7 +1893,9 @@ inline bool is_empty(const ConditionalConfig& c) {
         // `c.inputs` (BuildInputs), so `is_empty(c.inputs)` above does not see
         // it -- a section carrying only this key would otherwise be dropped
         // before it is ever evaluated, the same failure #296 was filed for.
-        && c.dialectCxxflags.empty();
+        && c.dialectCxxflags.empty()
+        // mcpp#942: a section that only selects test programs.
+        && c.testDiscover.empty();
 }
 
 // `[lib]` — library "root" interface convention.
@@ -2280,6 +2290,12 @@ struct Manifest {
     // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
     std::vector<std::string>    testDiscover;
     bool                        testDiscoverDeclared = false;
+    // `[test] features` (mcpp#941): the features the package's own test build
+    // turns on, beside its defaults and `--features`. The tests are a consumer
+    // of the package, and this is that consumer's request: it is resolved in
+    // the test build alone, as a dev-dependency is, and no other consumer of
+    // the package sees it. Each name is a feature `[features]` declares.
+    std::vector<std::string>    testFeatures;
     // `[test] windows_code_page`: the ANSI code page of every discovered test
     // program on Windows, in the vocabulary of the target key of the same
     // name. Empty is `legacy`, the system's code page.

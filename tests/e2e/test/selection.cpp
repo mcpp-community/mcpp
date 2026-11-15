@@ -1,5 +1,6 @@
 // Which tests `mcpp test` finds and runs: names from paths, a pattern and several, the listing,
-// `[test] discover` (formerly tests/e2e/152, 154, 159 and 673; 1084).
+// `[test] discover` (formerly tests/e2e/152, 154, 159 and 673; 1084), the tests of a target
+// (`[target.<sel>.test]`, 1098) and the features they are built with (`[test] features`, 1099, 1100).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -11,6 +12,33 @@ namespace {
 
 std::string manifest(std::string_view name) {
     return std::format("[package]\nname = \"{}\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n", name);
+}
+
+namespace fs = std::filesystem;
+
+// The most recently written <name> under `target`, outside the build programs' trees.
+std::optional<fs::path> newest_graph(const fs::path& target, std::string_view name) {
+    std::optional<fs::path> best;
+    for (const auto& f : s::find_files(target, std::regex_replace(std::string(name), std::regex{R"(\.)"}, R"(\.)")))
+        if (f.generic_string().find("/.build-mcpp/") == std::string::npos
+            && (!best || fs::last_write_time(f) > fs::last_write_time(*best)))
+            best = f;
+    return best;
+}
+
+// A library whose module `<name>.extra` is the source of its feature `extra`.
+std::string featured(std::string_view name, std::string_view test) {
+    return std::format(R"([package]
+name     = "{0}"
+version  = "0.1.0"
+standard = "c++23"
+
+[targets.{0}]
+kind = "lib"
+
+[features]
+extra = {{ sources = ["src/extra/*.cppm"] }}
+{1})", name, test);
 }
 
 E2E selection{"selection", [] {
@@ -140,6 +168,107 @@ E2E selection{"selection", [] {
         auto t6 = p.mcpp({"test"});
         expect(t6.started && t6.status != 0) << "a string discover was accepted";
         expect(e2e::contains(s::text(t6), "[test] discover must be an array"));
+    };
+
+    "1098 the tests of a target are selected by its predicate"_test = [] {
+        // mcpp#942: `[target.<sel>.test] discover` adds to `[test] discover` for the targets it
+        // selects. A: a `!` glob removes tests on one target and leaves them on this machine;
+        // B: a glob adds tests on the targets it selects only; C: a predicate on a target-side
+        // layer is refused, as the tests are discovered before it has a value; D: a key other
+        // than `discover` is a warning.
+        constexpr std::string_view web = "wasm32-emscripten";
+        s::project p{{"mcpp.toml", manifest("bytarget") + "\n[target.'cfg(os = \"emscripten\")'.test]\n"
+                                                         "discover = [\"!tests/native/**\"]\n"},
+                     {"tests/core.cpp", "int main() { return 0; }\n"},
+                     {"tests/native/window.cpp", "int main() { return 0; }\n"}};
+        // A
+        auto r = p.mcpp({"test", "--list"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "core")) << s::text(r);
+        expect(e2e::contains(s::text(r), "native/window")) << "A: this machine lost a test: " << s::text(r);
+        r = p.mcpp({"test", "--list", "--target", std::string(web)});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "core")) << s::text(r);
+        expect(s::lacks(s::text(r), "native/window")) << "A: the excluded test is listed for the Web: " << s::text(r);
+        r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "2 passed")) << s::text(r);
+        // B
+        p.write("mcpp.toml", manifest("bytarget") + "\n[test]\ndiscover = [\"tests/*.cpp\"]\n"
+                                                    "\n[target.'cfg(not(os = \"emscripten\"))'.test]\n"
+                                                    "discover = [\"tests/native/*.cpp\"]\n");
+        r = p.mcpp({"test", "--list"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "window")) << "B: the added test is not listed here: " << s::text(r);
+        r = p.mcpp({"test", "--list", "--target", std::string(web)});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "window")) << "B: a test added for native targets is listed for the Web: " << s::text(r);
+        // C
+        p.write("mcpp.toml", manifest("bytarget") + "\n[target.'cfg(kernel-abi = \"openkal\")'.test]\n"
+                                                    "discover = [\"!tests/native/**\"]\n");
+        r = p.mcpp({"test", "--list"});
+        expect(fatal(!e2e::succeeded(r))) << "C: a layer predicate selected tests: " << s::text(r);
+        expect(e2e::contains(s::text(r), "names a target-side layer")) << s::text(r);
+        // D
+        p.write("mcpp.toml", manifest("bytarget") + "\n[target.'cfg(os = \"emscripten\")'.test]\n"
+                                                    "programs = \"directory\"\n");
+        r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "contributes test programs only: discover")) << s::text(r);
+    };
+
+    "1099 a package's tests are built with the features [test] features names"_test = [] {
+        // mcpp#941: the tests are a consumer of their package, and `[test] features` is that
+        // consumer's request. A: a test of a module behind a non-default feature fails without
+        // it; B: with it the test builds and passes, and an unchanged second run is the recorded
+        // one; C: `mcpp build` builds the package's defaults; D: a feature the package does not
+        // declare is refused.
+        s::project p{{"mcpp.toml", featured("tf", "")},
+                     {"src/tf.cppm", "export module tf;\nexport int tf_v() { return 1; }\n"},
+                     {"src/extra/extra.cppm", "export module tf.extra;\nexport int extra_v() { return 7; }\n"},
+                     {"tests/extra.cpp", "import tf.extra;\nint main() { return extra_v() == 7 ? 0 : 1; }\n"}};
+        // A
+        auto r = p.mcpp({"test"});
+        expect(fatal(!e2e::succeeded(r))) << "A: a module behind an inactive feature was built: " << s::text(r);
+        // B
+        p.write("mcpp.toml", featured("tf", "\n[test]\nfeatures = [\"extra\"]\n"));
+        r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << "B: " << s::text(r);
+        expect(e2e::contains(s::text(r), "1 passed")) << s::text(r);
+        auto nj = newest_graph(p.at("target"), "test.ninja");
+        expect(fatal(nj && e2e::contains(s::read_file(*nj), "extra.cppm"))) << "B: the feature's source is not in the test graph";
+        r = p.mcpp({"test", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "no recorded test graph matches")) << "B: the unchanged run was planned again: " << s::text(r);
+        // C
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "C: " << s::text(r);
+        nj = newest_graph(p.at("target"), "build.ninja");
+        expect(fatal(nj.has_value())) << "C: no build graph";
+        expect(s::lacks(s::read_file(*nj), "extra.cppm")) << "C: `mcpp build` turned the tests' feature on";
+        // D
+        p.write("mcpp.toml", featured("tf", "\n[test]\nfeatures = [\"nope\"]\n"));
+        r = p.mcpp({"test"});
+        expect(fatal(!e2e::succeeded(r))) << "D: an undeclared feature was accepted: " << s::text(r);
+        expect(e2e::contains(s::text(r), "[test] features names 'nope', which [features] does not declare")) << s::text(r);
+    };
+
+    "1100 a member's test features are its own"_test = [] {
+        // mcpp#941 in a workspace: each member's `[test] features` are requested on its own edge.
+        // Member a's tests turn `extra` on; member b declares a feature of the same name whose
+        // source does not compile, and `mcpp test --workspace` builds b without it.
+        s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"},
+                      {"a/mcpp.toml", featured("a", "\n[test]\nfeatures = [\"extra\"]\n")},
+                      {"a/src/a.cppm", "export module a;\nexport int a_v() { return 1; }\n"},
+                      {"a/src/extra/extra.cppm", "export module a.extra;\nexport int extra_v() { return 7; }\n"},
+                      {"a/tests/extra.cpp", "import a.extra;\nint main() { return extra_v() == 7 ? 0 : 1; }\n"},
+                      {"b/mcpp.toml", featured("b", "")},
+                      {"b/src/b.cppm", "export module b;\nexport int b_v() { return 2; }\n"},
+                      {"b/src/extra/extra.cppm", "export module b.extra;\nstatic_assert(false, \"b's extra was requested\");\n"},
+                      {"b/tests/plain.cpp", "import b;\nint main() { return b_v() == 2 ? 0 : 1; }\n"}};
+        auto r = ws.mcpp({"test", "--workspace"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "b's extra was requested")) << "another member's feature of the same name was requested";
     };
 }};
 

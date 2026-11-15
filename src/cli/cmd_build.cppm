@@ -60,8 +60,9 @@ namespace mcpp::cli {
 // another member's package name would be read as that member: a member is
 // discovered from its own directory or refused, and never from another's.
 std::expected<mcpp::build::TestTargetSet, std::string>
-discover_member_tests(const std::filesystem::path& wsRoot, const std::string& mp) {
-    auto d = mcpp::build::discover_test_targets(wsRoot, mp);
+discover_member_tests(const std::filesystem::path& wsRoot, const std::string& mp,
+                      std::string_view targetTriple = {}) {
+    auto d = mcpp::build::discover_test_targets(wsRoot, mp, targetTriple);
     if (!d) return d;
     std::error_code ec;
     const bool same = std::filesystem::equivalent(d->packageRoot, wsRoot / mp, ec);
@@ -81,10 +82,11 @@ struct GroupTests {
     std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> discovery;
 };
 std::expected<GroupTests, std::string>
-group_tests(const std::filesystem::path& wsRoot, const std::vector<std::string>& group) {
+group_tests(const std::filesystem::path& wsRoot, const std::vector<std::string>& group,
+            std::string_view targetTriple = {}) {
     GroupTests out;
     for (auto const& mp : group) {
-        auto d = discover_member_tests(wsRoot, mp);
+        auto d = discover_member_tests(wsRoot, mp, targetTriple);
         if (!d) return std::unexpected(std::format("{}: {}", mp, d.error()));
         if (!d->targets.empty()) out.targets[mp] = std::move(d->targets);
         out.discovery.emplace_back(d->packageRoot, std::move(d->discover));
@@ -358,7 +360,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
                 mo.workspace_members = g;
                 mo.workspace_request = request;
                 if (configure_only) {
-                    auto tests = group_tests(root, g);
+                    auto tests = group_tests(root, g, leg.triple);
                     if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); return 2; }
                     spec.includeDevDeps = !tests->targets.empty();
                     mo.member_targets = std::move(tests->targets);
@@ -373,7 +375,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (configure_only) {
             // The surface an editor needs, as for one target: the tests and
             // the dev-dependencies.
-            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter);
+            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter, leg.triple);
             if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
             spec.includeDevDeps = !discovered->targets.empty();
             spec.extraTargets = std::move(discovered->targets);
@@ -460,8 +462,8 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
             where("no mcpp.toml found in current directory or any parent");
             return 2;
         }
-        auto discovered = mcpp::build::discover_test_targets(*root,
-                                                              memberOv.package_filter);
+        auto discovered = mcpp::build::discover_test_targets(*root, memberOv.package_filter,
+                                                              memberOv.target_triple);
         if (!discovered) {
             where(discovered.error());
             return 2;
@@ -523,7 +525,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
                         if (int r = configure_member(std::move(one), mp, &configured); r != 0) rc = r;
                     }
                 };
-                auto tests = group_tests((*selection)->root, g);
+                auto tests = group_tests((*selection)->root, g, ov.target_triple);
                 if (!tests && g.size() > 1) { configure_one_by_one(); continue; }
                 if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); rc = 2; continue; }
                 mcpp::build::BuildOverrides mo = ov;
@@ -882,7 +884,8 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> discovery;
             bool includeDevDeps = false;
             if (req.group.empty()) {
-                auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter);
+                auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter,
+                                                                      mo.target_triple);
                 if (!discovered) {
                     fail_plan(req.member.empty() ? discovered.error()
                               : std::format("{}: {}", req.member, discovered.error()));
@@ -892,7 +895,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 discovery.emplace_back(discovered->packageRoot, discovered->discover);
                 extraTargets = std::move(discovered->targets);
             } else {
-                auto tests = group_tests(wsRoot, req.group);
+                auto tests = group_tests(wsRoot, req.group, mo.target_triple);
                 if (!tests && req.group.size() == 1) { fail_plan(tests.error()); continue; }
                 if (!tests) {
                     for (auto const& mp : req.group) plan_alone(mp);
@@ -1505,7 +1508,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                 for (auto const& mp : members) {
                     mcpp::build::WorkspaceTestMember wm;
                     wm.path = mp;
-                    auto d = discover_member_tests(sel.root, mp);
+                    auto d = discover_member_tests(sel.root, mp, ov.target_triple);
                     if (!d) {
                         wm.error = std::format("{}: {}", mp, d.error());
                     } else {

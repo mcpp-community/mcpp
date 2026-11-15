@@ -1999,6 +1999,12 @@ discover = ["tests/**/*.cpp"]    # the default
 | `split` | `"file"`、`"case"`、`"auto"` 或 `"none"` | 使用测试协议的程序的运行方式：按用例所在文件各一个进程（默认）、每个用例一个进程、按文件且把运行存储测得长于其份额的文件划分为用例组（`"auto"`，2026.11.13.1+），或只运行一次 *(2026.11.9.1+)* |
 | `link` | `"used"` 或 `"objects"` | `"used"`（默认）：测试只链接它用到的部分（`--gc-sections`、`-dead_strip`）；`"objects"`：保留每个目标文件的全部内容 *(2026.11.9.1+)* |
 | `store` | 目录或 `"none"` | 运行以 mtest 存储的形式保存的位置，相对项目；默认 `target/mtest`；`"none"` 不保存 *(2026.11.9.1+)* |
+| `features` | feature 名数组 | 包自身的测试构建在默认 feature 与 `--features` 之外打开的 feature；每个都须是 `[features]` 声明的 feature *(2026.11.16.1+)* |
+
+`[target.'<sel>'.test] discover` 为谓词选中的目标向 `discover` 追加 glob，如同条件 `[build] sources`
+追加源文件；以 `!` 开头的 glob 从整个集合中移除它匹配的文件 *(2026.11.16.1+)*。这是该表唯一的键：其它键
+决定测试构建的形态，而不是增加它的输入。测试在依赖解析之前发现，所以基于目标侧层（`kernel-abi`、`c-abi`
+等）的谓词被拒绝。
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个
