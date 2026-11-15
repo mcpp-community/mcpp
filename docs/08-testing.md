@@ -282,7 +282,10 @@ The selection narrows what a pattern or `-p` names and adds nothing to it.
 the package's programs first, as `mcpp build` does, and gives each test
 `MCPP_BIN_<NAME>`: the path of program `<name>`, upper-cased, every character
 other than a letter or a digit written `_` (`MCPP_BIN_MY_TOOL` for `my-tool`).
-A test that runs the program it tests reads it from there.
+A test that runs the program it tests reads it from there. Under several
+members the programs of a configuration group are planned together, as
+`mcpp build --workspace` plans them, so a package they share is built with
+one configuration (2026.11.16.1+).
 
 `--no-programs` (2026.11.13.1+) builds none of them: the programs are planned
 for their names, and each test takes each program from the environment's
@@ -548,6 +551,10 @@ A framework states its guide to writing tests on its entry, `test-guide = "<file
 package and of its version. `mcpp test --guide` names each test framework of the
 package with its guide and repository, and the commands that list, select and
 explain cases; with none, it states the contract above and how to take mtest.
+The frameworks are declared data: the guide reads them from the resolved
+graph, the dev-dependencies included, and plans, scans and builds nothing,
+wherever it is asked (2026.11.16.1+). Where several members are selected, a
+workspace root or `--workspace`, it names the frameworks of all of them.
 A failed run ends with `how these tests are written: mcpp test --guide (...)`,
 and a record of `--message-format json` carries `guide`. A person or an agent
 about to write a test, or reading why one failed, starts there.

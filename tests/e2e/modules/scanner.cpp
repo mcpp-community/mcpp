@@ -1,7 +1,7 @@
 // What the module scanner reads: the walk pruned at `.mcpp`, defines that reach the scan, a
 // private module fragment, a byte-order mark, an implementation unit in a module file, comments
-// and raw strings, scan overrides of files a build excludes (formerly tests/e2e/113, 167, 634,
-// 635, 636, 639, 1064).
+// and raw strings, scan overrides of files a build excludes, a source named by a path that is
+// not there (formerly tests/e2e/113, 167, 634, 635, 636, 639, 1064; 1096).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -254,6 +254,31 @@ path = "src/core.cppm"
         r = p.mcpp({"build", "--toolchain", tc});
         expect(fatal(failed(r))) << "a glob naming no file was accepted\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "scan_overrides glob 'src/nowhere.cppm' matches no file of the package"))) << "the refusal does not name the glob\n" << s::text(r);
+    };
+
+    "1096 a source named by its path that is not there is refused"_test[s::gcc] = [] {
+        // #938: an entry without a pattern names one file; a missing one is refused with the table
+        // that states it, before an importer fails. A pattern that matches nothing is not.
+        s::project p({{"mcpp.toml", R"([package]
+name    = "s1096"
+version = "0.1.0"
+[targets.s1096]
+kind = "lib"
+[build]
+sources = ["src/*/*.cppm", "src/none/*.cppm"]
+[target.'cfg(unix)'.build]
+sources = ["src/target/unix/target.cppm"]
+)"},
+                      {"src/core/s1096.cppm", "export module s1096;\nexport import s1096.target;\n"}});
+        auto r = p.mcpp({"build"});
+        expect(fatal(failed(r))) << "a missing file named by its path was accepted\n" << s::text(r);
+        expect(e2e::contains(s::text(r), R"([target.'cfg(unix)'.build] sources: "src/target/unix/target.cppm" names no file)"))
+            << "the refusal does not name the table and the path\n" << s::text(r);
+        expect(!e2e::contains(s::text(r), "src/none/")) << "a pattern that matches nothing was refused";
+        expect(!e2e::contains(s::text(r), "failed to read compiled module")) << "the build reached an importer";
+        p.write("src/target/unix/target.cppm", "export module s1096.target;\nexport int t() { return 1; }\n");
+        r = p.mcpp({"build"});
+        expect(e2e::succeeded(r)) << "the build with the file in place failed\n" << s::text(r);
     };
 }};
 

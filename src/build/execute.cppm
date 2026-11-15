@@ -4585,8 +4585,10 @@ inline constexpr std::string_view kTestingDocs =
 using mcpp::build::test_protocol::kMtestRelease;
 using mcpp::build::test_protocol::kMtestRepo;
 
-static void print_test_guide(const BuildContext& ctx, bool json) {
-    const auto& frameworks = ctx.plan.testFrameworks;
+// `members`: how many members the frameworks were gathered from, when more
+// than one (a workspace root, `--workspace`).
+static void print_test_guide(std::span<const mcpp::build::TestFramework> frameworks, bool json,
+                             std::size_t members = 0) {
     if (json) {
         nlohmann::ordered_json list = nlohmann::ordered_json::array();
         for (auto const& f : frameworks)
@@ -4602,6 +4604,7 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
             {"docs", kTestingDocs},
         };
         if (frameworks.empty()) g["suggest"] = {{"dev-dependency", std::format("mcpplibs.mtest = \"{}\"", kMtestRelease)}, {"repo", kMtestRepo}};
+        if (members > 1) g["members"] = members;
         std::println("{}", nlohmann::ordered_json{{"guide", g}}.dump());
         std::fflush(libc::stdout());
         return;
@@ -4610,7 +4613,8 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
         std::println("No test framework: a test is a program under tests/, judged by its exit status.");
         std::println("A framework of cases (mtest): [dev-dependencies] mcpplibs.mtest = \"{}\"  ({})", kMtestRelease, kMtestRepo);
     } else {
-        std::println("Test frameworks:");
+        if (members > 1) std::println("Test frameworks of {} members (one member's: mcpp test -p <member> --guide):", members);
+        else std::println("Test frameworks:");
         for (auto const& f : frameworks) {
             std::println("  {} {} ({}{})", f.package, f.version, f.entry,
                          f.protocol ? std::format(", test protocol {}", f.protocol) : std::string{});
@@ -4634,6 +4638,53 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
     std::println("  mcpp test --message-format json    each case's result, a failure's place and both sides");
     std::println("  mcpp test <test> --print-launch    how the test starts, for a debugger");
     std::println("Testing in mcpp: {}", kTestingDocs);
+}
+
+// `mcpp test --guide` (#932): the frameworks are declared data, read from the
+// resolved graph -- with the dev-dependencies, where frameworks are -- and
+// nothing is planned or built: no toolchain after the graph, no build program,
+// no scan, no build lock. It is the command a failing test names next, and in
+// a workspace of 140 members a plan of the tests took minutes before it.
+// `groups`: the configuration groups of several selected members, each
+// resolved as `mcpp test` plans it, and their frameworks united; empty for one
+// package, resolved with `base`.
+export int print_test_guide_of(const BuildOverrides& base, const std::filesystem::path& wsRoot,
+                               const std::vector<std::vector<std::string>>& groups, bool json) {
+    std::vector<TestFramework> frameworks;
+    std::set<std::string> seen;
+    auto gather = [&](BuildOverrides ov) -> bool {
+        // The resolution's narration ("Workspace building ...") describes a
+        // build, which this is not; its refusal is still said.
+        const bool wasQuiet = mcpp::ui::is_quiet();
+        mcpp::ui::set_quiet(true);
+        auto packages = resolve_graph(/*includeDevDeps=*/true, std::move(ov));
+        mcpp::ui::set_quiet(wasQuiet);
+        if (!packages) { mcpp::ui::error(packages.error()); return false; }
+        std::vector<TestFramework> found;
+        for (auto const& p : *packages) collect_test_frameworks(p.manifest, p.root, found);
+        for (auto& f : found)
+            if (seen.insert(f.package + '\x1f' + f.version + '\x1f' + f.entry).second) frameworks.push_back(std::move(f));
+        return true;
+    };
+    std::size_t members = 0;
+    if (groups.empty()) {
+        if (!gather(base)) return 2;
+    } else {
+        std::vector<std::string> request;
+        for (auto const& g : groups) request.insert(request.end(), g.begin(), g.end());
+        members = request.size();
+        for (auto const& g : groups) {
+            BuildOverrides ov = base;
+            ov.package_filter.clear();
+            ov.project_root = wsRoot;
+            ov.workspace_members = g;
+            ov.workspace_request = request;
+            ov.member_targets.clear();
+            if (!gather(std::move(ov))) return 2;
+        }
+    }
+    print_test_guide(frameworks, json, members);
+    return 0;
 }
 
 // A planned test build, and what the tests run against it need: the plan, the
@@ -6680,7 +6731,7 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
         return std::nullopt;
     };
     if (!testOpts.since.empty() || !testOpts.changed.empty()) return declined("a change selects the tests (--since, --changed)");
-    if (!testOpts.archive.empty() || testOpts.guide || print_launch_flag()) return declined("an archive, the guide or a launch is asked for");
+    if (!testOpts.archive.empty() || print_launch_flag()) return declined("an archive or a launch is asked for");
     if (!testOpts.runnerName.empty() || testOpts.noRunner) return declined("a runner is named");
     if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") return declined("MCPP_LOCKED=1 asks for a locked resolution");
     if (auto v = mcpp::invocation::get("MCPP_MANAGED_ONLY"); v && *v != "0") return declined("MCPP_MANAGED_ONLY asks for the sources to be checked");
@@ -7043,11 +7094,6 @@ export int run_tests(std::span<const std::string> passthrough,
             mcpp::ui::error(std::format("no tests match '{}'", patterns_text(testOpts.filters)));
             return 2;
         }
-    }
-
-    if (testOpts.guide) {
-        print_test_guide(*ctx, json);
-        return 0;
     }
 
     // 4. A package is named by the build that compiles it: Phase A's report
@@ -7539,50 +7585,81 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         }
         // EACH MEMBER'S PROGRAMS, BUILT BEFORE ITS TESTS AND NAMED TO THEM (L5),
         // as for one package. A workspace's test plan holds a member's test
-        // programs only, so its own programs are built by the member's plan;
+        // programs only, so its own programs are built by a plan of programs;
         // without this a member's test found no MCPP_BIN_<NAME> under
         // `--workspace` and found it under `-p` (found by mtest's conformance
         // suite).
+        //
+        // ONE PLAN OF THE GROUP, AS `mcpp build --workspace` PLANS IT (#936).
+        // A plan of one member resolved the features of the packages it shares
+        // with the others from that member alone, and built them into the
+        // group's directory, at the same paths: a dependency's module was
+        // compiled by the group's test plan, again by each member's plan of
+        // programs, and again by the test pass that followed (three compiles
+        // of one unchanged module in one run, measured), and on Windows a
+        // rewrite of a module another process had mapped failed the run. The
+        // members of the group are planned together, so a package is built
+        // with the configuration the tests' build gives it; a member is
+        // planned alone only to say whose programs did not build.
+        std::vector<std::size_t> buildable, withPrograms;
         for (auto i : who) {
             if (slots[i].packageFailed || slots[i].session < 0) continue;
+            buildable.push_back(i);
             auto m = mcpp::manifest::load(wsRoot / members[i].path / "mcpp.toml", {.insideWorkspace = true});
-            if (!m || std::ranges::none_of(m->targets, [](auto const& t) {
+            if (m && std::ranges::any_of(m->targets, [](auto const& t) {
                     return t.kind == mcpp::manifest::Target::Binary
                         || t.kind == mcpp::manifest::Target::Application; }))
-                continue;
+                withPrograms.push_back(i);
+        }
+        // The programs of `of`, planned with the members `planFor`: false
+        // when they did not build, the reason left for the caller.
+        auto programs_of = [&](const std::vector<std::size_t>& of, const std::vector<std::size_t>& planFor,
+                               std::string& why) {
             BuildOverrides po = base;
             po.package_filter.clear();
             po.project_root = wsRoot;
             po.will_run = false;
-            po.workspace_members = { members[i].path };
-            po.workspace_request = { members[i].path };
+            po.workspace_members.clear();
+            for (auto i : planFor) po.workspace_members.push_back(members[i].path);
+            po.workspace_request.clear();
+            for (auto const& m : members) po.workspace_request.push_back(m.path);
             po.member_targets.clear();
             auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, std::move(po));
-            if (!binCtx) {
-                slots[i].packageFailed = true;
-                slots[i].packageOutput = binCtx.error();
-                continue;
-            }
+            if (!binCtx) { why = binCtx.error(); return false; }
             // `--no-programs`: planned for their names, and the environment's.
             if (!testOpts.noPrograms
                 && run_build_plan(*binCtx, mcpp::log::is_verbose(), false, base.target_triple) != 0) {
-                slots[i].packageFailed = true;
-                slots[i].packageOutput = std::format("the programs of member '{}' did not build", members[i].path);
-                continue;
+                why.clear();
+                return false;
             }
-            auto& env = tb.memberProgramEnv[slots[i].owner];
-            for (auto const& lu : binCtx->plan.linkUnits) {
-                if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
-                env.emplace_back(program_env_key(lu.targetName),
-                                 testOpts.noPrograms ? std::string{}
-                                                     : (binCtx->outputDir / lu.output).lexically_normal().string());
-            }
-            if (testOpts.noPrograms && !testOpts.noRun)
-                if (auto why = programs_from_environment(env)) {
-                    slots[i].packageFailed = true;
-                    slots[i].packageOutput = *why;
-                    continue;
+            for (auto i : of) {
+                auto& env = tb.memberProgramEnv[slots[i].owner];
+                for (auto const& lu : binCtx->plan.linkUnits) {
+                    if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
+                    env.emplace_back(program_env_key(lu.targetName),
+                                     testOpts.noPrograms ? std::string{}
+                                                         : (binCtx->outputDir / lu.output).lexically_normal().string());
                 }
+            }
+            return true;
+        };
+        if (!withPrograms.empty()) {
+            std::string why;
+            if (!programs_of(withPrograms, buildable, why)) {
+                for (auto i : withPrograms) {
+                    if (buildable.size() > 1 && programs_of({i}, {i}, why)) continue;
+                    slots[i].packageFailed = true;
+                    slots[i].packageOutput = why.empty()
+                        ? std::format("the programs of member '{}' did not build", members[i].path) : why;
+                }
+            }
+        }
+        for (auto i : withPrograms) {
+            if (slots[i].packageFailed || !testOpts.noPrograms || testOpts.noRun) continue;
+            if (auto why = programs_from_environment(tb.memberProgramEnv[slots[i].owner])) {
+                slots[i].packageFailed = true;
+                slots[i].packageOutput = *why;
+            }
         }
         // The test goals of the members that can run.
         std::set<std::string> runnable;

@@ -1222,10 +1222,6 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto since = parsed.value("since")) to.since = *since;
     if (auto c = parsed.option("changed")) to.changed = c->get().values;
     to.guide = parsed.is_flag_set("guide");
-    if (to.guide && (parsed.is_flag_set("workspace") || parsed.option_or_empty("package").values.size() > 1)) {
-        mcpp::ui::error("--guide describes one package's tests; name it with -p");
-        return 2;
-    }
     if (auto sd = parsed.value("seed")) {
         std::uint64_t seed = 0;
         auto [p, ec] = std::from_chars(sd->data(), sd->data() + sd->size(), seed);
@@ -1376,6 +1372,21 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // selection design 2026-09-30, S4).
     auto selection = mcpp::cli::select_members(member_request(parsed));
     if (!selection) { mcpp::ui::error(std::format("{}", selection.error())); return 2; }
+    // THE GUIDE (#932) is read from the resolved graph and nothing is planned
+    // or built, wherever it is asked: a package, a member, a workspace root.
+    // Several members are resolved by their configuration groups, as their
+    // tests are planned, and their frameworks united.
+    if (to.guide) {
+        std::vector<std::vector<std::string>> groups;
+        std::filesystem::path wsRoot;
+        if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)) {
+            wsRoot = (*selection)->root;
+            if (auto g = workspace_groups(wsRoot, (*selection)->members, ov.target_triple)) groups = std::move(*g);
+            else for (auto const& mp : (*selection)->members) groups.push_back({mp});
+        }
+        return mcpp::build::print_test_guide_of(ov, wsRoot, groups,
+                                                to.format == mcpp::build::TestMessageFormat::Json);
+    }
     if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)
         && !to.archive.empty()) {
         mcpp::ui::error("--archive holds the tests of one package: select one member (-p)");

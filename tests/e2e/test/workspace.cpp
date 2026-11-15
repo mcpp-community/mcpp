@@ -1,6 +1,6 @@
 // `mcpp test` over a workspace's members: selection, one plan per configuration group, the report
-// of a shared build, a failing member, a member's programs (formerly tests/e2e/90, 854, 855, 856
-// and 1034).
+// of a shared build, a failing member, a member's programs, a shared module compiled once, the
+// guide at a root (formerly tests/e2e/90, 854, 855, 856 and 1034; 1094, 1095).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -373,6 +373,70 @@ int main() {{
         expect(e2e::succeeded(w)) << "under --workspace a member's test did not find its program";
         expect(e2e::succeeded(ws.mcpp({"test", "-p", "a"})));
         expect(e2e::contains(s::text(w), "finds ... ok"));
+    };
+
+    "1094 a members test compiles a shared module once"_test[s::gcc] = [] {
+        // #936: the programs of a group are planned with the group, so a package two members share
+        // (here with a feature one of them asks for, and a module its build program writes) is
+        // compiled once in a run and not again in the next.
+        s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"core\", \"a\", \"app\"]\n"},
+                      {"core/mcpp.toml", "[package]\nname    = \"core\"\nversion = \"0.1.0\"\n\n[features]\nextra = []\n\n[targets.core]\nkind = \"lib\"\n"},
+                      {"core/src/core.cppm", "export module s1094_core;\nexport import s1094_core.gen;\nexport int core_v() { return gen_v(); }\n"},
+                      {"core/build.mcpp", R"(import std;
+import mcpp;
+int main() {
+    const std::string p = std::string(mcpp::out_dir()) + "/gen.cppm";
+    std::ofstream(p) << "export module s1094_core.gen;\nexport int gen_v() { return 1; }\n";
+    std::printf("mcpp:generated=%s\n", p.c_str());
+    return 0;
+}
+)"},
+                      {"a/mcpp.toml", "[package]\nname    = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = { path = \"../core\", features = [\"extra\"] }\n\n[targets.a]\nkind = \"lib\"\n"},
+                      {"a/src/a.cppm", "export module s1094_a;\nimport s1094_core;\nexport int a_v() { return core_v(); }\n"},
+                      {"a/tests/main.cpp", "import s1094_a;\nint main() { return a_v() == 1 ? 0 : 1; }\n"},
+                      {"app/mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = { path = \"../core\" }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                      {"app/src/main.cpp", "import s1094_core;\nint main() { return core_v() == 1 ? 0 : 1; }\n"},
+                      {"app/tests/main.cpp", "import std;\nint main() { return std::getenv(\"MCPP_BIN_APP\") ? 0 : 1; }\n"}};
+        auto gen_edges = [&] {
+            std::ptrdiff_t n = 0;
+            for (const auto& d : graph_dirs(ws))
+                n += std::ranges::count_if(s::ninja_log_outputs(d), [](const std::string& o) {
+                    return std::regex_search(o, std::regex(R"(/core/gen\.m\.o$)"));
+                });
+            return n;
+        };
+        auto first = ws.mcpp({"test", "--workspace"});
+        expect(fatal(e2e::succeeded(first))) << s::text(first);
+        expect(eq(gen_edges(), 1)) << "the shared module was compiled more than once in one run";
+        expect(fatal(e2e::succeeded(ws.mcpp({"test", "--workspace"}))));
+        expect(eq(gen_edges(), 1)) << "an unchanged shared module was compiled again";
+    };
+
+    "1095 the guide at a workspace root plans nothing"_test[s::gcc] = [] {
+        // #932: the guide reads the frameworks from the resolved graph -- every member's -- and
+        // plans, scans and builds nothing.
+        s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"fw\", \"a\", \"b\"]\n"},
+                      {"fw/mcpp.toml", "[package]\nname    = \"fw\"\nversion = \"0.1.0\"\n\n[targets.main]\nkind          = \"entry\"\nmain          = \"src/main.cpp\"\ntest-protocol = 1\ntest-guide    = \"GUIDE.md\"\n"},
+                      {"fw/GUIDE.md", "# writing tests\n"},
+                      {"fw/src/main.cpp", "int main() { return 0; }\n"},
+                      {"a/mcpp.toml", "[package]\nname    = \"a\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\nfw = { path = \"../fw\" }\n"},
+                      {"a/tests/t.cpp", "int main() { return 0; }\n"},
+                      {"b/mcpp.toml", "[package]\nname    = \"b\"\nversion = \"0.1.0\"\n"},
+                      {"b/tests/t.cpp", "int main() { return 0; }\n"}};
+        auto g = ws.mcpp({"test", "--guide"});
+        expect(fatal(e2e::succeeded(g))) << s::text(g);
+        expect(e2e::contains(g.out, "Test frameworks of 3 members"));
+        expect(e2e::contains(g.out, "fw 0.1.0 (fw/main, test protocol 1)"));
+        expect(e2e::contains(g.out, "GUIDE.md"));
+        expect(!e2e::contains(s::text(g), "Compiling")) << "the guide built";
+        expect(graph_dirs(ws).empty()) << "the guide planned a build";
+        auto j = ws.mcpp({"test", "--guide", "--message-format", "json"});
+        expect(fatal(e2e::succeeded(j)));
+        expect(e2e::contains(j.out, R"("entry":"fw/main")"));
+        expect(e2e::contains(j.out, R"("members":3)"));
+        auto one = ws.mcpp_in("b", {"test", "--guide"});
+        expect(fatal(e2e::succeeded(one)));
+        expect(e2e::contains(one.out, "No test framework")) << "a member's guide named another member's framework";
     };
 }};
 

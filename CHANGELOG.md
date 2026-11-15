@@ -67,6 +67,18 @@
 
 ### Fixed
 
+- `mcpp test --guide` reads the frameworks from the resolved graph and plans,
+  scans and builds nothing; at a workspace root it names the frameworks of
+  every member. It planned and built the whole workspace first (#932).
+- `mcpp test` over several members plans a configuration group's programs
+  together, as `mcpp build --workspace` does. Each member's programs were
+  planned alone, with that member's features for the packages it shares, and
+  rebuilt a shared module into the group's directory: three compiles of one
+  unchanged module in a run, and on Windows a failed rewrite of a module
+  another process had mapped (#936).
+- A `sources` entry without a pattern that names no existing file is an error
+  naming its table. It was skipped, and the build failed at an importer of its
+  module (#938).
 - On Windows a runner named with a directory and no suffix (`../tools/x`)
   takes the system's suffixes as a bare name does; it could not be started.
   A `.bat` or `.cmd` program, which the system starts through its command

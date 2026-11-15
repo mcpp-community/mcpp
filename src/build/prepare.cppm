@@ -1140,6 +1140,14 @@ prepare_build(bool print_fingerprint, bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {});
 
+// THE RESOLVED GRAPH, AND NOTHING AFTER IT (#932): the packages `prepare_build`
+// reads -- the manifest and its workspace, the toolchain request, the graph's
+// resolution -- with the same phases, and no toolchain resolved after the
+// graph, no build program, no scan and no plan. For a question the declared
+// data answers (`mcpp test --guide`), which a plan would answer minutes later.
+export std::expected<std::vector<mcpp::modgraph::PackageRoot>, std::string>
+resolve_graph(bool includeDevDeps, BuildOverrides overrides);
+
 // ONE CONFIGURATION, PREPARED WITHOUT A BUILD (SPEC-013 §9): what `mcpp self
 // env --target` reports and what `mcpp toolchain install --target` fetches --
 // the toolchain, the platform package, the packages it adds and the tools it

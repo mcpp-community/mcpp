@@ -568,6 +568,14 @@ belongs at the package/feature boundary, not on an individual target.
 > mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
 
+> **A path without a pattern names one file** (2026.11.16.1+). A `sources`
+> entry with none of `*`, `?`, `[`, `{` names a file, and a file that does not
+> exist is an error naming the table that states it (`[build]`,
+> `[target.'<sel>'.build]`, `[features.<f>]`): it was skipped, and the build
+> failed at an importer of the module the file provides. A file an action or
+> a build program of the build writes is the build's. A pattern that matches
+> nothing selects nothing, as a target's selection may.
+
 > **`**/` stands for whole directories.** In `sources` and every glob that
 > shares its grammar, `**/` matches zero or more directories and what follows
 > it starts a path segment: `**/main.cpp` names every `main.cpp` and not

@@ -210,7 +210,8 @@ test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.
 
 **测试按名字找到包的程序**（2026.10.27.1+）。`mcpp test` 先按 `mcpp build` 的方式构建包的程序，并给每个测试
 `MCPP_BIN_<NAME>`：程序 `<name>` 的路径，名字转为大写，字母与数字之外的字符写作 `_`（`my-tool` 为
-`MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。
+`MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。选中多个成员时，一个配置组的程序一起规划，与
+`mcpp build --workspace` 相同，因此它们共用的包以一种配置构建（2026.11.16.1+）。
 
 `--no-programs`（2026.11.13.1+）不构建它们：程序只为得到名字而规划，每个测试从环境的 `MCPP_BIN_<NAME>`
 取得各程序，用于在别处构建的程序（一个 CI 作业测试另一个作业构建的二进制）。环境未指定的程序在任何测试运行前
@@ -414,7 +415,9 @@ mcpp test --guide            # 框架、它们的指南，以及用例相关的�
 
 框架在其入口上陈述编写测试的指南，`test-guide = "<文件>"`（2026.11.8.1+；协议的 P2.5）：包中的一个
 文件，从已安装的包读取，与其版本一致。`mcpp test --guide` 列出本包的每个测试框架及其指南与仓库，以及列出、
-选择、解释用例的命令；没有框架时，给出上文的契约与接入 mtest 的写法。失败的运行以
+选择、解释用例的命令；没有框架时，给出上文的契约与接入 mtest 的写法。框架是声明的数据：guide 从解析后的
+图（含 dev-dependencies）读取它们，在任何位置都不规划、不扫描、不构建（2026.11.16.1+）。选中多个成员时（workspace
+根或 `--workspace`），列出所有成员的框架。失败的运行以
 `how these tests are written: mcpp test --guide (...)` 结尾，`--message-format json` 的记录带有 `guide`。
 将要编写测试、或要读懂测试为何失败的人或 agent，从这里开始。
 
