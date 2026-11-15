@@ -265,7 +265,9 @@ mcpplibs.os = { version = "0.4.4", override = true }
   the defaults, and the project may choose another.
 - **When it is needed.** Two version requests that no SemVer merge reconciles
   are refused naming both, and the refusal ends with the line that overrides
-  the package. A library that pins one release of a package every consumer
+  the package. Two requests from `[build-dependencies]` tables are refused the
+  same way and are never renamed apart: a build dependency is a module of a
+  build program, and one build loads one version of it (2026.11.16.1). A library that pins one release of a package every consumer
   shares (one that provides a target-side layer or a kernel ABI) is noted to
   the projects that use it, and `mcpp publish` refuses the pin in a library:
   a range leaves the choice to the project.

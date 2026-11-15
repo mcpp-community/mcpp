@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Two `[build-dependencies]` requests of one package that no version
+  satisfies are refused as such, naming both requesters, the merge's reason and
+  the `override` line. The engine tried to rename the second copy's modules,
+  which does not separate a build program's modules, and failed on the
+  requester's sources with a message about staging (a project asking for
+  `mcpp:plugins` 0.21.0 over a platform asking for 0.20.0: `stage: no source
+  files found under '<platform>'`) (design 2026-11-15 N29).
+
 ## [2026.11.15.1] - 2026-11-15
 
 ### Added

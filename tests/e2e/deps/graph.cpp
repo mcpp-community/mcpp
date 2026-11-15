@@ -252,6 +252,26 @@ int main() {
         expect(fatal(e2e::succeeded(d))) << "D: the build failed";
         expect(e2e::contains(s::text(d), "`override` on 'mcpplibs.os' is ignored")) << "D: a library's override is not reported";
     };
+
+    "1088 two build dependencies that disagree are refused by their requesters"_test = [] {
+        // Two [build-dependencies] requests of one package that no merge reconciles are refused
+        // as such, naming both requesters and the override line: a build dependency is a module
+        // of a build program, which no rename separates (design 2026-11-15 N29). The rename was
+        // tried and failed on the requester's sources.
+        const auto tmp = s::case_dir();
+        s::project tooling{tmp / "tooling", {{"mcpp.toml", "[package]\nname    = \"tooling\"\nversion = \"0.1.0\"\n[targets.tooling]\nkind = \"lib\"\n[build-dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
+                                             {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
+                                             {"src/tooling.cppm", "export module tooling;\nexport int tooling_answer() { return 1; }\n"}}};
+        s::project app{tmp / "app", {{"mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[build-dependencies]\nmcpplibs.os = \"^0.4.4\"\n[dependencies]\ntooling = {{ path = \"{}/tooling\" }}\n", tmp.generic_string())},
+                                     {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
+                                     {"src/main.cpp", "import tooling;\nint main() { return tooling_answer() == 1 ? 0 : 1; }\n"}}};
+        auto r = app.mcpp({"build", "--configure-only"});
+        expect(fatal(failed(r))) << "two build dependencies no merge reconciles were accepted\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "build dependency 'mcpplibs.os' has irreconcilable versions"))) << "the refusal does not name the conflict\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "tooling") && e2e::contains(s::text(r), "app"))) << "the refusal does not name both requesters\n" << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "mangl"))) << "the rename was tried\n" << s::text(r);
+        expect(s::has_line(s::text(r), R"(mcpplibs\.os = \{ version = "[0-9.]*", override = true \})")) << "the refusal does not name the override\n" << s::text(r);
+    };
 }};
 
 }  // namespace
