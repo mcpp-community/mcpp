@@ -31,6 +31,18 @@
 
 ### Fixed
 
+- A name a build program, this machine or the project states for a program
+  (`mcpp::artifact_name("exe", "{name}")`) is followed on a built-in row as on
+  a platform's: a program named `cmd.exe` was `cmd.exe.exe` on
+  x86_64-windows-gnu and `cmd.exe` on x86_64-windows-musl (design 2026-11-15
+  N9).
+- A linked program is written under a temporary name that keeps its extension
+  (`<dir>/.<file>`, then renamed). DJGPP's driver names a second file after the
+  output's extension, so `<out>.tmp` left two programs in `bin/` on
+  i586-dos-djgpp (N9).
+- `[resources]` and the application manifest are compiled only for a PE row
+  whose execution system is Windows; the UEFI row, a PE image the firmware
+  loads, failed the build with them (N16).
 - Two `[build-dependencies]` requests of one package that no version
   satisfies are refused as such, naming both requesters, the merge's reason and
   the `override` line. The engine tried to rename the second copy's modules,

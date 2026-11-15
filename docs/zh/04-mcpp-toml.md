@@ -1874,8 +1874,8 @@ icon = "assets/app.ico"
 | `version-info` | 布尔值 | `false` 退出自动生成版本资源 |
 | `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
 
-**只有 PE 目标会*编译*它。** 在 Linux 与 macOS 上，这一节*不适用*：
-没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
+**只有程序由 Windows 运行的目标会*编译*它**：执行系统为 Windows 的 PE 行。在其他目标上这一节*不适用*——
+Linux、macOS，以及由其他系统加载的 PE 行，如 `x86_64-uefi`（2026.11.16.1）：没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
 `cfg(windows)` 谓词——写一次，无条件生效即可。
 
 资源属于拥有可执行程序或共享库的包。依赖的 executable artifact 与共享库在通过

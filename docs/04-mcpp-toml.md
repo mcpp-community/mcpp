@@ -2056,8 +2056,10 @@ generates the resource script automatically.
 | `version-info` | bool | `false` opts out of the generated version resource |
 | `[resources.version-info]` | table | `company`, `product`, `description`, `copyright`, `original-filename`, `internal-name` |
 
-**Only PE targets *compile* this.** On Linux and macOS the section is
-*inapplicable*: no resource units, no diagnostics, byte-identical build. You do
+**Only targets whose programs Windows runs *compile* this**: PE rows whose
+execution system is Windows. Elsewhere the section is *inapplicable* --- Linux,
+macOS, and a PE row another system loads, such as `x86_64-uefi` (2026.11.16.1):
+no resource units, no diagnostics, byte-identical build. You do
 **not** need (and cannot use) a `cfg(windows)` predicate — write it once,
 unconditionally.
 

@@ -1976,7 +1976,16 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // The patterns were checked where they were read.
     // `ArtifactNaming` holds views; these are views into the platform's own
     // strings, which outlive the plan's construction.
-    if (platform && platform->active) {
+    //
+    // THE STATEMENT NAMES THEM ON EVERY ROW (design 2026-11-15 N9), with a
+    // platform or without: a build program, this machine or the project that
+    // names a program `{name}` is followed on a built-in row as on a
+    // platform's. The row's own suffix (`.exe` of a Windows row) was appended
+    // regardless where no platform was selected, and a program the project
+    // named `cmd.exe` was `cmd.exe.exe` on x86_64-windows-gnu and `cmd.exe` on
+    // x86_64-windows-musl. A platform's own suffix still stands against a
+    // build program (`keep_platform_naming`).
+    if (platform) {
         constexpr std::string_view kName = "{name}";
         auto const& l = platform->fields.link;
         if (l.exe.set && mcpp::platform::split_name_pattern(l.exe.value)) {

@@ -2393,8 +2393,14 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             if (inPlaceTarget) return cmd;
             const auto pos = cmd.find("-o $out");
             if (pos == std::string::npos) return cmd;
-            cmd.replace(pos, 7, "-o $out.tmp");
-            return cmd + " && mv -f $out.tmp $out";
+            // THE TEMPORARY NAME KEEPS THE FILE'S EXTENSION: `<dir>/.<file>`,
+            // not `<out>.tmp`. A linker that names a file after its output's
+            // extension writes a second file otherwise: DJGPP's driver, given
+            // `-o x.exe.tmp`, writes `x.exe.tmp` and `x.exe.exe` (measured with
+            // GCC 12.2.0 for i586-pc-msdosdjgpp; `-o x.exe` writes one file),
+            // and the package held two programs (design 2026-11-15 N9).
+            cmd.replace(pos, 7, "-o $$t");
+            return "t=$$(dirname $out)/.$$(basename $out) && " + cmd + " && mv -f $$t $out";
         }
     };
     {
