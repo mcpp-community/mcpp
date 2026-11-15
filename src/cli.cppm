@@ -1382,6 +1382,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("output").takes_value().value_name("PATH").help("the artifact the command links"))
             .option(cl::Option("companions").takes_value().value_name("SUFFIXES").help("the row's companions, removed before the link (`.wasm`)"))
             .option(cl::Option("aside").help("move the previous artifact aside first (a Windows host)"))
+            .option(cl::Option("temporary").help("link under a temporary name in the artifact's directory, then rename it over the artifact (POSIX)"))
             .action([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_link_output(p, std::span<const std::string>(passthrough));
             }))

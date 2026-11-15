@@ -1840,8 +1840,13 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // nothing holds any more are deleted here. A process started while the linker
 // writes fails to start (file not found, sharing violation) -- Windows never
 // starts an image that is being written -- rather than running half of one.
-// (POSIX links write `<artifact>.tmp` and rename it over the name in the
-// edge's own shell command: a rename replaces a running program there.)
+// On POSIX (`--temporary`) the linker writes `<dir>/.<artifact>` -- the
+// argument after its `-o`, renamed; the name keeps its extension, as a driver
+// that names a file after it writes a second one otherwise (design 2026-11-15
+// N9) -- and the file is renamed over the artifact once the linker succeeds: a
+// rename replaces a running program there, and a program started meanwhile
+// never meets a partial file. The publication is one command, so an edge that
+// holds a permit for the link holds it until the artifact is in place.
 export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
                            std::span<const std::string> command) {
     namespace fs = std::filesystem;
@@ -1864,6 +1869,33 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
     // running program's file cannot be overwritten). An edge that reaches here
     // for its companions alone does not: an aside file would be named like a
     // companion (`app.js.old-1`).
+    if (parsed.is_flag_set("temporary")) {
+        std::vector<std::string> argv(command.begin(), command.end());
+        const auto temporary = out.parent_path() / ("." + out.filename().string());
+        auto named = std::ranges::adjacent_find(argv, [&](const std::string& a, const std::string& b) {
+            return a == "-o" && fs::path(b) == out;
+        });
+        if (named == argv.end()) {
+            std::println(libc::stderr(), "error: link-output --temporary: the linker command names no `-o {}`",
+                         out.string());
+            return 2;
+        }
+        *std::next(named) = temporary.string();
+        const auto linked = mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                                      .streams = mcpp::run::Streams::inherit});
+        if (linked.exit_code != 0) {
+            fs::remove(temporary, ec);
+            return linked.exit_code;
+        }
+        fs::rename(temporary, out, ec);
+        if (ec) {
+            std::println(libc::stderr(), "error: link-output: cannot rename {} over {}: {}",
+                         temporary.string(), out.string(), ec.message());
+            fs::remove(temporary, ec);
+            return 1;
+        }
+        return 0;
+    }
     if (!parsed.is_flag_set("aside"))
         return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
     const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();

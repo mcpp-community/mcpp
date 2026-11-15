@@ -86,6 +86,13 @@
   rebuilt a shared module into the group's directory: three compiles of one
   unchanged module in a run, and on Windows a failed rewrite of a module
   another process had mapped (#936).
+- Under `bmi_schedule = "on"` with GCC a link holds a permit of the build's
+  compiler limit. Ninja runs six jobs per compiler there and only compilers
+  were bounded, so links that became ready together all ran at once: mcpp's
+  26 test programs relinked together at 1 to 1.8 GB each and a 16 GB machine
+  ran out of memory. A POSIX link is published through a temporary name by
+  `mcpp link-output --temporary`, one command, so the permit is held until the
+  artifact is in place.
 - A `sources` entry without a pattern that names no existing file is an error
   naming its table, and a warning in a package fetched into a store. It was
   skipped, and the build failed at an importer of its module (#938).

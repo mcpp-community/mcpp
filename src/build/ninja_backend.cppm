@@ -2402,23 +2402,32 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         } else {
             if (!companions.empty()) return "$mcpp link-output --output $out" + companionOption + " -- " + cmd;
             if (inPlaceTarget) return cmd;
-            const auto pos = cmd.find("-o $out");
-            if (pos == std::string::npos) return cmd;
-            // THE TEMPORARY NAME KEEPS THE FILE'S EXTENSION: `<dir>/.<file>`,
-            // not `<out>.tmp`. A linker that names a file after its output's
-            // extension writes a second file otherwise: DJGPP's driver, given
-            // `-o x.exe.tmp`, writes `x.exe.tmp` and `x.exe.exe` (measured with
-            // GCC 12.2.0 for i586-pc-msdosdjgpp; `-o x.exe` writes one file),
-            // and the package held two programs (design 2026-11-15 N9).
-            cmd.replace(pos, 7, "-o $$t");
-            return "t=$$(dirname $out)/.$$(basename $out) && " + cmd + " && mv -f $$t $out";
+            if (cmd.find("-o $out") == std::string::npos) return cmd;
+            // Through a temporary name, `<dir>/.<file>` (cmd_link_output): one
+            // command, so a permit around it is held until the artifact is in
+            // place (2026.11.16.1; before it a shell sequence that renamed the
+            // file after the linker's command had ended).
+            return "$mcpp link-output --output $out --temporary -- " + cmd;
         }
     };
     {
         constexpr bool useRsp = true;
+        // A LINK HOLDS A PERMIT AS A COMPILE DOES. Under the detached schedule
+        // ninja is given six slots per compiler and the generation's semaphore
+        // bounds the compilers, so every link a build reached at once ran at
+        // once: a change that every test program links relinked mcpp's 26 tests
+        // together, at 1 to 1.8 GB each, and a 16 GB machine ran out of memory.
+        // A link takes a permit of the same semaphore, so compiles and links
+        // together are what this machine runs at once; the graph still names no
+        // number (e2e 861). An archive copies its members and holds none.
+        const std::string linkPrefix = plan.scheduleCompilerCap > 0
+            ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out -- ")
+            : std::string{};
         auto link_rule = [&](std::string_view name, std::string cmd,
                              std::string_view desc) {
-            if (desc != "AR") cmd = publish_link(std::move(cmd));
+            // The permit wraps the publication: the attempt's output is the
+            // artifact in place when the command it holds exits.
+            if (desc != "AR") cmd = linkPrefix + publish_link(std::move(cmd));
             append(std::format("rule {}\n", name));
             if (useRsp) {
                 if (auto pos = cmd.find("$in"); pos != std::string::npos)

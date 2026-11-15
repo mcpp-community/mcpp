@@ -279,7 +279,7 @@ ldflags = ["-Wl,-rpath='$$ORIGIN/../x'"]
         bool published = false;
         for (std::size_t i = 0; i + 1 < lines.size(); ++i)
             if (lines[i].starts_with("rule cxx_link"))
-                published = published || std::regex_search(lines[i + 1], std::regex{R"(-o \$\$t .*&& mv -f \$\$t \$out)"});
+                published = published || lines[i + 1].contains("link-output --output $out --temporary -- ");
         expect(fatal(published)) << "A: the link rule does not publish through a temporary name";
         const auto exe = path_ending(p.at("target"), "/bin/app");
         expect(fatal(exe.has_value())) << "no bin/app";

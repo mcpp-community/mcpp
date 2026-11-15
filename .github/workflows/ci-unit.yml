@@ -133,6 +133,17 @@ jobs:
           set -euo pipefail
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           mkdir -p "$RUNNER_TEMP/unit"
+          # LINKS BOUNDED BY THE BOOTSTRAP'S SCHEDULE. Before 2026.11.16.1 a link
+          # under the detached schedule (bmi_schedule = "on") took no permit, and
+          # ninja ran six per compiler: a change every test links relinked the 26
+          # tests at once, at 1 to 1.8 GB each, and the runner ran out of memory.
+          # Such a bootstrap builds the archive with the ordinary schedule, whose
+          # job count bounds links; a later one holds a permit for each link.
+          v=$("$MCPP" --version 2>/dev/null | awk '{print $2; exit}')
+          if [ "$(printf '%s\n' 2026.11.16.1 "$v" | sort -V | head -1)" != 2026.11.16.1 ]; then
+            export MCPP_BMI_SCHEDULE=off
+            echo "the bootstrap $v holds no permit for a link: the archive is built with bmi_schedule off"
+          fi
           # shellcheck disable=SC2086 -- the flag is one word or none
           # The profile `ci` (mcpp.toml): -O0 and no debug information. The
           # default profile of this package is release (-O2); the tests built
