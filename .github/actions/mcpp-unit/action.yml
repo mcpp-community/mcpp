@@ -23,6 +23,12 @@ inputs:
     description: the test archive to run (`mcpp test --archive`); empty to build the tests here
     required: false
     default: ''
+  profile:
+    description: >
+      the profile the tests are built with when they are built here (`mcpp test --profile`);
+      empty for the package's default
+    required: false
+    default: ''
   shard:
     description: I/N, this job's shard of the tests (`mcpp test --shard`)
     required: false
@@ -103,6 +109,7 @@ runs:
       env:
         ARCHIVE: ${{ inputs.archive }}
         SHARD: ${{ inputs.shard }}
+        PROFILE: ${{ inputs.profile }}
         SINCE: ${{ inputs.since }}
         PATTERNS: ${{ inputs.patterns }}
         TIMEOUT: ${{ inputs.timeout }}
@@ -117,7 +124,12 @@ runs:
         fresh="$MCPP_FRESH"
         if command -v cygpath >/dev/null 2>&1; then fresh="$(cygpath -w "$fresh")"; fi
         export MCPP_BIN_MCPP="${MCPP_BIN_MCPP:-$fresh}"
-        if [ -n "$ARCHIVE" ]; then args+=(--archive "$ARCHIVE"); else args+=(--no-programs); fi
+        if [ -n "$ARCHIVE" ]; then
+          args+=(--archive "$ARCHIVE")
+        else
+          args+=(--no-programs)
+          [ -z "$PROFILE" ] || args+=(--profile "$PROFILE")
+        fi
         if [ -n "${MCPP_UNIT_FAILED:-}" ]; then
           args+=(--failed)
         else

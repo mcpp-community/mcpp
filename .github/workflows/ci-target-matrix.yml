@@ -408,13 +408,16 @@ jobs:
     # workflow is green. This job is the one place that reads the expected table
     # as a whole and requires the run to have covered it.
     #
-    # It runs even when a scan failed (`always()`), because "which hosts were
-    # covered" is a different question from "did they pass" — and a run where a
-    # host is missing entirely should say so in those words rather than leaving
-    # a reader to infer it from a job list.
+    # It runs even when a scan failed, because "which hosts were covered" is a
+    # different question from "did they pass" — and a run where a host is
+    # missing entirely should say so in those words rather than leaving a
+    # reader to infer it from a job list. Not in a cancelled run: `always()`
+    # queued it for a runner after the cancellation, and the concurrency group
+    # was held until it ran (run 43599371222: 8.5 minutes, the next run's
+    # start delayed by 9.1).
     name: coverage (every host the table names was scanned)
     needs: scan
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

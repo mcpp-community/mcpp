@@ -91,6 +91,16 @@ with one link. `[test] split = "case"` gives each case its own process,
 then divides a file the run store measured longer than its share of the run
 (the run's measured work over its workers and shards) into groups of its listed
 cases of about equal measured duration, named `<program>/<file> (i/k)`.
+A listed case longer than its share whose program's selection excludes and
+selects where declared (SPEC-017 P4.3, mtest 0.9.0) is divided by the cases it
+declared as the store measured them, which a list does not name
+(2026.11.15.1+): `<program>/<file> [<case>] (i/k)`. Each part but the last
+selects the cases it was given where they are still declared; the last selects
+the case without them, so a case no run measured runs once, in it. The cases
+of one case may share what the first of them fills (a cache, a toolchain), and
+every part pays it again: a case is divided once to be measured so, and then
+only while its longest part took at most four fifths of the case run whole
+(each part records the case it divides, `divides`).
 `--split <mode>` states the value for one invocation. A pattern names a program or a part of one as
 the run names it: `mcpp test unit/test_home` (or `home`) runs that file's part.
 

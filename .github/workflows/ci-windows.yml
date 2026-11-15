@@ -73,6 +73,10 @@ jobs:
         uses: ./.github/actions/mcpp-unit
         with:
           name: windows
+          # -O0 without debug information (mcpp.toml `[profile.ci]`): the
+          # package's default is release, and its tests took twice the compiler
+          # time with it (design 2026-11-14 §6).
+          profile: ci
           history: windows
           mcpp: ${{ env.MCPP_SELF }}
           since: ${{ env.MCPP_TEST_SINCE }}
@@ -81,7 +85,8 @@ jobs:
         shell: bash
         run: |
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          MCPP="$MCPP_SELF" python .github/tools/check_windows_home_legacy.py
+          # The tests as the step above built them (profile ci).
+          MCPP="$MCPP_SELF" MCPP_TEST_PROFILE=ci python .github/tools/check_windows_home_legacy.py
 
       # WS8: this row has Visual Studio, so its answer is the "Windows with
       # usable MSVC" row of docs/01 and docs/20.

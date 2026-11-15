@@ -92,3 +92,16 @@ UTest recognises_its_own_heads_only{"PackPolyglot/RecognisesItsOwnHeadsOnly", []
     expect(!pg::is_polyglot("#!/bin/sh\necho hi\n"));
     expect(!pg::is_polyglot(""));
 }};
+
+// The file is started by a shell, which selects by `uname`, or by the Windows
+// loader, whose program leads it. A system a firmware or another loader starts
+// (`uefi`, a runner host of openkal-platform 0.28.0) is no system of the file:
+// `--systems all` leaves it out rather than refusing the pack.
+UTest holds_the_systems_a_shell_or_the_windows_loader_starts{"PackPolyglot/HoldsTheSystemsAShellOrTheWindowsLoaderStarts", [] {
+    expect(mcpp::pack::polyglot::holds("linux"));
+    expect(mcpp::pack::polyglot::holds("macos"));
+    expect(mcpp::pack::polyglot::holds("freebsd"));
+    expect(mcpp::pack::polyglot::holds("windows"));
+    expect(!mcpp::pack::polyglot::holds("uefi"));
+    expect(!mcpp::pack::polyglot::holds("dos"));
+}};

@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.11.14.1"
+version     = "2026.11.15.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -56,6 +56,15 @@ debug    = false
 cflags   = ["--coverage"]
 cxxflags = ["--coverage"]
 ldflags  = ["--coverage"]
+
+# The tests as CI builds them (ci-unit.yml, mcpp-unit): -O0 and no debug information. The
+# package's default profile is release (-O2); building the library and its unit tests with it took
+# 8988 s of compiler time, and with this 4183 s (design 2026-11-14 §6). A failure is read from
+# mtest's report, which names the place of each check without debug information.
+[profile.ci]
+opt   = 0
+debug = false
+strip = true
 
 [test]
 windows_code_page = "utf-8"
@@ -169,7 +178,7 @@ members = [
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
-mcpplibs.mtest = "0.8.5"
+mcpplibs.mtest = "0.9.0"
 # The support of the end-to-end cases (tests/support, design 2026-11-12 §5.9).
 mcpp.test-support = { path = "tests/support" }
 

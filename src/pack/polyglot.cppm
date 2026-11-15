@@ -48,6 +48,12 @@ std::expected<std::string, std::string> assemble(std::string_view name, const st
 // Whether `head`, the first bytes of a file, are a file `assemble` wrote.
 bool is_polyglot(std::string_view head);
 
+// Whether the file can hold a program of `system`: a system that states its
+// `uname` (the script selects by it), or a stated system without one (its
+// program is the PE the file leads with). A program a firmware or another
+// loader starts by itself (`uefi`, `dos`) is no program of such a file.
+bool holds(std::string_view system);
+
 } // namespace mcpp::pack::polyglot
 
 namespace mcpp::pack::polyglot {
@@ -138,6 +144,10 @@ std::string stage_one(std::uint64_t at, std::uint64_t length) {
 }
 
 }  // namespace
+
+bool holds(std::string_view system) {
+    return !uname_of(system).empty() || mcpp::toolchain::target::find_system(system) != nullptr;
+}
 
 bool is_polyglot(std::string_view head) {
     return head.starts_with("MZqFpD='\n") || head.starts_with("#!/bin/sh\n" "o=$0;");

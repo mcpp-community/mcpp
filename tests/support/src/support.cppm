@@ -118,6 +118,14 @@ fs::file_time_type file_time(std::chrono::sys_time<Duration> t) {
     return file_now + std::chrono::duration_cast<fs::file_time_type::duration>(t - sys_now);
 }
 
+// A file's modification time moved past the present and its own (`sleep 1; touch file`), so a
+// build sees it changed. Its own time alone is not enough: the file was written before a build
+// that may take longer than the step, whose outputs are then newer than the file touched
+// (`basics/04` on Windows, run 43649417016).
+inline void touch(const fs::path& f) {
+    fs::last_write_time(f, (std::max)(fs::file_time_type::clock::now(), fs::last_write_time(f)) + std::chrono::seconds(2));
+}
+
 // ---- mcpp ----------------------------------------------------------------------------------------
 
 // The mcpp under test: MCPP_E2E_MCPP when it is set (a released mcpp, tested by the cases of an

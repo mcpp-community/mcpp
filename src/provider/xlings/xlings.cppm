@@ -419,8 +419,9 @@ std::vector<InvocationVar> invocation_env(const Env& env);
 // The runtime the home's `abi` link selects (`xlings config --runtime`).
 void select_runtime(const Env& env, std::string_view runtimeId);
 
-// Where the state an install writes lives, every link resolved: the project's
-// home, or the home's `subos` (Provider::state_dir).
+// Where the state an install writes lives, every link resolved: the home's
+// `subos`, whose environment an install for a project saves as well
+// (Provider::state_dir).
 std::filesystem::path state_dir(const Env& env);
 
 // Build full xlings interface command.

@@ -97,6 +97,30 @@ jobs:
             echo "the bootstrap $("$MCPP" --version 2>/dev/null | head -1) builds the package's program into the archive"
           fi
 
+      # MAIN'S TEST BUILD, REUSED (design 2026-11-14 §6, W1). The archive of
+      # main's last successful run carries its build directory and the blob of
+      # every tracked file it was built from. A file whose blob is the same is
+      # given a time older than every output; a changed one keeps the
+      # checkout's, so only what changed and what imports it is built again.
+      # The bootstrap mcpp is pinned, so the configuration is main's; a pin
+      # that moved builds whole, as a run without the artifact does.
+      - name: Main's test build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOST: ${{ inputs.host }}
+        run: |
+          set -uo pipefail
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
+                  --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          [ -n "$run" ] || { echo "no successful run of main: the tests are built whole"; exit 0; }
+          if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -n "mcpp-unit-build-$HOST" -D "$RUNNER_TEMP/build" 2>/dev/null; then
+            echo "main's run $run kept no test build for $HOST: the tests are built whole"; exit 0
+          fi
+          tar --zstd -xf "$RUNNER_TEMP/build/target.tar.zst" && rm -f "$RUNNER_TEMP/build/target.tar.zst"
+          python3 .github/tools/source_mtimes.py restore target
+          echo "main's run $run: its test build restored"
+
       # EVERY TEST, ON EVERY SET. The bootstrap mcpp that builds them selects
       # by change without the rule that a test running the package's program
       # is affected by the program's sources (2026.11.13.1), so it would leave
@@ -110,7 +134,10 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           mkdir -p "$RUNNER_TEMP/unit"
           # shellcheck disable=SC2086 -- the flag is one word or none
-          "$MCPP" test --no-run ${{ steps.programs.outputs.flag }} --archive "$RUNNER_TEMP/unit/unit.tar.gz" 2>&1 | tee "$RUNNER_TEMP/archive.log"
+          # The profile `ci` (mcpp.toml): -O0 and no debug information. The
+          # default profile of this package is release (-O2); the tests built
+          # with it took 8988 s of compiler time, and 4183 s with `ci`.
+          "$MCPP" test --profile ci --no-run ${{ steps.programs.outputs.flag }} --archive "$RUNNER_TEMP/unit/unit.tar.gz" 2>&1 | tee "$RUNNER_TEMP/archive.log"
           n=$(sed -n 's/.*Archived \([0-9][0-9]*\) test.*/\1/p' "$RUNNER_TEMP/archive.log" | tail -1)
           [ -f "$RUNNER_TEMP/unit/unit.tar.gz" ] || n=0
           echo "archived=${n:-0}" >> "$GITHUB_OUTPUT"
@@ -146,6 +173,27 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # THE TEST BUILD FOR THE NEXT RUN: main's only, so a pull request
+      # starts from the build of the branch it merges into.
+      - name: Keep the test build
+        id: keep
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.archive.outputs.archived != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/tools/source_mtimes.py record target
+          tar --zstd -cf "$RUNNER_TEMP/target.tar.zst" target
+          du -h "$RUNNER_TEMP/target.tar.zst"
+      - name: Upload the test build
+        if: steps.keep.outcome == 'success'
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpp-unit-build-${{ inputs.host }}
+          path: ${{ runner.temp }}/target.tar.zst
+          compression-level: 0
+          retention-days: 7
+
       # The tests a job that runs named cases takes (e2e-cases), built here
       # beside the others; the job names the program they test.
       - name: Write the tests other jobs run
@@ -155,7 +203,7 @@ jobs:
           set -euo pipefail
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           # shellcheck disable=SC2086 -- the input is a list of test paths
-          "$MCPP" test ${{ inputs.tests }} --no-run ${{ steps.programs.outputs.flag }} --archive "dist/mcpp-tests.tar.gz"
+          "$MCPP" test ${{ inputs.tests }} --profile ci --no-run ${{ steps.programs.outputs.flag }} --archive "dist/mcpp-tests.tar.gz"
 
       - name: Upload the tests other jobs run
         if: inputs.tests != ''

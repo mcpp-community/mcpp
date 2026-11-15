@@ -4,6 +4,65 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.15.1] - 2026-11-15
+
+### Added
+
+- `[test] split = "auto"` divides a listed case longer than its share by the
+  cases it declared, as the run store measured them (SPEC-017 O10, P4.3), when
+  the program's selection excludes and selects where declared (mtest 0.9.0):
+  `<program>/<file> [<case>] (i/k)`. Each part but the last selects the cases it
+  was given where they are still declared (`?<id>`); the last selects the case
+  without them (`!<id>`), so a case no run measured runs once. A division is
+  kept while it pays: the cases of one case may share what the first fills, and
+  each part pays it again (`e2e/openkal/sets`, 1375 s whole, took 909, 1109 and
+  1306 s as three parts). Each part records the case it divides (`divides`); a
+  case is divided once to be measured so, then only while its longest part took
+  at most four fifths of the case whole, and is estimated by its whole run.
+- `[profile.ci]` in this package's manifest: the tests as CI builds them, -O0
+  without debug information (the library and its unit tests: 8988 s of compiler
+  time at the default release profile, 4183 s with it).
+
+### Changed
+
+- The built-in platform of the ok images and of the musl identities is
+  openkal-platform 0.28.0 (was 0.27.1): the group on openkal 0.25.3, and the
+  rows `i686-linux-musl`, `i686-openkal`, `x86_64-uefi` and `i686-dos-musl`
+  (a technical experiment). A project that names openkal 0.25.3 builds for
+  `x86_64-openkal` without stating a platform; with 0.27.1 the group's openkal
+  0.25.0 refused it.
+- `mcpp new` scaffolds tests with mtest 0.9.0, the version this package's own
+  tests use, so a new package's long cases are divisible by the cases they
+  declare.
+- The run store's case durations are kept by program and case id; two programs
+  with a case of one name (`layers`, `sets`) read each other's.
+- CI: the archive stage reuses main's test build: an artifact of its build
+  directory with the blob of each tracked file, whose unchanged files are given
+  a time older than every output (`.github/tools/source_mtimes.py`); the tests
+  are built with `--profile ci` on Linux, macOS and Windows; the target-matrix
+  scan builds its cells side by side (`MATRIX_JOBS`); a cancelled run's
+  `coverage` job no longer waits for a runner and holds the concurrency group
+  (it held it 9.1 minutes in run 43599371222).
+
+### Fixed
+
+- An install for a project takes the home's state turn: it saves the home's
+  environment (`subos/default/.xlings.json`) as well as the project's, and with
+  the turn in the project's directory it collided on Windows with an install of
+  another project ("Failed to write file"). One turn per home orders both.
+- `mcpp pack --pkg-format polyglot --systems all` leaves out the systems a
+  polyglot file is not started on: openkal-platform 0.28.0 names `uefi-x86_64`
+  and `dos-i686` among its runner hosts, and the pack refused ("a polyglot file
+  holds no program of uefi"). They are reported as not covered, with
+  `--pkg-format single-file` as the way to make them; naming one of them
+  explicitly is still refused.
+- A host tool built by two builds of one home at once is published by both:
+  each writes through a temporary of its own (`mcpp.build.stage`), and a store
+  entry already equal to the tool is published. With one temporary name for
+  every writer, one removed the other's before its rename ("publishing host
+  tool ... failed: No such file or directory", the target matrix's cells side
+  by side).
+
 ## [2026.11.14.1] - 2026-11-14
 
 ### Added
