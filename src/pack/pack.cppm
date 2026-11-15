@@ -569,6 +569,16 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
 std::string unbuilt_row(std::string_view system, std::string_view arch,
                         const mcpp::platform::Resolved* P = nullptr);
 
+// WHY NO SINGLE FILE OF AN IMAGE IS MADE FOR `system`-`arch`, as
+// `<row>: <reason>`: the row is one this mcpp builds no program for, or the
+// platform's carrier, which names no hosts, is not a program where the
+// platform's runner exists (`runner.hosts`). Empty when the file is made. The
+// one reading of a named system before the build and of `--systems all` (a
+// planned row the platform serves is built since N23, so the second condition
+// is the one that answers for it).
+std::string single_file_unmade(std::string_view system, std::string_view arch,
+                               const mcpp::platform::Resolved& P);
+
 // The systems `--systems` names for an architecture (design 2026-10-29
 // §4.1): an `<os>`, an `<os>-<arch>` of that architecture, or every system
 // for `all`; this machine's system when it names none.
@@ -3608,12 +3618,7 @@ std::vector<SingleFileRow> single_file_rows(const Plan& plan) {
     for (auto const& arch : archs)
         for (auto const& system : systems_for(plan.opts.systems, arch)) {
             SingleFileRow r{ system, arch, {} };
-            if (all)
-                if (auto row = unbuilt_row(system, arch, &plan.platform); !row.empty())
-                    r.skipped = std::format("no carrier row: this mcpp builds no program for {}", row);
-            if (all && r.skipped.empty() && plan.platform.active)
-                if (auto why = detail::unbuilt_carrier(plan.platform, system, arch, true))
-                    r.skipped = *why;
+            if (all) r.skipped = single_file_unmade(system, arch, plan.platform);
             // `all` in one polyglot file: the systems the file is started on.
             if (all && r.skipped.empty() && plan.opts.polyglot && !polyglot::holds(system))
                 r.skipped = std::format("a polyglot file is started by a shell or by the Windows loader, "
@@ -3635,6 +3640,17 @@ std::string unbuilt_row(std::string_view system, std::string_view arch,
                         const mcpp::platform::Resolved* P) {
     const auto row = detail::program_row(system, arch, true, P);
     return detail::row_is_built(row, P) ? std::string() : row.triple;
+}
+
+std::string single_file_unmade(std::string_view system, std::string_view arch,
+                               const mcpp::platform::Resolved& P) {
+    const auto row = detail::program_row(system, arch, true, &P);
+    if (!detail::row_is_built(row, &P))
+        return std::format("{}: this mcpp builds no program for the row", row.triple);
+    if (P.active)
+        if (auto why = detail::unbuilt_carrier(P, system, arch, true))
+            return std::format("{}: {}", row.triple, *why);
+    return {};
 }
 
 std::vector<std::string> carried_systems(const Plan& plan) {

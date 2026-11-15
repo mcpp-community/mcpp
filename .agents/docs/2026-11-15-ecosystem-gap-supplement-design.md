@@ -546,6 +546,20 @@ profile 给出一次提示。需要评审后实现，不在本轮。
 - **op0** 见 7.1：版本组补丁 0.28.1 先于 op 发布，dirun 0.4.0 经它取得 okrun 0.6.4。
 - **N27** 实测结论与原记录不同：node 下 Emscripten 对终端的同步读取以 `EIO` 失败（是否调用 `tcsetattr` 相同），
   管道与文件可读；文档按实测写出（docs/24）。
+- **op（openkal-platform 0.29.0）** 实现的范围：
+  - op1：UEFI runner 补 `--`，固定 ovmf 9.2.4-2 与 dirun 0.4.0。
+  - op3：openkal-uefi 0.11.0。openkal-musl 0.29.7 请求 `^0.10.0`，因此先发 openkal-musl 0.29.8（`>=0.10.0, <0.12.0`）。
+  - op4：okrun runner 的宿主加入 `macos-x86_64` 与 `linux-i686`（后者 `built-as = i686-linux-musl`），`--systems all`
+    的包实测含两者。
+  - op5：按 R1 的规则，虚拟机与机器模拟器的 runner 一律 `enabled = false`，包括 UEFI（QEMU 与 OVMF）与 DOS（DOSBox），
+    不只 FreeBSD 与 windows-musl。hosted 行的 runner 以完整的 `[[platform.provider]]` 陈述：`hosted = true`，
+    `base = "none"`，toolchain 与 layers 取 `[platform.hosted]` 的值。实测三行的构建图与不加条目时逐字节相同。只写 runner
+    的条目会取 ok 映像的约定，所以不能只写 runner。
+  - 本项留作评审（N40）：`[platform.hosted]` 若能按行陈述 runner，即可去掉 layers 的重复。这需要改 SPEC-013 §1 的键表，
+    不在本轮。
+- **N17（k5）** 定位与原记录不同：批处理静默结束不是 `if … goto` 所致，而是之后的目录列举超出 openkal-dos 的 64 KiB
+  首个栈，栈溢出不产生故障而挂起，未写出的输出随之丢失。最小复现（8 KiB 栈帧递归 8 层即挂起）见 mcpplibs/openkal-dos#3，
+  修复属 openkal-dos，本轮不实现。
 - **G7（m8、xb）** 实测：API 34 镜像的 system.img 是 GPT 磁盘（vbmeta 与动态分区 super），qemu-user 的根仍只属 API 24
   arm64-v8a；模拟器 37.1.11 以 `-sysdir` 启动时需要一个含 `platform-tools` 的 SDK 根，否则在读取 `-sysdir` 后以 SIGSEGV
   结束，启动脚本给出空的 SDK 根。x86_64 镜像经已安装的配置与 dirun 0.4.0 运行动态程序，19 秒得到状态，参数与标准错误完整，

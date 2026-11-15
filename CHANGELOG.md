@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [2026.11.16.1] - 2026-11-16
+
 ### Added
 
 - `x86_64-linux-android` runs in the Android Emulator on an x86_64 Linux
@@ -71,6 +73,10 @@
 
 ### Fixed
 
+- A single file named for a system where the platform's runner does not exist
+  (`--systems macos` for an x86_64 image whose platform names no
+  `macos-x86_64` runner host) is refused before the build, by the reading
+  `--systems all` applies to leave it out; it was refused after the build.
 - `mcpp test --guide` reads the frameworks from the resolved graph and plans,
   scans and builds nothing; at a workspace root it names the frameworks of
   every member. It planned and built the whole workspace first (#932).

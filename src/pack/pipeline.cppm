@@ -1000,18 +1000,21 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                     "--systems names {}, and no leg of this pack is of {}", e, e.substr(dash + 1))};
         }
         // A single file of an image is made for each leg and system on this
-        // mcpp's row of it; a row it builds no program for, named, is refused
-        // before the build (`all` names the rows there are, and says the rest).
+        // mcpp's row of it; a system where none is made, named, is refused
+        // before the build, by the reading `all` applies to say the rest
+        // (`single_file_unmade`: a row this mcpp builds no program for, or a
+        // carrier where the platform's runner does not exist). The second was
+        // read only by `all`, so a named one was refused after the build.
         if (loaded && run.opts.format == mcpp::pack::Format::SingleFile) {
             std::size_t files = 0;
             std::vector<std::string> unbuilt, built;
             const bool all = std::ranges::find(run.opts.systems, "all") != run.opts.systems.end();
             for (auto const& arch : archs)
                 for (auto const& system : mcpp::pack::systems_for(run.opts.systems, arch)) {
-                    auto row = mcpp::pack::unbuilt_row(system, arch, &ctx.plan.platform);
-                    if (row.empty()) built.push_back(std::format("{}-{}", system, arch));
-                    else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, row));
-                    if (row.empty() || !all) ++files;
+                    auto why = mcpp::pack::single_file_unmade(system, arch, ctx.plan.platform);
+                    if (why.empty()) built.push_back(std::format("{}-{}", system, arch));
+                    else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, why));
+                    if (why.empty() || !all) ++files;
                 }
             if (files > 1 && !run.opts.output.empty() && !run.opts.polyglot)
                 return Refusal{2, std::format(
@@ -1023,7 +1026,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                 for (auto const& u : unbuilt) say += (say.empty() ? "" : ", ") + u;
                 for (auto const& b : built) use += (use.empty() ? "" : ",") + b;
                 return Refusal{2, std::format(
-                    "--systems: this mcpp builds no program for {}, so no single file is made there.\n"
+                    "--systems: no single file is made for {}.\n"
                     "  use: {}", say,
                     use.empty() ? std::string("--systems naming a system this mcpp builds for")
                                 : "--systems " + use)};
