@@ -689,6 +689,8 @@ profile 给出一次提示。需要评审后实现，不在本轮。
 - e2e 1100：workspace 中成员各自的边。
 
 **13.7 补记：冷缓存暴露的测试隔离缺陷（已修复）。**
-- 现象：xlings 版本进入 CI 沙箱缓存键，前移后 runner 的 mcpp home 为冷缓存。e2e `llvm/36` 在 CI 中两次失败：glibc 的配置拒绝 `registry/subos/default/lib/Scrt1.o`（“user-owned or unobserved entry”）。本地单独运行，以及以冷的用户 home 运行，均通过。
-- 根因：`inherited` home 把用户的 `registry/subos` 整个链接进用例的 home，`subos` 因此成为共享状态。冷缓存时，同分片的其它用例向用户 home 安装，写入的 `lib/Scrt1.o` 出现在本用例的 subos 中，而本用例的记录中没有它；用例的安装也会写入用户的 subos。温缓存时运行期间不发生安装，所以此前没有暴露。
-- 设计：用例的 subos 是用户 subos 的副本，链接保持为链接（`cp -a`，`fs::copy_options::copy_symlinks`）。这与 `_inherit_toolchain.sh` 对包目录已有的处理理由相同（“只链接版本目录，不链接包目录”）。subos 是链接的集合（开发者 home 上约 1600 个），复制的代价与链接相当。support 库与脚本一并修改。
+- 现象：xlings 版本进入 CI 沙箱缓存键，前移后 runner 的 mcpp home 为冷缓存（无 llvm；main 的 push 运行由 build 作业 `prewarm` 安装后保存，PR 不保存）。e2e `llvm/36` 在 CI 中三次失败，均在同一分片：glibc 的配置拒绝 `registry/subos/default/lib/Scrt1.o`（“user-owned or unobserved entry”）。本地均通过（开发者 home 已有 llvm）。
+- 根因：`cli/commands` 的 231 在 Linux 上以用户 home 执行 `mcpp build --toolchain llvm@23.1.3`，home 没有 llvm 时就向用户 home 安装 llvm（253 MB）。同分片并行的 `llvm/36` 以运行时的载荷存在判断门控（`needs_llvm_payload`），在安装进行中看到 `bin/clang++` 而运行；它继承的 home 中 llvm 不完整，于是自行安装 llvm 与 glibc，而 glibc 的物化遇到继承来的 subos 链接（指向用户 home 的载荷，不在用例的记录中），按 xlings 的规则拒绝。证据：同一程序中 `llvm/37` 的能力探测与 `llvm/101` 的检查都报告 llvm 不存在（mtest 以种子打乱顺序，二者先于 36 运行）。
+- 设计：用例不向共享 home 安装工具链，只测量 home 已有的（与 671 相同的写法：home 有 llvm 时测量，否则打印 `NOT MEASURED`）。
+- 随附的隔离修正：`inherited` home 原先把用户的 `registry/subos` 整个链接进用例 home，用例的安装因此写入用户的 subos。现在用例的 subos 是副本，链接保持为链接（`cp -a`，`fs::copy_options::copy_symlinks`），与 `_inherit_toolchain.sh` 对包目录已有的处理理由相同。subos 是链接的集合（开发者 home 上约 1600 个），复制的代价与链接相当。它不是 `llvm/36` 的原因：只改它之后仍然失败。
+- 同一运行中的另一失败 `signals/340`：support 的 `processes()` 读 `/proc/<pid>/cmdline` 时进程恰好结束，读返回 ESRCH，libstdc++ 的 `basic_filebuf::underflow` 抛出异常。读取期间结束的进程按不存在处理。
