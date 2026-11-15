@@ -1,7 +1,7 @@
 // What the module scanner reads: the walk pruned at `.mcpp`, defines that reach the scan, a
 // private module fragment, a byte-order mark, an implementation unit in a module file, comments
 // and raw strings, scan overrides of files a build excludes, a source named by a path that is
-// not there (formerly tests/e2e/113, 167, 634, 635, 636, 639, 1064; 1096).
+// not there (formerly tests/e2e/113, 167, 634, 635, 636, 639, 1064; 1096, 1097).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -279,6 +279,30 @@ sources = ["src/target/unix/target.cppm"]
         p.write("src/target/unix/target.cppm", "export module s1096.target;\nexport int t() { return 1; }\n");
         r = p.mcpp({"build"});
         expect(e2e::succeeded(r)) << "the build with the file in place failed\n" << s::text(r);
+    };
+
+    "1097 a fetched package's source named by its path that is not there is a warning"_test[s::gcc][s::fresh_sandbox] = [] {
+        // #938, the other side: the entry is in a package fetched into a store, which its consumer
+        // cannot change. The build is not refused; a warning names the entry.
+        s::project p({{"local-index/pkgs/a/acme.gone.lua", R"(package = {
+    spec = "1", namespace = "acme", name = "acme.gone",
+    description = "fixture", licenses = {"MIT"}, type = "package",
+    xpm = {
+        linux   = { ["1.0.0"] = { url = "u", sha256 = "0" } },
+        macosx  = { ["1.0.0"] = { url = "u", sha256 = "0" } },
+        windows = { ["1.0.0"] = { url = "u", sha256 = "0" } },
+    },
+    mcpp = { language = "c++23", import_std = false, sources = { "src/gone.cppm", "src/absent.cpp" },
+             targets = { ["gone"] = { kind = "lib" } }, deps = {} },
+}
+)"},
+                      {".mcpp/.xlings/data/xpkgs/acme.gone/1.0.0/src/gone.cppm", "export module gone;\nexport int gone_value() { return 3; }\n"},
+                      {"src/main.cpp", "import gone;\nint main() { return gone_value() == 3 ? 0 : 1; }\n"},
+                      {"mcpp.toml", "[package]\nname    = \"s1097\"\nversion = \"0.1.0\"\n\n[indices]\nacme = { path = \"local-index\" }\n\n[dependencies.acme]\ngone = \"1.0.0\"\n\n[targets.s1097]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
+        auto r = p.mcpp({"build"}, {.where = s::home::inherited});
+        expect(fatal(e2e::succeeded(r))) << "a fetched package's missing file refused the build\n" << s::text(r);
+        expect(e2e::contains(s::text(r), R"("src/absent.cpp" names no file)"))
+            << "no warning names the entry\n" << s::text(r);
     };
 }};
 

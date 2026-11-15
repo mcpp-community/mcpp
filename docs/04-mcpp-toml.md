@@ -572,7 +572,8 @@ belongs at the package/feature boundary, not on an individual target.
 > entry with none of `*`, `?`, `[`, `{` names a file, and a file that does not
 > exist is an error naming the table that states it (`[build]`,
 > `[target.'<sel>'.build]`, `[features.<f>]`): it was skipped, and the build
-> failed at an importer of the module the file provides. A file an action or
+> failed at an importer of the module the file provides. In a package fetched
+> into a store, which its consumer cannot change, it is a warning. A file an action or
 > a build program of the build writes is the build's. A pattern that matches
 > nothing selects nothing, as a target's selection may.
 

@@ -87,8 +87,8 @@
   unchanged module in a run, and on Windows a failed rewrite of a module
   another process had mapped (#936).
 - A `sources` entry without a pattern that names no existing file is an error
-  naming its table. It was skipped, and the build failed at an importer of its
-  module (#938).
+  naming its table, and a warning in a package fetched into a store. It was
+  skipped, and the build failed at an importer of its module (#938).
 - On Windows a runner named with a directory and no suffix (`../tools/x`)
   takes the system's suffixes as a bare name does; it could not be started.
   A `.bat` or `.cmd` program, which the system starts through its command

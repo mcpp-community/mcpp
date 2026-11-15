@@ -85,6 +85,14 @@ std::set<std::filesystem::path>
 package_source_files(const std::filesystem::path& root,
                      const mcpp::manifest::Manifest& manifest);
 
+// The entries of a package's `sources` that name one file by its path and
+// find none (#938), each stated against the table it is written in. Exported
+// rather than raised by the scan: whether such an entry stops the build is the
+// caller's to decide by whose tree the package is (an editable tree is
+// refused; a fetched package, which its consumer cannot change, is warned of).
+std::vector<ScanError> unnamed_sources(const std::filesystem::path& root,
+                                       const mcpp::manifest::Manifest& manifest);
+
 // Scan the entire package: collects all sources via manifest globs and returns a Graph.
 struct ScanResult {
     Graph                       graph;
@@ -1164,15 +1172,13 @@ package_source_files(const std::filesystem::path& root,
     return all_files;
 }
 
-namespace {
-
 // A SOURCE NAMED BY ITS PATH THAT IS NOT THERE (#938). An entry of a
 // `sources` list without a pattern character names one file; when that file
 // does not exist the entry selected nothing and the build went on, to fail at
 // an importer ("failed to read compiled module", a module "imported but not
 // provided") that names no manifest -- measured where an ignore rule left the
 // file out of a fresh checkout. Each such entry of the lists this build reads
-// is an error naming the table that states it. A pattern that matches nothing
+// is stated against the table that states it. A pattern that matches nothing
 // is not: a selection may be empty on a target. A file an action of the build
 // writes or a build program declares is the build's, not yet on disk, and an
 // absolute entry is a build program's (`select_sources`).
@@ -1217,6 +1223,8 @@ std::vector<ScanError> unnamed_sources(const std::filesystem::path& root,
     }
     return out;
 }
+
+namespace {
 
 // Phase 1: scan a single package, append units to result.graph.units;
 // errors go straight into result.errors. producerOf/edges are NOT built
@@ -1401,7 +1409,6 @@ void scan_one_into(ScanResult& result,
                 "a stale declaration)", glob)});
         }
     }
-    for (auto& e : unnamed_sources(root, manifest)) result.errors.push_back(std::move(e));
 
     // A `module_extensions` entry that matches nothing is dead config, and it
     // is invisible otherwise: the build succeeds, the extension does nothing,
