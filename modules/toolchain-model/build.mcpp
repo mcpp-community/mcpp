@@ -23,7 +23,7 @@ constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
     "platform", "tier", "system-headers", "runner",
 };
-constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled" };
+constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled", "exclusive" };
 constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources", "command-scripts" };
 constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
 constexpr std::string_view kPayloadKeys[] = {
@@ -168,7 +168,7 @@ std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<
     // artifact of the arrangement is started, where, and from which packages.
     std::vector<std::string> runner, runnerHosts, runnerRequires;
     std::string runnerHost;
-    bool runnerEnabled = true;
+    bool runnerEnabled = true, runnerExclusive = false;
     if (auto it = t.find("runner"); it != t.end()) {
         if (!it->second.is_table()) throw Failure{std::format("{}: `runner` is not a table", where)};
         auto const& r = it->second.as_table();
@@ -184,18 +184,23 @@ std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<
             if (!e->second.is_bool()) throw Failure{std::format("{}: `enabled` is not true or false", rwhere)};
             runnerEnabled = e->second.as_bool();
         }
+        if (auto e = r.find("exclusive"); e != r.end()) {
+            if (!e->second.is_bool()) throw Failure{std::format("{}: `exclusive` is not true or false", rwhere)};
+            runnerExclusive = e->second.as_bool();
+        }
         if (runner.empty()) throw Failure{std::format("{}: `cmd` is empty", rwhere)};
     }
     return std::format(
         "    {{ .name = {}, .serves = {}, .priority = {}, .hosts = {}, .probe = {}, .toolchain = {}, "
         ".pairs = {}, .sysroot = {}, .linkage = {}, .platform = {}, .tier = {}, .systemHeaders = {}, "
-        ".runner = {}, .runnerHosts = {}, .runnerRequires = {}, .runnerHost = {}, .runnerEnabled = {} }},\n",
+        ".runner = {}, .runnerHosts = {}, .runnerRequires = {}, .runnerHost = {}, .runnerEnabled = {}, "
+        ".runnerExclusive = {} }},\n",
         lit(name), arrays.add(serves), priority, arrays.add(words(t, "hosts", where)),
         lit(text(t, "probe", where)), lit(text(t, "toolchain", where)),
         arrays.add(words(t, "pairs", where)), lit(text(t, "sysroot", where)), lit(linkage),
         lit(text(t, "platform", where)), lit(tier), lit(text(t, "system-headers", where)),
         arrays.add(runner), arrays.add(runnerHosts), arrays.add(runnerRequires), lit(runnerHost),
-        runnerEnabled);
+        runnerEnabled, runnerExclusive);
 }
 
 std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {

@@ -8,6 +8,10 @@
 
 ### Added
 
+- `x86_64-linux-android` runs in the Android Emulator on an x86_64 Linux
+  machine, once enabled: dirun (>= 0.4.0) boots the API 34 system image
+  through the image package's profile, and the target's runs do not overlap.
+  A provider's runner states `exclusive` (G7).
 - `mcpp::runner_spec` states a runner in a build program as the table of
   data: `.arg()`, `.require()`, `.hosts()`, and `host`, `longlived`,
   `exclusive`, `enabled` (protocol 19). `{pkg:<name>}` names a program outside

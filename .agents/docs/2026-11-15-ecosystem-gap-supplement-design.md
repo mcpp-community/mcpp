@@ -170,7 +170,7 @@ CI 在每个检查点上通过。合并保留 commit，不压缩，评审逐个�
 | m5 运行器的启用 | R1；Windows 行在 Linux 上的 wine runner 数据（X1，`enabled = false`） |
 | m6 运行器模型 | R2 的字段对齐、`runner_spec`、构建程序中的 `{pkg:}`、数据中的 `longlived` |
 | m7 运行器的程序规则 | R2 的查找与 Windows 脚本规则；docs/30 与 docs/41 的矛盾；N21、N27 文档 |
-| m8 Android runner 数据 | Android 行提供者条目的 `runner`（dirun 与镜像包，`enabled = false`）；前置：xb 已合并 |
+| m8 Android runner 数据 | Android 行提供者条目的 `runner`（dirun 与镜像包，`enabled = false`）；前置：xb 已合并。实现：x86_64 一行（`same-arch`、`exclusive`，提供者 runner 增加 `exclusive` 键）；模拟器包只服务 linux-x86_64，aarch64 行不陈述 runner |
 
 m1–m7 没有外部前置，立即开工，顺序按价值：N29 与 N20 先。m8 是最后一个检查点，前置在外部（dirun 0.4.0 与
 API 34 镜像已在 xim）。它不拆成另一个 PR：外部前置不妨碍 m1–m7 的开发、评审与 CI，只决定 PR 何时合并；mcpp
@@ -546,6 +546,10 @@ profile 给出一次提示。需要评审后实现，不在本轮。
 - **op0** 见 7.1：版本组补丁 0.28.1 先于 op 发布，dirun 0.4.0 经它取得 okrun 0.6.4。
 - **N27** 实测结论与原记录不同：node 下 Emscripten 对终端的同步读取以 `EIO` 失败（是否调用 `tcsetattr` 相同），
   管道与文件可读；文档按实测写出（docs/24）。
+- **G7（m8、xb）** 实测：API 34 镜像的 system.img 是 GPT 磁盘（vbmeta 与动态分区 super），qemu-user 的根仍只属 API 24
+  arm64-v8a；模拟器 37.1.11 以 `-sysdir` 启动时需要一个含 `platform-tools` 的 SDK 根，否则在读取 `-sysdir` 后以 SIGSEGV
+  结束，启动脚本给出空的 SDK 根。x86_64 镜像经已安装的配置与 dirun 0.4.0 运行动态程序，19 秒得到状态，参数与标准错误完整，
+  运行后不留模拟器与设备目录。
 - **N21** 实测顺序为 `[build]`、profile、`[target.<sel>.build]`，`cflags`、`cxxflags`、`ldflags` 相同（docs/04）。
 - **R2 的 Windows 脚本规则（与 10.4 第 2 条的差异，2026-11-16 评审确认）** 实现为拒绝含命令解释器语法的参数（系统表
   `command-scripts` 指出哪些后缀经解释器启动），不做转义。转义要求引擎以 `one_string` 自行构造

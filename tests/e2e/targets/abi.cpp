@@ -111,9 +111,10 @@ E2E abi{"abi", [] {
 
     "653 exceptions is the second abi member"_test[s::elf] = [] {
         // `[target.<selector>.abi] exceptions = true`: a Linux build is byte-identical with an
-        // emscripten-only table; on the Web row the program builds without it and aborts at the
-        // throw, and with it prints the marker, the flag reaching the dependency and the std
-        // module and the fingerprint moving; a dependency requiring it is refused without it.
+        // emscripten-only table; on the Web row the row's model catches with no table (N26), the
+        // program builds with `exceptions = false` and aborts at the throw, and with `true` prints
+        // the marker, the flag reaching the dependency and the std module and the fingerprint
+        // moving; a dependency requiring it is served by the row and refused with it off.
         bool have_emsdk = false;
         for (const auto& root : {s::shared_home() / "registry/data/xpkgs", fs::path(s::env("HOME").value_or("")) / ".xlings/data/xpkgs"})
             for (const auto& em : s::glob(root, "xim-x-emsdk/*/emscripten/em++"))
@@ -132,7 +133,8 @@ E2E abi{"abi", [] {
         expect(fatal(e2e::succeeded(r))) << "FAIL: the Linux build with the table failed: " << s::text(r);
         const auto with_ninja = s::read_file(first_ninja(lx.at("target")).value_or(fs::path()));
         expect(fatal(!plain_ninja.empty() && plain_ninja == with_ninja)) << "FAIL: a Linux build.ninja differs with the emscripten-only abi table present";
-        // 2. Without exceptions the build and link succeed, and the run fails at the throw.
+        // 2. With no table the row's model (`exceptions = "wasm"`, N26) catches the throw; with
+        //    `exceptions = false` the build and link succeed, and the run fails at the throw.
         s::project(tmp / "excdep", {{"mcpp.toml", "[package]\nname    = \"excdep\"\nversion = \"0.1.0\"\n\n[targets.excdep]\nkind = \"lib\"\n"},
                                     {"src/excdep.cppm", "export module excdep;\nimport std;\nexport void throwing() { throw std::runtime_error(\"boom\"); }\n"}});
         s::project app(tmp / "app", {{"src/main.cpp", R"(import excdep;
@@ -157,11 +159,15 @@ int main() {
             return args;
         };
         write_app("");
+        r = app.mcpp(with("run"));
+        expect(fatal(e2e::succeeded(r))) << "FAIL: the row's exception model did not catch the throw: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^caught: boom$"))) << "FAIL: the row's model did not print the marker";
+        write_app("[target.'cfg(os = \"emscripten\")'.abi]\nexceptions = false\n");
         r = app.mcpp(with("build"));
-        expect(fatal(e2e::succeeded(r))) << "FAIL: the build without the abi table failed (expected: it succeeds; only the run fails): " << s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "FAIL: the build with exceptions off failed (expected: it succeeds; only the run fails): " << s::text(r);
         const auto plain_dir = newest_ninja(app.at("target/wasm32-emscripten")).value_or(fs::path()).parent_path();
         r = app.mcpp(with("run"));
-        expect(fatal(!r)) << "FAIL: mcpp run succeeded without -fexceptions -- the throw should have aborted: " << s::text(r);
+        expect(fatal(!r)) << "FAIL: mcpp run succeeded with exceptions off -- the throw should have aborted: " << s::text(r);
         expect(fatal(s::no_line(s::text(r), "^caught: boom$"))) << "FAIL: the marker printed without -fexceptions";
         expect(fatal(e2e::contains(s::text(r), "exception catching is not enabled"))) << "FAIL: the run did not fail with the expected Emscripten abort: " << s::text(r);
         // 3. With exceptions the marker prints, the flags reach both compiles, and the
@@ -187,13 +193,17 @@ int main() {
         const auto stdmodule_json = fs::path(stdcache_pcm).parent_path().parent_path() / "std-module.json";
         expect(fatal(fs::is_regular_file(stdmodule_json))) << "FAIL: no std-module.json beside the cached std.pcm build.ninja names: " << stdmodule_json.string();
         expect(fatal(e2e::contains(s::read_file(stdmodule_json), "-fexceptions"))) << "FAIL: -fexceptions is not recorded on the std module's cached prebuild command";
-        // 4. A dependency requiring exceptions is refused on the Web build without the table.
+        // 4. A dependency requiring exceptions is served by the row's model, and refused on the
+        //    Web build whose root states `exceptions = false`.
         s::project(tmp / "excreq", {{"mcpp.toml", "[package]\nname         = \"excreq\"\nversion      = \"0.1.0\"\nrequires_abi = { exceptions = true }\n\n[targets.excreq]\nkind = \"lib\"\n"},
                                     {"src/excreq.cppm", "export module excreq;\nexport int v() { return 1; }\n"}});
         s::project app3(tmp / "app3", {{"mcpp.toml", "[package]\nname    = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nexcreq = { path = \"../excreq\" }\n\n[targets.app3]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[target.wasm32-emscripten]\nrunner = [\"node\"]\n"},
                                        {"src/main.cpp", "import excreq;\nint main() { return v() == 1 ? 0 : 1; }\n"}});
         r = app3.mcpp(with("build"));
-        expect(fatal(!r)) << "FAIL: a dependency requiring exceptions was built for the Web without the root's table: " << s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "FAIL: the row's exception model did not serve a dependency requiring exceptions: " << s::text(r);
+        app3.write("mcpp.toml", app3.read("mcpp.toml") + "\n[target.'cfg(os = \"emscripten\")'.abi]\nexceptions = false\n");
+        r = app3.mcpp(with("build"));
+        expect(fatal(!r)) << "FAIL: a dependency requiring exceptions was built for the Web with exceptions off: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "`excreq` requires the artefact's ABI to have exceptions (the package)"))) << "FAIL: the refusal does not name 'exceptions': " << s::text(r);
     };
 

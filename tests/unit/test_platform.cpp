@@ -553,6 +553,32 @@ UTest the_system_table_states_which_systems_read_resources{"PlatformRun/TheSyste
     expect(uefi == nullptr || !uefi->resources);
 }};
 
+UTest the_android_row_runs_in_the_emulator_on_request{"PlatformRun/TheAndroidRowRunsInTheEmulatorOnRequest", [] {
+    // G7, R1: an x86_64 Android program runs through dirun and the API 34 image's profile, on a
+    // machine of its architecture, one run at a time, once enabled. The aarch64 row states none:
+    // the emulator package serves no aarch64 machine.
+    namespace tt = mcpp::toolchain::target;
+    using provider = decltype(tt::providers())::value_type;
+    provider x86 = nullptr;
+    provider arm = nullptr;
+    for (auto const* p : tt::providers()) {
+        if (p->name != "android-ndk") continue;
+        for (auto sv : p->serves) {
+            if (sv == "x86_64-linux-android") x86 = p;
+            if (sv == "aarch64-linux-android") arm = p;
+        }
+    }
+    expect(fatal(x86 != nullptr && arm != nullptr));
+    expect(fatal(!x86->runner.empty()));
+    expect(eq(x86->runner.front(), std::string_view("dirun")));
+    expect(eq(x86->runnerHost, std::string_view("same-arch")));
+    expect(!x86->runnerEnabled) << "a runner that boots an emulator is enabled by default";
+    expect(x86->runnerExclusive) << "two runs would start two devices at one console port";
+    expect(std::ranges::find(x86->runnerRequires, std::string_view("xim:android-system-image@34-default-x86_64"))
+           != x86->runnerRequires.end());
+    expect(arm->runner.empty()) << "the aarch64 row names a runner no machine can install";
+}};
+
 // ── The report ──────────────────────────────────────────────────────────────
 
 UTest sources_and_json{"PlatformReport/SourcesAndJson", [] {

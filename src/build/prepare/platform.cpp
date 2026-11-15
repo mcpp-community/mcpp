@@ -236,6 +236,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         p.runnerRequires = set.keep(sp.runnerRequires);
         p.runnerHost = set.keep(sp.runnerHost);
         p.runnerEnabled = sp.runnerEnabled;
+        p.runnerExclusive = sp.runnerExclusive;
         set.providers.push_back(p);
     };
     for (auto const& sys : s.systems)
@@ -1058,6 +1059,8 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             s.runner.host = std::string(p->runnerHost);
             s.runner.enabled = p->runnerEnabled;
             s.runner.enabledSet = !p->runnerEnabled;
+            s.runner.exclusive = p->runnerExclusive;
+            s.runner.exclusiveSet = p->runnerExclusive;
             s.runner.origin = mp::Origin{ mp::Tier::BuiltIn, {}, 0,
                 std::format("the provider '{}' of {}", p->name, state.targetChoice.identity) };
             s.runner.set = true;

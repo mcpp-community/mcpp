@@ -76,7 +76,8 @@
 #                   runner whose first use fetches a whole machine image or an
 #                   emulator, or leaves state outside the build tree and the
 #                   package store (a VM, an Android emulator, Wine); a project
-#                   or this machine enables it (SPEC-016 §6)
+#                   or this machine enables it (SPEC-016 §6). `exclusive = true`
+#                   when the runs cannot overlap (a device at one address)
 #
 # ONE ENTRY STATES ONE ARRANGEMENT OF PAYLOADS. A native arrangement and a cross
 # one are two entries, each with its `hosts`; an entry whose facts depend on the
@@ -609,9 +610,27 @@ pairs     = ["llvm"]
 linkage   = "static"
 
 # bionic is inside the NDK; no package adds it to another compiler.
+#
+# An x86_64 program runs in the Android Emulator booting the API 34 system image,
+# through the image package's dirun profile (design 2026-11-15 G7, R1): the
+# emulator boots an image of the machine's architecture only (`same-arch`) and
+# starts its device at one console port, so the runs of the target do not
+# overlap (`exclusive`). Not enabled by default: the first run fetches the
+# emulator and a system image. The emulator package is built for linux-x86_64
+# alone, so the aarch64 row states no runner until it serves an aarch64 machine.
 [[platform.provider]]
 name      = "android-ndk"
-serves    = ["*-linux-android"]
+serves    = ["x86_64-linux-android"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "android-ndk@30.0.16248370"
+pairs     = ["android-ndk"]
+sysroot   = "toolchain"
+runner    = { cmd = ["dirun", "--profile", "{pkg:android-system-image}/dirun.toml", "--var", "emulator={pkg:android-emulator}/emulator", "--var", "adb={pkg:android-platform-tools}/adb", "--", "{}"], host = "same-arch", hosts = ["linux-x86_64"], exclusive = true, enabled = false, requires = ["xim:dirun@0.4.0", "xim:android-system-image@34-default-x86_64", "xim:android-emulator@37.1.11-2", "xim:android-platform-tools@37.0.1-2"] }
+
+[[platform.provider]]
+name      = "android-ndk"
+serves    = ["aarch64-linux-android"]
 priority  = 100
 hosts     = ["*"]
 toolchain = "android-ndk@30.0.16248370"

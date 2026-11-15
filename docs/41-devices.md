@@ -142,6 +142,18 @@ the runner it names. A named runner takes the same table
 (`[target.<sel>.runners] web = { cmd = [...], longlived = true }`), merged by
 the same rule.
 
+**An Android program runs in the emulator (2026.11.16.1+).** On an x86_64
+Linux machine, once enabled, `x86_64-linux-android` runs through dirun
+(>= 0.4.0) and the profile of the API 34 system image package: the emulator
+boots a fresh device, the program and its runtime files are pushed through adb,
+and its output and status return. The runs of the target do not overlap
+(`exclusive`), since the device has one console port. The aarch64 row has no
+runner: the emulator package serves no aarch64 machine.
+
+```bash
+MCPP_TARGET_X86_64_LINUX_ANDROID_RUNNER_ENABLED=true mcpp run --target x86_64-linux-android
+```
+
 ## The program a runner names (2026.11.16.1+)
 
 | | Rule |

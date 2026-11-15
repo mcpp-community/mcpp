@@ -27,6 +27,7 @@ struct StatedProvider {
     std::vector<std::string> runner, runnerHosts, runnerRequires;
     std::string              runnerHost;
     bool                     runnerEnabled = true;
+    bool                     runnerExclusive = false;
 };
 
 // `name` is the platform's name (`platform_name`), the name of every provider

@@ -88,6 +88,8 @@ struct Provider {
     // and whether it is used before a project or this machine enables it (R1).
     std::string_view                  runnerHost;
     bool                              runnerEnabled = true;
+    // Its runs cannot overlap (a device the runner starts at one address).
+    bool                              runnerExclusive = false;
 };
 
 // A TOOLCHAIN PAYLOAD (design 2026-11-12 §16, T3): the package a family's

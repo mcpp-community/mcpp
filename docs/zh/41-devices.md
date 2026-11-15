@@ -115,6 +115,14 @@ runner = { enabled = true }      # mcpp.toml，或本机的 config.toml
 为一次调用启用缺省 runner，`mcpp run --runner <name>` 启用它指名的 runner。具名 runner 取同一种表
 （`[target.<sel>.runners] web = { cmd = [...], longlived = true }`），按同一规则合并。
 
+**Android 程序在模拟器中运行（2026.11.16.1+）。** 在 x86_64 Linux 机器上启用后，`x86_64-linux-android` 经 dirun
+（>= 0.4.0）与 API 34 系统镜像包的配置运行：模拟器启动一台新设备，程序与其运行时文件经 adb 推送，输出与状态返回。
+设备只有一个控制台端口，因此该目标的运行不重叠（`exclusive`）。aarch64 行没有 runner：模拟器包不服务 aarch64 机器。
+
+```bash
+MCPP_TARGET_X86_64_LINUX_ANDROID_RUNNER_ENABLED=true mcpp run --target x86_64-linux-android
+```
+
 ## runner 所指名的程序（2026.11.16.1+）
 
 | | 规则 |
