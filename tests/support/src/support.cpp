@@ -351,8 +351,18 @@ void inherit(const fs::path& h, bool whole) {
             fs::create_directories(h / "registry/data");
             link_or_copy(user / "registry/data" / name, h / "registry/data" / name);
         }
-    if (whole && env("MCPP_INHERIT_SUBOS").value_or("1") != "0" && fs::is_directory(user / "registry/subos", ec))
-        link_or_copy(user / "registry/subos", h / "registry/subos");
+    // THE SUBOS IS THE CASE'S OWN COPY, ITS LINKS KEPT AS LINKS. A link to the user's subos made
+    // it shared state: an install in the user's home by a case beside this one (a home cold on a
+    // CI runner, 2026-11-16) put `lib/Scrt1.o` into this case's subos, which its own records do
+    // not name, and glibc's configuration refused it as user-owned; and the case's installs wrote
+    // into the user's subos. The subos is a farm of links (about 1600 on a developer's home), so
+    // the copy costs what the link did.
+    if (whole && env("MCPP_INHERIT_SUBOS").value_or("1") != "0" && fs::is_directory(user / "registry/subos", ec)
+        && !fs::exists(fs::symlink_status(h / "registry/subos", ec))) {
+        fs::create_directories(h / "registry");
+        fs::copy(user / "registry/subos", h / "registry/subos",
+                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+    }
     if (whole && env("MCPP_INHERIT_CONFIG").value_or("1") != "0" && fs::is_regular_file(user / "config.toml", ec))
         fs::copy_file(user / "config.toml", h / "config.toml", fs::copy_options::overwrite_existing, ec);
     if (fs::is_directory(user / "bin", ec))

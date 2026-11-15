@@ -687,3 +687,8 @@ profile 给出一次提示。需要评审后实现，不在本轮。
 - e2e 1098：Web 上移除、原生上增加、层谓词拒绝、其它键警告。
 - e2e 1099：无 feature 时失败；有 feature 时通过，第二次运行走记录；`mcpp build` 的图不含 feature 源文件；未声明的 feature 被拒绝。
 - e2e 1100：workspace 中成员各自的边。
+
+**13.7 补记：冷缓存暴露的测试隔离缺陷（已修复）。**
+- 现象：xlings 版本进入 CI 沙箱缓存键，前移后 runner 的 mcpp home 为冷缓存。e2e `llvm/36` 在 CI 中两次失败：glibc 的配置拒绝 `registry/subos/default/lib/Scrt1.o`（“user-owned or unobserved entry”）。本地单独运行，以及以冷的用户 home 运行，均通过。
+- 根因：`inherited` home 把用户的 `registry/subos` 整个链接进用例的 home，`subos` 因此成为共享状态。冷缓存时，同分片的其它用例向用户 home 安装，写入的 `lib/Scrt1.o` 出现在本用例的 subos 中，而本用例的记录中没有它；用例的安装也会写入用户的 subos。温缓存时运行期间不发生安装，所以此前没有暴露。
+- 设计：用例的 subos 是用户 subos 的副本，链接保持为链接（`cp -a`，`fs::copy_options::copy_symlinks`）。这与 `_inherit_toolchain.sh` 对包目录已有的处理理由相同（“只链接版本目录，不链接包目录”）。subos 是链接的集合（开发者 home 上约 1600 个），复制的代价与链接相当。support 库与脚本一并修改。

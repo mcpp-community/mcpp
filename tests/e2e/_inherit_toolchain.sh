@@ -81,11 +81,14 @@ if [[ -d "$USER_MCPP/registry/data/xim-index-repos" ]]; then
         || ln -sf "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos" 2>/dev/null \
         || cp -r "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos"
 fi
+# The subos is the test's own copy, its links kept as links (`cp -a`): linked
+# whole, an install in the developer's home by a test beside this one appeared
+# in this test's subos unrecorded, and glibc's configuration refused it as
+# user-owned; and this test's installs wrote into the developer's subos.
 if [[ "${MCPP_INHERIT_SUBOS:-1}" != "0" && -d "$USER_MCPP/registry/subos" ]]; then
     mkdir -p "$MCPP_HOME/registry"
     [[ -e "$MCPP_HOME/registry/subos" ]] \
-        || ln -sf "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos" 2>/dev/null \
-        || cp -r "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos"
+        || cp -a "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos"
 fi
 if [[ "${MCPP_INHERIT_CONFIG:-1}" != "0" && -f "$USER_MCPP/config.toml" ]]; then
     cp -f "$USER_MCPP/config.toml" "$MCPP_HOME/config.toml" 2>/dev/null || true
