@@ -2268,15 +2268,10 @@ run_wasm(const Plan& plan)
         "copy launcher failed: {}", ec.message())});
 
     const auto builtDir = plan.builtBinary.parent_path();
+    // The module beside the launcher is the row's companion (N33): absent when
+    // the link embedded it (`-sSINGLE_FILE=1`), and removed before every link,
+    // so a module present here is this launcher's.
     auto family = mcpp::pack::emscripten_stem_family(builtDir, plan.binaryName);
-    if (!family.hasWasm) {
-        const auto stem = plan.builtBinary.stem().string();
-        return std::unexpected(Error{std::format(
-            "'{}.wasm' is missing beside the built launcher '{}' -- the "
-            "wasm32-emscripten link declares it as an implicit output, so its "
-            "absence means the build directory does not match the graph",
-            stem, plan.builtBinary.string())});
-    }
     for (auto const& name : family.siblings) {
         std::error_code fec;
         std::filesystem::copy_file(builtDir / name,
@@ -2567,14 +2562,25 @@ std::string_view launcher_platform() {
 // Whether this mcpp builds programs for `row`: a target its table does not
 // state (`aarch64-windows-gnu`), or states as planned (`x86_64-macos`, its
 // toolchain not published), is not built.
-bool row_is_built(const ProgramRow& row) {
+bool row_is_built(const ProgramRow& row, const mcpp::platform::Resolved* P = nullptr) {
     if (!row.served) return false;
     if (row.triple.empty()) return true;   // this machine's own row
     auto t = mcpp::toolchain::triple::parse(row.triple);
     if (!t) return false;
     if (t->defined()) return !row.platform.empty();   // a platform's row, over that platform
     auto* k = mcpp::toolchain::triple::find_known_target(*t);
-    return k && k->tier != "planned";
+    if (!k) return false;
+    // A PLANNED ROW THE PROGRAM'S PLATFORM SERVES IS BUILT (design 2026-11-15
+    // N23), as a build for that row over that platform is (2026.11.14.1): the
+    // carrier of an i686 image is a program of i686-linux-musl, which the
+    // built-in table keeps planned and openkal-platform 0.28.0 lists with its
+    // toolchain. The carrier was refused as a row this mcpp builds no program
+    // for, while the project's own build of the row succeeded.
+    if (k->tier == "planned")
+        return P && P->active && !row.platform.empty() && row.platform == platform_ref_of(*P)
+            ? mcpp::manifest::platform::serves_with_toolchain(P->fields, P->package, t->str())
+            : false;
+    return true;
 }
 
 } // namespace
@@ -2599,7 +2605,7 @@ std::optional<std::string> unbuilt_carrier(const mcpp::platform::Resolved& platf
                                            std::string_view system, std::string_view arch,
                                            bool single) {
     const auto row = program_row(system, arch, single, &platform);
-    if (!row_is_built(row))
+    if (!row_is_built(row, &platform))
         return std::format("{}'s carrier is built as a program of {}-{} ({}), and this mcpp builds "
                            "no program for that row", platform.display(), system, arch, row.triple);
     // A CARRIER THAT NAMES NO HOSTS EXISTS WHERE THE PLATFORM'S RUNNER DOES: it is
@@ -3628,7 +3634,7 @@ bool output_names_directory(const std::filesystem::path& output) {
 std::string unbuilt_row(std::string_view system, std::string_view arch,
                         const mcpp::platform::Resolved* P) {
     const auto row = detail::program_row(system, arch, true, P);
-    return detail::row_is_built(row) ? std::string() : row.triple;
+    return detail::row_is_built(row, P) ? std::string() : row.triple;
 }
 
 std::vector<std::string> carried_systems(const Plan& plan) {

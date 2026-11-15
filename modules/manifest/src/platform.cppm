@@ -247,9 +247,9 @@ struct Hosted {
 struct RowSpec {
     std::string triple;
     std::string tier = "preview", note, clangTriple, gccTriple, objectFormat = "elf", family, dataModel,
-                exeSuffix, sharedSuffix, loader, execution;
+                exeSuffix, sharedSuffix, loader, execution, exceptions;
     std::string march, mabi, codeModel, multilib, linkEmulation;
-    std::vector<std::string> flags, descriptorKeys;
+    std::vector<std::string> flags, descriptorKeys, companions;
     bool standard = true, exact = false;
     Origin origin;
 };
@@ -283,6 +283,7 @@ struct ProviderSpec {
 // A SYSTEM (`[[platform.system]]`, SPEC-016 §2.3).
 struct SystemSpec {
     std::string name, uname;
+    bool resources = false;
     Origin origin;
 };
 
@@ -375,13 +376,13 @@ inline constexpr std::string_view kPlatformKeys[] = {
 inline constexpr std::string_view kDefineKeys[] = {
     "triple", "tier", "note", "standard", "exact", "clang-triple", "gcc-triple", "object-format", "family",
     "data-model", "exe-suffix", "shared-suffix", "loader", "execution", "march", "mabi",
-    "code-model", "multilib", "flags", "link-emulation", "descriptor-keys",
+    "code-model", "multilib", "flags", "link-emulation", "descriptor-keys", "companions", "exceptions",
 };
 inline constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
     "hosted", "layers", "link", "execution", "tier", "system-headers", "runner",
 };
-inline constexpr std::string_view kSystemKeys[] = { "name", "uname" };
+inline constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources" };
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
     "driver", "flags", "start", "script", "inputs", "exe", "shared", "seal",

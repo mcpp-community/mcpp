@@ -17,14 +17,15 @@ namespace {
 constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
     "link-emulation", "clang-triple", "gcc-triple", "family", "object-format", "data-model", "exe-suffix",
-    "shared-suffix", "loader", "execution",
+    "shared-suffix", "loader", "execution", "companions", "exceptions",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
     "platform", "tier", "system-headers", "runner",
 };
 constexpr std::string_view kRunnerKeys[] = { "cmd", "hosts", "requires" };
-constexpr std::string_view kSystemKeys[] = { "name", "uname" };
+constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources" };
+constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
 constexpr std::string_view kPayloadKeys[] = {
     "name", "aliases", "family", "serves", "hosts", "frontend-dir", "frontends", "builds-for", "glibc-fixup", "family-version",
 };
@@ -123,7 +124,7 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         ".exact = {}, .march = {}, .mabi = {}, "
         ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, "
         ".gccTriple = {}, .objectFormat = {}, .family = {}, .dataModel = {}, .exeSuffix = {}, .sharedSuffix = {}, "
-        ".loader = {}, .execution = {} }},\n",
+        ".loader = {}, .execution = {}, .companions = {}, .exceptions = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
@@ -132,7 +133,8 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         lit(text(t, "clang-triple", where)), lit(text(t, "gcc-triple", where)), lit(text(t, "object-format", where)), lit(family),
         lit(text(t, "data-model", where)), lit(text(t, "exe-suffix", where)),
         lit(text(t, "shared-suffix", where)), lit(text(t, "loader", where)),
-        lit(text(t, "execution", where)));
+        lit(text(t, "execution", where)), arrays.add(words(t, "companions", where)),
+        lit(text(t, "exceptions", where)));
 }
 
 std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {
@@ -191,8 +193,26 @@ std::string system_entry(const toml::Table& t, std::set<std::string>& seen) {
     const auto name = text(t, "name", "[[platform.system]]");
     if (name.empty()) throw Failure{"[[platform.system]]: an entry without `name`"};
     if (!seen.insert(name).second) throw Failure{std::format("[[platform.system]] {}: stated twice", name)};
-    return std::format("    {{ .name = {}, .uname = {} }},\n", lit(name),
-                       lit(text(t, "uname", "[[platform.system]] " + name)));
+    const auto where = "[[platform.system]] " + name;
+    bool resources = false;
+    if (auto it = t.find("resources"); it != t.end()) {
+        if (!it->second.is_bool()) throw Failure{std::format("{}: `resources` is not true or false", where)};
+        resources = it->second.as_bool();
+    }
+    return std::format("    {{ .name = {}, .uname = {}, .resources = {} }},\n", lit(name),
+                       lit(text(t, "uname", where)), resources);
+}
+
+std::string executes_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
+    known_keys(t, kExecutesKeys, "[[platform.executes]]");
+    const auto host = text(t, "host", "[[platform.executes]]");
+    const auto where = "[[platform.executes]] " + host;
+    if (host.empty() || host.find('-') == std::string::npos)
+        throw Failure{"[[platform.executes]]: `host` is `<os>-<arch>`"};
+    if (!seen.insert(host).second) throw Failure{std::format("{}: stated twice", where)};
+    const auto arches = words(t, "arches", where);
+    if (arches.empty()) throw Failure{std::format("{}: `arches` names no architecture", where)};
+    return std::format("    {{ .host = {}, .arches = {} }},\n", lit(host), arrays.add(arches));
 }
 
 bool flag(const toml::Table& t, std::string_view key, bool fallback, std::string_view where) {
@@ -240,8 +260,8 @@ const toml::Array& entries(const toml::Document& doc, std::string_view path) {
 std::string generate(const toml::Document& doc) {
     Arrays arrays;
     std::set<std::string> rowNames;
-    std::set<std::string> systemNames;
-    std::string rows, providers, systems, payloads, offers;
+    std::set<std::string> systemNames, executesHosts;
+    std::string rows, providers, systems, executes, payloads, offers;
     for (auto const& e : entries(doc, "platform.define")) {
         if (!e.is_table()) throw Failure{"[[platform.define]]: an entry that is not a table"};
         rows += row_entry(e.as_table(), arrays, rowNames);
@@ -253,6 +273,10 @@ std::string generate(const toml::Document& doc) {
     for (auto const& e : entries(doc, "platform.system")) {
         if (!e.is_table()) throw Failure{"[[platform.system]]: an entry that is not a table"};
         systems += system_entry(e.as_table(), systemNames);
+    }
+    for (auto const& e : entries(doc, "platform.executes")) {
+        if (!e.is_table()) throw Failure{"[[platform.executes]]: an entry that is not a table"};
+        executes += executes_entry(e.as_table(), arrays, executesHosts);
     }
     for (auto const& e : entries(doc, "toolchain.payload")) {
         if (!e.is_table()) throw Failure{"[[toolchain.payload]]: an entry that is not a table"};
@@ -267,15 +291,19 @@ std::string generate(const toml::Document& doc) {
         "export module mcpp.toolchain.builtin_targets;\n\n"
         "import std;\n"
         "import mcpp.toolchain.target_schema;\n\n"
-        "namespace mcpp::toolchain::builtin::d {{\n{}}}\n\n"
+        "namespace mcpp::toolchain::builtin::d {{\n{}"
+        "inline constexpr mcpp::toolchain::target::Executes executes_[] = {{\n{}    {{}},\n}};\n"
+        "inline constexpr std::span<const mcpp::toolchain::target::Executes> executes{{executes_, std::size(executes_) - 1}};\n"
+        "}}\n\n"
         "export namespace mcpp::toolchain::builtin {{\n\n"
         "inline constexpr mcpp::toolchain::target::Row kRows[] = {{\n{}}};\n\n"
         "inline constexpr mcpp::toolchain::target::Provider kProviders[] = {{\n{}}};\n\n"
         "inline constexpr mcpp::toolchain::target::System kSystems[] = {{\n{}}};\n\n"
+        "inline constexpr std::span<const mcpp::toolchain::target::Executes> kExecutes = d::executes;\n\n"
         "inline constexpr mcpp::toolchain::target::Payload kPayloads[] = {{\n{}}};\n\n"
         "inline constexpr mcpp::toolchain::target::Offer kOffers[] = {{\n{}}};\n\n"
         "}} // namespace mcpp::toolchain::builtin\n",
-        arrays.decls, rows, providers, systems, payloads, offers);
+        arrays.decls, executes, rows, providers, systems, payloads, offers);
 }
 
 } // namespace

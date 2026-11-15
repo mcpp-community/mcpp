@@ -23,6 +23,9 @@ import std;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;   // the execution relations (N23)
+import mcpp.toolchain.target_select; // host_pair
+import mcpp.toolchain.platform;
 import mcpp.invocation;
 
 export namespace mcpp::platform {
@@ -143,7 +146,10 @@ std::vector<std::string> expand_step(const std::vector<std::string>& step,
 // runs the artifact on a machine of its architecture: here when the two
 // agree; on the execution host (`run_under`) otherwise, whose architecture is
 // the artifact's, so the program is that architecture's; refused when no
-// execution host is named. `--no-runner` states the triple is native here.
+// execution host is named. A machine the execution table states executes the
+// artifact's architecture (`[[platform.executes]]`) is that execution host
+// itself: the program is that architecture's, started here (design
+// 2026-11-15 N23). `--no-runner` states the triple is native here.
 // Every other runner reaches the artifact from this machine.
 enum class RunnerReach { Here, TargetArchitecture, Refused };
 RunnerReach runner_reach(const mcpp::manifest::platform::Runner& runner, std::string_view targetArch,
@@ -638,6 +644,14 @@ RunnerReach runner_reach(const mp::Runner& runner, std::string_view targetArch,
                          std::string_view hostArch, bool executionHostNamed, bool noRunner) {
     if (noRunner || !runner.set || runner.host != "same-arch" || targetArch == hostArch)
         return RunnerReach::Here;
+    // A MACHINE THAT EXECUTES THE ARTIFACT'S ARCHITECTURE besides its own is
+    // its own execution host of that architecture (N23): the runner is the
+    // platform's runner built for that architecture, started here, as it is
+    // handed to a named execution host. An x86_64 Linux machine runs an i386
+    // image through the i686 runner; its own runner refuses the image.
+    if (mcpp::toolchain::target::executes(
+            mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name, hostArch), targetArch))
+        return RunnerReach::TargetArchitecture;
     return executionHostNamed ? RunnerReach::TargetArchitecture : RunnerReach::Refused;
 }
 

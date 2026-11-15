@@ -261,6 +261,11 @@ hosted   = true                    # C 环境有 `main`
 未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
 提供者的两种简写。
 
+**行的附带文件与异常模型（2026.11.16.1+）。** `companions = [".wasm"]` 指链接可能在程序旁写出、以程序命名的文件：每次链接前
+删除，链接写出时被暂存，未写出不是错误。`exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型，
+为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
+SPEC-016 §2.4）；此时 `same-arch` 的 runner 为产物的架构构建，在本机启动。
+
 **定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`
 标为 `row`）；工具链载荷为其自身宿主构建的东西——libc++ 头文件、运行时目录、宿主的 `-L` 与 RPATH——不进入该行；本机加载器的
 闭包与符号检查只在该行的执行系统为本机时进行。没有内置提供者服务的内置行同样如此。
@@ -325,7 +330,8 @@ uname = "Haiku"                                  # `uname -s` 在该系统上的
 （[SPEC-016 §4](../specs/targets-and-providers.md)）。
 
 陈述了 `uname` 的系统可进入每个系统一个程序的单文件（`mcpp pack --pkg-format single-file`）；未陈述的系统，其程序是
-文件开头的 PE。运行器为多个系统构建的平台，陈述各自的身份：
+文件开头的 PE。加载器读取程序资源节的系统陈述 `resources = true`（内置的 `windows` 条目）：工程的 `[resources]` 编入其行的
+程序，不编入另一系统加载的 PE 映像，如 UEFI 应用（2026.11.16.1）。运行器为多个系统构建的平台，陈述各自的身份：
 
 ```toml
 [platform]

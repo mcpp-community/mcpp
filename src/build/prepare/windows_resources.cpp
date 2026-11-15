@@ -636,12 +636,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 return {};
             };
 
-            // Windows resources are a property of a program Windows runs, not
-            // of the PE container: a UEFI application is a PE image the
+            // Resources are a property of a program whose system reads them,
+            // not of the PE container: a UEFI application is a PE image the
             // firmware loads, and `[resources]` compiled into it failed the
-            // build (design 2026-11-15 N16). The row's execution system
-            // decides (SPEC-016 §6), as rule 3 does for every other target.
-            if (trip.is_pe() && trip.execution_system() == "windows")
+            // build (design 2026-11-15 N16). The system table states it for
+            // the row's execution system (SPEC-016 §2.3).
+            auto const* sys = mcpp::toolchain::target::find_system(trip.execution_system());
+            if (trip.is_pe() && sys && sys->resources)
                 if (auto r = plan_resources(); !r) return std::unexpected(r.error());
         }
     }

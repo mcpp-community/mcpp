@@ -43,6 +43,12 @@
 #                   `-mcmodel` (empty: the driver's default), the multilib
 #                   directory of a C library, extra compile flags, and the
 #                   `ld.lld -m` emulation when clang's driver cannot reach lld
+#   exceptions      the exception model of the row's builds when the project
+#                   states none (`[target.<sel>.abi] exceptions`); under `wasm`
+#                   the long-jump model is `wasm` too
+#   companions      the files the link may write beside a program, named after
+#                   it (`.wasm` beside `app.js`): removed before each link,
+#                   staged when written, not an error when absent
 #
 # Provider keys
 #   name            the provider's name; `builtin:<name>` selects it
@@ -78,6 +84,9 @@
 #   uname           the word `uname -s` answers there; a file that carries one
 #                   program per system selects by it, and a system without the
 #                   key joins no such file
+#   resources       the system's loader reads a program's resource section: a
+#                   project's `[resources]` compile into its programs (false
+#                   when absent)
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
@@ -438,6 +447,15 @@ triple   = "wasm32-emscripten"
 tier     = "verified"
 note     = "wasm"
 standard = true
+# WebAssembly exception handling unless the project states another model
+# (design 2026-11-15 N26): a C++ exception is caught, and `setjmp`/`longjmp`
+# take the same mechanism. Emscripten's default leaves catching off, and a
+# program's `catch` was never reached. `[target.<sel>.abi] exceptions` states
+# another model (`"js"`, `true`) or none (`false`).
+exceptions = "wasm"
+# The module Emscripten writes beside the launcher (`app.wasm` beside `app.js`),
+# none under `-sSINGLE_FILE=1` (N33).
+companions = [".wasm"]
 
 # OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
 # `okrun` on Linux, macOS and Windows of that architecture.
@@ -646,7 +664,24 @@ uname = "FreeBSD"
 
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
-name  = "windows"
+name      = "windows"
+resources = true
+
+# ── Execution relations ──────────────────────────────────────────────────────
+#
+# Executes keys (`[[platform.executes]]`)
+#   host            the machine, `<os>-<arch>`
+#   arches          the architectures whose programs it starts besides its own;
+#                   a runner stated for a machine of the artifact's architecture
+#                   (`host = "same-arch"`) runs there too
+#
+# Only a relation a CI has measured is stated. An x86_64 Linux kernel runs i386
+# programs (IA-32 emulation), which the i686 rows' CI runs on GitHub's x86_64
+# Linux machines (openkal-platform 0.28.0; mcpp e2e `i686`). Windows' WOW64 is
+# not stated until a CI measures an i686 runner there.
+[[platform.executes]]
+host   = "linux-x86_64"
+arches = ["i686"]
 
 # ── Toolchain payloads ───────────────────────────────────────────────────────
 #

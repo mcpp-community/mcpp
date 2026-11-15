@@ -212,6 +212,8 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.sharedSuffix = set.keep(d.sharedSuffix);
         r.loader = set.keep(d.loader);
         r.descriptorKeys = set.keep(d.descriptorKeys);
+        r.companions = set.keep(d.companions);
+        r.exceptions = set.keep(d.exceptions);
         r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);
         r.defined = true;
         set.rows.push_back(r);
@@ -235,7 +237,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         set.providers.push_back(p);
     };
     for (auto const& sys : s.systems)
-        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname) });
+        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname), sys.resources });
     // A platform the engine's own providers name (openkal-platform) is served by
     // those; its shorthands are not registered twice.
     const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {

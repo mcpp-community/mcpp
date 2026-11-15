@@ -1840,6 +1840,21 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
         return 2;
     }
     std::error_code ec;
+    // The row's companions (`--companions .wasm`, design 2026-11-15 N33): the
+    // files named after the artifact that an earlier link wrote and this one
+    // may not, removed first.
+    if (auto c = parsed.option_or_empty("companions").value(); !c.empty())
+        for (auto part : std::views::split(std::string_view(c), ',')) {
+            auto companion = out;
+            companion.replace_extension(std::string(std::string_view(part.begin(), part.end())));
+            fs::remove(companion, ec);
+        }
+    // Moved aside when the edge asks (`--aside`, a Windows host, where a
+    // running program's file cannot be overwritten). An edge that reaches here
+    // for its companions alone does not: an aside file would be named like a
+    // companion (`app.js.old-1`).
+    if (!parsed.is_flag_set("aside"))
+        return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
     const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();
     const auto stem = out.filename().string() + ".old-";
     for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))

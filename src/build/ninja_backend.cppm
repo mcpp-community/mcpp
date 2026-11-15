@@ -40,6 +40,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
+import mcpp.toolchain.target_rows;   // the row's companions (N33)
 import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
@@ -2386,10 +2387,20 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
         return t ? (t->is_pe() || t->is_wasm()) : bool(mcpplibs::os::is_windows);
     }();
+    // THE ROW'S COMPANIONS (design 2026-11-15 N33): removed before the link by
+    // `link-output`, so one present afterwards is this link's. An earlier
+    // link's `.wasm`, left beside a launcher linked with `-sSINGLE_FILE=1`,
+    // was staged as the program's module.
+    std::string companions;
+    if (auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
+        if (auto const* row = mcpp::toolchain::target::find_row(t->str()))
+            for (auto c : row->companions) companions += (companions.empty() ? "" : ",") + std::string(c);
+    const std::string companionOption = companions.empty() ? std::string() : " --companions " + companions;
     auto publish_link = [&](std::string cmd) {
         if constexpr (mcpplibs::os::is_windows) {
-            return "$mcpp link-output --output $out -- " + cmd;
+            return "$mcpp link-output --output $out --aside" + companionOption + " -- " + cmd;
         } else {
+            if (!companions.empty()) return "$mcpp link-output --output $out" + companionOption + " -- " + cmd;
             if (inPlaceTarget) return cmd;
             const auto pos = cmd.find("-o $out");
             if (pos == std::string::npos) return cmd;
@@ -3438,17 +3449,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // #622 A5: on `wasm32-emscripten` the link command is a single emcc
     // invocation that writes the named output (`<name>.js`, this plan's
-    // artifact naming — see triple.cppm) AND `<name>.wasm` beside it in one
-    // run. The `.wasm` is not a second edge (nothing would sequence it against
-    // the first) and not a naming convention applied after the fact — it is
-    // declared as an implicit output of the SAME edge, so `ninja -t clean`,
-    // the incremental check and `mcpp pack`'s graph walk all see it.
-    const auto planTargetTriple =
-        mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-    const bool wasmTarget =
-        planTargetTriple
-        && planTargetTriple->object_format()
-               == mcpp::toolchain::triple::ObjectFormat::Wasm;
+    // artifact naming — see triple.cppm) AND, unless `-sSINGLE_FILE=1`,
+    // `<name>.wasm` beside it in one run: a companion of the row (N33).
 
     // Link units
     for (auto& lu : plan.linkUnits) {
@@ -3560,16 +3562,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         std::string implicitOut;
         if (!lu.importLibrary.empty())
             implicitOut = " | " + escape_ninja_path(lu.importLibrary);
-        // The `.wasm` module emcc writes beside the JavaScript launcher for
-        // every executable link on this row (see the comment above the loop).
-        // Not the test binary's rule alone and not the `bin` rule alone: both
-        // ARE the executable form on this row, so both get the sibling.
-        if (wasmTarget
-            && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
-            auto wasmSibling = lu.output; wasmSibling.replace_extension(".wasm");
-            implicitOut += (implicitOut.empty() ? " | " : " ")
-                         + escape_ninja_path(wasmSibling);
-        }
+        // THE ROW'S COMPANIONS ARE NOT DECLARED OUTPUTS (design 2026-11-15
+        // N33): the `.wasm` Emscripten writes beside the launcher is absent
+        // under `-sSINGLE_FILE=1`, and a declared output the link did not
+        // write failed a clean pack and relinked every time. The link edge
+        // removes them first (`link-output --companions`), so a companion
+        // present after the link is this link's.
         // The link map, DECLARED rather than merely written. It is produced by
         // a flag on the link command, so it cannot be its own edge — a second
         // edge claiming to produce it would run the link twice. Declaring it

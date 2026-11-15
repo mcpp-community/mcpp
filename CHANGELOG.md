@@ -8,6 +8,17 @@
 
 ### Added
 
+- The execution table (`[[platform.executes]]`, SPEC-016 §2.4): a machine runs
+  the programs of another architecture where it is stated, `linux-x86_64`
+  executing `i686`. There a `same-arch` runner is built for the artifact's
+  architecture and started on this machine, and a launcher whose package lacks
+  this machine's architecture takes one the machine executes: an i386 image
+  runs on x86_64 Linux through the i686 runner (design 2026-11-15 N23).
+- A row's `companions` (`.wasm` on wasm32-emscripten): removed before each
+  link, staged when the link wrote one, not an error when absent. A clean pack
+  with `-sSINGLE_FILE=1` failed, naming the missing module, and an earlier
+  link's module was packed beside a launcher that embeds its own (N33).
+
 - `mcpp::pack_program("<program>")` (build-program protocol 19): a pack-format
   provider states the program of the package being packed that it assembles
   from, and `mcpp pack --pkg-format <format>` with no program named packs that
@@ -20,6 +31,11 @@
 
 ### Changed
 
+- A wasm32-emscripten build whose project states no `[abi] exceptions` uses
+  WebAssembly exception handling, the row's `exceptions = "wasm"`: a C++
+  exception is caught, and `setjmp`/`longjmp` follow the same model. The SDK's
+  default left catching off. `exceptions = "js"`, `true` or `false` states
+  another model or none (N26).
 - A package that carries its runner (`--mode self-contained`) starts only the
   runner it carries for this machine, and a machine it holds none for exits
   with status 126, naming the machine and the systems the package holds. The
@@ -40,8 +56,13 @@
   (`<dir>/.<file>`, then renamed). DJGPP's driver names a second file after the
   output's extension, so `<out>.tmp` left two programs in `bin/` on
   i586-dos-djgpp (N9).
+- The carrier of an image whose row the built-in table keeps planned and the
+  project's platform lists with its toolchain is built (an i686 image's
+  i686-linux-musl runner); it was refused as a row this mcpp builds no program
+  for (N23).
 - `[resources]` and the application manifest are compiled only for a PE row
-  whose execution system is Windows; the UEFI row, a PE image the firmware
+  whose execution system reads them, the system table's `resources = true`
+  (the built-in `windows` entry); the UEFI row, a PE image the firmware
   loads, failed the build with them (N16).
 - Two `[build-dependencies]` requests of one package that no version
   satisfies are refused as such, naming both requesters, the merge's reason and

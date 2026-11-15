@@ -82,8 +82,9 @@ std::string posix_launcher(const Launch& l);
 // (`env::image`, not argv[0]), picks the image of this machine's architecture,
 // runs the runner in `libexec/<loader>/windows-<arch>/` when the package
 // carries one (and otherwise refuses with 126, naming the systems it holds),
-// or the runner on PATH when it carries none, and becomes it. A POSIX shell on Windows (Git Bash, MSYS, Cygwin) picks the
-// script of the same name, which hands over to this program.
+// or the runner on PATH when it carries none, and becomes it. A POSIX shell
+// on Windows (Git Bash, MSYS, Cygwin) picks the script of the same name, which
+// hands over to this program.
 std::string exe_launcher_manifest(std::string_view name, std::string_view version);
 std::string exe_launcher_main(const Launch& l);
 
@@ -1024,6 +1025,16 @@ std::string posix_launcher(const Launch& l) {
     for (auto const* s : mcpp::toolchain::target::systems())
         if (!s->uname.empty())
             systems += std::format("  {}) os={} ;;\n", sh_word(s->uname), sh_word(s->name));
+    // AN ARCHITECTURE THIS MACHINE ALSO EXECUTES (the execution table, N23): a
+    // package without this machine's architecture takes one the machine runs
+    // besides its own, in the table's order -- an i686 package on x86_64 Linux.
+    std::string also;
+    for (auto const& e : mcpp::toolchain::target::execution_relations()) {
+        std::string words;
+        for (auto a : e.arches) words += (words.empty() ? "" : " ") + sh_word(a);
+        also += std::format("    {}) for a in {}; do case \" $arches \" in *\" $a \"*) arch=$a; break ;; esac; done ;;\n",
+                            sh_word(e.host), words);
+    }
     // The runner: its program found in the package, then on PATH; none, the
     // image itself.
     std::string find, args = " \"$@\"";
@@ -1074,6 +1085,12 @@ std::string posix_launcher(const Launch& l) {
         "  MINGW*|MSYS*|CYGWIN*) exec \"$top/bin/\"{0}.exe \"$@\" ;;\n"
         "  *) os=$(uname -s | tr '[:upper:]' '[:lower:]') ;;\n"
         "esac\n"
+        "arches={2}\n"
+        "case \" $arches \" in *\" $arch \"*) ;; *)\n"
+        "  case \"$os-$arch\" in\n"
+        "{6}"
+        "  esac ;;\n"
+        "esac\n"
         "case \"$arch\" in\n"
         "{1}"
         "  *) printf '%s: this machine is %s; the package holds %s\\n' {0} \"$arch\" {2} >&2; exit 126 ;;\n"
@@ -1086,7 +1103,7 @@ std::string posix_launcher(const Launch& l) {
         "  printf '%s: %s carries com.apple.quarantine (a browser downloaded it), and macOS may refuse to start it; remove the mark with: xattr -dr com.apple.quarantine %s\\n' {0} \"$runner\" \"$top\" >&2\n"
         "fi\n"
         "exec \"$runner\"{4}\n",
-        sh_word(l.name), cases, sh_word(arch_list(l)), find, args, systems);
+        sh_word(l.name), cases, sh_word(arch_list(l)), find, args, systems, also);
 }
 
 std::string exe_launcher_manifest(std::string_view name, std::string_view version) {
@@ -1112,6 +1129,9 @@ std::string exe_launcher_main(const Launch& l) {
     std::string words;
     const std::string entry = l.entry.empty() ? std::string() : l.entry.begin()->second;
     for (auto const& w : l.runner) words += std::format("    {},\n", cxx(w));
+    std::string also;
+    for (auto const& e : mcpp::toolchain::target::execution_relations())
+        for (auto a : e.arches) also += std::format("    {{{}, {}}},\n", cxx(e.host), cxx(a));
     return std::format(R"MCPP(// The Windows launcher of {0} (design 2026-10-29 §4.3), written by mcpp pack.
 import std;
 import mcpplibs.os;
@@ -1124,6 +1144,9 @@ constexpr std::string_view kLoader = {2};
 constexpr std::string_view kEntry = {3};
 constexpr std::string_view kRunner[] = {{
 {4}    std::string_view{{}},
+}};
+constexpr std::pair<std::string_view, std::string_view> kAlso[] = {{
+{5}    {{}},
 }};
 
 int main(int argc, char** argv) {{
@@ -1139,9 +1162,14 @@ int main(int argc, char** argv) {{
     std::string machine = os::env::get("PROCESSOR_ARCHITEW6432").value_or(
                           os::env::get("PROCESSOR_ARCHITECTURE").value_or(""));
     for (auto& c : machine) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    const std::string arch = machine == "AMD64" || machine == "X86_64" ? "x86_64"
+    std::string arch = machine == "AMD64" || machine == "X86_64" ? "x86_64"
                            : machine == "ARM64" || machine == "AARCH64" ? "aarch64" : machine;
     std::error_code dec;
+    // An architecture this machine also executes (the execution table, N23).
+    for (auto const& [host, also] : kAlso)
+        if (!fs::is_directory(top / "lib" / arch, dec) && host == "windows-" + arch
+            && fs::is_directory(top / "lib" / std::string(also), dec))
+            arch = std::string(also);
     if (!fs::is_directory(top / "lib" / arch, dec)) {{
         std::string all;
         for (auto const& d : fs::directory_iterator(top / "lib", dec))
@@ -1199,7 +1227,7 @@ int main(int argc, char** argv) {{
     std::println(std::cerr, "{{}}: cannot start {{}}", kName, program);
     return 127;
 }}
-)MCPP", l.name, cxx(l.name), cxx(l.loader), cxx(entry), words);
+)MCPP", l.name, cxx(l.name), cxx(l.loader), cxx(entry), words, also);
 }
 
 // ─── mcpp-package.json ────────────────────────────────────────────────────

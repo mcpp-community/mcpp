@@ -48,6 +48,15 @@ struct Row {
     // The system the artifact runs on: the row's os by default, `loader` for an
     // image a loader binds, `none` for bare metal.
     std::string_view execution;
+    // FILES THE LINK MAY WRITE BESIDE A PROGRAM, NAMED AFTER IT (design
+    // 2026-11-15 N33): the suffix replaces the program's (`.wasm` beside
+    // `app.js`). Removed before each link and staged when the link wrote one;
+    // their absence is not an error (`-sSINGLE_FILE=1` writes none).
+    std::span<const std::string_view> companions;
+    // THE EXCEPTION MODEL OF THE ROW'S BUILDS when the project states none
+    // (`[target.<sel>.abi] exceptions`; design 2026-11-15 N26): `wasm` on
+    // wasm32-emscripten. Empty: the toolchain's default.
+    std::string_view exceptions;
     bool             defined = false; // stated by a platform package
 };
 
@@ -115,6 +124,20 @@ struct Offer {
 struct System {
     std::string_view name;
     std::string_view uname;
+    // THE SYSTEM'S LOADER READS A PROGRAM'S RESOURCE SECTION (design
+    // 2026-11-15 N16): a project's `[resources]` compile into the programs of
+    // its rows. A PE image another system loads (a UEFI application) has none.
+    bool             resources = false;
+};
+
+// AN ARCHITECTURE A MACHINE EXECUTES BESIDES ITS OWN (design 2026-11-15 N23):
+// `host` is the machine, `<os>-<arch>`; `arches` the architectures whose
+// programs it starts as its own. A runner that runs an artifact on a machine
+// of the artifact's architecture (`host = "same-arch"`) runs there too. Only
+// relations a CI has measured are stated.
+struct Executes {
+    std::string_view host;
+    std::span<const std::string_view> arches;
 };
 
 // THE PATTERN OF `serves`: segment by segment, `*` standing for any one segment

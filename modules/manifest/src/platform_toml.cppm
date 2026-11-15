@@ -587,11 +587,11 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
              {"gcc-triple", &r.gccTriple},
              {"object-format", &r.objectFormat}, {"family", &r.family}, {"data-model", &r.dataModel},
              {"exe-suffix", &r.exeSuffix}, {"shared-suffix", &r.sharedSuffix}, {"loader", &r.loader},
-             {"execution", &r.execution}, {"march", &r.march}, {"mabi", &r.mabi},
+             {"execution", &r.execution}, {"exceptions", &r.exceptions}, {"march", &r.march}, {"mabi", &r.mabi},
              {"code-model", &r.codeModel}, {"multilib", &r.multilib}, {"link-emulation", &r.linkEmulation}})
         if (auto e = text(key, *to); !e) return std::unexpected(e.error());
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::vector<std::string>*>>{
-             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}})
+             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions}})
         if (auto it = t.find(key); it != t.end()) {
             auto w = strings(it->second, std::format("{}.{}", where, key));
             if (!w) return std::unexpected(w.error());
@@ -797,6 +797,12 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                     if (!contains(kSystemKeys, sk)) {
                         warn(std::format("{}: '{}' is not a key of a system (ignored); the keys are {}",
                                          where, sk, list_of(kSystemKeys)));
+                        continue;
+                    }
+                    if (sk == "resources") {
+                        if (!sv.is_bool())
+                            return std::unexpected(std::format("{}.resources must be a boolean", where));
+                        sys.resources = sv.as_bool();
                         continue;
                     }
                     if (!sv.is_string())

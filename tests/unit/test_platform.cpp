@@ -5,6 +5,8 @@ import mcpp.manifest;
 import mcpp.platform;
 import mcpp.build.prepare_inputs;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.platform;
 
 using namespace mcpplibs::mtest;
 
@@ -457,6 +459,34 @@ UTest the_runner_reaches_the_artifacts_architecture{"PlatformRun/TheRunnerReache
         expect(eq(pf::runner_reach(*r.runner, r.target, "x86_64", r.executionHost, r.noRunner), r.want))
             << r.runner->host << " " << r.target << " executionHost=" << r.executionHost
             << " noRunner=" << r.noRunner;
+    // N23: an x86_64 Linux machine executes i686 (the execution table), so a same-arch runner
+    // is built for i686 and started here; elsewhere the table states nothing and it is refused.
+    const bool linuxHost = std::string_view(mcpp::toolchain::platform::name) == "linux";
+    expect(eq(pf::runner_reach(same, "i686", "x86_64", false, false),
+              linuxHost ? R::TargetArchitecture : R::Refused));
+}};
+
+UTest the_execution_table_states_measured_relations{"PlatformRun/TheExecutionTableStatesMeasuredRelations", [] {
+    namespace tt = mcpp::toolchain::target;
+    expect(tt::executes("linux-x86_64", "i686"));
+    expect(tt::executes("linux-x86_64", "x86_64"));       // its own architecture
+    expect(!tt::executes("linux-aarch64", "i686"));
+    expect(!tt::executes("macos-aarch64", "x86_64"));     // not stated: not measured
+    expect(!tt::execution_relations().empty());
+}};
+
+UTest the_system_table_states_which_systems_read_resources{"PlatformRun/TheSystemTableStatesWhichSystemsReadResources", [] {
+    // N16: `[resources]` compile for the programs of a system whose loader reads them, a key of
+    // the system table; a PE image another system loads (a UEFI application) has none.
+    namespace tt = mcpp::toolchain::target;
+    auto const* windows = tt::find_system("windows");
+    expect(fatal(windows != nullptr));
+    expect(windows->resources);
+    auto const* linux_ = tt::find_system("linux");
+    expect(fatal(linux_ != nullptr));
+    expect(!linux_->resources);
+    auto const* uefi = tt::find_system("uefi");
+    expect(uefi == nullptr || !uefi->resources);
 }};
 
 // ── The report ──────────────────────────────────────────────────────────────

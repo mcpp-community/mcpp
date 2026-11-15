@@ -1378,8 +1378,10 @@ int run(int argc, char** argv) {
                 .help("Place every `<source>\\t<destination>` pair of FILE in one process (#734 E4); several lines naming one destination are its sources"))
             .action(cmd_stage))
         .subcommand(cl::App("link-output")
-            .description("(internal: invoked by ninja on Windows) Move a linked artifact aside, then run the linker command after `--` (a running program keeps its file)")
+            .description("(internal: invoked by ninja) Remove the row's companions, move a linked artifact aside, then run the linker command after `--` (a running program keeps its file)")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the artifact the command links"))
+            .option(cl::Option("companions").takes_value().value_name("SUFFIXES").help("the row's companions, removed before the link (`.wasm`)"))
+            .option(cl::Option("aside").help("move the previous artifact aside first (a Windows host)"))
             .action([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_link_output(p, std::span<const std::string>(passthrough));
             }))

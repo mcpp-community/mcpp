@@ -1448,6 +1448,23 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // `true` has meant since 2026.9.12.3. The flag is in the dialect set, so the
     // model is part of every cache key.
     const bool emscripten = state.cfgCtx().os == "emscripten";
+    // THE ROW'S MODEL WHERE THE PROJECT STATES NONE (design 2026-11-15 N26):
+    // wasm32-emscripten's row states `exceptions = "wasm"`, and a program's
+    // `catch` was never reached under the SDK's default. Data, not a rule of
+    // the engine; `exceptions = false` states none.
+    if (emscripten && !state.m->buildConfig.abiExceptionsDeclared)
+        if (auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple))
+            if (auto const* row = mcpp::toolchain::target::find_row(t->str()); row && !row->exceptions.empty()) {
+                state.m->buildConfig.abiExceptions = true;
+                state.m->buildConfig.abiExceptionsModel = std::string(row->exceptions);
+                // The long jump follows WebAssembly exception handling (D6),
+                // stated for the C translation units too, which do not read
+                // the C++ flag; under another model it is the SDK's default.
+                if (!state.m->buildConfig.abiLongjmpDeclared && row->exceptions == "wasm") {
+                    state.m->buildConfig.abiLongjmpDeclared = true;
+                    state.m->buildConfig.abiLongjmpModel = "wasm";
+                }
+            }
     const bool abiExceptionsRendered = state.m->buildConfig.abiExceptions && emscripten;
     if (abiExceptionsRendered) {
         const char* flag = state.m->buildConfig.abiExceptionsModel == "wasm"
