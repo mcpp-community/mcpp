@@ -581,7 +581,7 @@ vocabulary, nothing wired yet.
 | `x86_64-windows-gnu` | Linux and Windows by the gcc payload; every host by the MinGW-w64 base package | one identity, host-split at the distribution layer; the `mingw-llvm` provider serves it with clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on UCRT, libc++, compiler-rt) where no gcc payload exists |
 | `aarch64-windows-gnu` | every host | the MinGW-w64 base package alone; no gcc payload targets it |
 | `*-freebsd` | every host, through a platform | the rows are built-in; a platform names each identity's FreeBSD base package (`xim:x86_64-freebsd-sysroot`, `xim:aarch64-freebsd-sysroot`) and is selected with `[target.<row>] platform`, or by any selector the row meets (`[target.freebsd]`, `cfg(os = "freebsd")`); another platform package's provider does not compete with the chosen platform |
-| `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.27.1): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
+| `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.28.0): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
@@ -793,7 +793,9 @@ target does not determine a compiler.
 
 - A row at the `planned` tier is **registered in the vocabulary and nothing is
   wired yet**. Naming such a target is accepted by the parser and refused by the
-  build.
+  build, unless the build names a toolchain for it: `[target.X] toolchain`, or
+  `--toolchain` (or `MCPP_TOOLCHAIN`, its statement in the environment;
+  2026.11.13.1+).
 - `host_can_serve` decides whether this machine can produce a target, and it is
   a different question from the tier. A target mcpp supports may still be
   unreachable from this host; the escape hatch is an explicit

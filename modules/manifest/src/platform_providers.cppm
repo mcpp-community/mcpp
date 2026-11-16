@@ -25,6 +25,9 @@ struct StatedProvider {
     bool                     shorthand = false;   // `[platform]` or `[platform.hosted]`
     std::string              tier, systemHeaders;
     std::vector<std::string> runner, runnerHosts, runnerRequires;
+    std::string              runnerHost;
+    bool                     runnerEnabled = true;
+    bool                     runnerExclusive = false;
 };
 
 // `name` is the platform's name (`platform_name`), the name of every provider
@@ -40,6 +43,11 @@ struct ServedIdentity {
 // The identities the statement's providers serve among the built-in rows and the
 // rows it defines, by identity, then priority (highest first), then provider.
 std::vector<ServedIdentity> served_identities(const Statement& s, std::string_view name);
+
+// Whether a provider of the statement serves `identity` and names the toolchain
+// it is built with: the statement then serves a row the engine registers as
+// `planned`, as a toolchain named for the build does (SPEC-016 §5).
+bool serves_with_toolchain(const Statement& s, std::string_view name, std::string_view identity);
 
 // The statement checked against the rows: a row defined twice, or a definition
 // of a built-in row, is an error; a provider that serves no row, and two
@@ -81,7 +89,8 @@ std::vector<StatedProvider> stated_providers(const Statement& s, std::string_vie
     for (auto const& p : s.providers)
         out.push_back({ p.name.empty() ? std::string(name) : p.name, p.serves, p.hosts, p.pairs, p.priority,
                         p.toolchain.empty() ? s.toolchain.value : p.toolchain, p.sysroot, p.linkage, false,
-                        p.tier, p.systemHeaders, p.runner.cmd, p.runner.hosts, p.runner.requires_ });
+                        p.tier, p.systemHeaders, p.runner.cmd, p.runner.hosts, p.runner.requires_,
+                        p.runner.host, p.runner.enabled });
     if (s.targets.set)
         out.push_back({ std::string(name), s.targets.value, {"*"}, {}, s.prioritySet ? s.priority : 100,
                         s.toolchain.value, {}, {}, true });
@@ -120,6 +129,12 @@ std::vector<ServedIdentity> served_identities(const Statement& s, std::string_vi
         return std::tie(a.identity, b.priority, a.provider) < std::tie(b.identity, a.priority, b.provider);
     });
     return out;
+}
+
+bool serves_with_toolchain(const Statement& s, std::string_view name, std::string_view identity) {
+    return std::ranges::any_of(stated_providers(s, name), [&](auto const& p) {
+        return !p.toolchain.empty() && std::ranges::contains(rows_served(s, p), identity);
+    });
 }
 
 StatementFindings check_statement(const Statement& s, std::string_view name) {

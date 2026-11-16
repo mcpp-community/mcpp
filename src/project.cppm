@@ -356,7 +356,10 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
         if (inserted) continue;
         auto& to = it->second;
         if (!to.optDeclared && from.optDeclared) { to.optLevel = from.optLevel; to.optDeclared = true; }
-        if (!to.debugDeclared && from.debugDeclared) { to.debug = from.debug; to.debugDeclared = true; }
+        if (!to.debugDeclared && from.debugDeclared) {
+            to.debug = from.debug; to.debugLines = from.debugLines; to.debugWritten = from.debugWritten;
+            to.debugDeclared = true;
+        }
         if (!to.ltoDeclared && from.ltoDeclared) { to.lto = from.lto; to.ltoDeclared = true; }
         if (!to.stripDeclared && from.stripDeclared) { to.strip = from.strip; to.stripDeclared = true; }
         if (!to.ndebugDeclared && from.ndebugDeclared) { to.ndebug = from.ndebug; to.ndebugDeclared = true; }
@@ -1138,7 +1141,7 @@ export std::string root_position_key(
     field("run_exclusive", b.runExclusive ? "1" : "0");
     for (auto const& [name, pr] : m.profiles) {
         field("profile." + name, std::format("{}/{}/{}/{}/{}", pr.optLevel,
-              pr.debug ? 1 : 0, pr.lto ? 1 : 0, pr.strip ? 1 : 0,
+              pr.debug ? (pr.debugLines ? "lines" : "1") : "0", pr.lto ? 1 : 0, pr.strip ? 1 : 0,
               pr.dependencyLinkageDeclared ? pr.dependencyLinkage : std::string("-")));
         list("profile." + name + ".cflags", pr.cflags);
         list("profile." + name + ".cxxflags", pr.cxxflags);

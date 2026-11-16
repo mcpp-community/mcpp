@@ -314,6 +314,11 @@ C 库**底下**—— 而必须落在一个 C 库**之上**。规范恰好允许
 wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn
 ```
 
+**node 下的终端没有原始模式。** Emscripten 以同步读取读标准输入，node 对管道与文件提供它、对终端拒绝它：在终端上
+`read(0, ...)` 以 `EIO` 失败，无论是否调用 `tcsetattr`；`tcsetattr` 返回 0 且不改变任何东西；`isatty(0)` 在各种情况下
+都为 1。程序经管道读取输入（`printf 'keys' | mcpp run --target wasm32-emscripten`）；在 web 上需要逐键输入的程序在其页面中
+以键盘事件读取（以 emsdk 6.0.9、node 26 实测）。
+
 这正是 6.2 条里的第二个时刻。若提供一个 `kal_process_spawn`、只让它返回
 一个错误，会是规范所禁止的那种形状 —— 存在却永远失败，调用方无法把它同一个
 条件区分开来 —— 并且会把一个在链接期就已知的事实，挪到运行期才能知道。

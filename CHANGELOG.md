@@ -4,6 +4,464 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [Unreleased]
+
+## [2026.11.16.1] - 2026-11-16
+
+### Changed
+
+- The bundled xlings is 2026.11.16.1. On Windows it replaces a SubOS
+  description while another process reads it, where a concurrent install
+  failed with `Failed to write file: ...\.xlings.json` (xlings#715), and a shim
+  passes an argument holding `"`, `&`, `%` or `^` whole.
+
+### Added
+
+- `[target.'<sel>'.test] discover` selects a package's test programs by
+  target: its globs join `[test] discover` for the targets the predicate
+  selects, and a `!` glob removes tests there. A package on the Web holds a
+  test that needs a native-only dev-dependency without a second package (#942).
+- `[test] features` names the features a package's own test build turns on.
+  The tests are a consumer of the package and this is their request: `mcpp
+  build`, the programs the tests run and every other consumer keep the
+  package's defaults, and in a workspace each member's request stays on its own
+  edge (#941).
+- `x86_64-linux-android` runs in the Android Emulator on an x86_64 Linux
+  machine, once enabled: dirun (>= 0.4.0) boots the API 34 system image
+  through the image package's profile, and the target's runs do not overlap.
+  A provider's runner states `exclusive` (G7).
+- `mcpp::runner_spec` states a runner in a build program as the table of
+  data: `.arg()`, `.require()`, `.hosts()`, and `host`, `longlived`,
+  `exclusive`, `enabled` (protocol 19). `{pkg:<name>}` names a program outside
+  a package's `bin/`, installed by the first run. A name stated by
+  `runner_spec` and by the token calls is refused (R2).
+- A runner states `enabled = false` when its first use fetches a whole machine
+  image or an emulator, or leaves state outside the build tree and the package
+  store. `mcpp run` refuses it with status 2 and `mcpp test` leaves the tests
+  built and not run, naming `[runner-not-enabled]`, the packages its first use
+  installs and the ways of enabling it; nothing is installed first. A table
+  without `cmd` in `config.toml` or the project enables it (`runner = { enabled
+  = true }`), `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true` enables it once, and
+  `mcpp run --runner <name>` enables the runner it names. A runner whose `cmd`
+  a nearer tier replaces is enabled unless stated (R1).
+- The Windows rows on an x86_64 Linux machine state Wine as their runner
+  (`xim:wine@11.0`, `host = "same-arch"`), not enabled by default (X1).
+- A named runner takes the table of the default runner (`runners.<name> = {
+  cmd = [...], longlived = true, enabled = false }`) and merges by the same
+  rule; `longlived` states in data what `runner_longlived` states in a build
+  program. A provider's runner states `host` and `enabled` (R2).
+- The execution table (`[[platform.executes]]`, SPEC-016 §2.4): a machine runs
+  the programs of another architecture where it is stated, `linux-x86_64`
+  executing `i686`. There a `same-arch` runner is built for the artifact's
+  architecture and started on this machine, and a launcher whose package lacks
+  this machine's architecture takes one the machine executes: an i386 image
+  runs on x86_64 Linux through the i686 runner (design 2026-11-15 N23).
+- A row's `companions` (`.wasm` on wasm32-emscripten): removed before each
+  link, staged when the link wrote one, not an error when absent. A clean pack
+  with `-sSINGLE_FILE=1` failed, naming the missing module, and an earlier
+  link's module was packed beside a launcher that embeds its own (N33).
+
+- `mcpp::pack_program("<program>")` (build-program protocol 19): a pack-format
+  provider states the program of the package being packed that it assembles
+  from, and `mcpp pack --pkg-format <format>` with no program named packs that
+  program. A program named on the command line outranks it; providers that
+  state different programs, or a program the build does not have, are refused
+  by name (design 2026-11-15 N30).
+- A pack whose format provider submitted nothing lists, in the refusal, the
+  warnings the provider stated in that pass (`mcpp::warning`, `mcpp::report`)
+  as its reasons (N30).
+
+### Changed
+
+- A wasm32-emscripten build whose project states no `[abi] exceptions` uses
+  WebAssembly exception handling, the row's `exceptions = "wasm"`: a C++
+  exception is caught, and `setjmp`/`longjmp` follow the same model. The SDK's
+  default left catching off. `exceptions = "js"`, `true` or `false` states
+  another model or none (N26).
+- A package that carries its runner (`--mode self-contained`) starts only the
+  runner it carries for this machine, and a machine it holds none for exits
+  with status 126, naming the machine and the systems the package holds. The
+  POSIX and the Windows launcher fell back to a runner on `PATH`, which ran
+  another release's runner (design 2026-11-15 N20).
+- The POSIX launcher names the system by the system table's `uname` column, so
+  a FreeBSD machine finds `libexec/<runner>/freebsd-<arch>/`; it looked for
+  `FreeBSD-<arch>` (N20).
+
+### Fixed
+
+- A single file named for a system where the platform's runner does not exist
+  (`--systems macos` for an x86_64 image whose platform names no
+  `macos-x86_64` runner host) is refused before the build, by the reading
+  `--systems all` applies to leave it out; it was refused after the build.
+- `mcpp test --guide` reads the frameworks from the resolved graph and plans,
+  scans and builds nothing; at a workspace root it names the frameworks of
+  every member. It planned and built the whole workspace first (#932).
+- `mcpp test` over several members plans a configuration group's programs
+  together, as `mcpp build --workspace` does. Each member's programs were
+  planned alone, with that member's features for the packages it shares, and
+  rebuilt a shared module into the group's directory: three compiles of one
+  unchanged module in a run, and on Windows a failed rewrite of a module
+  another process had mapped (#936).
+- Under `bmi_schedule = "on"` with GCC a link holds a permit of the build's
+  compiler limit. Ninja runs six jobs per compiler there and only compilers
+  were bounded, so links that became ready together all ran at once: mcpp's
+  26 test programs relinked together at 1 to 1.8 GB each and a 16 GB machine
+  ran out of memory. A POSIX link is published through a temporary name by
+  `mcpp link-output --temporary`, one command, so the permit is held until the
+  artifact is in place.
+- A `sources` entry without a pattern that names no existing file is an error
+  naming its table, and a warning in a package fetched into a store. It was
+  skipped, and the build failed at an importer of its module (#938).
+- On Windows a runner named with a directory and no suffix (`../tools/x`)
+  takes the system's suffixes as a bare name does; it could not be started.
+  A `.bat` or `.cmd` program, which the system starts through its command
+  interpreter (the system table's `command-scripts`), is refused an argument
+  holding `%`, `^`, `&`, `|`, `<`, `>`, `"` or a line end, which the
+  interpreter rewrote or ran as a command (R2).
+- A name a build program, this machine or the project states for a program
+  (`mcpp::artifact_name("exe", "{name}")`) is followed on a built-in row as on
+  a platform's: a program named `cmd.exe` was `cmd.exe.exe` on
+  x86_64-windows-gnu and `cmd.exe` on x86_64-windows-musl (design 2026-11-15
+  N9).
+- A linked program is written under a temporary name that keeps its extension
+  (`<dir>/.<file>`, then renamed). DJGPP's driver names a second file after the
+  output's extension, so `<out>.tmp` left two programs in `bin/` on
+  i586-dos-djgpp (N9).
+- The carrier of an image whose row the built-in table keeps planned and the
+  project's platform lists with its toolchain is built (an i686 image's
+  i686-linux-musl runner); it was refused as a row this mcpp builds no program
+  for (N23).
+- `[resources]` and the application manifest are compiled only for a PE row
+  whose execution system reads them, the system table's `resources = true`
+  (the built-in `windows` entry); the UEFI row, a PE image the firmware
+  loads, failed the build with them (N16).
+- Two `[build-dependencies]` requests of one package that no version
+  satisfies are refused as such, naming both requesters, the merge's reason and
+  the `override` line. The engine tried to rename the second copy's modules,
+  which does not separate a build program's modules, and failed on the
+  requester's sources with a message about staging (a project asking for
+  `mcpp:plugins` 0.21.0 over a platform asking for 0.20.0: `stage: no source
+  files found under '<platform>'`) (design 2026-11-15 N29).
+- `mcpp pack --all-programs` of an ok image gives every program its own pair of
+  launchers, `bin/<name>` and `bin/<name>.exe`; only the chosen program had them
+  (N11).
+
+## [2026.11.15.1] - 2026-11-15
+
+### Added
+
+- `[test] split = "auto"` divides a listed case longer than its share by the
+  cases it declared, as the run store measured them (SPEC-017 O10, P4.3), when
+  the program's selection excludes and selects where declared (mtest 0.9.0):
+  `<program>/<file> [<case>] (i/k)`. Each part but the last selects the cases it
+  was given where they are still declared (`?<id>`); the last selects the case
+  without them (`!<id>`), so a case no run measured runs once. A division is
+  kept while it pays: the cases of one case may share what the first fills, and
+  each part pays it again (`e2e/openkal/sets`, 1375 s whole, took 909, 1109 and
+  1306 s as three parts). Each part records the case it divides (`divides`); a
+  case is divided once to be measured so, then only while its longest part took
+  at most four fifths of the case whole, and is estimated by its whole run.
+- `[profile.ci]` in this package's manifest: the tests as CI builds them, -O0
+  without debug information (the library and its unit tests: 8988 s of compiler
+  time at the default release profile, 4183 s with it).
+
+### Changed
+
+- The built-in platform of the ok images and of the musl identities is
+  openkal-platform 0.28.0 (was 0.27.1), the group on openkal 0.25.3. A project
+  that names openkal 0.25.3 builds for `x86_64-openkal` without stating a
+  platform; with 0.27.1 the group's openkal 0.25.0 refused it. The release's
+  rows `i686-linux-musl`, `i686-openkal`, `x86_64-uefi` and `i686-dos-musl` (a
+  technical experiment) are planned in the built-in table and are served when a
+  project states the platform (`[target.'cfg(os = "linux")'] platform =
+  "openkal-platform@0.28.0"`).
+- `mcpp new` scaffolds tests with mtest 0.9.0, the version this package's own
+  tests use, so a new package's long cases are divisible by the cases they
+  declare.
+- The run store's case durations are kept by program and case id; two programs
+  with a case of one name (`layers`, `sets`) read each other's.
+- CI: the archive stage reuses main's test build: an artifact of its build
+  directory with the blob of each tracked file, whose unchanged files are given
+  a time older than every output (`.github/tools/source_mtimes.py`); the tests
+  are built with `--profile ci` on Linux, macOS and Windows; the target-matrix
+  scan builds its cells side by side (`MATRIX_JOBS`); a cancelled run's
+  `coverage` job no longer waits for a runner and holds the concurrency group
+  (it held it 9.1 minutes in run 43599371222).
+
+### Fixed
+
+- An install for a project takes the home's state turn: it saves the home's
+  environment (`subos/default/.xlings.json`) as well as the project's, and with
+  the turn in the project's directory it collided on Windows with an install of
+  another project ("Failed to write file"). One turn per home orders both.
+- `mcpp pack --pkg-format polyglot --systems all` leaves out the systems a
+  polyglot file is not started on: openkal-platform 0.28.0 names `uefi-x86_64`
+  and `dos-i686` among its runner hosts, and the pack refused ("a polyglot file
+  holds no program of uefi"). They are reported as not covered, with
+  `--pkg-format single-file` as the way to make them; naming one of them
+  explicitly is still refused.
+- A host tool built by two builds of one home at once is published by both:
+  each writes through a temporary of its own (`mcpp.build.stage`), and a store
+  entry already equal to the tool is published. With one temporary name for
+  every writer, one removed the other's before its rename ("publishing host
+  tool ... failed: No such file or directory", the target matrix's cells side
+  by side).
+
+## [2026.11.14.1] - 2026-11-14
+
+### Added
+
+- A build program reads `MCPP_TARGET_SDK`: the Apple SDK directory the link
+  names with `-isysroot`, empty when the link names none (`target_sdk()` in
+  `mcpp.hostprogram`). The link line and the variable are read from one
+  function, so they name the same SDK. A package that supplies its own
+  `libSystem` stub for a link without an SDK (a cross link to macOS from another
+  host) now has the fact it needs; it used to infer it from
+  `MCPP_TARGET_REQUESTED`, which on a Mac with `--target aarch64-macos` said the
+  SDK was absent while the link carried it.
+
+### Changed
+
+- The release publishes in the order GitHub mirror, index pull request, then
+  GitCode, and mirrors GitCode only when started with `gitcode`
+  (`gh workflow run release.yml -f gitcode=true`). A GitHub runner uploaded each
+  archive of v2026.11.13.1 to GitCode in about 604 s; the owner mirrors GitCode
+  locally with `MIRROR_HOSTS=gtc .github/tools/mirror_res.sh` (docs/92-release.md).
+- The release opens the xim-pkgindex pull request itself
+  (`.github/tools/index_pr.py`) from the sealed `mcpp-release.json`, with the
+  index updater's marker, instead of asking the updater to propose it; the
+  updater waited for both mirrors, and its run for v2026.11.13.1 failed.
+  `bump_index.sh` is removed.
+
+- A `planned` row is served by the platform chosen for the request when the
+  platform's statement lists it with a toolchain (`[platform] targets` beside
+  its `toolchain`, or a `[[platform.provider]]` that names one), as by a
+  toolchain named for the build. A platform that lists the row nowhere is named
+  in the refusal. `--target openkal` with openkal-platform 0.28.0, whose
+  targets include `i686-openkal`, was refused on that leg.
+- Test discovery leaves out every directory below the package root that holds
+  an `mcpp.toml`: such a directory is a package of its own. The default
+  `tests/**/*.cpp` compiled the sources of a member suite (`tests/cts/src/main.cpp`,
+  the layout mtest states for a suite with outside inputs) as tests of the root.
+
+### Fixed
+
+- On Windows a runner's bare first word is the program with the system's
+  suffix (`.exe`, `.cmd`, `.bat`) and never a file without one. A package for
+  every system that carries a POSIX launcher beside its program (dirun's
+  `bin/dirun` and `bin/dirun.exe`) had the launcher taken, and the run refused
+  with `executable format error`.
+
+## [2026.11.13.1] - 2026-11-13
+
+### Added
+
+- `mcpp test` orders a run by the durations its store measured: the tests
+  start longest first. `--shard I/N` runs the I-th of N shards, each test
+  assigned longest first to the shard with the least measured work, so that N
+  machines with one store run every test once; `--failed` runs what the
+  store's last run failed (its failed cases, or the program whole when it
+  failed outside its cases). `[test] split = "auto"` (and `--split <mode>` for
+  one invocation) divides a file the store measured longer than its share of
+  the run into groups of its cases. The store's program records state
+  `part_of`, and a shard's run states `shard`.
+- `mcpp test --no-programs` builds none of the package's programs: the tests
+  take each from the environment's `MCPP_BIN_<NAME>`, for a program built
+  elsewhere, and one the environment does not name is refused before a test
+  runs. With `--no-run --archive` the archive carries none of them and names
+  their variables (`named_programs`); its run takes each from its own
+  environment.
+- Toolchain payloads are data. Which package serves a family for a target on a
+  host is the `[[toolchain.payload]]` table of the built-in data, read in both
+  directions; `xim:<name>@<version>` accepts any package of the index and
+  resolves it as `path:<root>` with the table its `.mcpp-toolchain.json`
+  states (schema 2: `family`, `prefix`, `sysroot`, `tools`). A new
+  distribution of a known family needs no engine change.
+- `[profile.<name>] debug = "lines"` keeps the line tables alone (`-g1`; `/Z7`
+  under cl.exe): backtraces and sanitizer reports keep file and line.
+- `cfg(interface = "openkal.fs")` selects by the interfaces the resolved
+  kernel-abi provider states it provides; `cfg(object-format = "pe")` selects
+  by the row's container (`elf`, `pe`, `mach-o`, `wasm`, `coff`).
+- A provider entry states `link`, the base and `runner` of the identities it
+  serves, over the platform's, in either base. A row a platform defines states
+  its link emulation without its machine.
+- `[test] programs = "package"`: the package's discovered files are one
+  program, linked once, run as one process per file (`tests/<file>`). At most
+  one file defines `main`.
+- The end-to-end cases are C++ test programs of mtest (`tests/e2e/**`, support
+  in `tests/support`); each host's unit job runs them with `mcpp test`. Shell
+  scripts remain where a case needs a shell. A case states where it runs and
+  what it needs of the machine as attributes of mtest 0.8.0
+  (`"x"_test[s::windows][s::msvc]`): the program skips it elsewhere, naming the
+  platform or the capability, whichever runner starts it. A job that runs named
+  cases on a host that cannot build them (Visual Studio masked, a cross
+  toolchain only, a released mcpp) takes them from the test archive build.yml
+  writes (`.github/actions/e2e-cases`), and holds each case to its `ok` line;
+  `MCPP_E2E_MCPP` names the mcpp such a run tests when it is not the archive's
+  own build.
+- Two canary projects (`tests/canary/c`, `tests/canary/cxx`) and a nightly
+  matrix (`canaries.yml`): every identity a host offers is built, linked
+  statically, run, tested and packed, and each cell is compared with
+  `tests/canary/matrix.tsv` in both directions.
+
+### Changed
+
+- A test that runs a program of the package (a file it is built from names
+  `MCPP_BIN_`) is affected, for `--since` and `--changed`, by a change of any
+  source of the package that is not a test's own. An end-to-end test is
+  built from none of the program's sources, and a change of `src/` selected
+  none of them.
+- `mcpp test --archive` runs archived tests on a machine whose toolchain could
+  not compile them: a configuration that targets the MSVC ABI with no Visual
+  Studio is no longer refused when nothing is compiled.
+- CI: the Linux unit and C++ e2e tests are built once beside the build and run
+  in four shards assigned by main's measured history (`ci-unit.yml`), and the
+  gate left the Linux build job, which it held for 18.6 minutes; the tests are
+  archived without the package's program and run, as every unit job's are,
+  against the binary the build job made, which no job builds again; every unit
+  job orders its tests by that history and re-runs only what a failed
+  attempt failed; the macOS 27 image runs the SDK-dependent subset on a pull
+  request; `bench.yml` measures the engine alone for a commit whose CI
+  passed. The release builds its four platforms at once and creates the
+  release with every archive in one job; the ecosystem canaries run only in a
+  release started with `canaries`.
+- `mcpp new` scaffolds tests with mtest 0.8.5 (was 0.5.2), and `mcpp test
+  --guide` suggests it; mcpp's own tests, its modules' tests, the canaries and
+  the engine benchmark use it. Its end-to-end outcomes say when an output was
+  cut at its limit (mtest 0.8.5). The benchmark times each call by itself
+  (`bench::each`): the median as before, with the 95th percentile, the maximum
+  and the two slowest calls.
+- A configuration's build directory is named by its lineage, which includes the
+  base as stated; the evolving parts (mcpp, the compiler build, the standard
+  library version, what the base contains) are recorded inside it, a compiler
+  build or base contents that differ empty it in place, and the graph runs mcpp
+  through the directory's link `engine/epoch-<N>/mcpp`. An upgrade of mcpp alone compiles nothing again
+  (measured: 18 of 153 before, 0 after).
+- `Finished` states the time spent waiting for a build directory;
+  `mcpp clean --report` gives split debug information its own column.
+- The test summary divides its time as `Finished` does:
+  `finished in 7.77s (plan 2.10s · programs 1.73s · build 1.60s · run 2.34s)`,
+  replacing `(build Xs + run Ys)`.
+- `[test] programs = "directory"` notes the files it leaves programs of their
+  own; a setting that forms no group is a degradation that `--strict` refuses.
+- The warning for a configuration built in full beside another states the
+  other's size and the command that reclaims it.
+- The C environment a kernel-abi implementation presents is chosen by the
+  row's container, not its system name; a carrier takes its section directive
+  and program suffix from the row.
+- `--toolchain` opts a planned row in, as a `[target.<row>]` toolchain does.
+- mcpplibs.cmdline 0.0.4: every command's action returns its status.
+- CI follows the event: a pull request runs the `pr` set (the cases its
+  change affects), and one labelled `ci:full`, a push to main and a run started
+  by hand run `full`. Each host's e2e shard count is `mtest ci plan` over the
+  measured history of main's stores (`tests/e2e/mtest.toml` `[ci.plan]`), and
+  a host the set gives no work starts no shard. Each build job runs the host's
+  gate (`e2e/basics`) before its dependants start, and a failed gate cancels
+  the run.
+
+### Fixed
+
+- A toolchain payload whose programs start through its home's loader runs on
+  the home's C runtime, whatever its name: taken from a store restored without
+  the home's loader links (`<home>/abi`), it has the runtime pinned and the
+  links made again, as a gcc or llvm payload had. Which payloads run on the
+  runtime is read from their programs (`PT_INTERP` inside their provider
+  home), not from a list; the emsdk payload restored from a CI cache did not
+  start, and was reported as providing no std module.
+- `import std` refused for a toolchain whose compiler did not answer the
+  question says why (the probe's last line of output), instead of only that
+  no std module source was found.
+- `mcpp build --message-format json` of an unchanged workspace reports the
+  artifacts of the build it replays, as a package's fast path did; it
+  reported none, and its envelope carried no record.
+- A home whose `registry` is a link to another home's borrows that registry,
+  as a home whose `[xlings] home` names it does; whether a home borrows its
+  registry is decided once, and every writer of the registry's configuration
+  asks it. A borrowing home writes neither the places of the indices, nor its
+  `[index.repos]` tables' places, nor its upstreams there. Before, such a home
+  recorded its own store in the shared registry, and every later install of the
+  shared home went to that store after the home had been removed (`install path
+  missing after fetch`).
+- Every write of the provider's state takes one turn (`.mcpp-state.lock` in
+  the state's real directory, every link resolved): an install, an index
+  repository added or removed, the runtime chosen, the sandbox initialised.
+  Homes that reach one state through a link take one turn. Before, only the
+  installs of dependencies took a turn, in `registry/`, and on Windows a second
+  writer's save of the SubOS description was refused (`Failed to write file`).
+- A reader of a home's files on Windows opens them shared for deletion, so a
+  writer's replacement is not refused for its sake; a writer retries every
+  20 ms at most within its two seconds.
+- `mcpp test --archive` compiles nothing: no build program or host tool of the
+  project is compiled or run, so the tests of an MSVC-ABI archive run on a
+  machine without Visual Studio. It asks for none of the platform's link and
+  seal programs, and a runner that is the platform's tool is the platform's
+  runner for this machine's architecture, made as another architecture's is
+  (`okrun` for an ok image). A test run through a runner receives what a
+  build's test run hands one (`MCPP_RUNTIME_FILES`, each file named by its
+  place beside the program, and `MCPP_RUN_*`); one run directly receives
+  neither. Before, every archived program received the list, named by file
+  name alone, and `MCPP_RUN_TRIPLE` and `MCPP_RUN_MODE`.
+- A case or suite that states its length (mtest `timeout{...}`) raises the
+  limit of its process to the sum its cases state, when that is longer than
+  `--timeout`.
+- `config.toml` is replaced whole: programs started at once on a fresh home
+  no longer read a part of another's write (`invalid config.toml: expected
+  '='`). On Windows, which refuses a rename over a file a reader holds open,
+  `mcpp toolchain default` and the other writers no longer fail with `cannot
+  write config.toml`: the writer closes its own reader first and waits up to
+  two seconds for the others, and a reader whose open is refused while the
+  file is being replaced waits for the replacement as well. The file is
+  written as given: on Windows a text-mode write had ended each line in
+  `\r\n`, after which a value set again found no `[toolchain]` and appended a
+  second one; a `config.toml` an editor wrote with `\r\n` has its value
+  replaced where it stands, and an added line ends as the file's others do.
+  A `config.toml` that is a symbolic link is written through, and the file
+  keeps its permissions.
+- `mcpp test` runs a case that holds the machine (P7.1, resource `machine`)
+  with no other test beside it: the listed cases of a file that hold it are a
+  part of their own (`<program>/<file> (machine)` beside the file's other
+  cases), queued last and run alone.
+  Before, the resource was recorded and not kept across processes (docs/08).
+- A compiler without C++ modules (GCC before 14) builds the C++ units that
+  declare and import no module, without module flags, and refuses at planning
+  the first unit that needs modules, naming what it needs. Before, the build
+  failed on `-fmodules` at the first compile.
+- An interrupt asks each running program to end and allows two seconds before
+  ending its unit; waits poll without holding the lock. Before, a program
+  started by `mcpp __action-stamp` outlived Ctrl-C.
+- A cold build (`--cache off`) makes the graph's engine link again.
+- A runner named by the environment replaces the requirements of the one it
+  replaces.
+- A reader of the package index waits for a refresh in progress when an index
+  it declares is absent, instead of reporting no local index.
+- A provider with `base = "none"` carries the platform's tools its own link,
+  seal and runner name; the platform's other rows no longer provision a tool
+  only such a provider names. Before, such a provider carried no tool, and its
+  seal's program was reported absent.
+- A row whose compile triple names no system (`<arch>-unknown-none-elf`) is
+  compiled as a bare machine is: the C environment's identity macros are the C
+  library's alone. Before, the realised environment declared `__unix__` that
+  the compiler did not define.
+- A build of a platform's own row reads the platform's view of it, which
+  carries the tools of the platform's conventions and not a provider's. Before,
+  the statement was taken whole, and an ok image's build provisioned the DOS
+  row's seal.
+- A single file for a system a platform defines is the row the platform defines
+  for it, whose name may carry an environment (`dos` on i686 is
+  `i686-dos-musl`): its program is named with that row's suffix, and a runner's
+  `built-as` naming such a row builds over the platform. Before, the pack
+  refused the row as one this mcpp builds no program for, or looked for the
+  program without its suffix.
+- A pack reads the runtime facts (interpreter, needed libraries, run paths) of
+  an ELF32 program as of an ELF64 one. Before, an i386 program or image was
+  refused as "not ELF64 little-endian".
+- A file no strip reads is packed as its row's seal left it: a seal may wrap the
+  link's output in a container of its own (the DOS row's MZ stub before an ELF32
+  executable). Before, the pack failed in `llvm-strip`.
+- `mcpp test` takes several patterns and runs every test one of them names
+  (`mcpp test parse lex`); `--print-launch` refuses more than one. Before, a
+  pattern after the first was ignored without a word.
+
 ## [2026.11.12.1] - 2026-11-12
 
 ### Added

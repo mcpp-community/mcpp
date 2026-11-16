@@ -86,8 +86,8 @@ runner = ["my-okrun", "{}"]
 |---|---|
 | 编译标志、`link.flags` | 追加在平台的之后;约定不能删除 |
 | `link.inputs`、`link.seal` | 整体替换 |
-| `layers`、`tools`、`runners` | 按键替换;`<layer> = false` 不提供该层 |
-| `runner` | argv 替换;未写出时保留 `host` 与 `exclusive` |
+| `layers`、`tools` | 按键替换;`<layer> = false` 不提供该层 |
+| `runner`、`runners` 的每个名字 | `cmd`、`requires` 与 `enabled` 一起替换,`cmd` 被替换的 runner 未写出时为启用;`host`、`hosts`、`exclusive`、`longlived` 未写出时保留;`config.toml` 或工程中不含 `cmd` 的表只改它写出的键(2026.11.16.1) |
 | 其余字段 | 替换 |
 
 同样的表也可以写在 `~/.mcpp/config.toml` 中,对一台机器生效。图中已有包提供的层交给该包,报告为 `graph`。
@@ -168,7 +168,7 @@ error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-p
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.27.1"     # 一个版本,或一个系列:"openkal-platform@^0.27"
+platform = "openkal-platform@0.28.0"     # 一个版本,或一个系列:"openkal-platform@^0.28"
 ```
 
 使用默认平台的构建失败、且已同步的索引中有更新版本时,最后输出一行 `tip:`,写出两个版本与上面这一行。
@@ -261,6 +261,11 @@ hosted   = true                    # C 环境有 `main`
 未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
 提供者的两种简写。
 
+**行的附带文件与异常模型（2026.11.16.1+）。** `companions = [".wasm"]` 指链接可能在程序旁写出、以程序命名的文件：每次链接前
+删除，链接写出时被暂存，未写出不是错误。`exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型，
+为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
+SPEC-016 §2.4）；此时 `same-arch` 的 runner 为产物的架构构建，在本机启动。
+
 **定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`
 标为 `row`）；工具链载荷为其自身宿主构建的东西——libc++ 头文件、运行时目录、宿主的 `-L` 与 RPATH——不进入该行；本机加载器的
 闭包与符号检查只在该行的执行系统为本机时进行。没有内置提供者服务的内置行同样如此。
@@ -309,17 +314,24 @@ name  = "haiku"
 uname = "Haiku"                                  # `uname -s` 在该系统上的回答
 ```
 
-提供者的 `runner` 是运行器陈述的最低一级：平台的 `runner`、构建程序的、本机 `config.toml` 的、项目的
-`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
+提供者的 `runner` 是运行器陈述的最低一级：构建程序的、本机 `config.toml` 的、项目的
+`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。平台自己的 `runner` 属于 `[platform] targets`，
+不替换它（2026.11.13.1）：提供者陈述它所服务的身份的运行器、链接（`link`）与基座（`sysroot`），`base = "platform"` 与
+`base = "none"` 相同，因此一个平台可以陈述约定不同的行（openkal 平台的 ok 镜像与 `x86_64-uefi`）。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
 模板中 `{}` 是产物，`{sysroot}` 是产物链接时所用的基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在
 `requires` 的包中查找，再查 `PATH`。`requires` 的包由第一次需要它们的 `mcpp run` 或 `mcpp test` 安装，构建不安装。
+
+`[platform.tools]` 为构建机器构建，构建只准备它的行所带的工具（2026.11.13.1）。`base = "none"` 的提供者带它自己的链接、
+封装（seal）与运行器所指名的工具；其余的行带全部工具，只由这类提供者指名的工具除外。因此 openkal 平台的 DOS 行
+（`i686-dos-musl`，其封装为 `okdos`）只构建 `okdos`，其 ok 镜像不构建它。
 
 一条提供者条目陈述一种载荷安排：原生安排与交叉安排是两条条目，各有自己的 `hosts`、基座与优先级。新增的条目不改变
 此前已有回答的请求，所以它以低于现有 `<arch>-<os>` 回答的优先级进入
 （[SPEC-016 §4](../specs/targets-and-providers.md)）。
 
 陈述了 `uname` 的系统可进入每个系统一个程序的单文件（`mcpp pack --pkg-format single-file`）；未陈述的系统，其程序是
-文件开头的 PE。运行器为多个系统构建的平台，陈述各自的身份：
+文件开头的 PE。加载器读取程序资源节的系统陈述 `resources = true`（内置的 `windows` 条目）：工程的 `[resources]` 编入其行的
+程序，不编入另一系统加载的 PE 映像，如 UEFI 应用（2026.11.16.1）。运行器为多个系统构建的平台，陈述各自的身份：
 
 ```toml
 [platform]

@@ -239,6 +239,54 @@ UTest parses_program_dynamic_and_gnu_version_tables_internally{"ElfRuntime/Parse
     expect(eq(parsed->definedGlibcVersions, (std::vector<std::string>{"GLIBC_2.44"})));
 }};
 
+// An i386 program (ELFCLASS32, 2026.11.13.1): the header, program headers and
+// dynamic entries at the class's widths; the strings as in the other class.
+UTest reads_an_elf32_program{"ElfRuntime/ReadsAnElf32Program", [] {
+    if constexpr (!mcpplibs::os::is_linux)
+        skip("ELF table inspection is exercised on native Linux");
+    Tmp t;
+    constexpr std::uint32_t kVaddr = 0x8048000;
+    std::vector<unsigned char> b(0x400, 0);
+    b[0] = 0x7f; b[1] = 'E'; b[2] = 'L'; b[3] = 'F';
+    b[4] = 1; b[5] = 1; b[6] = 1;            // ELFCLASS32, little-endian
+    put16(b, 0x10, 2);                       // ET_EXEC
+    put16(b, 0x12, 3);                       // EM_386
+    put32(b, 0x14, 1);
+    put32(b, 0x1c, 0x34);                    // e_phoff
+    put16(b, 0x28, 0x34);                    // e_ehsize
+    put16(b, 0x2a, 0x20);                    // e_phentsize
+    put16(b, 0x2c, 3);                       // e_phnum
+    auto ph = [&](std::size_t i, std::uint32_t type, std::uint32_t off, std::uint32_t size) {
+        auto p = 0x34 + i * 0x20;
+        put32(b, p, type); put32(b, p + 4, off); put32(b, p + 8, kVaddr + off);
+        put32(b, p + 0x10, size); put32(b, p + 0x14, size);
+    };
+    const std::string_view interp = "/lib/ld-musl-i386.so.1";
+    std::copy(interp.begin(), interp.end(), b.begin() + 0x100);
+    ph(0, 1, 0, static_cast<std::uint32_t>(b.size()));
+    ph(1, 3, 0x100, static_cast<std::uint32_t>(interp.size() + 1));
+    ph(2, 2, 0x200, 5 * 8);
+    std::size_t cursor = 0x300;
+    b[cursor++] = 0;
+    const auto needed = append_string(b, 0x300, cursor, "libz.so.1");
+    const auto runpath = append_string(b, 0x300, cursor, "$ORIGIN/../lib");
+    std::size_t d = 0x200;
+    auto dyn = [&](std::uint32_t tag, std::uint32_t value) { put32(b, d, tag); put32(b, d + 4, value); d += 8; };
+    dyn(1, needed);                                        // DT_NEEDED
+    dyn(29, runpath);                                      // DT_RUNPATH
+    dyn(5, kVaddr + 0x300);                                // DT_STRTAB
+    dyn(10, static_cast<std::uint32_t>(cursor - 0x300));   // DT_STRSZ
+    dyn(0, 0);
+    std::ofstream(t.path / "i386", std::ios::binary).write(reinterpret_cast<const char*>(b.data()),
+                                                           static_cast<std::streamsize>(b.size()));
+    auto parsed = elf::inspect_elf_runtime(t.path / "i386");
+    if (auto&& failed = expect(fatal(parsed.has_value())); !failed) failed << parsed.error();
+    expect(eq(static_cast<int>(parsed->elfType), 2));
+    expect(eq(parsed->interp, std::string(interp)));
+    expect(eq(parsed->needed, (std::vector<std::string>{"libz.so.1"})));
+    expect(eq(parsed->runpaths, (std::vector<std::string>{"$ORIGIN/../lib"})));
+}};
+
 UTest rejects_unsupported_or_truncated_elf_without_guessing{"ElfRuntime/RejectsUnsupportedOrTruncatedElfWithoutGuessing", [] {
     if constexpr (!mcpplibs::os::is_linux)
         skip("ELF table inspection is exercised on native Linux");

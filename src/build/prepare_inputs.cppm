@@ -66,6 +66,7 @@ namespace cfgpred {
 // `requires = ["mcpp:compiler=llvm"]` permanently unsatisfiable.
 struct Ctx {
     std::string os, arch, family, env, triple;
+    std::string objectFormat;   // the row's container, `cfg(object-format = ...)`
     // The selected platform (SPEC-013 §3): the platform's name (`openkal`)
     // and its package's (`openkal-platform`); `cfg(platform = ...)` matches
     // either. Empty when the target uses none.
@@ -77,6 +78,14 @@ struct Ctx {
     // ROCm device code in one artifact requires, so this layer holds a set
     // rather than the single answer the other five hold.
     std::vector<std::string> accelerators;
+    // THE INTERFACES OF THE KERNEL-ABI LAYER (`cfg(interface = "<name>")`): the
+    // resolved provider's `[kernel-abi] provides-interfaces`, compared by
+    // membership as `accelerator` is. A provider that states none provides
+    // every one; a graph without the layer provides none. A package selects
+    // its sources by what the implementation beneath it provides, and names
+    // no implementation.
+    std::vector<std::string> interfaces;
+    bool interfacesStated = false;
 
     std::string_view layer_value(std::string_view k) const {
         if (k == "compiler")         return compiler;
@@ -128,6 +137,10 @@ struct Ctx {
             if (v == "none") return accelerators.empty();
             return std::ranges::find(accelerators, v) != accelerators.end();
         }
+        if (k == "interface") {
+            if (kernelAbi.empty()) return false;
+            return !interfacesStated || std::ranges::find(interfaces, v) != interfaces.end();
+        }
         return layer_value(k) == v;
     }
 };
@@ -153,6 +166,7 @@ inline Ctx context_for(std::string_view targetTriple,
         c.arch   = t->arch;
         c.env    = t->env;
         c.family = t->family();
+        c.objectFormat = std::string(triple::object_format_word(t->object_format()));
         // Canonical spelling on BOTH sides of the later comparison, so an
         // `x86_64-w64-mingw32` key and an `x86_64-windows-gnu` build agree.
         c.triple = t->str();
@@ -280,6 +294,7 @@ struct Parser {
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
         if (k == "env")    return c.env == v;
+        if (k == "object-format") return c.objectFormat == v;
         if (k == "platform")
             return !c.platform.empty() && (c.platform == v || c.platformPackage == v);
         // `accelerator` is answerable whenever the context carries the build's
@@ -547,7 +562,9 @@ std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
     // outside the language keep their raw spelling.
     auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
     if (auto t = mcpp::toolchain::triple::parse(triple)) triple = t->str();
-    return root / "target" / triple / fp.hex;
+    // Named by the configuration's lineage, which the commands compiled there
+    // name (2026-11-12 §17, W1); the evolving rest is recorded inside.
+    return root / "target" / triple / fp.lineage;
 }
 
 
@@ -583,7 +600,7 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
         s += flag;
     }
     s += " opt=";   s += root.buildConfig.optLevel;
-    s += " debug="; s += root.buildConfig.debug ? "1" : "0";
+    s += " debug="; s += root.buildConfig.debug ? (root.buildConfig.debugLines ? "lines" : "1") : "0";
     s += " lto=";   s += root.buildConfig.lto   ? "1" : "0";
     s += " strip="; s += root.buildConfig.strip ? "1" : "0";
     // Only when on: a profile that has neither keeps the identity it had.

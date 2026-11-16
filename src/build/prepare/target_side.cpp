@@ -497,9 +497,11 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
             auto realised = mcpp::toolchain::cenv::realise(
                 *state.resolvedTargetSide.cAbiDecl, tt ? tt->os : std::string{},
                 tt ? tt->arch : std::string{},
+                tt ? mcpp::toolchain::triple::to_string(tt->object_format()) : std::string_view{},
                 // A program its loader runs is told no operating system, as a
-                // bare machine is: the C library's identity macros are the only ones.
-                tt && (tt->is_freestanding() || tt->loader_supplies_os()));
+                // bare machine is, and so is a row whose compile triple names
+                // none: the C library's identity macros are the only ones.
+                tt && tt->compiler_told_no_os());
             if (!realised) {
                 refusal::record(refusal::Code::CEnvUnrealisable);
                 return std::unexpected(realised.error());
@@ -710,6 +712,27 @@ static void for_tests(PrepareState& state, const mcpp::modgraph::UsageRequiremen
         state.appendUniqueFlags(to.cflags, usage.cflags);
         state.appendUniqueFlags(to.cxxflags, usage.cxxflags);
     }
+}
+
+// THE PACKAGE THAT RESOLVED AS THE KERNEL-ABI LAYER AND STATES ITS INTERFACES;
+// null when none states them. The list comes from the package that resolved as
+// the layer, not from the first one in the graph that stated one: a graph may
+// carry more than one candidate (a workspace member beside a dependency, a
+// second implementation behind a feature that did not activate), and only one
+// is the provider this build uses. `impl` is `name@version`; the name is what
+// precedes the separator, so `openkal` is not matched against `openkal-linux`.
+static const mcpp::modgraph::PackageRoot* kernel_abi_provider(const PrepareState& state) {
+    for (auto const& pkg : state.packages) {
+        if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
+        if (!state.resolvedTargetSide.kernelAbi.impl.empty()) {
+            auto const& impl = state.resolvedTargetSide.kernelAbi.impl;
+            const auto at = impl.find('@');
+            const auto implName = at == std::string::npos ? impl : impl.substr(0, at);
+            if (implName != pkg.manifest.package.name) continue;
+        }
+        return &pkg;
+    }
+    return nullptr;
 }
 
 static std::expected<void, std::string>
@@ -954,22 +977,9 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
         // rather than a missing one.
         std::vector<std::string> providedInterfaces;
         std::string providerId;
-        for (auto& pkg : state.packages) {
-            if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
-            // `impl` is `name@version`; the name is what precedes the
-            // separator. A substring test would match `openkal` against
-            // `openkal-linux@0.15.0` and read one implementation's list
-            // as another's.
-            if (!state.resolvedTargetSide.kernelAbi.impl.empty()) {
-                auto const& impl = state.resolvedTargetSide.kernelAbi.impl;
-                const auto at = impl.find('@');
-                const auto implName = at == std::string::npos
-                    ? impl : impl.substr(0, at);
-                if (implName != pkg.manifest.package.name) continue;
-            }
-            providedInterfaces = pkg.manifest.kernelAbiProvidesInterfaces;
-            providerId = pkg.manifest.package.name;
-            break;
+        if (auto const* pkg = kernel_abi_provider(state)) {
+            providedInterfaces = pkg->manifest.kernelAbiProvidesInterfaces;
+            providerId = pkg->manifest.package.name;
         }
         // A REQUIREMENT NOBODY ANSWERED IS SAID SO, because otherwise
         // "yes" and "never asked" are the same reading.
@@ -1510,6 +1520,10 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
         layerCtx.kernelAbi       = state.resolvedTargetSide.kernelAbi.interfaceName;
         layerCtx.cAbi            = state.resolvedTargetSide.cAbi.interfaceName;
         layerCtx.cxxAbi          = state.resolvedTargetSide.cxx.interfaceName;
+        if (auto const* pkg = kernel_abi_provider(state)) {
+            layerCtx.interfaces       = pkg->manifest.kernelAbiProvidesInterfaces;
+            layerCtx.interfacesStated = true;
+        }
         // A REQUIREMENT A LAYER DECIDES IS CHECKED NOW, WHEN THE LAYERS ARE
         // KNOWN. `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
         // ["mcpp:compiler-runtime=compiler-rt"]` states what one compiler needs
@@ -1881,7 +1895,7 @@ static std::expected<void, std::string> step9_device_sources_reach_an_action(Pre
     //
     // THE PREMISE OF THIS CHECK IS THE BUILD PROGRAM'S DIRECTIVES: an action
     // consuming a device source is one such directive. A package whose program
-    // failed in this pass (`plan_only`, above) applied none of them, so every
+    // failed in this pass (`PrepareIntent::Describe`, above) applied none of them, so every
     // device source would read as an orphan -- not a second defect, only the
     // shape the first one takes here. Such a package already carries its one
     // diagnostic, `MCPP_BUILD_DATABASE_PROGRAM_FAILED`; this check does not run
@@ -2096,8 +2110,11 @@ std::expected<void, std::string> phase9_target_side(PrepareState& state) {
     if (auto r = step9_layer_conditional_config(state); !r) return std::unexpected(r.error());
     if (auto r = step9_dependency_link_forms(state); !r) return std::unexpected(r.error());
     step9_define_graph_package_entry_closure(state);
-    if (auto r = step9_root_build_program(state); !r) return std::unexpected(r.error());
-    if (auto r = step9_member_build_programs(state); !r) return std::unexpected(r.error());
+    // The root's and the members' programs (see phase 6): none where nothing is compiled.
+    if (state.overrides.compiles()) {
+        if (auto r = step9_root_build_program(state); !r) return std::unexpected(r.error());
+        if (auto r = step9_member_build_programs(state); !r) return std::unexpected(r.error());
+    }
     if (auto r = step9_device_sources_reach_an_action(state); !r) return std::unexpected(r.error());
     if (auto r = step9_rerun_input_prepare_dir(state); !r) return std::unexpected(r.error());
 

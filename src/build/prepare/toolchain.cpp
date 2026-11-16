@@ -136,7 +136,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         if (!state.cfg_opt) {
             auto c = mcpp::config::load_or_init(/*quiet=*/false,
                 mcpp::fetcher::make_bootstrap_progress_callback(), {},
-                state.overrides.plan_only ? mcpp::config::Initialization::ReadOnly
+                state.overrides.describes() ? mcpp::config::Initialization::ReadOnly
                                           : mcpp::config::Initialization::Bootstrap);
             if (!c) return std::unexpected(c.error().message);
             state.cfg_opt = std::move(*c);
@@ -144,7 +144,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // Execution requires the bootstrap tools. A planning pass reads the
         // installed toolchain without requiring an initialized provider or
         // installing tools it will not execute.
-        if (requireBootstrap && !state.overrides.plan_only && !state.bootstrap_checked) {
+        if (requireBootstrap && !state.overrides.describes() && !state.bootstrap_checked) {
             state.bootstrap_checked = true;
             auto problem = mcpp::config::check_base_init(*state.cfg_opt);
             if (!problem.empty()) {
@@ -213,10 +213,11 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // refreshed with the binding, because detection and the fingerprint read
     // them afterwards.
     state.runtimePayloadProvided = false;
-    state.provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg)
+    state.provide_runtime_payload = [&](const mcpp::toolchain::XimToolchainPackage& pkg,
+                                        const std::filesystem::path& payloadRoot)
         -> std::expected<void, std::string> {
         if (state.runtimePayloadProvided) return {};
-        if (mcpp::toolchain::runtime_payload_kind(pkg).empty()) return {};
+        if (mcpp::toolchain::runtime_payload_kind(pkg, payloadRoot).empty()) return {};
         state.runtimePayloadProvided = true;
         auto cfgP = state.get_cfg(true);
         if (!cfgP) return {};
@@ -265,7 +266,11 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         if (!state.overrides.dependency_linkage.empty())
             state.m->buildConfig.dependencyLinkage = state.overrides.dependency_linkage;
         state.m->buildConfig.optLevel = pr.optLevel;
+        if (!pr.debugWritten.empty() && pr.debugWritten != "lines")
+            return std::unexpected(std::format(
+                "[profile.{}] debug = \"{}\": expected true, false or \"lines\"", pname, pr.debugWritten));
         state.m->buildConfig.debug    = pr.debug;
+        state.m->buildConfig.debugLines = pr.debugLines;
         state.m->buildConfig.lto      = pr.lto;
         state.m->buildConfig.strip    = pr.strip;
         // `ndebug` and `trim_paths` follow the industry's convention for a
@@ -298,7 +303,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // SAID ONCE PER HOME, the first time a shipping profile takes the new
         // defaults without stating them: the artifact changed, and the line
         // that changes it back is one key.
-        if (shipping && !(pr.ndebugDeclared && pr.trimPathsDeclared) && !state.overrides.plan_only
+        if (shipping && !(pr.ndebugDeclared && pr.trimPathsDeclared) && !state.overrides.describes()
             && state.overrides.tool_depth == 0 && !state.overrides.host_target) {
             std::error_code ec;
             const auto marker = mcpp::home::root() / "cache" / "notes" / "profile-ndebug-trim-paths";
@@ -533,6 +538,9 @@ struct TargetOverrideCtx {
     // `[toolchain] default`: a pair the configuration states.
     bool targetFromGlobalDefault = false;
     const mcpp::toolchain::triple::TargetInfo* known = nullptr;
+    // The platform the project, the command line or the machine chose for the
+    // request (its short name), or empty.
+    std::string chosenPlatform;
 };
 
 // The body of the `apply_target_section` closure the single-function version
@@ -617,7 +625,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
         std::vector<mcpp::manifest::platform::Override> config;
         if (auto cfg = state.get_cfg(true); cfg) config = (*cfg)->platformOverrides;
         std::string platform;
-        const std::string provider = named_provider(state, *ctx.parsed, config, &platform);
+        const std::string provider = named_provider(state, *ctx.parsed, config, &platform, &ctx.chosenPlatform);
         auto sctx = target_context(state.m->platformOverrides, config, family,
                                    provider == "none" ? std::string{} : provider,
                                    state.msvc_usable_either_origin);
@@ -759,7 +767,27 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
             sug ? std::format(" — did you mean '{}'?", *sug) : "",
             ctx.requestedSpelling));
     }
-    if (ctx.known && ctx.known->tier == "planned" && !ctx.hasToolchainOverride) {
+    // A TOOLCHAIN NAMED FOR THE BUILD IS AS EXPLICIT AS ONE THE SECTION NAMES.
+    // The refusal says that no toolchain is published for the row; a build that
+    // names one -- `[target.<row>] toolchain`, or `--toolchain`, which the
+    // command line states as MCPP_TOOLCHAIN -- has one; so does a consumer's
+    // sub-build given its consumer's. Before 2026.11.13.1 only the section did,
+    // and a platform's conformance run that names its toolchain on the command
+    // line was refused.
+    const bool toolchainNamed = ctx.hasToolchainOverride || state.tcFromCommandLine || state.tcFromConsumer;
+    // AND SO IS ONE A PLATFORM CHOSEN FOR THE REQUEST NAMES FOR THE ROW
+    // (2026.11.14.1). A platform that lists the row among its targets with its
+    // toolchain serves it; the row's `planned` says only that the engine's own
+    // providers do not yet. The platform's statement is read with the platform
+    // (`step1_select_platform`, or `step4b_apply_platform` for a package this
+    // pass fetches), and the build is refused there when it does not list the
+    // row. openkal-platform 0.28.0 lists `i686-openkal`, and `--target openkal`
+    // (its targets as one set) was refused on that leg.
+    if (ctx.known && ctx.known->tier == "planned" && !toolchainNamed && !ctx.chosenPlatform.empty()) {
+        state.plannedRow = ctx.parsed->str();
+        return {};
+    }
+    if (ctx.known && ctx.known->tier == "planned" && !toolchainNamed) {
         refusal::record(refusal::Code::TierPlanned);
         // The subject is what the user wrote. When completion filled a
         // segment, both are shown — otherwise the sentence is about a
@@ -772,7 +800,7 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
         return std::unexpected(std::format(
             "target {} is registered but not yet supported (planned) — "
             "no toolchain is published for it yet.\n"
-            "       An explicit [target.{}] toolchain override can opt in early.",
+            "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.",
             subject, ctx.parsed->str()));
     }
     return {};
@@ -1420,6 +1448,23 @@ static std::expected<void, std::string> step1_device_axis_and_layer_merge(Prepar
     // `true` has meant since 2026.9.12.3. The flag is in the dialect set, so the
     // model is part of every cache key.
     const bool emscripten = state.cfgCtx().os == "emscripten";
+    // THE ROW'S MODEL WHERE THE PROJECT STATES NONE (design 2026-11-15 N26):
+    // wasm32-emscripten's row states `exceptions = "wasm"`, and a program's
+    // `catch` was never reached under the SDK's default. Data, not a rule of
+    // the engine; `exceptions = false` states none.
+    if (emscripten && !state.m->buildConfig.abiExceptionsDeclared)
+        if (auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple))
+            if (auto const* row = mcpp::toolchain::target::find_row(t->str()); row && !row->exceptions.empty()) {
+                state.m->buildConfig.abiExceptions = true;
+                state.m->buildConfig.abiExceptionsModel = std::string(row->exceptions);
+                // The long jump follows WebAssembly exception handling (D6),
+                // stated for the C translation units too, which do not read
+                // the C++ flag; under another model it is the SDK's default.
+                if (!state.m->buildConfig.abiLongjmpDeclared && row->exceptions == "wasm") {
+                    state.m->buildConfig.abiLongjmpDeclared = true;
+                    state.m->buildConfig.abiLongjmpModel = "wasm";
+                }
+            }
     const bool abiExceptionsRendered = state.m->buildConfig.abiExceptions && emscripten;
     if (abiExceptionsRendered) {
         const char* flag = state.m->buildConfig.abiExceptionsModel == "wasm"
@@ -1715,6 +1760,55 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
                 "toolchain '{}': {}", *state.tcSpec, payload.error().message));
         }
 
+        // A PAYLOAD NAMED OUTRIGHT (`xim:<name>@<version>`, design 2026-11-12
+        // §16 T2) is resolved as `path:<root>` with the table it states of
+        // itself (`.mcpp-toolchain.json`, schema 2): the same step, the same
+        // probes and refusals as a directory a manifest names.
+        if (spec->describedPayload) {
+            auto d = mcpp::toolchain::read_payload_descriptor(payload->root);
+            if (!d) return std::unexpected(d.error());
+            if (!*d)
+                return std::unexpected(std::format(
+                    "toolchain '{}': the package has no {} at its root; a payload named "
+                    "outright states its drivers there (\"schema\": 2, with \"family\", "
+                    "\"prefix\", \"tools\")",
+                    *state.tcSpec, mcpp::toolchain::payload_descriptor_filename));
+            auto const& desc = **d;
+            mcpp::manifest::LocalToolchain lt;
+            lt.path   = payload->root.generic_string();
+            lt.prefix = desc.prefix;
+            lt.family = desc.family;
+            if (!desc.sysroot.empty()) lt.sysroot = (payload->root / desc.sysroot).generic_string();
+            for (auto const& [role, p] : desc.tools)
+                lt.tools.emplace_back(role, (payload->root / p).generic_string());
+            if (!desc.frontend.empty()
+                && std::ranges::none_of(lt.tools, [](auto const& t) { return t.first == "cxx"; }))
+                lt.tools.emplace_back("cxx", (payload->root / desc.frontend).generic_string());
+            if (lt.family.empty()) {
+                // The family is the drivers' when the payload does not say: its
+                // C++ driver's name, else the drivers in `bin/`.
+                for (auto const& [role, p] : lt.tools)
+                    if (role == "cxx") {
+                        auto stem = std::filesystem::path(p).stem().string();
+                        lt.family = stem.ends_with("clang++") ? "llvm" : stem.ends_with("g++") ? "gcc" : "";
+                    }
+                if (lt.family.empty())
+                    if (auto fam = mcpp::toolchain::parse_toolchain_spec("path:" + lt.path); fam)
+                        lt.family = mcpp::toolchain::family_name(fam->family);
+            }
+            SourceDecision origin;
+            origin.subject    = "toolchain.build";
+            origin.cls        = SourceClass::Pinned;
+            origin.originKind = "manifest";
+            origin.originKey  = *state.tcSpec;
+            state.localToolchain       = std::move(lt);
+            state.localToolchainOrigin = std::move(origin);
+            auto local = *spec;
+            local.localRoot = payload->root;
+            mcpp::ui::info("Resolved", std::format("{} → {}", spec->display(), payload->root.string()));
+            return step2_use_local_toolchain(state, local);
+        }
+
         // A pinned MSVC toolset: the payload root IS a VS-shaped root and the
         // package version IS the toolset directory name, so cl.exe is
         // derived, not searched for. Nothing here can silently pick a
@@ -1752,7 +1846,7 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
             // manifest [toolchain] path previously ran none, so a freshly
             // auto-installed payload kept its stale install-time cfg /
             // unpatched runtime libs.
-            if (auto provided = state.provide_runtime_payload(pkg); !provided)
+            if (auto provided = state.provide_runtime_payload(pkg, payload->root); !provided)
                 return std::unexpected(provided.error());
             // Canonical rendering, whatever spelling the manifest/config used:
             // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
@@ -1986,7 +2080,7 @@ step2_first_run_auto_install(PrepareState& state) {
         // `mcpp toolchain install` performs — without it a fresh sandbox
         // gcc cannot find the C library (stdlib.h: No such file or
         // directory) and a fresh llvm keeps its stale install-time cfg.
-        if (auto provided = state.provide_runtime_payload(defaultPkg); !provided)
+        if (auto provided = state.provide_runtime_payload(defaultPkg, payload->root); !provided)
             return std::unexpected(provided.error());
 
         // Persist the default so we don't ask again next time.
@@ -2161,6 +2255,11 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
           state.tc->compiler == mcpp::toolchain::CompilerId::MSVC
           || mcpp::toolchain::is_msvc_target(*state.tc);
       if (targetsMsvcAbi && !state.msvc_usable_either_origin()) {
+          // Tests built on another machine run here and nothing is compiled
+          // (`mcpp test --archive`): the toolchain is neither refused nor
+          // replaced. Measured on a Windows runner with Visual Studio masked:
+          // every archived test was "not run" for the compiler it did not use.
+          if (!state.overrides.compiles()) return {};
           // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
           // msvc@system on its own — it cannot install one — so the only way it
           // reaches config.toml is a user typing `mcpp toolchain default msvc`.
@@ -2241,7 +2340,7 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
                   gnuPkg.target(),
                   mcpp::toolchain::payload_frontend_dir(payloadR->root, gnuPkg).string()));
           }
-          if (auto provided = state.provide_runtime_payload(gnuPkg); !provided)
+          if (auto provided = state.provide_runtime_payload(gnuPkg, payloadR->root); !provided)
               return std::unexpected(provided.error());
 
           // Persist both axes so the repair happens once, not on every build.

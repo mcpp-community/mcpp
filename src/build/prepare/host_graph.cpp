@@ -530,7 +530,7 @@ std::map<std::string, std::string> resolution_pins(const PrepareState& state);
 // what a person or a test runs by hand with an environment of their choosing.
 // Placed when absent or older than the compiled program, by a build.
 static void place_program_copy(const PrepareState& state, std::size_t i, const fs::path& bin) {
-    if (state.overrides.plan_only) return;   // a planning pass writes nothing in the project
+    if (state.overrides.describes()) return;   // a planning pass writes nothing in the project
     const auto dest = build_program_dir(state, i)
         / (mcpplibs::os::is_windows ? "build.mcpp.exe" : "build.mcpp.bin");
     std::error_code ec;
@@ -717,7 +717,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
             const std::vector<const Program*>& goals, const HostToolchain& tc) {
     // The graph `mcpp emit build-database` describes, beside the one it builds.
     auto describe = [&](const BuildContext& ctx) {
-        if (!state.overrides.plan_only) return;
+        if (!state.overrides.describes()) return;
         BuildProgramGraph g;
         g.ctx = std::make_shared<const BuildContext>(ctx);
         g.dir = dir;
@@ -1067,7 +1067,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         if (stale.empty()) {
             // Described, not built: `mcpp emit build-database` lists the graph
             // of programs that are current too.
-            if (state.overrides.plan_only) {
+            if (state.overrides.describes()) {
                 write_group(state, dir, programs, standard, *enginePackage, tc->spec);
                 if (auto r = build_group(state, dir, programs, {}, *tc); !r)
                     mcpp::log::verbose("host-graph", r.error());

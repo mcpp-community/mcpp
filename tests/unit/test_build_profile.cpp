@@ -246,3 +246,38 @@ UTest shorthands_name_their_profile{"BuildProfile/ShorthandsNameTheirProfile", [
     expect(eq(mcpp::build::profile_override_from_flags("", false, true), "dev"));
     expect(eq(mcpp::build::profile_override_from_flags("", false, false), ""));
 }};
+
+// ── debug = "lines" (2026-11-12 §17, W5) ─────────────────────────────────────
+
+// The line tables are a configuration of their own, and `debug = true` keeps the
+// string it had: a directory built before the level existed keeps its name.
+UTest debug_lines_is_its_own_configuration{"BuildProfile/DebugLinesIsItsOwnConfiguration", [] {
+    auto full = base();  full.buildConfig.debug = true;
+    auto lines = full;   lines.buildConfig.debugLines = true;
+    const auto f = mcpp::build::canonical_configuration_flags(full);
+    expect(ne(f.find(" debug=1 "), std::string::npos)) << f;
+    expect(ne(mcpp::build::canonical_configuration_flags(lines), f));
+}};
+
+UTest debug_lines_is_read_from_the_profile{"BuildProfile/DebugLinesIsReadFromTheProfile", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "demo"
+version = "0.1.0"
+
+[profile.ci]
+debug = "lines"
+strip = true
+
+[profile.odd]
+debug = "full"
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    auto const& ci = m->profiles.at("ci");
+    expect(ci.debug && ci.debugLines && ci.debugDeclared);
+    // A string other than "lines" is kept as written, for prepare to refuse
+    // with the profile's name.
+    auto const& odd = m->profiles.at("odd");
+    expect(eq(odd.debugWritten, "full"));
+    expect(!odd.debug);
+}};

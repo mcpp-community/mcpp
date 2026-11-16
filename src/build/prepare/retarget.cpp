@@ -33,6 +33,7 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.home;
@@ -109,6 +110,25 @@ step2_retarget_for_retargetable_driver(PrepareState& state) {
       // already names: a RETARGETABLE driver has to be told. gcc is not one — a
       // gcc payload IS its target — so the mingw and musl-gcc crosses keep
       // answering from `-dumpmachine`, which for them remains a measured fact.
+      // A ROW THAT STATES ITS GCC TARGET (`gcc-triple`) names the payload whose
+      // compiler is that target, and `-dumpmachine` answers in GCC's spelling
+      // (`i586-pc-msdosdjgpp`) rather than the row's (`i586-dos-djgpp`). The
+      // measured answer is checked against the row's statement and then named
+      // by the row, so the output directory, the fingerprint and every flag
+      // decision read the identity the build was asked for.
+      if (!state.overrides.target_triple.empty()
+          && state.tc->compiler == mcpp::toolchain::CompilerId::GCC) {
+          if (auto want = mcpp::toolchain::triple::parse(state.overrides.target_triple)) {
+              if (auto const* r = mcpp::toolchain::target::find_row(want->str()); r && !r->gccTriple.empty()) {
+                  if (state.tc->targetTriple != r->gccTriple)
+                      return std::unexpected(std::format(
+                          "the compiler {} reports the target '{}', and the row '{}' states its GCC target "
+                          "'{}' (`gcc-triple`)",
+                          state.tc->binaryPath.string(), state.tc->targetTriple, want->str(), r->gccTriple));
+                  state.tc->targetTriple = want->str();
+              }
+          }
+      }
       if (!state.overrides.target_triple.empty()) {
           if (auto want = mcpp::toolchain::triple::parse(state.overrides.target_triple);
               want && (want->is_freestanding()

@@ -1001,13 +1001,19 @@ arch/env 条件与组合子用 `cfg(...)`。2026.11.10.2 之前的 mcpp 仅将 `
   因此不会与检查本身漂移。
 - **按解析后的目标求值**——交叉构建取 `--target` 三元组，否则取宿主。因此
   原生 Linux 构建**根本不会下载** `[target.windows]` 依赖。
-- **谓词的键**：`os`、`arch`、`family`、`env`——三元组的坐标——以及自 mcpp
+- **谓词的键**：`os`、`arch`、`family`、`env`——三元组的坐标；`object-format`（mcpp 2026.11.13.1），
+  行的容器格式（`elf`、`pe`、`mach-o`、`wasm`、`coff`），包需要的是同一容器的各系统共有的约定
+  （PE 行：Microsoft x64 调用约定、COFF 节）而不是某个系统时按它选择——以及自 mcpp
   2026.9.1.1 起的五个目标侧层名 `compiler`、`compiler-runtime`、
   `kernel-abi`、`c-abi`、`c++-abi`（见 [22 —— 目标侧](22-target-side.md)）。
   `accelerator` 同样是这里的键，由本次构建自己的 `accel`（`--accel` 或
   `[build] accel` 里的后端名）回答，因此它是对一个集合的成员判定；
   `accelerator = "none"` 是一种写法，用来说明「本次构建没有命名任何后端」，
-  而不必枚举它不是的那些后端。裸词 `linux` / `macos` / `windows` / `unix`
+  而不必枚举它不是的那些后端。`interface`（mcpp 2026.11.13.1）是 kernel-abi 层的第二个回答：
+  该层的提供者在 `[kernel-abi] provides-interfaces` 里陈述的接口，与
+  `accelerator` 一样按成员判定。未陈述列表的提供者提供全部接口；没有该层的
+  图不提供任何接口。包据此按其下实现提供的接口选择源文件，而不命名任何实现：
+  `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`。裸词 `linux` / `macos` / `windows` / `unix`
   是对应 `os` / `family` 判定的糖。集合之外的键会被报成一条 schema 警告，
   且该段不生效——它过去静默地求值为假，而那与「这一段本就不该匹配」
   读起来完全相同。
@@ -1154,7 +1160,7 @@ WebAssembly 上，每个目标文件、预编译的标准库模块与链接必�
 | 成员 | 类型 | 渲染为 | 到达 |
 |---|---|---|---|
 | `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`；在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元，以及链接 |
-| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
+| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型；`false` 表示不启用。未写时取行自身的模型：`wasm32-emscripten` 为 `"wasm"`（2026.11.16.1；此前不启用）。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
 | `longjmp` *(mcpp 2026.11.12.1+)* | `"wasm"` 或 `"js"` | 只在 `os = "emscripten"` 上，进入每个 C 与 C++ 翻译单元的编译行与链接行：`"wasm"` 为 `-sSUPPORT_LONGJMP=wasm`，即 WebAssembly 自身的栈切换；`"js"` 为 `-sSUPPORT_LONGJMP=emscripten`，即 JavaScript 模型，也是工具链的默认。声明在其余任何行上都会被拒绝。成员缺省时不产生任何 flag | 与 `threads` 相同的那一套 |
 
 三个成员都经由它们渲染的 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会

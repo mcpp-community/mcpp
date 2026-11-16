@@ -1133,7 +1133,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // needs it MOST, before any build has provided it. There is no project
         // here, so the selection is mcpp's default environment, which is what
         // `RuntimeSelection{}` means.
-        if (!mcpp::toolchain::runtime_payload_kind(pkg).empty()) {
+        if (!mcpp::toolchain::runtime_payload_kind(pkg, payload->root).empty()) {
             if (auto rb = mcpp::runtime::resolve_runtime_binding(
                     mcpp::provider::runtime::RuntimeSelection{}, {}, cfg.xlingsHome()))
                 if (auto provided = ensure_declared_runtime(cfg, *rb); !provided) {

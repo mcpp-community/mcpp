@@ -137,4 +137,15 @@ echo "bootstrap mcpp: $MCPP ($GOT)" >&2
 # a member's `os = "0.1.0"` -- missed against it with no refresh.
 "$MCPP" index update >&2 || echo "::warning::the bootstrap mcpp could not refresh its package index" >&2
 
+# THE RELEASED BINARY ITSELF, for a program that runs the bootstrap outside
+# this checkout (MCPP_BOOT; e2e 772, a released client builds a published
+# archive). $MCPP is xlings' shim, which takes the version from the project of
+# its working directory and finds none in a directory of a test's own. The
+# payload is where xlings places a package, under the home this script found;
+# the release fallback above is a binary already.
+boot="$MCPP"
+payload="$XL_HOME/.xlings/data/xpkgs/xim-x-mcpp/$PIN/bin/mcpp${EXE}"
+[ "$installed" = no ] || [ ! -f "$payload" ] || boot="$payload"
+[ -z "${GITHUB_ENV:-}" ] || echo "MCPP_BOOT=$boot" >> "$GITHUB_ENV"
+
 echo "$MCPP"

@@ -79,23 +79,32 @@ inline Lookup locate(std::string_view argv0,
     const bool hasDir = a0.is_absolute()
                      || argv0.find('/') != std::string_view::npos
                      || argv0.find('\\') != std::string_view::npos;
+    // A name on Windows is a program with the system's suffix, as the shell
+    // finds it: `okrun` is `okrun.exe`. The file without a suffix is not one:
+    // the system starts no file without one (`CreateProcess` appends `.exe`),
+    // and every file is "executable" there. A package for every system
+    // carries both -- dirun's `bin/dirun`, a POSIX launcher, beside
+    // `bin/dirun.exe` -- and the launcher was taken and refused (`executable
+    // format error`, 2026-11-14). A name with a directory follows the same
+    // rule (design 2026-11-15 R2, A3): `../tools/x` could not be started.
+    auto program_at = [&](const std::filesystem::path& c) -> std::optional<std::filesystem::path> {
+        if constexpr (mcpplibs::os::is_windows) {
+            if (!c.has_extension()) {
+                for (auto ext : { ".exe", ".cmd", ".bat" })
+                    if (auto s = std::filesystem::path(c.string() + ext); detail::executable_file(s)) return s;
+                return std::nullopt;
+            }
+        }
+        if (detail::executable_file(c)) return c;
+        return std::nullopt;
+    };
     if (hasDir) {
         std::error_code ec;
-        if (detail::executable_file(a0)) out.program = std::filesystem::absolute(a0, ec);
+        if (auto c = program_at(a0)) out.program = std::filesystem::absolute(*c, ec);
         out.searched.push_back(a0.parent_path());
         return out;
     }
-    // A bare name on Windows is a program with the system's suffix, as the
-    // shell finds it: `okrun` is `okrun.exe`.
-    auto in_dir = [&](const std::filesystem::path& d) -> std::optional<std::filesystem::path> {
-        if (auto c = d / a0; detail::executable_file(c)) return c;
-        if constexpr (mcpplibs::os::is_windows) {
-            if (!a0.has_extension())
-                for (auto ext : { ".exe", ".cmd", ".bat" })
-                    if (auto c = d / (a0.string() + ext); detail::executable_file(c)) return c;
-        }
-        return std::nullopt;
-    };
+    auto in_dir = [&](const std::filesystem::path& d) { return program_at(d / a0); };
     for (auto const& d : depBinDirs) {
         out.searched.push_back(d);
         if (auto c = in_dir(d)) { out.program = *c; return out; }

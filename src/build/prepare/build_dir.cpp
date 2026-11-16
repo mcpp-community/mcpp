@@ -1,6 +1,7 @@
 // build_dir.cpp -- a configuration's build directory over time (design
-// 2026-10-31 §8): the predecessor a new fingerprint of its lineage takes over,
-// and what the directory records for the next build and for `mcpp clean --stale`.
+// 2026-10-31 §8, 2026-11-12 §17): named by its lineage, emptied when its
+// compiler changes, taking over a directory an earlier mcpp named by the whole
+// fingerprint, and what it records for the next build and for `mcpp clean --stale`.
 
 module mcpp.build.prepare;
 import :state;
@@ -8,6 +9,8 @@ import :state;
 import std;
 import mcpp.bmi_cache.maintenance;   // dir_size, human_bytes
 import mcpp.build.dirlock;
+import mcpp.build.graph_engine;
+import mcpp.build.cache_key;         // kCacheEpoch: the epoch the graph's engine link carries
 import mcpp.home.files;
 import mcpp.log;
 import mcpp.toolchain.fingerprint;
@@ -17,28 +20,7 @@ namespace mcpp::build {
 
 namespace {
 
-// A CONFIGURATION'S LINEAGE (design 2026-10-31 §8.2): the fingerprint's
-// parts a developer switches between and keeps side by side -- the compiler
-// family, the target, the standard library's family, the language standard and
-// the configuration's flags. The rest evolve with time: the compiler's version
-// and identity, the standard library's version, mcpp's version, the std
-// module and the runtime contract. A new fingerprint of a lineage that has a
-// directory takes that directory over instead of opening another copy of the
-// build: ninja then rebuilds the edges whose commands changed and reuses the
-// rest. Each mcpp upgrade used to open a full new directory (mcppls: 2.9 GB per
-// configuration) and rebuild everything.
-std::string lineage_text(const mcpp::toolchain::Fingerprint& fp) {
-    const auto stdlibFamily = fp.parts[4].substr(0, fp.parts[4].find(' '));
-    return std::format("compiler {}\ntarget {}\nstdlib {}\nstandard {}\nconfiguration {}\n",
-                       fp.parts[0], fp.parts[3], stdlibFamily, fp.parts[5], fp.parts[6]);
-}
-
-// The toolchain's part of the evolution. Objects and BMIs of another compiler
-// build are never reused, so a predecessor that differs here is removed rather
-// than taken over: the build starts over in one directory instead of two.
-std::string toolchain_text(const mcpp::toolchain::Fingerprint& fp) {
-    return std::format("compiler {}\ndriver {}\nstdlib {}\n", fp.parts[1], fp.parts[2], fp.parts[4]);
-}
+using mcpp::toolchain::lineage_text, mcpp::toolchain::toolchain_text;
 
 // THE COMPILER RECORDS OF THE PREDECESSOR ARE NOT TAKEN OVER. Beside each object
 // a split compile keeps its slot's records (`<object>.sched.*`, compiler
@@ -69,7 +51,45 @@ std::string read_small(const std::filesystem::path& file) {
     return {std::istreambuf_iterator<char>(in), {}};
 }
 
+// `text` without its line `<key> ...`.
+std::string without_line(std::string_view text, std::string_view key) {
+    std::string out;
+    for (auto const part : std::views::split(text, '\n')) {
+        const std::string_view line(part.begin(), part.end());
+        if (line.empty() || (line.starts_with(key) && line.substr(key.size()).starts_with(' '))) continue;
+        out += line;
+        out += '\n';
+    }
+    return out;
+}
+
+// A RECORD AN EARLIER MCPP WROTE (before 2026.11.13.1) states fewer lines: its
+// lineage no `base`, its toolchain no `runtime`. It is read on the lines it
+// states, so that an upgrade takes the directory over rather than leaving it
+// beside a new one (measured: the 753 MB directory of mcpp's own build an
+// earlier mcpp of this release wrote, left). A base switched since is in the
+// commands that name it, which ninja compiles again.
+bool same_record(std::string_view was, std::string_view now, std::string_view added) {
+    if (was == now) return true;
+    const bool states = was.starts_with(std::string(added) + " ")
+                     || was.find(std::format("\n{} ", added)) != std::string_view::npos;
+    return !was.empty() && !states && was == without_line(now, added);
+}
+
 } // namespace
+
+// A DIRECTORY AN EARLIER MCPP NAMED BY THE WHOLE FINGERPRINT (before
+// 2026.11.13.1), or one this configuration left under another name, is taken
+// over once by the lineage it records; from then on the name holds.
+// What a directory's record says changed: the base when only its runtime line
+// differs (a base rewritten in place), the toolchain otherwise.
+std::string_view what_changed(std::string_view was, std::string_view now) {
+    auto without_runtime = [](std::string_view t) {
+        const auto at = t.find("runtime ");
+        return t.substr(0, at == std::string_view::npos ? t.size() : at);
+    };
+    return without_runtime(was) == without_runtime(now) ? "the base" : "the toolchain";
+}
 
 void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
     namespace fs = std::filesystem;
@@ -83,7 +103,7 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     for (auto const& d : fs::directory_iterator(outputDir.parent_path(), ec)) {
         std::error_code dec;
         if (d.path() == outputDir || !d.is_directory(dec)
-            || read_small(d.path() / "lineage") != lineage)
+            || !same_record(read_small(d.path() / "lineage"), lineage, "base"))
             continue;
         // The one this configuration used last: build.ninja is written by every plan.
         const auto t = fs::last_write_time(d.path() / "build.ninja", dec);
@@ -94,7 +114,8 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     auto held = mcpp::home::FileLock::try_acquire(*best, mcpp::build::dirlock::kLockName);
     if (!held) return;
     const auto shown = best->lexically_relative(state.workRoot).generic_string();
-    const bool sameToolchain = read_small(*best / "toolchain") == toolchain_text(state.fp);
+    const auto was_toolchain = read_small(*best / "toolchain");
+    const bool sameToolchain = same_record(was_toolchain, toolchain_text(state.fp), "runtime");
     if (sameToolchain) {
         // Its entries move in, one rename each, beside the lock this build
         // may already have created there.
@@ -116,13 +137,41 @@ void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::pat
     fs::remove_all(*best, ec);
     if (!sameToolchain && !ec)
         mcpp::ui::status("Replaced", std::format(
-            "{} ({}): the toolchain changed, and nothing compiled there is reused", shown,
-            mcpp::bmi_cache::human_bytes(bytes)));
+            "{} ({}): {} changed, and nothing compiled there is reused", shown,
+            mcpp::bmi_cache::human_bytes(bytes),
+            what_changed(was_toolchain, toolchain_text(state.fp))));
 }
 
-// What this configuration uses beside its directory (`mcpp clean --stale`), and
-// its lineage and toolchain, which the next fingerprint of the configuration
-// reads to take the directory over.
+std::filesystem::path renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
+    namespace fs = std::filesystem;
+    const auto was = read_small(outputDir / "toolchain");
+    if (!was.empty() && was != toolchain_text(state.fp)) {
+        // Held by this build (dirlock): nothing else writes here.
+        const auto bytes = mcpp::bmi_cache::dir_size(outputDir);
+        const auto lock = std::string(mcpp::build::dirlock::kLockName);
+        std::error_code ec;
+        for (auto const& e : fs::directory_iterator(outputDir, ec)) {
+            const auto name = e.path().filename().string();
+            if (name == lock || name == lock + ".owner") continue;
+            std::error_code rec;
+            fs::remove_all(e.path(), rec);
+        }
+        mcpp::ui::status("Replaced", std::format(
+            "{} ({}): {} changed, and nothing compiled there is reused",
+            outputDir.lexically_relative(state.workRoot).generic_string(), mcpp::bmi_cache::human_bytes(bytes),
+            what_changed(was, toolchain_text(state.fp))));
+    } else if (const auto fp = read_small(outputDir / "fingerprint"); !fp.empty() && fp != state.fp.hex + "\n") {
+        // Another mcpp, std module or runtime contract continues here: the
+        // compiler records describe the attempts of the build before, as those
+        // of a directory taken over do.
+        drop_compiler_records(outputDir / "obj");
+    }
+    return mcpp::build::graph_engine::refresh(outputDir, mcpp::build::cache_key::kCacheEpoch);
+}
+
+// What this configuration uses beside its directory (`mcpp clean --stale`); its
+// lineage and toolchain, which the next build of the configuration reads; and
+// the whole fingerprint, which the directory's name no longer states.
 void record_build_dir(const PrepareState& state, const std::filesystem::path& outputDir) {
     std::string uses;
     for (auto const& h : state.usedProgramOut) uses += "out " + h + "\n";
@@ -142,7 +191,8 @@ void record_build_dir(const PrepareState& state, const std::filesystem::path& ou
     if (was != uses || !std::filesystem::exists(outputDir / "uses.list", uec))
         std::ofstream(outputDir / "uses.list", std::ios::binary) << uses;
     for (auto const& [name, text] : {std::pair{"lineage", lineage_text(state.fp)},
-                                      std::pair{"toolchain", toolchain_text(state.fp)}})
+                                      std::pair{"toolchain", toolchain_text(state.fp)},
+                                      std::pair{"fingerprint", state.fp.hex + "\n"}})
         if (read_small(outputDir / name) != text)
             std::ofstream(outputDir / name, std::ios::binary) << text;
 }

@@ -1,0 +1,25 @@
+# canary-c: a C89 program family on POSIX alone, the shape of a program the ecosystem is
+# asked to carry everywhere (design 2026-11-12 §5.7, §7: V2, V3, V9, V10 and the run).
+# Two programs share every source and differ by their entry and a macro; the resource
+# script is written once and compiled where the row is PE.
+[package]
+name     = "canary-c"
+version  = "1.0.0"
+
+[targets.canary-a]
+kind    = "bin"
+main    = "src/a.c"
+defines = ["CANARY_ROLE=\"a\""]
+
+[targets.canary-b]
+kind    = "bin"
+main    = "src/b.c"
+defines = ["CANARY_ROLE=\"b\""]
+
+[build]
+sources      = ["src/common.c"]
+include_dirs = ["include"]
+c_standard   = "c89"
+
+[resources]
+files = ["res/canary.rc"]

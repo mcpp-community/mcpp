@@ -18,7 +18,9 @@ name: ci-linux
 #
 # The checks that need no binary run in the `docs` job of ci.yml.
 #
-# The e2e suite is ci-linux-e2e.yml, called beside this one.
+# The e2e suite is ci-linux-e2e.yml, called beside this one; the root suite of
+# `mcpp test` (the unit tests and the C++ e2e programs) is ci-unit.yml, built
+# once and run in shards.
 #
 # Paired workflows: ci-linux-e2e.yml, ci-macos.yml, ci-windows.yml.
 
@@ -31,21 +33,26 @@ on:
       bench:
         type: boolean
         default: false
+      # The set of cases (ci.yml's changes job): `pr` runs the tests the
+      # change affects (`mcpp test --since`), `full` every test.
+      set:
+        type: string
+        default: full
 
 env:
   # MCPP_HOME pinned so the cache keys below restore into the same path
   # mcpp resolves at runtime.
   MCPP_HOME: /home/runner/.mcpp
   # Verbose every mcpp invocation for richer CI diagnostics (src/cli.cppm).
-  # Safe here: this workflow no longer runs the e2e suite, which is what
-  # asserts mcpp's default quiet output (tests 48/53).
+  # The e2e cases of the unit job read mcpp's default output; the case support
+  # removes MCPP_VERBOSE from the mcpp a case starts (tests/support).
   MCPP_VERBOSE: "1"
 
 jobs:
   build-test:
-    name: unit tests (linux x86_64, self-host)
+    name: subsystem tests (linux x86_64, self-host)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -59,16 +66,12 @@ jobs:
       # docs/08; design 2026-11-08 W8): the base's tip is fetched, and when it
       # cannot be, every test runs.
       - name: The base of the change
-        if: github.base_ref != ''
+        if: github.base_ref != '' && inputs.set == 'pr'
         shell: bash
         run: |
           if git fetch --no-tags --depth=1 origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF"; then
             echo "MCPP_TEST_SINCE=origin/$GITHUB_BASE_REF" >> "$GITHUB_ENV"
           fi
-
-      - name: Unit + integration tests via `mcpp test`
-        run: |
-          "$MCPP_FRESH" test ${MCPP_TEST_SINCE:+--since "$MCPP_TEST_SINCE"}
 
       # Each package under `modules/` carries its own tests, and they are built
       # as that package ALONE -- a configuration the root suite never produces,
@@ -116,7 +119,7 @@ jobs:
       - uses: ./.github/actions/test-report
         if: always()
         with:
-          name: mtest-unit-linux
+          name: mtest-unit-linux-subsystems
           stores: target/mtest bench/target/mtest
 
   # A cold, from-scratch self-host build by this commit's binary with the

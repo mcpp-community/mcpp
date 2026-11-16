@@ -178,17 +178,54 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
     return lib;
 }
 
-// WHICH TOOLCHAIN PAYLOADS RUN ON A C RUNTIME PAYLOAD, stated once: a GNU
-// gcc and an llvm on Linux. The runtime they run on is the one the provider
-// bound them to when it installed them (its home's runtime pin, design
-// 2026-10-16 §7.2); mcpp makes sure that runtime is installed and writes
-// nothing into the toolchain (§7.1: the patchelf, specs and cfg rewrites
-// that once lived here are gone). Empty on every other payload and on
-// Windows, where a PE toolchain has no C runtime payload.
-export std::string_view runtime_payload_kind(const XimToolchainPackage& pkg) {
+export std::string read_elf_interp(const std::filesystem::path& bin);
+
+// Whether the programs of the payload at `root` start through a loader its
+// provider home keeps: a C runtime payload of that home, or the home's link to
+// one (`<home>/abi/...`). Asked of the provider's layout and of the programs
+// themselves (PT_INTERP of the first ELF of `bin/` that names a loader; a
+// payload's programs are linked alike), so no payload and no system loader is
+// named here. A Mach-O or PE program names none, and the answer is no.
+export bool starts_through_its_home(const std::filesystem::path& root) {
+    const auto& layout = mcpp::provider::layout();
+    const auto store = layout.store_of(root);
+    if (store.empty()) return false;
+    // Both sides as the filesystem resolves them: a home reached through a
+    // link (a borrowed registry) names its loader by either spelling.
+    std::error_code ec;
+    const auto home = std::filesystem::weakly_canonical(layout.home_of_store(store), ec);
+    if (ec || home.empty()) return false;
+    for (auto it = std::filesystem::directory_iterator(root / "bin", ec);
+         !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+        if (it->is_symlink(ec) || !it->is_regular_file(ec)) continue;
+        const auto interp = read_elf_interp(it->path());
+        if (interp.empty()) continue;
+        std::error_code iec;
+        const auto loader = std::filesystem::weakly_canonical(std::filesystem::path(interp), iec);
+        const auto rel = (iec ? std::filesystem::path(interp) : loader).lexically_relative(home);
+        return !rel.empty() && *rel.begin() != "..";
+    }
+    return false;
+}
+
+// WHICH TOOLCHAIN PAYLOADS RUN ON A C RUNTIME PAYLOAD, stated once. A GNU
+// gcc and an llvm on Linux by their recipes, before they are installed; any
+// payload, once its directory `root` is known, by its programs: they start
+// through a loader their provider home keeps (`starts_through_its_home`; the
+// emsdk payload, whose clang names the home's loader link; design 2026-11-14
+// §5.5). The
+// runtime they run on is the one the provider bound them to when it installed
+// them (its home's runtime pin, design 2026-10-16 §7.2); mcpp makes sure that
+// runtime is installed and linked, and writes nothing into the toolchain
+// (§7.1: the patchelf, specs and cfg rewrites that once lived here are gone).
+// Empty on every other payload and on Windows, where a PE toolchain has no C
+// runtime payload.
+export std::string_view runtime_payload_kind(const XimToolchainPackage& pkg,
+                                             const std::filesystem::path& root = {}) {
     if constexpr (mcpplibs::os::is_windows) return {};
     if (pkg.needsGccPostInstallFixup) return "gcc";
     if (pkg.ximName == "llvm")        return "llvm";
+    if (!root.empty() && starts_through_its_home(root)) return "elf";
     return {};
 }
 
@@ -198,7 +235,7 @@ export std::string_view runtime_payload_kind(const XimToolchainPackage& pkg) {
 // patchelf is not guaranteed to be resolved, and a dependency on an external
 // tool for four fields of a header is a dependency that will be missing on
 // exactly the machine that needs the answer.
-std::string read_elf_interp(const std::filesystem::path& bin) {
+export std::string read_elf_interp(const std::filesystem::path& bin) {
     std::ifstream is(bin, std::ios::binary);
     if (!is) return {};
     unsigned char ident[16]{};

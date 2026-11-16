@@ -208,9 +208,9 @@ inline mcpp::targetside::CAbiDataModel arch_default_data_model(
 // MSVC alike; every other OS this table covers follows the architecture's
 // own convention.
 inline mcpp::targetside::CAbiDataModel triple_native_data_model(
-    std::string_view os, std::string_view arch) {
+    std::string_view container, std::string_view arch) {
     using mcpp::targetside::CAbiDataModel;
-    if (os == "windows") return CAbiDataModel::Llp64;
+    if (container == "PE") return CAbiDataModel::Llp64;
     return arch_is_64bit(arch) ? CAbiDataModel::Lp64 : CAbiDataModel::Ilp32;
 }
 
@@ -230,8 +230,8 @@ inline mcpp::targetside::CAbiDataModel triple_native_data_model(
 // declaration asks for 32, regardless of what the toolchain would have
 // defaulted to — so the probe then measures the state the engine actually
 // produced, not the host's leak.
-inline int native_wchar_bits(std::string_view os) {
-    return os == "windows" ? 16 : 32;
+inline int native_wchar_bits(std::string_view container) {
+    return container == "PE" ? 16 : 32;
 }
 
 // `decl.declared` must be true — callers hold `TargetSide::cAbiDecl`, which is
@@ -242,7 +242,7 @@ inline int native_wchar_bits(std::string_view os) {
 // and what is missing (§3.2: "无法满足...明确拒绝并说明缺什么，不静默降级").
 inline std::expected<Realisation, std::string> realise(
     const mcpp::targetside::CAbiDecl& decl, std::string_view os,
-    std::string_view arch, bool freestanding) {
+    std::string_view arch, std::string_view container, bool freestanding) {
     using mcpp::targetside::CAbiPresents;
     using mcpp::targetside::CAbiDataModel;
 
@@ -255,7 +255,7 @@ inline std::expected<Realisation, std::string> realise(
             "       missing     {}\n"
             "       mcpp knows one realisation for a POSIX-presenting "
             "environment on a non-POSIX target: the Cygwin-flavoured "
-            "compile on Windows/x86_64 (design 2026-09-18 §3.3). Every "
+            "compile on a PE target, x86_64 (design 2026-09-18 §3.3). Every "
             "other combination this build asked for has no known mapping "
             "and is refused rather than silently approximated.",
             os, freestanding ? " (freestanding)" : "",
@@ -274,6 +274,16 @@ inline std::expected<Realisation, std::string> realise(
     // it to LP64 — a contradiction the mapping should refuse outright rather
     // than leave for the verification probe to catch after a real compile.
     bool cygwinIdentity = false;
+
+    // THE CONTAINER, NOT THE SYSTEM'S NAME, SELECTS THE MECHANISM (2026-11-13).
+    // What a compile line costs to present POSIX is a property of the
+    // toolchain's conventions for the container: a PE target is LLP64 with a
+    // sixteen-bit `wchar_t` and predefines `_WIN32` where it has a system, an
+    // ELF target predefines `__unix__`, a Mach-O target `__APPLE__`. A row a
+    // platform defines (`x86_64-uefi`, PE) is answered as the built-in rows of
+    // its container are, with no system name in this table; the verification
+    // probe below measures the result either way. `os` names the target in
+    // messages only.
 
     // ── `presents`: the environment-identity macros ─────────────────────────
     //
@@ -310,7 +320,7 @@ inline std::expected<Realisation, std::string> realise(
             return refuse("a freestanding target has no platform identity "
                           "macros to become `windows`");
         }
-    } else if (os == "windows") {
+    } else if (container == "PE") {
         if (decl.presents == CAbiPresents::Posix) {
             if (arch != "x86_64")
                 return refuse("the Cygwin-flavoured realisation is measured "
@@ -403,7 +413,7 @@ inline std::expected<Realisation, std::string> realise(
             return refuse("no known way to suppress every environment-"
                           "identity macro on a hosted Windows triple");
         }
-    } else if (os == "linux" || os == "freebsd" || os == "netbsd") {
+    } else if (container == "ELF") {
         if (decl.presents == CAbiPresents::Posix) {
             // The default triple already presents POSIX — nothing to add. The
             // BSDs' ELF triples predefine `__unix__` as Linux's does, and are
@@ -417,7 +427,7 @@ inline std::expected<Realisation, std::string> realise(
                 "identity belongs to a different object format",
                 os, mcpp::targetside::c_abi_presents_name(decl.presents)));
         }
-    } else if (os == "macos") {
+    } else if (container == "Mach-O") {
         if (decl.presents == CAbiPresents::Posix) {
             // UNLIKE LINUX: Apple's clang predefines `__APPLE__`/`__MACH__`
             // on its default triple, never `__unix__` (measured — this is
@@ -435,7 +445,7 @@ inline std::expected<Realisation, std::string> realise(
                 os, mcpp::targetside::c_abi_presents_name(decl.presents)));
         }
     } else {
-        return refuse("this OS is outside the mapping table §3.3 publishes");
+        return refuse(std::format("the {} container is outside the mapping table §3.3 publishes", container));
     }
 
     // ── `data-model` ─────────────────────────────────────────────────────────
@@ -455,7 +465,7 @@ inline std::expected<Realisation, std::string> realise(
         // instead of a false "already satisfied": the identity switch that
         // `presents = "posix"` required already left LLP64 behind.
         const auto effectiveNative = cygwinIdentity ? CAbiDataModel::Lp64
-                                                     : triple_native_data_model(os, arch);
+                                                     : triple_native_data_model(container, arch);
         if (want == effectiveNative) {
             // Already satisfied — the common case, and the only one that
             // needs no further check: `arch-default` on Linux/macOS/native
@@ -510,7 +520,7 @@ inline std::expected<Realisation, std::string> realise(
             // token that makes the compile match the declaration.
             r.tokens.push_back(decl.wcharBits == 32 ? "-fno-short-wchar"
                                                      : "-fshort-wchar");
-        } else if (decl.wcharBits != native_wchar_bits(os)) {
+        } else if (decl.wcharBits != native_wchar_bits(container)) {
             // Hosted: the target's own default is what the compile sees,
             // and `native_wchar_bits(os)` correctly captures it
             // (16 on Windows because MinGW headers bake in
@@ -604,15 +614,10 @@ inline std::expected<Realisation, std::string> realise(
     // idiom-triggering unit for `aarch64-macos` over the openkal stack and
     // asserts the symbol is absent from the object.
     //
-    // `os == "macos" || os == "ios"` IS `Triple::is_apple()`, SPELLED OUT.
-    // This module takes `os` as a string rather than a `Triple` on purpose ---
-    // it is pure, and importing `mcpp.toolchain-model` to reach one predicate
-    // would couple what that choice decoupled. The canonical list is
-    // `modules/toolchain-model/src/triple.cppm`; `ninja_backend.cppm` spells
-    // it out twice for the same reason. A new Apple OS in the vocabulary has
-    // to visit all three, and this comment is the grep target that says so.
+    // The Apple loop idioms belong to the Mach-O targets, whose system library
+    // is libSystem; the container is the row's (`Triple::object_format()`).
     if (decl.builtins == mcpp::targetside::CAbiBuiltins::Iso) {
-        if (!freestanding && (os == "macos" || os == "ios"))
+        if (!freestanding && container == "Mach-O")
             r.builtinsTokens.push_back("-fno-builtin");
     }
 

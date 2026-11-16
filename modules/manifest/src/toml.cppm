@@ -1256,6 +1256,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) {
                 pr.debug = it->second.as_bool();
                 pr.debugDeclared = true;
+            } else if (it != tt.end() && it->second.is_string()) {
+                pr.debugWritten = it->second.as_string();
+                pr.debug = pr.debugLines = pr.debugWritten == "lines";
+                pr.debugDeclared = true;
             }
             if (auto it = tt.find("lto"); it != tt.end() && it->second.is_bool()) {
                 pr.lto = it->second.as_bool();
@@ -3740,10 +3744,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 continue;
             }
             if (key == "programs") {
-                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"))
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"
+                                           && value.as_string() != "package"))
                     return std::unexpected(error(origin,
-                        "[test] programs is \"file\" (a test program per file, the default) or "
-                        "\"directory\" (the files of one directory are one program)"));
+                        "[test] programs is \"file\" (a test program per file, the default), "
+                        "\"directory\" (the files of one directory are one program) or \"package\" "
+                        "(the files the package discovers are one program)"));
                 m.testPrograms = value.as_string();
                 continue;
             }
@@ -3756,10 +3762,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             }
             if (key == "split") {
                 if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "case"
-                                           && value.as_string() != "none"))
+                                           && value.as_string() != "none" && value.as_string() != "auto"))
                     return std::unexpected(error(origin,
                         "[test] split is \"file\" (a process per file of a program's cases, the default), "
-                        "\"case\" (a process per case) or \"none\" (one process)"));
+                        "\"case\" (a process per case), \"auto\" (a process per file, and a file the run "
+                        "store measured longer than its share divided into groups of its cases) or \"none\" "
+                        "(one process)"));
                 m.testSplit = value.as_string();
                 continue;
             }
@@ -3771,10 +3779,41 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testLink = value.as_string();
                 continue;
             }
+            if (key == "features") {
+                // A feature the package does not declare is refused, as
+                // `--features` refuses it: the table is read only when this
+                // package is tested, so no consumer's engine reads it.
+                bool listOk = value.is_array();
+                if (listOk)
+                    for (auto& e : value.as_array())
+                        if (!e.is_string() || e.as_string().empty()) { listOk = false; break; }
+                if (!listOk)
+                    return std::unexpected(error(origin,
+                        "[test] features must be an array of feature names, e.g. [\"ktx2\"]"));
+                m.testFeatures.clear();
+                for (auto& e : value.as_array()) {
+                    const auto& f = e.as_string();
+                    if (!m.featuresMap.contains(f)) {
+                        std::string known;
+                        for (auto const& [name, _] : m.featuresMap) {
+                            if (name == "default") continue;
+                            known += (known.empty() ? "" : ", ") + name;
+                        }
+                        return std::unexpected(error(origin, std::format(
+                            "[test] features names '{}', which [features] does not declare{}", f,
+                            known.empty() ? std::string("; this package declares no features")
+                                          : std::format(" (declared: {})", known))));
+                    }
+                    if (std::ranges::find(m.testFeatures, f) == m.testFeatures.end())
+                        m.testFeatures.push_back(f);
+                }
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, link, main, programs, split, start, store, windows_code_page, windows_long_paths.", key));
+                    "discover, features, link, main, programs, split, start, store, windows_code_page, "
+                    "windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -4242,6 +4281,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // artefact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
             // of the conditional sub-table channel.
+            bool runnerAdjusts = false;   // a table without `cmd` (`{ enabled = true }`)
             if (auto it = body.find("runner"); it != body.end()) {
                 // The table form, `{ cmd = [...], host = "same-arch", exclusive =
                 // true }`, is the platform reader's (SPEC-013 §2.3); its command
@@ -4249,9 +4289,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 if (!it->second.is_array() && it->second.is_table()) {
                     mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                         &m.schemaWarnings};
-                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple));
+                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple), true);
                     if (!r) return std::unexpected(error(origin, r.error()));
                     e.runner = r->cmd;
+                    runnerAdjusts = !r->set;
                 } else if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner must be an array of strings or {{ cmd = [...], "
@@ -4265,7 +4306,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     }
                     e.runner.push_back(el.as_string());
                 }
-                if (e.runner.empty()) {
+                if (e.runner.empty() && !runnerAdjusts) {
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner is empty — an empty template would "
                         "run nothing and report success", triple)));
@@ -4288,9 +4329,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "\"download\", \"{{}}\"]", triple, triple)));
                 }
                 for (auto& [name, val] : it->second.as_table()) {
+                    // The table form is the default runner's (R2): the same keys.
+                    if (val.is_table()) {
+                        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                                            &m.schemaWarnings};
+                        auto r = rd.runner(val, std::format("[target.{}.runners].{}", triple, name), true);
+                        if (!r) return std::unexpected(error(origin, r.error()));
+                        if (r->set) e.namedRunners[name] = r->cmd;
+                        continue;
+                    }
                     if (!val.is_array()) {
                         return std::unexpected(error(origin, std::format(
-                            "[target.{}.runners].{} must be an array of strings",
+                            "[target.{}.runners].{} must be an array of strings or {{ cmd = [...] }}",
                             triple, name)));
                     }
                     std::vector<std::string> argv;
@@ -4410,7 +4460,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
                 "feature-xlings", "layers", "link", "priority", "requires_abi", "runners", "runtime",
-                "targets", "tools", "xlings",
+                "targets", "test", "tools", "xlings",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) {
@@ -4874,6 +4924,33 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 }
                 return {};
             };
+            // [target.<predicate>.test] (mcpp#942): the test programs of the
+            // targets the predicate selects, appended to `[test] discover`.
+            // Only `discover`: the other `[test]` keys shape the test build
+            // rather than add to its inputs, which is all a conditional
+            // section contributes.
+            if (auto t = body.find("test"); t != body.end()) {
+                if (!t->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}.test] must be a table", triple)));
+                for (auto& [tk, tv] : t->second.as_table()) {
+                    if (tk != "discover") {
+                        m.schemaWarnings.push_back(std::format(
+                            "[target.{}.test] has unsupported key '{}' (ignored). A conditional "
+                            "section contributes test programs only: discover.", triple, tk));
+                        continue;
+                    }
+                    bool listOk = tv.is_array();
+                    if (listOk)
+                        for (auto& e : tv.as_array())
+                            if (!e.is_string() || e.as_string().empty()) { listOk = false; break; }
+                    if (!listOk)
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.test] discover must be an array of non-empty glob strings, "
+                            "e.g. [\"!tests/native/**\"]", triple)));
+                    for (auto& e : tv.as_array()) cc.testDiscover.push_back(e.as_string());
+                }
+            }
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
             if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());

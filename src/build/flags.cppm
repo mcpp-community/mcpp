@@ -194,6 +194,15 @@ CompileFlags compute_build_contract_flags(const BuildPlan& plan);
 // by the build information a build program receives (#734 E2).
 dist::Format target_object_format(const mcpp::toolchain::Toolchain& tc);
 
+// THE SDK THE LINK NAMES with `-isysroot`, or empty when it names none. One
+// answer, read by the macOS link line and by the build programs
+// (`MCPP_TARGET_SDK`): a package that supplies a stub of a system library asks
+// whether the system's own is on the link, which only this decides. A Mach-O
+// link on a macOS host names one -- the located Apple SDK of a cross row, a
+// base stated as an Apple SDK, or the machine's SDK -- whichever party supplies
+// the C library; any other link names none.
+std::filesystem::path link_sdk(const mcpp::toolchain::Toolchain& tc);
+
 // #734 E2: the C++ runtime contract of the package's programs as the manifest
 // states it or its default gives it, spelled as `cxx_runtime` is written; and
 // on the MSVC ABI the CRT linkage that contract compiles with ("static" or
@@ -660,7 +669,7 @@ bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
 
 std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc) {
     std::string d = realises_optimization(bc) ? "optimized" : "unoptimized";
-    if (bc.debug) d += " + debuginfo";
+    if (bc.debug) d += bc.debugLines ? " + line tables" : " + debuginfo";
     if (bc.lto)   d += bc.ltoPartial ? " + lto (partial)" : " + lto";
     return d;
 }
@@ -676,6 +685,16 @@ dist::Format target_object_format(const mcpp::toolchain::Toolchain& tc) {
               mcpp::toolchain::platform::needs_explicit_libcxx ? dist::Format::MachO
             : mcpplibs::os::is_windows            ? dist::Format::Pe
                                                     : dist::Format::Elf);
+}
+
+std::filesystem::path link_sdk(const mcpp::toolchain::Toolchain& tc) {
+    if (link_shape(current_link_host(), target_object_format(tc), false, false) != LinkShape::AppleSdk)
+        return {};
+    if (!tc.base.apple.root.empty()) return tc.base.apple.root;
+    if (tc.base.stated() && tc.base.address == mcpp::toolchain::base::Address::AppleIsysroot)
+        return tc.base.root;
+    if (auto sdk = mcpp::toolchain::apple::sdk_path()) return *sdk;
+    return {};
 }
 
 std::string program_cxx_runtime(const mcpp::manifest::Manifest& m,
@@ -1113,6 +1132,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
                     return LinkIntentFlavor::Wasm;
                 case mcpp::toolchain::triple::ObjectFormat::Elf:
                     return LinkIntentFlavor::Elf;
+                case mcpp::toolchain::triple::ObjectFormat::Coff:
+                    // DJGPP links with GNU ld, which takes a search path and a
+                    // library in ELF's spelling (`-L`, `-l<name>`).
+                    return LinkIntentFlavor::Elf;
             }
         }
         auto triple = plan.toolchain.targetTriple;
@@ -1170,7 +1193,10 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     f.ldRuntimeFallback = farm_ld;
 
     std::filesystem::path binutilsBin;
-    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
+    // A self-contained cross payload finds its own assembler and linker under
+    // its prefix: musl, MinGW, and a payload a row names by its GCC target.
+    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++"
+        && !mcpp::toolchain::row_states_gcc_target(plan.toolchain)) {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
         if (!ar.empty())
             binutilsBin = ar.parent_path();
@@ -1193,7 +1219,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     std::string opt_flag = (isMsvcDialect && optLevel == "0")
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
         : std::format(" {}{}", d.optPrefix, optLevel);
-    if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
+    if (prof.debug) opt_flag += std::format(" {}", prof.debugLines ? d.lineDebugFlags : d.debugFlags);
     // DEBUG INFORMATION IS COMPRESSED where the linker copies it into every
     // artifact (mcpp#874): on ELF each program of a member, every test among
     // them, carries the DWARF of its whole closure, and zlib halves it (a
@@ -2256,16 +2282,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         //     incompatible with arm64 (iOS Simulator18.0.0)
         //
         // which is why the cross path also carries `--no-default-config`.
+        //
+        // The choice is `link_sdk`'s, which the build programs read as well.
         std::string macos_sdk;
-        if (appleCross) {
-            macos_sdk = " -isysroot "
-                      + escape_path(plan.toolchain.base.apple.root);
-        } else if (plan.toolchain.base.stated()
-                   && plan.toolchain.base.address == mcpp::toolchain::base::Address::AppleIsysroot) {
-            macos_sdk = " -isysroot " + escape_path(plan.toolchain.base.root);
-        } else if (auto sdk = mcpp::toolchain::apple::sdk_path()) {
-            macos_sdk = " -isysroot " + escape_path(*sdk);
-        }
+        if (const auto sdk = link_sdk(plan.toolchain); !sdk.empty())
+            macos_sdk = " -isysroot " + escape_path(sdk);
         // AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.
         //
         // `-isysroot` and the deployment floor describe the TARGET OS. Every

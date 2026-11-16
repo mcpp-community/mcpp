@@ -100,7 +100,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
-| `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
+| `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. Name the program (located as [41](41-devices.md) states), and only **one** dependency may supply it |
 | `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | add a **linker flag** this program computed, verbatim. The outlet `link-lib` / `link-search` / `link-script` leave open: a generated version script (`-Wl,--version-script=`), `-Wl,--wrap=malloc` for a runtime that takes over a C-library symbol, `-Wl,--exclude-libs,ALL` so a statically absorbed third party does not become part of this package's ABI. Appended after `[build] ldflags`, in emission order. **Reaches the consumer**, exactly as `[build] ldflags` does — see below |
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | set the PE subsystem (`console` or `windows`) of the executable `<target>` of **this** package, the same field as `[targets.<target>] windows_subsystem` (docs/04). Reaches that target's link and no other, never a consumer, and renders nothing on a target that is not PE. A target the package does not declare with `kind = "bin"`, a value outside the set, and a value that contradicts mcpp.toml are each refused before any directive is applied |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | set the entry function (`main`, `wmain`, `WinMain` or `wWinMain`) of the executable `<target>`, the same field as `windows_entry`; the scope and the refusals are those of `windows-subsystem` |
@@ -187,6 +187,7 @@ int main() {
 | `mcpp::seal(step, token)` *(protocol 17)* | `mcpp:seal=` — one token of seal step `step`, run on the linked file (`{}`) before it is published; `link.seal` |
 | `mcpp::run_host(h)` *(protocol 17)* | `mcpp:run-host=` — `"same-arch"` or `"any"`; `runner.host` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
+| `mcpp::runner_spec` *(protocol 19)* | `mcpp:runner-spec=` — a runner as one statement, the table of data field for field; see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package declared in `[xlings.workspace]` — by this manifest, or by a dependency compiled into this build program *(2026.9.6.6+)*; `""` when it was not declared or is not installed (see below) |
 | `mcpp::xpkg_source(ns, name)` / `mcpp::xpkg_program(ns, name)` *(protocol 15)* | where that payload comes from — `payload`, `override`, `pending`, or `""` — and the program an override named |
 | `mcpp::xpkg_request(ns, name)` / `mcpp::xpkg_pending()` *(protocol 15)* | the directory of a payload declared `provision = "on-request"`, asking for it when it is not installed yet; `xpkg_pending()` is then true and the program should return (see below) |
@@ -290,9 +291,13 @@ anyway, **it wins** — swapping `-bios default` for `-bios none -semihosting`
 while debugging is a legitimate thing to want — and mcpp says which dependency
 it overrode.
 
-**Emit the executable as an absolute path.** A bare name resolves through
-`PATH` to a shim that dispatches against its own owner home, which is not
-necessarily the home this build uses.
+**Name the program, not its path.** The first word is looked up in the
+packages of the runner's `requires`, then in the `bin/` of every payload the
+graph declares, then on `PATH`, never in the current directory
+([41 — Reaching a Device](41-devices.md)). A program outside a package's
+`bin/` is written `{pkg:<name>}/<path>` with the package in `requires`
+(`runner_spec` below), resolved when the run starts; an absolute path computed
+at build time fixes the home and the version into the statement.
 
 **Exactly one dependency may supply a runner.** Two board-support packages
 both claiming to know how to run the artifact is a configuration error, and
@@ -307,7 +312,37 @@ chooses between two runners chooses before it emits either. A runner named
 after a pack format reaches that format's distributable under `mcpp run
 --pkg-format <name>` ([41 — Reaching a Device](41-devices.md)).
 
-### Asking instead of declaring: `toolchain_dir` / `sysroot_dir` (2026.8.19.4+)
+### `runner_spec` — a runner as one statement (2026.11.16.1+, protocol 19)
+
+A runner in data is a table (`runner = { cmd = [...], requires = [...], ... }`,
+[41](41-devices.md)); `mcpp::runner_spec` is that table in a build program,
+field for field, submitted as one directive:
+
+```cpp
+mcpp::runner_spec web;
+web.name      = "web";                          // empty: the default runner
+web.longlived = true;                           // no natural end
+web.arg("{pkg:emsdk}/emscripten/emrun").arg("{}")
+   .require("xim:emsdk");
+web.submit();
+```
+
+| Table key | `runner_spec` |
+|---|---|
+| `cmd` | `.arg(tok)`, as `action.arg()` |
+| `longlived`, `exclusive`, `enabled` | fields of the same name (`enabled` defaults to `true`) |
+| `host` | the field of the same name (`"same-arch"`, `"any"`) |
+| `hosts` | `.hosts(pair)`, one `<os>-<arch>` per call |
+| `requires` | `.require(pkg)`: `requires` is a C++ keyword |
+
+`{}` is the artifact and `{pkg:<name>}` the root of a package of `require()`,
+installed by the first `mcpp run` or `mcpp test` that uses the runner, never by
+a build. A runner is stated one way: a name stated by `runner_spec` and by the
+token calls, a `runner_spec` submitted twice for a name, one without a command,
+or a `host` other than the two words is refused before anything is applied.
+The token calls keep their meaning; overriding, `enabled` and the one supplier
+per name follow the rules of data.
+: `toolchain_dir` / `sysroot_dir` (2026.8.19.4+)
 
 ```cpp
 const char* tc = mcpp::toolchain_dir();   // the resolved toolchain's payload root
@@ -1033,6 +1068,21 @@ pass their own format — and makes the set unknowable for everyone else. mcpp
 refuses a format nothing submitted for, rather than reporting a pack that
 produced no package.
 
+**The program a provider assembles from.** A provider that wraps one program of
+the package being packed states which, unconditionally, beside the declaration:
+
+```cpp
+mcpp::provides_pack_format("web");
+mcpp::pack_program("app");          // protocol 19, mcpp 2026.11.16.1
+```
+
+`mcpp pack --pkg-format web` with no program named then packs `app`; a program
+named on the command line outranks it, and a stated program the build does not
+have is refused by the provider's name. When a provider submits nothing in the
+second pass, the refusal lists the warnings it stated there (`mcpp::warning`,
+`mcpp::report`) as its reasons, so a provider explains a decline with either and
+not with its standard error, which mcpp shows only for a program that fails.
+
 **`mcpp pack --pkg-format <name>` prepares twice.** An `artifact` action is a ninja
 edge and the staged tree is produced by mcpp *after* the link, so the tree
 cannot be an input of the pass that built it. The first pass collects the
@@ -1349,6 +1399,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_KERNEL_ABI_INTERFACES` *(2026.11.10.1+)* | `mcpp::kernel_abi_interfaces()` | for a package that states `requires = ["mcpp:kernel-abi=..."]`: the `provides-interfaces` of the resolved kernel-abi provider, joined by `;` (`openkal.fs;openkal.process;...`). Always set; empty when the provider states no list or the package states no such requirement, which a program reads as "unknown" and answers by binding every interface |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
+| `MCPP_TARGET_SDK` *(2026.11.14.1+)* | `mcpp::target_sdk()` | the SDK the link names with `-isysroot` (a Mach-O link on a macOS host); empty when it names none. A package that supplies a stub of a system library supplies it only where this is empty: elsewhere the SDK's complete library is on the link |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | the directory mcpp names with `-B`; empty when it names none (a musl or MinGW payload brings its own assembler and linker) |
 | `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | the C++ standard library the resolved toolchain uses — `libstdc++`, `libc++`, `msvc-stl`; empty when no toolchain resolved. A different question from `MCPP_TARGET_LIBC`, which is the C library |

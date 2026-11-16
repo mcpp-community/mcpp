@@ -831,8 +831,13 @@ The other legs are planned one after another and built at once
 directory, picks the architecture directory from `uname -m` (`x86_64`, `amd64`
 → `x86_64`; `aarch64`, `arm64` → `aarch64`), hands a Git Bash, MSYS or Cygwin
 shell to `bin/<name>.exe`, and starts the runner on the image there with its
-own arguments, looking for the runner first in `libexec/<runner>/<os>-<arch>/`
-and then on `PATH`. The Windows launcher is the engine's program built for
+own arguments. A package that carries its runner starts the one in
+`libexec/<runner>/<os>-<arch>/`, and on a machine it holds none for exits with
+status 126, naming the machine and the systems it holds; a package that carries
+none finds the runner on `PATH`. `<os>` is the system whose `uname -s` word the
+system table records (`linux`, `macos`, `freebsd`, ...). Under `--all-programs`
+every program of the package has its own pair of launchers, `bin/<name>` and
+`bin/<name>.exe`. The Windows launcher is the engine's program built for
 `x86_64-windows-gnu`: it finds the package from its own path, picks the image
 of the machine's architecture, and starts the runner the same way; no `.cmd` is
 written. Where the build's platform has a hosted arrangement for that row, the

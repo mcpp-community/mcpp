@@ -106,6 +106,10 @@ struct BuildProgramEnv {
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
     std::string toolchainDir;
     std::string targetSysroot;
+    // The SDK the link names with `-isysroot` (`link_sdk`), empty when it
+    // names none: whether the system's own stubs of its libraries are on the
+    // link, which a package that supplies a stub of one must ask.
+    std::string targetSdk;
     // THE TWO ANSWERS A SECOND COMPILER NEEDS AND CANNOT DERIVE.
     //
     // `toolchainSysroot` is the `--sysroot` mcpp passes to its own compiler and
@@ -342,7 +346,7 @@ struct BuildProgramEnv {
     // A run that asked for a payload (`mcpp:xpkg-request=`) is normally
     // DISCARDED: the requests are handed back in `xpkgRequests`, nothing else
     // is applied and nothing is cached, because the engine installs the
-    // payloads and runs the program again. Under `plan_only` no payload is
+    // payloads and runs the program again. Under `PrepareIntent::Describe` no payload is
     // installed, so the run is kept -- applied, reported, and still not cached,
     // so the next build asks again.
     bool keepRequestingRun = false;
@@ -671,23 +675,17 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // one that a platform package has to ask: **was this build POINTED at a
     // target**, or is it an ordinary native build?
     //
-    // The two are not the same even when the triples are equal. `mcpp build
-    // --target aarch64-macos` on an arm64 Mac names the same machine the host
-    // is, and yet it is the graph that supplies the target side — so this tool
-    // puts no system SDK on the link, and the package that knows the system is
-    // the only thing that can name one. A native build on the same machine gets
-    // the SDK and needs nothing from the package.
+    // The two are not the same even when the triples are equal: `mcpp build
+    // --target aarch64-macos` on an arm64 Mac names the machine the host is.
     //
-    // Measured 2026-08-23, `openkal-macos` trying to decide this from what
-    // was available. From the host: right for the cross, wrong for
-    // `--target aarch64-macos` ON a Mac (`library not found for -lSystem`).
-    // From `MCPP_TARGET`: right for the cross, wrong for the native build,
-    // because it is never empty (`undefined symbol: wcslen`, `strtoul`, … —
-    // the package's three-name stub had shadowed the vendor's complete one).
-    //
-    // An older mcpp sets neither, and that is the correct answer for it:
-    // it has no graph-supplied target side, so the system is always on the
-    // link and a package should supply nothing.
+    // WHETHER THE SYSTEM'S OWN LIBRARIES ARE ON THE LINK IS A SEPARATE QUESTION,
+    // answered by `MCPP_TARGET_SDK` below. This paragraph once answered it from
+    // this variable ("a requested target puts no system SDK on the link"); the
+    // link has named the SDK on every Mach-O link of a macOS host since
+    // 2026.8.25.2, and `openkal-macos`, which supplied its three-name
+    // `libSystem` stub on a requested target, shadowed the SDK's complete one
+    // (`undefined symbol: strlen`, canary `cxx aarch64-macos test`,
+    // 2026-11-14).
     e.emplace_back("MCPP_TARGET_REQUESTED", env.targetTriple);
     e.emplace_back("MCPP_TARGET_PROVIDER", env.targetProvider);
     e.emplace_back("MCPP_KERNEL_ABI_INTERFACES", env.kernelAbiInterfaces);
@@ -712,6 +710,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_CXX_STDLIB", shared_value("MCPP_CXX_STDLIB"));
     e.emplace_back("MCPP_CXX_ABI_ROOT", env.cxxAbiRoot);
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
+    e.emplace_back("MCPP_TARGET_SDK", env.targetSdk);
     // #734 E2. Every key always, empty when it does not apply, for the reason
     // the lines above give.
     for (auto key : kBuildInformationKeys) {
@@ -1335,6 +1334,9 @@ std::expected<void, std::string> run_build_program_impl(
     if (auto derr = dirs::deploy_directive_error(m, d); !derr.empty()) {
         return std::unexpected(derr);
     }
+    if (auto rerr = dirs::runner_spec_error(d); !rerr.empty()) {
+        return std::unexpected(rerr);
+    }
     // GLOB INPUTS OUTSIDE THE PACKAGE (#766). A registry or git dependency's
     // tree sits in the package store, whose other contents depend on what
     // else is installed: a pattern leaving that package would make its re-run
@@ -1478,7 +1480,7 @@ std::expected<void, std::string> run_build_program_impl(
     for (auto const& a : dirs::advisories(m.package.name, d))
         mcpp::ui::warning(a);
     report_stated_diagnostics(m.package.name, d);
-    // A run kept although it asked for a payload (`plan_only`) is never
+    // A run kept although it asked for a payload (`PrepareIntent::Describe`) is never
     // cached: replaying it would keep the build from ever asking again.
     if (cacheThisRun) {
         write_cache(bdir, root, programHash, compilerHash, ctxHash, d);

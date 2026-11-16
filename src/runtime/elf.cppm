@@ -993,15 +993,24 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
         || reader.bytes[2] != 'L' || reader.bytes[3] != 'F')
         return std::unexpected(std::format(
             "artifact '{}' is not ELF", artifact.string()));
-    if (reader.bytes[4] != 2 || reader.bytes[5] != 1)
+    // Either class (i386's programs and images are ELF32): the header, the
+    // program headers and the dynamic entries differ in width and place; the
+    // strings and the version-need records do not.
+    if ((reader.bytes[4] != 1 && reader.bytes[4] != 2) || reader.bytes[5] != 1)
         return std::unexpected(std::format(
-            "artifact '{}' is not ELF64 little-endian", artifact.string()));
+            "artifact '{}' is not little-endian ELF", artifact.string()));
+    const bool wide = reader.bytes[4] == 2;
+    auto word = [&](std::uint64_t off) -> std::optional<std::uint64_t> {
+        if (wide) return reader.u64(off);
+        if (auto v = reader.u32(off)) return *v;
+        return std::nullopt;
+    };
 
     auto type = reader.u16(0x10);
-    auto phoff = reader.u64(0x20);
-    auto phentsize = reader.u16(0x36);
-    auto phnum = reader.u16(0x38);
-    if (!type || !phoff || !phentsize || !phnum || *phentsize < 0x38
+    auto phoff = word(wide ? 0x20 : 0x1c);
+    auto phentsize = reader.u16(wide ? 0x36 : 0x2a);
+    auto phnum = reader.u16(wide ? 0x38 : 0x2c);
+    if (!type || !phoff || !phentsize || !phnum || *phentsize < (wide ? 0x38 : 0x20)
         || *phnum > 4096
         || !reader.range(*phoff, static_cast<std::uint64_t>(*phentsize) * *phnum))
         return std::unexpected(std::format(
@@ -1015,9 +1024,9 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
     for (std::uint16_t i = 0; i < *phnum; ++i) {
         auto off = *phoff + static_cast<std::uint64_t>(i) * *phentsize;
         auto ptype = reader.u32(off);
-        auto poff = reader.u64(off + 0x08);
-        auto pvaddr = reader.u64(off + 0x10);
-        auto pfilesz = reader.u64(off + 0x20);
+        auto poff = word(off + (wide ? 0x08 : 0x04));
+        auto pvaddr = word(off + (wide ? 0x10 : 0x08));
+        auto pfilesz = word(off + (wide ? 0x20 : 0x10));
         if (!ptype || !poff || !pvaddr || !pfilesz
             || !reader.range(*poff, *pfilesz))
             return std::unexpected(std::format(
@@ -1034,14 +1043,15 @@ inspect_elf_runtime(const std::filesystem::path& artifact) {
     }
 
     if (!dynamic) return out; // static ELF or relocatable object
-    if (dynamic->filesz % 16 != 0) return std::unexpected(std::format(
+    const std::uint64_t entry = wide ? 16 : 8;
+    if (dynamic->filesz % entry != 0) return std::unexpected(std::format(
         "artifact '{}' has a malformed PT_DYNAMIC", artifact.string()));
 
     std::vector<std::pair<std::uint64_t, std::uint64_t>> entries;
     for (std::uint64_t off = dynamic->offset;
-         off + 16 <= dynamic->offset + dynamic->filesz; off += 16) {
-        auto tag = reader.u64(off);
-        auto value = reader.u64(off + 8);
+         off + entry <= dynamic->offset + dynamic->filesz; off += entry) {
+        auto tag = word(off);
+        auto value = word(off + entry / 2);
         if (!tag || !value) return std::unexpected(std::format(
             "artifact '{}' has a truncated dynamic entry", artifact.string()));
         if (*tag == detail::kDtNull) break;

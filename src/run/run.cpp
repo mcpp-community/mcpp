@@ -13,6 +13,8 @@ import mcpplibs.os.interrupt;
 import mcpp.invocation;
 import mcpp.build.command_line;
 import mcpp.runtime.launch_env;
+import mcpp.toolchain.platform;
+import mcpp.toolchain.target_rows;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -44,11 +46,20 @@ std::map<int, std::function<void()>>& cleanups() {
     return c;
 }
 
+std::atomic<bool> g_finishing{false};
+
 // A started program, ended with mcpp at a request for as long as this lives.
+// One that ends while mcpp ends at a request (it was asked to, below) leaves
+// nothing of its unit: what it started is ended with it, as it would have
+// been had the program still run when the request's moment was over.
 struct Registered {
     Process* p;
     explicit Registered(Process* q) : p(q) { std::lock_guard g(g_live); live().insert(p); }
-    ~Registered() { std::lock_guard g(g_live); live().erase(p); }
+    ~Registered() {
+        if (g_finishing.load()) p->end_unit();
+        std::lock_guard g(g_live);
+        live().erase(p);
+    }
     Registered(const Registered&) = delete;
     Registered& operator=(const Registered&) = delete;
 };
@@ -57,7 +68,6 @@ struct Registered {
 // A second caller returns when the first has finished: what it ends then is
 // the state the request left. A cleanup that reaches it again from within (a
 // terminal's mode restored onto an output with no reader) returns at once.
-std::atomic<bool> g_finishing{false};
 std::once_flag g_finished;
 thread_local bool t_finishing = false;
 void finish_once() {
@@ -70,6 +80,25 @@ void finish_once() {
         std::lock_guard g(g_files);
         for (auto const& [path, content] : interrupt_files())
             (void)os::fs::write_atomic(path, content);
+    }
+    // A REQUEST FIRST, THEN THE END. A program asked to end ends what it
+    // started: ninja ends each command it started, in a process group of the
+    // command's own, which ending ninja's unit outright does not reach, and a
+    // Ctrl-C left them running (a prepare action alive 3 s after mcpp ended,
+    // e2e 845). Each program is asked, the programs are given a moment to
+    // end, and what still runs is then ended with its unit.
+    {
+        std::lock_guard g(g_live);
+        for (auto* p : live()) p->terminate();
+    }
+    const auto grace = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+        {
+            std::lock_guard g(g_live);
+            if (live().empty()) break;
+        }
+        if (std::chrono::steady_clock::now() >= grace) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     {
         std::lock_guard g(g_live);
@@ -180,6 +209,24 @@ std::optional<std::filesystem::path> program_of(const std::string& name) {
     return mcpp::invocation::which(name);
 }
 
+// A SCRIPT THIS MACHINE STARTS THROUGH ITS COMMAND INTERPRETER (the system
+// table's `command-scripts`), given an argument the interpreter would read as
+// syntax: the refusal, or empty. Decided before the start, so the argument is
+// neither rewritten nor run as a command (design 2026-11-15 R2, A3).
+std::string command_script_refusal(const std::filesystem::path& program, std::span<const std::string> args) {
+    auto const* sys = mcpp::toolchain::target::find_system(mcpp::toolchain::platform::name);
+    if (!sys || sys->commandScripts.empty()) return {};
+    auto ext = program.extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (std::ranges::find(sys->commandScripts, std::string_view(ext)) == sys->commandScripts.end()) return {};
+    auto problem = mcpp::build::command_line::command_script_problem(args);
+    if (problem.empty()) return {};
+    return std::format("cannot start '{}': {}; a {} file is started through the command interpreter, and the "
+                       "argument is refused rather than rewritten. Start a program (.exe) instead, or pass the "
+                       "value another way (a file, an environment variable).\n",
+                       program.string(), problem, ext);
+}
+
 // Lines of `acc` up to its last line end, to `on_line`, without the ends.
 void deliver_lines(std::string& acc, const std::function<void(std::string_view)>& on_line, bool splitOnCr,
                    bool all) {
@@ -215,6 +262,11 @@ Outcome launch(const Spec& s) {
     o.program = *program;
     o.argv0 = s.argv.front();
     o.args.assign(s.argv.begin() + 1, s.argv.end());
+    if (auto why = command_script_refusal(*program, o.args); !why.empty()) {
+        out.spawn_error = static_cast<int>(std::errc::invalid_argument);
+        out.spawn_message = std::move(why);
+        return out;
+    }
     o.cwd = s.cwd;
     o.env = child_env(s.env, s.hostTool, s.unset);
     o.in = s.nullInput ? os::process::stdio::null : os::process::stdio::inherit;
@@ -325,10 +377,13 @@ Outcome launch(const Spec& s) {
                   || (s.shouldStop && *s.shouldStop))) {
         // Stream EOF is independent of child completion. Keep the same bounds
         // through the final wait, including inherited and discarded streams.
-        for (;;) {
-            auto waited = p->wait_for(std::chrono::milliseconds(20));
+        // Polled with the wait lock free between polls (see below), from 1 ms
+        // growing to 20 ms: a program that ends at once is seen at once.
+        for (auto pause = std::chrono::milliseconds(1);; pause = std::min(pause * 2, std::chrono::milliseconds(20))) {
+            auto waited = p->try_wait();
             if (!waited || waited->has_value()) break;
             if (should_stop()) { stop = true; break; }
+            std::this_thread::sleep_for(pause);
         }
     }
     if (stop) {
@@ -336,7 +391,19 @@ Outcome launch(const Spec& s) {
         p->kill();
         out.timed_out = true;
     }
-    auto st = p->wait();
+    // POLLED, NOT ONE BLOCKING WAIT: a wait holds the program's wait lock for
+    // as long as it blocks, and the request to end it (`terminate', above)
+    // takes that lock, so an interrupt waited behind the program it was to
+    // end. Between the polls the lock is free: a timed wait that releases it
+    // only to take it again at once starved the request (measured: an action
+    // ignored SIGTERM for as long as its program ran).
+    std::optional<os::process::exit_status> st;
+    for (auto pause = std::chrono::milliseconds(1);; pause = std::min(pause * 2, std::chrono::milliseconds(20))) {
+        auto waited = p->try_wait();
+        if (!waited) break;
+        if (waited->has_value()) { st = **waited; break; }
+        std::this_thread::sleep_for(pause);
+    }
     out.exit_code = st ? st->shell_code() : 127;
     return out;
 }
@@ -447,6 +514,11 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
         o.program = *program;
         o.argv0 = argv.front();
         o.args.assign(argv.begin() + 1, argv.end());
+        if (auto why = command_script_refusal(*program, o.args); !why.empty()) {
+            if (spawn_error) *spawn_error = static_cast<int>(std::errc::invalid_argument);
+            else std::fputs(why.c_str(), libc::stderr());
+            return 125;
+        }
         o.env = child_env(extraEnv, false);
         o.in = o.out = o.err = os::process::stdio::inherit;
         std::fflush(libc::stdout());

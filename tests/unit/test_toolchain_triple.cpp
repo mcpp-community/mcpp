@@ -2,6 +2,8 @@
 import std;
 import mcpplibs.mtest;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;
 
 using namespace mcpplibs::mtest;
 
@@ -1084,4 +1086,35 @@ UTest openkal_is_an_image_for_no_operating_system{"Triple/OpenkalIsAnImageForNoO
     expect(fatal(ne(row, nullptr)));
     expect(eq(row->pin, "llvm@23.1.3"));
     expect(eq(platform_name(*a), "openkal"));
+}};
+
+// ── a compile triple that names no system (2026.11.13.1) ────────────────────
+
+// A row a platform defines over `<arch>-unknown-none-elf' is compiled as for no
+// operating system, as a bare machine and an ok image are: the C environment's
+// identity macros are then the C library's alone. A row of a system is not.
+UTest compiler_told_no_os_follows_the_compile_triple{"Triple/CompilerToldNoOsFollowsTheCompileTriple", [] {
+    namespace tg = mcpp::toolchain::target;
+    tg::DefinitionSet set;
+    set.source = "test-platform";
+    auto& id = set.strings.emplace_back("i686-dos-musl");
+    auto& clang = set.strings.emplace_back("i386-unknown-none-elf");
+    tg::Row r{};
+    r.triple = id;
+    r.arch = std::string_view(id).substr(0, 4);
+    r.os = std::string_view(id).substr(5, 3);
+    r.env = std::string_view(id).substr(9);
+    r.clangTriple = clang;
+    r.objectFormat = "elf";
+    r.execution = "dos";
+    set.rows.push_back(r);
+    tg::define(std::move(set));
+
+    auto dos = parse("i686-dos-musl");
+    expect(fatal(dos.has_value()));
+    expect(eq(dos->llvm_triple(), "i386-unknown-none-elf"));
+    expect(dos->compiler_told_no_os());
+    expect(parse("x86_64-openkal")->compiler_told_no_os()) << "an ok image";
+    expect(!parse("x86_64-linux-musl")->compiler_told_no_os());
+    expect(!parse("x86_64-windows-gnu")->compiler_told_no_os());
 }};

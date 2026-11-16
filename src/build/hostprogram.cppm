@@ -57,12 +57,13 @@ inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-di
 // carries one value per line. The artifact path is appended by mcpp, or
 // substituted for a `{}` token if one is present.
 //
-// Emit the executable as an ABSOLUTE path. A bare name resolves through
-// PATH to a shim that dispatches against its OWNER home, which is not
-// necessarily the home this build uses; measured in CI as
-// `xlings: 'qemu-system-riscv64' is not installed` from a job where the same
-// bare name had answered `--version` two steps earlier. `xpkg_dir()` is how a
-// package finds the payload it declared.
+// Name the program. mcpp looks for it in the runner's `requires`, then in
+// the `bin/` of every payload the graph declares, then on PATH (docs/41); a
+// program outside a package's `bin/` is `{pkg:<name>}/<path>`, its package
+// among `requires` (`runner_spec`). A bare name that reached PATH alone
+// resolved to a shim dispatching against its OWNER home (measured in CI as
+// `xlings: 'qemu-system-riscv64' is not installed`), which the payload
+// search answers first.
 //
 // Exactly one dependency may supply this. Two board-support packages both
 // claiming to know how to run the artifact is a configuration error, and mcpp
@@ -178,6 +179,19 @@ inline void provides_pack_format(const char* name) {
     std::printf("mcpp:pack-format=%s\n", name);
 }
 
+// The program of the package being packed that this provider assembles its
+// distributable from (protocol 19). `mcpp pack --pkg-format <format>` with no
+// program named packs this one, as `mcpp pack <program>` would; a named
+// program outranks it. Declared unconditionally, as `provides_pack_format`
+// is, for the same reason: the program is chosen from the build that precedes
+// the packaging pass.
+//
+//     mcpp::provides_pack_format("web");
+//     mcpp::pack_program("app");
+inline void pack_program(const char* name) {
+    std::printf("mcpp:pack-program=%s\n", name);
+}
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.
@@ -277,6 +291,102 @@ namespace roles {
     // unpacking an SDK. See `action::output_dir` below for its contract.
     inline constexpr const char* prepare  = "prepare";
 }
+// THE JSON OF A DECLARATION (an action, a runner): a list field held already
+// serialised, a string literal, and one entry of a list, by one rule.
+namespace json_detail {
+// One list field, held already serialised (`"a","b"`) so submit() prints
+// it as it is. Owning and std-free, and both words are constraints this
+// module carries: it may be compiled before a std BMI exists, so it must
+// not `import std;`, and its exported interface must name no std type, so
+// `std::string` may not appear in a signature. Neither forbids the heap:
+// storage is `realloc` from the `<cstdlib>` already in the global module
+// fragment, and no exported signature mentions this type.
+//
+// An earlier revision held six fixed arrays (8192 bytes for `inputs` and
+// `outputs`, chosen for a protoc command line) and a declaration that did
+// not fit was refused. The bound was in bytes of serialised JSON, so a
+// consumer's checkout depth decided whether a resource list of 44 files
+// fit (HuxerUI#130 measured the margin at 45 bytes), and `outputs` is the
+// one list an author cannot shorten: an output the program does not name
+// cannot be built, and there is no depfile for outputs. See
+// .agents/docs/2026-09-13-four-upstream-asks-from-a-ui-framework.md.
+struct list {
+    char* p = nullptr;
+    unsigned long len = 0, cap = 0;
+    list() = default;
+    list(const list& o) { take(o); }
+    list& operator=(const list& o) { if (this != &o) { len = 0; take(o); } return *this; }
+    ~list() { std::free(p); }
+    const char* c_str() const { return p ? p : ""; }
+    // Grows by doubling. False only when the allocator refuses.
+    bool reserve(unsigned long need) {
+        if (need <= cap) return true;
+        unsigned long c = cap ? cap : 256;
+        while (c < need) c *= 2;
+        void* q = std::realloc(p, c);
+        if (!q) return false;
+        p = static_cast<char*>(q);
+        cap = c;
+        return true;
+    }
+    bool put(char c) {
+        if (!reserve(len + 2)) return false;
+        p[len++] = c;
+        p[len] = 0;
+        return true;
+    }
+    void take(const list& o) {
+        if (!o.len) { if (p) p[0] = 0; return; }
+        if (!reserve(o.len + 1)) return;
+        for (unsigned long i = 0; i <= o.len; ++i) p[i] = o.p[i];
+        len = o.len;
+    }
+};
+inline void esc(const char* s) {
+    std::putchar('"');
+    for (const char* p = s; *p; ++p) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') { std::putchar('\\'); std::putchar(c); continue; }
+        // Any control character has to be escaped or the payload is not
+        // JSON at all. \n was handled before; \t and \r reach this code
+        // through ordinary Windows paths and log text.
+        if (c < 0x20) { std::printf("\\u%04x", c); continue; }
+        std::putchar(c);
+    }
+    std::putchar('"');
+}
+// Appends one JSON string literal, with the escaping `esc` applies, so a
+// list entry and a scalar field are encoded by one rule. A payload that
+// decoded under the fixed-array revision is encoded to the same bytes
+// here: that revision escaped `"` and `\\` and passed control characters
+// through, and a control character passed through was not JSON, so no
+// payload the engine accepted contained one.
+// `value`, when given, is appended to `s` after an `=`, inside the same
+// string literal: one `env` entry is one `NAME=value` string.
+inline bool add(list& l, const char* s, const char* value = nullptr) {
+    bool ok = true;
+    if (l.len) ok = ok && l.put(',');
+    ok = ok && l.put('"');
+    auto body = [&](const char* text) {
+        for (const char* p = text; ok && *p; ++p) {
+            unsigned char c = (unsigned char)*p;
+            if (c == '"' || c == '\\') { ok = l.put('\\') && l.put((char)c); continue; }
+            if (c < 0x20) {
+                static const char hex[] = "0123456789abcdef";
+                ok = l.put('\\') && l.put('u') && l.put('0') && l.put('0')
+                  && l.put(hex[c >> 4]) && l.put(hex[c & 0xf]);
+                continue;
+            }
+            ok = l.put((char)c);
+        }
+    };
+    body(s);
+    if (value) { ok = ok && l.put('='); body(value); }
+    ok = ok && l.put('"');
+    return ok;
+}
+} // namespace json_detail
+
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is
@@ -287,6 +397,7 @@ namespace roles {
 // and the module graph during prepare, so an output whose name is unknown
 // cannot be built. Content may arrive later; names may not.
 struct action {
+    using list = json_detail::list;
     const char* id          = "";
     const char* role        = roles::source; // one of `roles::{source, check, object, artifact, prepare}`
     const char* description = "";
@@ -372,104 +483,60 @@ struct action {
         std::printf("}\n");
     }
 private:
-    // One list field, held already serialised (`"a","b"`) so submit() prints
-    // it as it is. Owning and std-free, and both words are constraints this
-    // module carries: it may be compiled before a std BMI exists, so it must
-    // not `import std;`, and its exported interface must name no std type, so
-    // `std::string` may not appear in a signature. Neither forbids the heap:
-    // storage is `realloc` from the `<cstdlib>` already in the global module
-    // fragment, and no exported signature mentions this type.
-    //
-    // An earlier revision held six fixed arrays (8192 bytes for `inputs` and
-    // `outputs`, chosen for a protoc command line) and a declaration that did
-    // not fit was refused. The bound was in bytes of serialised JSON, so a
-    // consumer's checkout depth decided whether a resource list of 44 files
-    // fit (HuxerUI#130 measured the margin at 45 bytes), and `outputs` is the
-    // one list an author cannot shorten: an output the program does not name
-    // cannot be built, and there is no depfile for outputs. See
-    // .agents/docs/2026-09-13-four-upstream-asks-from-a-ui-framework.md.
-    struct list {
-        char* p = nullptr;
-        unsigned long len = 0, cap = 0;
-        list() = default;
-        list(const list& o) { take(o); }
-        list& operator=(const list& o) { if (this != &o) { len = 0; take(o); } return *this; }
-        ~list() { std::free(p); }
-        const char* c_str() const { return p ? p : ""; }
-        // Grows by doubling. False only when the allocator refuses.
-        bool reserve(unsigned long need) {
-            if (need <= cap) return true;
-            unsigned long c = cap ? cap : 256;
-            while (c < need) c *= 2;
-            void* q = std::realloc(p, c);
-            if (!q) return false;
-            p = static_cast<char*>(q);
-            cap = c;
-            return true;
-        }
-        bool put(char c) {
-            if (!reserve(len + 2)) return false;
-            p[len++] = c;
-            p[len] = 0;
-            return true;
-        }
-        void take(const list& o) {
-            if (!o.len) { if (p) p[0] = 0; return; }
-            if (!reserve(o.len + 1)) return;
-            for (unsigned long i = 0; i <= o.len; ++i) p[i] = o.p[i];
-            len = o.len;
-        }
-    };
     list inputs_, outputs_, command_, provides_, imports_, targets_, env_;
     // `prepare` only: see `output_dir()` above. A plain `const char*`, not a
     // `list`: it is one directory, never a JSON array.
     const char* outputDir_ = "";
     const char* cwd_ = "";
     mutable bool overflow_ = false;
-    static void esc(const char* s) {
-        std::putchar('"');
-        for (const char* p = s; *p; ++p) {
-            unsigned char c = (unsigned char)*p;
-            if (c == '"' || c == '\\') { std::putchar('\\'); std::putchar(c); continue; }
-            // Any control character has to be escaped or the payload is not
-            // JSON at all. \n was handled before; \t and \r reach this code
-            // through ordinary Windows paths and log text.
-            if (c < 0x20) { std::printf("\\u%04x", c); continue; }
-            std::putchar(c);
-        }
-        std::putchar('"');
-    }
-    // Appends one JSON string literal, with the escaping `esc` applies, so a
-    // list entry and a scalar field are encoded by one rule. A payload that
-    // decoded under the fixed-array revision is encoded to the same bytes
-    // here: that revision escaped `"` and `\\` and passed control characters
-    // through, and a control character passed through was not JSON, so no
-    // payload the engine accepted contained one.
-    // `value`, when given, is appended to `s` after an `=`, inside the same
-    // string literal: one `env` entry is one `NAME=value` string.
+    static void esc(const char* s) { json_detail::esc(s); }
+    // One entry of a list field; a list the allocator refused marks the
+    // declaration cut short (`overflow`).
     bool add(list& l, const char* s, const char* value = nullptr) {
-        bool ok = true;
-        if (l.len) ok = ok && l.put(',');
-        ok = ok && l.put('"');
-        auto body = [&](const char* text) {
-            for (const char* p = text; ok && *p; ++p) {
-                unsigned char c = (unsigned char)*p;
-                if (c == '"' || c == '\\') { ok = l.put('\\') && l.put((char)c); continue; }
-                if (c < 0x20) {
-                    static const char hex[] = "0123456789abcdef";
-                    ok = l.put('\\') && l.put('u') && l.put('0') && l.put('0')
-                      && l.put(hex[c >> 4]) && l.put(hex[c & 0xf]);
-                    continue;
-                }
-                ok = l.put((char)c);
-            }
-        };
-        body(s);
-        if (value) { ok = ok && l.put('='); body(value); }
-        ok = ok && l.put('"');
+        const bool ok = json_detail::add(l, s, value);
         if (!ok) overflow_ = true;
         return ok;
     }
+};
+
+// A RUNNER AS ONE STATEMENT (protocol 19; design 2026-11-15 R2): the table a
+// runner is in data (`runner = { cmd = [...], ... }`, SPEC-013 §10), field for
+// field. `name` empty is the default runner; otherwise `mcpp run --runner
+// <name>` reaches it. `{}` is the artifact, `{pkg:<name>}` the root of a
+// package of `require()` (a program outside the package's `bin/`, such as
+// `{pkg:emsdk}/emscripten/emrun`), installed by the first run, never by a
+// build. A name is stated by this type or by the token calls (`runner`,
+// `runner_longlived`), not by both.
+//
+//     mcpp::runner_spec web;
+//     web.name      = "web";
+//     web.longlived = true;
+//     web.arg("{pkg:emsdk}/emscripten/emrun").arg("{}").require("xim:emsdk");
+//     web.submit();
+struct runner_spec {
+    const char* name      = "";
+    const char* host      = "";       // "same-arch" | "any"; empty: unstated
+    bool        longlived = false;    // no natural end; `mcpp test` does not use it
+    bool        exclusive = false;    // runs do not overlap
+    bool        enabled   = true;     // false: used once a project or this machine enables it
+    runner_spec& arg(const char* token)   { put(cmd_, token); return *this; }
+    runner_spec& hosts(const char* pair)  { put(hosts_, pair); return *this; }   // `<os>-<arch>`
+    // `requires` is a C++ keyword: the nearest spelling of the table's key.
+    runner_spec& require(const char* pkg) { put(requires_, pkg); return *this; }
+    void submit() const {
+        std::printf("mcpp:runner-spec={\"name\":");   json_detail::esc(name);
+        std::printf(",\"host\":");                    json_detail::esc(host);
+        std::printf(",\"longlived\":%s,\"exclusive\":%s,\"enabled\":%s",
+                    longlived ? "true" : "false", exclusive ? "true" : "false", enabled ? "true" : "false");
+        if (overflow_) std::printf(",\"overflow\":true");
+        std::printf(",\"cmd\":[%s]", cmd_.c_str());
+        std::printf(",\"hosts\":[%s]", hosts_.c_str());
+        std::printf(",\"requires\":[%s]}\n", requires_.c_str());
+    }
+private:
+    void put(json_detail::list& l, const char* s) { if (!json_detail::add(l, s)) overflow_ = true; }
+    json_detail::list cmd_, hosts_, requires_;
+    bool overflow_ = false;
 };
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }
 // mcpp#359: re-run when the SET of files matching `pattern` changes — a file
@@ -645,6 +712,12 @@ inline const char* cxx_abi_root()                 { return env_or("MCPP_CXX_ABI_
 // Empty on a hosted target — there the libc comes with the compiler payload or
 // through the runtime binding, and nothing has to look for it.
 inline const char* sysroot_dir()                  { return env_or("MCPP_TARGET_SYSROOT"); }
+
+// The SDK the link names with `-isysroot` (a Mach-O link on a macOS host), or
+// "" when it names none. A package that supplies a stub of a system library
+// supplies it only where this is empty: where it is not, the SDK's complete
+// library is on the link, and the stub, searched first, would shadow it.
+inline const char* target_sdk()                   { return env_or("MCPP_TARGET_SDK"); }
 
 // ── The build information of the resolved toolchain (#734 E2, protocol 14) ──
 //

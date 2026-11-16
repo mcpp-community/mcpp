@@ -86,7 +86,7 @@ void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
 // `stale`, when given, turns the function into a comparison: nothing is
 // created or written, and every declared file that is missing or differs from
 // its declared content is appended. A build that describes itself rather than
-// running (BuildOverrides::plan_only) reads the root package's generated files
+// running (PrepareIntent::Describe) reads the root package's generated files
 // this way, because they live in the source tree it promises not to write.
 std::expected<void, std::string>
 materialize_generated_files(const std::filesystem::path& root,

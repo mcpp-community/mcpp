@@ -256,6 +256,9 @@ struct Options {
     // `--all-programs` (mcpp#911 B3): every program of the package, the
     // chosen one and the others beside it.
     bool                                 allPrograms = false;
+    // The others' file names, which are also in `runtimeFiles`: a tree of
+    // images gives each of them a launcher, as it gives the chosen one.
+    std::vector<std::string>             otherPrograms;
 };
 
 // The strip decision for this run: `--strip`/`--no-strip` > `[pack] strip` >
@@ -565,6 +568,16 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
 // or does not state (`aarch64-windows-gnu`). Empty when it builds one.
 std::string unbuilt_row(std::string_view system, std::string_view arch,
                         const mcpp::platform::Resolved* P = nullptr);
+
+// WHY NO SINGLE FILE OF AN IMAGE IS MADE FOR `system`-`arch`, as
+// `<row>: <reason>`: the row is one this mcpp builds no program for, or the
+// platform's carrier, which names no hosts, is not a program where the
+// platform's runner exists (`runner.hosts`). Empty when the file is made. The
+// one reading of a named system before the build and of `--systems all` (a
+// planned row the platform serves is built since N23, so the second condition
+// is the one that answers for it).
+std::string single_file_unmade(std::string_view system, std::string_view arch,
+                               const mcpp::platform::Resolved& P);
 
 // The systems `--systems` names for an architecture (design 2026-10-29
 // §4.1): an `<os>`, an `<os>-<arch>` of that architecture, or every system
@@ -2265,15 +2278,10 @@ run_wasm(const Plan& plan)
         "copy launcher failed: {}", ec.message())});
 
     const auto builtDir = plan.builtBinary.parent_path();
+    // The module beside the launcher is the row's companion (N33): absent when
+    // the link embedded it (`-sSINGLE_FILE=1`), and removed before every link,
+    // so a module present here is this launcher's.
     auto family = mcpp::pack::emscripten_stem_family(builtDir, plan.binaryName);
-    if (!family.hasWasm) {
-        const auto stem = plan.builtBinary.stem().string();
-        return std::unexpected(Error{std::format(
-            "'{}.wasm' is missing beside the built launcher '{}' -- the "
-            "wasm32-emscripten link declares it as an implicit output, so its "
-            "absence means the build directory does not match the graph",
-            stem, plan.builtBinary.string())});
-    }
     for (auto const& name : family.siblings) {
         std::error_code fec;
         std::filesystem::copy_file(builtDir / name,
@@ -2384,10 +2392,19 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
     // program for that system is, and the engine holds no such table. One
     // static program over the platform's hosted arrangement, the same whichever
     // machine packs it.
+    // A row the platform defines rather than hosts (a provider's) is built over
+    // the platform itself, as the next rule builds a system's row.
     if (P && P->active)
         if (auto it = P->fields.runner.builtAs.find(std::format("{}-{}", system, arch));
-            it != P->fields.runner.builtAs.end())
-            return { it->second, "static", hosted_platform_for(P, it->second) };
+            it != P->fields.runner.builtAs.end()) {
+            auto over = hosted_platform_for(P, it->second);
+            if (over.empty())
+                for (auto const& d : P->fields.defines)
+                    if (auto t = mcpp::toolchain::triple::parse(d.triple), b = mcpp::toolchain::triple::parse(it->second);
+                        t && b && t->str() == b->str())
+                        over = platform_ref_of(*P);
+            return { it->second, "static", over };
+        }
     // A SYSTEM A PLATFORM DEFINES (mcpp#911 G10): its row of that architecture,
     // built over the platform that defines it, as the platform's carrier and
     // packs of every other row are. A system nothing states a row for has no
@@ -2418,14 +2435,36 @@ ProgramRow program_row(std::string_view system, std::string_view arch, bool sing
     return { here ? std::string() : triple, mode };
 }
 
-// The bytes of `carried` as a section of a program of `system`, with the
-// symbols the carrier's entry reads; `name` and `digest` as strings. An empty
-// `carried` places nothing: `mcpp_carried_begin == mcpp_carried_end`.
-std::string carried_assembly(std::string_view system, std::string_view sectionName,
+// THE ROW A PROGRAM OF `system` ON `arch` IS BUILT FOR, as the vocabulary reads
+// `<arch>-<system>` -- a row a platform defines included. Its object format and
+// its program's suffix are that row's statement and not its system's name: a
+// carrier for a system a platform defines (`x86_64-uefi`, PE) was written as
+// ELF and named without its suffix when the name decided.
+// A system the platform defines a row for is that row, whose name may carry an
+// environment (`dos` on i686 is `i686-dos-musl`), as program_row builds it.
+std::optional<mcpp::toolchain::triple::Triple> system_row(std::string_view system, std::string_view arch,
+                                                          const mcpp::platform::Resolved* P = nullptr) {
+    if (P && P->active)
+        for (auto const& d : P->fields.defines)
+            if (auto t = mcpp::toolchain::triple::parse(d.triple); t && t->os == system && t->arch == arch)
+                return t;
+    return mcpp::toolchain::triple::parse(std::format("{}-{}", arch, system));
+}
+std::string program_suffix(std::string_view system, std::string_view arch,
+                           const mcpp::platform::Resolved* P = nullptr) {
+    const auto row = system_row(system, arch, P);
+    return row ? std::string(mcpp::toolchain::triple::artifact_naming(*row, {}).exeSuffix) : std::string();
+}
+
+// The bytes of `carried` as a section of a program of `system` on `arch`, with
+// the symbols the carrier's entry reads; `name` and `digest` as strings. An
+// empty `carried` places nothing: `mcpp_carried_begin == mcpp_carried_end`.
+std::string carried_assembly(std::string_view system, std::string_view arch, std::string_view sectionName,
                              const std::filesystem::path& carried, std::string_view name,
-                             std::string_view digest) {
-    const bool macho = system == "macos";
-    const bool coff  = system == "windows";
+                             std::string_view digest, const mcpp::platform::Resolved* P = nullptr) {
+    const auto row   = system_row(system, arch, P);
+    const bool macho = row && row->is_mach_o();
+    const bool coff  = row && (row->is_pe() || row->object_format() == mcpp::toolchain::triple::ObjectFormat::Coff);
     const std::string sym = macho ? "_" : "";
     std::string bare(sectionName);
     while (!bare.empty() && bare.front() == '.') bare.erase(bare.begin());
@@ -2449,15 +2488,18 @@ std::string carried_assembly(std::string_view system, std::string_view sectionNa
 }
 
 // Where a program generated under `dir` is packed: the tree, and the program
-// in it -- under the tree's `bin/`, or, for a Windows program, whose tree is
-// flat, at its root.
+// in it -- under the tree's `bin/`, or, for a PE program, whose tree is flat,
+// at its root.
 std::filesystem::path packed_tree(const std::filesystem::path& dir) {
     return dir / "target" / "dist" / "packed";
 }
 std::filesystem::path packed_program(const std::filesystem::path& dir, std::string_view stem,
-                                     std::string_view system) {
-    if (system == "windows") return packed_tree(dir) / (std::string(stem) + ".exe");
-    return packed_tree(dir) / "bin" / std::string(stem);
+                                     std::string_view system, std::string_view arch,
+                                     const mcpp::platform::Resolved* P = nullptr) {
+    const auto file = std::string(stem) + program_suffix(system, arch, P);
+    const auto row = system_row(system, arch, P);
+    if (row && row->is_pe()) return packed_tree(dir) / file;
+    return packed_tree(dir) / "bin" / file;
 }
 
 // The generated project of the carrier named `stem` for `system` and `arch`.
@@ -2530,14 +2572,25 @@ std::string_view launcher_platform() {
 // Whether this mcpp builds programs for `row`: a target its table does not
 // state (`aarch64-windows-gnu`), or states as planned (`x86_64-macos`, its
 // toolchain not published), is not built.
-bool row_is_built(const ProgramRow& row) {
+bool row_is_built(const ProgramRow& row, const mcpp::platform::Resolved* P = nullptr) {
     if (!row.served) return false;
     if (row.triple.empty()) return true;   // this machine's own row
     auto t = mcpp::toolchain::triple::parse(row.triple);
     if (!t) return false;
     if (t->defined()) return !row.platform.empty();   // a platform's row, over that platform
     auto* k = mcpp::toolchain::triple::find_known_target(*t);
-    return k && k->tier != "planned";
+    if (!k) return false;
+    // A PLANNED ROW THE PROGRAM'S PLATFORM SERVES IS BUILT (design 2026-11-15
+    // N23), as a build for that row over that platform is (2026.11.14.1): the
+    // carrier of an i686 image is a program of i686-linux-musl, which the
+    // built-in table keeps planned and openkal-platform 0.28.0 lists with its
+    // toolchain. The carrier was refused as a row this mcpp builds no program
+    // for, while the project's own build of the row succeeded.
+    if (k->tier == "planned")
+        return P && P->active && !row.platform.empty() && row.platform == platform_ref_of(*P)
+            ? mcpp::manifest::platform::serves_with_toolchain(P->fields, P->package, t->str())
+            : false;
+    return true;
 }
 
 } // namespace
@@ -2562,7 +2615,7 @@ std::optional<std::string> unbuilt_carrier(const mcpp::platform::Resolved& platf
                                            std::string_view system, std::string_view arch,
                                            bool single) {
     const auto row = program_row(system, arch, single, &platform);
-    if (!row_is_built(row))
+    if (!row_is_built(row, &platform))
         return std::format("{}'s carrier is built as a program of {}-{} ({}), and this mcpp builds "
                            "no program for that row", platform.display(), system, arch, row.triple);
     // A CARRIER THAT NAMES NO HOSTS EXISTS WHERE THE PLATFORM'S RUNNER DOES: it is
@@ -2643,7 +2696,7 @@ carrier_build(const Plan& plan, const CarrierBuild& b)
     }
     if (!write(dir / "mcpp.toml", manifest)
         || !write(dir / "src" / "carried.S",
-                  carried_assembly(b.system, c.section, b.carried, b.carriedName, {}))
+                  carried_assembly(b.system, b.arch, c.section, b.carried, b.carriedName, {}, &plan.platform))
         || !write(dir / "src" / "main.cpp", mainText))
         return std::unexpected(Error{std::format("cannot write the program's sources under {}", dir.string())});
 
@@ -2787,54 +2840,67 @@ run_loaded(const Plan& plan)
                         "cannot place the runner for {}-{}: {}", system, leg.arch, ec.message())});
                 }
         }
-        const auto posix = plan.stagingRoot / "bin" / launch.name;
-        {
-            std::ofstream out(posix, std::ios::binary | std::ios::trunc);
-            out << mcpp::pack::distribution::posix_launcher(launch);
+        // EVERY PROGRAM HAS A LAUNCHER (N11). Under `--all-programs` the others
+        // are images beside the chosen one in each `lib/<arch>/`, and each is
+        // started as the chosen one is: by its name in `bin/`.
+        std::vector<mcpp::pack::distribution::Launch> launches{ launch };
+        for (auto const& other : plan.opts.otherPrograms) {
+            auto l = launch;
+            l.name = fs::path(other).stem().string();
+            for (auto& [arch, file] : l.entry) file = other;
+            launches.push_back(std::move(l));
         }
-        fs::permissions(posix, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
-                               | fs::perms::others_read | fs::perms::others_exec,
-                        fs::perm_options::replace, ec);
-        // The Windows launcher, a program (design 2026-10-29 §4.3): built for
-        // x86_64 Windows, which an arm64 Windows machine also runs. A host
-        // that builds no program for that row leaves it out, says so, and
-        // the package's `runs_on` names no Windows pair.
-        // Over a platform's hosted arrangement where the build's platform
-        // serves the row, as the runners are: the same program whichever
-        // machine packs it. The launcher is mcpp's program and not the
-        // project's: its `mcpplibs.os` pins one openkal release, which only the
-        // platform mcpp's own openkal rows name agrees with, so it is built
-        // over that platform whichever release the project selected (a newer
-        // version group named another openkal, and the launcher's graph held
-        // two; openkal-platform 0.19.0's CI, 2026-10-30).
-        auto row = program_row("windows", "x86_64", true, &plan.platform);
-        if (!row.platform.empty()) row.platform = std::string(launcher_platform());
-        if (!row_is_built(row)) {
-            mcpp::ui::warning(std::format(
-                "no Windows launcher in the package: this mcpp builds no program for {}; the package "
-                "does not run on Windows", row.triple));
-        } else {
-            const auto dir = plan.projectRoot / "target" / "launcher-pack" / launch.name;
-            fs::create_directories(dir / "src", ec);
-            fs::remove(dir / "mcpp.lock", ec);
-            auto write = [&](const fs::path& p, std::string_view text) -> bool {
-                std::ofstream out(p, std::ios::binary | std::ios::trunc);
-                out.write(text.data(), static_cast<std::streamsize>(text.size()));
-                return bool(out);
-            };
-            if (!write(dir / "mcpp.toml", mcpp::pack::distribution::exe_launcher_manifest(
-                           launch.name, plan.packageVersion)
-                           + static_row_pin(row, plan.platform.fields.toolchain.set
-                                                     ? plan.platform.fields.toolchain.value : std::string()))
-                || !write(dir / "src" / "main.cpp", mcpp::pack::distribution::exe_launcher_main(launch)))
-                return std::unexpected(Error{std::format("cannot write the launcher's sources under {}",
-                                                         dir.string())});
-            auto packed = pack_generated_program(dir, row);
-            if (!packed) return std::unexpected(packed.error());
-            fs::copy_file(*packed / (launch.name + ".exe"), plan.stagingRoot / "bin" / (launch.name + ".exe"),
-                          fs::copy_options::overwrite_existing, ec);
-            if (ec) return std::unexpected(Error{std::format("cannot place the Windows launcher: {}",
-                                                             ec.message())});
+        for (auto const& launch : launches) {
+            const auto posix = plan.stagingRoot / "bin" / launch.name;
+            {
+                std::ofstream out(posix, std::ios::binary | std::ios::trunc);
+                out << mcpp::pack::distribution::posix_launcher(launch);
+            }
+            fs::permissions(posix, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec
+                                   | fs::perms::others_read | fs::perms::others_exec,
+                            fs::perm_options::replace, ec);
+            // The Windows launcher, a program (design 2026-10-29 §4.3): built for
+            // x86_64 Windows, which an arm64 Windows machine also runs. A host
+            // that builds no program for that row leaves it out, says so, and
+            // the package's `runs_on` names no Windows pair.
+            // Over a platform's hosted arrangement where the build's platform
+            // serves the row, as the runners are: the same program whichever
+            // machine packs it. The launcher is mcpp's program and not the
+            // project's: its `mcpplibs.os` pins one openkal release, which only the
+            // platform mcpp's own openkal rows name agrees with, so it is built
+            // over that platform whichever release the project selected (a newer
+            // version group named another openkal, and the launcher's graph held
+            // two; openkal-platform 0.19.0's CI, 2026-10-30).
+            auto row = program_row("windows", "x86_64", true, &plan.platform);
+            if (!row.platform.empty()) row.platform = std::string(launcher_platform());
+            if (!row_is_built(row)) {
+                if (&launch == &launches.front())
+                    mcpp::ui::warning(std::format(
+                        "no Windows launcher in the package: this mcpp builds no program for {}; the package "
+                        "does not run on Windows", row.triple));
+            } else {
+                const auto dir = plan.projectRoot / "target" / "launcher-pack" / launch.name;
+                fs::create_directories(dir / "src", ec);
+                fs::remove(dir / "mcpp.lock", ec);
+                auto write = [&](const fs::path& p, std::string_view text) -> bool {
+                    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+                    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+                    return bool(out);
+                };
+                if (!write(dir / "mcpp.toml", mcpp::pack::distribution::exe_launcher_manifest(
+                               launch.name, plan.packageVersion)
+                               + static_row_pin(row, plan.platform.fields.toolchain.set
+                                                         ? plan.platform.fields.toolchain.value : std::string()))
+                    || !write(dir / "src" / "main.cpp", mcpp::pack::distribution::exe_launcher_main(launch)))
+                    return std::unexpected(Error{std::format("cannot write the launcher's sources under {}",
+                                                             dir.string())});
+                auto packed = pack_generated_program(dir, row);
+                if (!packed) return std::unexpected(packed.error());
+                fs::copy_file(*packed / (launch.name + ".exe"), plan.stagingRoot / "bin" / (launch.name + ".exe"),
+                              fs::copy_options::overwrite_existing, ec);
+                if (ec) return std::unexpected(Error{std::format("cannot place the Windows launcher: {}",
+                                                                 ec.message())});
+            }
         }
     }
 
@@ -3552,12 +3618,11 @@ std::vector<SingleFileRow> single_file_rows(const Plan& plan) {
     for (auto const& arch : archs)
         for (auto const& system : systems_for(plan.opts.systems, arch)) {
             SingleFileRow r{ system, arch, {} };
-            if (all)
-                if (auto row = unbuilt_row(system, arch, &plan.platform); !row.empty())
-                    r.skipped = std::format("no carrier row: this mcpp builds no program for {}", row);
-            if (all && r.skipped.empty() && plan.platform.active)
-                if (auto why = detail::unbuilt_carrier(plan.platform, system, arch, true))
-                    r.skipped = *why;
+            if (all) r.skipped = single_file_unmade(system, arch, plan.platform);
+            // `all` in one polyglot file: the systems the file is started on.
+            if (all && r.skipped.empty() && plan.opts.polyglot && !polyglot::holds(system))
+                r.skipped = std::format("a polyglot file is started by a shell or by the Windows loader, "
+                                        "and {} starts a program of its own (--pkg-format single-file)", system);
             rows.push_back(std::move(r));
         }
     return rows;
@@ -3574,7 +3639,18 @@ bool output_names_directory(const std::filesystem::path& output) {
 std::string unbuilt_row(std::string_view system, std::string_view arch,
                         const mcpp::platform::Resolved* P) {
     const auto row = detail::program_row(system, arch, true, P);
-    return detail::row_is_built(row) ? std::string() : row.triple;
+    return detail::row_is_built(row, P) ? std::string() : row.triple;
+}
+
+std::string single_file_unmade(std::string_view system, std::string_view arch,
+                               const mcpp::platform::Resolved& P) {
+    const auto row = detail::program_row(system, arch, true, &P);
+    if (!detail::row_is_built(row, &P))
+        return std::format("{}: this mcpp builds no program for the row", row.triple);
+    if (P.active)
+        if (auto why = detail::unbuilt_carrier(P, system, arch, true))
+            return std::format("{}: {}", row.triple, *why);
+    return {};
 }
 
 std::vector<std::string> carried_systems(const Plan& plan) {
@@ -3600,7 +3676,7 @@ runner_program(const mcpp::platform::Resolved& platform, const std::filesystem::
     if (auto why = detail::unbuilt_carrier(platform, system, arch, false))
         return std::unexpected(Error{*why});
     const auto program = detail::packed_program(detail::carrier_dir(projectRoot, name, system, arch),
-                                                name, system);
+                                                name, system, arch, &platform);
     if (!build) return program;
     Plan plan;
     plan.platform = platform;
@@ -3692,7 +3768,7 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             const auto stem = fs::path(plan.binaryName).stem().string();
             auto packed = detail::carrier_build(plan, { f.carried, plan.binaryName, stem, f.system, f.arch, true });
             if (!packed) return std::unexpected(packed.error());
-            const auto suffix = f.system == "windows" ? std::string(".exe") : std::string();
+            const auto suffix = detail::program_suffix(f.system, f.arch, &plan.platform);
             const auto program = *packed / (stem + suffix);
             if (!fs::is_regular_file(program, ec))
                 return std::unexpected(Error{std::format("the carrier built for {}-{} has no {}",
@@ -3790,14 +3866,14 @@ std::expected<std::vector<std::filesystem::path>, Error> single_file(const Plan&
             || !write(dir / "mcpp.toml", d::launcher_manifest(stem, plan.packageVersion) + detail::static_row_pin(row))
             || !write(dir / "src" / "main.cpp", d::launcher_main())
             || !write(dir / "src" / "carried.S",
-                      detail::carried_assembly(system, ".mcppsf", dir / "payload.zst", entry, digest)))
+                      detail::carried_assembly(system, arch, ".mcppsf", dir / "payload.zst", entry, digest)))
             return std::unexpected(Error{std::format("cannot write the launcher's sources under {}", dir.string())});
         mcpp::ui::info("Packing", std::format("{} into one file for {}-{} ({} payload, sha256 {})",
                                               plan.binaryName, system, arch,
                                               mcpp::pack::compress::name(c.algorithm), digest.substr(0, 12)));
         auto packed = detail::pack_generated_program(dir, row);
         if (!packed) return std::unexpected(packed.error());
-        const auto suffix = system == "windows" ? std::string(".exe") : std::string();
+        const auto suffix = detail::program_suffix(system, arch, &plan.platform);
         const auto program = *packed / (stem + suffix);
         const auto out = output_for(t ? t->str() : plan.triple, suffix);
         fs::create_directories(out.parent_path(), ec);

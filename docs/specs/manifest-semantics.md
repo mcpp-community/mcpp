@@ -492,7 +492,7 @@ feature-deps          feature-xlings         ← 限定词是门
     另一成员的,`-p` 下相同;非工作空间中依赖的共享库含自己与 profile 的标记而不含根包与兄弟
     依赖的;只由根声明的搜索路径不再到达依赖的共享库,构建给出 `link/root-flags` 提示,依赖
     自己声明后链接通过(`tests/e2e/884_a_shared_library_links_with_its_own_closure.sh`)。
-23. §11 的判据(`tests/e2e/887_msvc_lto_and_export_discovery.sh`,需要 cl.exe):cl.exe 上
+23. §11 的判据(`tests/e2e/windows/msvc.cpp` 的用例 `887 msvc lto and export discovery`,需要 cl.exe):cl.exe 上
     `lto = true` 以 `/GL` 编译、以 `/LTCG` 链接;省略 `windows_auto_export` 的 DLL 所链接的包以
     `/GL-` 编译并报告一次;陈述 `true` 与写入 `/GL` 被拒绝;陈述 `false` 时完整使用 `/GL`。
 

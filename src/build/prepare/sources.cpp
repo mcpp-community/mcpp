@@ -443,7 +443,7 @@ answer_payload_requests(PrepareState& state, mcpp::manifest::Manifest& m,
         auto wit = state.xlingsWinner.find(key);
         addresses.push_back(wit == state.xlingsWinner.end() ? key : wit->second);
     }
-    if (state.overrides.plan_only) {
+    if (state.overrides.describes()) {
         std::string list;
         for (auto const& a : addresses) list += (list.empty() ? "" : ", ") + a;
         state.planNotes.push_back({"MCPP_BUILD_DATABASE_PAYLOAD_DEFERRED",
@@ -485,7 +485,7 @@ run_answering_requests(PrepareState& state, mcpp::manifest::Manifest& m,
     // At most three rounds: a program may learn what it needs only from what
     // it received, but a program that asks for something new every time is a
     // loop, and a named refusal beats an unbounded one.
-    e.keepRequestingRun = state.overrides.plan_only;
+    e.keepRequestingRun = state.overrides.describes();
     for (int round = 0;; ++round) {
         auto r = run();
         if (!r) return r;

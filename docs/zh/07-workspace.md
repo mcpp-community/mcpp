@@ -477,7 +477,7 @@ mcpp test  --exclude legacy --exclude bench  # at a virtual root: every member b
    Workspace built members libs/core, libs/http, ... in 120.40s; slowest: obj/libs/jsc/tests/jsc.o 88.0s
    Workspace testing member 'libs/core' (3/97)
 test_paths ... ok (0.31s)
- test result ok. 7 passed; 0 failed; finished in 121.10s (build 120.40s + run 0.60s)
+ test result ok. 7 passed; 0 failed; finished in 121.10s (plan 0.10s · build 120.40s · run 0.60s)
    Workspace member 'libs/core' (3/97) ok — 7 passed, run 0.60s
 ...
  workspace result ok. 97 member(s); 412 passed; 0 failed; finished in 355.20s
@@ -565,6 +565,25 @@ mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no
   程序的两个成员可以各自提供同名模块，一条 `--workspace` 命令会把两者都构建出来；同时链接两者的
   成员会被拒绝。见 [05 —— 每个程序里一个名字只对应一个模块](05-dependencies.md#每个程序里一个名字只对应一个模块mcpp-20269302)。
 
+### 5.5 同时的两个命令，与一个配置的目录随时间的变化
+
+一个配置的构建目录有一把锁，只在写目录时持有。读取清单、解析、下载、确定工具链与扫描都不持锁；`mcpp test` 在第一个测试
+运行之前释放锁，`mcpp run` 在程序启动之前释放。因此：
+
+- **测试一个成员的同时可以修改并构建另一个成员。** 两个命令只在各自编译与链接时排队，等待的一方说明持有目录的命令
+  （`Waiting for the build directory, held by …`）。源码改动时正在运行的测试运行的是改动前链接的程序；下一次构建编译该改动。
+- **不同配置的命令互不等待。** 规划出不同配置的 profile、目标或选择是不同的目录。
+- **锁属于配置，不属于成员。** 一个配置只有一份 `build.ninja` 与一份 ninja 状态，两个 ninja 进程不能同时写它们（mcpp#839）。
+- 等待目录一秒以上时，`Finished` 说明等待的时长（2026.11.13.1+）。
+
+一个配置的目录以其**谱系**命名（2026.11.13.1+）：编译器家族、目标、标准库家族、C++ 标准、配置的选项与所陈述的基座（默认基座
+与陈述的 sysroot 是两个配置）。随时间演进的部分——mcpp 的版本、编译器的版本与构建、标准库的版本、运行时契约（含基座的内容）——记在目录内（`toolchain`、`fingerprint`），不在名字中。构建图经
+目录自己的 mcpp 链接 `engine/epoch-<N>/mcpp` 运行 mcpp，每次构建使之为正在运行的 mcpp，因此没有命令含带 mcpp 版本的路径。
+mcpp 升级后，编译器、选项与文件未变的命令保持不变，ninja 只编译新版本改变的部分；编译器的构建不同、或基座的内容改变时，
+目录在原处清空（`Replaced`）。链接路径中的 epoch 只在某个版本自身的构建步骤写出不同内容时改变，此时各步重新运行。2026.11.13.1 之前
+目录名是完整的指纹：升级把目录移到新的名字，而每个成员的命令都含这个名字，于是每个成员都重新编译。2026.11.13.1 的第一次构建
+接管这样的目录一次。
+
 ## 6. 目录布局
 
 工作空间推荐的目录布局：
@@ -593,7 +612,7 @@ myproject/
 ```
 myproject/
 ├── mcpp.lock                               # 整个工作空间一份锁文件
-└── target/<triple>/<configuration>/
+└── target/<triple>/<configuration>/       # 以配置的谱系命名（§5.5）
     ├── build.ninja, compile_commands.json  # 每个配置一张图、一份数据库
     ├── obj/<package>/                      # 各包的中间产物
     ├── gcm.cache/<package>/                # 各包的 BMI（clang 为 pcm.cache）

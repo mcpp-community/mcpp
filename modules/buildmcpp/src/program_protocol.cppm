@@ -128,7 +128,12 @@ export namespace mcpp::build::program_protocol {
 // spelling.
 // v18: optional action.progress; runtime snapshots carry no graph inputs.
 // Old action payloads default to progress=false.
-inline constexpr int kProtocolVersion = 18;
+// v19 (design 2026-11-15 N30): `mcpp:pack-program=` -- the program a pack
+// format's provider assembles its distributable from, which `mcpp pack` packs
+// when no program is named. Same cost as v5's: a package calling
+// `mcpp::pack_program()` fails on an older engine at the build.mcpp COMPILE.
+// No directive of v18 changes spelling.
+inline constexpr int kProtocolVersion = 19;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

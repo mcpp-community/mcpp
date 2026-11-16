@@ -1,18 +1,18 @@
 # One number per word: its occurrences in the engine's sources
 # (.github/tools/check_system_names.py). The numbers only fall.
-linux 66
-macos 54
-windows 81
-freebsd 2
+linux 64
+macos 51
+windows 72
+freebsd 1
 android 19
-emscripten 21
-ios 25
+emscripten 18
+ios 24
 darwin 10
-netbsd 1
+netbsd 0
 openbsd 0
 haiku 0
 dos 0
 uefi 0
-is_linux 30
-is_windows 130
+is_linux 26
+is_windows 126
 is_macos 32

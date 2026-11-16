@@ -295,7 +295,7 @@ and only the first belongs to the program:
 | `0`–`124` | the program ran; this is its own status, passed through unchanged. The exception is `101`, below |
 | `101` | `mcpp run` could not build the program: its planning or its build failed, and nothing was started. This is the status Cargo gives a failed `cargo run` build |
 | `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else; `126` also answers `mcpp run --pkg-format <f>` for a distributable that is a directory and meets no runner, refused before the spawn with the same meaning (2026.9.14.2+) |
-| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare |
+| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare, a runner that is not enabled (the message carries `[runner-not-enabled]`; 2026.11.16.1+) |
 
 Until 2026.9.30.2 a failed build exited `1` and a failed planning `2`, so that
 a compile error and a program that returns `1` could not be told apart by a
@@ -410,7 +410,8 @@ of another architecture and a `same-arch` runner, it is the platform's runner
 for that architecture, located where the first run builds it (`built: false`
 until then; `self env` builds nothing). `runUnderProgram` is the execution
 host's program, and `runner.refusal` the reason runs are refused on this
-machine (`null` when they are not). For `--host` the host platform's
+machine (`null` when they are not; a runner that is not enabled is one, with
+`[runner-not-enabled]`). For `--host` the host platform's
 `runner` and `tools` are reported once the project's build programs have been
 built under it. A reason the project's sources would be refused for (an `import
 std` with no C++ run-time in the graph) is a `warning` diagnostic with the code
@@ -552,7 +553,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -991,7 +992,10 @@ Standard output is NDJSON. Each line but the last is an event:
 
 The last line is the `mcpp.build` envelope, on one line. Its `data` is the
 result record this run wrote (below); a run that failed before it entered a
-build directory omits `data`. Its `diagnostics` are mcpp's own errors, each
+build directory omits `data`. A build that replays the recorded build of an
+unchanged tree (the fast path, of a package or of a workspace's members)
+restates that build's artifacts, as events and in `data` (a workspace's,
+2026.11.13.1+). Its `diagnostics` are mcpp's own errors, each
 located where its message says (§2), with the code `MCPP_BUILD_FAILED`, or
 `MCPP_EFFECT_DENIED` for a run that stopped before a denied effect. The
 narration goes to standard error, as for every machine-readable mode.

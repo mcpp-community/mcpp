@@ -1,8 +1,10 @@
 # Release canaries (the 2026-09-28 ecosystem design, WS10).
 #
 # Projects of this ecosystem built with the candidate mcpp before a release is
-# tagged: release.yml runs .github/workflows/release-canaries.yml first, and a
-# canary that fails blocks the tag.
+# created: a release started by hand with `canaries` (release.yml) runs
+# .github/workflows/release-canaries.yml beside its builds, and a canary that
+# fails blocks the release. A tag pushed, or a release started without it,
+# runs none (design 2026-11-14: their build took 48 of 109 minutes).
 #
 # Only the ecosystem's own repositories are canaries. A downstream project (a
 # user's application, or a fork of one) validates a release in its own pull

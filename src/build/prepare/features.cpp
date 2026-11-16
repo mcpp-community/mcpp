@@ -46,6 +46,7 @@ import mcpp.build.build_program;
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
 import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
+import mcpp.build.stage;        // publishing a built tool into the store
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.provider.runtime_selection;
@@ -1563,7 +1564,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     // build program that must RUN the tool while configuring
     // meets the same missing file it meets when the tool fails
     // to build (SPEC-007 R5.3), so no new contract follows.
-    if (state.overrides.plan_only) {
+    if (state.overrides.describes()) {
         state.planNotes.push_back({"MCPP_BUILD_DATABASE_HOST_TOOL_DEFERRED",
             std::format("host tool '{}' of package '{}' is not in "
                         "the tool store and is not built while "
@@ -1731,9 +1732,14 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
 
 static std::expected<void, std::string>
 step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
-    // Publish into the store: build out of place, then move —
-    // the same discipline mcpp.build.stage follows, so a
-    // concurrent consumer never observes a half-written entry.
+    // Publish into the store through mcpp.build.stage: a temporary of this
+    // writer's own beside the entry, then a rename, so a concurrent consumer
+    // never observes a half-written entry. Two processes that built the same
+    // key publish the same bytes; a destination already equal to them is
+    // published. With one temporary name for every writer, one writer removed
+    // the other's temporary before its rename ("publishing host tool
+    // 'openkal-tools:okld' failed: No such file or directory", the target
+    // matrix's cells side by side, run 43636471152).
     std::error_code cpEc;
     auto produced = ctx.subOutputDir / ctx.goal;
     if (!std::filesystem::exists(produced, cpEc)) {
@@ -1742,27 +1748,16 @@ step6_publish_tool(PrepareState& state, HostToolCtx& ctx) {
             ctx.depName, ctx.toolName, produced.string()));
     }
     std::filesystem::create_directories(ctx.binOut.parent_path(), cpEc);
-    auto tmp = ctx.binOut;
-    tmp += ".tmp";
-    std::filesystem::remove(tmp, cpEc);
-    std::filesystem::copy_file(produced, tmp,
-        std::filesystem::copy_options::overwrite_existing, cpEc);
-    if (cpEc) {
+    if (auto staged = mcpp::build::stage::stage_file(produced, ctx.binOut); !staged) {
         return std::unexpected(std::format(
-            "staging host tool '{}:{}' failed: {}",
-            ctx.depName, ctx.toolName, cpEc.message()));
+            "publishing host tool '{}:{}' failed: {}",
+            ctx.depName, ctx.toolName, staged.error().message));
     }
-    std::filesystem::permissions(tmp,
+    std::filesystem::permissions(ctx.binOut,
         std::filesystem::perms::owner_exec
         | std::filesystem::perms::group_exec
         | std::filesystem::perms::others_exec,
         std::filesystem::perm_options::add, cpEc);
-    std::filesystem::rename(tmp, ctx.binOut, cpEc);
-    if (cpEc) {
-        return std::unexpected(std::format(
-            "publishing host tool '{}:{}' failed: {}",
-            ctx.depName, ctx.toolName, cpEc.message()));
-    }
     // A path package's tree, so that its superseded entries are collected.
     std::filesystem::path toolSource;
     if (ctx.depIdx >= 1 && ctx.depIdx - 1 < state.dep_cache_identities.size()
@@ -1953,7 +1948,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                 bpEnv.toolPaths = tit->second;
             // The program, as the build programs' graph compiled it (mcpp#797).
             auto program = build_program_binary(state, i);
-            if (!program && !state.overrides.plan_only) return std::unexpected(program.error());
+            if (!program && !state.overrides.describes()) return std::unexpected(program.error());
             if (program) {
                 bpEnv.programBinary   = program->path;
                 bpEnv.programRunner   = program->runner;
@@ -1978,7 +1973,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                             pkg.manifest.cppStandard, bpEnv);
                     });
                 !r) {
-                // #699 item 2 (E3): under `emit build-database` (`plan_only`),
+                // #699 item 2 (E3): under `emit build-database` (`PrepareIntent::Describe`),
                 // a failing build program describes its package without that
                 // program's directives, instead of costing the whole plan —
                 // the manifest's own configuration, the toolchain and the
@@ -1988,7 +1983,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                 // that follows from the missing directives (a source the
                 // program would have added, say) fails the member under the
                 // ordinary rule (E1).
-                if (state.overrides.plan_only) {
+                if (state.overrides.describes()) {
                     state.planNotes.push_back({"MCPP_BUILD_DATABASE_PROGRAM_FAILED",
                         std::format("dependency '{}': {}",
                                     pkg.manifest.package.name, r.error()),
@@ -2054,6 +2049,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                         state.runnerProvider, pkg.manifest.package.name));
                 }
                 state.m->buildConfig.runner = std::move(supplied);
+                state.m->buildConfig.runnerFields = bcDep.runnerFields;
                 state.runnerProvider = pkg.manifest.package.name;
             }
             for (auto const& [name, nr] : bcDep.namedRunners) {
@@ -2334,16 +2330,19 @@ std::expected<void, std::string> phase6_features_and_host_tools(PrepareState& st
     if (auto r = step6_device_extensions_and_rules(state); !r) return std::unexpected(r.error());
     if (auto r = step6_xlings_workspace_from_graph(state); !r) return std::unexpected(r.error());
 
-    auto toolRequests = step6_tool_requests(state);
-    if (!toolRequests) return std::unexpected(toolRequests.error());
-    // The root build program's toolchain phase (mcpp#755): its host modules
-    // are registered, and nothing that depends on the build toolchain has
-    // been built. A statement ends this pass; prepare starts again with it.
-    if (auto r = step6_toolchain_phase(state); !r) return std::unexpected(r.error());
-    if (auto r = step6_provision_host_tools(state, *toolRequests); !r)
-        return std::unexpected(r.error());
-
-    if (auto r = step6_dependency_build_programs(state); !r) return std::unexpected(r.error());
+    // THE PACKAGES' PROGRAMS AND TOOLS, compiled and run here: a preparation
+    // that compiles nothing (PrepareIntent::RunBuilt) has none to run.
+    if (state.overrides.compiles()) {
+        auto toolRequests = step6_tool_requests(state);
+        if (!toolRequests) return std::unexpected(toolRequests.error());
+        // The root build program's toolchain phase (mcpp#755): its host modules
+        // are registered, and nothing that depends on the build toolchain has
+        // been built. A statement ends this pass; prepare starts again with it.
+        if (auto r = step6_toolchain_phase(state); !r) return std::unexpected(r.error());
+        if (auto r = step6_provision_host_tools(state, *toolRequests); !r)
+            return std::unexpected(r.error());
+        if (auto r = step6_dependency_build_programs(state); !r) return std::unexpected(r.error());
+    }
     if (auto r = step6_capability_binding(state); !r) return std::unexpected(r.error());
 
 

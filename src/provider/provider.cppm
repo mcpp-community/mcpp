@@ -412,6 +412,14 @@ struct PayloadStatus {
 };
 
 // One provider at one Location.
+// The lock in Provider::state_dir() that orders every writer of the provider's
+// state (mcpp::home::Turn): an install, a repository added or removed, a
+// runtime chosen. A provider that writes its state atomically needs none; one
+// that does not refused a second writer's save on Windows ("Failed to write
+// file ... subos\\default\\.xlings.json"), measured with the e2e programs
+// of one home beside each other.
+inline constexpr std::string_view kStateTurn = ".mcpp-state.lock";
+
 class Provider {
 public:
     virtual ~Provider() = default;
@@ -442,6 +450,11 @@ public:
     virtual NetworkReport check_network(std::chrono::milliseconds budget = std::chrono::seconds(5)) const = 0;
     virtual std::filesystem::path data_root() const = 0;   // where its indexes are
     virtual std::filesystem::path config_file() const = 0; // the home's own configuration
+    // THE REAL DIRECTORY OF THE STATE ITS INSTALLS WRITE (the environments'
+    // descriptions), every link resolved: the homes that reach one state --
+    // a home whose `registry` or whose `registry/subos` is a link -- name one
+    // directory, and one turn (kStateTurn) orders their writers.
+    virtual std::filesystem::path state_dir() const = 0;
 
     // ── operations ──
     virtual std::expected<CallResult, std::string>

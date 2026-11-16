@@ -204,6 +204,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.flags = set.keep(d.flags);
         r.linkEmulation = set.keep(d.linkEmulation);
         r.clangTriple = set.keep(d.clangTriple);
+        r.gccTriple = set.keep(d.gccTriple);
         r.objectFormat = set.keep(d.objectFormat);
         r.family = set.keep(d.family);
         r.dataModel = set.keep(d.dataModel);
@@ -211,6 +212,8 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.sharedSuffix = set.keep(d.sharedSuffix);
         r.loader = set.keep(d.loader);
         r.descriptorKeys = set.keep(d.descriptorKeys);
+        r.companions = set.keep(d.companions);
+        r.exceptions = set.keep(d.exceptions);
         r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);
         r.defined = true;
         set.rows.push_back(r);
@@ -231,10 +234,14 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         p.runner = set.keep(sp.runner);
         p.runnerHosts = set.keep(sp.runnerHosts);
         p.runnerRequires = set.keep(sp.runnerRequires);
+        p.runnerHost = set.keep(sp.runnerHost);
+        p.runnerEnabled = sp.runnerEnabled;
+        p.runnerExclusive = sp.runnerExclusive;
         set.providers.push_back(p);
     };
     for (auto const& sys : s.systems)
-        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname) });
+        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname), sys.resources,
+                                set.keep(sys.commandScripts) });
     // A platform the engine's own providers name (openkal-platform) is served by
     // those; its shorthands are not registered twice.
     const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {
@@ -307,7 +314,7 @@ std::string platform_short_name(std::string_view ref) {
 }
 
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
-                           std::span<const mp::Override> config, std::string* platform) {
+                           std::span<const mp::Override> config, std::string* platform, std::string* chosenOut) {
     const auto flag = !state.overrides.platform_choice.empty()
         ? state.overrides.platform_choice
         : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
@@ -320,6 +327,7 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
     if (!sel->builtin.empty()) return sel->builtin;
     if (sel->none) return "none";
     const auto chosen = known_short_name(sel->ref);
+    if (chosenOut) *chosenOut = chosen;
     for (auto const* p : mcpp::toolchain::target::providers()) {
         if (p->platform.empty()) continue;
         auto ref = mp::parse_ref_text(p->platform);
@@ -331,6 +339,22 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
 
 cfgpred::Ctx platform_cfg_context(const PrepareState& state) {
     return cfgpred::context_for(target_of(state).str(), state.platformPackageShortName);
+}
+
+// A `planned` row the chosen platform was to serve (`state.plannedRow`), checked
+// against the platform's statement once it is read: served when a provider of the
+// statement lists the row with a toolchain; refused, naming the platform, when not.
+static std::expected<void, std::string> planned_row_served(PrepareState& state, const mp::Statement& s,
+                                                           std::string_view platformName, std::string_view shown) {
+    if (state.plannedRow.empty()) return {};
+    const auto row = state.plannedRow;
+    if (mp::serves_with_toolchain(s, platformName, row)) return {};
+    refusal::record(refusal::Code::TierPlanned);
+    return std::unexpected(std::format(
+        "target '{}' is registered but not yet supported (planned), and the platform {} does not serve it:\n"
+        "       its statement lists no provider of the row with a toolchain.\n"
+        "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.",
+        row, shown, row));
 }
 
 std::expected<void, std::string> step1_select_platform(PrepareState& state) {
@@ -372,6 +396,13 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     if (!sel) return std::unexpected(sel.error());
     state.platform = mcpp::platform::Resolved{};
     state.platform.selection = std::move(*sel);
+    if (state.platform.selection.none && !state.plannedRow.empty()) {
+        refusal::record(refusal::Code::TierPlanned);
+        return std::unexpected(std::format(
+            "target '{}' is registered but not yet supported (planned) — no toolchain is published for it yet.\n"
+            "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.",
+            state.plannedRow, state.plannedRow));
+    }
     if (!state.platform.selection.none) {
         auto const& ref = state.platform.selection.ref;
         // A directory is read now, and its manifest's own error is the answer
@@ -399,6 +430,9 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
             if (auto m = mcpp::manifest::load(early / "mcpp.toml"); m && m->platformDeclared) {
                 state.platformData = mcpp::platform::provider_view(m->platform, t.str());
                 state.platformEarly = true;
+                auto n = mcpp::pm::compat::resolve_package_name(m->package.name, m->package.namespace_);
+                if (auto r = planned_row_served(state, m->platform, n.shortName, mp::display(state.platform.selection.ref)); !r)
+                    return r;
             }
     }
     return {};
@@ -496,6 +530,18 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         P.package = qualified(found->manifest);
         P.version = found->manifest.package.version;
         P.root = found->root;
+        // A planned row this platform was to serve: refused now when it does not;
+        // when it does and the first pass fetched it, prepared again with the
+        // platform read in P1, where its toolchain is the build's.
+        if (!state.plannedRow.empty() && !state.platformEarly) {
+            auto n = mcpp::pm::compat::resolve_package_name(found->manifest.package.name,
+                                                            found->manifest.package.namespace_);
+            if (auto r = planned_row_served(state, found->manifest.platform, n.shortName,
+                                            std::format("{}@{}", P.package, P.version)); !r)
+                return std::unexpected(r.error());
+            g_platformRestart = P.root;
+            return std::unexpected(std::string("mcpp:platform-restart"));
+        }
         define_platform(found->manifest.platform, state.platformPackageShortName,
                         ref.spec.path.empty() ? std::format("{}@{}", P.package, P.version)
                                               : "path:" + ref.spec.path);
@@ -528,10 +574,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
                 mcpp::platform::origin_text(P.selection.origin)));
         }
         P.selection.hosted = *hosted;
-        state.platformData = mcpp::platform::provider_of(found->manifest.platform, t.str())
-            ? mcpp::platform::provider_view(found->manifest.platform, t.str())
-            : *hosted ? mcpp::platform::hosted_view(found->manifest.platform)
-                      : found->manifest.platform;
+        state.platformData = mcpp::platform::view_of(found->manifest.platform, t.str(), *hosted);
         P.fields = state.platformData;
         const auto ctx = platform_cfg_context(state);
         std::vector<mp::Override> config;
@@ -1013,6 +1056,11 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
         if (here) {
             s.runner.cmd.assign(p->runner.begin(), p->runner.end());
             s.runner.requires_.assign(p->runnerRequires.begin(), p->runnerRequires.end());
+            s.runner.host = std::string(p->runnerHost);
+            s.runner.enabled = p->runnerEnabled;
+            s.runner.enabledSet = !p->runnerEnabled;
+            s.runner.exclusive = p->runnerExclusive;
+            s.runner.exclusiveSet = p->runnerExclusive;
             s.runner.origin = mp::Origin{ mp::Tier::BuiltIn, {}, 0,
                 std::format("the provider '{}' of {}", p->name, state.targetChoice.identity) };
             s.runner.set = true;
@@ -1033,6 +1081,16 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
     mcpp::platform::merge(program, state.m->buildConfig.programPlatform);
     // A build program's runner and named runners (`mcpp::runner`), the BSP
     // spelling of the same fields.
+    // The rest of a runner's table (`runner_spec`, R2): the same fields as
+    // data, so `{pkg:<name>}` and `enabled` mean in a build program what they
+    // mean in a platform.
+    auto table = [](mp::Runner& r, const mcpp::manifest::NamedRunner& f) {
+        r.requires_ = f.requires_;
+        if (!f.hosts.empty()) { r.hosts = f.hosts; r.hostsSet = true; }
+        if (!f.host.empty()) r.host = f.host;
+        if (!f.enabled) { r.enabled = false; r.enabledSet = true; }
+        if (f.exclusive) { r.exclusive = true; r.exclusiveSet = true; }
+    };
     if (!state.m->buildConfig.runner.empty()) {
         program.runner.cmd = state.m->buildConfig.runner;
         program.runner.set = true;
@@ -1042,11 +1100,19 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             program.runner.exclusive = true;
             program.runner.exclusiveSet = true;
         }
+        table(program.runner, state.m->buildConfig.runnerFields);
     }
     for (auto const& [name, nr] : state.m->buildConfig.namedRunners) {
         auto it = state.namedRunnerProvider.find(name);
-        program.runners[name] = mp::Words{ nr.argv, mp::Origin{ mp::Tier::Program, {}, 0,
-            it == state.namedRunnerProvider.end() ? state.m->package.name : it->second }, true };
+        mp::Runner r;
+        r.cmd = nr.argv;
+        r.origin = mp::Origin{ mp::Tier::Program, {}, 0,
+            it == state.namedRunnerProvider.end() ? state.m->package.name : it->second };
+        r.set = !nr.argv.empty();
+        r.longlived = nr.longLived;
+        r.longlivedSet = nr.longLived;
+        table(r, nr);
+        program.runners[name] = std::move(r);
     }
     mcpp::platform::merge(s, program);
     std::vector<mp::Override> config;
@@ -1061,9 +1127,24 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             s.runner = mp::Runner{};
         } else {
             s.runner.cmd = split_words(*e);
+            // The command replaces the runner whole, as every other tier's does
+            // (`merge`): the packages the replaced one was installed from are
+            // not this command's, and it is enabled unless stated otherwise.
+            s.runner.requires_.clear();
+            s.runner.enabled = true;
+            s.runner.enabledSet = false;
             s.runner.origin = mp::Origin{ mp::Tier::Env, {}, 0, envKey };
             s.runner.set = !s.runner.cmd.empty();
         }
+    }
+    // THE ONE-OFF ENABLING (R1): `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED`, the
+    // spelling of the variables beside it, nearest of all.
+    const auto enabledKey = target_env_name(t, "RUNNER_ENABLED");
+    if (auto e = mcpp::invocation::get(enabledKey); e && !e->empty()) {
+        if (*e == "true" || *e == "1") { s.runner.enabled = true; s.runner.enabledSet = true; }
+        else if (*e == "false" || *e == "0") { s.runner.enabled = false; s.runner.enabledSet = true; }
+        else mcpp::diag::warning("runner/enabled", std::format(
+            "{}={} is not true or false (ignored)", enabledKey, *e));
     }
     return s;
 }
@@ -1088,6 +1169,14 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     auto P = state.platform;
     const auto t = target_of(state);
 
+    // A preparation links when it compiles and does not only describe: the
+    // run of an archive (RunBuilt) links nothing, and its link and seal
+    // programs were the machine's that wrote the archive.
+    const bool linksSomething = state.overrides.compiles() && !state.overrides.describes()
+        && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
+               return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
+           });
+
     // ── The programs the link and the seal run (§4.4, §4.6) ───────────────
     if (P.active) {
         std::set<std::string> needed;
@@ -1098,16 +1187,13 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
         for (auto const& [name, e] : P.fields.tools)
             if (auto found = locate_program(state, ctx, e.ref.program.empty() ? name : e.ref.program))
                 P.tools[name] = found->generic_string();
-        const bool linksSomething = std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-            return lu.kind != mcpp::build::LinkUnit::StaticLibrary;
-        });
         for (auto const& name : needed) {
             if (P.tools.contains(name)) continue;
             if (auto found = locate_program(state, ctx, name)) {
                 P.tools[name] = found->generic_string();
                 continue;
             }
-            if (!linksSomething || state.overrides.plan_only) continue;
+            if (!linksSomething) continue;
             refusal::record(refusal::Code::PlatformToolAbsent);
             auto it = P.fields.tools.find(name);
             const std::string from = it == P.fields.tools.end()
@@ -1127,9 +1213,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     }
     // A platform that links with ld.lld needs one beside the compiler; its
     // absence is said here, not as a link line that starts with a flag.
-    if (P.active && P.fields.link.driver.value == "lld" && !state.overrides.plan_only
-        && std::ranges::any_of(ctx.plan.linkUnits, [](auto const& lu) {
-               return lu.kind != mcpp::build::LinkUnit::StaticLibrary; })
+    if (P.active && P.fields.link.driver.value == "lld" && linksSomething
         && mcpp::freestanding::resolve_lld_any(state.tc->binaryPath).empty()) {
         refusal::record(refusal::Code::LldRequiredAbsent);
         return std::unexpected(std::format(
@@ -1169,7 +1253,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
             state.hostPlatformTarget,
             state.hostPlatformRunner.empty() ? std::string("its runner")
                 : std::filesystem::path(state.hostPlatformRunner.front()).filename().string()));
-    if (state.overrides.configuration_only) {
+    if (state.overrides.configures()) {
         if (ctx.hostPlatform.active) {
             ctx.hostTriple = state.hostPlatformTarget;
             ctx.hostCompiler = ctx.hostPlatform.fields.toolchain.value;

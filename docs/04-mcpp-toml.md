@@ -581,6 +581,15 @@ belongs at the package/feature boundary, not on an individual target.
 > mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
 
+> **A path without a pattern names one file** (2026.11.16.1+). A `sources`
+> entry with none of `*`, `?`, `[`, `{` names a file, and a file that does not
+> exist is an error naming the table that states it (`[build]`,
+> `[target.'<sel>'.build]`, `[features.<f>]`): it was skipped, and the build
+> failed at an importer of the module the file provides. In a package fetched
+> into a store, which its consumer cannot change, it is a warning. A file an action or
+> a build program of the build writes is the build's. A pattern that matches
+> nothing selects nothing, as a target's selection may.
+
 > **`**/` stands for whole directories.** In `sources` and every glob that
 > shares its grammar, `**/` matches zero or more directories and what follows
 > it starts a path segment: `**/main.cpp` names every `main.cpp` and not
@@ -1076,6 +1085,8 @@ with two behaviours has to be.
 With GCC and `bmi_schedule = "on"`, ordinary compilation and detached code
 generation share the same total `jobs` limit (2026.11.7.1+). Additional
 scheduling and join tasks do not increase the number of compiler processes.
+A link shares the same limit (2026.11.16.1+): links that become ready together
+run as many at once as compiles do, not all at once.
 Cancelling the build ends its ordinary and detached compilers. An immediately
 following build waits for their cleanup before starting another compiler;
 partial outputs are rebuilt. A missing object from a completed module is
@@ -1496,7 +1507,7 @@ established, repeats the first line of the reason in the summary, and exits 2:
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
 smoke ... not run
-error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (plan 0.02s · build 0.39s · run 0.00s)
 ```
 
 Exit code 1 keeps its meaning — a test ran and failed — and 0 means every test
@@ -1559,7 +1570,8 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 | `tools.<name>` | the package that builds a tool for this machine, or `{ program = "<name>" }` |
 | `link` | `driver`, `flags`, `start`, `script`, `inputs`, `exe`, `shared`, `seal` |
 | `carrier` | `{ package, section, main }`: the program `--mode self-contained` builds |
-| `runner` | an argv, or `{ cmd, host, exclusive }`: `host = "same-arch"` runs an artifact only on a machine of its architecture |
+| `runner` | an argv, or `{ cmd, host, hosts, exclusive, requires, enabled, longlived }`: `host = "same-arch"` runs an artifact only on a machine of its architecture; a table without `cmd` adjusts the runner below it, as `{ enabled = true }` enables a runner its data states `enabled = false` (2026.11.16.1) |
+| `runners.<name>` | the same argv or table, for a named runner (the table form 2026.11.16.1) |
 
 `cfg(platform = "<name>")` selects by platform; `platform` itself is not
 accepted under such a selector. The same keys are read from
@@ -1660,7 +1672,7 @@ where it would become a BMI path that nothing reports.
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g; /Z7 on cl.exe
+debug    = false          # -g; /Z7 on cl.exe; "lines": the line tables alone
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
@@ -1692,6 +1704,10 @@ anything compiles.
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
+- **The order of the flag lists.** Each of `cflags`, `cxxflags` and `ldflags`
+  reaches a command as `[build]`'s, then the profile's, then
+  `[target.<selector>.build]`'s: where a compiler or a linker takes the last of
+  two words, the target block's wins (measured on 2026.11.16.1).
 - **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in
@@ -1730,6 +1746,14 @@ anything compiles.
   build directory the skeleton names. `"off"` keeps all of it in the artifact.
   Mach-O (the debug map), PDB, MinGW, WebAssembly and freestanding targets are
   unchanged. `-gz=none` in a package's flags turns compression off.
+- **`debug = "lines"` (2026.11.13.1+)** keeps the line tables alone: `-g1` with
+  GCC, which is `-gline-tables-only` with clang. A backtrace, a sanitizer report
+  and a profiler still name a file and a line; a debugger sees no variables and
+  no types. A test program of a large closure is a fraction of its `debug = true`
+  size, which is what a profile for CI and full test runs wants (see
+  [08 — The size of a test build](08-testing.md#the-size-of-a-test-build)).
+  cl.exe has no level below `/Z7`, which `"lines"` compiles with there. Any other
+  string is refused.
 - **Each profile owns its own build directory.** The resolved profile knobs
   participate in the fingerprint, so `target/<triple>/` holds one hash directory
   per profile and switching between them is incremental instead of a full
@@ -1737,13 +1761,15 @@ anything compiles.
   actually use.
 - **A configuration keeps one directory over time (2026.10.31.3+).** The part of
   the fingerprint a developer switches between -- the compiler family, the
-  target, the standard library's family, the standard and the configuration's
-  flags -- is the directory's lineage; the compiler's version, mcpp's version,
-  the std module and the runtime contract evolve. A new fingerprint of a lineage
+  target, the standard library's family, the standard, the configuration's
+  flags and the base as stated -- is the directory's lineage; the compiler's
+  version, mcpp's version, the std module and the runtime contract (what the
+  base contains) evolve. A new fingerprint of a lineage
   takes over the directory that lineage used last, and ninja rebuilds the edges
   whose commands changed: after an mcpp upgrade that leaves the flags as they
-  were, no unit is compiled again. A predecessor of another compiler build is
-  removed instead (its objects are not reusable). After a build or a test run,
+  were, no unit is compiled again. A predecessor of another compiler build, or
+  built against other contents of the base, is removed instead (its objects are
+  not reusable). After a build or a test run,
   at most once a day, the directories no configuration used for `[build]
   keep_days` days (config.toml; default 3, `0` keeps all) are removed.
 - **`[build] target_budget` bounds `target/` (2026.11.8.1+).** A size such as
@@ -2059,8 +2085,10 @@ generates the resource script automatically.
 | `version-info` | bool | `false` opts out of the generated version resource |
 | `[resources.version-info]` | table | `company`, `product`, `description`, `copyright`, `original-filename`, `internal-name` |
 
-**Only PE targets *compile* this.** On Linux and macOS the section is
-*inapplicable*: no resource units, no diagnostics, byte-identical build. You do
+**Only targets whose programs Windows runs *compile* this**: PE rows whose
+execution system is Windows. Elsewhere the section is *inapplicable* --- Linux,
+macOS, and a PE row another system loads, such as `x86_64-uefi` (2026.11.16.1):
+no resource units, no diagnostics, byte-identical build. You do
 **not** need (and cannot use) a `cfg(windows)` predicate — write it once,
 unconditionally.
 
@@ -2182,9 +2210,17 @@ discover = ["tests/**/*.cpp"]    # the default
 | `main` | `{ from = "<dependency>/<entry>" }` | the entry target every test program begins in; each test file is then an ordinary translation unit of its program and defines no `main` (§2.2, `kind = "entry"`) *(2026.10.26.2+)* |
 | `start` | symbol | the symbol every test image is entered at, on a freestanding target (§2.2, `start`) *(2026.10.26.2+)* |
 | `programs` | `"file"` or `"directory"` | `"file"` (the default): every discovered file is a program; `"directory"`: the files of one directory below a glob's fixed directory are one program, named by the directory, beginning at the file that defines `main` when one does *(2026.11.8.1+)* |
-| `split` | `"file"`, `"case"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, or once *(2026.11.9.1+)* |
+| `split` | `"file"`, `"case"`, `"auto"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, per file with a file the run store measured longer than its share divided into groups of its cases (`"auto"`, 2026.11.13.1+), or once *(2026.11.9.1+)* |
 | `link` | `"used"` or `"objects"` | `"used"` (the default): a test links what it reaches (`--gc-sections`, `-dead_strip`); `"objects"`: every object whole *(2026.11.9.1+)* |
 | `store` | directory or `"none"` | where a run is kept in the mtest store's form, relative to the project; the default is `target/mtest`; `"none"` keeps nothing *(2026.11.9.1+)* |
+| `features` | array of feature names | the features the package's own test build turns on, beside its defaults and `--features`; each is a feature `[features]` declares *(2026.11.16.1+)* |
+
+`[target.'<sel>'.test] discover` adds globs to `discover` for the targets the
+predicate selects, as a conditional `[build] sources` adds sources; a `!` glob
+removes the files it matches from the whole set *(2026.11.16.1+)*. It is the
+one key such a table holds: the others shape the test build rather than add to
+its inputs. The tests are discovered before dependencies resolve, so a
+predicate on a target-side layer (`kernel-abi`, `c-abi`, ...) is refused.
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

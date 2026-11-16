@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-014 |
 | 标题 | 打包与分发:链接、闭包、容器三个维度与构建腿,腿的合并,暂存树与包元数据,运行覆盖、单文件、容器列表、签名、压缩、合并与分发描述 |
-| 状态 | 评审中 v2.3 |
-| 版本 | 2.3 |
-| 最后修改 | 2026-11-10 |
-| 对应实现 | mcpp >= 2026.10.31.1;v2.2 条款 mcpp >= 2026.11.10.1 |
-| 相关设计文档 | `.agents/docs/2026-10-30-ecosystem-part2-ide-and-language-service-design.md`(§19.6)、`.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
+| 状态 | 评审中 v2.5 |
+| 版本 | 2.5 |
+| 最后修改 | 2026-11-16 |
+| 对应实现 | mcpp >= 2026.10.31.1;v2.2 条款 mcpp >= 2026.11.10.1;v2.3 条款 mcpp >= 2026.11.12.1;v2.4 条款 mcpp >= 2026.11.13.1;v2.5 条款 mcpp >= 2026.11.16.1 |
+| 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`(§5)、`.agents/docs/2026-10-30-ecosystem-part2-ide-and-language-service-design.md`(§19.6)、`.agents/docs/2026-10-29-ecosystem-target-sets-packaging-and-editors-design.md`(§4、§13)、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`(§2–§7、§14)、`.agents/docs/2026-10-28-platforms-design.md`(§4.7)、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md`(§2.2、§2.6) |
 | 相关 issue | mcpp#847、mcpp#849、mcpp#860 |
 | 相关规范 | [SPEC-007](build-plugins.md)(包格式提供者、artifact action)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-013](platforms.md)(平台、运行器、载体)、[SPEC-015](target-sets.md)(目标集合与腿) |
 | 使用文档 | [10 —— 发布打包](../zh/10-pack-and-release.md) |
@@ -213,8 +213,13 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
   `x86_64`、`amd64`、`AMD64` → `x86_64`,`aarch64`、`arm64`、`ARM64` → `aarch64`;没有对应目录时以状态 126 退出,
   写出本机架构与包含的架构。
 - 运行 `runner.cmd`,与 `mcpp run` 的展开相同:含 `{}` 的词中 `{}` 替换为所选架构目录中的入口映像,没有词含 `{}`
-  时映像追加在末尾;其余词原样传递,随后是启动器自己的参数;运行器先在 `libexec/<runner>/<os>-<arch>/` 中找,
-  再找 `PATH`。
+  时映像追加在末尾;其余词原样传递,随后是启动器自己的参数。携带运行器的包(`libexec/<runner>/` 存在)只运行
+  `libexec/<runner>/<os>-<arch>/` 中的运行器,本机没有时以状态 126 退出,写出本机的 `<os>-<arch>` 与包所含的各项;
+  不携带运行器的包在 `PATH` 上找(2026.11.16.1:此前携带运行器的包也回落到 `PATH`,运行的是另一版本的运行器)。
+- `<os>` 取系统表(SPEC-016 §2.3)中 `uname` 一列与 `uname -s` 相等的系统名;表中没有的系统取 `uname -s` 的小写
+  (2026.11.16.1:此前只认 Linux 与 Darwin,FreeBSD 上找的是 `FreeBSD-<arch>`)。
+- `--all-programs` 的树中,每个程序都有自己的两个启动器(`bin/<name>`、`bin/<name>.exe`),入口为它在各
+  `lib/<arch>/` 中的映像(2026.11.16.1)。
 - POSIX 启动器把每个词写成单引号字符串,沿符号链接找到自身的位置(不依赖 `readlink -f`);`uname -s` 为 `MINGW*`、
   `MSYS*`、`CYGWIN*` 时交给 `bin/<name>.exe`。macOS 上运行器带有 `com.apple.quarantine`(浏览器下载的包)时,启动器在启动它之前写出
   这一点与去除标记的命令(`xattr -dr com.apple.quarantine <包>`)(2026.10.31.1)。
@@ -236,7 +241,10 @@ openkal 目标上 `static` 为一个 `.oke`、无 `.okso`,`shared` 为 `.oke` �
 按惯常行构建,与本机系统和架构相同时取本机的行。本 mcpp 不构建程序的行(目标表标为 planned 或未列出)不放入包,并
 写出该系统与行。引擎只对 `linux`、`macos`、`windows` 持有"该系统的程序是哪一行"的约定;其余系统的程序是平台运行器
 为该宿主对陈述的身份(`runner.built-as`,SPEC-013 §10),无此陈述、平台也未为它定义行的系统没有程序
-(**mcpp >= 2026.11.12.1**)。
+(**mcpp >= 2026.11.12.1**)。平台为某系统定义的行即该系统的程序之行,行名可带环境段(i686 上的 `dos` 即
+`i686-dos-musl`):程序以该行的后缀命名;`built-as` 指向平台定义而非托管的行时,在该平台之上构建。封装把链接
+产物包进自己的容器时(DOS 行的 MZ 存根后接 ELF32 可执行文件),strip 不读的文件按封装的结果打包
+(**mcpp >= 2026.11.13.1**)。
 
 ### 4.5 `mcpp-package.json`
 
@@ -397,6 +405,12 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 (`mcpp::pack_stage_dir()`、`${mcpp.stage_dir}`)、其中的 `mcpp-package.json`、`MCPP_PACK_*` 环境;它报告的终端
 输出即产物。未知的名字被拒绝,消息列出图中可用的格式。
 
+提供者**可以**以 `mcpp::pack_program("<program>")` 陈述它从被打包的包的哪个程序组装产物(构建程序协议 19,
+2026.11.16.1)。陈述与 `provides_pack_format` 一样无条件给出:程序在打包的第二遍之前选定。未指名程序的
+`--pkg-format <name>` 打包该程序;命令行指名的程序优先;所请求格式的提供者陈述了不同的程序时拒绝并列出各项;
+陈述的程序不在本次构建中时拒绝,消息指名提供者。提供者在第二遍中没有提交 `role = "artifact"` 的 action 时,
+拒绝消息列出它在这一遍中陈述的警告与降级(`mcpp::warning`、`mcpp::report`),作为它不提交的原因。
+
 平台插件(SPEC-013 §12)**可以**在平台阶段声明包格式与 artifact action;平台阶段的指令表因此包含 `pack-format`
 与 `role = "artifact"` 的 action(其他角色的 action 仍被拒绝)。该平台的目标打包时,这些格式与引擎的格式并列。
 
@@ -491,3 +505,5 @@ openkal 目标的单文件:载体携带一条腿的映像本身(映像不引用�
 | 2.1 | 2026-10-31 | mcpp 2026.10.31.1(设计 2026-10-30 part 2 §19.6):§5.3 载体模型 `row` 与 `polyglot`,`--pkg-format polyglot` 的范围、布局、启动、缓存、签名与其他选项;§1.3、§1.5、§5.4、§7、§8 相应条目;`mcpp run --pkg-format` 直接运行 `single-file` 与 `polyglot`、拒绝 `tar`、`zip`、`dir`;§4.3 macOS 上带 quarantine 标记的运行器;判据 14(e2e 992)。 |
 | 2.2 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E7,mcpp#911 N8):§1.2 另一系统的产物从文件读取闭包,不运行本机加载器;`--mode static` 链接全静态程序并在打包前核对。 |
 | 2.3 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 C6、C7):§4.4 `--systems all` 取系统表,无程序可构建的对写为未覆盖;三个系统之外的程序按 `runner.built-as` 构建;单文件按系统表的 `uname` 选择程序(SPEC-016 §2.3)。 |
+| 2.4 | 2026-11-14 | mcpp 2026.11.13.1:§4.4 平台定义的行即该系统的程序之行(行名可带环境段),`built-as` 指向定义的行时在平台之上构建;strip 不读的封装容器按封装结果打包。 |
+| 2.5 | 2026-11-16 | mcpp 2026.11.16.1(设计 2026-11-15 N11、N20):§4.3 携带运行器的包不回落到 `PATH`,本机没有时以 126 退出并写出所含各项;`<os>` 取系统表的 `uname`;`--all-programs` 的树中每个程序有自己的启动器;§6 `mcpp::pack_program` 与提供者不提交的原因(N30)。 |

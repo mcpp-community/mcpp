@@ -153,6 +153,53 @@ UTest spawn_failed_message_is_verbatim{"RunnerLookup/SpawnFailedMessageIsVerbati
 
 #else
 
-UTest runner_lookup_windows_covered_by_integration{"RunnerLookup/WindowsCoveredByIntegration", [] { /* passes */; }};
+namespace {
+std::filesystem::path file_in(const std::filesystem::path& dir, std::string_view name) {
+    std::filesystem::create_directories(dir);
+    auto p = dir / name;
+    { std::ofstream o(p, std::ios::binary); o << "x"; }
+    return p;
+}
+std::filesystem::path fresh_root(std::string_view name) {
+    auto root = std::filesystem::temp_directory_path() / name;
+    std::filesystem::remove_all(root);
+    return root;
+}
+} // namespace
+
+// A package for every system carries a POSIX launcher beside the program:
+// the bare name is the program with the system's suffix, never the launcher.
+UTest a_bare_name_is_the_suffixed_program{"RunnerLookup/ABareNameIsTheSuffixedProgram", [] {
+    auto root = fresh_root("mcpp-runner-lookup-win-1");
+    file_in(root / "bin", "dirun");
+    auto exe = file_in(root / "bin", "dirun.exe");
+    auto l = locate("dirun", payload_search_dirs(root), "");
+    expect(fatal(l.program.has_value()));
+    expect(eq(*l.program, exe));
+}};
+
+UTest a_file_without_a_suffix_is_no_program{"RunnerLookup/AFileWithoutASuffixIsNoProgram", [] {
+    auto root = fresh_root("mcpp-runner-lookup-win-2");
+    file_in(root / "bin", "tool");
+    auto l = locate("tool", payload_search_dirs(root), "");
+    expect(!l.program.has_value());
+}};
 
 #endif
+
+#if defined(_WIN32)
+// R2, A3: a name with a directory and no suffix takes the system's suffix, as a bare name does;
+// the file without one is not a program on Windows.
+UTest a_name_with_a_directory_takes_the_systems_suffix{"RunnerLookup/ANameWithADirectoryTakesTheSystemsSuffix", [] {
+    auto root = std::filesystem::temp_directory_path() / "mcpp-runner-lookup-dir-suffix";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "tools");
+    { std::ofstream o(root / "tools" / "x.cmd"); o << "@echo off\r\n"; }
+    { std::ofstream o(root / "tools" / "y"); o << "#!/bin/sh\n"; }
+    auto l = locate((root / "tools" / "x").string(), {}, "");
+    expect(fatal(l.program.has_value()));
+    expect(eq(l.program->filename().string(), std::string("x.cmd")));
+    expect(!locate((root / "tools" / "y").string(), {}, "").program.has_value());
+}};
+#endif
+

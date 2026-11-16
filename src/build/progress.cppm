@@ -32,6 +32,7 @@ export module mcpp.build.progress;
 import std;
 import mcpp.run;
 import mcpp.build.action_progress;
+import mcpp.build.dirlock;
 import mcpp.ui;
 import mcpp.ui.dots_screen;
 import mcpp.log;
@@ -1454,17 +1455,23 @@ void finished(std::string_view profile, std::string_view descriptor) {
         // The breakdown and the longest step explain a wait; a command shorter
         // than a minute has none worth a longer line (build output design
         // revision 3, §7.3).
+        // The time spent waiting for a build directory another command held
+        // is said whenever it is a second or more: it is the part of a slow
+        // command no build of this one explains (2026-11-12 §17, W3).
+        const long long waited = mcpp::build::dirlock::waited().count();
+        if (waited >= 1'000)
+            detail = "waited " + mcpp::ui::format_duration(ms(waited)) + " for the build directory";
         if (total >= 60'000) {
             const long long build = r.buildStart ? total - *r.buildStart : 0;
             const long long programs = r.programTime.count();
-            const long long plan = std::max<long long>(0, total - build - programs);
+            const long long plan = std::max<long long>(0, total - build - programs - waited);
             std::vector<std::string> parts;
             if (plan > 0)     parts.push_back("plan " + mcpp::ui::format_duration(ms(plan)));
             if (programs > 0) parts.push_back("programs " + mcpp::ui::format_duration(ms(programs)));
             if (build > 0)    parts.push_back("build " + mcpp::ui::format_duration(ms(build)));
             if (parts.size() > 1)
                 for (std::size_t i = 0; i < parts.size(); ++i)
-                    detail += (i ? " · " : "") + parts[i];
+                    detail += (detail.empty() ? "" : " · ") + parts[i];
             long long longest = 0;
             std::string label;
             for (auto const& b : r.builds)

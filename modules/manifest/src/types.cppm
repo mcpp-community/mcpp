@@ -869,6 +869,13 @@ struct Resources {
 struct NamedRunner {
     std::vector<std::string> argv;
     bool                     longLived = false;
+    // The rest of the runner's table (`mcpp::runner_spec`, protocol 19; R2):
+    // the packages it is installed from, where it exists, how it reaches the
+    // artifact, whether runs overlap and whether it is enabled.
+    std::vector<std::string> requires_, hosts;
+    std::string              host;
+    bool                     exclusive = false;
+    bool                     enabled   = true;
 };
 
 // THE C STANDARD OF A PACKAGE THAT DECLARES NONE (#695).
@@ -941,6 +948,9 @@ struct BuildConfig : BuildInputs {
     // gets the same flow.
     std::map<std::string, NamedRunner> namedRunners;
     bool                                runExclusive = false;
+    // The default runner's table besides its command (`runner_spec` with no
+    // name); `argv` is unused, the command being `runner` above.
+    NamedRunner                         runnerFields;
 
     // Was `sources` WRITTEN, as opposed to merely being empty?
     //
@@ -1085,6 +1095,14 @@ struct BuildConfig : BuildInputs {
     // notarisation each couple a release to a release mcpp does not control,
     // and a name here is the whole of what the engine learns.
     std::vector<std::string>            packFormats;
+    // The program of the depending package this package's pack format is
+    // assembled from (`mcpp:pack-program=`, protocol 19, design 2026-11-15
+    // N30): `mcpp pack --pkg-format <format>` with no program named packs it.
+    std::vector<std::string>            packPrograms;
+    // The warnings and degradations the program stated in its last run, in
+    // order. A packaging pass whose provider submitted nothing states them as
+    // the provider's reasons (N30).
+    std::vector<std::string>            statedReasons;
     // mcpp#755, protocol 15. What a build program stated about SOURCES, carried
     // to prepare the way every other directive is: folded in here, read back
     // after the program ran, replayed with it on a cache hit.
@@ -1222,6 +1240,7 @@ struct BuildConfig : BuildInputs {
     // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
+    bool                                debugLines = false; // -g1: the line tables alone
     bool                                lto      = false; // -flto, /GL + /LTCG on cl.exe
     // LTO was requested and some objects of the plan are compiled without it:
     // those that feed a PE shared library whose exports are discovered, or a
@@ -1716,6 +1735,14 @@ struct ConditionalConfig {
     // `!`-exclusion globs work there too (the scanner handles positive+
     // negative sets).
     BuildInputs                         inputs;
+    // `[target.<sel>.test] discover` (mcpp#942): globs appended to the
+    // package's `[test] discover` when the predicate matches the target the
+    // tests are built for. The test programs are the test build's inputs, so
+    // the cfg axis carries them as it carries `[build] sources`; a `!` entry
+    // removes the files it matches from the whole set. Evaluated when the
+    // tests are discovered, before dependencies resolve: a predicate on a
+    // target-side layer cannot select them.
+    std::vector<std::string>            testDiscover;
     // `[target.<sel>.runtime]` — the DIALECT-NEUTRAL half of a link line.
     //
     // `inputs.ldflags` above is spelled the GNU way and native `cl.exe` rejects
@@ -1866,7 +1893,9 @@ inline bool is_empty(const ConditionalConfig& c) {
         // `c.inputs` (BuildInputs), so `is_empty(c.inputs)` above does not see
         // it -- a section carrying only this key would otherwise be dropped
         // before it is ever evaluated, the same failure #296 was filed for.
-        && c.dialectCxxflags.empty();
+        && c.dialectCxxflags.empty()
+        // mcpp#942: a section that only selects test programs.
+        && c.testDiscover.empty();
 }
 
 // `[lib]` — library "root" interface convention.
@@ -2147,6 +2176,11 @@ struct Hooks {
 struct Profile {
     std::string optLevel = "2";
     bool        debug    = false;
+    // `debug = "lines"` (2026-11-12 §17, W5): debug information, the line
+    // tables alone. `debugWritten` is a string as the table wrote it, which
+    // prepare refuses unless it is "lines".
+    bool        debugLines = false;
+    std::string debugWritten;
     bool        lto      = false;
     bool        strip    = false;
     // Which scalars the table WROTE: a profile inherited from the workspace
@@ -2256,6 +2290,12 @@ struct Manifest {
     // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
     std::vector<std::string>    testDiscover;
     bool                        testDiscoverDeclared = false;
+    // `[test] features` (mcpp#941): the features the package's own test build
+    // turns on, beside its defaults and `--features`. The tests are a consumer
+    // of the package, and this is that consumer's request: it is resolved in
+    // the test build alone, as a dev-dependency is, and no other consumer of
+    // the package sees it. Each name is a feature `[features]` declares.
+    std::vector<std::string>    testFeatures;
     // `[test] windows_code_page`: the ANSI code page of every discovered test
     // program on Windows, in the vocabulary of the target key of the same
     // name. Empty is `legacy`, the system's code page.

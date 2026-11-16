@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-360 records.
+363 records.
 
 ## By subject
 
@@ -42,12 +42,17 @@ Records that declare one. Everything else is listed by date below.
 
 - [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
 
+### ci
+
+- [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
+
 ### compiler-scheduling
 
 - [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
 
 ### cross-platform
 
+- [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
 - [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
 
 ### design
@@ -140,6 +145,10 @@ Records that declare one. Everything else is listed by date below.
 
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
 
+### release
+
+- [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
+
 ### review
 
 - [Two days of mcpp and xlings: a review of what merged, what is known, and what is open](2026-09-28-ecosystem-review-of-two-days-of-mcpp-and-xlings.md) — active
@@ -193,6 +202,9 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
+- [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
+- [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
 - [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
 - [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active

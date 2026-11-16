@@ -1,0 +1,7 @@
+# One number per payload name of data/builtin.toml: its occurrences in the
+# engine's sources (.github/tools/check_payload_names.py). The numbers only fall.
+emsdk 0
+android-ndk 0
+musl-gcc 0
+mingw-gcc 1
+mingw-cross-gcc 0

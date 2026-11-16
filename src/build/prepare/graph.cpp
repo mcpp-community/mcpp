@@ -736,6 +736,32 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     //   * The secondary version must be a leaf (no own
                     //     transitive deps) — recursive mangling is
                     //     deferred to a follow-up.
+                    // A BUILD DEPENDENCY IS NOT RENAMED (design 2026-11-15
+                    // N29). It is a module of a build program, which the
+                    // rename does not rewrite: the program that asked keeps
+                    // importing the authored name, and the stage of its
+                    // package's sources -- a data package has none -- failed
+                    // with a message about the package rather than about the
+                    // two requests (a project asking for mcpp:plugins 0.21.0
+                    // over a platform that asks for 0.20.0).
+                    if (item.fromBuildTable) {
+                        return std::unexpected(std::format(
+                            "build dependency '{}{}{}' has irreconcilable versions:\n"
+                            "  '{}' (constraint '{}') requested by '{}'\n"
+                            "  '{}' (constraint '{}') requested by '{}'\n"
+                            "SemVer merge: {}\n"
+                            "A build dependency is a module of a build program, and a build "
+                            "loads one version of it. Align the requests on one version{}.",
+                            key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                            it->second.version, effective_constraint(state, it->second), it->second.requestedBy,
+                            spec.version, item.originalConstraint, item.requestedBy,
+                            merged.error(),
+                            state.platform.active
+                                ? std::format(", or select the release of {} that carries the "
+                                              "version you need", state.platform.display())
+                                : std::string())
+                            + override_hint(key, it->second.version, spec.version));
+                    }
                     if (item.consumerDepIndex == kMainConsumer) {
                         return std::unexpected(std::format(
                             "dependency '{}{}{}' has irreconcilable versions:\n"
