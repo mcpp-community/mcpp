@@ -483,13 +483,15 @@ flags  = ["-e", "_start"]
         expect(fatal(h.kind == s::format::elf && !h.wide)) << "the program is not ELF32";
     };
     "1106 the package index names the platform of a row"_test[s::elf][s::llvm][s::fresh_sandbox] = [] {
-        // A row no table knows, `x86_64-toyos`, and a `planned` row, `i686-linux-musl`, are listed
-        // in the `platform_rows` of a descriptor in the project's index: A `--target x86_64-toyos`
-        // selects that platform with no statement of the project, and the report says the index
-        // chose; E the planned row takes the platform that serves it; B a statement of the
-        // project stands over the index; C two descriptors of one index listing the row are
-        // named, and the first is taken; D without the column the row is unknown and the planned
-        // row is refused.
+        // A row no table knows, `x86_64-toyos`, a `planned` row, `i686-linux-musl`, a row the
+        // table holds with no platform and no provider here, `x86_64-freebsd`, and the host's
+        // own row are listed in the `platform_rows` of a descriptor in the project's index: A
+        // `--target x86_64-toyos` selects that platform with no statement of the project, and
+        // the report says the index chose; E the planned row takes the platform that serves it;
+        // F so does the row no built-in provider serves; G the host's row, which the table
+        // answers, is not taken from the index; B a statement of the project stands over the
+        // index; C two descriptors of one index listing the row are named, and the first is
+        // taken; D without the column the row is unknown and the planned row is refused.
         const auto platform = [](std::string_view name) {
             return std::format(R"([package]
 namespace = "acme"
@@ -507,7 +509,7 @@ family        = "unix"
 execution     = "linux"
 
 [[platform.provider]]
-serves = ["x86_64-toyos", "i686-linux-musl"]
+serves = ["x86_64-toyos", "i686-linux-musl", "x86_64-freebsd"]
 
 [platform.build]
 cflags = ["-ffreestanding", "-fno-stack-protector", "-fno-pic", "-DTOY_NAME=\"{0}\""]
@@ -531,7 +533,7 @@ driver = "compiler"
 }}
 )", name, rows);
         };
-        const std::string rows = "    platform_rows = { \"x86_64-toyos\", \"i686-linux-musl\" },\n";
+        const std::string rows = "    platform_rows = { \"x86_64-toyos\", \"i686-linux-musl\", \"x86_64-freebsd\", \"x86_64-linux-gnu\", \"aarch64-linux-gnu\" },\n";
         const auto t = s::case_dir();
         s::project app(t / "app", {{"mcpp.toml", R"([package]
 name    = "toyapp"
@@ -561,6 +563,13 @@ main = "src/main.c"
         r = app.mcpp({"build", "--target", "i686-linux-musl"}, inherited);
         expect(fatal(s::lacks(s::text(r), "not yet supported"))) << "E: the planned row the index names was refused: " << s::text(r);
         expect(fatal(s::has_line(s::text(r), R"(Platform +toy 0\.1\.0 \(index)"))) << "E: the planned row did not take the index's platform: " << s::text(r);
+        // F
+        r = app.mcpp({"build", "--target", "x86_64-freebsd"}, inherited);
+        expect(fatal(s::lacks(s::text(r), "cannot be built on this host"))) << "F: the row no provider serves was refused: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Platform +toy 0\.1\.0 \(index)"))) << "F: the row no provider serves did not take the index's platform: " << s::text(r);
+        // G
+        r = app.mcpp({"build"}, inherited);
+        expect(fatal(s::lacks(s::text(r), "(index"))) << "G: the host's row was taken from the index: " << s::text(r);
         // B
         const auto plain = app.read("mcpp.toml");
         app.write("mcpp.toml", plain + "\n[target.x86_64-toyos]\nplatform = \"acme.toy2@0.1.0\"\n");

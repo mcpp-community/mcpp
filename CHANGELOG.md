@@ -41,9 +41,11 @@
 - A platform package's index entry lists the rows it serves,
   `platform_rows = { "x86_64-uefi", ... }`, and a row the built-in table has no
   platform for takes that package as a series (`<ns>.<name>@*`): `mcpp build
-  --target x86_64-uefi` needs no `[target.x86_64-uefi] platform`, and a
-  `planned` row such as `i686-linux-musl` builds once a platform claims it. A
-  row the table answers is unchanged, a project's own statement still comes
+  --target x86_64-uefi` needs no `[target.x86_64-uefi] platform`, a `planned`
+  row such as `i686-linux-musl` builds once a platform claims it, and so does a
+  row the table holds with no platform and no built-in provider here, such as
+  `x86_64-freebsd`, rather than being completed to a sibling row. A row the
+  table answers, a host row included, is unchanged, a project's own statement still comes
   first, the project's `[indices]` rank before the shared ones, and the report
   names the source `index`. The entries are read once per command, and only
   for such a row (design 2026-11-16 §6.2, SPEC-013 §14).

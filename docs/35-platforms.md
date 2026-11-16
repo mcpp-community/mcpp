@@ -218,7 +218,9 @@ takes the newest release again.
 ## A row the index names (2026.11.17.1+)
 
 A row the built-in table has no platform for — a row the engine does not know,
-such as `x86_64-uefi`, or a `planned` one, such as `i686-linux-musl` — takes the
+such as `x86_64-uefi`, a `planned` one, such as `i686-linux-musl`, or one the
+table holds with no platform and no built-in provider here, such as
+`x86_64-freebsd`, whose system a platform's sysroot provides — takes the
 platform whose index entry lists it:
 
 ```lua

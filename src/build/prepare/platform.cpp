@@ -444,6 +444,27 @@ std::string platform_short_name(std::string_view ref) {
     return r ? known_short_name(*r) : std::string{};
 }
 
+// WHETHER THE BUILT-IN TABLE ANSWERS THE PLATFORM COLUMN FOR A ROW (design
+// 2026-11-16 §6.2). It does not for a row it does not hold (a platform defines
+// it), holds as `planned`, or holds with no platform in its column and no
+// built-in provider that serves that row here: the native FreeBSD rows, whose
+// system a platform's sysroot provides (E4 of 2026-11-10; the selection takes
+// them with no provider). A request the
+// selection would complete to a sibling (`x86_64-freebsd` to openkal's
+// `x86_64-freebsd-musl`) is not the table answering the row requested.
+static bool table_answers(const PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
+    const auto* known = mcpp::toolchain::triple::find_known_target(t);
+    if (!known || known->tier == "planned" || t.defined()) return false;
+    if (!known->platform.empty()) return true;
+    auto served = mcpp::toolchain::target::select(t.str(), t.arch, t.os, t.env, true,
+        target_context(state.m->platformOverrides, {}, {}, {}, [&] {
+            return state.msvc_usable_either_origin && state.msvc_usable_either_origin();
+        }));
+    return !served.candidates.empty() && !served.fallback && served.candidates.front().available
+        && served.candidates.front().provider
+        && served.candidates.front().row && served.candidates.front().row->triple == t.str();
+}
+
 std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
                            std::span<const mp::Override> config, std::string* platform, std::string* chosenOut) {
     const auto flag = !state.overrides.platform_choice.empty()
@@ -464,11 +485,12 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
     if (!unchosen) {
         chosen = known_short_name(sel->ref);
     } else {
-        // Nothing chose, and the table has no platform for a `planned` row: the
-        // index's column names the platform that serves it (design 2026-11-16
-        // §6.2), as a choice of the project would.
-        const auto* known = mcpp::toolchain::triple::find_known_target(t);
-        if (!known || known->tier != "planned" || t.defined()) return {};
+        // Nothing chose, and the table has no answer for a row it holds (a
+        // `planned` row, or one no built-in provider serves here): the index's
+        // column names the platform that serves it (design 2026-11-16 §6.2), as
+        // a choice of the project would. A row nothing defines is answered by
+        // `define_early_platform`.
+            if (!mcpp::toolchain::triple::find_known_target(t) || table_answers(state, t)) return {};
         const auto column = index_platform_for(state, t.str());
         if (column.empty()) return {};
         const auto ref = mp::parse_ref_text(column);
@@ -538,13 +560,12 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     if (state.selectedTarget) column = std::string(state.selectedTarget->platform);
     else if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
     // THE INDEX ANSWERS WHERE THE BUILT-IN TABLE DOES NOT (design 2026-11-16
-    // §6.2): a row the table does not hold (a platform defines it), or holds
-    // as planned. A row the table answers -- a host row included, which a
-    // platform's `targets` may also list -- is never taken from the index.
+    // §6.2, `table_answers`). A row the table answers -- a host row included,
+    // which a platform's `targets` may also list -- is never taken from the
+    // index.
     bool fromIndex = false;
     {
-        const auto* known = mcpp::toolchain::triple::find_known_target(t);
-        const bool tableAnswers = known && known->tier != "planned" && !t.defined();
+        const bool tableAnswers = table_answers(state, t);
         if (!tableAnswers)
             if (auto indexed = index_platform_for(state, t.str()); !indexed.empty()) {
                 column = std::move(indexed);
