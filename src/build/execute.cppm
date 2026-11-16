@@ -3881,11 +3881,19 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         o.input = mcpp::run::Input::inherit;
         o.streams = mcpp::run::Streams::inherit;
         o.report_spawn_failure = false;
+        // The directory is the run's: removed after it, and by the interrupt
+        // watcher when a request ends mcpp while the program runs, so no
+        // `run-<pid>-<n>` is left behind (mcpp waits here; it cannot exec).
+        const auto removeDir = [dir = runDir->dir] {
+            std::error_code rmEc;
+            std::filesystem::remove_all(dir, rmEc);
+        };
+        const int cleanup = mcpp::run::add_cleanup(removeDir);
         auto r = mcpp::run::execute(argv, o);
+        mcpp::run::remove_cleanup(cleanup);
         rc = r.exit_code;
         spawnErr = r.spawn_error;
-        std::error_code rmEc;
-        std::filesystem::remove_all(runDir->dir, rmEc);
+        removeDir();
     } else {
         rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
     }
