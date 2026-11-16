@@ -372,10 +372,12 @@ E2E contract_machine{"contract-machine", resource{"machine"}, [] {
         expect(fatal(r.started && r.status == 2 && e2e::contains(s::text(r), "missing.txt does not exist"))) << s::text(r);
         s::write_executable(work / "runner.sh", "#!/bin/sh\necho \"runner-cwd=$(basename \"$PWD\" | cut -c1-4)\"\n"
                                                 "cat \"$MCPP_RUNTIME_FILES\"\ngrep -c '\"dest\": \"IN.TXT\"' \"$MCPP_RUN_CLOSURE\"\nexec \"$@\"\n");
-        // The runner is declared for the host's own row, which every host builds.
-        auto host = app.mcpp({"--print-target"}).out;
-        host.erase(host.find_last_not_of("\r\n") + 1);
-        expect(fatal(!host.empty())) << "mcpp --print-target named no row";
+        // The runner is declared for the host's own row, which every host builds: the triple of
+        // the build directory the runs above made.
+        std::string host;
+        for (const auto& e : fs::directory_iterator(app.at("target")))
+            if (const auto n = e.path().filename().string(); !n.starts_with(".") && n.find('-') != std::string::npos) { host = n; break; }
+        expect(fatal(!host.empty())) << "could not determine the host's row";
         app.write("mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[target.{}]\nrunner = [\"{}\"]\n",
                                            host, (work / "runner.sh").generic_string()));
         r = app.mcpp({"run", "--target", host, "--file", "data/in.txt=IN.TXT", "--", "IN.TXT"});
