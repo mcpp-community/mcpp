@@ -5,7 +5,7 @@ status: draft
 
 # 生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项
 
-**日期：** 2026-11-16 · **版本：** v3（第 15 节的八项已定；第 13 节为与外部验证工程的双向交叉评审） · **基线：** mcpp 2026.11.16.1（main 另含 #929：多行内联表）、
+**日期：** 2026-11-16 · **版本：** v4（第 15 节的十一项已定；第 13 节为双向交叉评审；第 16、17 节为实施计划及其评审） · **基线：** mcpp 2026.11.16.1（main 另含 #929：多行内联表）、
 openkal-platform 0.29.0、dirun 0.5.0、ovmf 9.2.4-3、mcpp:plugins 0.22.0（平台以 0.20.0 构建）、xlings v2026.10.26.1 ·
 **前文：** [第一部分](2026-11-15-ecosystem-gap-supplement-design.md)（N1–N47，13.12–13.17 为本文的来源）
 
@@ -420,17 +420,73 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
 - **约束**：OpenBSD 7.4 起只允许经 libc 发出系统调用（`pinsyscalls`），所以 OpenBSD 上的 okrun 以原生行构建；
   openkal 映像在 OpenBSD 上运行，以这一行为前提。
 
+### 8.6 N48：产物名与行的后缀（已定）
+
+- **现状**：工程以 `mcpp::artifact_name("exe", "{name}")` 给出名字时，行的后缀被去掉。对 Windows 与 DOS 这是工程
+  想要的（名字本身已带扩展名）。对 Emscripten 则不是：`.js` 是启动文件与 `.wasm` 成对的依据，去掉之后 node、
+  网页与 dist-web 都找不到启动文件。平台以 `link.exe = "{name}.efi"` 给出的名字又不受工程的模板影响。工程
+  因此要在构建程序中按系统判断。
+- **规则**：行的数据陈述它的后缀是否为加载所必需（行键 `exe-suffix-fixed`，缺省为假）。必需的后缀总是出现在
+  产物名的末尾，工程的模板只决定它之前的部分；模板的结果已经以该后缀结尾时不重复添加。
+- **数据**：内置表中 Emscripten 的行写 `exe-suffix-fixed = true`；平台包为自己的行陈述。引擎不识别系统名。
+- **效果**：工程无条件写一行 `mcpp::artifact_name("exe", "{name}")`，不再判断系统。
+- **兼容**：没有给出模板的工程不变。给出模板而又面向 Emscripten 的工程，产物名恢复为带 `.js`；这正是它们现在
+  以条件判断得到的结果。
+
+### 8.7 FreeBSD 的行加上 runner（已定）
+
+- FreeBSD 的四行在内置表中，目前没有 runner；运行验证只能在 CI 的虚拟机动作中手工进行。
+- 与 8.5 的三个系统使用同一机制：xim 的 `freebsd-disk-image` 包带 dirun 的配置，行的 runner 为
+  `dirun --profile {pkg:freebsd-disk-image}/dirun.toml`，`enabled = false`。Android 的行已是这一写法。
+- 数据写在 mcpp 的内置表中（这些行本来就在那里）；映像包在 xim-pkgindex。
+- 映像的要求对四个系统相同，写进 `mcpp.platforms` 的收录规范：串口控制台、自动登录、不需要网络、dirun 能把
+  文件送入并取得退出状态。
+
+### 8.8 安装动作 `setup-mcpp`（已定）
+
+- **缺口**：使用 mcpp 的每个 CI 作业都要重复约 15 行：按系统安装 xlings、加入 PATH、带重试地安装指定版本的
+  mcpp、设置镜像。mcpp 自己的 CI 用仓库内的 `bootstrap-mcpp`，它与 mcpp 的缓存策略绑定，不能给外部工程用。
+- **形式**：仓库 `mcpp-community/setup-mcpp`，根目录是一个 composite 动作（不需要构建产物，三个宿主系统通用），
+  以 `v1` 这样的主版本标签发布。用法：
+
+  ```yaml
+  - uses: mcpp-community/setup-mcpp@v1
+    with:
+      version: 2026.11.16.1        # 缺省 latest
+      toolchains: llvm 23.1.3      # 可选，每行一个
+  ```
+
+| 输入 | 缺省 | 含义 |
+|---|---|---|
+| `version` | `latest` | mcpp 的版本 |
+| `xlings-version` | 动作发布时验证过的版本 | 用来安装 mcpp 的 xlings |
+| `mirror` | `GLOBAL` | `mcpp self config --mirror` 的值 |
+| `toolchains` | 空 | 预先安装的工具链，每行一个 `mcpp toolchain install` 的参数 |
+| `cache` | `false` | `true` 时缓存 mcpp 的包目录；键含系统、架构、xlings 与 mcpp 的版本、`mcpp.lock` 的散列 |
+
+| 输出 | 含义 |
+|---|---|
+| `version` | 实际安装的 mcpp 版本 |
+| `cache-hit` | 缓存是否命中 |
+
+- **通用性**：动作中没有任何工程的名字；全部行为由输入决定。
+- **沿用已有的教训**（`bootstrap-mcpp` 的注释记录了它们）：缓存键必须含架构（否则 arm 的机器取回 x86 的二进制）；
+  xlings 的版本是缓存谱系的一部分；缓存缺省关闭，由使用者显式打开。
+- **验证**：动作自己的 CI 在 Linux x86_64、Linux aarch64、macOS、Windows 上安装并构建一个最小工程。
+- **采用**：本轮新建的仓库与外部验证工程直接使用；已有的生态仓库在下一次修改 CI 时改用，不为此单开 PR。
+
 ## 9. 归属
 
 | 仓库 | 改动 | 版本 |
 |---|---|---|
-| mcpp | `deploy` 的条目语法（4.1）；`license_files` 与打包时的暂存、报告（4.3）；`--file` 与 `[test] files`（5.2）；工作目录（5.3）；`MCPP_RUN_CLOSURE` 的 `run_files` 与 TSV 镜像（7.1）；平台列查索引（6.2）；SPEC-002、SPEC-004、SPEC-014、SPEC-017 的条款；中英文文档；把多行内联表写进示例 | 下一版 |
+| mcpp | `deploy` 的条目语法（4.1）；`license_files` 与打包时的暂存、报告（4.3）；`--file` 与 `[test] files`（5.2）；工作目录（5.3）；`MCPP_RUN_CLOSURE` 的 `run_files` 与 TSV 镜像（7.1）；平台列查索引（6.2）；N48 的行键（8.6）；FreeBSD 行的 runner 数据（8.7）；SPEC-002、SPEC-004、SPEC-014、SPEC-017 的条款；中英文文档；把多行内联表写进示例 | 下一版 |
 | mcpp.plugins | dist-web 写明未提交的原因（8.3） | 补丁版本 |
 | dirun | `[payload] disk = "fat-image"`（8.4） | 0.6.0 |
 | openkal-uefi | 读取 `LoadOptions`（8.1） | 0.11.1 |
 | openkal-dos | 栈的大小、保护页与退路（8.2） | 0.1.1 |
+| setup-mcpp（新，`mcpp-community`） | 安装动作（8.8） | v1 |
 | mcpp-platforms（新，`mcpp-community`） | OpenBSD、NetBSD、illumos 的行、工具链、sysroot 与 runner；收录规范（8.5） | 0.1.0 |
-| xim-pkgindex | dirun 0.6.0；ovmf 9.2.4-4；三个系统的 sysroot 与磁盘映像 | — |
+| xim-pkgindex | dirun 0.6.0；ovmf 9.2.4-4；三个系统的 sysroot；四个系统（含 FreeBSD）的磁盘映像 | — |
 | mcpp-index | openkal-uefi 0.11.1、openkal-dos 0.1.1、openkal-platform 0.29.1、`mcpp.platforms`、mcpp.plugins；平台条目中行的列表及其生成与校验工具（6.2）；`compat.onnxruntime` 改用 `license_files` 与 `library_dirs` 的清理（等新版 mcpp 发布后进行） | — |
 | openkal-platform | 0.29.1：新成员；ovmf r4 与 dirun 0.6.0；DOS 行的缺省栈大小（8.2）；以新版 plugins 构建；UEFI 检查增加含连续空白的参数；runner 改为多行（在要求新 mcpp 的版本中） | 0.29.1 |
 | 外部验证工程（fork） | 改用 `--file`，去掉对 dirun 的直接调用和对包目录的 `find`；DOS、UEFI 与 Android 经 `mcpp run` 运行完整的脚本；三个新行；去掉平台的四行与 13.2 的两处过时绕行 | — |
@@ -439,6 +495,8 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
 事实（哪些文件是它的测试数据、它选用哪些行）。
 
 ## 10. PR 划分与依赖
+
+本节是概览；逐个 PR 的阶段点与分层的依赖见第 16 节。
 
 ```
 openkal-uefi ─┐
@@ -512,11 +570,11 @@ xim-pkgindex（sysroot、映像）─> mcpp-platforms ─> mcpp-index（mcpp.pla
 |---|---|---|---|
 | X1 | UEFI 与 DOS：CI 直接调用 dirun，并在包目录中查找 dirun、固件与模拟器 | 运行文件不能经 mcpp 交付；固件的盘只读 | 本轮：第 5 节、8.4 |
 | X2 | Android：CI 以 adb 手工推送程序与脚本并运行，而该行已有 runner | 同 X1：runner 收不到脚本 | 本轮：`--file` 之后改为 `mcpp run`，作为验证项 |
-| X3 | FreeBSD：在 CI 的虚拟机动作中手工运行 | 该行没有 runner | 8.5 的磁盘映像机制同样适用；**评审项**：本轮是否为 FreeBSD 的行加上 runner |
+| X3 | FreeBSD：在 CI 的虚拟机动作中手工运行 | 该行没有 runner | 本轮：8.7 |
 | X4 | 四行重复写平台 | 平台列只有内置数据 | 本轮：6.2 |
-| X5 | 构建程序按系统判断是否改产物名（`emscripten` 除外） | 工程给出的名字与行的后缀之间的先后不一致：emscripten 上工程的名字去掉了加载所必需的 `.js`，UEFI 上平台的 `{name}.efi` 却保留 | 新发现 N48。建议：行的数据陈述后缀是否为加载所必需，必需的后缀不被工程的模板去掉；工程无条件写一行即可。**评审项** |
+| X5 | 构建程序按系统判断是否改产物名（`emscripten` 除外） | 工程给出的名字与行的后缀之间的先后不一致：emscripten 上工程的名字去掉了加载所必需的 `.js`，UEFI 上平台的 `{name}.efi` 却保留 | 新发现 N48。本轮：8.6 |
 | X6 | wasm 的 `-sSTACK_SIZE=1048576` 写在构建程序中，DOS 依赖平台的缺省 | 同一个事实（需要 1 MiB 的栈）按链接器各写一次 | 通用键 `stack_size` 的证据；已定本轮不加，记录 |
-| X7 | 每个作业约 15 行安装 xlings 与 mcpp，带重试 | 没有公开的安装动作（mcpp 自己用仓库内的 `bootstrap-mcpp`） | 候选：`mcpp-community/setup-mcpp`。**评审项** |
+| X7 | 每个作业约 15 行安装 xlings 与 mcpp，带重试 | 没有公开的安装动作（mcpp 自己用仓库内的 `bootstrap-mcpp`） | 本轮：8.8 |
 | X8 | 插件版本须与平台构建时的版本一致，工程写死 `0.20.0` | N45 | 本轮：8.3；之后工程写范围 |
 | X9 | CI 以 `find` 在 `target/` 下查找产物与打包目录 | 无：机器输出已有（docs/50） | 工程侧改用机器输出 |
 
@@ -535,7 +593,7 @@ xim-pkgindex（sysroot、映像）─> mcpp-platforms ─> mcpp-index（mcpp.pla
 | ovmf 配置中的引用规则与结束标记 | 是 UEFI Shell 的通用规则，不含工程的内容 |
 | DOS 的 1 MiB 缺省栈 | 由这个工程暴露（每层约 80 KiB），取值是 PE 的行业缺省，写在数据中并可覆盖 |
 | N43 的参数截短 | edk2 Shell 的通用缺陷，任何带连续空白的参数都会遇到 |
-| N48 的命名规则 | 尚未实现；建议的规则以行的数据表达，不识别任何系统名 |
+| N48 的命名规则 | 以行的数据表达，不识别任何系统名（8.6） |
 
 ### 13.4 正确地留在工程中的内容
 
@@ -585,8 +643,96 @@ xim-pkgindex（sysroot、映像）─> mcpp-platforms ─> mcpp-index（mcpp.pla
 7. 新行在一个 PR 中完成构建与运行；`mcpp-community/mcpp-platforms`，包 `mcpp.platforms`，一个包多行（8.5）。
 8. DOS 的缺省栈大小写在平台行的数据中；通用键 `stack_size` 本轮不加（8.2）。
 
-**待评审（第 13 节新提出）：**
+9. N48：行的数据陈述后缀是否为加载所必需（8.6）。
+10. FreeBSD 的行加上 runner，与三个新系统使用同一机制（8.7）。
+11. 公开的安装动作 `mcpp-community/setup-mcpp`（8.8）。
 
-1. N48：行的数据陈述后缀是否为加载所必需，必需的后缀不被工程的名字模板去掉（13.1 X5）。
-2. 本轮是否为 FreeBSD 的行加上 runner，与三个新系统使用同一机制（13.1 X3）。
-3. 是否提供公开的安装动作 `mcpp-community/setup-mcpp`（13.1 X7）。
+**待确认：** 两个新仓库由谁创建（16.4）。
+
+## 16. 实施计划
+
+### 16.1 仓库与 PR
+
+每个仓库一个 PR，以提交作为阶段点；每个阶段点带它的测试与规范、文档的更新。两个发布渠道（xim-pkgindex、
+mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表中列出。
+
+| PR | 仓库 | 内容（阶段点） | 版本 |
+|---|---|---|---|
+| P1 | openkal-uefi（#19，已开） | 读取 `LoadOptions`（8.1） | 0.11.1 |
+| P2 | openkal-dos | ① 读 `PT_GNU_STACK` ② 保护页 ③ 哨兵值与诊断 ④ 复现程序进入 CI（8.2） | 0.1.1 |
+| P3 | dirun | ① FAT32 映像生成模块与单元测试 ② `[payload] disk` ③ OVMF 中写入并读出的检查（8.4） | 0.6.0 |
+| P4 | mcpp.plugins | dist-web 写明原因（8.3） | 补丁 |
+| P5 | mcpp（复用 #944，改标题） | ① `deploy` 的条目语法 ② `license_files` ③ 运行文件、工作目录与契约 ④ 平台列查索引 ⑤ N48 ⑥ FreeBSD 的 runner 数据 ⑦ 文档改用多行内联表 | 下一版 |
+| P6 | setup-mcpp（新） | 动作与它的 CI（8.8） | v1 |
+| P7a | xim-pkgindex | dirun 0.6.0、ovmf 9.2.4-4 | — |
+| P7b | xim-pkgindex | 三个系统的 sysroot；四个系统的磁盘映像 | — |
+| P8a | mcpp-index | openkal-uefi 0.11.1、openkal-dos 0.1.1、mcpp.plugins | — |
+| P8b | mcpp-index | openkal-platform 0.29.1；平台条目中行的列表及其生成、校验工具 | — |
+| P8c | mcpp-index | `mcpp.platforms` 0.1.0；`compat.onnxruntime` 改用 `license_files`；`library_dirs` 的清理 | — |
+| P9 | openkal-platform | 新成员、DOS 的缺省栈、ovmf r4 与 dirun 0.6.0、新版 plugins、UEFI 检查 | 0.29.1 |
+| P10 | mcpp-platforms（新） | ① 收录规范 ② OpenBSD ③ NetBSD ④ illumos，每个系统先构建后运行（8.5） | 0.1.0 |
+| P11 | 外部验证工程（fork 的 PR） | 改用 `setup-mcpp`、`--file`；去掉平台的四行与两处过时绕行；三个新行；FreeBSD 与 Android 经 `mcpp run` | — |
+
+### 16.2 依赖
+
+```
+第 0 层（实测，互不依赖）
+  M1 CWSDPMI 对 0507h 的支持            ─> P2
+  M2 lld 与三个系统的链接；sysroot 的组成  ─> P7b、P10
+  M3 四个系统的磁盘映像：体积、条款、镜像   ─> P7b
+  M4 旧引擎读到索引条目的新字段时的行为     ─> P5④、P8b
+  M5 打包目录命名规则对新包名的影响         ─> P10
+
+第 1 层（互不依赖，并行）
+  P1  P2  P3  P4  P5  P6
+
+第 2 层
+  P3 ─> P7a
+  P1、P2、P4 ─> P8a
+  P5 ─> mcpp 发布
+
+第 3 层
+  P7a、P8a ─> P9 ─> P8b
+  M2、M3 ─> P7b ─> P10 ─> P8c（并需要 mcpp 发布）
+
+第 4 层
+  mcpp 发布、P8b、P8c、P6 ─> P11 ─> 真实环境验证 ─> 生态级评审 ─> 关闭 issue ─> 报告
+```
+
+- **关键路径有两条**：P5（引擎的五项功能，工作量最大）与 M3 → P7b → P10（磁盘映像的制作）。两条互不依赖，
+  同时开始。
+- **等待 CI 时做什么**：第 1 层的六个 PR 轮流推进；CI 运行期间做第 0 层的实测与 P7b 的映像制作。
+- **发布的顺序**：先发布被依赖的包，再发布依赖它的包；每次发布之后在本地以 gtc 补 GitCode 的资源，再重新触发
+  主干的 CI。
+
+### 16.3 每个 PR 的完成条件
+
+1. 实现、测试、规范条款、中英文文档在同一个 PR 中；
+2. 该仓库的全部 CI 通过；失败的作业先读日志再重跑；
+3. 合入前按第 12 节的角度自查一次；
+4. 合入、发布、镜像、索引更新之后，在隔离的 xlings 环境中从索引取用并验证。
+
+### 16.4 需要用户完成或授权的事
+
+| 事项 | 影响 |
+|---|---|
+| 创建 `mcpp-community/mcpp-platforms` 与 `mcpp-community/setup-mcpp`（或授权创建） | P6、P10 及其后续；其余不受影响 |
+
+## 17. 计划的自我评审
+
+| 角度 | 检查 | 结论 |
+|---|---|---|
+| 架构 | 每项改动是否落在它所属的层 | 是：机制在引擎（P5），事实在数据（内置表、平台包、索引、xim 包），实现在各自的包（P1–P3），工程只留自己的事实（P11） |
+| 通用性 | 是否有只为一个工程存在的改动 | 没有：第 13 节逐项检查；`setup-mcpp`、平台列查索引、`--file` 对任何工程成立 |
+| 简洁 | 新增的清单键与命令行 | 清单两个键（`license_files`、`[test] files`），`deploy` 一个字段，命令行一个选项，行的数据一个键（`exe-suffix-fixed`）；runner、插件协议、平台选择的清单语法没有新增 |
+| 单 PR | P5 含七个阶段点，是否过大 | 是最大的一个。七项各自独立、各带测试，以提交分隔，可以逐个评审与回退；按“每个仓库一个 PR”保留为一个 |
+| 单 PR | 发布渠道分批是否必要 | 必要：P8a 是 P9 的前置，P9 是 P8b 的前置，P10 是 P8c 的前置，不能合成一个 |
+| 稳定性 | 实测项失败时的出路 | M1 失败：哨兵值作为唯一手段，启动时给出诊断。M2 中某个系统不能链接：该行暂不收录，记录原因，另外两个照常。M3 中映像不能再分发：该行只构建，在收录规范中标明，并报告 |
+| 无感升级 | 发布的中间状态是否会破坏现有用户 | 不会：新语法只出现在声明了新下限的包中；平台列先查内置表；ovmf 的旧修订与平台的旧版本保留；`setup-mcpp` 是新增 |
+| 无感升级 | P5④ 与 P8b 的先后 | 索引先带上行的列表而引擎尚未读取时没有影响，前提是 M4 确认旧引擎忽略该字段；否则 P8b 提高索引的引擎下限 |
+| 一致性 | 四个 BSD 类系统与 Android 的运行方式 | 相同：磁盘映像包带 dirun 的配置 |
+| 一致性 | 生态仓库的 CI 安装方式 | 新仓库与外部工程用 `setup-mcpp`；已有仓库在下一次修改 CI 时改用，本轮不为此单开 PR，这是唯一留到以后的事项，且不改变任何行为 |
+| 跨平台 | 每项在三个宿主系统上的验证 | P3 的映像生成、P5 的工作目录与复制、P6 的动作都在 Linux、macOS、Windows 上有 CI |
+| 测试 | 每个阶段点是否有自动化验证 | 有：第 11 节；P11 是端到端的检查 |
+| 资源 | 磁盘映像的体积与本地存储 | 制作前清理过期的临时文件；体积在 M3 中实测并记录 |
+| 风险 | 最不确定的部分 | M3（映像的制作与分发）与 P5④（解析顺序中插入索引查找）。两者都排在最早开始 |
