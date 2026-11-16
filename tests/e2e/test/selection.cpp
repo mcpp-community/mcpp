@@ -280,13 +280,14 @@ E2E selection{"selection", [] {
                                            {"tests/data/in.txt", "payload\n"}, {"tests/data/sub/d.txt", "deep\n"},
                                            {"tests/host/h.txt", "host\n"},
                                            {"tests/reads.cpp", "import std;\nint main() {\n"
-                                                               "    std::ifstream a(\"IN.TXT\"), b(\"in.txt\"), c(\"sub/d.txt\"), d(\"h.txt\");\n"
+                                                               "    std::ifstream a(\"COPY.TXT\"), b(\"in.txt\"), c(\"sub/d.txt\"), d(\"h.txt\");\n"
                                                                "    std::string w, x, y, z; std::getline(a, w); std::getline(b, x); std::getline(c, y); std::getline(d, z);\n"
                                                                "    std::ofstream(\"written\") << 1;\n"
                                                                "    return w == \"payload\" && x == \"payload\" && y == \"deep\" && z == \"host\" ? 0 : 1;\n}\n"},
                                            {"tests/fails.cpp", "import std;\nint main() { std::ofstream(\"evidence.txt\") << 1; return 4; }\n"}});
-        p.write("mcpp.toml", manifest("p") + "\n[test]\nfiles = [\"tests/data/**\", { from = \"tests/data/in.txt\", name = \"IN.TXT\" }]\n"
-                                             "\n[target.'cfg(unix)'.test]\nfiles = [\"tests/host/h.txt\"]\n");
+        p.write("mcpp.toml", manifest("p") + "\n[test]\nfiles = [\"tests/data/**\", { from = \"tests/data/in.txt\", name = \"COPY.TXT\" }]\n"
+                                             "\n[target.'cfg(unix)'.test]\nfiles = [\"tests/host/h.txt\"]\n"
+                                             "\n[target.'cfg(windows)'.test]\nfiles = [\"tests/host/h.txt\"]\n");
         auto r = p.mcpp({"test"});
         expect(fatal(r.started && r.status != 0)) << "the failing test passed: " << s::text(r);
         expect(fatal(s::has_line(s::text(r), "^reads \\.\\.\\. ok"))) << "the test that reads its files failed: " << s::text(r);

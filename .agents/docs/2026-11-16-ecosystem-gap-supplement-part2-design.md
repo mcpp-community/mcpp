@@ -773,9 +773,9 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
 - **mimalloc 的随机数（待定）**：openkal-uefi 的程序在 OVMF 中启动时输出
   `mimalloc: warning: thread …: unable to use secure randomness`。UEFI 下 mimalloc 没有取得安全随机数的途径；
   可行的做法是由 openkal-uefi 经 `EFI_RNG_PROTOCOL` 提供，不可用时静默退回。不在本轮范围内，记为后续项。
-- **dirun 的测试在 macOS 上失败**：FAT 的测试在 macOS 上读到一个文件为 0 字节。原因在测试：同一测试程序的用例可以
-  同时运行，四个用例共用一个源目录，一个用例重建目录时另一个正在写映像。改为每个用例一个源目录；写入方以
-  `std::filesystem::file_size(path)` 询问大小并报告错误。
+- **dirun 的测试在 macOS 上失败**：FAT 的测试在 macOS 上读到一个文件为 0 字节。原因在测试：查找函数返回指向临时
+  列表元素的指针，列表在表达式结束时销毁，读到的是已释放的内存（Linux 上碰巧保留了原值）。改为先保存列表；
+  写入方另以 `std::filesystem::file_size(path)` 询问大小并报告错误。
 - **磁盘空间**：本机 `/home` 的可用空间一度降到 1 GB 以下，e2e 因 `No space left on device` 失败；清理过期的临时
   目录与构建缓存之后重跑通过。磁盘映像的制作（M3、P7b）需要先确认空间。
 
