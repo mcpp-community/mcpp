@@ -2625,7 +2625,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // --verbose); what remains is the advice below.
         if (!reported) mcpp::ui::error("build failed");
         if (!reported && !(reporting && verbose))
-            mcpp::ui::block(verbose ? out : mcpp::build::filter_ninja_output(out, prefixes));
+            mcpp::ui::block(verbose ? out : mcpp::build::failure_diagnostics(out, prefixes));
         // Read from the RAW output, not from `diagnostics`: the filter drops
         // command lines, and a future filter change must not be able to
         // silently remove the advice along with them.
@@ -7198,7 +7198,10 @@ export int run_tests(std::span<const std::string> passthrough,
             }
         }
         if (hasPrograms) {
-            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, overrides);
+            // With the dev-dependencies, as the tests' own plan (mcpp#945): the
+            // packages the programs share with the tests keep one configuration,
+            // so neither plan compiles them again over the other's output.
+            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/true, {}, overrides);
             if (!binCtx) { mcpp::ui::error(binCtx.error()); return 2; }
             if (std::ranges::any_of(binCtx->plan.linkUnits,
                                     [](auto const& lu) { return lu.kind == LinkUnit::Binary; })) {
@@ -7826,7 +7829,13 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
             po.workspace_request.clear();
             for (auto const& m : members) po.workspace_request.push_back(m.path);
             po.member_targets.clear();
-            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, std::move(po));
+            // WITH THE DEV-DEPENDENCIES, as the tests' plan is made (mcpp#945): a
+            // dev-dependency's features are unified into the packages it shares
+            // with the programs, so a plan without them configured those packages
+            // otherwise and compiled them again into the same paths -- three
+            // compiles of one unchanged module in a run (e2e 1107), and on Windows
+            // a rewrite of a module another process had open.
+            auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/true, {}, std::move(po));
             if (!binCtx) { why = binCtx.error(); return false; }
             // `--no-programs`: planned for their names, and the environment's.
             if (!testOpts.noPrograms

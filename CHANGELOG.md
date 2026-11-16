@@ -70,6 +70,15 @@
   array of tables before the platform reader saw it, so a platform could define
   rows for a system but not state the system (`uname`, `resources`,
   `command-scripts`; SPEC-016 §2.3).
+- `mcpp test` plans a package's programs with its dev-dependencies, as it plans
+  the tests (#945). A dev-dependency that asks a shared package for a feature
+  configured that package one way for the tests and another for the programs,
+  so one run compiled its modules again into the same paths: three compiles of
+  one unchanged module per `mcpp test --workspace` (e2e 1107), two per `mcpp
+  test` of a package, and on Windows a rewrite of a module another process had
+  open, which failed the run.
+- A failed build whose ninja output names no failed step prints ninja's last
+  lines rather than a bare `error: build failed` (#945).
 
 ## [2026.11.16.1] - 2026-11-16
 

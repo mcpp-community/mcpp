@@ -112,6 +112,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                               std::vector<std::filesystem::path>* placed = nullptr);
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
+// What a failed build that named no failed step says (mcpp#945): the filtered
+// output, or, when the filter leaves nothing, the last lines ninja printed as
+// they are -- never a bare "build failed".
+std::string failure_diagnostics(std::string_view output,
+                                std::span<const std::string> commandPrefixes);
 
 // One ninja run read line by line into its build's report (build progress
 // design 2026-09-29, §6.1). `argv` must not carry `--quiet`: the status lines
@@ -1365,6 +1370,27 @@ std::string graph_link_library_advice(std::string_view output,
                "older openkal-musl\n"
                "      needs its pin moved (openkal-llvm-runtime 0.15.2 and later carry "
                "it).\n";
+    return out;
+}
+
+std::string failure_diagnostics(std::string_view output,
+                                std::span<const std::string> commandPrefixes) {
+    auto filtered = filter_ninja_output(output, commandPrefixes);
+    if (filtered.find_first_not_of(" \t\r\n") != std::string::npos) return filtered;
+    std::vector<std::string> lines;
+    std::istringstream in{std::string(output)};
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto trimmed = ltrim_copy(line);
+        if (trimmed.empty() || trimmed.starts_with("\x1b[0m@@mcpp ") || trimmed.starts_with("@@mcpp ")) continue;
+        lines.push_back(std::move(line));
+    }
+    if (lines.empty())
+        return "the build stopped with no output: ninja named no failed step and printed nothing\n";
+    constexpr std::size_t kTail = 40;
+    std::string out = "ninja named no failed step; its last lines:\n";
+    for (std::size_t i = lines.size() > kTail ? lines.size() - kTail : 0; i < lines.size(); ++i)
+        out += "  " + lines[i] + "\n";
     return out;
 }
 
@@ -5289,7 +5315,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // What was reported as it happened is not repeated: a failed step's
         // diagnostics (default output), or every line (--verbose).
         auto diagnostics = reported || (report && opts.verbose) ? std::string{}
-                         : opts.verbose ? out : filter_ninja_output(out, prefixes);
+                         : opts.verbose ? out : failure_diagnostics(out, prefixes);
         // Appended here as well as on the fast path (execute.cppm): the two
         // paths report failure through different channels, and advice attached
         // to only one of them would appear or not depending on whether
