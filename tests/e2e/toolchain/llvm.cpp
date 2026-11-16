@@ -22,9 +22,11 @@ std::optional<fs::path> program_under(const fs::path& root, std::string_view nam
     return found.front();
 }
 
+// A regular file first: the status of a missing file has the permissions `perms::unknown`, every
+// bit set, so the bit alone called a payload that was not there executable.
 bool executable(const fs::path& f) {
     std::error_code ec;
-    return (fs::status(f, ec).permissions() & fs::perms::owner_exec) != fs::perms::none;
+    return fs::is_regular_file(f, ec) && (fs::status(f, ec).permissions() & fs::perms::owner_exec) != fs::perms::none;
 }
 
 // `$(program)`: its standard output without the trailing newlines.
