@@ -5,7 +5,7 @@ status: draft
 
 # 生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项
 
-**日期：** 2026-11-16 · **版本：** v5（第 15 节的十二项已定；第 13 节为双向交叉评审；第 16、17 节为实施计划及其评审） · **基线：** mcpp 2026.11.16.1（main 另含 #929：多行内联表）、
+**日期：** 2026-11-16 · **版本：** v6（实施中：第 18 节记录实测结果与实施中的决定；v5 为第 15 节的十二项与第 16、17 节的计划） · **基线：** mcpp 2026.11.16.1（main 另含 #929：多行内联表）、
 openkal-platform 0.29.0、dirun 0.5.0、ovmf 9.2.4-3、mcpp:plugins 0.22.0（平台以 0.20.0 构建）、xlings v2026.10.26.1 ·
 **前文：** [第一部分](2026-11-15-ecosystem-gap-supplement-design.md)（N1–N47，13.12–13.17 为本文的来源）
 
@@ -302,7 +302,7 @@ runner = {
 **v1 的 `[platforms]` 表被否定**：openkal-platform 的 `targets` 还列有 `x86_64-linux-gnu` 等宿主行，按平台整体
 选择会把本机构建也交给平台；它又是一个新的清单概念。按行查找的平台列没有这两个问题。
 
-**待实测**：早于本版本的引擎读到条目中的新字段时是否忽略；索引同步之后查找的开销。
+**实测（M4，第 18 节）**：字段名为 `platform_rows`；mcpp 2026.11.16.1 读到带该字段的条目时忽略它；查找的开销见第 18 节。
 
 ### 6.3 索引数据的清理（不改引擎）
 
@@ -363,13 +363,16 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
     块基址是固定的，平坦模型下 DS 与 SS 共用同一个描述符，栈放到低端就要移动全部段的地址。
 - **退路**：DPMI 宿主不支持 `0507h` 时，在栈底写入哨兵值，程序结束时检查；被改写时以专用状态报告“栈越界”，并
   在启动时以一行诊断说明保护页不可用（做得少时不沉默）。
-- **待实测**：CWSDPMI r7 与 DOSBox Staging 内置的 DPMI 对 `0507h` 的支持。
+- **实测（M1）**：DOSBox Staging 中的 CWSDPMI r7 支持 `0507h`：保护页之下的记录可读，保护页本身产生故障。哨兵值
+  只作为不支持时的退路保留。
 - **测试**：#3 的最小复现程序在 8 KiB 栈帧下递归 64 层后正常返回；声明 64 KiB 栈时，以 `#PF` 报告。
 
 ### 8.3 N45：dist-web 与平台的插件版本
 
 - mcpp.plugins：dist-web 找不到它要包装的启动文件时，以警告写明查找过的路径（N30 的机制）。
 - openkal-platform 0.29.1 改为以 mcpp.plugins 的最新版本构建，使选用平台行的工程可以使用新的 dist-web。
+- **实施结论（P4）**：mcpp.plugins 0.22.0 的 dist-web 已经以警告写出它查找过的路径，引擎已把提供者的警告并入
+  错误信息，不需要新版本。N45 余下的部分是 P9。
 
 ### 8.4 N47：dirun 0.6.0，可写的 FAT 映像
 
@@ -433,12 +436,16 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
 - **兼容**：没有给出模板的工程不变。给出模板而又面向 Emscripten 的工程，产物名恢复为带 `.js`；这正是它们现在
   以条件判断得到的结果。
 
-### 8.7 FreeBSD 的行加上 runner（已定）
+### 8.7 FreeBSD 的行加上 runner（已定；v6 修订归属）
 
 - FreeBSD 的四行在内置表中，目前没有 runner；运行验证只能在 CI 的虚拟机动作中手工进行。
 - 与 8.5 的三个系统使用同一机制：xim 的 `freebsd-disk-image` 包带 dirun 的配置，行的 runner 为
   `dirun --profile {pkg:freebsd-disk-image}/dirun.toml`，`enabled = false`。Android 的行已是这一写法。
-- 数据写在 mcpp 的内置表中（这些行本来就在那里）；映像包在 xim-pkgindex。
+- **归属（v6，2026-11-16 决定）**：runner 只能写在提供者上。内置表中原生的两行（`<arch>-freebsd`）按 2026-11-10
+  E4 没有提供者：系统 ABI 由声明 sysroot 的平台提供，未选平台时拒绝。原生行的提供者（`xim:freebsd-sysroot`、
+  llvm、上述 runner）因此放在 `mcpp.platforms`，与 OpenBSD、NetBSD、illumos 相同；配合 6.2，`--target
+  x86_64-freebsd` 的工程不写平台。musl 的两行由 openkal-platform 的 `freebsd-vm` 提供者服务，runner 在 0.29.0
+  已经写出。引擎本轮不为此修改；v5 的“数据写在 mcpp 的内置表中”作废。
 - 映像的要求对四个系统相同，写进 `mcpp.platforms` 的收录规范：串口控制台、自动登录、不需要网络、dirun 能把
   文件送入并取得退出状态。
 
@@ -644,7 +651,7 @@ xim-pkgindex（sysroot、映像）─> mcpp-platforms ─> mcpp-index（mcpp.pla
 8. DOS 的缺省栈大小写在平台行的数据中；通用键 `stack_size` 本轮不加（8.2）。
 
 9. N48：行的数据陈述后缀是否为加载所必需（8.6）。
-10. FreeBSD 的行加上 runner，与三个新系统使用同一机制（8.7）。
+10. FreeBSD 的行加上 runner，与三个新系统使用同一机制（8.7）；原生行的提供者在 `mcpp.platforms`（v6）。
 11. 公开的安装动作 `mcpp-community/setup-mcpp`（8.8）。
 
 12. 实施计划（第 16 节）；两个新仓库由实施者创建，内容经 PR #1、CI 通过之后合入（16.4）。
@@ -662,7 +669,7 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
 | P2 | openkal-dos | ① 读 `PT_GNU_STACK` ② 保护页 ③ 哨兵值与诊断 ④ 复现程序进入 CI（8.2） | 0.1.1 |
 | P3 | dirun | ① FAT32 映像生成模块与单元测试 ② `[payload] disk` ③ OVMF 中写入并读出的检查（8.4） | 0.6.0 |
 | P4 | mcpp.plugins | dist-web 写明原因（8.3） | 补丁 |
-| P5 | mcpp（复用 #944，改标题） | ① `deploy` 的条目语法 ② `license_files` ③ 运行文件、工作目录与契约 ④ 平台列查索引 ⑤ N48 ⑥ FreeBSD 的 runner 数据 ⑦ 文档改用多行内联表 | 下一版 |
+| P5 | mcpp（复用 #944，改标题） | ① `deploy` 的条目语法 ② `license_files` ③ 运行文件、工作目录与契约 ④ 平台列查索引 ⑤ N48 ⑥ （v6：移至 P10）⑦ 文档改用多行内联表 | 下一版 |
 | P6 | setup-mcpp（新） | 动作与它的 CI（8.8） | v1 |
 | P7a | xim-pkgindex | dirun 0.6.0、ovmf 9.2.4-4 | — |
 | P7b | xim-pkgindex | 三个系统的 sysroot；四个系统的磁盘映像 | — |
@@ -670,7 +677,7 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
 | P8b | mcpp-index | openkal-platform 0.29.1；平台条目中行的列表及其生成、校验工具 | — |
 | P8c | mcpp-index | `mcpp.platforms` 0.1.0；`compat.onnxruntime` 改用 `license_files`；`library_dirs` 的清理 | — |
 | P9 | openkal-platform | 新成员、DOS 的缺省栈、ovmf r4 与 dirun 0.6.0、新版 plugins、UEFI 检查 | 0.29.1 |
-| P10 | mcpp-platforms（新） | ① 收录规范 ② OpenBSD ③ NetBSD ④ illumos，每个系统先构建后运行（8.5） | 0.1.0 |
+| P10 | mcpp-platforms（新） | ① 收录规范 ② OpenBSD ③ NetBSD ④ illumos，每个系统先构建后运行（8.5）⑤ 原生 FreeBSD 的提供者（8.7，v6） | 0.1.0 |
 | P11 | 外部验证工程（fork 的 PR） | 改用 `setup-mcpp`、`--file`；去掉平台的四行与两处过时绕行；三个新行；FreeBSD 与 Android 经 `mcpp run` | — |
 
 ### 16.2 依赖
@@ -740,3 +747,34 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
 | 测试 | 每个阶段点是否有自动化验证 | 有：第 11 节；P11 是端到端的检查 |
 | 资源 | 磁盘映像的体积与本地存储 | 制作前清理过期的临时文件；体积在 M3 中实测并记录 |
 | 风险 | 最不确定的部分 | M3（映像的制作与分发）与 P5④（解析顺序中插入索引查找）。两者都排在最早开始 |
+
+## 18. 实施记录（v6）
+
+### 18.1 实测结果
+
+| 项 | 结果 |
+|---|---|
+| M1 | DOSBox Staging 中的 CWSDPMI r7 支持 `0507h`（8.2）。 |
+| M4 | mcpp 2026.11.16.1 读到带 `platform_rows` 的 openkal-platform 条目时照常构建 `x86_64-openkal`，字段被忽略。索引先于引擎带上这一列没有影响，P8b 不需要提高索引的引擎下限。 |
+| 查找开销 | 只在内置表没有答案的行上扫描，每条命令至多一次。约 400 个条目时，对一个未知行的完整拒绝过程用时 0.05 s；有答案的行不扫描。 |
+| N47 | OVMF 中的 UEFI 程序在 `disk = "fat-image"` 的盘上写入文件并读回；只读的 `directory` 盘上写入失败（状态 3）。 |
+
+### 18.2 平台列查索引的实现要点（6.2）
+
+- 条目的键为 `platform_rows`，值为行的列表；平台包以系列 `<命名空间>.<名字>@*` 选择，版本按 SPEC-013 §14 的
+  系列规则取得并锁定。
+- 内置表没有答案的三种行查索引：引擎不认识的行、平台定义的行、`planned` 行。`planned` 行与工程选择平台时相同，
+  由认领它的平台服务后可以构建。
+- 工程自己的索引（`[indices]`）先于共享的索引；同一层两个认领时取名字最小者并给出警告。
+- 规范：SPEC-013 v1.11（§3.1 第 5 步、§14、判据 16），e2e 1106。
+
+### 18.3 实施中的发现
+
+- **mimalloc 的随机数（待定）**：openkal-uefi 的程序在 OVMF 中启动时输出
+  `mimalloc: warning: thread …: unable to use secure randomness`。UEFI 下 mimalloc 没有取得安全随机数的途径；
+  可行的做法是由 openkal-uefi 经 `EFI_RNG_PROTOCOL` 提供，不可用时静默退回。不在本轮范围内，记为后续项。
+- **dirun 在 macOS 上的文件大小**：FAT 映像的写入在 macOS 上把一个三级目录中的文件记为 0 字节；改为向文件
+  本身询问大小（`std::filesystem::file_size(path)`），并在测试中先检查源文件的大小，结果待 CI 确认。
+- **磁盘空间**：本机 `/home` 的可用空间一度降到 1 GB 以下，e2e 因 `No space left on device` 失败；清理过期的临时
+  目录与构建缓存之后重跑通过。磁盘映像的制作（M3、P7b）需要先确认空间。
+
