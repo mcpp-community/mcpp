@@ -27,6 +27,7 @@ export namespace mcpp::manifest::platform {
 // a later tier replaces an earlier one field by field (§4.5).
 enum class Tier : std::uint8_t {
     BuiltIn,   // the engine's own conventions for a host target
+    Index,     // the target table's platform column, answered by the index (§3.1 step 5)
     Platform,  // the platform package's `[platform]` section
     Program,   // the platform's plugin or a build program (directives)
     Config,    // config.toml: `[target.<selector>]`, `[host]`
@@ -39,6 +40,7 @@ enum class Tier : std::uint8_t {
 constexpr std::string_view tier_name(Tier t) {
     switch (t) {
         case Tier::BuiltIn:  return "built-in";
+        case Tier::Index:    return "index";
         case Tier::Platform: return "platform";
         case Tier::Program:  return "build-program";
         case Tier::Config:   return "config.toml";

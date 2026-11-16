@@ -1,7 +1,7 @@
 // Platform packages: a class of targets a platform states, its version group and its series,
 // the default platform release, a target a platform defines, the platform skeleton, and a row a
 // platform defines taking nothing of the payload's host (formerly tests/e2e/952, 1020, 1021,
-// 1025, 1040, 1049, 1057).
+// 1025, 1040, 1049, 1057), and the package index naming a row's platform (1106).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -481,6 +481,108 @@ flags  = ["-e", "_start"]
         expect(fatal(exe.has_value())) << "no program";
         const auto h = s::read_header(*exe);
         expect(fatal(h.kind == s::format::elf && !h.wide)) << "the program is not ELF32";
+    };
+    "1106 the package index names the platform of a row"_test[s::elf][s::llvm][s::fresh_sandbox] = [] {
+        // A row no table knows, `x86_64-toyos`, and a `planned` row, `i686-linux-musl`, are listed
+        // in the `platform_rows` of a descriptor in the project's index: A `--target x86_64-toyos`
+        // selects that platform with no statement of the project, and the report says the index
+        // chose; E the planned row takes the platform that serves it; B a statement of the
+        // project stands over the index; C two descriptors of one index listing the row are
+        // named, and the first is taken; D without the column the row is unknown and the planned
+        // row is refused.
+        const auto platform = [](std::string_view name) {
+            return std::format(R"([package]
+namespace = "acme"
+name      = "{0}"
+version   = "0.1.0"
+
+[platform]
+toolchain = "llvm@{1}"
+
+[[platform.define]]
+triple        = "x86_64-toyos"
+clang-triple  = "x86_64-unknown-linux-gnu"
+object-format = "elf"
+family        = "unix"
+execution     = "linux"
+
+[[platform.provider]]
+serves = ["x86_64-toyos", "i686-linux-musl"]
+
+[platform.build]
+cflags = ["-ffreestanding", "-fno-stack-protector", "-fno-pic", "-DTOY_NAME=\"{0}\""]
+
+[platform.link]
+driver = "compiler"
+
+[platform.layers]
+"c-abi" = false
+"c++-abi" = false
+"compiler-runtime" = false
+"kernel-abi" = false
+)", name, s::llvm_version());
+        };
+        const auto descriptor = [](std::string_view name, std::string_view rows) {
+            return std::format(R"(package = {{
+    spec = "1", namespace = "acme", name = "{0}",
+    description = "platform column fixture", licenses = {{"MIT"}}, type = "package",
+    mcpp = "mcpp.toml",
+{1}    xpm = {{ linux = {{ ["0.1.0"] = {{ url = "u", sha256 = "0" }} }} }},
+}}
+)", name, rows);
+        };
+        const std::string rows = "    platform_rows = { \"x86_64-toyos\", \"i686-linux-musl\" },\n";
+        const auto t = s::case_dir();
+        s::project app(t / "app", {{"mcpp.toml", R"([package]
+name    = "toyapp"
+version = "0.1.0"
+
+[indices]
+acme = { path = "local-index" }
+
+[build]
+sources = ["src/*.c"]
+ldflags = ["-nostdlib", "-static", "-no-pie"]
+
+[targets.toyapp]
+kind = "bin"
+main = "src/main.c"
+)"},
+                                   {"local-index/pkgs/t/toy.lua", descriptor("toy", rows)},
+                                   {".mcpp/.xlings/data/xpkgs/acme.toy/0.1.0/mcpp.toml", platform("toy")},
+                                   {".mcpp/.xlings/data/xpkgs/acme.toy2/0.1.0/mcpp.toml", platform("toy2")},
+                                   {"src/main.c", "void _start(void) {\n#ifdef __x86_64__\n    __asm__ volatile(\"mov $60, %eax\\n mov $7, %edi\\n syscall\");\n#else\n    for (;;) {}\n#endif\n}\n"}});
+        // A
+        auto r = app.mcpp({"build", "--target", "x86_64-toyos"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "A: the row the index names did not build: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Platform +toy 0\.1\.0 \(index\))"))) << "A: the report does not say the index chose the platform: " << s::text(r);
+        // E
+        // (selected, not linked: the fixture's platform supplies no i686 run-time)
+        r = app.mcpp({"build", "--target", "i686-linux-musl"}, inherited);
+        expect(fatal(s::lacks(s::text(r), "not yet supported"))) << "E: the planned row the index names was refused: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Platform +toy 0\.1\.0 \(index)"))) << "E: the planned row did not take the index's platform: " << s::text(r);
+        // B
+        const auto plain = app.read("mcpp.toml");
+        app.write("mcpp.toml", plain + "\n[target.x86_64-toyos]\nplatform = \"acme.toy2@0.1.0\"\n");
+        app.write("local-index/pkgs/t/toy2.lua", descriptor("toy2", ""));
+        r = app.mcpp({"build", "--target", "x86_64-toyos"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "B: the stated platform did not build: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Platform +toy2 0\.1\.0)"))) << "B: the index stood over the project's statement: " << s::text(r);
+        app.write("mcpp.toml", plain);
+        // C
+        app.write("local-index/pkgs/t/toy2.lua", descriptor("toy2", rows));
+        fs::remove_all(app.at("target"));
+        r = app.mcpp({"build", "--target", "x86_64-toyos"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "C: the build with two claims failed: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "lists acme.toy, acme.toy2 for x86_64-toyos"))) << "C: the two claims are not named: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Platform +toy 0\.1\.0)"))) << "C: the first claim was not taken: " << s::text(r);
+        // D
+        app.write("local-index/pkgs/t/toy.lua", descriptor("toy", ""));
+        app.write("local-index/pkgs/t/toy2.lua", descriptor("toy2", ""));
+        r = app.mcpp({"build", "--target", "x86_64-toyos"}, inherited);
+        expect(fatal(e2e::contains(s::text(r), "unknown target 'x86_64-toyos'"))) << "D: without the column the row was known: " << s::text(r);
+        r = app.mcpp({"build", "--target", "i686-linux-musl"}, inherited);
+        expect(fatal(e2e::contains(s::text(r), "registered but not yet supported (planned)"))) << "D: without the column the planned row was built: " << s::text(r);
     };
 }};
 

@@ -25,6 +25,7 @@ import mcpp.config;
 import mcpp.invocation;
 import mcpp.manifest;
 import mcpp.platform;
+import mcpp.provider;          // the synced index's roots (the platform column, design 2026-11-16 §6.2)
 import mcpp.pm.compat;
 import mcpp.project;
 import mcpp.targetside;
@@ -286,7 +287,19 @@ void define_early_platform(PrepareState& state) {
         }
     // A request no definition knows, with a platform chosen for it that is not on
     // this machine yet: a provisional row lets the first pass fetch the platform.
-    if (raw.empty() || mcpp::toolchain::triple::parse(raw) || !chosen) return;
+    // With no choice, the index's platform column may answer (design 2026-11-16
+    // §6.2).
+    // A request that parses but names a row nothing defines (`x86_64-toyos`)
+    // is answered so only by the column.
+    if (raw.empty()) return;
+    if (const auto parsed = mcpp::toolchain::triple::parse(raw);
+        parsed && (chosen || !chosenText.empty() || parsed->defined()
+                   || mcpp::toolchain::triple::find_known_target(*parsed)))
+        return;
+    if (!chosen && chosenText.empty())
+        if (auto column = index_platform_for(state, raw); !column.empty())
+            if (auto ref = mp::parse_ref_text(column)) chosen = *ref;
+    if (!chosen) return;
     std::vector<std::string> seg;
     for (auto part : std::views::split(std::string_view(raw), '-')) seg.emplace_back(part.begin(), part.end());
     if (seg.size() < 2 || seg.size() > 3 || std::ranges::any_of(seg, [](auto const& x) { return x.empty(); })) return;
@@ -309,6 +322,111 @@ void define_early_platform(PrepareState& state) {
     state.provisionalTarget = true;
 }
 
+std::string index_platform_for(const PrepareState& state, std::string_view triple) {
+    // One scan of the indices per process: the column is consulted only for a
+    // row the built-in table does not answer, and the answer does not change
+    // while one command runs. The project's own indices ([indices] of
+    // mcpp.toml) rank before the shared ones; one rank's claims are compared.
+    struct Claim {
+        int rank;
+        std::string package;
+    };
+    static std::mutex lock;
+    static std::optional<std::map<std::string, std::vector<Claim>>> claims;
+    std::scoped_lock guard(lock);
+    if (!claims) {
+        claims.emplace();
+        auto cfg = state.get_cfg(false);
+        if (!cfg) return {};
+        // `<key> = ` at the start of a line or after `{` or `,`: the first such
+        // key is the package table's own (its keys precede its nested tables).
+        auto field = [](std::string_view lua, std::string_view key) -> std::size_t {
+            for (std::size_t pos = 0; (pos = lua.find(key, pos)) != std::string_view::npos; pos += key.size()) {
+                std::size_t b = pos;
+                while (b > 0 && (lua[b - 1] == ' ' || lua[b - 1] == '\t')) --b;
+                std::size_t e = pos + key.size();
+                while (e < lua.size() && (lua[e] == ' ' || lua[e] == '\t')) ++e;
+                if ((b == 0 || lua[b - 1] == '\n' || lua[b - 1] == ',' || lua[b - 1] == '{') && e < lua.size()
+                    && lua[e] == '=' && (e + 1 >= lua.size() || lua[e + 1] != '='))
+                    return e + 1;
+            }
+            return std::string_view::npos;
+        };
+        auto quoted = [](std::string_view lua, std::size_t at) {
+            std::string out;
+            const auto q1 = lua.find('"', at), nl = lua.find('\n', at);
+            if (q1 == std::string_view::npos || (nl != std::string_view::npos && q1 > nl)) return out;
+            const auto q2 = lua.find('"', q1 + 1);
+            if (q2 != std::string_view::npos) out = std::string(lua.substr(q1 + 1, q2 - q1 - 1));
+            return out;
+        };
+        // (root, rank, the namespace of a descriptor that names none)
+        std::vector<std::tuple<fs::path, int, std::string>> roots;
+        const auto add = [&](fs::path dir, int rank, std::string ns) {
+            if (std::ranges::none_of(roots, [&](auto const& r) { return std::get<0>(r) == dir; }))
+                roots.emplace_back(std::move(dir), rank, std::move(ns));
+        };
+        if (state.root && state.m) {
+            const auto project = state.projectIndexRoot();
+            for (auto const& [name, spec] : state.m->indices)
+                if (spec.is_local()) add(mcpp::config::resolve_project_index_path(*state.root, spec), 0, name);
+            for (auto const& dir : mcpp::provider::layout().index_roots_of(project / ".mcpp"))
+                add(dir, 0, dir.filename().string());
+            for (auto const& data : mcpp::config::project_xlings_data_roots(project))
+                for (auto const& dir : mcpp::provider::layout().index_roots_of(data.parent_path()))
+                    add(dir, 0, dir.filename().string());
+        }
+        for (auto const& dir : mcpp::provider::open(mcpp::config::make_xlings_env(**cfg))->index_roots())
+            add(dir, 1, std::string(mcpp::pm::kDefaultNamespace));
+        for (auto const& [root, rank, defaultNs] : roots) {
+            std::error_code ec;
+            const auto pkgs = root / "pkgs";
+            if (!fs::is_directory(pkgs, ec)) continue;
+            for (auto it = fs::recursive_directory_iterator(pkgs, ec);
+                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (it->path().extension() != ".lua") continue;
+                std::ifstream is(it->path(), std::ios::binary);
+                const std::string lua{std::istreambuf_iterator<char>(is), {}};
+                const auto rows = field(lua, "platform_rows");
+                if (rows == std::string_view::npos) continue;
+                const auto open = lua.find('{', rows), close = lua.find('}', rows);
+                if (open == std::string::npos || close == std::string::npos || close < open) continue;
+                const auto nameAt = field(lua, "name"), nsAt = field(lua, "namespace");
+                if (nameAt == std::string_view::npos) continue;
+                const auto ns = nsAt == std::string_view::npos ? defaultNs : quoted(lua, nsAt);
+                auto name = quoted(lua, nameAt);
+                // A descriptor may spell its name qualified (`acme.plat`).
+                if (name.starts_with(ns + ".")) name.erase(0, ns.size() + 1);
+                if (ns.empty() || name.empty()) continue;
+                const auto pkg = ns + "." + name;
+                for (std::size_t p = open; p < close; ++p) {
+                    if (lua[p] != '"') continue;
+                    const auto q = lua.find('"', p + 1);
+                    if (q == std::string::npos || q > close) break;
+                    auto& who = (*claims)[lua.substr(p + 1, q - p - 1)];
+                    if (std::ranges::none_of(who, [&](auto const& c) { return c.package == pkg; }))
+                        who.push_back({rank, pkg});
+                    p = q;
+                }
+            }
+        }
+    }
+    auto it = claims->find(std::string(triple));
+    if (it == claims->end() || it->second.empty()) return {};
+    const int first = std::ranges::min(it->second, {}, &Claim::rank).rank;
+    std::vector<std::string> who;
+    for (auto const& c : it->second)
+        if (c.rank == first) who.push_back(c.package);
+    std::ranges::sort(who);
+    if (who.size() > 1) {
+        std::string names;
+        for (auto const& w : who) names += (names.empty() ? "" : ", ") + w;
+        mcpp::ui::warning(std::format("the package index lists {} for {}; {} is taken. The index's own check "
+                                      "allows one platform for a row", names, triple, who.front()));
+    }
+    return who.front() + "@*";
+}
+
 std::string platform_short_name(std::string_view ref) {
     auto r = mp::parse_ref_text(ref);
     return r ? known_short_name(*r) : std::string{};
@@ -324,10 +442,27 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
     const auto project = project_tables(*state.m);
     mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, {} };
     auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));
-    if (!sel || sel->origin.tier == mp::Tier::BuiltIn) return {};
+    if (!sel) return {};
+    // Nothing chose: the selection's answer is "none" from the (empty) column.
+    const bool unchosen = sel->none && sel->origin.tier == mp::Tier::BuiltIn;
+    if (!unchosen && sel->origin.tier == mp::Tier::BuiltIn) return {};
     if (!sel->builtin.empty()) return sel->builtin;
-    if (sel->none) return "none";
-    const auto chosen = known_short_name(sel->ref);
+    if (sel->none && !unchosen) return "none";
+    std::string chosen;
+    if (!unchosen) {
+        chosen = known_short_name(sel->ref);
+    } else {
+        // Nothing chose, and the table has no platform for a `planned` row: the
+        // index's column names the platform that serves it (design 2026-11-16
+        // §6.2), as a choice of the project would.
+        const auto* known = mcpp::toolchain::triple::find_known_target(t);
+        if (!known || known->tier != "planned" || t.defined()) return {};
+        const auto column = index_platform_for(state, t.str());
+        if (column.empty()) return {};
+        const auto ref = mp::parse_ref_text(column);
+        if (!ref) return {};
+        chosen = known_short_name(*ref);
+    }
     if (chosenOut) *chosenOut = chosen;
     for (auto const* p : mcpp::toolchain::target::providers()) {
         if (p->platform.empty()) continue;
@@ -390,7 +525,22 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     std::string column;
     if (state.selectedTarget) column = std::string(state.selectedTarget->platform);
     else if (auto* row = mcpp::toolchain::triple::find_known_target(t)) column = std::string(row->platform);
+    // THE INDEX ANSWERS WHERE THE BUILT-IN TABLE DOES NOT (design 2026-11-16
+    // §6.2): a row the table does not hold (a platform defines it), or holds
+    // as planned. A row the table answers -- a host row included, which a
+    // platform's `targets` may also list -- is never taken from the index.
+    bool fromIndex = false;
+    {
+        const auto* known = mcpp::toolchain::triple::find_known_target(t);
+        const bool tableAnswers = known && known->tier != "planned" && !t.defined();
+        if (!tableAnswers)
+            if (auto indexed = index_platform_for(state, t.str()); !indexed.empty()) {
+                column = std::move(indexed);
+                fromIndex = true;
+            }
+    }
     mcpp::platform::ChoiceInputs in{ flag, env, envKey, project, config, column };
+    in.columnFromIndex = fromIndex;
     if (state.overrides.platform_choice.empty() && !stated_on_command_line("MCPP_PLATFORM"))
         in.flagKey = "MCPP_PLATFORM";
     auto sel = mcpp::platform::select_target(in, matcher(cfgpred::context_for(t.str())));

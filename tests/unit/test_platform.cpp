@@ -286,6 +286,17 @@ platform = "machine-platform@1.0.0"
     expect(eq(pick("", "", false, false, "row-platform@1.0.0"), "row-platform|built-in"));
     expect(eq(pick("", "", false, false, ""), "none|built-in"));
     expect(eq(pick("none", "", true, true, "row-platform@1.0.0"), "none|flag"));
+    // The column answered by the index (design 2026-11-16 §6.2): the same place, its own source.
+    pf::ChoiceInputs indexed{ "", "", "", {}, {}, "acme.row-platform@*" };
+    indexed.columnFromIndex = true;
+    auto s = pf::select_target(indexed, t);
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "row-platform"));
+    expect(eq(std::string(mp::tier_name(s->origin.tier)), "index"));
+    indexed.project = m.platformOverrides;
+    s = pf::select_target(indexed, t);
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "project-platform")) << "the project's statement comes before the index";
 }};
 
 UTest the_most_specific_selector_decides{"PlatformSelect/TheMostSpecificSelectorDecides", [] {
