@@ -799,3 +799,17 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
 - **磁盘空间**：本机 `/home` 的可用空间一度降到 1 GB 以下，e2e 因 `No space left on device` 失败；清理过期的临时
   目录与构建缓存之后重跑通过。磁盘映像的制作（M3、P7b）需要先确认空间。
 
+- **OpenBSD 的包根**：OpenBSD 的 sysroot 在根下只有 `usr/` 与 `mcpp.toml`。取载荷时版本目录不含 `bin/`、`include/`、
+  `lib/` 就进入其唯一的子目录（解压的源码包），清单因此丢失，构建把 `usr/` 判为库前缀（"no crt1.o"）。引擎改为
+  版本目录带 `mcpp.toml` 即包根（单元测试 PmPayloadRoot）。
+- **OpenBSD 映像的 dirun 配置**：配方写出的配置在 TOML 基本字符串中写了 `\$` 与 `\d`，dirun 拒绝解析。改为转义
+  反斜杠并以 revision 1、floor 1 替换已安装的 r0；xim-pkgindex 增加静态测试，解析每个配方带的 dirun 配置。
+- **NetBSD 的 `import std`**：NetBSD 10.2 的 C++ 库是 GCC 10 的 libstdc++，不带模块源码。按 openkal 的做法，层由包
+  供给：提供者以 `layers = { "c++-abi" = "llvm.libcxx@22.1.8.3" }` 在 NetBSD 的 C 库之上从源码构建 libc++，C 库与
+  编译器运行时仍取自基座。实测中链接同时带上了基座的 `-lstdc++`（程序 NEEDED libstdc++.so.9，两个 C++ 运行时）：
+  基座的 `ldflags` 按 SPEC-002 §2.5 是其 C++ 库的，引擎却只看基座是否声明 `c++-abi`。改为该层由其他包供给时不进入
+  链接（e2e 1108）。libc++abi 的展开器是基座的 libgcc_s，clang 的 NetBSD 驱动不论 `--rtlib`/`--unwindlib` 都不
+  写出它，所以由平台为 NetBSD 的行陈述（`[platform.build.'cfg(os = "netbsd")'] ldflags`，`--as-needed`）。
+  两个 NetBSD 行都能构建，x86_64 在 NetBSD 10.2 中运行并返回程序的状态。
+- **本机验证（P10）**：六个行都能构建（含 `import std` 与异常）；x86_64 的 FreeBSD、NetBSD、OpenBSD 经 dirun 0.6.0
+  运行，参数 `one "two three"` 原样到达，状态 7 返回。
