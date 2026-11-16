@@ -186,6 +186,31 @@ not one of its tests: `mcpp test --list --target <triple>` names the set, and a
 case that is built everywhere and holds on some machines only is the test
 protocol's (a skip with its reason), not this table's.
 
+### A test's run files (2026.11.17.1+)
+
+`[test] files` names the files a test program finds in its working directory,
+in the entry grammar of `[runtime] deploy`: a path, or `{ from, to, name }`,
+with `to` and `name` relative to that directory. A
+`[target.'<sel>'.test] files` table adds files for the targets it selects.
+Not the test's sources, which `discover` names:
+
+```toml
+[test]
+files = ["tests/data/**", { from = "tests/t.bat", name = "TEST.BAT" }]
+
+[target.'cfg(os = "uefi")'.test]
+files = ["tests/uefi/**"]
+```
+
+Each test program then runs in a directory of the build tree,
+`run/test-<name>/`, into which the files are copied before it starts; the
+processes a split divides it into share it. The directory of a program that
+passed is removed, and that of one that failed is kept and named in the report
+(`Kept the working directory of ...`). A runner whose program has a file system
+of its own (a virtual machine, firmware) delivers the files beside the program,
+as it delivers the runtime files. A package without `[test] files` runs its
+tests where `mcpp test` was started, as before.
+
 The tests are a consumer of their package, and `[test] features` is that
 consumer's request:
 

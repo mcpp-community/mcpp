@@ -1552,7 +1552,8 @@ and `run_under`.
 
 A runner reached this way receives `MCPP_RUN_TRIPLE`, `MCPP_RUN_KIND` (`exe` /
 `bundle`), `MCPP_RUN_MODE` (`run` / `test`), `MCPP_RUN_ID`, `MCPP_RUN_CLOSURE`
-(a versioned JSON naming the artifact, the files it carries and the base) and,
+(a versioned JSON naming the artifact, the files it carries, the run's files
+(`run_files`, schema 2, 2026.11.17.1+) and the base) and,
 when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's. An
 Apple artifact on a host that is not macOS, with no `run_under`, is refused
 before anything is spawned, naming this key.

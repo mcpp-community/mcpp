@@ -30,4 +30,21 @@ conditional_test_globs(const mcpp::manifest::Manifest& m, std::string_view targe
     return out;
 }
 
+std::expected<std::vector<mcpp::manifest::DeployEntry>, std::string>
+test_run_files(const mcpp::manifest::Manifest& m, std::string_view targetTriple) {
+    std::vector<mcpp::manifest::DeployEntry> out = m.testFiles;
+    const auto ctx = cfgpred::context_for(targetTriple.empty() ? std::string_view(m.buildConfig.target)
+                                                               : targetTriple);
+    for (auto const& cc : m.conditionalConfigs) {
+        if (cc.testFiles.empty()) continue;
+        if (cfgpred::uses_layer(cc.predicate))
+            return std::unexpected(std::format(
+                "[target.'{}'.test] files names a target-side layer; select the files by the target "
+                "(os, arch, env, family, object-format)", cc.predicate));
+        if (!cfgpred::matches(cc.predicate, ctx)) continue;
+        out.insert(out.end(), cc.testFiles.begin(), cc.testFiles.end());
+    }
+    return out;
+}
+
 } // namespace mcpp::build

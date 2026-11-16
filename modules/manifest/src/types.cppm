@@ -1774,6 +1774,9 @@ struct ConditionalConfig {
     // tests are discovered, before dependencies resolve: a predicate on a
     // target-side layer cannot select them.
     std::vector<std::string>            testDiscover;
+    // `[target.<sel>.test] files` (design 2026-11-16 §5.2): run files of the
+    // tests of the targets the predicate selects, after `[test] files`.
+    std::vector<DeployEntry>            testFiles;
     // `[target.<sel>.runtime]` — the DIALECT-NEUTRAL half of a link line.
     //
     // `inputs.ldflags` above is spelled the GNU way and native `cl.exe` rejects
@@ -1926,7 +1929,7 @@ inline bool is_empty(const ConditionalConfig& c) {
         // before it is ever evaluated, the same failure #296 was filed for.
         && c.dialectCxxflags.empty()
         // mcpp#942: a section that only selects test programs.
-        && c.testDiscover.empty();
+        && c.testDiscover.empty() && c.testFiles.empty();
 }
 
 // `[lib]` — library "root" interface convention.
@@ -2321,6 +2324,10 @@ struct Manifest {
     // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
     std::vector<std::string>    testDiscover;
     bool                        testDiscoverDeclared = false;
+    // `[test] files` (design 2026-11-16 §5.2): the files the working directory
+    // of each test program holds, in the entry grammar of `[runtime] deploy`;
+    // `to` and `name` are relative to that directory.
+    std::vector<DeployEntry>    testFiles;
     // `[test] features` (mcpp#941): the features the package's own test build
     // turns on, beside its defaults and `--features`. The tests are a consumer
     // of the package, and this is that consumer's request: it is resolved in

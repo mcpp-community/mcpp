@@ -28,6 +28,16 @@
   fixed names, and said nothing when it found none; that mode still looks for
   the default files beside the shared objects it bundles that no package
   declares, and names those without (design 2026-11-16 §4.3).
+- `mcpp run --file FROM[=TO]` (repeatable; dirun's spelling) and `[test]
+  files` (in the `deploy` entry grammar, with `[target.'<sel>'.test] files`)
+  name the files a run finds in its working directory. With them, a program
+  runs in a directory of the build tree, `run/<id>/`, into which they are
+  copied: removed after `mcpp run`, removed after a test program that passed
+  and kept, and named, after one that failed. Without them, a program runs
+  where mcpp was started, as before. A runner receives them as `run_files` in
+  `MCPP_RUN_CLOSURE` (schema 2) and in `MCPP_RUNTIME_FILES` beside the runtime
+  files, so a runner whose program has a file system of its own delivers them
+  beside the program (design 2026-11-16 §5, §7).
 
 ### Changed
 

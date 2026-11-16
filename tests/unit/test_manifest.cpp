@@ -5923,6 +5923,31 @@ license_files = ["LICENSE", "ThirdPartyNotices.txt"]
     expect(eq(mcpp::manifest::default_license_files().front(), std::string("{LICENSE,LICENCE,COPYING,NOTICE}*")));
 }};
 
+// Design 2026-11-16 §5.2: `[test] files` in the deploy entry grammar, and the
+// conditional form for the tests of a target.
+UTest test_files_are_read{"Manifest/TestFilesAreRead", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "t"
+version = "0.1.0"
+[test]
+files = ["tests/data/**", { from = "tests/t.bat", name = "TEST.BAT" }]
+[target.'cfg(os = "uefi")'.test]
+files = ["tests/uefi/**"]
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(fatal(eq(m->testFiles.size(), 2u)));
+    expect(eq(m->testFiles[1].name, "TEST.BAT"));
+    bool conditional = false;
+    for (auto const& cc : m->conditionalConfigs)
+        if (cc.testFiles.size() == 1 && cc.testFiles.front().from == std::filesystem::path("tests/uefi/**")) conditional = true;
+    expect(conditional);
+    expect(m->schemaWarnings.empty());
+    auto bad = mcpp::manifest::parse_string("[package]\nname = \"t\"\nversion = \"0.1.0\"\n[test]\nfiles = [{ to = \"x\" }]\n");
+    expect(fatal(!bad.has_value()));
+    expect(ne(bad.error().message.find("[test] files[1] has no `from`"), std::string::npos)) << bad.error().message;
+}};
+
 // ── `requires_abi` (design 2026-09-12, section 5.2) ────────────────────────
 
 UTest requires_abi_threads_parses_on_the_package_and_on_a_feature{"Manifest/RequiresAbiThreadsParsesOnThePackageAndOnAFeature", [] {
@@ -7270,7 +7295,7 @@ UTest a_conditional_test_table_carries_discover_alone{"Manifest/AConditionalTest
     expect(eq(m->conditionalConfigs.front().testDiscover, std::vector<std::string>{"!tests/native/**"}));
     expect(!mcpp::manifest::is_empty(m->conditionalConfigs.front()));
     expect(fatal(eq(m->schemaWarnings.size(), 1u)));
-    expect(ne(m->schemaWarnings.front().find("contributes test programs only: discover"), std::string::npos));
+    expect(ne(m->schemaWarnings.front().find("contributes test programs and their files only: discover, files"), std::string::npos));
     auto bad = mcpp::manifest::parse_string(
         "[package]\nname = \"bt\"\nversion = \"0.1.0\"\n"
         "[target.'cfg(os = \"emscripten\")'.test]\ndiscover = \"tests/x.cpp\"\n");

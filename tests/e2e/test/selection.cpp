@@ -1,6 +1,7 @@
 // Which tests `mcpp test` finds and runs: names from paths, a pattern and several, the listing,
 // `[test] discover` (formerly tests/e2e/152, 154, 159 and 673; 1084), the tests of a target
-// (`[target.<sel>.test]`, 1098) and the features they are built with (`[test] features`, 1099, 1100).
+// (`[target.<sel>.test]`, 1098), the features they are built with (`[test] features`, 1099, 1100)
+// and their run files (`[test] files`, 1105).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -214,7 +215,7 @@ E2E selection{"selection", [] {
                                                     "programs = \"directory\"\n");
         r = p.mcpp({"test"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
-        expect(e2e::contains(s::text(r), "contributes test programs only: discover")) << s::text(r);
+        expect(e2e::contains(s::text(r), "contributes test programs and their files only: discover, files")) << s::text(r);
     };
 
     "1099 a package's tests are built with the features [test] features names"_test = [] {
@@ -269,6 +270,30 @@ E2E selection{"selection", [] {
         auto r = ws.mcpp({"test", "--workspace"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(s::lacks(s::text(r), "b's extra was requested")) << "another member's feature of the same name was requested";
+    };
+
+    "1105 a test's run files are in its working directory"_test = [] {
+        // Design 2026-11-16 §5: `[test] files` (and `[target.<sel>.test] files` for the target the
+        // tests are built for) are copied into a directory per test program, where it runs; the
+        // directory of a test that passed is removed, that of one that failed is kept and named.
+        s::project p(s::case_dir() / "p", {{"src/main.cpp", "int main() { return 0; }\n"},
+                                           {"tests/data/in.txt", "payload\n"}, {"tests/data/sub/d.txt", "deep\n"},
+                                           {"tests/host/h.txt", "host\n"},
+                                           {"tests/reads.cpp", "import std;\nint main() {\n"
+                                                               "    std::ifstream a(\"IN.TXT\"), b(\"in.txt\"), c(\"sub/d.txt\"), d(\"h.txt\");\n"
+                                                               "    std::string w, x, y, z; std::getline(a, w); std::getline(b, x); std::getline(c, y); std::getline(d, z);\n"
+                                                               "    std::ofstream(\"written\") << 1;\n"
+                                                               "    return w == \"payload\" && x == \"payload\" && y == \"deep\" && z == \"host\" ? 0 : 1;\n}\n"},
+                                           {"tests/fails.cpp", "import std;\nint main() { std::ofstream(\"evidence.txt\") << 1; return 4; }\n"}});
+        p.write("mcpp.toml", manifest("p") + "\n[test]\nfiles = [\"tests/data/**\", { from = \"tests/data/in.txt\", name = \"IN.TXT\" }]\n"
+                                             "\n[target.'cfg(unix)'.test]\nfiles = [\"tests/host/h.txt\"]\n");
+        auto r = p.mcpp({"test"});
+        expect(fatal(r.started && r.status != 0)) << "the failing test passed: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^reads \\.\\.\\. ok"))) << "the test that reads its files failed: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "the working directory of fails:"))) << "the failed test's directory is not named: " << s::text(r);
+        expect(fatal(s::find_file(p.at("target"), "evidence.txt").has_value())) << "the failed test's directory was removed";
+        expect(fatal(!s::find_file(p.at("target"), "written").has_value())) << "the passed test's directory was left";
+        expect(fatal(!fs::exists(p.at("written")))) << "a test wrote into the project";
     };
 }};
 

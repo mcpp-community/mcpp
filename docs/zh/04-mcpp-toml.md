@@ -1421,7 +1421,8 @@ runner 之前:`<run_under…> <runner…> <产物> <参数>`(Bazel 的 `--run_un
 runner 与 `run_under`。
 
 经此到达的运行器收到 `MCPP_RUN_TRIPLE`、`MCPP_RUN_KIND`(`exe` / `bundle`)、`MCPP_RUN_MODE`
-(`run` / `test`)、`MCPP_RUN_ID`、`MCPP_RUN_CLOSURE`(一份带版本的 JSON,列出产物、它随带的文件与基座),
+(`run` / `test`)、`MCPP_RUN_ID`、`MCPP_RUN_CLOSURE`(一份带版本的 JSON,列出产物、它随带的文件、本次运行的文件
+(`run_files`,schema 2,2026.11.17.1+)与基座),
 以及陈述了基座时的 `MCPP_SYSROOT`;其退出码即程序的退出码。非 macOS 宿主上的 Apple 产物在没有
 `run_under` 时于执行前被拒绝,拒绝信息点名本键。
 

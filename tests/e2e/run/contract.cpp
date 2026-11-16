@@ -347,6 +347,42 @@ E2E contract_machine{"contract-machine", resource{"machine"}, [] {
         expect(fatal(e2e::contains(s::text(r), R"("launch-stream")"))) << "E: launch-stream is not stated: " << s::text(r);
     };
 
+    "1104 a run's files are in its working directory"_test[s::unix_shell] = [] {
+        // Design 2026-11-16 §5: `--file FROM[=TO]` copies FROM into a directory of the build tree,
+        // where the program runs; the directory is removed after it; without --file the program
+        // runs where mcpp was started. Through a runner, the files are listed in
+        // MCPP_RUNTIME_FILES with the runtime files and as `run_files` in the closure (schema 2),
+        // and the runner starts in the directory.
+        const auto work = s::case_dir();
+        s::project app(work / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n"},
+                                      {"data/in.txt", "payload\n"}, {"data/sub/d.txt", "deep\n"},
+                                      {"src/main.cpp", "import std;\nint main(int argc, char** argv) {\n"
+                                                       "    std::println(\"cwd={}\", std::filesystem::current_path().filename().string());\n"
+                                                       "    for (int i = 1; i < argc; ++i) { std::ifstream in(argv[i]); std::string l; std::getline(in, l); std::println(\"{}=[{}]\", argv[i], l); }\n"
+                                                       "    std::ofstream(\"written.txt\") << 1;\n    return 3;\n}\n"}});
+        auto r = app.mcpp({"run", "--file", "data/in.txt=IN.TXT", "--file", "data", "--", "IN.TXT", "data/sub/d.txt"});
+        expect(fatal(r.started && r.status == 3)) << "the program's status did not pass through: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^cwd=run-"))) << "the program did not run in the run's directory: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^IN.TXT=\\[payload\\]$"))) << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^data/sub/d.txt=\\[deep\\]$"))) << s::text(r);
+        expect(fatal(!fs::exists(app.at("written.txt")))) << "the program wrote into the project";
+        for (const auto& f : s::find_files(app.at("target"), R"(written\.txt)"))
+            expect(fatal(false)) << "the run's directory was left: " << f;
+        r = app.mcpp({"run", "--file", "missing.txt"});
+        expect(fatal(r.started && r.status == 2 && e2e::contains(s::text(r), "missing.txt does not exist"))) << s::text(r);
+        s::write_executable(work / "runner.sh", "#!/bin/sh\necho \"runner-cwd=$(basename \"$PWD\" | cut -c1-4)\"\n"
+                                                "cat \"$MCPP_RUNTIME_FILES\"\ngrep -c '\"dest\": \"IN.TXT\"' \"$MCPP_RUN_CLOSURE\"\nexec \"$@\"\n");
+        auto machine = s::run(*s::on_path("uname"), {"-m"}).out;
+        machine.erase(machine.find_last_not_of("\r\n") + 1);
+        app.write("mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[target.{}-linux-gnu]\nrunner = [\"{}\"]\n",
+                                           machine, (work / "runner.sh").generic_string()));
+        r = app.mcpp({"run", "--target", machine + "-linux-gnu", "--file", "data/in.txt=IN.TXT", "--", "IN.TXT"});
+        expect(fatal(r.started && r.status == 3)) << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^runner-cwd=run-"))) << "the runner did not start in the run's directory: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^IN.TXT\t.*/run/run-[^/]*/IN.TXT$"))) << "MCPP_RUNTIME_FILES does not list the run file: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "^1$"))) << "the closure does not list the run file: " << s::text(r);
+    };
+
     "927 the runner contract"_test[s::gcc][s::unix_shell] = [] {
         // run_under composes in front of the artifact with the contract variables and a closure
         // manifest, returns the program's status and states where it was declared; the
@@ -386,7 +422,8 @@ exec "$@"
         const auto closure = s::last_starting(rec, "closure=").substr(8);
         expect(fatal(fs::is_regular_file(closure))) << "MCPP_RUN_CLOSURE names no file";
         const auto cl = s::read_file(closure);
-        expect(fatal(e2e::contains(cl, R"("schema": 1)"))) << "the closure manifest carries no schema: " << cl;
+        expect(fatal(e2e::contains(cl, R"("schema": 2)"))) << "the closure manifest carries no schema: " << cl;
+        expect(fatal(e2e::contains(cl, R"("run_files": [])"))) << "the closure manifest lists no run files: " << cl;
         expect(fatal(s::has_line(cl, R"("artifact": ".*/bin/app")"))) << "the closure manifest does not name the artifact: " << cl;
         fs::remove(record);
         std::string var = "MCPP_TARGET_" + triple + "_RUN_UNDER";
