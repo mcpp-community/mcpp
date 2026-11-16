@@ -15,6 +15,7 @@
 **平台**是一个带版本的包,陈述一类目标所需的全部内容:工具链、目标侧各层的提供包、构建在本机运行的
 工具、编译与链接约定、产物的命名与封装,以及运行器。工程一项都不必写。目标表为 `x86_64-openkal` 与
 `aarch64-openkal` 选择 `mcpplibs.openkal-platform`(2026.10.27.1+),这两个目标的内置支持即是如此。
+映像是一种发布形态,原生行是保证相同的构建目标,二者不分高低([24](24-openkal-cross.md),"两种角色,不分等级")。
 
 ## 最短可跑
 
@@ -32,13 +33,13 @@ mcpp run --target x86_64-openkal
 
 ```
     Resolved llvm@23.1.3 → x86_64-openkal → …/xim-x-llvm/23.1.3/bin/clang++
-             the platform's (openkal-platform 0.18.0), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
+             the platform's (openkal-platform 0.24.0), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
       Target x86_64-openkal → x86_64-unknown-none-elf
-             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.6, platform)
-             c-abi             musl           (openkal-musl@0.22.6, platform)
-             c++-abi           libc++         (openkal-llvm-runtime@0.16.6, platform)
-    Platform openkal-platform 0.18.0 (built-in)
-             tools             okld, okrun (openkal-tools@0.1.3, platform)
+             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.19.0, platform)
+             c-abi             musl           (openkal-musl@0.28.0, platform)
+             c++-abi           libc++         (openkal-llvm-runtime@0.19.0, platform)
+    Platform openkal-platform 0.24.0 (built-in)
+             tools             okld, okprof, okrun (openkal-tools@0.5.0, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
    Compiling app v0.1.0 (.)
@@ -85,8 +86,8 @@ runner = ["my-okrun", "{}"]
 |---|---|
 | 编译标志、`link.flags` | 追加在平台的之后;约定不能删除 |
 | `link.inputs`、`link.seal` | 整体替换 |
-| `layers`、`tools`、`runners` | 按键替换;`<layer> = false` 不提供该层 |
-| `runner` | argv 替换;未写出时保留 `host` 与 `exclusive` |
+| `layers`、`tools` | 按键替换;`<layer> = false` 不提供该层 |
+| `runner`、`runners` 的每个名字 | `cmd`、`requires` 与 `enabled` 一起替换,`cmd` 被替换的 runner 未写出时为启用;`host`、`hosts`、`exclusive`、`longlived` 未写出时保留;`config.toml` 或工程中不含 `cmd` 的表只改它写出的键(2026.11.16.1) |
 | 其余字段 | 替换 |
 
 同样的表也可以写在 `~/.mcpp/config.toml` 中,对一台机器生效。图中已有包提供的层交给该包,报告为 `graph`。
@@ -98,9 +99,9 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 | 来源 | 写法 |
 |---|---|
-| 命令行 | `--platform openkal-platform@0.23.3`、`--platform path:../openkal-platform`、`--platform none` |
+| 命令行 | `--platform openkal-platform@0.24.1`、系列 `--platform openkal-platform@^0.24`、`--platform path:../openkal-platform`、`--platform none` |
 | 环境变量 | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| 工程 | `[target.<selector>] platform = "openkal-platform@0.23.3"`,或 `{ path = "…" }` |
+| 工程 | `[target.<selector>] platform = "openkal-platform@0.24.0"`,或 `{ path = "…" }` |
 | 本机 | `~/.mcpp/config.toml` 中的同一个键 |
 | 目标表 | 平台列(`mcpp toolchain list`) |
 
@@ -112,11 +113,11 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 
 ```toml
 [host]
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.24.0"
 ```
 
 ```
-        Host platform openkal-platform 0.18.0 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
+        Host platform openkal-platform 0.24.0 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
 ```
 
 此后每个构建程序都编译为本机架构的 ok 映像,在 Linux、macOS 与 Windows 上使用同一个工具链,经平台的运行器
@@ -130,27 +131,51 @@ platform = "openkal-platform@0.23.3"
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.24.0"
 ```
 
 Windows 上这一安排对应 GNU ABI 的行(`--target x86_64-windows-gnu`);`[platform.hosted] targets` 之外的
 三元组被拒绝,消息给出它所服务的同系统同架构的行。
 
+图中的 C 库(`mcpp:c-abi`)位于 Mach-O 映像链接的最前(2026.11.9.1+)。该格式的加载器在入口之前按链接顺序运行
+映像的初始化函数,而 C 库由它自己的一个初始化函数启动;其目标文件在前,C 库便在程序的任何全局构造函数运行之前
+就绪,如同 ELF 上 C 运行时的启动目标文件位于程序之前。
+
 ## 版本组
 
-`[platform.versions]` 为一个包与包之间精确钉住的家族列出每个包的一个版本。依赖图中出现其中某个包的
-另一个版本时,在任何编译之前拒绝:
+`[platform.versions]` 为一个家族列出每个包的一个版本。从 mcpp 2026.11.7.1 起由版本组选择版本:平台是依赖图解析的
+第一个包,此后对版本组所列包的每个版本请求,只要其约束容许组中版本,就解析为组中版本,即使索引中有更新的补丁。
+openkal 的包之间以兼容范围互相依赖(`openkal-musl = "^0.28.0"`),所以构建链接的就是版本组选定的版本。组中版本
+不满足的请求在任何编译之前被拒绝:
 
 ```
-error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.18.0 is a version group that names openkal-musl 0.22.9.
-       requested by: own
-       The family's packages pin one another exactly, so two versions of one of
-       them cannot be linked into one program. Either select the platform release
-       of that version ([target.<selector>] platform = "openkal-platform@<version>"), or write
-       openkal-musl = "0.22.6" where it is requested.
+error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-platform 0.24.1 is a version group
+       that names openkal-musl 0.28.1.
+       The group chooses one version of each package of the family for a
+       build. Either select the platform release of the version you need
+       ([target.<selector>] platform = "openkal-platform@<version>"), or admit 0.28.1 where
+       it is requested (openkal-musl = "^0.28.1").
 ```
 
-从目录或仓库取得的包不受版本组约束。
+只为本机构建的包(工具的)以及从目录或仓库取得的包不受版本组约束。早于 2026.11.7.1 的 mcpp 改为在解析之后检查
+版本组;一个家族以一次索引改动整组发布时,两者结果相同。
+
+## 内置平台是一个版本
+
+目标表为两个 ok 映像目标选择一个 openkal-platform 版本,即当前 mcpp 验证过的版本:mcpp 2026.11.10.1 为 0.25.0,2026.11.8.1 与 2026.11.9.1 为 0.24.4,2026.11.7.2 为 0.24.3
+(2026.11.7.1 选择系列 `^0.24`)。不写平台的工程在任何时候、有无 `mcpp.lock` 都构建同一组版本;锁中记录了另一个版本时,
+构建采用默认版本并写出锁中记录的版本。更新的平台不需要新的 mcpp:工程在自己的清单中选择,
+
+```toml
+[target.'cfg(os = "openkal")']
+platform = "openkal-platform@0.28.0"     # 一个版本,或一个系列:"openkal-platform@^0.28"
+```
+
+使用默认平台的构建失败、且已同步的索引中有更新版本时,最后输出一行 `tip:`,写出两个版本与上面这一行。
+
+系列取其中 `[package] mcpp` 下限当前 mcpp 满足的最新版本,并写出因需要更新的引擎而跳过的版本;`mcpp.lock` 记录结果,
+之后的构建在系列容许时采用记录的版本。`mcpp update`(或 `mcpp update openkal-platform`)删除这条记录,下一次构建重新
+取最新版本。
 
 ## 编写平台包
 
@@ -160,39 +185,40 @@ error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0
 [package]
 namespace = "mcpplibs"
 name      = "openkal-platform"
-version   = "0.18.0"
-mcpp      = ">=2026.10.30.1"
+version   = "0.24.0"
+mcpp      = ">=2026.11.3.1"
 
 [platform]
 targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
-runner    = { cmd = ["okrun", "{}"], host = "same-arch" }
-carrier   = { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp" }
+runner    = { cmd = ["okrun", "{}"], host = "same-arch", hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"] }
+carrier   = { package = "openkal-run@0.5.0", section = ".oke", main = "carrier/main.cpp" }
 plugin    = "build.mcpp"
 
 [platform.layers]
-compiler-runtime = "openkal-llvm-runtime@0.16.6"
-"c++-abi"        = "openkal-llvm-runtime@0.16.6"
-c-abi            = { name = "openkal-musl", version = "0.22.6", default-features = false, features = ["posix"] }
+compiler-runtime = "openkal-llvm-runtime@0.19.0"
+"c++-abi"        = "openkal-llvm-runtime@0.19.0"
+c-abi            = { name = "openkal-musl", version = "0.28.0", default-features = false, features = ["posix", "malloc-mimalloc"] }
 
 [platform.tools]
-okld  = "openkal-tools@0.1.3"
-okrun = "openkal-tools@0.1.3"
+okld  = "openkal-tools@0.5.0"
+okprof = "openkal-tools@0.5.0"
+okrun = "openkal-tools@0.5.0"
 
 [platform.build]
-cxxflags = ["-fPIC", "-femulated-tls", "-fvisibility=hidden", "-fasynchronous-unwind-tables"]
+cxxflags = ["-fPIC", "-femulated-tls", "-fvisibility=hidden", "-fasynchronous-unwind-tables", "-Xclang", "-fstack-clash-protection", "-ffunction-sections", "-fdata-sections", "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer", "-fstack-protector-strong", "-mstack-protector-guard=global", "-ftrivial-auto-var-init=zero", "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST"]
 
 [platform.build.'cfg(arch = "aarch64")']
-cxxflags = ["-ffixed-x18", "-mno-outline-atomics"]
+cxxflags = ["-ffixed-x18", "-mno-outline-atomics", "-mbranch-protection=pac-ret+bti"]
 
 [platform.link]
 driver = "lld"
 start  = "ok_main"
-flags  = ["-shared", "-z", "max-page-size=65536", "-z", "now", "--gc-sections", "--icf=safe", "--eh-frame-hdr"]
+flags  = ["-shared", "-z", "max-page-size=65536", "-z", "pack-relative-relocs", "-z", "now", "-z", "noexecstack", "--hash-style=both", "--gc-sections", "--icf=safe", "--eh-frame-hdr", "--build-id=sha1", "--emit-relocs", "-mllvm", "-emulated-tls"]
 inputs = [{ from = ["okld", "note-source"], as = "ok-notes.S" }]
 exe    = "{name}.oke"
 shared = "lib{name}.okso"
-seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
+seal   = [["okld", "note", "{}"], ["okld", "place", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
 ```
 
 - **程序写名字,不写位置。** `inputs` 与 `seal` 中的 `okld` 依次在图为本机构建的程序、声明的载荷、`PATH` 中查找。
@@ -211,6 +237,114 @@ seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
 开发期间,工程以 `--platform path:<dir>` 或 `platform = { path = "<dir>" }` 选择工作树。在平台包中执行
 `mcpp test` 而不给 `--target` 时,以该包为平台为其每个 `targets` 构建测试,运行本机架构的那些与给出了执行宿主的
 那些(2026.10.29.1+),其余报告为已构建、未运行。
+
+## 定义目标与提供者（2026.11.9.1+）
+
+平台可以服务内置行未命名的系统。`[[platform.define]]` 陈述行，`[[platform.provider]]` 陈述服务它的提供者：
+
+```toml
+[[platform.define]]
+triple        = "x86_64-haiku"
+clang-triple  = "x86_64-unknown-haiku"
+object-format = "elf"
+family        = "unix"
+execution     = "haiku"            # 其程序运行的系统
+
+[[platform.provider]]
+serves   = ["x86_64-haiku"]        # 模式：`*` 代表任一段
+priority = 100
+hosted   = true                    # C 环境有 `main`
+```
+
+选中该平台（`[target.x86_64-haiku] platform = {...}` 或 `--platform`）后，`--target x86_64-haiku` 构建到
+`target/x86_64-haiku/`，`cfg(os = "haiku")` 成立（2026.11.10.2 起 `cfg(haiku)` 亦成立，`cfg(unix)` 由行的 `family` 决定）；程序的系统不是本机时，在运行器陈述运行方式之前为「已构建、
+未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
+提供者的两种简写。
+
+**行的附带文件与异常模型（2026.11.16.1+）。** `companions = [".wasm"]` 指链接可能在程序旁写出、以程序命名的文件：每次链接前
+删除，链接写出时被暂存，未写出不是错误。`exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型，
+为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
+SPEC-016 §2.4）；此时 `same-arch` 的 runner 为产物的架构构建，在本机启动。
+
+**定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`
+标为 `row`）；工具链载荷为其自身宿主构建的东西——libc++ 头文件、运行时目录、宿主的 `-L` 与 RPATH——不进入该行；本机加载器的
+闭包与符号检查只在该行的执行系统为本机时进行。没有内置提供者服务的内置行同样如此。
+
+**内置行已命名的系统由平台服务，而非定义（2026.11.10.1+）。** FreeBSD 的行是内置的（`x86_64-freebsd`、`aarch64-freebsd`）；
+服务它们的平台为每个身份陈述提供者与基座，再次定义它们是错误。提供者的 `sysroot`（包，或相对平台清单的
+`{ path = "<目录>" }`）是该身份的基座，先于平台自己的 `sysroot`：
+
+```toml
+[platform]
+toolchain = "llvm@23.1.3"
+
+[[platform.provider]]
+serves  = ["x86_64-freebsd"]
+sysroot = "xim:x86_64-freebsd-sysroot@14.5"     # 基座包（[22](22-target-side.md)）
+hosted  = true
+
+[[platform.provider]]
+serves  = ["aarch64-freebsd"]
+sysroot = "xim:aarch64-freebsd-sysroot@14.5"
+hosted  = true
+
+[platform.build]
+ldflags = ["-pthread"]
+
+[platform.link]
+driver = "compiler"
+```
+
+**`[platform.link] flags` 是给 ld.lld 的词（2026.11.10.1+）。** `driver` 为 `"compiler"` 的平台不把它们交给任何程序，构建
+会说明这一点，并指名 `[platform.build] ldflags`——后者的词进入编译器的链接。
+
+**提供者陈述其产物怎样启动，以及一个系统叫什么（2026.11.12.1+）。** 提供者条目的三个键与一张表：
+
+```toml
+[[platform.provider]]
+serves         = ["x86_64-haiku"]
+tier           = "preview"                       # 这一安排的档位；未写时为行的档位
+system-headers = "xim:haiku-headers@1.0"         # 系统自身接口的头文件，供对它们编译的步骤读取
+runner         = { cmd = ["dirun", "--profile", "{pkg:haiku-disk-image}/dirun.toml", "--", "{}"],
+                   hosts = ["linux-x86_64", "macos-aarch64"],
+                   requires = ["xim:dirun@0.2.0", "xim:haiku-disk-image@1.0"] }
+
+[[platform.system]]
+name  = "haiku"
+uname = "Haiku"                                  # `uname -s` 在该系统上的回答
+```
+
+提供者的 `runner` 是运行器陈述的最低一级：构建程序的、本机 `config.toml` 的、项目的
+`[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。平台自己的 `runner` 属于 `[platform] targets`，
+不替换它（2026.11.13.1）：提供者陈述它所服务的身份的运行器、链接（`link`）与基座（`sysroot`），`base = "platform"` 与
+`base = "none"` 相同，因此一个平台可以陈述约定不同的行（openkal 平台的 ok 镜像与 `x86_64-uefi`）。`hosts` 是该运行器所在的宿主（未写为任一宿主）。
+模板中 `{}` 是产物，`{sysroot}` 是产物链接时所用的基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在
+`requires` 的包中查找，再查 `PATH`。`requires` 的包由第一次需要它们的 `mcpp run` 或 `mcpp test` 安装，构建不安装。
+
+`[platform.tools]` 为构建机器构建，构建只准备它的行所带的工具（2026.11.13.1）。`base = "none"` 的提供者带它自己的链接、
+封装（seal）与运行器所指名的工具；其余的行带全部工具，只由这类提供者指名的工具除外。因此 openkal 平台的 DOS 行
+（`i686-dos-musl`，其封装为 `okdos`）只构建 `okdos`，其 ok 镜像不构建它。
+
+一条提供者条目陈述一种载荷安排：原生安排与交叉安排是两条条目，各有自己的 `hosts`、基座与优先级。新增的条目不改变
+此前已有回答的请求，所以它以低于现有 `<arch>-<os>` 回答的优先级进入
+（[SPEC-016 §4](../specs/targets-and-providers.md)）。
+
+陈述了 `uname` 的系统可进入每个系统一个程序的单文件（`mcpp pack --pkg-format single-file`）；未陈述的系统，其程序是
+文件开头的 PE。加载器读取程序资源节的系统陈述 `resources = true`（内置的 `windows` 条目）：工程的 `[resources]` 编入其行的
+程序，不编入另一系统加载的 PE 映像，如 UEFI 应用（2026.11.16.1）。运行器为多个系统构建的平台，陈述各自的身份：
+
+```toml
+[platform]
+runner = { cmd = ["okrun", "{}"], hosts = ["linux-x86_64", "freebsd-x86_64"],
+           built-as = { "freebsd-x86_64" = "x86_64-freebsd-musl" } }
+```
+
+`mcpp pack --systems all` 取表中的全部系统，没有程序可构建的对写为未覆盖。
+
+`mcpp new <名> --template platform` 生成一个定义 `<arch>-<名>` 的平台包。读取平台清单时按行检查其语句：定义内置行、
+同一行定义两次是错误，无论平台在何处被读取；不服务任何行的提供者、以同一优先级服务同一身份的两个提供者是平台自身构建的
+警告。`mcpp why platform` 列出平台定义的行与所服务的身份，各附提供者与优先级：在平台目录中是其自身，在项目中是其目标所选
+的平台（`--target`；`--format json`）。
 
 ## 查看一个配置
 

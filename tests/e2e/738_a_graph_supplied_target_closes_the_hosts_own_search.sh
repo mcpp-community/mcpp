@@ -111,7 +111,7 @@ if ! out="$("$MCPP" build --target x86_64-windows-gnu --cache off 2>&1)"; then
     case "$out" in
       *"not found in the synced index"*|*"install_packages failed"*)
         echo "SKIP: the openkal packages are not reachable from here"
-        exit 0 ;;
+        exit 77 ;;
     esac
     echo "FAIL: the openkal windows-gnu stack did not build"
     printf '%s\n' "$out" | grep -iE 'error' | head -5

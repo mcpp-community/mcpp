@@ -21,6 +21,8 @@
 //   graph_load.cpp     P4a -- loading one git, path or version dependency.
 //   graph.cpp          P4b -- the worklist, the graph, the cycle check.
 //   graph_closures.cpp P4b -- the lookups the later phases ask of the graph.
+//   package_root.cpp   P4b -- a package's root: the build inputs the graph records.
+//   overrides.cpp      P4b -- the root's overrides, and the pins of shared packages.
 //   host_graph.cpp     the build programs' graph: its workspace, its sub-build,
 //                      the programs' identities and the build-plugin checks.
 //   toolchain_decision.cpp  P5 -- the toolchain, decided once the graph exists.
@@ -54,10 +56,6 @@
 //
 // Bodies moved verbatim from the CLI layer, then from one file into many.
 // Zero behavior change either time.
-
-module;
-#include <cstdio>
-#include <cstdlib>
 
 export module mcpp.build.prepare;
 
@@ -414,12 +412,12 @@ export struct SourceDecision {
 export std::string source_tag(const SourceDecision& d,
                               const std::filesystem::path& relativeTo = {});
 
-// A condition a planning pass reports instead of acting on (plan_only): the
+// A condition a planning pass reports instead of acting on (PrepareIntent::Describe): the
 // code is stable and the message is for people. Emitted as diagnostics by the
 // command that asked for the plan, at the severity carried here — most notes
 // are warnings the document is still complete despite (a lock that would
 // change, a generated file left unmaterialized); a build program whose run
-// failed under `plan_only` (#699 item 2, E3) is an error, because the sets it
+// failed under `PrepareIntent::Describe` (#699 item 2, E3) is an error, because the sets it
 // would have shaped are described without its directives.
 export struct PlanNote {
     std::string code;
@@ -450,6 +448,38 @@ export struct DepSourceRoot {
     bool operator==(const DepSourceRoot&) const = default;
 };
 
+// WHAT A PREPARATION IS FOR. One answer, from which each phase reads what it may
+// do: whether it compiles, whether it runs the package's programs, whether it
+// writes the project. Three switches that grew one per caller had answered it
+// before, each phase asking the ones it knew of (2026-11-14).
+export enum class PrepareIntent {
+    // Plan, then build.
+    Build,
+    // PLANNING TO DESCRIBE, NOT TO BUILD (`mcpp emit build-database`, publish,
+    // the doctor). With `work_dir` pointed outside the project, three things
+    // still reached it or ran a compiler, and this intent settles each: the std
+    // module is described (mcpp::toolchain::describe_std_module) instead of
+    // compiled; the root package's `[build] generated_files`, which are sources
+    // and live in the source tree, are compared instead of written, and a
+    // missing or stale one is recorded in BuildContext::planNotes; and mcpp.lock
+    // is READ from the project root, as the resolution input it is, while the
+    // lock this planning produces is written under `work_dir`. Build programs
+    // still run.
+    Describe,
+    // THE CONFIGURATION, NOT THE SOURCES (`prepare_configuration`, SPEC-013
+    // §9): what the project's sources would be refused for -- `import std`
+    // with no C++ run-time in the graph -- is a note of the report, and the
+    // configuration is still reported.
+    Configure,
+    // THE CONFIGURATION TESTS BUILT ELSEWHERE RUN IN (`mcpp test --archive`,
+    // SPEC-015 §4): a configuration that compiles nothing. A toolchain this
+    // machine cannot compile with -- the MSVC ABI with no Visual Studio -- is
+    // no refusal, and no build program or host tool is compiled or run: their
+    // directives and outputs shape compiles, and the tests' programs and
+    // files are the archive's.
+    RunBuilt,
+};
+
 export struct BuildContext;
 
 // A BUILD PROGRAMS' GRAPH a prepare planned (mcpp#797), for the readers that
@@ -462,9 +492,26 @@ export struct BuildProgramGraph {
     std::map<std::string, std::string>    programOf;
 };
 
+// One candidate of a request's selection, and the selection (SPEC-016 §4), for
+// `mcpp why target` and the machine output. `request` empty: the build is the
+// host's own, which no selection decides.
+export struct TargetCandidate {
+    std::string identity, provider, why;
+    int         priority = 0;
+    bool        available = false;
+    std::string tier;   // of the arrangement: the provider entry's, else the row's
+};
+
+export struct TargetSelection {
+    std::string                  request, identity, provider, why;
+    int                          priority = 0;
+    bool                         fallback = false;
+    std::vector<TargetCandidate> candidates;
+};
+
 export struct BuildContext {
     // The build programs' graphs this prepare planned to describe them
-    // (`plan_only`; empty otherwise).
+    // (`PrepareIntent::Describe`; empty otherwise).
     std::vector<BuildProgramGraph>  buildProgramGraphs;
     // The root is a build plugin, planned in the build-program configuration
     // (mcpp#797, SPEC-007 P3). `mcpp pack` refuses it (P5).
@@ -480,6 +527,13 @@ export struct BuildContext {
     // parser of one file, and because the two readers must not be able to
     // disagree about the machine.
     int                             globalDefaultJobs = 0;
+    // What the preparation was for: a preparation that compiles nothing
+    // (`PrepareIntent::RunBuilt`) provisioned no tool, and its readers find
+    // the programs it would have built another way.
+    PrepareIntent                   intent = PrepareIntent::Build;
+    // The root's exact pins of packages every consumer shares (T3): what
+    // `mcpp publish` refuses in a library, one line each.
+    std::vector<std::string>        sharedExactPins;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the
@@ -554,11 +608,11 @@ export struct BuildContext {
     // the finish phase starts writing `outputDir`, held through ninja, and
     // dropped (`reset()`) before a program or a test runs. Shared because a
     // context is copied; the last copy releases it. Null for a planning pass
-    // that describes (plan_only), which works in its own directory.
+    // that describes (PrepareIntent::Describe), which works in its own directory.
     std::shared_ptr<mcpp::home::FileLock> buildLock;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
-    // plan_only: what the std module build WOULD be (sources are on the
+    // PrepareIntent::Describe: what the std module build WOULD be (sources are on the
     // toolchain), set when the graph imports std. A build compiles it instead
     // and leaves this empty.
     std::optional<mcpp::toolchain::StdModuleDescription> stdModule;
@@ -596,6 +650,8 @@ export struct BuildContext {
         std::string replaced;    // the spec displaced, when one was
     };
     CompilerChoice                  compilerChoice;
+    // WHICH ROW AND WHICH PROVIDER THE REQUEST WAS GIVEN (SPEC-016 §4).
+    TargetSelection                 targetSelection;
     // THE SOURCES THIS BUILD USED (mcpp#755), one entry per subject. See
     // SourceDecision.
     std::vector<SourceDecision>     sources;
@@ -659,6 +715,12 @@ export struct BuildContext {
     // refines: the plan knows the set of formats and this knows who provides
     // each.
     std::map<std::string, std::vector<std::string>> packFormatProviders;
+    // By provider (a package in `packFormatProviders`): the programs it stated
+    // with `mcpp::pack_program`, and the warnings it stated in this pass, which
+    // a pack whose provider submitted nothing gives as the provider's reasons
+    // (design 2026-11-15 N30).
+    std::map<std::string, std::vector<std::string>> packPrograms;
+    std::map<std::string, std::vector<std::string>> packReasons;
 };
 
 // The selected member a package acts for in a packaging pass: the package
@@ -784,6 +846,13 @@ export std::string profile_override_from_flags(std::string_view profileOption,
 
 // Command-level overrides (--target / --static).
 // Empty defaults preserve pre-existing behaviour exactly.
+// THE ROOT OF A PACKAGE A STATEMENT NAMES (`xim:<name>@<version>`), for the
+// readers outside prepare (a runner's packages, SPEC-016 §6): where the payload
+// stands, installed first when `install` and it does not stand.
+export std::expected<std::filesystem::path, std::string>
+package_root(const std::string& ref, bool install);
+
+
 export struct BuildOverrides {
     // Where the package being built LIVES (its mcpp.toml). Empty = walk up from
     // the process cwd, which is what every user-facing invocation does. Set by
@@ -804,22 +873,12 @@ export struct BuildOverrides {
     // only some would be worse than moving none — a half-redirected build
     // writes into the shared root anyway, just less visibly.
     std::filesystem::path work_dir;
-    // PLANNING TO DESCRIBE, NOT TO BUILD (`mcpp emit build-database`).
-    //
-    // With `work_dir` pointed outside the project, three things still reached
-    // it or ran a compiler, and this switch settles each: the std module is
-    // described (mcpp::toolchain::describe_std_module) instead of compiled; the
-    // root package's `[build] generated_files`, which are sources and live in
-    // the source tree, are compared instead of written, and a missing or stale
-    // one is recorded in BuildContext::planNotes; and mcpp.lock is READ from the
-    // project root, as the resolution input it is, while the lock this planning
-    // produces is written under `work_dir`. Build programs still run.
-    bool        plan_only = false;
-    // THE CONFIGURATION, NOT THE SOURCES (`prepare_configuration`, SPEC-013
-    // §9): what the project's sources would be refused for -- `import std`
-    // with no C++ run-time in the graph -- is a note of the report, and the
-    // configuration is still reported.
-    bool        configuration_only = false;
+    // What this preparation is for (PrepareIntent), and what each phase reads
+    // of it.
+    PrepareIntent intent = PrepareIntent::Build;
+    bool describes()  const { return intent == PrepareIntent::Describe; }
+    bool configures() const { return intent == PrepareIntent::Configure || intent == PrepareIntent::RunBuilt; }
+    bool compiles()   const { return intent != PrepareIntent::RunBuilt; }
     // #355 tool provisioning re-enters prepare_build for the tool package. A
     // tool package's own build.mcpp may legitimately want another tool (gRPC's
     // wants protoc), so the depth cannot be 1 — but an unbounded chain is a
@@ -887,6 +946,11 @@ export struct BuildOverrides {
     std::shared_ptr<const mcpp::runtime::RuntimeBinding>
         inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
+    // THE REQUEST, WHEN THE IDENTITY WAS GIVEN BY THE C LIBRARY (SPEC-016 §5): a
+    // first pass found that the graph or the platform supplies a C library the
+    // selected row does not name, and prepared again for the row that names it.
+    // The report and the lock name this request; `target_triple` is the identity.
+    std::optional<std::string> target_request;
     // --accel: the device backends and architectures this build targets, in
     // the wire form mcpp.pack.abi_tag reads. Overrides `[build] accel`, the
     // same relationship --target has with [toolchain].
@@ -1076,6 +1140,14 @@ prepare_build(bool print_fingerprint, bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {});
 
+// THE RESOLVED GRAPH, AND NOTHING AFTER IT (#932): the packages `prepare_build`
+// reads -- the manifest and its workspace, the toolchain request, the graph's
+// resolution -- with the same phases, and no toolchain resolved after the
+// graph, no build program, no scan and no plan. For a question the declared
+// data answers (`mcpp test --guide`), which a plan would answer minutes later.
+export std::expected<std::vector<mcpp::modgraph::PackageRoot>, std::string>
+resolve_graph(bool includeDevDeps, BuildOverrides overrides);
+
 // ONE CONFIGURATION, PREPARED WITHOUT A BUILD (SPEC-013 §9): what `mcpp self
 // env --target` reports and what `mcpp toolchain install --target` fetches --
 // the toolchain, the platform package, the packages it adds and the tools it
@@ -1084,7 +1156,7 @@ prepare_build(bool print_fingerprint, bool includeDevDeps = false,
 // `[target.<selector>]` tables apply); elsewhere an empty program in the
 // home's cache stands for one. Nothing is compiled but the tools.
 export std::expected<BuildContext, std::string>
-prepare_configuration(std::string_view targetTriple);
+prepare_configuration(std::string_view targetTriple, PrepareIntent intent = PrepareIntent::Configure);
 
 // THE PLATFORM A TARGET SELECTS, ASKED WITHOUT PREPARING IT (SPEC-015 §1): the
 // selection the first phase makes -- `--platform`, the target's environment
@@ -1105,7 +1177,7 @@ platform_selection_for(const mcpp::toolchain::triple::Triple& target,
 // by an earlier phase (`MCPP_BUILD_DATABASE_PROGRAM_FAILED`, say) was
 // therefore lost on every failure of a later phase, not only the one that
 // motivated this (design 2026-09-27 §4.2, mcpp#724 side finding A, fix item
-// 2): under `emit build-database`'s `plan_only`, a member the caller could
+// 2): under `emit build-database`'s `PrepareIntent::Describe`, a member the caller could
 // otherwise describe the ordinary way (R5.2) instead reported nothing but the
 // later phase's own message.
 //

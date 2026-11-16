@@ -1,12 +1,9 @@
 // mcpp.provider.xlings — the implementation: how mcpp starts xlings, reads
 // its events and keeps its home.
-module;
-#include <cstdio>      // stderr
-#include <cstdlib>
-
 module mcpp.provider.xlings;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.provider;
 import mcpp.pm.compat;
 import mcpp.pm.index_contract;
@@ -21,8 +18,10 @@ import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
 import mcpp.home;
 import mcpp.xpkg_version;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::provider::xlings {
 // How mcpp starts xlings: `args` after the binary, the environment
@@ -55,9 +54,9 @@ namespace {
 void print_status(std::string_view verb, std::string_view msg) {
     constexpr std::size_t W = 12;
     if (verb.size() >= W) {
-        std::println(stderr, "{} {}", verb, msg);
+        std::println(libc::stderr(), "{} {}", verb, msg);
     } else {
-        std::println(stderr, "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
+        std::println(libc::stderr(), "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     }
 }
 
@@ -948,7 +947,41 @@ Invocation invocation(const Env& env, std::vector<std::string> args) {
     return inv;
 }
 
+std::filesystem::path state_dir(const Env& env) {
+    // The home's, for a project's install as well: an install at project scope
+    // also saves the home's environment (subos/default/.xlings.json), so a turn
+    // in the project's directory let it collide with an install of another
+    // project, or of none, on Windows (e2e images/1033, run 43632995462). One
+    // turn per home orders every writer of either state.
+    const auto dir = env.home / "subos";
+    std::error_code ec;
+    auto real = std::filesystem::weakly_canonical(dir, ec);
+    return ec ? dir : real;
+}
+
+namespace {
+// THE PROVIDER'S STATE, ONE WRITER AT A TIME (kStateTurn). xlings saves a
+// SubOS description by writing it in place, and on Windows a save while
+// another process of the same state held the file was refused: the install
+// failed after its payload was placed. Every invocation that writes the state
+// takes the turn; a caller already holding it (an install in prepare) nests.
+// When the provider writes atomically, the turn orders writers that no longer
+// collide, and costs a lock per install.
+void hold_state_turn(std::optional<mcpp::home::Turn>& t, const Env& env, std::string_view what) {
+    t.emplace(state_dir(env), mcpp::provider::kStateTurn, what, std::chrono::seconds(2),
+              [](std::string_view holder) {
+                  mcpp::log::verbose("xlings", std::format("waiting for the provider's state turn{}{}",
+                                                           holder.empty() ? "" : ", held by ", holder));
+              });
+}
+bool writes_state(std::string_view capability) {
+    return capability == "install_packages" || capability == "add_repo" || capability == "remove_repo";
+}
+}  // namespace
+
 void select_runtime(const Env& env, std::string_view runtimeId) {
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, "choosing the runtime");
     auto inv = invocation(env, { "config", "--runtime", std::string(runtimeId) });
     inv.options.streams = mcpp::run::Streams::discard;
     (void)mcpp::run::execute(inv.argv, inv.options);
@@ -1132,6 +1165,8 @@ call(const Env& env, std::string_view capability,
     // Stdout is parsed line by line as NDJSON, so merging stderr into it could
     // split an event; discarding it lost the one line that names a rejection.
     // It is read only when the call fails.
+    std::optional<mcpp::home::Turn> turn;
+    if (writes_state(capability)) hold_state_turn(turn, env, std::format("xlings {}", capability));
     auto inv = invocation(env, { "interface", std::string(capability), "--args", std::string(argsJson) });
     const auto cmd = mcpp::build::command_line::display(inv.argv);
 
@@ -1150,6 +1185,7 @@ call(const Env& env, std::string_view capability,
     const bool installing = capability == "install_packages";
     const bool syncing = capability == "sync_index" || capability == "update_packages";
     InstallDeadline deadline;
+    std::string progressDeadlineReason;
     std::map<std::string, int> sourceAttempts;
     inv.options.streams = mcpp::run::Streams::output_error_kept;
     inv.options.on_line = [&](std::string_view line) {
@@ -1196,14 +1232,19 @@ call(const Env& env, std::string_view capability,
                       : syncing ? std::chrono::duration_cast<std::chrono::milliseconds>(index_refresh_timeout())
                                 : std::chrono::milliseconds{0};
     inv.options.idle = std::chrono::duration_cast<std::chrono::milliseconds>(kInterfaceIdleTimeout);
-    inv.options.should_stop = [&] { return installing && deadline.expired(); };
+    inv.options.should_stop = [&] {
+        if (!installing) return false;
+        progressDeadlineReason = deadline.failure_reason();
+        return !progressDeadlineReason.empty();
+    };
     const auto ran = mcpp::run::execute(inv.argv, inv.options);
     const int rc = ran.exit_code;
     const bool timedOut = ran.timed_out;
     if (timedOut) {
         result.exitCode = result.exitCode != 0 ? result.exitCode : 124;
-        const auto message = std::format(
-            "provider {} exceeded its progress/process deadline and was stopped", capability);
+        const auto message = progressDeadlineReason.empty()
+            ? std::format("provider {} exceeded its process deadline and was stopped", capability)
+            : std::format("provider {} stopped: {}", capability, progressDeadlineReason);
         if (!result.error) result.error = ErrorEvent{
             installing || syncing ? "E_NETWORK" : "E_PROVIDER_TIMEOUT", message,
             installing || syncing ? "check proxy settings or use mcpp self config --mirror auto|CN|GLOBAL"
@@ -1478,12 +1519,15 @@ int install_with_progress(const Env& env, std::string_view target,
     // the interface only retries the same operation and hides its first error.
     if (!quiet) print_status("Installing", target);
     mcpp::effects::note_network_access();
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, std::format("installing {}", target));
     auto inv = invocation(env, { "interface", "install_packages", "--args", argsJson });
 
     int resultExitCode = -1;
     std::map<std::string, int> sourceAttempts;
     mcpp::ui::DownloadProgress download;
     InstallDeadline deadline;
+    std::string progressDeadlineReason;
 
     auto handle_line = [&](std::string_view line) {
         deadline.observe(line);
@@ -1522,7 +1566,10 @@ int install_with_progress(const Env& env, std::string_view target,
     inv.options.on_line = handle_line;
     inv.options.total = std::chrono::duration_cast<std::chrono::milliseconds>(kDirectInstallTimeout);
     inv.options.idle = std::chrono::duration_cast<std::chrono::milliseconds>(kInterfaceIdleTimeout);
-    inv.options.should_stop = [&] { return deadline.expired(); };
+    inv.options.should_stop = [&] {
+        progressDeadlineReason = deadline.failure_reason();
+        return !progressDeadlineReason.empty();
+    };
     const auto ran = mcpp::run::execute(inv.argv, inv.options);
     const bool idleTimedOut = ran.timed_out;
     const int closeRc = ran.exit_code;
@@ -1531,21 +1578,25 @@ int install_with_progress(const Env& env, std::string_view target,
         else download.finish_failed();
     }
     if (idleTimedOut) {
-        mcpp::log::warn("xlings", "package install exceeded its progress/process deadline and was stopped");
-        if (!quiet) print_status("Network", "Download stopped: no byte progress or process deadline exceeded; check proxy/mirror settings");
+        const auto reason = progressDeadlineReason.empty() ? "provider process deadline exceeded"
+                                                         : progressDeadlineReason;
+        mcpp::log::warn("xlings", std::format("package install stopped: {}", reason));
+        if (!quiet) print_status("Network", std::format("Download stopped: {}; check proxy/mirror settings", reason));
         return resultExitCode > 0 ? resultExitCode : 124;
     }
     return (resultExitCode != -1) ? resultExitCode : closeRc;
 }
 
 int install_direct(const Env& env, std::string_view target, bool quiet) {
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, std::format("installing {}", target));
     auto inv = invocation(env, { "install", std::string(target), "-y" });
     mcpp::effects::note_network_access();
     // An empty standard input. Lines are passed through as the inherited
     // terminal showed them before, unless the caller asked for quiet. They are
     // xlings' own progress text, narration: standard error.
     inv.options.streams = quiet ? mcpp::run::Streams::discard : mcpp::run::Streams::output_error_shown;
-    inv.options.on_line = [](std::string_view line) { std::println(stderr, "{}", line); };
+    inv.options.on_line = [](std::string_view line) { std::println(libc::stderr(), "{}", line); };
     inv.options.total = std::chrono::duration_cast<std::chrono::milliseconds>(kDirectInstallTimeout);
     const auto ran = mcpp::run::execute(inv.argv, inv.options);
     const bool timedOut = ran.timed_out;
@@ -1668,12 +1719,14 @@ void ensure_init(const Env& env, bool quiet) {
     // whatever the caller's project directory is.
     Env globalEnv = env;
     globalEnv.projectDir.clear();
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, globalEnv, "initialising the sandbox");
     auto inv = invocation(globalEnv, { "self", "init" });
     inv.options.streams = mcpp::run::Streams::discard;
     inv.options.total = std::chrono::seconds{120};
     const int rc = mcpp::run::execute(inv.argv, inv.options).exit_code;
     if (rc != 0 && !quiet) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: `xlings self init` failed for sandbox at '{}'",
             env.home.string());
     }
@@ -1708,7 +1761,7 @@ void ensure_patchelf(const Env& env, bool quiet,
     int rc = install_with_progress(env,
         std::format("xim:patchelf@{}", pinned::kPatchelfVersion), cb, quiet);
     if (rc != 0 && !quiet) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: failed to bootstrap patchelf into mcpp sandbox; "
             "subsequent xim installs may skip ELF rewriting");
     }
@@ -1735,7 +1788,7 @@ void ensure_ninja(const Env& env, bool quiet,
     int rc = install_with_progress(env,
         std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
     if (rc != 0 && !quiet) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",
             rc);
     }
@@ -1943,8 +1996,25 @@ int update_index_unguarded(const Env& env, bool quiet) {
     std::filesystem::create_directories(paths::index_data(env), lockEc);
     auto lock = mcpp::home::FileLock::try_acquire(paths::index_data(env));
     if (!lock) {
-        mcpp::log::verbose("index",
-            "another process is refreshing the index — skipping this one");
+        // UNLESS THERE IS NO INDEX TO READ (mcpp#927, 2026-11-12 §18 P3). A
+        // process that skipped the refresh then read an index another process
+        // was still fetching, or exchanging on a volume without an atomic
+        // exchange, and reported "no local package index" for a home that had
+        // one a moment later. Such a reader waits for the refresh it skipped;
+        // one with an index skips as before.
+        bool absent = false;
+        for (const auto& d : paths::declared_indices(env))
+            if (!std::filesystem::exists(d.dir, lockEc)) absent = true;
+        if (!absent) {
+            mcpp::log::verbose("index",
+                "another process is refreshing the index — skipping this one");
+            return 0;
+        }
+        auto waited = mcpp::home::FileLock::acquire(
+            paths::index_data(env), ".lock", "a refresh of the package index",
+            std::chrono::milliseconds(500), [&](std::string_view) {
+                if (!quiet) print_status("Waiting", "for the package index another mcpp is refreshing");
+            });
         return 0;
     }
 
@@ -2005,7 +2075,7 @@ int update_index_unguarded(const Env& env, bool quiet) {
         // would only be waited on three times. The caller treats the refresh as
         // failed and resolves from the local index, as it does for any failure.
         if (timedOut) {
-            std::println(stderr,
+            std::println(libc::stderr(),
                 "warning: the package index refresh did not finish within {} seconds and was "
                 "stopped; continuing with the local index "
                 "(the bound is [index] refresh_timeout in mcpp's config.toml)",
@@ -2024,7 +2094,7 @@ int update_index_unguarded(const Env& env, bool quiet) {
     // the TTL refresh before a build), which continues with the local index;
     // `mcpp index update` reports the failure itself.
     if (quiet)
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: the package index refresh failed after {} attempts (exit {}); "
             "continuing with the local index", kMaxAttempts, rc);
     return rc;

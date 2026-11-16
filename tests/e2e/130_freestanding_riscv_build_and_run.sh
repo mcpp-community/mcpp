@@ -54,7 +54,7 @@ for d in "$HOME"/.mcpp/registry/data/xpkgs/*-x-qemu-riscv/*/bin \
          "$HOME"/.xlings/data/xpkgs/*-x-qemu-riscv/*/bin; do
     [[ -x "$d/qemu-system-riscv64" ]] && QEMU="$d/qemu-system-riscv64"
 done
-[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 0; }
+[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 77; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

@@ -134,14 +134,27 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
     // refuse further in with "not a program in this build", which is a
     // pre-existing message for any target the application pipeline finds no
     // executable link unit for.
+    //
+    // SEVERAL PROGRAMS ARE NOT DECIDED HERE (mcpp#911 B3): the application
+    // pipeline takes the one named after the package, says which others it
+    // left, and refuses when none is so named (`--all-programs` ships them
+    // together). The first one was taken here before, without a word.
     const mcpp::manifest::Target* onlyLib = nullptr;
-    std::size_t libCount = 0;
+    const mcpp::manifest::Target* firstProgram = nullptr;
+    std::size_t libCount = 0, programCount = 0;
     for (auto const& t : m->targets) {
-        if (t.is_program())
-            return PackRoute{ t.name, false,
-                              t.kind == mcpp::manifest::Target::Application };
+        if (t.is_program()) {
+            if (!firstProgram) firstProgram = &t;
+            ++programCount;
+        }
         if (is_library(t)) { onlyLib = &t; ++libCount; }
     }
+    if (programCount == 1)
+        return PackRoute{ firstProgram->name, false,
+                          firstProgram->kind == mcpp::manifest::Target::Application };
+    if (programCount > 1)
+        return PackRoute{ {}, false,
+                          firstProgram->kind == mcpp::manifest::Target::Application };
     if (libCount == 1) return PackRoute{ onlyLib->name, true };
     if (libCount == 0)
         return std::unexpected("this package declares no program and no library to pack");

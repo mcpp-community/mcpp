@@ -24,17 +24,16 @@
 // Anywhere else only final lines are written, and the status line is repeated
 // when the log has been silent for a minute.
 
-module;
-#include <cerrno>      // EPIPE: a closed standard output
-#include <cstdio>      // fileno, stdout, stderr
-
 export module mcpp.ui;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.os.platform;
 import mcpp.ui.terminal;
 import mcpp.log;
 import mcpp.invocation;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::ui {
 
@@ -110,8 +109,12 @@ struct ClosingNotice {
     std::string message;   // one line; no trailing newline
 };
 void add_closing_notice(std::string code, std::string message);
+// A notice that belongs to a failed run only: advice that would be noise after
+// a success (design 2026-11-07 §4.10, a newer platform release in the index).
+void add_failure_notice(std::string code, std::string message);
 std::vector<ClosingNotice> take_closing_notices();
-void print_closing_notices();
+// `failed`: the run is failing, and its failure notices are printed as well.
+void print_closing_notices(bool failed = false);
 
 // Multi-line Rust-style diagnostic (M4 #8.1).
 // Renders as:
@@ -635,9 +638,9 @@ void emit_locked(term::Stream s, std::string_view text, bool narrates = false) {
         // come through here, arrives before this line whichever stream it is
         // for: on a terminal that both streams reach, the two are one column of
         // text. Standard error is unbuffered.
-        std::fflush(stdout);
+        std::fflush(libc::stdout());
         term::write(s, text);
-        std::fflush(s == term::Stream::Out ? stdout : stderr);
+        std::fflush(s == term::Stream::Out ? libc::stdout() : libc::stderr());
         return;
     }
     auto rows = current_rows_locked();
@@ -737,14 +740,16 @@ bool live_progress() {
 bool is_quiet()        { return g_quiet; }
 
 void flush() {
-    std::fflush(stdout);
-    std::fflush(stderr);
+    std::fflush(libc::stdout());
+    std::fflush(libc::stderr());
 }
 
 bool output_closed() {
-    errno = 0;
-    if (std::fflush(stdout) != 0 && errno == EPIPE) return true;
-    if (!std::ferror(stdout)) return false;
+    libc::errno() = 0;
+    if (std::fflush(libc::stdout()) != 0
+        && libc::errno() == static_cast<int>(std::errc::broken_pipe))
+        return true;
+    if (!std::ferror(libc::stdout())) return false;
     // An earlier write failed and its reason is gone with its errno. A write
     // to a pipe is refused only when the pipe has no reader, so a standard
     // output that is a pipe and has refused a write has lost its reader.
@@ -765,7 +770,7 @@ void set_line_buffered() {
     // function here calls, so the platform that cannot do this cheaply is also
     // the one that does not need it: its 4096-byte block is the smallest of the
     // three anyway, and `mcpp test` routes its result lines through ui::plain.
-    if constexpr (!mcpplibs::os::is_windows) std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    if constexpr (!mcpplibs::os::is_windows) std::setvbuf(libc::stdout(), nullptr, libc::_IOLBF, 0);
 }
 
 void status(std::string_view verb, std::string_view message) {
@@ -863,7 +868,18 @@ std::vector<ClosingNotice>& closing_notices() {
     static std::vector<ClosingNotice> notices;
     return notices;
 }
+std::vector<ClosingNotice>& failure_notices() {
+    static std::vector<ClosingNotice> notices;
+    return notices;
+}
 } // namespace
+
+void add_failure_notice(std::string code, std::string message) {
+    auto& all = failure_notices();
+    for (auto const& n : all)
+        if (n.message == message) return;
+    all.push_back({std::move(code), std::move(message)});
+}
 
 void add_closing_notice(std::string code, std::string message) {
     auto& all = closing_notices();
@@ -876,8 +892,10 @@ std::vector<ClosingNotice> take_closing_notices() {
     return std::exchange(closing_notices(), {});
 }
 
-void print_closing_notices() {
+void print_closing_notices(bool failed) {
     auto notices = take_closing_notices();
+    auto onFailure = std::exchange(failure_notices(), {});
+    if (failed) notices.insert(notices.end(), onFailure.begin(), onFailure.end());
     if (g_quiet) return;
     init();
     for (auto const& n : notices) {
@@ -1202,16 +1220,16 @@ void set_heartbeat(std::chrono::milliseconds interval) {
 }
 
 SuspendRegion::SuspendRegion() {
-    std::fflush(stdout);
-    std::fflush(stderr);
+    std::fflush(libc::stdout());
+    std::fflush(libc::stderr());
     std::lock_guard line(line_mutex());
     erase_locked();
     ++region().suspended;
 }
 
 SuspendRegion::~SuspendRegion() {
-    std::fflush(stdout);
-    std::fflush(stderr);
+    std::fflush(libc::stdout());
+    std::fflush(libc::stderr());
     std::lock_guard line(line_mutex());
     auto& r = region();
     if (r.suspended > 0) --r.suspended;

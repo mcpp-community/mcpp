@@ -1,8 +1,5 @@
 // mcpp.build.configure - configure-only prerequisites and execution.
 
-module;
-#include <cstdio>
-
 export module mcpp.build.configure;
 
 import std;

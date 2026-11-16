@@ -3,13 +3,10 @@
 // sandbox init/reset, and xlings mirror configuration.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.doctor;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.build.program_protocol;
 import mcpp.source_kind;
 import mcpp.manifest;
@@ -19,13 +16,14 @@ import mcpp.build.refusal;
 import mcpp.targetside;
 import mcpp.wire;
 import mcpp.build.plan;
+import mcpp.build.flag_origins;
 import mcpp.build.runtime_validation;
 import mcpp.config;
 import mcpp.fallback.probe_sysroot;
 import mcpp.fallback.xlings_binary;
 import mcpp.fetcher.progress;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.toolchain.platform;
@@ -47,6 +45,8 @@ import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpplibs.os.fs;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::doctor {
 
@@ -233,7 +233,7 @@ export int doctor_report() {
     //
     // Offline for the call: nothing is downloaded, installed or replaced, so
     // a build that would install first is reported as exactly that. Planned
-    // to describe, not to build (`plan_only`, as `mcpp emit build-database`
+    // to describe, not to build (`PrepareIntent::Describe`, as `mcpp emit build-database`
     // plans): the std module is described rather than compiled, generated
     // files are compared rather than written, and the lock this planning
     // produces goes to a scratch directory, not the project.
@@ -246,7 +246,7 @@ export int doctor_report() {
         mcpp::ui::set_quiet(true);
         (void)mcpp::build::refusal::take();
         mcpp::build::BuildOverrides ov;
-        ov.plan_only = true;
+        ov.intent = mcpp::build::PrepareIntent::Describe;
         std::error_code tec;
         ov.work_dir = std::filesystem::temp_directory_path(tec)
             / std::format("mcpp-doctor-{}", std::chrono::steady_clock::now().time_since_epoch().count());
@@ -998,20 +998,20 @@ latest_runtime_resolution(const std::filesystem::path& projectRoot) {
 int print_stored_runtime_resolution() {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: no mcpp.toml found; `mcpp why runtime` only reads a project's stored resolution");
         return 2;
     }
     auto stored = latest_runtime_resolution(*root);
     if (!stored) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: no stored runtime resolution; run `mcpp build` once");
         return 2;
     }
     auto const& [path, doc] = *stored;
     auto runtime = doc.find("runtime");
     if (runtime == doc.end() || !runtime->is_object()) {
-        std::println(stderr, "error: {} has no runtime object", path.string());
+        std::println(libc::stderr(), "error: {} has no runtime object", path.string());
         return 2;
     }
     std::println("runtime resolution: {}", path.string());
@@ -1174,6 +1174,8 @@ int print_stored_runtime_resolution() {
 //
 // It builds nothing. `prepare_build` stops before any compile, which is also
 // why the target matrix can afford to ask it for every cell.
+nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx);
+
 export int why_toolchain_json(std::string_view target, std::string_view tcSpec) {
     mcpp::build::BuildOverrides ov;
     ov.target_triple = std::string(target);
@@ -1282,6 +1284,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
             {"replaced",   ctx->compilerChoice.replaced},
         }},
     };
+    data["target"] = target_selection_json(*ctx);
     data["triple"] = {
         {"requested", std::string(target)},
         {"toolchain", tc.targetTriple},
@@ -1509,6 +1512,84 @@ nlohmann::json compat_uses_json() {
     return uses;
 }
 
+// The selection of a request (SPEC-016 §4) as the machine output states it.
+nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx) {
+    auto const& s = ctx.targetSelection;
+    auto candidates = nlohmann::json::array();
+    for (auto const& c : s.candidates)
+        candidates.push_back({ {"identity", c.identity}, {"provider", c.provider},
+                               {"priority", c.priority}, {"available", c.available}, {"why", c.why},
+                               {"tier", c.tier} });
+    return { {"request", s.request}, {"identity", s.identity}, {"provider", s.provider},
+             {"priority", s.priority}, {"fallback", s.fallback}, {"why", s.why},
+             {"candidates", candidates} };
+}
+
+// THE PLATFORM AT HAND (SPEC-016 §5): the root package's own statement when it
+// is a platform package, else the platform the build uses for its target.
+struct PlatformAtHand {
+    std::string name, version;
+    const mcpp::manifest::platform::Statement* statement = nullptr;
+};
+
+PlatformAtHand platform_at_hand(const mcpp::build::BuildContext& ctx) {
+    if (ctx.manifest.platformDeclared)
+        return { ctx.manifest.package.name, ctx.manifest.package.version, &ctx.manifest.platform };
+    if (ctx.plan.platform.active) {
+        auto const& p = ctx.plan.platform;
+        auto dot = p.package.rfind('.');
+        return { dot == std::string::npos ? p.package : p.package.substr(dot + 1), p.version, &p.fields };
+    }
+    return {};
+}
+
+nlohmann::json platform_json(const mcpp::build::BuildContext& ctx) {
+    namespace mp = mcpp::manifest::platform;
+    const auto at = platform_at_hand(ctx);
+    if (!at.statement) return nullptr;
+    const auto name = mp::platform_name(at.name);
+    auto rows = nlohmann::json::array();
+    for (auto const& d : at.statement->defines) rows.push_back(d.triple);
+    auto served = nlohmann::json::array();
+    for (auto const& s : mp::served_identities(*at.statement, name))
+        served.push_back({ {"identity", s.identity}, {"provider", s.provider}, {"priority", s.priority} });
+    const auto f = mp::check_statement(*at.statement, name);
+    return { {"package", at.name}, {"version", at.version}, {"defines", rows}, {"serves", served},
+             {"warnings", f.warnings} };
+}
+
+// `mcpp why target|flags|platform --format json`.
+export int why_target_or_flags_json(std::string_view topic, std::string_view target,
+                                    std::string_view unit, const std::string& features) {
+    const bool wasQuiet = mcpp::ui::is_quiet();
+    mcpp::ui::set_quiet(true);
+    struct QuietGuard {
+        bool prev;
+        ~QuietGuard() { mcpp::ui::set_quiet(prev); }
+    } quietGuard{wasQuiet};
+    mcpp::build::BuildOverrides ov;
+    ov.features = features;
+    ov.target_triple = std::string(target);
+    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                          /*includeDevDeps=*/false, {}, ov);
+    nlohmann::json data;
+    std::vector<mcpp::wire::Diagnostic> diags;
+    data["status"] = ctx ? "ok" : "refused";
+    if (!ctx)
+        diags.push_back({.code = "prepare.failed", .severity = mcpp::wire::Severity::Error,
+                         .message = ctx.error()});
+    else if (topic == "target") data["target"] = target_selection_json(*ctx);
+    else if (topic == "platform") data["platform"] = platform_json(*ctx);
+    else data["flags"] = mcpp::build::flag_origins_json(mcpp::build::flag_origins(ctx->plan, unit));
+    mcpp::wire::emit({
+        .kind        = std::format("mcpp.why.{}", topic),
+        .effects     = { mcpp::wire::Effect::ReadProject },
+        .data        = data,
+        .diagnostics = diags,
+    });
+    return ctx ? 0 : 2;
+}
+
 export int why_build_programs_or_compat_json(std::string_view topic, const std::string& features) {
     const bool wasQuiet = mcpp::ui::is_quiet();
     mcpp::ui::set_quiet(true);
@@ -1538,16 +1619,16 @@ export int why_build_programs_or_compat_json(std::string_view topic, const std::
 }
 
 export int why_report(const std::string& topic, const std::string& features,
-                      const std::string& subject = {}) {
+                      const std::string& subject = {}, const std::string& target = {}) {
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
-        "all", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool", "payload",
-        "build-programs", "compat",
+        "all", "target", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool",
+        "payload", "build-programs", "compat", "flags", "platform",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
-        std::println(stderr, "error: '{}' is not a topic of `mcpp why`; the topics are "
-                     "toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
-                     "payload <ns:name>, build-programs and compat", topic);
+        std::println(libc::stderr(), "error: '{}' is not a topic of `mcpp why`; the topics are "
+                     "target, toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
+                     "payload <ns:name>, build-programs, compat, flags [<unit>] and platform", topic);
         return 2;
     }
 
@@ -1561,10 +1642,69 @@ export int why_report(const std::string& topic, const std::string& features,
     // visible only in the `resolution.json` of that build.
     mcpp::build::BuildOverrides ov;
     ov.features = features;
+    ov.target_triple = target;
     auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
                                           /*includeDevDeps=*/false, {}, ov);
-    if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
+    if (!ctx) { std::println(libc::stderr(), "error: {}", ctx.error()); return 2; }
     auto& tc   = ctx->tc;
+
+    // THE SELECTION (SPEC-016 §4): the request, the identity and provider it
+    // was given, and every candidate in the order the rule took them.
+    if (all || topic == "target") {
+        auto const& s = ctx->targetSelection;
+        if (s.request.empty()) {
+            std::println("target: {}  (the host's own build; no request to select for)", s.identity);
+        } else {
+            std::println("target: {} → {}", s.request, s.identity);
+            std::println("  provider: {}{}", s.provider.empty() ? std::string("(the platform's)") : s.provider,
+                         s.provider.empty() ? std::string{} : std::format("  (priority {})", s.priority));
+            if (s.fallback) std::println("  fallback: {}", s.why);
+            if (!s.candidates.empty()) std::println("  candidates, in order:");
+            for (auto const& c : s.candidates) {
+                const bool taken = c.identity == s.identity && c.provider == s.provider;
+                std::println("    {:<26} {:<14} {:>4}  {:<9} {}", c.identity,
+                             c.provider.empty() ? std::string("(platform)") : c.provider, c.priority, c.tier,
+                             taken ? std::string("taken")
+                                   : c.available ? std::string("available") : "not available: " + c.why);
+            }
+        }
+    }
+    // THE PLATFORM'S ROWS AND THE IDENTITIES IT SERVES (SPEC-016 §5), each with
+    // the provider and its priority.
+    if (topic == "platform") {
+        namespace mp = mcpp::manifest::platform;
+        const auto at = platform_at_hand(*ctx);
+        if (!at.statement) {
+            std::println("platform: none  (the build of {} uses no platform package)", ctx->targetSelection.identity);
+            return 0;
+        }
+        const auto name = mp::platform_name(at.name);
+        std::println("platform: {} {}", at.name, at.version);
+        for (auto const& d : at.statement->defines) std::println("  defines {}", d.triple);
+        for (auto const& s : mp::served_identities(*at.statement, name))
+            std::println("  serves  {:<28} {:<20} priority {}", s.identity, s.provider, s.priority);
+        for (auto const& w : mp::check_statement(*at.statement, name).warnings)
+            std::println("  warning: {}", w);
+        return 0;
+    }
+    // EVERY WORD OF A UNIT'S COMMAND LINE AND WHO GAVE IT (mcpp#911 G2).
+    if (topic == "flags") {
+        const auto o = mcpp::build::flag_origins(ctx->plan, subject);
+        if (o.units.empty())
+            std::println("flags: no unit {}", subject.empty() ? std::string("of the root package")
+                                                          : std::format("ends with '{}'", subject));
+        for (auto const& u : o.units) {
+            std::println("flags of {} (package {}, for {}):", u.file, u.package, o.identity);
+            for (auto const& w : u.words)
+                std::println("  {:<9} {}{}", w.layer, w.word,
+                             w.detail.empty() ? std::string{} : std::format("   [{}]", w.detail));
+        }
+        std::println("link flags (for {}):", o.identity);
+        for (auto const& w : o.link)
+            std::println("  {:<9} {}{}", w.layer, w.word,
+                         w.detail.empty() ? std::string{} : std::format("   [{}]", w.detail));
+        return 0;
+    }
 
     if (all || topic == "toolchain") {
         const auto prof = mcpp::toolchain::abi_profile(tc);
@@ -1735,6 +1875,8 @@ export int why_report(const std::string& topic, const std::string& features,
                             list += (list.empty() ? "" : ", ") + x.get<std::string>();
                         std::println("      instances: {}", list);
                     }
+                    if (!entry.value("root", false) && entry.contains("manifest_dir"))
+                        std::println("      root: {}", entry.value("manifest_dir", std::string{}));
                     // A package with no target instance is linked into nothing here.
                     const auto inst = entry.value("instances", nlohmann::json::array());
                     const bool linked = !inst.is_array() || inst.empty()
@@ -1834,8 +1976,8 @@ export int explain_code(std::string_view code) {
             return 0;
         }
     }
-    std::println(stderr, "error: unknown error code '{}'", code);
-    std::println(stderr, "       known codes: E0001..E0006");
+    std::println(libc::stderr(), "error: unknown error code '{}'", code);
+    std::println(libc::stderr(), "       known codes: E0001..E0006");
     return 2;
 }
 

@@ -2,10 +2,6 @@
 // remove, update, pin, unpin.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.pm.index_management;
 
 import std;
@@ -20,7 +16,7 @@ import mcpp.pm.index_route;
 import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.wire;   // `--format json` (design 2026-10-26 §5.6)
 
 namespace mcpp::pm {
@@ -424,7 +420,9 @@ export int index_pin(const std::string& name, std::string rev) {
         // Inline table. Find the closing brace and insert/update rev.
         auto braceClose = lineContent.find('}', braceOpen);
         if (braceClose == std::string::npos) {
-            mcpp::ui::error("malformed inline table in mcpp.toml");
+            mcpp::ui::error(std::format(
+                "the inline table of index `{}` does not close on its line in mcpp.toml; "
+                "`mcpp index pin` edits an entry written on one line", name));
             return 1;
         }
         auto tableContent = lineContent.substr(braceOpen + 1, braceClose - braceOpen - 1);
@@ -525,7 +523,9 @@ export int index_unpin(const std::string& name) {
     if (braceOpen != std::string::npos) {
         auto braceClose = lineContent.find('}', braceOpen);
         if (braceClose == std::string::npos) {
-            mcpp::ui::error("malformed inline table in mcpp.toml");
+            mcpp::ui::error(std::format(
+                "the inline table of index `{}` does not close on its line in mcpp.toml; "
+                "`mcpp index unpin` edits an entry written on one line", name));
             return 1;
         }
         auto tableContent = lineContent.substr(braceOpen + 1, braceClose - braceOpen - 1);

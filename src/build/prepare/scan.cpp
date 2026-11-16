@@ -37,6 +37,7 @@ import mcpp.freestanding.target;   // the target sysroot layout (libdir)
 import mcpp.freestanding.linkline; // the ISA profile, for the std module command
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
+import mcpp.toolchain.provider;   // capabilities_for: whether C++ units can be built
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
@@ -245,6 +246,16 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
         }
         return mcpp::modgraph::scan_packages(scannedPackages, closures);
     }();
+    // A `sources` entry that names a file which is not there (#938) stops a
+    // build of the tree it is written in, and is a warning in a package
+    // fetched into a store: its consumer cannot change it, and an engine that
+    // refused it would refuse a release that built before.
+    for (std::size_t i = 0; i < state.packages.size(); ++i) {
+        if (!state.compilesHere(i)) continue;
+        auto& into = state.editablePackage(i) ? state.scan.errors : state.scan.warnings;
+        for (auto& e : mcpp::modgraph::unnamed_sources(state.packages[i].root, state.packages[i].manifest))
+            into.push_back(std::move(e));
+    }
     if (!state.scan.errors.empty()) {
         std::string msg = "scanner errors:\n";
         for (auto& e : state.scan.errors) msg += "  " + e.format() + "\n";
@@ -440,6 +451,10 @@ step11_msvc_crt_word_check(PrepareState& state) {
     // NOT gated on `needsStdModule`: the CRT model is a link-time fact for
     // every MSVC-ABI build, with or without `import std`.
     //
+    // On cl.exe the same pass refuses a shared-PDB word (`/Zi`, `/ZI`, `/FS`):
+    // its server outlives the compile that started it, and retiring that
+    // compile's unit ends it under the others (`check_shared_pdb_word`).
+    //
     // EVERY PACKAGE'S `cxxflags`, because each reaches its own package's
     // units after the graph's flags and would compile them against another
     // CRT: one image, two CRTs. `dialect_cxxflags` is the root's alone (a
@@ -450,6 +465,9 @@ step11_msvc_crt_word_check(PrepareState& state) {
     if (mcpp::toolchain::is_msvc_target(*state.tc)) {
         const bool wantsStatic = mcpp::toolchain::msvc_wants_static_crt(
             state.m->buildConfig.linkage, state.m->buildConfig.cxxRuntime);
+        // cl.exe alone writes a shared PDB through mspdbsrv.exe; clang on the
+        // MSVC ABI writes its debug information into each object.
+        const bool clExe = mcpp::toolchain::dialect_for(*state.tc).id == "msvc";
         for (std::size_t i = 0; i < state.packages.size(); ++i) {
             auto const& pkg = state.packages[i];
             // A selected workspace member is the project being developed and
@@ -473,8 +491,12 @@ step11_msvc_crt_word_check(PrepareState& state) {
                 for (auto const& w : list) {
                     const bool inherited =
                         std::ranges::find(fromWorkspace, w) != fromWorkspace.end();
-                    auto verdict = mcpp::toolchain::check_crt_word(
-                        w, wantsStatic, inherited ? std::string_view(workspaceKey) : key);
+                    const std::string_view at =
+                        inherited ? std::string_view(workspaceKey) : key;
+                    if (clExe)
+                        if (auto refusal = mcpp::toolchain::check_shared_pdb_word(w, at))
+                            return std::unexpected(*refusal);
+                    auto verdict = mcpp::toolchain::check_crt_word(w, wantsStatic, at);
                     if (!verdict) continue;
                     if (verdict->contradicts)
                         return std::unexpected(verdict->message);
@@ -578,7 +600,7 @@ step11_package_std_module_source(PrepareState& state) {
         if (auto fs = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             fs && fs->is_freestanding()) {
             if (auto spec = mcpp::freestanding::resolve(*fs))
-                flags += mcpp::freestanding::compile_prefix(*spec, true);
+                flags += mcpp::freestanding::compile_prefix(*spec, true, state.tc->hostedC);
         } else if (!state.tc->crossTargetFlag.empty()) {
             // `crossTargetFlag` and not `targetTriple`. The triple is mcpp's
             // vocabulary (`aarch64-macos`); the flag carries the spelling a
@@ -695,8 +717,10 @@ step11_package_std_module_source(PrepareState& state) {
             }();
             hopt.macosDeploymentTarget = mcpp::toolchain::apple::deployment_target(
                 cAbiTargetIsMacos, state.m->buildConfig.macosDeploymentTarget);
-            for (auto& t : mcpp::toolchain::host_compile_tokens(
-                     *state.tc, hopt, mcpp::toolchain::no_escape)) {
+            auto tokens = mcpp::toolchain::host_compile_tokens(*state.tc, hopt, mcpp::toolchain::no_escape);
+            // The scan reads C++ units: the paired system's C++ library too.
+            if (auto w = mcpp::toolchain::paired_stdlib_flag(*state.tc); !w.empty()) tokens.push_back(w);
+            for (auto& t : tokens) {
                 const auto q = " " + mcpp::build::command_line::quote(t);
                 if (flags.find(q) == std::string::npos) flags += q;
             }
@@ -896,8 +920,11 @@ step11_std_module_availability_gate(PrepareState& state, bool needsStdModule) {
                 state.tc->targetTriple, why, remedy));
         }
         return std::unexpected(std::format(
-            "source imports std but toolchain '{}' provides no std module source",
-            state.tc->label()));
+            "source imports std but toolchain '{}' provides no std module source{}",
+            state.tc->label(),
+            state.tc->stdModuleUnanswered.empty()
+                ? std::string{}
+                : std::format("\n       the compiler did not answer: {}", state.tc->stdModuleUnanswered)));
     }
     // `std.compat` is a second module of the same library, and not every
     // library has it: a package that supplies `std` alone, or a toolset without
@@ -1020,7 +1047,7 @@ step11_prebuild_std_module(PrepareState& state, bool needsStdModule) {
             auto stdTt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
             return stdTt && stdTt->os == "macos";
         }();
-        if (state.overrides.plan_only) {
+        if (state.overrides.describes()) {
             // Described, not compiled: the paths and commands are the ones
             // ensure_built would use, from the one derivation in stdmod.cppm.
             auto described = mcpp::toolchain::describe_std_module(
@@ -1180,10 +1207,44 @@ static void step11_public_module_check(PrepareState& state) {
     }
 }
 
+// A C++ unit is built as a module unit and its dependencies are read by P1689
+// scanning; a compiler with neither can build the graph's C units and none of
+// its C++ ones. Refused here, naming the compiler and the first C++ source,
+// rather than at the first compile, where the compiler rejects `-fmodules`.
+static std::expected<void, std::string>
+step11_cxx_compiler_gate(PrepareState& state) {
+    if (!state.tc) return {};
+    const auto caps = mcpp::toolchain::capabilities_for(*state.tc);
+    if (caps.has_modules) return {};
+    // A compiler without C++ modules builds the units that declare and import
+    // none, as translation units without module flags; the graph is mcpp's own
+    // scan. The first unit that needs modules is named, with what it needs.
+    for (auto const& u : state.scan.graph.units) {
+        if (u.kind != mcpp::SourceKind::Cxx && u.kind != mcpp::SourceKind::ModuleInterface)
+            continue;
+        std::string needs;
+        if (u.provides) needs = std::format("declares the module `{}`", u.provides->logicalName);
+        else if (u.declaration != mcpp::modgraph::ModuleDeclaration::None)
+            needs = "is a module unit";
+        else if (!u.requires_.empty())
+            needs = std::format("imports `{}`", u.requires_.front().logicalName);
+        else if (u.kind == mcpp::SourceKind::ModuleInterface)
+            needs = "is a module interface by its extension";
+        if (needs.empty()) continue;
+        return std::unexpected(std::format(
+            "{} has no C++ modules, which GCC provides from 14: {} {}. C++ sources that declare "
+            "and import no module, and C sources, build with it.\n"
+            "       help: a program of modules on {} needs a toolchain of GCC 14 or later, or Clang",
+            state.tc->label(), u.relPath.generic_string(), needs, state.tc->targetTriple));
+    }
+    return {};
+}
+
 std::expected<void, std::string> phase11_scan(PrepareState& state) {
     auto needsStdModule = step11_scan_sources(state);
     if (!needsStdModule) return std::unexpected(needsStdModule.error());
     if (auto r = refuse_plugin_units_in_target(state); !r) return std::unexpected(r.error());
+    if (auto r = step11_cxx_compiler_gate(state); !r) return std::unexpected(r.error());
     step11_public_module_check(state);
 
     if (auto r = step11_dependency_standard_scope_check(state); !r)
@@ -1202,7 +1263,7 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
         return std::unexpected(r.error());
 
     if (auto r = step11_std_module_availability_gate(state, *needsStdModule); !r) {
-        if (!state.overrides.configuration_only) return std::unexpected(r.error());
+        if (!state.overrides.configures()) return std::unexpected(r.error());
         // The configuration is reported; the sources' refusal travels with it.
         PlanNote note;   // a warning: the document is complete without the sources
         note.code = "MCPP_CONFIGURATION_SOURCES_REFUSED";
@@ -1219,6 +1280,7 @@ std::expected<void, std::string> phase11_scan(PrepareState& state) {
     if (state.print_fingerprint) {
         std::println("Toolchain: {}", state.tc->label());
         std::println("Fingerprint: {}", state.fp.hex);
+        std::println("Lineage: {} (the build directory's name)", state.fp.lineage);
         for (std::size_t i = 0; i < state.fp.parts.size(); ++i) {
             std::println("  [{}] {}", i + 1, state.fp.parts[i]);
         }

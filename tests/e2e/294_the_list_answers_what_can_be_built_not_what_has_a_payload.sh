@@ -29,7 +29,7 @@ targets="$(printf '%s\n' "$out" | awk '/^Targets:/,0')"
 
 if [ -z "$targets" ]; then
     echo "SKIP: this build printed no Targets section"
-    exit 0
+    exit 77
 fi
 
 row() { printf '%s\n' "$targets" | grep -E "^\s+\*?\s*$1(\s|$)" | head -1; }
@@ -41,7 +41,7 @@ row() { printf '%s\n' "$targets" | grep -E "^\s+\*?\s*$1(\s|$)" | head -1; }
 # means something else.
 case "$(uname -s)" in
   Linux) ;;
-  *) echo "SKIP: the graph-served row under test is a Linux-host arrangement"; exit 0 ;;
+  *) echo "SKIP: the graph-served row under test is a Linux-host arrangement"; exit 77 ;;
 esac
 
 wm="$(row x86_64-windows-musl)"
@@ -72,7 +72,7 @@ esac
 n="$(printf '%s\n' "$targets" | grep -cE '^\s+\*?\s*[a-z0-9_]+-' || true)"
 if [ "${n:-0}" -lt 3 ]; then
     echo "SKIP: only ${n:-0} target rows printed — too few to assert an absence"
-    exit 0
+    exit 77
 fi
 echo "  ok  $n target rows printed, so an absence below means something"
 

@@ -29,7 +29,7 @@ qemu_arm() {
     command -v qemu-system-arm 2>/dev/null && return 0
     return 1
 }
-QEMU="$(qemu_arm)" || { echo "SKIP: qemu-system-arm not installed"; exit 0; }
+QEMU="$(qemu_arm)" || { echo "SKIP: qemu-system-arm not installed"; exit 77; }
 
 llvm_tool() {
     local c
@@ -37,8 +37,8 @@ llvm_tool() {
     [ -n "$c" ] && { echo "$c"; return 0; }
     command -v "$1" 2>/dev/null
 }
-NM="$(llvm_tool llvm-nm)" || { echo "SKIP: llvm-nm not found"; exit 0; }
-OBJDUMP="$(llvm_tool llvm-objdump)" || { echo "SKIP: llvm-objdump not found"; exit 0; }
+NM="$(llvm_tool llvm-nm)" || { echo "SKIP: llvm-nm not found"; exit 77; }
+OBJDUMP="$(llvm_tool llvm-objdump)" || { echo "SKIP: llvm-objdump not found"; exit 77; }
 
 mkdir -p "$work/soc/src"
 cd "$work/soc"

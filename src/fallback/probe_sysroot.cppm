@@ -5,9 +5,6 @@
 //   2. Parse Clang's .cfg file for --sysroot=
 //   3. macOS: use xcrun to discover the SDK path
 
-module;
-#include <cstdlib>
-
 export module mcpp.fallback.probe_sysroot;
 
 import std;

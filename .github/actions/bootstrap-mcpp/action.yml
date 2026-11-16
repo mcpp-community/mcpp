@@ -33,7 +33,7 @@ inputs:
     # `package.name`, so one of the two was simply unreachable — and which one
     # depended on the machine, which is why CI failed on `compat:lua` on
     # Windows and `mcpplibs.capi:lua` on Linux. Never pin below that.
-    default: '2026.10.26.1'
+    default: '2026.11.16.1'
 
 outputs:
   sandbox-key:
@@ -107,6 +107,7 @@ runs:
       env:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         REPO_DIR="$(pwd)"
         # Always install the pinned version — the cache may hold an older
@@ -231,6 +232,7 @@ runs:
       env:
         XLINGS_NON_INTERACTIVE: '1'
         XLINGS_VERSION: ${{ inputs.xlings-version }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         REPO_DIR="$(pwd)"
         # FAST PATH: see the unix leg for the reasoning. The cost on Windows is

@@ -1,12 +1,16 @@
-#include <gtest/gtest.h>
 #include <fstream>
 #include <sstream>
 #include <string>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.config;
+import mcpp.home.files;
+import mcpplibs.os.fs;
 import mcpp.fallback.config_migration;
 import mcpp.pm.index_spec;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -19,16 +23,16 @@ std::filesystem::path make_tempdir(std::string_view name) {
 
 }  // namespace
 
-TEST(Config, ProjectXlingsDataRootsIncludeLegacyAndNestedLayouts) {
+UTest project_xlings_data_roots_include_legacy_and_nested_layouts{"Config/ProjectXlingsDataRootsIncludeLegacyAndNestedLayouts", [] {
     auto project = std::filesystem::path{"/tmp/mcpp-project"};
     auto roots = mcpp::config::project_xlings_data_roots(project);
 
-    ASSERT_EQ(roots.size(), 2u);
-    EXPECT_EQ(roots[0], project / ".mcpp" / "data");
-    EXPECT_EQ(roots[1], project / ".mcpp" / ".xlings" / "data");
-}
+    expect(fatal(eq(roots.size(), 2u)));
+    expect(eq(roots[0], project / ".mcpp" / "data"));
+    expect(eq(roots[1], project / ".mcpp" / ".xlings" / "data"));
+}};
 
-TEST(Config, ProjectIndexDataInitializedChecksNestedXlingsData) {
+UTest project_index_data_initialized_checks_nested_xlings_data{"Config/ProjectIndexDataInitializedChecksNestedXlingsData", [] {
     auto project = make_tempdir("mcpp-config-index-state");
     auto nestedIndexDir = project / ".mcpp" / ".xlings" / "data" / "xim-index-repos";
     std::filesystem::create_directories(nestedIndexDir);
@@ -37,22 +41,21 @@ TEST(Config, ProjectIndexDataInitializedChecksNestedXlingsData) {
         os << "{}";
     }
 
-    EXPECT_TRUE(mcpp::config::project_index_data_initialized(project));
+    expect(bool(mcpp::config::project_index_data_initialized(project)));
 
     std::filesystem::remove_all(project);
-}
+}};
 
-TEST(Config, ResolveProjectIndexPathUsesProjectRootForRelativeLocalIndex) {
+UTest resolve_project_index_path_uses_project_root_for_relative_local_index{"Config/ResolveProjectIndexPathUsesProjectRootForRelativeLocalIndex", [] {
     auto project = std::filesystem::path{"/tmp/mcpp-project"};
     mcpp::pm::IndexSpec spec;
     spec.name = "xlings";
     spec.path = "mcpp";
 
-    EXPECT_EQ(mcpp::config::resolve_project_index_path(project, spec),
-              (project / "mcpp").lexically_normal());
-}
+    expect(eq(mcpp::config::resolve_project_index_path(project, spec), (project / "mcpp").lexically_normal()));
+}};
 
-TEST(Config, ProjectIndexJsonEscapesLocalIndexPath) {
+UTest project_index_json_escapes_local_index_path{"Config/ProjectIndexJsonEscapesLocalIndexPath", [] {
     auto project = make_tempdir("mcpp-config-json-escape");
     auto index = project / "local" / "index";
     std::filesystem::create_directories(index / "pkgs");
@@ -70,24 +73,24 @@ TEST(Config, ProjectIndexJsonEscapesLocalIndexPath) {
     indices.emplace(remote.name, remote);
 
     mcpp::config::GlobalConfig cfg;
-    ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
+    expect(fatal(bool(mcpp::config::ensure_project_index_dir(cfg, project, indices))));
 
     std::ifstream is(project / ".mcpp" / ".xlings.json");
-    ASSERT_TRUE(is);
+    expect(fatal(bool(is)));
     std::stringstream ss;
     ss << is.rdbuf();
     auto content = ss.str();
 
-    EXPECT_NE(content.find(R"("name": "local\"dev")"), std::string::npos)
+    expect(ne(content.find(R"("name": "local\"dev")"), std::string::npos))
         << content;
-    EXPECT_NE(content.find(index.generic_string()), std::string::npos)
+    expect(ne(content.find(index.generic_string()), std::string::npos))
         << content;
-    EXPECT_NE(content.find(R"(https://example.com/a\\b\"c)"), std::string::npos)
+    expect(ne(content.find(R"(https://example.com/a\\b\"c)"), std::string::npos))
         << content;
 
     is.close();
     std::filesystem::remove_all(project);
-}
+}};
 
 // The official global `xim` index must NOT be injected/exposed into the project
 // scope. `xim` (and its dynamic sub-indexes) are xlings GLOBAL-default indices —
@@ -96,7 +99,7 @@ TEST(Config, ProjectIndexJsonEscapesLocalIndexPath) {
 // store instead of the shared registry, breaking ELF loader resolution for
 // build-dep tools. `xim:*` resolves at global scope via the registry-local clone.
 // See .agents/docs/2026-07-09-project-index-scope-global-infra-fix.md.
-TEST(Config, ProjectIndexDirDoesNotInjectOfficialXimIndex) {
+UTest project_index_dir_does_not_inject_official_xim_index{"Config/ProjectIndexDirDoesNotInjectOfficialXimIndex", [] {
     auto project = make_tempdir("mcpp-config-project-xim-index");
     auto registry = make_tempdir("mcpp-config-registry");
     auto official = registry / "data" / "xim-pkgindex";
@@ -118,30 +121,30 @@ TEST(Config, ProjectIndexDirDoesNotInjectOfficialXimIndex) {
 
     mcpp::config::GlobalConfig cfg;
     cfg.registryDir = registry;
-    ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
+    expect(fatal(bool(mcpp::config::ensure_project_index_dir(cfg, project, indices))));
 
     // xim is NOT copied/exposed into the project data dir (it stays global).
     auto projectOfficial =
         project / ".mcpp" / ".xlings" / "data" / "xim-pkgindex";
-    EXPECT_FALSE(std::filesystem::exists(projectOfficial / "pkgs" / "p" / "python.lua"));
+    expect(!std::filesystem::exists(projectOfficial / "pkgs" / "p" / "python.lua"));
 
     // The user-declared local `compat` index IS exposed project-locally.
     auto projectLocal = project / ".mcpp" / ".xlings" / "data" / "compat";
-    EXPECT_TRUE(std::filesystem::exists(projectLocal / "pkgs"));
+    expect(std::filesystem::exists(projectLocal / "pkgs"));
 
     // The seeded project .xlings.json index_repos must not contain `xim`.
     auto projJson = project / ".mcpp" / ".xlings.json";
     if (std::filesystem::exists(projJson)) {
         std::ifstream is(projJson);
         std::stringstream ss; ss << is.rdbuf();
-        EXPECT_EQ(ss.str().find("\"xim\""), std::string::npos);
+        expect(eq(ss.str().find("\"xim\""), std::string::npos));
     }
 
     std::filesystem::remove_all(project);
     std::filesystem::remove_all(registry);
-}
+}};
 
-TEST(Config, ProjectLocalIndexStaleCacheIsRemoved) {
+UTest project_local_index_stale_cache_is_removed{"Config/ProjectLocalIndexStaleCacheIsRemoved", [] {
     auto project = make_tempdir("mcpp-config-local-index-cache");
     auto localIndex = project / "compat";
     std::filesystem::create_directories(localIndex / "pkgs" / "c");
@@ -158,11 +161,11 @@ TEST(Config, ProjectLocalIndexStaleCacheIsRemoved) {
     indices.emplace(local.name, local);
 
     mcpp::config::GlobalConfig cfg;
-    ASSERT_TRUE(mcpp::config::ensure_project_index_dir(cfg, project, indices));
-    EXPECT_FALSE(std::filesystem::exists(localIndex / ".xlings-index-cache.json"));
+    expect(fatal(bool(mcpp::config::ensure_project_index_dir(cfg, project, indices))));
+    expect(!std::filesystem::exists(localIndex / ".xlings-index-cache.json"));
 
     std::filesystem::remove_all(project);
-}
+}};
 
 // ── #267-A/#269: index org migration + artifact adoption ────────────────────
 
@@ -176,38 +179,38 @@ std::string read_all(const std::filesystem::path& p) {
 
 }  // namespace
 
-TEST(ConfigIndexMigration, CanonicalizeRewritesOrgAndName) {
+UTest canonicalize_rewrites_org_and_name{"ConfigIndexMigration/CanonicalizeRewritesOrgAndName", [] {
     mcpp::config::GlobalConfig cfg;
     cfg.defaultIndex = "mcpp-index";
     cfg.indexRepos.push_back({ "mcpp-index",
         std::string(mcpp::config::kMcpplibsIndexUrlLegacy) });
     mcpp::config::canonicalize_legacy_index_names(cfg);
-    ASSERT_EQ(cfg.indexRepos.size(), 1u);
-    EXPECT_EQ(cfg.defaultIndex, "mcpplibs");
-    EXPECT_EQ(cfg.indexRepos[0].name, "mcpplibs");
-    EXPECT_EQ(cfg.indexRepos[0].url,  mcpp::config::kMcpplibsIndexUrl);
-}
+    expect(fatal(eq(cfg.indexRepos.size(), 1u)));
+    expect(eq(cfg.defaultIndex, "mcpplibs"));
+    expect(eq(cfg.indexRepos[0].name, "mcpplibs"));
+    expect(eq(cfg.indexRepos[0].url, mcpp::config::kMcpplibsIndexUrl));
+}};
 
-TEST(ConfigIndexMigration, CanonicalizeFoldsLegacyAndDefaultEntries) {
+UTest canonicalize_folds_legacy_and_default_entries{"ConfigIndexMigration/CanonicalizeFoldsLegacyAndDefaultEntries", [] {
     mcpp::config::GlobalConfig cfg;
     cfg.indexRepos.push_back({ "mcpplibs",
         std::string(mcpp::config::kMcpplibsIndexUrlLegacy) });
     cfg.indexRepos.push_back({ "mcpplibs",
         std::string(mcpp::config::kMcpplibsIndexUrl) });
     mcpp::config::canonicalize_legacy_index_names(cfg);
-    EXPECT_EQ(cfg.indexRepos.size(), 1u);
-}
+    expect(eq(cfg.indexRepos.size(), 1u));
+}};
 
-TEST(ConfigIndexMigration, CanonicalizeLeavesForeignReposAlone) {
+UTest canonicalize_leaves_foreign_repos_alone{"ConfigIndexMigration/CanonicalizeLeavesForeignReposAlone", [] {
     mcpp::config::GlobalConfig cfg;
     cfg.indexRepos.push_back({ "other", "https://example.com/other-index.git" });
     mcpp::config::canonicalize_legacy_index_names(cfg);
-    ASSERT_EQ(cfg.indexRepos.size(), 1u);
-    EXPECT_EQ(cfg.indexRepos[0].name, "other");
-    EXPECT_EQ(cfg.indexRepos[0].url, "https://example.com/other-index.git");
-}
+    expect(fatal(eq(cfg.indexRepos.size(), 1u)));
+    expect(eq(cfg.indexRepos[0].name, "other"));
+    expect(eq(cfg.indexRepos[0].url, "https://example.com/other-index.git"));
+}};
 
-TEST(ConfigIndexMigration, MigrateConfigTomlRewritesOrgUrlIdempotently) {
+UTest migrate_config_toml_rewrites_org_url_idempotently{"ConfigIndexMigration/MigrateConfigTomlRewritesOrgUrlIdempotently", [] {
     auto dir = make_tempdir("mcpp-migrate-toml");
     auto p = dir / "config.toml";
     {
@@ -215,25 +218,25 @@ TEST(ConfigIndexMigration, MigrateConfigTomlRewritesOrgUrlIdempotently) {
         os << "[index]\ndefault = \"mcpplibs\"\n\n[index.repos.\"mcpplibs\"]\n"
               "url = \"https://github.com/mcpp-community/mcpp-index.git\"\n";
     }
-    EXPECT_TRUE(mcpp::fallback::migrate_config_toml_index_names(p));
+    expect(bool(mcpp::fallback::migrate_config_toml_index_names(p)));
     auto text = read_all(p);
-    EXPECT_NE(text.find("github.com/mcpplibs/mcpp-index.git"), std::string::npos);
-    EXPECT_EQ(text.find("mcpp-community/mcpp-index"), std::string::npos);
-    EXPECT_FALSE(mcpp::fallback::migrate_config_toml_index_names(p));  // idempotent
-    EXPECT_EQ(read_all(p), text);
+    expect(ne(text.find("github.com/mcpplibs/mcpp-index.git"), std::string::npos));
+    expect(eq(text.find("mcpp-community/mcpp-index"), std::string::npos));
+    expect(!mcpp::fallback::migrate_config_toml_index_names(p));  // idempotent
+    expect(eq(read_all(p), text));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(ConfigIndexMigration, CanonicalizeFillsDefaultArtifactForOfficialRepo) {
+UTest canonicalize_fills_default_artifact_for_official_repo{"ConfigIndexMigration/CanonicalizeFillsDefaultArtifactForOfficialRepo", [] {
     mcpp::config::GlobalConfig cfg;
     cfg.indexRepos.push_back({ "mcpplibs",
         std::string(mcpp::config::kMcpplibsIndexUrlLegacy) });
     mcpp::config::canonicalize_legacy_index_names(cfg);
-    ASSERT_EQ(cfg.indexRepos.size(), 1u);
-    EXPECT_EQ(cfg.indexRepos[0].artifact, mcpp::config::kMcpplibsIndexArtifact);
-}
+    expect(fatal(eq(cfg.indexRepos.size(), 1u)));
+    expect(eq(cfg.indexRepos[0].artifact, mcpp::config::kMcpplibsIndexArtifact));
+}};
 
-TEST(ConfigIndexMigration, CanonicalizeRespectsExplicitGitSourceAndCustomArtifact) {
+UTest canonicalize_respects_explicit_git_source_and_custom_artifact{"ConfigIndexMigration/CanonicalizeRespectsExplicitGitSourceAndCustomArtifact", [] {
     mcpp::config::GlobalConfig cfg;
     mcpp::config::IndexRepo git{ "mcpplibs",
         std::string(mcpp::config::kMcpplibsIndexUrl) };
@@ -245,13 +248,13 @@ TEST(ConfigIndexMigration, CanonicalizeRespectsExplicitGitSourceAndCustomArtifac
     cfg.indexRepos.push_back(custom);
     cfg.indexRepos.push_back({ "other", "https://example.com/other-index.git" });
     mcpp::config::canonicalize_legacy_index_names(cfg);
-    ASSERT_EQ(cfg.indexRepos.size(), 3u);
-    EXPECT_TRUE(cfg.indexRepos[0].artifact.empty());        // explicit git opt-out
-    EXPECT_EQ(cfg.indexRepos[1].artifact, "https://example.com/my-mirror");
-    EXPECT_TRUE(cfg.indexRepos[2].artifact.empty());        // foreign repo untouched
-}
+    expect(fatal(eq(cfg.indexRepos.size(), 3u)));
+    expect(cfg.indexRepos[0].artifact.empty());        // explicit git opt-out
+    expect(eq(cfg.indexRepos[1].artifact, "https://example.com/my-mirror"));
+    expect(cfg.indexRepos[2].artifact.empty());        // foreign repo untouched
+}};
 
-TEST(ConfigIndexMigration, XlingsJsonHealsPrettyLegacyEntry) {
+UTest xlings_json_heals_pretty_legacy_entry{"ConfigIndexMigration/XlingsJsonHealsPrettyLegacyEntry", [] {
     auto dir = make_tempdir("mcpp-migrate-xj");
     auto p = dir / ".xlings.json";
     {
@@ -261,21 +264,20 @@ TEST(ConfigIndexMigration, XlingsJsonHealsPrettyLegacyEntry) {
               "\"https://github.com/mcpp-community/mcpp-index.git\" }\n"
               "  ],\n  \"subos\": \"default\",\n  \"mirror\": \"auto\"\n}\n";
     }
-    EXPECT_TRUE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    expect(bool(mcpp::fallback::migrate_xlings_json_index_names(p)));
     auto text = read_all(p);
-    EXPECT_NE(text.find(
+    expect(ne(text.find(
         "\"url\": \"https://github.com/mcpplibs/mcpp-index.git\", "
         "\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
-        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"),
-        std::string::npos) << text;
-    EXPECT_NE(text.find("\"subos\": \"default\""), std::string::npos);
-    EXPECT_EQ(text.find("mcpp-community/mcpp-index"), std::string::npos);
-    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));  // idempotent
-    EXPECT_EQ(read_all(p), text);
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"), std::string::npos)) << text;
+    expect(ne(text.find("\"subos\": \"default\""), std::string::npos));
+    expect(eq(text.find("mcpp-community/mcpp-index"), std::string::npos));
+    expect(!mcpp::fallback::migrate_xlings_json_index_names(p));  // idempotent
+    expect(eq(read_all(p), text));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(ConfigIndexMigration, XlingsJsonHealsCompactLegacyNameAndUrl) {
+UTest xlings_json_heals_compact_legacy_name_and_url{"ConfigIndexMigration/XlingsJsonHealsCompactLegacyNameAndUrl", [] {
     auto dir = make_tempdir("mcpp-migrate-xjc");
     auto p = dir / ".xlings.json";
     {
@@ -284,21 +286,20 @@ TEST(ConfigIndexMigration, XlingsJsonHealsCompactLegacyNameAndUrl) {
               "\"url\":\"https://github.com/mcpp-community/mcpp-index.git\"}],"
               "\"mirror\":\"auto\"}";
     }
-    EXPECT_TRUE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    expect(bool(mcpp::fallback::migrate_xlings_json_index_names(p)));
     auto text = read_all(p);
-    EXPECT_NE(text.find("\"name\":\"mcpplibs\""), std::string::npos);
-    EXPECT_NE(text.find(
+    expect(ne(text.find("\"name\":\"mcpplibs\""), std::string::npos));
+    expect(ne(text.find(
         "\"url\":\"https://github.com/mcpplibs/mcpp-index.git\", "
         "\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
-        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"),
-        std::string::npos) << text;
-    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"), std::string::npos)) << text;
+    expect(!mcpp::fallback::migrate_xlings_json_index_names(p));
     std::filesystem::remove_all(dir);
-}
+}};
 
 // #648 A6. A home seeded with the GitHub-only default artifact gains the CN half
 // of the region object once; the migration is idempotent afterwards.
-TEST(ConfigIndexMigration, XlingsJsonUpgradesTheFlatDefaultArtifactToTheRegionObject) {
+UTest xlings_json_upgrades_the_flat_default_artifact_to_the_region_object{"ConfigIndexMigration/XlingsJsonUpgradesTheFlatDefaultArtifactToTheRegionObject", [] {
     auto dir = make_tempdir("mcpp-migrate-xja");
     auto p = dir / ".xlings.json";
     {
@@ -309,17 +310,17 @@ TEST(ConfigIndexMigration, XlingsJsonUpgradesTheFlatDefaultArtifactToTheRegionOb
               "\"artifact\": \"https://github.com/xlings-res/mcpp-index\" }\n"
               "  ]\n}\n";
     }
-    EXPECT_TRUE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    expect(bool(mcpp::fallback::migrate_xlings_json_index_names(p)));
     auto text = read_all(p);
-    EXPECT_NE(text.find("\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
-        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"), std::string::npos) << text;
-    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
-    EXPECT_EQ(read_all(p), text);
+    expect(ne(text.find("\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"), std::string::npos)) << text;
+    expect(!mcpp::fallback::migrate_xlings_json_index_names(p));
+    expect(eq(read_all(p), text));
     std::filesystem::remove_all(dir);
-}
+}};
 
 // An artifact base the user wrote is theirs: no CN half is added to it.
-TEST(ConfigIndexMigration, XlingsJsonLeavesAUserArtifactBaseAlone) {
+UTest xlings_json_leaves_a_user_artifact_base_alone{"ConfigIndexMigration/XlingsJsonLeavesAUserArtifactBaseAlone", [] {
     auto dir = make_tempdir("mcpp-migrate-xju");
     auto p = dir / ".xlings.json";
     std::string body =
@@ -332,7 +333,82 @@ TEST(ConfigIndexMigration, XlingsJsonLeavesAUserArtifactBaseAlone) {
         std::ofstream os(p);
         os << body;
     }
-    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
-    EXPECT_EQ(read_all(p), body);
+    expect(!mcpp::fallback::migrate_xlings_json_index_names(p));
+    expect(eq(read_all(p), body));
     std::filesystem::remove_all(dir);
-}
+}};
+
+// A config.toml whose lines end in `\r\n` (an editor on Windows) has its value replaced where it
+// stands, and a line the writer adds ends as the file's others do. A writer that matched only
+// `\n` found no `[toolchain]` and appended a second one, which the parser refuses.
+UTest config_value_keeps_the_files_line_ending{"Config/ConfigValueKeepsTheFilesLineEnding", [] {
+    const auto home = make_tempdir("mcpp-config-crlf");
+    mcpp::config::GlobalConfig cfg;
+    cfg.configFile = home / "config.toml";
+    std::ofstream(cfg.configFile, std::ios::binary) << "[xlings]\r\nbinary = \"bundled\"\r\n\r\n[toolchain]\r\ndefault = \"gcc@16.1.0\"\r\n";
+    for (auto value : {"\"llvm@23.1.3\"", "\"gcc@16.1.0\""})
+        expect(fatal(mcpp::config::write_config_value(cfg, "toolchain", "default", value).has_value()));
+    expect(fatal(mcpp::config::write_config_value(cfg, "build", "default_jobs", "4").has_value()));
+    const auto text = mcpp::home::read_whole(cfg.configFile).value_or("");
+    std::size_t headers = 0;
+    for (auto p = text.find("[toolchain]"); p != std::string::npos; p = text.find("[toolchain]", p + 1)) ++headers;
+    expect(eq(headers, std::size_t{1})) << text;
+    expect(text.contains("[toolchain]\r\ndefault = \"gcc@16.1.0\"\r\n")) << text;
+    expect(text.contains("\r\n[build]\r\ndefault_jobs = 4\r\n")) << text;
+    bool bare = false;
+    for (std::size_t i = 0; i < text.size(); ++i) bare = bare || (text[i] == '\n' && (i == 0 || text[i - 1] != '\r'));
+    expect(!bare) << "a line ends in a bare \\n: " << text;
+    std::filesystem::remove_all(home);
+}};
+
+// A value written while another reader reads the file: the reader sees the previous copy or the
+// new one, whole, and the writer leaves no file of its own beside it. Programs started at once on
+// a fresh home each write config.toml; a rewrite in place (truncate, then write) let one read a
+// part of another's ("invalid config.toml: expected '='").
+UTest config_value_is_replaced_whole{"Config/ConfigValueIsReplacedWhole", [] {
+    const auto home = make_tempdir("mcpp-config-replace");
+    mcpp::config::GlobalConfig cfg;
+    cfg.configFile = home / "config.toml";
+    const std::string padding(64 * 1024, '#');
+    {
+        std::ofstream(cfg.configFile, std::ios::binary) << "[xlings]\nbinary = \"bundled\"\n" << padding << "\n[toolchain]\ndefault = \"gcc@16.1.0\"\n";
+    }
+    std::atomic<int> partial{0};
+    // What the first reader that missed the value saw: the failure should say
+    // whether the read was refused or read something else.
+    std::string first;
+    // Windows refuses a rename over a file a reader holds open, and the writer retries
+    // (replace_file); a reader there pauses between reads, as the readers of a home do, where
+    // elsewhere it reads without a pause. A failed write stops and joins the reader (jthread).
+    const bool pauses = host() == platform::windows;
+    std::jthread reader([&](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            // As mcpp reads it (read_whole), which waits out a replacement on Windows.
+            const auto text = mcpp::home::read_whole(cfg.configFile);
+            if (!text.value_or("").contains("[toolchain]\ndefault = \"") && partial++ == 0) {
+                if (!text) {
+                    const auto again = mcpplibs::os::fs::read(cfg.configFile);
+                    first = std::format("no text; read at once after it: {}",
+                                        again ? std::format("{} bytes", again->size()) : again.error().message());
+                } else {
+                    const auto at = text->find("[toolchain]");
+                    std::string excerpt;
+                    for (char c : text->substr(at == std::string::npos ? 0 : at, 48))
+                        excerpt += c == '\n' ? std::string("\\n") : c == '\r' ? std::string("\\r") : std::string(1, c);
+                    first = std::format("{} bytes, at [toolchain]: {}", text->size(),
+                                        at == std::string::npos ? std::string("(absent)") : excerpt);
+                }
+            }
+            if (pauses) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+    });
+    for (int i = 0; i < 200; ++i)
+        expect(fatal(mcpp::config::write_config_value(cfg, "toolchain", "default", i % 2 ? "\"llvm@23.1.3\"" : "\"gcc@16.1.0\"").has_value()));
+    reader.request_stop();
+    reader.join();
+    expect(eq(partial.load(), 0)) << "a reader saw config.toml without its [toolchain] default; the first saw: " << first;
+    std::size_t files = 0;
+    for ([[maybe_unused]] const auto& e : std::filesystem::directory_iterator(home)) ++files;
+    expect(eq(files, std::size_t{1})) << "a writer left a file beside config.toml";
+    std::filesystem::remove_all(home);
+}};

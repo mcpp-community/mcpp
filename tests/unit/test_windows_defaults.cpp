@@ -1,11 +1,13 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpplibs.os.platform;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.registry;
 import mcpp.build.prepare;
+
+using namespace mcpplibs::mtest;
 
 // ── has_usable_msvc() ───────────────────────────────────────────────────────
 //
@@ -14,22 +16,22 @@ import mcpp.build.prepare;
 // STL (Visual Studio's "Desktop development with C++" workload) nor the
 // Windows SDK, so a default that targets the MSVC ABI there can never build.
 
-TEST(WindowsDefaults, HasUsableMsvcIsFalseOffWindows) {
+UTest has_usable_msvc_is_false_off_windows{"WindowsDefaults/HasUsableMsvcIsFalseOffWindows", [] {
     if constexpr (mcpplibs::os::is_windows) {
-        GTEST_SKIP() << "windows behavior is covered by e2e 182";
+        skip("windows behavior is covered by e2e 182");
     } else {
-        EXPECT_FALSE(mcpp::toolchain::msvc::has_usable_msvc());
+        expect(!mcpp::toolchain::msvc::has_usable_msvc());
     }
-}
+}};
 
 // The predicate must never disagree with the two probes it is defined as.
 // A drift here (e.g. someone "optimizing" it down to find_vs_install_path())
 // silently reintroduces the half-installed-VS trap it exists to close.
-TEST(WindowsDefaults, HasUsableMsvcAgreesWithItsParts) {
+UTest has_usable_msvc_agrees_with_its_parts{"WindowsDefaults/HasUsableMsvcAgreesWithItsParts", [] {
     const bool both = mcpp::toolchain::msvc::find_std_module_source().has_value()
                    && mcpp::toolchain::msvc::find_windows_sdk().has_value();
-    EXPECT_EQ(mcpp::toolchain::msvc::has_usable_msvc(), both);
-}
+    expect(eq(mcpp::toolchain::msvc::has_usable_msvc(), both));
+}};
 
 // ── First-run pins ──────────────────────────────────────────────────────────
 //
@@ -37,29 +39,29 @@ TEST(WindowsDefaults, HasUsableMsvcAgreesWithItsParts) {
 // ships no GCC, while on Windows clang targets the MSVC ABI and therefore
 // needs a Visual Studio that is not preinstalled.
 
-TEST(WindowsDefaults, FirstRunPinsParse) {
+UTest first_run_pins_parse{"WindowsDefaults/FirstRunPinsParse", [] {
     namespace pins = mcpp::toolchain::triple::pins;
     for (auto spec : { pins::kFirstRunMac, pins::kFirstRunWinMsvc,
                        pins::kFirstRunWinGnu, pins::kFirstRunLinuxX86_64,
                        pins::kFirstRunLinuxAarch64, pins::kFirstRunLinuxOther }) {
         auto parsed = mcpp::toolchain::parse_toolchain_spec(std::string(spec));
-        ASSERT_TRUE(parsed.has_value()) << spec;
-        EXPECT_FALSE(parsed->version.empty()) << spec;
+        expect(fatal(parsed.has_value())) << spec;
+        expect(!(parsed->version.empty())) << spec;
     }
-}
+}};
 
 // The GNU fallback must land on a target mcpp is willing to build for, and
 // the toolchain it names must equal that target's vocabulary pin — otherwise
 // the same decision is derived in two places and they will drift.
-TEST(WindowsDefaults, GnuFallbackTargetIsVerifiedAndPinAgrees) {
+UTest gnu_fallback_target_is_verified_and_pin_agrees{"WindowsDefaults/GnuFallbackTargetIsVerifiedAndPinAgrees", [] {
     namespace triple = mcpp::toolchain::triple;
     auto t = triple::parse(std::string(triple::pins::kFirstRunWinGnuTarget));
-    ASSERT_TRUE(t.has_value());
+    expect(fatal(t.has_value()));
     const auto* known = triple::find_known_target(*t);
-    ASSERT_NE(known, nullptr) << triple::pins::kFirstRunWinGnuTarget;
-    EXPECT_EQ(known->tier, "verified");
-    EXPECT_EQ(known->pin, triple::pins::kFirstRunWinGnu);
-}
+    expect(fatal(ne(known, nullptr))) << triple::pins::kFirstRunWinGnuTarget;
+    expect(eq(known->tier, "verified"));
+    expect(eq(known->pin, triple::pins::kFirstRunWinGnu));
+}};
 
 // ── Intent classification ───────────────────────────────────────────────────
 //
@@ -67,19 +69,19 @@ TEST(WindowsDefaults, GnuFallbackTargetIsVerifiedAndPinAgrees) {
 // directions: call an explicit choice "mcpp's own" and a project that needs
 // the MSVC ABI silently gets a different one; call mcpp's own default
 // "explicit" and every user carrying a stale persisted default stays stuck.
-TEST(WindowsDefaults, OriginClassification) {
+UTest origin_classification{"WindowsDefaults/OriginClassification", [] {
     using mcpp::build::TcOrigin;
     using mcpp::build::tc_origin_is_user_explicit;
-    EXPECT_TRUE (tc_origin_is_user_explicit(TcOrigin::ManifestToolchain));
-    EXPECT_TRUE (tc_origin_is_user_explicit(TcOrigin::TargetSection));
-    EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::GlobalDefault));
-    EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::TargetPin));
-    EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::FirstRun));
-    EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::None));
+    expect(tc_origin_is_user_explicit(TcOrigin::ManifestToolchain));
+    expect(tc_origin_is_user_explicit(TcOrigin::TargetSection));
+    expect(!tc_origin_is_user_explicit(TcOrigin::GlobalDefault));
+    expect(!tc_origin_is_user_explicit(TcOrigin::TargetPin));
+    expect(!tc_origin_is_user_explicit(TcOrigin::FirstRun));
+    expect(!tc_origin_is_user_explicit(TcOrigin::None));
     // A compiler the dependency graph required is not the user's word either —
     // mcpp derived it, so the two paths that revise mcpp's own answers may.
-    EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::GraphRequirement));
-}
+    expect(!tc_origin_is_user_explicit(TcOrigin::GraphRequirement));
+}};
 
 // AND IT IS THE ONE ORIGIN THAT MAY NEVER BECOME THE MACHINE'S DEFAULT.
 //
@@ -93,55 +95,55 @@ TEST(WindowsDefaults, OriginClassification) {
 // WINDOWS MACHINE. The e2e that checks `config.toml`'s sha256 runs where a
 // toolchain is already configured, so it never reaches either branch; here the
 // rule itself is the subject.
-TEST(WindowsDefaults, OnlyMcppsOwnAnswersMayBePersisted) {
+UTest only_mcpps_own_answers_may_be_persisted{"WindowsDefaults/OnlyMcppsOwnAnswersMayBePersisted", [] {
     using mcpp::build::TcOrigin;
     using mcpp::build::tc_origin_may_persist;
-    EXPECT_FALSE(tc_origin_may_persist(TcOrigin::GraphRequirement));
-    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::GlobalDefault));
-    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::TargetPin));
-    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::FirstRun));
-    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::None));
-}
+    expect(!tc_origin_may_persist(TcOrigin::GraphRequirement));
+    expect(bool(tc_origin_may_persist(TcOrigin::GlobalDefault)));
+    expect(bool(tc_origin_may_persist(TcOrigin::TargetPin)));
+    expect(bool(tc_origin_may_persist(TcOrigin::FirstRun)));
+    expect(bool(tc_origin_may_persist(TcOrigin::None)));
+}};
 
 // The fallback target must be PE/GNU, not the host's MSVC-ABI triple — the
 // whole point is to leave the ABI that needs Visual Studio behind.
-TEST(WindowsDefaults, GnuFallbackTargetIsWindowsGnu) {
+UTest gnu_fallback_target_is_windows_gnu{"WindowsDefaults/GnuFallbackTargetIsWindowsGnu", [] {
     namespace triple = mcpp::toolchain::triple;
     auto t = triple::parse(std::string(triple::pins::kFirstRunWinGnuTarget));
-    ASSERT_TRUE(t.has_value());
-    EXPECT_EQ(t->os, "windows");
-    EXPECT_EQ(t->env, "gnu");
-    EXPECT_TRUE(t->is_windows_gnu());
-}
+    expect(fatal(t.has_value()));
+    expect(eq(t->os, "windows"));
+    expect(eq(t->env, "gnu"));
+    expect(t->is_windows_gnu());
+}};
 
-TEST(LinuxDefaults, NativeArm64UsesLlvmAndOtherDefaultsRemainStable) {
+UTest native_arm64_uses_llvm_and_other_defaults_remain_stable{"LinuxDefaults/NativeArm64UsesLlvmAndOtherDefaultsRemainStable", [] {
     namespace pins = mcpp::toolchain::triple::pins;
-    EXPECT_EQ(pins::linux_default_toolchain("aarch64"), "llvm@23.1.3");
-    EXPECT_EQ(pins::linux_default_toolchain("x86_64"), "gcc@16.1.0");
-    EXPECT_EQ(pins::linux_default_toolchain("riscv64"), "gcc@15.1.0-musl");
+    expect(eq(pins::linux_default_toolchain("aarch64"), "llvm@23.1.3"));
+    expect(eq(pins::linux_default_toolchain("x86_64"), "gcc@16.1.0"));
+    expect(eq(pins::linux_default_toolchain("riscv64"), "gcc@15.1.0-musl"));
     auto target = mcpp::toolchain::triple::parse("aarch64-linux-gnu");
-    ASSERT_TRUE(target);
+    expect(fatal(bool(target)));
     auto row = mcpp::toolchain::triple::find_known_target(*target);
-    ASSERT_TRUE(row);
-    EXPECT_EQ(row->pin, pins::kFirstRunLinuxAarch64);
-    EXPECT_FALSE(target->pin_is_capability());
-}
+    expect(fatal(bool(row)));
+    expect(eq(row->pin, pins::kFirstRunLinuxAarch64));
+    expect(!target->pin_is_capability());
+}};
 
 // A Luban system's /etc/mcpp/config.toml names its own gcc on the host's
 // triple (gcc@16.1.0 + aarch64-linux-gnu); the aarch64-linux-gnu row's llvm
 // convention replaced it with a download (xim-pkgindex#986, editions CI on
 // arm). The configured pair for the host's own target is kept; a cross target
 // and a remembered default without a target are not this case.
-TEST(LinuxDefaults, AConfiguredPairForTheHostsOwnTargetKeepsItsToolchain) {
+UTest a_configured_pair_for_the_hosts_own_target_keeps_its_toolchain{"LinuxDefaults/AConfiguredPairForTheHostsOwnTargetKeepsItsToolchain", [] {
     namespace tr = mcpp::toolchain::triple;
     using mcpp::build::TcOrigin;
     using mcpp::build::configured_native_pair;
     auto arm = tr::parse("aarch64-linux-gnu");
     auto x86 = tr::parse("x86_64-linux-gnu");
     auto winGnu = tr::parse("x86_64-windows-gnu");
-    ASSERT_TRUE(arm && x86 && winGnu);
-    EXPECT_TRUE(configured_native_pair(true, TcOrigin::GlobalDefault, *arm, *arm));
-    EXPECT_FALSE(configured_native_pair(false, TcOrigin::GlobalDefault, *arm, *arm)) << "--target names it";
-    EXPECT_FALSE(configured_native_pair(true, TcOrigin::FirstRun, *arm, *arm)) << "mcpp's own guess";
-    EXPECT_FALSE(configured_native_pair(true, TcOrigin::GlobalDefault, *winGnu, *x86)) << "a cross target";
-}
+    expect(fatal(arm && x86 && winGnu));
+    expect(bool(configured_native_pair(true, TcOrigin::GlobalDefault, *arm, *arm)));
+    expect(!configured_native_pair(false, TcOrigin::GlobalDefault, *arm, *arm)) << "--target names it";
+    expect(!configured_native_pair(true, TcOrigin::FirstRun, *arm, *arm)) << "mcpp's own guess";
+    expect(!configured_native_pair(true, TcOrigin::GlobalDefault, *winGnu, *x86)) << "a cross target";
+}};

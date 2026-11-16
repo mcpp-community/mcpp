@@ -18,8 +18,7 @@ for d in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-emsdk/*/emscripte
 done
 if [ "$have_emsdk" -ne 1 ]; then
     echo "SKIP: 981 -- no emsdk payload installed"
-    echo "PASS: 981 (skipped)"
-    exit 0
+    exit 77
 fi
 
 mkdir -p "$TMP/app/src"

@@ -3,11 +3,13 @@
 // provider home's, which holds what was installed before that index had a
 // store of its own.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.config;
 import mcpp.pm.package_fetcher;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -34,27 +36,27 @@ mcpp::config::GlobalConfig home_at(const std::filesystem::path& home) {
     return cfg;
 }
 
-TEST(FetcherInstallPath, APackageIsFoundInItsIndexStore) {
+UTest a_package_is_found_in_its_index_store{"FetcherInstallPath/APackageIsFoundInItsIndexStore", [] {
     TempDir temp;
     auto cfg = home_at(temp.path);
     const auto verdir = temp.path / "xpkgs" / "compat-x-gadget" / "1.0.0";
     std::filesystem::create_directories(verdir);
     mcpp::pm::Fetcher f(cfg);
     const auto found = f.install_path("compat", "gadget", "1.0.0");
-    ASSERT_TRUE(found);
-    EXPECT_EQ(found->lexically_normal(), verdir.lexically_normal());
-}
+    expect(fatal(bool(found)));
+    expect(eq(found->lexically_normal(), verdir.lexically_normal()));
+}};
 
-TEST(FetcherInstallPath, APackageFromBeforeIsFoundInTheHomesStore) {
+UTest a_package_from_before_is_found_in_the_homes_store{"FetcherInstallPath/APackageFromBeforeIsFoundInTheHomesStore", [] {
     TempDir temp;
     auto cfg = home_at(temp.path);
     const auto verdir = cfg.registryDir / "data" / "xpkgs" / "compat-x-gadget" / "1.0.0";
     std::filesystem::create_directories(verdir);
     mcpp::pm::Fetcher f(cfg);
     const auto found = f.install_path("compat", "gadget", "1.0.0");
-    ASSERT_TRUE(found);
-    EXPECT_EQ(found->lexically_normal(), verdir.lexically_normal());
-    EXPECT_FALSE(f.install_path("compat", "gadget", "2.0.0"));
-}
+    expect(fatal(bool(found)));
+    expect(eq(found->lexically_normal(), verdir.lexically_normal()));
+    expect(!f.install_path("compat", "gadget", "2.0.0"));
+}};
 
 } // namespace

@@ -17,6 +17,7 @@
 export module mcpp.run;
 
 import std;
+import mcpplibs.os.process;
 
 export namespace mcpp::run {
 
@@ -158,6 +159,9 @@ struct Options {
     // The arguments given as one string after the program's name (Windows):
     // `Shell::one_string`, for the command interpreter.
     bool                      one_string = false;
+    // An explicitly declared unit whose registration precedes this start.
+    // Its owner retains the unit until retirement and final bookkeeping.
+    mcpplibs::os::process::owned_unit* declared_unit = nullptr;
 };
 RunResult execute(const std::vector<std::string>& argv, const Options& options = {});
 

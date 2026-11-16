@@ -3,11 +3,13 @@
 // semver-descending version union; anything unreadable degrades to empty
 // without failing the search.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.config;
 import mcpp.pm.package_fetcher;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -29,7 +31,7 @@ mcpp::pm::Fetcher::SearchHit hit(std::string name) {
     return {"mcpplibs", std::move(name), "description"};
 }
 
-TEST(SearchVersions, MergesPerOsTablesOfTheHitsDescriptor) {
+UTest merges_per_os_tables_of_the_hits_descriptor{"SearchVersions/MergesPerOsTablesOfTheHitsDescriptor", [] {
     TempDir temp;
     // Layout rule: the reader derives the letter dir from the candidate
     // FILENAME's first char — "compat.gadget.lua" lives under pkgs/c/.
@@ -50,26 +52,26 @@ TEST(SearchVersions, MergesPerOsTablesOfTheHitsDescriptor) {
 
     mcpp::pm::Fetcher f(cfg);
     auto versions = f.versions_for_hit(hit("compat:gadget"));
-    ASSERT_EQ(versions.size(), 2u);
-    EXPECT_EQ(versions[0], "2.0.0");
-    EXPECT_EQ(versions[1], "1.0.0");
-}
+    expect(fatal(eq(versions.size(), 2u)));
+    expect(eq(versions[0], "2.0.0"));
+    expect(eq(versions[1], "1.0.0"));
+}};
 
-TEST(SearchVersions, BareNameWithoutNamespaceCarriesNoVersions) {
+UTest bare_name_without_namespace_carries_no_versions{"SearchVersions/BareNameWithoutNamespaceCarriesNoVersions", [] {
     mcpp::config::GlobalConfig cfg{};
     cfg.registryDir = std::filesystem::temp_directory_path()
         / "mcpp-search-versions-no-registry";
     mcpp::pm::Fetcher f(cfg);
-    EXPECT_TRUE(f.versions_for_hit(hit("gadget")).empty());
-}
+    expect(f.versions_for_hit(hit("gadget")).empty());
+}};
 
-TEST(SearchVersions, UnreadableDescriptorDegradesToEmpty) {
+UTest unreadable_descriptor_degrades_to_empty{"SearchVersions/UnreadableDescriptorDegradesToEmpty", [] {
     TempDir temp;
     mcpp::config::GlobalConfig cfg{};
     cfg.registryDir = temp.path;   // data/ exists nowhere: nothing readable
 
     mcpp::pm::Fetcher f(cfg);
-    EXPECT_TRUE(f.versions_for_hit(hit("compat:ghost")).empty());
-}
+    expect(f.versions_for_hit(hit("compat:ghost")).empty());
+}};
 
 } // namespace

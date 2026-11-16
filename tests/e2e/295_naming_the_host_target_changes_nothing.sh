@@ -187,7 +187,7 @@ done
 
 if [ "$checked" = 0 ]; then
     echo "SKIP: no toolchain here produced a link line to compare"
-    exit 0
+    exit 77
 fi
 [ "$fail" = 0 ] || exit 1
 echo "OK: naming the host's own target changes nothing ($checked toolchains)"

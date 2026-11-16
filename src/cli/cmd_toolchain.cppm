@@ -1,19 +1,18 @@
 // mcpp.cli.cmd_toolchain — CLI parsing + routing for the `mcpp toolchain`
 // family. Implementations live in mcpp.toolchain.lifecycle.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_toolchain;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.config;
 import mcpp.fetcher.progress;
 import mcpp.toolchain.lifecycle;
 import mcpp.ui;
 import mcpp.wire;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -43,7 +42,7 @@ export int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
         bool json = false;
         if (auto f = sub_parsed.value("format")) {
             if (!mcpp::wire::parse_format(*f)) {
-                std::println(stderr, "error: {}",
+                std::println(libc::stderr(), "error: {}",
                              mcpp::wire::unsupported_format(*f));
                 return 2;
             }

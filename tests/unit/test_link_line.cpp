@@ -9,10 +9,12 @@
 // So these assertions are about the ORDER itself, not about "the flags look
 // roughly right". Each one names the failure it prevents.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.link_line;
+
+using namespace mcpplibs::mtest;
 
 namespace ll = mcpp::build::link_line;
 
@@ -23,7 +25,7 @@ namespace {
 // two huge numbers and no clue which one was missing.
 std::size_t pos_of(std::string_view haystack, std::string_view needle) {
     auto p = haystack.find(needle);
-    EXPECT_NE(p, std::string_view::npos) << "missing '" << needle << "' in: " << haystack;
+    expect(ne(p, std::string_view::npos)) << "missing '" << needle << "' in: " << haystack;
     return p;
 }
 
@@ -42,66 +44,64 @@ ll::UnitTail full_tail() {
 // resolved against; the farm is a mutable view that may hold another build of
 // the same SONAME. Farm-first is how an already-linked artifact silently
 // starts loading a different library.
-TEST(LinkLine, ArtifactDirectoryPrecedesTheRuntimeFallback) {
+UTest artifact_directory_precedes_the_runtime_fallback{"LinkLine/ArtifactDirectoryPrecedesTheRuntimeFallback", [] {
     auto line = full_tail().render();
-    EXPECT_LT(pos_of(line, "$ORIGIN"), pos_of(line, "subos/default/lib")) << line;
-}
+    expect(lt(pos_of(line, "$ORIGIN"), pos_of(line, "subos/default/lib"))) << line;
+}};
 
 // ld honours the LAST `--enable/--disable-new-dtags` it sees, and both gcc
 // specs and clang config files supply the opposite of what mcpp wants. A slot
 // appended after this one silently changes RPATH into RUNPATH (or back), which
 // changes whether the tag applies to transitive dependencies at all.
-TEST(LinkLine, LoaderTagIsLiterallyLast) {
+UTest loader_tag_is_literally_last{"LinkLine/LoaderTagIsLiterallyLast", [] {
     auto line = full_tail().render();
-    EXPECT_TRUE(line.ends_with("-Wl,--disable-new-dtags"))
+    expect(line.ends_with("-Wl,--disable-new-dtags"))
         << "something was emitted after the loader tag: " << line;
-    EXPECT_GT(pos_of(line, "--disable-new-dtags"),
-              pos_of(line, "subos/default/lib")) << line;
-}
+    expect(gt(pos_of(line, "--disable-new-dtags"), pos_of(line, "subos/default/lib"))) << line;
+}};
 
 // The C++ runtime archive is processed after the dependencies it might
 // otherwise pre-empt: an archive member is pulled only for symbols still
 // undefined when the archive is reached.
-TEST(LinkLine, CxxRuntimeFollowsDependenciesAndPrecedesTheFallback) {
+UTest cxx_runtime_follows_dependencies_and_precedes_the_fallback{"LinkLine/CxxRuntimeFollowsDependenciesAndPrecedesTheFallback", [] {
     auto line = full_tail().render();
-    EXPECT_LT(pos_of(line, "-lX11"),            pos_of(line, "-static-libstdc++")) << line;
-    EXPECT_LT(pos_of(line, "-static-libstdc++"), pos_of(line, "subos/default/lib")) << line;
-}
+    expect(lt(pos_of(line, "-lX11"), pos_of(line, "-static-libstdc++"))) << line;
+    expect(lt(pos_of(line, "-static-libstdc++"), pos_of(line, "subos/default/lib"))) << line;
+}};
 
 // PE has no rpath and no loader tag; Mach-O has no farm. A format that fills
 // only some slots must not acquire stray separators — the rendered line is
 // compared byte-for-byte against build.ninja by other tests.
-TEST(LinkLine, EmptySlotsProduceNoStraySeparators) {
+UTest empty_slots_produce_no_stray_separators{"LinkLine/EmptySlotsProduceNoStraySeparators", [] {
     ll::UnitTail t;
     t.cxxRuntime = " -static";
-    EXPECT_EQ(t.render(), " -static");
+    expect(eq(t.render(), " -static"));
 
     ll::UnitTail only_deps;
     only_deps.dependencies = " target/bin/foo.lib";
-    EXPECT_EQ(only_deps.render(), " target/bin/foo.lib");
+    expect(eq(only_deps.render(), " target/bin/foo.lib"));
 
-    EXPECT_EQ(ll::UnitTail{}.render(), "");
-    EXPECT_TRUE(ll::UnitTail{}.empty());
-    EXPECT_FALSE(full_tail().empty());
-}
+    expect(eq(ll::UnitTail{}.render(), ""));
+    expect(ll::UnitTail{}.empty());
+    expect(!(full_tail().empty()));
+}};
 
 // A producer that forgets the leading space must not weld two flags together.
 // Every producer supplies it today; this keeps that from being load-bearing.
-TEST(LinkLine, SlotWithoutLeadingSpaceGetsASeparator) {
+UTest slot_without_leading_space_gets_a_separator{"LinkLine/SlotWithoutLeadingSpaceGetsASeparator", [] {
     ll::UnitTail t;
     t.dependencies = " -lfoo";
     t.cxxRuntime   = "-static-libstdc++";   // no leading space
-    EXPECT_EQ(t.render(), " -lfoo -static-libstdc++");
-}
+    expect(eq(t.render(), " -lfoo -static-libstdc++"));
+}};
 
 // Order is a property of the type, not of the caller's assignment order.
-TEST(LinkLine, RenderOrderIsIndependentOfAssignmentOrder) {
+UTest render_order_is_independent_of_assignment_order{"LinkLine/RenderOrderIsIndependentOfAssignmentOrder", [] {
     ll::UnitTail t;
     t.loaderTag       = "-Wl,--disable-new-dtags";
     t.runtimeFallback = " -Wl,-rpath,/farm";
     t.cxxRuntime      = " -static-libstdc++";
     t.dependencies    = " -Wl,-rpath,'$ORIGIN'";
-    EXPECT_EQ(t.render(),
-              " -Wl,-rpath,'$ORIGIN' -static-libstdc++ -Wl,-rpath,/farm"
-              " -Wl,--disable-new-dtags");
-}
+    expect(eq(t.render(), " -Wl,-rpath,'$ORIGIN' -static-libstdc++ -Wl,-rpath,/farm"
+              " -Wl,--disable-new-dtags"));
+}};

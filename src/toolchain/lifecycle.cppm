@@ -2,10 +2,6 @@
 // (list / install / set-default / remove) + version-spec matching.
 // Bodies moved verbatim from the CLI layer. Zero behavior change.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.toolchain.lifecycle;
 
 import std;
@@ -20,10 +16,12 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
 import mcpp.wire;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -212,8 +210,8 @@ void msvc_print_detected(const mcpp::toolchain::msvc::MsvcInstallation& inst,
 //   read-only files — payloads are unpacked from .vsix/.msi, and archive
 //     entries carry the attribute through. POSIX only needs the DIRECTORY
 //     writable to unlink a child, so this never shows up on Linux or macOS.
-//   a lingering handle — a build with /Zi leaves mspdbsrv.exe running for a
-//     few seconds after cl.exe exits, and it lives inside the payload.
+//   a lingering handle — a build that writes a PDB leaves mspdbsrv.exe
+//     running for a few seconds after it ends, and it lives inside the payload.
 //
 // Both surface as the same "Access is denied", which is why this handles both
 // rather than picking one: clear the attribute, then give a live process a
@@ -267,8 +265,8 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     //   even while open, same volume, the handle follows the file)
     //   then delete the payload tree, which now holds only directories
     //
-    // This is what makes `remove` mean something after a /Zi build with the
-    // toolset being removed: mspdbsrv.exe lives INSIDE the payload and
+    // This is what makes `remove` mean something after a build that wrote a
+    // PDB with the toolset being removed: mspdbsrv.exe lives INSIDE the payload and
     // outlives cl.exe by tens of seconds, so "wait for it" is a guess and a
     // CLI that hangs on a guess is worse than the failure. The bytes are
     // swept by the next lifecycle command, when nothing holds them.
@@ -311,7 +309,8 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     // The files are gone and an empty directory skeleton would not die. That
     // is a sharing violation on a DIRECTORY, which on Windows means some
     // process has one of them as its current directory -- mspdbsrv.exe is
-    // launched inside the payload, so this is the normal tail of a /Zi build.
+    // launched inside the payload, so this is the normal tail of a build that
+    // wrote a PDB.
     //
     // A toolchain with no files in it is not installed, which is what
     // `remove` promises. Reporting failure here would be reporting the
@@ -757,9 +756,22 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // Apple SDK is not redistributable, so none can, which makes every
         // Apple row like `aarch64-macos` and unlike `x86_64-windows-musl`.
         // Stating it removes the reliance on an empty field.
+        //
+        //
+        // AND AN APPLE ROW A PLATFORM SERVES IS NOT AN SDK'S (2026.11.12.1): the
+        // musl identities of macOS take their system from the platform's
+        // packages and need no SDK. They are listed where their system is this
+        // machine's, as they were while `host_can_serve` answered every Apple
+        // row by the host's system -- then as if a payload produced them, now
+        // as what the data says, the graph's. (They build on every host; the
+        // list and the matrix name them on a macOS host only, as before.)
+        const bool platformServesHere = t->system_is_host() && std::ranges::any_of(
+            mcpp::toolchain::target::providers(), [&](auto const* p) {
+                return !p->platform.empty() && mcpp::toolchain::target::serves(*p, info.canonical);
+            });
         bool graphCouldServe = false;
         if (!planned && !installable_here(*t) && !info.pin.empty()
-            && !t->is_apple()) {
+            && (platformServesHere || !t->is_apple())) {
             auto at = info.pin.find('@');
             auto fam = info.pin.substr(0, at == std::string_view::npos
                                               ? info.pin.size() : at);
@@ -1121,7 +1133,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // needs it MOST, before any build has provided it. There is no project
         // here, so the selection is mcpp's default environment, which is what
         // `RuntimeSelection{}` means.
-        if (!mcpp::toolchain::runtime_payload_kind(pkg).empty()) {
+        if (!mcpp::toolchain::runtime_payload_kind(pkg, payload->root).empty()) {
             if (auto rb = mcpp::runtime::resolve_runtime_binding(
                     mcpp::provider::runtime::RuntimeSelection{}, {}, cfg.xlingsHome()))
                 if (auto provided = ensure_declared_runtime(cfg, *rb); !provided) {

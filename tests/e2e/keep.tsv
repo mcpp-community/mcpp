@@ -1,0 +1,34 @@
+script	why
+00_fixture_path_hygiene.sh	lints the bash scripts' own fixture paths (Git Bash path forms); retires with the last script
+27_self_contained_home.sh	home located from the installed binary's own directory (<root>/bin/mcpp): a release-layout install
+30_dev_binary_home.sh	a dev binary's home when MCPP_HOME is unset: needs the real ~/.mcpp of the machine
+102_mingw_cross_wine.sh	emulator: runs the cross-built PE under wine
+130_freestanding_riscv_build_and_run.sh	emulator: boots the image in qemu-system-riscv64
+131_freestanding_bsp_supplies_everything.sh	emulator: boots the image in qemu-system-riscv64
+132_freestanding_test_and_artifacts.sh	emulator: runs the freestanding tests in qemu-system-riscv64
+133_freestanding_std_subset.sh	emulator: boots the image in qemu-system-riscv64
+150_clang_module_operator_template.sh	a state canary of the bundled Clang (expected crash), not an assertion about mcpp
+230_bench_harness.sh	bench harness; converges with bench/ (design 5.9 bench), not the e2e migration
+232_workflow_syntax.sh	lints .github/workflows YAML (CI configuration, needs a YAML reader)
+233_bench_matrix.sh	bench/matrix.json single-source check; converges with bench/ (design 5.9 bench)
+239_msvc_managed_toolset.sh	CI-only: xlings-managed MSVC (opt-in MCPP_E2E_XLINGS_MSVC, ~380 MB download)
+257_shared_library_pe.sh	emulator: runs the PE DLL program under wine
+288_the_openkal_stack_on_a_machine_with_no_os.sh	emulator: boots the openkal stack in qemu-system-riscv64
+332_cortex_m_builds_and_boots.sh	emulator: boots the Cortex-M image in qemu-system-arm
+336_armv7a_builds_and_boots.sh	emulator: boots the armv7-a image in qemu-system-arm
+338_cortex_m_picolibc_sysroot.sh	emulator: boots the Cortex-M picolibc image in qemu-system-arm
+658_a_program_runs_on_an_attached_android_device.sh	a physical Android device over adb
+704_cxx_identity_across_macho_images.sh	a measurement leg (prints a table, asserts nothing)
+705_cxx_identity_across_pe_images.sh	a measurement leg (prints a table, asserts nothing)
+796_runtime_search_dir_on_pe_under_wine.sh	emulator: runs the PE program under wine
+797_a_windows_program_finds_its_dlls_beside_it.sh	emulator: runs the PE program under wine
+846_the_vendored_xlings_is_replaced_from_the_newest_source.sh	upgrade: the vendored xlings replaced from the newest source in a home
+901_the_toolchain_library_path_stays_with_the_tools.sh	container: a host whose /bin/sh is not the toolchain's (termux-style loader)
+914_an_upstream_home_is_linked_never_written.sh	machine state: a home linked to an upstream (system) home
+915_the_system_home_is_maintained_and_read.sh	machine state: the system home (--system, MCPP_SYSTEM_CONFIG)
+916_a_home_from_before_keeps_working.sh	upgrade: a home laid out by an earlier mcpp is migrated
+917_a_long_home_on_windows.sh	machine state: a long home path on Windows (MAX_PATH)
+918_an_older_packaging_is_used_not_replaced.sh	upgrade: an older packaging of a payload is used, not replaced
+988_the_windows_launcher_finds_its_package_from_a_windows_path.sh	emulator: runs the Windows launcher under wine
+1044_clang_pairs_with_the_mingw_payload.sh	emulator: runs the clang/mingw program under wine
+1063_a_mingw_base_package_serves_windows_gnu_beside_llvm.sh	emulator: runs the mingw base-package program under wine

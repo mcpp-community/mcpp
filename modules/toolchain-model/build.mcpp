@@ -1,0 +1,357 @@
+// The built-in target rows and providers, compiled into the engine.
+//
+// data/builtin.toml is the source (the schema of `[[platform.define]]` and
+// `[[platform.provider]]`, SPEC-016); this program writes the module
+// mcpp.toolchain.builtin_targets, whose static tables the engine reads. A build
+// therefore parses no file to know its targets. The output is written only when
+// its content changes, so an unchanged table recompiles nothing.
+
+import std;
+import mcpp;
+import mcpp.libs.toml;
+
+namespace toml = mcpp::libs::toml;
+
+namespace {
+
+constexpr std::string_view kRowKeys[] = {
+    "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
+    "link-emulation", "clang-triple", "gcc-triple", "family", "object-format", "data-model", "exe-suffix",
+    "shared-suffix", "loader", "execution", "companions", "exceptions",
+};
+constexpr std::string_view kProviderKeys[] = {
+    "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
+    "platform", "tier", "system-headers", "runner",
+};
+constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled", "exclusive" };
+constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources", "command-scripts" };
+constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
+constexpr std::string_view kPayloadKeys[] = {
+    "name", "aliases", "family", "serves", "hosts", "frontend-dir", "frontends", "builds-for", "glibc-fixup", "family-version",
+};
+constexpr std::string_view kOfferKeys[] = { "name", "hosts" };
+constexpr std::string_view kFamilies[] = { "gcc", "llvm", "msvc" };
+constexpr std::string_view kTiers[] = { "verified", "preview", "planned" };
+
+struct Failure { std::string text; };
+
+std::string lit(std::string_view s) {
+    std::string o = "\"";
+    for (char c : s) {
+        if (c == '"' || c == '\\') o += '\\';
+        o += c;
+    }
+    return o + "\"";
+}
+
+std::string text(const toml::Table& t, std::string_view key, std::string_view where) {
+    auto it = t.find(key);
+    if (it == t.end()) return {};
+    if (!it->second.is_string())
+        throw Failure{std::format("{}: `{}` is not a string", where, key)};
+    return it->second.as_string();
+}
+
+std::vector<std::string> words(const toml::Table& t, std::string_view key, std::string_view where) {
+    std::vector<std::string> out;
+    auto it = t.find(key);
+    if (it == t.end()) return out;
+    if (!it->second.is_array())
+        throw Failure{std::format("{}: `{}` is not an array", where, key)};
+    for (auto const& v : it->second.as_array()) {
+        if (!v.is_string()) throw Failure{std::format("{}: `{}` holds a non-string", where, key)};
+        out.push_back(v.as_string());
+    }
+    return out;
+}
+
+void known_keys(const toml::Table& t, std::span<const std::string_view> keys, std::string_view where) {
+    for (auto const& [k, v] : t)
+        if (std::ranges::find(keys, k) == keys.end())
+            throw Failure{std::format("{}: unknown key `{}`", where, k)};
+}
+
+// A named array of words in the generated module; the entry's field views it.
+struct Arrays {
+    std::string decls;
+    int n = 0;
+    std::string add(const std::vector<std::string>& v) {
+        if (v.empty()) return "{}";
+        auto name = std::format("a{}", n++);
+        decls += std::format("inline constexpr std::string_view {}[] = {{", name);
+        for (std::size_t i = 0; i < v.size(); ++i) decls += (i ? ", " : "") + lit(v[i]);
+        decls += "};\n";
+        return "d::" + name;
+    }
+};
+
+std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
+    known_keys(t, kRowKeys, "[[platform.define]]");
+    const auto triple = text(t, "triple", "[[platform.define]]");
+    const auto where = std::format("[[platform.define]] {}", triple);
+    if (triple.empty()) throw Failure{"[[platform.define]]: an entry without `triple`"};
+    if (!seen.insert(triple).second) throw Failure{std::format("{}: defined twice", where)};
+    const auto tier = text(t, "tier", where);
+    if (std::ranges::find(kTiers, tier) == std::end(kTiers))
+        throw Failure{std::format("{}: tier `{}` is not verified, preview or planned", where, tier)};
+    bool standard = true;
+    if (auto it = t.find("standard"); it != t.end()) {
+        if (!it->second.is_bool()) throw Failure{std::format("{}: `standard` is not a boolean", where)};
+        standard = it->second.as_bool();
+    }
+    // The segments of the canonical spelling: `arch-os` or `arch-os-env`.
+    std::vector<std::string> seg;
+    for (std::size_t b = 0;;) {
+        const auto d = triple.find('-', b);
+        seg.push_back(triple.substr(b, d == std::string::npos ? std::string::npos : d - b));
+        if (d == std::string::npos) break;
+        b = d + 1;
+    }
+    if (seg.size() < 2 || seg.size() > 3 || std::ranges::any_of(seg, [](auto const& x) { return x.empty(); }))
+        throw Failure{std::format("{}: a triple is `arch-os` or `arch-os-env`", where)};
+    // A row may state its system's family (`unix` | `windows`); a system the
+    // engine has always known answers it by convention when the row is silent.
+    const auto family = text(t, "family", where);
+    if (!family.empty() && family != "unix" && family != "windows")
+        throw Failure{std::format("{}: `family` is `unix` or `windows`, not `{}`", where, family)};
+    bool exact = false;
+    if (auto it = t.find("exact"); it != t.end()) {
+        if (!it->second.is_bool()) throw Failure{std::format("{}: `exact` is not a boolean", where)};
+        exact = it->second.as_bool();
+    }
+    return std::format(
+        "    {{ .triple = {}, .arch = {}, .os = {}, .env = {}, .tier = {}, .note = {}, .standard = {}, "
+        ".exact = {}, .march = {}, .mabi = {}, "
+        ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, "
+        ".gccTriple = {}, .objectFormat = {}, .family = {}, .dataModel = {}, .exeSuffix = {}, .sharedSuffix = {}, "
+        ".loader = {}, .execution = {}, .companions = {}, .exceptions = {} }},\n",
+        lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
+        lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
+        lit(text(t, "march", where)), lit(text(t, "mabi", where)),
+        lit(text(t, "code-model", where)), lit(text(t, "multilib", where)),
+        arrays.add(words(t, "flags", where)), lit(text(t, "link-emulation", where)),
+        lit(text(t, "clang-triple", where)), lit(text(t, "gcc-triple", where)), lit(text(t, "object-format", where)), lit(family),
+        lit(text(t, "data-model", where)), lit(text(t, "exe-suffix", where)),
+        lit(text(t, "shared-suffix", where)), lit(text(t, "loader", where)),
+        lit(text(t, "execution", where)), arrays.add(words(t, "companions", where)),
+        lit(text(t, "exceptions", where)));
+}
+
+std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {
+    known_keys(t, kProviderKeys, "[[platform.provider]]");
+    const auto name = text(t, "name", "[[platform.provider]]");
+    const auto where = std::format("[[platform.provider]] {}", name);
+    if (name.empty()) throw Failure{"[[platform.provider]]: an entry without `name`"};
+    const auto serves = words(t, "serves", where);
+    if (serves.empty()) throw Failure{std::format("{}: `serves` is empty", where)};
+    // Every identity a built-in provider serves is a built-in row, so a typo in
+    // either table fails here rather than as a target nobody can select.
+    for (auto const& s : serves) {
+        const bool any = std::ranges::any_of(rows, [&](auto const& r) {
+            return r == s || (s.starts_with("*-") && r.size() > s.size() - 1
+                              && r.ends_with(s.substr(1)));
+        });
+        if (!any) throw Failure{std::format("{}: serves `{}`, which no row defines", where, s)};
+    }
+    std::int64_t priority = 0;
+    if (auto it = t.find("priority"); it != t.end()) {
+        if (!it->second.is_int()) throw Failure{std::format("{}: `priority` is not an integer", where)};
+        priority = it->second.as_int();
+    }
+    const auto linkage = text(t, "linkage", where);
+    if (!linkage.empty() && linkage != "static" && linkage != "dynamic")
+        throw Failure{std::format("{}: linkage `{}` is not static or dynamic", where, linkage)};
+    const auto tier = text(t, "tier", where);
+    if (!tier.empty() && std::ranges::find(kTiers, tier) == std::end(kTiers))
+        throw Failure{std::format("{}: tier `{}` is not verified, preview or planned", where, tier)};
+    // `runner = { cmd = [...], hosts = [...], requires = [...] }`: how an
+    // artifact of the arrangement is started, where, and from which packages.
+    std::vector<std::string> runner, runnerHosts, runnerRequires;
+    std::string runnerHost;
+    bool runnerEnabled = true, runnerExclusive = false;
+    if (auto it = t.find("runner"); it != t.end()) {
+        if (!it->second.is_table()) throw Failure{std::format("{}: `runner` is not a table", where)};
+        auto const& r = it->second.as_table();
+        const auto rwhere = where + " runner";
+        known_keys(r, kRunnerKeys, rwhere);
+        runner = words(r, "cmd", rwhere);
+        runnerHosts = words(r, "hosts", rwhere);
+        runnerRequires = words(r, "requires", rwhere);
+        runnerHost = text(r, "host", rwhere);
+        if (!runnerHost.empty() && runnerHost != "same-arch" && runnerHost != "any")
+            throw Failure{std::format("{}: host `{}` is not same-arch or any", rwhere, runnerHost)};
+        if (auto e = r.find("enabled"); e != r.end()) {
+            if (!e->second.is_bool()) throw Failure{std::format("{}: `enabled` is not true or false", rwhere)};
+            runnerEnabled = e->second.as_bool();
+        }
+        if (auto e = r.find("exclusive"); e != r.end()) {
+            if (!e->second.is_bool()) throw Failure{std::format("{}: `exclusive` is not true or false", rwhere)};
+            runnerExclusive = e->second.as_bool();
+        }
+        if (runner.empty()) throw Failure{std::format("{}: `cmd` is empty", rwhere)};
+    }
+    return std::format(
+        "    {{ .name = {}, .serves = {}, .priority = {}, .hosts = {}, .probe = {}, .toolchain = {}, "
+        ".pairs = {}, .sysroot = {}, .linkage = {}, .platform = {}, .tier = {}, .systemHeaders = {}, "
+        ".runner = {}, .runnerHosts = {}, .runnerRequires = {}, .runnerHost = {}, .runnerEnabled = {}, "
+        ".runnerExclusive = {} }},\n",
+        lit(name), arrays.add(serves), priority, arrays.add(words(t, "hosts", where)),
+        lit(text(t, "probe", where)), lit(text(t, "toolchain", where)),
+        arrays.add(words(t, "pairs", where)), lit(text(t, "sysroot", where)), lit(linkage),
+        lit(text(t, "platform", where)), lit(tier), lit(text(t, "system-headers", where)),
+        arrays.add(runner), arrays.add(runnerHosts), arrays.add(runnerRequires), lit(runnerHost),
+        runnerEnabled, runnerExclusive);
+}
+
+std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
+    known_keys(t, kSystemKeys, "[[platform.system]]");
+    const auto name = text(t, "name", "[[platform.system]]");
+    if (name.empty()) throw Failure{"[[platform.system]]: an entry without `name`"};
+    if (!seen.insert(name).second) throw Failure{std::format("[[platform.system]] {}: stated twice", name)};
+    const auto where = "[[platform.system]] " + name;
+    bool resources = false;
+    if (auto it = t.find("resources"); it != t.end()) {
+        if (!it->second.is_bool()) throw Failure{std::format("{}: `resources` is not true or false", where)};
+        resources = it->second.as_bool();
+    }
+    return std::format("    {{ .name = {}, .uname = {}, .resources = {}, .commandScripts = {} }},\n", lit(name),
+                       lit(text(t, "uname", where)), resources, arrays.add(words(t, "command-scripts", where)));
+}
+
+std::string executes_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
+    known_keys(t, kExecutesKeys, "[[platform.executes]]");
+    const auto host = text(t, "host", "[[platform.executes]]");
+    const auto where = "[[platform.executes]] " + host;
+    if (host.empty() || host.find('-') == std::string::npos)
+        throw Failure{"[[platform.executes]]: `host` is `<os>-<arch>`"};
+    if (!seen.insert(host).second) throw Failure{std::format("{}: stated twice", where)};
+    const auto arches = words(t, "arches", where);
+    if (arches.empty()) throw Failure{std::format("{}: `arches` names no architecture", where)};
+    return std::format("    {{ .host = {}, .arches = {} }},\n", lit(host), arrays.add(arches));
+}
+
+bool flag(const toml::Table& t, std::string_view key, bool fallback, std::string_view where) {
+    auto it = t.find(key);
+    if (it == t.end()) return fallback;
+    if (!it->second.is_bool()) throw Failure{std::format("{}: `{}` is not true or false", where, key)};
+    return it->second.as_bool();
+}
+
+std::string payload_entry(const toml::Table& t, Arrays& arrays) {
+    known_keys(t, kPayloadKeys, "[[toolchain.payload]]");
+    const auto name = text(t, "name", "[[toolchain.payload]]");
+    if (name.empty()) throw Failure{"[[toolchain.payload]]: an entry without `name`"};
+    const auto where = std::format("[[toolchain.payload]] {}", name);
+    const auto family = text(t, "family", where);
+    if (std::ranges::find(kFamilies, family) == std::end(kFamilies))
+        throw Failure{std::format("{}: `family` is gcc, llvm or msvc", where)};
+    const auto serves = words(t, "serves", where), hosts = words(t, "hosts", where);
+    if (serves.empty()) throw Failure{std::format("{}: `serves` names no target", where)};
+    if (hosts.empty()) throw Failure{std::format("{}: `hosts` names no host", where)};
+    return std::format(
+        "    {{ .name = {}, .aliases = {}, .family = {}, .serves = {}, .hosts = {}, .frontendDir = {}, .frontends = {}, "
+        ".buildsFor = {}, .glibcFixup = {}, .familyVersion = {} }},\n",
+        lit(name), arrays.add(words(t, "aliases", where)), lit(family), arrays.add(serves), arrays.add(hosts), lit(text(t, "frontend-dir", where)),
+        arrays.add(words(t, "frontends", where)), lit(text(t, "builds-for", where)),
+        flag(t, "glibc-fixup", false, where), flag(t, "family-version", true, where));
+}
+
+std::string offer_entry(const toml::Table& t, Arrays& arrays) {
+    known_keys(t, kOfferKeys, "[[toolchain.offer]]");
+    const auto name = text(t, "name", "[[toolchain.offer]]");
+    if (name.empty()) throw Failure{"[[toolchain.offer]]: an entry without `name`"};
+    return std::format("    {{ .name = {}, .hosts = {} }},\n", lit(name),
+                       arrays.add(words(t, "hosts", "[[toolchain.offer]] " + name)));
+}
+
+const toml::Array& entries(const toml::Document& doc, std::string_view path) {
+    static const toml::Array none;
+    auto* v = doc.get(path);
+    if (!v) return none;
+    if (!v->is_array()) throw Failure{std::format("`{}` is not an array of tables", path)};
+    return v->as_array();
+}
+
+std::string generate(const toml::Document& doc) {
+    Arrays arrays;
+    std::set<std::string> rowNames;
+    std::set<std::string> systemNames, executesHosts;
+    std::string rows, providers, systems, executes, payloads, offers;
+    for (auto const& e : entries(doc, "platform.define")) {
+        if (!e.is_table()) throw Failure{"[[platform.define]]: an entry that is not a table"};
+        rows += row_entry(e.as_table(), arrays, rowNames);
+    }
+    for (auto const& e : entries(doc, "platform.provider")) {
+        if (!e.is_table()) throw Failure{"[[platform.provider]]: an entry that is not a table"};
+        providers += provider_entry(e.as_table(), arrays, rowNames);
+    }
+    for (auto const& e : entries(doc, "platform.system")) {
+        if (!e.is_table()) throw Failure{"[[platform.system]]: an entry that is not a table"};
+        systems += system_entry(e.as_table(), arrays, systemNames);
+    }
+    for (auto const& e : entries(doc, "platform.executes")) {
+        if (!e.is_table()) throw Failure{"[[platform.executes]]: an entry that is not a table"};
+        executes += executes_entry(e.as_table(), arrays, executesHosts);
+    }
+    for (auto const& e : entries(doc, "toolchain.payload")) {
+        if (!e.is_table()) throw Failure{"[[toolchain.payload]]: an entry that is not a table"};
+        payloads += payload_entry(e.as_table(), arrays);
+    }
+    for (auto const& e : entries(doc, "toolchain.offer")) {
+        if (!e.is_table()) throw Failure{"[[toolchain.offer]]: an entry that is not a table"};
+        offers += offer_entry(e.as_table(), arrays);
+    }
+    return std::format(
+        "// Generated by modules/toolchain-model/build.mcpp from data/builtin.toml.\n"
+        "export module mcpp.toolchain.builtin_targets;\n\n"
+        "import std;\n"
+        "import mcpp.toolchain.target_schema;\n\n"
+        "namespace mcpp::toolchain::builtin::d {{\n{}"
+        "inline constexpr mcpp::toolchain::target::Executes executes_[] = {{\n{}    {{}},\n}};\n"
+        "inline constexpr std::span<const mcpp::toolchain::target::Executes> executes{{executes_, std::size(executes_) - 1}};\n"
+        "}}\n\n"
+        "export namespace mcpp::toolchain::builtin {{\n\n"
+        "inline constexpr mcpp::toolchain::target::Row kRows[] = {{\n{}}};\n\n"
+        "inline constexpr mcpp::toolchain::target::Provider kProviders[] = {{\n{}}};\n\n"
+        "inline constexpr mcpp::toolchain::target::System kSystems[] = {{\n{}}};\n\n"
+        "inline constexpr std::span<const mcpp::toolchain::target::Executes> kExecutes = d::executes;\n\n"
+        "inline constexpr mcpp::toolchain::target::Payload kPayloads[] = {{\n{}}};\n\n"
+        "inline constexpr mcpp::toolchain::target::Offer kOffers[] = {{\n{}}};\n\n"
+        "}} // namespace mcpp::toolchain::builtin\n",
+        arrays.decls, executes, rows, providers, systems, payloads, offers);
+}
+
+} // namespace
+
+int main() {
+    const std::filesystem::path source = std::filesystem::path(mcpp::manifest_dir()) / "data" / "builtin.toml";
+    mcpp::rerun_if_changed(source.generic_string().c_str());
+    std::ifstream in(source, std::ios::binary);
+    if (!in) {
+        std::println(std::cerr, "build.mcpp: cannot read {}", source.generic_string());
+        return 1;
+    }
+    const std::string src{std::istreambuf_iterator<char>(in), {}};
+    auto doc = toml::parse(src);
+    if (!doc) {
+        std::println(std::cerr, "{}:{}: {}", source.generic_string(), doc.error().where.line,
+                     doc.error().message);
+        return 1;
+    }
+    std::string out;
+    try {
+        out = generate(*doc);
+    } catch (const Failure& f) {
+        std::println(std::cerr, "{}: {}", source.generic_string(), f.text);
+        return 1;
+    }
+    const auto target = std::filesystem::path(mcpp::out_dir()) / "builtin_targets.cppm";
+    std::string was;
+    if (std::ifstream old(target, std::ios::binary); old) was.assign(std::istreambuf_iterator<char>(old), {});
+    if (was != out) {
+        std::filesystem::create_directories(target.parent_path());
+        std::ofstream(target, std::ios::binary) << out;
+    }
+    mcpp::generated(target.generic_string().c_str());
+    return 0;
+}

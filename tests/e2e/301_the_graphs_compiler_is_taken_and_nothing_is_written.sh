@@ -74,7 +74,7 @@ done
 if [ -z "$want" ]; then
     echo "SKIP: this project already resolves '$current' and no other family is"
     echo "      installed here, so no requirement could differ from it"
-    exit 0
+    exit 77
 fi
 
 printf '[package]\nname     = "needs-%s"\nversion  = "0.1.0"\nrequires = ["mcpp:compiler=%s"]\n' \

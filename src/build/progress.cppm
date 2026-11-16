@@ -27,14 +27,12 @@
 // model's: every line the model writes is collected under the lock and written
 // after it is released.
 
-module;
-#include <cstdio>
-
 export module mcpp.build.progress;
 
 import std;
 import mcpp.run;
 import mcpp.build.action_progress;
+import mcpp.build.dirlock;
 import mcpp.ui;
 import mcpp.ui.dots_screen;
 import mcpp.log;
@@ -733,7 +731,8 @@ struct Build::Impl {
 namespace {
 
 // The fast path has no plan: it reads the record the plan wrote, when ninja
-// reports its first step, so a build with nothing to do reads nothing.
+// reports its first step or an action writes its start, so a build with
+// nothing to do reads nothing. Ninja may buffer stdout until an action ends.
 void ensure_record(Build::Impl& b) {
     if (b.record || b.recordTried) return;
     b.recordTried = true;
@@ -1004,11 +1003,13 @@ void read_log(Report& r, Build::Impl& b, std::vector<std::string>& out) {
 // Reads the start file of an open pass; model lock held. A check or prepare
 // action that starts names its package: that is work.
 void read_starts(Report& r, Build::Impl& b, std::vector<std::string>& out) {
-    if (!b.inPass || !b.record) return;
+    if (!b.inPass) return;
     std::error_code ec;
     const auto path = b.dir / kStartsFile;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec || size <= b.startsOffset) return;
+    ensure_record(b);
+    if (!b.record) return;
     std::ifstream f(path, std::ios::binary);
     f.seekg(static_cast<std::streamoff>(b.startsOffset));
     std::string text(static_cast<std::size_t>(size - b.startsOffset), '\0');
@@ -1032,14 +1033,18 @@ void read_starts(Report& r, Build::Impl& b, std::vector<std::string>& out) {
 
 // Read only active graph actions. Snapshot counts never complete an action;
 // the ninja log removes it from running only after the command has finished.
-void read_action_progress(Build::Impl& build) {
-    if (build.progressDir.empty()) return;
+bool read_action_progress(Build::Impl& build) {
+    if (build.progressDir.empty()) return false;
+    bool changed = false;
     for (auto& action : build.running) {
         auto snapshot = action_progress::read(
             action_progress::channel(build.progressDir, action.stamp));
-        if (snapshot && (!action.snapshot || snapshot->seq > action.snapshot->seq))
+        if (snapshot && (!action.snapshot || snapshot->seq > action.snapshot->seq)) {
             action.snapshot = std::move(snapshot);
+            changed = true;
+        }
     }
+    return changed;
 }
 
 // The builds whose Build object is alive: the frame, the poll and the status
@@ -1175,6 +1180,7 @@ mcpp::ui::Frame frame() {
 void poll() {
     auto& r = report();
     std::vector<std::string> out;
+    bool progressChanged = false;
     {
         std::lock_guard lock(r.m);
         if (r.game && r.keys)
@@ -1188,10 +1194,13 @@ void poll() {
         for (auto const& b : live_builds(r)) {
             read_starts(r, *b, out);
             read_log(r, *b, out);
-            read_action_progress(*b);
+            progressChanged |= read_action_progress(*b);
         }
     }
     write_lines(out);
+    // A snapshot can arrive between Ninja status lines. Wake the normal
+    // frame writer instead of waiting for its one-second clock redraw.
+    if (progressChanged) mcpp::ui::touch_region();
 }
 
 // The status row's screen, as MCPP_PROGRESS asks: `random` (the default) or
@@ -1446,17 +1455,23 @@ void finished(std::string_view profile, std::string_view descriptor) {
         // The breakdown and the longest step explain a wait; a command shorter
         // than a minute has none worth a longer line (build output design
         // revision 3, §7.3).
+        // The time spent waiting for a build directory another command held
+        // is said whenever it is a second or more: it is the part of a slow
+        // command no build of this one explains (2026-11-12 §17, W3).
+        const long long waited = mcpp::build::dirlock::waited().count();
+        if (waited >= 1'000)
+            detail = "waited " + mcpp::ui::format_duration(ms(waited)) + " for the build directory";
         if (total >= 60'000) {
             const long long build = r.buildStart ? total - *r.buildStart : 0;
             const long long programs = r.programTime.count();
-            const long long plan = std::max<long long>(0, total - build - programs);
+            const long long plan = std::max<long long>(0, total - build - programs - waited);
             std::vector<std::string> parts;
             if (plan > 0)     parts.push_back("plan " + mcpp::ui::format_duration(ms(plan)));
             if (programs > 0) parts.push_back("programs " + mcpp::ui::format_duration(ms(programs)));
             if (build > 0)    parts.push_back("build " + mcpp::ui::format_duration(ms(build)));
             if (parts.size() > 1)
                 for (std::size_t i = 0; i < parts.size(); ++i)
-                    detail += (i ? " · " : "") + parts[i];
+                    detail += (detail.empty() ? "" : " · ") + parts[i];
             long long longest = 0;
             std::string label;
             for (auto const& b : r.builds)

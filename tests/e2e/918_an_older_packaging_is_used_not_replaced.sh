@@ -32,11 +32,11 @@ cd probe
 
 # The payload the build resolved: `Resolved <tc> → <payload>/bin/<driver>`.
 COMPILER=$(sed -n 's/.*Resolved [^ ]* → \(.*\)$/\1/p' first.log | tail -1)
-[ -n "$COMPILER" ] || { echo "SKIP: the build resolved no managed toolchain payload"; exit 0; }
+[ -n "$COMPILER" ] || { echo "SKIP: the build resolved no managed toolchain payload"; exit 77; }
 case "$COMPILER" in @mcpp/*) COMPILER="$MCPP_HOME/${COMPILER#@mcpp/}" ;; esac
 PAYLOAD=$(cd "$(dirname "$COMPILER")/.." && pwd)
 STAMP="$PAYLOAD/.xpkg-install.json"
-[ -f "$STAMP" ] || { echo "SKIP: $PAYLOAD carries no install record"; exit 0; }
+[ -f "$STAMP" ] || { echo "SKIP: $PAYLOAD carries no install record"; exit 77; }
 
 # The payload in this home becomes a directory of its own whose children link
 # to the inherited one, with a record of its own: the inherited payload (the

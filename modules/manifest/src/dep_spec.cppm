@@ -113,6 +113,14 @@ struct DependencySpec {
     // into publicUsage unconditionally. Only build.mcpp-INJECTED include dirs
     // are private-only.)
     bool                        reexport = false;
+    // `override = true` (design 2026-11-10 supplement, T2): this declaration
+    // answers every request for the package in the graph its table governs
+    // ([dependencies]: the build's and the tests'; [dev-dependencies]: the
+    // tests'; [build-dependencies]: the build programs'), whatever version a
+    // dependency asks for. Honoured on the root's edges and on
+    // [workspace.dependencies]; a library that writes it is told it is
+    // ignored, as `linkage` is a root's alone.
+    bool                        override_ = false;
     // design 2026-11-02 (part 3) §14: a patched dependency is another
     // library. `patches` are unified diffs applied in order to the verified
     // source; the edge's dependency becomes the VARIANT (package, version,
@@ -124,6 +132,10 @@ struct DependencySpec {
     // edges only: a `path` dependency is a tree its consumer already owns.
     std::vector<std::string>    patches;
     std::string                 patchesDigest;
+    // `patch_root` (mcpp#911 G8): the directory the patches name their files
+    // from, relative to the package's root (the directory of its resolved
+    // manifest); empty: that root.
+    std::string                 patchRoot;
     // `embed = true`: the dependency's sources (as its description selects
     // them, less `exclude`) are compiled INTO this consumer with the
     // consumer's flags and the dependency's include directories and macros,
@@ -149,6 +161,10 @@ struct DependencySpec {
 
     bool                        inheritWorkspace = false;  // .workspace = true
     bool                        legacyDottedKey = false;   // parsed from legacy "ns.name" flat key
+    // The quoted key cannot be written otherwise: a package and a package of
+    // its namespace in one table (`mcpplibs.mtest`, `mcpplibs.mtest.gtest`),
+    // whose unquoted keys would make one name both a value and a table.
+    bool                        quotingRequired = false;
     // One-release migration marker for the former unquoted dotted-selector
     // search (`capi.lua` tried mcpplibs.capi before capi). New exact selectors
     // written as namespace subtables never set this bit.

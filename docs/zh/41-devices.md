@@ -61,13 +61,16 @@ mcpp::runner_longlived("monitor");      // no natural end
 mcpp::run_exclusive();                  // this target's runs cannot overlap
 ```
 
+`mcpp::runner_spec` 以数据中的表陈述一个 runner，含 `requires` 与 `enabled`（2026.11.16.1+，[30](30-build-mcpp.md)）。
+
 **写程序名，不要写路径。** mcpp 会定位它：先找**图中任何一个包**在
 `[xlings.workspace]` 下声明的载荷的 `bin/`（消费工程优先，然后是它的
 依赖），再找 `PATH`。板级包正是那个知道哪个模拟器或探针能抵达这台机器
 的东西，所以由它自己声明该载荷，**消费者什么都不用声明**。用
 `mcpp::xpkg_dir` 拼出绝对路径是多余的，而且会引入一个失败模式——声明
 不是安装，查询可能返回空，于是没有配置任何 runner，也没有任何话说明
-原因。写程序名则让 mcpp 能报出它究竟搜过哪些目录。
+原因。写程序名则让 mcpp 能报出它究竟搜过哪些目录。不在载荷 `bin/` 下的程序写作 `{pkg:<name>}/<路径>`，
+其包列入 runner 的 `requires`，并最先被查找。
 
 ## 工程的覆盖项
 
@@ -97,6 +100,41 @@ runner 能从任何机器抵达产物。给出执行宿主（`run_under`）时�
 [24](24-openkal-cross.md) 中的 `run_under = ["qemu-aarch64"]`）。目标的平台提供它的缺省 runner（[35](35-platforms.md)）；依赖的构建程序、本机的
 `config.toml`、工程与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它，只写 argv 时保留平台的 `host` 与 `exclusive`。
 
+**按需启用的 runner（2026.11.16.1+）。** 首次使用需取得整机镜像或模拟器、或在构建树与包仓库之外留下状态的 runner，
+由其数据陈述 `enabled = false`：虚拟机、Android 模拟器，以及 x86_64 Linux 上 Windows 行的 Wine。`mcpp run` 以状态 2
+拒绝它，`mcpp test` 使测试已构建而未运行。消息带有 token `[runner-not-enabled]`、首次使用安装的包与两种启用写法；
+启用之前不安装任何包。
+
+```toml
+[target.x86_64-windows-gnu]
+runner = { enabled = true }      # mcpp.toml，或本机的 config.toml
+```
+
+不含 `cmd` 的表调整其下一层的 runner。`cmd`、`requires` 与 `enabled` 是一条陈述：替换 `cmd` 的层陈述另一个 runner，
+除非写出否则为启用，因此已写 `runner = ["wine", "{}"]` 的工程行为不变。`MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`
+为一次调用启用缺省 runner，`mcpp run --runner <name>` 启用它指名的 runner。具名 runner 取同一种表
+（`[target.<sel>.runners] web = { cmd = [...], longlived = true }`），按同一规则合并。
+
+**Android 程序在模拟器中运行（2026.11.16.1+）。** 在 x86_64 Linux 机器上启用后，`x86_64-linux-android` 经 dirun
+（>= 0.4.0）与 API 34 系统镜像包的配置运行：模拟器启动一台新设备，程序与其运行时文件经 adb 推送，输出与状态返回。
+设备只有一个控制台端口，因此该目标的运行不重叠（`exclusive`）。aarch64 行没有 runner：模拟器包不服务 aarch64 机器。
+
+```bash
+MCPP_TARGET_X86_64_LINUX_ANDROID_RUNNER_ENABLED=true mcpp run --target x86_64-linux-android
+```
+
+## runner 所指名的程序（2026.11.16.1+）
+
+| | 规则 |
+|---|---|
+| 查找 | 先 `requires` 的包，再图中各载荷的 `bin/`，最后 `PATH`；不查当前目录 |
+| 不在 `bin/` 下的程序 | `{pkg:<name>}/<路径>`，其包列入 `requires` |
+| Windows 上无后缀的名字 | 取系统的后缀 `.exe`、`.cmd`、`.bat`，裸名字与带目录的名字相同（`../tools/x` 即 `../tools/x.cmd`）；无后缀的文件在那里不是程序 |
+| 执行 | argv，不经 shell |
+| 系统经命令解释器启动的脚本 | Windows 上的 `.bat` 与 `.cmd`（系统表的 `command-scripts`）：参数含 `%`、`^`、`&`、`\|`、`<`、`>`、`"` 或换行时在启动前拒绝，因为解释器不论怎样引用都把它们读作语法（CVE-2024-24576 一类） |
+| 占位符 | `{}`、`{sysroot}` 与 `{pkg:<name>}`，可位于词中（`{}/index.html`）；其余花括号原样保留；没有 `{}` 时产物附在末尾 |
+| 状态 | runner 的状态即运行的状态；长驻 runner 的状态不是结论，`mcpp test` 不使用它 |
+
 ## runner 收到的内容
 
 runner 收到一段 argv——它自己的 token，产物路径被追加或替换 `{}`——
@@ -123,6 +161,29 @@ libfw.so<TAB>/abs/project/target/<triple>/<fp>/bin/libfw.so
 容器或远程主机——会把列出的每个文件复制到被移走产物旁边对应的目的
 路径。
 
+### runner 包与平台定义的系统（2026.11.9.1+）
+
+runner 是一个程序；构建它的包是 **runner 包**（虚拟机、经 ssh 的远程主机、设备）。工程把该包写为目标的工具之一，
+以工具名指定 runner：
+
+```toml
+[target.x86_64-freebsd]
+runner = ["freebsd-vm", "{}"]
+
+[target.x86_64-freebsd.tools]
+freebsd-vm = { git = "https://example.org/freebsd-vm.git", tag = "v1" }
+```
+
+该工具为本机构建，以上述 argv 与环境启动：它传送产物及 `MCPP_RUNTIME_FILES` 所列文件，执行 argv，转发程序的输出，
+并以程序的退出码退出。行的 `execution` 为本机以外系统的产物，若无 runner 也无执行主机（`run_under`），
+即**已构建、未运行**：`mcpp run` 在启动任何进程之前拒绝，并给出声明 runner 的键，`mcpp test` 把其测试报告为未运行。
+这条规则对每一行相同，无论内置还是平台定义（2026.11.12.1+；此前内置行的产物会被启动，并报告内核的回答）。本机内核不读取
+程序所属的系统，另一系统的系统调用号在本机另有含义，所以启动它什么也观察不到。`--no-runner` 陈述该身份在本机可直接执行，
+供经已登记的解释器运行此类程序的宿主使用。同一系统、另一架构的产物照旧启动。
+
+提供者可以陈述其安排的运行器，于是目标无需任何声明即可运行（docs/35）：在 linux-x86_64 上，
+`mcpp run --target aarch64-linux-gnu` 在第一次运行时安装用户态模拟器，并以该安排的基座为模拟器的根启动产物。
+
 ## 运行一个可分发物
 
 `mcpp run --pkg-format <f>` 打包可分发物 `<f>` 并运行它。不带 `--runner`
@@ -148,6 +209,7 @@ mcpp run --pkg-format app --runner other    # a typed --runner still wins
 |---|---|
 | default | runs to completion; the exit code is the verdict |
 | `runner_longlived(name)` | has no natural end; the operator ends it |
+| runner 表中的 `longlived = true` | 同上，以数据陈述（2026.11.16.1+） |
 
 `openocd -c "program image.elf verify reset exit"` 会终止，
 `openocd -c "init"` 不会，两者的拼写直到包所选的那个参数为止都一样。

@@ -85,6 +85,14 @@ std::set<std::filesystem::path>
 package_source_files(const std::filesystem::path& root,
                      const mcpp::manifest::Manifest& manifest);
 
+// The entries of a package's `sources` that name one file by its path and
+// find none (#938), each stated against the table it is written in. Exported
+// rather than raised by the scan: whether such an entry stops the build is the
+// caller's to decide by whose tree the package is (an editable tree is
+// refused; a fetched package, which its consumer cannot change, is warned of).
+std::vector<ScanError> unnamed_sources(const std::filesystem::path& root,
+                                       const mcpp::manifest::Manifest& manifest);
+
 // Scan the entire package: collects all sources via manifest globs and returns a Graph.
 struct ScanResult {
     Graph                       graph;
@@ -150,6 +158,11 @@ struct PackageRoot {
     UsageRequirements               privateBuild;
     UsageRequirements               publicUsage;
     UsageRequirements               linkUsage;
+    // What the package's TESTS see beyond `privateBuild`: the public usage of
+    // its `[dev-dependencies]`, under `mcpp test`. A dev-dependency reaches the
+    // test units and never the package's own sources, so those compile under
+    // `mcpp test` as under `mcpp build` (docs/08 "Dev-dependencies").
+    UsageRequirements               testBuild;
     bool                            usageResolved = false;
     // No TARGET INSTANCE (mcpp#797): no chain of ordinary edges reaches it
     // from the root. It is resolved here -- one version per package, and its
@@ -159,6 +172,11 @@ struct PackageRoot {
     // A BUILD-PROGRAM INSTANCE: reached through a `[build-dependencies]` edge
     // and then any edges. A package may have both instances (mcpp#797, R2).
     bool                            hostInstance = false;
+    // A TEST-ONLY INSTANCE: reached from the root and the selected members
+    // only through a `[dev-dependencies]` edge. A target-side layer it supplies
+    // serves the tests and does not change the configuration of the shipped
+    // graph (docs/08 "Dev-dependencies").
+    bool                            devOnly = false;
     // A selected workspace member that the plan builds (workspace design
     // 2026-09-29 §15), and the directory below `bin/` its products are placed
     // in (empty: `bin/` itself). False on the plan's root and on every
@@ -1154,6 +1172,58 @@ package_source_files(const std::filesystem::path& root,
     return all_files;
 }
 
+// A SOURCE NAMED BY ITS PATH THAT IS NOT THERE (#938). An entry of a
+// `sources` list without a pattern character names one file; when that file
+// does not exist the entry selected nothing and the build went on, to fail at
+// an importer ("failed to read compiled module", a module "imported but not
+// provided") that names no manifest -- measured where an ignore rule left the
+// file out of a fresh checkout. Each such entry of the lists this build reads
+// is stated against the table that states it. A pattern that matches nothing
+// is not: a selection may be empty on a target. A file an action of the build
+// writes or a build program declares is the build's, not yet on disk, and an
+// absolute entry is a build program's (`select_sources`).
+std::vector<ScanError> unnamed_sources(const std::filesystem::path& root,
+                                       const mcpp::manifest::Manifest& manifest) {
+    namespace fs = std::filesystem;
+    std::set<std::string> built;
+    auto key = [&](std::string_view p) {
+        auto n = native_path_from_generic(p);
+        return (n.is_absolute() ? n : root / n).lexically_normal().generic_string();
+    };
+    for (auto const& [path, _] : manifest.modules.declaredUnits) built.insert(key(path));
+    for (auto const& a : manifest.buildConfig.actions)
+        for (auto const& o : a.outputs) built.insert(key(o));
+    // The table an entry is stated in: the manifest's own `[build]` before the
+    // tables of the target were applied, then those tables, then a feature's.
+    auto const& stated = manifest.beforeConditionalMerge ? manifest.beforeConditionalMerge->buildConfig.sources
+                                                         : manifest.buildConfig.sources;
+    auto table = [&](const std::string& entry) -> std::string {
+        if (std::ranges::find(stated, entry) != stated.end()) return "[build] sources";
+        for (auto const& cc : manifest.conditionalConfigs)
+            if (std::ranges::find(cc.inputs.sources, entry) != cc.inputs.sources.end())
+                return std::format("[target.'{}'.build] sources", cc.predicate);
+        for (auto const& [feature, globs] : manifest.buildConfig.featureSources)
+            if (std::ranges::find(globs, entry) != globs.end())
+                return std::format("[features.{}] sources", feature);
+        return "sources";
+    };
+    std::vector<ScanError> out;
+    std::set<std::string> seen;
+    for (auto const& entry : manifest.modules.sources) {
+        if (entry.empty() || entry.front() == '!' || entry.find_first_of("*?[{") != std::string::npos) continue;
+        if (!seen.insert(entry).second) continue;
+        if (native_path_from_generic(entry).is_absolute()) continue;
+        const auto at = key(entry);
+        if (built.contains(at)) continue;
+        std::error_code ec;
+        if (fs::exists(fs::path(at), ec)) continue;
+        out.push_back(ScanError{root / "mcpp.toml", 0, std::format(
+            "{}: \"{}\" names no file: a path without a pattern names one file, and {} does not exist "
+            "(a file a fresh checkout leaves out, an ignore rule, or a typo)", table(entry), entry, at)});
+    }
+    return out;
+}
+
 namespace {
 
 // Phase 1: scan a single package, append units to result.graph.units;
@@ -1186,8 +1256,11 @@ void scan_one_into(ScanResult& result,
             ? manifest.package.name
             : manifest.package.namespace_ + "." + manifest.package.name;
     // scan_overrides: author-asserted units bypass the text scan entirely.
-    // Every override glob must match at least one collected source file —
-    // an unmatched glob is a typo or a stale declaration, not a no-op.
+    // Every override glob must match a file: one that matches nothing on disk
+    // is a typo or a stale declaration, not a no-op. One whose files exist and
+    // take no part in this build -- a feature that is off, a `!` rule of a
+    // `[target.<selector>.build]` -- describes them for the builds that do
+    // compile them (mcpp#902).
     std::map<std::string, int> overrideHits;
     for (auto const& [glob, ov] : manifest.modules.scanOverrides)
         overrideHits[glob] = 0;
@@ -1329,10 +1402,11 @@ void scan_one_into(ScanResult& result,
     }
 
     for (auto const& [glob, hits] : overrideHits) {
-        if (hits == 0) {
+        if (hits == 0 && std::ranges::none_of(expand_braces(glob), [&](auto const& branch) {
+                return !expand_glob(root, branch).empty(); })) {
             result.errors.push_back(ScanError{root, 0, std::format(
-                "scan_overrides glob '{}' matched no source file "
-                "(typo, or the glob is not covered by `sources`)", glob)});
+                "scan_overrides glob '{}' matches no file of the package (a typo, or "
+                "a stale declaration)", glob)});
         }
     }
 

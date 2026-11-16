@@ -632,6 +632,12 @@ struct Inputs {
     // configured for, at a version its runtime accepts (measured by the base
     // resolution's floor check).
     bool        sysrootFitsPayloadCxx = false;
+    // A BASE PACKAGE (design 2026-11-10 E5): the base states the C++ run-time
+    // and the compiler run-time it holds, beside its C library.
+    std::string baseRef;                  // `freebsd-sysroot@14.5`
+    std::string baseCxx;                  // `libc++`; empty: the base holds none
+    std::string baseCompilerRuntime;      // `libgcc`; empty: none
+    bool        baseHasStdModule = false;
 
     // What the payload would contribute, for display only.
     std::string payloadSystemRef;
@@ -675,6 +681,9 @@ struct Inputs {
 // compared through `c_abi_request_satisfied` rather than by equality.
 inline std::string payload_libc_name(std::string_view os, std::string_view env) {
     if (env == "gnu") return os == "windows" ? "ucrt" : "glibc";
+    // `-msvc` names the toolset, as `-gnu` does on Windows: the C library of
+    // both is the Universal CRT, the name a base package states for it.
+    if (env == "msvc" && os == "windows") return "ucrt";
     if (!env.empty()) return std::string(env);
     if (os == "macos")   return "libSystem";
     if (os == "windows") return "ucrt";
@@ -688,6 +697,7 @@ inline bool c_abi_request_satisfied(std::string_view requested,
                                     std::string_view resolved) {
     if (requested == resolved) return true;
     if (requested == "gnu")   return resolved == "glibc" || resolved == "ucrt";
+    if (requested == "msvc")  return resolved == "ucrt";
     if (requested == "glibc") return resolved == "gnu";
     return false;
 }
@@ -725,6 +735,8 @@ inline TargetSide resolve(const Inputs& in) {
         ts.compilerRuntime = { Origin::Graph,
                                in.compilerRuntime->display_interface(),
                                in.compilerRuntime->id(), false };
+    else if (!in.baseCompilerRuntime.empty())
+        ts.compilerRuntime = { Origin::Xpkg, in.baseCompilerRuntime, in.baseRef, false };
     else if (in.payloadCompilerRuntimeAbsent || in.loaderTarget)
         // The runtime routines of a program its loader runs are its own (a
         // C++ run-time package, or the program): the payload's are built for
@@ -771,6 +783,9 @@ inline TargetSide resolve(const Inputs& in) {
     if (in.cxxAbi)
         ts.cxx = { Origin::Graph, in.cxxAbi->display_interface(), in.cxxAbi->id(),
                    !in.cxxAbi->hasStdModule };
+    else if (!in.baseCxx.empty())
+        // The base's own C++ run-time, configured for the C library beside it.
+        ts.cxx = { Origin::Xpkg, in.baseCxx, in.baseRef, !in.baseHasStdModule };
     else if (ts.cAbi.origin == Origin::Payload
              || (ts.cAbi.origin == Origin::Xpkg && in.sysrootFitsPayloadCxx))
         // THE LAYERING RULE, AS STRUCTURE RATHER THAN AS A LATER CHECK.
@@ -1098,13 +1113,23 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
 }
 
 inline std::string format_report(const TargetSide& ts, std::string_view targetName,
-                                 bool verbose = false) {
+                                 bool verbose = false, std::string_view request = {},
+                                 std::string_view fallback = {}) {
     // The head carries no verb of its own: the caller supplies one through the
     // status line's own padding, and the layer lines below are indented to sit
-    // under it.
-    std::string head = (ts.llvmTriple.empty() || ts.llvmTriple == targetName)
-        ? std::format("{}", targetName)
-        : std::format("{} → {}", targetName, ts.llvmTriple);
+    // under it. A request that is a pattern reads `<request> → <identity>`
+    // (SPEC-016 §4.5), with the compiler's triple beside it; a selection that
+    // passed over its first candidate says why, on the same line.
+    std::string head;
+    if (!request.empty() && request != targetName) {
+        head = std::format("{} → {}", request, targetName);
+        if (!ts.llvmTriple.empty() && ts.llvmTriple != targetName) head += std::format(" ({})", ts.llvmTriple);
+    } else {
+        head = (ts.llvmTriple.empty() || ts.llvmTriple == targetName)
+            ? std::format("{}", targetName)
+            : std::format("{} → {}", targetName, ts.llvmTriple);
+    }
+    if (!fallback.empty()) head += std::format("; {}", fallback);
 
     // WHEN THE SEGMENT IS NOT A C LIBRARY, SAY WHAT IT IS — HERE, WHERE THE
     // READER IS LOOKING AT IT.
@@ -1160,6 +1185,80 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
 // The islands of a resolved target side: each private C++ requirement the
 // graph's C++ layer does not meet. One it meets is no island -- the graph
 // unifies where it can (U before I, design 2026-10-26 §6.3).
+// ── Rule two, made checkable: the layers stand on one another ──────────────────
+//
+// Each layer is configured for the one beneath it (SPEC-002 §3.2). A supplier
+// states what it stands on with `requires`: openkal-musl requires the
+// kernel-abi, an implementation of openkal written above a C library requires
+// the c-abi. When the suppliers of the graph's layers require one another in a
+// circle, no layer is beneath the other: the composition builds and the
+// program calls itself at run time (measured 2026-11-10: openkal-posix beneath
+// openkal-musl recursed between `kal_time_wall` and `clock_gettime`). The
+// circle is refused here, naming each supplier and what it requires.
+//
+// Only layers the graph supplies take part: a payload or a prebuilt base has
+// no requirements, and the compiler is not supplied by a package.
+inline std::optional<std::string>
+check_layer_cycle(const TargetSide& ts, std::span<const Requirement> reqs) {
+    constexpr CapLayer kLayers[] = {CapLayer::CompilerRuntime, CapLayer::KernelAbi,
+                                    CapLayer::CAbi, CapLayer::CxxAbi};
+    auto package_of = [](std::string_view id) {
+        const auto at = id.find('@');
+        return at == std::string_view::npos ? id : id.substr(0, at);
+    };
+    // The layer a requiring package supplies, if it supplies one of the graph's.
+    auto supplied_by = [&](std::string_view requiredBy) -> std::optional<CapLayer> {
+        for (auto l : kLayers) {
+            auto const& have = layer_of(ts, l);
+            if (have.fromGraph() && !have.impl.empty()
+                && package_of(have.impl) == package_of(requiredBy))
+                return l;
+        }
+        return std::nullopt;
+    };
+    // edges[a][b]: the supplier of layer a requires layer b, which the graph supplies.
+    bool edges[5][5] = {};
+    for (auto const& r : reqs) {
+        if (r.privateScope || r.layer == CapLayer::Compiler) continue;
+        auto from = supplied_by(r.requiredBy);
+        if (!from || *from == r.layer || !layer_of(ts, r.layer).fromGraph()) continue;
+        edges[static_cast<int>(*from)][static_cast<int>(r.layer)] = true;
+    }
+    // At most four nodes: a depth-first walk from each, recording the path.
+    for (auto start : kLayers) {
+        std::vector<CapLayer> path{start};
+        std::function<bool(CapLayer)> walk = [&](CapLayer at) -> bool {
+            for (auto next : kLayers) {
+                if (!edges[static_cast<int>(at)][static_cast<int>(next)]) continue;
+                if (next == start) return true;
+                if (std::ranges::find(path, next) != path.end()) continue;
+                path.push_back(next);
+                if (walk(next)) return true;
+                path.pop_back();
+            }
+            return false;
+        };
+        if (!walk(start)) continue;
+        std::string chain;
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            const auto next = path[(i + 1) % path.size()];
+            chain += std::format("\n         `{}` supplies the {} and requires the {}",
+                                 layer_of(ts, path[i]).impl, cap_layer_name(path[i]),
+                                 cap_layer_name(next));
+        }
+        return std::format(
+            "the suppliers of the target side require one another in a circle [layer-cycle]:{}\n"
+            "       Each layer is built for the one beneath it (SPEC-002 §3.2); here no layer is "
+            "beneath the other,\n"
+            "       and the program would call itself. Supply one of these layers from a package "
+            "that does not require the other\n"
+            "       (an implementation written above a C library runs over the system's own "
+            "C library, not over one built on it).",
+            chain);
+    }
+    return std::nullopt;
+}
+
 inline std::vector<Island> cxx_islands(const TargetSide& ts, std::span<const Requirement> reqs) {
     std::vector<Island> out;
     for (auto const& r : reqs) {

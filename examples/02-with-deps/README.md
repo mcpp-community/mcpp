@@ -10,5 +10,6 @@ mcpp run -- --name "C++23 modules"
 # Hello, C++23 modules!
 ```
 
-`mcpp.toml` 里的 SemVer 约束（`^0.0.1`）告诉 mcpp 自动选最高匹配版本。
-本地结果会写到 `mcpp.lock` 锁版本。
+`mcpp.toml` 以身份键 `mcpplibs.cmdline`（命名空间 `mcpplibs`，包 `cmdline`）
+和精确版本 `0.0.2` 声明依赖；解析结果写入 `mcpp.lock`。版本范围（`^0.0.2`、
+`>=0.0.1, <0.1.0`）的写法见 docs/05-dependencies.md。

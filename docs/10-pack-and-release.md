@@ -131,7 +131,7 @@ choices:
 | `--compress zstd` or `xz` with `--pkg-format zip` | `--compress gzip` (DEFLATE) or `none`, or `--pkg-format tar` |
 | `--compress gzip` or `xz` with `--pkg-format single-file` | `--compress zstd[:<level>]` or `none`: the launcher decompresses zstd |
 | `--systems` on anything but a self-contained tree of images or a single file of an image | `--mode self-contained`, or `--pkg-format single-file`; `[pack] systems` that does not fit is noted and left aside |
-| an image's single file for a system named whose row this mcpp builds no program for (`x86_64-macos`, `aarch64-windows-gnu`) | `--systems` naming the pairs that are built; `--systems all` takes those and says the rest |
+| an image's single file for a system named whose row this mcpp builds no program for (`x86_64-macos`), or for which the platform's carrier does not exist (its runner's `hosts`, when the carrier names none) | `--systems` naming the pairs that are built; `--systems all` takes those and says the rest |
 | more than one file (a package per leg, several single files) with `-o` naming one file | `-o <directory>/` |
 | several images of a platform that states no `runner`, not as single files | one pack per target, or `--pkg-format single-file` |
 | `--target` outside the platform's targets | a target the platform serves |
@@ -744,6 +744,22 @@ the loader reads it from that path on every machine, whatever the tree carries.
 `kind = "lib"` / `"shared"` target is packaged by the library route, which is
 unaffected.
 
+### An ELF program for another system: the closure read from the file (2026.11.10.1+)
+
+A program for a row whose execution system is not the packing host's — a FreeBSD
+program packed on Linux, or a row a platform defines — is not handed to the host's
+loader, which would describe the host or fail (`ldd` exited 127 on a FreeBSD
+program). Its closure is read from the file's `DT_NEEDED`:
+
+| Name | Treatment |
+|---|---|
+| a shared library this build produced, beside the program (`bin/`, `../lib/`) | staged with the program |
+| any other name | the target system's; recorded as a platform need and not staged |
+
+`--mode static` links a fully static program on such a row as on a native one, and
+the file is read before it is packed: a program that names a loader or a shared
+library is refused, naming them, rather than packed under the `-static` name.
+
 ### ok images (`<arch>-openkal`): the image, or a program that carries it
 
 An ok image runs through `okrun` on every system of its architecture (see
@@ -815,8 +831,13 @@ The other legs are planned one after another and built at once
 directory, picks the architecture directory from `uname -m` (`x86_64`, `amd64`
 → `x86_64`; `aarch64`, `arm64` → `aarch64`), hands a Git Bash, MSYS or Cygwin
 shell to `bin/<name>.exe`, and starts the runner on the image there with its
-own arguments, looking for the runner first in `libexec/<runner>/<os>-<arch>/`
-and then on `PATH`. The Windows launcher is the engine's program built for
+own arguments. A package that carries its runner starts the one in
+`libexec/<runner>/<os>-<arch>/`, and on a machine it holds none for exits with
+status 126, naming the machine and the systems it holds; a package that carries
+none finds the runner on `PATH`. `<os>` is the system whose `uname -s` word the
+system table records (`linux`, `macos`, `freebsd`, ...). Under `--all-programs`
+every program of the package has its own pair of launchers, `bin/<name>` and
+`bin/<name>.exe`. The Windows launcher is the engine's program built for
 `x86_64-windows-gnu`: it finds the package from its own path, picks the image
 of the machine's architecture, and starts the runner the same way; no `.cmd` is
 written. Where the build's platform has a hosted arrangement for that row, the
@@ -834,9 +855,21 @@ Each runner is built on its row (`<arch>-linux-musl`, `<arch>-macos`,
 `<arch>-windows-gnu`) over the platform's hosted arrangement, so the same
 program results whichever machine packs, with no SDK or C run-time of that
 system; a Linux runner is static. A row this mcpp builds no program for
-(`x86_64-macos`, planned; `aarch64-windows-gnu`, not in its table) is left out
-with a warning. An image built on a Windows host is not the bytes of one built
+(`x86_64-macos`, planned), or a system the platform's carrier does not exist for,
+is left out with a warning: a carrier that names no `hosts` is the runner's
+program and exists where the runner does (`runner.hosts`; openkal-platform's
+names no `windows-aarch64`, so `aarch64-windows-gnu`, a row this mcpp builds,
+gets no runner from it). An image built on a Windows host is not the bytes of one built
 elsewhere (#850): pack trees on Linux or macOS.
+
+**What `all` names is the system table (mcpp 2026.11.12.1+).** Every system
+the table states (`[[platform.system]]`, built-in or a platform's) and every
+system a platform defines a row of for the architecture. A pair no program is
+built for is written as not covered, with the reason, and the pack succeeds for
+the rest. The program of a system the engine holds no convention for is built
+as the identity the platform's runner states for the host pair
+(`runner.built-as`, [35](35-platforms.md)); a pack without `--systems` carries
+the runner of the packing machine's system alone.
 
 **Where it runs.** The pack writes `runs_on` into `mcpp-package.json` and says
 it after `Packed`: `self`, the `<os>-<arch>` pairs the package runs on with
@@ -956,7 +989,7 @@ and sha256. A provided format, `--merge` and `mcpp emit xpkg` read it
 ([SPEC-014](specs/packaging.md) §4.5):
 
 ```json
-{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.23.3",
+{"schema": 1, "name": "hello", "version": "0.1.0", "platform": "openkal-platform@0.24.0",
  "linkage": "shared", "mode": "vendored", "legs": ["x86_64-openkal", "aarch64-openkal"], "systems": [],
  "launch": {"runner": ["okrun", "{}"], "entry": {"x86_64": "lib/x86_64/hello.oke", "aarch64": "lib/aarch64/hello.oke"}},
  "files": [{"path": "lib/x86_64/hello.oke", "role": "image", "leg": "x86_64-openkal", "sha256": "…"}]}

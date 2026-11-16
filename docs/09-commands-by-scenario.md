@@ -99,7 +99,11 @@ default 30, `0` turns it off) is removed. A hit marks an entry used. A `path`
 host tool's entry is replaced when its tree changes: the entry built from the
 same tree under the previous stamp is removed as the new one is written
 (2026.10.31.3+). Before a build, mcpp warns when the file system it writes to
-has less than 2 GiB free.
+has less free space than the larger of 2 GiB and 1.25 times what the
+configuration's last build wrote (recorded in `<output>/.mcpp-written`); the
+warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc
+--older-than` collect `std` module entries by age as well; `gc --max-size`
+budgets packages and host tools, not `std` modules (2026.11.8.1+).
 
 ## The versions a package publishes
 
@@ -212,9 +216,11 @@ dependency graph:
       requested by huxdemo.comp@0.1.0 as 'fw' in [dependencies]
       linked static (default)
       instances: target
+      root: /work/fw
 ```
 
-`instances` states whether the package is compiled for the target, for the
+`root` is the package's root as the build reads it, a patched dependency's
+being its variant's (2026.11.9.1+; docs/05). `instances` states whether the package is compiled for the target, for the
 build programs, or for both (2026.10.11.1+). `mcpp why build-programs` lists the
 build programs' graphs: each program, the libraries it uses, the identity it
 was compiled from and its binary. `mcpp why compat` lists every use of a
@@ -223,8 +229,14 @@ deprecated reading with the release that removes it (51 — Supported Versions).
 The same graph is recorded under `graph` in
 `target/<triple>/<fp>/resolution.json`, one entry per package with the root
 first: `package` (canonical identity, namespace, name, version, source),
-`root`, `requested_by` (`requester`, `key`, `table`), and, for a library,
-`link` (`form`, `reason`).
+`root`, `requested_by` (`requester`, `key`, `table`), `manifest_dir` (the
+package's root), and, for a library, `link` (`form`, `reason`).
+
+`mcpp why target` lists a request's candidates in order (docs/21), `mcpp why
+flags [<unit>]` each word of a unit's command line with the layer that gave it,
+and `mcpp why platform` the rows a platform defines and the identities it
+serves (docs/35); the last two are not part of the report without a topic
+(2026.11.9.1+).
 
 The topic is `toolchain`, `runtime`, `deps` or `runners`, and all four report
 when none is named. `--target` and `--toolchain` turn the report into a query
@@ -276,7 +288,8 @@ of any run that read such an index, including runs that then succeeded.
 fails rather than fetch. `--locked` fails when resolution differs from
 `mcpp.lock` instead of rewriting it, which is the shape a CI job wants.
 `mcpp index pin <name> <rev>` records a commit for a custom index in
-`mcpp.toml`; `mcpp index unpin` removes it.
+`mcpp.toml`; `mcpp index unpin` removes it. Both edit an `[indices]` entry
+written on one line, and refuse one whose inline table spans several lines.
 
 ## Download progress
 
@@ -761,7 +774,7 @@ mcpp is involved and its documentation will not help.
 ## Current limitations
 
 - `mcpp why --format json` is defined for the `toolchain`, `sources`, `tool`,
-  `payload`, `build-programs` and `compat` topics. The other topics report
+  `payload`, `build-programs`, `compat`, `target`, `flags` and `platform` topics. The other topics report
   `'<topic>' has no machine-readable shape yet` and exit non-zero.
 - `mcpp search` matches a substring; there is no field selector, and no way to
   restrict a search to one namespace.

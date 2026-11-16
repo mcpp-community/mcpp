@@ -22,7 +22,7 @@ import mcpp.build.loader_contract;
 import mcpp.build.plan;
 import mcpp.build.symbol_provision;
 import mcpp.manifest;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.runtime.search;
 import mcpp.runtime.elf;
@@ -679,8 +679,17 @@ ValidationReport validate_changed_artifacts(
     // `os == "linux"` on purpose -- it IS the kernel -- so every Linux-shaped
     // decision in the tree is right about it except the ones that mean "this
     // machine".
+    // ONE QUESTION FOR EVERY SUCH ROW (SPEC-016 §6): does this machine load the
+    // artifact. An SDK's row, a row of another system and a row of another
+    // architecture all answer no, and the row's data answers it -- Android's
+    // `execution`, a defined row's, the architecture segment. An artifact for
+    // another system says so, since its closure is the one thing not checked.
     if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-        tt && tt->has_own_sysroot()) {
+        tt && !tt->loads_on_host()) {
+        if (!before.empty() && tt->c_library_by_platform() && !tt->system_is_host())
+            mcpp::ui::info("note", std::format(
+                "the artifacts are for {}, not this machine: their runtime closure is not "
+                "checked here", tt->execution_system()));
         record_without_rules(plan, before);
         return report;
     }
@@ -956,6 +965,12 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     namespace sp = mcpp::build::symbol_provision;
     std::vector<SymbolProvisionFinding> findings;
     if constexpr (!mcpplibs::os::is_linux) return findings;
+    // An artifact for another system loads that system's libraries, which this
+    // machine's search directories do not hold (E1, mcpp#911 N4: a FreeBSD
+    // program was compared with the host's glibc).
+    if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        tt && !tt->loads_on_host())
+        return findings;
 
     // The flags this build hands the linker, as ONE vector, because the
     // question is whether ANY of them took the export decision away from

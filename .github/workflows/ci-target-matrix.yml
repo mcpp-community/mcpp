@@ -123,9 +123,9 @@ jobs:
           # payload (it backs the host row), so that job uses `check` and the
           # test is guaranteed to be exercised somewhere on every run. Without
           # that, a reason accepted everywhere is a test that runs nowhere.
-          check_or_declared_skip() {   # log  ok-line  acceptable-skip-substring
+          check_or_declared_skip() {   # log  ok-line  acceptable-skip-pattern (ERE)
             grep -qF "$2" "$1".log && { echo "  ok  $1"; return 0; }
-            if grep -q '^SKIP:' "$1".log && grep -qF "$3" "$1".log; then
+            if grep -q '^SKIP:' "$1".log && grep -qE "$3" "$1".log; then
               echo "  ok  $1 (declared skip: $(grep -m1 '^SKIP:' "$1".log))"
               return 0
             fi
@@ -153,11 +153,13 @@ jobs:
             check 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" || fail=1
           else
-            # Non-Linux rows may restore a cache with no declared LLVM.
+            # Non-Linux rows may restore a cache with no declared LLVM, and a
+            # macOS host serves every gcc-pinned row through openkal-platform,
+            # whose compiler is llvm: no row there is overridden by llvm.
             # Both Linux hosts require the assertion after native provisioning.
             check_or_declared_skip 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" \
-              "llvm is not installed here" || fail=1
+              "llvm is not installed here|served by a non-llvm convention" || fail=1
           fi
 
           # ── 2026.8.26.2: an answer mcpp already had, now used ─────────────
@@ -377,14 +379,24 @@ jobs:
             exit 1
           fi
           echo "ok: wasm32-emscripten ran through the payload's runner; the decoy node was never run"
-          # #851 (e2e 981) needs the emsdk payload this step has just installed;
-          # the shards have none and skip it, so it runs here, in that home.
-          MCPP="$MCPP_UNDER_TEST" bash tests/e2e/981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh 2>&1 \
-            | tee "$RUNNER_TEMP/981.log"
-          if grep -q '^SKIP' "$RUNNER_TEMP/981.log" || ! grep -qx 'PASS: 981' "$RUNNER_TEMP/981.log"; then
-            echo "::error::e2e 981 did not run to its PASS line over the installed emsdk"
-            exit 1
-          fi
+          # THE WEB-ROW SCRIPTS RUN HERE, OVER THE PAYLOAD THIS STEP HAS JUST
+          # INSTALLED. The shards have no emsdk, and each of these leaves there
+          # with 77 after its `SKIP:` line; until 2026-11-12 that exit was 0, the
+          # shards reported them as passes, and 650, 653 and 657 ran on no
+          # runner. A status other than 0 fails the step, 77 included.
+          for t in 650_wasm_row_names_its_launcher.sh \
+                   653_exceptions_is_the_second_abi_member.sh \
+                   657_a_build_program_under_the_web_row_uses_the_host_compiler.sh \
+                   981_a_web_link_has_the_profiles_level_and_the_wasm_exception_model.sh \
+                   1079_an_emscripten_rows_longjmp_model_round_trips.sh; do
+            echo "::group::e2e $t"
+            MCPP="$MCPP_UNDER_TEST" bash "tests/e2e/$t" && rc=0 || rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::e2e $t ended with $rc over the installed emsdk (77: it skipped itself)"
+              exit 1
+            fi
+          done
 
   coverage:
     # THE DENOMINATOR. Every check above is per host, and no per-host check
@@ -396,13 +408,16 @@ jobs:
     # workflow is green. This job is the one place that reads the expected table
     # as a whole and requires the run to have covered it.
     #
-    # It runs even when a scan failed (`always()`), because "which hosts were
-    # covered" is a different question from "did they pass" — and a run where a
-    # host is missing entirely should say so in those words rather than leaving
-    # a reader to infer it from a job list.
+    # It runs even when a scan failed, because "which hosts were covered" is a
+    # different question from "did they pass" — and a run where a host is
+    # missing entirely should say so in those words rather than leaving a
+    # reader to infer it from a job list. Not in a cancelled run: `always()`
+    # queued it for a runner after the cancellation, and the concurrency group
+    # was held until it ran (run 43599371222: 8.5 minutes, the next run's
+    # start delayed by 9.1).
     name: coverage (every host the table names was scanned)
     needs: scan
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,46 @@
+name: mtest
+description: >
+  The mtest engine CI runs and reports with: the release .github/versions.env
+  pins (MTEST_VERSION), an xlings package (xim:mtest) the index verifies, else
+  the release bundle checked against MTEST_SHA256. Exports MTEST, the launcher.
+
+runs:
+  using: composite
+  steps:
+    # THE ENGINE IS AN XLINGS PACKAGE (xim:mtest), installed as the job installs
+    # mcpp, verified by the index's sha256, and kept in the job's xlings cache:
+    # by the configured mirror (GLOBAL), then by CN (GitCode first), each with a
+    # refreshed index; else the release bundle itself (fetch_release.sh: the
+    # web address, then the API's), checked against the pinned sha256.
+    - name: mtest
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        . .github/versions.env
+        launcher=""
+        for mirror in GLOBAL CN; do
+          xlings config --mirror "$mirror" > /dev/null 2>&1 || true
+          xlings update > /dev/null 2>&1 || true
+          # Into the global subos (-g): inside the repository xlings would install it
+          # for the project, and its shim refuses to run it from another directory.
+          if xlings install "mtest@$MTEST_VERSION" -y -g; then launcher=$(command -v mtest); break; fi
+        done
+        xlings config --mirror GLOBAL > /dev/null 2>&1 || true
+        if [ -z "$launcher" ]; then
+          echo "::warning::xlings could not install mtest $MTEST_VERSION; taking the release itself"
+          archive="mtest-$MTEST_VERSION-openkal-bundle-all.tar.gz"
+          temp="$RUNNER_TEMP"; python=python3
+          if [ "$RUNNER_OS" = Windows ]; then temp=$(cygpath -u "$RUNNER_TEMP"); python=python; fi
+          bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
+            "https://github.com/mcpp-community/mtest/releases/download/v$MTEST_VERSION/$archive" "$temp/$archive"
+          actual=$("$python" -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$temp/$archive")
+          [ "$actual" = "$MTEST_SHA256" ] || { echo "::error::$archive: sha256 $actual, the action pins $MTEST_SHA256"; exit 1; }
+          mkdir -p "$temp/mtest" && tar xzf "$temp/$archive" -C "$temp/mtest"
+          launcher="$temp/mtest/mtest-$MTEST_VERSION-openkal-bundle-all/bin/mtest"
+          [ "$RUNNER_OS" = Windows ] && launcher="$launcher.exe"
+        fi
+        "$launcher" --version | grep -qF "$MTEST_VERSION" \
+          || { echo "::error::the mtest at $launcher is not $MTEST_VERSION: $("$launcher" --version)"; exit 1; }
+        echo "MTEST=$launcher" >> "$GITHUB_ENV"

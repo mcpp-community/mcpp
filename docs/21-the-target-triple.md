@@ -146,40 +146,43 @@ A `.js` file carries no shebang, so an emsdk payload installed before its
 descriptor gained a `runner` field needs the index refresh
 [chapter 20](20-toolchains.md) describes before `mcpp run` finds one.
 
-## Declining The Third Segment
+## Declining The Third Segment: A Request Names A System (2026.11.9.1+)
 
-`<arch>-<os>` is a complete target on every platform:
+A target written whole is an **identity**: the output directory, the cache key
+and the subject of a `cfg()` predicate. A target that names only `<arch>-<os>`
+is a **request**: it reaches every identity of that system, and the build takes
+the first one whose **provider** -- the toolchain and the target side that
+serve it -- is available on this machine (SPEC-016 §4).
 
 ```bash
-mcpp build --target x86_64-linux      # = x86_64-linux-gnu
-mcpp build --target x86_64-windows    # = x86_64-windows-gnu
+mcpp build --target x86_64-linux      # x86_64-linux-gnu on Linux; -musl where no glibc payload is
+mcpp build --target x86_64-windows    # -msvc with MSVC installed, else -musl (openkal-platform)
+mcpp build --target aarch64-macos     # the Apple identity on macOS, else aarch64-macos-musl
 mcpp build --target riscv64-none      # = riscv64-none-elf
-mcpp build --target aarch64-linux     # = aarch64-linux-gnu
-mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
-Declining it changes no identity. The output directory, the cache key and the
-subject of a `cfg()` predicate are all the canonical form, so the two spellings
-share one fingerprint and the second build is a cache hit rather than a second
-full build.
+The candidates are ordered by the providers' priorities (data the engine ships:
+a system's own toolchain and C library first, openkal-platform next, other
+conventions after), then by the rows' order. The report says which identity
+was taken, and why when the first candidate is not available here:
 
-What differs is the record of what was asked for. A triple serves as an
-identity, which must be total, and as a request, which must be able to say
-nothing; mcpp keeps both, filling the segment for the identity while recording
-that the fill was a fill.
+```text
+      Target x86_64-windows → x86_64-windows-musl
+             msvc is not available on linux-x86_64
+```
 
-### The completion is chosen from the vocabulary, not from a fixed word
+`mcpp why target [--target <t>]` lists the candidates in order with their
+priorities and availability (`--format json` for scripts). A project changes
+the order with `[target.<selector>.priority] <provider> = <n>`, or chooses a
+built-in provider by name with `platform = "builtin:<name>"`. A written
+identity is never replaced: `--target x86_64-linux-gnu` builds that identity or
+is refused naming what is missing. `mcpp.lock` records the identity each
+request was given, and `--locked` refuses a build that selects another.
 
-A request with an omitted environment segment is completed against the
-known-target table. A supported lexical default takes precedence; otherwise,
-a unique supported sibling is selected. If none is supported, the lexical
-form is retained and the diagnostic names the registered siblings. An
-ambiguous request lists the supported candidates.
-
-`aarch64-linux` selects `aarch64-linux-gnu`. The native Linux ARM64 payload
-uses LLVM 23.1.3 and glibc. `aarch64-linux-musl` remains the explicit spelling
-for a static musl artifact. A written environment segment is retained.
-
+When the dependency graph supplies the C library (`mcpp:c-abi`) and the request
+names none, the identity is the C library's: `x86_64-linux` over a graph's musl
+builds `x86_64-linux-musl`. A written segment the graph contradicts is reported
+and kept.
 
 ### The Spelling To Use
 
@@ -511,24 +514,38 @@ not from `linux-aarch64`, while `aarch64-linux-gnu` is served natively by
 `linux-aarch64`. Collapsing them to `linux` would let one overwrite the
 other's rows.
 
+`aarch64-linux-gnu` has a second, cross arrangement (2026.11.12.1+): on
+`linux-x86_64` the provider `glibc-sysroot` serves it from a base package
+([22](22-target-side.md)). It stands below the musl entries, so `--target
+aarch64-linux` is still answered by `aarch64-linux-musl` there and the whole
+identity selects the glibc cross; `mcpp run` starts its artifacts through the
+provider's runner ([41](41-devices.md)).
+
 ### Build hosts and the targets they serve
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | payload | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | payload | — | — |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | base package | payload | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
-| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | — | payload |
+| `i686-linux-musl`, `i686-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | base | payload |
+| `aarch64-windows-gnu` | preview | `llvm@23.1.3` | base | base | base | base |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | graph | graph | graph | payload |
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `aarch64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
+| `x86_64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
+| `x86_64-freebsd`, `aarch64-freebsd` | preview | — | platform | platform | platform | platform |
+| `x86_64-freebsd-musl`, `aarch64-freebsd-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 | `x86_64-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `i686-none-elf` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
 | `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
@@ -544,13 +561,16 @@ other's rows.
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
-| `x86_64-openkal` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
-| `aarch64-openkal` | preview | `llvm@23.1.3` | payload | payload | payload | payload |
+| `x86_64-openkal` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `aarch64-openkal` | verified | `llvm@23.1.3` | payload | payload | payload | payload |
+| `i686-openkal` | planned | — | planned | planned | planned | planned |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a
 dependency can supply the system · `system` located on the machine, not
-installed by mcpp · `SDK` the platform's own · `—` unreachable from this host
-· `planned` registered in the vocabulary, nothing wired yet.
+installed by mcpp · `SDK` the platform's own · `base` a base package the provider
+names, installed from the index (2026.11.10.1+) · `platform` served by a platform the
+project selects · `—` unreachable from this host · `planned` registered in the
+vocabulary, nothing wired yet.
 
 ### The rule behind the columns
 
@@ -558,7 +578,10 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 |---|---|---|
 | `*-linux-musl` | Linux (any arch), Windows (same arch only) | the musl payloads are self-contained |
 | `*-linux-gnu` | Linux, same arch only | additionally needs the host-native `xim:glibc` / `xim:linux-headers` |
-| `x86_64-windows-gnu` | Linux, Windows | one identity, host-split at the distribution layer |
+| `x86_64-windows-gnu` | Linux and Windows by the gcc payload; every host by the MinGW-w64 base package | one identity, host-split at the distribution layer; the `mingw-llvm` provider serves it with clang and `xim:mingw-w64-sysroot` (llvm-mingw's target side: MinGW-w64 on UCRT, libc++, compiler-rt) where no gcc payload exists |
+| `aarch64-windows-gnu` | every host | the MinGW-w64 base package alone; no gcc payload targets it |
+| `*-freebsd` | every host, through a platform | the rows are built-in; a platform names each identity's FreeBSD base package (`xim:x86_64-freebsd-sysroot`, `xim:aarch64-freebsd-sysroot`) and is selected with `[target.<row>] platform`, or by any selector the row meets (`[target.freebsd]`, `cfg(os = "freebsd")`); another platform package's provider does not compete with the chosen platform |
+| `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.28.0): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
@@ -588,6 +611,15 @@ under qemu-user over the system image's own bionic, which is the route that
 works from an x86_64 host -- the platform emulator refuses a foreign guest
 (`QEMU2 emulator does not support arm64 CPU architecture`). A tier states that
 an artefact was built and RUN; it does not state which emulator ran it.
+
+**Both `*-openkal` rows are `verified` (2026.11.8.1).** Every host builds both
+rows, and each system runs the image of its own architecture: Linux and Windows
+x86_64 run `x86_64-openkal`, macOS arm64 runs `aarch64-openkal`, with the
+platform's C library and C++ run-time (`import std`). Test 1033 does this, and
+`tests/e2e/host-requirements.tsv` requires it to pass on Linux, macOS and
+Windows, so the claim fails CI when a system stops running images. Before, the
+rows' run tests declared `llvm`, which only the Linux shards grant, and mcpp's
+own CI ran images on Linux alone.
 
 On these two rows, `kind = "app"` links as a shared library rather than as an
 executable ([04 §2.2](04-mcpp-toml.md)) — the form `application_form` answers
@@ -761,7 +793,9 @@ target does not determine a compiler.
 
 - A row at the `planned` tier is **registered in the vocabulary and nothing is
   wired yet**. Naming such a target is accepted by the parser and refused by the
-  build.
+  build, unless the build names a toolchain for it: `[target.X] toolchain`, or
+  `--toolchain` (or `MCPP_TOOLCHAIN`, its statement in the environment;
+  2026.11.13.1+).
 - `host_can_serve` decides whether this machine can produce a target, and it is
   a different question from the tier. A target mcpp supports may still be
   unreachable from this host; the escape hatch is an explicit

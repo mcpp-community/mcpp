@@ -21,7 +21,7 @@ import mcpplibs.os.platform;
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.build.capacity;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -462,8 +462,11 @@ static std::expected<void, std::string> step13_make_plan(PrepareState& state, Bu
     if (!ctx.plan.trimMap.empty()) {
         const auto n = state.packages.size();
         std::vector<std::vector<std::size_t>> deps(n);
+        // Not along a dev edge: a dev-dependency reaches the test units, which
+        // keep their paths, so the package's own map is the one `mcpp build`
+        // gives it and its commands are the same under `mcpp test`.
         for (auto const& e : state.dependencyEdges)
-            if (e.consumerPackageIndex < n && e.dependencyPackageIndex < n)
+            if (e.consumerPackageIndex < n && e.dependencyPackageIndex < n && !e.devTable)
                 deps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
         for (std::size_t i = 0; i < n; ++i) {
             std::vector<char> closure(n, 0);
@@ -989,6 +992,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     // own target, and the output directory is shared with plain builds because
     // the fingerprint covers neither input. Stamping it on the plan is what
     // lets the graph say so about itself.
+    ctx.sharedExactPins = state.sharedExactPins;
     ctx.plan.graphShape = (state.includeDevDeps || !state.extraTargets.empty()
                            || !state.memberTargets.empty())
         ? mcpp::build::GraphShape::WithTests
@@ -1017,6 +1021,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     if (auto c = state.get_cfg(/*requireBootstrap=*/false))
         globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
     ctx.globalDefaultJobs = globalDefaultJobs;
+    ctx.intent = state.overrides.intent;
 
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and
     // the manifest are in hand. The backend writes the graph in this shape, the
@@ -1077,17 +1082,17 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     // moved in — an earlier assignment was silently overwritten by that move,
     // which produced a generated file that nothing ever passed to the driver.
     // Generated here rather than in compute_flags, which runs twice per build.
-    // A link input only: a plan that builds nothing (`plan_only`) neither reads
+    // A link input only: a plan that builds nothing (`PrepareIntent::Describe`) neither reads
     // it nor runs the driver to produce it, and its compile arguments are the
     // same without it.
-    if (state.tc->compiler == mcpp::toolchain::CompilerId::GCC && !state.overrides.plan_only)
+    if (state.tc->compiler == mcpp::toolchain::CompilerId::GCC && !state.overrides.describes())
         ctx.plan.gccCleanSpecs = mcpp::toolchain::write_clean_link_specs(
             state.tc->binaryPath, ctx.outputDir);
     // THE WAY BACK FROM A TRIMMED PATH (design 2026-10-23 §15.3): a debugger
     // loads these and finds the sources the debug information names by
     // `<name>@<version>/…`. Written with the build that produced them, and
     // only when there is debug information for them to serve.
-    if (!ctx.plan.trimMap.empty() && state.m->buildConfig.debug && !state.overrides.plan_only) {
+    if (!ctx.plan.trimMap.empty() && state.m->buildConfig.debug && !state.overrides.describes()) {
         std::error_code ec;
         std::filesystem::create_directories(ctx.outputDir, ec);
         std::ofstream gdb(ctx.outputDir / "source-map.gdbinit", std::ios::binary | std::ios::trunc);
@@ -1315,6 +1320,14 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 ctx.plan.providedPackFormats.push_back(f);
                 auto& who = ctx.packFormatProviders[f];
                 if (std::ranges::find(who, owner) == who.end()) who.push_back(owner);
+            }
+            // The program each provider assembles from, and what it said
+            // (N30): read by `mcpp pack` for the format's providers only.
+            if (!mm.buildConfig.packFormats.empty()) {
+                if (!mm.buildConfig.packPrograms.empty())
+                    ctx.packPrograms[owner] = mm.buildConfig.packPrograms;
+                if (!mm.buildConfig.statedReasons.empty())
+                    ctx.packReasons[owner] = mm.buildConfig.statedReasons;
             }
         };
         collect(*state.m, 0);
@@ -1585,6 +1598,36 @@ static std::expected<void, std::string> step13_assembly_units(PrepareState& stat
 }
 
 
+// The root's own `[dev-dependencies]` serve its tests, not its library, which a
+// framework that uses the package under test reaches (names_the_root,
+// graph_edges.cpp): the root's key does not fold them in.
+static bool serves_root_tests(const DependencyEdge& e) {
+    return e.consumerPackageIndex == 0 && e.devTable;
+}
+
+// The package graph the keys fold along: the declared edges, and the imports no
+// declared edge covers. An import a declared edge already covers adds nothing.
+// One that a declared path runs the other way is a module this build generates
+// for the importer below its consumer's root, filed under the consumer by its
+// path (e2e 849): not an upstream, and left out of `importedFrom` rather than
+// closing a cycle.
+static mcpp::graph::AdjacencyList key_graph(const PrepareState& state,
+                                            std::vector<std::set<std::size_t>>& importedFrom) {
+    mcpp::graph::AdjacencyList pkgDeps(state.packages.size());
+    for (auto& e : state.dependencyEdges)
+        if (e.consumerPackageIndex < pkgDeps.size() && !serves_root_tests(e))
+            pkgDeps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
+    for (std::size_t p = 0; p < importedFrom.size(); ++p)
+        std::erase_if(importedFrom[p], [&](std::size_t q) {
+            if (std::ranges::find(pkgDeps[p], q) != pkgDeps[p].end()) return true;
+            const auto above = mcpp::graph::closure(pkgDeps, std::array{q}, /*include_roots=*/false);
+            return std::ranges::find(above, p) != above.end();
+        });
+    for (std::size_t p = 0; p < importedFrom.size(); ++p)
+        pkgDeps[p].insert(pkgDeps[p].end(), importedFrom[p].begin(), importedFrom[p].end());
+    return pkgDeps;
+}
+
 static std::expected<void, std::string> step13_dependency_cache(PrepareState& state, BuildContext& ctx) {
     // ─── Global dependency cache: per-package keys, hit → stage edges ──
     //
@@ -1725,24 +1768,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
         // below walks `mcpp::graph::topological_order` — dependencies before
         // dependents — instead of recursing, with an explicit cycle check up
         // front standing in for the old in-progress guard.
-        mcpp::graph::AdjacencyList pkgDeps(state.packages.size());
-        for (auto& e : state.dependencyEdges)
-            if (e.consumerPackageIndex < pkgDeps.size())
-                pkgDeps[e.consumerPackageIndex].push_back(e.dependencyPackageIndex);
-        // An import a declared edge already covers adds nothing. One that a
-        // declared path runs the other way is a module this build generates
-        // for the importer below its consumer's root, filed under the
-        // consumer by its path (e2e 849): not an upstream, and left out
-        // rather than closing a cycle.
-        for (std::size_t p = 0; p < importedFrom.size(); ++p)
-            std::erase_if(importedFrom[p], [&](std::size_t q) {
-                if (std::ranges::find(pkgDeps[p], q) != pkgDeps[p].end()) return true;
-                const auto above = mcpp::graph::closure(pkgDeps, std::array{q}, /*include_roots=*/false);
-                return std::ranges::find(above, p) != above.end();
-            });
-        for (std::size_t p = 0; p < importedFrom.size(); ++p)
-            pkgDeps[p].insert(pkgDeps[p].end(), importedFrom[p].begin(), importedFrom[p].end());
-        auto keyOrder = mcpp::graph::topological_order(pkgDeps);
+        auto keyOrder = mcpp::graph::topological_order(key_graph(state, importedFrom));
         if (!keyOrder) {
             keyCycleError = std::format(
                 "dependency cycle through package '{}' while computing "
@@ -1793,7 +1819,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 && state.dep_cache_identities[idx - 1].sourceKind == "version";
             if (!selfIsIndex) localTaint[idx] = 1;
             for (auto& e : state.dependencyEdges) {
-                if (e.consumerPackageIndex != idx) continue;
+                if (e.consumerPackageIndex != idx || serves_root_tests(e)) continue;
                 // `idx`'s dependencies precede it in `keyOrder`, so their
                 // keys and taint are already folded in below.
                 auto const& up = pkgKeys[e.dependencyPackageIndex];
@@ -2185,6 +2211,20 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     ctx.runtimeBinding = state.targetRuntimeBinding ? *state.targetRuntimeBinding
                                                     : state.runtimeBindingSnapshot;
     ctx.runUnder = state.runUnder;
+    {
+        auto const& c = state.targetChoice;
+        auto& s = ctx.targetSelection;
+        s.request = c.request;
+        s.identity = c.identity.empty() ? state.tc->targetTriple : c.identity;
+        s.provider = c.provider;
+        s.priority = c.priority;
+        s.fallback = c.fallback;
+        s.why = c.why;
+        for (auto const& k : c.candidates)
+            s.candidates.push_back({ k.row ? std::string(k.row->triple) : std::string{},
+                                     k.provider ? std::string(k.provider->name) : std::string{},
+                                     k.why, k.priority, k.available, std::string(k.tier()) });
+    }
     if (!state.runUnder.empty()) {
         auto const& o = state.runUnderOrigin;
         ctx.runUnderOrigin = o.originKind == "env" ? o.originKey
@@ -2208,17 +2248,19 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
     // before this line -- the manifest, resolution, the network, the
     // toolchain, the scan -- ran holding nothing, and a second build of the
     // same configuration waits here, then finds ninja with little to do. A
-    // pass that only describes (plan_only) plans into its own directory.
+    // pass that only describes (PrepareIntent::Describe) plans into its own directory.
     // `--deny write-project` stops here, before the first write (design
     // 2026-10-26 §5.5).
-    if (!state.overrides.plan_only && mcpp::effects::effect_denied("write-project")) {
+    if (!state.overrides.describes() && mcpp::effects::effect_denied("write-project")) {
         mcpp::effects::note_effect_refused("write-project", ctx.outputDir.generic_string());
         return std::unexpected(std::format(
             "effect denied: write-project -- the build writes {}, and the caller denied writing "
             "the project (--deny write-project)", ctx.outputDir.generic_string()));
     }
-    if (!state.overrides.plan_only) adopt_predecessor_dir(state, ctx.outputDir);
-    if (!state.overrides.plan_only) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
+    if (!state.overrides.describes()) adopt_predecessor_dir(state, ctx.outputDir);
+    if (!state.overrides.describes()) ctx.buildLock = mcpp::build::dirlock::acquire(ctx.outputDir);
+    std::filesystem::path graphEngine;
+    if (!state.overrides.describes()) graphEngine = renew_build_dir(state, ctx.outputDir);
 
     // Each step states its duration under `build/stage` in the log file, as
     // the phases do (build wall-time plan, W9; see prepare_build).
@@ -2245,6 +2287,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         return std::unexpected(r.error());
     if (auto r = timed("make plan", [&] { return step13_make_plan(state, ctx); }); !r)
         return std::unexpected(r.error());
+    ctx.plan.engine = graphEngine;
     if (auto r = timed("cxx islands", [&] { return step13_cxx_islands(state, ctx); }); !r)
         return std::unexpected(r.error());
     if (auto r = timed("cxx private runtime", [&] { return step13_cxx_private_runtime(state, ctx); }); !r)
@@ -2272,7 +2315,7 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state) {
         return std::unexpected(r.error());
     timed("report packages", [&] { step13_report_packages(state, ctx); return 0; });
     // Last: what the plan used is known only now (the dependency cache's hits).
-    if (!state.overrides.plan_only) record_build_dir(state, ctx.outputDir);
+    if (!state.overrides.describes()) record_build_dir(state, ctx.outputDir);
 
     ctx.planNotes = std::move(state.planNotes);
     return ctx;

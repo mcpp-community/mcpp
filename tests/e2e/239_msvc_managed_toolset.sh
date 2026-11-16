@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # requires: msvc xlings-msvc python3
+# resources: machine
 # 239_msvc_managed_toolset.sh — `xim:msvc@<toolset>`: the package the manifest
 # names is the one that compiles, regardless of what this machine has.
 #
@@ -62,7 +63,7 @@ cd "$TMP"
 #    so that is the question to ask.
 if ! "$MCPP" toolchain list 2>&1 | grep -q "$TOOLSET"; then
     echo "SKIP: this index does not offer msvc $TOOLSET (publish window? offline?)"
-    exit 0
+    exit 77
 fi
 
 # 1) install it. Any failure from here on is a FAILURE.

@@ -12,7 +12,7 @@ import mcpp.build.stage;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -30,6 +30,8 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_schema;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
@@ -72,6 +74,38 @@ import mcpp.bmi_cache;
 
 namespace mcpp::build {
 
+// THE SYSTEM'S OWN HEADERS, FOR A ROW WHOSE TOOLCHAIN STATES NONE (SPEC-016
+// §3, `system-headers`). A row whose system the graph supplies has no paired
+// payload, and its compiler carries no headers of the system, so a resource
+// script's `winres.h` reaches neither of the include sources the toolchain
+// states. The provider the selection took names the package that has them.
+//
+// ONE QUESTION, ASKED BY BOTH STEPS THAT READ THE ANSWER: is the script
+// compiled by llvm-rc (which reads no INCLUDE of its own) for a row that
+// states no header source. A row that states its headers -- the SDK's, a
+// paired payload's -- resolves nothing, so preparing it installs no package
+// its build does not read. Where the provider names a package and it cannot
+// be installed, the build is refused with the package's name: a resource
+// compile left to fail on a missing header would name neither.
+static bool resource_headers_wanted(const mcpp::toolchain::Toolchain& tc,
+                                    const mcpp::build::resources::RcTool* tool,
+                                    std::string_view dialectId, bool msvcStyle) {
+    return tool && msvcStyle && tool->name().find("llvm-rc") != std::string::npos
+        && tc.base.msvc.sdkRoot.empty()
+        && mcpp::build::resources::system_include_dirs(tc, dialectId).empty();
+}
+
+static std::expected<std::filesystem::path, std::string> system_headers_root(PrepareState& state) {
+    auto const* p = chosen_provider(state);
+    if (!p || p->systemHeaders.empty()) return std::filesystem::path{};
+    auto dir = package_dir(state, std::string(p->systemHeaders), true);
+    if (!dir)
+        return std::unexpected(std::format(
+            "the provider '{}' of {} takes the system's headers from {}, and {}",
+            p->name, state.targetChoice.identity, p->systemHeaders, dir.error()));
+    return *dir / "include";
+}
+
 // The resource compiler of the plan's resource units, and each unit's flags.
 static std::expected<void, std::string>
 step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
@@ -80,11 +114,13 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
     const auto  dialectId = mcpp::toolchain::dialect_for(*state.tc).id;
-    const bool msvcStyle = (dialectId == "msvc");
 
     // Lazy + hard failure, exactly like nasm: a dropped resource
     // surfaces as "where did my icon go", which is unattributable.
     auto tool = rsrc::find_rc_tool(*state.tc, dialectId);
+    // The TOOL's style decides the spelling and the output (`.res` or a COFF
+    // object), not the dialect: clang on a GNU-ABI row may compile with llvm-rc.
+    const bool msvcStyle = tool ? tool->style == "msvc" : dialectId == "msvc";
     if (!tool) {
         return std::unexpected(std::format(
             "[resources] needs a Windows resource compiler for the "
@@ -98,9 +134,17 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     ctx.plan.rcPath  = tool->path;
     ctx.plan.rcStyle = tool->style;
 
+    // Below the toolchain's own include sources, never beside them.
+    std::filesystem::path systemHeaders;
+    if (resource_headers_wanted(*state.tc, &*tool, dialectId, msvcStyle)) {
+        auto headers = system_headers_root(state);
+        if (!headers) return std::unexpected(headers.error());
+        systemHeaders = *headers;
+    }
+
     // UTF-8 input, always. `[package]` metadata is user text and
     // routinely non-ASCII; without this llvm-rc refuses the script
-    // outright ("Non-ASCII 8-bit codepoint can't be interpreted in
+    // outright ("Non-ASCII 8-bit codepage can't be interpreted in
     // the current codepage") rather than mangling it, so a project
     // with a Chinese description could not build at all.
     //
@@ -113,15 +157,9 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     // plan with one package states them once.
     const std::string ip = msvcStyle ? "/I" : "-I";
     std::vector<std::string> systemIncludes;
-    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos) {
-        for (auto const& ev : state.tc->envOverrides) {
-            if (ev.key != "INCLUDE") continue;
-            // Shared splitter: `;` only. See rsrc::split_env_list --
-            // the drive colon is not a separator.
-            for (auto dir : rsrc::split_env_list(ev.value))
-                systemIncludes.push_back(ip + std::string(dir));
-        }
-    }
+    if (msvcStyle && tool->name().find("llvm-rc") != std::string::npos)
+        for (auto const& dir : rsrc::system_include_dirs(*state.tc, dialectId, systemHeaders))
+            systemIncludes.push_back(ip + dir.string());
     for (auto& ru : ctx.plan.resourceUnits) {
         if (auto target = rsrc::coff_target_flag(*tool, state.tc->targetTriple);
             !target.empty())
@@ -135,6 +173,84 @@ step13_resource_compiler(PrepareState& state, BuildContext& ctx) {
     return {};
 }
 
+// A SUBJECT is one package whose resources are planned: its manifest, the
+// directory its paths were written in, and the images it owns. Selection
+// decides the graph, not the ownership of an image within that graph.
+namespace {
+struct Subject {
+    const mcpp::manifest::Manifest* m;
+    std::filesystem::path           dir;
+    std::string                     owner;   // qualified package identity
+};
+}  // namespace
+
+static std::vector<Subject> resource_subjects(PrepareState& state, BuildContext& ctx) {
+    std::vector<Subject> subjects;
+    std::set<std::string> seenSubjects;
+    auto add_subject = [&](const auto& manifest, const auto& root) {
+        auto owner = mcpp::build::qualified_package_name(manifest);
+        if (seenSubjects.insert(owner).second)
+            subjects.push_back({&manifest, root, std::move(owner)});
+    };
+    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
+    for (auto const& pkg : state.packages) {
+        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
+        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
+            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
+        });
+        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
+    }
+    return subjects;
+}
+
+
+// ─── The per-subject manifest policy: code page and long paths ────────────
+//
+// The predicates step13 applies to every subject, as functions so the gate's
+// 400-line budget holds (split at the boundary the block already had).
+
+static bool subject_declares_own_manifest(const mcpp::manifest::Manifest& M,
+                                          const Subject& S, bool hostToolBuild)
+{
+    return hostToolBuild
+        && std::ranges::any_of(M.resources.files, [&](const auto& f) {
+               const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
+               return mcpp::build::resources::scan_rc(abs).declaresManifest;
+           });
+}
+
+static std::string_view target_code_page(const mcpp::manifest::Target& t,
+                                         bool hostToolBuild, bool ownManifest)
+{
+    if (!t.windowsCodePage.empty()) return t.windowsCodePage;
+    return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+}
+
+// `windows_long_paths` (design 2026-10-16 §11), with the same default: a
+// host tool is long-path aware unless it says otherwise.
+static bool target_long_paths(const mcpp::manifest::Target& t,
+                              bool hostToolBuild, bool ownManifest)
+{
+    const auto& stated = t.windowsLongPaths;
+    if (stated) return *stated;
+    return hostToolBuild && t.is_program() && !ownManifest;
+}
+
+// A test program carries the code page `[test] windows_code_page` gave it,
+// and nothing by default: the host-tool default is a program's.
+static bool target_takes_code_page(const mcpp::manifest::Target& t)
+{
+    return t.is_program() || t.kind == mcpp::manifest::Target::TestBinary;
+}
+
+// Whether an image carries an application manifest of mcpp's: a UTF-8 code
+// page or long paths asked for.
+static bool target_manifested(const mcpp::manifest::Target& t,
+                              bool hostToolBuild, bool ownManifest)
+{
+    return target_code_page(t, hostToolBuild, ownManifest) == "utf-8"
+        || target_long_paths(t, hostToolBuild, ownManifest);
+}
 std::expected<void, std::string> step13_windows_resources(PrepareState& state, BuildContext& ctx) {
     // ─── Windows resources: [resources] → a tracked link input (mcpp#365) ──
     //
@@ -148,7 +264,9 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     //      see a typo in `icon = …` at all and only the Windows job went red,
     //      which is the same "find out late" failure the hard error exists to
     //      remove. Existence is checked everywhere; only COMPILATION is PE-only.
-    //   3. On a non-PE target nothing is compiled — no units, no warning,
+    //   3. On a target whose programs Windows does not run (not PE, or a PE
+    //      row whose execution system is another, UEFI's) nothing is
+    //      compiled — no units, no warning,
     //      byte-identical build. This is what makes `cfg(windows)` unnecessary
     //      (and it could not be used anyway: the conditional channel carries
     //      BuildInputs only).
@@ -165,35 +283,22 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     // through `[resources] files`: both would sit at ordinal 1, the package
     // said nothing about code pages, and its own manifest is the one it ships.
     // A DECLARED `utf-8` beside such a manifest is refused below instead.
-    //
-    // A SUBJECT is one package whose resources are planned: its manifest, the
-    // directory its paths were written in, and the images it owns. Selection
-    // decides the graph, not the ownership of an image within that graph.
-    struct Subject {
-        const mcpp::manifest::Manifest* m;
-        std::filesystem::path           dir;
-        std::string                     owner;   // qualified package identity
-    };
-    std::vector<Subject> subjects;
-    std::set<std::string> seenSubjects;
-    auto add_subject = [&](const auto& manifest, const auto& root) {
-        auto owner = mcpp::build::qualified_package_name(manifest);
-        if (seenSubjects.insert(owner).second)
-            subjects.push_back({&manifest, root, std::move(owner)});
-    };
-    if (!state.workspacePlan()) add_subject(*state.m, *state.root);
-    for (auto const& pkg : state.packages) {
-        const auto owner = mcpp::build::qualified_package_name(pkg.manifest);
-        const bool ownsImage = std::ranges::any_of(ctx.plan.linkUnits, [&](const auto& lu) {
-            return lu.package == owner && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::SharedLibrary);
-        });
-        if (pkg.selectedMember || ownsImage) add_subject(pkg.manifest, pkg.root);
-    }
+    const auto subjects = resource_subjects(state, ctx);
     const bool hostToolBuild = state.overrides.tool_depth > 0;
     const auto trip = mcpp::toolchain::triple::parse(state.tc->targetTriple)
                           .value_or(mcpp::toolchain::triple::host_triple());
     const auto  dialectId = mcpp::toolchain::dialect_for(*state.tc).id;
-    const bool msvcStyle = (dialectId == "msvc");
+    // The output is the tool's (`.res` from rc.exe/llvm-rc, a COFF object from
+    // windres), found as the compile step below finds it (E3).
+    const auto rcTool = mcpp::build::resources::find_rc_tool(*state.tc, dialectId);
+    const bool msvcStyle = rcTool ? rcTool->style == "msvc" : dialectId == "msvc";
+    namespace rsrc = mcpp::build::resources;
+    std::filesystem::path systemHeaders;
+    if (resource_headers_wanted(*state.tc, rcTool ? &*rcTool : nullptr, dialectId, msvcStyle)) {
+        auto headers = system_headers_root(state);
+        if (!headers) return std::unexpected(headers.error());
+        systemHeaders = *headers;
+    }
 
     for (auto const& S : subjects) {
         const auto& M = *S.m;
@@ -204,32 +309,16 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                     && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary);
             });
         };
-        const bool ownManifest = hostToolBuild
-            && std::ranges::any_of(M.resources.files, [&](const auto& f) {
-                   const auto abs = (f.is_absolute() ? f : (S.dir / f)).lexically_normal();
-                   return mcpp::build::resources::scan_rc(abs).declaresManifest;
-               });
-        auto codePageOf = [&](const mcpp::manifest::Target& t) -> std::string_view {
-            if (!t.windowsCodePage.empty()) return t.windowsCodePage;
-            return (hostToolBuild && t.is_program() && !ownManifest) ? "utf-8" : "legacy";
+        const bool ownManifest = subject_declares_own_manifest(M, S, hostToolBuild);
+        auto codePageOf = [&](const mcpp::manifest::Target& t) {
+            return target_code_page(t, hostToolBuild, ownManifest);
         };
-        // `windows_long_paths` (design 2026-10-16 §11), with the same
-        // defaults: a host tool is long-path aware unless it says otherwise.
         auto longPathsOf = [&](const mcpp::manifest::Target& t) {
-            const auto& stated = t.windowsLongPaths;
-            if (stated) return *stated;
-            return hostToolBuild && t.is_program() && !ownManifest;
+            return target_long_paths(t, hostToolBuild, ownManifest);
         };
-        // A test program carries the code page `[test] windows_code_page`
-        // gave it, and nothing by default: the host-tool default is a
-        // program's.
-        auto takesCodePage = [](const mcpp::manifest::Target& t) {
-            return t.is_program() || t.kind == mcpp::manifest::Target::TestBinary;
-        };
-        // Whether an image carries an application manifest of mcpp's: a
-        // UTF-8 code page or long paths asked for.
+        auto takesCodePage = target_takes_code_page;
         auto manifested = [&](const mcpp::manifest::Target& t) {
-            return codePageOf(t) == "utf-8" || longPathsOf(t);
+            return target_manifested(t, hostToolBuild, ownManifest);
         };
         const bool anyUtf8Image = std::ranges::any_of(M.targets, [&](const auto& t) {
             return active_target(t) && takesCodePage(t) && manifested(t);
@@ -375,7 +464,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
 
                 // Author-written scripts: compiled once, linked into every image.
                 for (auto const& rcSrc : peUnits.empty() ? decltype(scriptFiles){} : scriptFiles) {
-                    auto scan = rsrc::scan_rc(rcSrc, rcIncludes);
+                    // The script's own directories, then the toolchain's: a
+                    // quoted `"winres.h"` is the toolchain's header, not a file
+                    // a build action produces (E3).
+                    auto scanIncludes = rcIncludes;
+                    for (auto const& d : rsrc::system_include_dirs(*state.tc, dialectId, systemHeaders))
+                        scanIncludes.push_back(d);
+                    auto scan = rsrc::scan_rc(rcSrc, scanIncludes);
                     if (scan.versionInfoNamedByString) {
                         // The mcpp#365 silent failure, caught on the way in. A
                         // degradation rather than a warning: the impact is exactly
@@ -412,7 +507,21 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                             "UTF-8</activeCodePage>` to your manifest and set "
                             "`windows_code_page = \"legacy\"`, or drop your manifest.",
                             rcSrc.filename().generic_string()));
-                    auto inputs = std::move(scan.inputs);
+                    // A name found nowhere is an input only when a build action
+                    // writes it. Otherwise the script's own preprocessing decides
+                    // (`#if __has_include`), or the resource compiler names it; a
+                    // build graph edge on a file nothing produces would only fail
+                    // in ninja, without the script's name.
+                    std::vector<std::filesystem::path> inputs;
+                    for (auto& in : scan.inputs) {
+                        std::error_code ec;
+                        const bool written = std::ranges::any_of(ctx.plan.actions, [&](auto const& act) {
+                            return std::ranges::any_of(act.outputs, [&](auto const& o) {
+                                return std::filesystem::path(o).filename() == in.filename();
+                            });
+                        });
+                        if (written || std::filesystem::exists(in, ec)) inputs.push_back(std::move(in));
+                    }
                     inputs.insert(inputs.end(), extraInputs.begin(), extraInputs.end());
                     if (auto a = add_unit(rcSrc, rcSrc.stem().string(),
                                           std::move(inputs),
@@ -527,7 +636,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 return {};
             };
 
-            if (trip.is_pe())
+            // Resources are a property of a program whose system reads them,
+            // not of the PE container: a UEFI application is a PE image the
+            // firmware loads, and `[resources]` compiled into it failed the
+            // build (design 2026-11-15 N16). The system table states it for
+            // the row's execution system (SPEC-016 §2.3).
+            auto const* sys = mcpp::toolchain::target::find_system(trip.execution_system());
+            if (trip.is_pe() && sys && sys->resources)
                 if (auto r = plan_resources(); !r) return std::unexpected(r.error());
         }
     }

@@ -83,7 +83,10 @@ host 工具条目。一份 `std` BMI 被机器上每个工程共享，实现以"
 构建成功后，每天至多一次，移除 `[cache] unused_days` 天（config.toml；默认 30，
 `0` 关闭）内没有构建使用过的条目，包、host 工具与 `std` 均在其列；命中即记为使用。
 `path` host 工具的源树变化时，写入新条目的同时移除同一源树在旧 stamp 下的条目
-（2026.10.31.3+）。构建前，若所写入的文件系统可用空间不足 2 GiB，mcpp 给出警告。
+（2026.10.31.3+）。构建前，若所写入的文件系统可用空间少于 2 GiB 与"该配置上一次构建写入量的 1.25 倍"中的较大者
+（记录在 `<输出目录>/.mcpp-written`），mcpp 给出警告并说明两者（2026.11.8.1+）。`mcpp cache prune`
+与 `mcpp cache gc --older-than` 也按年龄收集 `std` 模块条目；`gc --max-size` 只对包与宿主工具做
+预算（2026.11.8.1+）。
 
 ## 一个包已发布的版本
 
@@ -182,16 +185,20 @@ dependency graph:
       requested by huxdemo.comp@0.1.0 as 'fw' in [dependencies]
       linked static (default)
       instances: target
+      root: /work/fw
 ```
 
-`instances` 说明这个包是为目标编译、为构建程序编译，还是两者都有（2026.10.11.1+）。
+`root` 是构建所读的包根，打了补丁的依赖为其变体的包根（2026.11.9.1+；docs/05）。`instances` 说明这个包是为目标编译、为构建程序编译，还是两者都有（2026.10.11.1+）。
 `mcpp why build-programs` 列出构建程序图：每个程序、它使用的库、编译所依据的身份与其二进制。
 `mcpp why compat` 列出每次使用弃用读法的位置与移除它的版本（51 —— 支持的版本）。
 
 同一张图记录在 `target/<triple>/<fp>/resolution.json` 的 `graph` 下，
 每个包一条，根在最前：`package`（规范身份、命名空间、名字、版本、来源）、
-`root`、`requested_by`(`requester`、`key`、`table`)，对库还有 `link`
+`root`、`requested_by`(`requester`、`key`、`table`)、`manifest_dir`（包根），对库还有 `link`
 (`form`、`reason`)。
+
+`mcpp why target` 按序列出请求的候选（docs/21），`mcpp why flags [<unit>]` 列出单元命令行的每个参数及给出它的层，
+`mcpp why platform` 列出平台定义的行与所服务的身份（docs/35）；后两者不属于不给话题时的报告（2026.11.9.1+）。
 
 话题是 `toolchain`、`runtime`、`deps` 或 `runners`，不给话题时四者全报。
 `--target` 与 `--toolchain` 把报告变成对当前目录并不使用的那一对的查询，
@@ -239,7 +246,8 @@ tip: the refreshed package index `mcpplibs` requires a newer mcpp; this run used
 `--offline`（或 `MCPP_OFFLINE=1`）在单次调用中禁止网络，宁可失败也不拉取。
 `--locked` 在解析结果与 `mcpp.lock` 不一致时失败，而不是改写它，这正是 CI
 作业需要的形状。`mcpp index pin <name> <rev>` 把一个自定义索引的某个
-commit 记进 `mcpp.toml`;`mcpp index unpin` 移除它。
+commit 记进 `mcpp.toml`;`mcpp index unpin` 移除它。二者编辑写在一行之内的
+`[indices]` 条目；内联表跨多行的条目会被拒绝。
 
 ## 下载进度
 
@@ -626,7 +634,7 @@ side_effect = false
 
 ## 当前边界
 
-- `mcpp why --format json` 对 `toolchain`、`sources`、`tool`、`payload`、`build-programs` 与 `compat` 话题有定义。其余话题报告 `'<topic>' has no machine-readable shape yet` 并以非零退出。
+- `mcpp why --format json` 对 `toolchain`、`sources`、`tool`、`payload`、`build-programs`、`compat`、`target`、`flags` 与 `platform` 话题有定义。其余话题报告 `'<topic>' has no machine-readable shape yet` 并以非零退出。
 - `mcpp search` 按子串匹配；没有字段选择器，也没有把搜索限定到单个命名
   空间的办法。
 - `mcpp clean --stale` 读 `target/.build_cache`，它保存的近期条目数量

@@ -224,6 +224,16 @@ strip_artifact(const std::filesystem::path& artifact,
             "match this toolchain.",
             artifact.filename().string()));
 
+    // A FILE NO STRIP READS (2026.11.13.1): a row's seal may wrap its link's
+    // output in a container of its own (the DOS row's MZ stub before an ELF32
+    // executable), which is packed as the seal left it; stripping it would
+    // undo the seal. An archive is read as one.
+    if (shape != ArtifactShape::StaticArchive
+        && mcpp::pack::binfmt::identify(artifact).format == mcpp::pack::binfmt::Format::Unknown) {
+        out.outcome = StripOutcome::NotApplicable;
+        return out;
+    }
+
     out.before = size_of(artifact);
 
     // ── separate, when asked ──────────────────────────────────────────

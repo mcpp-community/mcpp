@@ -292,7 +292,9 @@ jobs:
           # `openkal-llvm-runtime`'s own CI under qemu; it has no runner here to
           # execute on, and a build-only cell in a workflow whose point is
           # running would be the weaker claim.
-          for t in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
+          # The macOS identity over openkal is `aarch64-macos-musl` on every host (SPEC-016 §4): on a
+          # macOS host `aarch64-macos` is the Apple SDK's.
+          for t in x86_64-linux-gnu aarch64-macos-musl x86_64-windows-gnu; do
             rm -rf target
             # The upstream manifest may pin an older LLVM line. The invocation
             # selects this candidate explicitly, including on the ARM64 host.
@@ -301,12 +303,12 @@ jobs:
             [ -n "$a" ] || { echo "::error::$t produced no artefact on ${{ matrix.host }}"; exit 1; }
             case "$t" in
               x86_64-windows-gnu) cp "$a" "$RUNNER_TEMP/out/windows.exe" ;;
-              aarch64-macos)      cp "$a" "$RUNNER_TEMP/out/macos"       ;;
+              aarch64-macos-musl) cp "$a" "$RUNNER_TEMP/out/macos"       ;;
               *)                  cp "$a" "$RUNNER_TEMP/out/linux"       ;;
             esac
             "$READOBJ" --file-headers "$a" > "$RUNNER_TEMP/out/$t.headers.txt"
             case "$t" in
-              aarch64-macos) arch=aarch64 ;;
+              aarch64-macos-musl) arch=aarch64 ;;
               *) arch=x86_64 ;;
             esac
             grep -q "Arch: $arch" "$RUNNER_TEMP/out/$t.headers.txt" \
@@ -319,7 +321,7 @@ jobs:
             thread_bin=$(cat "$RUNNER_TEMP/threads-binary.txt")
             case "$t" in
               x86_64-windows-gnu) thread_output=windows-threads.exe ;;
-              aarch64-macos) thread_output=macos-threads ;;
+              aarch64-macos-musl) thread_output=macos-threads ;;
               *) thread_output=linux-threads ;;
             esac
             cp "$thread_bin" "$RUNNER_TEMP/out/$thread_output"
@@ -355,7 +357,7 @@ jobs:
       # costs.
       #
       # LEG 3 IS THE ENGINE: the same idiom, over the openkal stack, for
-      # `aarch64-macos`, built by the mcpp under test. Measured on the token
+      # `aarch64-macos-musl`, built by the mcpp under test. Measured on the token
       # this step was written for, the two readings are
       #
       #     -fno-builtin-memset_pattern16   1 reference, and the link fails
@@ -444,10 +446,10 @@ jobs:
           [ "$(refs "$W/narrow.o")" = 1 ] || { echo "::error::leg 2: clang now honours -fno-builtin-memset_pattern16, and mcpp.toolchain.cenv can emit the narrower token"; exit 1; }
           [ "$(refs "$W/blunt.o")" = 0 ] || { echo "::error::leg 2: -fno-builtin no longer withdraws the pattern fill"; exit 1; }
 
-          (cd "$W" && "$MCPP_UNDER_TEST" build --target aarch64-macos)
+          (cd "$W" && "$MCPP_UNDER_TEST" build --target aarch64-macos-musl)
           obj=$(find "$W/target" -name 'main.o' | head -1)
           [ -n "$obj" ] || { echo "::error::leg 3 produced no object to read"; exit 1; }
-          echo "engine, aarch64-macos over openkal: $(refs "$obj")"
+          echo "engine, aarch64-macos-musl over openkal: $(refs "$obj")"
           [ "$(refs "$obj")" = 0 ] || { echo "::error::leg 3: builtins = \"iso\" did not withdraw memset_pattern16"; exit 1; }
 
       - uses: actions/upload-artifact@v4

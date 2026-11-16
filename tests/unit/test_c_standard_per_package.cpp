@@ -9,15 +9,17 @@
 // per-unit C flags, which the compile edge, the scan edge and both build
 // databases read after the file-level flags.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.plan;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.source_kind;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::build;
 
@@ -143,7 +145,7 @@ Result plan_for(const Fixture& f) {
 
     auto plan = make_plan(app, f.tc, {}, graph, topo, packages,
                           appRoot, appRoot / "target" / "t", {}, {}, {});
-    EXPECT_TRUE(plan.has_value()) << (plan ? "" : plan.error());
+    if (auto&& failed = expect(plan.has_value()); !failed) failed << (plan ? "" : plan.error());
     Result r;
     if (!plan) return r;
     for (auto const& cu : plan->compileUnits) {
@@ -166,48 +168,48 @@ bool has_std(const std::vector<std::string>& v) {
 
 // The report's case: a dependency that declares `gnu11` compiles its C units at
 // `gnu11`, and not at the consumer's standard.
-TEST(CStandardPerPackage, ADependencyCompilesAtItsOwnStandard) {
+UTest a_dependency_compiles_at_its_own_standard{"CStandardPerPackage/ADependencyCompilesAtItsOwnStandard", [] {
     auto r = plan_for(Fixture{});
-    ASSERT_FALSE(r.cflags["cdep.c"].empty());
-    EXPECT_EQ(r.cflags["cdep.c"].back(), "-std=gnu11");
-    EXPECT_EQ(r.cflags["more.c"].back(), "-std=gnu11");
-}
+    expect(fatal(!(r.cflags["cdep.c"].empty())));
+    expect(eq(r.cflags["cdep.c"].back(), "-std=gnu11"));
+    expect(eq(r.cflags["more.c"].back(), "-std=gnu11"));
+}};
 
 // The consumer's standard reaches the consumer's own C units and no one else's.
-TEST(CStandardPerPackage, TheRootsStandardStaysInTheRoot) {
+UTest the_roots_standard_stays_in_the_root{"CStandardPerPackage/TheRootsStandardStaysInTheRoot", [] {
     Fixture f;
     f.rootStandard = "c99";
     auto r = plan_for(f);
-    ASSERT_FALSE(r.cflags["app.c"].empty());
-    EXPECT_EQ(r.cflags["app.c"].back(), "-std=c99");
-    EXPECT_FALSE(has(r.cflags["plain.c"], "-std=c99"));
-    EXPECT_FALSE(has_std(r.cflags["plain.c"]))
+    expect(fatal(!(r.cflags["app.c"].empty())));
+    expect(eq(r.cflags["app.c"].back(), "-std=c99"));
+    expect(!has(r.cflags["plain.c"], "-std=c99"));
+    expect(!has_std(r.cflags["plain.c"]))
         << "a package that declares nothing compiles at the file-level default";
-    EXPECT_EQ(r.cflags["cdep.c"].back(), "-std=gnu11");
-}
+    expect(eq(r.cflags["cdep.c"].back(), "-std=gnu11"));
+}};
 
 // A declaration equal to the default adds nothing: the file-level line already
 // carries it, so the command line is unchanged.
-TEST(CStandardPerPackage, DeclaringTheDefaultAddsNothing) {
+UTest declaring_the_default_adds_nothing{"CStandardPerPackage/DeclaringTheDefaultAddsNothing", [] {
     Fixture f;
     f.depStandard = "c11";
     auto r = plan_for(f);
-    EXPECT_FALSE(has_std(r.cflags["cdep.c"]));
-}
+    expect(!has_std(r.cflags["cdep.c"]));
+}};
 
 // A C standard is a C setting: no C++ unit receives one.
-TEST(CStandardPerPackage, NoCxxUnitReceivesACStandard) {
+UTest no_cxx_unit_receives_ac_standard{"CStandardPerPackage/NoCxxUnitReceivesACStandard", [] {
     Fixture f;
     f.rootStandard = "c99";
     auto r = plan_for(f);
-    EXPECT_FALSE(has_std(r.cxxflags["main.cpp"]));
-    EXPECT_FALSE(has_std(r.cflags["main.cpp"]));
-}
+    expect(!has_std(r.cxxflags["main.cpp"]));
+    expect(!has_std(r.cflags["main.cpp"]));
+}};
 
 // cl.exe compiles C in its default mode and takes no C `/std:` from mcpp yet
 // (W3b). Nothing is added to a unit, and every declaring package that has C
 // units is recorded once, so the backend can say so in one line.
-TEST(CStandardPerPackage, ClRecordsWhatItDoesNotApply) {
+UTest cl_records_what_it_does_not_apply{"CStandardPerPackage/ClRecordsWhatItDoesNotApply", [] {
     Fixture f;
     f.tc = cl_like();
     f.rootStandard  = "c11";
@@ -215,29 +217,29 @@ TEST(CStandardPerPackage, ClRecordsWhatItDoesNotApply) {
     auto r = plan_for(f);
     for (auto const& [file, v] : r.cflags)
         for (auto const& flag : v)
-            EXPECT_FALSE(flag.starts_with("-std=") || flag.starts_with("/std:c"))
+            expect(!(flag.starts_with("-std=") || flag.starts_with("/std:c")))
                 << file << ": " << flag;
-    EXPECT_EQ(r.notApplied, (std::vector<std::string>{"app (c11)", "cdep (gnu11)"}))
+    expect(eq(r.notApplied, (std::vector<std::string>{"app (c11)", "cdep (gnu11)"})))
         << "a package with no C units (quiet) is not reported";
-}
+}};
 
 // With no cl.exe in the build, nothing is recorded as unapplied.
-TEST(CStandardPerPackage, GnuDriversApplyEverythingTheyAreGiven) {
+UTest gnu_drivers_apply_everything_they_are_given{"CStandardPerPackage/GnuDriversApplyEverythingTheyAreGiven", [] {
     Fixture f;
     f.rootStandard = "c99";
     auto r = plan_for(f);
-    EXPECT_TRUE(r.notApplied.empty());
-}
+    expect(r.notApplied.empty());
+}};
 
 // A target's entry `main` written in C is a unit of the root package: it
 // compiles at the root's standard, as a scanned C unit does.
-TEST(CStandardPerPackage, ACEntryMainTakesItsPackagesStandard) {
+UTest ac_entry_main_takes_its_packages_standard{"CStandardPerPackage/ACEntryMainTakesItsPackagesStandard", [] {
     Fixture f;
     f.rootStandard = "c99";
     f.cEntry = true;
     auto r = plan_for(f);
-    ASSERT_TRUE(r.cflags.contains("entry.c"))
+    expect(fatal(r.cflags.contains("entry.c")))
         << "the plan has no unit for the entry main";
-    ASSERT_FALSE(r.cflags["entry.c"].empty());
-    EXPECT_EQ(r.cflags["entry.c"].back(), "-std=c99");
-}
+    expect(fatal(!(r.cflags["entry.c"].empty())));
+    expect(eq(r.cflags["entry.c"].back(), "-std=c99"));
+}};

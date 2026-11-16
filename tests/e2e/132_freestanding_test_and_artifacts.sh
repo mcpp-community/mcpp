@@ -27,11 +27,11 @@ for d in "$HOME"/.mcpp/registry/data/xpkgs/*-x-qemu-riscv/*/bin \
          "$HOME"/.xlings/data/xpkgs/*-x-qemu-riscv/*/bin; do
     [[ -x "$d/qemu-system-riscv64" ]] && QEMU="$d/qemu-system-riscv64"
 done
-[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 0; }
+[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 77; }
 
 MH="${MCPP_HOME:-$HOME/.mcpp}"
 [[ -d "$MH/registry/data/xpkgs/xim-x-picolibc-riscv" ]] \
-    || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 0; }
+    || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 77; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -40,6 +40,8 @@ cd "$TMP"
 # ── the board-support package (same shape as 131) ───────────────────────────
 "$MCPP" new board > /dev/null
 cd board
+# The scaffold's tests use mtest; this test's do not.
+perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
 rm -f src/main.cpp tests/*.cpp 2>/dev/null || true
 
 cat > mcpp.toml <<'EOF'
@@ -100,6 +102,8 @@ EOF
 cd "$TMP"
 "$MCPP" new fw > /dev/null
 cd fw
+# The scaffold's tests use mtest; this test's do not.
+perl -0pi -e 's/\n\[dev-dependencies\]\nmcpplibs\.mtest = "[^"]*"\n//' mcpp.toml
 rm -f tests/*.cpp 2>/dev/null || true
 
 cat > src/main.cpp <<'EOF'

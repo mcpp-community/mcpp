@@ -1,12 +1,14 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.config;
 import mcpplibs.os.platform;
 import mcpp.runtime.binding;
 import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.registry;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain;
 
@@ -31,7 +33,7 @@ using namespace mcpp::toolchain;
 // takes the ordinary route, and the sweep is precise about what it eats.
 // Nothing here asserts something this platform cannot express.
 
-TEST(ToolchainRemove, AnOrdinaryPayloadIsJustDeleted) {
+UTest an_ordinary_payload_is_just_deleted{"ToolchainRemove/AnOrdinaryPayloadIsJustDeleted", [] {
     // The common path must not grow a `.trash-` directory: moving files aside
     // is the fallback, and a fallback that fires always is not a fallback.
     auto dir = std::filesystem::temp_directory_path()
@@ -41,18 +43,18 @@ TEST(ToolchainRemove, AnOrdinaryPayloadIsJustDeleted) {
     std::ofstream{dir / "14.44.35207" / "bin" / "cl.exe"} << "not a compiler";
 
     std::error_code ec;
-    EXPECT_TRUE(remove_payload_tree(dir / "14.44.35207", ec));
-    EXPECT_FALSE(std::filesystem::exists(dir / "14.44.35207"));
+    expect(bool(remove_payload_tree(dir / "14.44.35207", ec)));
+    expect(!std::filesystem::exists(dir / "14.44.35207"));
 
     bool anyTrash = false;
     for (auto& e : std::filesystem::directory_iterator(dir, ec))
         anyTrash |= e.path().filename().string().starts_with(".trash-");
-    EXPECT_FALSE(anyTrash) << "a deletable payload was parked instead of deleted";
+    expect(!anyTrash) << "a deletable payload was parked instead of deleted";
 
     std::filesystem::remove_all(dir, ec);
-}
+}};
 
-TEST(ToolchainRemove, TheSweepDoesNotTouchAnotherVersionThatHasNoFilesYet) {
+UTest the_sweep_does_not_touch_another_version_that_has_no_files_yet{"ToolchainRemove/TheSweepDoesNotTouchAnotherVersionThatHasNoFilesYet", [] {
     // An install populates a version directory over time, so a DIFFERENT
     // version being extracted right now is briefly indistinguishable from a
     // leftover skeleton. Two mcpp processes against one MCPP_HOME is ordinary
@@ -70,16 +72,16 @@ TEST(ToolchainRemove, TheSweepDoesNotTouchAnotherVersionThatHasNoFilesYet) {
 
     sweep_parked_payloads(pkgRoot, mine);
 
-    EXPECT_FALSE(std::filesystem::exists(mine)) << "the named skeleton survived";
-    EXPECT_TRUE(std::filesystem::exists(theirs))
+    expect(!std::filesystem::exists(mine)) << "the named skeleton survived";
+    expect(std::filesystem::exists(theirs))
         << "swept a version this command was not about — that is someone "
            "else's install being extracted";
 
     std::error_code ec;
     std::filesystem::remove_all(pkgRoot, ec);
-}
+}};
 
-TEST(ToolchainRemove, TheSweepDeletesParkedPayloadsAndNothingElse) {
+UTest the_sweep_deletes_parked_payloads_and_nothing_else{"ToolchainRemove/TheSweepDeletesParkedPayloadsAndNothingElse", [] {
     // The sweep runs before every install and remove, so it must be precise:
     // `.trash-*` goes, an installed version directory beside it stays.
     auto pkgRoot = std::filesystem::temp_directory_path()
@@ -92,16 +94,16 @@ TEST(ToolchainRemove, TheSweepDeletesParkedPayloadsAndNothingElse) {
 
     sweep_parked_payloads(pkgRoot, {});
 
-    EXPECT_FALSE(std::filesystem::exists(pkgRoot / ".trash-14.44.35207-1"))
+    expect(!std::filesystem::exists(pkgRoot / ".trash-14.44.35207-1"))
         << "parked payload was not swept";
-    EXPECT_TRUE(std::filesystem::exists(pkgRoot / "14.44.35207" / "bin" / "cl.exe"))
+    expect(std::filesystem::exists(pkgRoot / "14.44.35207" / "bin" / "cl.exe"))
         << "the sweep deleted an installed toolset";
 
     std::error_code ec;
     std::filesystem::remove_all(pkgRoot, ec);
-}
+}};
 
-TEST(ToolchainRemove, ADirectorySkeletonWithNoFilesCountsAsRemoved) {
+UTest a_directory_skeleton_with_no_files_counts_as_removed{"ToolchainRemove/ADirectorySkeletonWithNoFilesCountsAsRemoved", [] {
     // Windows can refuse to delete an empty DIRECTORY when a process has it
     // as its current directory — mspdbsrv.exe is launched inside the payload,
     // so this is the ordinary tail of a /Zi build with the toolset being
@@ -116,13 +118,13 @@ TEST(ToolchainRemove, ADirectorySkeletonWithNoFilesCountsAsRemoved) {
     std::filesystem::create_directories(dir / "14.44.35207" / "bin" / "Hostx64" / "x64");
 
     std::error_code ec;
-    EXPECT_TRUE(remove_payload_tree(dir / "14.44.35207", ec))
+    expect(bool(remove_payload_tree(dir / "14.44.35207", ec)))
         << "a payload with no files left was reported as still installed";
 
     std::filesystem::remove_all(dir, ec);
-}
+}};
 
-TEST(ToolchainRemove, TheSweepAlsoClearsAFileLessSkeleton) {
+UTest the_sweep_also_clears_a_file_less_skeleton{"ToolchainRemove/TheSweepAlsoClearsAFileLessSkeleton", [] {
     // The deferral half: whatever the removal could not delete goes on the
     // next lifecycle command, once the process holding it has exited.
     auto pkgRoot = std::filesystem::temp_directory_path()
@@ -134,14 +136,14 @@ TEST(ToolchainRemove, TheSweepAlsoClearsAFileLessSkeleton) {
 
     sweep_parked_payloads(pkgRoot, pkgRoot / "14.44.35207");
 
-    EXPECT_FALSE(std::filesystem::exists(pkgRoot / "14.44.35207"))
+    expect(!std::filesystem::exists(pkgRoot / "14.44.35207"))
         << "the empty skeleton survived the sweep";
-    EXPECT_TRUE(std::filesystem::exists(pkgRoot / "14.52.36629" / "bin" / "cl.exe"))
+    expect(std::filesystem::exists(pkgRoot / "14.52.36629" / "bin" / "cl.exe"))
         << "the sweep ate an installed toolset";
 
     std::error_code ec;
     std::filesystem::remove_all(pkgRoot, ec);
-}
+}};
 
 // ─── The declared C runtime payload (mcpp#660) ─────────────────────────────
 //
@@ -162,53 +164,53 @@ mcpp::config::GlobalConfig unreachable_cfg() {
 
 } // namespace
 
-TEST(DeclaredRuntime, ABindingThatLocatesItsPayloadIsLeftAlone) {
+UTest a_binding_that_locates_its_payload_is_left_alone{"DeclaredRuntime/ABindingThatLocatesItsPayloadIsLeftAlone", [] {
     auto cfg = unreachable_cfg();
     mcpp::runtime::RuntimeBinding binding;
     binding.runtimeId = "glibc@2.44.3";
     binding.libraryDirs = {"/store/xim-x-glibc/2.44.3/lib64"};
     const auto before = binding.libraryDirs;
-    EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false);
-    EXPECT_EQ(binding.libraryDirs, before);
-    EXPECT_EQ(binding.runtimeId, "glibc@2.44.3");
-}
+    expect(eq(ensure_declared_runtime(cfg, binding).value_or(true), false));
+    expect(eq(binding.libraryDirs, before));
+    expect(eq(binding.runtimeId, "glibc@2.44.3"));
+}};
 
 // A provider that binds no payload (`ucrt` is an OS component) and an absent
 // identity are not requests to install anything.
-TEST(DeclaredRuntime, OnlyAGlibcPayloadIsInstalled) {
+UTest only_a_glibc_payload_is_installed{"DeclaredRuntime/OnlyAGlibcPayloadIsInstalled", [] {
     auto cfg = unreachable_cfg();
     for (auto id : {"", "ucrt@10.0.26100.0", "macos_sdk@15.0", "glibc"}) {
         mcpp::runtime::RuntimeBinding binding;
         binding.runtimeId = id;
-        EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false) << id;
-        EXPECT_TRUE(binding.libraryDirs.empty()) << id;
+        expect(eq(ensure_declared_runtime(cfg, binding).value_or(true), false)) << id;
+        expect(binding.libraryDirs.empty()) << id;
     }
-}
+}};
 
 // Off Linux there is no glibc payload to provide, whatever the identity says.
-TEST(DeclaredRuntime, NothingIsInstalledOffLinux) {
+UTest nothing_is_installed_off_linux{"DeclaredRuntime/NothingIsInstalledOffLinux", [] {
     if constexpr (mcpplibs::os::is_linux)
-        GTEST_SKIP() << "the Linux path is exercised by e2e 700";
+        skip("the Linux path is exercised by e2e 700");
     auto cfg = unreachable_cfg();
     mcpp::runtime::RuntimeBinding binding;
     binding.runtimeId = "glibc@2.44.3";
-    EXPECT_EQ(ensure_declared_runtime(cfg, binding).value_or(true), false);
-}
+    expect(eq(ensure_declared_runtime(cfg, binding).value_or(true), false));
+}};
 
 // Which toolchains run on a C runtime payload: a GNU gcc and an llvm on
 // Linux. Any other toolchain must not cause a runtime download.
-TEST(DeclaredRuntime, OnlyToolchainsOnARuntimePayloadNeedIt) {
+UTest only_toolchains_on_a_runtime_payload_need_it{"DeclaredRuntime/OnlyToolchainsOnARuntimePayloadNeedIt", [] {
     XimToolchainPackage gcc;   gcc.ximName = "gcc";   gcc.needsGccPostInstallFixup = true;
     XimToolchainPackage llvm;  llvm.ximName = "llvm";
     XimToolchainPackage musl;  musl.ximName = "musl-gcc";
     XimToolchainPackage msvc;  msvc.ximName = "msvc";
     if constexpr (mcpplibs::os::is_windows) {
         for (auto const* p : {&gcc, &llvm, &musl, &msvc})
-            EXPECT_TRUE(runtime_payload_kind(*p).empty()) << p->ximName;
+            expect(runtime_payload_kind(*p).empty()) << p->ximName;
     } else {
-        EXPECT_EQ(runtime_payload_kind(gcc), "gcc");
-        EXPECT_EQ(runtime_payload_kind(llvm), "llvm");
-        EXPECT_TRUE(runtime_payload_kind(musl).empty());
-        EXPECT_TRUE(runtime_payload_kind(msvc).empty());
+        expect(eq(runtime_payload_kind(gcc), "gcc"));
+        expect(eq(runtime_payload_kind(llvm), "llvm"));
+        expect(runtime_payload_kind(musl).empty());
+        expect(runtime_payload_kind(msvc).empty());
     }
-}
+}};

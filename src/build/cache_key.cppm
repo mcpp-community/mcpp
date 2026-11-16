@@ -54,7 +54,7 @@
 export module mcpp.build.cache_key;
 
 import std;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.detect;
@@ -187,6 +187,7 @@ struct BuildAxes {
     // C
     std::string optLevel;
     bool        debug = false;
+    bool        debugLines = false;   // debug = "lines"
     bool        lto   = false;
     bool        strip = false;
     bool        ndebug = false;
@@ -364,6 +365,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"pic", b.pic},
         {"crt", b.crt},
     };
+    if (b.debugLines) j["profile"]["debug"] = "lines";
     j["package"] = {
         {"index", p.indexName},
         {"name", p.packageName},
@@ -409,7 +411,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "minplat",  b.minPlatformVersion);
     // C
     put(s, "opt",      b.optLevel);
-    put(s, "debug",    b.debug ? "1" : "0");
+    put(s, "debug",    b.debug ? (b.debugLines ? "lines" : "1") : "0");
     put(s, "lto",      b.lto   ? "1" : "0");
     put(s, "strip",    b.strip ? "1" : "0");
     // Only when on, so a key computed before these existed is unchanged.
@@ -417,6 +419,13 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     if (b.trimPaths) put(s, "trim", "1");
     put(s, "pic",      b.pic   ? "1" : "0");
     put(s, "crt",      b.crt);
+    // THE FORM IN WHICH THE MODEL REACHES A C UNIT. Until 2026.11.12.1 the
+    // model's word and the C standard's were one word on the C line
+    // (flags.cppm), so a C object of a build that states a model named the
+    // static C library whatever the model was, and this key did not tell it
+    // from one built since. Only where a model is stated, so every other key
+    // is unchanged.
+    if (!b.crt.empty()) put(s, "crtform", "2");
     // D
     put(s, "index",    p.indexName);
     put(s, "pkg",      p.packageName);
@@ -494,7 +503,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     if (auto ft = mcpp::toolchain::triple::parse(tc.targetTriple))
         if (auto spec = mcpp::freestanding::resolve(*ft))
             b.targetImpliedFlags =
-                mcpp::freestanding::compile_flags(*spec, tc.targetCxxRuntime);
+                mcpp::freestanding::compile_flags(*spec, tc.targetCxxRuntime, tc.hostedC);
     b.stdlibId        = tc.stdlibId;
     b.stdlibVersion   = tc.stdlibVersion;
 
@@ -579,6 +588,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
 
     b.optLevel        = rootManifest.buildConfig.optLevel;
     b.debug           = rootManifest.buildConfig.debug;
+    b.debugLines      = rootManifest.buildConfig.debugLines;
     b.lto             = rootManifest.buildConfig.lto;
     b.strip           = rootManifest.buildConfig.strip;
     b.ndebug          = rootManifest.buildConfig.ndebug;

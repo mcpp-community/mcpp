@@ -118,6 +118,17 @@ struct Toolchain {
     // and run-time type information off for every unit — right when nothing can
     // throw, and wrong when something can.
     bool                                targetCxxRuntime = false;
+    // THE C ENVIRONMENT IS HOSTED (mcpp#911 G3): a sysroot that provides
+    // `hosted-standard-library`, or a platform provider that states `hosted =
+    // true`, gives a bare-metal row a C library with `main`; `-ffreestanding` is
+    // then not added and `main` is not treated as freestanding.
+    bool                                hostedC = false;
+    // THE PAYLOAD A PAIRED PROVIDER SUPPLIES THE SYSTEM FROM (SPEC-016 §6):
+    // clang aimed at `x86_64-windows-gnu` takes the MinGW-w64 payload as its
+    // sysroot, C library and C++ runtime (libstdc++). A base package on that
+    // row is the same root with the run-times its layers state (E9: libc++,
+    // compiler-rt; `base.layers.cxx` says which). Empty otherwise.
+    std::filesystem::path                pairedSysroot;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `TargetSide::cAbi.prebuilt()`, recorded
@@ -229,6 +240,9 @@ struct Toolchain {
     // GCC/libc++ answer 20; MSVC answers 20 from cl 19.38 (VS 2022 17.8,
     // microsoft/STL#3977) and 23 below that.
     int                                 importStdMinLevel = 0;
+    // Why no std module was found, when the compiler did not answer the
+    // question (its probe failed); empty when it answered that it has none.
+    std::string                         stdModuleUnanswered;
 
     // Something about HOW this toolchain was resolved that the user has to be
     // told, but which is not a failure. Non-empty ⇒ the caller MUST surface it.
@@ -495,6 +509,13 @@ struct BmiTraits {
 
 BmiTraits bmi_traits(const Toolchain& tc);
 
+// Whether the compiler has C++ named modules: every family mcpp drives does,
+// except a GCC before 14, which accepts neither `-fmodules` nor P1689 (DJGPP's
+// GCC 12.2.0, measured). A GCC version that does not parse is taken as current.
+// Its C++ units that declare and import no module still build, as translation
+// units without module flags.
+bool compiles_modules(const Toolchain& tc);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -607,8 +628,17 @@ bool target_supports_full_static(std::string_view targetTriple, bool hostCapabil
     if (t->is_mach_o()) return false;
 
     // Linux ELF — glibc or musl, native or cross. This is the line that was
-    // previously gated on the HOST being Linux.
-    return t->os == "linux";
+    // previously gated on the HOST being Linux. And an ELF system whose C
+    // library a platform describes (FreeBSD's base holds libc.a): a static
+    // linkage there is a static program (design 2026-11-10 E7; `--mode static`
+    // packed a dynamic one, mcpp#911 N8).
+    return t->os == "linux" || t->c_library_by_platform();
+}
+
+bool compiles_modules(const Toolchain& tc) {
+    if (tc.compiler != CompilerId::GCC) return true;
+    const int major = std::atoi(tc.version.c_str());
+    return major == 0 || major >= 14;
 }
 
 BmiTraits bmi_traits(const Toolchain& tc) {
@@ -667,8 +697,8 @@ BmiTraits bmi_traits(const Toolchain& tc) {
         .needsPrebuiltModulePath = false,
         .scanNeedsFModules = true,
         // GCC: -fmodules on every TU; BMIs implicit in cwd/gcm.cache, no
-        // std=/search flags needed.
-        .compileModulesFlag = " -fmodules",
+        // std=/search flags needed. A GCC without modules is given none.
+        .compileModulesFlag = compiles_modules(tc) ? " -fmodules" : "",
         .stdBmiUsePrefix = "",
         .stdCompatBmiUsePrefix = "",
         .moduleFileUsePrefix = "",

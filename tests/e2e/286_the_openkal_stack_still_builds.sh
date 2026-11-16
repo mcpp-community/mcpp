@@ -92,7 +92,7 @@ if ! out="$("$MCPP" build 2>&1)"; then
     case "$out" in
       *"not found in the synced index"*|*"install_packages failed"*)
         echo "SKIP: the openkal packages are not reachable from here"
-        exit 0 ;;
+        exit 77 ;;
     esac
     echo "FAIL: the openkal stack did not build"
     printf '%s\n' "$out" | grep -iE 'error' | head -5

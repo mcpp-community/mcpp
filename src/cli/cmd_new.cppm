@@ -1,18 +1,17 @@
 // mcpp.cli.cmd_new — CLI parsing + routing for `mcpp new`.
 // Implementation lives in mcpp.scaffold.create.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_new;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.scaffold;
 import mcpp.scaffold.create;
 import mcpp.scaffold.project_name;
 import mcpp.ui;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -40,7 +39,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     std::string name = parsed.positional(0);
     if (name.empty()) {
-        std::println(stderr, "error: `mcpp new` requires a package name (e.g. `mcpp new hello`)");
+        std::println(libc::stderr(), "error: `mcpp new` requires a package name (e.g. `mcpp new hello`)");
         return 2;
     }
 
@@ -54,7 +53,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     // `--template` exact package SPEC:
-    //   builtin registry (frozen: bin; gui = transitional alias), else a
+    //   builtin registry (bin, lib; gui = transitional alias), else a
     //   package template: [ns.]pkg | [ns.]pkg:tmpl | [ns.]pkg@ver:tmpl.
     std::string tmpl = "bin";
     if (auto t = parsed.value("template")) tmpl = *t;
@@ -63,7 +62,8 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "--template gui is deprecated; use `--template imgui` "
             "(the template then ships with — and version-tracks — the library)");
     }
-    if (tmpl != "bin" && tmpl != "gui") {
+    if (tmpl == "platform") return mcpp::scaffold::create_platform_project(*project);
+    if (tmpl != "bin" && tmpl != "gui" && tmpl != "lib") {
         auto spec = mcpp::scaffold::parse_template_spec(tmpl);
         if (!spec) {
             mcpp::ui::error(spec.error().message);
@@ -79,7 +79,8 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return mcpp::scaffold::new_from_package_template(*project, *spec);
     }
     return mcpp::scaffold::create_builtin_project(
-        *project, /*gui=*/tmpl == "gui");
+        *project, tmpl == "lib" ? mcpp::scaffold::builtin::lib
+                  : tmpl == "gui" ? mcpp::scaffold::builtin::gui : mcpp::scaffold::builtin::bin);
 }
 
 } // namespace mcpp::cli

@@ -7,11 +7,13 @@
 // that has been around a while, and silence there is what made mcpp#352
 // expensive to find in the first place.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.runtime.launch_env;
 import mcpp.provider.xlings.subos_info;
+
+using namespace mcpplibs::mtest;
 
 namespace su = mcpp::provider::xlings::subos;
 
@@ -30,7 +32,7 @@ struct Tmp {
     }
 };
 
-TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
+UTest reads_runtime_and_env_declarations{"SubosInfo/ReadsRuntimeAndEnvDeclarations", [] {
     Tmp t;
     t.write(R"({
       "workspace": {},
@@ -64,26 +66,25 @@ TEST(SubosInfo, ReadsRuntimeAndEnvDeclarations) {
       }
     })");
     auto info = su::read(t.dir);
-    EXPECT_TRUE(info.present);
-    EXPECT_EQ(info.schema, 1);
-    EXPECT_EQ(info.runtime, "glibc@2.39");
-    EXPECT_EQ(info.hostGlibc, "2.43");
-    ASSERT_EQ(info.providers.size(), 1u);
-    EXPECT_EQ(info.providers[0].binding, "mesa@25.0.7.1");
-    ASSERT_EQ(info.providers[0].decls.size(), 2u);
-    EXPECT_EQ(info.providers[0].decls[0].var, "LIBGL_DRIVERS_PATH");
-    ASSERT_EQ(info.runtimeProviders.size(), 1u);
-    EXPECT_EQ(info.runtimeProviders[0].capability, "render.demo");
-    EXPECT_EQ(info.runtimeProviders[0].provider.namespace_, "xim");
-    EXPECT_EQ(info.runtimeProviders[0].provider.name, "renderer");
-    ASSERT_EQ(info.runtimeArtifacts.size(), 1u);
-    EXPECT_EQ(info.runtimeArtifacts[0].path,
-              (t.dir / "runtime/renderer.bin").lexically_normal());
-    EXPECT_EQ(info.runtimeArtifacts[0].hostFingerprint, "host-2");
-    EXPECT_TRUE(info.note.empty());
-}
+    expect(bool(info.present));
+    expect(eq(info.schema, 1));
+    expect(eq(info.runtime, "glibc@2.39"));
+    expect(eq(info.hostGlibc, "2.43"));
+    expect(fatal(eq(info.providers.size(), 1u)));
+    expect(eq(info.providers[0].binding, "mesa@25.0.7.1"));
+    expect(fatal(eq(info.providers[0].decls.size(), 2u)));
+    expect(eq(info.providers[0].decls[0].var, "LIBGL_DRIVERS_PATH"));
+    expect(fatal(eq(info.runtimeProviders.size(), 1u)));
+    expect(eq(info.runtimeProviders[0].capability, "render.demo"));
+    expect(eq(info.runtimeProviders[0].provider.namespace_, "xim"));
+    expect(eq(info.runtimeProviders[0].provider.name, "renderer"));
+    expect(fatal(eq(info.runtimeArtifacts.size(), 1u)));
+    expect(eq(info.runtimeArtifacts[0].path, (t.dir / "runtime/renderer.bin").lexically_normal()));
+    expect(eq(info.runtimeArtifacts[0].hostFingerprint, "host-2"));
+    expect(info.note.empty());
+}};
 
-TEST(SubosInfo, OrdersGenericContractByTheCompleteFactIdentity) {
+UTest orders_generic_contract_by_the_complete_fact_identity{"SubosInfo/OrdersGenericContractByTheCompleteFactIdentity", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
       "runtime_contract":{
@@ -103,79 +104,77 @@ TEST(SubosInfo, OrdersGenericContractByTheCompleteFactIdentity) {
         ]
       }}})");
     auto info = su::read(t.dir);
-    ASSERT_EQ(info.runtimeProviders.size(), 2u);
-    EXPECT_EQ(info.runtimeProviders[0].provider.source, "a-index");
-    EXPECT_EQ(info.runtimeProviders[1].provider.source, "z-index");
-    ASSERT_EQ(info.runtimeArtifacts.size(), 2u);
-    EXPECT_EQ(info.runtimeArtifacts[0].provenance, "a-view");
-    EXPECT_EQ(info.runtimeArtifacts[1].provenance, "z-view");
-}
+    expect(fatal(eq(info.runtimeProviders.size(), 2u)));
+    expect(eq(info.runtimeProviders[0].provider.source, "a-index"));
+    expect(eq(info.runtimeProviders[1].provider.source, "z-index"));
+    expect(fatal(eq(info.runtimeArtifacts.size(), 2u)));
+    expect(eq(info.runtimeArtifacts[0].provenance, "a-view"));
+    expect(eq(info.runtimeArtifacts[1].provenance, "z-view"));
+}};
 
 // `${subosdir}` expands against the subos the block was read FROM, not
 // against any global notion of "the" subos. That is what lets a program
 // built under one subos run correctly under another.
-TEST(SubosInfo, ResolvesSubosdirPlaceholder) {
+UTest resolves_subosdir_placeholder{"SubosInfo/ResolvesSubosdirPlaceholder", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
       "envs":{"mesa@1":[
         {"var":"LIBGL_DRIVERS_PATH","op":"prepend","value":"${subosdir}/usr/lib/dri"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
-    ASSERT_EQ(env.size(), 1u);
-    EXPECT_EQ(env[0].first, "LIBGL_DRIVERS_PATH");
+    expect(fatal(eq(env.size(), 1u)));
+    expect(eq(env[0].first, "LIBGL_DRIVERS_PATH"));
     // Literal concatenation, NOT a path join. The separator in the declaration
     // belongs to the subos manifest and is substituted verbatim; turning it
     // into the host's would rewrite a value we do not own. On Windows the two
     // spellings differ and the path-join form is the wrong expectation.
-    EXPECT_EQ(env[0].second, t.dir.string() + "/usr/lib/dri");
-}
+    expect(eq(env[0].second, t.dir.string() + "/usr/lib/dri"));
+}};
 
 // Several providers may contribute to one variable — that is the normal
 // shape for the graphics stack, where mesa and a vendor bridge both add an
 // EGL vendor directory. `prepend` joins them; it must not drop either.
-TEST(SubosInfo, PrependJoinsProvidersInOrder) {
+UTest prepend_joins_providers_in_order{"SubosInfo/PrependJoinsProvidersInOrder", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a-mesa@1":[{"var":"V","op":"prepend","value":"${subosdir}/one"}],
       "b-vendor@1":[{"var":"V","op":"prepend","value":"${subosdir}/two"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
-    ASSERT_EQ(env.size(), 1u);
+    expect(fatal(eq(env.size(), 1u)));
     const auto sep = mcpp::runtime::launch_env::path_list_separator();
-    EXPECT_EQ(env[0].second,
-              t.dir.string() + "/two" + sep + t.dir.string() + "/one")
+    expect(eq(env[0].second, t.dir.string() + "/two" + sep + t.dir.string() + "/one"))
         << "both providers must survive, later binding front-most";
-}
+}};
 
 // The same value arriving twice must not accumulate: nested invocations
 // would otherwise grow the variable without bound.
-TEST(SubosInfo, PrependDeduplicates) {
+UTest prepend_deduplicates{"SubosInfo/PrependDeduplicates", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a@1":[{"var":"V","op":"prepend","value":"${subosdir}/x"}],
       "b@1":[{"var":"V","op":"prepend","value":"${subosdir}/x"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
-    ASSERT_EQ(env.size(), 1u);
+    expect(fatal(eq(env.size(), 1u)));
     // One entry, not two. The de-duplication has to split on the PLATFORM's
     // list separator: keyed on ':' it would cut "C:\\x" apart on Windows,
     // match nothing, and grow the list on every nested invocation.
-    EXPECT_EQ(env[0].second, t.dir.string() + "/x");
-    EXPECT_EQ(env[0].second.find(mcpp::runtime::launch_env::path_list_separator()),
-              std::string::npos);
-}
+    expect(eq(env[0].second, t.dir.string() + "/x"));
+    expect(eq(env[0].second.find(mcpp::runtime::launch_env::path_list_separator()), std::string::npos));
+}};
 
 // `set` supplies a value only when the caller did not define the variable.
 // Presence — not non-emptiness — is the boundary, matching xlings: an
 // explicitly empty export is still an intentional caller value.
-TEST(SubosInfo, SetAppliesWhenAmbientIsAbsent) {
+UTest set_applies_when_ambient_is_absent{"SubosInfo/SetAppliesWhenAmbientIsAbsent", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a@1":[{"var":"V","op":"prepend","value":"/one"}],
       "b@1":[{"var":"V","op":"set","value":"/two"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
-    ASSERT_EQ(env.size(), 1u);
-    EXPECT_EQ(env[0].second, "/two");
-}
+    expect(fatal(eq(env.size(), 1u)));
+    expect(eq(env[0].second, "/two"));
+}};
 
-TEST(SubosInfo, SetPreservesPresentAmbientValue) {
+UTest set_preserves_present_ambient_value{"SubosInfo/SetPreservesPresentAmbientValue", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a@1":[{"var":"V","op":"set","value":"/subos"}]}}})");
@@ -185,11 +184,11 @@ TEST(SubosInfo, SetPreservesPresentAmbientValue) {
             if (var == "V") return "/caller";
             return std::nullopt;
         });
-    ASSERT_EQ(env.size(), 1u);
-    EXPECT_EQ(env[0].second, "/caller");
-}
+    expect(fatal(eq(env.size(), 1u)));
+    expect(eq(env[0].second, "/caller"));
+}};
 
-TEST(SubosInfo, SetPreservesExplicitlyEmptyAmbientValue) {
+UTest set_preserves_explicitly_empty_ambient_value{"SubosInfo/SetPreservesExplicitlyEmptyAmbientValue", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a@1":[{"var":"V","op":"set","value":"/subos"}]}}})");
@@ -199,64 +198,64 @@ TEST(SubosInfo, SetPreservesExplicitlyEmptyAmbientValue) {
             if (var == "V") return std::string{};
             return std::nullopt;
         });
-    ASSERT_EQ(env.size(), 1u);
-    EXPECT_TRUE(env[0].second.empty());
-}
+    expect(fatal(eq(env.size(), 1u)));
+    expect(env[0].second.empty());
+}};
 
 // A subos made before xlings grew the block. Degrade, and SAY SO — this is
 // the common case on an existing machine, and mcpp's own sandbox subos was
 // measured in exactly this state.
-TEST(SubosInfo, MissingBlockDegradesWithANote) {
+UTest missing_block_degrades_with_a_note{"SubosInfo/MissingBlockDegradesWithANote", [] {
     Tmp t;
     t.write(R"({"workspace":{}})");
     auto info = su::read(t.dir);
-    EXPECT_FALSE(info.present);
-    EXPECT_TRUE(info.runtime.empty());
-    EXPECT_FALSE(info.note.empty());
-    EXPECT_TRUE(su::resolve_env(info, t.dir).empty());
-}
+    expect(!info.present);
+    expect(info.runtime.empty());
+    expect(!info.note.empty());
+    expect(su::resolve_env(info, t.dir).empty());
+}};
 
 // A schema newer than we understand: read what we can, and say we are behind.
 // Refusing outright would make a newer xlings break an older mcpp, which is
 // the failure mode the index-floor incident already paid for once.
-TEST(SubosInfo, NewerSchemaIsUsedAndAnnounced) {
+UTest newer_schema_is_used_and_announced{"SubosInfo/NewerSchemaIsUsedAndAnnounced", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":99,"runtime":"glibc@2.44","envs":[]}})");
     auto info = su::read(t.dir);
-    EXPECT_TRUE(info.present);
-    EXPECT_EQ(info.runtime, "glibc@2.44");
-    EXPECT_FALSE(info.note.empty());
-}
+    expect(bool(info.present));
+    expect(eq(info.runtime, "glibc@2.44"));
+    expect(!info.note.empty());
+}};
 
-TEST(SubosInfo, NoFileAtAllIsNotACrash) {
+UTest no_file_at_all_is_not_a_crash{"SubosInfo/NoFileAtAllIsNotACrash", [] {
     Tmp t;   // nothing written
     auto info = su::read(t.dir);
-    EXPECT_FALSE(info.present);
-    EXPECT_FALSE(info.note.empty());
-}
+    expect(!info.present);
+    expect(!info.note.empty());
+}};
 
-TEST(SubosInfo, MalformedJsonDegrades) {
+UTest malformed_json_degrades{"SubosInfo/MalformedJsonDegrades", [] {
     Tmp t;
     t.write("{ this is not json");
     auto info = su::read(t.dir);
-    EXPECT_FALSE(info.present);
-    EXPECT_FALSE(info.note.empty());
-}
+    expect(!info.present);
+    expect(!info.note.empty());
+}};
 
 // The family mapping is part of the cross-repo contract: xlings derives it
 // from the runtime string too, and the two must agree or a subos and a build
 // will disagree about what ABI they are talking about.
-TEST(SubosInfo, FamilyOfMirrorsXlings) {
-    EXPECT_EQ(su::family_of("glibc@2.39"), "linux-x86_64-glibc");
-    EXPECT_EQ(su::family_of("musl@1.2.5"), "linux-x86_64-musl");
-    EXPECT_EQ(su::family_of("glibc@2.39", "aarch64"), "linux-aarch64-glibc");
-    EXPECT_EQ(su::family_of("wasi-libc@1"), "wasm32-wasi");
-    EXPECT_EQ(su::family_of("macos_sdk@14.0", "arm64"), "darwin-arm64");
-    EXPECT_EQ(su::family_of("ucrt@10"), "windows-x86_64-ucrt");
-    EXPECT_EQ(su::family_of("nonsense@1"), "unknown");
+UTest family_of_mirrors_xlings{"SubosInfo/FamilyOfMirrorsXlings", [] {
+    expect(eq(su::family_of("glibc@2.39"), "linux-x86_64-glibc"));
+    expect(eq(su::family_of("musl@1.2.5"), "linux-x86_64-musl"));
+    expect(eq(su::family_of("glibc@2.39", "aarch64"), "linux-aarch64-glibc"));
+    expect(eq(su::family_of("wasi-libc@1"), "wasm32-wasi"));
+    expect(eq(su::family_of("macos_sdk@14.0", "arm64"), "darwin-arm64"));
+    expect(eq(su::family_of("ucrt@10"), "windows-x86_64-ucrt"));
+    expect(eq(su::family_of("nonsense@1"), "unknown"));
     // No '@' at all is not a binding; it must not be read as one.
-    EXPECT_EQ(su::family_of("glibc"), "linux-x86_64-glibc");
-}
+    expect(eq(su::family_of("glibc"), "linux-x86_64-glibc"));
+}};
 
 
 // A VERBATIM capture of what a real xlings wrote, after `xlings install
@@ -272,7 +271,7 @@ TEST(SubosInfo, FamilyOfMirrorsXlings) {
 //
 // A fixture composed from the same understanding as the parser cannot catch
 // that. Only one taken from the writer can.
-TEST(SubosInfo, RealXlingsCapture) {
+UTest real_xlings_capture{"SubosInfo/RealXlingsCapture", [] {
     Tmp t;
     t.write(R"({
       "subos_info": {
@@ -295,42 +294,41 @@ TEST(SubosInfo, RealXlingsCapture) {
     })");
 
     auto info = su::read(t.dir);
-    ASSERT_TRUE(info.present);
-    EXPECT_EQ(info.runtime, "glibc@2.39");
-    ASSERT_EQ(info.providers.size(), 2u);
-    EXPECT_EQ(info.providers[0].binding, "mesa@25.0.7.1");
-    EXPECT_EQ(info.providers[1].binding, "nvidia-gl-host-link@0.1.1");
+    expect(fatal(bool(info.present)));
+    expect(eq(info.runtime, "glibc@2.39"));
+    expect(fatal(eq(info.providers.size(), 2u)));
+    expect(eq(info.providers[0].binding, "mesa@25.0.7.1"));
+    expect(eq(info.providers[1].binding, "nvidia-gl-host-link@0.1.1"));
 
     auto env = su::resolve_env(info, t.dir);
-    ASSERT_EQ(env.size(), 3u) << "all three graphics variables must be produced";
+    expect(fatal(eq(env.size(), 3u))) << "all three graphics variables must be produced";
 
     std::map<std::string, std::string> byVar;
     for (auto& [k, v] : env) byVar[k] = v;
     const auto sep = mcpp::runtime::launch_env::path_list_separator();
-    EXPECT_EQ(byVar["LIBGL_DRIVERS_PATH"], t.dir.string() + "/usr/lib/dri");
-    EXPECT_EQ(byVar["XDG_DATA_DIRS"],      t.dir.string() + "/share");
+    expect(eq(byVar["LIBGL_DRIVERS_PATH"], t.dir.string() + "/usr/lib/dri"));
+    expect(eq(byVar["XDG_DATA_DIRS"], t.dir.string() + "/share"));
     // Both providers name the same vendor directory; de-duplication must
     // leave exactly one, or libglvnd sees it twice and enumerates the device
     // twice -- which is a defect xlings hit on its own side.
-    EXPECT_EQ(byVar["__EGL_VENDOR_LIBRARY_DIRS"],
-              t.dir.string() + "/share/glvnd/egl_vendor.d");
-    EXPECT_EQ(byVar["__EGL_VENDOR_LIBRARY_DIRS"].find(sep), std::string::npos);
-}
+    expect(eq(byVar["__EGL_VENDOR_LIBRARY_DIRS"], t.dir.string() + "/share/glvnd/egl_vendor.d"));
+    expect(eq(byVar["__EGL_VENDOR_LIBRARY_DIRS"].find(sep), std::string::npos));
+}};
 
 // xlings drops a declaration whose op it does not recognise. A reader more
 // permissive than its writer eventually applies something the writer meant to
 // reject, so this asserts the same refusal rather than a tolerant guess.
-TEST(SubosInfo, UnknownOpIsDroppedLikeXlingsDrops) {
+UTest unknown_op_is_dropped_like_xlings_drops{"SubosInfo/UnknownOpIsDroppedLikeXlingsDrops", [] {
     Tmp t;
     t.write(R"({"subos_info":{"schema_version":1,"runtime":"glibc@2.39","envs":{
       "a@1":[{"var":"V","op":"append","value":"/nope"},
              {"var":"W","op":"prepend","value":"/yes"},
              {"var":"","op":"prepend","value":"/no-name"}]}}})");
     auto env = su::resolve_env(su::read(t.dir), t.dir);
-    ASSERT_EQ(env.size(), 1u);
-    EXPECT_EQ(env[0].first, "W");
-    EXPECT_EQ(env[0].second, "/yes");
-}
+    expect(fatal(eq(env.size(), 1u)));
+    expect(eq(env[0].first, "W"));
+    expect(eq(env[0].second, "/yes"));
+}};
 
 
 
@@ -338,7 +336,7 @@ TEST(SubosInfo, UnknownOpIsDroppedLikeXlingsDrops) {
 // `prepend` prepends TO the caller's value rather than replacing it. Same
 // reason: the pair replaces the variable, so emitting the declared value alone
 // discards whatever search path the user had.
-TEST(SubosResolveEnv, PrependKeepsTheExportedValue) {
+UTest prepend_keeps_the_exported_value{"SubosResolveEnv/PrependKeepsTheExportedValue", [] {
     Tmp t;
     t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
         "envs":{"glibc@2.39":[{"var":"LD_LIBRARY_PATH","op":"prepend","value":"/sub/lib"}]}}})");
@@ -348,13 +346,13 @@ TEST(SubosResolveEnv, PrependKeepsTheExportedValue) {
             if (v == "LD_LIBRARY_PATH") return std::string("/user/lib");
             return std::nullopt;
         });
-    ASSERT_EQ(out.size(), 1u);
+    expect(fatal(eq(out.size(), 1u)));
     const auto sep = mcpp::runtime::launch_env::path_list_separator();
-    EXPECT_EQ(out[0].second, std::string("/sub/lib") + sep + "/user/lib");
-}
+    expect(eq(out[0].second, std::string("/sub/lib") + sep + "/user/lib"));
+}};
 
 // Already there: prepending again would grow the list on every nested run.
-TEST(SubosResolveEnv, PrependIsIdempotentAgainstTheExportedValue) {
+UTest prepend_is_idempotent_against_the_exported_value{"SubosResolveEnv/PrependIsIdempotentAgainstTheExportedValue", [] {
     Tmp t;
     t.write(R"({"workspace":{},"subos_info":{"schema_version":1,"runtime":"glibc@2.39",
         "envs":{"glibc@2.39":[{"var":"LD_LIBRARY_PATH","op":"prepend","value":"/sub/lib"}]}}})");
@@ -366,14 +364,14 @@ TEST(SubosResolveEnv, PrependIsIdempotentAgainstTheExportedValue) {
             if (v == "LD_LIBRARY_PATH") return existing;
             return std::nullopt;
         });
-    ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0].second, existing);
-}
+    expect(fatal(eq(out.size(), 1u)));
+    expect(eq(out[0].second, existing));
+}};
 
 // xlings defines `set` as set-if-absent. mcpp must use the same presence
 // boundary or the exact same SubOS changes behaviour depending on which tool
 // launches the program.
-TEST(SubosResolveEnv, SetYieldsToAnExportedValue) {
+UTest set_yields_to_an_exported_value{"SubosResolveEnv/SetYieldsToAnExportedValue", [] {
     Tmp t;
     t.write(R"({"workspace":{},"subos_info":{"schema_version":1,
         "runtime":"glibc@2.39",
@@ -384,8 +382,8 @@ TEST(SubosResolveEnv, SetYieldsToAnExportedValue) {
             if (v == "GALLIUM_DRIVER") return std::string("llvmpipe");
             return std::nullopt;
         });
-    ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0].second, "llvmpipe");
-}
+    expect(fatal(eq(out.size(), 1u)));
+    expect(eq(out[0].second, "llvmpipe"));
+}};
 
 }  // namespace

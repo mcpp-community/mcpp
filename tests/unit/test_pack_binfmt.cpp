@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 #include <cstdio>       // stderr is a MACRO — `import std;` cannot export it
 #include <cstdlib>      // getenv
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.binfmt;
 import mcpp.pack.zip;
+
+using namespace mcpplibs::mtest;
 
 namespace bf = mcpp::pack::binfmt;
 
@@ -351,28 +353,28 @@ std::string macho_fat(const std::vector<std::pair<std::uint32_t, std::string>>& 
 
 } // namespace
 
-TEST(PackBinfmt, IdentifiesElfWithoutRunningIt) {
+UTest identifies_elf_without_running_it{"PackBinfmt/IdentifiesElfWithoutRunningIt", [] {
     std::array<std::string_view, 1> needed{"libc.so.6"};
     TempFile f{"elf", elf_with_needed(needed)};
     auto id = bf::identify(f.path);
-    EXPECT_EQ(id.format, bf::Format::Elf);
-    EXPECT_EQ(id.arch, "x86_64");
-    EXPECT_TRUE(id.is64);
-}
+    expect(eq(id.format, bf::Format::Elf));
+    expect(eq(id.arch, "x86_64"));
+    expect(bool(id.is64));
+}};
 
-TEST(PackBinfmt, ReadsElfDtNeededThroughTheSegmentTable) {
+UTest reads_elf_dt_needed_through_the_segment_table{"PackBinfmt/ReadsElfDtNeededThroughTheSegmentTable", [] {
     // DT_STRTAB is a virtual address, so the parser has to translate it via
     // PT_LOAD. Two entries, in file order.
     std::array<std::string_view, 2> needed{"libstdc++.so.6", "libcustom.so.1"};
     TempFile f{"elfneeded", elf_with_needed(needed)};
     auto names = bf::needed_names(f.path);
-    ASSERT_TRUE(names.has_value()) << names.error();
-    ASSERT_EQ(names->size(), 2u);
-    EXPECT_EQ((*names)[0], "libstdc++.so.6");
-    EXPECT_EQ((*names)[1], "libcustom.so.1");
-}
+    if (auto&& failed = expect(fatal(names.has_value())); !failed) failed << names.error();
+    expect(fatal(eq(names->size(), 2u)));
+    expect(eq((*names)[0], "libstdc++.so.6"));
+    expect(eq((*names)[1], "libcustom.so.1"));
+}};
 
-TEST(PackBinfmt, AnElfWithNoDynamicSectionHasZeroDepsAndIsNotAnError) {
+UTest an_elf_with_no_dynamic_section_has_zero_deps_and_is_not_an_error{"PackBinfmt/AnElfWithNoDynamicSectionHasZeroDepsAndIsNotAnError", [] {
     // A fully static binary. "No dependencies" and "could not be read" must
     // not look alike — one is a packageable artifact and the other is a bug.
     auto bytes = elf_with_needed({});
@@ -380,52 +382,52 @@ TEST(PackBinfmt, AnElfWithNoDynamicSectionHasZeroDepsAndIsNotAnError) {
     put(bytes, 120, 0, 4);
     TempFile f{"elfstatic", bytes};
     auto names = bf::needed_names(f.path);
-    ASSERT_TRUE(names.has_value()) << names.error();
-    EXPECT_TRUE(names->empty());
-}
+    if (auto&& failed = expect(fatal(names.has_value())); !failed) failed << names.error();
+    expect(names->empty());
+}};
 
 // SPLIT INTO THREE ON PURPOSE. The combined version died with SIGSEGV on the
 // macOS ARM64 runner and nowhere else, and a single test that builds a
 // fixture, identifies it and parses it cannot say WHICH of the three it was.
 // A test that cannot localise its own failure is a test that costs a CI round
 // per hypothesis.
-TEST(PackBinfmt, ThePeFixtureItselfIsWellFormed) {
+UTest the_pe_fixture_itself_is_well_formed{"PackBinfmt/ThePeFixtureItselfIsWellFormed", [] {
     auto bytes = pe_with_imports(pe_imports(), pe_delayed());
-    ASSERT_GT(bytes.size(), 0x400u);
-    EXPECT_EQ(bytes.substr(0, 2), "MZ");
-    EXPECT_EQ(bytes.substr(0x40, 4), std::string("PE\0\0", 4));
+    expect(fatal(gt(bytes.size(), 0x400u)));
+    expect(eq(bytes.substr(0, 2), "MZ"));
+    expect(eq(bytes.substr(0x40, 4), std::string("PE\0\0", 4)));
     // The names have to be IN the image, or every assertion below is about
     // the fixture rather than about the reader.
     for (auto want : {"KERNEL32.dll", "vcruntime140.dll", "dbghelp.dll"})
-        EXPECT_NE(bytes.find(want), std::string::npos) << want;
-}
+        expect(ne(bytes.find(want), std::string::npos)) << want;
+}};
 
-TEST(PackBinfmt, IdentifiesPe) {
+UTest identifies_pe{"PackBinfmt/IdentifiesPe", [] {
     TempFile f{"peid", pe_with_imports(pe_imports(), pe_delayed())};
 
     auto id = bf::identify(f.path);
-    EXPECT_EQ(id.format, bf::Format::Pe);
-    EXPECT_EQ(id.arch, "x86_64");
-    EXPECT_TRUE(id.is64);
-}
+    expect(eq(id.format, bf::Format::Pe));
+    expect(eq(id.arch, "x86_64"));
+    expect(bool(id.is64));
+}};
 
-TEST(PackBinfmt, ReadsBothPeImportDirectories) {
+UTest reads_both_pe_import_directories{"PackBinfmt/ReadsBothPeImportDirectories", [] {
     TempFile f{"peimp", pe_with_imports(pe_imports(), pe_delayed())};
 
     auto names = bf::needed_names(f.path);
-    ASSERT_TRUE(names.has_value()) << names.error();
+    if (auto&& failed = expect(fatal(names.has_value())); !failed) failed << names.error();
     // The DELAY-loaded one is a dependency too, and leaving it out is worse
     // than leaving out an ordinary import: a missing delay-load does not fail
     // at startup, it fails at the first call through it.
-    EXPECT_EQ(names->size(), 3u);
+    expect(eq(names->size(), 3u));
     for (auto want : {"KERNEL32.dll", "vcruntime140.dll", "dbghelp.dll"}) {
         bool found = false;
         for (auto const& n : *names) found = found || n == want;
-        EXPECT_TRUE(found) << want << " missing from the closure";
+        expect(bool(found)) << want << " missing from the closure";
     }
-}
+}};
 
-TEST(PackBinfmt, ADosStubWithoutAPeSignatureIsNotAPe) {
+UTest a_dos_stub_without_a_pe_signature_is_not_a_pe{"PackBinfmt/ADosStubWithoutAPeSignatureIsNotAPe", [] {
     // "MZ" alone is a DOS executable. Calling it PE would send the caller
     // into a parser that cannot succeed, and the error would describe the
     // wrong thing.
@@ -433,11 +435,11 @@ TEST(PackBinfmt, ADosStubWithoutAPeSignatureIsNotAPe) {
     b[0] = 'M'; b[1] = 'Z';
     put(b, 0x3C, 0x40, 4);          // points at zeros, not "PE\0\0"
     TempFile f{"dos", b};
-    EXPECT_EQ(bf::identify(f.path).format, bf::Format::Unknown);
-    EXPECT_FALSE(bf::needed_names(f.path).has_value());
-}
+    expect(eq(bf::identify(f.path).format, bf::Format::Unknown));
+    expect(!(bf::needed_names(f.path).has_value()));
+}};
 
-TEST(PackBinfmt, AGarbageELfanewIsRejectedAndDoesNotThrow) {
+UTest a_garbage_e_lfanew_is_rejected_and_does_not_throw{"PackBinfmt/AGarbageELfanewIsRejectedAndDoesNotThrow", [] {
     // An "MZ" file whose `e_lfanew` points past the end is ordinary malformed
     // input: a truncated download, a DOS stub, a text file named `.exe`.
     //
@@ -450,15 +452,15 @@ TEST(PackBinfmt, AGarbageELfanewIsRejectedAndDoesNotThrow) {
         b[0] = 'M'; b[1] = 'Z';
         put(b, 0x3C, lfanew, 4);
         TempFile f{"mzjunk", b};
-        EXPECT_NO_THROW({
-            EXPECT_EQ(bf::identify(f.path).format, bf::Format::Unknown)
+        expect(nothrow([&] { {
+            expect(eq(bf::identify(f.path).format, bf::Format::Unknown))
                 << "e_lfanew=" << lfanew;
-            EXPECT_FALSE(bf::needed_names(f.path).has_value());
-        }) << "e_lfanew=" << lfanew;
+            expect(!(bf::needed_names(f.path).has_value()));
+        }; })) << "e_lfanew=" << lfanew;
     }
-}
+}};
 
-TEST(PackBinfmt, TruncatedInputIsRejectedRatherThanRead) {
+UTest truncated_input_is_rejected_rather_than_read{"PackBinfmt/TruncatedInputIsRejectedRatherThanRead", [] {
     // Malformed input is ordinary: a half-downloaded file, a text file named
     // `.exe`. Every read is bounds-checked, so the parser is total over it.
     for (std::size_t keep : {0u, 4u, 0x40u, 0x80u}) {
@@ -466,45 +468,45 @@ TEST(PackBinfmt, TruncatedInputIsRejectedRatherThanRead) {
         bytes.resize(keep);
         TempFile f{"trunc", bytes};
         auto names = bf::needed_names(f.path);
-        if (names) EXPECT_TRUE(names->empty()) << "keep=" << keep;
+        if (names) expect(names->empty()) << "keep=" << keep;
     }
-}
+}};
 
-TEST(PackBinfmt, TheSystemPredicateKnowsWindowsFromTheToolset) {
+UTest the_system_predicate_knows_windows_from_the_toolset{"PackBinfmt/TheSystemPredicateKnowsWindowsFromTheToolset", [] {
     // Windows' own: shipping a private copy is a broken program, not a
     // heavier one.
     for (auto n : {"KERNEL32.dll", "kernel32.dll", "ucrtbase.dll", "ntdll.dll",
                    "api-ms-win-crt-runtime-l1-1-0.dll"})
-        EXPECT_TRUE(bf::is_system_lib(bf::Format::Pe, n)) << n;
+        expect(bf::is_system_lib(bf::Format::Pe, n)) << n;
 
     // NOT Windows' own. These belong to the TOOLSET, and whether they travel
     // is `cxx_runtime`'s decision — the one call this predicate must not make
     // on its behalf.
     for (auto n : {"vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll",
                    "libwinpthread-1.dll", "libstdc++-6.dll"})
-        EXPECT_FALSE(bf::is_system_lib(bf::Format::Pe, n)) << n;
+        expect(!bf::is_system_lib(bf::Format::Pe, n)) << n;
 
     // ELF keeps the manylinux allow-list it always had.
-    EXPECT_TRUE(bf::is_system_lib(bf::Format::Elf, "libstdc++.so.6"));
-    EXPECT_TRUE(bf::is_system_lib(bf::Format::Elf, "ld-linux-x86-64.so.2"));
-    EXPECT_FALSE(bf::is_system_lib(bf::Format::Elf, "libcurl.so.4"));
-}
+    expect(bf::is_system_lib(bf::Format::Elf, "libstdc++.so.6"));
+    expect(bf::is_system_lib(bf::Format::Elf, "ld-linux-x86-64.so.2"));
+    expect(!bf::is_system_lib(bf::Format::Elf, "libcurl.so.4"));
+}};
 
 // ─── Mach-O: #630 §4 — the reader `needed_names` used to refuse ─────────
 
-TEST(PackBinfmt, IdentifiesThinAndFatMachOWithoutRunningIt) {
+UTest identifies_thin_and_fat_mach_o_without_running_it{"PackBinfmt/IdentifiesThinAndFatMachOWithoutRunningIt", [] {
     TempFile thin{"macho-thin",
         macho_thin(/*is64=*/true, /*bigEndian=*/false, kCpuTypeArm64,
                   {{kLcLoadDylib, kDylibStructSize, "/usr/lib/libSystem.B.dylib"}})};
-    EXPECT_EQ(bf::identify(thin.path).format, bf::Format::MachO);
+    expect(eq(bf::identify(thin.path).format, bf::Format::MachO));
 
     TempFile fat{"macho-fat",
         macho_fat({{kCpuTypeX86_64, macho_thin(true, false, kCpuTypeX86_64, {})},
                    {kCpuTypeArm64,  macho_thin(true, false, kCpuTypeArm64, {})}})};
-    EXPECT_EQ(bf::identify(fat.path).format, bf::Format::MachO);
-}
+    expect(eq(bf::identify(fat.path).format, bf::Format::MachO));
+}};
 
-TEST(PackBinfmt, ThinMachOReadsNamesAndRpathsInLoadCommandOrder) {
+UTest thin_mach_o_reads_names_and_rpaths_in_load_command_order{"PackBinfmt/ThinMachOReadsNamesAndRpathsInLoadCommandOrder", [] {
     // Two LC_LOAD_DYLIB, one LC_LOAD_WEAK_DYLIB, two LC_RPATH — the record's
     // §4.3 fixture shape, in one file.
     TempFile f{"macho-thin-arm64",
@@ -517,20 +519,20 @@ TEST(PackBinfmt, ThinMachOReadsNamesAndRpathsInLoadCommandOrder) {
         })};
 
     auto r = bf::macho_needed(f.path, "aarch64");
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_EQ(r->names, (std::vector<std::string>{
-        "@rpath/libfoo.dylib", "/usr/lib/libSystem.B.dylib", "@rpath/libbar.dylib"}));
-    EXPECT_EQ(r->rpaths, (std::vector<std::string>{
-        "@executable_path/../Frameworks", "@loader_path/../lib"}));
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(eq(r->names, (std::vector<std::string>{
+        "@rpath/libfoo.dylib", "/usr/lib/libSystem.B.dylib", "@rpath/libbar.dylib"})));
+    expect(eq(r->rpaths, (std::vector<std::string>{
+        "@executable_path/../Frameworks", "@loader_path/../lib"})));
 
     // `needed_names` completes for Mach-O now: names alone, through the same
     // dispatcher ELF and PE already go through.
     auto names = bf::needed_names(f.path);
-    ASSERT_TRUE(names.has_value()) << names.error();
-    EXPECT_EQ(*names, r->names);
-}
+    if (auto&& failed = expect(fatal(names.has_value())); !failed) failed << names.error();
+    expect(eq(*names, r->names));
+}};
 
-TEST(PackBinfmt, AWrongArchRequestOnAThinFileStillReadsIt) {
+UTest a_wrong_arch_request_on_a_thin_file_still_reads_it{"PackBinfmt/AWrongArchRequestOnAThinFileStillReadsIt", [] {
     // There is only one slice in a thin file; refusing to read it because
     // the caller asked for a different architecture would be wrong — the
     // caller already knows what it built, and mcpp never builds a thin
@@ -539,11 +541,11 @@ TEST(PackBinfmt, AWrongArchRequestOnAThinFileStillReadsIt) {
         macho_thin(true, false, kCpuTypeArm64,
                   {{kLcLoadDylib, kDylibStructSize, "@rpath/libfoo.dylib"}})};
     auto r = bf::macho_needed(f.path, "x86_64");
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_EQ(r->names, (std::vector<std::string>{"@rpath/libfoo.dylib"}));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(eq(r->names, (std::vector<std::string>{"@rpath/libfoo.dylib"})));
+}};
 
-TEST(PackBinfmt, FatMachOReadsOnlyTheRequestedSlice) {
+UTest fat_mach_o_reads_only_the_requested_slice{"PackBinfmt/FatMachOReadsOnlyTheRequestedSlice", [] {
     auto x64 = macho_thin(true, false, kCpuTypeX86_64,
         {{kLcLoadDylib, kDylibStructSize, "onlyintel.dylib"}});
     auto arm = macho_thin(true, false, kCpuTypeArm64,
@@ -552,19 +554,18 @@ TEST(PackBinfmt, FatMachOReadsOnlyTheRequestedSlice) {
         macho_fat({{kCpuTypeX86_64, x64}, {kCpuTypeArm64, arm}})};
 
     auto arm64Read = bf::macho_needed(fat.path, "aarch64");
-    ASSERT_TRUE(arm64Read.has_value()) << arm64Read.error();
-    EXPECT_EQ(arm64Read->names, (std::vector<std::string>{"onlyarm.dylib"}));
+    if (auto&& failed = expect(fatal(arm64Read.has_value())); !failed) failed << arm64Read.error();
+    expect(eq(arm64Read->names, (std::vector<std::string>{"onlyarm.dylib"})));
     // A name present only in the OTHER slice must be absent — the whole
     // point of selecting by architecture rather than reading both.
-    EXPECT_EQ(std::ranges::find(arm64Read->names, "onlyintel.dylib"),
-              arm64Read->names.end());
+    expect(eq(std::ranges::find(arm64Read->names, "onlyintel.dylib"), arm64Read->names.end()));
 
     auto x64Read = bf::macho_needed(fat.path, "x86_64");
-    ASSERT_TRUE(x64Read.has_value()) << x64Read.error();
-    EXPECT_EQ(x64Read->names, (std::vector<std::string>{"onlyintel.dylib"}));
-}
+    if (auto&& failed = expect(fatal(x64Read.has_value())); !failed) failed << x64Read.error();
+    expect(eq(x64Read->names, (std::vector<std::string>{"onlyintel.dylib"})));
+}};
 
-TEST(PackBinfmt, ABigEndianMagicThinMachOIsReadCorrectly) {
+UTest a_big_endian_magic_thin_mach_o_is_read_correctly{"PackBinfmt/ABigEndianMagicThinMachOIsReadCorrectly", [] {
     // The CIGAM leg: every integer in the header and its load commands is
     // written big-endian, which `macho_thin_needed` has to detect from the
     // magic alone and undo.
@@ -573,20 +574,20 @@ TEST(PackBinfmt, ABigEndianMagicThinMachOIsReadCorrectly) {
                   {{kLcLoadDylib, kDylibStructSize, "/usr/lib/libSystem.B.dylib"},
                    {kLcRpath,     kRpathStructSize, "@executable_path/../lib"}})};
     auto r = bf::macho_needed(f.path, {});
-    ASSERT_TRUE(r.has_value()) << r.error();
-    EXPECT_EQ(r->names, (std::vector<std::string>{"/usr/lib/libSystem.B.dylib"}));
-    EXPECT_EQ(r->rpaths, (std::vector<std::string>{"@executable_path/../lib"}));
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
+    expect(eq(r->names, (std::vector<std::string>{"/usr/lib/libSystem.B.dylib"})));
+    expect(eq(r->rpaths, (std::vector<std::string>{"@executable_path/../lib"})));
+}};
 
-TEST(PackBinfmt, TheSystemPredicateKnowsMachOsOwnRoots) {
-    EXPECT_TRUE(bf::is_system_lib(bf::Format::MachO, "/usr/lib/libSystem.B.dylib"));
-    EXPECT_TRUE(bf::is_system_lib(bf::Format::MachO,
+UTest the_system_predicate_knows_mach_os_own_roots{"PackBinfmt/TheSystemPredicateKnowsMachOsOwnRoots", [] {
+    expect(bf::is_system_lib(bf::Format::MachO, "/usr/lib/libSystem.B.dylib"));
+    expect(bf::is_system_lib(bf::Format::MachO,
         "/System/Library/Frameworks/Foundation.framework/Foundation"));
     // Not yet resolved to a file -- `@rpath` names a search, not a root.
-    EXPECT_FALSE(bf::is_system_lib(bf::Format::MachO, "@rpath/libc++.1.dylib"));
-}
+    expect(!bf::is_system_lib(bf::Format::MachO, "@rpath/libc++.1.dylib"));
+}};
 
-TEST(PackBinfmt, ResolveMachoNamesTriesRpathsInOrderAndReportsUnresolved) {
+UTest resolve_macho_names_tries_rpaths_in_order_and_reports_unresolved{"PackBinfmt/ResolveMachoNamesTriesRpathsInOrderAndReportsUnresolved", [] {
     auto dir = std::filesystem::temp_directory_path()
              / std::format("mcpp-macho-resolve-{}",
                            std::chrono::steady_clock::now().time_since_epoch().count());
@@ -613,28 +614,28 @@ TEST(PackBinfmt, ResolveMachoNamesTriesRpathsInOrderAndReportsUnresolved) {
     };
 
     auto resolved = bf::resolve_macho_names(names, rpaths, bin, bin);
-    ASSERT_EQ(resolved.size(), 2u);
+    expect(fatal(eq(resolved.size(), 2u)));
 
-    EXPECT_EQ(resolved[0].name, "@rpath/dup.dylib");
-    EXPECT_FALSE(resolved[0].unresolved);
+    expect(eq(resolved[0].name, "@rpath/dup.dylib"));
+    expect(!(resolved[0].unresolved));
     // `lexically_normal`: the resolver joins `@executable_path/../first` onto
     // `bin` without collapsing the `..` itself (that is the filesystem's job,
     // at `exists()`), so the raw and the hand-built path differ textually
     // while naming the same file.
-    EXPECT_EQ(resolved[0].path.lexically_normal(), (first / "dup.dylib").lexically_normal())
+    expect(eq(resolved[0].path.lexically_normal(), (first / "dup.dylib").lexically_normal()))
         << "the FIRST rpath entry must win when both would resolve";
 
     // Reported, not skipped: the vector still carries an entry for the name
     // that resolved nowhere.
-    EXPECT_EQ(resolved[1].name, "@rpath/nowhere.dylib");
-    EXPECT_TRUE(resolved[1].unresolved);
-    EXPECT_TRUE(resolved[1].path.empty());
+    expect(eq(resolved[1].name, "@rpath/nowhere.dylib"));
+    expect(bool(resolved[1].unresolved));
+    expect(resolved[1].path.empty());
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
-}
+}};
 
-TEST(PackBinfmt, ResolveMachoNamesSubstitutesExecutableAndLoaderPath) {
+UTest resolve_macho_names_substitutes_executable_and_loader_path{"PackBinfmt/ResolveMachoNamesSubstitutesExecutableAndLoaderPath", [] {
     auto dir = std::filesystem::temp_directory_path()
              / std::format("mcpp-macho-resolve2-{}",
                            std::chrono::steady_clock::now().time_since_epoch().count());
@@ -650,28 +651,28 @@ TEST(PackBinfmt, ResolveMachoNamesSubstitutesExecutableAndLoaderPath) {
         "@loader_path/libplugin.dylib",
     };
     auto resolved = bf::resolve_macho_names(names, {}, exeDir, loaderDir);
-    ASSERT_EQ(resolved.size(), 2u);
-    EXPECT_EQ(resolved[0].path, exeDir / "libbeside.dylib");
-    EXPECT_FALSE(resolved[0].unresolved);
-    EXPECT_EQ(resolved[1].path, loaderDir / "libplugin.dylib");
-    EXPECT_FALSE(resolved[1].unresolved);
+    expect(fatal(eq(resolved.size(), 2u)));
+    expect(eq(resolved[0].path, exeDir / "libbeside.dylib"));
+    expect(!(resolved[0].unresolved));
+    expect(eq(resolved[1].path, loaderDir / "libplugin.dylib"));
+    expect(!(resolved[1].unresolved));
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
-}
+}};
 
 // ─── the zip writer ──────────────────────────────────────────────────────
 
-TEST(PackZip, Crc32MatchesTheKnownVectors) {
+UTest crc32_matches_the_known_vectors{"PackZip/Crc32MatchesTheKnownVectors", [] {
     // Self-consistency proves nothing here: an archive whose CRCs are wrong
     // extracts with a warning on some tools and silently on others.
-    EXPECT_EQ(mcpp::pack::zip::crc32(""), 0u);
-    EXPECT_EQ(mcpp::pack::zip::crc32("123456789"), 0xCBF43926u);
-    EXPECT_EQ(mcpp::pack::zip::crc32(
-        "The quick brown fox jumps over the lazy dog"), 0x414FA339u);
-}
+    expect(eq(mcpp::pack::zip::crc32(""), 0u));
+    expect(eq(mcpp::pack::zip::crc32("123456789"), 0xCBF43926u));
+    expect(eq(mcpp::pack::zip::crc32(
+        "The quick brown fox jumps over the lazy dog"), 0x414FA339u));
+}};
 
-TEST(PackZip, WritesAReadableArchiveWithForwardSlashNames) {
+UTest writes_a_readable_archive_with_forward_slash_names{"PackZip/WritesAReadableArchiveWithForwardSlashNames", [] {
     auto dir = std::filesystem::temp_directory_path()
              / std::format("mcpp-zip-{}", std::chrono::steady_clock::now()
                                               .time_since_epoch().count());
@@ -685,29 +686,29 @@ TEST(PackZip, WritesAReadableArchiveWithForwardSlashNames) {
     };
     auto out = dir / "pkg.zip";
     auto r = mcpp::pack::zip::write(out, entries);
-    ASSERT_TRUE(r.has_value()) << r.error();
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error();
 
     std::ifstream is(out, std::ios::binary);
     std::string bytes((std::istreambuf_iterator<char>(is)), {});
-    ASSERT_GE(bytes.size(), 22u);
-    EXPECT_EQ(bytes.substr(0, 4), std::string("PK\x03\x04", 4))
+    expect(fatal(ge(bytes.size(), 22u)));
+    expect(eq(bytes.substr(0, 4), std::string("PK\x03\x04", 4)))
         << "no local file header signature";
-    EXPECT_NE(bytes.find(std::string("PK\x01\x02", 4)), std::string::npos)
+    expect(ne(bytes.find(std::string("PK\x01\x02", 4)), std::string::npos))
         << "no central directory";
-    EXPECT_EQ(bytes.substr(bytes.size() - 22, 4), std::string("PK\x05\x06", 4))
+    expect(eq(bytes.substr(bytes.size() - 22, 4), std::string("PK\x05\x06", 4)))
         << "end-of-central-directory is not last (a trailing comment?)";
     // Names are stored verbatim; a backslash here is what makes an archive
     // written on Windows extract to one oddly-named file everywhere else.
-    EXPECT_NE(bytes.find("pkg/a.txt"), std::string::npos);
-    EXPECT_EQ(bytes.find("pkg\\a.txt"), std::string::npos);
+    expect(ne(bytes.find("pkg/a.txt"), std::string::npos));
+    expect(eq(bytes.find("pkg\\a.txt"), std::string::npos));
     // Stored, not deflated: the payload appears literally.
-    EXPECT_NE(bytes.find("hello"), std::string::npos);
+    expect(ne(bytes.find("hello"), std::string::npos));
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
-}
+}};
 
-TEST(PackZip, TwoWritesOfTheSameInputAreByteIdentical) {
+UTest two_writes_of_the_same_input_are_byte_identical{"PackZip/TwoWritesOfTheSameInputAreByteIdentical", [] {
     // A published checksum only means something if the archive is a function
     // of its contents. Reading mtimes would make it a function of when.
     auto dir = std::filesystem::temp_directory_path()
@@ -721,10 +722,10 @@ TEST(PackZip, TwoWritesOfTheSameInputAreByteIdentical) {
         std::ifstream is(p, std::ios::binary);
         return std::string((std::istreambuf_iterator<char>(is)), {});
     };
-    ASSERT_TRUE(mcpp::pack::zip::write(dir / "one.zip", entries).has_value());
-    ASSERT_TRUE(mcpp::pack::zip::write(dir / "two.zip", entries).has_value());
-    EXPECT_EQ(read(dir / "one.zip"), read(dir / "two.zip"));
+    expect(fatal(mcpp::pack::zip::write(dir / "one.zip", entries).has_value()));
+    expect(fatal(mcpp::pack::zip::write(dir / "two.zip", entries).has_value()));
+    expect(eq(read(dir / "one.zip"), read(dir / "two.zip")));
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
-}
+}};

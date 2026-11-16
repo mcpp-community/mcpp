@@ -22,6 +22,10 @@ export module mcpp.platform;
 import std;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;   // the execution relations (N23)
+import mcpp.toolchain.target_select; // host_pair
+import mcpp.toolchain.platform;
 import mcpp.invocation;
 
 export namespace mcpp::platform {
@@ -38,6 +42,9 @@ struct Selection {
     mcpp::manifest::platform::PackageRef ref;
     mcpp::manifest::platform::Origin     origin;
     bool           none = true;
+    // A built-in provider chosen by name (`builtin:<name>`, SPEC-016 §4): no
+    // platform package, and the selection takes that provider alone.
+    std::string    builtin;
     // A host triple selected the platform: only its `[platform.hosted]` part
     // applies (§5.4).
     bool           hosted = false;
@@ -88,6 +95,21 @@ void merge(mcpp::manifest::platform::Statement& base, const mcpp::manifest::plat
 // The part of a platform that applies when a host triple selects it: its
 // `[platform.hosted]` toolchain and layers, and nothing else (§5.4).
 mcpp::manifest::platform::Statement hosted_view(const mcpp::manifest::platform::Statement& platform);
+// The statement that applies to `identity` (SPEC-016 §3): the platform's, with the
+// fields of the `[[platform.provider]]` that serves it in place of the platform's
+// own (its toolchain, layers and link), or the hosted view when that provider is
+// hosted. The platform's own statement when no provider of it names the identity,
+// without the tools only another row's provider names.
+mcpp::manifest::platform::Statement provider_view(const mcpp::manifest::platform::Statement& platform,
+                                                  std::string_view identity);
+// The statement a build of `identity` reads, `hosted` as serves() answered: the
+// hosted view where the platform hosts the identity and no provider names it,
+// the provider view otherwise (a row of the platform's own conventions included).
+mcpp::manifest::platform::Statement view_of(const mcpp::manifest::platform::Statement& platform,
+                                            std::string_view identity, bool hosted);
+// The `[[platform.provider]]` of a platform that serves `identity`; null when none.
+const mcpp::manifest::platform::ProviderSpec* provider_of(const mcpp::manifest::platform::Statement& platform,
+                                                          std::string_view identity);
 
 // Whether the platform serves the triple, or refuses with the reason. A host
 // triple is served by a platform with a `[platform.hosted]` table.
@@ -124,7 +146,10 @@ std::vector<std::string> expand_step(const std::vector<std::string>& step,
 // runs the artifact on a machine of its architecture: here when the two
 // agree; on the execution host (`run_under`) otherwise, whose architecture is
 // the artifact's, so the program is that architecture's; refused when no
-// execution host is named. `--no-runner` states the triple is native here.
+// execution host is named. A machine the execution table states executes the
+// artifact's architecture (`[[platform.executes]]`) is that execution host
+// itself: the program is that architecture's, started here (design
+// 2026-11-15 N23). `--no-runner` states the triple is native here.
 // Every other runner reaches the artifact from this machine.
 enum class RunnerReach { Here, TargetArchitecture, Refused };
 RunnerReach runner_reach(const mcpp::manifest::platform::Runner& runner, std::string_view targetArch,
@@ -160,6 +185,16 @@ struct Resolved {
 // `config.toml`, `mcpp.toml`, `env`, `flag`, `graph`, `build-program`.
 std::string origin_text(const mcpp::manifest::platform::Origin& o);
 
+// THE DEFAULT IS A RELEASE, AND A NEWER ONE IS THE PROJECT'S CHOICE (design
+// 2026-11-07 §4.10). The tip a failed build prints when the platform is the
+// target table's default (`origin` is built-in) and the index holds a newer
+// release: the release used, this mcpp's, the newer one and the line to write.
+// None for a platform the project, the configuration or the command line chose,
+// or when nothing newer is known.
+std::optional<std::string> newer_release_tip(const mcpp::manifest::platform::Origin& origin,
+                                             std::string_view name, std::string_view used,
+                                             std::string_view newer, std::string_view mcppVersion);
+
 // The lines `Platform …` and its fields, as the target report prints them.
 std::vector<std::pair<std::string, std::string>> report_rows(const Resolved& r);
 
@@ -177,7 +212,7 @@ namespace {
 namespace mp = mcpp::manifest::platform;
 
 bool names_a_path(std::string_view v) {
-    if (v.empty()) return false;
+    if (v.empty() || v.starts_with("git+")) return false;   // a repository (SPEC-016 §8)
     if (v.starts_with("path:")) return true;
     if (v.starts_with("/") || v.starts_with("./") || v.starts_with("../") || v.starts_with("~")
         || v == "." || v == "..")
@@ -233,6 +268,13 @@ std::expected<Selection, std::string> parse_choice(std::string_view value, mp::O
     Selection s;
     s.origin = std::move(origin);
     if (value == "none") return s;
+    if (value.starts_with("builtin:")) {
+        s.builtin = std::string(value.substr(8));
+        if (s.builtin.empty())
+            return std::unexpected(std::format("{}: `builtin:` names no provider; write builtin:<name> "
+                                               "(`mcpp why target` lists them)", s.origin.key));
+        return s;
+    }
     if (names_a_path(value)) {
         std::string dir(value.starts_with("path:") ? value.substr(5) : value);
         if (dir.starts_with("~"))
@@ -276,6 +318,7 @@ std::expected<Selection, std::string> select_target(const ChoiceInputs& in, cons
         s.origin = chosen->platformOrigin;
         if (s.origin.key.empty())
             s.origin.key = std::format("[target.{}].platform", chosen->selector);
+        s.builtin = chosen->platformBuiltin;
         if (chosen->platformNone) return s;
         s.ref = chosen->platform;
         s.none = false;
@@ -312,6 +355,38 @@ std::expected<Selection, std::string> select_host(std::string_view flagOrEnv, bo
     return none;
 }
 
+// ONE RUNNER OVER ANOTHER (SPEC-013 §10; R1, R2): `cmd`, `requires` and
+// `enabled` are one statement, replaced together; `host`, `hosts`,
+// `exclusive`, `longlived` and `built-as` each stand until a nearer statement
+// writes them. A table without `cmd` adjusts the runner below it.
+void merge_runner(mp::Runner& b, const mp::Runner& o) {
+    if (o.set) {
+        b.cmd = o.cmd;
+        b.requires_ = o.requires_;
+        b.origin = o.origin;
+        b.set = true;
+        b.enabled = o.enabledSet ? o.enabled : true;
+        b.enabledSet = o.enabledSet;
+    } else if (o.enabledSet) {
+        b.enabled = o.enabled;
+        b.enabledSet = true;
+    }
+    if (!o.builtAs.empty()) b.builtAs = o.builtAs;
+    if (!o.host.empty()) b.host = o.host;
+    if (o.exclusiveSet) {
+        b.exclusive = o.exclusive;
+        b.exclusiveSet = true;
+    }
+    if (o.longlivedSet) {
+        b.longlived = o.longlived;
+        b.longlivedSet = true;
+    }
+    if (o.hostsSet) {
+        b.hosts = o.hosts;
+        b.hostsSet = true;
+    }
+}
+
 void merge(mp::Statement& b, const mp::Statement& o) {
     auto text = [](mp::Text& to, const mp::Text& from) { if (from.set) to = from; };
     auto words = [](mp::Words& to, const mp::Words& from) { if (from.set) to = from; };
@@ -320,21 +395,10 @@ void merge(mp::Statement& b, const mp::Statement& o) {
     if (o.sysroot.set) { b.sysroot = o.sysroot; b.sysrootProvides = o.sysrootProvides; }
     // Field by field: an argv-only statement keeps the platform's `host` and
     // `exclusive`; a table, or a program's `run-host`, states what it states.
-    if (o.runner.set) {
-        b.runner.cmd = o.runner.cmd;
-        b.runner.origin = o.runner.origin;
-        b.runner.set = true;
-    }
-    if (!o.runner.host.empty()) b.runner.host = o.runner.host;
-    if (o.runner.exclusiveSet) {
-        b.runner.exclusive = o.runner.exclusive;
-        b.runner.exclusiveSet = true;
-    }
-    if (o.runner.hostsSet) {
-        b.runner.hosts = o.runner.hosts;
-        b.runner.hostsSet = true;
-    }
-    for (auto const& [k, v] : o.runners) b.runners[k] = v;
+    // `requires` are the packages of THAT command, so a statement that
+    // replaces the command replaces them.
+    merge_runner(b.runner, o.runner);
+    for (auto const& [k, v] : o.runners) merge_runner(b.runners[k], v);
     if (!o.carriers.empty()) b.carriers = o.carriers;
     words(b.descriptorKeys, o.descriptorKeys);
     text(b.plugin, o.plugin);
@@ -385,20 +449,133 @@ mp::Statement hosted_view(const mp::Statement& p) {
     return s;
 }
 
+const mp::ProviderSpec* provider_of(const mp::Statement& p, std::string_view identity) {
+    for (auto const& pr : p.providers)
+        for (auto const& s : pr.serves)
+            if (mcpp::toolchain::target::serves_triple(s, identity)) return &pr;
+    return nullptr;
+}
+
+// THE PROVIDER'S OWN FIELDS, OVER WHICHEVER BASE (2026-11-13). `link`, `sysroot`
+// and `runner` are what a provider states for the identities it serves; with
+// `base = "none"` they were dropped with the platform's, so a provider could not
+// state the link of a row whose conventions are not the platform's own (the
+// openkal platform's `x86_64-uefi` beside its ok images). The platform's top-level
+// `runner` belongs to `[platform] targets`; a provider that states one runs its
+// identities by it.
+namespace {
+void take_provider_fields(mp::Statement& s, const mp::ProviderSpec& pr) {
+    if (!pr.sysroot.empty()) s.sysroot = mp::Text{ pr.sysroot, pr.origin, true };
+    if (!pr.runner.cmd.empty()) s.runner = pr.runner;
+    auto const& l = pr.link;
+    auto text = [](mp::Text& to, const mp::Text& from) { if (from.set) to = from; };
+    text(s.link.driver, l.driver);
+    text(s.link.start, l.start);
+    text(s.link.script, l.script);
+    text(s.link.exe, l.exe);
+    text(s.link.shared, l.shared);
+    if (l.flags.set) s.link.flags = l.flags;
+    if (l.inputsSet) { s.link.inputs = l.inputs; s.link.inputsOrigin = l.inputsOrigin; s.link.inputsSet = true; }
+    if (l.sealSet) { s.link.seal = l.seal; s.link.sealOrigin = l.sealOrigin; s.link.sealSet = true; }
+}
+
+// THE PROGRAMS A STATEMENT'S CONVENTIONS RUN: its link's inputs, its seal's steps,
+// its runner and its named runners, each by its first word.
+std::set<std::string> named_programs(const mp::Link& l, const mp::Runner& runner,
+                                     const std::map<std::string, mp::Runner>& runners) {
+    std::set<std::string> out;
+    for (auto const& in : l.inputs) if (!in.from.empty()) out.insert(in.from.front());
+    for (auto const& step : l.seal) if (!step.empty()) out.insert(step.front());
+    if (!runner.cmd.empty()) out.insert(runner.cmd.front());
+    for (auto const& [_, w] : runners) if (!w.cmd.empty()) out.insert(w.cmd.front());
+    return out;
+}
+
+// WHICH OF THE PLATFORM'S TOOLS A VIEW CARRIES (2026.11.13.1). `[platform.tools]`
+// are programs for the building machine, and a build provisions each tool its view
+// carries. A provider with `base = "none"` carries the tools its own conventions
+// name (a row's seal, beside rows whose conventions are the platform's own); every
+// other view carries every tool but those that only such providers name, so the
+// programs of one row are not built for another.
+void select_tools(mp::Statement& s, const mp::Statement& p, const mp::ProviderSpec* own) {
+    if (own && own->base == "none") {
+        const auto named = named_programs(s.link, s.runner, s.runners);
+        s.tools.clear();
+        for (auto const& [name, e] : p.tools)
+            if (named.contains(name)) s.tools.emplace(name, e);
+        return;
+    }
+    std::set<std::string> foreign;
+    for (auto const& pr : p.providers)
+        if (&pr != own && pr.base == "none")
+            for (auto const& n : named_programs(pr.link, pr.runner, {})) foreign.insert(n);
+    if (foreign.empty()) return;
+    const auto named = named_programs(s.link, s.runner, s.runners);
+    for (auto const& n : foreign)
+        if (!named.contains(n)) s.tools.erase(n);
+}
+} // namespace
+
+mp::Statement provider_view(const mp::Statement& p, std::string_view identity) {
+    const auto* pr = provider_of(p, identity);
+    if (!pr) {
+        auto s = p;
+        select_tools(s, p, nullptr);
+        return s;
+    }
+    if (pr->base == "none") {
+        auto s = hosted_view(p);
+        s.cHosted = pr->hosted;
+        if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+        if (!pr->layers.empty()) s.layers = pr->layers;
+        take_provider_fields(s, *pr);
+        select_tools(s, p, pr);
+        return s;
+    }
+    auto s = p;
+    s.cHosted = pr->hosted;
+    if (!pr->toolchain.empty()) s.toolchain = mp::Text{ pr->toolchain, pr->origin, true };
+    if (!pr->layers.empty()) s.layers = pr->layers;
+    take_provider_fields(s, *pr);
+    select_tools(s, p, pr);
+    return s;
+}
+
+mp::Statement view_of(const mp::Statement& p, std::string_view identity, bool hosted) {
+    return hosted && !provider_of(p, identity) ? hosted_view(p) : provider_view(p, identity);
+}
+
 std::expected<bool, std::string>
 serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::triple::Triple& t) {
+    // A provider of the platform that names the identity (SPEC-016 §3).
+    if (const auto* pr = provider_of(p, t.str())) return pr->base == "none";
     for (auto const& w : p.targets.value) {
         auto pt = mcpp::toolchain::triple::parse(w);
         if (pt ? pt->str() == t.str() : w == t.str()) return false;
     }
-    std::string list;
-    for (auto const& w : p.targets.value) { if (!list.empty()) list += ", "; list += w; }
+    // What it serves: its targets and the identities its providers name.
+    std::string list, first;
+    auto name = [&](std::string_view w) {
+        if (first.empty()) first = std::string(w);
+        if (!list.empty()) list += ", ";
+        list += w;
+    };
+    for (auto const& w : p.targets.value) name(w);
+    for (auto const& pr : p.providers)
+        for (auto const& w : pr.serves) name(w);
     if (p.hosted.set) {
         if (!p.hosted.targets.set) return true;
         std::string hosts;
         for (auto const& w : p.hosted.targets.value) {
+            // A HOSTED ENTRY NAMES A SYSTEM, AND THE C LIBRARY NAMES THE ENV
+            // (SPEC-016 §2, I5): `x86_64-linux-gnu` in `hosted.targets` serves
+            // the build of that architecture and system whose identity follows
+            // the C library the hosted layers bring (`x86_64-linux-musl` for
+            // openkal-musl), so a platform written before the identity followed
+            // the C library keeps serving the same builds.
             auto pt = mcpp::toolchain::triple::parse(w);
-            if (pt ? pt->str() == t.str() : w == t.str()) return true;
+            if (pt ? (pt->str() == t.str() || (pt->arch == t.arch && pt->os == t.os)) : w == t.str())
+                return true;
             if (!hosts.empty()) hosts += ", ";
             hosts += w;
         }
@@ -420,8 +597,8 @@ serves(const mp::Statement& p, std::string_view package, const mcpp::toolchain::
         "platform {} serves {} and not {}: it has no [platform.hosted] table, the part a host "
         "triple may take (SPEC-013 §5.4).\n"
         "       Build for one of its targets (--target {}), or select another platform for {}",
-        package, list, t.str(), p.targets.value.empty() ? std::string("<target>") : p.targets.value.front(),
-        t.str()));
+        package, list.empty() ? std::string("nothing") : list, t.str(),
+        first.empty() ? std::string("<target>") : first, t.str()));
 }
 
 TargetFlags evaluate_flags(const mp::Statement& s, const Matches& matches) {
@@ -484,6 +661,14 @@ RunnerReach runner_reach(const mp::Runner& runner, std::string_view targetArch,
                          std::string_view hostArch, bool executionHostNamed, bool noRunner) {
     if (noRunner || !runner.set || runner.host != "same-arch" || targetArch == hostArch)
         return RunnerReach::Here;
+    // A MACHINE THAT EXECUTES THE ARTIFACT'S ARCHITECTURE besides its own is
+    // its own execution host of that architecture (N23): the runner is the
+    // platform's runner built for that architecture, started here, as it is
+    // handed to a named execution host. An x86_64 Linux machine runs an i386
+    // image through the i686 runner; its own runner refuses the image.
+    if (mcpp::toolchain::target::executes(
+            mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name, hostArch), targetArch))
+        return RunnerReach::TargetArchitecture;
     return executionHostNamed ? RunnerReach::TargetArchitecture : RunnerReach::Refused;
 }
 
@@ -500,6 +685,17 @@ std::string Resolved::display() const {
     if (!active) return "host conventions";
     auto dot = package.find('.');
     return std::format("{} {}", dot == std::string::npos ? package : package.substr(dot + 1), version);
+}
+
+std::optional<std::string> newer_release_tip(const mp::Origin& origin, std::string_view name,
+                                             std::string_view used, std::string_view newer,
+                                             std::string_view mcppVersion) {
+    if (origin.tier != mp::Tier::BuiltIn || used.empty() || newer.empty() || newer == used)
+        return std::nullopt;
+    return std::format("this build used {} {}, mcpp {}'s default; the index has {} {}. A project "
+                       "selects a release in its mcpp.toml: [target.'cfg(os = \"openkal\")'] "
+                       "platform = \"{}@{}\"",
+                       name, used, mcppVersion, name, newer, name, newer);
 }
 
 std::string origin_text(const mp::Origin& o) {
@@ -540,7 +736,8 @@ std::vector<std::pair<std::string, std::string>> report_rows(const Resolved& r) 
         rows.emplace_back("runner", std::format("{} ({})", f.runner.cmd.empty() ? std::string() : f.runner.cmd.front(),
                                                 origin_text(f.runner.origin)));
     for (auto const& [name, w] : f.runners)
-        rows.emplace_back("runner " + name, std::format("{} ({})", argv_text(w.value), origin_text(w.origin)));
+        if (w.set)
+            rows.emplace_back("runner " + name, std::format("{} ({})", argv_text(w.cmd), origin_text(w.origin)));
     if (f.link.driver.set && f.link.driver.value != "compiler")
         rows.emplace_back("link", std::format("{}{} ({})", f.link.driver.value,
                                               f.link.start.set ? ", start " + f.link.start.value : "",
@@ -570,7 +767,7 @@ std::string to_json(const Resolved& r) {
     };
     if (f.toolchain.set) field("toolchain", q(f.toolchain.value), f.toolchain.origin);
     if (f.runner.set) field("runner", arr(f.runner.cmd), f.runner.origin);
-    for (auto const& [k, w] : f.runners) field("runners." + k, arr(w.value), w.origin);
+    for (auto const& [k, w] : f.runners) if (w.set) field("runners." + k, arr(w.cmd), w.origin);
     for (auto const& [layer, l] : r.layers) {
         mp::Origin origin{l.tier, {}, 0, {}};
         if (auto it = f.layers.find(layer); it != f.layers.end() && l.tier != mp::Tier::Graph)

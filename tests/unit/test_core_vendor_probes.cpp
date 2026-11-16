@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 // The engine owns no vendor probes.
 //
@@ -54,10 +56,10 @@ std::string without_comments(std::string_view source) {
 
 }  // namespace
 
-TEST(CoreVendorProbes, TheEngineNamesNoVendorTool) {
+UTest the_engine_names_no_vendor_tool{"CoreVendorProbes/TheEngineNamesNoVendorTool", [] {
     auto repo = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path();
     auto src = repo / "src";
-    ASSERT_TRUE(std::filesystem::is_directory(src)) << src;
+    expect(fatal(std::filesystem::is_directory(src))) << src;
     // Tools, probes and locations. Each one is something only a rule package
     // has business invoking or reading.
     const std::vector<std::string> tools = {
@@ -86,11 +88,10 @@ TEST(CoreVendorProbes, TheEngineNamesNoVendorTool) {
                 std::string lowered = tool;
                 std::ranges::transform(lowered, lowered.begin(),
                     [](unsigned char c) { return std::tolower(c); });
-                EXPECT_EQ(lineText.find(lowered), std::string::npos)
-                    << it->path() << ':' << line << " names a vendor tool: " << tool;
+                if (auto&& failed = expect(eq(lineText.find(lowered), std::string::npos)); !failed) failed << it->path() << ':' << line << " names a vendor tool: " << tool;
             }
         }
     }
     // The denominator: a scan that found no files would pass vacuously.
-    EXPECT_GT(files, 100u);
-}
+    expect(gt(files, 100u));
+}};

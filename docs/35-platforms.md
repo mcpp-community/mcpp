@@ -22,7 +22,9 @@ the tools the build runs on this machine, the compile and link conventions, the
 name and seal of an artifact, and the runner. A project states none of it. The
 target table selects `mcpplibs.openkal-platform` for `x86_64-openkal` and
 `aarch64-openkal` (2026.10.27.1+), which is what built-in support for those two
-targets is.
+targets is. An image is a release form, and a native row is a build target with
+the same guarantees; neither ranks above the other ([24](24-openkal-cross.md),
+"Two Roles, No Ranking").
 
 ## The shortest run
 
@@ -40,13 +42,13 @@ mcpp run --target x86_64-openkal
 
 ```
     Resolved llvm@23.1.3 → x86_64-openkal → …/xim-x-llvm/23.1.3/bin/clang++
-             the platform's (openkal-platform 0.18.0), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
+             the platform's (openkal-platform 0.24.0), replacing your gcc@16.1.0 — override with `[target.x86_64-openkal] toolchain`
       Target x86_64-openkal → x86_64-unknown-none-elf
-             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.16.6, platform)
-             c-abi             musl           (openkal-musl@0.22.6, platform)
-             c++-abi           libc++         (openkal-llvm-runtime@0.16.6, platform)
-    Platform openkal-platform 0.18.0 (built-in)
-             tools             okld, okrun (openkal-tools@0.1.3, platform)
+             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.19.0, platform)
+             c-abi             musl           (openkal-musl@0.28.0, platform)
+             c++-abi           libc++         (openkal-llvm-runtime@0.19.0, platform)
+    Platform openkal-platform 0.24.0 (built-in)
+             tools             okld, okprof, okrun (openkal-tools@0.5.0, platform)
              runner            okrun (platform)
              link              lld, start ok_main (platform)
    Compiling app v0.1.0 (.)
@@ -98,8 +100,8 @@ runner = ["my-okrun", "{}"]
 |---|---|
 | compile flags, `link.flags` | appended after the platform's; a convention cannot be removed |
 | `link.inputs`, `link.seal` | replaced whole |
-| `layers`, `tools`, `runners` | replaced key by key; `<layer> = false` leaves the layer out |
-| `runner` | the argv is replaced; `host` and `exclusive` are kept unless stated |
+| `layers`, `tools` | replaced key by key; `<layer> = false` leaves the layer out |
+| `runner`, each of `runners` | `cmd`, `requires` and `enabled` are replaced together, and a runner whose `cmd` is replaced is enabled unless stated; `host`, `hosts`, `exclusive` and `longlived` are kept unless stated; a table without `cmd` in `config.toml` or the project adjusts the keys it writes (2026.11.16.1) |
 | every other field | replaced |
 
 The same tables are accepted in `~/.mcpp/config.toml` for one machine. A layer
@@ -113,9 +115,9 @@ The first of these that answers selects the target's platform:
 
 | Source | Spelling |
 |---|---|
-| the command line | `--platform openkal-platform@0.23.3`, `--platform path:../openkal-platform`, `--platform none` |
+| the command line | `--platform openkal-platform@0.24.1`, a series `--platform openkal-platform@^0.24`, `--platform path:../openkal-platform`, `--platform none` |
 | the environment | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
-| the project | `[target.<selector>] platform = "openkal-platform@0.23.3"`, or `{ path = "…" }` |
+| the project | `[target.<selector>] platform = "openkal-platform@0.24.0"`, or `{ path = "…" }` |
 | this machine | the same key in `~/.mcpp/config.toml` |
 | the target table | the platform column (`mcpp toolchain list`) |
 
@@ -129,11 +131,11 @@ its own conventions. `[host] platform` selects a platform for them instead:
 
 ```toml
 [host]
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.24.0"
 ```
 
 ```
-        Host platform openkal-platform 0.18.0 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
+        Host platform openkal-platform 0.24.0 (mcpp.toml:2): build programs are x86_64-openkal images run by okrun
 ```
 
 Every build program then compiles as an ok image of this machine's
@@ -151,29 +153,67 @@ implementation:
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.3"
+platform = "openkal-platform@0.24.0"
 ```
 
 On Windows the arrangement is the GNU ABI's row (`--target x86_64-windows-gnu`);
 a triple outside `[platform.hosted] targets` is refused, naming the row of the
 same system and architecture that it serves.
 
+A C library of the graph (`mcpp:c-abi`) leads a Mach-O image's link
+(2026.11.9.1+). The loader of that format runs an image's initialisers before
+its entry, in link order, and the C library is brought up by an initialiser of
+its own; with its objects first, it is up before any global constructor of the
+program runs, as a C runtime's start objects precede a program on ELF.
+
 ## The version group
 
-`[platform.versions]` names one version of each package of a family whose
-packages pin one another exactly. A graph that holds another version of one of
-them is refused before anything compiles:
+`[platform.versions]` names one version of each package of a family. From mcpp
+2026.11.7.1 the group chooses: the platform is the first package the graph
+resolves, and each later request of a package the group lists, by version,
+resolves to the group's version when its constraint admits it, though the index
+holds a newer patch. openkal's packages name one another by compatible ranges
+(`openkal-musl = "^0.28.0"`), so the group's choice is what a build links. A
+request the group's version does not satisfy is refused before anything
+compiles:
 
 ```
-error: openkal-musl 0.22.2 is in this build, and the platform openkal-platform 0.18.0 is a version group that names openkal-musl 0.22.9.
-       requested by: own
-       The family's packages pin one another exactly, so two versions of one of
-       them cannot be linked into one program. Either select the platform release
-       of that version ([target.<selector>] platform = "openkal-platform@<version>"), or write
-       openkal-musl = "0.22.6" where it is requested.
+error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-platform 0.24.1 is a version group
+       that names openkal-musl 0.28.1.
+       The group chooses one version of each package of the family for a
+       build. Either select the platform release of the version you need
+       ([target.<selector>] platform = "openkal-platform@<version>"), or admit 0.28.1 where
+       it is requested (openkal-musl = "^0.28.1").
 ```
 
-A package taken from a directory or a repository is not bound by the group.
+A package built for this machine only (a tool's) and a package taken from a
+directory or a repository are not bound by the group. An mcpp before
+2026.11.7.1 checks the group after resolution instead; a family released as one
+index change resolves the same either way.
+
+## The built-in platform is one release
+
+The target table selects one openkal-platform release for the two ok-image
+targets, the one this mcpp was qualified with: 0.25.0 for mcpp 2026.11.10.1,
+0.24.4 for 2026.11.8.1 and 2026.11.9.1, 0.24.3 for 2026.11.7.2 (2026.11.7.1 selected the series `^0.24`). A project that states no platform
+builds the same versions at any time, with or without `mcpp.lock`; when the lock
+records another release, the build takes the default and says which release the
+lock recorded. A newer platform needs no new mcpp: a project selects it in its
+manifest,
+
+```toml
+[target.'cfg(os = "openkal")']
+platform = "openkal-platform@0.28.0"     # a release, or a series: "openkal-platform@^0.28"
+```
+
+and a build that fails while the default is in use and the synced index holds a
+newer release ends with a `tip:` naming both and this line.
+
+A series takes its newest release whose `[package] mcpp` floor this mcpp meets,
+naming each release it skips for a newer engine, and `mcpp.lock` records it; the
+next build takes the recorded release while the series admits it. `mcpp update`
+(or `mcpp update openkal-platform`) drops the record, and the build after it
+takes the newest release again.
 
 ## Writing a platform package
 
@@ -184,39 +224,40 @@ abridged:
 [package]
 namespace = "mcpplibs"
 name      = "openkal-platform"
-version   = "0.18.0"
-mcpp      = ">=2026.10.30.1"
+version   = "0.24.0"
+mcpp      = ">=2026.11.3.1"
 
 [platform]
 targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
-runner    = { cmd = ["okrun", "{}"], host = "same-arch" }
-carrier   = { package = "openkal-run@0.1.3", section = ".oke", main = "carrier/main.cpp" }
+runner    = { cmd = ["okrun", "{}"], host = "same-arch", hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"] }
+carrier   = { package = "openkal-run@0.5.0", section = ".oke", main = "carrier/main.cpp" }
 plugin    = "build.mcpp"
 
 [platform.layers]
-compiler-runtime = "openkal-llvm-runtime@0.16.6"
-"c++-abi"        = "openkal-llvm-runtime@0.16.6"
-c-abi            = { name = "openkal-musl", version = "0.22.6", default-features = false, features = ["posix"] }
+compiler-runtime = "openkal-llvm-runtime@0.19.0"
+"c++-abi"        = "openkal-llvm-runtime@0.19.0"
+c-abi            = { name = "openkal-musl", version = "0.28.0", default-features = false, features = ["posix", "malloc-mimalloc"] }
 
 [platform.tools]
-okld  = "openkal-tools@0.1.3"
-okrun = "openkal-tools@0.1.3"
+okld  = "openkal-tools@0.5.0"
+okprof = "openkal-tools@0.5.0"
+okrun = "openkal-tools@0.5.0"
 
 [platform.build]
-cxxflags = ["-fPIC", "-femulated-tls", "-fvisibility=hidden", "-fasynchronous-unwind-tables"]
+cxxflags = ["-fPIC", "-femulated-tls", "-fvisibility=hidden", "-fasynchronous-unwind-tables", "-Xclang", "-fstack-clash-protection", "-ffunction-sections", "-fdata-sections", "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer", "-fstack-protector-strong", "-mstack-protector-guard=global", "-ftrivial-auto-var-init=zero", "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST"]
 
 [platform.build.'cfg(arch = "aarch64")']
-cxxflags = ["-ffixed-x18", "-mno-outline-atomics"]
+cxxflags = ["-ffixed-x18", "-mno-outline-atomics", "-mbranch-protection=pac-ret+bti"]
 
 [platform.link]
 driver = "lld"
 start  = "ok_main"
-flags  = ["-shared", "-z", "max-page-size=65536", "-z", "now", "--gc-sections", "--icf=safe", "--eh-frame-hdr"]
+flags  = ["-shared", "-z", "max-page-size=65536", "-z", "pack-relative-relocs", "-z", "now", "-z", "noexecstack", "--hash-style=both", "--gc-sections", "--icf=safe", "--eh-frame-hdr", "--build-id=sha1", "--emit-relocs", "-mllvm", "-emulated-tls"]
 inputs = [{ from = ["okld", "note-source"], as = "ok-notes.S" }]
 exe    = "{name}.oke"
 shared = "lib{name}.okso"
-seal   = [["okld", "note", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
+seal   = [["okld", "note", "{}"], ["okld", "place", "{}"], ["okld", "check", "{}", "--with", "{needed}"]]
 ```
 
 - **Programs are named, not located.** `okld` in `inputs` and `seal` is found among
@@ -248,6 +289,152 @@ platform package, with no `--target`, builds its tests for each of its
 `targets` with the package as the platform, runs those of this machine's
 architecture and those an execution host is named for (2026.10.29.1+), and
 reports the others as built and not run.
+
+## Defining targets and providers (2026.11.9.1+)
+
+A platform may serve a system no built-in row names. `[[platform.define]]`
+states the row, `[[platform.provider]]` the provider that serves it:
+
+```toml
+[[platform.define]]
+triple        = "x86_64-haiku"
+clang-triple  = "x86_64-unknown-haiku"
+object-format = "elf"
+family        = "unix"
+execution     = "haiku"            # the system its programs run on
+
+[[platform.provider]]
+serves   = ["x86_64-haiku"]        # patterns: `*` is any one segment
+priority = 100
+hosted   = true                    # the C environment has `main`
+```
+
+With the platform selected (`[target.x86_64-haiku] platform = {...}` or
+`--platform`), `--target x86_64-haiku` builds into `target/x86_64-haiku/`,
+`cfg(os = "haiku")` holds (and `cfg(haiku)`, `cfg(unix)` by the row's `family`, 2026.11.10.2+), and a program whose system is not this machine's
+is built, not run, until a runner states how it runs (docs/41). The row's
+machine description is the platform's: a target whose machine differs from a
+built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
+shorthands of a provider.
+
+**A row's companions and exception model (2026.11.16.1+).** `companions = [".wasm"]`
+names the files the link may write beside a program, named after it: they are removed
+before each link, staged when the link wrote one, and not an error when it did not.
+`exceptions` is the model of the row's builds when the project states no
+`[target.<sel>.abi] exceptions`; under `"wasm"` the long-jump model is `"wasm"` too
+(the built-in `wasm32-emscripten` row states `"wasm"`). A machine
+runs another architecture's programs only where the execution table states it
+(`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
+the artifact's architecture and started on this machine.
+
+**A defined row is read as a built-in one (2026.11.10.1+).** Its `march` and
+`link-emulation` reach the compile and an `ld.lld` link (`mcpp why flags` marks them
+`row`); nothing the toolchain payload built for its own host — its libc++ headers,
+its runtime directories, the host's `-L` and RPATH — reaches the row; and the host
+loader's closure and symbol checks apply only when the row's execution system is
+this machine's. The same holds for a built-in row no built-in provider serves.
+
+**A system the built-in rows name is served, not defined (2026.11.10.1+).**
+FreeBSD's rows are built-in (`x86_64-freebsd`, `aarch64-freebsd`); a platform that
+serves them states a provider and a base for each, and defining them again is an error.
+A provider's `sysroot` (a package, or `{ path = "<dir>" }` relative to the platform's
+manifest) is that identity's base, ahead of the platform's own `sysroot`:
+
+```toml
+[platform]
+toolchain = "llvm@23.1.3"
+
+[[platform.provider]]
+serves  = ["x86_64-freebsd"]
+sysroot = "xim:x86_64-freebsd-sysroot@14.5"     # a base package ([22](22-target-side.md))
+hosted  = true
+
+[[platform.provider]]
+serves  = ["aarch64-freebsd"]
+sysroot = "xim:aarch64-freebsd-sysroot@14.5"
+hosted  = true
+
+[platform.build]
+ldflags = ["-pthread"]
+
+[platform.link]
+driver = "compiler"
+```
+
+**`[platform.link] flags` are words for ld.lld (2026.11.10.1+).** A platform whose
+`driver` is `"compiler"` gives them to no program, and the build says so, naming
+`[platform.build] ldflags`, whose words reach the compiler's link.
+
+**A provider states how its artifacts start, and what a system is called
+(2026.11.12.1+).** Three keys of a provider entry and one table:
+
+```toml
+[[platform.provider]]
+serves         = ["x86_64-haiku"]
+tier           = "preview"                       # of this arrangement; unset: the row's
+system-headers = "xim:haiku-headers@1.0"         # the system's own interfaces, for a step that compiles against them
+runner         = { cmd = ["dirun", "--profile", "{pkg:haiku-disk-image}/dirun.toml", "--", "{}"],
+                   hosts = ["linux-x86_64", "macos-aarch64"],
+                   requires = ["xim:dirun@0.2.0", "xim:haiku-disk-image@1.0"] }
+
+[[platform.system]]
+name  = "haiku"
+uname = "Haiku"                                  # what `uname -s` answers there
+```
+
+A provider's `runner` is the lowest tier of the runner statement: a build
+program's, this machine's `config.toml`, the project's `[target.<selector>]
+runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each replace it. The platform's own
+`runner` belongs to `[platform] targets` and does not replace it (2026.11.13.1):
+a provider states the runner, the link (`link`) and the base (`sysroot`) of the
+identities it serves, with `base = "platform"` and with `base = "none"` alike,
+so one platform states rows whose conventions differ (the openkal platform's ok
+images and `x86_64-uefi`). `hosts` are the machines the runner exists on (unset: any). In the
+template `{}` is the artifact, `{sysroot}` the base the artifact was linked
+against, and `{pkg:<name>}` the root of the package of that name among
+`requires`; the template's program is looked for in the required packages
+before `PATH`. The packages of `requires` are installed by the first `mcpp
+run` or `mcpp test` that needs them, never by a build.
+
+`[platform.tools]` are built for the building machine, and a build provisions
+the tools its row carries (2026.11.13.1). A provider with `base = "none"` carries
+those its own link, seal and runner name; every other row carries every tool
+but those only such a provider names. So the openkal platform's DOS row
+(`i686-dos-musl`, whose seal is `okdos`) builds `okdos` alone, and its ok images
+do not build it.
+
+One provider entry states one arrangement of payloads: a native arrangement and
+a cross one are two entries, each with its `hosts`, base and priority. A new
+entry does not change the answer of a request that was answered before it, so
+it enters below the entries that answer `<arch>-<os>` today
+([SPEC-016 §4](specs/targets-and-providers.md)).
+
+A system that states a `uname` joins a file that carries one program per
+system (`mcpp pack --pkg-format single-file`); the system that states none
+leads the file as its PE. A system whose loader reads a program's resource
+section states `resources = true` (the built-in `windows` entry): a project's
+`[resources]` compile into the programs of its rows, and not into a PE image
+another system loads, such as a UEFI application (2026.11.16.1). A platform whose runner is built for several systems
+states the identity of each:
+
+```toml
+[platform]
+runner = { cmd = ["okrun", "{}"], hosts = ["linux-x86_64", "freebsd-x86_64"],
+           built-as = { "freebsd-x86_64" = "x86_64-freebsd-musl" } }
+```
+
+`mcpp pack --systems all` takes every system of the table, and writes a pair no
+program is built for as not covered.
+
+`mcpp new <name> --template platform` writes a platform package defining
+`<arch>-<name>`. Reading a platform's manifest checks its statement against the
+rows: a definition of a built-in row, or a row defined twice, is an error
+wherever the platform is read; a provider that serves no row, and two providers
+that serve one identity at one priority, are warnings of the platform's own
+build. `mcpp why platform` lists the rows the platform defines and the
+identities it serves, each with its provider and priority: in the platform's
+directory its own, in a project the one its target selects (`--target`;
+`--format json`).
 
 ## Inspecting a configuration
 

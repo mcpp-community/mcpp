@@ -93,7 +93,7 @@ SDK，或者区分 `linux`/`windows`/`macos`。那些是 C 环境层或平台层
 
 ```toml
 [target.'cfg(any(linux, macos, windows))']
-platform = "openkal-platform@0.23.6"
+platform = "openkal-platform@0.24.0"
 ```
 
 一张表（2026.10.27.1+）。它为宿主三元组选择 openkal 平台，平台的宿主部分命名编译器与目标侧三个层的包；
@@ -314,6 +314,11 @@ C 库**底下**—— 而必须落在一个 C 库**之上**。规范恰好允许
 wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn
 ```
 
+**node 下的终端没有原始模式。** Emscripten 以同步读取读标准输入，node 对管道与文件提供它、对终端拒绝它：在终端上
+`read(0, ...)` 以 `EIO` 失败，无论是否调用 `tcsetattr`；`tcsetattr` 返回 0 且不改变任何东西；`isatty(0)` 在各种情况下
+都为 1。程序经管道读取输入（`printf 'keys' | mcpp run --target wasm32-emscripten`）；在 web 上需要逐键输入的程序在其页面中
+以键盘事件读取（以 emsdk 6.0.9、node 26 实测）。
+
 这正是 6.2 条里的第二个时刻。若提供一个 `kal_process_spawn`、只让它返回
 一个错误，会是规范所禁止的那种形状 —— 存在却永远失败，调用方无法把它同一个
 条件区分开来 —— 并且会把一个在链接期就已知的事实，挪到运行期才能知道。
@@ -361,7 +366,11 @@ mcpp run   --target x86_64-openkal      # okrun bin/app.oke
 无需其他声明（2026.10.27.1+）：目标表为两行选择 `openkal-platform`，由平台陈述工具链、各层、工具、下表的约定
 与 runner（[35](35-platforms.md)）。
 
-mcpp 2026.11.5.1 的两个内置 openkal 目标默认选择平台 0.23.6。显式 `platform` 配置可覆盖默认选择；该平台的最终 ThinLTO 链接保持 emulated TLS 约定。
+两个内置 openkal 目标默认选择平台 0.24.0（2026.11.7.1+）。显式 `platform` 配置可覆盖默认选择；
+该平台的最终 ThinLTO 链接保持 emulated TLS 约定。
+
+OS 0.3 使用 OpenKal 0.24 依赖组。保留 OS 0.2.9 的工程显式选择匹配的 0.23 平台组；
+不兼容的 OpenKal 次版本要求在依赖解析阶段被拒绝。
 
 | | 平台的陈述 | 原因 |
 |---|---|---|
@@ -378,6 +387,25 @@ mcpp 2026.11.5.1 的两个内置 openkal 目标默认选择平台 0.23.6。显�
 
 **缺少 `okld` 是拒绝而非警告。** 没有需求 note 的映像会被每个加载器拒绝；拒绝（`platform-tool-absent`）
 指名构建它的包。
+
+### 两种角色，不分等级（mcpp 2026.11.8.1）
+
+映像行与原生行不是彼此的等级，而是两种角色。
+
+- **发布形态。** 只需要文件、进程、网络与终端的程序，可以把每种架构一份映像作为唯一的
+  发布物，并在每个真实系统上测试这份映像。生态的应用即如此：mcppls-clangd、mcppls 与
+  mcpp-ide 的后端。
+- **构建目标。** 原生行（`*-linux-gnu`、`*-linux-musl`、`*-windows-msvc`、`aarch64-macos`、
+  Android、iOS、`wasm32-emscripten`、`*-none-elf`）是完整支持的目标，保证与映像相同。
+  只有原生行适用于：
+  - 按系统发布、以编译期选择调用系统接口的程序（mcpp 本身）；
+  - 库，它随使用者的目标编译进使用者；
+  - 链接系统或厂商库的程序（Qt、Vulkan 或 Metal、CUDA 或 SYCL、Android 的
+    `native_activity`、iOS 应用）；
+  - 映像不覆盖的平台（Android、iOS、Web、裸机）。
+
+两个映像行都是 `verified`（[21](21-the-target-triple.md)）：每台宿主都构建它们，Linux、
+macOS 与 Windows 在 mcpp 的 CI 中各自运行本架构的映像。
 
 ### 另一架构的映像（mcpp 2026.10.29.1）
 

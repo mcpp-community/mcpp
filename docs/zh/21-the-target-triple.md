@@ -134,36 +134,33 @@ target spec 设置 `exe_suffix: ".js"`。
 的 emsdk payload，需要先经过[第 20 章](20-toolchains.md)所述的那次索引
 刷新，`mcpp run` 才能找到 runner。
 
-## 省略第三段
+## 省略第三段：请求只写系统（2026.11.9.1+）
 
-`<arch>-<os>` 在每个平台上都是一个完整的目标：
+写全的目标是**身份**：输出目录、缓存键与 `cfg()` 判断的对象。只写 `<arch>-<os>` 的目标是**请求**：它包含该系统的
+全部身份，构建取第一个其**提供者**（服务它的工具链与目标侧）在本机可得的身份（SPEC-016 §4）。
 
 ```bash
-mcpp build --target x86_64-linux      # = x86_64-linux-gnu
-mcpp build --target x86_64-windows    # = x86_64-windows-gnu
+mcpp build --target x86_64-linux      # Linux 上为 x86_64-linux-gnu；无 glibc 载荷处为 -musl
+mcpp build --target x86_64-windows    # 装有 MSVC 时为 -msvc，否则为 -musl（openkal-platform）
+mcpp build --target aarch64-macos     # macOS 上为 Apple 身份，否则为 aarch64-macos-musl
 mcpp build --target riscv64-none      # = riscv64-none-elf
-mcpp build --target aarch64-linux     # = aarch64-linux-gnu
-mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
-省略它不改变任何身份。输出目录、缓存键，以及 `cfg()` 谓词的对象，都取规范
-形式，因此两种拼法共用同一个指纹，第二次构建是缓存命中，而不是又一次
-完整构建。
+候选按提供者的优先级排序（引擎附带的数据：各系统自己的工具链与 C 库在前，openkal-platform 其次，其他约定在后），
+再按行的顺序。报告写出所取的身份，第一个候选在本机不可得时附其原因：
 
-不同的是**请求被记录成了什么**。三元组既充当身份 —— 身份必须完整 ——
-又充当请求 —— 请求必须能够什么都不说；mcpp 两者都保留：为身份填上那一
-段，同时记住这次填充只是一次填充。
+```text
+      Target x86_64-windows → x86_64-windows-musl
+             msvc is not available on linux-x86_64
+```
 
-### 补全取自词汇表，而不是取自一个固定的词
+`mcpp why target [--target <t>]` 按序列出候选、优先级与可得性（脚本用 `--format json`）。工程以
+`[target.<选择器>.priority] <提供者> = <n>` 改变顺序，或以 `platform = "builtin:<名>"` 指名一个内置提供者。写全的身份
+从不被替换：`--target x86_64-linux-gnu` 构建该身份，或被拒绝并写出所缺之物。`mcpp.lock` 记录每个请求得到的身份，
+`--locked` 拒绝选到另一身份的构建。
 
-省略环境段的请求按已知目标表补全。受支持的词法默认值优先；否则采用
-唯一受支持的同族行。没有受支持的行时保留词法形式，并在诊断中列出
-已登记的同族行。歧义请求列出受支持的候选。
-
-`aarch64-linux` 选择 `aarch64-linux-gnu`。原生 Linux ARM64 载荷采用
-LLVM 23.1.3 与 glibc。`aarch64-linux-musl` 仍是静态 musl 产物的显式
-拼法。显式写出的环境段保持不变。
-
+依赖图提供 C 库（`mcpp:c-abi`）而请求未写 C 库时，身份取该 C 库：依赖 musl 的 `x86_64-linux` 构建为
+`x86_64-linux-musl`。写出而与图矛盾的段被报告并保留。
 
 ### 采用的拼法
 
@@ -476,24 +473,35 @@ docs/22。
 着；`aarch64-linux-gnu` 由 `linux-aarch64` 原生宿主服务。把它们
 合并成 `linux`，会让一台的行覆盖掉另一台的行。
 
+`aarch64-linux-gnu` 还有第二种、交叉的安排（2026.11.12.1+）：在 `linux-x86_64` 上，提供者 `glibc-sysroot` 以一个基座包
+服务它（[22](22-target-side.md)）。它排在 musl 的条目之下，所以 `--target aarch64-linux` 在那里仍由 `aarch64-linux-musl`
+回答，写全身份才取 glibc 的交叉安排；`mcpp run` 经该提供者的运行器启动其产物（[41](41-devices.md)）。
+
 ### 构建机与它们服务的目标
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | verified | — | 载荷 | — | — | — |
-| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | — | 载荷 | — | — |
+| `aarch64-linux-gnu` | preview | `llvm@23.1.3` | 基座包 | 载荷 | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
-| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
+| `i686-linux-musl`、`i686-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | 载荷 | 载荷 | 基座 | 载荷 |
+| `aarch64-windows-gnu` | preview | `llvm@23.1.3` | 基座 | 基座 | 基座 | 基座 |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 载荷 |
 | `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `aarch64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
+| `x86_64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
+| `x86_64-freebsd`、`aarch64-freebsd` | preview | — | 平台 | 平台 | 平台 | 平台 |
+| `x86_64-freebsd-musl`、`aarch64-freebsd-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
 | `riscv64-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `riscv32-none-elf` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `x86_64-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `i686-none-elf` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv6m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv7m-none-eabi` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv7em-none-eabi` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
@@ -509,11 +517,13 @@ docs/22。
 | `aarch64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `x86_64-ios-sim` | verified | `llvm@23.1.3` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `x86_64-openkal` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `aarch64-openkal` | preview | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `x86_64-openkal` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `aarch64-openkal` | verified | `llvm@23.1.3` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `i686-openkal` | planned | — | planned | planned | planned | planned |
 
 `载荷` 这里有工具链 payload 产出它 · `图` 没有 payload，但依赖能供给
 system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台自己的 ·
+`基座` 提供者指名、从索引安装的基座包（2026.11.10.1+） · `平台` 由项目选择的平台服务 ·
 `—` 从这台宿主够不着 · `planned` 词汇表里已登记，还没有任何东西接线。
 
 ### 各列背后的规则
@@ -522,7 +532,10 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 |---|---|---|
 | `*-linux-musl` | Linux（任意架构）、Windows（仅同架构） | musl 的 payload 是自包含的 |
 | `*-linux-gnu` | Linux，且仅同架构 | 还需要本机架构的 `xim:glibc` / `xim:linux-headers` |
-| `x86_64-windows-gnu` | Linux、Windows | 一个身份，只在分发层按宿主拆分 |
+| `x86_64-windows-gnu` | Linux 与 Windows 经 gcc 载荷；每一台宿主经 MinGW-w64 基座包 | 一个身份，只在分发层按宿主拆分；没有 gcc 载荷之处，`mingw-llvm` 提供者以 clang 与 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、compiler-rt）服务它 |
+| `aarch64-windows-gnu` | 每一台宿主 | 只由 MinGW-w64 基座包服务；没有 gcc 载荷以它为目标 |
+| `*-freebsd` | 每一台宿主，经平台 | 行是内置的；平台为每个身份指名 FreeBSD 基座包（`xim:x86_64-freebsd-sysroot`、`xim:aarch64-freebsd-sysroot`），以 `[target.<行>] platform` 或该行满足的任一选择器（`[target.freebsd]`、`cfg(os = "freebsd")`）选择；其他平台包的提供者不与所选平台竞争 |
+| `*-freebsd-musl` | 每一台宿主，经依赖图 | openkal-platform 的 hosted 部分（0.28.0）：openkal-freebsd 的 standalone 形态之上的 openkal-musl，一个静态程序；未为 `<arch>-freebsd` 选平台时，该请求取这一身份（2026.11.10.2+），正如非 Mac 宿主上的 `aarch64-macos` 取 musl 身份 |
 | `x86_64-windows-msvc` | Windows | MSVC 是在机器上被找到的 |
 | `x86_64-windows-musl` | payload 只在 Windows 上；图则任意宿主 | 没有 gcc 能发出 PE + musl，且 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器自己的 |
@@ -552,6 +565,13 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 模拟器会直接拒绝异构 guest（`QEMU2 emulator does not support arm64 CPU
 architecture`）。一个档位断言的是产物**被构建并运行**过；它不断言是
 哪个模拟器运行的。
+
+**两个 `*-openkal` 行都是 `verified`（2026.11.8.1）。** 每台宿主构建两行，每个系统运行
+自身架构的映像：Linux 与 Windows x86_64 运行 `x86_64-openkal`，macOS arm64 运行
+`aarch64-openkal`，映像带平台的 C 库与 C++ 运行时（`import std`）。测试 1033 完成这件事，
+`tests/e2e/host-requirements.tsv` 要求它在 Linux、macOS 与 Windows 上通过，因此一旦某个
+系统不再运行映像，CI 即失败。此前这两行的运行测试声明了 `llvm`，而只有 Linux 分片提供它，
+mcpp 自身的 CI 只在 Linux 上运行映像。
 
 在这两行上，`kind = "app"` 链接成一个共享库而不是可执行文件（见
 [04 §2.2](04-mcpp-toml.md)）——由 `application_form` 对
@@ -714,7 +734,9 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 ## 当前边界
 
 - 处于 `planned` 档位的行，含义是**词汇表里已登记，还没有任何东西
-  接线**。点名这样一个目标会被解析器接受、被构建拒绝。
+  接线**。点名这样一个目标会被解析器接受、被构建拒绝，除非构建为它指定了
+  工具链：`[target.X] toolchain` 或 `--toolchain`（或其在环境中的陈述
+  `MCPP_TOOLCHAIN`；2026.11.13.1+）。
 - `host_can_serve` 判断的是「这台机器能不能产出这个目标」，这与档位
   是两个不同的问题。mcpp 支持的目标仍可能从这台宿主够不着；出口是
   显式的 `[target.X] toolchain = "…"`。

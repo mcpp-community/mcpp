@@ -20,13 +20,15 @@
 // passed with the defect in place. The link model takes its mode from its
 // input, so a test can name the mode instead of hoping for it.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.flags;
 import mcpp.manifest.types;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 namespace tc = mcpp::toolchain;
 
@@ -80,48 +82,46 @@ std::string joined(const tc::ToolchainLinkModel& lm) {
     return s;
 }
 
-TEST(LinkModelRuntimeDirs, PayloadFirstCarriesTheCompilerRuntime) {
+UTest payload_first_carries_the_compiler_runtime{"LinkModelRuntimeDirs/PayloadFirstCarriesTheCompilerRuntime", [] {
     Payload p;
     auto lm = tc::resolve_link_model(p.toolchain(/*withSysroot=*/false));
-    ASSERT_EQ(lm.mode, tc::CLibMode::PayloadFirst);
+    expect(fatal(eq(lm.mode, tc::CLibMode::PayloadFirst)));
     auto line = joined(lm);
-    EXPECT_NE(line.find("-Wl,-rpath," + p.gccLib.string()), std::string::npos)
+    expect(ne(line.find("-Wl,-rpath," + p.gccLib.string()), std::string::npos))
         << "libgcc_s.so.1 lives here and nothing else will find it:\n" << line;
-}
+}};
 
-TEST(LinkModelRuntimeDirs, SysrootCarriesTheCompilerRuntime) {
+UTest sysroot_carries_the_compiler_runtime{"LinkModelRuntimeDirs/SysrootCarriesTheCompilerRuntime", [] {
     Payload p;
     auto lm = tc::resolve_link_model(p.toolchain(/*withSysroot=*/true));
-    ASSERT_EQ(lm.mode, tc::CLibMode::Sysroot);
+    expect(fatal(eq(lm.mode, tc::CLibMode::Sysroot)));
     auto line = joined(lm);
-    EXPECT_NE(line.find("-Wl,-rpath," + p.gccLib.string()), std::string::npos)
+    expect(ne(line.find("-Wl,-rpath," + p.gccLib.string()), std::string::npos))
         << line;
-}
+}};
 
 // The C library's own directory, in both modes, for the same reason.
-TEST(LinkModelRuntimeDirs, BothModesCarryTheCLibrary) {
+UTest both_modes_carry_the_c_library{"LinkModelRuntimeDirs/BothModesCarryTheCLibrary", [] {
     Payload p;
     for (bool withSysroot : {false, true}) {
         auto line = joined(tc::resolve_link_model(p.toolchain(withSysroot)));
-        EXPECT_NE(line.find("-Wl,-rpath," + p.glibcLib.string()),
-                  std::string::npos)
+        expect(ne(line.find("-Wl,-rpath," + p.glibcLib.string()), std::string::npos))
             << "withSysroot=" << withSysroot << "\n" << line;
     }
-}
+}};
 
 // And the interpreter. A sysroot says where headers live; it says nothing
 // about which loader runs the result, and gcc's `*link:` no longer answers.
-TEST(LinkModelRuntimeDirs, BothModesNameTheInterpreter) {
+UTest both_modes_name_the_interpreter{"LinkModelRuntimeDirs/BothModesNameTheInterpreter", [] {
     Payload p;
     for (bool withSysroot : {false, true}) {
         auto line = joined(tc::resolve_link_model(p.toolchain(withSysroot)));
-        EXPECT_NE(line.find("--dynamic-linker=" + p.glibcLib.string()),
-                  std::string::npos)
+        expect(ne(line.find("--dynamic-linker=" + p.glibcLib.string()), std::string::npos))
             << "withSysroot=" << withSysroot << "\n" << line;
     }
-}
+}};
 
-TEST(LinkIntent, KeepsLinkSearchTransitiveSearchAndRuntimeSearchSeparate) {
+UTest keeps_link_search_transitive_search_and_runtime_search_separate{"LinkIntent/KeepsLinkSearchTransitiveSearchAndRuntimeSearchSeparate", [] {
     mcpp::manifest::LinkIntent intent;
     intent.libraries = {"widget"};
     intent.linkLibraryDirs = {"/contract/link"};
@@ -132,26 +132,26 @@ TEST(LinkIntent, KeepsLinkSearchTransitiveSearchAndRuntimeSearchSeparate) {
 
     auto elf = mcpp::build::render_link_intent_flags(
         intent, mcpp::build::LinkIntentFlavor::Elf);
-    EXPECT_NE(elf.find("-L/contract/link"), std::string::npos) << elf;
-    EXPECT_NE(elf.find("-Wl,-rpath-link,/contract/needed"), std::string::npos)
+    expect(ne(elf.find("-L/contract/link"), std::string::npos)) << elf;
+    expect(ne(elf.find("-Wl,-rpath-link,/contract/needed"), std::string::npos))
         << elf;
-    EXPECT_NE(elf.find("-Wl,-rpath,/contract/run"), std::string::npos) << elf;
-    EXPECT_EQ(elf.find("-L/contract/run"), std::string::npos) << elf;
-    EXPECT_EQ(elf.find("widget.dll"), std::string::npos) << elf;
+    expect(ne(elf.find("-Wl,-rpath,/contract/run"), std::string::npos)) << elf;
+    expect(eq(elf.find("-L/contract/run"), std::string::npos)) << elf;
+    expect(eq(elf.find("widget.dll"), std::string::npos)) << elf;
 
     auto macho = mcpp::build::render_link_intent_flags(
         intent, mcpp::build::LinkIntentFlavor::MachO);
-    EXPECT_NE(macho.find("-Wl,-rpath,/contract/run"), std::string::npos)
+    expect(ne(macho.find("-Wl,-rpath,/contract/run"), std::string::npos))
         << macho;
-    EXPECT_NE(macho.find("-framework WindowKit"), std::string::npos) << macho;
-    EXPECT_EQ(macho.find("rpath-link"), std::string::npos) << macho;
+    expect(ne(macho.find("-framework WindowKit"), std::string::npos)) << macho;
+    expect(eq(macho.find("rpath-link"), std::string::npos)) << macho;
 
     auto pe = mcpp::build::render_link_intent_flags(
         intent, mcpp::build::LinkIntentFlavor::PeMsvc);
-    EXPECT_NE(pe.find("/LIBPATH$:/contract/link"), std::string::npos) << pe;
-    EXPECT_EQ(pe.find("rpath"), std::string::npos) << pe;
-    EXPECT_EQ(pe.find("/contract/run"), std::string::npos) << pe;
-    EXPECT_EQ(pe.find("widget.dll"), std::string::npos) << pe;
-}
+    expect(ne(pe.find("/LIBPATH$:/contract/link"), std::string::npos)) << pe;
+    expect(eq(pe.find("rpath"), std::string::npos)) << pe;
+    expect(eq(pe.find("/contract/run"), std::string::npos)) << pe;
+    expect(eq(pe.find("widget.dll"), std::string::npos)) << pe;
+}};
 
 }  // namespace

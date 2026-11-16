@@ -26,6 +26,9 @@ import mcpp.runtime.binding;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.target_select;
+import mcpp.toolchain.target_schema;
 import mcpp.ui;
 import mcpp.invocation;
 
@@ -113,7 +116,10 @@ std::string missing_path_message(const mcpp::toolchain::triple::Triple& t, const
 std::expected<tb::Statement, std::string>
 base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
     const auto key = t.str();
-    if (state.baseStatement && state.baseStatementFor == key) return *state.baseStatement;
+    if (state.baseStatement && state.baseStatementFor == key
+        && !(state.baseStatementProvisional && !state.packages.empty()))
+        return *state.baseStatement;
+    bool provisional = false;   // the engine's tier, asked before the graph is known
     auto settle = [&](std::expected<tb::Statement, std::string> s)
         -> std::expected<tb::Statement, std::string> {
         if (!s) return s;
@@ -124,6 +130,7 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
         }
         state.baseStatement = *s;
         state.baseStatementFor = key;
+        state.baseStatementProvisional = provisional;
         return s;
     };
     auto stamped = [&](std::expected<tb::Statement, std::string> s, std::string kind,
@@ -181,8 +188,33 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t) {
             return settle(std::move(s));
         }
     }
-    // 4. The engine's: the platform's `sysroot` (SPEC-013 §2), then the row,
-    //    read where it always was (`effective_sysroot`).
+    // 4. The engine's, the more specific first: the `sysroot` of the provider
+    //    that serves the identity here (SPEC-016 §3; a platform gives each
+    //    identity its own base this way, design 2026-11-10 E5), then the
+    //    platform's `sysroot` (SPEC-013 §2). A provider's sysroot is a statement
+    //    only where the row's base is rendered from one (gnu-sysroot,
+    //    driver-internal); a bare-metal row's C library stays the row's
+    //    (`effective_sysroot`).
+    //    An engine default yields to a dependency graph that supplies the
+    //    system (a C library composed over a kernel interface), as the row's
+    //    toolchain convention does: a base would be a second C library. Asked
+    //    before the graph is loaded, the answer is provisional: it is asked
+    //    again once the graph is known.
+    provisional = state.packages.empty();
+    if (!graph_supplies_system(state)) {
+        const auto address = tb::row_base(t).address;
+        const auto identity = state.targetChoice.identity.empty() ? key : state.targetChoice.identity;
+        for (auto const* p : mcpp::toolchain::target::providers()) {
+            if (p->name != state.targetChoice.provider || !mcpp::toolchain::target::serves(*p, identity))
+                continue;
+            if ((address == tb::Address::GnuSysroot || address == tb::Address::DriverInternal)
+                && (p->sysroot.starts_with("xim:") || p->sysroot.starts_with("path:")))
+                return settle(stamped(tb::parse_text(std::string(p->sysroot)),
+                                      p->platform.empty() ? "provider" : "platform", {}, 0,
+                                      std::format("the provider '{}' of {}", p->name, identity)));
+            break;
+        }
+    }
     if (state.platformEarly && state.platformData.sysroot.set) {
         auto const& o = state.platformData.sysroot.origin;
         auto s = stamped(tb::parse_text(state.platformData.sysroot.value), "platform", o.file,
@@ -211,6 +243,41 @@ std::vector<std::string> driver_base(const mcpp::toolchain::Toolchain& tc) {
     return v;
 }
 
+// A BASE PACKAGE (design 2026-11-10 E5, SPEC-002 §2.5): a sysroot whose root
+// carries a package manifest. It is read as any package is: `provides` answers
+// its layers, and its `[build]` keys mean what they mean for any supplier --
+// `include_dirs` the C++ library's headers, `ldflags` its libraries,
+// `std-module*` the std module, `compiler_runtime_dir` where the compiler
+// runtime stands -- with paths relative to the package root, which is the
+// sysroot. Nothing in the manifest marks the role: being named where a sysroot
+// is named is the role. false: no manifest, an ordinary base.
+std::expected<bool, std::string>
+read_base_package(const fs::path& dir, tb::Resolution::Layers& out) {
+    std::error_code ec;
+    const auto manifest = dir / "mcpp.toml";
+    if (!fs::is_regular_file(manifest, ec)) return false;
+    auto m = mcpp::manifest::load(manifest);
+    if (!m) return std::unexpected(std::format("{}: {}", manifest.string(), m.error().message));
+    out.ref = std::format("{}@{}", m->package.name, m->package.version);
+    for (auto const& p : m->provides) {
+        auto take = [&](std::string_view layer, std::string& into) {
+            const auto k = std::string("mcpp:") + std::string(layer) + "=";
+            if (p.starts_with(k)) into = p.substr(k.size());
+        };
+        take("c-abi", out.cAbi);
+        take("c++-abi", out.cxx);
+        take("compiler-runtime", out.compilerRuntime);
+    }
+    auto const& b = m->buildConfig;
+    for (auto const& d : b.includeDirs) out.cxxIncludes.push_back(dir / d);
+    out.ldflags = b.ldflags;
+    if (!m->stdModule.empty()) out.stdModule = dir / m->stdModule;
+    if (!m->stdCompatModule.empty()) out.stdCompatModule = dir / m->stdCompatModule;
+    out.stdModuleFlags = b.stdModuleFlags;
+    if (!b.compilerRuntimeDir.empty()) out.compilerRuntimeDir = dir / b.compilerRuntimeDir;
+    return true;
+}
+
 bool provides_c_abi(const tb::Statement& s, std::string* impl) {
     for (auto const& p : s.provides) {
         constexpr std::string_view k = "mcpp:c-abi=";
@@ -219,24 +286,59 @@ bool provides_c_abi(const tb::Statement& s, std::string* impl) {
     return false;
 }
 
-// The directory a package statement names, installed through the channel a
-// row's toolchain pin uses (and `MCPP_NO_AUTO_INSTALL` / offline are the
-// fetcher's to decide, as they are there).
+// The directory a package statement names: where its payload stands, and,
+// when `install`, installed through the channel a row's toolchain pin uses
+// (`MCPP_NO_AUTO_INSTALL` and offline are the fetcher's to decide, as they
+// are there). One resolution for every statement that names a package -- a
+// base, the system's headers, a runner's packages.
 std::expected<fs::path, std::string>
-package_dir(PrepareState& state, const std::string& ref) {
-    auto cfg = state.get_cfg(true);
-    if (!cfg) return std::unexpected(cfg.error());
-    mcpp::fetcher::Fetcher f(**cfg);
+package_dir_in(const mcpp::config::GlobalConfig& cfg, const std::string& ref, bool install) {
+    auto xl = mcpp::config::make_xlings_env(cfg);
+    if (!install) {
+        if (auto d = mcpp::provider::payload(*mcpp::provider::open(xl), mcpp::provider::parse_ref(ref)))
+            return *d;
+        return std::unexpected(std::format("the package {} is not installed", ref));
+    }
+    mcpp::fetcher::Fetcher f(cfg);
     mcpp::fetcher::InstallProgressHandler progress;
     if (auto p = f.resolve_xpkg_path(ref, mcpp::fetcher::PayloadIntent::Use, &progress))
         return p->root;
-    auto xl = mcpp::config::make_xlings_env(**cfg);
     if (auto d = mcpp::provider::payload(*mcpp::provider::open(xl), mcpp::provider::parse_ref(ref)))
         return *d;
     return std::unexpected(std::format("the package {} could not be installed", ref));
 }
 
 } // namespace
+
+std::expected<fs::path, std::string>
+package_dir(PrepareState& state, const std::string& ref, bool install) {
+    auto cfg = state.get_cfg(true);
+    if (!cfg) return std::unexpected(cfg.error());
+    return package_dir_in(**cfg, ref, install);
+}
+
+std::expected<fs::path, std::string> package_root(const std::string& ref, bool install) {
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/true);
+    if (!cfg) return std::unexpected(cfg.error().message);
+    return package_dir_in(*cfg, ref, install);
+}
+
+const mcpp::toolchain::target::Provider* chosen_provider(const PrepareState& state) {
+    if (state.targetChoice.provider.empty()) return nullptr;
+    const auto host = mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name,
+                                                         mcpp::toolchain::platform::host_arch);
+    const mcpp::toolchain::target::Provider* named = nullptr;
+    for (auto const* p : mcpp::toolchain::target::providers()) {
+        if (p->name != state.targetChoice.provider
+            || !mcpp::toolchain::target::serves(*p, state.targetChoice.identity))
+            continue;
+        const auto dash = state.targetChoice.identity.find('-');
+        if (mcpp::toolchain::target::available_on(*p, host, state.targetChoice.identity.substr(0, dash)))
+            return p;
+        if (!named) named = p;
+    }
+    return named;
+}
 
 // THE ONE RESOLUTION (§4.2 steps 5-7) for the rows whose base the engine
 // renders itself: a gnu-sysroot (Linux), and the identity and report of every
@@ -336,6 +438,45 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         record_source(state, std::move(d));
         return {};
     }
+    // A BASE PACKAGE ON A ROW WHOSE DRIVER RESOLVES ITS OWN SYSTEM (E9): the
+    // MinGW-w64 rows. The base is the driver's sysroot as the paired payload
+    // is, with the run-times its layers state; nothing is measured, the
+    // package's statement is the declaration (§3.4).
+    if (row.address == tb::Address::DriverInternal
+        && (stmt->form == tb::Form::Package || stmt->form == tb::Form::Path)) {
+        fs::path dir = stmt->form == tb::Form::Path ? fs::path(stmt->path) : fs::path{};
+        if (stmt->form == tb::Form::Package) {
+            auto p = package_dir(state, stmt->text, true);
+            if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
+                                                       tt->str(), stmt->text, p.error()));
+            dir = *p;
+        }
+        tc.base.layers = {};
+        auto b = read_base_package(dir, tc.base.layers);
+        if (!b) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text,
+                                               b.error()));
+        }
+        if (*b && mcpp::toolchain::is_mingw_target(tc)) {
+            tc.pairedSysroot = dir;
+            tc.base.runtime = tb::Runtime::None;
+            tc.base.libc = tc.base.layers.cAbi;
+            if (!tc.base.layers.cxx.empty()) {
+                tc.stdlibId = tc.base.layers.cxx;
+                std::error_code ec;
+                if (!tc.base.layers.stdModule.empty() && fs::is_regular_file(tc.base.layers.stdModule, ec))
+                    tc.set_std_modules(tc.base.layers.stdModule, tc.base.layers.stdCompatModule);
+                else
+                    tc.clear_std_modules();
+            }
+            d.detail = std::format("{} ({})", tc.base.libc, tc.base.layers.ref);
+            record_identity(tc.base.layers.ref, {dir / "mcpp.toml"});
+            record_source(state, std::move(d));
+            return {};
+        }
+        tc.base.layers = {};
+    }
     if (row.address != tb::Address::GnuSysroot || stmt->form == tb::Form::Empty) {
         // The empty form, and a package on a row whose SDK resolves its own
         // system: accepted as they always were, and stated.
@@ -355,10 +496,17 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
             return std::unexpected(missing_path_message(*tt, *stmt));
         }
     } else {
-        auto p = package_dir(state, stmt->text);
+        auto p = package_dir(state, stmt->text, true);
         if (!p) return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}",
                                                    tt->str(), stmt->text, p.error()));
         dir = *p;
+    }
+    tc.base.layers = {};
+    const auto basePackage = read_base_package(dir, tc.base.layers);
+    if (!basePackage) {
+        refusal::record(refusal::Code::TargetBase);
+        return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text,
+                                           basePackage.error()));
     }
     const auto ecosystemLinux = tc.base.payload ? tc.base.payload->linuxInclude : fs::path{};
     const bool native = tt->os == "linux" && tt->arch == mcpp::toolchain::platform::host_arch
@@ -371,7 +519,11 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     std::vector<fs::path> evidence;
     std::vector<fs::path> hostLibcDirs;
     std::string impl;
-    if (tb::is_payload_layout(dir)) {
+    // A BASE PACKAGE HAS ONE READING (SPEC-002 §2.5): its manifest states that
+    // the package root is the sysroot, so it is rendered as one whatever its
+    // directories are called. The layout is consulted only for a directory
+    // that states nothing about itself.
+    if (!*basePackage && tb::is_payload_layout(dir)) {
         // The ecosystem's own layout: a glibc package (`xim:glibc@2.39`). It
         // is linked as the default base is, from its own directories.
         tc.base.payload = tb::payload_layout_paths(dir, ecosystemLinux);
@@ -394,7 +546,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     } else {
         auto m = tb::measure_gnu(driver_base(tc), *tt, dir,
                                  mcpp::toolchain::is_clang(tc), probeDir);
-        if (!m.cAbiFound && !provides_c_abi(*stmt, &impl)) {
+        if (!m.cAbiFound && !provides_c_abi(*stmt, &impl) && tc.base.layers.cAbi.empty()) {
             refusal::record(refusal::Code::TargetBase);
             return std::unexpected(std::format(
                 "[target.{}].sysroot = {} ({}): {} supplies no C library the compiler can find "
@@ -427,6 +579,34 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         if (native && !ecosystemLinux.empty()
             && !fs::exists(dir / "usr" / "include" / "linux" / "limits.h", ec))
             tc.base.addedIncludes.push_back(ecosystemLinux);
+    }
+
+    // THE LOADER AN ARTIFACT NAMES IS A PATH ON THE MACHINE THAT RUNS IT
+    // (SPEC-016 §6). A native dynamic link names the base's own loader, where
+    // it stands; an artifact this machine does not load names the row's
+    // `loader`, and no directory of this machine enters it.
+    tc.base.interpreter.clear();
+    if (!native && !staticLink)
+        if (auto const* r = mcpp::toolchain::target::find_row(tt->str()))
+            tc.base.interpreter = std::string(r->loader);
+    // THE PAYLOAD'S RUN-TIME DIRECTORIES ARE ITS HOST'S. A retargetable driver
+    // discovers them for the machine it runs on (`lib/<host triple>`), and a
+    // base of another machine takes none of them: on the link they precede the
+    // base's own (measured: the x86_64 libatomic.a ahead of the sysroot's on an
+    // aarch64 link), and in the artifact they are a RUNPATH of this machine.
+    // Decided here, where the base is resolved, so no renderer asks again.
+    if (!native && mcpp::toolchain::is_clang(tc)) tc.linkRuntimeDirs.clear();
+    // A base package's own `provides` is its declaration, as a statement's is.
+    if (tc.base.libc.empty() && !tc.base.layers.cAbi.empty()) tc.base.libc = tc.base.layers.cAbi;
+    // ITS C++ RUN-TIME STANDS WHERE THE PAYLOAD'S WOULD (E5): the std module is
+    // the base's, or there is none -- the payload's module was built from
+    // another release of the library than the base's headers.
+    if (!tc.base.layers.cxx.empty()) {
+        tc.stdlibId = tc.base.layers.cxx;
+        if (!tc.base.layers.stdModule.empty() && fs::is_regular_file(tc.base.layers.stdModule, ec))
+            tc.set_std_modules(tc.base.layers.stdModule, tc.base.layers.stdCompatModule);
+        else
+            tc.clear_std_modules();
     }
     // A declaration checks a measurement and stands in for one that cannot be
     // made (§3.4).

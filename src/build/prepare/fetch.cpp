@@ -3,10 +3,6 @@
 // installed and recorded, and the index cause a resolution failure carries.
 // Declared in `:state`, or exported from prepare.cppm for the unit tests.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 module mcpp.build.prepare;
 import :state;
 
@@ -18,7 +14,7 @@ import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.effects;
 import mcpp.run;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;

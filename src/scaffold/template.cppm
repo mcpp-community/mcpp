@@ -318,6 +318,9 @@ struct RenderVars {
     std::string templatePackageSelector;
     std::string templatePackageVersion;
     std::string templateName;
+    // A library skeleton's module and C++ namespace (`mcpp new --template lib`).
+    std::string projectModule;
+    std::string projectCxxNamespace;
 };
 
 struct RenderError {
@@ -331,6 +334,9 @@ render_tokens(std::string_view input, const RenderVars& vars) {
         if (token == "project.name") return vars.projectName;
         if (token == "project.namespace") return vars.projectNamespace;
         if (token == "project.qualifiedName") return vars.projectQualifiedName;
+        if (token == "project.module" && !vars.projectModule.empty()) return vars.projectModule;
+        if (token == "project.cxxNamespace" && !vars.projectCxxNamespace.empty())
+            return vars.projectCxxNamespace;
         if (token == "template.package.namespace")
             return vars.templatePackageNamespace;
         if (token == "template.package.name") return vars.templatePackageName;

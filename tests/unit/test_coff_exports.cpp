@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.coff_exports;
+
+using namespace mcpplibs::mtest;
 
 using mcpp::build::coff::Export;
 using mcpp::build::coff::read_exports;
@@ -91,76 +93,76 @@ std::vector<std::string> names(const std::vector<Export>& v) {
 
 // ─── what is exported ──────────────────────────────────────────────────────
 
-TEST(CoffExports, TakesExternalDefinedSymbols) {
+UTest takes_external_defined_symbols{"CoffExports/TakesExternalDefinedSymbols", [] {
     auto obj = make_obj({ Sym{ .name = "f" } });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r) << r.error();
-    EXPECT_EQ(names(*r), (std::vector<std::string>{ "f" }));
-}
+    if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
+    expect(eq(names(*r), (std::vector<std::string>{ "f" })));
+}};
 
-TEST(CoffExports, SkipsStaticSymbols) {
+UTest skips_static_symbols{"CoffExports/SkipsStaticSymbols", [] {
     // IMAGE_SYM_CLASS_STATIC (3). Exporting a TU-local symbol would put a name
     // in the DLL's surface that the author never made public.
     auto obj = make_obj({ Sym{ .name = "s", .storage = 3 } });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    EXPECT_TRUE(r->empty());
-}
+    expect(fatal(bool(r)));
+    expect(r->empty());
+}};
 
-TEST(CoffExports, SkipsUndefinedSymbols) {
+UTest skips_undefined_symbols{"CoffExports/SkipsUndefinedSymbols", [] {
     // SectionNumber 0 is UNDEFINED — a symbol this object REFERENCES. Exporting
     // it would have the DLL claim to provide what it is asking someone else for.
     auto obj = make_obj({ Sym{ .name = "u", .section = 0 } });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    EXPECT_TRUE(r->empty());
-}
+    expect(fatal(bool(r)));
+    expect(r->empty());
+}};
 
-TEST(CoffExports, SkipsAbsoluteAndDebugSections) {
+UTest skips_absolute_and_debug_sections{"CoffExports/SkipsAbsoluteAndDebugSections", [] {
     // -1 IMAGE_SYM_ABSOLUTE, -2 IMAGE_SYM_DEBUG: neither has an address to
     // export.
     auto obj = make_obj({ Sym{ .name = "a", .section = -1 },
                           Sym{ .name = "d", .section = -2 } });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    EXPECT_TRUE(r->empty());
-}
+    expect(fatal(bool(r)));
+    expect(r->empty());
+}};
 
 // ─── DATA, which is the half that fails silently ───────────────────────────
 
-TEST(CoffExports, AVariableIsMarkedDATA) {
+UTest a_variable_is_marked_data{"CoffExports/AVariableIsMarkedDATA", [] {
     // Without `DATA` the linker generates a call thunk for a variable and the
     // consumer reads the thunk instead of the value.
     auto obj = make_obj({ Sym{ .name = "v", .section = 2, .type = 0 } },
                         { kText, kData });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    ASSERT_EQ(r->size(), 1u);
-    EXPECT_TRUE((*r)[0].data);
-}
+    expect(fatal(bool(r)));
+    expect(fatal(eq(r->size(), 1u)));
+    expect(bool((*r)[0].data));
+}};
 
-TEST(CoffExports, AConstInAReadOnlySectionIsStillDATA) {
+UTest a_const_in_a_read_only_section_is_still_data{"CoffExports/AConstInAReadOnlySectionIsStillDATA", [] {
     // `.rdata` is not writable, so a rule keyed on MEM_WRITE alone calls this a
     // function. It is a variable, and consumers read it as one.
     auto obj = make_obj({ Sym{ .name = "c", .section = 2, .type = 0 } },
                         { kText, kRdata });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    ASSERT_EQ(r->size(), 1u);
-    EXPECT_TRUE((*r)[0].data);
-}
+    expect(fatal(bool(r)));
+    expect(fatal(eq(r->size(), 1u)));
+    expect(bool((*r)[0].data));
+}};
 
-TEST(CoffExports, AFunctionIsNotDATA) {
+UTest a_function_is_not_data{"CoffExports/AFunctionIsNotDATA", [] {
     auto obj = make_obj({ Sym{ .name = "f", .section = 1, .type = 0x20 } }, { kText });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    ASSERT_EQ(r->size(), 1u);
-    EXPECT_FALSE((*r)[0].data);
-}
+    expect(fatal(bool(r)));
+    expect(fatal(eq(r->size(), 1u)));
+    expect(!((*r)[0].data));
+}};
 
 // ─── the skip list, each entry for its own reason ──────────────────────────
 
-TEST(CoffExports, SkipsDestructorThunksAndManagedArtefacts) {
+UTest skips_destructor_thunks_and_managed_artefacts{"CoffExports/SkipsDestructorThunksAndManagedArtefacts", [] {
     auto obj = make_obj({
         Sym{ .name = "??_Gx" },      // scalar-deleting destructor
         Sym{ .name = "??_Ex" },      // vector-deleting destructor
@@ -168,11 +170,11 @@ TEST(CoffExports, SkipsDestructorThunksAndManagedArtefacts) {
         Sym{ .name = "keep" },
     });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    EXPECT_EQ(names(*r), (std::vector<std::string>{ "keep" }));
-}
+    expect(fatal(bool(r)));
+    expect(eq(names(*r), (std::vector<std::string>{ "keep" })));
+}};
 
-TEST(CoffExports, SkipsAuxiliaryRecords) {
+UTest skips_auxiliary_records{"CoffExports/SkipsAuxiliaryRecords", [] {
     // An aux record follows its symbol and is NOT a symbol. Reading one as a
     // symbol yields a name made of raw section data — which is how a `.def`
     // ends up with entries no linker can resolve.
@@ -180,39 +182,39 @@ TEST(CoffExports, SkipsAuxiliaryRecords) {
                           Sym{ .name = "\x01\x02\x03" },   // the aux record
                           Sym{ .name = "after" } });
     auto r = read_exports(obj);
-    ASSERT_TRUE(r);
-    EXPECT_EQ(names(*r), (std::vector<std::string>{ "after", "fn" }));
-}
+    expect(fatal(bool(r)));
+    expect(eq(names(*r), (std::vector<std::string>{ "after", "fn" })));
+}};
 
-TEST(CoffExports, StripsTheLeadingUnderscoreOnI386Only) {
+UTest strips_the_leading_underscore_on_i386_only{"CoffExports/StripsTheLeadingUnderscoreOnI386Only", [] {
     auto i386 = make_obj({ Sym{ .name = "_f" } }, { kText }, 0x014c);
     auto r32 = read_exports(i386);
-    ASSERT_TRUE(r32);
-    EXPECT_EQ(names(*r32), (std::vector<std::string>{ "f" }));
+    expect(fatal(bool(r32)));
+    expect(eq(names(*r32), (std::vector<std::string>{ "f" })));
 
     // On amd64 a leading underscore is part of the name.
     auto amd64 = make_obj({ Sym{ .name = "_f" } }, { kText }, 0x8664);
     auto r64 = read_exports(amd64);
-    ASSERT_TRUE(r64);
-    EXPECT_EQ(names(*r64), (std::vector<std::string>{ "_f" }));
-}
+    expect(fatal(bool(r64)));
+    expect(eq(names(*r64), (std::vector<std::string>{ "_f" })));
+}};
 
 // ─── refusals, because a partial answer here ships a broken DLL ────────────
 
-TEST(CoffExports, RefusesAnUnsupportedMachine) {
+UTest refuses_an_unsupported_machine{"CoffExports/RefusesAnUnsupportedMachine", [] {
     auto obj = make_obj({ Sym{ .name = "f" } }, { kText }, 0x5032 /* RISC-V */);
     auto r = read_exports(obj);
-    ASSERT_FALSE(r);
-    EXPECT_NE(r.error().find("machine"), std::string::npos);
-}
+    expect(fatal(!r));
+    expect(ne(r.error().find("machine"), std::string::npos));
+}};
 
-TEST(CoffExports, RefusesATruncatedSymbolTable) {
+UTest refuses_a_truncated_symbol_table{"CoffExports/RefusesATruncatedSymbolTable", [] {
     auto obj = make_obj({ Sym{ .name = "f" }, Sym{ .name = "g" } });
     obj.resize(obj.size() - 20);          // cut into the symbol table
     auto r = read_exports(obj);
-    ASSERT_FALSE(r) << "a truncated table must not read as a short one";
-    EXPECT_NE(r.error().find("past the end"), std::string::npos);
-}
+    expect(fatal(!r)) << "a truncated table must not read as a short one";
+    expect(ne(r.error().find("past the end"), std::string::npos));
+}};
 
 // ─── anonymous objects (2026.10.5.2) ────────────────────────────────────────
 //
@@ -268,7 +270,7 @@ std::vector<std::byte> make_bigobj(std::vector<Sym> syms,
 
 }  // namespace
 
-TEST(CoffExports, ReadsABigobjObjectAsTheOrdinaryOneWithTheSameSymbols) {
+UTest reads_a_bigobj_object_as_the_ordinary_one_with_the_same_symbols{"CoffExports/ReadsABigobjObjectAsTheOrdinaryOneWithTheSameSymbols", [] {
     const std::vector<Sym> syms = {
         Sym{ .name = "f" }, Sym{ .name = "v", .section = 2, .type = 0 },
         Sym{ .name = "s", .storage = 3 }, Sym{ .name = "u", .section = 0 },
@@ -276,65 +278,64 @@ TEST(CoffExports, ReadsABigobjObjectAsTheOrdinaryOneWithTheSameSymbols) {
     };
     auto small = read_exports(make_obj(syms, { kText, kData }));
     auto big   = read_exports(make_bigobj(syms, { kText, kData }));
-    ASSERT_TRUE(small) << small.error();
-    ASSERT_TRUE(big) << big.error();
-    EXPECT_EQ(*big, *small);
-    EXPECT_EQ(names(*big), (std::vector<std::string>{ "f", "g", "h", "v" }));
-}
+    if (auto&& failed = expect(fatal(bool(small))); !failed) failed << small.error();
+    if (auto&& failed = expect(fatal(bool(big))); !failed) failed << big.error();
+    expect(eq(*big, *small));
+    expect(eq(names(*big), (std::vector<std::string>{ "f", "g", "h", "v" })));
+}};
 
-TEST(CoffExports, NamesAGlObjectAndSaysWhatToDo) {
+UTest names_a_gl_object_and_says_what_to_do{"CoffExports/NamesAGlObjectAndSaysWhatToDo", [] {
     auto r = read_exports(anonymous(1, kClGl));
-    ASSERT_FALSE(r);
-    EXPECT_NE(r.error().find("/GL"), std::string::npos) << r.error();
-    EXPECT_EQ(r.error().find("bigobj"), std::string::npos) << r.error();
-    EXPECT_NE(r.error().find("windows_auto_export = false"), std::string::npos);
-    EXPECT_NE(r.error().find("dllexport"), std::string::npos);
-    EXPECT_FALSE(declares_exports(anonymous(1, kClGl)));
-}
+    expect(fatal(!r));
+    if (auto&& failed = expect(ne(r.error().find("/GL"), std::string::npos)); !failed) failed << r.error();
+    if (auto&& failed = expect(eq(r.error().find("bigobj"), std::string::npos)); !failed) failed << r.error();
+    expect(ne(r.error().find("windows_auto_export = false"), std::string::npos));
+    expect(ne(r.error().find("dllexport"), std::string::npos));
+    expect(!(declares_exports(anonymous(1, kClGl))));
+}};
 
-TEST(CoffExports, NamesAnImportObjectAndAnUnknownAnonymousObject) {
+UTest names_an_import_object_and_an_unknown_anonymous_object{"CoffExports/NamesAnImportObjectAndAnUnknownAnonymousObject", [] {
     auto imp = read_exports(anonymous(0, {}));
-    ASSERT_FALSE(imp);
-    EXPECT_NE(imp.error().find("import object"), std::string::npos) << imp.error();
+    expect(fatal(!imp));
+    if (auto&& failed = expect(ne(imp.error().find("import object"), std::string::npos)); !failed) failed << imp.error();
     auto other = read_exports(anonymous(3, {}));
-    ASSERT_FALSE(other);
-    EXPECT_NE(other.error().find("anonymous"), std::string::npos) << other.error();
-}
+    expect(fatal(!other));
+    if (auto&& failed = expect(ne(other.error().find("anonymous"), std::string::npos)); !failed) failed << other.error();
+}};
 
-TEST(CoffExports, RefusesABigobjObjectWhoseCountsOverrunIt) {
+UTest refuses_a_bigobj_object_whose_counts_overrun_it{"CoffExports/RefusesABigobjObjectWhoseCountsOverrunIt", [] {
     auto obj = make_bigobj({ Sym{ .name = "f" } });
     put32(obj, 44, 0x00ffffffu);   // sections no file of this size can hold
     auto r = read_exports(obj);
-    ASSERT_FALSE(r);
-    EXPECT_NE(r.error().find("past the end"), std::string::npos) << r.error();
-}
+    expect(fatal(!r));
+    if (auto&& failed = expect(ne(r.error().find("past the end"), std::string::npos)); !failed) failed << r.error();
+}};
 
-TEST(CoffExports, RefusesSomethingThatIsNotAnObject) {
+UTest refuses_something_that_is_not_an_object{"CoffExports/RefusesSomethingThatIsNotAnObject", [] {
     std::vector<std::byte> tiny(4, std::byte{0});
-    EXPECT_FALSE(read_exports(tiny));
-}
+    expect(!read_exports(tiny));
+}};
 
 // ─── the .def text ─────────────────────────────────────────────────────────
 
-TEST(CoffExports, DefIsSortedDeduplicatedAndMarksData) {
+UTest def_is_sorted_deduplicated_and_marks_data{"CoffExports/DefIsSortedDeduplicatedAndMarksData", [] {
     auto def = write_def("mathkit.dll", {
         { "zeta", false }, { "alpha", true }, { "zeta", false } });
-    EXPECT_EQ(def,
-        "LIBRARY mathkit.dll\n"
+    expect(eq(def, "LIBRARY mathkit.dll\n"
         "EXPORTS\n"
         "    alpha DATA\n"
-        "    zeta\n");
-}
+        "    zeta\n"));
+}};
 
-TEST(CoffExports, TheExportCeilingIsPesNotOurs) {
+UTest the_export_ceiling_is_pes_not_ours{"CoffExports/TheExportCeilingIsPesNotOurs", [] {
     // Stated as a constant a reader can check against the format, not as a
     // number chosen here: PE addresses exports by 16-bit ordinal.
-    EXPECT_EQ(kMaxExports, 65535u);
-}
+    expect(eq(kMaxExports, 65535u));
+}};
 
 // ─── a real object, from a real compiler ───────────────────────────────────
 
-TEST(CoffExports, ReadsARealMingwObject) {
+UTest reads_a_real_mingw_object{"CoffExports/ReadsARealMingwObject", [] {
     // Committed fixture: macOS and Windows CI cannot produce a COFF object, and
     // a byte-level reader that is only ever fed its own test's output is exactly
     // the kind that agrees with itself and with nothing else.
@@ -347,31 +348,31 @@ TEST(CoffExports, ReadsARealMingwObject) {
         for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
 
         auto r = read_exports(bytes);
-        ASSERT_TRUE(r) << r.error();
+        if (auto&& failed = expect(fatal(bool(r))); !failed) failed << r.error();
         auto got = names(*r);
 
         // From `x86_64-w64-mingw32-nm --defined-only --extern-only` on the same
         // object; see tests/fixtures/coff/README.md.
-        EXPECT_NE(std::ranges::find(got, "exported_fn"), got.end());
-        EXPECT_NE(std::ranges::find(got, "exported_data"), got.end());
-        EXPECT_NE(std::ranges::find(got, "exported_const"), got.end());
-        EXPECT_NE(std::ranges::find(got, "_ZN2ns10mangled_fnEi"), got.end());
+        expect(ne(std::ranges::find(got, "exported_fn"), got.end()));
+        expect(ne(std::ranges::find(got, "exported_data"), got.end()));
+        expect(ne(std::ranges::find(got, "exported_const"), got.end()));
+        expect(ne(std::ranges::find(got, "_ZN2ns10mangled_fnEi"), got.end()));
         // `static` at namespace scope is internal linkage: not in the surface.
-        EXPECT_EQ(std::ranges::find(got, "_ZL9hidden_fni"), got.end());
+        expect(eq(std::ranges::find(got, "_ZL9hidden_fni"), got.end()));
 
         for (auto const& e : *r) {
             if (e.name == "exported_data" || e.name == "exported_const")
-                EXPECT_TRUE(e.data) << e.name << " is a variable";
-            if (e.name == "exported_fn") EXPECT_FALSE(e.data);
+                expect(bool(e.data)) << e.name << " is a variable";
+            if (e.name == "exported_fn") expect(!e.data);
         }
         return;
     }
-    GTEST_SKIP() << "fixture not reachable from this working directory";
-}
+    skip("fixture not reachable from this working directory");
+}};
 
 // ─── annotation wins ───────────────────────────────────────────────────────
 
-TEST(CoffExports, RecognisesAnObjectThatAlreadyDeclaresExports) {
+UTest recognises_an_object_that_already_declares_exports{"CoffExports/RecognisesAnObjectThatAlreadyDeclaresExports", [] {
     // `__declspec(dllexport)` makes the compiler write `/EXPORT:` directives
     // into `.drectve`. Generating a `.def` on top of that would export the same
     // names twice (LNK4197) AND export everything else besides, replacing a
@@ -387,13 +388,13 @@ TEST(CoffExports, RecognisesAnObjectThatAlreadyDeclaresExports) {
         if (!in) continue;
         std::vector<std::byte> bytes;
         for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
-        EXPECT_TRUE(declares_exports(bytes));
+        expect(bool(declares_exports(bytes)));
         return;
     }
-    GTEST_SKIP() << "fixture not reachable from this working directory";
-}
+    skip("fixture not reachable from this working directory");
+}};
 
-TEST(CoffExports, AnObjectWithNoDirectivesDeclaresNothing) {
+UTest an_object_with_no_directives_declares_nothing{"CoffExports/AnObjectWithNoDirectivesDeclaresNothing", [] {
     // The negative half: without it, a `declares_exports` that always said true
     // would pass the test above and silently disable auto-export everywhere.
     for (auto const& base : { "tests/fixtures/coff/probe-amd64.obj",
@@ -403,12 +404,12 @@ TEST(CoffExports, AnObjectWithNoDirectivesDeclaresNothing) {
         if (!in) continue;
         std::vector<std::byte> bytes;
         for (char c; in.get(c); ) bytes.push_back(static_cast<std::byte>(c));
-        EXPECT_FALSE(declares_exports(bytes));
+        expect(!declares_exports(bytes));
         return;
     }
-    GTEST_SKIP() << "fixture not reachable from this working directory";
-}
+    skip("fixture not reachable from this working directory");
+}};
 
-TEST(CoffExports, SyntheticObjectsHaveNoDirectiveSection) {
-    EXPECT_FALSE(declares_exports(make_obj({ Sym{ .name = "f" } })));
-}
+UTest synthetic_objects_have_no_directive_section{"CoffExports/SyntheticObjectsHaveNoDirectiveSection", [] {
+    expect(!(declares_exports(make_obj({ Sym{ .name = "f" } }))));
+}};

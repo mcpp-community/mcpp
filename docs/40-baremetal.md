@@ -535,7 +535,7 @@ mcpp test
 boots: console
 boots ... ok (0.02s)
 
- test result ok. 1 passed; 0 failed; finished in 0.58s (build 0.05s + run 0.02s)
+ test result ok. 1 passed; 0 failed; finished in 0.58s (plan 0.51s · build 0.05s · run 0.02s)
 ```
 
 A failing case is named, and the command's exit status is non-zero:
@@ -546,7 +546,7 @@ about to fail
 boots ... ok (0.02s)
 boots: console
 
-error: test result: FAILED. 1 passed; 1 failed; finished in 0.24s (build 0.04s + run 0.02s)
+error: test result: FAILED. 1 passed; 1 failed; finished in 0.24s (plan 0.18s · build 0.04s · run 0.02s)
 
 failures:
     deliberate_fail

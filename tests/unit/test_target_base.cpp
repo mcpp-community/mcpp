@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.toolchain.linkmodel;
@@ -10,6 +10,8 @@ import mcpplibs.os.platform;
 import mcpp.toolchain.apple_sdk;
 import mcpp.invocation;
 import mcpp.build.command_line;
+
+using namespace mcpplibs::mtest;
 
 // The target base (design 2026-10-23, "target base and execution host"): the
 // string grammar of `sysroot`, which spellings each row takes, the
@@ -49,148 +51,147 @@ bool has(const std::vector<std::string>& v, std::string_view s) {
 
 } // namespace
 
-TEST(TargetBaseGrammar, EveryForm) {
+UTest every_form{"TargetBaseGrammar/EveryForm", [] {
     auto e = tb::parse_text("");
-    ASSERT_TRUE(e);
-    EXPECT_EQ(e->form, tb::Form::Empty);
+    expect(fatal(bool(e)));
+    expect(eq(e->form, tb::Form::Empty));
 
     auto p = tb::parse_text("path:/opt/acme//sysroot");
-    ASSERT_TRUE(p);
-    EXPECT_EQ(p->form, tb::Form::Path);
-    EXPECT_EQ(p->text, "path:/opt/acme/sysroot");
+    expect(fatal(bool(p)));
+    expect(eq(p->form, tb::Form::Path));
+    expect(eq(p->text, "path:/opt/acme/sysroot"));
 
     auto k = tb::parse_text("acme:sysroot-rhel8@1.0");
-    ASSERT_TRUE(k);
-    EXPECT_EQ(k->form, tb::Form::Package);
+    expect(fatal(bool(k)));
+    expect(eq(k->form, tb::Form::Package));
 
     auto l = tb::parse_text("glibc@system");
-    ASSERT_TRUE(l);
-    EXPECT_EQ(l->form, tb::Form::Locator);
-    EXPECT_EQ(l->family, "glibc");
-    EXPECT_EQ(l->version, "system");
+    expect(fatal(bool(l)));
+    expect(eq(l->form, tb::Form::Locator));
+    expect(eq(l->family, "glibc"));
+    expect(eq(l->version, "system"));
 
     // A versioned C library without a namespace is the ecosystem's package
     // (SPEC-006 §2.3); a versioned SDK is a locator with a version.
     auto g = tb::parse_text("glibc@2.39");
-    ASSERT_TRUE(g);
-    EXPECT_EQ(g->form, tb::Form::Package);
-    EXPECT_EQ(g->text, "xim:glibc@2.39");
+    expect(fatal(bool(g)));
+    expect(eq(g->form, tb::Form::Package));
+    expect(eq(g->text, "xim:glibc@2.39"));
     auto i = tb::parse_text("iphoneos@18.5");
-    ASSERT_TRUE(i);
-    EXPECT_EQ(i->form, tb::Form::Locator);
-    EXPECT_EQ(i->version, "18.5");
-}
+    expect(fatal(bool(i)));
+    expect(eq(i->form, tb::Form::Locator));
+    expect(eq(i->version, "18.5"));
+}};
 
-TEST(TargetBaseGrammar, RefusesWhatNamesNothing) {
-    EXPECT_FALSE(tb::parse_text("sysroot"));
-    EXPECT_FALSE(tb::parse_text("path:"));
-    EXPECT_FALSE(tb::parse_text("bogus@1.0"));
+UTest refuses_what_names_nothing{"TargetBaseGrammar/RefusesWhatNamesNothing", [] {
+    expect(!tb::parse_text("sysroot"));
+    expect(!tb::parse_text("path:"));
+    expect(!tb::parse_text("bogus@1.0"));
     // An Apple SDK has no package; `@system` takes no namespace.
-    EXPECT_FALSE(tb::parse_text("xim:iphoneos@18.5"));
-    EXPECT_FALSE(tb::parse_text("xim:glibc@system"));
-}
+    expect(!tb::parse_text("xim:iphoneos@18.5"));
+    expect(!tb::parse_text("xim:glibc@system"));
+}};
 
-TEST(TargetBaseRows, EachRowTakesItsOwnForms) {
+UTest each_row_takes_its_own_forms{"TargetBaseRows/EachRowTakesItsOwnForms", [] {
     auto linux_gnu = *parse("x86_64-linux-gnu");
-    EXPECT_FALSE(tb::refusal(linux_gnu, *tb::parse_text("glibc@system")));
-    EXPECT_FALSE(tb::refusal(linux_gnu, *tb::parse_text("path:/x")));
-    EXPECT_FALSE(tb::refusal(linux_gnu, *tb::parse_text("xim:glibc@2.39")));
+    expect(!(tb::refusal(linux_gnu, *tb::parse_text("glibc@system"))));
+    expect(!(tb::refusal(linux_gnu, *tb::parse_text("path:/x"))));
+    expect(!(tb::refusal(linux_gnu, *tb::parse_text("xim:glibc@2.39"))));
     // A family names a platform, so it must agree with the row.
-    EXPECT_TRUE(tb::refusal(linux_gnu, *tb::parse_text("musl@system")));
-    EXPECT_TRUE(tb::refusal(linux_gnu, *tb::parse_text("iphoneos@system")));
+    expect(bool(tb::refusal(linux_gnu, *tb::parse_text("musl@system"))));
+    expect(bool(tb::refusal(linux_gnu, *tb::parse_text("iphoneos@system"))));
 
     auto sim = *parse("aarch64-ios-sim");
-    EXPECT_FALSE(tb::refusal(sim, *tb::parse_text("iphonesimulator@system")));
-    EXPECT_FALSE(tb::refusal(sim, *tb::parse_text("path:/sdk")));
-    EXPECT_TRUE(tb::refusal(sim, *tb::parse_text("iphoneos@system")));
+    expect(!(tb::refusal(sim, *tb::parse_text("iphonesimulator@system"))));
+    expect(!(tb::refusal(sim, *tb::parse_text("path:/sdk"))));
+    expect(bool(tb::refusal(sim, *tb::parse_text("iphoneos@system"))));
     // The spellings the row took before it took a locator keep their meaning.
-    EXPECT_FALSE(tb::refusal(sim, *tb::parse_text("")));
+    expect(!(tb::refusal(sim, *tb::parse_text(""))));
 
     auto msvc = *parse("x86_64-windows-msvc");
-    EXPECT_FALSE(tb::refusal(msvc, *tb::parse_text("msvc@system")));
-    EXPECT_FALSE(tb::refusal(msvc, *tb::parse_text("xim:msvc@14.44")));
-    EXPECT_TRUE(tb::refusal(msvc, *tb::parse_text("acme:vs@1")));
+    expect(!(tb::refusal(msvc, *tb::parse_text("msvc@system"))));
+    expect(!(tb::refusal(msvc, *tb::parse_text("xim:msvc@14.44"))));
+    expect(bool(tb::refusal(msvc, *tb::parse_text("acme:vs@1"))));
 
     // The MSVC spelling on a MinGW row names another platform's toolset.
-    EXPECT_TRUE(tb::refusal(*parse("x86_64-windows-gnu"), *tb::parse_text("msvc@14.44.35207")));
+    expect(bool(tb::refusal(*parse("x86_64-windows-gnu"), *tb::parse_text("msvc@14.44.35207"))));
 
     // An SDK toolchain's row carries its own system: no new form.
     auto android = *parse("aarch64-linux-android");
-    EXPECT_TRUE(tb::refusal(android, *tb::parse_text("path:/ndk")));
-    EXPECT_EQ(tb::row_base(android).address, tb::Address::DriverInternal);
+    expect(bool(tb::refusal(android, *tb::parse_text("path:/ndk"))));
+    expect(eq(tb::row_base(android).address, tb::Address::DriverInternal));
 
-    EXPECT_EQ(tb::row_base(*parse("riscv64-none-elf")).address, tb::Address::Multilib);
-    EXPECT_EQ(tb::row_base(*parse("aarch64-macos")).address, tb::Address::AppleIsysroot);
-}
+    expect(eq(tb::row_base(*parse("riscv64-none-elf")).address, tb::Address::Multilib));
+    expect(eq(tb::row_base(*parse("aarch64-macos")).address, tb::Address::AppleIsysroot));
+}};
 
-TEST(TargetBaseRows, PathSlashIsTheHostLocator) {
+UTest path_slash_is_the_host_locator{"TargetBaseRows/PathSlashIsTheHostLocator", [] {
     auto s = tb::normalise(*parse("x86_64-linux-gnu"), *tb::parse_text("path:/"));
-    EXPECT_EQ(s.form, tb::Form::Locator);
-    EXPECT_EQ(s.text, "glibc@system");
+    expect(eq(s.form, tb::Form::Locator));
+    expect(eq(s.text, "glibc@system"));
     auto m = tb::normalise(*parse("x86_64-linux-musl"), *tb::parse_text("path:/"));
-    EXPECT_EQ(m.text, "musl@system");
-}
+    expect(eq(m.text, "musl@system"));
+}};
 
-TEST(TargetBaseMeasure, ImplementationFromThePreprocessor) {
+UTest implementation_from_the_preprocessor{"TargetBaseMeasure/ImplementationFromThePreprocessor", [] {
     auto glibc = tb::classify_macros(tb::parse_defines(
         "#define __GLIBC__ 2\n#define __GLIBC_MINOR__ 31\n#define FOO(x) x\n"));
-    ASSERT_TRUE(glibc);
-    EXPECT_EQ(glibc->impl, "glibc");
-    EXPECT_EQ(glibc->version, "2.31");
+    expect(fatal(bool(glibc)));
+    expect(eq(glibc->impl, "glibc"));
+    expect(eq(glibc->version, "2.31"));
 
     auto pico = tb::classify_macros(tb::parse_defines(
         "#define __PICOLIBC__ 1\n#define __PICOLIBC_VERSION__ \"1.8.12\"\n"));
-    ASSERT_TRUE(pico);
-    EXPECT_EQ(pico->version, "1.8.12");
+    expect(fatal(bool(pico)));
+    expect(eq(pico->version, "1.8.12"));
 
     auto bionic = tb::classify_macros(tb::parse_defines(
         "#define __BIONIC__ 1\n#define __ANDROID_API__ 24\n"));
-    ASSERT_TRUE(bionic);
-    EXPECT_EQ(bionic->factName, "android.api");
+    expect(fatal(bool(bionic)));
+    expect(eq(bionic->factName, "android.api"));
 
-    EXPECT_FALSE(tb::classify_macros(tb::parse_defines("#define __linux__ 1\n")));
-}
+    expect(!(tb::classify_macros(tb::parse_defines("#define __linux__ 1\n"))));
+}};
 
-TEST(TargetBaseMeasure, VersionsCompareNumerically) {
-    EXPECT_LT(tb::compare_versions("2.9", "2.31"), 0);
-    EXPECT_GT(tb::compare_versions("2.38", "2.31"), 0);
-    EXPECT_EQ(tb::compare_versions("2.31", "2.31.0"), 0);
-    EXPECT_EQ(tb::highest_glibc({"GLIBC_2.2.5", "GLIBC_2.38", "GLIBC_PRIVATE", "GLIBC_2.34"}),
-              "2.38");
-}
+UTest versions_compare_numerically{"TargetBaseMeasure/VersionsCompareNumerically", [] {
+    expect(lt(tb::compare_versions("2.9", "2.31"), 0));
+    expect(gt(tb::compare_versions("2.38", "2.31"), 0));
+    expect(eq(tb::compare_versions("2.31", "2.31.0"), 0));
+    expect(eq(tb::highest_glibc({"GLIBC_2.2.5", "GLIBC_2.38", "GLIBC_PRIVATE", "GLIBC_2.34"}), "2.38"));
+}};
 
-TEST(TargetBaseMeasure, MultiarchTuplesAreDebiansTable) {
-    EXPECT_EQ(tb::multiarch_tuple(*parse("x86_64-linux-gnu")), "x86_64-linux-gnu");
-    EXPECT_EQ(tb::multiarch_tuple(*parse("aarch64-linux-gnu")), "aarch64-linux-gnu");
-    EXPECT_EQ(tb::multiarch_tuple(*parse("x86_64-linux-musl")), "x86_64-linux-musl");
-}
+UTest multiarch_tuples_are_debians_table{"TargetBaseMeasure/MultiarchTuplesAreDebiansTable", [] {
+    expect(eq(tb::multiarch_tuple(*parse("x86_64-linux-gnu")), "x86_64-linux-gnu"));
+    expect(eq(tb::multiarch_tuple(*parse("aarch64-linux-gnu")), "aarch64-linux-gnu"));
+    expect(eq(tb::multiarch_tuple(*parse("x86_64-linux-musl")), "x86_64-linux-musl"));
+}};
 
-TEST(TargetBaseMeasure, PayloadLayoutIsNotASysroot) {
+UTest payload_layout_is_not_a_sysroot{"TargetBaseMeasure/PayloadLayoutIsNotASysroot", [] {
     Tmp t;
     touch(t.path / "pkg" / "include" / "features.h");
     touch(t.path / "pkg" / "lib64" / "libc.so.6");
-    EXPECT_TRUE(tb::is_payload_layout(t.path / "pkg"));
+    expect(tb::is_payload_layout(t.path / "pkg"));
     touch(t.path / "root" / "usr" / "include" / "features.h");
     touch(t.path / "root" / "lib64" / "libc.so.6");
-    EXPECT_FALSE(tb::is_payload_layout(t.path / "root"));
-}
+    expect(!tb::is_payload_layout(t.path / "root"));
+}};
 
 // The identity moves when a file the measurement rested on is rewritten in
 // place, and only then.
-TEST(TargetBaseIdentity, FollowsTheEvidence) {
+UTest follows_the_evidence{"TargetBaseIdentity/FollowsTheEvidence", [] {
     Tmp t;
     const auto lib = t.path / "lib64" / "libc.so.6";
     touch(lib, "one");
     const auto a = tb::identity_of("path:/x", t.path, {lib}, "glibc 2.31");
-    EXPECT_EQ(a, tb::identity_of("path:/x", t.path, {lib}, "glibc 2.31"));
+    expect(eq(a, tb::identity_of("path:/x", t.path, {lib}, "glibc 2.31")));
     touch(lib, "a longer file");
-    EXPECT_NE(a, tb::identity_of("path:/x", t.path, {lib}, "glibc 2.31"));
-    EXPECT_NE(a, tb::identity_of("path:/y", t.path, {lib}, "glibc 2.31"));
-}
+    expect(ne(a, tb::identity_of("path:/x", t.path, {lib}, "glibc 2.31")));
+    expect(ne(a, tb::identity_of("path:/y", t.path, {lib}, "glibc 2.31")));
+}};
 
 // Apple's own convention, on every host: `SDKROOT` names the SDK, its
 // `SDKSettings.json` its version, its `libSystem.tbd` its slices.
-TEST(TargetBaseApple, SdkrootOnEveryHost) {
+UTest sdkroot_on_every_host{"TargetBaseApple/SdkrootOnEveryHost", [] {
     Tmp t;
     const auto sdk = t.path / "iPhoneSimulator18.5.sdk";
     touch(sdk / "SDKSettings.json", R"({"CanonicalName": "iphonesimulator18.5", "Version": "18.5"})");
@@ -199,30 +200,30 @@ TEST(TargetBaseApple, SdkrootOnEveryHost) {
           "--- !tapi-tbd\ntbd-version: 4\ntargets: [ x86_64-ios-simulator, arm64-ios-simulator ]\n");
     mcpp::invocation::ScopedEnv env("SDKROOT", sdk.string());
     auto found = tb::locate_apple(*tb::parse_text("iphonesimulator@system"), "iphonesimulator");
-    ASSERT_TRUE(found) << found.error();
-    EXPECT_EQ(found->root, sdk);
-    EXPECT_EQ(found->version, "18.5");
-    EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphonesimulator@17.0"), "iphonesimulator"));
+    if (auto&& failed = expect(fatal(bool(found))); !failed) failed << found.error();
+    expect(eq(found->root, sdk));
+    expect(eq(found->version, "18.5"));
+    expect(!(tb::locate_apple(*tb::parse_text("iphonesimulator@17.0"), "iphonesimulator")));
     // SDKROOT names one SDK and does not answer for another. (On an Apple
     // host `xcrun` answers next, and Xcode's iPhoneOS SDK is found there.)
     if (!mcpplibs::os::is_macos)
-        EXPECT_FALSE(tb::locate_apple(*tb::parse_text("iphoneos@system"), "iphoneos"));
+        expect(!(tb::locate_apple(*tb::parse_text("iphoneos@system"), "iphoneos")));
     using mcpp::toolchain::apple::Slice;
-    EXPECT_EQ(mcpp::toolchain::apple::sdk_has_target(sdk, "x86_64-ios-simulator"), Slice::carried);
-    EXPECT_EQ(mcpp::toolchain::apple::sdk_has_target(sdk, "x86_64-ios"), Slice::absent);
-}
+    expect(eq(mcpp::toolchain::apple::sdk_has_target(sdk, "x86_64-ios-simulator"), Slice::carried));
+    expect(eq(mcpp::toolchain::apple::sdk_has_target(sdk, "x86_64-ios"), Slice::absent));
+}};
 
-TEST(TargetBaseApple, PathMustBeAnSdk) {
+UTest path_must_be_an_sdk{"TargetBaseApple/PathMustBeAnSdk", [] {
     Tmp t;
     auto none = tb::locate_apple(*tb::parse_text("path:" + (t.path / "nothing").string()), "macosx");
-    EXPECT_FALSE(none);
+    expect(!none);
     touch(t.path / "empty" / "readme");
-    EXPECT_FALSE(tb::locate_apple(*tb::parse_text("path:" + (t.path / "empty").string()), "macosx"));
-}
+    expect(!(tb::locate_apple(*tb::parse_text("path:" + (t.path / "empty").string()), "macosx")));
+}};
 
 // THE LINKER IS GIVEN THE SYSROOT, AND A BINDING ARTIFACT LOADS THE BASE: the
 // two defects #755's sysroot had (scenarios C and D).
-TEST(TargetBaseLinkModel, StatedBindingBaseNamesItsLoaderAndDirs) {
+UTest stated_binding_base_names_its_loader_and_dirs{"TargetBaseLinkModel/StatedBindingBaseNamesItsLoaderAndDirs", [] {
     tc::Toolchain t;
     t.compiler = tc::CompilerId::GCC;
     t.targetTriple = "x86_64-linux-gnu";
@@ -234,22 +235,22 @@ TEST(TargetBaseLinkModel, StatedBindingBaseNamesItsLoaderAndDirs) {
     t.base.loader = "/sr/lib64/ld-linux-x86-64.so.2";
     t.base.runtimeDirs = {"/sr/lib64"};
     auto lm = tc::resolve_link_model(t);
-    EXPECT_EQ(lm.mode, tc::CLibMode::Sysroot);
+    expect(eq(lm.mode, tc::CLibMode::Sysroot));
     auto link = lm.link_tokens(ident);
-    EXPECT_TRUE(has(link, "--sysroot=/sr"));
-    EXPECT_TRUE(has(link, "-Wl,--sysroot=/sr"));
-    EXPECT_TRUE(has(link, "-Wl,--dynamic-linker=/sr/lib64/ld-linux-x86-64.so.2"));
-    EXPECT_TRUE(has(link, "-Wl,-rpath,/sr/lib64"));
+    expect(bool(has(link, "--sysroot=/sr")));
+    expect(bool(has(link, "-Wl,--sysroot=/sr")));
+    expect(bool(has(link, "-Wl,--dynamic-linker=/sr/lib64/ld-linux-x86-64.so.2")));
+    expect(bool(has(link, "-Wl,-rpath,/sr/lib64")));
 
     // A floor (a cross target) names no loader: the pristine spec's standard
     // path is the one the target machine has.
     t.base.runtime = tb::Runtime::Floor;
     auto floor = tc::resolve_link_model(t).link_tokens(ident);
-    EXPECT_FALSE(std::ranges::any_of(floor, [](auto const& s) {
-        return s.starts_with("-Wl,--dynamic-linker"); }));
-}
+    expect(!(std::ranges::any_of(floor, [](auto const& s) {
+        return s.starts_with("-Wl,--dynamic-linker"); })));
+}};
 
-TEST(TargetBaseLinkModel, MultiarchForADriverThatDoesNotKnowIt) {
+UTest multiarch_for_a_driver_that_does_not_know_it{"TargetBaseLinkModel/MultiarchForADriverThatDoesNotKnowIt", [] {
     tc::Toolchain t;
     t.compiler = tc::CompilerId::GCC;
     t.targetTriple = "x86_64-linux-gnu";
@@ -265,15 +266,15 @@ TEST(TargetBaseLinkModel, MultiarchForADriverThatDoesNotKnowIt) {
     // operators, so a Windows host writes its own separator.
     namespace fs = std::filesystem;
     const auto root = fs::path("/");
-    EXPECT_TRUE(has(lm.compile_tokens(ident),
-                    "-idirafter" + (root / "usr" / "include" / "x86_64-linux-gnu").string()));
+    expect(bool(has(lm.compile_tokens(ident),
+                    "-idirafter" + (root / "usr" / "include" / "x86_64-linux-gnu").string())));
     auto link = lm.link_tokens(ident);
-    EXPECT_TRUE(has(link, "-B" + (root / "usr" / "lib" / "x86_64-linux-gnu").string()));
-    EXPECT_TRUE(has(link, "-Wl,-rpath-link," + (root / "lib" / "x86_64-linux-gnu").string()));
-}
+    expect(bool(has(link, "-B" + (root / "usr" / "lib" / "x86_64-linux-gnu").string())));
+    expect(bool(has(link, "-Wl,-rpath-link," + (root / "lib" / "x86_64-linux-gnu").string())));
+}};
 
-TEST(PasteArg, QuotesOnlyWhatTheShellWouldSplit) {
-    EXPECT_EQ(mcpp::build::command_line::paste_arg("/tmp/home"), "/tmp/home");
-    EXPECT_NE(mcpp::build::command_line::paste_arg("/tmp/mc probe/home"), "/tmp/mc probe/home");
-    EXPECT_NE(mcpp::build::command_line::paste_arg("/tmp/a'b"), "/tmp/a'b");
-}
+UTest quotes_only_what_the_shell_would_split{"PasteArg/QuotesOnlyWhatTheShellWouldSplit", [] {
+    expect(eq(mcpp::build::command_line::paste_arg("/tmp/home"), "/tmp/home"));
+    expect(ne(mcpp::build::command_line::paste_arg("/tmp/mc probe/home"), "/tmp/mc probe/home"));
+    expect(ne(mcpp::build::command_line::paste_arg("/tmp/a'b"), "/tmp/a'b"));
+}};

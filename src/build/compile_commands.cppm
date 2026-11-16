@@ -42,7 +42,7 @@ import mcpp.source_kind;
 import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.home;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.home.files;
 import mcpp.manifest.flag_words;
@@ -204,7 +204,7 @@ write_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 // calls mcpp back. A tool for the host is built in the host graph, whose
 // configuration has its own contract.
 //
-//   {"schema": 1, "target": "<triple>", "dialect": "<gcc|clang|msvc>",
+//   {"schema": 1, "target": "<triple>", "dialect": "<gnu|msvc>",
 //    "compile": {"c": {"program", "args"}, "cxx": {...}, "asm": {...}},
 //    "link":    {"program", "args", "archiver"}}
 std::filesystem::path contract_path(const BuildPlan& plan);
@@ -901,8 +901,10 @@ std::expected<void, std::string> write_build_contract(const BuildPlan& plan, con
     doc["compile"]["asm"] = tool(flags.ccBinary, flags.as, true);
     target_side(doc["compile"]["asm"], plan.contractTargetSide.cflags, true);
     for (auto const& w : plan.contractTargetSide.asmflags) doc["compile"]["asm"]["args"].push_back(w);
-    auto link = tool(flags.ldDriver.empty() ? flags.cxxBinary : flags.ldDriver, flags.ld, false);
-    link["archiver"] = flags.arBinary.generic_string();
+    const auto contractFlags = compute_build_contract_flags(plan);
+    auto link = tool(contractFlags.ldDriver.empty() ? contractFlags.cxxBinary : contractFlags.ldDriver,
+                     contractFlags.ld, false);
+    link["archiver"] = contractFlags.arBinary.generic_string();
     doc["link"] = std::move(link);
     const auto path = contract_path(plan);
     std::error_code ec;

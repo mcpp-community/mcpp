@@ -476,7 +476,7 @@ mcpp test
 boots: console
 boots ... ok (0.02s)
 
- test result ok. 1 passed; 0 failed; finished in 0.58s (build 0.05s + run 0.02s)
+ test result ok. 1 passed; 0 failed; finished in 0.58s (plan 0.51s · build 0.05s · run 0.02s)
 ```
 
 失败的用例会被点名，命令的退出状态非零：
@@ -487,7 +487,7 @@ about to fail
 boots ... ok (0.02s)
 boots: console
 
-error: test result: FAILED. 1 passed; 1 failed; finished in 0.24s (build 0.04s + run 0.02s)
+error: test result: FAILED. 1 passed; 1 failed; finished in 0.24s (plan 0.18s · build 0.04s · run 0.02s)
 
 failures:
     deliberate_fail

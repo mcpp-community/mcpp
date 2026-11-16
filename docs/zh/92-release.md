@@ -45,17 +45,34 @@ POSIX `sh`/dash 解析不了——`sh check_version_pins.sh` 会在第 95 行附
 推导 tag）会做完这些：
 
 ```
-四平台构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
-  → GitHub Release v<version>，含 tarball 与 .sha256 边车文件
+四平台同时构建（linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64）
+  [手动发布且带 `canaries` 时，canaries 与之并行]
+  → create-release：GitHub Release v<version>，含全部归档与 .sha256 边车文件
   → 重新计算每个载荷的哈希并发布不可变 mcpp-release.json
-  → 镜像到 xlings-res/mcpp 的 GitHub 与 GitCode 双端
-  → 向 openxlings/xim-pkgindex 开版本 bump PR
+  → 镜像到 xlings-res/mcpp 的 GitHub 端
+  → 以封存的 manifest 向 openxlings/xim-pkgindex 开索引 PR
+  → [手动发布且带 `gitcode` 时，镜像到 xlings-res/mcpp 的 GitCode 端]
   → workflow_run 钩子触发 ci-fresh-install
 ```
 
+发布只在带 `gitcode` 启动时镜像 GitCode（`gh workflow run release.yml -f gitcode=true`；2026.11.14.1+）。
+GitHub runner 向 GitCode 的上传约 0.012 MB/s：v2026.11.13.1 在其上用了 713 s，每个归档 604 s，而 GitHub
+端八个资源共 64 s。不带 `gitcode` 时由负责人在线路可用的主机上以同一脚本镜像 GitCode，之后再合入索引
+PR（§3）：
+
+```bash
+GITCODE_TOKEN=... MIRROR_HOSTS=gtc bash .github/tools/mirror_res.sh mcpp <version>   # PATH 上需有 gtc
+```
+
+四个构建同时开始，各自把归档留作 artifact；`create-release` 在每个构建都通过后一次创建带全部归档的
+release，因此不存在缺少某个平台的 release（2026.11.13.1+）。生态 canaries（xlings、mcppls；
+`.github/release-canaries.toml`）只在手动发布且带 `canaries` 时用候选版本构建
+（`gh workflow run release.yml -f canaries=true`），此时它们是创建 release 的前提；v2026.11.12.1 的
+109 分钟中它们占 48 分钟，各项目在发布后以自己的 CI 验证该版本。
+
 ### 2.1 不可变 release manifest
 
-`release-manifest` 会等待四个平台上传 job 全部结束，然后下载最终的非
+`release-manifest` 等待 `create-release` 结束，然后下载最终的非
 draft、非 prerelease GitHub Release，重新计算每个带版本平台载荷的
 SHA256，校验对应的 `.sha256` 边车文件，并发布 schema 1 的
 `mcpp-release.json`：
@@ -89,14 +106,17 @@ reconciler 与 `tools/pypi/` 中的 `mcpp-bin` PyPI wheel 构建脚本）必须�
 
 两步**没有**自动化：
 
-- **合并 xim-pkgindex 的 bump PR**——由维护者完成。在它落地之前，发布出来
+- **合并 xim-pkgindex 的索引 PR**——由维护者完成。在它落地之前，发布出来
   的版本可以下载，但无法通过 `xlings install` 安装。
 - **bump `.xlings.json`**——见 §4。
 
-bump PR 是机器生成的：分支 `bump/mcpp-<version>`，提交者 `xlings-ci
-<ci@xlings.dev>`，diff 恒为 +22/-3。承重的是那三行删除——生成器对每个
+索引 PR 由发布自身写出（`.github/tools/index_pr.py`，2026.11.14.1+；此前请求索引的更新器提出，
+而更新器要等两端镜像都完成）：分支 `auto/bump-xim-mcpp`，提交者 `mcpp-release`，摘要取自封存的
+`mcpp-release.json`，diff 恒为 +22/-3。正文以更新器的标记
+（`<!-- xpkgindex-update: {"id":"xim:mcpp","candidate":"<version>"} -->`）开头，更新器据此不再自行提出，
+并写明本次运行是否镜像了 GitCode。重复运行见到该标记即不再开 PR。承重的是那三行删除——脚本对每个
 平台表是**替换** `["latest"]` 那一行，而不是新增一行。手写一个索引 PR
-并不是等价的捷径；在 bot 的 PR 之外另开一个，代价有两份，2026-09-05 的
+并不是等价的捷径；在发布生成的 PR 之外另开一个，代价有两份，2026-09-05 的
 `xim-pkgindex#764` 两份都付了：
 
 - 手写的 diff 把 `["latest"] = { ref = "<新版>" }` **追加**在原有那行上面
@@ -105,10 +125,10 @@ bump PR 是机器生成的：分支 `bump/mcpp-<version>`，提交者 `xlings-ci
   正确，所以每个按精确版本 pin 的消费者都是绿的——mcpp 自己的 CI 正是
   精确 pin，完全看不见这件事。只有不带版本的 `xlings install mcpp` 会
   拿到过期的二进制。
-- 它先于 bot 的 PR 落地，使那个 PR 变成冲突。解法是取 bot 分支那一侧的
+- 它先于生成的 PR 落地，使那个 PR 变成冲突。解法是取生成分支那一侧的
   `pkgs/m/mcpp.lua`；它与手写后的 `main` 只差那几行陈旧的 `["latest"]`。
 
-因此，bump PR 合入的判据是 `latest` **解析成什么**，而不是文件里别处出现
+因此，索引 PR 合入的判据是 `latest` **解析成什么**，而不是文件里别处出现
 了版本字符串：
 
 ```bash
@@ -274,8 +294,9 @@ curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-
 [ ] gh workflow run release.yml --ref main
 [ ] release.yml green (4 builds + immutable manifest + publish-ecosystem)
 [ ] downloaded mcpp-release.json regenerates byte-identically from public assets
+[ ] GitCode mirrored (release started with `gitcode`, or MIRROR_HOSTS=gtc locally)
 [ ] mirrors serve all four platforms on BOTH hosts, sha256 recomputed
-[ ] merge the xim-pkgindex bump PR
+[ ] merge the xim-pkgindex index PR
 [ ] index `latest` resolves to the new version in all three platform tables
 [ ] xim-index-latest.json's `index_version` equals xim-pkgindex `main`
 [ ] clean-room XLINGS_HOME: xlings install mcpp@<version> succeeds

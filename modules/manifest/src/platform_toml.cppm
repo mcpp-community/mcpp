@@ -37,7 +37,11 @@ struct Reader {
     std::expected<PackageRef, std::string>
     ref(const mcpp::libs::toml::Value& v, std::string_view where, bool allowOff, bool allowProgram) const;
 
-    std::expected<Runner, std::string> runner(const mcpp::libs::toml::Value& v, std::string_view where) const;
+    // `overriding`: the table of an override tier (this machine's config.toml,
+    // the project), which may adjust the runner below it without a command
+    // (`{ enabled = true }`).
+    std::expected<Runner, std::string> runner(const mcpp::libs::toml::Value& v, std::string_view where,
+                                              bool overriding = false) const;
 
     std::expected<void, std::string>
     flags(const mcpp::libs::toml::Table& t, std::string_view where, Flags& out,
@@ -68,6 +72,8 @@ struct Reader {
 
     // `[platform]` of a platform package.
     std::expected<Statement, std::string> statement(const mcpp::libs::toml::Table& t) const;
+    std::expected<RowSpec, std::string> define(const mcpp::libs::toml::Table& t, std::string_view where) const;
+    std::expected<ProviderSpec, std::string> provider(const mcpp::libs::toml::Table& t, std::string_view where) const;
 
     // The platform part of one `[target.<selector>]` table (the keys of
     // `kOverrideKeys`, plus `runner` and `runners`, which the table already
@@ -236,7 +242,8 @@ Reader::ref(const toml::Value& v, std::string_view where, bool allowOff, bool al
     return r;
 }
 
-std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::string_view where) const {
+std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::string_view where,
+                                                  bool overriding) const {
     Runner r;
     r.origin = at(v, std::string(where));
     r.set = true;
@@ -261,20 +268,50 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
                 if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
                 r.exclusive = val.as_bool();
                 r.exclusiveSet = true;
+            } else if (k == "enabled") {
+                if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
+                r.enabled = val.as_bool();
+                r.enabledSet = true;
+            } else if (k == "longlived") {
+                if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
+                r.longlived = val.as_bool();
+                r.longlivedSet = true;
             } else if (k == "hosts") {
                 auto h = host_pairs(val, key);
                 if (!h) return std::unexpected(h.error());
                 r.hosts = std::move(*h);
                 r.hostsSet = true;
+            } else if (k == "requires") {
+                auto w = strings(val, key);
+                if (!w) return std::unexpected(w.error());
+                r.requires_ = std::move(*w);
+            } else if (k == "built-as") {
+                if (!val.is_table())
+                    return std::unexpected(std::format(
+                        "{} must be a table of \"<os>-<arch>\" = \"<triple>\"", key));
+                for (auto const& [pair, triple] : val.as_table()) {
+                    if (!mcpp::manifest::platform::is_host_pair(pair) || !triple.is_string()
+                        || triple.as_string().empty())
+                        return std::unexpected(std::format(
+                            "{}.{} must name the identity the runner of that host pair is built as, "
+                            "for example \"freebsd-x86_64\" = \"x86_64-freebsd-musl\"", key, pair));
+                    r.builtAs[pair] = triple.as_string();
+                }
             } else {
                 warn(std::format(
-                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, hosts, exclusive",
-                    where, k));
+                    "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, hosts, "
+                    "exclusive, requires, enabled, longlived, built-as", where, k));
             }
         }
     } else {
         return std::unexpected(std::format(
             "{} must be an array of strings or {{ cmd = [...], host = \"same-arch\" }}", where));
+    }
+    // An override table adjusts the runner below it: without `cmd` it states
+    // the keys it writes and replaces no command.
+    if (r.cmd.empty() && overriding && v.is_table() && !v.as_table().contains("cmd")) {
+        r.set = false;
+        return r;
     }
     if (r.cmd.empty())
         return std::unexpected(std::format(
@@ -475,8 +512,8 @@ Reader::host_pairs(const toml::Value& v, std::string_view where) const {
     for (auto const& p : *w)
         if (!mcpp::manifest::platform::is_host_pair(p))
             return std::unexpected(std::format(
-                "{}: '{}' is not a system and an architecture; write \"<os>-<arch>\" with "
-                "<os> one of linux, macos, windows, for example \"linux-x86_64\"", where, p));
+                "{}: '{}' is not a system and an architecture; write \"<os>-<arch>\", "
+                "for example \"linux-x86_64\"", where, p));
     return w;
 }
 
@@ -549,6 +586,119 @@ std::expected<Carrier, std::string> Reader::carrier(const toml::Value& v, std::s
     return c;
 }
 
+std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::string_view where) const {
+    RowSpec r;
+    r.origin = Origin{ tier, file.generic_string(), 0, std::string(where) };
+    auto text = [&](std::string_view key, std::string& to) -> std::expected<void, std::string> {
+        auto it = t.find(key);
+        if (it == t.end()) return {};
+        if (!it->second.is_string())
+            return std::unexpected(std::format("{}.{} must be a string", where, key));
+        to = it->second.as_string();
+        return {};
+    };
+    for (auto const& [k, v] : t)
+        if (!contains(kDefineKeys, k))
+            warn(std::format("{}: '{}' is not a key of a row (ignored); the keys are {}", where, k,
+                             list_of(kDefineKeys)));
+    for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::string*>>{
+             {"triple", &r.triple}, {"tier", &r.tier}, {"note", &r.note}, {"clang-triple", &r.clangTriple},
+             {"gcc-triple", &r.gccTriple},
+             {"object-format", &r.objectFormat}, {"family", &r.family}, {"data-model", &r.dataModel},
+             {"exe-suffix", &r.exeSuffix}, {"shared-suffix", &r.sharedSuffix}, {"loader", &r.loader},
+             {"execution", &r.execution}, {"exceptions", &r.exceptions}, {"march", &r.march}, {"mabi", &r.mabi},
+             {"code-model", &r.codeModel}, {"multilib", &r.multilib}, {"link-emulation", &r.linkEmulation}})
+        if (auto e = text(key, *to); !e) return std::unexpected(e.error());
+    for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::vector<std::string>*>>{
+             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions}})
+        if (auto it = t.find(key); it != t.end()) {
+            auto w = strings(it->second, std::format("{}.{}", where, key));
+            if (!w) return std::unexpected(w.error());
+            *to = std::move(*w);
+        }
+    for (auto [key, to] : std::initializer_list<std::pair<std::string_view, bool*>>{
+             {"standard", &r.standard}, {"exact", &r.exact}})
+        if (auto it = t.find(key); it != t.end()) {
+            if (!it->second.is_bool()) return std::unexpected(std::format("{}.{} must be true or false", where, key));
+            *to = it->second.as_bool();
+        }
+    // `arch-os` or `arch-os-env`, each segment of letters, digits, `_` and `.`.
+    std::size_t segments = 1;
+    for (char c : r.triple) segments += c == '-';
+    if (r.triple.empty() || segments < 2 || segments > 3 || r.triple.starts_with('-') || r.triple.ends_with('-')
+        || r.triple.find("--") != std::string::npos)
+        return std::unexpected(std::format("{}.triple must be `arch-os` or `arch-os-env`, for example "
+                                           "\"x86_64-freebsd\"", where));
+    if (r.tier != "verified" && r.tier != "preview" && r.tier != "planned")
+        return std::unexpected(std::format("{}.tier is verified, preview or planned", where));
+    if (r.objectFormat != "elf" && r.objectFormat != "mach-o" && r.objectFormat != "pe" && r.objectFormat != "wasm"
+        && r.objectFormat != "coff")
+        return std::unexpected(std::format("{}.object-format is elf, mach-o, pe, wasm or coff", where));
+    return r;
+}
+
+std::expected<ProviderSpec, std::string> Reader::provider(const toml::Table& t, std::string_view where) const {
+    ProviderSpec p;
+    p.origin = Origin{ tier, file.generic_string(), 0, std::string(where) };
+    for (auto const& [k, v] : t) {
+        const auto key = std::format("{}.{}", where, k);
+        // A provider's base, as the platform's own (`[platform] sysroot`): a
+        // package, or `{ path = "<dir>" }` relative to the platform's manifest.
+        if (k == "sysroot" && v.is_table()) {
+            std::string path;
+            for (auto const& [sk, sv] : v.as_table()) {
+                if (sk == "path" && sv.is_string()) path = sv.as_string();
+                else warn(std::format("{}: '{}' is not a key of a provider's sysroot table (ignored); "
+                                      "the key is path", key, sk));
+            }
+            if (path.empty()) return std::unexpected(std::format("{} is a table without `path`", key));
+            p.sysroot = "path:" + absolute(path).generic_string();
+        } else if (k == "runner") {
+            auto r = runner(v, key);
+            if (!r) return std::unexpected(r.error());
+            p.runner = std::move(*r);
+        } else if (k == "tier" || k == "system-headers") {
+            if (!v.is_string()) return std::unexpected(std::format("{} must be a string", key));
+            (k == "tier" ? p.tier : p.systemHeaders) = v.as_string();
+        } else if (k == "name" || k == "toolchain" || k == "sysroot" || k == "linkage" || k == "execution"
+            || k == "base") {
+            if (!v.is_string())
+                return std::unexpected(k == "sysroot"
+                    ? std::format("{} must be a string or {{ path = \"<dir>\" }}", key)
+                    : std::format("{} must be a string", key));
+            (k == "name" ? p.name : k == "toolchain" ? p.toolchain : k == "sysroot" ? p.sysroot
+             : k == "linkage" ? p.linkage : k == "base" ? p.base : p.execution) = v.as_string();
+        } else if (k == "serves" || k == "hosts" || k == "pairs") {
+            auto w = strings(v, key);
+            if (!w) return std::unexpected(w.error());
+            (k == "serves" ? p.serves : k == "hosts" ? p.hosts : p.pairs) = std::move(*w);
+        } else if (k == "priority") {
+            if (!v.is_int()) return std::unexpected(std::format("{} must be an integer", key));
+            p.priority = static_cast<int>(v.as_int());
+        } else if (k == "hosted") {
+            if (!v.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
+            p.hosted = v.as_bool();
+        } else if (k == "layers") {
+            if (auto r = layers(v, key, p.layers); !r) return std::unexpected(r.error());
+        } else if (k == "link") {
+            if (!v.is_table()) return std::unexpected(std::format("{} must be a table", key));
+            if (auto r = link(v.as_table(), key, p.link); !r) return std::unexpected(r.error());
+        } else {
+            warn(std::format("{}: '{}' is not a key of a provider (ignored); the keys are {}", where, k,
+                             list_of(kProviderKeys)));
+        }
+    }
+    if (p.serves.empty())
+        return std::unexpected(std::format("{} serves nothing: write serves = [\"<triple>\", ...]", where));
+    if (!p.linkage.empty() && p.linkage != "static" && p.linkage != "dynamic")
+        return std::unexpected(std::format("{}.linkage is static or dynamic", where));
+    if (p.base != "platform" && p.base != "none")
+        return std::unexpected(std::format("{}.base is \"platform\" or \"none\"", where));
+    if (!p.tier.empty() && p.tier != "verified" && p.tier != "preview" && p.tier != "planned")
+        return std::unexpected(std::format("{}.tier is verified, preview or planned", where));
+    return p;
+}
+
 std::expected<Statement, std::string> Reader::statement(const toml::Table& t) const {
     Statement s;
     for (auto const& [k, v] : t) {
@@ -590,13 +740,11 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
             s.runner = std::move(*r);
         } else if (k == "runners") {
             if (!v.is_table())
-                return std::unexpected(std::format("{} must be a table of <name> = [argv]", key));
+                return std::unexpected(std::format("{} must be a table of <name> = [argv] or <name> = {{ cmd = [argv] }}", key));
             for (auto const& [rk, rv] : v.as_table()) {
-                auto rkey = std::format("{}.{}", key, rk);
-                auto w = strings(rv, rkey);
-                if (!w) return std::unexpected(w.error());
-                if (w->empty()) return std::unexpected(std::format("{} is empty", rkey));
-                s.runners[rk] = Words{ std::move(*w), at(rv, rkey), true };
+                auto r = runner(rv, std::format("{}.{}", key, rk));
+                if (!r) return std::unexpected(r.error());
+                s.runners[rk] = std::move(*r);
             }
         } else if (k == "carrier") {
             auto c = carriers(v, key);
@@ -606,10 +754,13 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
             auto w = strings(v, key);
             if (!w) return std::unexpected(w.error());
             if (w->empty()) return std::unexpected(std::format("{} names no key", key));
+            // The keys are the blocks a descriptor may have: the built-in ones, and
+            // any a platform's rows name (SPEC-016 §7); a key is a word.
             for (auto const& d : *w)
-                if (std::ranges::find(kDescriptorKeys, std::string_view(d)) == std::end(kDescriptorKeys))
+                if (d.empty() || std::ranges::any_of(d, [](char c) {
+                        return !std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-'; }))
                     return std::unexpected(std::format(
-                        "{}: '{}' is not a descriptor platform; the keys are {}", key, d,
+                        "{}: '{}' is not a descriptor block name; the built-in ones are {}", key, d,
                         list_of(kDescriptorKeys)));
             s.descriptorKeys = Words{ std::move(*w), at(v, key), true };
         } else if (k == "plugin") {
@@ -645,6 +796,64 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                 s.versions[vk] = vv.as_string();
             }
             s.versionsOrigin = at(v, "[platform.versions]");
+        } else if (k == "priority") {
+            if (!v.is_int())
+                return std::unexpected(std::format("{} must be an integer", key));
+            s.priority = static_cast<int>(v.as_int());
+            s.prioritySet = true;
+        } else if (k == "system") {
+            if (!v.is_array())
+                return std::unexpected(std::format("{} is an array of tables: write [[platform.system]]", key));
+            std::size_t i = 0;
+            for (auto const& e : v.as_array()) {
+                const auto where = std::format("[[platform.system]] #{}", ++i);
+                if (!e.is_table()) return std::unexpected(std::format("{} must be a table", where));
+                SystemSpec sys;
+                sys.origin = Origin{ tier, file.generic_string(), 0, where };
+                for (auto const& [sk, sv] : e.as_table()) {
+                    if (!contains(kSystemKeys, sk)) {
+                        warn(std::format("{}: '{}' is not a key of a system (ignored); the keys are {}",
+                                         where, sk, list_of(kSystemKeys)));
+                        continue;
+                    }
+                    if (sk == "command-scripts") {
+                        auto w = strings(sv, std::format("{}.command-scripts", where));
+                        if (!w) return std::unexpected(w.error());
+                        sys.commandScripts = std::move(*w);
+                        continue;
+                    }
+                    if (sk == "resources") {
+                        if (!sv.is_bool())
+                            return std::unexpected(std::format("{}.resources must be a boolean", where));
+                        sys.resources = sv.as_bool();
+                        continue;
+                    }
+                    if (!sv.is_string())
+                        return std::unexpected(std::format("{}.{} must be a string", where, sk));
+                    (sk == "name" ? sys.name : sys.uname) = sv.as_string();
+                }
+                if (sys.name.empty())
+                    return std::unexpected(std::format("{} names no system: write name = \"<os>\"", where));
+                s.systems.push_back(std::move(sys));
+            }
+        } else if (k == "define" || k == "provider") {
+            if (!v.is_array())
+                return std::unexpected(std::format(
+                    "{} is an array of tables: write [[platform.{}]]", key, k));
+            std::size_t i = 0;
+            for (auto const& e : v.as_array()) {
+                const auto where = std::format("[[platform.{}]] #{}", k, ++i);
+                if (!e.is_table()) return std::unexpected(std::format("{} must be a table", where));
+                if (k == "define") {
+                    auto r = define(e.as_table(), where);
+                    if (!r) return std::unexpected(r.error());
+                    s.defines.push_back(std::move(*r));
+                } else {
+                    auto r = provider(e.as_table(), where);
+                    if (!r) return std::unexpected(r.error());
+                    s.providers.push_back(std::move(*r));
+                }
+            }
         } else if (k == "hosted") {
             if (!v.is_table()) return std::unexpected(std::format("{} must be a table", key));
             s.hosted.set = true;
@@ -686,6 +895,12 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
         if (k == "platform") {
             if (v.is_string() && v.as_string() == "none") {
                 o.platformNone = true;
+            } else if (v.is_string() && v.as_string().starts_with("builtin:")) {
+                // A built-in provider by name (SPEC-016 §4): no platform package.
+                o.platformNone = true;
+                o.platformBuiltin = v.as_string().substr(8);
+                if (o.platformBuiltin.empty())
+                    return std::unexpected(std::format("{}: `builtin:` names no provider", key));
             } else {
                 auto r = ref(v, key, false, false);
                 if (!r) return std::unexpected(r.error());
@@ -693,6 +908,16 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
             }
             o.platformOrigin = at(v, key);
             o.platformSet = true;
+        } else if (k == "priority" && !selector.empty()) {
+            if (!v.is_table())
+                return std::unexpected(std::format(
+                    "{} must be a table of <provider> = <integer>, for example mingw = 200", key));
+            for (auto const& [pk, pv] : v.as_table()) {
+                if (!pv.is_int())
+                    return std::unexpected(std::format("{}.{} must be an integer", key, pk));
+                o.priority[pk] = static_cast<int>(pv.as_int());
+            }
+            o.priorityOrigin = at(v, key);
         } else if (selector.empty()) {
             // `[host]` selects the host graph's platform and nothing else.
             warn(std::format(
@@ -709,17 +934,17 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
         } else if (k == "link") {
             if (!v.is_table()) return std::unexpected(std::format("{} must be a table", key));
             if (auto r = link(v.as_table(), key, o.fields.link); !r) return std::unexpected(r.error());
+
         } else if (k == "runner") {
-            auto r = runner(v, key);
+            auto r = runner(v, key, true);
             if (!r) return std::unexpected(r.error());
             o.fields.runner = std::move(*r);
         } else if (k == "runners") {
             if (!v.is_table()) continue;   // the table's own reader refuses the shape
             for (auto const& [rk, rv] : v.as_table()) {
-                auto rkey = std::format("{}.{}", key, rk);
-                auto w = strings(rv, rkey);
-                if (!w) continue;          // ditto
-                o.fields.runners[rk] = Words{ std::move(*w), at(rv, rkey), true };
+                auto r = runner(rv, std::format("{}.{}", key, rk), true);
+                if (!r) return std::unexpected(r.error());
+                o.fields.runners[rk] = std::move(*r);
             }
         }
         // Every other key belongs to the table's other readers.

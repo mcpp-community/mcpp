@@ -12,9 +12,6 @@
 // (`gcm.cache/<sanitized>.gcm`, with ':' replaced by '-' to keep
 // filename-safe).
 
-module;
-#include <cstdio>
-
 export module mcpp.dyndep;
 
 import std;

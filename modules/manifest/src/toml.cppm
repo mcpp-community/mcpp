@@ -7,6 +7,7 @@ import mcpp.manifest.key_registry;
 import mcpp.manifest.cfg_selector;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
+import mcpp.manifest.platform_providers;
 import mcpp.targetside;
 import std;
 import mcpp.invocation;
@@ -596,6 +597,14 @@ std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit);
 
+// Where the `key = value` line that begins at `lineStart` ends: the newline
+// after its value, or the end of `text`. An inline table or an array may
+// continue over the following lines (TOML 1.1 inline tables, any array), so
+// an editor that replaced or erased the first line alone would leave the rest
+// of the value behind. Brackets are counted outside strings and comments; the
+// value ends at the first newline where none is open.
+std::size_t assignment_end(std::string_view text, std::size_t lineStart);
+
 // Every path the lib-root convention would accept, in extension-table order
 // (`.cppm` first, then whatever `[build] module_extensions` declares). An
 // explicit `[lib] path` collapses this to that one entry.
@@ -1054,6 +1063,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // 2026-10-29 §4.5): the platform reader type-checks every entry.
         "platform.carrier",
         "target.*.carrier",
+        // `[[platform.define]]` and `[[platform.provider]]` (SPEC-016 §2, §3):
+        // the platform reader type-checks every entry.
+        "platform.define",
+        "platform.provider",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
@@ -1061,7 +1074,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
             "[[runtime.artifacts]], [[runtime.deploy]], [[platform.link.inputs]], "
-            "[[platform.carrier]] and [xlings] deps entries",
+            "[[platform.carrier]], [[platform.define]], [[platform.provider]] and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -1242,6 +1255,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             }
             if (auto it = tt.find("debug"); it != tt.end() && it->second.is_bool()) {
                 pr.debug = it->second.as_bool();
+                pr.debugDeclared = true;
+            } else if (it != tt.end() && it->second.is_string()) {
+                pr.debugWritten = it->second.as_string();
+                pr.debug = pr.debugLines = pr.debugWritten == "lines";
                 pr.debugDeclared = true;
             }
             if (auto it = tt.find("lto"); it != tt.end() && it->second.is_bool()) {
@@ -2050,6 +2067,60 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             t.start = sit->second.as_string();
             t.startDeclaredBy = std::format("[targets.{}] start = \"{}\"", tname, t.start);
         }
+        // `test-protocol` (docs/08): the version of the test protocol a test
+        // program that begins at this entry implements. Version 1 is the one
+        // this mcpp runs; a program of another version runs as a plain test.
+        if (auto pit = tt.find("test-protocol"); pit != tt.end()) {
+            if (t.kind != Target::Entry)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-protocol states what a test program that begins at an "
+                    "entry implements, and `{}` is not a `kind = \"entry\"` target", tname, tname)));
+            if (!pit->second.is_int() || pit->second.as_int() < 1)
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-protocol is the protocol's version, a positive integer "
+                    "(`test-protocol = 1`)", tname)));
+            t.testProtocol = static_cast<int>(pit->second.as_int());
+        }
+        // `test-main` (docs/08): this entry begins a test program of a package
+        // that depends on this one when the test's file defines no `main`.
+        if (auto mit = tt.find("test-main"); mit != tt.end()) {
+            if (t.kind != Target::Entry || !mit->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-main is `true` or `false`, on a `kind = \"entry\"` target", tname)));
+            t.testMain = mit->second.as_bool();
+        }
+        // `test-guide` (docs/08): the framework's guide to writing its tests.
+        if (auto git = tt.find("test-guide"); git != tt.end()) {
+            if (t.kind != Target::Entry || !git->second.is_string() || git->second.as_string().empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-guide is a file of the package, on a `kind = \"entry\"` target", tname)));
+            t.testGuide = git->second.as_string();
+        }
+        // `test-capabilities` and `test-session` (docs/specs/test.md, B6): what
+        // the framework implements of the spec's optional capabilities, and
+        // the command that starts its session (O9). A name is a capability's
+        // (lowercase words joined by `-`); a name this mcpp does not know is
+        // reported as stated.
+        auto strings_of = [&](std::string_view key, std::vector<std::string>& out) -> std::optional<std::string> {
+            auto it = tt.find(std::string(key));
+            if (it == tt.end()) return std::nullopt;
+            if (t.kind != Target::Entry || !it->second.is_array() || it->second.as_array().empty())
+                return std::format("targets.{}.{} is a non-empty array of strings, on a `kind = \"entry\"` target",
+                                   tname, key);
+            for (auto const& v : it->second.as_array()) {
+                if (!v.is_string() || v.as_string().empty())
+                    return std::format("targets.{}.{} is a non-empty array of strings, on a `kind = \"entry\"` target",
+                                       tname, key);
+                out.push_back(v.as_string());
+            }
+            return std::nullopt;
+        };
+        if (auto bad = strings_of("test-capabilities", t.testCapabilities)) return std::unexpected(error(origin, *bad));
+        for (auto const& c : t.testCapabilities)
+            if (!std::ranges::all_of(c, [](char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-'; }))
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.test-capabilities: '{}' is not a capability's name (lowercase words joined by `-`)", tname, c)));
+        if (auto bad = strings_of("test-session", t.testSession)) return std::unexpected(error(origin, *bad));
         // An entry target is a translation unit and not an artifact: the keys
         // that describe an artifact (its ABI name, its exports, its form, its
         // PE subsystem and manifest) belong to the program that selects it.
@@ -2152,6 +2223,29 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         read_list("cxxflags",          t.cxxflags);
         read_list("defines",           t.defines);
         read_list("required_features", t.requiredFeatures);
+        // `[targets.<name>.build]`: the artifact's own compile of the
+        // package's translation units it links (mcpp#911 G9).
+        if (auto it = tt.find("build"); it != tt.end()) {
+            if (!it->second.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[targets.{}].build must be a table of cflags, cxxflags and defines", tname)));
+            for (auto const& [bk, bv] : it->second.as_table()) {
+                std::vector<std::string>* dst = bk == "cflags" ? &t.buildCflags
+                                              : bk == "cxxflags" ? &t.buildCxxflags
+                                              : bk == "defines" ? &t.buildDefines : nullptr;
+                if (!dst || !bv.is_array())
+                    return std::unexpected(error(origin, std::format(
+                        "[targets.{}.build].{} is not read: the keys are cflags, cxxflags and defines, "
+                        "each a list", tname, bk)));
+                for (auto const& v : bv.as_array())
+                    if (v.is_string()) dst->push_back(v.as_string());
+            }
+            for (auto const& flag : t.buildCxxflags)
+                if (starts_with_std_flag(flag))
+                    return std::unexpected(error(origin, std::format(
+                        "[targets.{}.build].cxxflags contains '{}'; use [package].standard to "
+                        "configure the C++ language standard", tname, flag)));
+        }
         // `windows_subsystem` / `windows_entry` (#618). A closed set each, so a
         // misspelling is refused by name rather than rendered as nothing.
         auto read_choice = [&](const char* key, std::string& out, bool subsystem)
@@ -2239,9 +2333,9 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // at the right axis (workspace / features / profile).
         static constexpr std::string_view kKnownTargetKeys[] = {
             "kind", "linkage", "main", "soname", "exports", "windows_auto_export",
-            "cflags", "cxxflags", "defines", "required_features",
+            "cflags", "cxxflags", "defines", "required_features", "build",
             "windows_entry", "windows_subsystem", "windows_code_page", "windows_long_paths",
-            "start",
+            "start", "test-protocol", "test-main", "test-guide", "test-capabilities", "test-session",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
@@ -2298,7 +2392,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             || k == "backend"  || k == "tools" || k == "artifacts"
             || k == "host-module" || k == "reexport"
             || k == "linkage"
-            || k == "patches" || k == "embed" || k == "exclude";
+            || k == "patches" || k == "patch_root" || k == "embed" || k == "exclude"
+            || k == "override";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -2315,14 +2410,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // property #349 established for the index floor: data must not be able to
     // decide whether the program works.
     //
-    // An identity key is an unambiguous discriminator: a nested namespace
-    // table's keys are PACKAGE names, and no package is named `version` /
-    // `path` / `git` / `workspace`.
+    // An identity key with an identity value is the discriminator: `path` /
+    // `version` / `git` are strings and `workspace` is a boolean in a spec. A
+    // nested namespace table's keys are PACKAGE names, and a package may be
+    // named `version` (#918: `gpp.version = { path = "../version" }`), so the
+    // same key holding a table is that package, not the spec's field.
     auto looks_like_inline_dep_spec = [](const t::Table& sub) {
-        if (sub.empty()) return false;
-        for (auto& [sk, sv] : sub)
-            if (sk == "path" || sk == "version" || sk == "git" || sk == "workspace")
+        for (auto& [sk, sv] : sub) {
+            if ((sk == "path" || sk == "version" || sk == "git") && sv.is_string())
                 return true;
+            if (sk == "workspace" && sv.is_bool()) return true;
+        }
         return false;
     };
 
@@ -2489,6 +2587,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // (tools, host module, dependency dir) on to THIS package's consumers.
         // Off by default; see DependencySpec::reexport for why it is not the
         // edge's `visibility`.
+        if (auto it = sub.find("override"); it != sub.end()) {
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] override is `true` or `false`", section, fqName)));
+            spec.override_ = it->second.as_bool();
+        }
         if (auto it = sub.find("reexport"); it != sub.end() && it->second.is_bool()) {
             spec.reexport = it->second.as_bool();
         }
@@ -2510,6 +2614,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 }
                 spec.patches.push_back(pp.lexically_normal().generic_string());
             }
+        }
+        if (auto it = sub.find("patch_root"); it != sub.end()) {
+            const std::filesystem::path pr = it->second.is_string() ? it->second.as_string() : std::string{};
+            if (!it->second.is_string() || pr.is_absolute())
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] patch_root must be a directory relative to the package's root", section, fqName)));
+            spec.patchRoot = pr.lexically_normal().generic_string();
         }
         if (auto it = sub.find("embed"); it != sub.end()) {
             if (!it->second.is_bool())
@@ -2539,6 +2650,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         if (auto it = sub.find("backend"); it != sub.end() && it->second.is_string()) {
             spec.features.push_back("backend-" + it->second.as_string());
         }
+        // AT MOST ONE OF `rev`, `tag`, `branch` (SPEC-001 §5); none is the
+        // remote's default branch, resolved when the dependency is fetched.
+        if (int refs = int(sub.contains("rev")) + int(sub.contains("tag")) + int(sub.contains("branch")); refs > 1)
+            return std::unexpected(error(origin, std::format(
+                "[{}.\"{}\"] names {} of rev / tag / branch; a git dependency names at most one",
+                section, fqName, refs)));
         if (auto it = sub.find("rev");     it != sub.end() && it->second.is_string()) {
             spec.gitRev     = it->second.as_string();
             spec.gitRefKind = "rev";
@@ -2571,10 +2688,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             return std::unexpected(error(origin, std::format(
                 "[{}.\"{}\"] must specify 'path', 'version', or 'git'", section, fqName)));
         }
-        if (!spec.git.empty() && spec.gitRev.empty()) {
-            return std::unexpected(error(origin, std::format(
-                "[{}.\"{}\"] git dep requires one of: rev / tag / branch", section, fqName)));
-        }
+        if (!spec.git.empty() && spec.gitRefKind.empty()) spec.gitRefKind = "branch";   // the default branch
         return {};
     };
 
@@ -2820,12 +2934,25 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         }
         return {};
     };
+    // A quoted dotted key that names a package beside its parent or a child of
+    // its namespace in one table is the only spelling of the pair (mcpp#904).
+    auto mark_required_quoting = [](std::map<std::string, DependencySpec>& deps) {
+        for (auto& [key, spec] : deps) {
+            if (!spec.legacyDottedKey) continue;
+            spec.quotingRequired = std::ranges::any_of(deps, [&](auto const& other) {
+                return other.first != key
+                    && (other.first.starts_with(key + ".") || key.starts_with(other.first + "."));
+            });
+        }
+    };
     auto load_deps = [&](std::string_view section, std::map<std::string, DependencySpec>& out)
         -> std::expected<void, ManifestError>
     {
         auto* tt = doc->get_table(section);
         if (!tt) return {};
-        return load_deps_table(section, *tt, out);
+        auto r = load_deps_table(section, *tt, out);
+        if (r) mark_required_quoting(out);
+        return r;
     };
     if (auto r = load_deps("dependencies",       m.dependencies);       !r) return std::unexpected(r.error());
     if (auto r = load_deps("dev-dependencies",   m.devDependencies);    !r) return std::unexpected(r.error());
@@ -2883,6 +3010,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
 
     // [build] — backend tunables
     if (auto v = doc->get_bool("build.static_stdlib")) m.buildConfig.staticStdlib = *v;
+    if (auto v = doc->get_string("build.compiler_runtime_dir")) m.buildConfig.compilerRuntimeDir = *v;
     // #336 — [build] cxx_runtime. Two spellings for one field, cargo-style:
     //   cxx_runtime = "host-coupled"                                  (all roles)
     //   cxx_runtime = { default = "...", tests = "...", shared = "..." }
@@ -3615,10 +3743,77 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 m.testStart = value.as_string();
                 continue;
             }
+            if (key == "programs") {
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "directory"
+                                           && value.as_string() != "package"))
+                    return std::unexpected(error(origin,
+                        "[test] programs is \"file\" (a test program per file, the default), "
+                        "\"directory\" (the files of one directory are one program) or \"package\" "
+                        "(the files the package discovers are one program)"));
+                m.testPrograms = value.as_string();
+                continue;
+            }
+            if (key == "store") {
+                if (!value.is_string() || value.as_string().empty())
+                    return std::unexpected(error(origin,
+                        "[test] store is a directory relative to the project, or \"none\""));
+                m.testStore = value.as_string();
+                continue;
+            }
+            if (key == "split") {
+                if (!value.is_string() || (value.as_string() != "file" && value.as_string() != "case"
+                                           && value.as_string() != "none" && value.as_string() != "auto"))
+                    return std::unexpected(error(origin,
+                        "[test] split is \"file\" (a process per file of a program's cases, the default), "
+                        "\"case\" (a process per case), \"auto\" (a process per file, and a file the run "
+                        "store measured longer than its share divided into groups of its cases) or \"none\" "
+                        "(one process)"));
+                m.testSplit = value.as_string();
+                continue;
+            }
+            if (key == "link") {
+                if (!value.is_string() || (value.as_string() != "used" && value.as_string() != "objects"))
+                    return std::unexpected(error(origin,
+                        "[test] link is \"used\" (the linker keeps what a test reaches, the default) or "
+                        "\"objects\" (every object whole)"));
+                m.testLink = value.as_string();
+                continue;
+            }
+            if (key == "features") {
+                // A feature the package does not declare is refused, as
+                // `--features` refuses it: the table is read only when this
+                // package is tested, so no consumer's engine reads it.
+                bool listOk = value.is_array();
+                if (listOk)
+                    for (auto& e : value.as_array())
+                        if (!e.is_string() || e.as_string().empty()) { listOk = false; break; }
+                if (!listOk)
+                    return std::unexpected(error(origin,
+                        "[test] features must be an array of feature names, e.g. [\"ktx2\"]"));
+                m.testFeatures.clear();
+                for (auto& e : value.as_array()) {
+                    const auto& f = e.as_string();
+                    if (!m.featuresMap.contains(f)) {
+                        std::string known;
+                        for (auto const& [name, _] : m.featuresMap) {
+                            if (name == "default") continue;
+                            known += (known.empty() ? "" : ", ") + name;
+                        }
+                        return std::unexpected(error(origin, std::format(
+                            "[test] features names '{}', which [features] does not declare{}", f,
+                            known.empty() ? std::string("; this package declares no features")
+                                          : std::format(" (declared: {})", known))));
+                    }
+                    if (std::ranges::find(m.testFeatures, f) == m.testFeatures.end())
+                        m.testFeatures.push_back(f);
+                }
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, main, start, windows_code_page, windows_long_paths.", key));
+                    "discover, features, link, main, programs, split, start, store, windows_code_page, "
+                    "windows_long_paths.", key));
                 continue;
             }
             bool ok = value.is_array();
@@ -3813,9 +4008,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                             &m.schemaWarnings};
         auto st = rd.statement(*pt);
         if (!st) return std::unexpected(error(origin, st.error()));
-        if (!st->targets.set)
+        if (!st->targets.set && st->providers.empty())
             return std::unexpected(error(origin,
-                "[platform] names the targets it serves: targets = [\"<triple>\", ...]"));
+                "[platform] names the targets it serves: targets = [\"<triple>\", ...], or its "
+                "providers: [[platform.provider]] serves = [...]"));
+        // The rows it defines and the providers it states, checked against the
+        // rows as the engine reads them (SPEC-016 §5).
+        auto findings = mcpp::manifest::platform::check_statement(
+            *st, mcpp::manifest::platform::platform_name(m.package.name));
+        if (!findings.errors.empty())
+            return std::unexpected(error(origin, findings.errors.front()));
+        for (auto& w : findings.warnings) m.schemaWarnings.push_back(std::move(w));
         m.platform = std::move(*st);
         m.platformDeclared = true;
     }
@@ -3825,6 +4028,25 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         auto ov = rd.override_(*ht, "");
         if (!ov) return std::unexpected(error(origin, ov.error()));
         m.hostPlatform = std::move(*ov);
+    }
+    // [defaults."<capability>"] — the provider of a required capability when
+    // nothing else provides it (mcpp#911 G7): `<selector> = "<package>@<version>"`
+    // or a dependency table, the selector a target selector (`linux`,
+    // `cfg(os = "freebsd")`, a triple, `*`).
+    if (auto* dt = doc->get_table("defaults")) {
+        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                            &m.schemaWarnings};
+        for (auto const& [cap, body] : *dt) {
+            if (!body.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[defaults.\"{}\"] must be a table of <target selector> = <package>, for example "
+                    "linux = \"openkal-linux@^0.25\"", cap), body.position));
+            for (auto const& [sel, v] : body.as_table()) {
+                auto r = rd.ref(v, std::format("[defaults.\"{}\"].{}", cap, toml_header_key(sel)), false, false);
+                if (!r) return std::unexpected(error(origin, r.error(), v.position));
+                m.capabilityDefaults.push_back({ cap, sel, std::move(*r), static_cast<int>(v.position.line) });
+            }
+        }
     }
 
     // [lib] — library root convention (cargo-style).
@@ -4059,6 +4281,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             // artefact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
             // of the conditional sub-table channel.
+            bool runnerAdjusts = false;   // a table without `cmd` (`{ enabled = true }`)
             if (auto it = body.find("runner"); it != body.end()) {
                 // The table form, `{ cmd = [...], host = "same-arch", exclusive =
                 // true }`, is the platform reader's (SPEC-013 §2.3); its command
@@ -4066,9 +4289,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 if (!it->second.is_array() && it->second.is_table()) {
                     mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                         &m.schemaWarnings};
-                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple));
+                    auto r = rd.runner(it->second, std::format("[target.{}].runner", triple), true);
                     if (!r) return std::unexpected(error(origin, r.error()));
                     e.runner = r->cmd;
+                    runnerAdjusts = !r->set;
                 } else if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner must be an array of strings or {{ cmd = [...], "
@@ -4082,7 +4306,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     }
                     e.runner.push_back(el.as_string());
                 }
-                if (e.runner.empty()) {
+                if (e.runner.empty() && !runnerAdjusts) {
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner is empty — an empty template would "
                         "run nothing and report success", triple)));
@@ -4105,9 +4329,18 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "\"download\", \"{{}}\"]", triple, triple)));
                 }
                 for (auto& [name, val] : it->second.as_table()) {
+                    // The table form is the default runner's (R2): the same keys.
+                    if (val.is_table()) {
+                        mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
+                                                            &m.schemaWarnings};
+                        auto r = rd.runner(val, std::format("[target.{}.runners].{}", triple, name), true);
+                        if (!r) return std::unexpected(error(origin, r.error()));
+                        if (r->set) e.namedRunners[name] = r->cmd;
+                        continue;
+                    }
                     if (!val.is_array()) {
                         return std::unexpected(error(origin, std::format(
-                            "[target.{}.runners].{} must be an array of strings",
+                            "[target.{}.runners].{} must be an array of strings or {{ cmd = [...] }}",
                             triple, name)));
                     }
                     std::vector<std::string> argv;
@@ -4166,6 +4399,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "[target.{}].link must be a table, e.g. [target.{}.link] start = \"<symbol>\"", triple, triple)));
                 platformKeys = true;
             }
+            // The priority of a provider for the rows this selector matches
+            // (SPEC-016 §4.3): data the selection orders candidates by.
+            if (auto it = body.find("priority"); it != body.end()) {
+                if (!it->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].priority must be a table, e.g. [target.{}.priority] mingw = 200", triple, triple)));
+                platformKeys = true;
+            }
             if (platformKeys || body.contains("runner") || body.contains("runners")) {
                 mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                     &m.schemaWarnings};
@@ -4218,8 +4459,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             static constexpr std::string_view kKnownTargetTables[] = {
                 "abi", "build", "build-dependencies", "carrier", "dependencies",
                 "dev-dependencies", "feature-deps", "feature-requires-abi",
-                "feature-xlings", "layers", "link", "requires_abi", "runners", "runtime",
-                "targets", "tools", "xlings",
+                "feature-xlings", "layers", "link", "priority", "requires_abi", "runners", "runtime",
+                "targets", "test", "tools", "xlings",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) {
@@ -4254,7 +4495,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
                     "cxx_runtime, linkage, min_api_level, platform, run_under, runner, sysroot, "
                     "toolchain, plus the [target.<triple>.runners] table for named runners and "
-                    "the platform's layers, tools, carrier and link tables. "
+                    "the platform's layers, tools, carrier, link and priority tables. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }
@@ -4298,14 +4539,28 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "[target.{}].abi must be a table, e.g. `[target.{}.abi]` "
                         "with `threads = true`", triple, triple)));
                 for (auto& [ak, av] : ait->second.as_table()) {
-                    if (ak != "threads" && ak != "exceptions")
+                    if (ak != "threads" && ak != "exceptions" && ak != "longjmp")
                         return std::unexpected(error(origin, std::format(
                             "[target.{}.abi] has no member '{}'; the members are: "
-                            "threads, exceptions", triple, ak)));
+                            "threads, exceptions, longjmp", triple, ak)));
                     // `exceptions` also takes the model on Emscripten (design
                     // 2026-10-29 §6): "wasm" or "js"; `true` keeps "js".
                     const bool model = ak == "exceptions" && av.is_string()
                         && (av.as_string() == "wasm" || av.as_string() == "js");
+                    // `longjmp` is a model only (2026.11.12.1): "wasm" or
+                    // "js", no boolean -- the engine's default is the
+                    // toolchain's own ("js"), and an absent member is that
+                    // default rather than a switch turned off.
+                    if (ak == "longjmp") {
+                        if (!av.is_string()
+                            || (av.as_string() != "wasm" && av.as_string() != "js"))
+                            return std::unexpected(error(origin, std::format(
+                                "[target.{}.abi].longjmp must be \"wasm\" or \"js\"",
+                                triple)));
+                        cc.abiLongjmpModel    = av.as_string();
+                        cc.abiLongjmpDeclared = true;
+                        continue;
+                    }
                     if (!av.is_bool() && !model)
                         return std::unexpected(error(origin, ak == "exceptions"
                             ? std::format("[target.{}.abi].exceptions must be true, false, "
@@ -4660,12 +4915,42 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             auto read_deps = [&](const char* key, std::map<std::string, DependencySpec>& out)
                 -> std::expected<void, ManifestError>
             {
-                if (auto f = body.find(key); f != body.end() && f->second.is_table())
-                    return load_deps_table(
+                if (auto f = body.find(key); f != body.end() && f->second.is_table()) {
+                    auto r = load_deps_table(
                         std::format("target.{}.{}", toml_header_key(triple), key),
                         f->second.as_table(), out, key);
+                    if (r) mark_required_quoting(out);
+                    return r;
+                }
                 return {};
             };
+            // [target.<predicate>.test] (mcpp#942): the test programs of the
+            // targets the predicate selects, appended to `[test] discover`.
+            // Only `discover`: the other `[test]` keys shape the test build
+            // rather than add to its inputs, which is all a conditional
+            // section contributes.
+            if (auto t = body.find("test"); t != body.end()) {
+                if (!t->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}.test] must be a table", triple)));
+                for (auto& [tk, tv] : t->second.as_table()) {
+                    if (tk != "discover") {
+                        m.schemaWarnings.push_back(std::format(
+                            "[target.{}.test] has unsupported key '{}' (ignored). A conditional "
+                            "section contributes test programs only: discover.", triple, tk));
+                        continue;
+                    }
+                    bool listOk = tv.is_array();
+                    if (listOk)
+                        for (auto& e : tv.as_array())
+                            if (!e.is_string() || e.as_string().empty()) { listOk = false; break; }
+                    if (!listOk)
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.test] discover must be an array of non-empty glob strings, "
+                            "e.g. [\"!tests/native/**\"]", triple)));
+                    for (auto& e : tv.as_array()) cc.testDiscover.push_back(e.as_string());
+                }
+            }
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
             if (auto r = read_deps("dev-dependencies",   cc.devDependencies);  !r) return std::unexpected(r.error());
             if (auto r = read_deps("build-dependencies", cc.buildDependencies); !r) return std::unexpected(r.error());
@@ -5574,6 +5859,31 @@ license     = "Apache-2.0"
 )", packageName);
 }
 
+std::size_t assignment_end(std::string_view text, std::size_t lineStart) {
+    int depth = 0;
+    char quote = '\0';
+    bool comment = false;
+    for (std::size_t i = lineStart; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '\n') {
+            comment = false;
+            if (depth <= 0 && quote == '\0') return i;
+            continue;
+        }
+        if (comment) continue;
+        if (quote != '\0') {
+            if (c == '\\' && quote == '"') ++i;
+            else if (c == quote) quote = '\0';
+            continue;
+        }
+        if (c == '"' || c == '\'') quote = c;
+        else if (c == '#') comment = true;
+        else if (c == '{' || c == '[') ++depth;
+        else if (c == '}' || c == ']') --depth;
+    }
+    return text.size();
+}
+
 std::expected<std::string, std::string>
 upsert_dependency_text(std::string_view source,
                        const DependencyTextEdit& edit) {
@@ -5617,18 +5927,20 @@ upsert_dependency_text(std::string_view source,
         }
     }
 
+    auto quoted_list = [](const std::vector<std::string>& items) {
+        std::string list;
+        for (auto const& item : items) {
+            if (!list.empty()) list += ", ";
+            list += std::format("\"{}\"", item);
+        }
+        return list;
+    };
     std::string value;
     if (edit.features.empty()) {
         value = std::format("\"{}\"", edit.version);
     } else {
-        std::string featureList;
-        for (auto const& feature : edit.features) {
-            if (!featureList.empty()) featureList += ", ";
-            featureList += std::format("\"{}\"", feature);
-        }
-        value = std::format(
-            "{{ version = \"{}\", features = [{}] }}",
-            edit.version, featureList);
+        value = std::format("{{ version = \"{}\", features = [{}] }}", edit.version,
+                            quoted_list(edit.features));
     }
 
     struct SectionSpan {
@@ -5714,7 +6026,7 @@ upsert_dependency_text(std::string_view source,
             };
             if (!line.starts_with('#')
                 && (assignment_for(key) || assignment_for(quotedKey))) {
-                return std::pair{lineStart, lineEnd};
+                return std::pair{lineStart, assignment_end(text, lineStart)};
             }
             if (newline == std::string_view::npos
                 || newline >= section.sectionEnd) break;
@@ -5732,9 +6044,13 @@ upsert_dependency_text(std::string_view source,
     // Retained flat dotted spellings are removed before canonical namespace
     // subtable emission. The parsed identity gate above ensures this edits the
     // exact PackageId, not a short-name substring match.
-    if (!defaultNamespace) {
+    // The default namespace's dotted spelling (`mcpplibs.cmdline = ...`) is
+    // the same package as the bare one and is removed as well.
+    {
+        const std::string dotted = defaultNamespace
+            ? std::format("{}.{}", edit.namespace_, edit.shortName) : spelling;
         if (auto base = find_section(text, baseHeader)) {
-            if (auto legacy = key_line_span(text, *base, spelling)) {
+            if (auto legacy = key_line_span(text, *base, dotted)) {
                 auto eraseEnd = legacy->second;
                 if (eraseEnd < text.size() && text[eraseEnd] == '\n')
                     ++eraseEnd;

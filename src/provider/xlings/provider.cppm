@@ -9,7 +9,7 @@ import mcpp.provider;
 import mcpp.provider.xlings;
 import mcpp.provider.xlings.subos_info;
 import mcpp.provider.xlings.legacy_dirs;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
 
 export namespace mcpp::provider::xlings {
@@ -302,6 +302,7 @@ public:
     std::filesystem::path config_file() const override {
         return (env_.projectDir.empty() ? env_.home : env_.projectDir) / ".xlings.json";
     }
+    std::filesystem::path state_dir() const override { return xlings::state_dir(env_); }
 
     std::expected<mcpp::provider::CallResult, std::string>
     call(std::string_view operation, std::string_view argsJson, mcpp::provider::EventHandler* handler) const override {

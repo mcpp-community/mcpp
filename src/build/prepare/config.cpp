@@ -86,7 +86,7 @@ void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
 // `stale`, when given, turns the function into a comparison: nothing is
 // created or written, and every declared file that is missing or differs from
 // its declared content is appended. A build that describes itself rather than
-// running (BuildOverrides::plan_only) reads the root package's generated files
+// running (PrepareIntent::Describe) reads the root package's generated files
 // this way, because they live in the source tree it promises not to write.
 std::expected<void, std::string>
 materialize_generated_files(const std::filesystem::path& root,
@@ -341,6 +341,10 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.buildConfig.abiExceptions = cc.abiExceptions;
             m.buildConfig.abiExceptionsModel = cc.abiExceptionsModel;
             m.buildConfig.abiExceptionsDeclared = true;
+        }
+        if (cc.abiLongjmpDeclared) {
+            m.buildConfig.abiLongjmpModel = cc.abiLongjmpModel;
+            m.buildConfig.abiLongjmpDeclared = true;
         }
         // `[target.<sel>.build] dialect_cxxflags` (#717): recorded for every
         // package, like the abi switches above, but APPENDED rather than
@@ -882,12 +886,16 @@ bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
     // packages whose targets make_plan compiles are the root and, in a
     // workspace plan, every selected member (a member whose only sources are
     // its tests is the case the root alone misses).
+    // A dependency's entry targets too: an entry is compiled into the program
+    // that begins at it (a test framework's `main`), and it is in no package
+    // scan, so its `import std` was seen by nothing that builds the std module.
     auto targets_import_std = [&](const mcpp::manifest::Manifest& m,
-                                  const std::filesystem::path& root) {
+                                  const std::filesystem::path& root, bool entriesOnly = false) {
         const auto extTable = mcpp::extension_table_for(m.buildConfig.moduleExtensions,
                                                         m.buildConfig.deviceExtensions);
         for (auto& t : m.targets) {
             if (t.main.empty()) continue;
+            if (entriesOnly && t.kind != mcpp::manifest::Target::Entry) continue;
             const auto entry = mcpp::modgraph::scan_entry_file(root / t.main,
                                                                m.package.name, extTable);
             for (auto const& req : entry.requires_)
@@ -897,7 +905,7 @@ bool graph_or_targets_import(const mcpp::modgraph::Graph& graph,
     };
     if (targets_import_std(manifest, projectRoot)) return true;
     for (auto const& pkg : packages)
-        if (pkg.selectedMember && targets_import_std(pkg.manifest, pkg.root)) return true;
+        if (targets_import_std(pkg.manifest, pkg.root, /*entriesOnly=*/!pkg.selectedMember)) return true;
     return false;
 }
 

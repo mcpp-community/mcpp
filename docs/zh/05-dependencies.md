@@ -53,6 +53,19 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 
 </details>
 
+带点的加引号键 `"mcpplibs.cmdline" = "0.0.2"` 是一个名字中含点的 TOML 键。
+mcpp 把它读作这些点所拼写的选择器，警告该拼法已弃用（自 2026.11.8.1 起，
+2027.2 起移除；docs/51），并给出替代它的不加引号的键：
+`mcpplibs.cmdline = "0.0.2"`。
+同一张表中的一个包与其命名空间下的包（`mcpplibs.mtest` 与 `mcpplibs.mtest.gtest`）不能都不加引号——一个名字
+会既是值又是表——因此其中一个的加引号键就是这对包的写法，不属于弃用：
+
+```toml
+[dev-dependencies]
+mcpplibs.mtest         = "0.9.0"
+"mcpplibs.mtest.gtest" = "0.9.0"
+```
+
 ```toml
 # Path dependency (local development)
 [dependencies]
@@ -60,7 +73,7 @@ mylib = { path = "../mylib" }
 ```
 
 ```toml
-# Git dependency — pick exactly one of tag / branch / rev
+# Git dependency — tag / branch / rev 至多一个；都不写即远端的缺省分支
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
@@ -80,6 +93,10 @@ widget = { version = "1.0", backend = "glfw_opengl3" }  # Sugar for: features=["
 
 构建记录相同的解析结果时，`mcpp.lock` 保留原内容与修改时间（2026.10.21.1+）。
 仅 LF 与 CRLF 行结束形式不同不会触发改写。这不跳过依赖解析，也不改变锁定范围。
+
+不写 `tag`、`branch`、`rev` 的 git 依赖跟随远端的缺省分支，分支名取远端的通告（`main`、`master`、`trunk` 等；
+2026.11.9.1+），此后按 `branch` 处理并以 commit 锁定。命令行上的平台与工具使用相同的字符串形式：
+`--platform git+https://example.org/acme/acme-platform.git#tag=v1`。
 
 **Git 依赖与 `mcpp.lock`**:`tag` 和 `rev` 已经指向历史中的一个固定点，而
 `branch` 是会移动的。首次构建把分支解析成一个 commit 并写进 `mcpp.lock`,
@@ -177,6 +194,28 @@ sdk = { version = "1.0", visibility = "private" }
 被选中的成员以不同种类、或以同一种类的不同引用声明同一身份时被拒绝，并点名双方：
 一个配置只构建一个包的一份 checkout。被选中成员依赖边上的 `linkage` 同理：它会被采纳；两个被选中成员
 为同一个包要求两种形态时被拒绝。
+
+**后到的边要求更多特性（mcpp 2026.11.7.1+）。** 一个包以其各条边所要求特性的并集构建。一条边到达已解析的包、并激活
+此前各边没有激活的特性时，该特性的 `[feature-deps]` 与转发也一并遍历，使它需要的依赖及其对这些依赖要求的特性进入
+依赖图。此前该特性的源码会被编译，依赖却不会进入依赖图（mcpp#897；例如 `v` 与要求 `v` 的 `x` 特性的 `s` 一同被选中）。
+
+**平台版本组之下（mcpp 2026.11.7.1+）。** 目标的平台声明了 `[platform.versions]` 时，对版本组所列包的版本请求，若其约束
+容许组中版本则解析为组中版本，否则以点名请求与版本组的错误拒绝（docs/35“版本组”）。包之间以兼容范围互相依赖的家族
+因此由其版本组解析，每次构建每个包一个版本。
+
+### 根为整个图覆盖一个依赖：`override`（mcpp 2026.11.10.1+）
+
+根的声明写 `override = true` 时，它回答其所在表所管辖的图中对该包的每一个请求，无论请求写的是哪个版本、路径或仓库：
+
+```toml
+[dependencies]
+mcpplibs.os = { version = "0.4.4", override = true }
+```
+
+- **生效位置。** 根的依赖表与 `[workspace.dependencies]`；后者管辖工作空间所有成员的计划（在那里声明一个包不会让成员依赖它）。`[dependencies]` 管辖构建的图与测试的图；`[dev-dependencies]` 只管辖测试的图；`[build-dependencies]` 只管辖构建程序的图。库写出它时被告知已忽略：这是工程的决定。
+- **陈述。** 被替换且本不接受覆盖值的每条请求打印一次：`Overrode <包> <请求> (requested by <请求方>) -> <覆盖> (<表>)`。`mcpp.lock` 为该包记 `override = true`，`--locked` 把该标记视为记录的解析结果的一部分。
+- **平台的版本组。** 覆盖版本组所列的包时照样生效，并给出警告，写出版本组的版本：平台给出默认值，工程可以选择另一个。
+- **何时需要。** 任何 SemVer 合并都无法调和的两个版本请求被拒绝时，会写出两者，并在末尾给出覆盖该包的那一行。两个来自 `[build-dependencies]` 的请求同样被拒绝，且不以重命名分开：构建依赖是构建程序的模块，一次构建只加载它的一个版本（2026.11.16.1）。库精确固定一个所有使用者共享的包（提供目标侧层或内核 ABI 的包）时，使用它的工程会得到提示，`mcpp publish` 拒绝库中的这种固定：范围把选择留给工程。
 
 ### `path` 或 `git` 依赖的身份（mcpp 2026.9.14.2+）
 
@@ -369,7 +408,8 @@ mcpp index status     # local state: state, age and revision
 gtest = "1.15.2"
 ```
 
-`mcpp build` 忽略这些依赖；`mcpp test` 解析并使用它们。`mcpp test` 自动
+`mcpp build` 忽略这些依赖；`mcpp test` 解析并使用它们，且只用于测试单元：包自己的源文件
+在 `mcpp test` 下与 `mcpp build` 下编译方式相同（2026.11.8.1+，见 [08](08-testing.md)）。`mcpp test` 自动
 发现 `tests/**/*.cpp` 并把它们编译为测试二进制。运行器与框架无关：每个文件
 是一个独立的二进制，由退出码判定 —— 裸 `main`、gtest（经 `[dev-dependencies]`
 加 `gtest_main`）或任何其他框架，行为完全一致，`-- args` 会转发给每一个测试
@@ -380,6 +420,11 @@ gtest = "1.15.2"
 独立编译（一个测试写坏，只让它自己失败；包或依赖本身损坏则报告为构建
 错误），`mcpp test <pattern>` 与 `--message-format json` 分别提供过滤与
 机器可读输出。
+
+**正在构建的包在其自身的依赖图中代表它自己**（2026.11.9.1+）。经包的 `[dev-dependencies]` 到达的依赖可以指名正在构建的包：用一个本身使用
+该库的测试框架测试该库（mtest 下的 `mcpplibs.os`）。这条边即该包自身，无论它要求哪个版本，未要求的版本会被说明；
+第二份副本会在一个程序中把包的每个模块提供两次，而受测的是此处的这个包。根的 `[dev-dependencies]` 只服务它的测试，
+因此框架到达该库而不形成包的环。
 
 ## `[build-dependencies]` —— 构建期依赖（mcpp 2026.8.29.1+）
 
@@ -553,6 +598,20 @@ updater = { path = "../updater", artifacts = ["updater"] }
 - 应用器是 mcpp 自己的，而且是精确的：一个 hunk 只在其头部所写的位置应用，每一行上下文与每一行
   删除都必须逐字节相符，否则构建被拒绝，并指出补丁、文件、hunk 与行号。不在别处查找，不转换换行。
   补丁中的路径带一级前导目录（`a/`、`b/`），应用时去掉。改名、复制与二进制改动被拒绝。
+- 补丁中的文件以**包根**为起点：包解析得到的清单在归档中所在的目录（描述符写
+  `mcpp = "*/run/mcpp.toml"` 时为归档中的 `run/`），因而布局相同的各版本可共用一个补丁。边上的
+  `patch_root = "<dir>"` 另指一个目录，相对包根，且在包的源码之内。2026.11.9 之前以归档顶层为起点写的
+  补丁按原写法应用，构建给出说明。
+- `mcpp why deps` 报告每个依赖在构建中所读的包根（已应用其补丁）。补丁即 git 对该目录树的一份副本写出的差异：
+
+  ```sh
+  cp -R <包根> /tmp/zlib && cd /tmp/zlib
+  git init -q && git add -A && git commit -qm base
+  # 修改之后
+  git diff > <项目>/patches/0001-fix.patch
+  ```
+
+  并由边的 `patches` 列出。再一个补丁以同样方式从打补丁后的构建所报告的包根写出，列在前者之后。
 - 版本依赖与 git 依赖可以带补丁；`path` 依赖是使用者自己拥有的源码树，带补丁时被拒绝。
 - `mcpp.lock` 记录变体，以及每个补丁的路径与 SHA-256；`mcpp emit sbom` 把它们写作组件的 pedigree。
 - 一个程序只持有一个包的一个变体。同一配置中的两个程序（工作区的成员）可以各用自己的变体；一个

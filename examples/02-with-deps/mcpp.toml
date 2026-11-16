@@ -3,4 +3,4 @@ name    = "with-deps"
 version = "0.1.0"
 
 [dependencies]
-"mcpplibs.cmdline" = "^0.0.1"
+mcpplibs.cmdline = "0.0.2"

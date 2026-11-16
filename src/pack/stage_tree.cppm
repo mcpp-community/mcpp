@@ -54,9 +54,6 @@
 // TAB-separated because both fields are names a loader reads and either may
 // contain a space (a Mach-O install name, a Windows directory).
 
-module;
-#include <cstdio>
-
 export module mcpp.pack.stage_tree;
 
 import std;

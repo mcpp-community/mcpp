@@ -85,9 +85,9 @@ CPP
 if ! out="$("$MCPP" build --target "$TARGET" 2>&1)"; then
     case "$out" in
       *"not found in the synced index"*|*"install_packages failed"*)
-        echo "SKIP: openkal-opensbi is not reachable from here"; exit 0 ;;
+        echo "SKIP: openkal-opensbi is not reachable from here"; exit 77 ;;
       *"cannot be built on this host"*)
-        echo "SKIP: $TARGET cannot be built here"; exit 0 ;;
+        echo "SKIP: $TARGET cannot be built here"; exit 77 ;;
     esac
     echo "FAIL: the freestanding openkal build failed"
     printf '%s\n' "$out" | grep -iE 'error' | head -5

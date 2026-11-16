@@ -19,7 +19,6 @@ module;
 // build failure that arrives as three words is a build failure nobody can act
 // on. This global module fragment was removed once as an unused `<cstdio>`;
 // it has a use now.
-#include <cstdio>
 
 export module mcpp.pack.library_pipeline;
 

@@ -1001,9 +1001,45 @@ xpkg_name_form_violation_from_lua(std::string_view luaContent)
                                     extract_xpkg_name(luaContent));
 }
 
+namespace {
+std::vector<XpkgVersionEntry>
+entries_of_first_block(std::string_view luaContent,
+                       const mcpp::toolchain::platform::PlatformKey& platformAxis);
+}
+
+// THE ARTIFACT THAT IS ONE FOR EVERY TARGET (mcpp#911 G6; SPEC-016 §7). A target
+// reads the blocks its row names; when the descriptor has none of them, a
+// version whose artifact is the same in every block it has -- the source archive
+// of a package built from source -- is the target's too, and its versions are
+// those. A prebuilt payload differs per block and stays the block's.
 std::vector<XpkgVersionEntry>
 list_xpkg_version_entries(std::string_view luaContent,
                           const mcpp::toolchain::platform::PlatformKey& platformAxis) {
+    auto direct = entries_of_first_block(luaContent, platformAxis);
+    if (!direct.empty()) return direct;
+    std::vector<std::vector<XpkgVersionEntry>> blocks;
+    for (auto key : mcpp::toolchain::platform::xpkg_platforms) {
+        auto one = entries_of_first_block(luaContent,
+            mcpp::toolchain::platform::TargetPlatform::with_keys({std::string(key)}));
+        if (!one.empty()) blocks.push_back(std::move(one));
+    }
+    if (blocks.empty()) return direct;
+    std::vector<XpkgVersionEntry> out;
+    for (auto const& e : blocks.front()) {
+        const bool same = std::ranges::all_of(blocks, [&](auto const& b) {
+            auto it = std::ranges::find(b, e.version, &XpkgVersionEntry::version);
+            return it != b.end() && it->alias == e.alias && it->sha256 == e.sha256
+                && (e.alias || !e.sha256.empty());
+        });
+        if (same) out.push_back(e);
+    }
+    return out;
+}
+
+namespace {
+std::vector<XpkgVersionEntry>
+entries_of_first_block(std::string_view luaContent,
+                       const mcpp::toolchain::platform::PlatformKey& platformAxis) {
     // Locate `xpm = { ... <platform> = { ["X.Y.Z"] = {...}, ... } ... }`, the
     // platform being the first of the axis's keys the table has a block for.
     // We work on a sanitized copy so quoted version keys remain locatable
@@ -1147,6 +1183,7 @@ list_xpkg_version_entries(std::string_view luaContent,
     }
     return versions;
 }
+}  // namespace
 
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,

@@ -68,6 +68,10 @@ struct CompileUnit {
     // provides nothing, and on a unit built by hand, which then takes the name.
     std::string                     bmiFile;
     std::vector<std::string>        imports;           // logical names imported
+    // A file of a test program (its `main` file, or another of its directory):
+    // the one kind of unit `trim_paths` leaves its paths, since a test finds
+    // its fixtures through `__FILE__` and runs where it was built.
+    bool                            testUnit = false;
     // The key of this unit's module map in `BuildPlan::moduleScopes`: the BMI
     // of every module the unit imports, directly or through another module,
     // and of the module it provides. Empty when every such BMI lies at its
@@ -203,6 +207,9 @@ struct LinkUnit {
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
+    // Of a test: the files that are its own (its `main` file and, under
+    // `[test] programs = "directory"`, its directory's others).
+    std::vector<std::filesystem::path> ownSources;
     // `windows_subsystem` / `windows_entry` of the target this unit links
     // (#618), carried as the declared words. Rendering them needs the linker
     // the emitter addresses, which the plan does not know, so the backend does
@@ -217,6 +224,13 @@ struct LinkUnit {
     std::string                     entryFrom;
     std::string                     start;
     std::string                     startFrom;
+    // The test protocol the selected entry states it implements
+    // (`test-protocol`, docs/08); 0 when none does. `mcpp test` also reads a
+    // program's marker for it (mtest spec/protocol.md P2.3).
+    int                             testProtocol = 0;
+    // The package whose entry begins this test, when one does: the framework
+    // whose guide `mcpp test --guide` names (BuildPlan::testFrameworks).
+    std::string                     testFramework;
 };
 
 // One Windows resource script compiled into one linkable resource artifact
@@ -399,6 +413,21 @@ struct ModuleScope {
     std::vector<std::string> arguments;
 };
 
+// A package of the graph whose entry states how its tests are written or run
+// (`test-guide`, `test-protocol`, `test-main`): a test framework.
+struct TestFramework {
+    std::string package;    // qualified name
+    std::string version;
+    std::string entry;      // `<package>/<entry>`
+    int         protocol = 0;
+    std::string guide;      // absolute path of its guide, or empty
+    std::string repo;
+    // What it states of the mcpp test spec (docs/specs/test.md, B6): the
+    // optional capabilities it implements, and its session's command (O9).
+    std::vector<std::string> capabilities;
+    std::vector<std::string> session;
+};
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     // Every package of the graph, as the report names it; the backend writes
@@ -467,6 +496,12 @@ struct BuildPlan {
     // share an output directory and overwrite each other's graph; this is what
     // lets a fast path tell them apart (mcpp#407, mcpp.build.graph_shape).
     GraphShape                      graphShape = GraphShape::Normal;
+    // The file the graph is written to, in the output directory. `mcpp test`
+    // writes `test.ninja` (design 2026-11-10 supplement, T5): the build's own
+    // graph stays where its fast path replays it, and the two share the
+    // directory's objects, `.ninja_log` and `.ninja_deps`, so an output both
+    // graphs name is rebuilt when one names another command for it.
+    std::string                     graphFile = "build.ninja";
     // The module-edge schedule this plan will emit, resolved ONCE (see
     // mcpp.build.schedule.policy). The backend writes the graph in this shape,
     // the graph records the tag, and the fast path compares against it — three
@@ -521,7 +556,10 @@ struct BuildPlan {
     std::string                     dialectFlags;
 
     std::filesystem::path           projectRoot;      // where mcpp.toml lives
-    std::filesystem::path           outputDir;        // target/<triple>/<fp>/
+    std::filesystem::path           outputDir;        // target/<triple>/<lineage>/
+    // The engine the graph's commands run: the directory's link to this
+    // engine (mcpp.build.graph_engine); empty, this engine's own path.
+    std::filesystem::path           engine;
     // Where compile_commands.json goes. Carried rather than derived from
     // projectRoot: under BuildOverrides::work_dir the package root is a shared
     // (possibly read-only) registry directory, and deriving the path would put
@@ -575,6 +613,8 @@ struct BuildPlan {
 
     std::vector<CompileUnit>        compileUnits;     // topologically sorted
     std::vector<LinkUnit>           linkUnits;
+    // The test frameworks of the graph (docs/08 "Writing a test").
+    std::vector<TestFramework>      testFrameworks;
     // Build-graph nodes declared by build programs (`mcpp:action=`). Paths are
     // absolute and engine variables already substituted by the time they get
     // here, so the backend only has to spell edges.
@@ -757,6 +797,14 @@ std::vector<mcpp::runtime::search::Dir> runtime_search_closure(
 bool path_is_under_any(const std::filesystem::path&              p,
                        const std::vector<std::filesystem::path>& roots);
 
+// THE TEST FRAMEWORKS A PACKAGE STATES (docs/08): each entry of `m` that
+// states its guide, its protocol, its session or capabilities, or that it
+// begins a test, appended to `out`. `dir` is the package's root, which a
+// guide's path is relative to. Read by the plan and by `mcpp test --guide`,
+// which reads a resolved graph and plans nothing (#932).
+void collect_test_frameworks(const mcpp::manifest::Manifest& m, const std::filesystem::path& dir,
+                             std::vector<TestFramework>& out);
+
 // True if a source file defines a top-level `int main(`/`auto main(` entry,
 // ignoring comments and string/raw-string literals. Drives the archive-vs-inline
 // choice for kind="lib" dependencies (see plan.cppm).
@@ -862,6 +910,20 @@ trim_map(const std::vector<mcpp::modgraph::PackageRoot>& packages,
 } // namespace mcpp::build
 
 namespace mcpp::build {
+
+void collect_test_frameworks(const mcpp::manifest::Manifest& m, const std::filesystem::path& dir,
+                             std::vector<TestFramework>& out) {
+    for (auto const& entry : m.targets) {
+        if (entry.kind != mcpp::manifest::Target::Entry) continue;
+        if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain
+            && entry.testCapabilities.empty() && entry.testSession.empty()) continue;
+        out.push_back({
+            qualified_package_name(m), m.package.version,
+            std::format("{}/{}", m.package.name, entry.name), entry.testProtocol,
+            entry.testGuide.empty() ? std::string{} : (dir / entry.testGuide).lexically_normal().generic_string(),
+            m.package.repo, entry.testCapabilities, entry.testSession});
+    }
+}
 
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
     if (!manifest.package.namespace_.empty()
@@ -1160,6 +1222,40 @@ expand_manifest_include_entry(const std::filesystem::path& root,
         expanded.push_back(std::move(joined));
     }
     return expanded;
+}
+
+// The other translation units of a test program of several files (`[test]
+// programs = "directory"`): each compiled as the program's `main` unit is,
+// with its own imports.
+std::vector<CompileUnit> test_program_units(const CompileUnit& mainUnit, const mcpp::manifest::Target& t,
+                                            const std::filesystem::path& root,
+                                            const mcpp::ExtensionTable& extTable) {
+    std::vector<CompileUnit> out;
+    for (auto const& source : t.testSources) {
+        CompileUnit cu = mainUnit;
+        cu.source = root / source;
+        cu.kind = mcpp::classify(cu.source, extTable);
+        cu.object.clear();
+        const auto scanned = mcpp::modgraph::scan_entry_file(cu.source, cu.packageName, extTable);
+        cu.imports.clear();
+        for (auto const& req : scanned.requires_) cu.imports.push_back(req.logicalName);
+        cu.declaration = scanned.provides ? mcpp::modgraph::ModuleDeclaration::Unknown : scanned.declaration;
+        out.push_back(std::move(cu));
+    }
+    return out;
+}
+
+// A test unit sees its package's own usage and then its dev-dependencies'
+// (`PackageRoot::testBuild`); the package's other units see the first only.
+void with_test_usage(CompileUnit& cu, const mcpp::modgraph::PackageRoot& pkg) {
+    auto add = [](auto& to, auto const& from) {
+        for (auto const& x : from)
+            if (std::ranges::find(to, x) == to.end()) to.push_back(x);
+    };
+    add(cu.localIncludeDirs, pkg.testBuild.includeDirs);
+    add(cu.localIncludeDirsAfter, pkg.testBuild.includeDirsAfter);
+    add(cu.packageCflags, pkg.testBuild.cflags);
+    add(cu.packageCxxflags, pkg.testBuild.cxxflags);
 }
 
 std::vector<std::filesystem::path>
@@ -1548,6 +1644,204 @@ bool path_is_under_any(const std::filesystem::path&              p,
     return false;
 }
 
+// A preprocessor condition's value as far as a source's text decides it: true,
+// false, or unknown (nullopt). A name the compiler or the platform predefines
+// (one beginning with `_`) is unknown; every other name is not defined, as no
+// command defines the switches a library guards its own tools with (zlib's
+// MAKECRCH, QuickJS's TEST).
+namespace main_scan {
+
+struct Expr {
+    std::string_view text;
+    std::size_t at = 0;
+    bool failed = false;
+
+    void blank() { while (at < text.size() && (text[at] == ' ' || text[at] == '\t')) ++at; }
+    bool take(std::string_view op) {
+        blank();
+        if (text.substr(at, op.size()) != op) return false;
+        at += op.size();
+        return true;
+    }
+    std::string name() {
+        blank();
+        std::size_t from = at;
+        while (at < text.size() && (std::isalnum(static_cast<unsigned char>(text[at])) || text[at] == '_')) ++at;
+        return std::string(text.substr(from, at - from));
+    }
+    static bool reserved(std::string_view n) { return !n.empty() && n.front() == '_'; }
+
+    std::optional<long long> primary() {
+        blank();
+        if (take("(")) {
+            auto v = ternary();
+            if (!take(")")) failed = true;
+            return v;
+        }
+        if (take("!")) {
+            auto v = primary();
+            return v ? std::optional<long long>(!*v) : std::nullopt;
+        }
+        if (take("-")) {
+            auto v = primary();
+            return v ? std::optional<long long>(-*v) : std::nullopt;
+        }
+        if (at < text.size() && std::isdigit(static_cast<unsigned char>(text[at]))) {
+            long long v = 0;
+            const bool hex = text.substr(at, 2) == "0x" || text.substr(at, 2) == "0X";
+            if (hex) at += 2;
+            const auto from = at;
+            while (at < text.size() && std::isxdigit(static_cast<unsigned char>(text[at]))) ++at;
+            std::from_chars(text.data() + from, text.data() + at, v, hex ? 16 : 10);
+            while (at < text.size() && std::isalpha(static_cast<unsigned char>(text[at]))) ++at;   // 1L, 2u
+            return v;
+        }
+        const auto n = name();
+        if (n.empty()) { failed = true; return std::nullopt; }
+        if (n == "defined") {
+            const bool paren = take("(");
+            const auto m = name();
+            if (paren && !take(")")) failed = true;
+            return reserved(m) ? std::nullopt : std::optional<long long>(0);
+        }
+        blank();
+        if (at < text.size() && text[at] == '(') {   // a function-like macro: its value is the macro's
+            int depth = 0;
+            do {
+                depth += text[at] == '(' ? 1 : text[at] == ')' ? -1 : 0;
+                ++at;
+            } while (at < text.size() && depth > 0);
+            return std::nullopt;
+        }
+        return reserved(n) ? std::nullopt : std::optional<long long>(0);
+    }
+    template <class Next, class Apply>
+    std::optional<long long> binary(Next next, std::initializer_list<std::string_view> ops, Apply apply) {
+        auto lhs = next();
+        for (bool more = true; more && !failed;) {
+            more = false;
+            for (auto op : ops) {
+                blank();
+                // `&&` is not `&`, `<=` is not `<`: the longer operators are listed first.
+                if (!take(op)) continue;
+                lhs = apply(op, lhs, next());
+                more = true;
+                break;
+            }
+        }
+        return lhs;
+    }
+    static std::optional<long long> arith(std::string_view op, std::optional<long long> a, std::optional<long long> b) {
+        if (!a || !b) return std::nullopt;
+        if (op == "*") return *a * *b;
+        if (op == "/") return *b ? std::optional<long long>(*a / *b) : std::nullopt;
+        if (op == "+") return *a + *b;
+        if (op == "-") return *a - *b;
+        if (op == "<=") return *a <= *b;
+        if (op == ">=") return *a >= *b;
+        if (op == "<") return *a < *b;
+        if (op == ">") return *a > *b;
+        if (op == "==") return *a == *b;
+        return *a != *b;
+    }
+    std::optional<long long> product() { return binary([&] { return primary(); }, {"*", "/"}, arith); }
+    std::optional<long long> sum() { return binary([&] { return product(); }, {"+", "-"}, arith); }
+    std::optional<long long> relation() { return binary([&] { return sum(); }, {"<=", ">=", "<", ">"}, arith); }
+    std::optional<long long> equality() { return binary([&] { return relation(); }, {"==", "!="}, arith); }
+    std::optional<long long> conjunction() {
+        return binary([&] { return equality(); }, {"&&"}, [](auto, auto a, auto b) -> std::optional<long long> {
+            if ((a && !*a) || (b && !*b)) return 0;
+            if (a && b) return 1;
+            return std::nullopt;
+        });
+    }
+    std::optional<long long> disjunction() {
+        return binary([&] { return conjunction(); }, {"||"}, [](auto, auto a, auto b) -> std::optional<long long> {
+            if ((a && *a) || (b && *b)) return 1;
+            if (a && b) return 0;
+            return std::nullopt;
+        });
+    }
+    std::optional<long long> ternary() {
+        auto c = disjunction();
+        if (!take("?")) return c;
+        auto t = ternary();
+        if (!take(":")) failed = true;
+        auto f = ternary();
+        if (!c) return t == f ? t : std::nullopt;
+        return *c ? t : f;
+    }
+};
+
+// The value of `#if <text>`; unknown when the text is not an expression this reads.
+std::optional<bool> condition(std::string_view text) {
+    Expr e{text};
+    auto v = e.ternary();
+    e.blank();
+    if (e.failed || e.at != text.size() || !v) return std::nullopt;
+    return *v != 0;
+}
+
+// One `#if` group: whether its enclosing region may be compiled, whether a
+// branch of it was taken for certain, and whether one may have been.
+struct Group {
+    bool parent = true;
+    bool certainlyTaken = false;
+    bool current = true;   // the current branch may be compiled
+};
+
+// The code of a source the preprocessor may compile: the lines of branches
+// whose conditions are not false, directives dropped.
+std::string compiled_lines(std::string_view code) {
+    std::string out;
+    std::vector<Group> groups;
+    auto active = [&] { return groups.empty() || (groups.back().parent && groups.back().current); };
+    auto open = [&](std::optional<bool> c) {
+        const bool parent = active();
+        groups.push_back({parent, c.value_or(false), c.value_or(true)});
+    };
+    auto next_branch = [&](std::optional<bool> c) {
+        if (groups.empty()) return;
+        auto& g = groups.back();
+        g.current = !g.certainlyTaken && c.value_or(true);
+        g.certainlyTaken = g.certainlyTaken || c.value_or(false);
+    };
+    std::size_t at = 0;
+    while (at < code.size()) {
+        auto end = code.find('\n', at);
+        if (end == std::string_view::npos) end = code.size();
+        std::string line(code.substr(at, end - at));
+        at = end + 1;
+        while (!line.empty() && line.back() == '\\' && at < code.size()) {   // a continued directive
+            line.pop_back();
+            end = code.find('\n', at);
+            if (end == std::string_view::npos) end = code.size();
+            line += code.substr(at, end - at);
+            at = end + 1;
+        }
+        const auto first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] != '#') {
+            if (active()) out += line + '\n';
+            continue;
+        }
+        Expr d{std::string_view(line).substr(first + 1)};
+        const auto word = d.name();
+        const auto rest = std::string_view(line).substr(first + 1 + d.at);
+        if (word == "if") open(condition(rest));
+        else if (word == "ifdef" || word == "ifndef") {
+            Expr n{rest};
+            const auto m = n.name();
+            std::optional<bool> isDefined = Expr::reserved(m) ? std::nullopt : std::optional<bool>(false);
+            open(word == "ifdef" ? isDefined : (isDefined ? std::optional<bool>(!*isDefined) : std::nullopt));
+        } else if (word == "elif") next_branch(condition(rest));
+        else if (word == "else") next_branch(true);
+        else if (word == "endif" && !groups.empty()) groups.pop_back();
+    }
+    return out;
+}
+
+}  // namespace main_scan
+
 bool source_defines_main(const std::filesystem::path& src) {
     std::ifstream is(src);
     if (!is) return false;
@@ -1587,6 +1881,7 @@ bool source_defines_main(const std::filesystem::path& src) {
             break;
         }
     }
+    code = main_scan::compiled_lines(code);
     auto isws = [](char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
     };
@@ -1672,6 +1967,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
          const mcpp::platform::Resolved*         platform)
 {
     BuildPlan plan;
+    // The artifacts' own compiles of shared sources (mcpp#911 G9), joined to
+    // the plan's units after every link unit is formed.
+    std::vector<CompileUnit> artifactVariants;
     plan.manifest         = manifest;
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
@@ -1700,7 +1998,16 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // The patterns were checked where they were read.
     // `ArtifactNaming` holds views; these are views into the platform's own
     // strings, which outlive the plan's construction.
-    if (platform && platform->active) {
+    //
+    // THE STATEMENT NAMES THEM ON EVERY ROW (design 2026-11-15 N9), with a
+    // platform or without: a build program, this machine or the project that
+    // names a program `{name}` is followed on a built-in row as on a
+    // platform's. The row's own suffix (`.exe` of a Windows row) was appended
+    // regardless where no platform was selected, and a program the project
+    // named `cmd.exe` was `cmd.exe.exe` on x86_64-windows-gnu and `cmd.exe` on
+    // x86_64-windows-musl. A platform's own suffix still stands against a
+    // build program (`keep_platform_naming`).
+    if (platform) {
         constexpr std::string_view kName = "{name}";
         auto const& l = platform->fields.link;
         if (l.exe.set && mcpp::platform::split_name_pattern(l.exe.value)) {
@@ -1776,6 +2083,23 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // than link.exe does, so "which compiler binary" is the wrong question.
         return targetOs == "windows" && mcpp::toolchain::is_msvc_target(tc);
     }();
+    // A TEST KEEPS WHAT IT REACHES (design 2026-11-09 §17.2): every object of
+    // the package is on its link line, and a test of one module used to carry
+    // all of them -- 32 MB for each of mcpp's 166 unit tests. The linker drops
+    // the sections nothing references; static constructors are its roots, so
+    // a case that registers itself stays. `[test] link = "objects"` keeps
+    // every object whole. ELF and Mach-O through the compiler driver; MSVC's
+    // link.exe, a freestanding image, a platform's ld.lld and wasm keep their
+    // own link lines.
+    auto keep_what_tests_reach = [&](LinkUnit& lu, const mcpp::manifest::Manifest& owner) {
+        if (owner.testLink == "objects" || msvcTarget || targetTriple.is_freestanding()) return;
+        // A platform that links with ld.lld itself states its own link line
+        // (an ok image collects its sections there already).
+        if (platform && platform->active && platform->fields.link.driver.value == "lld") return;
+        if (!targetTriple.empty() && targetTriple.str().starts_with("wasm")) return;
+        const bool macho = targetTriple.empty() ? bool(mcpplibs::os::is_macos) : targetTriple.is_mach_o();
+        lu.linkFlags.push_back(macho ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
+    };
 
     bool experimentalStd = false;
     if (auto stdCfg = mcpp::manifest::normalize_cpp_standard(manifest.package.standard)) {
@@ -2075,8 +2399,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         if (!t.is_program() && t.kind != mcpp::manifest::Target::Entry
             && t.kind != mcpp::manifest::Target::TestBinary) continue;
         auto entry = projectRoot / t.main;
-        if (scannedSources.contains(entry)) continue;
-        rootBasenameCount[object_filename_for(entry, objExt)]++;
+        if (!scannedSources.contains(entry)) rootBasenameCount[object_filename_for(entry, objExt)]++;
+        // A test program's other files (`[test] programs`) are compiled as its
+        // entry is, and a package's program holds files of several directories
+        // (`tests/b.cpp`, `tests/unit/b.cpp`): they take part in the census.
+        for (auto const& source : t.testSources)
+            if (!scannedSources.contains(projectRoot / source))
+                rootBasenameCount[object_filename_for(projectRoot / source, objExt)]++;
     }
     auto sanitize = [](const std::string& s) {
         std::string out; out.reserve(s.size());
@@ -2402,20 +2731,27 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     //    A file a target names as `main` on another row is a beginning too
     //    (design 2026-10-26 §24.3): it is in no image of this row.
     std::set<std::filesystem::path> entryFilesAcrossTargets;
-    for (auto& t : manifest.targets) {
-        if (!t.main.empty()) {
-            entryFilesAcrossTargets.insert(projectRoot / t.main);
-        }
-        for (auto const& other : t.otherMains) entryFilesAcrossTargets.insert(projectRoot / other);
-    }
-    for (auto const& p : packages) {
-        for (auto const& t : p.manifest.targets) {
-            if (!t.main.empty()) {
-                entryFilesAcrossTargets.insert(p.root / t.main);
-            }
-            for (auto const& other : t.otherMains) entryFilesAcrossTargets.insert(p.root / other);
-        }
-    }
+    // A test program's other files are its own as well (`[test] programs`).
+    auto own_files = [&](const std::filesystem::path& root, const mcpp::manifest::Target& t) {
+        if (!t.main.empty()) entryFilesAcrossTargets.insert(root / t.main);
+        for (auto const& other : t.otherMains) entryFilesAcrossTargets.insert(root / other);
+        for (auto const& source : t.testSources) entryFilesAcrossTargets.insert(root / source);
+    };
+    for (auto& t : manifest.targets) own_files(projectRoot, t);
+    // HOW MANY TARGETS OF THE ROOT PACKAGE BEGIN AT EACH FILE (design 2026-11-10
+    // E2). An entry two targets name is compiled once for the targets that give
+    // it no flags of their own, and once more for each target that does, under
+    // `obj/_entry/<target>/`: a target's `defines`, `cflags`, `cxxflags` and
+    // `[targets.<name>.build]` reach its own beginning and no other target's.
+    std::map<std::filesystem::path, std::size_t> entryUses;
+    for (auto const& t : manifest.targets)
+        if (!t.main.empty()) ++entryUses[projectRoot / t.main];
+    auto shared_entry = [&](const std::filesystem::path& f) {
+        auto it = entryUses.find(f);
+        return it != entryUses.end() && it->second > 1;
+    };
+    for (auto const& p : packages)
+        for (auto const& t : p.manifest.targets) own_files(p.root, t);
 
     struct SharedDepTarget {
         std::size_t                   packageIndex = 0;
@@ -2431,10 +2767,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // of the root's, by name and by the shared package that takes them.
     std::set<std::string> placedInImage;
     std::map<std::size_t, std::vector<std::size_t>> staticsByImagePackage;
-    for (std::size_t i = 0; i < packages.size(); ++i) {
-        auto const& p = packages[i];
-        packageIndexByName[qualified_package_name(p.manifest)] = i;
-        packageIndexByName[p.manifest.package.name] = i;
+    // A package is found by its qualified name, and by its bare name only where
+    // that name is no other package's: `foo` and `ns.foo` are two packages, and
+    // the bare `foo` of the second used to replace the first, so an edge to
+    // `foo` reached `ns.foo` and `foo`'s objects were left out of the link
+    // (mcpp#896).
+    for (std::size_t i = 0; i < packages.size(); ++i)
+        packageIndexByName[qualified_package_name(packages[i].manifest)] = i;
+    {
+        std::map<std::string, std::vector<std::size_t>, std::less<>> byBareName;
+        for (std::size_t i = 0; i < packages.size(); ++i)
+            byBareName[packages[i].manifest.package.name].push_back(i);
+        for (auto const& [bare, holders] : byBareName)
+            if (holders.size() == 1) packageIndexByName.emplace(bare, holders.front());
     }
 
     for (std::size_t i = 1; i < packages.size(); ++i) {
@@ -2503,10 +2848,30 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
     std::set<std::filesystem::path> depEntryMainSources;
+    // Every source beneath the dev-dependencies that defines `main`, a direct
+    // dev-dependency's or one beneath it (gtest_main.cc of compat.gtest beneath
+    // a GoogleTest adapter): none is linked into a program that has a beginning
+    // of its own. Only the tests' packages: a C library's start-up file names
+    // `main` and belongs to every program.
+    std::set<std::string> devOnlyPackages;
+    for (auto const& p : packages)
+        if (p.devOnly) devOnlyPackages.insert(qualified_package_name(p.manifest));
+    std::set<std::string> testPackages = devDepPackages;
+    testPackages.insert(devOnlyPackages.begin(), devOnlyPackages.end());
+    std::set<std::filesystem::path> depMainSources;
+    auto has_tests = [](const mcpp::manifest::Manifest& m) {
+        return std::ranges::any_of(m.targets, [](auto const& t) {
+            return t.kind == mcpp::manifest::Target::TestBinary;
+        });
+    };
+    const bool testPlan = has_tests(manifest) || std::ranges::any_of(packages, [&](auto const& p) {
+        return p.selectedMember && has_tests(p.manifest);
+    });
     for (auto& cu : plan.compileUnits) {
-        if (!devDepPackages.contains(cu.packageName)) continue;
-        if (!is_implementation_source(cu.kind)) continue;
-        if (source_defines_main(cu.source)) depEntryMainSources.insert(cu.source);
+        if (!testPlan || !testPackages.contains(cu.packageName) || !is_implementation_source(cu.kind)) continue;
+        if (!source_defines_main(cu.source)) continue;
+        depMainSources.insert(cu.source);
+        if (devDepPackages.contains(cu.packageName)) depEntryMainSources.insert(cu.source);
     }
 
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
@@ -2535,16 +2900,24 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // edges.
         auto const& edges = i == 0 ? manifest.dependencies
                                    : packages[i].manifest.dependencies;
-        for (auto const& [depName, spec] : edges) {
-            for (auto const& candidate : dependency_name_candidates(depName, spec)) {
-                auto it = packageIndexByName.find(candidate);
-                if (it == packageIndexByName.end() || it->second == i) continue;
+        auto add_edges = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& table) {
+            for (auto const& [depName, spec] : table) {
+                auto const names = dependency_name_candidates(depName, spec);
+                auto hit = std::ranges::find_if(names, [&](auto const& n) {
+                    auto it = packageIndexByName.find(n);
+                    return it != packageIndexByName.end() && it->second != i;
+                });
+                if (hit == names.end()) continue;
                 auto& deps = directPackageDeps[i];
-                if (std::find(deps.begin(), deps.end(), it->second) == deps.end())
-                    deps.push_back(it->second);
-                break;
+                const auto depIndex = packageIndexByName.at(*hit);
+                if (std::find(deps.begin(), deps.end(), depIndex) == deps.end()) deps.push_back(depIndex);
             }
-        }
+        };
+        add_edges(edges);
+        // A test links its package's dev-dependencies: a shared one by its
+        // library, as a dependency is (mcpplibs.mtest.capi's libmtest).
+        if (testPlan && (i == 0 || packages[i].selectedMember))
+            add_edges(i == 0 ? manifest.devDependencies : packages[i].manifest.devDependencies);
     }
 
     // WHERE A STATIC PACKAGE UNDER A SHARED LIBRARY IS LINKED (#646 F1).
@@ -2984,6 +3357,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             if (t.kind != mcpp::manifest::Target::Entry || t.main.empty()) return;
             if (t.defines.empty() && t.cflags.empty() && t.cxxflags.empty()) return;
             const auto entry = root / t.main;
+            if (root == projectRoot && shared_entry(entry)) return;   // E2: per target, below
             if (!std::ranges::any_of(plan.compileUnits,
                                      [&](const CompileUnit& cu) { return cu.source == entry; }))
                 return;
@@ -3077,6 +3451,103 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return EntrySelection{ *idx, entry, t.mainFrom };
     };
 
+    // THE DEFAULT BEGINNING OF A TEST (docs/08): a test whose file defines no
+    // `main`, of a package that states no `[test] main`, begins at the entry
+    // a dependency (or the package itself) offers with `test-main = true`. An
+    // offer whose package provides modules none of which the test imports is
+    // not this test's framework and is set aside, so a file of mtest's cases
+    // and a file of GoogleTest's begin each at its own. A dev-dependency's
+    // source that defines `main` (gtest_main.cc) begins a test as it always
+    // has; two beginnings left for one test are refused, naming them.
+    struct offer { std::string spelling; std::size_t idx; };
+    std::set<std::filesystem::path> entryMainFiles;   // an entry's own file is no such source
+    auto test_main_entries = [&](std::size_t idx, const std::string& depKey,
+                                 std::vector<offer>& offers) {
+        auto const& provider = idx == 0 ? manifest : packages[idx].manifest;
+        auto const& providerRoot = idx == 0 ? projectRoot : packages[idx].root;
+        for (auto const& candidate : provider.targets) {
+            if (candidate.kind != mcpp::manifest::Target::Entry) continue;
+            entryMainFiles.insert(providerRoot / candidate.main);
+            if (candidate.testMain) offers.push_back({depKey + "/" + candidate.name, idx});
+        }
+    };
+    // How an offer fits the test: the file imports a module its package
+    // provides (decisive), its package provides none (a header framework's),
+    // or it provides modules the file does not import (not this test's).
+    enum class fit { imported, headers, other };
+    auto offer_fits = [&](const offer& o, const std::vector<std::string>& imports) {
+        const auto owner = qualified_package_name(o.idx == 0 ? manifest : packages[o.idx].manifest);
+        bool provides = false;
+        for (auto const& cu : plan.compileUnits) {
+            if (cu.packageName != owner || cu.providesModule.empty()) continue;
+            provides = true;
+            if (std::ranges::contains(imports, cu.providesModule)) return fit::imported;
+        }
+        return provides ? fit::other : fit::headers;
+    };
+    auto test_main_default = [&](std::size_t consumerIdx, const mcpp::manifest::Manifest& consumer,
+                                 const mcpp::manifest::Target& t, const LinkUnit& lu,
+                                 const std::set<std::filesystem::path>& mainSources)
+        -> std::expected<std::optional<mcpp::manifest::Target>, std::string> {
+        if (t.kind != mcpp::manifest::Target::TestBinary || !t.mainFrom.empty() || !lu.entryMain
+            || source_defines_main(*lu.entryMain))
+            return std::nullopt;
+        std::vector<offer> offers;
+        // A package is one provider however many tables name it (a dependency that is also a
+        // dev-dependency offers its beginning once).
+        std::set<std::size_t> providers{consumerIdx};
+        auto look = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& deps) {
+            for (auto const& [depName, spec] : deps) {
+                auto const names = dependency_name_candidates(depName, spec);
+                auto hit = std::ranges::find_if(names, [&](auto const& n) { return packageIndexByName.contains(n); });
+                if (hit != names.end() && providers.insert(packageIndexByName.at(*hit)).second)
+                    test_main_entries(packageIndexByName.at(*hit), depName, offers);
+            }
+        };
+        test_main_entries(consumerIdx, consumer.package.name, offers);
+        look(consumer.devDependencies);
+        look(consumer.dependencies);
+        if (offers.empty()) return std::nullopt;
+        // The program's imports: its `main` file's, and its other files' (`[test] programs`).
+        std::vector<std::string> imports;
+        auto const& consumerRoot = consumerIdx == 0 ? projectRoot : packages[consumerIdx].root;
+        std::vector<std::filesystem::path> files{*lu.entryMain};
+        for (auto const& source : t.testSources) files.push_back(consumerRoot / source);
+        for (auto const& file : files)
+            for (auto const& req : mcpp::modgraph::scan_entry_file(file, qualified_package_name(consumer),
+                                                                  rootExtTable).requires_)
+                imports.push_back(req.logicalName);
+        std::erase_if(offers, [&](const offer& o) { return offer_fits(o, imports) == fit::other; });
+        // An offer the file imports from decides; else every remaining
+        // beginning competes.
+        const auto imported = std::ranges::count_if(offers, [&](const offer& o) {
+            return offer_fits(o, imports) == fit::imported;
+        });
+        if (imported == 1)
+            std::erase_if(offers, [&](const offer& o) { return offer_fits(o, imports) != fit::imported; });
+        std::vector<std::string> beginnings;
+        for (auto const& o : offers) beginnings.push_back(std::format("the entry '{}' (test-main)", o.spelling));
+        if (imported != 1)
+            for (auto const& source : mainSources)
+                if (!entryMainFiles.contains(source))
+                    beginnings.push_back(std::format("{} (a dev-dependency's source that defines `main`)",
+                                                     source.filename().generic_string()));
+        if (offers.empty()) return std::nullopt;
+        if (beginnings.size() > 1) {
+            std::string list;
+            for (auto const& b : beginnings) list += (list.empty() ? "" : "; ") + b;
+            return std::unexpected(std::format(
+                "the test '{}' defines no `main`, and {} could begin it: {}. State one with "
+                "[test] main = {{ from = \"{}\" }}, define `main` in the test, or remove the "
+                "dependency whose beginning it does not use",
+                t.name, beginnings.size(), list, offers.front().spelling));
+        }
+        auto withEntry = t;
+        withEntry.mainFrom = offers.front().spelling;
+        withEntry.mainDeclaredBy = std::format("the test-main entry '{}'", offers.front().spelling);
+        return withEntry;
+    };
+
     // Apply a selected entry to a link unit: its object, the PE entry
     // function its translation unit defines (inherited unless the program
     // states another, which is refused), and where it came from.
@@ -3096,6 +3567,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.windowsEntry = sel.target->windowsEntry;
         }
         lu.entryFrom = sel.name;
+        lu.testProtocol = sel.target->testProtocol;
+        lu.testFramework = qualified_package_name(sel.packageIndex == 0 ? manifest : packages[sel.packageIndex].manifest);
         return entry_object(sel.packageIndex, entry, *sel.target);
     };
 
@@ -3153,6 +3626,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return {};
     };
 
+    // The test frameworks of the graph: each package's entry that states its
+    // guide, its protocol or that it begins a test (docs/08).
+    for (std::size_t i = 0; i < std::max<std::size_t>(packages.size(), 1); ++i)
+        collect_test_frameworks(i == 0 ? manifest : packages[i].manifest,
+                                i == 0 ? projectRoot : packages[i].root, plan.testFrameworks);
+
     // 4. Link units (one per [targets.X])
     // When any TestBinary target exists, skip Binary/Library/SharedLibrary
     // targets — `mcpp test` only cares about the test binaries, and pulling
@@ -3191,6 +3670,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.kind   = LinkUnit::TestBinary;
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
+            keep_what_tests_reach(lu, manifest);
         } else if (t.kind == mcpp::manifest::Target::Application
                    && mcpp::toolchain::triple::application_form(targetTriple)
                       == mcpp::toolchain::triple::ApplicationForm::SharedObject) {
@@ -3232,8 +3712,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
         // The beginning a dependency's entry target supplies (§24.3).
         std::optional<EntrySelection> selectedEntry;
-        if (!t.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
-            auto sel = select_entry(0, manifest, t);
+        bool sharedEntry = false;   // E2: this program's entry is another target's too
+        auto defaulted = test_main_default(0, manifest, t, lu, depEntryMainSources);
+        if (!defaulted) return std::unexpected(defaulted.error());
+        const auto& begins = *defaulted ? **defaulted : t;
+        if (!begins.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
+            auto sel = select_entry(0, manifest, begins);
             if (!sel) return std::unexpected(sel.error());
             selectedEntry = *sel;
         }
@@ -3263,6 +3747,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             CompileUnit main_cu;
             main_cu.source = *lu.entryMain;
             main_cu.packageName = qualified_package_name(manifest);
+            main_cu.testUnit = lu.kind == LinkUnit::TestBinary;
             // Synthesized outside the scanner, so it has no SourceUnit to copy
             // from — classify it here with the ROOT package's table (an entry
             // main is resolved against projectRoot by definition).
@@ -3272,6 +3757,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 main_cu.localIncludeDirsAfter = packages[0].privateBuild.includeDirsAfter;
                 main_cu.packageCflags = packages[0].privateBuild.cflags;
                 main_cu.packageCxxflags = packages[0].privateBuild.cxxflags;
+                if (lu.kind == LinkUnit::TestBinary) with_test_usage(main_cu, packages[0]);
             } else {
                 main_cu.localIncludeDirs = local_include_dirs_for_manifest(projectRoot, manifest);
                 main_cu.localIncludeDirsAfter =
@@ -3322,7 +3808,41 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 plan.compileUnits.push_back(main_cu);
                 entryObject = main_cu.object;
             }
+            sharedEntry = shared_entry(main_cu.source);
+            const bool ownEntryFlags = !t.defines.empty() || !t.cflags.empty()
+                || !t.cxxflags.empty() || t.has_build_variant();
+            if (sharedEntry && ownEntryFlags) {
+                auto base = std::ranges::find_if(plan.compileUnits,
+                    [&](const CompileUnit& cu) { return cu.object == entryObject; });
+                CompileUnit own = base != plan.compileUnits.end() ? *base : main_cu;
+                own.object = std::filesystem::path("obj") / "_entry" / sanitize(t.name)
+                           / entryObject.lexically_relative("obj");
+                auto add = [&](const std::vector<std::string>& defines,
+                               const std::vector<std::string>& cflags,
+                               const std::vector<std::string>& cxxflags) {
+                    for (auto const& d : defines) {
+                        const auto element = mcpp::manifest::flag_element("-D" + d);
+                        own.packageCflags.push_back(element);
+                        own.packageCxxflags.push_back(element);
+                    }
+                    for (auto const& f : cflags)   own.packageCflags.push_back(f);
+                    for (auto const& f : cxxflags) own.packageCxxflags.push_back(f);
+                };
+                add(t.buildDefines, t.buildCflags, t.buildCxxflags);
+                add(t.defines, t.cflags, t.cxxflags);
+                entryObject = own.object;
+                artifactVariants.push_back(std::move(own));
+            }
             lu.objects.push_back(entryObject);
+            if (lu.kind == LinkUnit::TestBinary) lu.ownSources.push_back(main_cu.source);
+            for (auto& extra : test_program_units(main_cu, t, projectRoot, rootExtTable)) {
+                lu.ownSources.push_back(extra.source);
+                extra.object = object_for(extra.source, extra.packageName,
+                                          std::filesystem::relative(extra.source, projectRoot),
+                                          /*owner=*/0).object;
+                lu.objects.push_back(extra.object);
+                plan.compileUnits.push_back(std::move(extra));
+            }
 
             // Per-target entry-scoped flags (issue #131). Applied to the compile
             // unit that actually builds this target's entry — which may be the
@@ -3332,9 +3852,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // are excluded from every other target's object set below), so these
             // flags never color a shared module/impl object. `defines` desugar
             // to -D on both the C and C++ entry compile.
-            if (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty()) {
+            if (!sharedEntry && (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty())) {
                 for (auto& cu : plan.compileUnits) {
-                    if (cu.source != main_cu.source) continue;
+                    if (cu.source != main_cu.source
+                        && std::ranges::none_of(t.testSources, [&](auto const& s) { return cu.source == projectRoot / s; }))
+                        continue;
                     for (auto const& d : t.defines) {
                         const auto element = mcpp::manifest::flag_element("-D" + d);
                         cu.packageCflags.push_back(element);
@@ -3342,7 +3864,6 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     }
                     for (auto const& f : t.cflags)   cu.packageCflags.push_back(f);
                     for (auto const& f : t.cxxflags) cu.packageCxxflags.push_back(f);
-                    break;
                 }
             }
         }
@@ -3378,6 +3899,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // Also include implementation .cpp/.cc/.cxx/.c units, but EXCLUDE any
         // file registered as another target's entryMain (each binary's main()
         // is exclusive to that binary).
+        // THE ARTIFACT'S OWN COMPILE (mcpp#911 G9): `[targets.<name>.build]`
+        // makes a variant of each of the package's implementation units this
+        // artifact links, under `obj/_variant/<target>/`, with the artifact's flags
+        // after the package's; the entry takes them in place. Module
+        // interfaces are one per package and are not varied.
+        const auto rootPackage = qualified_package_name(manifest);
+        auto vary = [&](CompileUnit& cu) {
+            for (auto const& d : t.buildDefines) {
+                const auto element = mcpp::manifest::flag_element("-D" + d);
+                cu.packageCflags.push_back(element);
+                cu.packageCxxflags.push_back(element);
+            }
+            for (auto const& f : t.buildCflags)   cu.packageCflags.push_back(f);
+            for (auto const& f : t.buildCxxflags) cu.packageCxxflags.push_back(f);
+        };
+        std::vector<CompileUnit> variants;
+        if (t.has_build_variant() && lu.entryMain && !sharedEntry)
+            for (auto& cu : plan.compileUnits)
+                if (cu.source == *lu.entryMain && cu.packageName == rootPackage) vary(cu);
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
             if (placedInImage.contains(cu.packageName)) continue;
@@ -3390,9 +3930,20 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // main, including it would be `duplicate symbol: main`; without one,
             // it supplies the entry (gtest-style). Works on every linker — the
             // object is linked directly, never relying on archive member pulling.
-            if (entryDefinesMain && depEntryMainSources.contains(cu.source)) continue;
+            if (entryDefinesMain && depMainSources.contains(cu.source)) continue;
+            if (t.has_build_variant() && cu.packageName == rootPackage && cu.providesModule.empty()) {
+                CompileUnit v = cu;
+                v.object = std::filesystem::path("obj") / "_variant" / sanitize(t.name)
+                         / cu.object.lexically_relative("obj");
+                vary(v);
+                lu.objects.push_back(v.object);
+                variants.push_back(std::move(v));
+                continue;
+            }
             lu.objects.push_back(cu.object);
         }
+        // Added once every link unit is formed: no other artifact links them.
+        for (auto& v : variants) artifactVariants.push_back(std::move(v));
 
         if (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
             || lu.kind == LinkUnit::SharedLibrary) {
@@ -3584,6 +4135,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // dev-dependencies, which are its own and are not walked further
         // than their own dependencies.
         std::set<std::size_t> closureIdx{mi};
+        std::set<std::string> ownDevDeps;
         {
             std::vector<std::size_t> work{mi};
             auto push = [&](std::size_t j) {
@@ -3595,6 +4147,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                         it != packageIndexByName.end() && it->second != mi) {
                         memberDevDepPackages.insert(
                             qualified_package_name(packages[it->second].manifest));
+                        ownDevDeps.insert(qualified_package_name(packages[it->second].manifest));
                         push(it->second);
                         break;
                     }
@@ -3650,6 +4203,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             pkg.manifest.buildConfig.moduleExtensions,
             pkg.manifest.buildConfig.deviceExtensions);
         std::vector<LinkUnit> units;
+        // The sources of the member's dev-dependencies that define `main`
+        // (gtest_main.cc): a beginning of a test that defines none.
+        std::set<std::filesystem::path> memberMainSources;
+        for (auto const& cu : plan.compileUnits)
+            if (ownDevDeps.contains(cu.packageName) && is_implementation_source(cu.kind)
+                && source_defines_main(cu.source))
+                memberMainSources.insert(cu.source);
         for (auto const& t : pkg.manifest.targets) {
             if (memberTestMode && t.kind != mcpp::manifest::Target::TestBinary) continue;
             if (t.kind == mcpp::manifest::Target::Entry) continue;   // §24.3
@@ -3689,6 +4249,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                           : place(target_output(t, naming));
                 lu.windowsSubsystem = t.windowsSubsystem;
                 lu.windowsEntry     = t.windowsEntry;
+                if (lu.kind == LinkUnit::TestBinary) keep_what_tests_reach(lu, pkg.manifest);
             }
             lu.loaderTagFlag = loader_tag_flag(lu.kind);
             for (auto const& other : plan.linkUnits)
@@ -3717,11 +4278,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     main_cu.source      = entry;
                     main_cu.packageName = owner;
                     main_cu.kind        = mcpp::classify(entry, memberExtTable);
+                    main_cu.testUnit    = lu.kind == LinkUnit::TestBinary;
                     if (pkg.usageResolved) {
                         main_cu.localIncludeDirs      = pkg.privateBuild.includeDirs;
                         main_cu.localIncludeDirsAfter = pkg.privateBuild.includeDirsAfter;
                         main_cu.packageCflags         = pkg.privateBuild.cflags;
                         main_cu.packageCxxflags       = pkg.privateBuild.cxxflags;
+                        if (lu.kind == LinkUnit::TestBinary) with_test_usage(main_cu, pkg);
                     } else {
                         main_cu.localIncludeDirs = local_include_dirs_for_manifest(pkg.root, pkg.manifest);
                         main_cu.localIncludeDirsAfter =
@@ -3742,11 +4305,25 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     entryObject = main_cu.object;
                 }
                 lu.objects.push_back(*entryObject);
+                if (lu.kind == LinkUnit::TestBinary) lu.ownSources.push_back(entry);
+                for (auto const& source : t.testSources) lu.ownSources.push_back(pkg.root / source);
+                if (!t.testSources.empty()) {
+                    auto base = std::ranges::find(plan.compileUnits, entry, &CompileUnit::source);
+                    const CompileUnit entryUnit = *base;
+                    for (auto& extra : test_program_units(entryUnit, t, pkg.root, memberExtTable)) {
+                        extra.object = object_for(extra.source, owner,
+                            std::filesystem::relative(extra.source, pkg.root), mi).object;
+                        lu.objects.push_back(extra.object);
+                        plan.compileUnits.push_back(std::move(extra));
+                    }
+                }
                 // Per-target entry-scoped flags (issue #131), on the unit that
                 // builds this target's entry, as for a root's target.
                 if (!t.defines.empty() || !t.cflags.empty() || !t.cxxflags.empty()) {
                     for (auto& cu : plan.compileUnits) {
-                        if (cu.source != entry) continue;
+                        if (cu.source != entry
+                            && std::ranges::none_of(t.testSources, [&](auto const& s) { return cu.source == pkg.root / s; }))
+                            continue;
                         for (auto const& d : t.defines) {
                             const auto element = mcpp::manifest::flag_element("-D" + d);
                             cu.packageCflags.push_back(element);
@@ -3754,15 +4331,17 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                         }
                         for (auto const& f : t.cflags)   cu.packageCflags.push_back(f);
                         for (auto const& f : t.cxxflags) cu.packageCxxflags.push_back(f);
-                        break;
                     }
                 }
             }
             // A dependency's entry as this program's beginning (§24.3), as
             // for a root's target.
             std::optional<EntrySelection> selectedEntry;
-            if (!t.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
-                auto sel = select_entry(mi, pkg.manifest, t);
+            auto defaulted = test_main_default(mi, pkg.manifest, t, lu, memberMainSources);
+            if (!defaulted) return std::unexpected(defaulted.error());
+            const auto& begins = *defaulted ? **defaulted : t;
+            if (!begins.mainFrom.empty() && lu.kind != LinkUnit::StaticLibrary) {
+                auto sel = select_entry(mi, pkg.manifest, begins);
                 if (!sel) return std::unexpected(sel.error());
                 selectedEntry = *sel;
                 auto object = begin_with_entry(lu, t, *selectedEntry);
@@ -3790,9 +4369,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 if (!is_implementation_source(cu.kind)) continue;
                 if (lu.entryMain && cu.source == *lu.entryMain) continue;
                 if (entryFilesAcrossTargets.contains(cu.source)) continue;
-                // A dev-dependency's own main-providing object (gtest_main.o)
-                // only for a test with no main of its own, as for a root.
-                if (entryDefinesMain && memberDevDepPackages.contains(cu.packageName)
+                // A main-providing object beneath the dev-dependencies
+                // (gtest_main.o) only for a test with no main of its own, as
+                // for a root.
+                if (entryDefinesMain && (ownDevDeps.contains(cu.packageName) || devOnlyPackages.contains(cu.packageName))
                     && source_defines_main(cu.source)) continue;
                 lu.objects.push_back(cu.object);
             }
@@ -4067,17 +4647,38 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // unit's objects, a workspace's member archives held its closure: 11 433
     // members for 2 666 objects, 5.3 GB (mcpp#874). An object that is not a
     // compile unit's -- an `object` action's -- is the package's own and stays.
-    {
-        std::map<std::filesystem::path, std::string> ownerOfObject;
-        for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
-        for (auto& lu : plan.linkUnits) {
-            if (lu.kind != LinkUnit::StaticLibrary) continue;
-            std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
-                auto it = ownerOfObject.find(o);
-                return it != ownerOfObject.end() && it->second != lu.package;
-            });
-        }
+    std::map<std::filesystem::path, std::string> ownerOfObject;
+    for (auto const& cu : plan.compileUnits) ownerOfObject.emplace(cu.object, cu.packageName);
+    for (auto& lu : plan.linkUnits) {
+        if (lu.kind != LinkUnit::StaticLibrary) continue;
+        std::erase_if(lu.objects, [&](const std::filesystem::path& o) {
+            auto it = ownerOfObject.find(o);
+            return it != ownerOfObject.end() && it->second != lu.package;
+        });
     }
+    // THE C LIBRARY LEADS A MACH-O IMAGE. This format's loader runs an image's
+    // initialisers before its entry, in link order, so a C library of the
+    // graph (`mcpp:c-abi`, openkal-musl) is brought up by an initialiser of
+    // its own (openkal-musl's port/src/mach/early_init.c). Linked after the
+    // program's objects, it came too late: the registration of a test, a
+    // global constructor that allocates, stopped in an allocator not yet
+    // started (mcpplibs/os#22, hosted macOS). Its objects precede every other
+    // package's, in their own order, as a C runtime's start objects do on ELF.
+    if (targetTriple.is_mach_o()) {
+        std::set<std::string> cLibraries;
+        for (auto const& pkg : packages)
+            if (std::ranges::any_of(pkg.manifest.provides,
+                                    [](const std::string& p) { return p.starts_with("mcpp:c-abi"); }))
+                cLibraries.insert(qualified_package_name(pkg.manifest));
+        auto of_c_library = [&](const std::filesystem::path& o) {
+            auto it = ownerOfObject.find(o);
+            return it != ownerOfObject.end() && cLibraries.contains(it->second);
+        };
+        if (!cLibraries.empty())
+            for (auto& lu : plan.linkUnits)
+                if (lu.kind != LinkUnit::StaticLibrary) std::ranges::stable_partition(lu.objects, of_c_library);
+    }
+    for (auto& v : artifactVariants) plan.compileUnits.push_back(std::move(v));
 
     return plan;
 }

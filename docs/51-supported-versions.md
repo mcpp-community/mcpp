@@ -83,6 +83,7 @@ the rows of this table (mcpp 2026.10.11.1+).
 | `pack-universal`: `[pack] universal` -- `true` refused, `false` ignored; a pack's targets are its legs | 2026.10.30.1 | 2027.1 | `[pack] targets = ["openkal"]` (every architecture), or one `--target` |
 | `platform-universal`: a platform's `[platform] universal`, ignored; a pack's targets are its legs | 2026.10.30.1 | 2027.1 | nothing in the platform; the pack names its targets (`--target openkal`) |
 | `no-universal-flag`: `mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a target set) | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>` (one leg) |
+| `quoted-dotted-dependency-key`: a quoted dependency key with dots (`"mcpplibs.cmdline" = "0.0.2"`), one TOML key read as the selector its dots spell; not where it is the only spelling of a package beside its parent or child (docs/05) | 2026.11.8.1 | 2027.2 | the selector unquoted, `mcpplibs.cmdline = "0.0.2"` |
 
 ## Reproducing a build
 

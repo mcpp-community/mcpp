@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 // The toolchain link model is the single resolver for "how do we compile and
 // link against this toolchain's C library" (issue #195 / the hermetic link
@@ -37,52 +39,49 @@ void touch(const std::filesystem::path& p) {
 
 std::string ident(const std::filesystem::path& p) { return p.string(); }
 
-TEST(LoaderFilename, TripleMap) {
-    EXPECT_EQ(tc::loader_filename("x86_64-unknown-linux-gnu"), "ld-linux-x86-64.so.2");
-    EXPECT_EQ(tc::loader_filename("aarch64-linux-gnu"), "ld-linux-aarch64.so.1");
-    EXPECT_EQ(tc::loader_filename("x86_64-linux-musl"), "ld-musl-x86_64.so.1");
-    EXPECT_EQ(tc::loader_filename("aarch64-linux-musl"), "ld-musl-aarch64.so.1");
-    EXPECT_EQ(tc::loader_filename("wasm32-unknown-unknown"), "");
-}
+UTest triple_map{"LoaderFilename/TripleMap", [] {
+    expect(eq(tc::loader_filename("x86_64-unknown-linux-gnu"), "ld-linux-x86-64.so.2"));
+    expect(eq(tc::loader_filename("aarch64-linux-gnu"), "ld-linux-aarch64.so.1"));
+    expect(eq(tc::loader_filename("x86_64-linux-musl"), "ld-musl-x86_64.so.1"));
+    expect(eq(tc::loader_filename("aarch64-linux-musl"), "ld-musl-aarch64.so.1"));
+    expect(eq(tc::loader_filename("wasm32-unknown-unknown"), ""));
+}};
 
-TEST(DistroLoaderPath, LsbLayoutPerArch) {
-    EXPECT_EQ(tc::distro_loader_path("x86_64-linux-gnu"), "/lib64/ld-linux-x86-64.so.2");
-    EXPECT_EQ(tc::distro_loader_path("aarch64-linux-gnu"), "/lib/ld-linux-aarch64.so.1");
-    EXPECT_EQ(tc::distro_loader_path("mips64-unknown"), "");
-}
+UTest lsb_layout_per_arch{"DistroLoaderPath/LsbLayoutPerArch", [] {
+    expect(eq(tc::distro_loader_path("x86_64-linux-gnu"), "/lib64/ld-linux-x86-64.so.2"));
+    expect(eq(tc::distro_loader_path("aarch64-linux-gnu"), "/lib/ld-linux-aarch64.so.1"));
+    expect(eq(tc::distro_loader_path("mips64-unknown"), ""));
+}};
 
-TEST(ResolveLoader, TripleMapHit) {
+UTest triple_map_hit{"ResolveLoader/TripleMapHit", [] {
     Tmp dir;
     auto lib = dir.path / "lib64";
     touch(lib / "ld-linux-x86-64.so.2");
-    EXPECT_EQ(tc::resolve_loader(lib, "x86_64-unknown-linux-gnu"),
-              lib / "ld-linux-x86-64.so.2");
-}
+    expect(eq(tc::resolve_loader(lib, "x86_64-unknown-linux-gnu"), lib / "ld-linux-x86-64.so.2"));
+}};
 
-TEST(ResolveLoader, GlobFallbackForUnknownTriple) {
+UTest glob_fallback_for_unknown_triple{"ResolveLoader/GlobFallbackForUnknownTriple", [] {
     Tmp dir;
     auto lib = dir.path / "lib";
     touch(lib / "ld-linux-aarch64.so.1");
     auto got = tc::resolve_loader(lib, "");  // no triple info at all
-    EXPECT_EQ(got, lib / "ld-linux-aarch64.so.1");
-}
+    expect(eq(got, lib / "ld-linux-aarch64.so.1"));
+}};
 
-TEST(ResolveLoader, EmptyWhenNothingFound) {
+UTest empty_when_nothing_found{"ResolveLoader/EmptyWhenNothingFound", [] {
     Tmp dir;
     auto lib = dir.path / "lib64";
     std::filesystem::create_directories(lib);
-    EXPECT_TRUE(tc::resolve_loader(lib, "x86_64-linux-gnu").empty());
-}
+    expect(tc::resolve_loader(lib, "x86_64-linux-gnu").empty());
+}};
 
-TEST(PayloadLibDir, PrefersLib64ThenLib) {
+UTest prefers_lib64_then_lib{"PayloadLibDir/PrefersLib64ThenLib", [] {
     Tmp dir;
     touch(dir.path / "lib" / "ld-linux-x86-64.so.2");
-    EXPECT_EQ(tc::payload_lib_dir_with_loader(dir.path, "x86_64-linux-gnu"),
-              dir.path / "lib");
+    expect(eq(tc::payload_lib_dir_with_loader(dir.path, "x86_64-linux-gnu"), dir.path / "lib"));
     touch(dir.path / "lib64" / "ld-linux-x86-64.so.2");
-    EXPECT_EQ(tc::payload_lib_dir_with_loader(dir.path, "x86_64-linux-gnu"),
-              dir.path / "lib64");
-}
+    expect(eq(tc::payload_lib_dir_with_loader(dir.path, "x86_64-linux-gnu"), dir.path / "lib64"));
+}};
 
 // Fabricate a bundled-LLVM-style toolchain: bin/clang++ + bin/clang++.cfg,
 // libc++ headers, and a glibc payload.
@@ -111,37 +110,37 @@ struct FakeClangWithPayload {
     }
 };
 
-TEST(LinkModel, ClangCfgPayloadFirstCarriesCrtDiscovery) {
+UTest clang_cfg_payload_first_carries_crt_discovery{"LinkModel/ClangCfgPayloadFirstCarriesCrtDiscovery", [] {
     FakeClangWithPayload fx;
     auto lm = tc::resolve_link_model(fx.t);
-    EXPECT_EQ(lm.mode, tc::CLibMode::PayloadFirst);
-    EXPECT_TRUE(lm.clangWithCfg);
-    EXPECT_EQ(lm.crtDir, fx.glibcLib);
-    EXPECT_EQ(lm.loader, fx.glibcLib / "ld-linux-x86-64.so.2");
+    expect(eq(lm.mode, tc::CLibMode::PayloadFirst));
+    expect(bool(lm.clangWithCfg));
+    expect(eq(lm.crtDir, fx.glibcLib));
+    expect(eq(lm.loader, fx.glibcLib / "ld-linux-x86-64.so.2"));
 
     auto link = lm.link_flags(ident);
     // -B is the #195 fix: CRT objects resolve via -B, never -L.
-    EXPECT_NE(link.find(" -B" + fx.glibcLib.string()), std::string::npos);
-    EXPECT_NE(link.find(" -L" + fx.glibcLib.string()), std::string::npos);
-    EXPECT_NE(link.find("--dynamic-linker=" + lm.loader.string()), std::string::npos);
+    expect(ne(link.find(" -B" + fx.glibcLib.string()), std::string::npos));
+    expect(ne(link.find(" -L" + fx.glibcLib.string()), std::string::npos));
+    expect(ne(link.find("--dynamic-linker=" + lm.loader.string()), std::string::npos));
 
     auto compile = lm.compile_flags(ident);
-    EXPECT_NE(compile.find("-nostdlibinc"), std::string::npos);
-    EXPECT_NE(compile.find("-isystem"), std::string::npos);
-    EXPECT_EQ(compile.find("-idirafter"), std::string::npos);
+    expect(ne(compile.find("-nostdlibinc"), std::string::npos));
+    expect(ne(compile.find("-isystem"), std::string::npos));
+    expect(eq(compile.find("-idirafter"), std::string::npos));
     // `-nostdlibinc` already closes clang's host search; no -isysroot.
-    EXPECT_EQ(compile.find("-isysroot"), std::string::npos);
-}
+    expect(eq(compile.find("-isysroot"), std::string::npos));
+}};
 
-TEST(LinkModel, ClangDriverModelExposesCfgAndHeaders) {
+UTest clang_driver_model_exposes_cfg_and_headers{"LinkModel/ClangDriverModelExposesCfgAndHeaders", [] {
     FakeClangWithPayload fx;
     auto dm = tc::resolve_clang_driver(fx.t);
-    EXPECT_TRUE(dm.hasCfg);
-    ASSERT_FALSE(dm.cxxIncludes.empty());
-    EXPECT_NE(dm.compile_flags(ident).find("--no-default-config"), std::string::npos);
-}
+    expect(bool(dm.hasCfg));
+    expect(fatal(!dm.cxxIncludes.empty()));
+    expect(ne(dm.compile_flags(ident).find("--no-default-config"), std::string::npos));
+}};
 
-TEST(LinkModel, GccSysrootWinsOverPayload) {
+UTest gcc_sysroot_wins_over_payload{"LinkModel/GccSysrootWinsOverPayload", [] {
     Tmp dir;
     auto sysroot = dir.path / "sysroot";
     touch(sysroot / "usr" / "include" / "stdlib.h");
@@ -157,17 +156,17 @@ TEST(LinkModel, GccSysrootWinsOverPayload) {
         .linuxInclude = dir.path / "linux" / "include",
     };
     auto lm = tc::resolve_link_model(t);
-    EXPECT_EQ(lm.mode, tc::CLibMode::Sysroot);
-    EXPECT_NE(lm.compile_flags(ident).find("--sysroot="), std::string::npos);
-    EXPECT_EQ(lm.compile_flags(ident).find("-nostdlibinc"), std::string::npos);
+    expect(eq(lm.mode, tc::CLibMode::Sysroot));
+    expect(ne(lm.compile_flags(ident).find("--sysroot="), std::string::npos));
+    expect(eq(lm.compile_flags(ident).find("-nostdlibinc"), std::string::npos));
     // --sysroot already replaces the recorded sysroot.
-    EXPECT_EQ(lm.compile_flags(ident).find("-isysroot"), std::string::npos);
-    EXPECT_NE(lm.link_flags(ident).find("--sysroot="), std::string::npos);
+    expect(eq(lm.compile_flags(ident).find("-isysroot"), std::string::npos));
+    expect(ne(lm.link_flags(ident).find("--sysroot="), std::string::npos));
     // Kernel headers exist in the sysroot → no supplement.
-    EXPECT_TRUE(lm.systemIncludes.empty());
-}
+    expect(lm.systemIncludes.empty());
+}};
 
-TEST(LinkModel, GccSysrootSupplementsMissingKernelHeaders) {
+UTest gcc_sysroot_supplements_missing_kernel_headers{"LinkModel/GccSysrootSupplementsMissingKernelHeaders", [] {
     Tmp dir;
     auto sysroot = dir.path / "sysroot";
     touch(sysroot / "usr" / "include" / "stdlib.h");  // no linux/limits.h
@@ -181,12 +180,12 @@ TEST(LinkModel, GccSysrootSupplementsMissingKernelHeaders) {
         .linuxInclude = dir.path / "linux" / "include",
     };
     auto lm = tc::resolve_link_model(t);
-    ASSERT_EQ(lm.systemIncludes.size(), 1u);
+    expect(fatal(eq(lm.systemIncludes.size(), 1u)));
     // Sysroot-mode supplement renders as -isystem even for GCC.
-    EXPECT_NE(lm.compile_flags(ident).find("-isystem"), std::string::npos);
-}
+    expect(ne(lm.compile_flags(ident).find("-isystem"), std::string::npos));
+}};
 
-TEST(LinkModel, GccPayloadEmitsIdirafterAndItsOwnAddressing) {
+UTest gcc_payload_emits_idirafter_and_its_own_addressing{"LinkModel/GccPayloadEmitsIdirafterAndItsOwnAddressing", [] {
     Tmp dir;
     auto glibcLib = dir.path / "glibc" / "lib64";
     touch(glibcLib / "ld-linux-x86-64.so.2");
@@ -199,20 +198,20 @@ TEST(LinkModel, GccPayloadEmitsIdirafterAndItsOwnAddressing) {
         .linuxInclude = {},
     };
     auto lm = tc::resolve_link_model(t);
-    EXPECT_EQ(lm.mode, tc::CLibMode::PayloadFirst);
+    expect(eq(lm.mode, tc::CLibMode::PayloadFirst));
     // Headers still differ by driver: libstdc++'s #include_next wrappers need
     // -idirafter, and that has not changed.
-    EXPECT_NE(lm.compile_flags(ident).find("-idirafter"), std::string::npos);
-    EXPECT_EQ(lm.compile_flags(ident).find("-nostdlibinc"), std::string::npos);
+    expect(ne(lm.compile_flags(ident).find("-idirafter"), std::string::npos));
+    expect(eq(lm.compile_flags(ident).find("-nostdlibinc"), std::string::npos));
 
     // The sysroot GCC recorded when it was built is replaced, for headers
     // only, by the C library payload's root: `-isysroot <root>` as two argv
     // words, so `<recorded>/usr/include` is never searched.
     auto tokens = lm.compile_tokens(ident);
     auto it = std::ranges::find(tokens, std::string("-isysroot"));
-    ASSERT_NE(it, tokens.end());
-    ASSERT_NE(std::next(it), tokens.end());
-    EXPECT_EQ(*std::next(it), (dir.path / "glibc").string());
+    expect(fatal(ne(it, tokens.end())));
+    expect(fatal(ne(std::next(it), tokens.end())));
+    expect(eq(*std::next(it), (dir.path / "glibc").string()));
 
     // Addressing no longer differs. GCC used to be left to its install-time
     // specs here, which made the RUN side a per-toolchain-install decision
@@ -220,21 +219,20 @@ TEST(LinkModel, GccPayloadEmitsIdirafterAndItsOwnAddressing) {
     // glibc versions as soon as a second one was installed. mcpp already
     // refuses to depend on clang's install-time cfg for exactly this reason.
     auto link = lm.link_flags(ident);
-    EXPECT_NE(link.find(" -B"), std::string::npos);
-    EXPECT_NE(link.find("--dynamic-linker=" + lm.loader.string()),
-              std::string::npos);
-    EXPECT_NE(link.find("-Wl,-rpath," + glibcLib.string()), std::string::npos);
-}
+    expect(ne(link.find(" -B"), std::string::npos));
+    expect(ne(link.find("--dynamic-linker=" + lm.loader.string()), std::string::npos));
+    expect(ne(link.find("-Wl,-rpath," + glibcLib.string()), std::string::npos));
+}};
 
-TEST(LinkModel, NothingUsableYieldsNoneAndEmptyFlags) {
+UTest nothing_usable_yields_none_and_empty_flags{"LinkModel/NothingUsableYieldsNoneAndEmptyFlags", [] {
     tc::Toolchain t;
     t.compiler = tc::CompilerId::Clang;
     t.targetTriple = "x86_64-linux-gnu";
     auto lm = tc::resolve_link_model(t);
-    EXPECT_EQ(lm.mode, tc::CLibMode::None);
-    EXPECT_TRUE(lm.compile_flags(ident).empty());
-    EXPECT_TRUE(lm.link_flags(ident).empty());
-}
+    expect(eq(lm.mode, tc::CLibMode::None));
+    expect(lm.compile_flags(ident).empty());
+    expect(lm.link_flags(ident).empty());
+}};
 
 
 // 关于 `find_sibling_tool` 的顺序:**不在这里测**。
@@ -266,21 +264,21 @@ TEST(LinkModel, NothingUsableYieldsNoneAndEmptyFlags) {
 // correct: `wasm-ld: error: unknown argument:
 // --dynamic-linker=<glibc>/lib64/ld-linux-x86-64.so.2` -- this host's loader
 // handed to a WebAssembly linker.
-TEST(LinkModel, AnSdkTargetDescribesNoCLibrary) {
+UTest an_sdk_target_describes_no_c_library{"LinkModel/AnSdkTargetDescribesNoCLibrary", [] {
     for (auto target : {"wasm32-emscripten", "aarch64-linux-android",
                         "x86_64-linux-android"}) {
         auto tc = mcpp::toolchain::Toolchain{};
         tc.compiler     = mcpp::toolchain::CompilerId::Clang;
         tc.targetTriple = target;
         auto lm = mcpp::toolchain::resolve_link_model(tc);
-        EXPECT_EQ(lm.mode, mcpp::toolchain::CLibMode::None) << target;
-        EXPECT_TRUE(lm.libDirs.empty()) << target;
-        EXPECT_TRUE(lm.crtDir.empty()) << target;
+        expect(eq(lm.mode, mcpp::toolchain::CLibMode::None)) << target;
+        expect(lm.libDirs.empty()) << target;
+        expect(lm.crtDir.empty()) << target;
         // And the rendered flags are empty, which is what both channels emit.
-        EXPECT_TRUE(lm.link_flags([](const std::filesystem::path& p) {
+        expect(lm.link_flags([](const std::filesystem::path& p) {
             return p.string(); }).empty()) << target;
     }
-}
+}};
 
 // ─── Clang on the MSVC ABI: the toolset and SDK, said to the driver ───────
 
@@ -296,7 +294,7 @@ tc::Toolchain clang_msvc() {
 }
 } // namespace
 
-TEST(LinkModel, ClangOnTheMsvcAbiNamesItsToolsetAndSdk) {
+UTest clang_on_the_msvc_abi_names_its_toolset_and_sdk{"LinkModel/ClangOnTheMsvcAbiNamesItsToolsetAndSdk", [] {
     auto t = clang_msvc();
     auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
     const std::vector<std::string> expected = {
@@ -304,49 +302,49 @@ TEST(LinkModel, ClangOnTheMsvcAbiNamesItsToolsetAndSdk) {
         "-Xmicrosoft-windows-sdk-root",   t.base.msvc.sdkRoot.string(),
         "-Xmicrosoft-windows-sdk-version", "10.0.26100.0",
     };
-    EXPECT_EQ(words, expected) << "separate words: the driver rejects the `=` form";
+    expect(eq(words, expected)) << "separate words: the driver rejects the `=` form";
     // Not a C-library mode: the other token sets stay empty.
     auto lm = tc::resolve_link_model(t);
-    EXPECT_EQ(lm.mode, tc::CLibMode::None);
-    EXPECT_TRUE(lm.compile_tokens(ident).empty());
-}
+    expect(eq(lm.mode, tc::CLibMode::None));
+    expect(lm.compile_tokens(ident).empty());
+}};
 
 // mcpp#746. The compiler version travels with the toolset: two runner images
 // held different cl.exe builds under one toolset directory name, and a key
 // that saw only the directory served one image's std module to the other.
-TEST(LinkModel, TheCompilerVersionIsSaidWithTheToolset) {
+UTest the_compiler_version_is_said_with_the_toolset{"LinkModel/TheCompilerVersionIsSaidWithTheToolset", [] {
     auto t = clang_msvc();
     t.base.msvc.compilerVersion = "19.44.35211";
     auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
-    ASSERT_FALSE(words.empty());
-    EXPECT_EQ(words.back(), "-fms-compatibility-version=19.44.35211");
+    expect(fatal(!words.empty()));
+    expect(eq(words.back(), "-fms-compatibility-version=19.44.35211"));
     // A second build of cl.exe under the same directory is a different word.
     auto other = t;
     other.base.msvc.compilerVersion = "19.44.35217";
-    EXPECT_NE(tc::resolve_link_model(other).msvc_driver_tokens(ident), words);
-}
+    expect(ne(tc::resolve_link_model(other).msvc_driver_tokens(ident), words));
+}};
 
-TEST(LinkModel, TheToolsetWithoutAnSdkOmitsTheSdkWords) {
+UTest the_toolset_without_an_sdk_omits_the_sdk_words{"LinkModel/TheToolsetWithoutAnSdkOmitsTheSdkWords", [] {
     auto t = clang_msvc();
     t.base.msvc.sdkRoot.clear();
     t.base.msvc.sdkVersion.clear();
     auto words = tc::resolve_link_model(t).msvc_driver_tokens(ident);
-    ASSERT_EQ(words.size(), 2u);
-    EXPECT_EQ(words[0], "-Xmicrosoft-visualc-tools-root");
-}
+    expect(fatal(eq(words.size(), 2u)));
+    expect(eq(words[0], "-Xmicrosoft-visualc-tools-root"));
+}};
 
-TEST(LinkModel, NoOtherRowReceivesMsvcDriverWords) {
+UTest no_other_row_receives_msvc_driver_words{"LinkModel/NoOtherRowReceivesMsvcDriverWords", [] {
     // cl.exe carries the toolset in its own path and envOverrides; MinGW is
     // not MSVC at all; a row with no toolset recorded says nothing.
     auto cl = clang_msvc();
     cl.compiler = tc::CompilerId::MSVC;
-    EXPECT_TRUE(tc::resolve_link_model(cl).msvc_driver_tokens(ident).empty());
+    expect(tc::resolve_link_model(cl).msvc_driver_tokens(ident).empty());
 
     auto mingw = clang_msvc();
     mingw.targetTriple = "x86_64-w64-mingw32";
-    EXPECT_TRUE(tc::resolve_link_model(mingw).msvc_driver_tokens(ident).empty());
+    expect(tc::resolve_link_model(mingw).msvc_driver_tokens(ident).empty());
 
     auto unbound = clang_msvc();
     unbound.base.msvc.toolsDir.clear();
-    EXPECT_TRUE(tc::resolve_link_model(unbound).msvc_driver_tokens(ident).empty());
-}
+    expect(tc::resolve_link_model(unbound).msvc_driver_tokens(ident).empty());
+}};

@@ -9,9 +9,6 @@
 // model, and records the source on every line that reports it -- the shape
 // `msvc@system` already has, generalised to gcc and llvm.
 
-module;
-#include <cstdlib>
-
 module mcpp.build.prepare;
 import :state;
 
@@ -306,7 +303,7 @@ step2_use_local_toolchain(PrepareState& state, const mcpp::toolchain::ToolchainS
         pkg.ximName = family;
         pkg.family  = family == "llvm" ? mcpp::toolchain::Family::Llvm : mcpp::toolchain::Family::Gcc;
         pkg.needsGccPostInstallFixup = family == "gcc";
-        if (auto provided = state.provide_runtime_payload(pkg); !provided)
+        if (auto provided = state.provide_runtime_payload(pkg, {}); !provided)
             return std::unexpected(provided.error());
     }
     return {};
@@ -369,6 +366,7 @@ std::expected<void, std::string> step6_toolchain_phase(PrepareState& state) {
     if (!host) return std::unexpected(host.error());
     mcpp::build::BuildProgramEnv bpEnv;
     bpEnv.targetTriple = state.resolvedTargetCanonical;
+    bpEnv.targetProvider = state.targetChoice.provider;
     fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr,
                           state.cfg_opt ? &*state.cfg_opt : nullptr);
     apply_graph_cxx_abi(bpEnv, state.packages);

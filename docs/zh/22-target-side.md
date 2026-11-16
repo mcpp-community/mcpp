@@ -271,6 +271,24 @@ requires = ["mcpp:c++-abi=libstdc++"]
 另一种变体构建进同一个存储目录，否则第一个消费者就会替之后所有消费者决定
 变体。
 
+
+### 缺省提供者（2026.11.9.1+）
+
+需要某能力的包为每个目标陈述在无人提供时所取的提供者（SPEC-002 §3.6）：
+
+```toml
+[package]
+requires = ["mcpp:kernel-abi=openkal"]
+
+[defaults."mcpp:kernel-abi=openkal"]
+linux   = "openkal-linux@^0.25"
+macos   = "openkal-macos@^0.25"
+"*"     = "openkal-posix@^0.25"
+```
+
+依赖图中的提供者——使用者的依赖，或平台为其层加入的包——优先；否则与目标匹配的选择器的缺省作为该包的依赖进入
+依赖图，构建报告之（`Default ... for ... of ...`）。指名目标的选择器先于 `*`。
+
 ### 表形式与按目标的 `requires`（mcpp 2026.10.26.1+）
 
 `requires` 的条目可以是一张表：
@@ -433,6 +451,7 @@ C 库名的通用知识：
 | 目标 | 请求 | 实现 |
 |---|---|---|
 | Linux | `posix` / `arch-default` | 默认三元组已经满足 |
+| FreeBSD、NetBSD | `posix` / `arch-default` | 与 Linux 相同：ELF 三元组预定义 `__unix__`，LP64，`wchar_t` 为 32 位（`<arch>-freebsd-musl`，openkal-freebsd 之上的 C 库） |
 | macOS | `posix` / `arch-default` | 一个令牌，`-D__unix__`——Apple 的 clang 在默认三元组上预定义的是 `__APPLE__`/`__MACH__`，从来不是 `__unix__` |
 | freestanding（裸机） | `posix` / `arch-default` | 同样一个令牌，`-D__unix__`，理由相同：这里同样没有任何东西定义它 |
 | Windows | `posix` / `arch-default` | 采用 Cygwin 式语义：只在编译行加 `--target=x86_64-pc-cygwin`；再加 `-D__MCPP_TARGET_WINDOWS__`（见下方说明）；`data-model` 变为 LP64 是三元组切换的结果，不是另一个开关 |
@@ -828,7 +847,9 @@ cxxflags = ["-D_GNU_SOURCE"]
 
 **层名指的是库，不是三元组的 env 段。** 二者在 `musl` 上重合，在 `gnu` 上
 分叉：在 Linux 上该段请求的是 glibc，在 Windows 上它命名的是工具链的
-MinGW 形态，而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。写法是
+MinGW 形态，而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。两种 Windows 载荷都回答
+`ucrt`（MSVC 载荷自 2026.11.10.2 起），因此需要 Win32 C 运行时的包写一次
+`requires = ["mcpp:c-abi=ucrt"]` 即可。写法是
 `c-abi = "glibc"`，而非 `c-abi = "gnu"`；与答案相对的那个「请求」是
 `env = "gnu"`——这是另一个问题（`docs/specs/target-side.md` §3.4）。
 
@@ -847,7 +868,7 @@ schema 警告，并且该段不生效。它过去静默地求值为假，而那�
 
 ## 诊断
 
-四种情形由引擎而非由编译器报出。
+五种情形由引擎而非由编译器报出。
 
 | 情形 | 报出内容 |
 |---|---|
@@ -855,6 +876,7 @@ schema 警告，并且该段不生效。它过去静默地求值为假，而那�
 | 两个包供给同一层 | 同时指出二者，以及各自进入图的路径 |
 | 某一层无人供给 | 指出该层，以及应当依赖的能力 |
 | 载荷的 C++ 运行时位于一个外来 C 库之上 | 同时指出二者，以及两条出路 |
+| 各层的供给者相互需要成环（2026.11.10.1+） | 指出每个包、它供给的层与它需要的层；`layer-cycle` |
 
 一条来自编译器或链接器、关于某个目标侧组合的消息，表明缺少一条诊断。在任何
 命令行被发出之前，引擎已经知道该组合不成立。
@@ -898,14 +920,17 @@ openblas = "0.3.33"
 ldflags = ["-Llib", "-llibopenblas"]
 
 # cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
-# plus the bare aliases windows/unix/linux/macos).
+# plus barewords: `unix` and the name of a system).
 [target.'cfg(all(linux, not(arch = "aarch64")))'.build]
 cxxflags = ["-march=x86-64-v2"]
 ```
 
-`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价——裸别名
-`windows` / `linux` / `macos` / `unix` 都不是合法的目标三元组，因此不存在
-歧义。单个 OS/族用裸形式，arch/env 条件与组合子用 `cfg(...)`。
+`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价。裸词由数据决定而非列表：`unix` 即
+`family = "unix"`，其余不含短横线的词即 `os = "<词>"`（`linux`、`macos`、`windows`、`freebsd`，
+或平台所定义行的系统）。行陈述其族（行表中的 `family`），因此 FreeBSD 属于 `unix` 族。目标三元组
+必含短横线，故裸词不会是三元组。不对应任何行之系统的词与未知键一样会被报告。单个 OS/族用裸形式，
+arch/env 条件与组合子用 `cfg(...)`。2026.11.10.2 之前的 mcpp 仅将 `linux`、`macos`、`windows`
+与 `unix` 读作裸词；需要被这些版本读取的包对其他系统写 `cfg(os = "<系统>")`。
 
 - **可用键**：`dependencies` / `dev-dependencies` / `build-dependencies` /
   `feature-deps.<feature>`（mcpp 2026.8.6.2+——见
@@ -976,13 +1001,19 @@ cxxflags = ["-march=x86-64-v2"]
   因此不会与检查本身漂移。
 - **按解析后的目标求值**——交叉构建取 `--target` 三元组，否则取宿主。因此
   原生 Linux 构建**根本不会下载** `[target.windows]` 依赖。
-- **谓词的键**：`os`、`arch`、`family`、`env`——三元组的坐标——以及自 mcpp
+- **谓词的键**：`os`、`arch`、`family`、`env`——三元组的坐标；`object-format`（mcpp 2026.11.13.1），
+  行的容器格式（`elf`、`pe`、`mach-o`、`wasm`、`coff`），包需要的是同一容器的各系统共有的约定
+  （PE 行：Microsoft x64 调用约定、COFF 节）而不是某个系统时按它选择——以及自 mcpp
   2026.9.1.1 起的五个目标侧层名 `compiler`、`compiler-runtime`、
   `kernel-abi`、`c-abi`、`c++-abi`（见 [22 —— 目标侧](22-target-side.md)）。
   `accelerator` 同样是这里的键，由本次构建自己的 `accel`（`--accel` 或
   `[build] accel` 里的后端名）回答，因此它是对一个集合的成员判定；
   `accelerator = "none"` 是一种写法，用来说明「本次构建没有命名任何后端」，
-  而不必枚举它不是的那些后端。裸词 `linux` / `macos` / `windows` / `unix`
+  而不必枚举它不是的那些后端。`interface`（mcpp 2026.11.13.1）是 kernel-abi 层的第二个回答：
+  该层的提供者在 `[kernel-abi] provides-interfaces` 里陈述的接口，与
+  `accelerator` 一样按成员判定。未陈述列表的提供者提供全部接口；没有该层的
+  图不提供任何接口。包据此按其下实现提供的接口选择源文件，而不命名任何实现：
+  `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`。裸词 `linux` / `macos` / `windows` / `unix`
   是对应 `os` / `family` 判定的糖。集合之外的键会被报成一条 schema 警告，
   且该段不生效——它过去静默地求值为假，而那与「这一段本就不该匹配」
   读起来完全相同。
@@ -1052,6 +1083,52 @@ sysroot = ""                          # no C library at all
 一棵解包的 Visual Studio 目录树或 clang 的 `/winsysroot` 布局,其中存在 `Windows Kits/10` 时使用它。见 [20 —— 工具链管理](20-toolchains.md) 中
 「MSVC ABI 上的 clang：toolset 就是 sysroot」一节。
 
+#### 基座包：陈述其各层的 sysroot（2026.11.10.1+）
+
+一个 sysroot 可以说出它在 C 库之外还有什么。**基座包**是根目录带普通包清单的 sysroot：`provides` 写出它供给的层，
+`[build]` 用任何层供给者都使用的键陈述这些层，路径相对包根，包根即 sysroot：
+
+```toml
+[package]
+name     = "x86_64-freebsd-sysroot"
+version  = "14.5"
+provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
+            "hosted-standard-library"]
+
+[build]
+include_dirs      = ["usr/include/c++/v1"]   # C++ 库的头文件
+ldflags           = ["-lc++", "-lcxxrt"]     # 链接的 C++ 库
+std-module        = "usr/share/libc++/v1/std.cppm"
+std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
+std-module-flags  = ["-D__fenv_static="]
+# compiler_runtime_dir = "compiler-rt"       # 编译器运行时所在的目录
+```
+
+与任何 sysroot 一样被指名（`sysroot = "xim:x86_64-freebsd-sysroot@14.5"`、`{ path = "…" }`、平台或提供者的
+`sysroot`）时，基座回答它陈述的各层：
+
+- 报告把这些层标为 `prebuilt`，并附基座的 `<名>@<版本>`；
+- C++ 头文件、`std` 模块与链接的 C++ 库取自基座；工具链载荷为其自身宿主构建的 C++ 运行时及其归档不参与。基座未给出
+  `std-module` 时，该构建没有 `import std`；
+- `compiler_runtime_dir`（`[build]` 的键，2026.11.10.1+）指名编译器运行时所在的目录：clang 读作资源目录，gcc 经 `-B`
+  读取。
+
+一个基座包是一个身份的 sysroot。平台以各提供者的 `sysroot` 为每个身份指名自己的基座（[35](35-platforms.md)）；驱动能在
+一个根内区分架构的系统（MinGW-w64）由一个包服务。
+
+**基座包只有一种读法（2026.11.12.1+）。** 它的清单陈述包根即 sysroot，所以不论其目录怎样命名，都按 sysroot 渲染
+（`--sysroot=<根>`）；目录布局只对不带清单的目录探测。产物不由本机加载时——基座属于另一架构或另一系统——链接不取工具链
+载荷自身的运行时目录，动态产物以行的 `loader` 为程序解释器（`/lib/ld-linux-aarch64.so.1`），其 RUNPATH 不含本机的任何
+目录。这类产物经运行器运行，运行器以 `{sysroot}` 得到该基座（[41](41-devices.md)）。原生的动态产物仍写基座自己的加载器
+所在的路径。
+
+索引中有 `xim:x86_64-freebsd-sysroot` 与 `xim:aarch64-freebsd-sysroot`（FreeBSD 的基本系统，附 libc++ 的模块源码），
+以及 `xim:mingw-w64-sysroot`（llvm-mingw 的目标侧：UCRT 上的 MinGW-w64、libc++、libunwind 与 compiler-rt，x86_64 与
+aarch64）。在 `*-windows-gnu` 行上后者是 clang 的 sysroot；`mingw-llvm` 提供者指名它，因此每一台宿主都能构建 GNU ABI 的
+Windows 行（[21](21-the-target-triple.md)）。索引中还有 `xim:aarch64-linux-gnu-sysroot`（arm64 的 glibc，附内核头文件、
+带模块源码的 libc++ 与 compiler-rt），由 `glibc-sysroot` 提供者指名：在 linux-x86_64 上，`--target aarch64-linux-gnu` 以它
+构建 C、C++ 与 `import std` 的程序，动态或静态皆可（2026.11.12.1+）。
+
 构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**：`mcpp::target_libc()`
 返回该包的名字，`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的
 子目录。零 libc 档上两者均为空。见
@@ -1083,11 +1160,21 @@ WebAssembly 上，每个目标文件、预编译的标准库模块与链接必�
 | 成员 | 类型 | 渲染为 | 到达 |
 |---|---|---|---|
 | `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`；在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元，以及链接 |
-| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
+| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔，或 `"wasm"` / `"js"` *(2026.10.30.1+)* | 只在 `os = "emscripten"` 上，经方言 flag 进入编译行，也进入链接行：`"wasm"` 为 `-fwasm-exceptions`，即 WebAssembly 自身的异常处理；`"js"` 与 `true` 为 `-fexceptions`，即基于 JavaScript 的模型；`false` 表示不启用。未写时取行自身的模型：`wasm32-emscripten` 为 `"wasm"`（2026.11.16.1；此前不启用）。在其余每个目标上什么都不产生，因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
+| `longjmp` *(mcpp 2026.11.12.1+)* | `"wasm"` 或 `"js"` | 只在 `os = "emscripten"` 上，进入每个 C 与 C++ 翻译单元的编译行与链接行：`"wasm"` 为 `-sSUPPORT_LONGJMP=wasm`，即 WebAssembly 自身的栈切换；`"js"` 为 `-sSUPPORT_LONGJMP=emscripten`，即 JavaScript 模型，也是工具链的默认。声明在其余任何行上都会被拒绝。成员缺省时不产生任何 flag | 与 `threads` 相同的那一套 |
 
-两个成员都经由方言 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会
+三个成员都经由它们渲染的 flag 进入依赖缓存键，因此没有启用某个成员的构建，不会
 被启用它的构建复用，以一种异常模型构建的依赖也不会被另一种模型的构建复用。
 未知成员，以及表外的取值，都会被拒绝，并列出可取的值。
+
+**`longjmp = "wasm"` 使 C 的 `sigsetjmp`/`siglongjmp` 在 Emscripten 下可用。** 工具链默认的 JavaScript 模型把这一对编译成
+栈拷贝，越过两层调用的非局部退出会读到模块的栈之外，在运行时终止。编译与链接都带上 `-sSUPPORT_LONGJMP=wasm` 后，这一对
+可以往返。非局部退出很深的程序还需要更大的栈；那是项目自己的旋钮（`ldflags = ["-sSTACK_SIZE=..."]`），不是 ABI 事实，
+所以引擎不渲染它。
+
+**`longjmp` 与 `exceptions` 所指的是同一机制。** WebAssembly 的异常处理同时承载抛出与长跳转，JavaScript 模型也同时承载
+二者。未写 `longjmp` 时它随 `exceptions`，与 SDK 自身的缺省一致。为 `exceptions` 写一种模型、为 `longjmp` 写另一种的构建，
+在任何编译之前被拒绝，并写出两处陈述。声明了的 `longjmp` 是配置键的一部分；未声明它的项目保持原有的键。
 
 **新程序应选 `"wasm"`。** 它的代码比 JavaScript 模型更小、更快，要求宿主支持 WebAssembly 异常处理：Safari 15.2、
 Firefox 100、Chrome 95、Node 17 及以上。`true` 保持自 2026.9.12.3 起的含义，即 JavaScript 模型。依赖的

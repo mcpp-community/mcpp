@@ -13,7 +13,7 @@ import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.invocation;
 import mcpp.runtime.search;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -99,6 +99,34 @@ static std::string lock_short_name(const mcpp::lockfile::LockedPackage& p) {
 // The identity two entries of one lock are compared by.
 static std::string lock_identity(const mcpp::lockfile::LockedPackage& p) {
     return p.namespace_ + "\x1f" + lock_short_name(p);
+}
+
+// THE IDENTITY THIS CONFIGURATION'S REQUEST WAS GIVEN (SPEC-016 §4.5), into
+// `lock`, and the other requests' as the lock had them. Returns what the lock
+// had for this request.
+static std::optional<mcpp::lockfile::LockedTarget> lock_targets(const PrepareState& state,
+                                                                mcpp::lockfile::Lockfile& lock) {
+    std::optional<mcpp::lockfile::LockedTarget> priorTarget;
+    auto const& c = state.targetChoice;
+    if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock"))
+        for (auto const& t : prior->targets) {
+            if (!c.request.empty() && t.request == c.request) priorTarget = t;
+            else lock.targets.push_back(t);
+        }
+    if (!c.request.empty()) lock.targets.push_back({ c.request, c.identity, c.provider });
+    std::ranges::sort(lock.targets, {}, &mcpp::lockfile::LockedTarget::request);
+    return priorTarget;
+}
+
+// The drift line of a request the lock gave another identity, if it did.
+static std::optional<std::string> target_drift(const PrepareState& state,
+                                               const std::optional<mcpp::lockfile::LockedTarget>& prior) {
+    auto const& c = state.targetChoice;
+    if (!prior || prior->identity == c.identity) return std::nullopt;
+    return std::format("target {}: {} ({}) -> {} ({}){}", c.request, prior->identity,
+                       prior->provider.empty() ? "the platform's" : prior->provider,
+                       c.identity, c.provider.empty() ? "the platform's" : c.provider,
+                       c.why.empty() ? std::string{} : "; " + c.why);
 }
 
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx) {
@@ -277,6 +305,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             lp.name       = lock_name_for(key);
             lp.namespace_ = key.ns;
             lp.version    = rec.version;
+            lp.overridden = rec.overridden;
             // A variant is its own entry, and says which patches made it
             // (design 2026-11-02 §14.1): each by its path, relative to the
             // project where it is inside it, and its SHA-256.
@@ -322,7 +351,11 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         // A workspace's lock is at its root and records every member's
         // resolution (§15). A plan of some of its members updates the entries
         // it resolved and keeps the others; a plan of all of them writes the
-        // whole record.
+        // whole record. "This plan" is the members it resolves, not the members
+        // the command asked for: a command over several configurations plans
+        // one group at a time, and a group that took the request for its own
+        // took every entry of another group's members from this configuration
+        // (mcpp#903).
         bool partialWorkspace = false;
         if (state.workspacePlan() && state.wsManifest) {
             std::set<std::string> all(state.wsManifest->workspace.members.begin(),
@@ -330,7 +363,6 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             if (!state.wsManifest->package.name.empty()) all.insert(".");
             std::set<std::string> planned(state.selectedMemberPaths.begin(),
                                           state.selectedMemberPaths.end());
-            for (auto const& mp : state.overrides.workspace_request) planned.insert(mp);
             partialWorkspace = !std::ranges::includes(planned, all);
         }
         // EACH ENTRY NAMES THE CONFIGURATIONS THAT RESOLVE IT (SPEC-013
@@ -410,6 +442,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         }
         // One order whichever configuration wrote the file last: by identity.
         std::ranges::stable_sort(lock.packages, {}, [](auto const& p) { return lock_identity(p); });
+        const auto priorTarget = lock_targets(state, lock);
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = state.workRoot / "mcpp.lock";
             // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
@@ -442,9 +475,15 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
                                                 : p.namespace_ + "." + sn;
                 };
                 std::map<std::string, std::string> was, now;
-                for (auto const& p : prior->packages) was[key(p)] = p.version;
-                for (auto const& p : lock.packages)    now[key(p)] = p.version;
+                // An override is part of the recorded resolution (T2): the
+                // same version chosen by a merge or by the root is drift.
+                auto recorded = [](const mcpp::lockfile::LockedPackage& p) {
+                    return p.overridden ? p.version + " (override)" : p.version;
+                };
+                for (auto const& p : prior->packages) was[key(p)] = recorded(p);
+                for (auto const& p : lock.packages)    now[key(p)] = recorded(p);
                 std::vector<std::string> drift;
+                if (auto d = target_drift(state, priorTarget)) drift.push_back(std::move(*d));
                 for (auto const& [k, v] : now) {
                     auto it = was.find(k);
                     if (it == was.end())      drift.push_back(k + " " + v + " (not in the lock)");

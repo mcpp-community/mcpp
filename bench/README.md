@@ -138,6 +138,20 @@ checks it produces a valid report. What is not automated is the measuring.
 **Run the standard set before a release, and after any change that claims a
 performance effect.**
 
+What CI does keep is a history of mcpp's own costs. `bench/tests/engine.cpp`
+holds mtest Bench cases that time the mcpp under test (`MCPP`) on a small module
+fixture: a build with nothing to do, `mcpp why flags`, and a rebuild after one
+interface edit, each call timed by itself (`bench::each`; the edit itself is
+paused out of the rebuild's time). The Linux subsystem job runs them on a push to
+main, a pull request labelled `ci:bench` and a CI run started with `bench`
+(`cd bench && mcpp test`); `bench.yml`, started by hand, runs them alone on the
+Linux binary a successful CI run of the commit built, the measurement a release
+is merged with. Each cost enters mtest's store as a metric -- the
+median, with `.p95`, `.max` and the two slowest calls stated -- so that
+`mtest analyze trend` and the workflow run's report show it against its history.
+These are trends on one runner, not comparisons between engines; the standard
+set above remains the source of every published number.
+
 ---
 
 ## The standard data

@@ -20,9 +20,6 @@
 //
 // Design: .agents/docs/2026-09-02-runner-beyond-baremetal-design.md §4.3-4.4.
 
-module;
-#include <cerrno>
-
 export module mcpp.build.runner_lookup;
 
 import std;
@@ -82,23 +79,32 @@ inline Lookup locate(std::string_view argv0,
     const bool hasDir = a0.is_absolute()
                      || argv0.find('/') != std::string_view::npos
                      || argv0.find('\\') != std::string_view::npos;
+    // A name on Windows is a program with the system's suffix, as the shell
+    // finds it: `okrun` is `okrun.exe`. The file without a suffix is not one:
+    // the system starts no file without one (`CreateProcess` appends `.exe`),
+    // and every file is "executable" there. A package for every system
+    // carries both -- dirun's `bin/dirun`, a POSIX launcher, beside
+    // `bin/dirun.exe` -- and the launcher was taken and refused (`executable
+    // format error`, 2026-11-14). A name with a directory follows the same
+    // rule (design 2026-11-15 R2, A3): `../tools/x` could not be started.
+    auto program_at = [&](const std::filesystem::path& c) -> std::optional<std::filesystem::path> {
+        if constexpr (mcpplibs::os::is_windows) {
+            if (!c.has_extension()) {
+                for (auto ext : { ".exe", ".cmd", ".bat" })
+                    if (auto s = std::filesystem::path(c.string() + ext); detail::executable_file(s)) return s;
+                return std::nullopt;
+            }
+        }
+        if (detail::executable_file(c)) return c;
+        return std::nullopt;
+    };
     if (hasDir) {
         std::error_code ec;
-        if (detail::executable_file(a0)) out.program = std::filesystem::absolute(a0, ec);
+        if (auto c = program_at(a0)) out.program = std::filesystem::absolute(*c, ec);
         out.searched.push_back(a0.parent_path());
         return out;
     }
-    // A bare name on Windows is a program with the system's suffix, as the
-    // shell finds it: `okrun` is `okrun.exe`.
-    auto in_dir = [&](const std::filesystem::path& d) -> std::optional<std::filesystem::path> {
-        if (auto c = d / a0; detail::executable_file(c)) return c;
-        if constexpr (mcpplibs::os::is_windows) {
-            if (!a0.has_extension())
-                for (auto ext : { ".exe", ".cmd", ".bat" })
-                    if (auto c = d / (a0.string() + ext); detail::executable_file(c)) return c;
-        }
-        return std::nullopt;
-    };
+    auto in_dir = [&](const std::filesystem::path& d) { return program_at(d / a0); };
     for (auto const& d : depBinDirs) {
         out.searched.push_back(d);
         if (auto c = in_dir(d)) { out.program = *c; return out; }
@@ -122,7 +128,7 @@ inline Lookup locate(std::string_view argv0,
 enum class SpawnClass { Unloadable, Other };
 
 inline SpawnClass classify(int e) {
-    if (e == ENOEXEC) return SpawnClass::Unloadable;
+    if (e == static_cast<int>(std::errc::executable_format_error)) return SpawnClass::Unloadable;
     return SpawnClass::Other;
 }
 
@@ -155,7 +161,9 @@ inline std::string spawn_failed_message(std::string_view program, int e,
 // The hosted sibling of mcpp::freestanding::no_runner_message. It reports what
 // the kernel answered rather than asserting why: on a hosted triple mcpp does
 // not know whether the refusal is a foreign ISA or a file that is not an
-// executable at all, and the example it prints is a user-mode emulator.
+// executable at all. The declaration it prints is the key's shape; which
+// program runs the artifact is the statement of a provider, a platform or the
+// project (SPEC-016 §6), and no program is named here.
 inline std::string unrunnable_message(std::string_view triple,
                                       const std::filesystem::path& artifact, int e) {
     return std::format(
@@ -163,7 +171,7 @@ inline std::string unrunnable_message(std::string_view triple,
         "       The artifact was built for '{}'. Declare how to run it here:\n"
         "\n"
         "           [target.{}]\n"
-        "           runner = [\"qemu-aarch64-static\"]\n"
+        "           runner = [\"<program>\", \"{{}}\"]\n"
         "\n"
         "       The artifact path is appended, or substituted for `{{}}` if the "
         "template contains it.\n"

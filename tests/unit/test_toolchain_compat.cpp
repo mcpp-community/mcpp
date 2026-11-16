@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.compat;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::toolchain::compat;
 
@@ -12,97 +14,97 @@ static std::string host_musl() {
 
 // ── canonical spellings pass through unchanged ───────────────────────────────
 
-TEST(Compat, CanonicalFamiliesPassThrough) {
+UTest canonical_families_pass_through{"Compat/CanonicalFamiliesPassThrough", [] {
     auto g = normalize_spec("gcc", "16.1.0");
-    ASSERT_TRUE(g.has_value());
-    EXPECT_EQ(g->family, "gcc");
-    EXPECT_EQ(g->version, "16.1.0");
-    EXPECT_TRUE(g->target.empty());
-    EXPECT_FALSE(g->changed);
+    expect(fatal(g.has_value()));
+    expect(eq(g->family, "gcc"));
+    expect(eq(g->version, "16.1.0"));
+    expect(g->target.empty());
+    expect(!g->changed);
 
     auto l = normalize_spec("llvm", "20.1.7");
-    ASSERT_TRUE(l.has_value());
-    EXPECT_EQ(l->family, "llvm");
-    EXPECT_FALSE(l->changed);
+    expect(fatal(l.has_value()));
+    expect(eq(l->family, "llvm"));
+    expect(!l->changed);
 
     auto m = normalize_spec("msvc", "system");
-    ASSERT_TRUE(m.has_value());
-    EXPECT_EQ(m->family, "msvc");
-    EXPECT_EQ(m->version, "system");
-    EXPECT_FALSE(m->changed);
-}
+    expect(fatal(m.has_value()));
+    expect(eq(m->family, "msvc"));
+    expect(eq(m->version, "system"));
+    expect(!m->changed);
+}};
 
 // ── §6.2 alias table: every legacy row round-trips ───────────────────────────
 
-TEST(Compat, MuslVersionSuffixBecomesTarget) {
+UTest musl_version_suffix_becomes_target{"Compat/MuslVersionSuffixBecomesTarget", [] {
     auto s = normalize_spec("gcc", "15.1.0-musl");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->family, "gcc");
-    EXPECT_EQ(s->version, "15.1.0");
-    EXPECT_EQ(s->target.str(), host_musl());
-    EXPECT_TRUE(s->changed);
-    EXPECT_FALSE(s->hint.empty());
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->family, "gcc"));
+    expect(eq(s->version, "15.1.0"));
+    expect(eq(s->target.str(), host_musl()));
+    expect(bool(s->changed));
+    expect(!(s->hint.empty()));
+}};
 
-TEST(Compat, MuslGccCompilerNameBecomesTarget) {
+UTest musl_gcc_compiler_name_becomes_target{"Compat/MuslGccCompilerNameBecomesTarget", [] {
     auto s = normalize_spec("musl-gcc", "15.1.0");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->family, "gcc");
-    EXPECT_EQ(s->version, "15.1.0");
-    EXPECT_EQ(s->target.str(), host_musl());
-    EXPECT_TRUE(s->changed);
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->family, "gcc"));
+    expect(eq(s->version, "15.1.0"));
+    expect(eq(s->target.str(), host_musl()));
+    expect(bool(s->changed));
+}};
 
-TEST(Compat, TripleNamedGccBecomesTarget) {
+UTest triple_named_gcc_becomes_target{"Compat/TripleNamedGccBecomesTarget", [] {
     auto s = normalize_spec("aarch64-linux-musl-gcc", "16.1.0");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->family, "gcc");
-    EXPECT_EQ(s->version, "16.1.0");
-    EXPECT_EQ(s->target.str(), "aarch64-linux-musl");
-    EXPECT_TRUE(s->changed);
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->family, "gcc"));
+    expect(eq(s->version, "16.1.0"));
+    expect(eq(s->target.str(), "aarch64-linux-musl"));
+    expect(bool(s->changed));
+}};
 
-TEST(Compat, MingwAndMingwCrossCollapseToWindowsGnu) {
+UTest mingw_and_mingw_cross_collapse_to_windows_gnu{"Compat/MingwAndMingwCrossCollapseToWindowsGnu", [] {
     // One concept, two host-split legacy names → the SAME normalized identity.
     auto native = normalize_spec("mingw", "16.1.0");
     auto cross  = normalize_spec("mingw-cross", "16.1.0");
-    ASSERT_TRUE(native.has_value());
-    ASSERT_TRUE(cross.has_value());
-    EXPECT_EQ(native->family, "gcc");
-    EXPECT_EQ(cross->family, "gcc");
-    EXPECT_EQ(native->target.str(), "x86_64-windows-gnu");
-    EXPECT_EQ(cross->target.str(), "x86_64-windows-gnu");
-    EXPECT_TRUE(native->changed);
-    EXPECT_TRUE(cross->changed);
-}
+    expect(fatal(native.has_value()));
+    expect(fatal(cross.has_value()));
+    expect(eq(native->family, "gcc"));
+    expect(eq(cross->family, "gcc"));
+    expect(eq(native->target.str(), "x86_64-windows-gnu"));
+    expect(eq(cross->target.str(), "x86_64-windows-gnu"));
+    expect(bool(native->changed));
+    expect(bool(cross->changed));
+}};
 
-TEST(Compat, ClangAliasBecomesLlvm) {
+UTest clang_alias_becomes_llvm{"Compat/ClangAliasBecomesLlvm", [] {
     auto s = normalize_spec("clang", "20.1.7");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->family, "llvm");
-    EXPECT_EQ(s->version, "20.1.7");
-    EXPECT_TRUE(s->changed);
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->family, "llvm"));
+    expect(eq(s->version, "20.1.7"));
+    expect(bool(s->changed));
+}};
 
-TEST(Compat, PartialMuslVersionSuffix) {
+UTest partial_musl_version_suffix{"Compat/PartialMuslVersionSuffix", [] {
     // "gcc 15-musl" — partial version with the legacy suffix.
     auto s = normalize_spec("gcc", "15-musl");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->version, "15");
-    EXPECT_EQ(s->target.str(), host_musl());
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->version, "15"));
+    expect(eq(s->target.str(), host_musl()));
+}};
 
-TEST(Compat, XimNamespacePrefixStripped) {
+UTest xim_namespace_prefix_stripped{"Compat/XimNamespacePrefixStripped", [] {
     auto s = normalize_spec("xim:gcc", "16.1.0");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->family, "gcc");
-    EXPECT_FALSE(s->changed);
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->family, "gcc"));
+    expect(!s->changed);
+}};
 
 // ── rejects ─────────────────────────────────────────────────────────────────
 
-TEST(Compat, RejectsUnknownFamilies) {
-    EXPECT_FALSE(normalize_spec("tcc", "1.0").has_value());
-    EXPECT_FALSE(normalize_spec("llvm", "20.1.7-musl").has_value());  // llvm has no musl flavor
-    EXPECT_FALSE(normalize_spec("not-a-triple-gcc", "1.0").has_value());
-}
+UTest rejects_unknown_families{"Compat/RejectsUnknownFamilies", [] {
+    expect(!(normalize_spec("tcc", "1.0").has_value()));
+    expect(!(normalize_spec("llvm", "20.1.7-musl").has_value()));  // llvm has no musl flavor
+    expect(!(normalize_spec("not-a-triple-gcc", "1.0").has_value()));
+}};

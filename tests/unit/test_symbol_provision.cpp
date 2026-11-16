@@ -11,11 +11,13 @@
 //     arrangement, where a shared dependency's static dependency legitimately
 //     lands in the consumer's executable with exactly one copy in the process.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.symbol_provision;
 import mcpp.runtime.elf;
+
+using namespace mcpplibs::mtest;
 
 namespace sp = mcpp::build::symbol_provision;
 namespace elf = mcpp::runtime::elf;
@@ -47,27 +49,27 @@ std::vector<std::string> names(const std::vector<sp::Export>& exports) {
 
 // ── stage one ──────────────────────────────────────────────────────────────
 
-TEST(SymbolProvision, ADefinedFunctionIsAlwaysAnExport) {
+UTest a_defined_function_is_always_an_export{"SymbolProvision/ADefinedFunctionIsAlwaysAnExport", [] {
     auto s = image();
     s.defined.push_back(func("inflate"));
     // Even at an address that carries a copy relocation: a copy relocation
     // moves DATA, so a function sharing that address is not one.
     s.copyRelocations.insert(0x1000);
     auto exports = sp::exported_definitions(s);
-    ASSERT_TRUE(exports.has_value());
-    EXPECT_EQ(names(*exports), std::vector<std::string>{"inflate"});
-}
+    expect(fatal(exports.has_value()));
+    expect(eq(names(*exports), std::vector<std::string>{"inflate"}));
+}};
 
-TEST(SymbolProvision, CopyRelocatedDataIsNotAnExport) {
+UTest copy_relocated_data_is_not_an_export{"SymbolProvision/CopyRelocatedDataIsNotAnExport", [] {
     auto s = image();
     s.defined.push_back(object("stdout", 0xb1d888));
     s.copyRelocations.insert(0xb1d888);
     auto exports = sp::exported_definitions(s);
-    ASSERT_TRUE(exports.has_value());
-    EXPECT_TRUE(exports->empty());
-}
+    expect(fatal(exports.has_value()));
+    expect(exports->empty());
+}};
 
-TEST(SymbolProvision, CopyRelocationsMatchByAddressNotByName) {
+UTest copy_relocations_match_by_address_not_by_name{"SymbolProvision/CopyRelocationsMatchByAddressNotByName", [] {
     // MEASURED, on every mcpp binary: glibc's `environ` is a WEAK alias of
     // `__environ` at one address, and only `__environ` appears in `.rela.dyn`.
     // A name-keyed filter reports `environ` as a hijacked symbol in every
@@ -77,35 +79,34 @@ TEST(SymbolProvision, CopyRelocationsMatchByAddressNotByName) {
     s.defined.push_back(object("environ",   0xb1d840));   // same address
     s.copyRelocations.insert(0xb1d840);                   // only one entry
     auto exports = sp::exported_definitions(s);
-    ASSERT_TRUE(exports.has_value());
-    EXPECT_TRUE(exports->empty()) << "environ must not be reported";
-}
+    expect(fatal(exports.has_value()));
+    expect(exports->empty()) << "environ must not be reported";
+}};
 
-TEST(SymbolProvision, AnUninitialisedDataSymbolWithNoCopyRelocationIsAnExport) {
+UTest an_uninitialised_data_symbol_with_no_copy_relocation_is_an_export{"SymbolProvision/AnUninitialisedDataSymbolWithNoCopyRelocationIsAnExport", [] {
     // /usr/bin/ls's `obstack_alloc_failed_handler` — a function-pointer
     // variable that gnulib defines and glibc also defines. It lives in .bss
     // like a copy relocation would, and it is NOT one.
     auto s = image();
     s.defined.push_back(object("obstack_alloc_failed_handler", 0x2000));
     auto exports = sp::exported_definitions(s);
-    ASSERT_TRUE(exports.has_value());
-    EXPECT_EQ(names(*exports),
-              std::vector<std::string>{"obstack_alloc_failed_handler"});
-}
+    expect(fatal(exports.has_value()));
+    expect(eq(names(*exports), std::vector<std::string>{"obstack_alloc_failed_handler"}));
+}};
 
-TEST(SymbolProvision, AnUnknownMachineDeclinesRatherThanGuessing) {
+UTest an_unknown_machine_declines_rather_than_guessing{"SymbolProvision/AnUnknownMachineDeclinesRatherThanGuessing", [] {
     // Without the machine's COPY relocation type every data symbol looks like
     // an export. "Could not evaluate" must not be spelled the same way as
     // "evaluated and clean".
     auto s = image();
     s.copyRelocationsKnown = false;
     s.defined.push_back(object("stdout", 0x10));
-    EXPECT_FALSE(sp::exported_definitions(s).has_value());
-}
+    expect(!(sp::exported_definitions(s).has_value()));
+}};
 
 // ── stage two ──────────────────────────────────────────────────────────────
 
-TEST(SymbolProvision, AnExportWithNoSecondProviderIsNotAConflict) {
+UTest an_export_with_no_second_provider_is_not_a_conflict{"SymbolProvision/AnExportWithNoSecondProviderIsNotAConflict", [] {
     // mcpp's OWN arrangement. A `kind = "shared"` dependency's link unit
     // takes only its own objects, so its static dependency lands in the
     // consumer's executable and the shared library binds back to it. One copy
@@ -115,10 +116,10 @@ TEST(SymbolProvision, AnExportWithNoSecondProviderIsNotAConflict) {
     std::vector<sp::Provider> closure{
         sp::Provider{"/lib/libc.so.6", {"printf", "malloc"}},
     };
-    EXPECT_TRUE(sp::conflicting_exports(exports, closure).empty());
-}
+    expect(sp::conflicting_exports(exports, closure).empty());
+}};
 
-TEST(SymbolProvision, AnExportWithASecondProviderIsAConflictAndNamesIt) {
+UTest an_export_with_a_second_provider_is_a_conflict_and_names_it{"SymbolProvision/AnExportWithASecondProviderIsAConflictAndNamesIt", [] {
     std::vector<sp::Export> exports{ sp::Export{"inflate", true},
                                      sp::Export{"deflate", true} };
     std::vector<sp::Provider> closure{
@@ -126,13 +127,13 @@ TEST(SymbolProvision, AnExportWithASecondProviderIsAConflictAndNamesIt) {
         sp::Provider{"/lib/libc.so.6",     {"printf"}},
     };
     auto conflicts = sp::conflicting_exports(exports, closure);
-    ASSERT_EQ(conflicts.size(), 2u);
-    EXPECT_EQ(conflicts[0].name, "inflate");
-    ASSERT_EQ(conflicts[0].alsoProvidedBy.size(), 1u);
-    EXPECT_EQ(conflicts[0].alsoProvidedBy[0], "/pkg/lib/libz.so.1");
-}
+    expect(fatal(eq(conflicts.size(), 2u)));
+    expect(eq(conflicts[0].name, "inflate"));
+    expect(fatal(eq(conflicts[0].alsoProvidedBy.size(), 1u)));
+    expect(eq(conflicts[0].alsoProvidedBy[0], "/pkg/lib/libz.so.1"));
+}};
 
-TEST(SymbolProvision, TheReportNamesEveryProviderAndCapsTheSymbolList) {
+UTest the_report_names_every_provider_and_caps_the_symbol_list{"SymbolProvision/TheReportNamesEveryProviderAndCapsTheSymbolList", [] {
     sp::Report report;
     report.status = sp::Status::Conflict;
     report.total = 217;
@@ -148,63 +149,62 @@ TEST(SymbolProvision, TheReportNamesEveryProviderAndCapsTheSymbolList) {
     report.exported = report.conflicts.size();
 
     auto text = report.explain("consumer");
-    EXPECT_NE(text.find("20 symbols"), std::string::npos);
-    EXPECT_NE(text.find("and 14 more"), std::string::npos);
-    EXPECT_NE(text.find("/pkg/lib/libz.so.1"), std::string::npos);
+    expect(ne(text.find("20 symbols"), std::string::npos));
+    expect(ne(text.find("and 14 more"), std::string::npos));
+    expect(ne(text.find("/pkg/lib/libz.so.1"), std::string::npos));
     // The three ways out are the point of the message, and their ORDER is
     // load-bearing: switching the form removes this finding while leaving two
     // copies loaded unless the SONAMEs also match, so it must not be first.
     auto stop = text.find("stop one side");
     auto soname = text.find("SONAME");
     auto form = text.find("dependency_linkage");
-    ASSERT_NE(stop, std::string::npos);
-    ASSERT_NE(soname, std::string::npos);
-    ASSERT_NE(form, std::string::npos);
-    EXPECT_LT(stop, soname);
-    EXPECT_LT(soname, form);
-}
+    expect(fatal(ne(stop, std::string::npos)));
+    expect(fatal(ne(soname, std::string::npos)));
+    expect(fatal(ne(form, std::string::npos)));
+    expect(lt(stop, soname));
+    expect(lt(soname, form));
+}};
 
-TEST(SymbolProvision, OnlyAConflictIsActionable) {
-    EXPECT_FALSE(sp::not_applicable("static").actionable());
-    EXPECT_FALSE(sp::not_evaluated("unknown machine").actionable());
+UTest only_a_conflict_is_actionable{"SymbolProvision/OnlyAConflictIsActionable", [] {
+    expect(!(sp::not_applicable("static").actionable()));
+    expect(!(sp::not_evaluated("unknown machine").actionable()));
     sp::Report clean; clean.status = sp::Status::Clean;
-    EXPECT_FALSE(clean.actionable());
-    EXPECT_TRUE(clean.explain("x").empty());
-}
+    expect(!clean.actionable());
+    expect(clean.explain("x").empty());
+}};
 
-TEST(SymbolProvision, ANonAnswerCarriesItsReason) {
+UTest a_non_answer_carries_its_reason{"SymbolProvision/ANonAnswerCarriesItsReason", [] {
     // "Not checked" and "checked and clean" must never render the same.
     auto na = sp::not_applicable("statically linked");
-    EXPECT_EQ(na.status, sp::Status::NotApplicable);
-    EXPECT_EQ(na.reason, "statically linked");
-    EXPECT_EQ(sp::to_string(sp::Status::NotApplicable), "not-applicable");
-    EXPECT_EQ(sp::to_string(sp::Status::NotEvaluated), "not-evaluated");
-    EXPECT_NE(sp::to_string(sp::Status::Clean),
-              sp::to_string(sp::Status::NotApplicable));
-}
+    expect(eq(na.status, sp::Status::NotApplicable));
+    expect(eq(na.reason, "statically linked"));
+    expect(eq(sp::to_string(sp::Status::NotApplicable), "not-applicable"));
+    expect(eq(sp::to_string(sp::Status::NotEvaluated), "not-evaluated"));
+    expect(ne(sp::to_string(sp::Status::Clean), sp::to_string(sp::Status::NotApplicable)));
+}};
 
 // ── the precondition ───────────────────────────────────────────────────────
 
-TEST(SymbolProvision, AnAuthorRequestedExportSurfaceVoidsThePredicate) {
+UTest an_author_requested_export_surface_voids_the_predicate{"SymbolProvision/AnAuthorRequestedExportSurfaceVoidsThePredicate", [] {
     // /usr/bin/bash exports 2339 symbols on purpose, for loadable builtins.
     // Detecting exactly the thing the author asked for is not a finding.
-    EXPECT_TRUE(sp::export_dynamic_requested(
-        std::vector<std::string>{"-O2", "-rdynamic"}));
-    EXPECT_TRUE(sp::export_dynamic_requested(
-        std::vector<std::string>{"-Wl,--export-dynamic"}));
-    EXPECT_TRUE(sp::export_dynamic_requested(std::vector<std::string>{"-Wl,-E"}));
-    EXPECT_TRUE(sp::export_dynamic_requested(
-        std::vector<std::string>{"-Wl,--dynamic-list=syms.txt"}));
-    EXPECT_TRUE(sp::export_dynamic_requested(
-        std::vector<std::string>{"-Wl,--export-dynamic-symbol=foo"}));
-}
+    expect(bool(sp::export_dynamic_requested(
+        std::vector<std::string>{"-O2", "-rdynamic"})));
+    expect(bool(sp::export_dynamic_requested(
+        std::vector<std::string>{"-Wl,--export-dynamic"})));
+    expect(bool(sp::export_dynamic_requested(std::vector<std::string>{"-Wl,-E"})));
+    expect(bool(sp::export_dynamic_requested(
+        std::vector<std::string>{"-Wl,--dynamic-list=syms.txt"})));
+    expect(bool(sp::export_dynamic_requested(
+        std::vector<std::string>{"-Wl,--export-dynamic-symbol=foo"})));
+}};
 
-TEST(SymbolProvision, OrdinaryLinkFlagsDoNotVoidThePredicate) {
+UTest ordinary_link_flags_do_not_void_the_predicate{"SymbolProvision/OrdinaryLinkFlagsDoNotVoidThePredicate", [] {
     // A substring sweep would fire on any of these.
-    EXPECT_FALSE(sp::export_dynamic_requested(std::vector<std::string>{
+    expect(!sp::export_dynamic_requested(std::vector<std::string>{
         "-O2", "-Wl,-rpath,$ORIGIN", "-lz", "-Wl,--as-needed",
         "-Wl,--enable-new-dtags", "-static-libstdc++", "-shared"}));
-}
+}};
 
 // ── vague linkage is not a second provider ─────────────────────────────────
 //
@@ -219,21 +219,21 @@ TEST(SymbolProvision, OrdinaryLinkFlagsDoNotVoidThePredicate) {
 // island's own `extern "C"` entry points, which libsycl does not define. A
 // check that could not tell binding from name reported all of them.
 
-TEST(SymbolProvision, AWeakDefinitionIsCarriedThroughAsWeak) {
+UTest a_weak_definition_is_carried_through_as_weak{"SymbolProvision/AWeakDefinitionIsCarriedThroughAsWeak", [] {
     auto s = image();
     auto weak = func("_ZN4sycl3_V15queueD2Ev");
     weak.isWeak = true;
     s.defined.push_back(weak);
     s.defined.push_back(func("saxpy_device"));
     auto exports = sp::exported_definitions(s);
-    ASSERT_TRUE(exports.has_value());
-    ASSERT_EQ(exports->size(), 2u);
+    expect(fatal(exports.has_value()));
+    expect(fatal(eq(exports->size(), 2u)));
     // Sorted by name: the mangled one first.
-    EXPECT_TRUE((*exports)[0].isWeak);
-    EXPECT_FALSE((*exports)[1].isWeak);
-}
+    expect(bool((*exports)[0].isWeak));
+    expect(!((*exports)[1].isWeak));
+}};
 
-TEST(SymbolProvision, AConflictRemembersWhetherItsDefinitionIsWeak) {
+UTest a_conflict_remembers_whether_its_definition_is_weak{"SymbolProvision/AConflictRemembersWhetherItsDefinitionIsWeak", [] {
     std::vector<sp::Export> exports{
         { .name = "_ZN4sycl3_V15queueD2Ev", .isFunc = true, .isWeak = true },
         { .name = "inflate",                .isFunc = true, .isWeak = false },
@@ -243,29 +243,29 @@ TEST(SymbolProvision, AConflictRemembersWhetherItsDefinitionIsWeak) {
           .defines = {"_ZN4sycl3_V15queueD2Ev", "inflate"} },
     };
     auto conflicts = sp::conflicting_exports(exports, closure);
-    ASSERT_EQ(conflicts.size(), 2u);
+    expect(fatal(eq(conflicts.size(), 2u)));
     // Both are shared; only the binding separates them, and the caller is what
     // decides which one is a finding. Asserted here rather than in the caller
     // so the DATA carries the distinction even if a future caller forgets it.
-    EXPECT_TRUE(conflicts[0].isWeak);
-    EXPECT_FALSE(conflicts[1].isWeak);
-}
+    expect(bool(conflicts[0].isWeak));
+    expect(!(conflicts[1].isWeak));
+}};
 
 // #646 F3. GCC emits the static data of an inline entity with STB_GNU_UNIQUE
 // (10) so that the loader keeps one copy across RTLD_LOCAL. It is vague linkage
 // exactly as STB_WEAK is; reading only the latter reported seven libstdc++
 // objects as a program displacing the library.
-TEST(SymbolProvision, TheUniqueBindingIsVagueLinkageAsTheWeakOneIs) {
-    EXPECT_TRUE(elf::is_vague_linkage_binding(2));    // STB_WEAK
-    EXPECT_TRUE(elf::is_vague_linkage_binding(10));   // STB_GNU_UNIQUE
-    EXPECT_FALSE(elf::is_vague_linkage_binding(1));   // STB_GLOBAL
-    EXPECT_FALSE(elf::is_vague_linkage_binding(0));   // STB_LOCAL
-}
+UTest the_unique_binding_is_vague_linkage_as_the_weak_one_is{"SymbolProvision/TheUniqueBindingIsVagueLinkageAsTheWeakOneIs", [] {
+    expect(elf::is_vague_linkage_binding(2));    // STB_WEAK
+    expect(elf::is_vague_linkage_binding(10));   // STB_GNU_UNIQUE
+    expect(!elf::is_vague_linkage_binding(1));   // STB_GLOBAL
+    expect(!elf::is_vague_linkage_binding(0));   // STB_LOCAL
+}};
 
 // #646 F3. The std module's initialiser is linked into every C++ image that
 // imports `std`, from one object. A provider that defines a name only through
 // an object this build linked into both images is removed from that conflict.
-TEST(SymbolProvision, ADefinitionBothImagesTakeFromOneObjectIsNotAConflict) {
+UTest a_definition_both_images_take_from_one_object_is_not_a_conflict{"SymbolProvision/ADefinitionBothImagesTakeFromOneObjectIsNotAConflict", [] {
     std::vector<sp::Conflict> conflicts{
         { .name = "_ZGIW3std", .isFunc = true,
           .alsoProvidedBy = {"bin/liblib.so"} },
@@ -275,21 +275,20 @@ TEST(SymbolProvision, ADefinitionBothImagesTakeFromOneObjectIsNotAConflict) {
     const std::map<std::string, std::set<std::string>> shared{
         { "bin/liblib.so", {"_ZGIW3std"} },
     };
-    EXPECT_EQ(sp::drop_shared_plan_definitions(conflicts, shared), 1u);
-    ASSERT_EQ(conflicts.size(), 1u);
-    EXPECT_EQ(conflicts[0].name, "inflate");
+    expect(eq(sp::drop_shared_plan_definitions(conflicts, shared), 1u));
+    expect(fatal(eq(conflicts.size(), 1u)));
+    expect(eq(conflicts[0].name, "inflate"));
     // The library still defines `inflate` from its OWN object, so it stays a
     // provider: attribution is by object, never by the library as a whole.
-    EXPECT_EQ(conflicts[0].alsoProvidedBy,
-              (std::vector<std::string>{"bin/liblib.so", "/usr/lib/libz.so.1"}));
-}
+    expect(eq(conflicts[0].alsoProvidedBy, (std::vector<std::string>{"bin/liblib.so", "/usr/lib/libz.so.1"})));
+}};
 
 // The rule is provenance, not a name pattern: an initialiser-shaped name that
 // no shared object defines is still a finding.
-TEST(SymbolProvision, AnInitialiserShapedNameWithoutSharedProvenanceIsStillReported) {
+UTest an_initialiser_shaped_name_without_shared_provenance_is_still_reported{"SymbolProvision/AnInitialiserShapedNameWithoutSharedProvenanceIsStillReported", [] {
     std::vector<sp::Conflict> conflicts{
         { .name = "_ZGIW5other", .isFunc = true, .alsoProvidedBy = {"bin/libother.so"} },
     };
-    EXPECT_EQ(sp::drop_shared_plan_definitions(conflicts, {}), 0u);
-    EXPECT_EQ(conflicts.size(), 1u);
-}
+    expect(eq(sp::drop_shared_plan_definitions(conflicts, {}), 0u));
+    expect(eq(conflicts.size(), 1u));
+}};

@@ -446,15 +446,19 @@ list` reports for this machine):
 | `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | verified |
 | `x86_64-windows-musl` | llvm 23 — a PE with a musl C library, which no gcc emits; the system comes from the dependency graph | preview |
 | `aarch64-macos`       | llvm *(macOS default)* | verified |
+| `aarch64-macos-musl` · `x86_64-macos-musl` | llvm 23 — a Mach-O with a musl C library from the dependency graph, built on any host *(what `aarch64-macos` is off macOS)* | preview |
 | `riscv64-none-elf` · `riscv32-none-elf` | llvm 23 — bare metal, `xim:picolibc-riscv` ² | verified |
 | `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 23 — Cortex-M0/M0+/M1, Cortex-M3 ² | verified |
 | `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 23 — Cortex-M4F/M7F hard float, Cortex-M33/M55 soft float ² | verified |
 | `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 23 — Cortex-A 32-bit, the first row with an MMU ² | verified |
-| `aarch64-none-elf` · `x86_64-none-elf` | llvm 23 — bare metal, no C library by default ² | preview |
+| `aarch64-none-elf` · `x86_64-none-elf` · `i686-none-elf` | llvm 23 — bare metal, no C library by default ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 23 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
 | `aarch64-linux-gnu` | `llvm@23.1.3` | preview |
-| `riscv64-linux-musl` · `x86_64-macos` | — | planned |
-| `x86_64-openkal` · `aarch64-openkal` | llvm 23 — an ok image: one artifact per architecture, run by `okrun` on Linux, macOS and Windows; the C library and C++ run-time inside it are packages ([24](docs/24-openkal-cross.md)) | preview |
+| `aarch64-windows-gnu` | llvm 23 with `xim:mingw-w64-sysroot` (llvm-mingw's target side) — built on any host; the same base serves `x86_64-windows-gnu` where no gcc payload exists | preview |
+| `x86_64-freebsd` · `aarch64-freebsd` | the platform that serves them, over `xim:<arch>-freebsd-sysroot` ([22](docs/22-target-side.md)) | preview |
+| `x86_64-freebsd-musl` · `aarch64-freebsd-musl` | llvm 23 — a static FreeBSD program with a musl C library over openkal-freebsd, built on any host *(what `<arch>-freebsd` is with no platform chosen)* | preview |
+| `riscv64-linux-musl` · `x86_64-macos` · `i686-linux-musl` · `i686-linux-gnu` · `i686-openkal` | — | planned |
+| `x86_64-openkal` · `aarch64-openkal` | llvm 23 — an ok image: one artifact per architecture, run by `okrun` on Linux, macOS and Windows; the C library and C++ run-time inside it are packages ([24](docs/24-openkal-cross.md)) | verified |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with the `node` the payload declares (`xim:node`), not one found on PATH | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |
 | `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |

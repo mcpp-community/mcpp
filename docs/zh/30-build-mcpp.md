@@ -92,7 +92,7 @@ mcpp build      # compiles + runs build.mcpp, then builds the project
 | `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建（绝对路径，或相对包根）。下游效果与 `generated=` 相同；语义区别在于文件是程序*选中*的（tarball payload / vendored 源树）而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录（`-I`；绝对路径或相对包根，自动规范化）。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`，但排在系统目录**之后**搜索（`-idirafter`）——用于会遮蔽系统头的 payload 源树 |
-| `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**（宿主跑不了它时）。一个 token 一次调用、按顺序；产物路径会被追加（或替换 `{}`）。**到达消费者**。可执行文件要发**绝对路径**，且**只能有一个**依赖提供它 |
+| `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**（宿主跑不了它时）。一个 token 一次调用、按顺序；产物路径会被追加（或替换 `{}`）。**到达消费者**。写程序名（按 [41](41-devices.md) 所述查找），且**只能有一个**依赖提供它 |
 | `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | 加一条本程序**算出来的**链接标志，原样传递。这是 `link-lib` / `link-search` / `link-script` 各自命名一类东西之后留下的出口：生成的版本脚本（`-Wl,--version-script=`）、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、以及 `-Wl,--exclude-libs,ALL`（静态吞入的第三方不得成为本包 ABI 的一部分）。按发出顺序追加在 `[build] ldflags` 之后。**到达消费者**，与 `[build] ldflags` 一致 —— 理由见下 |
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | 设置**本包**可执行目标 `<target>` 的 PE 子系统（`console` 或 `windows`），与 `[targets.<target>] windows_subsystem`（docs/04）是同一字段。只到达该目标的链接，不到达其他目标或消费者，在非 PE 目标上不产生任何标志。本包未以 `kind = "bin"` 声明该目标、取值不在集合内、取值与 mcpp.toml 的声明矛盾，这三种情形都在应用任何指令之前被拒绝 |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | 设置可执行目标 `<target>` 的入口函数（`main`、`wmain`、`WinMain` 或 `wWinMain`），与 `windows_entry` 是同一字段；作用域与拒绝条件同 `windows-subsystem` |
@@ -171,6 +171,7 @@ int main() {
 | `mcpp::seal(step, token)` *(协议 17)* | `mcpp:seal=` —— 封装步骤 `step` 的一个 token，在链接出的文件（`{}`）发布之前运行；即 `link.seal` |
 | `mcpp::run_host(h)` *(协议 17)* | `mcpp:run-host=` —— `"same-arch"` 或 `"any"`；即 `runner.host` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
+| `mcpp::runner_spec` *(协议 19)* | `mcpp:runner-spec=` —— 一条陈述的 runner，与数据中的表逐字段对应；见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的，或编进本构建程序的某个依赖声明的（2026.9.6.6+）；没声明或没安装时返回 `""`（见下） |
 | `mcpp::xpkg_source(ns, name)` / `mcpp::xpkg_program(ns, name)` *(协议 15)* | 该载荷从哪里来 —— `payload`、`override`、`pending` 或 `""` —— 以及一条覆盖点名的程序 |
 | `mcpp::xpkg_request(ns, name)` / `mcpp::xpkg_pending()` *(协议 15)* | 一个声明了 `provision = "on-request"` 的载荷的目录；尚未安装时请求它，此时 `xpkg_pending()` 为真，程序应当返回（见下） |
@@ -258,8 +259,9 @@ for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
 调试时把 `-bios default` 换成 `-bios none -semihosting` 是正当需求 —— 且 mcpp 会说明
 它覆盖了哪个依赖。
 
-**可执行文件要发绝对路径。** 裸名会经 `PATH` 解析到一个 shim，而 shim 按**拥有它
-的 home** 派发，那未必是本次构建用的 home。
+**写程序名，不写路径。** 首个词先在 runner 的 `requires` 的包中查找，再在图中各载荷的 `bin/` 中查找，最后查 `PATH`，
+不查当前目录（[41 —— 抵达一台设备](41-devices.md)）。不在包的 `bin/` 下的程序写作 `{pkg:<name>}/<路径>`，包写入
+`requires`（见下文 `runner_spec`），在运行开始时解析；构建时拼出的绝对路径把 home 与版本固化在陈述中。
 
 **只能有一个依赖提供 runner。** 两个板级支持包都声称知道怎么跑这个产物是配置
 错误；mcpp 会**同时点名两个**并报错，而不是把它们并成一个谁也不是的 argv。
@@ -270,7 +272,32 @@ runner，按发出顺序，无论调用来自这个程序的哪个库。要在�
 之间选择的程序，在发出任何一个之前完成选择。以打包格式命名的 runner 在
 `mcpp run --pkg-format <name>` 下抵达该格式的可分发物（[41 —— 抵达一台设备](41-devices.md)）。
 
-### 问，而不是声明：`toolchain_dir` / `sysroot_dir`（2026.8.19.4+）
+### `runner_spec` —— 一条陈述的 runner（2026.11.16.1+，协议 19）
+
+数据中的 runner 是一张表（`runner = { cmd = [...], requires = [...], ... }`，[41](41-devices.md)）；`mcpp::runner_spec`
+是构建程序中的同一张表，逐字段对应，作为一条指令提交：
+
+```cpp
+mcpp::runner_spec web;
+web.name      = "web";                          // 空：缺省 runner
+web.longlived = true;                           // 没有自然结束
+web.arg("{pkg:emsdk}/emscripten/emrun").arg("{}")
+   .require("xim:emsdk");
+web.submit();
+```
+
+| 表的键 | `runner_spec` |
+|---|---|
+| `cmd` | `.arg(tok)`，与 `action.arg()` 相同 |
+| `longlived`、`exclusive`、`enabled` | 同名字段（`enabled` 缺省为 `true`） |
+| `host` | 同名字段（`"same-arch"`、`"any"`） |
+| `hosts` | `.hosts(pair)`，每次一个 `<os>-<arch>` |
+| `requires` | `.require(pkg)`：`requires` 是 C++ 关键字 |
+
+`{}` 是产物，`{pkg:<name>}` 是 `require()` 中该包的根，由第一次使用该 runner 的 `mcpp run` 或 `mcpp test` 安装，构建
+不安装。一个 runner 只用一种方式陈述：同一名字既由 `runner_spec` 又由逐词调用陈述、同一名字提交两次、没有命令、或
+`host` 不是两个词之一时，在应用任何指令之前拒绝。逐词调用保持原义；覆盖、`enabled` 与每个名字一个提供者遵循数据的规则。
+：`toolchain_dir` / `sysroot_dir`（2026.8.19.4+）
 
 ```cpp
 const char* tc = mcpp::toolchain_dir();   // the resolved toolchain's payload root
@@ -882,6 +909,17 @@ int main() {
 所有人，这个集合变成不可知的。对一个谁都没为之提交的格式，mcpp 会拒绝，而不是报告一次
 「什么包都没产出」的成功打包。
 
+**提供者从哪个程序组装产物。** 只包装被打包的包中一个程序的提供者，在声明旁无条件地陈述是哪一个：
+
+```cpp
+mcpp::provides_pack_format("web");
+mcpp::pack_program("app");          // 协议 19，mcpp 2026.11.16.1
+```
+
+此后未指名程序的 `mcpp pack --pkg-format web` 打包 `app`；命令行指名的程序优先；陈述的程序不在本次构建中时，
+拒绝消息指名提供者。提供者在第二遍中什么也没有提交时，拒绝消息列出它在这一遍中陈述的警告（`mcpp::warning`、
+`mcpp::report`）作为原因。因此提供者以这两者说明为何不提交，而不写标准错误：mcpp 只在程序失败时显示标准错误。
+
 **`mcpp pack --pkg-format <name>` 会 prepare 两次。** 一条 `artifact` action 是一条
 ninja 边，而那棵暂存树是 mcpp 在链接**之后**产出的，所以这棵树不可能成为构建出它自己
 那一次 pass 的输入。第一次 pass 收集声明，并在任何东西被编译之前拒绝未知的格式；随后
@@ -933,7 +971,7 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件，永不�
 | `${mcpp.out_dir}` | 构建输出目录 |
 | `${mcpp.bin_dir}` | 产出的二进制所在目录:`bin/`;工作区成员的构建程序声明的 action 中为该成员的产物目录(2026.9.29.4+) |
 | `${mcpp.compile_db}` | `compile_commands.json` 的路径（clang-tidy 的 `-p` 要的就是它） |
-| `${mcpp.contract}` *(2026.10.30.1+)* | 配置的契约 `mcpp-contract.json` 的路径，与该配置的编译数据库同目录：每种语言的编译器与每个单元都带的词（目标、sysroot、目标侧的头文件、平台与 profile 的标志），以及链接驱动、它的词与归档工具。外部构建系统读它，以引擎的方式为目标编译；包自己的包含目录不在其中，引擎为自己的单元选择的 C++ 方言与模块词（`-std=`、`-fmodules`）也不在其中 |
+| `${mcpp.contract}` *(2026.10.30.1+)* | 配置的契约 `mcpp-contract.json` 的路径，与该配置的编译数据库同目录：每种语言的编译器与每个单元都带的词（目标、sysroot、目标侧的头文件、平台与 profile 的标志），以及链接驱动、它的词与归档工具。外部构建系统读它，以引擎的方式为目标编译；包自己的包含目录不在其中，引擎为自己的单元选择的 C++ 方言与模块词（`-std=`、`-fmodules`）也不在其中。自 2026.11.7.1 起，链接参数描述目标配置，不含消费包自己的链接标志和库；这些库可能正是外部构建尚待生成的产物 |
 | `${mcpp.target_file:<name>}` | target `<name>` 构建出的文件 |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树，绝对路径。仅 `artifact` role 可用，且仅在 `mcpp pack --pkg-format <name>` 下可用 |
 | `${mcpp.self}` *(2026.9.13.1+)* | 引擎自己的可执行文件，绝对路径。action 的命令是没有 shell 的 argv，构建程序因此没有可移植的拷贝手段；引擎在构建运行的每台机器上都在，`${mcpp.self} stage --verify content --output <dst> <src>` 拷贝一个文件、创建目标的父目录、只在字节不同时写入。这个参数形状自 2026.9.13.1 起是契约；写下它的构建程序即以该版本为下限 |
@@ -1147,8 +1185,11 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 | `MCPP_TARGET_OS` *(0.0.100+)* | `mcpp::target_os()` | 目标的 OS 段（`linux`/`macos`/`windows`）——不必再手撕 `MCPP_TARGET` |
 | `MCPP_TARGET_ARCH` *(0.0.100+)* | `mcpp::target_arch()` | 目标的 arch 段（GNU 拼写：`x86_64`、`aarch64`…） |
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | 目标的 env 段（`gnu`/`musl`/`msvc`）；三元组无 env 段（macOS）时为空串 |
+| `MCPP_TARGET_PROVIDER` *(2026.11.9.1+)* | `mcpp::target_provider()` | 选择为目标身份给出的提供者（`openkal`、`musl-gcc`、`msvc` 等；SPEC-016 §4）；宿主自身的构建为空串 |
+| `MCPP_KERNEL_ABI_INTERFACES` *(2026.11.10.1+)* | `mcpp::kernel_abi_interfaces()` | 声明 `requires = ["mcpp:kernel-abi=..."]` 的包：所解析的 kernel-abi 提供者的 `provides-interfaces`，以 `;` 连接（`openkal.fs;openkal.process;...`）。总是设置；提供者未声明清单或包没有该需求时为空，程序把空读作「未知」，按全部接口绑定 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名（`dev`/`release`/…） |
+| `MCPP_TARGET_SDK` *(2026.11.14.1+)* | `mcpp::target_sdk()` | 链接以 `-isysroot` 指名的 SDK（macOS 主机上的 Mach-O 链接）；不指名时为空串。提供某个系统库存根的包只在它为空时提供：不为空时链接中已有 SDK 的完整库 |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`；不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录；不指时为空串（musl 与 MinGW 载荷自带汇编器与链接器） |
 | `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | 解析出的工具链使用的 C++ 标准库 —— `libstdc++`、`libc++`、`msvc-stl`；没有工具链解析时为空串。与 `MCPP_TARGET_LIBC` 不是同一个问题，后者是 C 库 |
@@ -1178,6 +1219,20 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来，缓存
 
 这些契约值**无条件**折入重跑键——换 target、换 profile、开关 feature 都会触发重跑，
 不需要任何 `rerun-if-env-changed` 声明。
+
+### 测试程序的逻辑：`mcpp::context`（mcpp 2026.11.8.1+）
+
+每个类型化读取函数都经由同一个函数读取：在 `mcpp::context` 之内，取上下文陈述的值，最内层优先；上下文
+未陈述的名字取外层上下文的值，再取环境。构建程序或插件逻辑的测试因此在自己的进程中陈述引擎的值，而不改变
+进程的环境：
+
+```cpp
+mcpp::context engine({{"MCPP_TARGET_OS", "windows"}, {"MCPP_FEATURE_FAST", "1"}});
+expect(choose_flags() == "/O2");
+```
+
+上下文属于创建它的线程，随其作用域结束。一个上下文最多容纳 64 个值，不复制它所命名的字符串，这些字符串的
+生存期长于上下文（字面量即是如此）。
 
 ### 两个方向上的文本都是 UTF-8（mcpp 2026.9.26.1+）
 

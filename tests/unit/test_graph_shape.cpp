@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 import std;
+import mcpplibs.mtest;
 import mcpp.build.graph_shape;
+
+using namespace mcpplibs::mtest;
 
 // The header line build.ninja carries is what the fast paths read before any
 // plan exists. Four facts ride it -- the graph's shape, the module-edge
@@ -37,72 +39,65 @@ std::filesystem::path write_graph(const std::string& first) {
 
 } // namespace
 
-TEST(GraphShape, TheHeaderNamesShapeScheduleSelectionAndFormat) {
-    EXPECT_EQ(mcpp::build::header_line(mcpp::build::GraphShape::Normal, "none", false),
-              "# mcpp:graph=normal;schedule=none;accel=default;dist=none;request=");
-    EXPECT_EQ(mcpp::build::header_line(mcpp::build::GraphShape::WithTests, "two-phase", true),
-              "# mcpp:graph=test;schedule=two-phase;accel=override;dist=none;request=");
+UTest the_header_names_shape_schedule_selection_and_format{"GraphShape/TheHeaderNamesShapeScheduleSelectionAndFormat", [] {
+    expect(eq(mcpp::build::header_line(mcpp::build::GraphShape::Normal, "none", false), "# mcpp:graph=normal;schedule=none;accel=default;dist=none;request="));
+    expect(eq(mcpp::build::header_line(mcpp::build::GraphShape::WithTests, "two-phase", true), "# mcpp:graph=test;schedule=two-phase;accel=override;dist=none;request="));
     // An empty format reads as "none" rather than as an empty field: the value
     // has to be a word, because `read_pack_format` returning "" already means
     // "this file predates the field", and the two must not collide.
-    EXPECT_EQ(mcpp::build::header_line(mcpp::build::GraphShape::Normal, "none", false, "appimage"),
-              "# mcpp:graph=normal;schedule=none;accel=default;dist=appimage;request=");
-}
+    expect(eq(mcpp::build::header_line(mcpp::build::GraphShape::Normal, "none", false, "appimage"), "# mcpp:graph=normal;schedule=none;accel=default;dist=appimage;request="));
+}};
 
 // Workspace design 2026-09-29 §3: the request a graph was planned for rides
 // the same line, because the features and the workspace members no longer
 // name the directory. One tag per request, whatever the spelling.
-TEST(GraphShape, TheHeaderNamesTheRequest) {
+UTest the_header_names_the_request{"GraphShape/TheHeaderNamesTheRequest", [] {
     using namespace mcpp::build;
     const auto tag = request_tag("cli\x1egui", "b, a");
-    EXPECT_EQ(tag, request_tag("cli\x1egui", "a,b"));
-    EXPECT_NE(tag, request_tag("cli", "a,b"));
-    EXPECT_NE(tag, request_tag("cli\x1egui", "a"));
-    EXPECT_EQ(read_request(write_graph(header_line(GraphShape::Normal, "none", false, {}, tag))),
-              tag);
-    EXPECT_EQ(read_request(write_graph("# mcpp:graph=normal;schedule=none;accel=default;dist=none")),
-              "");
-}
+    expect(eq(tag, request_tag("cli\x1egui", "a,b")));
+    expect(ne(tag, request_tag("cli", "a,b")));
+    expect(ne(tag, request_tag("cli\x1egui", "a")));
+    expect(eq(read_request(write_graph(header_line(GraphShape::Normal, "none", false, {}, tag))), tag));
+    expect(eq(read_request(write_graph("# mcpp:graph=normal;schedule=none;accel=default;dist=none")), ""));
+}};
 
-TEST(GraphShape, OnlyAPlainGraphWithTheManifestsVariantIsReplayed) {
+UTest only_a_plain_graph_with_the_manifests_variant_is_replayed{"GraphShape/OnlyAPlainGraphWithTheManifestsVariantIsReplayed", [] {
     using namespace mcpp::build;
-    EXPECT_TRUE(is_plain_build_graph(write_graph(header_line(GraphShape::Normal, "none", false))));
+    expect(is_plain_build_graph(write_graph(header_line(GraphShape::Normal, "none", false))));
     // An override chose this variant: a plain build must not replay it.
-    EXPECT_FALSE(is_plain_build_graph(write_graph(header_line(GraphShape::Normal, "none", true))));
+    expect(!(is_plain_build_graph(write_graph(header_line(GraphShape::Normal, "none", true)))));
     // The test-shaped graph was already refused.
-    EXPECT_FALSE(is_plain_build_graph(write_graph(header_line(GraphShape::WithTests, "none", false))));
+    expect(!(is_plain_build_graph(write_graph(header_line(GraphShape::WithTests, "none", false)))));
     // A DISTRIBUTION EDGE IS NOT PART OF A PLAIN BUILD. `mcpp pack --format
     // appimage` makes a build program submit an artifact action consuming the
     // staged tree; replaying that graph for a plain build would produce a
     // distributable as a side effect of `mcpp build`, from a staged tree that
     // is no longer guaranteed to describe this build.
-    EXPECT_FALSE(is_plain_build_graph(
-        write_graph(header_line(GraphShape::Normal, "none", false, "appimage"))));
-    EXPECT_EQ(read_pack_format(
-                  write_graph(header_line(GraphShape::Normal, "none", false, "appimage"))),
-              "appimage");
-    EXPECT_EQ(read_pack_format(
-                  write_graph(header_line(GraphShape::Normal, "none", false))),
-              "none");
-}
+    expect(!(is_plain_build_graph(
+        write_graph(header_line(GraphShape::Normal, "none", false, "appimage")))));
+    expect(eq(read_pack_format(
+                  write_graph(header_line(GraphShape::Normal, "none", false, "appimage"))), "appimage"));
+    expect(eq(read_pack_format(
+                  write_graph(header_line(GraphShape::Normal, "none", false))), "none"));
+}};
 
-TEST(GraphShape, AGraphThatPredatesTheFieldIsAMiss) {
+UTest a_graph_that_predates_the_field_is_a_miss{"GraphShape/AGraphThatPredatesTheFieldIsAMiss", [] {
     using namespace mcpp::build;
     // Written by a 2026.9.5.2 mcpp: shape and schedule, no selection. It is
     // not known to be the manifest's variant, so it is prepared once more and
     // rewritten with the field -- a miss, never a guess.
     auto p = write_graph("# mcpp:graph=normal;schedule=none");
-    EXPECT_EQ(read_shape(p), GraphShape::Normal);
-    EXPECT_EQ(read_accel_selection(p), "");
-    EXPECT_EQ(read_pack_format(p), "");
-    EXPECT_FALSE(is_plain_build_graph(p));
+    expect(eq(read_shape(p), GraphShape::Normal));
+    expect(eq(read_accel_selection(p), ""));
+    expect(eq(read_pack_format(p), ""));
+    expect(!is_plain_build_graph(p));
 
     // Written by a 2026.9.10.2 mcpp: shape, schedule and selection, no
     // distribution field. Same rule one field later -- absent is a miss, and
     // must not be read as "none", or the very first build after an upgrade
     // would replay a graph this binary cannot describe.
     auto q = write_graph("# mcpp:graph=normal;schedule=none;accel=default");
-    EXPECT_EQ(read_accel_selection(q), "default");
-    EXPECT_EQ(read_pack_format(q), "");
-    EXPECT_FALSE(is_plain_build_graph(q));
-}
+    expect(eq(read_accel_selection(q), "default"));
+    expect(eq(read_pack_format(q), ""));
+    expect(!is_plain_build_graph(q));
+}};

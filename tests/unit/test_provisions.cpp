@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.provisions;
+
+using namespace mcpplibs::mtest;
 
 // A build-time provision — a host tool, a host build rule, a dependency's
 // directory — is something a dependency hands to its consumer's build PROGRAM.
@@ -46,61 +48,61 @@ bool sees_dir(const prov::Propagation& p, std::size_t consumer,
 
 // ── Table integrity ────────────────────────────────────────────────────────
 
-TEST(Provisions, EveryKindAnswersBothQuestions) {
+UTest every_kind_answers_both_questions{"Provisions/EveryKindAnswersBothQuestions", [] {
     // The table exists so a new provision kind cannot be added without someone
     // stating how far it travels. A row that answered neither would compile
     // fine and silently pick a default, which is the exact failure #359 fixed.
     std::set<prov::Kind> seen;
     for (auto const& d : prov::kTable) {
-        EXPECT_FALSE(d.name.empty());
-        EXPECT_TRUE(d.needsReexport) << d.name;
+        expect(!d.name.empty());
+        expect(bool(d.needsReexport)) << d.name;
         seen.insert(d.kind);
     }
-    EXPECT_EQ(seen.size(), 3u);
-    EXPECT_TRUE(prov::def_of(prov::Kind::Tool).bareAddressable);
-    EXPECT_TRUE(prov::def_of(prov::Kind::DepDir).bareAddressable);
+    expect(eq(seen.size(), 3u));
+    expect(bool(prov::def_of(prov::Kind::Tool).bareAddressable));
+    expect(bool(prov::def_of(prov::Kind::DepDir).bareAddressable));
     // A host module is addressed by `import <name>;` — the compiler resolves
     // it, so there is no bare-name channel for mcpp to bind.
-    EXPECT_FALSE(prov::def_of(prov::Kind::HostModule).bareAddressable);
-}
+    expect(!(prov::def_of(prov::Kind::HostModule).bareAddressable));
+}};
 
 // ── Propagation ────────────────────────────────────────────────────────────
 
-TEST(Provisions, ToolIsVisibleToTheRequesterWithoutAnyReexport) {
+UTest tool_is_visible_to_the_requester_without_any_reexport{"Provisions/ToolIsVisibleToTheRequesterWithoutAnyReexport", [] {
     // 0=root, 1=protobuf.  root --tools=[protoc]--> protobuf
     std::vector<Edge> edges{ { 0, 1, { "protoc" }, false, false, false } };
     auto p = prov::propagate(edges, 2);
-    EXPECT_TRUE(sees_tool(p, 0, 1, "protoc"));
+    expect(bool(sees_tool(p, 0, 1, "protoc")));
     // Nothing to export: the root has no consumers, and it never said it
     // re-exported anything anyway.
-    EXPECT_TRUE(p.exported[0].empty());
-}
+    expect(p.exported[0].empty());
+}};
 
-TEST(Provisions, WithoutReexportALibrarysToolStaysWithTheLibrary) {
+UTest without_reexport_a_librarys_tool_stays_with_the_library{"Provisions/WithoutReexportALibrarysToolStaysWithTheLibrary", [] {
     // 0=app, 1=lib, 2=protobuf.  app -> lib --tools=[protoc]--> protobuf
     std::vector<Edge> edges{
         { 0, 1, {}, false, false, false },
         { 1, 2, { "protoc" }, false, false, /*reexport=*/false },
     };
     auto p = prov::propagate(edges, 3);
-    EXPECT_TRUE(sees_tool(p, 1, 2, "protoc"));
+    expect(bool(sees_tool(p, 1, 2, "protoc")));
     // THE test: an ordinary dependency must not push entries into its
     // consumer's tool namespace. That is a supply-chain rule, not a
     // convenience — which is why `reexport` defaults to false.
-    EXPECT_FALSE(sees_tool(p, 0, 2, "protoc"));
-}
+    expect(!sees_tool(p, 0, 2, "protoc"));
+}};
 
-TEST(Provisions, ReexportHandsTheToolToTheLibrarysConsumer) {
+UTest reexport_hands_the_tool_to_the_librarys_consumer{"Provisions/ReexportHandsTheToolToTheLibrarysConsumer", [] {
     std::vector<Edge> edges{
         { 0, 1, {}, false, false, false },
         { 1, 2, { "protoc" }, false, false, /*reexport=*/true },
     };
     auto p = prov::propagate(edges, 3);
-    EXPECT_TRUE(sees_tool(p, 0, 2, "protoc"));
-    EXPECT_TRUE(sees_tool(p, 1, 2, "protoc"));
-}
+    expect(bool(sees_tool(p, 0, 2, "protoc")));
+    expect(bool(sees_tool(p, 1, 2, "protoc")));
+}};
 
-TEST(Provisions, ReexportTravelsFurtherOnlyWhenEachHopSaysSo) {
+UTest reexport_travels_further_only_when_each_hop_says_so{"Provisions/ReexportTravelsFurtherOnlyWhenEachHopSaysSo", [] {
     // 0=app, 1=mid, 2=lib, 3=protobuf.
     // lib re-exports protoc to mid; mid does NOT re-export to app.
     std::vector<Edge> edges{
@@ -109,30 +111,30 @@ TEST(Provisions, ReexportTravelsFurtherOnlyWhenEachHopSaysSo) {
         { 2, 3, { "protoc" }, false, false, /*reexport=*/true },
     };
     auto p = prov::propagate(edges, 4);
-    EXPECT_TRUE(sees_tool(p, 2, 3, "protoc"));
-    EXPECT_TRUE(sees_tool(p, 1, 3, "protoc"));
-    EXPECT_FALSE(sees_tool(p, 0, 3, "protoc"));
+    expect(bool(sees_tool(p, 2, 3, "protoc")));
+    expect(bool(sees_tool(p, 1, 3, "protoc")));
+    expect(!sees_tool(p, 0, 3, "protoc"));
 
     // Flip the middle hop and it reaches all the way. Each package decides
     // what IT hands to ITS consumers; nothing decides on someone else's
     // behalf.
     edges[1].reexport = true;
     auto q = prov::propagate(edges, 4);
-    EXPECT_TRUE(sees_tool(q, 0, 3, "protoc"));
-}
+    expect(bool(sees_tool(q, 0, 3, "protoc")));
+}};
 
-TEST(Provisions, HostModuleFollowsTheSameRule) {
+UTest host_module_follows_the_same_rule{"Provisions/HostModuleFollowsTheSameRule", [] {
     std::vector<Edge> edges{
         { 0, 1, {}, false, false, false },
         { 1, 2, {}, /*buildTable=*/true, /*wantsLibrary=*/true, /*reexport=*/true },
     };
     auto p = prov::propagate(edges, 3);
     const prov::Provision rule{ prov::Kind::HostModule, 2, {} };
-    EXPECT_TRUE(p.visible[0].contains(rule));
-    EXPECT_TRUE(p.visible[1].contains(rule));
-}
+    expect(p.visible[0].contains(rule));
+    expect(p.visible[1].contains(rule));
+}};
 
-TEST(Provisions, EveryEdgeExposesTheDependencyDirectory) {
+UTest every_edge_exposes_the_dependency_directory{"Provisions/EveryEdgeExposesTheDependencyDirectory", [] {
     // dep_dir() has always worked for a DIRECT dependency without anyone
     // declaring anything; that stays true. Re-export is what extends it.
     std::vector<Edge> edges{
@@ -141,13 +143,13 @@ TEST(Provisions, EveryEdgeExposesTheDependencyDirectory) {
         { 1, 3, {}, false, false, /*reexport=*/false },
     };
     auto p = prov::propagate(edges, 4);
-    EXPECT_TRUE(sees_dir(p, 0, 1));
-    EXPECT_TRUE(sees_dir(p, 0, 2));
-    EXPECT_FALSE(sees_dir(p, 0, 3));
-    EXPECT_TRUE(sees_dir(p, 1, 3));
-}
+    expect(bool(sees_dir(p, 0, 1)));
+    expect(bool(sees_dir(p, 0, 2)));
+    expect(!sees_dir(p, 0, 3));
+    expect(bool(sees_dir(p, 1, 3)));
+}};
 
-TEST(Provisions, ACycleTerminates) {
+UTest a_cycle_terminates{"Provisions/ACycleTerminates", [] {
     // Resolution should not produce one, but the fixpoint must not depend on
     // that: sets only grow and are bounded, so a cycle simply stops changing.
     std::vector<Edge> edges{
@@ -155,58 +157,58 @@ TEST(Provisions, ACycleTerminates) {
         { 1, 0, { "b" }, false, false, true },
     };
     auto p = prov::propagate(edges, 2);
-    EXPECT_TRUE(sees_tool(p, 0, 1, "a"));
-    EXPECT_TRUE(sees_tool(p, 1, 0, "b"));
-}
+    expect(bool(sees_tool(p, 0, 1, "a")));
+    expect(bool(sees_tool(p, 1, 0, "b")));
+}};
 
 // ── Bare-name binding ──────────────────────────────────────────────────────
 
-TEST(Provisions, ALoneCandidateOwnsItsBareName) {
+UTest a_lone_candidate_owns_its_bare_name{"Provisions/ALoneCandidateOwnsItsBareName", [] {
     auto b = prov::bind_bare_names({ "compat.protobuf" });
-    ASSERT_TRUE(b.contains("protobuf"));
-    EXPECT_EQ(b["protobuf"].owner, "compat.protobuf");
-    EXPECT_FALSE(b["protobuf"].contested);
-    EXPECT_TRUE(prov::contest_note("protobuf", b["protobuf"]).empty());
-}
+    expect(fatal(b.contains("protobuf")));
+    expect(eq(b["protobuf"].owner, "compat.protobuf"));
+    expect(!(b["protobuf"].contested));
+    expect(prov::contest_note("protobuf", b["protobuf"]).empty());
+}};
 
-TEST(Provisions, ANonDefaultNamespaceStillGetsItsBareName) {
+UTest a_non_default_namespace_still_gets_its_bare_name{"Provisions/ANonDefaultNamespaceStillGetsItsBareName", [] {
     // grpc-m's rule calls dep_bin("grpc-plugin", …); (grpc, grpc-plugin) is on
     // no rung of the package-identity ladder, so without the
     // unique-candidate rung the spelling already in the wild would break.
     auto b = prov::bind_bare_names({ "grpc.grpc-plugin" });
-    EXPECT_EQ(b["grpc-plugin"].owner, "grpc.grpc-plugin");
-}
+    expect(eq(b["grpc-plugin"].owner, "grpc.grpc-plugin"));
+}};
 
-TEST(Provisions, TheLadderPicksTheDefaultNamespaceFirst) {
+UTest the_ladder_picks_the_default_namespace_first{"Provisions/TheLadderPicksTheDefaultNamespaceFirst", [] {
     auto b = prov::bind_bare_names({ "compat.zlib", "mcpplibs.zlib", "acme.zlib" });
-    EXPECT_EQ(b["zlib"].owner, "mcpplibs.zlib");
-    EXPECT_TRUE(b["zlib"].contested);
+    expect(eq(b["zlib"].owner, "mcpplibs.zlib"));
+    expect(bool(b["zlib"].contested));
     // Contested but bound: the user is told which one won and how to name the
     // other, rather than getting whichever the loop appended last.
     auto note = prov::contest_note("zlib", b["zlib"]);
-    EXPECT_NE(note.find("mcpplibs.zlib"), std::string::npos);
-    EXPECT_NE(note.find("acme.zlib"), std::string::npos);
-}
+    expect(ne(note.find("mcpplibs.zlib"), std::string::npos));
+    expect(ne(note.find("acme.zlib"), std::string::npos));
+}};
 
-TEST(Provisions, CompatIsTheSecondRung) {
+UTest compat_is_the_second_rung{"Provisions/CompatIsTheSecondRung", [] {
     auto b = prov::bind_bare_names({ "compat.zlib", "acme.zlib" });
-    EXPECT_EQ(b["zlib"].owner, "compat.zlib");
-}
+    expect(eq(b["zlib"].owner, "compat.zlib"));
+}};
 
-TEST(Provisions, TwoUnreachableNamespacesLeaveTheBareNameUnbound) {
+UTest two_unreachable_namespaces_leave_the_bare_name_unbound{"Provisions/TwoUnreachableNamespacesLeaveTheBareNameUnbound", [] {
     // Neither is on the ladder and neither is unique. Binding either one would
     // be an arbitrary choice that decides which binary runs.
     auto b = prov::bind_bare_names({ "acme.protoc-ish", "other.protoc-ish" });
-    EXPECT_TRUE(b["protoc-ish"].owner.empty());
-    EXPECT_TRUE(b["protoc-ish"].contested);
+    expect(b["protoc-ish"].owner.empty());
+    expect(bool(b["protoc-ish"].contested));
     auto note = prov::contest_note("protoc-ish", b["protoc-ish"]);
-    EXPECT_NE(note.find("NOT"), std::string::npos);
-}
+    expect(ne(note.find("NOT"), std::string::npos));
+}};
 
-TEST(Provisions, AnUnnamespacedPackageIsTheThirdRung) {
+UTest an_unnamespaced_package_is_the_third_rung{"Provisions/AnUnnamespacedPackageIsTheThirdRung", [] {
     auto b = prov::bind_bare_names({ "grpcgen", "acme.grpcgen" });
-    EXPECT_EQ(b["grpcgen"].owner, "grpcgen");
-}
+    expect(eq(b["grpcgen"].owner, "grpcgen"));
+}};
 
 // ── Host module identity ───────────────────────────────────────────────────
 //
@@ -229,41 +231,40 @@ std::filesystem::path write_iface(std::string_view stem, std::string_view body) 
 
 } // namespace
 
-TEST(HostModuleIdentity, TheDeclaredNameWinsOverThePackageName) {
+UTest the_declared_name_wins_over_the_package_name{"HostModuleIdentity/TheDeclaredNameWinsOverThePackageName", [] {
     auto p = write_iface("declared-wins",
                          "export module mcpp.rules.protobuf;\nimport std;\n");
-    EXPECT_EQ(prov::host_module_name(p, "protobufgen"), "mcpp.rules.protobuf");
-}
+    expect(eq(prov::host_module_name(p, "protobufgen"), "mcpp.rules.protobuf"));
+}};
 
-TEST(HostModuleIdentity, ADottedNameSurvivesWhole) {
+UTest a_dotted_name_survives_whole{"HostModuleIdentity/ADottedNameSurvivesWhole", [] {
     // `declared_module_roots` is named for module ROOTS as opposed to
     // partitions; it must not truncate `a.b.c` to `a`, or every namespaced
     // rule would register under one colliding name.
     auto p = write_iface("dotted", "export module a.b.c;\n");
-    EXPECT_EQ(prov::host_module_name(p, "fallback"), "a.b.c");
-}
+    expect(eq(prov::host_module_name(p, "fallback"), "a.b.c"));
+}};
 
-TEST(HostModuleIdentity, AgreementIsTheCommonCaseAndIsUnchanged) {
+UTest agreement_is_the_common_case_and_is_unchanged{"HostModuleIdentity/AgreementIsTheCommonCaseAndIsUnchanged", [] {
     // The zero-break claim: every rule package that works today declares a
     // name equal to its package name, so the scan returns what the old code
     // returned.
     auto p = write_iface("grpcgen", "export module grpcgen;\nimport std;\n");
-    EXPECT_EQ(prov::host_module_name(p, "grpcgen"), "grpcgen");
-}
+    expect(eq(prov::host_module_name(p, "grpcgen"), "grpcgen"));
+}};
 
-TEST(HostModuleIdentity, AnUnreadableInterfaceFallsBackToThePackageName) {
+UTest an_unreadable_interface_falls_back_to_the_package_name{"HostModuleIdentity/AnUnreadableInterfaceFallsBackToThePackageName", [] {
     // build_host_module reports a missing interface unit by path, and that
     // diagnostic needs a name to report the package with.
-    EXPECT_EQ(prov::host_module_name("/nonexistent/nowhere.cppm", "rulepkg"),
-              "rulepkg");
-}
+    expect(eq(prov::host_module_name("/nonexistent/nowhere.cppm", "rulepkg"), "rulepkg"));
+}};
 
-TEST(HostModuleIdentity, AnInterfaceDeclaringNoModuleFallsBack) {
+UTest an_interface_declaring_no_module_falls_back{"HostModuleIdentity/AnInterfaceDeclaringNoModuleFallsBack", [] {
     auto p = write_iface("nomodule", "int main() { return 0; }\n");
-    EXPECT_EQ(prov::host_module_name(p, "rulepkg"), "rulepkg");
-}
+    expect(eq(prov::host_module_name(p, "rulepkg"), "rulepkg"));
+}};
 
-TEST(HostModuleIdentity, TwoRulesProvidingOneModuleNameAreRefused) {
+UTest two_rules_providing_one_module_name_are_refused{"HostModuleIdentity/TwoRulesProvidingOneModuleNameAreRefused", [] {
     // Designated initialisers on purpose. Positional aggregate init put the
     // interface path into a field added later, and the test then asserted that
     // a path it had never passed was absent — a green that meant nothing until
@@ -275,16 +276,16 @@ TEST(HostModuleIdentity, TwoRulesProvidingOneModuleNameAreRefused) {
          .interface = "/b/src/rules.cppm"},
     };
     auto clash = prov::host_module_collision(mods);
-    ASSERT_TRUE(clash.has_value());
+    expect(fatal(clash.has_value()));
     // Both identities and both paths are the CONTENT of this diagnostic: with
     // one module name shared, they are the only way to tell the two apart.
-    EXPECT_NE(clash->find("acme.tidy"), std::string::npos);
-    EXPECT_NE(clash->find("other.tidy"), std::string::npos);
-    EXPECT_NE(clash->find("/a/src/tidy.cppm"), std::string::npos);
-    EXPECT_NE(clash->find("/b/src/rules.cppm"), std::string::npos);
-}
+    expect(ne(clash->find("acme.tidy"), std::string::npos));
+    expect(ne(clash->find("other.tidy"), std::string::npos));
+    expect(ne(clash->find("/a/src/tidy.cppm"), std::string::npos));
+    expect(ne(clash->find("/b/src/rules.cppm"), std::string::npos));
+}};
 
-TEST(HostModuleIdentity, DistinctModuleNamesFromOnePackageNameAreFine) {
+UTest distinct_module_names_from_one_package_name_are_fine{"HostModuleIdentity/DistinctModuleNamesFromOnePackageNameAreFine", [] {
     // The mirror of the previous test, and the reason I1 and I3 ship together:
     // decoupling the names is what makes two packages able to share a package
     // name while differing in what they declare.
@@ -294,58 +295,58 @@ TEST(HostModuleIdentity, DistinctModuleNamesFromOnePackageNameAreFine) {
         {.module = "lints", .package = "other.rules",
          .interface = "/b/src/rules.cppm"},
     };
-    EXPECT_FALSE(prov::host_module_collision(mods).has_value());
-}
+    expect(!(prov::host_module_collision(mods).has_value()));
+}};
 
-TEST(ReservedPrefix, AnOutsidePackageClaimingMcppIsWarnedAbout) {
+UTest an_outside_package_claiming_mcpp_is_warned_about{"ReservedPrefix/AnOutsidePackageClaimingMcppIsWarnedAbout", [] {
     auto w = prov::reserved_prefix_warning("mcpp.rules.protobuf", "acme",
                                            "acme.protobufgen");
-    ASSERT_TRUE(w.has_value());
-    EXPECT_NE(w->find("mcpp.rules.protobuf"), std::string::npos);
-    EXPECT_NE(w->find("acme.protobufgen"), std::string::npos);
-}
+    expect(fatal(w.has_value()));
+    expect(ne(w->find("mcpp.rules.protobuf"), std::string::npos));
+    expect(ne(w->find("acme.protobufgen"), std::string::npos));
+}};
 
-TEST(ReservedPrefix, TheOfficialNamespaceIsSilent) {
-    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.rules.protobuf", "mcpp",
-                                               "mcpp.protobuf").has_value());
-}
+UTest the_official_namespace_is_silent{"ReservedPrefix/TheOfficialNamespaceIsSilent", [] {
+    expect(!(prov::reserved_prefix_warning("mcpp.rules.protobuf", "mcpp",
+                                               "mcpp.protobuf").has_value()));
+}};
 
-TEST(ReservedPrefix, AnOrdinaryNameIsSilent) {
-    EXPECT_FALSE(prov::reserved_prefix_warning("grpcgen", "mcpplibs",
-                                               "mcpplibs.grpcgen").has_value());
+UTest an_ordinary_name_is_silent{"ReservedPrefix/AnOrdinaryNameIsSilent", [] {
+    expect(!(prov::reserved_prefix_warning("grpcgen", "mcpplibs",
+                                               "mcpplibs.grpcgen").has_value()));
     // `mcppish` is not under the `mcpp.` prefix: the dot is what makes the
     // claim, and a substring test would have flagged this.
-    EXPECT_FALSE(prov::reserved_prefix_warning("mcppish", "acme",
-                                               "acme.mcppish").has_value());
-}
+    expect(!(prov::reserved_prefix_warning("mcppish", "acme",
+                                               "acme.mcppish").has_value()));
+}};
 
 // #734 E10: a plugin may say it is an mcpp plugin under its own namespace;
 // the official second segments stay the mcpp project's.
-TEST(ReservedPrefix, AnOwnNamespaceUnderMcppIsSilent) {
-    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.acme.protobuf", "acme",
-                                               "acme.protobufgen").has_value());
-    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.acme", "acme",
-                                               "acme.gen").has_value());
-    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.mcpplibs.capi.lua", "mcpplibs.capi",
-                                               "mcpplibs.capi.lua").has_value());
-}
+UTest an_own_namespace_under_mcpp_is_silent{"ReservedPrefix/AnOwnNamespaceUnderMcppIsSilent", [] {
+    expect(!(prov::reserved_prefix_warning("mcpp.acme.protobuf", "acme",
+                                               "acme.protobufgen").has_value()));
+    expect(!(prov::reserved_prefix_warning("mcpp.acme", "acme",
+                                               "acme.gen").has_value()));
+    expect(!(prov::reserved_prefix_warning("mcpp.mcpplibs.capi.lua", "mcpplibs.capi",
+                                               "mcpplibs.capi.lua").has_value()));
+}};
 
-TEST(ReservedPrefix, EveryReservedSecondSegmentIsWarnedAbout) {
+UTest every_reserved_second_segment_is_warned_about{"ReservedPrefix/EveryReservedSecondSegmentIsWarnedAbout", [] {
     for (auto seg : prov::kReservedSecondSegments) {
         auto name = std::string("mcpp.") + std::string(seg) + ".x";
         auto w = prov::reserved_prefix_warning(name, "acme", "acme.x");
-        ASSERT_TRUE(w.has_value()) << name;
-        EXPECT_NE(w->find("mcpp.acme.*"), std::string::npos) << *w;
+        expect(fatal(w.has_value())) << name;
+        if (auto&& failed = expect(ne(w->find("mcpp.acme.*"), std::string::npos)); !failed) failed << *w;
     }
-}
+}};
 
-TEST(ReservedPrefix, AnotherNamespaceUnderMcppIsWarnedAbout) {
+UTest another_namespace_under_mcpp_is_warned_about{"ReservedPrefix/AnotherNamespaceUnderMcppIsWarnedAbout", [] {
     auto w = prov::reserved_prefix_warning("mcpp.other.x", "acme", "acme.x");
-    ASSERT_TRUE(w.has_value());
-    EXPECT_NE(w->find("mcpp.acme.*"), std::string::npos) << *w;
+    expect(fatal(w.has_value()));
+    if (auto&& failed = expect(ne(w->find("mcpp.acme.*"), std::string::npos)); !failed) failed << *w;
     // `mcpp.acmeish` is not under `mcpp.acme.`: the segment boundary decides.
-    EXPECT_TRUE(prov::reserved_prefix_warning("mcpp.acmeish.x", "acme", "acme.x").has_value());
-}
+    expect(prov::reserved_prefix_warning("mcpp.acmeish.x", "acme", "acme.x").has_value());
+}};
 
 // A package that offers several rules through features (mcpp 2026.9.5.3+)
 // contributes every module INTERFACE unit among its resolved sources. The
@@ -353,30 +354,26 @@ TEST(ReservedPrefix, AnotherNamespaceUnderMcppIsWarnedAbout) {
 // wrong answer would turn into a compile of something that cannot be compiled
 // alone -- an implementation unit, a partition -- or into a phantom module
 // named by a comment.
-TEST(InterfaceUnit, ThePrimaryInterfaceDeclarationIsRecognised) {
-    EXPECT_EQ(prov::declared_interface_name("export module mcpp.rules.cuda;\n"),
-              "mcpp.rules.cuda");
-    EXPECT_EQ(prov::declared_interface_name(
-                  "module;\n#include <cstdio>\nexport module a.b;\nimport std;\n"),
-              "a.b");
-    EXPECT_EQ(prov::declared_interface_name("\texport   module\tx ;  // trailing\n"),
-              "x");
-}
+UTest the_primary_interface_declaration_is_recognised{"InterfaceUnit/ThePrimaryInterfaceDeclarationIsRecognised", [] {
+    expect(eq(prov::declared_interface_name("export module mcpp.rules.cuda;\n"), "mcpp.rules.cuda"));
+    expect(eq(prov::declared_interface_name(
+                  "module;\n#include <cstdio>\nexport module a.b;\nimport std;\n"), "a.b"));
+    expect(eq(prov::declared_interface_name("\texport   module\tx ;  // trailing\n"), "x"));
+}};
 
-TEST(InterfaceUnit, WhatIsNotAPrimaryInterfaceIsNotNamed) {
-    EXPECT_EQ(prov::declared_interface_name("module a.b;\n"), "");          // implementation
-    EXPECT_EQ(prov::declared_interface_name("export module a.b:part;\n"), ""); // partition
-    EXPECT_EQ(prov::declared_interface_name("module;\n"), "");              // global fragment
-    EXPECT_EQ(prov::declared_interface_name("export module;\n"), "");
-    EXPECT_EQ(prov::declared_interface_name("// export module a.b;\n"), "");  // documentation
-    EXPECT_EQ(prov::declared_interface_name("exportmodule a.b;\n"), "");
-    EXPECT_EQ(prov::declared_interface_name("int x; // not a module at all\n"), "");
-}
+UTest what_is_not_a_primary_interface_is_not_named{"InterfaceUnit/WhatIsNotAPrimaryInterfaceIsNotNamed", [] {
+    expect(eq(prov::declared_interface_name("module a.b;\n"), ""));          // implementation
+    expect(eq(prov::declared_interface_name("export module a.b:part;\n"), "")); // partition
+    expect(eq(prov::declared_interface_name("module;\n"), ""));              // global fragment
+    expect(eq(prov::declared_interface_name("export module;\n"), ""));
+    expect(eq(prov::declared_interface_name("// export module a.b;\n"), ""));  // documentation
+    expect(eq(prov::declared_interface_name("exportmodule a.b;\n"), ""));
+    expect(eq(prov::declared_interface_name("int x; // not a module at all\n"), ""));
+}};
 
-TEST(InterfaceUnit, TheFirstDeclarationWins) {
+UTest the_first_declaration_wins{"InterfaceUnit/TheFirstDeclarationWins", [] {
     // A file names one module; anything after the first declaration is that
     // module's body, and a quoted declaration inside it is text.
-    EXPECT_EQ(prov::declared_interface_name(
-                  "export module first;\n/* export module second; */\n"),
-              "first");
-}
+    expect(eq(prov::declared_interface_name(
+                  "export module first;\n/* export module second; */\n"), "first"));
+}};

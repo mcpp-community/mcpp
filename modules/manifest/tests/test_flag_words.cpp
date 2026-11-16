@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.manifest.flag_words;
+
+using namespace mcpplibs::mtest;
 
 // SUBSYSTEM-LEVEL. The words an element of a compile-flag list stands for are
 // part of what a manifest MEANS, so the syntax is stated here, with nothing
@@ -15,7 +17,7 @@ using Words = std::vector<std::string>;
 
 // Each row is a spelling found in a manifest or a descriptor and the words it
 // stands for on every host. The first rows are the ones #655 measured.
-TEST(FlagWords, TheSyntaxTable) {
+UTest the_syntax_table{"FlagWords/TheSyntaxTable", [] {
     const std::vector<std::pair<std::string, Words>> rows{
         // libarchive's descriptor, the one quoted spelling the index publishes.
         {R"(-DPLATFORM_CONFIG_H=\"mcpp_libarchive_config.h\")",
@@ -61,23 +63,23 @@ TEST(FlagWords, TheSyntaxTable) {
         {R"(-DV=a\)", {R"(-DV=a\)"}},
     };
     for (auto const& [element, words] : rows)
-        EXPECT_EQ(flag_words(element), words) << "element: " << element;
-}
+        expect(eq(flag_words(element), words)) << "element: " << element;
+}};
 
-TEST(FlagWords, AListIsTheConcatenationOfItsElements) {
+UTest a_list_is_the_concatenation_of_its_elements{"FlagWords/AListIsTheConcatenationOfItsElements", [] {
     const std::vector<std::string> list{"-include x.h", R"(-I"my dir")", "", "-O2"};
-    EXPECT_EQ(flag_words(list), (Words{"-include", "x.h", "-Imy dir", "-O2"}));
-}
+    expect(eq(flag_words(list), (Words{"-include", "x.h", "-Imy dir", "-O2"})));
+}};
 
-TEST(FlagWords, APlainWordIsItsOwnElement) {
+UTest a_plain_word_is_its_own_element{"FlagWords/APlainWordIsItsOwnElement", [] {
     for (std::string_view w : {"-O2", "-DV=1", "-IC:/x", "/std:c++latest", "-Wl,-z,defs", "$x",
                                R"(-IC:\sdk\include)", R"(C:\dir\)"})
-        EXPECT_EQ(flag_element(w), w);
-}
+        expect(eq(flag_element(w), w));
+}};
 
 // The property the engine relies on when it inserts a value into a flag list:
 // the element it writes reads back as exactly that one word.
-TEST(FlagWords, AnElementReadsBackAsItsWord) {
+UTest an_element_reads_back_as_its_word{"FlagWords/AnElementReadsBackAsItsWord", [] {
     Words words{"", " ", "a b", "'", "\"", "\\", "a\\", "\\\\srv\\share", "it's",
                 "-DV=\"def\"", "-DV='c'", "x\ty", "a\"b'c\\d e", "-DT=long long",
                 "-DV=\"a b\"", "/DV=x y"};
@@ -95,15 +97,13 @@ TEST(FlagWords, AnElementReadsBackAsItsWord) {
         words.push_back(std::move(w));
     }
     for (auto const& w : words)
-        EXPECT_EQ(flag_words(flag_element(w)), Words{w}) << "word: [" << w << "]";
-}
+        expect(eq(flag_words(flag_element(w)), Words{w})) << "word: [" << w << "]";
+}};
 
-TEST(HostCommandWords, PosixUndoesShellQuoting) {
-    EXPECT_EQ(host_command_words(R"(a 'b c' "d\"e" f\ g "h\x" -DV="mid")", false),
-              (Words{"a", "b c", "d\"e", "f g", "h\\x", "-DV=mid"}));
-}
+UTest posix_undoes_shell_quoting{"HostCommandWords/PosixUndoesShellQuoting", [] {
+    expect(eq(host_command_words(R"(a 'b c' "d\"e" f\ g "h\x" -DV="mid")", false), (Words{"a", "b c", "d\"e", "f g", "h\\x", "-DV=mid"})));
+}};
 
-TEST(HostCommandWords, WindowsFollowsTheRuntimeRules) {
-    EXPECT_EQ(host_command_words(R"(a "b c" "d\"e" C:\x\ "y\\" z\\\"w 'q')", true),
-              (Words{"a", "b c", "d\"e", "C:\\x\\", "y\\", "z\\\"w", "'q'"}));
-}
+UTest windows_follows_the_runtime_rules{"HostCommandWords/WindowsFollowsTheRuntimeRules", [] {
+    expect(eq(host_command_words(R"(a "b c" "d\"e" C:\x\ "y\\" z\\\"w 'q')", true), (Words{"a", "b c", "d\"e", "C:\\x\\", "y\\", "z\\\"w", "'q'"})));
+}};

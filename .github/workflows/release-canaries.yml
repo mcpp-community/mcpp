@@ -1,9 +1,11 @@
 name: release canaries
 
-# Real projects built with the candidate mcpp before a release is tagged (the
-# 2026-09-28 ecosystem design, WS10). release.yml calls this workflow first and
-# its tag job needs it, so a canary that fails blocks the tag. It can also be
-# dispatched by hand against any branch, to read a candidate early.
+# Real projects built with the candidate mcpp before a release is created (the
+# 2026-09-28 ecosystem design, WS10). release.yml calls this workflow beside
+# its builds when the release is started by hand with `canaries`, and the job
+# that creates the release needs it, so a canary that fails blocks the
+# release. It can also be dispatched by hand against any branch, to read a
+# candidate early.
 #
 # The list is .github/release-canaries.toml. Each canary job builds the
 # candidate from this commit, checks the project out, removes the project's own

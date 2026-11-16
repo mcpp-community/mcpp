@@ -22,9 +22,20 @@ mcpp 经由其包提供者 xlings 安装工具链与包。payload（一个包的
   build-cache/  cache/  provisioned/ …
 
 <project>/.mcpp/
+  .gitignore                `*`：目录忽略自身（2026.11.8.1+）
+  compiler-runs/<hash>/     构建所生成源文件的锁
   indices/<name>/           项目自己的 [indices] 的数据
   xpkgs/                    它们所服务的 payload
 ```
+
+多个进程共用一个 home。写入 provider 状态一次只由一个进程进行（2026.11.10.1+）：进程在安装包、增删索引
+仓库或选择运行时之前取得状态次序，为该包自己的依赖继续持有；等待过次序的进程先重新查找该包，所以两个
+构建同时需要的包只安装一次。次序是状态真实目录（`registry/subos`，解析全部链接；2026.11.13.1+）中的锁
+`.mcpp-state.lock`，因此经链接到达同一状态的各个 home 取同一个次序。2026.11.13.1 之前的版本取
+`registry/.install.lock`，且只用于安装。
+
+`<project>/.mcpp/` 是本机关于该项目的状态，不是项目的源文件。mcpp 在创建或使用它时写入只含一行 `*` 的
+`.gitignore`，所以即使项目自己的忽略文件没有列出它，版本控制也会忽略它。
 
 归属按索引划分。mcpp 所服务的索引，其数据与 payload 在 mcpp 的 home 中；提供者自己的索引（`xim` 及其附带的索引）留在
 `registry/` 下。本地路径索引（`path = "…"`）在原处读取。
@@ -71,6 +82,11 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 `self env`、`self config`、`self doctor` 和 `toolchain list` 读取本地状态，不安装工具。
 `self config --mirror auto|CN|GLOBAL` 仅更新本地配置，因此网络故障时仍可使用。
 
+安装过程分别跟踪每个活动下载的字节进度与来源切换，等待下载槽位的时间不消耗该预算。
+其他文件取得进度不会延长停滞文件的预算。
+从 2026.11.7.1 起，下载停滞诊断会标明文件、停滞时长与来源尝试次数；provider 准备阶段与进程超时单独报告。
+镜像选择使用 `mcpp self config --mirror auto`、`CN` 或 `GLOBAL`。
+
 ### 构建产物的保留期（2026.10.31.3+）
 
 `build-cache/v1/` 下的构建缓存由 home 中所有工程共享；工程的 `target/` 属于工程自身。两者各有保留期，
@@ -80,8 +96,10 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 |---|---|---|
 | `[cache] unused_days` | 30 | 构建后每天至多一次：该天数内没有构建使用过的缓存条目（包、`std` 模块、host 工具） |
 | `[build] keep_days` | 3 | `mcpp build` 或 `mcpp test` 后，每个工程每天至多一次：该天数内没有配置使用过的构建目录 |
+| `[build] target_budget` | 无 | 每次 `mcpp build` 或 `mcpp test` 后，`target/` 超过该大小（`"20GiB"`、`"512MiB"`）时：没有任何配置记录为当前的构建目录，不论其年龄（2026.11.8.1+） |
 
-`0` 表示全部保留。`mcpp self config --cache-unused-days <N>` 与 `--keep-days <N>` 写入它们，
+`0` 表示全部保留。`target_budget` 从工程（或工作区根）的 `mcpp.toml` 读取，否则从 config.toml
+读取。仍在使用的目录超过预算时，构建给出警告并列出最大的三个；仍在使用的目录不会被删除。`mcpp self config --cache-unused-days <N>` 与 `--keep-days <N>` 写入它们，
 `mcpp self config` 显示它们。
 
 缓存条目的文件写入后不再改变，以 `noatime` 或 `relatime` 挂载的文件系统也不记录读取，因此由 mcpp
@@ -190,6 +208,7 @@ sysroot = { path = "/opt/acme/sysroot" }    # 团队约定的路径,用于仓库
 
 `[xlings] home` 移动 registry，它指向的必须是 mcpp 建立的 home。不是 mcpp 建立的 home（例如 `~/.xlings`）在这里被拒绝：
 复用它的包应使用 `upstream`（§3）。
+已经存在的 registry 保留建立它的 home 所记录的索引位置：指向它的另一个 home 读取这些索引和存储，不在其中记录自己的位置（2026.11.10.1）。`registry` 是指向另一个 home 的 registry 的链接时，该 home 同样是借用者（2026.11.13.1）：索引的位置、上游以及其 `[index.repos]` 表的位置都不写入其中。
 
 ## 6. 文件系统与长路径
 

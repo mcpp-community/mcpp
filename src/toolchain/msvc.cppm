@@ -23,9 +23,6 @@
 // Also used by clang.cppm to find MSVC STL's std.ixx when Clang targets
 // x86_64-pc-windows-msvc.
 
-module;
-#include <cstdlib>
-
 export module mcpp.toolchain.msvc;
 
 import std;

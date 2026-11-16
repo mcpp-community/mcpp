@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.library;
 import mcpp.toolchain.dialect;
+
+using namespace mcpplibs::mtest;
 
 using mcpp::pack::archive_remove_command;
 using Argv = std::vector<std::string>;
@@ -34,49 +36,49 @@ const std::vector<std::string> kMembers{ "mathkit.m.o", "api.m.o" };
 
 }  // namespace
 
-TEST(ArchiveRemoveCommand, GnuTakesOneVerbThenTheArchiveThenEveryMember) {
+UTest gnu_takes_one_verb_then_the_archive_then_every_member{"ArchiveRemoveCommand/GnuTakesOneVerbThenTheArchiveThenEveryMember", [] {
     auto cmd = archive_remove_command("/usr/bin/ar", "bin/libmathkit.a", kMembers,
                                       gnu_dialect().archiveRemoveArg,
                                       gnu_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(cmd, (Argv{ "/usr/bin/ar", "d", "bin/libmathkit.a", "mathkit.m.o", "api.m.o" }));
-}
+    expect(eq(cmd, (Argv{ "/usr/bin/ar", "d", "bin/libmathkit.a", "mathkit.m.o", "api.m.o" })));
+}};
 
-TEST(ArchiveRemoveCommand, MsvcTakesOneFlagPerMemberAndTheArchiveLast) {
+UTest msvc_takes_one_flag_per_member_and_the_archive_last{"ArchiveRemoveCommand/MsvcTakesOneFlagPerMemberAndTheArchiveLast", [] {
     auto cmd = archive_remove_command("lib.exe", "bin/mathkit.lib", kMembers,
                                       msvc_dialect().archiveRemoveArg,
                                       msvc_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(cmd, (Argv{ "lib.exe", "/REMOVE:mathkit.m.o", "/REMOVE:api.m.o", "bin/mathkit.lib" }));
-}
+    expect(eq(cmd, (Argv{ "lib.exe", "/REMOVE:mathkit.m.o", "/REMOVE:api.m.o", "bin/mathkit.lib" })));
+}};
 
 // The two rows in dialect.cppm are the input to the assembly above. Pinned here
 // too, so changing one without the other fails rather than producing a command
 // that is well-formed for the wrong archiver.
-TEST(ArchiveRemoveCommand, TheDialectRowsSupplyTheseTwoSpellings) {
-    EXPECT_EQ(gnu_dialect().archiveRemoveArg, "d");
-    EXPECT_TRUE(gnu_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(msvc_dialect().archiveRemoveArg, "/REMOVE:{}");
-    EXPECT_FALSE(msvc_dialect().archiveRemoveTakesArchiveFirst);
-}
+UTest the_dialect_rows_supply_these_two_spellings{"ArchiveRemoveCommand/TheDialectRowsSupplyTheseTwoSpellings", [] {
+    expect(eq(gnu_dialect().archiveRemoveArg, "d"));
+    expect(bool(gnu_dialect().archiveRemoveTakesArchiveFirst));
+    expect(eq(msvc_dialect().archiveRemoveArg, "/REMOVE:{}"));
+    expect(!(msvc_dialect().archiveRemoveTakesArchiveFirst));
+}};
 
 // The failure that motivated the seam: the packer used to emit `ar` syntax
 // unconditionally. Stated as what must NOT appear, because "it contains
 // /REMOVE:" alone would stay green for a command that also carried the `d` verb
 // or put the archive in the wrong place.
-TEST(ArchiveRemoveCommand, TheMsvcFormCarriesNoArVerbAndNoLeadingArchive) {
+UTest the_msvc_form_carries_no_ar_verb_and_no_leading_archive{"ArchiveRemoveCommand/TheMsvcFormCarriesNoArVerbAndNoLeadingArchive", [] {
     auto cmd = archive_remove_command("lib.exe", "bin/mathkit.lib", kMembers,
                                       msvc_dialect().archiveRemoveArg,
                                       msvc_dialect().archiveRemoveTakesArchiveFirst);
-    EXPECT_EQ(std::ranges::find(cmd, "d"), cmd.end());
-    EXPECT_LT(std::ranges::find(cmd, "/REMOVE:mathkit.m.o"), std::ranges::find(cmd, "bin/mathkit.lib"));
-}
+    expect(eq(std::ranges::find(cmd, "d"), cmd.end()));
+    expect(lt(std::ranges::find(cmd, "/REMOVE:mathkit.m.o"), std::ranges::find(cmd, "bin/mathkit.lib")));
+}};
 
-TEST(ArchiveRemoveCommand, ASingleMemberIsSpelledTheSameWayAsMany) {
+UTest a_single_member_is_spelled_the_same_way_as_many{"ArchiveRemoveCommand/ASingleMemberIsSpelledTheSameWayAsMany", [] {
     // The per-member branch is a loop; a one-element list is where an
     // "and-then-the-rest" bug hides.
     auto gnu = archive_remove_command("ar", "libx.a", { "only.m.o" },
                                       gnu_dialect().archiveRemoveArg, true);
-    EXPECT_EQ(gnu, (Argv{ "ar", "d", "libx.a", "only.m.o" }));
+    expect(eq(gnu, (Argv{ "ar", "d", "libx.a", "only.m.o" })));
     auto msvc = archive_remove_command("lib.exe", "x.lib", { "only.m.o" },
                                        msvc_dialect().archiveRemoveArg, false);
-    EXPECT_EQ(msvc, (Argv{ "lib.exe", "/REMOVE:only.m.o", "x.lib" }));
-}
+    expect(eq(msvc, (Argv{ "lib.exe", "/REMOVE:only.m.o", "x.lib" })));
+}};

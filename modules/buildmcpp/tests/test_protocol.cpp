@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.program_protocol;
+
+using namespace mcpplibs::mtest;
 
 // A SUBSYSTEM-LEVEL test: it knows only this package, and it is the only place
 // the protocol's own invariants can be stated without an engine around them.
@@ -12,13 +14,13 @@ import mcpp.build.program_protocol;
 
 namespace pp = mcpp::build::program_protocol;
 
-TEST(ProgramProtocol, TheVersionIsPositiveAndMonotone) {
+UTest the_version_is_positive_and_monotone{"ProgramProtocol/TheVersionIsPositiveAndMonotone", [] {
     // A protocol version of zero would make "declared nothing" and "declared
     // version zero" the same observation, which is the distinction the whole
     // unknown-directive rule rests on.
-    EXPECT_GT(pp::kProtocolVersion, 0);
-}
+    expect(gt(pp::kProtocolVersion, 0));
+}};
 
-TEST(ProgramProtocol, TheCacheEpochIsPositive) {
-    EXPECT_GT(pp::kCacheEpoch, 0);
-}
+UTest the_cache_epoch_is_positive{"ProgramProtocol/TheCacheEpochIsPositive", [] {
+    expect(gt(pp::kCacheEpoch, 0));
+}};

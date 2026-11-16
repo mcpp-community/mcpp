@@ -6,10 +6,6 @@
 // completeness is the provider's answer (its `payload_status`, design §7.1):
 // mcpp writes nothing into a payload -- no marker, no copy from another home.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.pm.package_fetcher;
 
 import std;
@@ -26,7 +22,7 @@ import mcpp.ui;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.libs.json;
+import nlohmann.json;
 
 export namespace mcpp::pm {
 
@@ -161,6 +157,12 @@ public:
     std::optional<std::filesystem::path>
         install_path(std::string_view ns, std::string_view shortName,
                      std::string_view version) const;
+
+    // The version directories install_path() looks for, in its order: the
+    // place a payload that is not found was expected, for its diagnostic.
+    std::vector<std::filesystem::path>
+        install_path_candidates(std::string_view ns, std::string_view shortName,
+                                std::string_view version) const;
 
     // Read the raw xpkg .lua file content for a package from the cloned
     // index. Uses namespace-aware candidate filenames.
@@ -1437,6 +1439,18 @@ Fetcher::install_path(std::string_view ns, std::string_view shortName,
             if (auto p = try_dir(legacy)) return *p;
     }
     return std::nullopt;
+}
+
+std::vector<std::filesystem::path>
+Fetcher::install_path_candidates(std::string_view ns, std::string_view shortName,
+                                 std::string_view version) const
+{
+    std::vector<std::filesystem::path> out;
+    const auto candidates = mcpp::pm::compat::install_dir_candidates(ns, shortName, cfg_.defaultIndex);
+    for (const auto& base : mcpp::provider::open(location_of(cfg_))->stores())
+        for (auto& dirName : candidates)
+            out.push_back(base / dirName / std::string(version));
+    return out;
 }
 
 // ─── Legacy install_path (COMPAT(internal:legacy-fetcher-api)) ──────────────────

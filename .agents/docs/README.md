@@ -18,11 +18,15 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-349 records.
+363 records.
 
 ## By subject
 
 Records that declare one. Everything else is listed by date below.
+
+### architecture
+
+- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
 
 ### build
 
@@ -33,6 +37,23 @@ Records that declare one. Everything else is listed by date below.
 
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
+
+### build-progress-and-scheduling
+
+- [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
+
+### ci
+
+- [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
+
+### compiler-scheduling
+
+- [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
+
+### cross-platform
+
+- [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
+- [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
 
 ### design
 
@@ -67,6 +88,11 @@ Records that declare one. Everything else is listed by date below.
 
 ### ecosystem
 
+- [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
+- [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active
+- [生态顶层方案：#885 收尾之后的工作流、原则与依赖](2026-11-08-ecosystem-top-level-design.md) — active
+- [#885 收尾补充方案：目标角色、平台事实、系统接口与版本书写](2026-11-08-ecosystem-885-supplement-design.md) — active
+- [生态 #885 收尾设计：核心、插件、openkal、语言服务与编辑器的一轮闭合](2026-11-07-ecosystem-885-closeout-design.md) — active
 - [生态设计 part 2：openkal 的最小原子与二进制映像、其上的 `mcpplibs.os`，以及 part 1 的收尾与回归记录](2026-10-26-ecosystem-part2-os-library-over-openkal-design.md) — active
 - [控制契约、并发与性能、单一 C++ 运行时，以及 IDE 生态（生态级，#838、#839）](2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md) — active
 
@@ -82,6 +108,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### heterogeneous-build
 
+- [Launch configuration and named test runners](2026-11-06-launch-configuration-and-named-test-runners.md) — active
 - [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
 - [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active
 - [生态 885 与异构构建补充方案的实现依赖](2026-11-05-heterogeneous-build-implementation-plan.md) — active
@@ -118,6 +145,10 @@ Records that declare one. Everything else is listed by date below.
 
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
 
+### release
+
+- [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
+
 ### review
 
 - [Two days of mcpp and xlings: a review of what merged, what is known, and what is open](2026-09-28-ecosystem-review-of-two-days-of-mcpp-and-xlings.md) — active
@@ -125,6 +156,10 @@ Records that declare one. Everything else is listed by date below.
 - [本轮生态级自审](2026-09-20-wave-self-review.md) — active
 - [#674 设计方案评审：`-include unistd.h` 在 Windows + `presents = "posix"` 上的可行性](2026-09-20-issue-674-design-review.md) — active
 - [`__cxa_thread_atexit` 在 openkal-Windows 上:两层都已定位并修复](2026-09-20-cxa-thread-atexit-finding.md) — landed
+
+### target-model
+
+- [目标与提供者：统一的目标模型（结合 mcpp#911）](2026-11-09-target-model-design.md) — active
 
 ### targets
 
@@ -167,6 +202,20 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
+- [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
+- [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
+- [The three-plane platform architecture: mcpp × openkal × xim](2026-11-12-three-plane-platform-architecture-design.md) — superseded by [2026-11-12-ecosystem-architecture-optimization-design.md](2026-11-12-ecosystem-architecture-optimization-design.md)
+- [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
+- [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active
+- [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
+- [目标与提供者：统一的目标模型（结合 mcpp#911）](2026-11-09-target-model-design.md) — active
+- [生态顶层方案：#885 收尾之后的工作流、原则与依赖](2026-11-08-ecosystem-top-level-design.md) — active
+- [#885 收尾补充方案：目标角色、平台事实、系统接口与版本书写](2026-11-08-ecosystem-885-supplement-design.md) — active
+- [生态 #885 收尾设计：核心、插件、openkal、语言服务与编辑器的一轮闭合](2026-11-07-ecosystem-885-closeout-design.md) — active
+- [Launch configuration and named test runners](2026-11-06-launch-configuration-and-named-test-runners.md) — active
+- [Compiler attempt lifetime and output recovery](2026-11-06-compiler-attempt-recovery.md) — active
+- [BMI publication, compiler capacity and active download budgets](2026-11-06-bmi-publication-and-compiler-cap-closeout.md) — active
 - [异构构建语义与插件边界补充方案（mcpp#885、mcpp#887）](2026-11-05-heterogeneous-build-semantics-and-plugin-boundaries-supplement.md) — active
 - [异构构建补充方案的第二轮调研与实验](2026-11-05-heterogeneous-build-research-and-experiments.md) — active
 - [生态 885 与异构构建补充方案的实现依赖](2026-11-05-heterogeneous-build-implementation-plan.md) — active

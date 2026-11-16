@@ -117,6 +117,54 @@ raises the version's `floor`, and the next build replaces an installed payload
 below it, saying why. A replacement that fails leaves the installed payload in
 place; `mcpp toolchain install` then fails and names the revision still in use.
 
+## The package behind a family's name, and any package as a toolchain (2026.11.13.1+)
+
+A family's name (`gcc@16.1.0`, `llvm@23.1.3`) is a shorthand. Which package of
+the index it installs for a target on a host is data: the `[[toolchain.payload]]`
+entries of `modules/toolchain-model/data/builtin.toml`, tried in order, the first
+that serves the target on this machine taken. `gcc` for `x86_64-linux-musl` on a
+Linux x86_64 machine is `musl-gcc`, on any other machine `x86_64-linux-musl-gcc`;
+`gcc` for `x86_64-windows-gnu` is `mingw-gcc` on Windows and `mingw-cross-gcc`
+elsewhere. A payload's own name (`musl-gcc@16.1.0`, `emsdk@6.0.9`) is accepted
+where an entry states it, and `mcpp toolchain list` reads an installed payload
+through the same entries.
+
+A version of a family is the index's, not the engine's: once the index publishes
+it, a manifest or `--toolchain` names it without a new mcpp. A partial version
+takes the newest release of it (`gcc@16.2` is 16.2.0). A trunk snapshot is
+written as GCC reports it, `<major>.0.0-<YYYYMMDD>`; the date is a prerelease
+part, so `gcc@17` does not select it and only the whole version does:
+
+```toml
+[toolchain]
+default = "gcc@16.2"                    # the newest 16.2.x release
+# default = "xim:gcc@17.0.0-20261108"   # GCC's trunk of 2026-11-08 (experimental)
+```
+
+Any other package of the index is a toolchain when it describes itself.
+`xim:<name>@<version>` installs it and resolves it as `path:<root>` with the
+table its `.mcpp-toolchain.json` states (schema 2), the keys of a manifest's
+`{ path = ... }` table, each relative to the payload and refused if it leaves it:
+
+```json
+{ "schema": 2, "family": "gcc", "prefix": "riscv64-elf-",
+  "sysroot": "riscv64-elf", "tools": { "cxx": "bin/riscv64-elf-g++" } }
+```
+
+`family` is the option vocabulary of its drivers (`gcc` or `llvm`); without it
+the family is the C++ driver's name. A package without the file is refused,
+naming the file. Without `xim:` an unknown name is refused, and the message
+lists the families, the payloads of the table and this form.
+
+### A compiler without C++ modules (2026.11.13.1+)
+
+A GCC before 14 has neither `-fmodules` nor P1689 scanning (DJGPP's GCC 12.2.0,
+measured). With it, mcpp builds the C++ units that declare and import no module
+as translation units without module flags, from its own scan of the sources,
+and the C units as with any compiler. A unit that declares a module, is a
+module unit or imports one (`import std;` included) is refused at planning,
+naming the file and what it needs.
+
 ## Switching the Default Toolchain
 
 The default is a *pair* — toolchain axis + target axis (target omitted = host):
@@ -235,7 +283,16 @@ vocabulary, in four statuses:
 | `installed` | a payload here already produces it | nothing |
 | `available` | a payload exists for this host | `mcpp toolchain install` |
 | `via dependency graph` | the compiler is here; the target's system is not, and packages can supply it | depend on an implementation of the target's kernel interface and C library |
-| `planned` | registered in the vocabulary, not yet shipped | — |
+| `planned` | registered in the vocabulary, not yet shipped | name a toolchain for the build, or choose a platform that serves the row |
+
+A `planned` row is built when the build names its toolchain
+(`[target.<row>] toolchain`, `--toolchain`), or when the platform chosen for the
+request (`--platform`, `[target.<row>] platform`, the configuration) lists the
+row with a toolchain: among `[platform] targets` beside its `toolchain`, or in a
+`[[platform.provider]]` that names one (2026.11.14.1+). The platform's
+statement decides, and a platform that does not list the row is named in the
+refusal. A set of targets (`--target openkal`) is served leg by leg the same
+way.
 
 **A target absent from this block cannot be built here at all** — and that
 is a narrower statement than it used to be. Until mcpp 2026.8.25.2 the block
@@ -307,6 +364,15 @@ Before 2026.8.3.3 a mingw build on a Windows host emitted `foo.lib` — a GNU
 archive wearing an MSVC name, which MSVC cannot consume. A script
 that globs `*.lib` out of a `windows-gnu` build, it needs to glob `*.a` now.
 
+### clang with the MinGW-w64 payload (2026.11.9.1+)
+
+The MinGW-w64 provider pairs with gcc and with llvm. With llvm declared
+(`--toolchain llvm@<v>`, or `[target.x86_64-windows-gnu] toolchain`), the
+payload is installed as for gcc and becomes clang's sysroot: its C library,
+libstdc++ (whose `bits/std.cc` is the std module, so `import std` works) and
+the GCC runtime, linked by lld. The build reports `Pairs clang ... with the
+gcc@<v> payload`.
+
 ## Linux ELF from Windows (`x86_64-linux-musl`, no WSL required)
 
 The mirror of the section above: a Windows machine producing a **fully static
@@ -370,8 +436,7 @@ Pinned toolsets coexist with each other and with a system Visual Studio.
 > refusing to use what is already installed would cost more than it buys:
 > Visual Studio is very often present and cannot always be redistributed.
 > `<family>@system` for any other family is an error that names both things
-> that may have been intended. (The family-less `[toolchain] … = "system"` — the PATH
-> compiler — is a separate and deliberate escape hatch, and is unaffected.)
+> that may have been intended.
 
 ### `[toolchain] … = "system"` — refused
 

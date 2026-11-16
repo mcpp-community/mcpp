@@ -1,0 +1,893 @@
+# THE BUILT-IN TARGETS: THE ROWS mcpp KNOWS AND THE PROVIDERS THAT SERVE THEM.
+#
+# This file is data, written in the schema a platform package uses for its own
+# rows and providers (`[[platform.define]]`, `[[platform.provider]]`; SPEC-016).
+# The engine holds the mechanism -- the axes, the selection rule, the protocols --
+# and this file holds the facts. `build.mcpp` compiles it into static tables of the
+# engine, so a build reads no file and parses nothing to know them.
+#
+# A ROW defines an identity: the triple a build produces, the output directory,
+# the cache key and every `cfg(...)` answer. The order of the rows is the order of
+# `mcpp toolchain list`, of a target set's members, and the tie-break of selection.
+#
+# A PROVIDER serves identities: the toolchain, the C library and the rest of the
+# target's side, and the hosts on which it is available. A request names a
+# pattern (`x86_64-windows`); its candidates are the providers of the rows it
+# matches, ordered by `priority` (larger first), then by row, then by name; the
+# first available on the host is taken (SPEC-016 §4). Several entries may carry
+# one name when one provider serves rows with different facts.
+#
+# Row keys
+#   triple          the canonical identity, `arch-os[-env]`
+#   tier            verified (CI builds and runs it) | preview (builds and links) |
+#                   planned (registered intent; refused)
+#   note            the display note of `mcpp toolchain list`
+#   standard        the identity is an industry-standard one; a combination that
+#                   is not (musl on Windows) is mcpp's name for what is produced
+#   exact           only a request that names the row whole reaches it; `arch-os`
+#                   does not
+#   clang-triple    the triple the compiler is given, when the system's spelling
+#                   is not derived from the identity (`x86_64-unknown-freebsd14.0`)
+#   family          the system's family, `unix` or `windows` (`cfg(unix)`); a
+#                   system the engine has always known answers it by convention
+#   loader          the program interpreter a dynamic program of the row names: the
+#                   path on the machine that runs it. A link whose artifact this
+#                   machine does not load writes it; a native link writes the
+#                   payload's own loader
+#   execution       the system the row's artifacts run on, when it is not the os
+#                   segment (`android`: the kernel is Linux, the system is not)
+#   object-format, data-model, exe-suffix, shared-suffix
+#                   facts of a system the engine's conventions do not answer
+#   march, mabi, code-model, multilib, flags, link-emulation
+#                   the ISA profile of a bare-metal row: `-march`, `-mabi`,
+#                   `-mcmodel` (empty: the driver's default), the multilib
+#                   directory of a C library, extra compile flags, and the
+#                   `ld.lld -m` emulation when clang's driver cannot reach lld
+#   exceptions      the exception model of the row's builds when the project
+#                   states none (`[target.<sel>.abi] exceptions`); under `wasm`
+#                   the long-jump model is `wasm` too
+#   companions      the files the link may write beside a program, named after
+#                   it (`.wasm` beside `app.js`): removed before each link,
+#                   staged when written, not an error when absent
+#
+# Provider keys
+#   name            the provider's name; `builtin:<name>` selects it
+#   serves          the identities it serves; `*` stands for the architecture
+#   priority        the order among the candidates of one request
+#   hosts           where its payload exists: `<os>-<arch>` of the build machine,
+#                   `*` for any segment, `{arch}` for the target's architecture
+#   probe           an engine probe that must also answer (`msvc`: an installed
+#                   Visual Studio toolset)
+#   toolchain       the toolchain it pins; empty: the host's default
+#   pairs           the compiler families it pairs with; empty: any family, and a
+#                   declared family that does not supply the C library is refused
+#   sysroot         the C library it brings (a payload), or `toolchain` when the
+#                   toolchain ships the whole sysroot itself
+#   linkage         the default linkage, `static` or `dynamic`
+#   platform        a platform package that implements it (SPEC-013)
+#   tier            the tier of this arrangement, when it differs from the row's
+#   system-headers  the package whose headers state the system's own interfaces,
+#                   read by the steps that compile against them (resources)
+#   runner          how an artifact of the arrangement is started when nothing
+#                   nearer says: `{ cmd = [argv], host = "same-arch", hosts = [...],
+#                   requires = [...], enabled = false }`. `{}` is the artifact,
+#                   `{sysroot}` the arrangement's base; `requires` are installed
+#                   on the first run, never by a build. `enabled = false` for a
+#                   runner whose first use fetches a whole machine image or an
+#                   emulator, or leaves state outside the build tree and the
+#                   package store (a VM, an Android emulator, Wine); a project
+#                   or this machine enables it (SPEC-016 §6). `exclusive = true`
+#                   when the runs cannot overlap (a device at one address)
+#
+# ONE ENTRY STATES ONE ARRANGEMENT OF PAYLOADS. A native arrangement and a cross
+# one are two entries, each with its `hosts`; an entry whose facts depend on the
+# host it is read on is two entries written as one. A NEW ENTRY DOES NOT CHANGE
+# THE ANSWER OF A REQUEST THAT WAS ANSWERED BEFORE IT: it enters below the
+# priority of the entries that answer `arch-os` today (SPEC-016 §4.7).
+#
+# System keys (`[[platform.system]]`)
+#   name            the os segment the system's rows carry
+#   uname           the word `uname -s` answers there; a file that carries one
+#                   program per system selects by it, and a system without the
+#                   key joins no such file
+#   resources       the system's loader reads a program's resource section: a
+#                   project's `[resources]` compile into its programs (false
+#                   when absent)
+#   command-scripts the suffixes of the files the system starts through its
+#                   command interpreter; an argument holding the interpreter's
+#                   syntax (`%`, `^`, `&`, `|`, `<`, `>`, `"`) is refused
+
+# ── Linux ────────────────────────────────────────────────────────────────────
+
+[[platform.define]]
+triple   = "x86_64-linux-gnu"
+loader   = "/lib64/ld-linux-x86-64.so.2"
+tier     = "verified"
+standard = true
+
+[[platform.define]]
+triple   = "x86_64-linux-musl"
+loader   = "/lib/ld-musl-x86_64.so.1"
+tier     = "verified"
+standard = true
+
+# The system's standard identity before its musl sibling, as on x86_64: a
+# request `aarch64-linux` takes it where its provider is available.
+# `preview` until the released engine is consumed on a clean ARM64 host
+# (SPEC-009 §10.7).
+[[platform.define]]
+triple   = "aarch64-linux-gnu"
+loader   = "/lib/ld-linux-aarch64.so.1"
+tier     = "preview"
+standard = true
+
+[[platform.define]]
+triple   = "aarch64-linux-musl"
+loader   = "/lib/ld-musl-aarch64.so.1"
+tier     = "verified"
+standard = true
+
+# ── Windows ──────────────────────────────────────────────────────────────────
+
+[[platform.define]]
+triple   = "x86_64-windows-gnu"
+tier     = "verified"
+note     = "PE"
+standard = true
+
+# Served by the MinGW-w64 base package alone (E9); no gcc payload targets it.
+[[platform.define]]
+triple   = "aarch64-windows-gnu"
+tier     = "preview"
+note     = "PE"
+standard = true
+
+# MUSL ON WINDOWS. No MinGW C runtime is linked into a build over openkal-musl
+# (imports ntdll, KERNEL32, SHELL32; Itanium symbols only), so `gnu` would put the
+# one thing the C library is not into the identity, the output directory,
+# `cfg(env)` and the packed ABI tag. clang is still given `x86_64-w64-windows-gnu`,
+# which selects the Itanium C++ ABI the C library was compiled for.
+[[platform.define]]
+triple   = "x86_64-windows-musl"
+tier     = "preview"
+note     = "PE"
+standard = false
+
+[[platform.define]]
+triple   = "x86_64-windows-msvc"
+tier     = "verified"
+note     = "PE"
+standard = true
+
+# ── Apple, Linux continued ───────────────────────────────────────────────────
+
+[[platform.define]]
+triple   = "aarch64-macos"
+tier     = "verified"
+standard = true
+
+# MUSL ON macOS: openkal-platform's hosted part over openkal-macos. Its C library
+# is openkal-musl rather than libSystem, which is what the env segment says.
+[[platform.define]]
+triple   = "aarch64-macos-musl"
+tier     = "preview"
+standard = false
+
+[[platform.define]]
+triple   = "riscv64-linux-musl"
+loader   = "/lib/ld-musl-riscv64.so.1"
+tier     = "planned"
+standard = true
+
+# 32-BIT ROWS (E11): registered intent, refused until served. No payload of the
+# index targets them. openkal states its 32-bit class (0.25.1, clause 5.5), and
+# openkal-platform 0.28.0 serves `i686-linux-musl` and `i686-openkal` with the
+# LLVM toolchain when a project states it (`[target.<sel>] platform`): a
+# planned row the stated platform's targets name is served by it
+# (2026.11.14.1). The built-in platform does not serve a planned row, so the
+# rows stay planned here; an explicit `[target.<row>] toolchain` opts in as
+# well.
+[[platform.define]]
+triple   = "i686-linux-musl"
+loader   = "/lib/ld-musl-i386.so.1"
+tier     = "planned"
+standard = true
+
+[[platform.define]]
+triple   = "i686-linux-gnu"
+loader   = "/lib/ld-linux.so.2"
+tier     = "planned"
+standard = true
+
+[[platform.define]]
+triple   = "i686-openkal"
+tier     = "planned"
+note     = "ok"
+standard = true
+
+[[platform.define]]
+triple   = "x86_64-macos"
+tier     = "planned"
+standard = true
+
+[[platform.define]]
+triple   = "x86_64-macos-musl"
+tier     = "preview"
+standard = false
+
+# ── FreeBSD ──────────────────────────────────────────────────────────────────
+#
+# Two identities per architecture, as macOS has (design 2026-11-10 E4). The
+# system's own ABI -- libc, libc++ over libcxxrt -- is served by a platform that
+# states the system's sysroot; no built-in provider serves it, and a request is
+# refused naming that until a platform is selected. The musl identity is
+# openkal-platform's hosted part over openkal-freebsd (openkal-platform 0.26.0:
+# openkal-musl 0.29.2 over openkal-freebsd 0.1.0, standalone). 14.0 is the release the triple names: a program
+# built for it runs on every later 14.x and, through the kernel's
+# COMPAT_FREEBSD14, on 15.
+[[platform.define]]
+triple       = "x86_64-freebsd"
+loader       = "/libexec/ld-elf.so.1"
+family       = "unix"
+tier         = "preview"
+standard     = true
+clang-triple = "x86_64-unknown-freebsd14.0"
+
+[[platform.define]]
+triple       = "aarch64-freebsd"
+loader       = "/libexec/ld-elf.so.1"
+family       = "unix"
+tier         = "preview"
+standard     = true
+clang-triple = "aarch64-unknown-freebsd14.0"
+
+[[platform.define]]
+triple       = "x86_64-freebsd-musl"
+family       = "unix"
+tier         = "preview"
+standard     = false
+clang-triple = "x86_64-unknown-freebsd14.0"
+
+[[platform.define]]
+triple       = "aarch64-freebsd-musl"
+family       = "unix"
+tier         = "preview"
+standard     = false
+clang-triple = "aarch64-unknown-freebsd14.0"
+
+# ── Bare metal ───────────────────────────────────────────────────────────────
+#
+# No loader, so static is the only linkage. The ISA profile is the row's: a
+# correct object file from `--target <row>` alone, not every board. `x86-64` with
+# a hyphen is the `-march` spelling of the `x86_64` segment; `aapcs` (not `lp64`)
+# is the only `-mabi` aarch64 takes. `medany` because bare-metal RISC-V runs at
+# 0x80000000, `small` for the low 2 GiB a `-kernel` image runs in; a higher-half
+# kernel states `-mcmodel=kernel` itself. The multilib directory is
+# `<march>/<mabi>` on RISC-V and the triple on ARM, where `-mabi` names the call
+# standard and the float ABI is in the env segment.
+
+[[platform.define]]
+triple     = "riscv64-none-elf"
+tier       = "verified"
+note       = "bare"
+standard   = true
+march      = "rv64gc"
+mabi       = "lp64d"
+code-model = "medany"
+multilib   = "rv64gc/lp64d"
+
+[[platform.define]]
+triple     = "riscv32-none-elf"
+tier       = "verified"
+note       = "bare"
+standard   = true
+march      = "rv32imac"
+mabi       = "ilp32"
+code-model = "medany"
+multilib   = "rv32imac/ilp32"
+
+[[platform.define]]
+triple     = "aarch64-none-elf"
+tier       = "preview"
+note       = "bare"
+standard   = true
+march      = "armv8-a"
+mabi       = "aapcs"
+code-model = "small"
+multilib   = "armv8-a/aapcs"
+
+# `-mno-red-zone`: on bare metal the processor pushes an interrupt frame into the
+# 128 bytes below `rsp`, which a leaf function may use. clang's driver has no
+# bare-metal x86_64 toolchain that reaches lld, so the row links with ld.lld
+# directly under `elf_x86_64`.
+[[platform.define]]
+triple         = "x86_64-none-elf"
+tier           = "preview"
+note           = "bare"
+standard       = true
+march          = "x86-64"
+mabi           = "sysv"
+code-model     = "small"
+multilib       = "x86-64/sysv"
+flags          = ["-mno-red-zone"]
+link-emulation = "elf_x86_64"
+
+# `-mfpu=none` on the soft-float rows: the float ABI governs how values cross a
+# call, not whether the compiler may use the FPU inside one (measured: `vmul.f32`
+# under `thumbv7em-none-eabi`).
+
+[[platform.define]]
+triple   = "thumbv6m-none-eabi"
+tier     = "verified"
+note     = "bare"
+standard = true
+march    = "armv6-m"
+mabi     = "aapcs"
+multilib = "thumbv6m-none-eabi"
+flags    = ["-mfpu=none"]
+
+[[platform.define]]
+triple   = "thumbv7m-none-eabi"
+tier     = "verified"
+note     = "bare"
+standard = true
+march    = "armv7-m"
+mabi     = "aapcs"
+multilib = "thumbv7m-none-eabi"
+flags    = ["-mfpu=none"]
+
+[[platform.define]]
+triple   = "thumbv7em-none-eabi"
+tier     = "preview"
+note     = "bare"
+standard = true
+march    = "armv7e-m"
+mabi     = "aapcs"
+multilib = "thumbv7em-none-eabi"
+flags    = ["-mfpu=none"]
+
+[[platform.define]]
+triple   = "thumbv7em-none-eabihf"
+tier     = "verified"
+note     = "bare"
+standard = true
+march    = "armv7e-m"
+mabi     = "aapcs"
+multilib = "thumbv7em-none-eabihf"
+
+[[platform.define]]
+triple   = "thumbv8m.base-none-eabi"
+tier     = "preview"
+note     = "bare"
+standard = true
+march    = "armv8-m.base"
+mabi     = "aapcs"
+multilib = "thumbv8m.base-none-eabi"
+flags    = ["-mfpu=none"]
+
+[[platform.define]]
+triple   = "thumbv8m.main-none-eabi"
+tier     = "verified"
+note     = "bare"
+standard = true
+march    = "armv8-m.main"
+mabi     = "aapcs"
+multilib = "thumbv8m.main-none-eabi"
+flags    = ["-mfpu=none"]
+
+[[platform.define]]
+triple   = "thumbv8m.main-none-eabihf"
+tier     = "preview"
+note     = "bare"
+standard = true
+march    = "armv8-m.main"
+mabi     = "aapcs"
+multilib = "thumbv8m.main-none-eabihf"
+
+[[platform.define]]
+triple   = "armv7a-none-eabi"
+tier     = "verified"
+note     = "bare"
+standard = true
+march    = "armv7-a"
+mabi     = "aapcs"
+multilib = "armv7a-none-eabi"
+flags    = ["-mfpu=none"]
+
+[[platform.define]]
+triple   = "armv7a-none-eabihf"
+tier     = "verified"
+note     = "bare"
+standard = true
+march    = "armv7-a"
+mabi     = "aapcs"
+multilib = "armv7a-none-eabihf"
+
+# 32-BIT x86 (mcpp#911 G12). The code model is the driver's: clang refuses
+# `-mcmodel=small` for every i386 spelling. clang's driver reaches no lld for a
+# bare-metal x86 triple, so the row links with ld.lld directly under `elf_i386`.
+[[platform.define]]
+triple         = "i686-none-elf"
+tier           = "preview"
+note           = "bare"
+standard       = true
+march          = "i686"
+link-emulation = "elf_i386"
+
+# ── Android, iOS, the Web, ok images ─────────────────────────────────────────
+#
+# Android is Linux with bionic; `x86_64-linux` asks for a C library of Linux, not
+# for an Android application, so the Android rows are reached by name only.
+
+[[platform.define]]
+triple   = "aarch64-linux-android"
+execution = "android"
+tier     = "verified"
+standard = true
+exact    = true
+
+[[platform.define]]
+triple   = "x86_64-linux-android"
+execution = "android"
+tier     = "verified"
+standard = true
+exact    = true
+
+[[platform.define]]
+triple   = "aarch64-ios"
+tier     = "preview"
+standard = true
+
+[[platform.define]]
+triple   = "aarch64-ios-sim"
+tier     = "verified"
+standard = true
+
+[[platform.define]]
+triple   = "x86_64-ios-sim"
+tier     = "verified"
+standard = true
+
+# A new arch, a new os and a new object format; `em++` links `import std` with
+# the standard library surface the toolchain ships. One module plus its
+# JavaScript, no shared objects.
+[[platform.define]]
+triple   = "wasm32-emscripten"
+tier     = "verified"
+note     = "wasm"
+standard = true
+# WebAssembly exception handling unless the project states another model
+# (design 2026-11-15 N26): a C++ exception is caught, and `setjmp`/`longjmp`
+# take the same mechanism. Emscripten's default leaves catching off, and a
+# program's `catch` was never reached. `[target.<sel>.abi] exceptions` states
+# another model (`"js"`, `true`) or none (`false`).
+exceptions = "wasm"
+# The module Emscripten writes beside the launcher (`app.wasm` beside `app.js`),
+# none under `-sSINGLE_FILE=1` (N33).
+companions = [".wasm"]
+
+# OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
+# `okrun` on Linux, macOS and Windows of that architecture.
+[[platform.define]]
+triple   = "x86_64-openkal"
+tier     = "verified"
+note     = "ok"
+standard = true
+
+[[platform.define]]
+triple   = "aarch64-openkal"
+tier     = "verified"
+note     = "ok"
+standard = true
+
+# ── Providers ────────────────────────────────────────────────────────────────
+#
+# Priorities: a system's own toolchain and C library 100; openkal-platform,
+# which serves the musl identities of every system, 50; other conventions 10; a
+# base package beside llvm where a payload of the system's own exists too, 5.
+
+# glibc from the payload, at the host's default toolchain natively.
+[[platform.provider]]
+name     = "glibc"
+serves   = ["x86_64-linux-gnu"]
+priority = 100
+hosts    = ["linux-{arch}"]
+
+[[platform.provider]]
+name      = "glibc"
+serves    = ["aarch64-linux-gnu"]
+priority  = 100
+hosts     = ["linux-{arch}"]
+toolchain = "llvm@23.1.3"
+
+# THE CROSS ARRANGEMENT OF THE SAME IDENTITY: the C library, libc++ and the
+# compiler run-time come from a base package whose root is the sysroot, since
+# the toolchain's payload carries the libraries of its own host only. Below the
+# musl entries (100, 50), so `aarch64-linux` is answered as before it existed
+# and the whole identity reaches it. The loader the artifact names is the row's;
+# it runs through the runner, which is given the base as its root.
+[[platform.provider]]
+name      = "glibc-sysroot"
+serves    = ["aarch64-linux-gnu"]
+priority  = 40
+hosts     = ["linux-x86_64"]
+toolchain = "llvm@23.1.3"
+sysroot   = "xim:aarch64-linux-gnu-sysroot@2.44.3"
+linkage   = "dynamic"
+tier      = "preview"
+runner    = { cmd = ["qemu-aarch64-static", "-L", "{sysroot}", "{}"], hosts = ["linux-x86_64"], requires = ["xim:qemu-user-aarch64@7.2.0"] }
+
+# The musl cross payloads: native on each Linux arch, every arch from x86_64,
+# and the Canadian cross on a Windows host of the same arch.
+[[platform.provider]]
+name      = "musl-gcc"
+serves    = ["x86_64-linux-musl", "aarch64-linux-musl"]
+priority  = 100
+hosts     = ["linux-{arch}", "linux-x86_64", "windows-{arch}"]
+toolchain = "gcc@16.1.0"
+linkage   = "static"
+
+[[platform.provider]]
+name     = "musl-gcc"
+serves   = ["riscv64-linux-musl"]
+priority = 100
+hosts    = ["linux-{arch}", "linux-x86_64"]
+linkage  = "static"
+
+# MinGW-w64: gcc, or clang with the payload as its sysroot (SPEC-016 §6).
+# On an x86_64 Linux machine a Windows program runs through Wine (design
+# 2026-11-15 X1, R1). The runner is not enabled by default: Wine creates a
+# prefix in the home directory on its first run. A project or this machine
+# enables it (`[target.<sel>] runner = { enabled = true }`), once
+# `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`. It runs programs of the machine's
+# architecture (`same-arch`): an aarch64 Windows program is not offered.
+[[platform.provider]]
+name      = "mingw"
+serves    = ["x86_64-windows-gnu"]
+priority  = 10
+hosts     = ["windows-*", "linux-x86_64"]
+toolchain = "gcc@16.1.0"
+pairs     = ["gcc", "llvm"]
+linkage   = "static"
+runner    = { cmd = ["wine", "{}"], host = "same-arch", hosts = ["linux-x86_64"], requires = ["xim:wine@11.0"], enabled = false }
+
+# MinGW-w64 as a base package (E9): the target side of llvm-mingw (MinGW-w64
+# on UCRT, libc++, libunwind, compiler-rt) beside llvm, on every host and both
+# architectures; below the gcc payload where that one exists.
+[[platform.provider]]
+name      = "mingw-llvm"
+serves    = ["x86_64-windows-gnu", "aarch64-windows-gnu"]
+priority  = 5
+hosts     = ["*"]
+toolchain = "llvm@23.1.3"
+pairs     = ["llvm"]
+sysroot   = "xim:mingw-w64-sysroot@20261104-2"
+linkage   = "static"
+runner    = { cmd = ["wine", "{}"], host = "same-arch", hosts = ["linux-x86_64"], requires = ["xim:wine@11.0"], enabled = false }
+
+[[platform.provider]]
+name     = "msvc"
+serves   = ["x86_64-windows-msvc"]
+priority = 100
+hosts    = ["windows-*"]
+probe    = "msvc"
+
+[[platform.provider]]
+name     = "apple"
+serves   = ["aarch64-macos", "x86_64-macos"]
+priority = 100
+hosts    = ["macos-*"]
+
+[[platform.provider]]
+name      = "apple"
+serves    = ["aarch64-ios", "aarch64-ios-sim", "x86_64-ios-sim"]
+priority  = 100
+hosts     = ["macos-*"]
+toolchain = "llvm@23.1.3"
+
+# The C library of a bare-metal RISC-V row is the target's, like the compiler:
+# no bare-metal package has to name one.
+[[platform.provider]]
+name      = "bare-metal"
+serves    = ["riscv64-none-elf", "riscv32-none-elf"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "llvm@23.1.3"
+pairs     = ["llvm"]
+sysroot   = "xim:picolibc-riscv@1.8.12"
+linkage   = "static"
+
+[[platform.provider]]
+name      = "bare-metal"
+serves    = ["aarch64-none-elf", "x86_64-none-elf", "i686-none-elf", "thumbv6m-none-eabi",
+             "thumbv7m-none-eabi", "thumbv7em-none-eabi", "thumbv7em-none-eabihf",
+             "thumbv8m.base-none-eabi", "thumbv8m.main-none-eabi", "thumbv8m.main-none-eabihf",
+             "armv7a-none-eabi", "armv7a-none-eabihf"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "llvm@23.1.3"
+pairs     = ["llvm"]
+linkage   = "static"
+
+# bionic is inside the NDK; no package adds it to another compiler.
+#
+# An x86_64 program runs in the Android Emulator booting the API 34 system image,
+# through the image package's dirun profile (design 2026-11-15 G7, R1): the
+# emulator boots an image of the machine's architecture only (`same-arch`) and
+# starts its device at one console port, so the runs of the target do not
+# overlap (`exclusive`). Not enabled by default: the first run fetches the
+# emulator and a system image. The emulator package is built for linux-x86_64
+# alone, so the aarch64 row states no runner until it serves an aarch64 machine.
+[[platform.provider]]
+name      = "android-ndk"
+serves    = ["x86_64-linux-android"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "android-ndk@30.0.16248370"
+pairs     = ["android-ndk"]
+sysroot   = "toolchain"
+runner    = { cmd = ["dirun", "--profile", "{pkg:android-system-image}/dirun.toml", "--var", "emulator={pkg:android-emulator}/emulator", "--var", "adb={pkg:android-platform-tools}/adb", "--", "{}"], host = "same-arch", hosts = ["linux-x86_64"], exclusive = true, enabled = false, requires = ["xim:dirun@0.4.0", "xim:android-system-image@34-default-x86_64", "xim:android-emulator@37.1.11-2", "xim:android-platform-tools@37.0.1-2"] }
+
+[[platform.provider]]
+name      = "android-ndk"
+serves    = ["aarch64-linux-android"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "android-ndk@30.0.16248370"
+pairs     = ["android-ndk"]
+sysroot   = "toolchain"
+
+[[platform.provider]]
+name      = "emsdk"
+serves    = ["wasm32-emscripten"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "emsdk@6.0.9"
+pairs     = ["emsdk"]
+sysroot   = "toolchain"
+linkage   = "static"
+
+# openkal-platform: the ok images, and through its hosted part the musl identity
+# of each system it implements (its C library is openkal-musl).
+[[platform.provider]]
+name      = "openkal"
+serves    = ["*-openkal"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "llvm@23.1.3"
+pairs     = ["llvm"]
+linkage   = "static"
+platform  = "mcpplibs.openkal-platform@0.28.0"
+
+[[platform.provider]]
+name      = "openkal"
+serves    = ["*-linux-musl", "*-macos-musl", "*-freebsd-musl"]
+priority  = 50
+hosts     = ["*"]
+toolchain = "llvm@23.1.3"
+pairs     = ["llvm"]
+linkage   = "static"
+platform  = "mcpplibs.openkal-platform@0.28.0"
+
+# The same arrangement on Windows, whose own interfaces a resource script
+# compiles against: their headers are the MinGW-w64 base's, which states them
+# for every architecture under one `include`.
+[[platform.provider]]
+name           = "openkal"
+serves         = ["x86_64-windows-musl"]
+priority       = 50
+hosts          = ["*"]
+toolchain      = "llvm@23.1.3"
+pairs          = ["llvm"]
+linkage        = "static"
+platform       = "mcpplibs.openkal-platform@0.28.0"
+system-headers = "xim:mingw-w64-sysroot@20261104-2"
+
+# ── Systems ──────────────────────────────────────────────────────────────────
+
+[[platform.system]]
+name  = "linux"
+uname = "Linux"
+
+[[platform.system]]
+name  = "macos"
+uname = "Darwin"
+
+[[platform.system]]
+name  = "freebsd"
+uname = "FreeBSD"
+
+# A Windows program is not selected by `uname`: it leads the file.
+[[platform.system]]
+name            = "windows"
+resources       = true
+command-scripts = [".bat", ".cmd"]
+
+# ── Execution relations ──────────────────────────────────────────────────────
+#
+# Executes keys (`[[platform.executes]]`)
+#   host            the machine, `<os>-<arch>`
+#   arches          the architectures whose programs it starts besides its own;
+#                   a runner stated for a machine of the artifact's architecture
+#                   (`host = "same-arch"`) runs there too
+#
+# Only a relation a CI has measured is stated. An x86_64 Linux kernel runs i386
+# programs (IA-32 emulation), which the i686 rows' CI runs on GitHub's x86_64
+# Linux machines (openkal-platform 0.28.0; mcpp e2e `i686`). Windows' WOW64 is
+# not stated until a CI measures an i686 runner there.
+[[platform.executes]]
+host   = "linux-x86_64"
+arches = ["i686"]
+
+# ── Toolchain payloads ───────────────────────────────────────────────────────
+#
+# A toolchain named by its family (`gcc@16.1.0`, `llvm@23.1.3`) is a package of
+# the ecosystem's index, and which package is data (design 2026-11-12 §16): the
+# entries of a family are tried in order and the first that serves the target
+# on this host is taken. A payload named outright (`xim:<name>@<version>`) needs
+# no entry: it describes itself (`.mcpp-toolchain.json`).
+#
+# Payload keys
+#   name          the package; `{triple}` is the target, `{gcc-triple}` its row's
+#                 GCC triple, `{host-arch}` this machine's architecture. An entry
+#                 whose placeholder has no value does not apply
+#   aliases       other names a request may give it (`emscripten`)
+#   family        gcc | llvm | msvc: the option vocabulary of its compiler
+#   serves        target patterns, as a provider's (`*-linux-musl`); `*` any
+#                 target, `host` a build for this machine
+#   hosts         `<os>-<arch>` patterns of the machines it is published for;
+#                 `{arch}` the target's architecture, `!` excludes, the last
+#                 pattern that matches stands
+#   frontend-dir  where its C++ frontend is under the payload root (default
+#                 `bin`); `{ndk-host}` the NDK's directory for this host
+#   frontends     the frontend names, tried in order; `{exe}` the host's
+#                 executable suffix, `{host-musl}` this machine's musl triple
+#   builds-for    the target a request that names the payload builds for
+#                 (`musl-gcc@16.1.0`), and what `toolchain list` reads it as:
+#                 a triple, `host`, `host-musl`; empty: the request decides
+#   glibc-fixup   the glibc payload's install-time specs fixup
+#   family-version  the payload's version is its family's (default true):
+#                 `musl-gcc@16.1.0` is gcc 16.1.0 for its target, and
+#                 `toolchain list` shows it; false where the version is the
+#                 payload's own SDK's (`emsdk@6.0.9`), which a request names
+#                 as the payload
+#
+# Offer keys (`toolchain list --available`)
+#   name, hosts   a payload and the machines on which it is offered
+
+[[toolchain.payload]]
+name         = "emsdk"
+aliases      = ["emscripten"]
+family       = "llvm"
+serves       = ["*-emscripten"]
+hosts        = ["*"]
+frontend-dir = "emscripten"
+frontends    = ["em++", "emcc"]
+builds-for     = "wasm32-emscripten"
+family-version = false
+
+[[toolchain.payload]]
+name         = "android-ndk"
+family       = "llvm"
+serves       = ["*-linux-android"]
+hosts        = ["*"]
+frontend-dir = "toolchains/llvm/prebuilt/{ndk-host}/bin"
+frontends      = ["clang++{exe}", "clang++", "clang"]
+family-version = false
+
+[[toolchain.payload]]
+name       = "llvm"
+family     = "llvm"
+serves     = ["*", "host"]
+hosts      = ["*"]
+frontends  = ["clang++{exe}"]
+builds-for = "host"
+
+# A row that states its GCC triple (`i586-pc-msdosdjgpp`) names its cross GCC.
+[[toolchain.payload]]
+name      = "{gcc-triple}-gcc"
+family    = "gcc"
+serves    = ["*"]
+hosts     = ["*"]
+frontends = ["{gcc-triple}-g++{exe}", "{gcc-triple}-g++"]
+
+# musl for this machine's own architecture on Linux; a cross musl GCC otherwise.
+[[toolchain.payload]]
+name       = "musl-gcc"
+family     = "gcc"
+serves     = ["*-linux-musl"]
+hosts      = ["linux-{arch}"]
+frontends  = ["{triple}-g++{exe}", "{triple}-g++", "g++{exe}", "g++"]
+builds-for = "host-musl"
+
+[[toolchain.payload]]
+name      = "{triple}-gcc"
+family    = "gcc"
+serves    = ["*-linux-musl"]
+hosts     = ["*"]
+frontends = ["{triple}-g++{exe}", "{triple}-g++", "g++{exe}", "g++"]
+
+# MinGW: Windows' own GCC on Windows (also for a build for the machine itself),
+# the cross GCC elsewhere.
+[[toolchain.payload]]
+name       = "mingw-gcc"
+aliases    = ["mingw"]
+family     = "gcc"
+serves     = ["*-windows-gnu", "host"]
+hosts      = ["windows-*"]
+frontends  = ["g++{exe}", "g++"]
+builds-for = "x86_64-windows-gnu"
+
+[[toolchain.payload]]
+name       = "mingw-cross-gcc"
+aliases    = ["mingw-cross"]
+family     = "gcc"
+serves     = ["*-windows-gnu"]
+hosts      = ["*", "!windows-*"]
+frontends  = ["x86_64-w64-mingw32-g++"]
+builds-for = "x86_64-windows-gnu"
+
+# The glibc GCC is published for x86_64 Linux and, from 16.1.0, aarch64 when a
+# target names glibc; a build for the machine itself on another Linux
+# architecture takes the musl GCC, which is published there.
+[[toolchain.payload]]
+name        = "gcc"
+family      = "gcc"
+serves      = ["host"]
+hosts       = ["*", "!linux-*", "linux-x86_64"]
+frontends   = ["g++"]
+builds-for  = "host"
+glibc-fixup = true
+
+[[toolchain.payload]]
+name       = "musl-gcc"
+family     = "gcc"
+serves     = ["host"]
+hosts      = ["linux-*"]
+frontends  = ["{host-musl}-g++", "g++"]
+builds-for = "host-musl"
+
+[[toolchain.payload]]
+name        = "gcc"
+family      = "gcc"
+serves      = ["*"]
+hosts       = ["*"]
+frontends   = ["g++"]
+builds-for  = "host"
+glibc-fixup = true
+
+[[toolchain.payload]]
+name       = "msvc"
+family     = "msvc"
+serves     = ["*", "host"]
+hosts      = ["*"]
+frontends  = ["cl.exe"]
+builds-for = "host"
+
+[[toolchain.offer]]
+name  = "gcc"
+hosts = ["*"]
+
+[[toolchain.offer]]
+name  = "musl-gcc"
+hosts = ["*"]
+
+[[toolchain.offer]]
+name  = "llvm"
+hosts = ["*", "!linux-*", "linux-x86_64", "linux-aarch64"]
+
+[[toolchain.offer]]
+name  = "msvc"
+hosts = ["windows-*"]
+
+[[toolchain.offer]]
+name  = "mingw-gcc"
+hosts = ["windows-*"]
+
+[[toolchain.offer]]
+name  = "{host-arch}-linux-musl-gcc"
+hosts = ["windows-*"]
+
+[[toolchain.offer]]
+name  = "mingw-cross-gcc"
+hosts = ["linux-x86_64"]

@@ -21,11 +21,11 @@ source "$SCRIPT_DIR/_llvm_env.sh"
 
 if [[ ! -d "$LLVM_ROOT" ]]; then
     echo "SKIP: no llvm payload installed"
-    exit 0
+    exit 77
 fi
 
 CLANGXX="$LLVM_ROOT/bin/clang++"
-[[ -x "$CLANGXX" ]] || { echo "SKIP: no clang++ in $LLVM_ROOT"; exit 0; }
+[[ -x "$CLANGXX" ]] || { echo "SKIP: no clang++ in $LLVM_ROOT"; exit 77; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

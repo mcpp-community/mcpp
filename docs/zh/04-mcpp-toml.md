@@ -13,6 +13,18 @@
 `mcpp.toml` 是 mcpp 构建工具的工程配置文件，类似于 Cargo 的 `Cargo.toml` 或
 Node 的 `package.json`。把它放在工程根目录；`mcpp build` 会自动发现并读取它。
 
+该文件是 TOML。内联表可以跨多行书写、包含注释，并在最后一对之后带一个逗号，
+这与 TOML 1.1 的规定一致；每一对 `key = value` 仍写在一行之内(#928)。mcpp
+读取的每个 TOML 文件(`mcpp.lock`、`config.toml`、模板元数据)都遵循同一规则。
+
+```toml
+[dependencies]
+widget = {
+    version  = "2.0.0",
+    features = ["gui"],   # 表内的注释
+}
+```
+
 ## 1. 最小化示例
 
 mcpp 按**约定优于配置**设计——大多数字段都有合理的默认值，因此最简单的
@@ -291,7 +303,7 @@ main = { from = "openmui/player" }     # "<依赖>/<入口>"
 - 两者之间的契约只经符号与运行时数据。由程序定义的回调，提供方以 `extern "C++"` 或
   `extern "C"` 声明：附着于命名模块的声明不能在模块之外定义。
 - 入口目标陈述 `main`（文件），可以陈述 `start`、`windows_entry`、`cflags`、`cxxflags`、
-  `defines` 与 `required_features`。`windows_entry` 由选择它的程序继承，程序陈述不同的值
+  `defines`、`required_features` 与 `test-protocol`。`windows_entry` 由选择它的程序继承，程序陈述不同的值
   被拒绝；`required_features` 必须已开启，否则拒绝并给出开启它们的依赖写法。描述产物的键
   （`soname`、`exports`、`linkage`、程序的 `windows_*` 键）属于程序，在入口目标上被拒绝。
 - 使用 `main = { from }` 的程序目标不陈述 `cflags`、`cxxflags`、`defines`：这些标志作用于
@@ -478,18 +490,26 @@ required_features = ["gui"]                   # only built when feature `gui` is
 |---|---|
 | `defines` | 预处理宏（`name` 或 `name=value`）；在 C 与 C++ 两种入口编译上都脱糖为 `-D<x>`。 |
 | `cxxflags` / `cflags` | 这个目标专用的额外编译旗标。**不要**把 `-std=...` 写在这里——用 `[package].standard`。 |
+| `build` *(2026.11.9.1+)* | 一个表 `[targets.<name>.build]`，含 `defines`、`cxxflags`、`cflags`：本包中该目标链接的每个翻译单元的参数，即其入口与共享的实现源文件。与包的参数不同处，这些单元编译为该目标自己的变体（`obj/_variant/<name>/`）；其他目标照旧链接包的目标文件。模块接口每包一个，不做变体。 |
 | `required_features` | 只有当构建中**每一个**列出的 feature 都被激活时，这个目标才会被产出；否则被静默跳过。它只是一道闸——不会激活 feature（用 `--features` / `[features].default`）。**一个例外，但它不是第二条规则：** 当这个目标作为 host 工具被请求时（`tools = [...]`，§2.14），这个目标就是被**请求**的那一个，于是它的 `required_features` 变成子构建的**输入**。同一个字段、同一个含义——只是解析的方向反过来了。 |
 | `windows_subsystem` *（2026.9.12.2+）* | 可执行文件的 PE subsystem：`"console"`（默认）或 `"windows"`，一个启动时没有控制台的 GUI 程序。只到达这个目标的链接，别处不受影响，在非 PE 的目标上不渲染任何东西。见上一节。 |
 | `windows_entry` *（2026.9.12.2+）* | 程序定义的入口函数：`"main"`（默认）、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。入口目标陈述其翻译单元定义的函数，由选择它的程序继承。 |
 | `start` *（2026.10.26.2+）* | 独立目标上镜像的入口符号。见上文 `start`。 |
+| `test-guide` *（2026.11.8.1+）* | 入口目标的键：包中的一个文件，即编写以它为起点的测试的指南，由 `mcpp test --guide` 列出（[08](08-testing.md#编写测试)）。在其他目标上被拒绝。 |
+| `test-capabilities` *（2026.11.10.1+）* | 入口目标的键：其框架实现的 mcpp 测试规范可选能力，按名称列出（`["check-details", "metrics", "fixtures"]`；[SPEC-017](../specs/test.md) B6）。`mcpp test --guide` 报告它们；客户端只依赖已陈述的能力。在其他目标上被拒绝。 |
+| `test-session` *（2026.11.10.1+）* | 入口目标的键：启动其框架测试会话的命令（`["mtest", "serve", "--stdio"]`；SPEC-017 O9）。客户端启动该会话，在持有会话期间运行、加入和取消用例。`mcpp test --guide` 报告它。在其他目标上被拒绝。 |
+| `test-main` *（2026.11.8.1+）* | 入口目标的键：`true` 表示它可作为依赖本包（或本包自身）且未陈述 `[test] main` 的包中、不定义 `main` 的测试文件的起点（[08](08-testing.md#测试程序的起点)）。在其他目标上被拒绝。 |
+| `test-protocol` *（2026.11.8.1+）* | 入口目标的键：以此为起点的测试程序实现的测试协议版本，`1`；`mcpp test` 随之列出、选择并报告程序的用例（[08](08-testing.md#用例测试协议)）。在其他目标上被拒绝。 |
 | `windows_code_page` *（2026.9.26.1+）* | 可执行文件在 Windows 上的 ANSI 代码页：`"utf-8"`，以 Windows 10 1903 及以后版本会遵从的应用程序清单嵌入；或 `"legacy"`，即系统代码页。两者都不写的程序目标运行在系统代码页里，作为 host 工具构建的程序（§2.14）除外，它默认为 `"utf-8"`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。见 §2.3 的*路径与文本编码*。 |
 | `windows_long_paths` *（2026.10.16.1+）* | `true` 在可执行文件的应用程序清单中嵌入 `longPathAware`：在 Windows 启用长路径（`LongPathsEnabled`）时，进程可以使用超过 260 个字符的路径。`false` 不嵌入。两者都不写的程序目标不嵌入，作为 host 工具构建的程序（§2.14）除外，它默认为 `true`。写在库目标上会被拒绝；在非 PE 目标上不产生任何东西。 |
 | `linkage` *（2026.9.15.2+）* | 一个库目标的**默认**链接形态，`"static"` 或 `"shared"`：不写 `linkage` 的消费者得到的形态。与 `kind = "shared"` 不同，它不是约束，因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写，或写在程序目标上，都会被拒绝。见[`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
 > **范围（重要）：** 目标上的 `defines` / `cxxflags` / `cflags` **只**
-> 应用于该目标专属的入口源文件（它的 `main`）——绝不应用于共享的
+> 应用于该目标的入口源文件（它的 `main`）——绝不应用于共享的
 > 模块/实现对象，后者只编译一次，并链接进每一个目标（mcpp 的一次编译
-> 模型）。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
+> 模型）；一个目标的共享源文件经 `[targets.<name>.build]` 取得它自己的参数。
+> 多个程序共用的入口，按参数不同的每个程序各编译一次
+> （`obj/_entry/<name>/`，2026.11.10.1+），每个程序链接自己的入口对象。当一个旗标只需要影响单个二进制（或测试）自己的入口时，这两个
 > 键是正确的工具——例如某个测试的 `main` 专门触发违规，需要按测试设置
 > contract 求值语义（`-fcontract-evaluation-semantic=observe`）；或者
 > 只有入口会读到的一个 feature 宏；或者一次局部的警告抑制。如果一个
@@ -510,9 +530,9 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | **选择一个变体**的共享库（例如某个后端） | 用该库上的 `[features]`（§2.8）——是增量的，到达库自己的编译 |
 | **整个构建范围**的模式（sanitizer、contract 语义、优化档位） | `[profile.<name>]`（§2.9） + `--profile`；`mcpp test --profile <name>` 同样尊重它 |
 
-mcpp 刻意不在一次构建里用两种方式编译同一份共享源码：一个源文件对应
-一个对象（模块对应一个 BMI），所以凡是必须到达共享代码的分歧，都属于
-包/feature 的边界，不属于单个目标。
+一个源文件按每组参数对应一个对象：包的对象，以及参数（`[targets.<name>.build]`
+或入口参数）与包不同的每个目标各一个变体。模块接口每包对应一个 BMI，不做变体，
+所以凡是必须到达模块接口的分歧，都属于包/feature 的边界，不属于单个目标。
 
 ### 2.3 `[build]` —— 构建配置
 
@@ -529,6 +549,11 @@ mcpp 刻意不在一次构建里用两种方式编译同一份共享源码：一
 > 默认 glob；显式的空列表意味着**什么都不编译**，这正是一个纯头文件
 > 分发包需要表达的意思。在 mcpp 2026.8.18.1 之前两者逐字节相同，所以
 > 没有拼法能表达「什么都没有」，`src/` 下留下的任何文件都会被卷进来。
+
+> **不含模式的路径指名一个文件**（2026.11.16.1+）。不含 `*`、`?`、`[`、`{` 的 `sources` 条目指名一个
+> 文件，文件不存在时报错，并指出陈述它的表（`[build]`、`[target.'<sel>'.build]`、`[features.<f>]`）：
+> 此前它被跳过，构建在导入该文件所提供模块的地方失败。取入存储的包由其使用者无法修改，其中的这类条目是警告。构建中 action 或构建程序写出的文件属于构建。
+> 匹配为空的模式不选中任何文件，一个目标上的选择可以为空。
 
 > **`**/` 代表整段目录。** 在 `sources` 以及沿用其文法的每一处 glob 中，
 > `**/` 匹配零个或多个目录，其后的部分从一个路径段的开头算起：
@@ -559,6 +584,7 @@ c_standard   = "c11"              # Standard for this package's C sources (defau
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
+compiler_runtime_dir = "compiler-rt" # 供给 compiler-runtime 的包：其运行时所在的目录（2026.11.10.1+；docs/22）
 defines      = ["BIZ=1", "QUX"]   # 本包每个编译单元的预处理宏；按宏名构成集合（见下文）
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
@@ -972,6 +998,15 @@ bmi_schedule = "off"     # auto (default, = off) | on | off
 
 `bmi_schedule` 决定 importer 何时被解除阻塞。
 
+使用 GCC 且 `bmi_schedule = "on"` 时，普通编译与分离的代码生成共用同一个 `jobs` 总上限
+（2026.11.7.1+）。额外的调度和等待任务不增加编译器进程数量。
+链接共用同一上限（2026.11.16.1+）：同时就绪的链接按编译的并发数运行，而不是全部同时运行。
+取消构建会结束本轮普通编译器和分离的编译器。紧接着的构建等待它们完成清理后
+才启动新的编译器；未完成的输出会重新构建。已完成模块的 object 缺失时，
+该次构建会重新生成它。输入和输出均不变的构建仍不进行编译。
+若被强制结束的构建留下了无法确认已经完成的编译单元，下一次构建报告该单元
+仍被占用或状态未知，并保留其输出；该名额不会启动替代编译器。
+
 | 取值 | |
 |---|---|
 | `"auto"` | **默认值，目前意味着关闭** |
@@ -1349,7 +1384,7 @@ test` 把它报告为**未运行**，在原因确定时打印一次，在摘要�
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
 smoke ... not run
-error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (plan 0.02s · build 0.39s · run 0.00s)
 ```
 
 退出码 1 保留原有含义——一个测试运行过并失败；0 意味着每个测试都
@@ -1389,7 +1424,7 @@ runner 与 `run_under`。
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.23.3"          # or { path = "…" }, or "none"
+platform = "openkal-platform@^0.24"           # a series, a version, { path = "…" }, or "none"
 
 [target.'cfg(platform = "openkal")'.layers]
 c-abi = { path = "../openkal-musl" }
@@ -1405,7 +1440,8 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 | `tools.<name>` | 为本机构建一个工具的包，或 `{ program = "<name>" }` |
 | `link` | `driver`、`flags`、`start`、`script`、`inputs`、`exe`、`shared`、`seal` |
 | `carrier` | `{ package, section, main }`：`--mode self-contained` 构建的程序 |
-| `runner` | 一个 argv，或 `{ cmd, host, exclusive }`：`host = "same-arch"` 只在产物架构的机器上运行它 |
+| `runner` | 一个 argv，或 `{ cmd, host, hosts, exclusive, requires, enabled, longlived }`：`host = "same-arch"` 只在产物架构的机器上运行它；不含 `cmd` 的表调整其下一层的 runner，如 `{ enabled = true }` 启用数据陈述 `enabled = false` 的 runner（2026.11.16.1） |
+| `runners.<name>` | 具名 runner 的同一种 argv 或表（表形式 2026.11.16.1） |
 
 `cfg(platform = "<name>")` 按平台选择；`platform` 本身不能写在这样的选择器下。同样的键也从
 `~/.mcpp/config.toml` 读取。平台包在 `[platform]` 下陈述它们，`[host] platform` 选择构建程序的平台。
@@ -1435,7 +1471,9 @@ imports  = ["std"]
 这条声明会在**每次构建时被审计**：编译器自己对这个文件做的 P1689
 扫描（`.ddi` dyndep 输入）会与它比对，任何分歧都会让那条编译边失败，
 并同时打印双方的结果——一条陈旧的声明无法悄悄污染这张图。一条不匹配
-任何源文件的 override glob 是一个错误。
+包内任何文件的 override glob 是一个错误。文件存在但本次构建不编译它们的
+glob——feature 未启用，或被 `[target.<selector>.build]` 的 `!` 规则排除——
+不是错误：这条声明为编译这些文件的构建描述它们（2026.11.10.1+，mcpp#902）。
 
 xpkg 描述符（索引包）里也有同一个键：
 
@@ -1496,7 +1534,7 @@ GCC 16.1 报告 `sorry, unimplemented: private module fragment`，mcpp
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g
+debug    = false          # -g;cl.exe 上为 /Z7;"lines":只含行表
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
@@ -1507,6 +1545,13 @@ cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
+
+**标志列表的顺序。** `cflags`、`cxxflags` 与 `ldflags` 各自按 `[build]` 的、profile 的、`[target.<selector>.build]` 的
+顺序进入命令：编译器或链接器取两个词中后者时，目标块的生效（2026.11.16.1 实测）。
+
+**cl.exe 上的调试信息（2026.11.7.1+）。**`debug = true` 以 `/Z7` 编译：每个对象携带自己的调试信息。
+`/Zi` 与 `/ZI` 把全部编译的调试信息经由 mspdbsrv.exe 写入同一个 PDB；该服务在启动它的编译结束后继续存在，
+并随那个编译的进程单元一同结束。包的标志中的 `/Zi`、`/ZI`、`/FS` 在编译开始前被拒绝。
 
 - 选择与默认值：一条裸的 `mcpp build` 使用 **`dev`** profile
   （`-O0 -g`）——这是主流约定（参见 Cargo/Meson/CMake/Zig/Bazel）。
@@ -1531,8 +1576,9 @@ ldflags  = []
   `app@1.2.0/src/main.cpp`),存储、home、构建目录、工具链与 sysroot 分别映射为 `/mcpp/store`、
   `/mcpp/home`、`/mcpp/build`、`/mcpp/toolchain` 与 `/mcpp/sysroot`。同一棵树的两个检出因此嵌入
   相同的路径。一个单元的映射只含固定根与它所属包的依赖闭包中各包的根,所以无论构建选择哪些工作空间成员,
-  依赖的命令行都相同(2026.10.26.2+)。它作用于 `build`、`run` 与 `pack` 的产物,不作用于 `mcpp test`:测试二进制在构建处运行,
-  且常借 `__FILE__` 找到它的夹具。带调试信息的构建还在输出旁写出 `source-map.gdbinit` 与 `source-map.lldbinit`,
+  依赖的命令行都相同(2026.10.26.2+)。它作用于 `build`、`run`、`pack` 与 `mcpp test` 编译的代码,测试程序自己的文件除外:测试二进制
+  在构建处运行,且常借 `__FILE__` 找到它的夹具;被测试的代码就是发布的代码,因此 `mcpp build` 与 `mcpp test`
+  是同一配置(2026.11.8.1+;此前发布类 profile 的测试是单独的配置,会把整个图再编译一遍)。带调试信息的构建还在输出旁写出 `source-map.gdbinit` 与 `source-map.lldbinit`,
   供调试器把路径映射回来。cl.exe 没有文档化的等价开关,构建会报告一次。在 profile 下写
   `ndebug = false` 或 `trim_paths = false` 可保留以前的产物;升级后第一次发布档构建会提示一次。
 - **调试信息(2026.10.31.3+)。** 带调试信息、目标为 ELF 时(Linux、交叉 Linux 目标、ok 映像),
@@ -1545,15 +1591,24 @@ ldflags  = []
   它只在 `trim_paths` 关闭时生效,因为调试器经骨架所记的构建目录查找单元的 `.dwo`。`"off"` 把全部调试信息
   留在产物中。Mach-O(debug map)、PDB、MinGW、WebAssembly 与裸机目标不变。在包的 flags 中写 `-gz=none`
   可关闭压缩。
+- **`debug = "lines"`(2026.11.13.1+)** 只保留行表:GCC 为 `-g1`,clang 即 `-gline-tables-only`。回溯、sanitizer 报告与
+  性能分析器仍给出文件与行号;调试器看不到变量与类型。闭包大的测试程序只有 `debug = true` 时的一部分大小,这正是 CI 与全量测试的
+  profile 所需(见 [08 —— 测试构建的体积](08-testing.md#测试构建的体积))。cl.exe 没有低于 `/Z7` 的级别,`"lines"` 在其上以 `/Z7`
+  编译。其他字符串被拒绝。
 - **每个 profile 拥有自己的构建目录。** 解析出的 profile 旋钮参与
   指纹，所以 `target/<triple>/` 下每个 profile 各有一个哈希目录，在
   它们之间切换是增量的，不是一次完整重建。这也意味着磁盘开销随实际
   用到的 profile 数量而增长。
 - **一个配置在时间上只占一个目录(2026.10.31.3+)。** 指纹中开发者在其间切换的部分——编译器族、目标、
-  标准库族、语言标准与配置级选项——是目录的谱系;编译器版本、mcpp 版本、std 模块与运行时契约随时间演进。
+  标准库族、语言标准、配置级选项与所陈述的基座——是目录的谱系;编译器版本、mcpp 版本、std 模块与运行时契约
+  (基座的内容)随时间演进。
   同一谱系的新指纹接管该谱系最近使用的目录,由 ninja 重建命令变化的边:编译选项不变的 mcpp 升级之后,
-  没有单元被重新编译。编译器构建不同的前驱则被删除(其中的对象不可复用)。构建或测试成功后,每天至多一次,
+  没有单元被重新编译。编译器构建不同、或基于基座的其他内容构建的前驱则被删除(其中的对象不可复用)。构建或测试成功后,每天至多一次,
   删除 `[build] keep_days` 天(config.toml;默认 3,`0` 全部保留)内没有配置使用过的目录。
+- **`[build] target_budget` 限定 `target/` 的大小(2026.11.8.1+)。** 在 `mcpp.toml`(或 config.toml)
+  中写 `target_budget = "20GiB"` 这样的大小:每次构建或测试后,若 `target/` 超过该大小,没有任何配置
+  记录为当前的目录不论年龄一律删除;仍在使用的目录依然超过预算时,构建给出警告并列出最大的三个。
+  仍在使用的目录不会被删除(mcpp#874)。
 
 ### 2.10 `[build] cache` —— 依赖的全局构建缓存
 
@@ -1768,9 +1823,9 @@ platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 
 声明这个包支持的平台（一条 CI 矩阵提示，经 `mcpp why` 展示）。词汇由
 mcpp（拥有 target/triple 体系的一方）固定：
-`linux | macos | windows | ios | android | emscripten`
+`linux | macos | windows | ios | android | emscripten | openkal | freebsd`
 （mcpp 2026.9.12.3+；`ios`、`android` 与 `emscripten` 是这套此前只有
-`linux | macos | windows` 的词汇新增的成员）；未知取值会产生警告，
+`linux | macos | windows` 的词汇新增的成员，`freebsd` 自 2026.11.10.1 起是其成员）；未知取值会产生警告，
 `--strict` 下是错误。
 
 一个平台名就是目标三元组的 `os`，除非一个自己命名了平台的 `env`
@@ -1841,8 +1896,8 @@ icon = "assets/app.ico"
 | `version-info` | 布尔值 | `false` 退出自动生成版本资源 |
 | `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
 
-**只有 PE 目标会*编译*它。** 在 Linux 与 macOS 上，这一节*不适用*：
-没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
+**只有程序由 Windows 运行的目标会*编译*它**：执行系统为 Windows 的 PE 行。在其他目标上这一节*不适用*——
+Linux、macOS，以及由其他系统加载的 PE 行，如 `x86_64-uefi`（2026.11.16.1）：没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
 `cfg(windows)` 谓词——写一次，无条件生效即可。
 
 资源属于拥有可执行程序或共享库的包。依赖的 executable artifact 与共享库在通过
@@ -1901,7 +1956,10 @@ mcpp 读取 `.rc` 里带引号的 `#include`，以及资源语句（`ICON`、
 `RCDATA`、`MANIFEST`、数字类型 `24` 等）命名的文件，并把它们变成构建输入，
 所以修改图标会触发重新链接。相对文件名按脚本自己所在的目录解析，rc.exe、
 llvm-rc 与 windres 也在那里查找它。尖括号 include（`<windows.h>`）属于工具链，由
-工具链指纹覆盖，而不是这项扫描。
+工具链指纹覆盖，而不是这项扫描；工具链的 Windows 头文件中已有的带引号 include
+（`"winres.h"`）同样如此。各处都找不到的带引号 include，只有在某个构建动作写出它时
+才是输入；否则由脚本自身的预处理决定（`#if __has_include("x.h")`），缺失时由资源
+编译器报告，并给出脚本名与行号（2026.11.10.1+）。
 
 一个经由宏到达的文件名（`1 ICON APP_ICON`）对这项扫描是不可见的。
 mcpp 会点名它无法解析的部分，并要求显式声明：
@@ -1949,6 +2007,16 @@ discover = ["tests/**/*.cpp"]    # the default
 | `windows_long_paths` | `true` 或 `false` | Windows 上每个测试程序是否支持长路径，含义与同名的 target 键相同；默认 `false` *(2026.10.16.1+)* |
 | `main` | `{ from = "<依赖>/<入口>" }` | 每个测试程序的起点所在的入口目标；测试文件随之成为程序的普通翻译单元，不定义 `main`（§2.2，`kind = "entry"`） *(2026.10.26.2+)* |
 | `start` | 符号 | 独立目标上每个测试镜像的入口符号（§2.2，`start`） *(2026.10.26.2+)* |
+| `programs` | `"file"` 或 `"directory"` | `"file"`（默认）：每个被发现的文件是一个程序；`"directory"`：glob 固定目录之下同一目录的文件是一个程序，以目录命名，有文件定义 `main` 时以它为起点 *(2026.11.8.1+)* |
+| `split` | `"file"`、`"case"`、`"auto"` 或 `"none"` | 使用测试协议的程序的运行方式：按用例所在文件各一个进程（默认）、每个用例一个进程、按文件且把运行存储测得长于其份额的文件划分为用例组（`"auto"`，2026.11.13.1+），或只运行一次 *(2026.11.9.1+)* |
+| `link` | `"used"` 或 `"objects"` | `"used"`（默认）：测试只链接它用到的部分（`--gc-sections`、`-dead_strip`）；`"objects"`：保留每个目标文件的全部内容 *(2026.11.9.1+)* |
+| `store` | 目录或 `"none"` | 运行以 mtest 存储的形式保存的位置，相对项目；默认 `target/mtest`；`"none"` 不保存 *(2026.11.9.1+)* |
+| `features` | feature 名数组 | 包自身的测试构建在默认 feature 与 `--features` 之外打开的 feature；每个都须是 `[features]` 声明的 feature *(2026.11.16.1+)* |
+
+`[target.'<sel>'.test] discover` 为谓词选中的目标向 `discover` 追加 glob，如同条件 `[build] sources`
+追加源文件；以 `!` 开头的 glob 从整个集合中移除它匹配的文件 *(2026.11.16.1+)*。这是该表唯一的键：其它键
+决定测试构建的形态，而不是增加它的输入。测试在依赖解析之前发现，所以基于目标侧层（`kernel-abi`、`c-abi`
+等）的谓词被拒绝。
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个

@@ -1,0 +1,126 @@
+name: canaries
+
+# THE TWO CANARIES OVER THE MATRIX, NIGHTLY (design 2026-11-12 §5.7).
+#
+# tests/canary/c (C89 on POSIX alone: two programs from one set of sources, a
+# resource script written once, a non-local jump, files, the arguments) and
+# tests/canary/cxx (C++23 modules, `import std`, exceptions, threads, a test)
+# are built, linked statically, run, tested and packed for every identity the
+# host's rows of tests/canary/matrix.tsv name, with this commit's mcpp. Each row
+# states what the step does (ok, fails with a note, n/a); a cell that differs
+# from its row, either way, fails the job, so the table is a declaration that
+# a change of behaviour corrects. The report of each host is the job's
+# summary and its artifact `canary-report-<host>`; a statement such as "every
+# identity builds" cites a run of this workflow.
+#
+# Nightly, by hand, and on a pull request labelled `ci:canaries`; no pull
+# request waits for it otherwise.
+
+on:
+  schedule:
+    - cron: "17 19 * * *"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: canaries-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:canaries')
+    uses: ./.github/workflows/build.yml
+    with:
+      host: linux-x86_64
+      runs-on: ubuntu-24.04
+
+  build-macos:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:canaries')
+    uses: ./.github/workflows/build.yml
+    with:
+      host: macos-arm64
+      runs-on: macos-15
+
+  build-windows:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:canaries')
+    uses: ./.github/workflows/build.yml
+    with:
+      host: windows-x86_64
+      runs-on: windows-latest
+
+  linux:
+    name: canaries (linux-x86_64)
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: linux-x86_64
+      # The machine the rows of linux-x86_64 state: an aarch64 program runs
+      # through QEMU's user mode, registered with binfmt_misc, as it does where
+      # the matrix was measured. Without it the aarch64 Linux rows' run and test
+      # are refused by the system (Exec format error), which is not mcpp's to state.
+      - name: QEMU user mode for aarch64 programs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-user-static binfmt-support
+          test -e /proc/sys/fs/binfmt_misc/qemu-aarch64
+      - name: The canaries over the matrix
+        run: MCPP="$MCPP_FRESH" bash tests/canary/run.sh --host linux-x86_64 --report canary-report-linux-x86_64.tsv
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-report-linux-x86_64
+          path: canary-report-linux-x86_64.tsv
+
+  macos:
+    name: canaries (macos-aarch64)
+    needs: build-macos
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
+        with:
+          image: macos-15
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: macos-arm64
+      - name: The canaries over the matrix
+        run: MCPP="$MCPP_FRESH" bash tests/canary/run.sh --host macos-aarch64 --report canary-report-macos-aarch64.tsv
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-report-macos-aarch64
+          path: canary-report-macos-aarch64.tsv
+
+  windows:
+    name: canaries (windows-x86_64)
+    needs: build-windows
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: windows-x86_64
+      - name: The canaries over the matrix
+        shell: bash
+        run: MCPP="$MCPP_FRESH" bash tests/canary/run.sh --host windows-x86_64 --report canary-report-windows-x86_64.tsv
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-report-windows-x86_64
+          path: canary-report-windows-x86_64.tsv

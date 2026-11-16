@@ -6,7 +6,7 @@
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
 | **版本** | 1.7 |
-| **最后修改** | 2026-10-17 |
+| **最后修改** | 2026-11-09 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
@@ -318,6 +318,17 @@ cancellation = { path = "modules/cancellation" }`)。告警在解析完成之后
 采用而非拒绝:来源已由声明行固定,§4.2 反对候选搜索的理由(索引状态改变依赖的指向)
 在这里不成立。
 
+### 5.5 git 引用 已实现(mcpp >= 2026.11.9.1)
+
+- git 来源**至多**写出 `rev`、`tag`、`branch` 之一;写出两个以上**必须**被拒绝。
+- 一个都不写时,引用为远端的**缺省分支**:名字取自远端的通告(`git ls-remote --symref <url> HEAD`),
+  远端不通告时依次尝试 `main`、`master`,报告写出所用分支;引擎**禁止**写死分支名。缺省分支按 `branch`
+  处理:锁记录解析得到的提交,离线时由锁回答。
+- 命令行与环境变量中引用的字符串形式为 `[<ns>.]<name>@<约束>`、`path:<dir>`(或路径)、
+  `git+<url>[#tag=<t>|rev=<r>|branch=<b>]`、`builtin:<name>`(只用于提供者,SPEC-016 §3)。只以 URL 指名的
+  仓库,其包名取 URL 的最后一段(去掉 `.git`),取得后的清单名按 §5.4 核对。
+- 清单中写出的引用记入锁;只在命令行或环境变量中出现的引用不改写锁。
+
 清单未声明 `namespace` 时,身份的命名空间取键的命名空间(§5.3 的兼容边界)。此时同一
 来源经两个命名空间不同的键到达,就是同一来源上的两个身份;实现**必须**在扫描源码之前
 拒绝,点名二者。
@@ -541,6 +552,7 @@ mcpp 侧的使用:
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.8 | 2026-11-09 | 新增 §5.5:git 引用至多一个 ref、缺省分支、命令行的字符串形式(mcpp 2026.11.9.1) |
 | 1.5 | 2026-09-27 | 新增 §10.1:版本位的回答与 xlings 一致(安装记录优先,其次按 xlings 版本文法选择;已记录而缺失的载荷不算已安装),mcpp#712、#716;新增 §10.2:打包修订 `revision` 的含义与 mcpp 侧的三处使用(mcpp 2026.9.27.1,xlings 2026.9.27.1) |
 | 1.7 | 2026-10-17 | §10.2:新增 `floor`,区分可用与当前;工具链、运行时与宿主工具按使用/供给两种意图解析,使用命令不因修订号替换可用载荷;工具链载荷的修订号进入驱动身份;替换失败的语义。§10.3 第 3 条把修订号一致移出完整性(mcpp 2026.10.17.1,xlings 2026.10.17.1,libxpkg 0.0.65) |
 | 1.6 | 2026-10-16 | 新增 §10.3:载荷的身份含修订号,身份相同的载荷可以经链接条目在 home 之间共用;载荷所在的 store 由服务它的索引决定;完整性由提供者回答,mcpp 不写入载荷(mcpp 2026.10.16.1,xlings 2026.10.16.1) |

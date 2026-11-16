@@ -1,11 +1,13 @@
-#include <gtest/gtest.h>
 #include <fstream>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.post_install;
 import mcpp.provider.xlings;
 import mcpp.config;
 import mcpp.toolchain.registry;
+
+using namespace mcpplibs::mtest;
 
 // detect_baked_loader parses gcc SPECS GRAMMAR, not plain text. The baked
 // loader path is embedded inside %-spec conditionals, e.g.
@@ -30,36 +32,34 @@ const std::string kBakedSpecs =
     "%{mmusl:/lib/ld-musl-x86_64.so.1;:/opt/other-home/.xlings/data/xpkgs/xim-x-glibc/2.39/lib64/ld-linux-x86-64.so.2}}}}} "
     "%{static:-static}}\n";
 
-TEST(DetectBakedLoader, ExtractsExactPathWithoutSpecBraces) {
+UTest extracts_exact_path_without_spec_braces{"DetectBakedLoader/ExtractsExactPathWithoutSpecBraces", [] {
     auto got = detect_baked_loader(kBakedSpecs);
-    EXPECT_EQ(got,
-        "/opt/other-home/.xlings/data/xpkgs/xim-x-glibc/2.39/lib64/ld-linux-x86-64.so.2");
+    expect(eq(got, "/opt/other-home/.xlings/data/xpkgs/xim-x-glibc/2.39/lib64/ld-linux-x86-64.so.2"));
     // The regression: any brace in the result corrupts the specs on rewrite.
-    EXPECT_EQ(got.find('}'), std::string::npos);
-    EXPECT_EQ(got.find('{'), std::string::npos);
-}
+    expect(eq(got.find('}'), std::string::npos));
+    expect(eq(got.find('{'), std::string::npos));
+}};
 
-TEST(DetectBakedLoader, IgnoresPristineMultilibDefaults) {
+UTest ignores_pristine_multilib_defaults{"DetectBakedLoader/IgnoresPristineMultilibDefaults", [] {
     // An unbaked spec (all-standard /lib*/ paths) must not be rewritten.
     const std::string pristine =
         "%{mmusl:/lib/ld-musl-x86_64.so.1;:/lib64/ld-linux-x86-64.so.2} "
         "%{m16|m32:-dynamic-linker /lib/ld-linux.so.2} "
         "%{mx32:-dynamic-linker /libx32/ld-linux-x32.so.2}";
-    EXPECT_EQ(detect_baked_loader(pristine), "");
-}
+    expect(eq(detect_baked_loader(pristine), ""));
+}};
 
-TEST(DetectBakedLoader, Aarch64LoaderNameDetected) {
+UTest aarch64_loader_name_detected{"DetectBakedLoader/Aarch64LoaderNameDetected", [] {
     const std::string specs =
         "-dynamic-linker %{mmusl:/lib/ld-musl-aarch64.so.1;:"
         "/srv/build/.xlings/xpkgs/xim-x-glibc/2.39/lib/ld-linux-aarch64.so.1}";
-    EXPECT_EQ(detect_baked_loader(specs),
-        "/srv/build/.xlings/xpkgs/xim-x-glibc/2.39/lib/ld-linux-aarch64.so.1");
-}
+    expect(eq(detect_baked_loader(specs), "/srv/build/.xlings/xpkgs/xim-x-glibc/2.39/lib/ld-linux-aarch64.so.1"));
+}};
 
-TEST(DetectBakedLoader, EmptyWhenNoGnuLoaderPresent) {
-    EXPECT_EQ(detect_baked_loader("no loaders here"), "");
-    EXPECT_EQ(detect_baked_loader("%{mmusl:/lib/ld-musl-x86_64.so.1}"), "");
-}
+UTest empty_when_no_gnu_loader_present{"DetectBakedLoader/EmptyWhenNoGnuLoaderPresent", [] {
+    expect(eq(detect_baked_loader("no loaders here"), ""));
+    expect(eq(detect_baked_loader("%{mmusl:/lib/ld-musl-x86_64.so.1}"), ""));
+}};
 
 }  // namespace
 
@@ -112,45 +112,98 @@ struct GlibcRootFixture {
 
 } // namespace
 
-TEST(GlibcPayload, TheExactVersionIsSelected) {
+UTest the_exact_version_is_selected{"GlibcPayload/TheExactVersionIsSelected", [] {
     GlibcRootFixture fx{"mcpp_glibc_exact"};
     auto want = make_glibc_payload(fx.root, "2.44.3");
     make_glibc_payload(fx.root, "2.44.2");
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44.3");
-    ASSERT_TRUE(got.has_value()) << got.error();
-    EXPECT_EQ(*got, want);
-}
+    if (auto&& failed = expect(fatal(got.has_value())); !failed) failed << got.error();
+    expect(eq(*got, want));
+}};
 
 // THE CASE OF mcpp#660. Two revisions of the line are present and the declared
 // version is neither; the answer is "not installed", naming the coordinate
 // that provides it, and never one of the two.
-TEST(GlibcPayload, ANeighbouringRevisionIsNotASubstitute) {
+UTest a_neighbouring_revision_is_not_a_substitute{"GlibcPayload/ANeighbouringRevisionIsNotASubstitute", [] {
     GlibcRootFixture fx{"mcpp_glibc_neighbour"};
     make_glibc_payload(fx.root, "2.44.2");
     make_glibc_payload(fx.root, "2.44.3");
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
-    ASSERT_FALSE(got.has_value());
-    EXPECT_NE(got.error().find("xim:glibc@2.44"), std::string::npos) << got.error();
-    EXPECT_NE(got.error().find("not installed"), std::string::npos) << got.error();
+    expect(fatal(!got.has_value()));
+    if (auto&& failed = expect(ne(got.error().find("xim:glibc@2.44"), std::string::npos)); !failed) failed << got.error();
+    if (auto&& failed = expect(ne(got.error().find("not installed"), std::string::npos)); !failed) failed << got.error();
 
     // One neighbour is not a substitute either: the old tolerance accepted it.
     GlibcRootFixture one{"mcpp_glibc_one_neighbour"};
     make_glibc_payload(one.root, "2.44.2");
-    EXPECT_FALSE(mcpp::toolchain::select_glibc_payload_lib(one.root, "glibc@2.44"));
-}
+    expect(!mcpp::toolchain::select_glibc_payload_lib(one.root, "glibc@2.44"));
+}};
 
-TEST(GlibcPayload, NothingInstalledIsStillRefused) {
+UTest nothing_installed_is_still_refused{"GlibcPayload/NothingInstalledIsStillRefused", [] {
     GlibcRootFixture fx{"mcpp_glibc_empty"};
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
-    EXPECT_FALSE(got.has_value());
-}
+    expect(!got.has_value());
+}};
 
 // A DIRECTORY WITHOUT A LOADER IS REPORTED AS INCOMPLETE, NOT AS ABSENT. The
 // two call for different repairs, so the messages must not coincide.
-TEST(GlibcPayload, APayloadWithoutALoaderIsIncomplete) {
+UTest a_payload_without_a_loader_is_incomplete{"GlibcPayload/APayloadWithoutALoaderIsIncomplete", [] {
     GlibcRootFixture fx{"mcpp_glibc_husk"};
     std::filesystem::create_directories(fx.root / "2.44.3");
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44.3");
-    ASSERT_FALSE(got.has_value());
-    EXPECT_NE(got.error().find("stale/incomplete"), std::string::npos) << got.error();
+    expect(fatal(!got.has_value()));
+    if (auto&& failed = expect(ne(got.error().find("stale/incomplete"), std::string::npos)); !failed) failed << got.error();
+}};
+
+namespace {
+// A 64-bit little-endian ELF whose one program header is PT_INTERP naming
+// `interp` (or that has none when `interp` is empty): what read_elf_interp reads.
+void write_elf(const std::filesystem::path& file, std::string_view interp) {
+    std::filesystem::create_directories(file.parent_path());
+    std::string b(0x40 + 0x38, '\0');
+    auto put = [&](std::size_t at, std::uint64_t v, int n) {
+        for (int i = 0; i < n; ++i) b[at + i] = static_cast<char>((v >> (8 * i)) & 0xff);
+    };
+    b[0] = 0x7f; b[1] = 'E'; b[2] = 'L'; b[3] = 'F'; b[4] = 2; b[5] = 1; b[6] = 1;
+    put(0x10, 2, 2);      // ET_EXEC
+    put(0x20, 0x40, 8);   // e_phoff
+    put(0x34, 0x40, 2);   // e_ehsize
+    put(0x36, 0x38, 2);   // e_phentsize
+    put(0x38, 1, 2);      // e_phnum
+    put(0x40, interp.empty() ? 1 : 3, 4);           // PT_LOAD or PT_INTERP
+    put(0x48, b.size(), 8);                         // p_offset
+    put(0x60, interp.size() + 1, 8);                // p_filesz
+    b += interp;
+    b.push_back('\0');
+    std::ofstream(file, std::ios::binary) << b;
 }
+}  // namespace
+
+// WHETHER A PAYLOAD STARTS THROUGH ITS HOME'S LOADER is read from its programs
+// and the provider's layout, not from its name (design 2026-11-14 §5.5): the
+// emsdk payload's clang names `<home>/abi/...`, and a cache that restored the
+// store without that link held a compiler that did not start.
+UTest a_payload_starts_through_its_home{"RuntimePayload/APayloadStartsThroughItsHome", [] {
+    GlibcRootFixture fx{"mcpp_payload_loader"};
+    const auto home = fx.root / "home";
+    const auto payload = home / "data" / "xpkgs" / "xim-x-emsdk" / "6.0.9";
+    write_elf(payload / "bin" / "clang-24", (home / "abi" / "linux-x86_64-glibc" / "ld-linux-x86-64.so.2").string());
+    expect(mcpp::toolchain::starts_through_its_home(payload));
+    mcpp::toolchain::XimToolchainPackage pkg;
+    pkg.ximName = "emsdk";
+    // Windows runs a payload on the system's loader: no runtime is pinned there.
+    const auto kind = host() == platform::windows ? std::string_view{} : std::string_view("elf");
+    expect(eq(mcpp::toolchain::runtime_payload_kind(pkg, payload), kind));
+    expect(mcpp::toolchain::runtime_payload_kind(pkg).empty());   // not known before it is placed
+}};
+
+UTest a_payload_on_the_systems_loader_does_not{"RuntimePayload/APayloadOnTheSystemsLoaderDoesNot", [] {
+    GlibcRootFixture fx{"mcpp_payload_system_loader"};
+    const auto payload = fx.root / "home" / "data" / "xpkgs" / "xim-x-tool" / "1.0";
+    write_elf(payload / "bin" / "static-helper", "");
+    write_elf(payload / "bin" / "tool", "/lib64/ld-linux-x86-64.so.2");
+    expect(!mcpp::toolchain::starts_through_its_home(payload));
+    // Outside a store there is no home to start through.
+    write_elf(fx.root / "loose" / "bin" / "tool", (fx.root / "loose" / "ld.so").string());
+    expect(!mcpp::toolchain::starts_through_its_home(fx.root / "loose"));
+}};

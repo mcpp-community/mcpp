@@ -10,7 +10,8 @@
 # when they are forgotten:
 #
 #   1. modules/<x>/mcpp.toml          the package itself
-#   2. mcpp.toml [dependencies.mcpp]  what makes it importable
+#   2. mcpp.toml [dependencies]       `mcpp.<x> = { path = "modules/<x>" }`,
+#                                     what makes it importable
 #   3. mcpp.toml [workspace] members  what makes `-p` and `mcpp test` see it
 #   4. the two xmake source lists     the bootstrap and the benchmark, which
 #                                     have no package manager and compile the
@@ -62,8 +63,9 @@ for d in "${dirs[@]}"; do
         || bad "$d/mcpp.toml has namespace = \"${ns:-<none>}\"; modules of this project use \"mcpp\" so they do not squat bare registry names"
 
     # (2) importable
-    grep -qE "^[[:space:]]*$name[[:space:]]*=[[:space:]]*\{[[:space:]]*path[[:space:]]*=[[:space:]]*\"modules/$name\"" mcpp.toml \
-        || bad "mcpp.toml [dependencies.mcpp] has no entry for '$name' — it will not be importable"
+    grep -qE "^[[:space:]]*mcpp\.$name[[:space:]]*=[[:space:]]*\{[[:space:]]*path[[:space:]]*=[[:space:]]*\"modules/$name\"" \
+            <(sed -n '/^\[dependencies\]/,/^\[/p' mcpp.toml) \
+        || bad "mcpp.toml [dependencies] has no 'mcpp.$name = { path = \"modules/$name\" }' — it will not be importable"
 
     # (3) addressable
     grep -qF "\"modules/$name\"" <(sed -n '/^\[workspace\]/,/^\[/p' mcpp.toml) \
@@ -107,15 +109,10 @@ for f in tools/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
         || bad "$f does not add modules/*/src/**.cppm — it would build a strict subset of mcpp and report success"
 done
 
-# The vendored json header is reached through a private include dir. Its path
-# appears in three places and has already moved once.
-for f in tools/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
-         bench/projects/mcpp/xmake.lua; do
-    grep -qF 'modules/libs/src/json' "$f" \
-        || bad "$f does not add the json include dir (modules/libs/src/json)"
-done
-[[ -f modules/libs/src/json/json.hpp ]] \
-    || bad "modules/libs/src/json/json.hpp is missing, but three files name that path"
+# No third-party source is copied into the tree (2026.11.7.1): nlohmann.json
+# and the C libraries are packages of the index, imported as modules.
+[[ -e modules/libs/src/json ]] \
+    && bad "modules/libs/src/json is back: depend on nlohmann.json from the index instead"
 
 # Anything that hashes mcpp's sources has to hash BOTH trees. A cache key that
 # saw only `src/**` would restore a target/ built from different sources and

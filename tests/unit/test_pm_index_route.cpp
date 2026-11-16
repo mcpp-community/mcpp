@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_route;
 import mcpp.pm.index_spec;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -36,73 +38,72 @@ mcpp::pm::IndexMap local_map(const LocalIndex& idx) {
 
 } // namespace
 
-TEST(PmIndexRoute, FindForNsResolvesNestedNamespaceToItsRootIndex) {
+UTest find_for_ns_resolves_nested_namespace_to_its_root_index{"PmIndexRoute/FindForNsResolvesNestedNamespaceToItsRootIndex", [] {
     mcpp::pm::IndexMap indices;
     indices["acme"] = mcpp::pm::IndexSpec{ .name = "acme", .url = "https://x/y" };
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
-    EXPECT_NE(route.find_for_ns("acme"), nullptr);
-    EXPECT_NE(route.find_for_ns("acme.nested"), nullptr);
-    EXPECT_EQ(route.find_for_ns("other"), nullptr);
-}
+    expect(ne(route.find_for_ns("acme"), nullptr));
+    expect(ne(route.find_for_ns("acme.nested"), nullptr));
+    expect(eq(route.find_for_ns("other"), nullptr));
+}};
 
-TEST(PmIndexRoute, LazyGitIndexCannotRefuteAMiss) {
+UTest lazy_git_index_cannot_refute_a_miss{"PmIndexRoute/LazyGitIndexCannotRefuteAMiss", [] {
     mcpp::pm::IndexMap indices;
     indices["acme"] = mcpp::pm::IndexSpec{ .name = "acme", .url = "https://x/y" };
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
-    EXPECT_TRUE(route.lazy_git("acme"));
-    EXPECT_FALSE(route.authoritative_for("acme"));
-}
+    expect(bool(route.lazy_git("acme")));
+    expect(!route.authoritative_for("acme"));
+}};
 
-TEST(PmIndexRoute, LocalPathIndexIsAuthoritative) {
+UTest local_path_index_is_authoritative{"PmIndexRoute/LocalPathIndexIsAuthoritative", [] {
     LocalIndex idx("authoritative");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
-    EXPECT_FALSE(route.lazy_git("acme"));
-    EXPECT_TRUE(route.authoritative_for("acme"));
-}
+    expect(!route.lazy_git("acme"));
+    expect(bool(route.authoritative_for("acme")));
+}};
 
-TEST(PmIndexRoute, RouteDescriptionDoesNotExposeItsLocalPath) {
+UTest route_description_does_not_expose_its_local_path{"PmIndexRoute/RouteDescriptionDoesNotExposeItsLocalPath", [] {
     LocalIndex idx("diagnostic-privacy");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
     const auto description = route.describe("acme");
-    EXPECT_EQ(description, "local index 'acme': root present, pkgs present");
-    EXPECT_EQ(description.find(idx.root.string()), std::string::npos);
-}
+    expect(eq(description, "local index 'acme': root present, pkgs present"));
+    expect(eq(description.find(idx.root.string()), std::string::npos));
+}};
 
-TEST(PmIndexRoute, RouteDescriptionDistinguishesAMissingLocalRoot) {
+UTest route_description_distinguishes_a_missing_local_root{"PmIndexRoute/RouteDescriptionDistinguishesAMissingLocalRoot", [] {
     mcpp::pm::IndexMap indices;
     indices["acme"] = mcpp::pm::IndexSpec{
         .name = "acme", .path = "missing-local-index" };
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
-    EXPECT_EQ(route.describe("acme"),
-              "local index 'acme': root absent, pkgs absent");
-}
+    expect(eq(route.describe("acme"), "local index 'acme': root absent, pkgs absent"));
+}};
 
 // The regression behind #305/#307: a dotted selector is one exact NAMESPACE
 // PATH, so it resolves through the coordinate the manifest parser derives. Probing the
 // literal short name can never match — `package.name` is a single atomic
 // segment, so nothing in any index is named "acme.util".
-TEST(PmIndexRoute, DottedSelectorResolvesThroughItsExactCoordinate) {
+UTest dotted_selector_resolves_through_its_exact_coordinate{"PmIndexRoute/DottedSelectorResolvesThroughItsExactCoordinate", [] {
     LocalIndex idx("dotted");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
 
     auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
-    ASSERT_EQ(selector.candidates.size(), 1u);
+    expect(fatal(eq(selector.candidates.size(), 1u)));
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
 
-    ASSERT_TRUE(found.hit.has_value());
-    EXPECT_EQ(found.hit->coord.namespace_, "acme");
-    EXPECT_EQ(found.hit->coord.shortName, "util");
-}
+    expect(fatal(found.hit.has_value()));
+    expect(eq(found.hit->coord.namespace_, "acme"));
+    expect(eq(found.hit->coord.shortName, "util"));
+}};
 
-TEST(PmIndexRoute, NameOnlyDescriptorInheritsOwningLocalIndexNamespace) {
+UTest name_only_descriptor_inherits_owning_local_index_namespace{"PmIndexRoute/NameOnlyDescriptorInheritsOwningLocalIndexNamespace", [] {
     LocalIndex idx("name-only");
     std::ofstream(idx.root / "pkgs" / "a" / "acme.util.lua") << R"(
 package = {
@@ -117,12 +118,12 @@ package = {
     auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
 
-    ASSERT_TRUE(found.hit.has_value());
-    EXPECT_EQ(found.hit->coord.namespace_, "acme");
-    EXPECT_EQ(found.hit->coord.shortName, "util");
-}
+    expect(fatal(found.hit.has_value()));
+    expect(eq(found.hit->coord.namespace_, "acme"));
+    expect(eq(found.hit->coord.shortName, "util"));
+}};
 
-TEST(PmIndexRoute, MalformedCandidateIsAnErrorNotANotFoundMiss) {
+UTest malformed_candidate_is_an_error_not_a_not_found_miss{"PmIndexRoute/MalformedCandidateIsAnErrorNotANotFoundMiss", [] {
     LocalIndex idx("malformed");
     std::ofstream(idx.root / "pkgs" / "a" / "acme.util.lua") << R"(
 package = {
@@ -140,11 +141,11 @@ package = {
     auto selector = mcpp::pm::resolve_dependency_selector("acme.nested.util");
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
 
-    EXPECT_FALSE(found.hit.has_value());
-    EXPECT_NE(found.error.find("single atomic segment"), std::string::npos);
-}
+    expect(!found.hit.has_value());
+    expect(ne(found.error.find("single atomic segment"), std::string::npos));
+}};
 
-TEST(PmIndexRoute, LiteralDottedShortNameNeverMatches) {
+UTest literal_dotted_short_name_never_matches{"PmIndexRoute/LiteralDottedShortNameNeverMatches", [] {
     LocalIndex idx("literal");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
@@ -152,10 +153,10 @@ TEST(PmIndexRoute, LiteralDottedShortNameNeverMatches) {
     std::vector<mcpp::pm::DependencyCoordinate> literal{
         { .namespace_ = "mcpplibs", .shortName = "acme.util" },
     };
-    EXPECT_FALSE(mcpp::pm::lookup_descriptor(route, literal).hit.has_value());
-}
+    expect(!(mcpp::pm::lookup_descriptor(route, literal).hit.has_value()));
+}};
 
-TEST(PmIndexRoute, MissInAReadableIndexIsConclusive) {
+UTest miss_in_a_readable_index_is_conclusive{"PmIndexRoute/MissInAReadableIndexIsConclusive", [] {
     LocalIndex idx("conclusive");
     auto indices = local_map(idx);
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
@@ -164,11 +165,11 @@ TEST(PmIndexRoute, MissInAReadableIndexIsConclusive) {
         { .namespace_ = "acme", .shortName = "nope" },
     };
     auto found = mcpp::pm::lookup_descriptor(route, missing);
-    EXPECT_FALSE(found.hit.has_value());
-    EXPECT_TRUE(found.conclusive);
-}
+    expect(!found.hit.has_value());
+    expect(bool(found.conclusive));
+}};
 
-TEST(PmIndexRoute, MissBehindAnUnreadableIndexIsNotConclusive) {
+UTest miss_behind_an_unreadable_index_is_not_conclusive{"PmIndexRoute/MissBehindAnUnreadableIndexIsNotConclusive", [] {
     mcpp::pm::IndexMap indices;
     indices["acme"] = mcpp::pm::IndexSpec{ .name = "acme", .url = "https://x/y" };
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", nullptr };
@@ -177,11 +178,11 @@ TEST(PmIndexRoute, MissBehindAnUnreadableIndexIsNotConclusive) {
         { .namespace_ = "acme", .shortName = "nope" },
     };
     auto found = mcpp::pm::lookup_descriptor(route, missing);
-    EXPECT_FALSE(found.hit.has_value());
-    EXPECT_FALSE(found.conclusive);
-}
+    expect(!found.hit.has_value());
+    expect(!found.conclusive);
+}};
 
-TEST(PmIndexRoute, WorkspaceMemberReadsRootAnchoredRelativeIndex) {
+UTest workspace_member_reads_root_anchored_relative_index{"PmIndexRoute/WorkspaceMemberReadsRootAnchoredRelativeIndex", [] {
     auto root = std::filesystem::temp_directory_path()
               / "mcpp-index-route-workspace-relative";
     std::filesystem::remove_all(root);
@@ -217,7 +218,7 @@ version = "0.1.0"
 )";
 
     auto indices = mcpp::pm::effective_indices(root / "member");
-    ASSERT_TRUE(indices.contains("acme"));
+    expect(fatal(indices.contains("acme")));
 
     // Assert the CAPABILITY (the member can read the root's index), not the
     // path SPELLING. The first version of this test compared the stored path
@@ -226,14 +227,13 @@ version = "0.1.0"
     // about whether the index is reachable — which is why it stayed green
     // while the Windows suite was red.
     mcpp::pm::IndexRoute route{ &indices, root / "member", nullptr };
-    EXPECT_EQ(route.describe("acme"),
-              "local index 'acme': root present, pkgs present");
+    expect(eq(route.describe("acme"), "local index 'acme': root present, pkgs present"));
     auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
-    ASSERT_TRUE(found.hit.has_value());
-    EXPECT_EQ(found.hit->coord.namespace_, "acme");
-    EXPECT_EQ(found.hit->coord.shortName, "util");
-}
+    expect(fatal(found.hit.has_value()));
+    expect(eq(found.hit->coord.namespace_, "acme"));
+    expect(eq(found.hit->coord.shortName, "util"));
+}};
 
 // Why `inherit_workspace_indices` anchors with `lexically_normal` and not
 // `weakly_canonical`.
@@ -251,9 +251,9 @@ version = "0.1.0"
 // short-name alias — turned out NOT to be the cause of the red Windows suite;
 // that was a fixture writing an MSYS path into mcpp.toml. The change survives
 // on this invariant, which is why the invariant is now a test.)
-TEST(PmIndexRoute, InheritedIndexStaysInsideTheDeclaredWorkspaceTree) {
+UTest inherited_index_stays_inside_the_declared_workspace_tree{"PmIndexRoute/InheritedIndexStaysInsideTheDeclaredWorkspaceTree", [] {
 #ifdef _WIN32
-    GTEST_SKIP() << "directory symlinks need elevation on Windows";
+    skip("directory symlinks need elevation on Windows");
 #else
     auto base = std::filesystem::temp_directory_path()
               / "mcpp-index-route-workspace-symlink";
@@ -292,26 +292,25 @@ version = "0.1.0"
 )";
     std::error_code ec;
     std::filesystem::create_directory_symlink(real, link, ec);
-    if (ec) GTEST_SKIP() << "symlinks unavailable here: " << ec.message();
+    if (ec) skip([&] { std::ostringstream text; text << "symlinks unavailable here: " << ec.message(); return text.str(); }());
 
     auto indices = mcpp::pm::effective_indices(link / "member");
-    ASSERT_TRUE(indices.contains("acme"));
+    expect(fatal(indices.contains("acme")));
 
     // The declared tree is preserved: the anchored path is still addressed
     // through `link`, not rewritten to `real`.
     const auto anchored = indices.at("acme").path.string();
-    EXPECT_TRUE(anchored.starts_with(link.string()))
+    expect(anchored.starts_with(link.string()))
         << "anchoring relocated the index out of the declared tree: "
         << anchored;
 
     // …and it is still readable through that spelling. Preserving identity is
     // only correct if the index remains reachable.
     mcpp::pm::IndexRoute route{ &indices, link / "member", nullptr };
-    EXPECT_EQ(route.describe("acme"),
-              "local index 'acme': root present, pkgs present");
+    expect(eq(route.describe("acme"), "local index 'acme': root present, pkgs present"));
     auto selector = mcpp::pm::resolve_dependency_selector("acme.util");
     auto found = mcpp::pm::lookup_descriptor(route, selector.candidates);
-    ASSERT_TRUE(found.hit.has_value());
-    EXPECT_EQ(found.hit->coord.namespace_, "acme");
+    expect(fatal(found.hit.has_value()));
+    expect(eq(found.hit->coord.namespace_, "acme"));
 #endif
-}
+}};

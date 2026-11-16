@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.source_kind;
 import mcpp.build.configure;
 import mcpp.build.plan;
 import mcpp.toolchain.model;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -27,7 +29,7 @@ void write_file(const std::filesystem::path& path, std::string_view text) {
     out << text;
 }
 
-TEST(ConfigurePrerequisites, StagesOnlyBmisNeededByLanguageTools) {
+UTest stages_only_bmis_needed_by_language_tools{"ConfigurePrerequisites/StagesOnlyBmisNeededByLanguageTools", [] {
     TempDir temp;
     mcpp::build::BuildPlan plan;
     plan.outputDir = temp.path / "out";
@@ -48,14 +50,14 @@ TEST(ConfigurePrerequisites, StagesOnlyBmisNeededByLanguageTools) {
     plan.compileUnits.push_back(dep);
 
     auto staged = mcpp::build::stage_configure_prerequisites(plan);
-    ASSERT_TRUE(staged.has_value()) << staged.error();
-    EXPECT_TRUE(std::filesystem::exists(plan.outputDir / "pcm.cache/std.pcm"));
-    EXPECT_TRUE(std::filesystem::exists(plan.outputDir / "pcm.cache/std.compat.pcm"));
-    EXPECT_TRUE(std::filesystem::exists(plan.outputDir / "pcm.cache/demo.dep.pcm"));
-    EXPECT_FALSE(std::filesystem::exists(plan.outputDir / dep.object));
-}
+    if (auto&& failed = expect(fatal(staged.has_value())); !failed) failed << staged.error();
+    expect(std::filesystem::exists(plan.outputDir / "pcm.cache/std.pcm"));
+    expect(std::filesystem::exists(plan.outputDir / "pcm.cache/std.compat.pcm"));
+    expect(std::filesystem::exists(plan.outputDir / "pcm.cache/demo.dep.pcm"));
+    expect(!std::filesystem::exists(plan.outputDir / dep.object));
+}};
 
-TEST(ConfigurePrerequisites, MissingCachedBmiFailsBeforePublication) {
+UTest missing_cached_bmi_fails_before_publication{"ConfigurePrerequisites/MissingCachedBmiFailsBeforePublication", [] {
     TempDir temp;
     mcpp::build::BuildPlan plan;
     plan.outputDir = temp.path / "out";
@@ -68,8 +70,8 @@ TEST(ConfigurePrerequisites, MissingCachedBmiFailsBeforePublication) {
     plan.compileUnits.push_back(dep);
 
     auto staged = mcpp::build::stage_configure_prerequisites(plan);
-    ASSERT_FALSE(staged.has_value());
-    EXPECT_NE(staged.error().find("demo.dep"), std::string::npos);
-}
+    expect(fatal(!staged.has_value()));
+    expect(ne(staged.error().find("demo.dep"), std::string::npos));
+}};
 
 } // namespace

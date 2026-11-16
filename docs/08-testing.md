@@ -33,8 +33,10 @@ There is no framework and no registration. A test may use one — `[dev-dependen
 is how it reaches it — but the contract mcpp holds is the exit code, which is
 also why a test written for another framework needs no adapter.
 
-`mcpp new` scaffolds `tests/test_smoke.cpp` so a project starts with the
-directory in place.
+`mcpp new` scaffolds `tests/test_smoke.cpp`, a file of
+[mtest](https://github.com/mcpp-community/mtest)'s cases with no `main`, and the
+dev-dependency `mcpplibs.mtest` (2026.11.8.1+); `mcpp new <name> --template lib`
+scaffolds a library and its test the same way ([01](01-getting-started.md)).
 
 ### Where tests are
 
@@ -51,11 +53,157 @@ files it matches from the set, whichever glob found them. A test's name is its
 path relative to the fixed directory of the first glob that matched it, without
 the extension, so the default names `tests/unit/test_span.cpp` `unit/test_span`.
 `discover = []` discovers no test. Two files whose names coincide are refused,
-naming both.
+naming both. A directory below the package root that holds an `mcpp.toml` is a
+package of its own, and no glob discovers its files (2026.11.14.1+): a suite that
+needs inputs from outside the build (`tests/cts/mcpp.toml`) and a fixture
+project below a test's data directory are built and tested as packages.
 
-A suite compiled from several sources is a package of its own: a workspace
+`[test] programs = "directory"` (2026.11.8.1+) makes the files of one directory
+below a glob's fixed directory one program, named by the directory
+(`tests/unit/*.cpp` is the program `unit`): each file is a translation unit of
+it, its cases are all of theirs, and it begins at the file that defines `main`
+when one does, else as a file that defines none does. Two files of one directory
+that define `main` are refused, naming both; a file directly in the fixed
+directory stays a program of its own. A test's name is the path of its program,
+so a name that is another's directory (`unit` and `unit/own`) is refused,
+naming both (2026.11.9.1+). A program of many files is linked once
+where a program per file is linked once per file, which is what a suite of many
+small files spends its build time on. When the setting leaves files directly in
+the fixed directory, `mcpp test` notes how many stay programs of their own; when
+it forms no group at all, the note is a degradation, which `--strict` refuses
+(2026.11.13.1+).
+
+`[test] programs = "package"` (2026.11.13.1+) makes every file the package
+discovers one program, named by the first glob's fixed directory (`tests`). At
+most one of its files defines `main`; two are refused, naming both. The program
+still runs one process per file, named by the file's path below the
+fixed directory (`tests/unit/b` for `tests/unit/b.cpp`), so isolation and
+parallelism are those of a program per file, with one link for the suite. The
+three values are the granularity of a test program: `"file"` (the default),
+`"directory"` and `"package"`.
+
+A program that speaks the test protocol runs as **one process per file of its
+cases** (2026.11.9.1+): mcpp lists the cases of a program of several files, and
+each file's run selects its own (P4) and is scheduled across the workers as a program is, named
+`<program>/<file>` -- the isolation and the parallelism of a program per file,
+with one link. `[test] split = "case"` gives each case its own process,
+`"none"` runs the program once, and `"auto"` (2026.11.13.1+) divides by file and
+then divides a file the run store measured longer than its share of the run
+(the run's measured work over its workers and shards) into groups of its listed
+cases of about equal measured duration, named `<program>/<file> (i/k)`.
+A listed case longer than its share whose program's selection excludes and
+selects where declared (SPEC-017 P4.3, mtest 0.9.0) is divided by the cases it
+declared as the store measured them, which a list does not name
+(2026.11.15.1+): `<program>/<file> [<case>] (i/k)`. Each part but the last
+selects the cases it was given where they are still declared; the last selects
+the case without them, so a case no run measured runs once, in it. The cases
+of one case may share what the first of them fills (a cache, a toolchain), and
+every part pays it again: a case is divided once to be measured so, and then
+only while its longest part took at most four fifths of the case run whole
+(each part records the case it divides, `divides`).
+`--split <mode>` states the value for one invocation. A pattern names a program or a part of one as
+the run names it: `mcpp test unit/test_home` (or `home`) runs that file's part.
+
+A case that holds the machine (P7.1, resource `machine`) runs with no other test
+beside it (2026.11.13.1+). mcpp lists, on the run's workers, every program that
+speaks the protocol and that it divides or that runs without a runner; a program
+of one file behind a runner is not listed and runs whole, as before. In a program
+the run divides, the listed cases of a file that hold `machine` (a suite that
+states it, `E2E bmi_machine{"bmi-machine", resource{"machine"}, [] { ... }}`, or a
+bench) are a part of their own, named `<program>/<file> (machine)` when the file
+has other cases; a program the run does not divide (`split = "none"`, a program of
+one file) runs whole, alone when one of its cases holds `machine`. What holds
+`machine` is queued after every other test and runs alone. The run's record states
+`machine` among the part's resources. A resource stated on a case inside a suite
+is not listed, so it holds nothing across processes.
+
+**The order of a run** (2026.11.13.1+). Before anything runs, mcpp reads the run
+store (`[test] store`, below): of each test, the newest duration its runs
+measured, of the cases it selects or of the program whole. A test no run
+measured takes the mean of the measured tests of its nearest directory
+(`e2e/run/x`: of `e2e/run/`, then of `e2e/`), and the longest measured test when
+no run measured a test of its directories; a case no run measured takes the mean
+of the measured cases beside it, or an equal part of its program. A store kept
+by a run of another selection thus spreads the tests it never saw over the
+shards by count. The tests start longest first, so the longest work does
+not start last. `--shard I/N` runs the I-th of N shards: every test, longest
+first, is assigned to the shard with the least measured work, and this command
+runs its own; the assignment reads only the store and the run's list, so N
+commands on N machines, each with the same store, run every test once. A shard
+reads no run of a shard of its own group (`GITHUB_RUN_ID`, or none), so the
+shards of one run started one after another on one store read it as the first
+of them did. `--failed` runs what the store's last run failed: the programs
+that failed and, when every failure names its cases, only those cases; a
+program that failed outside its cases runs whole. It is not combined with a
+pattern, `--case`, `--cases` or `--no-run`, and a last run that failed nothing
+runs nothing and exits 0.
+
+A test program keeps what it reaches (2026.11.9.1+): units are compiled with one
+section per function and per object, and a test links with `--gc-sections`
+(`-dead_strip` on Mach-O), so a test of one module does not carry its package's
+every function (mcpp's own unit tests: 32 MB each to 14 MB). Static
+constructors are the collection's roots. `[test] link = "objects"` keeps every
+object whole.
+
+A run is kept in the form of the mtest store (2026.11.9.1+): `target/mtest/`
+holds `runs/<id>/run.json`, a line per process in `programs.ndjson` (its
+status, duration, start, worker and selected cases, and the program's `usage` when it reported
+one) and a line per case in `cases.ndjson` (its kind, tags, start after the run began, failures
+with their expected and actual values, metrics and bounds, 2026.11.10.1+), and `index.ndjson`
+lists the runs. A `Bench` case's measurements are therefore in the store, and `mtest analyze
+trend` shows them beside their bounds over the runs `mcpp test` kept. `mtest store import --from
+target/mtest` takes them into mtest's store, and an `mtest.toml` whose
+`[project] store` is `target/mtest` reads them where they are; `mtest report`,
+`analyze` and `graph` then read them as mtest's own runs (the Markdown report,
+the slowest cases, the critical path and the schedule). In CI, `commit` and
+`group` are `GITHUB_SHA` and `GITHUB_RUN_ID`. `[test] store = "<dir>"` names
+another directory, relative to the project; `"none"` keeps nothing.
+
+A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
+
+### The tests of a target and the features they are built with (2026.11.16.1+)
+
+The test programs of a package are the test build's inputs, so the target
+selects them as it selects sources:
+
+```toml
+[target.'cfg(os = "emscripten")'.test]
+discover = ["!tests/native/**"]      # not built for the Web
+
+[target.'cfg(os = "emscripten")'.dev-dependencies]
+# ... and `[target.'cfg(not(os = "emscripten"))'.dev-dependencies]` for what they import
+```
+
+The globs of a `[target.'<sel>'.test]` table whose predicate the target matches
+are added to `[test] discover`; a `!` glob removes what it matches from the
+whole set, and a positive glob adds tests on the targets it selects
+(`discover = ["tests/*.cpp"]` with `[target.'cfg(not(os = "emscripten"))'.test]
+discover = ["tests/native/*.cpp"]`). The target is `--target`, else the
+package's `[build] target`, else this machine. A test excluded on a target is
+not one of its tests: `mcpp test --list --target <triple>` names the set, and a
+case that is built everywhere and holds on some machines only is the test
+protocol's (a skip with its reason), not this table's.
+
+The tests are a consumer of their package, and `[test] features` is that
+consumer's request:
+
+```toml
+[features]
+ktx2 = { sources = ["src/ktx2/*.cppm"] }
+
+[test]
+features = ["ktx2"]
+```
+
+A test plan turns them on beside the defaults and `--features`, in `mcpp test`,
+`mcpp test -p <member>` and `mcpp test --workspace`. In a workspace they are
+requested on the member's own edge, so another member that declares a feature
+of the same name is not asked for it. `mcpp build`, the programs the tests run
+(`MCPP_BIN_<NAME>`) and every other consumer of the package keep its defaults.
+The tests and `mcpp build` share one build directory, so building one after the
+other compiles again what the features change, as alternating `--features` does.
 
 ### Where a test program begins
 
@@ -75,11 +223,23 @@ no `main`. The package's own name selects its own entry, which is how a framewor
 tests its entry with the callbacks a test file defines. On a freestanding target,
 `[test] start` states the symbol every test image is entered at.
 
+An entry may offer itself with `test-main = true` (2026.11.8.1+): a test file that
+defines no `main`, of a package that states no `[test] main`, then begins at it,
+and a file that defines `main` keeps its own. mtest's entry and its GoogleTest
+adapter's offer themselves, so a test needs only the dev-dependency. The choice
+is the file's: an offer whose package provides modules is this test's when the
+file imports one of them and is set aside when it imports none, so in one
+package a file of mtest's cases begins at mtest's entry and a file of
+GoogleTest's at GoogleTest's. A dependency's source that defines `main`
+(`gtest_main.cc`) begins a test as it always has. Where two beginnings remain
+for one test, the build is refused, naming them, and `[test] main` chooses.
+
 ## Running them
 
 ```bash
 mcpp test                 # build and run every test
 mcpp test parse           # only those whose name matches
+mcpp test parse lex       # those whose name matches either
 mcpp test --list          # what would run, without building or running it
 mcpp test -- --verbose    # everything after `--` goes to each test binary
 ```
@@ -98,7 +258,11 @@ configuration it is meant to check rather than against the default one:
 
 `--timeout <secs>` kills a test still running (default 300; `0` disables it) and
 `--build-timeout <secs>` bounds the compile. A test that hangs is reported as a
-failure with its own name, not as a job that stopped.
+failure with its own name, not as a job that stopped. A case or a suite that
+states its own length (mtest `timeout{...}`, listed with its cases) raises the
+limit of its process to the sum its cases state, when that is longer
+(2026.11.13.1+): a long test states its length, and the limit of the others
+stays.
 
 The report is the command's result and is written to standard output: each
 test's verdict, the output of a test that failed, the `test result` line and, for
@@ -107,11 +271,71 @@ test's verdict, the output of a test that failed, the `test result` line and, fo
 collects the report, and `mcpp test 2>&1 | tee test.log` collects both
 ([09 — Commands by scenario](09-commands-by-scenario.md#output-streams)).
 
+The `test result` line closes with the run's time, divided as `Finished`
+divides a build (2026.11.13.1+):
+
+```
+test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.73s · build 1.60s · run 2.34s)
+```
+
+`programs` is the build of the package's programs that the tests find by name,
+shown when it took 5 ms or more; `build` is the tests' own graph; `run` is the
+tests. `plan` is the rest: the manifest, resolution, the toolchain and the scan.
+The parts sum to the total.
+
+### An unchanged project (2026.11.10.1+)
+
+The tests' graph is `test.ninja`, beside the build's `build.ninja` in the same
+build directory; the two share the objects and ninja's records, so `mcpp build`
+after `mcpp test` replays its own graph, and an object both graphs compile is
+compiled once. A full run records what it planned for every test of the package
+(`test-plan.json`). A later run of a project in which nothing changed (the
+manifests, the lock, the sources under `src/` and `tests/`, the path
+dependencies, the toolchain) and whose tests are the recorded ones runs the
+selected tests from that record without planning; any change takes the full
+path. The build directory is held while the tests are built and released before
+the first one runs, so a build, or a second test of the same configuration,
+proceeds beside a running test.
+
+### The tests a change affects
+
+`mcpp test --since <commit>` and `--changed <path>` (2026.11.8.1+) build and run
+the tests a change affects, read from the plan before anything is built:
+
+- a test is affected by a change of a file it is built from: its own files, the
+  module units it imports and the units those import in turn, and every unit
+  of its link that belongs to no module;
+- a change of a manifest, a lock, a build program, a header, or a source the
+  plan does not hold affects every test;
+- a test that runs a program of the package (a file it is built from names
+  `MCPP_BIN_`) is affected by a change of any source of the package that is
+  not a test's own (2026.11.13.1+): an end-to-end test runs the program it
+  tests and is built from none of its sources;
+- another file affects the tests whose own files name it (a fixture), and no
+  other test.
+
+`--since` reads the change from git: the paths committed since the commit,
+changed in the working tree, and new and not ignored. `Affected N of M tests`
+states the selection, with what each changed path decided; under
+`--message-format json` an `affected` record lists each test with its reason.
+The selection narrows what a pattern or `-p` names and adds nothing to it.
+
 **A test finds the package's programs by name** (2026.10.27.1+). `mcpp test` builds
 the package's programs first, as `mcpp build` does, and gives each test
 `MCPP_BIN_<NAME>`: the path of program `<name>`, upper-cased, every character
 other than a letter or a digit written `_` (`MCPP_BIN_MY_TOOL` for `my-tool`).
-A test that runs the program it tests reads it from there.
+A test that runs the program it tests reads it from there. Under several
+members the programs of a configuration group are planned together, as
+`mcpp build --workspace` plans them, so a package they share is built with
+one configuration (2026.11.16.1+).
+
+`--no-programs` (2026.11.13.1+) builds none of them: the programs are planned
+for their names, and each test takes each program from the environment's
+`MCPP_BIN_<NAME>`, for a program built elsewhere (a CI job that tests the
+binary another job built). A program the environment does not name is refused
+before any test runs, so that no test takes another program of that name from
+`PATH`. The environment names one program for each name, so the option tests
+one target.
 
 **A platform package is tested on its targets** (2026.10.27.1+). `mcpp test` in a
 package with a `[platform]` section, with no `--target`, builds the tests for
@@ -137,6 +361,48 @@ The command continues past a member that fails, whether a test, its package's
 build or its plan failed, reports each member, and exits non-zero if any did.
 Discovery is scoped per member, so two members may each have a `tests/main.cpp`.
 
+A member is tested while another is edited and built: the two commands wait for
+each other only while one compiles or links, and a running test holds nothing
+([07 — Two commands at once](07-workspace.md#55-two-commands-at-once-and-a-configurations-directory-over-time)).
+
+### The size of a test build
+
+Every test program carries the closure it links, with its debug information.
+`mcpp clean --report` states, per configuration, the bytes of objects, of split
+debug information, of BMIs and of products. A suite of many programs is kept
+small by these, in the order of their effect:
+
+1. **A profile for the full run.** Debug information is most of a test
+   program's bytes. A profile for CI and for full runs states less of it and
+   strips the symbols, and day-to-day work keeps the `dev` profile:
+
+   ```toml
+   [profile.ci]
+   opt   = 0
+   debug = "lines"   # file and line in backtraces and sanitizer reports (2026.11.13.1+)
+   strip = true
+   ```
+
+   `mcpp test --profile ci` builds it in a directory of its own.
+2. **Fewer programs.** `[test] programs = "directory"` links a directory's
+   files once, and `"package"` the package's (see [Where tests are](#where-tests-are)).
+   The count of links falls from the count of files to that of directories, or
+   to one.
+3. **Members as shared libraries.** `dependency_linkage = "shared"` in a
+   workspace profile links each member a test reaches as a shared library, so
+   the closure is on disk once rather than once per program. It is a profile to
+   choose, not a default: on Windows a member's symbols reach a DLL's importers
+   only through its exports.
+4. **Module implementation units.** A function body in `module X;` instead of
+   `export module X;` does not change X's BMI, and what imports X is not
+   compiled again when it changes.
+5. **Layered members.** Logic in members that do not depend on UI or rendering
+   lets most tests link the logic alone.
+6. **What no configuration uses** is removed by `mcpp clean --stale`, and after
+   a build by the sweep that `[build] keep_days` bounds. When a change of
+   configuration starts a directory of its own, the warning states the size of
+   the one beside it (2026.11.13.1+).
+
 ## Tests that reach packages the artifact does not
 
 ```toml
@@ -148,6 +414,18 @@ A `[dev-dependencies]` entry is resolved for the test build and for nothing
 else: it is not in the artifact, and a consumer of the package never sees it.
 That is the difference between a test's dependency and the package's own, and it
 is why a test framework does not become part of what a library ships.
+
+A dev-dependency reaches the test units and nothing else of the package
+(2026.11.8.1+). Its include directories and interface definitions are given to
+the files under `tests/`; the package's own sources are compiled under
+`mcpp test` with the commands `mcpp build` gives them, so the code under test is
+the code that ships, and `mcpp build` and `mcpp test` share one build directory
+and one compile database. A kernel interface that only a dev-dependency reaches
+(`mcpplibs.mtest` over `mcpplibs.os` reaches openkal's) is given to the
+dev-dependencies and the test units alone: they see `__OPENKAL__` and openkal's
+headers, and the package's own sources do not. A C library or a C++ runtime that
+a dev-dependency supplies is a property of every object a test links, and it
+remains the configuration's.
 
 [`examples/11-features`](../examples/11-features/) declares one and uses it.
 
@@ -169,6 +447,18 @@ or a QEMU exit code is what a bare-metal runner is chosen to produce.
 
 `--no-runner` exists for a host that can execute the binaries natively and
 should not pay for an emulator.
+
+`--runner <name>` (2026.11.7.1+) selects a named runner instead of the default,
+using the same declarations and argument substitution as `mcpp run --runner`.
+It also applies to `--print-launch` and tests read from an archive. An absent
+runner name is refused; `--runner` and `--no-runner` cannot be combined.
+
+For a platform that declares `debuggee`, this builds one test and prints the
+command a debugger starts, without starting the test:
+
+```bash
+mcpp test unit/math --runner debuggee --print-launch
+```
 
 `--no-run` makes the narrower claim, and it has to be asked for. Without it, a
 target this host can neither execute nor reach through a runner leaves every
@@ -209,13 +499,27 @@ mcpp test --archive tests.tar.gz                             # in a checkout: ru
 ```
 
 The archive holds each leg's test programs and `mcpp-tests.json`, which names
-each test's leg, arguments and working directory. Reading it builds nothing;
-the tests run in the checkout, through this machine's runner or system, and the
-report is `mcpp test`'s. A failed test exits 1, and so does an archive of which
+each test's leg, arguments, working directory and the test protocol it
+implements. Reading it builds nothing; the tests run in the checkout, through
+this machine's runner or system, by `mcpp test`'s own runner: its cases, a
+process per file of them, the workers and the store (2026.11.9.1+). A failed test exits 1, and so does an archive of which
 no test ran. Legs this machine does not reach are reported as not run
 ([SPEC-015 §4](specs/target-sets.md)). The archive is a tar compressed as its
 name states: `.tar.gz` (or `.tgz`), `.tar.zst`, `.tar.xz` or `.tar`; another
 name is refused before anything is built.
+
+The archive carries the package's programs beside the tests, and its run gives
+each test `MCPP_BIN_<NAME>` as the build would. Written with `--no-programs`,
+the archive carries none of them and its manifest names their variables
+(`named_programs`, schema 2, which an mcpp that reads only schema 1 refuses);
+the run of a leg that runs here takes each from its own environment and refuses
+one the environment does not name (2026.11.13.1+). The run of an archive builds
+nothing, and is refused `--no-programs`.
+
+```bash
+mcpp test --no-run --no-programs --archive tests.tar.gz      # the tests only
+MCPP_BIN_MCPP=/path/to/mcpp mcpp test --archive tests.tar.gz # their program, named by the run
+```
 
 ## Tests that cannot run beside each other
 
@@ -225,6 +529,77 @@ workers reaching for it interleave rather than fail.
 
 The package that owns the resource states this about itself, and `mcpp test`
 then serialises those tests. A project never has to remember `-j1`.
+
+## Cases: the test protocol
+
+A test program may consist of cases. mcpp does not provide a framework for
+them; it implements the runner's side of a protocol that frameworks implement:
+the [mtest test protocol](https://github.com/mcpp-community/mtest/blob/main/spec/protocol.md),
+version 1 (mcpp 2026.11.8.1+), whatever framework or language a program is written with
+([SPEC-017](specs/test.md)). A program implements it when its entry states it,
+
+```toml
+[targets.main]
+kind          = "entry"
+main          = "src/main.cpp"
+test-protocol = 1
+```
+
+or when its file carries the marker `mtest-protocol=1`, as a program built
+with mtest's libraries does; of a test that keeps what it reaches, an object it
+was linked from carrying the marker counts as well, so a marker nothing
+references (mtest before 0.5.1) is not lost at the link. A program that carries the marker and writes no
+`program` event spoke no protocol: a file of plain `main` linked beside a
+framework's library is one case, judged by its exit status, run and listed. mcpp then gives the program the protocol's
+variables (`MTEST_PROTOCOL`, `MTEST_MODE`, `MTEST_REPORT`, `MTEST_TMPDIR`, and
+`MTEST_SELECT` and `MTEST_SEED` when they apply), reads the report it writes,
+and states each case's result:
+
+```bash
+mcpp test                       # each case's result in the report and the record
+mcpp test --case 'fs/*'         # of each such program, the cases a pattern matches
+mcpp test --cases               # each program's cases, running none
+mcpp test --seed 42             # the seed of anything random in the cases
+```
+
+- The program's exit status still decides its verdict. A report whose cases
+  failed fails the program though it exited zero; a case that began and did
+  not end failed, with the program's exit status as its reason.
+- A failing program's report names each failed case with the place of its
+  first failure: `case fs/read failed at tests/fs.cpp:12: ...`.
+- A pattern of `--case` matches with `*` and `?`; a name without either
+  matches itself and the cases below it (`fs` matches `fs/read`). A case that
+  a listed case declares is reported when it runs and need not be listed
+  (protocol P3.4; mtest's `UTest fs{"fs", [] { "read"_test = ...; }}` lists
+  `fs`): a name below a listed case selects that one case, and a pattern below
+  it runs the listed case whole. Under `--case`, a program with no matching
+  case, and every program that implements no protocol, does not run.
+- A program that implements no protocol is one case, judged by its exit status,
+  and receives none of the variables, even when mcpp's own environment has
+  them.
+
+The records of `--message-format json` carry the protocol, the cases and their
+failures ([50](50-machine-output.md)); `--print-launch` states the protocol
+for a debugger that starts the program.
+
+## Writing a test
+
+```bash
+mcpp test --guide            # the frameworks, their guides, and the commands for cases
+```
+
+A framework states its guide to writing tests on its entry, `test-guide = "<file>"`
+(2026.11.8.1+; the protocol's P2.5): a file of its package, read from the installed
+package and of its version. `mcpp test --guide` names each test framework of the
+package with its guide and repository, and the commands that list, select and
+explain cases; with none, it states the contract above and how to take mtest.
+The frameworks are declared data: the guide reads them from the resolved
+graph, the dev-dependencies included, and plans, scans and builds nothing,
+wherever it is asked (2026.11.16.1+). Where several members are selected, a
+workspace root or `--workspace`, it names the frameworks of all of them.
+A failed run ends with `how these tests are written: mcpp test --guide (...)`,
+and a record of `--message-format json` carries `guide`. A person or an agent
+about to write a test, or reading why one failed, starts there.
 
 ## Reporting to a program
 
@@ -246,9 +621,10 @@ runner, the environment the run adds and the arguments after `--` are in it.
 
 ## Current limitations
 
-- A test is one `.cpp` producing one program. mcpp does not discover cases
-  inside a file, so a framework's per-case selection happens inside the program,
-  through arguments after `--`.
+- A test is one `.cpp` producing one program. The cases inside it are the
+  program's: mcpp lists and selects them only for a program that implements
+  the test protocol; for any other, a framework's selection happens inside the
+  program, through arguments after `--`.
 - `mcpp test --list` over a manifest that does not load lists
   `tests/**/*.cpp`, not the `[test] discover` set it cannot read.
 - `--build-timeout` is POSIX-only.

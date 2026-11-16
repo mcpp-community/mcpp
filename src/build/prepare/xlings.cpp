@@ -18,6 +18,8 @@ import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
 import mcpp.toolchain.detect;
+import mcpplibs.os.platform;
+import mcpp.toolchain.msvc;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.registry;
@@ -86,7 +88,7 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
     if (!state.m->buildConfig.generatedFiles.empty()) {
         std::vector<std::filesystem::path> staleGenerated;
         if (auto r = materialize_generated_files(
-                *state.root, *state.m, state.overrides.plan_only ? &staleGenerated : nullptr); !r) {
+                *state.root, *state.m, state.overrides.describes() ? &staleGenerated : nullptr); !r) {
             return std::unexpected(r.error());
         }
         for (auto const& path : staleGenerated)
@@ -119,10 +121,16 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
         if (!state.bootstrapSpec.empty()) return state.bootstrapSpec;
         if (!state.tcSpec) return {};
         if (state.overrides.target_triple.empty()) return *state.tcSpec;
-        return (state.tcOrigin == TcOrigin::TargetPin && state.hostSpecBeforeRowPin.has_value()
-                && !state.hostSpecBeforeRowPin->empty() && *state.hostSpecBeforeRowPin != "system")
-            ? *state.hostSpecBeforeRowPin
-            : (state.tcOrigin == TcOrigin::TargetPin ? state.native_first_run_spec() : *state.tcSpec);
+        // The target's own choice -- a row's pin or a `[target.<t>] toolchain`
+        // -- is not the host's: the spec it replaced is. A pin that replaced
+        // nothing gives the native default (#622); a section that replaced
+        // nothing names the only compiler the project states.
+        const bool targetChose = state.tcOrigin == TcOrigin::TargetPin
+                              || state.tcOrigin == TcOrigin::TargetSection;
+        if (targetChose && state.hostSpecBeforeRowPin.has_value() && !state.hostSpecBeforeRowPin->empty()
+            && *state.hostSpecBeforeRowPin != "system")
+            return *state.hostSpecBeforeRowPin;
+        return state.tcOrigin == TcOrigin::TargetPin ? state.native_first_run_spec() : *state.tcSpec;
     };
     state.host_tc_for_build_program = [&]() -> std::expected<
             std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>, std::string> {
@@ -235,6 +243,27 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
             return std::unexpected(std::format(
                 "toolchain spec '{}' is invalid for the build.mcpp host resolve", hostSpecText));
         }
+        // `<family>@system` NAMES THIS MACHINE'S INSTALLATION, AND IS LOCATED,
+        // NEVER INSTALLED (2026.11.7.1). A Windows machine whose default is
+        // `msvc@system`, building for a bare cross target, handed that spec to
+        // the package resolver below, which looked for `msvc@system` in the
+        // index (design 2026-11-07 §4.1.3). The build program is located the
+        // way a native build locates the same spec.
+        if (mcpp::toolchain::origin_of(*spec) == mcpp::toolchain::Origin::SystemMsvc) {
+            if constexpr (!mcpplibs::os::is_windows) {
+                return std::unexpected(std::format(
+                    "host toolchain for build.mcpp ('{}') is only available on Windows hosts", hostSpecText));
+            }
+            auto inst = mcpp::toolchain::msvc::detect_installation();
+            if (!inst) return std::unexpected(mcpp::toolchain::msvc::install_guidance());
+            auto htc = mcpp::toolchain::detect(
+                inst->clPath, state.runtimePayload, state.runtimeBindingSnapshot.contractHash);
+            if (!htc) return std::unexpected(htc.error().message);
+            mcpp::ui::info("Resolved", std::format(
+                "host toolchain for build.mcpp: {} → {}", hostSpecText, htc->label()));
+            state.hostTcCache = std::pair{inst->clPath, *htc};
+            return std::pair{state.hostTcCache->first, as_host(state.hostTcCache->second)};
+        }
         // Deliberately NO target injection: the spec resolves for the host.
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
         auto cfgH = state.get_cfg(true);
@@ -256,7 +285,7 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
                 pkg.target(),
                     mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
         }
-        if (auto provided = state.provide_runtime_payload(pkg); !provided)
+        if (auto provided = state.provide_runtime_payload(pkg, payload->root); !provided)
             return std::unexpected(provided.error());
         // SAME THREE ARGUMENTS THE NATIVE CALL USES (line ~3550), not the
         // one-argument form. `detect()` probes `payloadPaths` — the
@@ -530,12 +559,12 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
             // environment half (`penv`: deps/subos/workspace) belongs to the
             // runtime's owner, `runtimeSelection.ownerRoot`: the workspace
             // root when a member builds (e2e 205), the project root otherwise.
-            // Under `plan_only` (`emit build-database`) nothing is written
+            // Under `PrepareIntent::Describe` (`emit build-database`) nothing is written
             // into the project (SPEC-005 R2.1, mcpp#724 side finding B, e2e
             // 817), so the owner's half goes to the planning directory too.
             // The build programs' graph shares the indices of the build that
             // asked, whose project already holds them (`project_index_root`).
-            const auto& runtimeRoot = state.overrides.plan_only
+            const auto& runtimeRoot = state.overrides.describes()
                 ? state.workRoot : state.runtimeSelection.ownerRoot;
             const auto indices = state.overrides.project_index_root.empty()
                 ? state.m->indices : decltype(state.m->indices){};

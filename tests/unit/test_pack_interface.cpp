@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.interface;
 import mcpp.modgraph.graph;
+
+using namespace mcpplibs::mtest;
 
 using namespace mcpp::pack;
 using mcpp::modgraph::Graph;
@@ -65,60 +67,58 @@ std::vector<std::string> names(const std::vector<std::filesystem::path>& v) {
 
 // ─── what travels, and what does not ───────────────────────────────────────
 
-TEST(InterfaceClosure, PublishesTheRootAndItsInterfacePartitionOnly) {
+UTest publishes_the_root_and_its_interface_partition_only{"InterfaceClosure/PublishesTheRootAndItsInterfacePartitionOnly", [] {
     auto c = interface_closure(library_graph(), "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value()) << (c ? "" : c.error());
-    EXPECT_EQ(names(c->published), (std::vector<std::string>{"api.cppm", "mathkit.cppm"}));
-}
+    if (auto&& failed = expect(fatal(c.has_value())); !failed) failed << (c ? "" : c.error());
+    expect(eq(names(c->published), (std::vector<std::string>{"api.cppm", "mathkit.cppm"})));
+}};
 
-TEST(InterfaceClosure, WithholdsTheImplementationPartitionSource) {
+UTest withholds_the_implementation_partition_source{"InterfaceClosure/WithholdsTheImplementationPartitionSource", [] {
     // The whole point for a closed-source library: `secret.cppm` produces a
     // BMI and an object, and its SOURCE must not be published.
     auto c = interface_closure(library_graph(), "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(names(c->withheld),
-              (std::vector<std::string>{"capi.c", "impl.cpp", "secret.cppm"}));
-}
+    expect(fatal(c.has_value()));
+    expect(eq(names(c->withheld), (std::vector<std::string>{"capi.c", "impl.cpp", "secret.cppm"})));
+}};
 
-TEST(InterfaceClosure, DropSetIsThePublishedObjectsNotEveryModuleObject) {
+UTest drop_set_is_the_published_objects_not_every_module_object{"InterfaceClosure/DropSetIsThePublishedObjectsNotEveryModuleObject", [] {
     // Measured: deleting every `.m.o` also deletes `secret.m.o`, which holds
     // real code, and every target then fails to link with an undefined
     // reference that names neither the archive nor the rule that removed it.
     auto c = interface_closure(library_graph(), "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
+    expect(fatal(c.has_value()));
     auto drop = published_object_names(*c);
     std::ranges::sort(drop);
-    EXPECT_EQ(drop, (std::vector<std::string>{"api.m.o", "mathkit.m.o"}));
-    EXPECT_EQ(std::ranges::find(drop, "secret.m.o"), drop.end());
-}
+    expect(eq(drop, (std::vector<std::string>{"api.m.o", "mathkit.m.o"})));
+    expect(eq(std::ranges::find(drop, "secret.m.o"), drop.end()));
+}};
 
 // ─── the loud half of the asymmetry ────────────────────────────────────────
 
-TEST(InterfaceClosure, AnInterfaceThatReachesAnImplementationPartitionPublishesItAndSaysSo) {
+UTest an_interface_that_reaches_an_implementation_partition_publishes_it_and_says_so{"InterfaceClosure/AnInterfaceThatReachesAnImplementationPartitionPublishesItAndSaysSo", [] {
     // Legal, and the consumer cannot build the interface's BMI without that
     // source — so it is published rather than refused. But for a closed-source
     // library it is the one outcome nobody wants by accident, and `import
     // :secret;` in an interface reads like any other import, so it is reported.
     auto c = interface_closure(library_graph(/*interfaceReachesSecret=*/true),
                                "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(names(c->published),
-              (std::vector<std::string>{"api.cppm", "mathkit.cppm", "secret.cppm"}));
-    ASSERT_EQ(c->publishedImplementationPartitions.size(), 1u);
-    EXPECT_EQ(c->publishedImplementationPartitions[0].filename().string(), "secret.cppm");
-    EXPECT_TRUE(c->unresolvedImports.empty());
-}
+    expect(fatal(c.has_value()));
+    expect(eq(names(c->published), (std::vector<std::string>{"api.cppm", "mathkit.cppm", "secret.cppm"})));
+    expect(fatal(eq(c->publishedImplementationPartitions.size(), 1u)));
+    expect(eq(c->publishedImplementationPartitions[0].filename().string(), "secret.cppm"));
+    expect(c->unresolvedImports.empty());
+}};
 
-TEST(InterfaceClosure, AnInterfaceOnlyClosureReportsNoPartitionLeak) {
+UTest an_interface_only_closure_reports_no_partition_leak{"InterfaceClosure/AnInterfaceOnlyClosureReportsNoPartitionLeak", [] {
     auto c = interface_closure(library_graph(), "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_TRUE(c->publishedImplementationPartitions.empty());
-    EXPECT_TRUE(c->publishedUndeterminedPartitions.empty());
-}
+    expect(fatal(c.has_value()));
+    expect(c->publishedImplementationPartitions.empty());
+    expect(c->publishedUndeterminedPartitions.empty());
+}};
 
 // ─── the state that used to be spelled "interface" ─────────────────────────
 
-TEST(InterfaceClosure, APublishedPartitionOfUnknownKindIsReportedSeparately) {
+UTest a_published_partition_of_unknown_kind_is_reported_separately{"InterfaceClosure/APublishedPartitionOfUnknownKindIsReportedSeparately", [] {
     // A `[scan_overrides."<glob>"]` entry says which module a file provides and
     // has nowhere to say whether the declaration is exported; a P1689 scanner
     // may omit `is-interface`. That used to arrive as `providesInterface =
@@ -127,18 +127,17 @@ TEST(InterfaceClosure, APublishedPartitionOfUnknownKindIsReportedSeparately) {
     auto g = library_graph(/*interfaceReachesSecret=*/true);
     g.units[2].providesInterface.reset();          // src/secret.cppm, kind unknown
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
+    expect(fatal(c.has_value()));
     // Still published — the consumer cannot build the root's BMI without it.
-    EXPECT_EQ(names(c->published),
-              (std::vector<std::string>{"api.cppm", "mathkit.cppm", "secret.cppm"}));
+    expect(eq(names(c->published), (std::vector<std::string>{"api.cppm", "mathkit.cppm", "secret.cppm"})));
     // But reported as undetermined, not as a known implementation partition:
     // the sentence to print is a different one.
-    EXPECT_TRUE(c->publishedImplementationPartitions.empty());
-    ASSERT_EQ(c->publishedUndeterminedPartitions.size(), 1u);
-    EXPECT_EQ(c->publishedUndeterminedPartitions[0].filename().string(), "secret.cppm");
-}
+    expect(c->publishedImplementationPartitions.empty());
+    expect(fatal(eq(c->publishedUndeterminedPartitions.size(), 1u)));
+    expect(eq(c->publishedUndeterminedPartitions[0].filename().string(), "secret.cppm"));
+}};
 
-TEST(InterfaceClosure, AnUndeterminedPrimaryInterfaceIsNotReported) {
+UTest an_undetermined_primary_interface_is_not_reported{"InterfaceClosure/AnUndeterminedPrimaryInterfaceIsNotReported", [] {
     // Only a PARTITION can be either kind. `module M;` provides nothing, so the
     // only declaration that provides a bare `M` is `export module M;` — asking
     // the question there would warn about every primary interface in every
@@ -147,42 +146,42 @@ TEST(InterfaceClosure, AnUndeterminedPrimaryInterfaceIsNotReported) {
     auto g = library_graph();
     g.units[0].providesInterface.reset();          // src/mathkit.cppm, the root
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_TRUE(c->publishedUndeterminedPartitions.empty());
-    EXPECT_TRUE(c->publishedImplementationPartitions.empty());
-}
+    expect(fatal(c.has_value()));
+    expect(c->publishedUndeterminedPartitions.empty());
+    expect(c->publishedImplementationPartitions.empty());
+}};
 
-TEST(InterfaceClosure, AWithheldPartitionOfUnknownKindIsNotReportedEither) {
+UTest a_withheld_partition_of_unknown_kind_is_not_reported_either{"InterfaceClosure/AWithheldPartitionOfUnknownKindIsNotReportedEither", [] {
     // The warning is about what is PUBLISHED. `secret.cppm` is unreachable from
     // the interface here, so its kind never mattered.
     auto g = library_graph(/*interfaceReachesSecret=*/false);
     g.units[2].providesInterface.reset();
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_TRUE(c->publishedUndeterminedPartitions.empty());
-}
+    expect(fatal(c.has_value()));
+    expect(c->publishedUndeterminedPartitions.empty());
+}};
 
-TEST(InterfaceClosure, AGenuinelyMissingPartitionIsStillAnError) {
+UTest a_genuinely_missing_partition_is_still_an_error{"InterfaceClosure/AGenuinelyMissingPartitionIsStillAnError", [] {
     // The unresolved path is not dead: a partition nothing provides means the
     // published set is incomplete and the consumer's compile will fail on it.
     auto g = library_graph(/*interfaceReachesSecret=*/true);
     g.producerOf.erase("mathkit:secret");
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    ASSERT_EQ(c->unresolvedImports.size(), 1u);
-    EXPECT_EQ(c->unresolvedImports[0], "mathkit:secret");
-}
+    expect(fatal(c.has_value()));
+    expect(fatal(eq(c->unresolvedImports.size(), 1u)));
+    expect(eq(c->unresolvedImports[0], "mathkit:secret"));
+}};
 
-TEST(InterfaceClosure, ADependencysModuleIsNeitherPublishedNorUnresolved) {
+UTest a_dependencys_module_is_neither_published_nor_unresolved{"InterfaceClosure/ADependencysModuleIsNeitherPublishedNorUnresolved", [] {
     auto g = library_graph();
     g.units[0].requires_.push_back(ModuleId{"compat.zlib"});   // someone else's
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_TRUE(c->unresolvedImports.empty());
-    EXPECT_EQ(c->published.size(), 2u);
-}
+    expect(fatal(c.has_value()));
+    expect(c->unresolvedImports.empty());
+    expect(eq(c->published.size(), 2u));
+}};
 
-TEST(InterfaceClosure, ForeignPackageUnitsAreNotFollowed) {
+UTest foreign_package_units_are_not_followed{"InterfaceClosure/ForeignPackageUnitsAreNotFollowed", [] {
     auto g = library_graph();
     SourceUnit other;
     other.path        = "vendor/zlib.cppm";
@@ -193,23 +192,23 @@ TEST(InterfaceClosure, ForeignPackageUnitsAreNotFollowed) {
     g.units[0].requires_.push_back(ModuleId{"compat.zlib"});
 
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_TRUE(c.has_value());
-    EXPECT_EQ(names(c->published), (std::vector<std::string>{"api.cppm", "mathkit.cppm"}));
+    expect(fatal(c.has_value()));
+    expect(eq(names(c->published), (std::vector<std::string>{"api.cppm", "mathkit.cppm"})));
     // Nor does a foreign unit show up as something we withheld.
     auto withheld = names(c->withheld);
-    EXPECT_EQ(std::ranges::find(withheld, "zlib.cppm"), withheld.end());
-}
+    expect(eq(std::ranges::find(withheld, "zlib.cppm"), withheld.end()));
+}};
 
-TEST(InterfaceClosure, RefusesAnUnknownRoot) {
+UTest refuses_an_unknown_root{"InterfaceClosure/RefusesAnUnknownRoot", [] {
     auto c = interface_closure(library_graph(), "mathkit", "nosuch");
-    ASSERT_FALSE(c.has_value());
-    EXPECT_NE(c.error().find("nosuch"), std::string::npos);
-}
+    expect(fatal(!c.has_value()));
+    expect(ne(c.error().find("nosuch"), std::string::npos));
+}};
 
-TEST(InterfaceClosure, RefusesARootOwnedByAnotherPackage) {
+UTest refuses_a_root_owned_by_another_package{"InterfaceClosure/RefusesARootOwnedByAnotherPackage", [] {
     auto g = library_graph();
     g.units[0].packageName = "somebody.else";
     auto c = interface_closure(g, "mathkit", "mathkit");
-    ASSERT_FALSE(c.has_value());
-    EXPECT_NE(c.error().find("somebody.else"), std::string::npos);
-}
+    expect(fatal(!c.has_value()));
+    expect(ne(c.error().find("somebody.else"), std::string::npos));
+}};

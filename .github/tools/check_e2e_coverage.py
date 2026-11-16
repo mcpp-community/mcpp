@@ -18,6 +18,10 @@ It reads the per-test reports the shards write (`E2E_REPORT` of run_all.sh, one
 under tests/e2e:
 
   ran        some report says pass, fail or timeout;
+  unaffected no report ran it, and a run narrowed to a set (`E2E_SET`, the
+             `pr` set of a pull request) says the change does not affect it:
+             the full runs of main are its coverage, and this run's claim is
+             about the tests the change reaches;
   job        no report ran it, but a workflow names it outside a comment, as a
              whole token: by file name, by name without `.sh`, or by its number
              as an `E2E_ONLY` pattern such as `239_*.sh`. A dedicated job runs it
@@ -25,14 +29,27 @@ under tests/e2e:
              and neither does a longer name that contains it;
   excused    tests/e2e/coverage-exceptions.tsv lists it with the reason no hosted
              runner can run it;
+  owed       tests/e2e/coverage-debt.tsv lists it: it skips itself on every
+             host that starts it (a script leaves with 77 after a `SKIP:` line
+             when it can hold nothing on a machine, and the run reports it as a
+             skip). The list is a debt, and it only shrinks: each entry names
+             what a host lacks, and is removed when a host gains it;
   uncovered  none of these. The check fails.
 
-An exception for a test that ran, or for a test that does not exist, also fails
-the check, so that the list cannot outlive the reason it records.
+An exception or a debt entry for a test that ran, or for a test that does not
+exist, also fails the check, so that neither list can outlive the reason it
+records.
+
+Some claims need a test to pass on particular hosts, not on some host: docs/21
+calls a target row `verified` when CI builds and runs its artefact, and the
+`*-openkal` rows claim that for every system. tests/e2e/host-requirements.tsv
+lists such a test with the hosts its result must come from; a listed test that
+did not pass on one of them, or that does not exist, fails the check; one a
+set left out on that host as unaffected meets it for that run.
 
 With --timings-out DIR it writes `<host>.tsv`, the measured duration of every
 test that ran, merged across that host's shards, in the format run_all.sh reads
-from E2E_TIMINGS; refreshing tests/e2e/timings/ is copying those files. A report
+from E2E_TIMINGS (a run without mtest; CI's shards divide by mtest's history). A report
 file is named `e2e-report-<host>-<shard>.tsv`.
 
 Usage:
@@ -62,6 +79,19 @@ def read_reports(directory: Path):
                 continue
             ms = int(parts[2]) if parts[2].isdigit() else 0
             yield m["host"], int(m["shard"]), parts[0], parts[1], ms, parts[3] if len(parts) > 3 else ""
+
+
+def read_host_requirements(path: Path) -> dict[str, set[str]]:
+    """`<test>\t<host> <host> ...\t<reason>` lines: the hosts a test must pass on."""
+    out: dict[str, set[str]] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        out[parts[0].strip()] = set(parts[1].split()) if len(parts) > 1 else set()
+    return out
 
 
 def read_exceptions(path: Path) -> dict[str, str]:
@@ -109,9 +139,13 @@ def main() -> int:
     workflows = workflow_tokens([p.read_text(encoding="utf-8")
                                  for p in sorted((root / ".github" / "workflows").glob("*.yml"))])
     exceptions = read_exceptions(root / "tests" / "e2e" / "coverage-exceptions.tsv")
+    debt = read_exceptions(root / "tests" / "e2e" / "coverage-debt.tsv")
+    required = read_host_requirements(root / "tests" / "e2e" / "host-requirements.tsv")
 
     ran: dict[str, set[str]] = defaultdict(set)
+    passed: dict[str, set[str]] = defaultdict(set)
     skipped: dict[str, set[str]] = defaultdict(set)
+    unaffected: dict[str, set[str]] = defaultdict(set)
     shard_ms: dict[tuple[str, int], int] = defaultdict(int)
     timings: dict[str, dict[str, int]] = defaultdict(dict)
     reports = 0
@@ -119,10 +153,14 @@ def main() -> int:
         reports += 1
         if status in RAN:
             ran[test].add(host)
+            if status == "pass":
+                passed[test].add(host)
             shard_ms[(host, shard)] += ms
             timings[host][test] = ms
         elif status == "skip":
             skipped[test].add(f"{host}: {detail}")
+        elif status == "unaffected":
+            unaffected[test].add(host)
     if reports == 0:
         print(f"no report under {args.reports}: nothing can be said about coverage")
         return 1
@@ -134,24 +172,46 @@ def main() -> int:
             counts["ran"] += 1
             if test in exceptions:
                 stale.append(f"{test} is excused but ran on {', '.join(sorted(ran[test]))}")
+            if test in debt:
+                stale.append(f"{test} is listed as owed but ran on {', '.join(sorted(ran[test]))}: "
+                             f"remove it from coverage-debt.tsv")
+        elif test in unaffected:
+            counts["unaffected"] += 1
         elif named_by_a_workflow(test, workflows):
             counts["job"] += 1
         elif test in exceptions:
             counts["excused"] += 1
+        elif test in debt:
+            counts["owed"] += 1
         else:
             uncovered.append(f"{test}: {'; '.join(sorted(skipped[test])) or 'in no report'}")
     for test in exceptions:
         if test not in tests:
             stale.append(f"{test} is excused but does not exist")
+    for test in debt:
+        if test not in tests:
+            stale.append(f"{test} is listed as owed but does not exist")
+    unmet = []
+    for test, hosts in sorted(required.items()):
+        if test not in tests:
+            stale.append(f"{test} is required on hosts but does not exist")
+            continue
+        for host in sorted(hosts - passed[test] - unaffected[test]):
+            why = [d for d in skipped[test] if d.startswith(f"{host}: ")]
+            unmet.append(f"{test} did not pass on {host}"
+                         f"{' (' + '; '.join(why) + ')' if why else (' (it ran and did not pass)' if host in ran[test] else ' (no report of it there)')}")
 
-    print(f"{len(tests)} tests: {counts['ran']} ran on a shard, {counts['job']} run by a "
-          f"dedicated job, {counts['excused']} excused, {len(uncovered)} uncovered")
+    print(f"{len(tests)} tests: {counts['ran']} ran on a shard, {counts['unaffected']} unaffected by "
+          f"the change, {counts['job']} run by a dedicated job, {counts['excused']} excused, "
+          f"{counts['owed']} owed, {len(uncovered)} uncovered")
     for (host, shard), ms in sorted(shard_ms.items()):
         print(f"  {host} shard {shard}: {ms / 60000:.1f} min of tests")
     for line in uncovered:
         print(f"UNCOVERED: {line}")
     for line in stale:
         print(f"STALE EXCEPTION: {line}")
+    for line in unmet:
+        print(f"REQUIRED ON HOST: {line}")
 
     if args.timings_out:
         out = Path(args.timings_out)
@@ -159,7 +219,7 @@ def main() -> int:
         for host, table in timings.items():
             (out / f"{host}.tsv").write_text(
                 "".join(f"{t}\t{ms}\n" for t, ms in sorted(table.items())), encoding="utf-8")
-    return 1 if uncovered or stale else 0
+    return 1 if uncovered or stale or unmet else 0
 
 
 if __name__ == "__main__":

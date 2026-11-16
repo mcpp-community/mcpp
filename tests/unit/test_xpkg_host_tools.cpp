@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.manifest;
 import mcpp.manifest.xpkg;
 import mcpp.toolchain.platform;
+
+using namespace mcpplibs::mtest;
 
 // #355 needed two things from the Form B (xpkg .lua) descriptor parser that it
 // simply did not read, and neither failed loudly:
@@ -24,7 +26,7 @@ namespace {
 mcpp::manifest::Manifest parse_or_fail(std::string_view lua) {
     auto m = mcpp::manifest::synthesize_from_xpkg_lua(
         lua, "compat.demo", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
-    EXPECT_TRUE(m.has_value()) << (m ? "" : m.error().message);
+    if (auto&& failed = expect(m.has_value()); !failed) failed << (m ? "" : m.error().message);
     return m.value_or(mcpp::manifest::Manifest{});
 }
 
@@ -37,7 +39,7 @@ const mcpp::manifest::Target* find_target(const mcpp::manifest::Manifest& m,
 
 }  // namespace
 
-TEST(XpkgHostTools, TargetsCarryRequiredFeatures) {
+UTest targets_carry_required_features{"XpkgHostTools/TargetsCarryRequiredFeatures", [] {
     auto m = parse_or_fail(R"LUA(
 package = {
     spec = "1", name = "demo", namespace = "compat", type = "package",
@@ -53,19 +55,18 @@ package = {
 )LUA");
 
     auto const* lib = find_target(m, "demo");
-    ASSERT_NE(lib, nullptr);
-    EXPECT_EQ(lib->kind, mcpp::manifest::Target::Library);
-    EXPECT_TRUE(lib->requiredFeatures.empty());
+    expect(fatal(ne(lib, nullptr)));
+    expect(eq(lib->kind, mcpp::manifest::Target::Library));
+    expect(lib->requiredFeatures.empty());
 
     auto const* tool = find_target(m, "protoc");
-    ASSERT_NE(tool, nullptr);
-    EXPECT_EQ(tool->kind, mcpp::manifest::Target::Binary);
-    EXPECT_EQ(tool->main, "src/compiler/main.cc");
-    EXPECT_EQ(tool->requiredFeatures,
-              (std::vector<std::string>{"protoc", "upb"}));
-}
+    expect(fatal(ne(tool, nullptr)));
+    expect(eq(tool->kind, mcpp::manifest::Target::Binary));
+    expect(eq(tool->main, "src/compiler/main.cc"));
+    expect(eq(tool->requiredFeatures, (std::vector<std::string>{"protoc", "upb"})));
+}};
 
-TEST(XpkgHostTools, DepsAcceptBothAStringAndATable) {
+UTest deps_accept_both_a_string_and_a_table{"XpkgHostTools/DepsAcceptBothAStringAndATable", [] {
     // The string form is the long-standing one and must keep working
     // unchanged; the table form is what lets a descriptor request a tool.
     auto m = parse_or_fail(R"LUA(
@@ -88,16 +89,16 @@ package = {
         if (k.find("protobuf") != std::string::npos) pb   = &spec;
     }
 
-    ASSERT_NE(zlib, nullptr);
-    EXPECT_EQ(zlib->version, "1.3.2");
-    EXPECT_TRUE(zlib->tools.empty());
+    expect(fatal(ne(zlib, nullptr)));
+    expect(eq(zlib->version, "1.3.2"));
+    expect(zlib->tools.empty());
 
-    ASSERT_NE(pb, nullptr);
-    EXPECT_EQ(pb->version, "35.1");
-    EXPECT_EQ(pb->tools, (std::vector<std::string>{"protoc"}));
-}
+    expect(fatal(ne(pb, nullptr)));
+    expect(eq(pb->version, "35.1"));
+    expect(eq(pb->tools, (std::vector<std::string>{"protoc"})));
+}};
 
-TEST(XpkgHostTools, UnknownDepKeyIsRecordedRatherThanSwallowed) {
+UTest unknown_dep_key_is_recorded_rather_than_swallowed{"XpkgHostTools/UnknownDepKeyIsRecordedRatherThanSwallowed", [] {
     // A descriptor author writing an unsupported key must be told. Silently
     // ignoring it leaves the dependency half-configured with no signal — the
     // exact failure the per-feature key recording already exists to prevent.
@@ -116,17 +117,17 @@ package = {
     bool recorded = false;
     for (auto const& k : m.xpkgUnknownKeys)
         if (k.find("no_such_key") != std::string::npos) recorded = true;
-    EXPECT_TRUE(recorded) << "unknown dep key was swallowed";
+    expect(bool(recorded)) << "unknown dep key was swallowed";
 
     // ...and the keys it DOES understand still take effect.
     for (auto const& [k, spec] : m.dependencies)
         if (k.find("protobuf") != std::string::npos)
-            EXPECT_EQ(spec.version, "35.1");
-}
+            expect(eq(spec.version, "35.1"));
+}};
 
 // #642 E1: a descriptor's target states its default link form exactly as
 // `mcpp.toml` does, and the same statements are refused.
-TEST(XpkgHostTools, TargetsCarryTheirDefaultLinkForm) {
+UTest targets_carry_their_default_link_form{"XpkgHostTools/TargetsCarryTheirDefaultLinkForm", [] {
     auto m = parse_or_fail(R"LUA(
 package = {
     spec = "1", name = "demo", namespace = "compat", type = "package",
@@ -139,9 +140,9 @@ package = {
 }
 )LUA");
     auto const* lib = find_target(m, "demo");
-    ASSERT_NE(lib, nullptr);
-    EXPECT_EQ(lib->kind, mcpp::manifest::Target::Library);
-    EXPECT_EQ(lib->linkageDefault, "shared");
+    expect(fatal(ne(lib, nullptr)));
+    expect(eq(lib->kind, mcpp::manifest::Target::Library));
+    expect(eq(lib->linkageDefault, "shared"));
 
     auto refused = mcpp::manifest::synthesize_from_xpkg_lua(R"LUA(
 package = {
@@ -154,7 +155,6 @@ package = {
     },
 }
 )LUA", "compat.demo", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
-    ASSERT_FALSE(refused.has_value());
-    EXPECT_NE(refused.error().message.find("states both `kind = \"shared\"`"),
-              std::string::npos) << refused.error().message;
-}
+    expect(fatal(!refused.has_value()));
+    if (auto&& failed = expect(ne(refused.error().message.find("states both `kind = \"shared\"`"), std::string::npos)); !failed) failed << refused.error().message;
+}};

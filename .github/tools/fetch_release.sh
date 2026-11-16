@@ -45,6 +45,33 @@ verify() {
     esac
 }
 
+# THE SAME FILE BY GITHUB'S API. The web address of a release asset
+# (`github.com/<owner>/<repo>/releases/download/<tag>/<name>`) answered 504 for
+# minutes at a time while the API's address of the same asset answered 200
+# (measured 2026-11-09 on xlings-2026.10.26.1-macosx-arm64.tar.gz, three times
+# each). A failed web attempt is followed by the API's, with the job's token
+# where there is one (the API's anonymous limit is 60 requests an hour).
+api_fetch() {
+    local rest="${url#https://github.com/}"
+    [ "$rest" != "$url" ] || return 1
+    local owner repo releases download tag name
+    IFS=/ read -r owner repo releases download tag name <<<"$rest"
+    [ "$releases/$download" = "releases/download" ] && [ -n "$name" ] || return 1
+    local auth=()
+    local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+    [ -z "$token" ] || auth=(-H "Authorization: Bearer $token")
+    local id
+    id=$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 "${auth[@]}" \
+            "https://api.github.com/repos/$owner/$repo/releases/tags/$tag" \
+         | python3 -c 'import json,sys; n=sys.argv[1]; print(next((str(a["id"]) for a in json.load(sys.stdin)["assets"] if a["name"] == n), ""))' "$name") \
+        || return 1
+    [ -n "$id" ] || return 1
+    echo "fetch_release: the web address failed; asking the API for asset $id" >&2
+    curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors --connect-timeout 20 --max-time 600 \
+         "${auth[@]}" -H "Accept: application/octet-stream" \
+         -o "$dest" "https://api.github.com/repos/$owner/$repo/releases/assets/$id"
+}
+
 for i in $(seq 1 "$attempts"); do
     rm -f "$dest"
     # --retry-all-errors is what covers exit 52; the rest bound how long a single
@@ -53,7 +80,7 @@ for i in $(seq 1 "$attempts"); do
     if curl -fsSL \
             --retry 3 --retry-delay 2 --retry-all-errors \
             --connect-timeout 20 --max-time 600 \
-            -o "$dest" "$url"; then
+            -o "$dest" "$url" || { rm -f "$dest"; api_fetch; }; then
         if verify; then
             [ "$i" -eq 1 ] || echo "fetch_release: succeeded on attempt $i" >&2
             exit 0

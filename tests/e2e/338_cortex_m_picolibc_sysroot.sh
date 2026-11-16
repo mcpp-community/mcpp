@@ -34,7 +34,7 @@ qemu_arm() {
     command -v qemu-system-arm 2>/dev/null && return 0
     return 1
 }
-QEMU="$(qemu_arm)" || { echo "SKIP: qemu-system-arm not installed"; exit 0; }
+QEMU="$(qemu_arm)" || { echo "SKIP: qemu-system-arm not installed"; exit 77; }
 
 llvm_tool() {
     local c
@@ -42,7 +42,7 @@ llvm_tool() {
     [ -n "$c" ] && { echo "$c"; return 0; }
     command -v "$1" 2>/dev/null
 }
-READELF="$(llvm_tool llvm-readelf)" || { echo "SKIP: llvm-readelf not found"; exit 0; }
+READELF="$(llvm_tool llvm-readelf)" || { echo "SKIP: llvm-readelf not found"; exit 77; }
 
 # The payload has to be present. Installing it here rather than skipping
 # would make the test about the install; skipping when it is absent keeps the
@@ -61,7 +61,7 @@ sysroot_dir() {
     done
     return 1
 }
-SYSROOT="$(sysroot_dir)" || { echo "SKIP: picolibc-arm is not installed"; exit 0; }
+SYSROOT="$(sysroot_dir)" || { echo "SKIP: picolibc-arm is not installed"; exit 77; }
 
 mkdir -p "$work/fw/src"
 cd "$work/fw"

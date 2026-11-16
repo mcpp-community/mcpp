@@ -220,6 +220,9 @@ struct Target {
     // Where `main` was stated, for diagnostics: `[targets.app] main`, or a
     // row's header.
     std::string                 mainDeclaredBy;
+    // Of a test program of several files (`[test] programs = "directory"`):
+    // its translation units besides `main`, relative to the package root.
+    std::vector<std::string>    testSources;
     // The files this target names as `main` on OTHER rows (and the one a
     // matching row replaced). Each is a beginning, never an ordinary source
     // of an image, whichever row is built (design 2026-10-26 §24.3).
@@ -229,6 +232,23 @@ struct Target {
     // as an artifact target is: a program that selects it is refused, naming
     // the features (design 2026-10-26 §24.4 item 3).
     std::vector<std::string>    inactiveFeatures;
+    // Of an entry target: `test-protocol = 1`, the version of the mtest test
+    // protocol a test program that begins here implements (mtest
+    // spec/protocol.md P2.3, docs/08); 0 when the entry states none.
+    int                         testProtocol = 0;
+    // Of an entry target: `test-main = true`, the beginning of a test program
+    // of a package that depends on this one and whose file defines no `main`
+    // (docs/08), without `[test] main`.
+    bool                        testMain = false;
+    // Of an entry target: `test-guide = "<file>"`, the package's guide to
+    // writing its tests, relative to the package root (`mcpp test --guide`).
+    std::string                 testGuide;
+    // Of an entry target: `test-capabilities = [...]`, the optional
+    // capabilities of the mcpp test spec its framework implements
+    // (docs/specs/test.md, B6), and `test-session = [...]`, the command of the
+    // framework's session (O9); both empty when the entry states none.
+    std::vector<std::string>    testCapabilities;
+    std::vector<std::string>    testSession;
 
     // Whether this target is a PROGRAM -- something `mcpp run` can be asked
     // for and `mcpp pack` treats as the application pipeline's subject --
@@ -276,6 +296,17 @@ struct Target {
     std::vector<std::string>    cflags;
     std::vector<std::string>    cxxflags;
     std::vector<std::string>    defines;
+    // `[targets.<name>.build]` (mcpp#911 G9): flags and defines of every
+    // translation unit of this package the artifact links -- its entry and the
+    // shared implementation sources -- compiled as the artifact's own variant
+    // where they differ from the package's. A module interface stays one per
+    // package and is not varied.
+    std::vector<std::string>    buildCflags;
+    std::vector<std::string>    buildCxxflags;
+    std::vector<std::string>    buildDefines;
+    bool has_build_variant() const {
+        return !buildCflags.empty() || !buildCxxflags.empty() || !buildDefines.empty();
+    }
     // Build gate: this target is emitted ONLY when every listed feature is
     // active in the current build (otherwise it is silently skipped). Gate
     // only — it does not activate features (use --features / [features].default).
@@ -838,6 +869,13 @@ struct Resources {
 struct NamedRunner {
     std::vector<std::string> argv;
     bool                     longLived = false;
+    // The rest of the runner's table (`mcpp::runner_spec`, protocol 19; R2):
+    // the packages it is installed from, where it exists, how it reaches the
+    // artifact, whether runs overlap and whether it is enabled.
+    std::vector<std::string> requires_, hosts;
+    std::string              host;
+    bool                     exclusive = false;
+    bool                     enabled   = true;
 };
 
 // THE C STANDARD OF A PACKAGE THAT DECLARES NONE (#695).
@@ -857,6 +895,10 @@ inline std::string effective_c_standard(std::string_view declared) {
 }
 
 struct BuildConfig : BuildInputs {
+    // `[build] compiler_runtime_dir`: the directory, relative to the package
+    // root, that holds the compiler runtime a `compiler-runtime` supplier
+    // provides (design 2026-11-10 E5). Empty: none stated.
+    std::string compilerRuntimeDir;
     // THE LINK FLAGS OF THE GRAPH, NOT OF THE ROOT PACKAGE (2026.10.5.2).
     //
     // The profile's `ldflags` and the words `[target.<selector>.abi]` renders
@@ -906,6 +948,9 @@ struct BuildConfig : BuildInputs {
     // gets the same flow.
     std::map<std::string, NamedRunner> namedRunners;
     bool                                runExclusive = false;
+    // The default runner's table besides its command (`runner_spec` with no
+    // name); `argv` is unused, the command being `runner` above.
+    NamedRunner                         runnerFields;
 
     // Was `sources` WRITTEN, as opposed to merely being empty?
     //
@@ -1050,6 +1095,14 @@ struct BuildConfig : BuildInputs {
     // notarisation each couple a release to a release mcpp does not control,
     // and a name here is the whole of what the engine learns.
     std::vector<std::string>            packFormats;
+    // The program of the depending package this package's pack format is
+    // assembled from (`mcpp:pack-program=`, protocol 19, design 2026-11-15
+    // N30): `mcpp pack --pkg-format <format>` with no program named packs it.
+    std::vector<std::string>            packPrograms;
+    // The warnings and degradations the program stated in its last run, in
+    // order. A packaging pass whose provider submitted nothing states them as
+    // the provider's reasons (N30).
+    std::vector<std::string>            statedReasons;
     // mcpp#755, protocol 15. What a build program stated about SOURCES, carried
     // to prepare the way every other directive is: folded in here, read back
     // after the program ran, replayed with it on a cache hit.
@@ -1138,6 +1191,15 @@ struct BuildConfig : BuildInputs {
     // "wasm" (`-fwasm-exceptions`), "js" (`-fexceptions`), or empty for
     // `exceptions = true`, which keeps its meaning since 2026.9.12.3: "js".
     std::string                        abiExceptionsModel;
+    // `[target.<selector>.abi] longjmp` -- the third member (2026.11.12.1):
+    // how `sigsetjmp`/`siglongjmp` cross the WebAssembly boundary on an
+    // Emscripten row. A model, not a switch: "wasm" (`-sSUPPORT_LONGJMP=wasm`,
+    // WebAssembly's own stack switching) or "js" (`-sSUPPORT_LONGJMP=emscripten`,
+    // the JavaScript model, which is also the toolchain's default). The root's
+    // statement only, rendered into every translation unit and the link, like
+    // `threads`; the model reaches every cache key through those flags.
+    bool                               abiLongjmpDeclared = false;
+    std::string                        abiLongjmpModel;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
     // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
@@ -1178,6 +1240,7 @@ struct BuildConfig : BuildInputs {
     // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
+    bool                                debugLines = false; // -g1: the line tables alone
     bool                                lto      = false; // -flto, /GL + /LTCG on cl.exe
     // LTO was requested and some objects of the plan are compiled without it:
     // those that feed a PE shared library whose exports are discovered, or a
@@ -1672,6 +1735,14 @@ struct ConditionalConfig {
     // `!`-exclusion globs work there too (the scanner handles positive+
     // negative sets).
     BuildInputs                         inputs;
+    // `[target.<sel>.test] discover` (mcpp#942): globs appended to the
+    // package's `[test] discover` when the predicate matches the target the
+    // tests are built for. The test programs are the test build's inputs, so
+    // the cfg axis carries them as it carries `[build] sources`; a `!` entry
+    // removes the files it matches from the whole set. Evaluated when the
+    // tests are discovered, before dependencies resolve: a predicate on a
+    // target-side layer cannot select them.
+    std::vector<std::string>            testDiscover;
     // `[target.<sel>.runtime]` — the DIALECT-NEUTRAL half of a link line.
     //
     // `inputs.ldflags` above is spelled the GNU way and native `cl.exe` rejects
@@ -1697,6 +1768,9 @@ struct ConditionalConfig {
     bool                                abiExceptions = false;
     bool                                abiExceptionsDeclared = false;
     std::string                         abiExceptionsModel;
+    // `[target.<sel>.abi] longjmp` -- see BuildConfig::abiLongjmpModel.
+    bool                                abiLongjmpDeclared = false;
+    std::string                         abiLongjmpModel;
     // `[target.<sel>.build] dialect_cxxflags` -- a GRAPH-WIDE switch under a
     // target condition (issue #717, design 2026-09-27 §6). Like `abiThreads`/
     // `abiExceptions` above, only the ROOT's value is rendered; unlike them it
@@ -1811,7 +1885,7 @@ inline bool is_empty(const ConditionalConfig& c) {
         && c.buildDependencies.empty() && c.featureDeps.empty()
         && c.targetKinds.empty()
         && c.xlings.empty() && c.xlings.overrides.empty()
-        && !c.abiThreadsDeclared && !c.abiExceptionsDeclared
+        && !c.abiThreadsDeclared && !c.abiExceptionsDeclared && !c.abiLongjmpDeclared
         && !c.requiresAbiThreads && !c.requiresAbiExceptions
         && c.requires_.empty() && c.privateRequires.empty()
         && c.featureRequiresAbiThreads.empty() && c.featureRequiresAbiExceptions.empty()
@@ -1819,7 +1893,9 @@ inline bool is_empty(const ConditionalConfig& c) {
         // `c.inputs` (BuildInputs), so `is_empty(c.inputs)` above does not see
         // it -- a section carrying only this key would otherwise be dropped
         // before it is ever evaluated, the same failure #296 was filed for.
-        && c.dialectCxxflags.empty();
+        && c.dialectCxxflags.empty()
+        // mcpp#942: a section that only selects test programs.
+        && c.testDiscover.empty();
 }
 
 // `[lib]` — library "root" interface convention.
@@ -2100,6 +2176,11 @@ struct Hooks {
 struct Profile {
     std::string optLevel = "2";
     bool        debug    = false;
+    // `debug = "lines"` (2026-11-12 §17, W5): debug information, the line
+    // tables alone. `debugWritten` is a string as the table wrote it, which
+    // prepare refuses unless it is "lines".
+    bool        debugLines = false;
+    std::string debugWritten;
     bool        lto      = false;
     bool        strip    = false;
     // Which scalars the table WROTE: a profile inherited from the workspace
@@ -2209,6 +2290,12 @@ struct Manifest {
     // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
     std::vector<std::string>    testDiscover;
     bool                        testDiscoverDeclared = false;
+    // `[test] features` (mcpp#941): the features the package's own test build
+    // turns on, beside its defaults and `--features`. The tests are a consumer
+    // of the package, and this is that consumer's request: it is resolved in
+    // the test build alone, as a dev-dependency is, and no other consumer of
+    // the package sees it. Each name is a feature `[features]` declares.
+    std::vector<std::string>    testFeatures;
     // `[test] windows_code_page`: the ANSI code page of every discovered test
     // program on Windows, in the vocabulary of the target key of the same
     // name. Empty is `legacy`, the system's code page.
@@ -2222,6 +2309,23 @@ struct Manifest {
     // image is entered at.
     std::string                 testMainFrom;
     std::string                 testStart;
+    // `[test] programs`: "file" (a test program per discovered file) or
+    // "directory" (the files of one directory below a discover glob's fixed
+    // directory are one program, named by the directory). Empty: "file".
+    std::string                 testPrograms;
+    // `[test] link` (design 2026-11-09 §17.2): "used" (the default) -- the
+    // linker keeps what a test reaches (`--gc-sections`, `-dead_strip`), so a
+    // test of one module does not carry the package's every function --, or
+    // "objects", every object whole.
+    std::string                 testLink;
+    // `[test] split` (design 2026-11-09 §17.3): how a test program that speaks
+    // the protocol is run -- "file" (the default: a process per file of its
+    // cases), "case" (a process per case) or "none" (one process).
+    std::string                 testSplit;
+    // `[test] store` (design 2026-11-09 §17.3): the directory `mcpp test`
+    // writes its runs to in the mtest store's form (mtest P12), relative to the
+    // project; empty: `target/mtest`; "none": no store.
+    std::string                 testStore;
     // Set once a workspace root's own package has received `[workspace.package]`
     // and `[workspace.build]` (`mcpp::project::inherit_as_root_package`). The
     // manifest is read on two paths before it is planned, and an appended
@@ -2283,6 +2387,17 @@ struct Manifest {
     // alone: one image has one C library (openkal's boundary). Unioned from
     // `[package]` and every matching `[target.<sel>]`, as `requires_` is.
     std::vector<std::string>                        privateRequires;
+    // `[defaults."<capability>"] <selector> = <package>` (mcpp#911 G7; SPEC-002
+    // §3.6): the provider of a capability this package requires when neither
+    // the graph nor the platform provides it, per target selector. The layer
+    // mechanism of the platform, for any package: graph > platform > default.
+    struct CapabilityDefault {
+        std::string                                 capability;
+        std::string                                 selector;
+        mcpp::manifest::platform::PackageRef        ref;
+        int                                         line = 0;
+    };
+    std::vector<CapabilityDefault>                  capabilityDefaults;
     // `requires_abi = { threads = true, exceptions = true }` at package
     // level, and per feature. A statement that the ARTEFACT's ABI has a
     // switch on, compared at resolution with the root's

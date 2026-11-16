@@ -90,7 +90,18 @@ prepare_build(bool print_fingerprint,
         return prepare_build_pass(print_fingerprint, includeDevDeps,
                                   std::move(extraTargets), std::move(overrides));
     auto first = prepare_build_pass(print_fingerprint, includeDevDeps, extraTargets, overrides);
-    if (first) { (void)take_toolchain_restart(); (void)take_platform_restart(); return first; }
+    if (first) {
+        (void)take_toolchain_restart();
+        (void)take_platform_restart();
+        (void)take_target_restart();
+        return first;
+    }
+    if (auto identity = take_target_restart(); identity && !overrides.target_request) {
+        overrides.target_request = overrides.target_triple;
+        overrides.target_triple = std::move(*identity);
+        return prepare_build(print_fingerprint, includeDevDeps, std::move(extraTargets),
+                             std::move(overrides));
+    }
     // A platform that states a target base, fetched by this pass: the next
     // reads its `[platform]` before the base is decided (SPEC-013 §7).
     if (auto root = take_platform_restart(); root && overrides.platform_root.empty()) {
@@ -229,5 +240,27 @@ prepare_build_pass(bool print_fingerprint,
 }
 } // namespace
 
+
+std::expected<std::vector<mcpp::modgraph::PackageRoot>, std::string>
+resolve_graph(bool includeDevDeps, BuildOverrides overrides) {
+    read_build_programs_marker(overrides);
+    auto statePtr = std::make_unique<PrepareState>(/*print_fingerprint=*/false, includeDevDeps,
+                                                   std::vector<mcpp::manifest::Target>{}, std::move(overrides));
+    PrepareState& state = *statePtr;
+    // A restart a phase asks of `prepare_build` (a toolchain, platform or
+    // target statement) belongs to a build; the graph is read as it stands.
+    struct NoRestart {
+        ~NoRestart() { (void)take_toolchain_restart(); (void)take_platform_restart(); (void)take_target_restart(); }
+    } noRestart;
+    if (auto r = phase0_manifest_and_workspace(state); !r) return std::unexpected(r.error());
+    if (auto r = check_engine_floors(state, /*rootOnly=*/true); !r) return std::unexpected(r.error());
+    if (auto r = phase1_toolchain_spec_and_axes(state); !r) return std::unexpected(r.error());
+    if (auto r = phase2_define_toolchain_resolver(state); !r) return std::unexpected(r.error());
+    if (auto r = phase3_xlings_before_graph(state); !r) return std::unexpected(r.error());
+    if (auto r = phase4a_graph_load(state); !r) return std::unexpected(r.error());
+    if (auto r = phase4b_graph_worklist(state); !r) return std::unexpected(r.error());
+    if (auto r = check_engine_floors(state, /*rootOnly=*/false); !r) return std::unexpected(r.error());
+    return std::move(state.packages);
+}
 
 } // namespace mcpp::build

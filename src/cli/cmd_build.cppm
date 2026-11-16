@@ -2,13 +2,10 @@
 // clean / dyndep / stage. Implementations live in mcpp.build.prepare,
 // mcpp.build.execute, mcpp.dyndep and mcpp.build.stage.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_build;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.platform;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.triple;
@@ -26,6 +23,7 @@ import mcpp.modgraph.glob;          // escaped_spelling, for coff-def's warning
 import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
+import mcpp.build.test_schedule;   // --shard, --failed
 import mcpp.cli.selection;
 import mcpp.build.build_database;
 import mcpp.build.build_program;
@@ -37,7 +35,7 @@ import mcpp.diag;                   // a member's own diagnostics, in the envelo
 import mcpp.dyndep;
 import mcpp.home;
 import mcpp.hooks;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;   // platform-step: a program's output alone
@@ -53,6 +51,8 @@ import mcpp.toolchain.fingerprint;
 import mcpp.ui;
 import mcpp.wire;
 
+namespace libc = mcpplibs::mwrap::libc::macros;
+
 namespace mcpp::cli {
 
 // A member's tests, discovered from the member's own directory. Discovery
@@ -60,8 +60,9 @@ namespace mcpp::cli {
 // another member's package name would be read as that member: a member is
 // discovered from its own directory or refused, and never from another's.
 std::expected<mcpp::build::TestTargetSet, std::string>
-discover_member_tests(const std::filesystem::path& wsRoot, const std::string& mp) {
-    auto d = mcpp::build::discover_test_targets(wsRoot, mp);
+discover_member_tests(const std::filesystem::path& wsRoot, const std::string& mp,
+                      std::string_view targetTriple = {}) {
+    auto d = mcpp::build::discover_test_targets(wsRoot, mp, targetTriple);
     if (!d) return d;
     std::error_code ec;
     const bool same = std::filesystem::equivalent(d->packageRoot, wsRoot / mp, ec);
@@ -81,10 +82,11 @@ struct GroupTests {
     std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> discovery;
 };
 std::expected<GroupTests, std::string>
-group_tests(const std::filesystem::path& wsRoot, const std::vector<std::string>& group) {
+group_tests(const std::filesystem::path& wsRoot, const std::vector<std::string>& group,
+            std::string_view targetTriple = {}) {
     GroupTests out;
     for (auto const& mp : group) {
-        auto d = discover_member_tests(wsRoot, mp);
+        auto d = discover_member_tests(wsRoot, mp, targetTriple);
         if (!d) return std::unexpected(std::format("{}: {}", mp, d.error()));
         if (!d->targets.empty()) out.targets[mp] = std::move(d->targets);
         out.discovery.emplace_back(d->packageRoot, std::move(d->discover));
@@ -216,6 +218,26 @@ target_legs(const mcpplibs::cmdline::ParsedArgs& parsed, const mcpp::build::Buil
 
 int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed);
 
+namespace {
+// The build's events on standard output (design 2026-10-26 §5.1): `waiting` while
+// another build holds the directory, `progress` with ninja's count, and what the
+// record adds. `mcpp build --message-format json` and `mcpp run --print-launch
+// --message-format json` stream them before their envelope.
+void stream_build_events() {
+    namespace res = mcpp::build::result;
+    res::enable_events(true);
+    mcpp::build::dirlock::set_waiting_observer(
+        [](const mcpp::build::dirlock::Holder& h, std::chrono::milliseconds waited) {
+            res::emit("waiting", {{"holder", {{"pid", h.pid}, {"command", h.command},
+                                              {"client", h.client}, {"startedAt", h.startedAt}}},
+                                  {"waitedMs", waited.count()}});
+        });
+    mcpp::build::progress::set_step_observer([](std::size_t finished, std::size_t total) {
+        res::emit("progress", {{"finished", finished}, {"total", total}});
+    });
+}
+} // namespace
+
 // `mcpp build --message-format json` (design 2026-10-26 §5.1).
 //
 // NDJSON ON STANDARD OUTPUT WHILE IT BUILDS, THEN ONE ENVELOPE. Events are
@@ -235,16 +257,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (messageFormat == "human") return cmd_build_body(parsed);
 
     namespace res = mcpp::build::result;
-    res::enable_events(true);
-    mcpp::build::dirlock::set_waiting_observer(
-        [](const mcpp::build::dirlock::Holder& h, std::chrono::milliseconds waited) {
-            res::emit("waiting", {{"holder", {{"pid", h.pid}, {"command", h.command},
-                                              {"client", h.client}, {"startedAt", h.startedAt}}},
-                                  {"waitedMs", waited.count()}});
-        });
-    mcpp::build::progress::set_step_observer([](std::size_t finished, std::size_t total) {
-        res::emit("progress", {{"finished", finished}, {"total", total}});
-    });
+    stream_build_events();
     // mcpp's own errors (a manifest's rejection, a refused requirement) are
     // the envelope's diagnostics, each located where its message says.
     std::vector<std::string> errors;
@@ -347,7 +360,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
                 mo.workspace_members = g;
                 mo.workspace_request = request;
                 if (configure_only) {
-                    auto tests = group_tests(root, g);
+                    auto tests = group_tests(root, g, leg.triple);
                     if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); return 2; }
                     spec.includeDevDeps = !tests->targets.empty();
                     mo.member_targets = std::move(tests->targets);
@@ -362,7 +375,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (configure_only) {
             // The surface an editor needs, as for one target: the tests and
             // the dev-dependencies.
-            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter);
+            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter, leg.triple);
             if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
             spec.includeDevDeps = !discovered->targets.empty();
             spec.extraTargets = std::move(discovered->targets);
@@ -449,8 +462,8 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
             where("no mcpp.toml found in current directory or any parent");
             return 2;
         }
-        auto discovered = mcpp::build::discover_test_targets(*root,
-                                                              memberOv.package_filter);
+        auto discovered = mcpp::build::discover_test_targets(*root, memberOv.package_filter,
+                                                              memberOv.target_triple);
         if (!discovered) {
             where(discovered.error());
             return 2;
@@ -512,7 +525,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
                         if (int r = configure_member(std::move(one), mp, &configured); r != 0) rc = r;
                     }
                 };
-                auto tests = group_tests((*selection)->root, g);
+                auto tests = group_tests((*selection)->root, g, ov.target_triple);
                 if (!tests && g.size() > 1) { configure_one_by_one(); continue; }
                 if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); rc = 2; continue; }
                 mcpp::build::BuildOverrides mo = ov;
@@ -679,7 +692,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
 
     const auto formatValue = parsed.value("format");
     if (formatValue && !mcpp::wire::parse_format(*formatValue)) {
-        std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*formatValue));
+        std::println(libc::stderr(), "error: {}", mcpp::wire::unsupported_format(*formatValue));
         return 2;
     }
     const bool envelope = formatValue.has_value();
@@ -688,7 +701,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     // consumer. `s1` is the default.
     const std::string spec = parsed.value("spec").value_or("s1");
     if (spec != "s1" && spec != "compile-commands") {
-        std::println(stderr, "error: unsupported --spec '{}'; expected: s1, compile-commands",
+        std::println(libc::stderr(), "error: unsupported --spec '{}'; expected: s1, compile-commands",
                      spec);
         return 2;
     }
@@ -712,14 +725,14 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             std::ofstream os(tmp, std::ios::binary);
             os << text;
             if (!os) {
-                std::println(stderr, "error: cannot write '{}'", tmp.string());
+                std::println(libc::stderr(), "error: cannot write '{}'", tmp.string());
                 return 1;
             }
         }
         std::error_code ec;
         if (!mcpp::home::replace_file(tmp, out, ec)) {
             std::filesystem::remove(tmp, ec);
-            std::println(stderr, "error: cannot replace '{}'", out.string());
+            std::println(libc::stderr(), "error: cannot replace '{}'", out.string());
             return 1;
         }
         return 0;
@@ -733,7 +746,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     auto fail_no_data = [&]() -> int {
         if (!envelope) {
             for (auto const& d : diagnostics)
-                std::println(stderr, "{}: {}",
+                std::println(libc::stderr(), "{}: {}",
                              mcpp::wire::severity_name(d.severity), d.message);
             return 1;
         }
@@ -871,7 +884,8 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> discovery;
             bool includeDevDeps = false;
             if (req.group.empty()) {
-                auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter);
+                auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter,
+                                                                      mo.target_triple);
                 if (!discovered) {
                     fail_plan(req.member.empty() ? discovered.error()
                               : std::format("{}: {}", req.member, discovered.error()));
@@ -881,7 +895,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 discovery.emplace_back(discovered->packageRoot, discovered->discover);
                 extraTargets = std::move(discovered->targets);
             } else {
-                auto tests = group_tests(wsRoot, req.group);
+                auto tests = group_tests(wsRoot, req.group, mo.target_triple);
                 if (!tests && req.group.size() == 1) { fail_plan(tests.error()); continue; }
                 if (!tests) {
                     for (auto const& mp : req.group) plan_alone(mp);
@@ -891,7 +905,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 discovery = std::move(tests->discovery);
                 mo.member_targets = std::move(tests->targets);
             }
-            mo.plan_only = true;
+            mo.intent = mcpp::build::PrepareIntent::Describe;
             std::string workKey = mo.package_filter;
             for (auto const& mp : req.group) workKey += (workKey.empty() ? "" : ",") + mp;
             mo.work_dir = build_database_work_dir(req.group.empty() ? *root : wsRoot, workKey);
@@ -1039,7 +1053,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
         [](const Diagnostic& d) { return d.severity == Severity::Error; });
     if (!envelope) {
         for (auto const& d : diagnostics)
-            std::println(stderr, "{}: {}", mcpp::wire::severity_name(d.severity),
+            std::println(libc::stderr(), "{}: {}", mcpp::wire::severity_name(d.severity),
                          d.message);
         if (const auto rc = publish(document.dump(2) + "\n"); rc != 0) return rc;
         return hasError ? 1 : 0;
@@ -1146,6 +1160,19 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);
     mcpp::build::set_print_launch(parsed.is_flag_set("print-launch"));
+    // A launch asked for as JSON streams the build's events, and its envelope is
+    // the last line (design 2026-11-07 §4.9): an editor shows the build as it goes.
+    if (auto mf = parsed.value("message-format"); mf && *mf != "human" && *mf != "json") {
+        mcpp::ui::error(std::format("unknown --message-format '{}' (human|json)", *mf));
+        return 2;
+    } else if (mf && *mf == "json" && !parsed.is_flag_set("print-launch")) {
+        mcpp::ui::error("mcpp run --message-format json describes a launch: add --print-launch");
+        return 2;
+    }
+    if (parsed.is_flag_set("print-launch") && parsed.value("message-format").value_or("human") == "json") {
+        mcpp::build::set_launch_stream(true);
+        stream_build_events();
+    }
     // Closed before the program starts: the program owns the terminal.
     mcpp::build::progress::open(mcpp::log::is_verbose());
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
@@ -1183,10 +1210,34 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         for (auto const& l : *legs) testLegs.push_back({l.triple, l.fromSet});
 
     mcpp::build::TestOptions to;
-    if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
+    for (std::size_t i = 0; i < parsed.positional_count(); ++i) to.filters.push_back(parsed.positional(i));
     to.list = parsed.is_flag_set("list");
     to.noRunner = parsed.is_flag_set("no-runner");   // see cmd_run
+    if (auto runner = parsed.value("runner")) to.runnerName = *runner;
+    if (to.noRunner && !to.runnerName.empty()) {
+        mcpp::ui::error("--runner and --no-runner cannot be combined");
+        return 2;
+    }
     to.noRun    = parsed.is_flag_set("no-run");
+    // The test protocol's cases (docs/08 "Cases").
+    if (auto c = parsed.option("case")) to.cases = c->get().values;
+    to.listCases = parsed.is_flag_set("cases");
+    if (auto since = parsed.value("since")) to.since = *since;
+    if (auto c = parsed.option("changed")) to.changed = c->get().values;
+    to.guide = parsed.is_flag_set("guide");
+    if (auto sd = parsed.value("seed")) {
+        std::uint64_t seed = 0;
+        auto [p, ec] = std::from_chars(sd->data(), sd->data() + sd->size(), seed);
+        if (ec != std::errc{} || p != sd->data() + sd->size()) {
+            mcpp::ui::error(std::format("invalid --seed '{}' (a decimal number)", *sd));
+            return 2;
+        }
+        to.seed = seed;
+    }
+    if (to.listCases && (!to.cases.empty() || to.noRun)) {
+        mcpp::ui::error("--cases lists every case and runs none; it is not combined with --case or --no-run");
+        return 2;
+    }
     // The two read alike and mean opposite things: `--no-runner` says to run
     // the binaries WITHOUT the declared runner, `--no-run` says not to run
     // them at all. Asking for both is not a preference to resolve.
@@ -1201,6 +1252,14 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // nothing.
     if (auto a = parsed.value("archive")) to.archive = *a;
     const bool runArchive = !to.archive.empty() && !to.noRun;
+    // The package's programs, built elsewhere: named by the environment
+    // (MCPP_BIN_<NAME>) of this run, or of the run of the archive written.
+    to.noPrograms = parsed.is_flag_set("no-programs");
+    if (to.noPrograms && runArchive) {
+        mcpp::ui::error("--no-programs leaves the package's programs unbuilt; the run of an archive builds "
+                        "nothing (an archive written with --no-programs takes them from MCPP_BIN_<NAME>)");
+        return 2;
+    }
     // The three deadlines share one parser: they differ only in what they
     // bound, not in how they are spelled. 0 always means "no limit" — for
     // --timeout that now has to be asked for rather than being the default.
@@ -1217,6 +1276,53 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
         out = secs;
         return true;
     };
+    if (auto sh = parsed.value("shard")) {
+        to.shard = mcpp::build::test_schedule::parse_shard(*sh);
+        if (!to.shard) {
+            mcpp::ui::error(std::format("invalid --shard '{}' (I/N, 1 <= I <= N)", *sh));
+            return 2;
+        }
+    }
+    if (auto sp = parsed.value("split")) {
+        if (*sp != "file" && *sp != "case" && *sp != "auto" && *sp != "none") {
+            mcpp::ui::error(std::format("invalid --split '{}' (file | case | auto | none)", *sp));
+            return 2;
+        }
+        to.split = *sp;
+    }
+    // THE FAILURES OF THE LAST RUN (`--failed`), read from the store before
+    // anything is built, so that only the programs that failed are built.
+    if (parsed.is_flag_set("failed")) {
+        if (!to.filters.empty() || !to.cases.empty() || to.listCases || to.noRun) {
+            mcpp::ui::error("--failed selects the tests itself; it is not combined with a PATTERN, --case, --cases or --no-run");
+            return 2;
+        }
+        std::error_code ec;
+        auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec));
+        auto m = root ? mcpp::manifest::load(*root / "mcpp.toml")
+                      : std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
+                            std::unexpected(mcpp::manifest::ManifestError{}));
+        if (!m) { mcpp::ui::error("--failed reads the run store of a project: no mcpp.toml here"); return 2; }
+        if (m->testStore == "none") {
+            mcpp::ui::error("--failed reads the run store, and [test] store = \"none\" keeps no run");
+            return 2;
+        }
+        const auto store = *root / (m->testStore.empty() ? std::string("target/mtest") : m->testStore);
+        auto f = mcpp::build::test_schedule::last_failures(store);
+        if (!f) {
+            mcpp::ui::error(std::format("--failed: the store {} holds no run", store.generic_string()));
+            return 2;
+        }
+        if (f->programs.empty()) {
+            mcpp::ui::info("Finished", std::format("the store's last run ({}) failed nothing: no test to run", f->run));
+            return 0;
+        }
+        to.filters = f->programs;
+        if (!f->whole) to.cases = f->cases;
+        mcpp::ui::info("Selected", std::format("what failed in run {}: {} program(s){}", f->run, f->programs.size(),
+                                               f->whole ? std::string{}
+                                                        : std::format(", {} case(s)", f->cases.size())));
+    }
     if (!read_secs("timeout", to.timeoutSecs)) return 2;
     if (!read_secs("build-timeout", to.buildTimeoutSecs)) return 2;
     if (!read_secs("workspace-timeout", workspaceTimeoutSecs)) return 2;
@@ -1239,7 +1345,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // package on one target, built and not run, and nothing else on stdout.
     if (parsed.is_flag_set("print-launch")) {
         std::string refused;
-        if (to.filter.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        if (to.filters.empty()) refused = "names no test: --print-launch describes the one test PATTERN names";
+        else if (to.filters.size() > 1) refused = "describes one test, and the command names several PATTERNs: name one";
         else if (to.list || to.noRun || !to.archive.empty()) refused = "describes a test to run; --list, --no-run and --archive do not run one";
         else if (to.format == mcpp::build::TestMessageFormat::Json) refused = "prints the mcpp.launch envelope; --message-format json prints records";
         else if (!testLegs.empty()) refused = "describes one test on one target, and --target names several legs";
@@ -1268,6 +1375,21 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // selection design 2026-09-30, S4).
     auto selection = mcpp::cli::select_members(member_request(parsed));
     if (!selection) { mcpp::ui::error(std::format("{}", selection.error())); return 2; }
+    // THE GUIDE (#932) is read from the resolved graph and nothing is planned
+    // or built, wherever it is asked: a package, a member, a workspace root.
+    // Several members are resolved by their configuration groups, as their
+    // tests are planned, and their frameworks united.
+    if (to.guide) {
+        std::vector<std::vector<std::string>> groups;
+        std::filesystem::path wsRoot;
+        if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)) {
+            wsRoot = (*selection)->root;
+            if (auto g = workspace_groups(wsRoot, (*selection)->members, ov.target_triple)) groups = std::move(*g);
+            else for (auto const& mp : (*selection)->members) groups.push_back({mp});
+        }
+        return mcpp::build::print_test_guide_of(ov, wsRoot, groups,
+                                                to.format == mcpp::build::TestMessageFormat::Json);
+    }
     if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)
         && !to.archive.empty()) {
         mcpp::ui::error("--archive holds the tests of one package: select one member (-p)");
@@ -1386,7 +1508,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                 for (auto const& mp : members) {
                     mcpp::build::WorkspaceTestMember wm;
                     wm.path = mp;
-                    auto d = discover_member_tests(sel.root, mp);
+                    auto d = discover_member_tests(sel.root, mp, ov.target_triple);
                     if (!d) {
                         wm.error = std::format("{}: {}", mp, d.error());
                     } else {
@@ -1453,7 +1575,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                              members.size(), totalPassed, totalFailed, totalNotRun,
                              totalBuilt,
                              join(failed), join(unrunnable), join(notRun), wsElapsed);
-                std::fflush(stdout);
+                std::fflush(libc::stdout());
                 return rc;
             }
 
@@ -1556,7 +1678,7 @@ export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (parsed.is_flag_set("report")) return mcpp::build::clean_report();
     if (parsed.is_flag_set("stale") || dryRun || olderThan) {
         if (parsed.is_flag_set("bmi-cache")) {
-            std::println(stderr, "error: --stale/--dry-run/--older-than cannot be combined with "
+            std::println(libc::stderr(), "error: --stale/--dry-run/--older-than cannot be combined with "
                                  "--bmi-cache (the build cache is shared across projects; "
                                  "use `mcpp cache gc`)");
             return 2;
@@ -1577,7 +1699,7 @@ export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto secs = (*olderThan == "0") ? std::optional<std::int64_t>{0}
                                             : mcpp::bmi_cache::parse_duration(*olderThan);
             if (!secs || *secs < 0) {
-                std::println(stderr, "error: invalid --older-than '{}' "
+                std::println(libc::stderr(), "error: invalid --older-than '{}' "
                                      "(expected <N>s, <N>m, <N>h, <N>d, or 0)", *olderThan);
                 return 2;
             }
@@ -1599,7 +1721,7 @@ export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::filesystem::path outPath = parsed.option_or_empty("output").value();
     if (outPath.empty()) {
-        std::println(stderr, "error: --output <path> required");
+        std::println(libc::stderr(), "error: --output <path> required");
         return 2;
     }
     // Every path ninja hands this edge is relative to the build directory,
@@ -1622,7 +1744,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto mm = parsed.option_or_empty("module-map").value(); !mm.empty()) {
         std::ifstream is{mcpplibs::os::fs::extended(std::filesystem::path{mm})};
         if (!is) {
-            std::println(stderr, "error: cannot read module map '{}'", mm);
+            std::println(libc::stderr(), "error: cannot read module map '{}'", mm);
             return 1;
         }
         std::string mapBody{std::istreambuf_iterator<char>(is), {}};
@@ -1633,7 +1755,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::expected<std::string, std::string> body;
     if (single) {
         if (parsed.positional_count() != 1) {
-            std::println(stderr, "error: --single requires exactly one .ddi input");
+            std::println(libc::stderr(), "error: --single requires exactly one .ddi input");
             return 2;
         }
         // Plan-vs-ddi reconciliation: when the generator declared what the
@@ -1649,7 +1771,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::string ddiBody{std::istreambuf_iterator<char>(is), {}};
             auto unit = mcpp::dyndep::parse_ddi(ddiBody);
             if (!unit) {
-                std::println(stderr, "error: {}: {}", parsed.positional(0), unit.error());
+                std::println(libc::stderr(), "error: {}: {}", parsed.positional(0), unit.error());
                 return 1;
             }
             std::optional<std::string> ep;
@@ -1662,7 +1784,7 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 b = e + 1;
             }
             if (auto err = mcpp::dyndep::verify_unit_expectations(*unit, ep, ei)) {
-                std::println(stderr, "error: {}", *err);
+                std::println(libc::stderr(), "error: {}", *err);
                 return 1;
             }
         }
@@ -1678,12 +1800,20 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     if (!body) {
-        std::println(stderr, "error: {}", body.error());
+        std::println(libc::stderr(), "error: {}", body.error());
         return 1;
     }
+    // AN UNCHANGED BINDING IS LEFT UNTOUCHED. The rule restats its output, so
+    // a unit whose module edges are what they were is not compiled again when
+    // another part of the graph changed the rule's command (a test graph
+    // binds the modules of its dev-dependencies; mcpp#874).
     std::error_code ec;
     std::filesystem::create_directories(outPath.parent_path(), ec);
-    std::ofstream os(outPath);
+    {
+        std::ifstream in(outPath, std::ios::binary);
+        if (in && std::string(std::istreambuf_iterator<char>(in), {}) == *body) return 0;
+    }
+    std::ofstream os(outPath, std::ios::binary);
     os << *body;
     return os ? 0 : 1;
 }
@@ -1713,17 +1843,64 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // nothing holds any more are deleted here. A process started while the linker
 // writes fails to start (file not found, sharing violation) -- Windows never
 // starts an image that is being written -- rather than running half of one.
-// (POSIX links write `<artifact>.tmp` and rename it over the name in the
-// edge's own shell command: a rename replaces a running program there.)
+// On POSIX (`--temporary`) the linker writes `<dir>/.<artifact>` -- the
+// argument after its `-o`, renamed; the name keeps its extension, as a driver
+// that names a file after it writes a second one otherwise (design 2026-11-15
+// N9) -- and the file is renamed over the artifact once the linker succeeds: a
+// rename replaces a running program there, and a program started meanwhile
+// never meets a partial file. The publication is one command, so an edge that
+// holds a permit for the link holds it until the artifact is in place.
 export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
                            std::span<const std::string> command) {
     namespace fs = std::filesystem;
     const fs::path out = parsed.option_or_empty("output").value();
     if (out.empty() || command.empty()) {
-        std::println(stderr, "error: link-output needs --output <artifact> -- <linker command>");
+        std::println(libc::stderr(), "error: link-output needs --output <artifact> -- <linker command>");
         return 2;
     }
     std::error_code ec;
+    // The row's companions (`--companions .wasm`, design 2026-11-15 N33): the
+    // files named after the artifact that an earlier link wrote and this one
+    // may not, removed first.
+    if (auto c = parsed.option_or_empty("companions").value(); !c.empty())
+        for (auto part : std::views::split(std::string_view(c), ',')) {
+            auto companion = out;
+            companion.replace_extension(std::string(std::string_view(part.begin(), part.end())));
+            fs::remove(companion, ec);
+        }
+    // Moved aside when the edge asks (`--aside`, a Windows host, where a
+    // running program's file cannot be overwritten). An edge that reaches here
+    // for its companions alone does not: an aside file would be named like a
+    // companion (`app.js.old-1`).
+    if (parsed.is_flag_set("temporary")) {
+        std::vector<std::string> argv(command.begin(), command.end());
+        const auto temporary = out.parent_path() / ("." + out.filename().string());
+        auto named = std::ranges::adjacent_find(argv, [&](const std::string& a, const std::string& b) {
+            return a == "-o" && fs::path(b) == out;
+        });
+        if (named == argv.end()) {
+            std::println(libc::stderr(), "error: link-output --temporary: the linker command names no `-o {}`",
+                         out.string());
+            return 2;
+        }
+        *std::next(named) = temporary.string();
+        const auto linked = mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                                      .streams = mcpp::run::Streams::inherit});
+        if (linked.exit_code != 0) {
+            fs::remove(temporary, ec);
+            return linked.exit_code;
+        }
+        fs::rename(temporary, out, ec);
+        if (ec) {
+            std::println(libc::stderr(), "error: link-output: cannot rename {} over {}: {}",
+                         temporary.string(), out.string(), ec.message());
+            fs::remove(temporary, ec);
+            return 1;
+        }
+        return 0;
+    }
+    if (!parsed.is_flag_set("aside"))
+        return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
     const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();
     const auto stem = out.filename().string() + ".old-";
     for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
@@ -1773,15 +1950,15 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
         for (auto const& a : argv) shown += (shown.empty() ? "" : " ") + a;
         auto r = proc::run(std::move(o));
         if (!r) {
-            std::println(stderr, "error: cannot start {}", shown);
+            std::println(libc::stderr(), "error: cannot start {}", shown);
             return false;
         }
-        std::print(stderr, "{}", r->err);
+        std::print(libc::stderr(), "{}", r->err);
         if (!r->status.success()) {
             // What a refusing step wrote is its reason (`okld check` names the
             // import it refused), on either stream.
-            std::print(stderr, "{}", r->out);
-            std::println(stderr, "error: `{}` exited {}", shown, r->status.shell_code());
+            std::print(libc::stderr(), "{}", r->out);
+            std::println(libc::stderr(), "error: `{}` exited {}", shown, r->status.shell_code());
             return false;
         }
         if (out) *out = std::move(r->out);
@@ -1791,7 +1968,7 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (mode == "capture") {
         const std::string out = parsed.option_or_empty("out").value();
         if (out.empty() || rest.empty()) {
-            std::println(stderr, "error: platform-step capture needs --out <file> -- <argv…>");
+            std::println(libc::stderr(), "error: platform-step capture needs --out <file> -- <argv…>");
             return 2;
         }
         std::string text;
@@ -1802,16 +1979,16 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
         {
             std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
             f << text;
-            if (!f) { std::println(stderr, "error: cannot write {}", tmp.string()); return 1; }
+            if (!f) { std::println(libc::stderr(), "error: cannot write {}", tmp.string()); return 1; }
         }
         fs::rename(tmp, out, ec);
-        if (ec) { std::println(stderr, "error: cannot publish {}: {}", out, ec.message()); return 1; }
+        if (ec) { std::println(libc::stderr(), "error: cannot publish {}: {}", out, ec.message()); return 1; }
         return 0;
     }
     if (mode == "seal") {
         const std::string hex = parsed.option_or_empty("steps-hex").value();
         if (hex.empty() || hex.size() % 2 != 0 || rest.size() < 2) {
-            std::println(stderr, "error: platform-step seal needs --steps-hex <steps> -- <linked> <artifact> [needed…]");
+            std::println(libc::stderr(), "error: platform-step seal needs --steps-hex <steps> -- <linked> <artifact> [needed…]");
             return 2;
         }
         std::string text;
@@ -1819,7 +1996,7 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
             unsigned v = 0;
             auto [p, e] = std::from_chars(hex.data() + i, hex.data() + i + 2, v, 16);
             if (e != std::errc{} || p != hex.data() + i + 2) {
-                std::println(stderr, "error: platform-step seal: the steps are not hexadecimal");
+                std::println(libc::stderr(), "error: platform-step seal: the steps are not hexadecimal");
                 return 2;
             }
             text.push_back(static_cast<char>(v));
@@ -1844,7 +2021,7 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
         }
         // A seal with no step would publish what it was asked to seal.
         if (steps.empty()) {
-            std::println(stderr, "error: platform-step seal was given no step");
+            std::println(libc::stderr(), "error: platform-step seal was given no step");
             return 2;
         }
         const fs::path linked = rest[0], artifact = rest[1];
@@ -1853,25 +2030,25 @@ export int cmd_platform_step(const mcpplibs::cmdline::ParsedArgs& parsed,
         tmp += ".tmp";
         fs::copy_file(linked, tmp, fs::copy_options::overwrite_existing, ec);
         if (ec) {
-            std::println(stderr, "error: cannot copy {} to {}: {}", linked.string(), tmp.string(), ec.message());
+            std::println(libc::stderr(), "error: cannot copy {} to {}: {}", linked.string(), tmp.string(), ec.message());
             return 1;
         }
         for (auto const& step : steps) {
             if (!run(mcpp::platform::expand_step(step, tmp.string(), needed), nullptr)) {
                 fs::remove(tmp, ec);
-                std::println(stderr, "error: {} was not sealed: a step of its platform's "
+                std::println(libc::stderr(), "error: {} was not sealed: a step of its platform's "
                              "[platform.link] seal refused it", artifact.filename().string());
                 return 1;
             }
         }
         fs::rename(tmp, artifact, ec);
         if (ec) {
-            std::println(stderr, "error: cannot publish {}: {}", artifact.string(), ec.message());
+            std::println(libc::stderr(), "error: cannot publish {}: {}", artifact.string(), ec.message());
             return 1;
         }
         return 0;
     }
-    std::println(stderr, "error: platform-step takes `capture` or `seal`");
+    std::println(libc::stderr(), "error: platform-step takes `capture` or `seal`");
     return 2;
 }
 
@@ -1890,7 +2067,7 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool json = false;
     if (auto f = parsed.value("format")) {
         if (!mcpp::wire::parse_format(*f)) {
-            std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*f));
+            std::println(libc::stderr(), "error: {}", mcpp::wire::unsupported_format(*f));
             return 2;
         }
         json = true;
@@ -2081,7 +2258,7 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (!verify.empty()) opts.verify = mcpp::build::stage::parse_verify(verify);
         std::ifstream in(std::filesystem::path{listFile}, std::ios::binary);
         if (!in) {
-            std::println(stderr, "error: cannot read the placement list {}", listFile);
+            std::println(libc::stderr(), "error: cannot read the placement list {}", listFile);
             return 1;
         }
         std::vector<std::pair<std::string, std::vector<std::filesystem::path>>> groups;
@@ -2093,7 +2270,7 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (line.empty()) continue;
             const auto tab = line.find('\t');
             if (tab == std::string::npos) {
-                std::println(stderr, "error: placement list line without a tab: {}", line);
+                std::println(libc::stderr(), "error: placement list line without a tab: {}", line);
                 return 2;
             }
             std::string src = line.substr(0, tab), dst = line.substr(tab + 1);
@@ -2111,9 +2288,9 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 // One edge places the whole list, so ninja's echo of the
                 // command no longer shows which files were involved; the
                 // entries are named here as the list writes them.
-                std::println(stderr, "error: {}", r.error().message);
-                std::println(stderr, "  placement list entries ({}):", listFile);
-                for (auto const& src : spelled[g]) std::println(stderr, "    {} -> {}", src, dst);
+                std::println(libc::stderr(), "error: {}", r.error().message);
+                std::println(libc::stderr(), "  placement list entries ({}):", listFile);
+                for (auto const& src : spelled[g]) std::println(libc::stderr(), "    {} -> {}", src, dst);
                 return 1;
             }
         }
@@ -2121,11 +2298,11 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     std::filesystem::path outPath = parsed.option_or_empty("output").value();
     if (outPath.empty()) {
-        std::println(stderr, "error: --output <path> required");
+        std::println(libc::stderr(), "error: --output <path> required");
         return 2;
     }
     if (parsed.positional_count() < 1) {
-        std::println(stderr, "error: stage requires at least one source path");
+        std::println(libc::stderr(), "error: stage requires at least one source path");
         return 2;
     }
 
@@ -2146,7 +2323,7 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto r = mcpp::build::stage::stage_files(
         sources, mcpplibs::os::fs::extended(outPath), opts);
     if (!r) {
-        std::println(stderr, "error: {}", r.error().message);
+        std::println(libc::stderr(), "error: {}", r.error().message);
         return 1;
     }
     return 0;
@@ -2160,7 +2337,7 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // the interface-unchanged fast path never fired. See mcpp.build.stage.
 export int cmd_bmi_equal(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (parsed.positional_count() != 2) {
-        std::println(stderr, "error: bmi-equal requires exactly two paths");
+        std::println(libc::stderr(), "error: bmi-equal requires exactly two paths");
         return 2;
     }
     const bool same = mcpp::build::stage::bmi_equivalent(
@@ -2183,7 +2360,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::filesystem::path out;
     if (auto v = parsed.value("output")) out = *v;
     if (out.empty()) {
-        std::println(stderr, "error: coff-def requires --output");
+        std::println(libc::stderr(), "error: coff-def requires --output");
         return 2;
     }
     std::string libName;
@@ -2201,7 +2378,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto v = parsed.value("exports-file")) {
         std::ifstream in(mcpplibs::os::fs::extended(std::filesystem::path{*v}));
         if (!in) {
-            std::println(stderr, "error: cannot read the exports list '{}'", *v);
+            std::println(libc::stderr(), "error: cannot read the exports list '{}'", *v);
             return 1;
         }
         for (std::string line; std::getline(in, line);) {
@@ -2211,14 +2388,14 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     auto discovery = mcpp::build::pe::discover_exports(objects, tools);
     if (!discovery) {
-        std::println(stderr, "error: {}", discovery.error());
+        std::println(libc::stderr(), "error: {}", discovery.error());
         return 1;
     }
     // THE PRECEDENCE OF THE THREE SOURCES (docs/04, `exports`): the inputs'
     // own declarations decide; otherwise `exports` narrows what discovery
     // found; otherwise everything discovered is published.
     if (discovery->declaredBy && !patterns.empty())
-        std::println(stderr,
+        std::println(libc::stderr(),
             "warning: {}: `exports` has no effect on this DLL: '{}' declares its exports "
             "in the source (__declspec(dllexport) or /EXPORT:), and the linker publishes "
             "exactly those",
@@ -2231,7 +2408,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // than as a missing file at the consumer. A DLL nothing links (resources
     // only, or loaded for DllMain) is valid as it is.
     if (all.empty() && !discovery->declaredBy && parsed.is_flag_set("required")) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: {} exports no symbol, and a consumer in this build links it.\n"
             "  Declare the exports in the source (__declspec(dllexport)), or let\n"
             "  `[targets.<name>] exports` patterns match the symbols to publish.",
@@ -2245,7 +2422,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::ranges::sort(all);
     all.erase(std::ranges::unique(all).begin(), all.end());
     if (all.size() > mcpp::build::coff::kMaxExports) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: {} exportable symbols, and PE addresses exports by 16-bit "
             "ordinal (max {}).\n"
             "  Auto-export cannot express this library. Mark its public surface "
@@ -2262,7 +2439,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::filesystem::create_directories(outOpen.parent_path(), ec);
     std::ofstream o(outOpen, std::ios::binary | std::ios::trunc);
     if (!o) {
-        std::println(stderr, "error: cannot write '{}'", out.string());
+        std::println(libc::stderr(), "error: cannot write '{}'", out.string());
         return 1;
     }
     o << mcpp::build::coff::write_def(libName, std::move(all));
@@ -2314,6 +2491,7 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::filesystem::path{opt_value(parsed, name)});
     };
     req.bmi       = file_path("bmi");
+    req.object    = file_path("object");
     req.bmiTarget = opt_value(parsed, "bmi");
     req.slot      = file_path("slot");
     req.self      = std::filesystem::path{opt_value(parsed, "self")};
@@ -2326,11 +2504,11 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     req.depTo       = file_path("dep-to");
     req.command     = read_command_file(req.commandFile);
     if (req.slot.empty()) {
-        std::println(stderr, "error: bmi-compile needs --slot");
+        std::println(libc::stderr(), "error: bmi-compile needs --slot");
         return 2;
     }
     if (req.command.empty()) {
-        std::println(stderr, "error: bmi-compile got no command from --command-file");
+        std::println(libc::stderr(), "error: bmi-compile got no command from --command-file");
         return 2;
     }
     return mcpp::build::schedule::detach::compile_release_at_bmi(req);
@@ -2340,8 +2518,13 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
 export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const auto slot = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "slot")});
-    const auto token = mcpplibs::os::fs::extended(
-        std::filesystem::path{opt_value(parsed, "token")});
+    const auto semaphore = mcpplibs::os::fs::extended(
+        std::filesystem::path{opt_value(parsed, "sem")});
+    const auto object = mcpplibs::os::fs::extended(
+        std::filesystem::path{opt_value(parsed, "object")});
+    int cap = 0;
+    if (const auto value = opt_value(parsed, "cap"); !value.empty())
+        std::from_chars(value.data(), value.data() + value.size(), cap);
     const auto command = read_command_file(mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "command-file")}));
     // Only `--slot` is checked here. An empty COMMAND is handed to supervise()
@@ -2349,10 +2532,10 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // both waiters are polling. Returning early instead left them waiting on an
     // `.rc` that nobody would ever write.
     if (slot.empty()) {
-        std::println(stderr, "error: bmi-supervise needs --slot");
+        std::println(libc::stderr(), "error: bmi-supervise needs --slot");
         return 2;
     }
-    return mcpp::build::schedule::detach::supervise(slot, token, command);
+    return mcpp::build::schedule::detach::supervise(slot, semaphore, cap, object, command);
 }
 
 // Phase 2: join the detached compiler before anything reads its object.
@@ -2362,7 +2545,7 @@ export int cmd_bmi_await(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const auto object = mcpplibs::os::fs::extended(
         std::filesystem::path{opt_value(parsed, "object")});
     if (slot.empty()) {
-        std::println(stderr, "error: bmi-await needs --slot");
+        std::println(libc::stderr(), "error: bmi-await needs --slot");
         return 2;
     }
     return mcpp::build::schedule::detach::await_unit(slot, object);

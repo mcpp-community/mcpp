@@ -56,6 +56,21 @@ glfw = "3.4"                    # Explicit namespace; no fallback search
 
 </details>
 
+A quoted key with dots, `"mcpplibs.cmdline" = "0.0.2"`, is one TOML key whose
+name contains dots. mcpp reads it as the selector those dots spell, warns that
+the spelling is deprecated (since 2026.11.8.1, removed from 2027.2; docs/51)
+and names the unquoted key that replaces it: `mcpplibs.cmdline = "0.0.2"`.
+A package and a package of its namespace in one table, `mcpplibs.mtest` and
+`mcpplibs.mtest.gtest`, cannot both be written unquoted -- one name would be a
+value and a table -- so the quoted key of one of them is their spelling and is
+not deprecated:
+
+```toml
+[dev-dependencies]
+mcpplibs.mtest         = "0.9.0"
+"mcpplibs.mtest.gtest" = "0.9.0"
+```
+
 ```toml
 # Path dependency (local development)
 [dependencies]
@@ -63,10 +78,11 @@ mylib = { path = "../mylib" }
 ```
 
 ```toml
-# Git dependency — pick exactly one of tag / branch / rev
+# Git dependency — at most one of tag / branch / rev; none follows the default branch
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
 applib = { git = "https://github.com/user/applib.git", branch = "develop" }
+tiplib = { git = "https://github.com/user/tiplib.git" }   # the remote's default branch
 ```
 
 ```toml
@@ -87,6 +103,12 @@ An unchanged `mcpp.lock` retains its contents and modification time when a build
 records the same resolution (2026.10.21.1+). LF and CRLF line endings are accepted
 without rewriting an otherwise identical file. This does not skip dependency
 resolution or change which dependencies the lock pins.
+
+A git dependency that names none of `tag`, `branch` and `rev` follows the remote's
+default branch, whose name the remote announces (`main`, `master`, `trunk`, ...;
+2026.11.9.1+); it is a `branch` from then on, locked by commit. The same string
+forms reach a platform or a tool on the command line:
+`--platform git+https://example.org/acme/acme-platform.git#tag=v1`.
 
 **Git dependencies and `mcpp.lock`**: a `tag` or `rev` already names a fixed point
 in history, but a `branch` moves. The first build resolves the branch to a commit
@@ -201,6 +223,54 @@ kind, are refused, naming both: one configuration builds one checkout of a
 package. The same holds for `linkage`
 on a selected member's dependency edges, which is honoured, and refused when
 two selected members ask for two forms of one package.
+
+**A later edge that asks more features (mcpp 2026.11.7.1+).** A package is
+built with the union of the features its edges ask. When an edge reaches a
+package already resolved and activates a feature the earlier edges did not,
+that feature's `[feature-deps]` and forwards are walked as well, so the
+dependencies it needs, and the features it asks of them, reach the graph.
+Before, the feature's sources were compiled and its dependencies were not
+(mcpp#897; for example `v` selected beside `s`, which asks `v` for `x`).
+
+**Under a platform's version group (mcpp 2026.11.7.1+).** When the target's
+platform states `[platform.versions]`, a request of a package the group lists,
+by version, resolves to the group's version if its constraint admits it, and is
+refused naming the request and the group if it does not (docs/35, "The version
+group"). A family whose packages name one another by compatible ranges is
+therefore resolved by its group, one version of each package per build.
+
+### The root overrides a dependency for the whole graph: `override` (mcpp 2026.11.10.1+)
+
+A declaration of the root written `override = true` answers every request for
+its package in the graph its table governs, whatever version, path or
+repository the request names:
+
+```toml
+[dependencies]
+mcpplibs.os = { version = "0.4.4", override = true }
+```
+
+- **Where it holds.** On the root's tables and on `[workspace.dependencies]`,
+  which governs every plan of the workspace's members (declaring a package
+  there does not make a member depend on it). `[dependencies]` governs the
+  build's graph and the tests'; `[dev-dependencies]` the tests' only;
+  `[build-dependencies]` the build programs' only. A library that writes it is
+  told that it is ignored: the decision is the project's.
+- **What it states.** Each request the override replaces and does not already
+  admit is named once, `Overrode <package> <request> (requested by <who>) ->
+  <override> (<table>)`. `mcpp.lock` marks the package `override = true`, and
+  `--locked` reads the marker as part of the recorded resolution.
+- **The platform's version group.** An override of a package the group lists
+  is taken, with a warning that names the group's version: the platform states
+  the defaults, and the project may choose another.
+- **When it is needed.** Two version requests that no SemVer merge reconciles
+  are refused naming both, and the refusal ends with the line that overrides
+  the package. Two requests from `[build-dependencies]` tables are refused the
+  same way and are never renamed apart: a build dependency is a module of a
+  build program, and one build loads one version of it (2026.11.16.1). A library that pins one release of a package every consumer
+  shares (one that provides a target-side layer or a kernel ABI) is noted to
+  the projects that use it, and `mcpp publish` refuses the pin in a library:
+  a range leaves the choice to the project.
 
 ### The identity of a `path` or `git` dependency (mcpp 2026.9.14.2+)
 
@@ -415,7 +485,17 @@ Run any command with `-v` to see the decision for each dependency and why.
 gtest = "1.15.2"
 ```
 
-`mcpp build` ignores these; `mcpp test` resolves and uses them. `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. The runner is framework-agnostic: each file is an independent binary judged by exit code — a bare `main`, gtest (via `[dev-dependencies]` + `gtest_main`), or any other framework all work identically, and `-- args` are forwarded to every test binary (e.g. `-- --gtest_filter=...`). Note: synthesized test target names may contain `/` (`tests/00-a/0.cpp` → `00-a/0`), unlike `[targets.*]` names — the two namespaces are intentionally separate (test targets never enter the manifest or publishing). Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
+`mcpp build` ignores these; `mcpp test` resolves and uses them, for the test units only: the package's own sources compile under `mcpp test` as under `mcpp build` (2026.11.8.1+, [08](08-testing.md#tests-that-reach-packages-the-artifact-does-not)). `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. The runner is framework-agnostic: each file is an independent binary judged by exit code — a bare `main`, gtest (via `[dev-dependencies]` + `gtest_main`), or any other framework all work identically, and `-- args` are forwarded to every test binary (e.g. `-- --gtest_filter=...`). Note: synthesized test target names may contain `/` (`tests/00-a/0.cpp` → `00-a/0`), unlike `[targets.*]` names — the two namespaces are intentionally separate (test targets never enter the manifest or publishing). Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
+
+**The package being built stands for itself in its own graph** (2026.11.9.1+).
+A dependency reached through the package's `[dev-dependencies]` may name the
+package being built: a library tested with a framework that itself uses the
+library (`mcpplibs.os` under mtest). The
+edge is the package itself, whatever version it asked for, and a version it did
+not ask for is said; a second copy would provide every module of the package
+twice in one program, and what is under test is the package as it is here. The
+root's `[dev-dependencies]` serve its tests only, so the framework reaches the
+library without a cycle of packages.
 
 ## `[build-dependencies]` — Build-Time Dependencies (mcpp 2026.8.29.1+)
 
@@ -636,6 +716,26 @@ verified source.
   searched for elsewhere and no line ending is converted. Paths in a patch
   carry one leading directory (`a/`, `b/`), which is removed. Renames, copies
   and binary changes are refused.
+- A patch names files from the **package's root**: the directory of the
+  package's resolved manifest inside its archive (`run/` of an archive whose
+  descriptor reads `mcpp = "*/run/mcpp.toml"`), so that one patch applies to
+  every version whose layout is the same. `patch_root = "<dir>"` on the edge
+  names another directory, relative to the package's root and inside its
+  source. A patch written from the archive's top, as before 2026.11.9, applies
+  as written, and the build says so.
+- `mcpp why deps` reports each dependency's root as the build reads it (its
+  patches applied). A patch is the difference git writes from a copy of that
+  tree:
+
+  ```sh
+  cp -R <root> /tmp/zlib && cd /tmp/zlib
+  git init -q && git add -A && git commit -qm base
+  # edit, then
+  git diff > <project>/patches/0001-fix.patch
+  ```
+
+  and the edge lists it in `patches`. A further patch is written the same way
+  from the root the patched build reports, and is listed after the first.
 - Version and git dependencies may carry patches; a `path` dependency is a tree
   its consumer owns and is refused with them.
 - `mcpp.lock` names the variant and each patch by its path and SHA-256;

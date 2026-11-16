@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.library_interface;
+
+using namespace mcpplibs::mtest;
 
 // ONE DEFINITION OF WHAT A LIBRARY OFFERS (SPEC-008 v0.2, mcpp#797): the
 // interface root and what it re-exports, the interface units of the active
@@ -43,7 +45,7 @@ SourceUnit unit(const std::filesystem::path& p, std::string module,
 
 }  // namespace
 
-TEST(LibraryInterface, TheRootAndWhatItReExports) {
+UTest the_root_and_what_it_re_exports{"LibraryInterface/TheRootAndWhatItReExports", [] {
     Tree t("root");
     Graph g;
     g.units.push_back(unit(t.touch("src/lib.cppm"), "acme.lib", {"acme.lib.part"}));
@@ -52,13 +54,12 @@ TEST(LibraryInterface, TheRootAndWhatItReExports) {
     mcpp::manifest::Manifest m;
     m.package.name = "lib";
     auto iface = library_interface(g, m, t.root, "acme.lib", {});
-    EXPECT_EQ(iface.rootModule, "acme.lib");
-    EXPECT_EQ(iface.publicModules, (std::set<std::string>{"acme.lib", "acme.lib.part"}));
-    EXPECT_EQ(iface.exportedModules,
-              (std::set<std::string>{"acme.lib", "acme.lib.part", "acme.lib.detail"}));
-}
+    expect(eq(iface.rootModule, "acme.lib"));
+    expect(eq(iface.publicModules, (std::set<std::string>{"acme.lib", "acme.lib.part"})));
+    expect(eq(iface.exportedModules, (std::set<std::string>{"acme.lib", "acme.lib.part", "acme.lib.detail"})));
+}};
 
-TEST(LibraryInterface, NoRootStatesNoInterface) {
+UTest no_root_states_no_interface{"LibraryInterface/NoRootStatesNoInterface", [] {
     Tree t("noroot");
     Graph g;
     g.units.push_back(unit(t.touch("src/a.cppm"), "acme.a"));
@@ -66,11 +67,11 @@ TEST(LibraryInterface, NoRootStatesNoInterface) {
     mcpp::manifest::Manifest m;
     m.package.name = "lib";
     auto iface = library_interface(g, m, t.root, "acme.lib", {});
-    EXPECT_TRUE(iface.rootModule.empty());
-    EXPECT_EQ(iface.publicModules, iface.exportedModules);
-}
+    expect(iface.rootModule.empty());
+    expect(eq(iface.publicModules, iface.exportedModules));
+}};
 
-TEST(LibraryInterface, ADeclaredRootIsTheOneUsed) {
+UTest a_declared_root_is_the_one_used{"LibraryInterface/ADeclaredRootIsTheOneUsed", [] {
     Tree t("declared");
     Graph g;
     g.units.push_back(unit(t.touch("src/lib.cppm"), "acme.conventional"));
@@ -79,12 +80,12 @@ TEST(LibraryInterface, ADeclaredRootIsTheOneUsed) {
     m.package.name = "lib";
     m.lib.path = "rules/facade.cppm";
     auto iface = library_interface(g, m, t.root, "acme.lib", {});
-    EXPECT_TRUE(iface.rootDeclared);
-    EXPECT_EQ(iface.rootModule, "acme.facade");
-    EXPECT_EQ(iface.publicModules, (std::set<std::string>{"acme.facade"}));
-}
+    expect(bool(iface.rootDeclared));
+    expect(eq(iface.rootModule, "acme.facade"));
+    expect(eq(iface.publicModules, (std::set<std::string>{"acme.facade"})));
+}};
 
-TEST(LibraryInterface, AnActiveFeatureAddsItsInterfaceUnits) {
+UTest an_active_feature_adds_its_interface_units{"LibraryInterface/AnActiveFeatureAddsItsInterfaceUnits", [] {
     Tree t("features");
     Graph g;
     g.units.push_back(unit(t.touch("src/lib.cppm"), "acme.lib"));
@@ -95,10 +96,10 @@ TEST(LibraryInterface, AnActiveFeatureAddsItsInterfaceUnits) {
     m.buildConfig.featureSources["rules-cuda"] = {"rules/cuda.cppm"};
     m.buildConfig.featureSources["rules-spirv"] = {"rules/spirv.cppm"};
     auto iface = library_interface(g, m, t.root, "acme.lib", {"rules-cuda"});
-    EXPECT_EQ(iface.publicModules, (std::set<std::string>{"acme.lib", "acme.rules.cuda"}));
-}
+    expect(eq(iface.publicModules, (std::set<std::string>{"acme.lib", "acme.rules.cuda"})));
+}};
 
-TEST(LibraryInterface, OnlyThePackagesOwnUnitsCount) {
+UTest only_the_packages_own_units_count{"LibraryInterface/OnlyThePackagesOwnUnitsCount", [] {
     Tree t("own");
     Graph g;
     g.units.push_back(unit(t.touch("src/lib.cppm"), "acme.lib"));
@@ -108,5 +109,5 @@ TEST(LibraryInterface, OnlyThePackagesOwnUnitsCount) {
     mcpp::manifest::Manifest m;
     m.package.name = "lib";
     auto iface = library_interface(g, m, t.root, "acme.lib", {});
-    EXPECT_FALSE(iface.exportedModules.contains("other.mod"));
-}
+    expect(!iface.exportedModules.contains("other.mod"));
+}};

@@ -14,19 +14,16 @@
 // Initialization is silent and idempotent: every Config::load() ensures
 // the directory tree exists and seeds .xlings.json if missing.
 
-module;
-#include <cstdlib>
-#include <cstdio>
-
 export module mcpp.config;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.home;
 import mcpp.modgraph.glob;   // try_narrow: the one UTF-8 spelling of a path
 import mcpp.libs.toml;
 import mcpp.manifest.platform;
 import mcpp.manifest.platform_toml;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -39,6 +36,8 @@ import mcpp.log;
 import mcpp.diag;
 import mcpp.fallback.xlings_binary;
 import mcpp.fallback.config_migration;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 export namespace mcpp::config {
 
@@ -98,6 +97,13 @@ struct GlobalConfig {
     // From config.toml [xlings]
     std::string                     xlingsBinaryMode;    // "bundled" | "system" | absolute path
     std::filesystem::path           xlingsHomeOverride;  // empty = use registryDir
+    // THE REGISTRY IS ANOTHER HOME'S. Its configuration -- the places of its
+    // indices, its upstreams -- is its owner's, and this home writes none of
+    // it. Decided once, where the configuration is loaded: a registry that
+    // `[xlings] home` names, or that `registry` reaches through a link, and
+    // that holds a configuration already. Every writer of the registry's
+    // configuration asks this, and no other test.
+    bool                            registryBorrowed = false;
 
     // From config.toml [index]
     std::string                     defaultIndex;        // "mcpplibs"
@@ -291,7 +297,7 @@ std::string check_base_init(const GlobalConfig& cfg) {
 bool report_network(const GlobalConfig& cfg, bool quiet = false) {
     const auto report = mcpp::provider::open(make_xlings_env(cfg))->check_network();
     auto line = [&](std::string_view key, std::string_view value) {
-        if (!quiet) std::println(stderr, "{:>12} {}", key, value);
+        if (!quiet) std::println(libc::stderr(), "{:>12} {}", key, value);
     };
     if (report.status == "offline") { line("Network", "Skipped (offline mode)"); return false; }
     if (report.status != "checked") {
@@ -427,17 +433,17 @@ namespace {
 void print_status(std::string_view verb, std::string_view msg) {
     constexpr std::size_t W = 12;
     if (verb.size() >= W) {
-        std::println(stderr, "{} {}", verb, msg);
+        std::println(libc::stderr(), "{} {}", verb, msg);
     } else {
-        std::println(stderr, "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
+        std::println(libc::stderr(), "{}{} {}", std::string(W - verb.size(), ' '), verb, msg);
     }
 }
 
-void write_file(const std::filesystem::path& p, std::string_view content) {
-    std::error_code ec;
-    std::filesystem::create_directories(p.parent_path(), ec);
-    std::ofstream os(p);
-    os << content;
+// config.toml and .xlings.json are read by every mcpp of the home: programs that
+// start at once on a fresh home each write config.toml, and an in-place rewrite
+// let one read a part of another's ("invalid config.toml: expected '='").
+bool write_file(const std::filesystem::path& p, std::string_view content) {
+    return mcpp::home::write_replacing(p, content);
 }
 
 std::string_view default_config_toml() {
@@ -487,8 +493,7 @@ keep_days       = 3
 }
 
 bool write_default_config_toml(const std::filesystem::path& path) {
-    write_file(path, default_config_toml());
-    return std::filesystem::exists(path);
+    return write_file(path, default_config_toml());
 }
 
 bool write_default_xlings_json(const std::filesystem::path& path,
@@ -549,16 +554,7 @@ std::optional<nlohmann::json> read_json_file(const std::filesystem::path& path) 
 }
 
 bool write_json_file(const std::filesystem::path& path, const nlohmann::json& doc) {
-    auto tmp = path;
-    tmp += ".tmp";
-    {
-        std::ofstream out(tmp);
-        if (!out) return false;
-        out << doc.dump(2) << "\n";
-    }
-    std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
-    return !ec;
+    return write_file(path, doc.dump(2) + "\n");
 }
 
 nlohmann::json index_repo_entry(const IndexRepo& r) {
@@ -598,7 +594,7 @@ void record_seeded_index_repos(const std::filesystem::path& xjson,
 
 void reconcile_index_repos(const std::filesystem::path& xjson,
                            const std::vector<IndexRepo>& repos,
-                           bool quiet)
+                           bool quiet, bool borrowed)
 {
     auto doc = read_json_file(xjson);
     if (!doc || !doc->is_object()) return;
@@ -625,8 +621,16 @@ void reconcile_index_repos(const std::filesystem::path& xjson,
     bool fileChanged = false, recordChanged = false;
     for (auto const& r : repos) {
         if (!r.fromConfig) continue;
-        const auto want = index_repo_entry(r);
+        auto want = index_repo_entry(r);
         auto* have = find(r.name);
+        // The places of the index (its data, its store) are the registry's
+        // owner's: a home that borrows the registry keeps the ones the owner
+        // recorded (GlobalConfig::registryBorrowed).
+        if (have && borrowed)
+            for (const char* place : {"dir", "store"}) {
+                want.erase(place);
+                if (have->contains(place)) want[place] = (*have)[place];
+            }
         if (have && *have == want) continue;
         if (!record.contains(r.name))
             record[r.name] = { {"previous", have ? *have : nlohmann::json(nullptr)} };
@@ -761,7 +765,7 @@ parse_target_defaults(const mcpp::libs::toml::Document& doc,
             std::lock_guard lock(m);
             for (auto const& w : warnings)
                 if (said.insert(file.string() + '\n' + w).second)
-                    std::println(stderr, "warning: {}: {}", file.string(), w);
+                    std::println(libc::stderr(), "warning: {}: {}", file.string(), w);
         }
     } said{ file, {} };
     const mp::Reader reader{file, mp::Tier::Config, &said.warnings};
@@ -967,7 +971,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     }
 
     // 4. Load config.toml
-    auto doc = fresh_config ? t::parse(default_config_toml()) : t::parse_file(cfg.configFile);
+    // Read as a writer leaves it (read_whole): another mcpp may be replacing it.
+    const auto configText = fresh_config ? std::optional<std::string>(default_config_toml())
+                                         : mcpp::home::read_whole(cfg.configFile);
+    if (!configText)
+        return std::unexpected(ConfigError{std::format("invalid config.toml: cannot open '{}'", cfg.configFile.string())});
+    auto doc = t::parse(*configText);
     if (!doc) {
         return std::unexpected(ConfigError{
             std::format("invalid config.toml: {}", doc.error().message)});
@@ -1148,9 +1157,29 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     canonicalize_legacy_index_names(cfg);
     // Ownership is by index (design 2026-10-16 §5): an index mcpp serves
     // keeps its data and payloads in mcpp's home; the provider's own indexes
-    // stay where the provider keeps them.
+    // stay where the provider keeps them. A registry another home made
+    // (`[xlings] home` naming an existing one) keeps the places that home
+    // recorded: writing this home's there sent every later user of the
+    // registry to this home's store, which ended with it (the e2e homes under
+    // a temporary directory, measured on Windows and macOS). A home whose
+    // `registry` is a link to another home's borrows it the same way: its
+    // writes reached the other home's configuration through the link, and on
+    // Linux every install of the shared home went to a case's store after the
+    // case had removed it ("install path missing after fetch", 2026-11-14).
+    cfg.registryBorrowed = [&] {
+        std::error_code ec;
+        if (!std::filesystem::exists(mcpp::provider::open(make_xlings_env(cfg))->config_file(), ec)) return false;
+        if (!cfg.xlingsHomeOverride.empty())
+            return !std::filesystem::equivalent(cfg.xlingsHomeOverride, cfg.registryDir, ec);
+        const auto real = std::filesystem::canonical(cfg.registryDir, ec);
+        if (ec) return false;
+        const auto home = std::filesystem::canonical(cfg.mcppHome, ec);
+        if (ec) return false;
+        const auto rel = real.lexically_relative(home);
+        return rel.empty() || *rel.begin() == "..";
+    }();
     for (auto& r : cfg.indexRepos) {
-        if (mcpp::provider::layout().is_provider_index(r.name)) continue;
+        if (cfg.registryBorrowed || mcpp::provider::layout().is_provider_index(r.name)) continue;
         r.dir = cfg.mcppHome / "indices" / r.name;
         r.store = mcpp::provider::layout().own_store(cfg.mcppHome);
     }
@@ -1188,7 +1217,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         record_seeded_index_repos(xjson, cfg.indexRepos, quiet);
     } else {
         mcpp::fallback::migrate_xlings_json_index_names(xjson);
-        reconcile_index_repos(xjson, cfg.indexRepos, quiet);
+        reconcile_index_repos(xjson, cfg.indexRepos, quiet, cfg.registryBorrowed);
     }
     {
         // A home from before: its indices' places recorded, their data moved
@@ -1197,10 +1226,12 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         std::vector<mcpp::provider::SeedRepo> owned;
         for (auto& r : cfg.indexRepos)
             if (!r.dir.empty()) owned.push_back({ r.name, r.url, {}, {}, {}, r.dir, r.store });
-        mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
+        if (!cfg.registryBorrowed) mcpp::provider::open(make_xlings_env(cfg))->own_indices(owned);
     }
 
-    {
+    // The upstreams are the registry's too: a borrowing home's `[xlings]
+    // upstream` would replace its owner's.
+    if (!cfg.registryBorrowed) {
         std::vector<mcpp::provider::Upstream> upstreams;
         for (auto& dir : cfg.upstreams)
             for (auto& u : mcpp::provider::layout().upstream_of(dir)) upstreams.push_back(std::move(u));
@@ -1234,7 +1265,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     if (cfg.xlingsBinaryMode != "bundled") {
         if (auto why = mcpp::provider::unmet(mcpp::provider::describe(cfg.xlingsBinary)); !why.empty()) {
             if (!quiet)
-                std::println(stderr, "note: the configured xlings {} {}; using the one mcpp ships",
+                std::println(libc::stderr(), "note: the configured xlings {} {}; using the one mcpp ships",
                              cfg.xlingsBinary.string(), why);
             cfg.xlingsBinary = bundledBinary;
             auto xbin = mcpp::fallback::acquire_xlings_binary(
@@ -1356,7 +1387,7 @@ bool ensure_project_index_dir(
             repo.artifact = spec.artifact;
             repo.source   = spec.source;
         } else if (!spec.artifact.empty()) {
-            std::println(stderr, "warning: [indices].{}: artifact source ignored "
+            std::println(libc::stderr(), "warning: [indices].{}: artifact source ignored "
                                  "(rev/tag/branch/path pins force git)", name);
         }
         customRepos.push_back(std::move(repo));
@@ -1378,7 +1409,7 @@ bool ensure_project_index_dir(
     if (customRepos.empty() && penv.empty()) return false;  // nothing to do
 
     auto dotMcpp = projectDir / ".mcpp";
-    std::filesystem::create_directories(dotMcpp, ec);
+    mcpp::home::mark_project_state(dotMcpp);
 
     // Seed .xlings.json with the custom index entries.
     mcpp::provider::Location env;
@@ -1434,35 +1465,42 @@ bool ensure_project_index_dir(
 std::expected<void, ConfigError>
 write_config_value(const GlobalConfig& cfg, std::string_view section, std::string_view key,
                    std::string_view literal) {
-    std::ifstream is(cfg.configFile);
-    if (!is) return std::unexpected(ConfigError{
+    // The reader is closed before the file is replaced: Windows refuses to
+    // rename over a file this process holds open.
+    auto read = mcpp::home::read_whole(cfg.configFile);
+    if (!read) return std::unexpected(ConfigError{
         std::format("cannot open '{}'", cfg.configFile.string())});
-    std::stringstream ss; ss << is.rdbuf();
-    std::string text = ss.str();
+    std::string text = std::move(*read);
 
-    std::string line = std::format("{} = {}\n", key, literal);
+    // The file's own line ending: a config.toml written on Windows by an
+    // editor ends its lines with `\r\n`, and a line this writer adds ends as
+    // the others do. A header or a key is matched before either ending.
+    const std::string_view eol = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    std::string line = std::format("{} = {}{}", key, literal, eol);
     const auto header = std::format("[{}]", section);
+    auto ends_line = [&](std::size_t at) {
+        return at == text.size() || text[at] == '\n' || (text[at] == '\r' && at + 1 < text.size() && text[at + 1] == '\n');
+    };
 
     // The header at the start of a line, so `[toolchain]` is not found inside
     // `[toolchain.x]` or a comment.
     auto sectionPos = std::string::npos;
     for (auto p = text.find(header); p != std::string::npos; p = text.find(header, p + 1))
-        if ((p == 0 || text[p - 1] == '\n')
-            && (p + header.size() == text.size() || text[p + header.size()] == '\n')) {
+        if ((p == 0 || text[p - 1] == '\n') && ends_line(p + header.size())) {
             sectionPos = p;
             break;
         }
     if (sectionPos == std::string::npos) {
         // Append the section's block at end.
-        if (!text.empty() && text.back() != '\n') text += '\n';
-        text += std::format("\n{}\n{}", header, line);
+        if (!text.empty() && text.back() != '\n') text += eol;
+        text += std::format("{}{}{}{}", eol, header, eol, line);
     } else {
         // Locate an existing `<key> = ...` line within the section. Match at
         // line starts with a word boundary after the key, so `default` never
         // matches the `default_target` line (and vice versa).
-        auto eol = text.find('\n', sectionPos);
-        if (eol == std::string::npos) eol = text.size();
-        auto bodyStart = (eol == text.size()) ? text.size() : eol + 1;
+        auto headerEnd = text.find('\n', sectionPos);
+        if (headerEnd == std::string::npos) headerEnd = text.size();
+        auto bodyStart = (headerEnd == text.size()) ? text.size() : headerEnd + 1;
         auto nextSec = text.find("\n[", bodyStart);
         auto bodyEnd = (nextSec == std::string::npos) ? text.size() : nextSec;
         auto body = std::string_view(text).substr(bodyStart, bodyEnd - bodyStart);
@@ -1493,10 +1531,8 @@ write_config_value(const GlobalConfig& cfg, std::string_view section, std::strin
         }
     }
 
-    std::ofstream os(cfg.configFile);
-    if (!os) return std::unexpected(ConfigError{
+    if (!write_file(cfg.configFile, text)) return std::unexpected(ConfigError{
         std::format("cannot write '{}'", cfg.configFile.string())});
-    os << text;
     return {};
 }
 

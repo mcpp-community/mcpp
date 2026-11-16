@@ -1,10 +1,10 @@
 name: ci-linux-e2e
 
 # The e2e suite (tests/e2e/run_all.sh) on Linux, called by ci.yml beside
-# ci-linux.yml after the Linux build. Six shards, assigned by measured
-# duration (tests/e2e/timings/linux.tsv, rule R4 of the 2026-10-02 CI record):
-# the table holds about 72 minutes of tests (2026-10-30, with the target-set
-# and packaging tests of 2026.10.30.1), about 12 a shard,
+# ci-linux.yml after the Linux build. As many shards as ci.yml's plan gives
+# (design 2026-11-12 §5.11; `mtest ci plan` over the measured history of main's
+# stores, tests/e2e/mtest.toml [ci.plan]); the scripts are divided among them
+# by that history (design 2026-11-08 W8; rule R4 of the 2026-10-02 CI record),
 # each running the one binary build.yml produced (use-built-mcpp, rule R1).
 # Each shard writes a per-test report that the e2e-coverage job of ci.yml reads
 # (rule R5).
@@ -14,19 +14,42 @@ name: ci-linux-e2e
 
 on:
   workflow_call:
+    inputs:
+      set:
+        description: the set of cases (`pr` or `full`; ci.yml's changes job)
+        type: string
+        default: full
+      shards:
+        description: the shards of this host (`mtest ci plan`), a JSON list
+        type: string
+        default: '[1,2,3]'
+      count:
+        description: how many shards the list holds
+        type: string
+        default: '3'
+      work:
+        description: whether the set gives this host any case
+        type: boolean
+        default: true
 
 jobs:
   e2e:
-    name: e2e ${{ matrix.shard }}/6 (linux x86_64, self-host)
+    name: e2e ${{ matrix.shard }}/${{ inputs.count }} (linux x86_64, self-host)
+    if: inputs.work
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(inputs.shards) }}
     env:
-      E2E_SHARD: ${{ matrix.shard }}/6
-      E2E_TIMINGS: tests/e2e/timings/linux.tsv
+      E2E_SHARD: ${{ matrix.shard }}/${{ inputs.count }}
+      # By mtest (design 2026-11-08 W8; .github/actions/e2e-mtest): parts by
+      # the measured history of main's stores, two tests at a time (measured on
+      # one Linux shard: 220 s against 424 s one at a time, three no faster),
+      # and on a pull request the tests its change affects.
+      E2E_JOBS: '2'
+      E2E_SET: ${{ inputs.set == 'pr' && 'pr' || '' }}
       E2E_REPORT: ${{ github.workspace }}/e2e-report-linux-${{ matrix.shard }}.tsv
       MCPP_HOME: /home/runner/.mcpp
       # NOTE: do NOT force MCPP_VERBOSE here. The e2e suite includes tests that
@@ -79,6 +102,10 @@ jobs:
           XLINGS_HOME="$MCPP_HOME/registry" "$MCPP_VENDORED_XLINGS" install \
               mcpplibs:cmdline@0.0.1 mcpplibs:cmdline@0.0.2 -y
 
+      - uses: ./.github/actions/e2e-mtest
+        with:
+          host: linux
+
       - name: E2E suite
         # About twice the shard's budget of ten minutes (R4): reached only by a
         # hang. The per-test 600 s limit in run_all.sh names the test that hung.
@@ -97,6 +124,27 @@ jobs:
           export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
           "$MCPP" self config
           bash tests/e2e/run_all.sh
+
+      # The shard's run as Markdown in the job's summary (mtest report).
+      - name: The shard's report
+        if: always()
+        shell: bash
+        run: |
+          [ -n "${E2E_MTEST:-}" ] || exit 0
+          (cd tests/e2e && "$E2E_MTEST" report --format md --group "$GITHUB_RUN_ID") >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::no e2e run of this workflow run in the store"
+
+      # The shard's store: main's are the history the next runs divide the suite by.
+      - name: Upload the shard's store
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-store-linux-${{ matrix.shard }}
+          path: tests/e2e/.mtest
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
       # One file, no glob: the report the e2e-coverage job of ci.yml reads.
       - name: Upload the shard's report
@@ -231,12 +279,13 @@ jobs:
           # llvm is the toolchain a freestanding target pins; install it
           # explicitly rather than relying on whatever the sandbox cache holds.
           "$MCPP" toolchain install llvm 23.1.3
-          # Run the two scripts DIRECTLY rather than through run_all.sh.
-          # They are standalone (they take $MCPP and nothing else), run_all.sh
-          # accepts no filter — it would run the whole 250-test suite here for
-          # two tests — and, more to the point, run_all.sh exits 0 on a skip.
-          # Invoked directly, a skip is visible: the script either prints its
-          # PASS line or it does not.
+          # Run the scripts DIRECTLY rather than through run_all.sh: they are
+          # standalone (they take $MCPP and nothing else) and this job runs
+          # seven of the suite. A script that does not apply exits 77
+          # (tests/e2e/mtest.toml, skip_exit), so the status says which of the
+          # three happened; a skip is a failure here for every script this
+          # job exists to run, and is stated for the one whose base package
+          # the job does not install (338, picolibc-arm).
           for t in tests/e2e/130_freestanding_riscv_build_and_run.sh \
                    tests/e2e/131_freestanding_bsp_supplies_everything.sh \
                    tests/e2e/132_freestanding_test_and_artifacts.sh \
@@ -247,11 +296,15 @@ jobs:
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log"
             rc=${PIPESTATUS[0]}
-            [ "$rc" = "0" ] || { echo "$t failed (exit $rc)"; exit 1; }
+            case "$rc:$t" in
+              0:*) ;;
+              77:*/338_*) echo "$t: skipped (exit 77)" ;;
+              77:*) echo "$t skipped on the runner that must run it"; exit 1 ;;
+              *) echo "$t failed (exit $rc)"; exit 1 ;;
+            esac
           done
-          # The assertion this job exists for: both tests RAN. Each has an
-          # early `exit 0` for a missing capability, so a zero exit code alone
-          # does not distinguish "passed" from "skipped".
+          # The assertion this job exists for: both tests RAN, by the line each
+          # prints when it has.
           grep -q 'PASS: freestanding riscv64 build + run' \
             130_freestanding_riscv_build_and_run.sh.log || {
             echo "130 (engine chain) skipped on the runner that must run it"; exit 1; }
@@ -416,7 +469,7 @@ jobs:
 
       - name: Bootstrap xlings + released mcpp
         run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.10.26.1
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash -s v2026.11.16.1
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
           xlings update
           xlings install mcpp -y -g
@@ -434,8 +487,7 @@ jobs:
       # tests, a compiler-free container in which only sandbox payloads exist.
       - name: Build PR mcpp from source (sandbox gcc only)
         run: |
-          "$MCPP_BOOT" build
-          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          MCPP=$(bash "$GITHUB_WORKSPACE/.github/tools/built_artifact.sh" "$MCPP_BOOT" mcpp)
           test -x "$MCPP"
           "$MCPP" --version
           echo "MCPP=$MCPP" >> "$GITHUB_ENV"
@@ -489,51 +541,25 @@ jobs:
             "ok: a stated self-contained program over a coupled C++ shared library is refused" \
             "PASS: 700 a program over a C++ shared library has one C++ runtime"
 
-      # The compile database (#699 report, design 2026-09-26 §3): the scripts
-      # whose rows need llvm declare `# requires: llvm`, which no shard has, so
-      # they run here and each is held to the lines it prints only when the
-      # property it names was checked.
-      - name: "Compile database e2e that needs llvm (783, 784, 785, 786)"
+      # The compile database (#699 report, design 2026-09-26 §3): the cases whose rows need llvm
+      # (tests/e2e/cdb/toolchains.cpp, formerly e2e 783-786) require `llvm`, which no shard has, so
+      # they run here. The bootstrap drives `mcpp test` so that the test build reuses the build of
+      # the step above; the mcpp under test is that build's binary (MCPP_BIN_MCPP). Each case is
+      # held to its `ok` line: a skip or a failure fails the step.
+      - name: "Compile database e2e that needs llvm (e2e/cdb, suite toolchains)"
         run: |
           set -o pipefail
-          # The scripts read the database with python3, which this container
-          # lacks. It is not a toolchain: the job's property (no host compiler,
-          # no host C runtime) was asserted before the checkout and still holds.
-          if ! command -v python3 >/dev/null 2>&1; then
-            apt-get install -y -qq python3 >/dev/null
-            if command -v gcc >/dev/null 2>&1; then
-              echo "::error::installing python3 brought a host compiler"; exit 1
-            fi
-          fi
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
-          export MCPP
-          run_and_assert() {   # $1 = script; the remaining arguments are lines it must print
-            local script="$1"; shift
-            local log="$RUNNER_TEMP/$(basename "$script").log"
-            bash "$script" 2>&1 | tee "$log"
-            for line in "$@"; do
-              grep -qxF "$line" "$log" || { echo "::error::$script did not print: $line"; exit 1; }
-            done
-          }
-          run_and_assert tests/e2e/783_cdb_switches_whole_with_the_configuration.sh \
-            "ok: mcpp test then mcpp build keep the test entry in one configuration" \
-            "ok: switching toolchain switches the whole root file" \
-            "ok: switching back restores that configuration's entries, test units included" \
-            "PASS: 783 one compile database per configuration"
-          run_and_assert tests/e2e/784_cdb_replays_from_its_directory.sh \
-            "ok: gcc row replays every entry from its directory, no gcm.cache/ in the project root" \
-            "ok: llvm row replays every entry from its directory" \
-            "PASS: 784 the compile database replays from its own directory"
-          run_and_assert tests/e2e/785_cdb_interface_flag_module_extensions.sh \
-            "ok: the interface entry carries -x c++-module immediately before -c, and replays" \
-            "ok: the non-module unit carries no language flag" \
-            "PASS: 785 the compile database states a module interface's language explicitly"
-          run_and_assert tests/e2e/786_std_unit_in_the_database_and_build_id.sh \
-            "ok: the std unit's directory is the shared std cache, not the project's output directory" \
-            "ok: emit --spec compile-commands renders the same std entry as the build's database" \
-            "ok: provides['std'] names the std-cache BMI" \
-            "ok: build-id is present and stable across two runs" \
-            "PASS: 786 the std unit in the database, emit/build agreement, provides and build-id"
+          log="$RUNNER_TEMP/cdb-toolchains.log"
+          "$MCPP_BOOT" test e2e/cdb --case toolchains 2>&1 | tee "$log"
+          for line in \
+              "  ok   toolchains/783 cdb switches whole with the configuration" \
+              "  ok   toolchains/784 cdb replays from its directory" \
+              "  ok   toolchains/785 cdb interface flag module extensions" \
+              "  ok   toolchains/786 std unit in the database and build id" \
+              "4 passed, 0 failed, 0 skipped"; do
+            grep -qxF "$line" "$log" || { echo "::error::e2e/cdb toolchains did not print: $line"; exit 1; }
+          done
 
       # Last, so that the payloads the steps above installed are in it. This job
       # is the one writer of its cache, on main only (R3).

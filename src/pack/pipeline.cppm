@@ -4,10 +4,6 @@
 // its program, its plan and the bundler, and one dispatch pass per group. The
 // package of one directory is a group of one member, and runs the same steps.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.pack.pipeline;
 
 import std;
@@ -519,19 +515,58 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                 return t.kind == mcpp::manifest::Target::Application;
         return false;
     };
+    // THE PROGRAM A FORMAT'S PROVIDER ASSEMBLES FROM (design 2026-11-15 N30).
+    // A provider that states `mcpp::pack_program` is followed when no program
+    // is named: the convention below knows nothing of the provider's own
+    // choice (a web directory configured for `app`), and packing another
+    // program left the provider nothing to wrap. A named program outranks it.
+    std::string want = run.wantTarget;
+    std::string wantFrom;
+    if (want.empty()) {
+        std::vector<std::pair<std::string, std::string>> stated;   // provider, program
+        const auto& asked = run.opts.formats.empty() ? std::vector<std::string>{ run.opts.formatName }
+                                                     : run.opts.formats;
+        for (auto const& format : asked) {
+            auto it = ctx.packFormatProviders.find(format);
+            if (format.empty() || mcpp::pack::is_builtin_pack_format(format)
+                || it == ctx.packFormatProviders.end()) continue;
+            for (auto const& p : it->second) {
+                if (sharedPlan) {
+                    auto reach = ctx.packReach.find(p);
+                    if (reach == ctx.packReach.end() || mcpp::build::pack_owner(p, reach->second) != m.name)
+                        continue;
+                }
+                auto pp = ctx.packPrograms.find(p);
+                if (pp == ctx.packPrograms.end()) continue;
+                for (auto const& name : pp->second)
+                    if (std::ranges::none_of(stated, [&](auto const& e) { return e.second == name; }))
+                        stated.emplace_back(p, name);
+            }
+        }
+        if (stated.size() > 1) {
+            std::string list;
+            for (auto const& [p, name] : stated) list += std::format("\n  {} (stated by {})", name, p);
+            return Refusal{2, about(run, m, std::format(
+                "the providers of the requested formats state different programs:{}\n"
+                "  name one: mcpp pack <program> --pkg-format <format>", list))};
+        }
+        if (!stated.empty()) { want = stated.front().second; wantFrom = stated.front().first; }
+    }
     std::filesystem::path mainBinary;
     const mcpp::build::LinkUnit* chosenLu = nullptr;
-    if (!run.wantTarget.empty()) {
+    if (!want.empty()) {
         for (auto& lu : ctx.plan.linkUnits) {
-            if (is_program_link_unit(lu) && lu.targetName == run.wantTarget) {
+            if (is_program_link_unit(lu) && lu.targetName == want) {
                 mainBinary = ctx.outputDir / lu.output;
                 chosenLu = &lu;
                 break;
             }
         }
         if (mainBinary.empty())
-            return Refusal{2, about(run, m, std::format(
-                "target '{}' is not a program in this build", run.wantTarget))};
+            return Refusal{2, about(run, m, wantFrom.empty()
+                ? std::format("target '{}' is not a program in this build", want)
+                : std::format("{} states the program '{}' (mcpp::pack_program), which is not a program "
+                              "in this build", wantFrom, want))};
     }
     for (auto& lu : ctx.plan.linkUnits) {
         if (!mainBinary.empty()) break;
@@ -541,18 +576,32 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
             break;
         }
     }
-    if (mainBinary.empty()) {
-        // Fall back to the first binary target if package.name doesn't match.
-        for (auto& lu : ctx.plan.linkUnits) {
-            if (is_program_link_unit(lu)) {
-                mainBinary = ctx.outputDir / lu.output;
-                chosenLu = &lu;
-                break;
-            }
-        }
+    // SEVERAL PROGRAMS ARE NOT PACKED WITHOUT A WORD (mcpp#911 B3): the
+    // program named after the package is the package's; with none so named,
+    // the first by name, as before. Either way the others are said, with the
+    // two ways to choose otherwise.
+    std::vector<const mcpp::build::LinkUnit*> programs;
+    for (auto const& lu : ctx.plan.linkUnits)
+        if (is_program_link_unit(lu)) programs.push_back(&lu);
+    const bool named = !mainBinary.empty();
+    if (mainBinary.empty() && !programs.empty()) {
+        mainBinary = ctx.outputDir / programs.front()->output;
+        chosenLu = programs.front();
     }
     if (mainBinary.empty())
         return Refusal{1, about(run, m, "no binary target to pack")};
+    if (programs.size() > 1 && !opts.allPrograms && !wantFrom.empty())
+        mcpp::ui::note(std::format("packing {}, the program {} states for its format", want, wantFrom));
+    if (programs.size() > 1 && !opts.allPrograms && want.empty()) {
+        std::string others;
+        for (auto const* lu : programs)
+            if (lu != chosenLu) others += (others.empty() ? "" : ", ") + lu->targetName;
+        mcpp::ui::note(std::format(
+            "packing {}, {}; its other programs are not packed ({}): `mcpp pack <program>` names "
+            "another, `mcpp pack --all-programs` ships them beside it", chosenLu->targetName,
+            named ? "the program named after the package" : "the first by name, as none is named after the package",
+            others));
+    }
     // Passed to `make_plan` rather than re-derived from the file: `make_plan`
     // has only `mainBinary` and would otherwise have to ask the triple and
     // the manifest the same question a second time.
@@ -637,6 +686,15 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
                 opts.runtimeFiles.push_back(productDir == "bin"
                     ? u.output.lexically_relative("bin")
                     : std::filesystem::path(u.output.filename()));
+        // `--all-programs`: the package's other programs, beside the chosen one.
+        if (opts.allPrograms)
+            for (auto const* u : programs)
+                if (u != chosenLu && u->kind == mcpp::build::LinkUnit::Binary) {
+                    opts.runtimeFiles.push_back(productDir == "bin"
+                        ? u->output.lexically_relative("bin")
+                        : std::filesystem::path(u->output.filename()));
+                    opts.otherPrograms.push_back(u->output.filename().string());
+                }
         // #634 A3: the Android row reads its closure against the directories
         // its link declared -- a prebuilt library named through `[runtime]
         // link_library_dirs` is a file the link used and the device does not
@@ -942,18 +1000,21 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                     "--systems names {}, and no leg of this pack is of {}", e, e.substr(dash + 1))};
         }
         // A single file of an image is made for each leg and system on this
-        // mcpp's row of it; a row it builds no program for, named, is refused
-        // before the build (`all` names the rows there are, and says the rest).
+        // mcpp's row of it; a system where none is made, named, is refused
+        // before the build, by the reading `all` applies to say the rest
+        // (`single_file_unmade`: a row this mcpp builds no program for, or a
+        // carrier where the platform's runner does not exist). The second was
+        // read only by `all`, so a named one was refused after the build.
         if (loaded && run.opts.format == mcpp::pack::Format::SingleFile) {
             std::size_t files = 0;
             std::vector<std::string> unbuilt, built;
             const bool all = std::ranges::find(run.opts.systems, "all") != run.opts.systems.end();
             for (auto const& arch : archs)
                 for (auto const& system : mcpp::pack::systems_for(run.opts.systems, arch)) {
-                    auto row = mcpp::pack::unbuilt_row(system, arch);
-                    if (row.empty()) built.push_back(std::format("{}-{}", system, arch));
-                    else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, row));
-                    if (row.empty() || !all) ++files;
+                    auto why = mcpp::pack::single_file_unmade(system, arch, ctx.plan.platform);
+                    if (why.empty()) built.push_back(std::format("{}-{}", system, arch));
+                    else if (!all) unbuilt.push_back(std::format("{}-{} ({})", system, arch, why));
+                    if (why.empty() || !all) ++files;
                 }
             if (files > 1 && !run.opts.output.empty() && !run.opts.polyglot)
                 return Refusal{2, std::format(
@@ -965,7 +1026,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
                 for (auto const& u : unbuilt) say += (say.empty() ? "" : ", ") + u;
                 for (auto const& b : built) use += (use.empty() ? "" : ",") + b;
                 return Refusal{2, std::format(
-                    "--systems: this mcpp builds no program for {}, so no single file is made there.\n"
+                    "--systems: no single file is made for {}.\n"
                     "  use: {}", say,
                     use.empty() ? std::string("--systems naming a system this mcpp builds for")
                                 : "--systems " + use)};
@@ -1245,7 +1306,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
                                               : std::vector<std::string>{}) {
                 const auto pair = std::format("{}-{}", system, arch);
                 if (covered(pair)) continue;
-                const auto row = mcpp::pack::unbuilt_row(system, arch);
+                const auto row = mcpp::pack::unbuilt_row(system, arch, &plan->platform);
                 out.notCovered.push_back(std::format("{} ({})", pair,
                     !row.empty() ? std::format("no runner row: this mcpp builds no program for {}", row)
                     : system == "windows" && !windowsLauncher ? std::string("no Windows launcher")
@@ -1472,7 +1533,22 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
         if (m.result.rc != 0) continue;
         auto it = submitted.find(m.name);
         if (it != submitted.end() && !it->second.outputs.empty()) { any = true; continue; }
-        mcpp::ui::error(about(run, m, std::format(
+        // THE PROVIDER'S OWN REASON IS THE ANSWER (N30): what a provider
+        // of this format acting for the member stated in this pass, as a
+        // warning or a degradation, explains why it submitted nothing.
+        std::string said;
+        if (auto it = distCtx->packFormatProviders.find(run.opts.formatName);
+            it != distCtx->packFormatProviders.end())
+            for (auto const& p : it->second) {
+                if (sharedPlan) {
+                    auto reach = distCtx->packReach.find(p);
+                    if (reach == distCtx->packReach.end()
+                        || mcpp::build::pack_owner(p, reach->second) != m.name) continue;
+                }
+                if (auto r = distCtx->packReasons.find(p); r != distCtx->packReasons.end())
+                    for (auto const& reason : r->second) said += std::format("\n  {} said: {}", p, reason);
+            }
+        mcpp::ui::error(about(run, m, said.empty() ? std::format(
             "no action claimed --pkg-format '{}'.\n"
             "  A package declared it provides this format, and no build "
             "program submitted a new\n"
@@ -1483,7 +1559,8 @@ std::optional<Refusal> dispatch_group(PackRun& run, GroupJob& g, mcpp::build::Ba
             "// always\n"
             "      if (std::string_view(mcpp::pack_format()) == \"{}\") ..."
             "   // then submit",
-            run.opts.formatName, run.opts.formatName, run.opts.formatName)));
+            run.opts.formatName, run.opts.formatName, run.opts.formatName)
+            : std::format("no action claimed --pkg-format '{}'.{}", run.opts.formatName, said)));
         m.result.rc = 1;
     }
     if (!any) return std::nullopt;
@@ -1662,6 +1739,10 @@ PackOutcome run_pack(PackRun run) {
         base.target_triple = std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch);
     else
         base.target_triple = run.opts.targetTriple;
+    // `--mode static` IS A STATIC PROGRAM, on a named target as on the host's
+    // musl row (design 2026-11-10 E7; mcpp#911 N8: a FreeBSD program was packed
+    // dynamic under the `-static` name). The program's own linkage, as `--static`.
+    if (run.opts.mode == mcpp::pack::Mode::Static) base.force_static = true;
     // The linkage axis (SPEC-014 §1): the whole graph's dependency linkage for
     // this build.
     if (run.opts.linkage == mcpp::pack::Linkage::Static) base.dependency_linkage = "static";

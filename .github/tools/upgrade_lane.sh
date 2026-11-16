@@ -59,17 +59,32 @@ IS_LINUX=0; [[ $PLAT == linux-* ]] && IS_LINUX=1
 
 # ── the previous release ───────────────────────────────────────────────
 CURRENT=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' mcpp.toml | head -1)
-OLD_VER=$(curl -fsSL ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} \
-            "https://api.github.com/repos/mcpp-community/mcpp/releases?per_page=20" \
-          | "$PY" -c '
+release_headers=()
+if [ -n "${GH_TOKEN:-}" ]; then release_headers=(-H "Authorization: Bearer $GH_TOKEN"); fi
+OLD_VER=''
+for attempt in 1 2 3; do
+  # A hosted Windows run once received an empty release list before it could
+  # exercise any upgrade. Retry this read-only input, never a product action.
+  if curl -fsSL --connect-timeout 10 --max-time 30 "${release_headers[@]}" \
+      "https://api.github.com/repos/mcpp-community/mcpp/releases?per_page=20" \
+      -o "$W/releases.json"; then
+    OLD_VER=$("$PY" -c '
 import json, sys
 current = sys.argv[1]
-for r in json.load(sys.stdin):
-    v = r["tag_name"].lstrip("v")
-    if not r["draft"] and not r["prerelease"] and v != current:
-        print(v); break
-' "$CURRENT")
-case "$OLD_VER" in ''|*[!0-9.]*) echo "::error::no previous release resolved (got '$OLD_VER')"; exit 1 ;; esac
+with open(sys.argv[2], encoding="utf-8") as source:
+    releases = json.load(source)
+if isinstance(releases, list):
+    for release in releases:
+        version = release["tag_name"].lstrip("v")
+        if not release["draft"] and not release["prerelease"] and version != current:
+            print(version)
+            break
+' "$CURRENT" "$W/releases.json") || OLD_VER=''
+    case "$OLD_VER" in ''|*[!0-9.]*) ;; *) break ;; esac
+  fi
+  [ "$attempt" = 3 ] || sleep 2
+done
+case "$OLD_VER" in ''|*[!0-9.]*) echo "::error::no previous release resolved after three metadata reads (got '$OLD_VER')"; exit 1 ;; esac
 echo "previous release: $OLD_VER; this commit: $CURRENT ($PLAT, variant $VARIANT)"
 
 name="mcpp-$OLD_VER-$PLAT.$EXT"

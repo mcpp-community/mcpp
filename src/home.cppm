@@ -12,9 +12,6 @@
 // A leaf over platform and the TOML reader: configuration, toolchains and
 // builds share its single path selection without depending on CLI or provider.
 
-module;
-#include <cstdlib>    // getenv
-
 export module mcpp.home;
 
 import std;
@@ -60,6 +57,10 @@ std::string spelling(const std::filesystem::path& path);
 std::filesystem::path from_utf8(std::string_view value);
 std::filesystem::path original_root();
 std::string original_source();
+// A self-contained home (`<home>/bin/mcpp`), stated as MCPP_HOME for the programs
+// this mcpp starts: a build directory's graph runs the engine through its own
+// link, from which the home cannot be derived. Its source stays `portable`.
+void state_portable_home();
 std::expected<Selection, std::string> inspect(const std::filesystem::path& original);
 Selection selection();
 bool initialized(const std::filesystem::path& path);
@@ -86,6 +87,13 @@ std::filesystem::path cache_root();
 // `mcpp cache clean --legacy` removes it. Kept resolvable rather than
 // hardcoded at the call sites so "where is the old cache" has one answer too.
 std::filesystem::path legacy_bmi_root();
+
+// A project's own state directory (`<project>/.mcpp/`: the indices it names,
+// their payloads, its SubOS, the locks of its compiler runs) is the machine's,
+// never the project's sources. Created by any part of mcpp, it carries a
+// `.gitignore` of `*`, so that it ignores itself in a repository whatever the
+// project's own ignore file says.
+void mark_project_state(const std::filesystem::path& dir);
 
 } // namespace mcpp::home
 
@@ -151,9 +159,23 @@ std::filesystem::path original_root() {
     return portable.empty() ? default_home() : portable;
 }
 
+namespace {
+// MCPP_HOME was set by state_portable_home, not by the caller.
+bool portable_stated = false;
+} // namespace
+
 std::string original_source() {
+    if (portable_stated) return "portable";
     if (mcpp::invocation::get("MCPP_HOME")) return "environment";
     return portable_root().empty() ? "user" : "portable";
+}
+
+void state_portable_home() {
+    if (mcpp::invocation::get("MCPP_HOME")) return;
+    const auto portable = portable_root();
+    if (portable.empty()) return;
+    mcpp::invocation::set("MCPP_HOME", spelling(portable));
+    portable_stated = true;
 }
 
 std::string spelling(const std::filesystem::path& path) {
@@ -368,6 +390,14 @@ std::filesystem::path cache_root() {
 
 std::filesystem::path legacy_bmi_root() {
     return root() / "bmi";
+}
+
+void mark_project_state(const std::filesystem::path& dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const auto ignore = dir / ".gitignore";
+    if (ec || std::filesystem::exists(ignore, ec)) return;
+    std::ofstream(ignore, std::ios::binary) << "# The machine's state of this project (mcpp); never its sources.\n*\n";
 }
 
 } // namespace mcpp::home

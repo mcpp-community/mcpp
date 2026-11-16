@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fixture tests for .github/tools/check_e2e_coverage.py (rule R5).
 
-A test that ran, a test a workflow names, and a test the exceptions excuse are
-covered; a test that is none of these fails the check, and so does an exception
+A test that ran, a test a set left out as unaffected, a test a workflow names,
+and a test the exceptions excuse are covered; a test that is none of these fails the check, and so does an exception
 for a test that ran or that does not exist.
 """
 
@@ -46,7 +46,8 @@ class E2ECoverage(unittest.TestCase):
     def test_ran_named_and_excused_tests_are_covered(self) -> None:
         r = self.run_check()
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn("1 ran on a shard, 2 run by a dedicated job, 1 excused, 0 uncovered", r.stdout)
+        self.assertIn("1 ran on a shard, 0 unaffected by the change, 2 run by a dedicated job, 1 excused, "
+                      "0 owed, 0 uncovered", r.stdout)
 
     def test_a_name_in_a_comment_or_inside_a_longer_name_does_not_count(self) -> None:
         e2e = self.root / "tests" / "e2e"
@@ -71,11 +72,70 @@ class E2ECoverage(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("UNCOVERED: 50_nowhere.sh: linux: missing capability: llvm", r.stdout)
 
+    def test_a_test_a_set_left_out_is_unaffected_and_meets_its_host(self) -> None:
+        e2e = self.root / "tests" / "e2e"
+        (e2e / "50_untouched.sh").write_text("# x\n# requires: unix-shell\n")
+        (e2e / "host-requirements.tsv").write_text("50_untouched.sh\tlinux\tverified rows\n")
+        (self.reports / "e2e-report-linux-2.tsv").write_text(
+            "unaffected\t50_untouched.sh\t0\tnot in the set 'pr'\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("1 unaffected by the change", r.stdout)
+        # Another host's unaffected report does not meet a requirement of linux.
+        (self.reports / "e2e-report-linux-2.tsv").unlink()
+        (self.reports / "e2e-report-macos-1.tsv").write_text(
+            "unaffected\t50_untouched.sh\t0\tnot in the set 'pr'\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("REQUIRED ON HOST: 50_untouched.sh did not pass on linux", r.stdout)
+
+    def test_a_test_that_skips_itself_everywhere_is_uncovered_until_it_is_owed(self) -> None:
+        """A script that leaves with its skip status ran nothing: it is not a pass."""
+        (self.root / "tests" / "e2e" / "55_skips_itself.sh").write_text("# x\n# requires: llvm\n")
+        for host in ("linux", "macos"):
+            (self.reports / f"e2e-report-{host}-3.tsv").write_text(
+                "skip\t55_skips_itself.sh\t40\tskipped itself: no emulator on this machine\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("UNCOVERED: 55_skips_itself.sh", r.stdout)
+        self.assertIn("skipped itself: no emulator on this machine", r.stdout)
+        debt = self.root / "tests" / "e2e" / "coverage-debt.tsv"
+        debt.write_text("# test\twhat the hosts lack\n55_skips_itself.sh\tno shard installs the emulator\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("1 owed, 0 uncovered", r.stdout)
+        # The debt only shrinks: an entry whose test ran is stale.
+        (self.reports / "e2e-report-linux-4.tsv").write_text("pass\t55_skips_itself.sh\t900\t\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("55_skips_itself.sh is listed as owed but ran on linux", r.stdout)
+
     def test_an_exception_for_a_test_that_ran_fails(self) -> None:
         (self.reports / "e2e-report-macos-1.tsv").write_text("pass\t30_excused.sh\t10\t\n")
         r = self.run_check()
         self.assertEqual(r.returncode, 1)
         self.assertIn("STALE EXCEPTION: 30_excused.sh is excused but ran on macos", r.stdout)
+
+    def test_a_test_required_on_hosts_must_pass_on_each(self) -> None:
+        (self.root / "tests" / "e2e" / "host-requirements.tsv").write_text(
+            "# test\thosts\treason\n10_runs.sh\tlinux macos windows\tverified rows\n")
+        (self.reports / "e2e-report-macos-1.tsv").write_text("pass\t10_runs.sh\t10\t\n")
+        (self.reports / "e2e-report-windows-1.tsv").write_text(
+            "skip\t10_runs.sh\t0\tmissing capability: llvm\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("REQUIRED ON HOST: 10_runs.sh did not pass on windows (windows: missing capability: llvm)",
+                      r.stdout)
+        self.assertNotIn("did not pass on linux", r.stdout)
+        self.assertNotIn("did not pass on macos", r.stdout)
+        (self.reports / "e2e-report-windows-1.tsv").write_text("pass\t10_runs.sh\t10\t\n")
+        self.assertEqual(self.run_check().returncode, 0)
+
+    def test_a_host_requirement_for_a_missing_test_fails(self) -> None:
+        (self.root / "tests" / "e2e" / "host-requirements.tsv").write_text("99_gone.sh\tlinux\tx\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("STALE EXCEPTION: 99_gone.sh is required on hosts but does not exist", r.stdout)
 
     def test_an_exception_for_a_missing_test_fails(self) -> None:
         with (self.root / "tests" / "e2e" / "coverage-exceptions.tsv").open("a") as f:

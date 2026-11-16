@@ -245,6 +245,15 @@ envelope says when either has changed since.
 | `target-sets` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--target openkal` and the other sets expand to their legs (SPEC-015 §1) | an IDE's target picker |
 | `pkg-format-list` | 2026.10.31.1 (meaning from 2026.10.30.1) | `--pkg-format tar,okb` writes each container of one tree (SPEC-014 §5.4) | an IDE's pack form |
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` prints the `mcpp.launch` of one test (below) | an IDE debugging a test |
+| `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` streams the build's events, then the `mcpp.launch` envelope (below) | an IDE's Run, showing the build as it goes |
+| `test-protocol` | 2026.11.8.1 | a test program that implements the test protocol has its cases listed (`--cases`), selected (`--case`) and reported in the records of `mcpp test --message-format json` (§8) | an IDE's test tree, a case run from the editor |
+| `test-parts` | 2026.11.10.1 | with `test-protocol`: a program run as several processes (`[test] split`) names its parts under `--cases` (`parts`) and in each part's record (`part_of`) (§8) | an IDE's test tree |
+| `test-case-stream` | 2026.11.10.1 | with `test-protocol`: a `case` record as each case begins and ends, before its program's record (§8) | an IDE's live results |
+| `test-metrics` | 2026.11.10.1 | with `test-protocol`: the cases' `kind`, `tags`, `metrics` and `bounds`, the program's `usage`, in the records and in the run `mcpp test` keeps (mtest spec P6, P10.2, P12; §8) | an IDE's metrics, bounds and trends |
+| `test-launch-records` | 2026.11.10.1 | with `test-protocol`: a record of a program built and not run (`--no-run`) carries its `launch`: `argv`, `env`, `cwd`, `via` (SPEC-017 B5) | a test session that starts the programs itself |
+| `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` names each framework's `capabilities` and `session` (SPEC-017 B6) | an IDE choosing between a session and processes |
+| `test-checks` | 2026.11.10.1 | with `test-protocol`: a failure's `source` and `fatal`, and a case's `checks` (`held`, `failed`), as the program reported them (SPEC-017 O3) | an IDE's list of checks |
+| `test-output` | 2026.11.10.1 | with `test-case-stream`: a case's own output, `output`: the program's `output` events, or all the output of a program that ran that case alone, in its program's `cases` and, from events, in its `end` record (SPEC-017 O8) | an IDE's output of one case |
 
 ### How a tool runs mcpp for a project
 
@@ -286,7 +295,7 @@ and only the first belongs to the program:
 | `0`–`124` | the program ran; this is its own status, passed through unchanged. The exception is `101`, below |
 | `101` | `mcpp run` could not build the program: its planning or its build failed, and nothing was started. This is the status Cargo gives a failed `cargo run` build |
 | `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else; `126` also answers `mcpp run --pkg-format <f>` for a distributable that is a directory and meets no runner, refused before the spawn with the same meaning (2026.9.14.2+) |
-| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare |
+| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare, a runner that is not enabled (the message carries `[runner-not-enabled]`; 2026.11.16.1+) |
 
 Until 2026.9.30.2 a failed build exited `1` and a failed planning `2`, so that
 a compile error and a program that returns `1` could not be told apart by a
@@ -401,7 +410,8 @@ of another architecture and a `same-arch` runner, it is the platform's runner
 for that architecture, located where the first run builds it (`built: false`
 until then; `self env` builds nothing). `runUnderProgram` is the execution
 host's program, and `runner.refusal` the reason runs are refused on this
-machine (`null` when they are not). For `--host` the host platform's
+machine (`null` when they are not; a runner that is not enabled is one, with
+`[runner-not-enabled]`). For `--host` the host platform's
 `runner` and `tools` are reported once the project's build programs have been
 built under it. A reason the project's sources would be refused for (an `import
 std` with no C++ run-time in the graph) is a `warning` diagnostic with the code
@@ -511,6 +521,22 @@ carries `status` (`ok` or `refused`) and:
 | `mcpp.why.build-programs` | `graphs[]` | one entry per build programs' graph: `workspace` (its directory) and `programs[]`, each `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | one entry per use of a deprecated reading: `{id, where, detail, warned, since, floor, canonical, docs}`; `warned` is false in a manifest the build does not edit |
 
+### `mcpp.why.target`, `mcpp.why.flags` and `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
+
+```
+mcpp why target   [--target <t>] --format json
+mcpp why flags    [<unit>] [--target <t>] --format json
+mcpp why platform [--target <t>] --format json
+```
+
+`data` carries `status` and:
+
+| kind | field | content |
+|---|---|---|
+| `mcpp.why.target` | `target` | `{request, identity, provider, priority, fallback, why, candidates[]}`, each candidate `{identity, provider, priority, available, why}` (SPEC-016 §7) |
+| `mcpp.why.flags` | `flags` | `{identity, units[], link[]}`: each unit `{file, package, words[]}`, each word `{word, layer, detail}`, the layer one of compiler, row, platform, toolchain, package, engine |
+| `mcpp.why.platform` | `platform` | `{package, version, defines[], serves[], warnings[]}`, each served `{identity, provider, priority}`; `null` when the build uses no platform package |
+
 `engineModules` in `mcpp.env` is the directory of the engine interface package
 of this mcpp version, which a build program's graph depends on (30 —
 `build.mcpp`); it exists once a build program has been compiled.
@@ -527,7 +553,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.23.3`), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -621,6 +647,7 @@ a program classifying the outcome reads `reason`:
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |
 | `layer-ordering` | the five layers do not stack |
+| `layer-cycle` | the packages that supply the layers require one another in a circle (a kernel-abi written above a C library under a C library written above a kernel-abi); the message names each package, the layer it supplies and the layer it requires, and carries the token in brackets *(2026.11.10.1+)* |
 | `exclusive-capability` | two packages provide one capability and at least one declared it exclusive |
 | `version-floor-unmet` | a package requires more of the machine than the machine was declared to have |
 | `accel-mismatch` | a `[build] sources` entry is constrained to a device set this build does not cover |
@@ -789,7 +816,8 @@ mcpp test [pattern] [--workspace] --message-format json
 ```
 
 This stream predates the envelope of §2 and is not wrapped in it: it is NDJSON,
-one record per test as each finishes, then one summary record per member. A
+one record per test as each finishes (under `--no-run` and `--cases`, as each is
+built; from 2026.11.8.1), then one summary record per member. A
 `--workspace` run ends with one `workspace_summary` record. A test over several
 members adds one `group_build` record per group, before the group's first test
 record. The §7 guarantees apply to it — fields are added and never removed, and
@@ -810,6 +838,32 @@ Per test:
 | `timed_out` | `true` when `--timeout` killed it (`run_fail`) |
 | `compile_output`, `run_output` | captured diagnostics |
 | `reason` | `not_run` only: why, in one sentence; `""` otherwise |
+| `protocol` | the version of the test protocol the program implements, or `null` *(2026.11.8.1+, [08](08-testing.md#cases-the-test-protocol))* |
+| `cases` | a program that implements it and ran: each case's `id`, `status` (`pass`, `fail`, `skip`, `xfail`, `xpass`, `invalid`), `duration_ms`, `reason` when there is one, and `failures` (`file`, `line`, `message`, `expected` and `actual` when stated) *(2026.11.8.1+)* |
+| `missing` | the identifiers a selection named that the program has no case for *(2026.11.8.1+)* |
+| `listed` | under `--cases`: each case's `id`, `name`, `file`, `line`, and `kind`, `tags`, `expect` when stated *(2026.11.8.1+)* |
+| `guide` | the guide of the framework the test is written with, a file, when its framework states one *(2026.11.8.1+)* |
+| `program`, `sources` | a test built and not run (`--no-run`, `--cases`): the program, and the files it is compiled from -- its own and those of the libraries it links -- for a runner that selects tests by change *(2026.11.8.1+)* |
+| `parts` | under `--cases`, a program a run divides into processes (`[test] split = "file"`, cases in several of its files): each part's `name` (`<test>/<file stem>`, as the run's records name it) and `file` *(2026.11.10.1+, `test-parts`)* |
+| `part_of` | the record of a part: the program it is a part of *(2026.11.10.1+, `test-parts`)* |
+| `usage` | the program's use of the machine, as it reported it (P10.2): `user_ms`, `sys_ms`, and `peak_bytes`, `read_bytes`, `written_bytes` when stated *(2026.11.10.1+, `test-metrics`)* |
+
+A case in `cases` also has, when the program stated them, `kind`, `tags`, `metrics` (`name`,
+`value`, `unit`, and `samples`, `better`, `precision` when stated) and `bounds` (`metric`, `max`,
+`min`); an entry of `listed` has `bounds` *(2026.11.10.1+, `test-metrics`)*.
+
+**Cases as they happen** *(2026.11.10.1+, `test-case-stream`)*. A program's report is read while
+it runs, and each case's beginning and end is a record of its own, before the program's record,
+which still carries every case:
+
+```json
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"begin","t_ms":12}}
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"end","status":"pass","duration_ms":3.1}}
+```
+
+`t_ms` counts from the start of the run, as the store's `started_ms` does. The `end` record has
+the fields of a case in `cases`. A program that ends without a case's `end` leaves that case
+begun; its program's record states it failed (protocol P5.4).
 
 Summary record, `{"summary": {...}}`:
 
@@ -902,6 +956,12 @@ A tree staged by a mode that bundles nothing (`system`, `static`) carries no
 places libraries itself reads these lines rather than inferring the closure from
 the files under `lib/`.
 
+`mcpp test --guide --message-format json` *(2026.11.8.1+)* prints one object,
+`{"guide": {...}}`: `frameworks` (each `package`, `version`, `entry`, `protocol`
+or `null`, `guide` or `null`, `repo`), `commands` (`list`, `one`, `records`,
+`debug`), `docs`, and `suggest` (the dev-dependency line and repository of mtest)
+when the package has no framework.
+
 ## 9. The build stream and the result record *(mcpp 2026.10.26.1+)*
 
 Every chain that builds a project — a person at a terminal, an agent with a
@@ -932,7 +992,10 @@ Standard output is NDJSON. Each line but the last is an event:
 
 The last line is the `mcpp.build` envelope, on one line. Its `data` is the
 result record this run wrote (below); a run that failed before it entered a
-build directory omits `data`. Its `diagnostics` are mcpp's own errors, each
+build directory omits `data`. A build that replays the recorded build of an
+unchanged tree (the fast path, of a package or of a workspace's members)
+restates that build's artifacts, as events and in `data` (a workspace's,
+2026.11.13.1+). Its `diagnostics` are mcpp's own errors, each
 located where its message says (§2), with the code `MCPP_BUILD_FAILED`, or
 `MCPP_EFFECT_DENIED` for a run that stopped before a denied effect. The
 narration goes to standard error, as for every machine-readable mode.
@@ -1002,6 +1065,26 @@ starting it. `data` is `program`, `argv`, `cwd`, `env` and `via`, as
 `launch` above. `--print-launch` takes no `--format`: on `mcpp run`, `--pkg-format`
 names a distributable.
 
+With `--message-format json` (2026.11.7.2+, feature `launch-stream`) standard
+output is NDJSON: the build's events, as `mcpp build --message-format json`
+streams them (`plan`, `waiting`, `progress`, `artifact`), and the `mcpp.launch`
+envelope as the last line. Without `--print-launch`, `mcpp run --message-format
+json` is refused (exit 2).
+
+With nothing changed the description takes the fast path, as `mcpp run` does
+(2026.11.7.2+): the full path records the launch it composes in the
+configuration's directory, and the fast path prints that record, with this
+request's arguments, when the launch it composes itself is the recorded one.
+Any other launch -- a runner, an execution host, the files a runner carries --
+is described by the full path.
+
+`data.configuration` (2026.11.7.1+) contains the selected program's `triple`,
+`profile` and resolved `platform`, using the same fields as the build record's
+configuration. For a target set it describes the leg selected for this launch.
+`configuration.runners` lists the available named runners, including project
+declarations when `platform` is null. Older engines omit `configuration`;
+consumers check for its presence.
+
 ```
 mcpp test <name> --print-launch [-- <arguments>]
 ```
@@ -1009,7 +1092,8 @@ mcpp test <name> --print-launch [-- <arguments>]
 The same for one test (feature `test-launch`, 2026.10.31.2): the test `<name>` names is
 built as `mcpp test` builds it and described as `mcpp test` would start it --
 its runner, the environment the run adds, and the arguments after `--` -- with
-`test` in `data` naming it. A name that several tests contain is resolved to
+`test` in `data` naming it and `protocol` stating the test protocol the program
+implements, or `null` (2026.11.8.1+). A name that several tests contain is resolved to
 the one named exactly; a pattern that names several is refused, as are
 `--list`, `--no-run`, `--archive`, `--message-format json`, several legs and
 several members. A debugger starts what the envelope describes.

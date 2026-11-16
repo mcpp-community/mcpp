@@ -208,6 +208,15 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `target-sets` | 2026.10.31.1（语义自 2026.10.30.1） | `--target openkal` 等集合展开为其腿（SPEC-015 §1） | IDE 的 target 选择 |
 | `pkg-format-list` | 2026.10.31.1（语义自 2026.10.30.1） | `--pkg-format tar,okb` 写出一棵树的各个容器（SPEC-014 §5.4） | IDE 的打包界面 |
 | `test-launch` | 2026.10.31.2 | `mcpp test <name> --print-launch` 打印一个测试的 `mcpp.launch`（见下） | 调试测试的 IDE |
+| `launch-stream` | 2026.11.7.2 | `mcpp run --print-launch --message-format json` 先流式输出构建事件，再输出 `mcpp.launch` 信封（见下） | IDE 的运行，边构建边显示 |
+| `test-protocol` | 2026.11.8.1 | 实现测试协议的测试程序，其用例在 `mcpp test --message-format json` 的记录中被列出（`--cases`）、选择（`--case`）并报告（§8） | IDE 的测试树、从编辑器运行一个用例 |
+| `test-parts` | 2026.11.10.1 | 在 `test-protocol` 之上：以多个进程运行的程序（`[test] split`）在 `--cases` 下写出其各部分（`parts`），各部分的记录写出 `part_of`（§8） | IDE 的测试树 |
+| `test-case-stream` | 2026.11.10.1 | 在 `test-protocol` 之上：每个用例开始与结束时各有一条 `case` 记录，先于其程序的记录（§8） | IDE 的实时结果 |
+| `test-metrics` | 2026.11.10.1 | 在 `test-protocol` 之上：用例的 `kind`、`tags`、`metrics`、`bounds` 与程序的 `usage`，出现在记录与 `mcpp test` 保存的运行中（mtest 规范 P6、P10.2、P12；§8） | IDE 的指标、界限与趋势 |
+| `test-launch-records` | 2026.11.10.1 | 在 `test-protocol` 之上：构建而未运行（`--no-run`）的程序记录带 `launch`：`argv`、`env`、`cwd`、`via`（SPEC-017 B5） | 自行启动程序的测试会话 |
+| `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` 写出每个框架的 `capabilities` 与 `session`（SPEC-017 B6） | 在会话与进程之间选择的 IDE |
+| `test-checks` | 2026.11.10.1 | 在 `test-protocol` 之上：失败的 `source` 与 `fatal`，用例的 `checks`（`held`、`failed`），按程序的报告（SPEC-017 O3） | IDE 的检查点列表 |
+| `test-output` | 2026.11.10.1 | 在 `test-case-stream` 之上：用例自己的输出 `output`：程序的 `output` 事件，或只运行该用例的程序的全部输出；出现在程序的 `cases` 中，来自事件时也出现在其 `end` 记录中（SPEC-017 O8） | IDE 中单个用例的输出 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -244,7 +253,7 @@ mcpp cache list --json            ->  {"root": …, "entries": [ … ]}
 | `0`–`124` | 程序运行过了；这是它自己的状态，原样透传。例外是 `101`，见下一行 |
 | `101` | `mcpp run` 无法构建程序：规划或构建失败，没有启动任何东西。这是 `cargo run` 构建失败时 Cargo 给出的状态 |
 | `125`–`127` | 尝试过启动但被拒绝 —— `127` 是找不到，`126` 是找到了但不可执行，`125` 是其他原因；对 `mcpp run --pkg-format <f>` 而言，一个是目录、且没有任何 runner 能到达的分发物同样得到 `126`，它在启动之前就被拒绝，含义相同（2026.9.14.2+） |
-| `2` | mcpp 在构建任何东西之前拒绝了请求，或在构建之后、启动任何东西之前拒绝了请求：用法错误、`--pkg-format` 与 `--no-runner` 同用、项目没有声明的程序或 runner |
+| `2` | mcpp 在构建任何东西之前拒绝了请求，或在构建之后、启动任何东西之前拒绝了请求：用法错误、`--pkg-format` 与 `--no-runner` 同用、项目没有声明的程序或 runner、未启用的 runner（消息带 `[runner-not-enabled]`；2026.11.16.1+） |
 
 在 2026.9.30.2 之前，构建失败退出 `1`，规划失败退出 `2`，脚本因此无法区分
 一次编译错误和一个返回 `1` 的程序。现在构建失败是 `101`；`mcpp build`、
@@ -347,7 +356,7 @@ mcpp self env --format json
 `runner.program` 为该工具，否则为本机找到的程序。对目标图（2026.10.29.1+），该程序就是 `mcpp run` 与
 `mcpp test` 会启动的程序：`runner.arch` 为其架构；产物属于另一架构、运行器为 `same-arch` 且给出了执行宿主时，
 它是平台为该架构准备的运行器，报告第一次运行构建它的位置（此前 `built: false`；`self env` 不构建任何东西）。
-`runUnderProgram` 为执行宿主的程序，`runner.refusal` 为本机拒绝运行的原因（不拒绝时为 `null`）。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
+`runUnderProgram` 为执行宿主的程序，`runner.refusal` 为本机拒绝运行的原因（不拒绝时为 `null`；未启用的 runner 亦是，带 `[runner-not-enabled]`）。`--host` 时，工程的构建程序已在宿主平台下构建过，才报告宿主平台
 的 `runner` 与 `tools`。工程源码会被拒绝的原因
 （图中没有 C++ 运行时而 `import std`）是一条代码为 `MCPP_CONFIGURATION_SOURCES_REFUSED` 的
 `warning` 诊断，配置照常报告。无法准备的配置带 `MCPP_CONFIGURATION_FAILED`，没有 `data`。
@@ -448,6 +457,22 @@ mcpp why compat --format json
 | `mcpp.why.build-programs` | `graphs[]` | 每张构建程序图一项：`workspace`（其目录）与 `programs[]`，每个程序为 `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | 每次使用弃用读法一项：`{id, where, detail, warned, since, floor, canonical, docs}`；在构建不编辑的清单中 `warned` 为 false |
 
+### `mcpp.why.target`、`mcpp.why.flags` 与 `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
+
+```
+mcpp why target   [--target <t>] --format json
+mcpp why flags    [<unit>] [--target <t>] --format json
+mcpp why platform [--target <t>] --format json
+```
+
+`data` 带 `status`，以及：
+
+| kind | 字段 | 内容 |
+|---|---|---|
+| `mcpp.why.target` | `target` | `{request, identity, provider, priority, fallback, why, candidates[]}`，每个候选 `{identity, provider, priority, available, why}`（SPEC-016 §7） |
+| `mcpp.why.flags` | `flags` | `{identity, units[], link[]}`：每个单元 `{file, package, words[]}`，每个参数 `{word, layer, detail}`，层为 compiler、row、platform、toolchain、package、engine 之一 |
+| `mcpp.why.platform` | `platform` | `{package, version, defines[], serves[], warnings[]}`，每个所服务的身份 `{identity, provider, priority}`；构建不用平台包时为 `null` |
+
 `mcpp.env` 的 `engineModules` 是本版本 mcpp 的引擎接口包的目录，构建程序图依赖它（30 ——
 `build.mcpp`）；第一次编译构建程序之后它才存在。
 
@@ -463,7 +488,7 @@ mcpp toolchain list --format json
 的形状是 `{target, note, toolchain, pin, status, default}`，`status` 取
 `installed` / `available` / `via dependency graph` / `planned` 之一。
 目标行另有 `platform`（2026.10.27.1+）：目标表为该目标选择的平台包
-（`mcpplibs.openkal-platform@0.23.3`），或 `null`。
+（2026.11.15.1 起为 `mcpplibs.openkal-platform@0.28.0`，2026.11.12.1 为 `@0.27.1`，2026.11.10.2 为 `@0.26.0`，2026.11.10.1 为 `@0.25.0`，2026.11.8.1 起为 `@0.24.4`，2026.11.7.2 为 `@0.24.3`；2026.11.7.1 为系列 `^0.24`），或 `null`。
 
 **`toolchain` 与 `pin` 不是把同一个字段写了两遍。** `toolchain` 表示这一行
 关联到什么 —— 已装的行是装好的载荷，词表行是它自己的约定。`pin` 只承载目标
@@ -550,6 +575,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `os-mismatch` | 请求的三元组与解析出的三元组命名不同的系统 |
 | `layer-requirement` | 某个包要求的层，解析结果没有提供 |
 | `layer-ordering` | 五个层无法叠加 |
+| `layer-cycle` | 供给各层的包相互需要成环（写在 C 库之上的 kernel-abi 位于写在 kernel-abi 之上的 C 库之下）；消息写出每个包、它供给的层与它需要的层，并以方括号带出该记号 *（2026.11.10.1+）* |
 | `exclusive-capability` | 一项能力有多个提供者，其中至少一个声明了独占 |
 | `version-floor-unmet` | 某个包对机器的要求，高于机器被声明拥有的水平 |
 | `accel-mismatch` | 一条 `[build] sources` 条目被约束到本次构建未覆盖的设备集合 |
@@ -700,7 +726,8 @@ mcpp pack [target] [--pkg-format <f>] [--target <triple>...] --message-format js
 mcpp test [pattern] [--workspace] --message-format json
 ```
 
-这条流早于 §2 的信封，也不被它包裹：它是 NDJSON，每个测试结束时一条记录，随后
+这条流早于 §2 的信封，也不被它包裹：它是 NDJSON，每个测试结束时一条记录（`--no-run` 与 `--cases`
+时每个测试构建完成时一条，2026.11.8.1 起），随后
 每个成员一条汇总记录。`--workspace` 运行以一条 `workspace_summary` 记录
 结束。对多个成员的测试会在每个组的第一条测试记录之前增加一条 `group_build` 记录。
 §7 的保证对它同样成立 —— 字段只增不减，字段含义永不改变 —— 下表是
@@ -720,6 +747,30 @@ mcpp test [pattern] [--workspace] --message-format json
 | `timed_out` | 被 `--timeout` 杀掉时为 `true`（`run_fail`） |
 | `compile_output`、`run_output` | 捕获到的诊断输出 |
 | `reason` | 仅 `not_run` 时：一句话说明原因；其余情况为 `""` |
+| `protocol` | 程序实现的测试协议版本，或 `null` *（2026.11.8.1+，[08](08-testing.md#用例测试协议)）* |
+| `cases` | 实现协议并运行过的程序：每个用例的 `id`、`status`（`pass`、`fail`、`skip`、`xfail`、`xpass`、`invalid`）、`duration_ms`、有原因时的 `reason`，以及 `failures`（`file`、`line`、`message`，陈述时还有 `expected` 与 `actual`） *（2026.11.8.1+）* |
+| `missing` | 选择中命名而程序没有对应用例的标识 *（2026.11.8.1+）* |
+| `listed` | `--cases` 时：每个用例的 `id`、`name`、`file`、`line`，陈述时还有 `kind`、`tags`、`expect` *（2026.11.8.1+）* |
+| `guide` | 测试所用框架陈述了指南时，该指南文件 *（2026.11.8.1+）* |
+| `program`、`sources` | 构建而未运行的测试（`--no-run`、`--cases`）：程序，以及它由之编译的文件（它自己的与它链接的库的），供按改动选择测试的运行器使用 *（2026.11.8.1+）* |
+| `parts` | `--cases` 时，运行会分成多个进程的程序（`[test] split = "file"`，用例分布在其多个文件中）：每部分的 `name`（`<test>/<文件主名>`，与运行的记录同名）与 `file` *（2026.11.10.1+，`test-parts`）* |
+| `part_of` | 一个部分的记录：它所属的程序 *（2026.11.10.1+，`test-parts`）* |
+| `usage` | 程序报告的机器使用（P10.2）：`user_ms`、`sys_ms`，陈述时还有 `peak_bytes`、`read_bytes`、`written_bytes` *（2026.11.10.1+，`test-metrics`）* |
+
+程序陈述时，`cases` 中的用例还有 `kind`、`tags`、`metrics`（`name`、`value`、`unit`，陈述时还有 `samples`、
+`better`、`precision`）与 `bounds`（`metric`、`max`、`min`）；`listed` 的条目有 `bounds`
+*（2026.11.10.1+，`test-metrics`）*。
+
+**用例的实时记录** *（2026.11.10.1+，`test-case-stream`）*。程序运行时即读取其报告，每个用例的开始与结束
+各成一条记录，先于程序的记录；程序的记录仍带全部用例：
+
+```json
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"begin","t_ms":12}}
+{"case":{"member":"","test":"unit/a","id":"alpha","event":"end","status":"pass","duration_ms":3.1}}
+```
+
+`t_ms` 从运行开始计，与存储中的 `started_ms` 相同。`end` 记录带 `cases` 中用例的各字段。程序结束时没有某用例的
+`end`，该用例停留在已开始；其程序的记录写明它失败（协议 P5.4）。
 
 汇总记录，`{"summary": {...}}`：
 
@@ -799,6 +850,10 @@ mcpp test [pattern] [--workspace] --message-format json
 出的树不带 `needs` 行，由更早版本的 mcpp 暂存出的树同样不带；自行放置库的
 读者应当读取这些行，而不是从 `lib/` 下的文件推断闭包。
 
+`mcpp test --guide --message-format json` *（2026.11.8.1+）* 输出一个对象 `{"guide": {...}}`：`frameworks`
+（每项 `package`、`version`、`entry`、`protocol` 或 `null`、`guide` 或 `null`、`repo`）、`commands`（`list`、
+`one`、`records`、`debug`）、`docs`，以及包没有框架时的 `suggest`（mtest 的 dev-dependency 写法与仓库）。
+
 ## 9. 构建事件流与结果记录 *（mcpp 2026.10.26.1+）*
 
 构建一个工程的每条调用链 —— 终端里的人、只有 shell 的 agent、IDE、CI 任务 ——
@@ -828,7 +883,9 @@ mcpp build [target] [-p <member>] [--release] --message-format json
 | `artifact` | `artifact`：一个产物，形状同下文记录的 `artifacts[]` |
 
 最后一行是 `mcpp.build` 信封，占一行。它的 `data` 是本次运行写下的结果记录（见
-下文）；在进入构建目录之前就失败的运行省略 `data`。它的 `diagnostics` 是 mcpp
+下文）；在进入构建目录之前就失败的运行省略 `data`。重放未变化的树已记录的构建（快速路径，
+包的或工作区成员的）时，重述该构建的产物，既作为事件也在 `data` 中（工作区的，2026.11.13.1+）。
+它的 `diagnostics` 是 mcpp
 自己的错误，每条按其消息定位（§2），代码为 `MCPP_BUILD_FAILED`；在被拒绝的副作
 用之前停下的运行为 `MCPP_EFFECT_DENIED`。叙述写到标准错误，与每一种机器可读模式
 相同。
@@ -890,13 +947,27 @@ mcpp run [target] --print-launch
 `argv`、`cwd`、`env` 与 `via`，同上文的 `launch`。`--print-launch` 不接受
 `--format`：在 `mcpp run` 上，`--pkg-format` 表示可分发物的格式。
 
+带 `--message-format json`（2026.11.7.2+，特性 `launch-stream`）时，标准输出为 NDJSON：先是与
+`mcpp build --message-format json` 相同的构建事件（`plan`、`waiting`、`progress`、`artifact`），
+最后一行是 `mcpp.launch` 信封。不带 `--print-launch` 的 `mcpp run --message-format json` 被拒绝
+（退出码 2）。
+
+没有改动时，启动描述与 `mcpp run` 一样走快速路径（2026.11.7.2+）：完整路径把它组合出的启动
+记录在该配置的目录中；快速路径自己组合出的启动与记录逐项相同时，输出这份记录，并附上本次的
+程序参数。其他启动（runner、执行宿主、runner 携带的文件）由完整路径描述。
+
+`data.configuration`（2026.11.7.1+）包含所选程序的 `triple`、`profile` 与解析后的
+`platform`，字段与构建记录的 configuration 相同。目标集合中，它描述本次启动所选的
+目标。`configuration.runners` 列出可用的具名运行器，包括 platform 为 null 时
+项目声明的运行器。旧引擎不提供 `configuration`；消费者检查该字段是否存在。
+
 ```
 mcpp test <name> --print-launch [-- <参数>]
 ```
 
 对一个测试作同样的描述（特性 `test-launch`，2026.10.31.2）：`<name>` 指定的测试按 `mcpp test`
 的方式构建，并按 `mcpp test` 启动它的方式描述——它的运行器、运行所加的环境、`--` 之后的参数——`data`
-另以 `test` 给出测试名。多个测试名包含该模式时取名字完全相同的那个；仍指向多个测试时拒绝，`--list`、
+另以 `test` 给出测试名，以 `protocol` 给出程序实现的测试协议或 `null`（2026.11.8.1+）。多个测试名包含该模式时取名字完全相同的那个；仍指向多个测试时拒绝，`--list`、
 `--no-run`、`--archive`、`--message-format json`、多条腿与多个成员同样拒绝。调试器启动信封描述的程序。
 
 ## 10. 拒绝副作用 —— `--deny` *（mcpp 2026.10.26.1+）*

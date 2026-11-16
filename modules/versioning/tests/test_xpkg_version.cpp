@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.xpkg_version;
+
+using namespace mcpplibs::mtest;
 
 // SUBSYSTEM-LEVEL: the grammar xlings resolves an `[xlings]` address with,
 // stated on its own. The engine-level consequence (which payload directory
@@ -16,47 +18,47 @@ std::string best(std::initializer_list<const char*> keys, std::string_view req) 
 }
 }
 
-TEST(XpkgVersion, FourSegmentKeysAreOrdinaryVersions) {
+UTest four_segment_keys_are_ordinary_versions{"XpkgVersion/FourSegmentKeysAreOrdinaryVersions", [] {
     auto v = xv::parse("1.7.0.1");
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(v->components, 4);
-    EXPECT_GT(xv::compare_keys("1.7.0.1", "1.7.0"), 0);
-    EXPECT_GT(xv::compare_keys("0.0.100", "0.0.11"), 0);
-}
+    expect(fatal(v.has_value()));
+    expect(eq(v->components, 4));
+    expect(gt(xv::compare_keys("1.7.0.1", "1.7.0"), 0));
+    expect(gt(xv::compare_keys("0.0.100", "0.0.11"), 0));
+}};
 
-TEST(XpkgVersion, ABareVersionOfOneOrTwoSegmentsIsAPrefixRange) {
-    EXPECT_EQ(best({"1.7.0.1", "1.8.0"}, "1.7"), "1.7.0.1");
-    EXPECT_EQ(best({"1.2.0", "1.2.5", "1.3.0"}, "1.2"), "1.2.5");
-    EXPECT_EQ(best({"15.1.0", "15.2.0", "16.1.0"}, "15"), "15.2.0");
-}
+UTest a_bare_version_of_one_or_two_segments_is_a_prefix_range{"XpkgVersion/ABareVersionOfOneOrTwoSegmentsIsAPrefixRange", [] {
+    expect(eq(best({"1.7.0.1", "1.8.0"}, "1.7"), "1.7.0.1"));
+    expect(eq(best({"1.2.0", "1.2.5", "1.3.0"}, "1.2"), "1.2.5"));
+    expect(eq(best({"15.1.0", "15.2.0", "16.1.0"}, "15"), "15.2.0"));
+}};
 
-TEST(XpkgVersion, ABareVersionOfThreeOrMoreSegmentsIsWrittenPrefixEquality) {
-    EXPECT_EQ(best({"12.9.1.4", "12.9.10"}, "12.9.1"), "12.9.1.4");
-    EXPECT_EQ(best({"1.2.0", "1.2.5"}, "1.2.0"), "1.2.0");
-    EXPECT_EQ(best({"1.8.13", "1.9.0"}, "1.8.12"), "");
-    EXPECT_EQ(best({"2.15.0.1", "2.15.0.2"}, "2.15.0.1"), "2.15.0.1");
-}
+UTest a_bare_version_of_three_or_more_segments_is_written_prefix_equality{"XpkgVersion/ABareVersionOfThreeOrMoreSegmentsIsWrittenPrefixEquality", [] {
+    expect(eq(best({"12.9.1.4", "12.9.10"}, "12.9.1"), "12.9.1.4"));
+    expect(eq(best({"1.2.0", "1.2.5"}, "1.2.0"), "1.2.0"));
+    expect(eq(best({"1.8.13", "1.9.0"}, "1.8.12"), ""));
+    expect(eq(best({"2.15.0.1", "2.15.0.2"}, "2.15.0.1"), "2.15.0.1"));
+}};
 
-TEST(XpkgVersion, OperatorsAndConjunctionsCompareTheWholeVersion) {
-    EXPECT_EQ(best({"8.0.0", "8.5.0", "8.7.1"}, ">=8.5.0"), "8.7.1");
-    EXPECT_EQ(best({"8.0.0", "8.5.0", "8.7.1"}, ">=8.0.0 <8.7.0"), "8.5.0");
-    EXPECT_EQ(best({"2.15.0", "2.15.0.1"}, ">=2.15.0.1"), "2.15.0.1");
-    EXPECT_EQ(best({"1.2.3", "1.9.0", "2.0.0"}, "^1.2.3"), "1.9.0");
-    EXPECT_EQ(best({"1.2.3", "1.2.9", "1.3.0"}, "~1.2.3"), "1.2.9");
-    EXPECT_EQ(best({"1.2.3", "1.2.9", "1.3.0"}, "1.2.*"), "1.2.9");
-}
+UTest operators_and_conjunctions_compare_the_whole_version{"XpkgVersion/OperatorsAndConjunctionsCompareTheWholeVersion", [] {
+    expect(eq(best({"8.0.0", "8.5.0", "8.7.1"}, ">=8.5.0"), "8.7.1"));
+    expect(eq(best({"8.0.0", "8.5.0", "8.7.1"}, ">=8.0.0 <8.7.0"), "8.5.0"));
+    expect(eq(best({"2.15.0", "2.15.0.1"}, ">=2.15.0.1"), "2.15.0.1"));
+    expect(eq(best({"1.2.3", "1.9.0", "2.0.0"}, "^1.2.3"), "1.9.0"));
+    expect(eq(best({"1.2.3", "1.2.9", "1.3.0"}, "~1.2.3"), "1.2.9"));
+    expect(eq(best({"1.2.3", "1.2.9", "1.3.0"}, "1.2.*"), "1.2.9"));
+}};
 
-TEST(XpkgVersion, APrereleaseIsExactAndRanksBelowItsRelease) {
-    EXPECT_EQ(best({"1.0.0-rc1", "1.0.0"}, "1.0.0-rc1"), "1.0.0-rc1");
-    EXPECT_LT(xv::compare_keys("1.0.0-rc1", "1.0.0"), 0);
-}
+UTest a_prerelease_is_exact_and_ranks_below_its_release{"XpkgVersion/APrereleaseIsExactAndRanksBelowItsRelease", [] {
+    expect(eq(best({"1.0.0-rc1", "1.0.0"}, "1.0.0-rc1"), "1.0.0-rc1"));
+    expect(lt(xv::compare_keys("1.0.0-rc1", "1.0.0"), 0));
+}};
 
-TEST(XpkgVersion, NamesNeverWinAndBuildMetadataIsIgnored) {
-    EXPECT_EQ(best({"latest", "nightly", "1.0.0"}, ">=0.1"), "1.0.0");
-    EXPECT_FALSE(xv::parse("nightly").has_value());
-    EXPECT_GT(xv::compare_keys("1.0.0", "nightly"), 0);
-    EXPECT_EQ(best({"25.0.4+7"}, "25.0.4"), "25.0.4+7");
-}
+UTest names_never_win_and_build_metadata_is_ignored{"XpkgVersion/NamesNeverWinAndBuildMetadataIsIgnored", [] {
+    expect(eq(best({"latest", "nightly", "1.0.0"}, ">=0.1"), "1.0.0"));
+    expect(!(xv::parse("nightly").has_value()));
+    expect(gt(xv::compare_keys("1.0.0", "nightly"), 0));
+    expect(eq(best({"25.0.4+7"}, "25.0.4"), "25.0.4+7"));
+}};
 
 // THE SHARED STATEMENT. xlings publishes which version a request selects as
 // data (tests/data/semver-vectors.tsv in its repository), and this package
@@ -89,9 +91,9 @@ std::vector<std::string> split(std::string_view s, char sep) {
 }
 }
 
-TEST(XpkgVersion, TheXlingsConformanceVectorsSelectTheSameVersion) {
+UTest the_xlings_conformance_vectors_select_the_same_version{"XpkgVersion/TheXlingsConformanceVectorsSelectTheSameVersion", [] {
     const auto file = vectors_file();
-    ASSERT_FALSE(file.empty()) << "semver-vectors.tsv not found above "
+    expect(fatal(!file.empty())) << "semver-vectors.tsv not found above "
                                << std::filesystem::current_path();
     std::ifstream in(file);
     std::string line;
@@ -100,13 +102,12 @@ TEST(XpkgVersion, TheXlingsConformanceVectorsSelectTheSameVersion) {
         ++lineNo;
         if (line.empty() || line.front() == '#') continue;
         const auto col = split(line, '\t');
-        ASSERT_EQ(col.size(), 4u) << file << ":" << lineNo;
+        expect(fatal(eq(col.size(), 4u))) << file << ":" << lineNo;
         if (col[2] != "-") continue;
         const auto available = split(col[1], ',');
         const auto request = col[0] == "-" ? std::string{} : col[0];
-        EXPECT_EQ(xv::select_installed(available, request).value_or("none"), col[3])
-            << file << ":" << lineNo << ": request '" << col[0] << "' among " << col[1];
+        if (auto&& failed = expect(eq(xv::select_installed(available, request).value_or("none"), col[3])); !failed) failed << file << ":" << lineNo << ": request '" << col[0] << "' among " << col[1];
         ++checked;
     }
-    EXPECT_GT(checked, 0);
-}
+    expect(gt(checked, 0));
+}};

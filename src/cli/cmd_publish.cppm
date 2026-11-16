@@ -1,20 +1,17 @@
 // mcpp.cli.cmd_publish — CLI parsing + routing for publish / pack /
 // emit xpkg. Implementations live in mcpp.publish.pipeline and mcpp.pack.pipeline.
 
-module;
-#include <cstdio>
-#include <cstdlib>
-
 export module mcpp.cli.cmd_publish;
 
 import std;
+import mcpplibs.mwrap.libc;
 import mcpp.build.advice;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;   // profile_override_from_flags
 import mcpp.build.progress;  // the build's report (build progress design 2026-09-29)
 import mcpp.cli.selection;    // which members `pack` acts on, as `build` plans them
 import mcpp.log;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.pack;
 import mcpp.pack.library_pipeline;
 import mcpp.pack.pipeline;
@@ -33,6 +30,8 @@ import mcpp.pack.compress;          // --compress
 import mcpp.toolchain.triple;       // which --target values are images' rows
 import mcpp.pack.distribution;      // --merge
 import mcpplibs.os.platform;
+
+namespace libc = mcpplibs::mwrap::libc::macros;
 
 namespace mcpp::cli {
 
@@ -88,7 +87,51 @@ export int cmd_emit_xpkg(const mcpplibs::cmdline::ParsedArgs& parsed) {
         parsed.option_or_empty("namespace").value());
 }
 
+// A LIBRARY DOES NOT CHOOSE A SHARED PACKAGE'S RELEASE FOR ITS USERS (design
+// 2026-11-10 supplement, T3). A library that pins one release of a package
+// every consumer shares -- one that provides a target-side layer or a kernel
+// ABI -- holds every project that uses it to that release. Its graph is
+// planned (nothing is built) and such a pin is refused, naming the range that
+// replaces it. A plan that cannot be made here leaves the check to the
+// consumers' builds, which note the pin, and says so.
+static int refuse_shared_exact_pins() {
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root) return 0;
+    auto m = mcpp::manifest::load(*root / "mcpp.toml");
+    if (!m || m->dependencies.empty()) return 0;
+    const bool library = m->targets.empty()
+        ? !std::filesystem::exists(*root / "src" / "main.cpp")
+        : std::ranges::any_of(m->targets, [](auto const& t) {
+              return t.kind == mcpp::manifest::Target::Library || t.kind == mcpp::manifest::Target::SharedLibrary;
+          });
+    if (!library) return 0;
+    mcpp::build::BuildOverrides ov;
+    ov.intent = mcpp::build::PrepareIntent::Describe;
+    ov.work_dir = mcpp::home::root() / "cache" / "publish-plan"
+                / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
+    std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
+    {
+        mcpp::ui::terminal::StdoutToStderr narration;
+        ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false, {}, ov);
+    }
+    if (!ctx) {
+        mcpp::ui::note(std::format("the library's pins of shared packages were not checked: its graph could not "
+                                   "be planned here ({})", ctx.error().substr(0, ctx.error().find('\n'))));
+        return 0;
+    }
+    if (ctx->sharedExactPins.empty()) return 0;
+    std::string lines;
+    for (auto const& l : ctx->sharedExactPins) lines += "\n         " + l;
+    mcpp::ui::error(std::format(
+        "{} pins one release of a package every consumer shares:{}\n"
+        "       A library that pins it holds every project that uses the library to that release.\n"
+        "       State a range; a project that needs one release chooses it with `override = true`.",
+        m->package.name, lines));
+    return 2;
+}
+
 export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    if (int rc = refuse_shared_exact_pins(); rc != 0) return rc;
     return mcpp::publish::publish_package(
         parsed.is_flag_set("dry-run"), parsed.is_flag_set("allow-dirty"));
 }
@@ -114,7 +157,7 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::filesystem::path stamp{parsed.option_or_empty("output").value()};
     const std::filesystem::path depfile{parsed.option_or_empty("depfile").value()};
     if (stamp.empty() || depfile.empty() || parsed.positional_count() < 1) {
-        std::println(stderr,
+        std::println(libc::stderr(),
             "error: place-dlls requires --output, --depfile and a program");
         return 2;
     }
@@ -173,7 +216,7 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto placed = mcpp::pack::place_runtime_dlls(program, dirs, placedBefore, placedByOthers,
                                                  crtRule);
     if (!placed) {
-        std::println(stderr, "error: {}", placed.error().message);
+        std::println(libc::stderr(), "error: {}", placed.error().message);
         return 1;
     }
     // What the placement has to say on success goes to the edge-advice
@@ -208,14 +251,14 @@ export int cmd_place_dlls(const mcpplibs::cmdline::ParsedArgs& parsed) {
         for (auto const& src : placed->sources) d << " \\\n  " << dep_word(src);
         d << '\n';
         if (!d) {
-            std::println(stderr, "error: cannot write '{}'", depfile.string());
+            std::println(libc::stderr(), "error: cannot write '{}'", depfile.string());
             return 1;
         }
     }
     std::ofstream st(stamp, std::ios::trunc);
     for (auto const& n : placed->names) st << n << '\n';
     if (!st) {
-        std::println(stderr, "error: cannot write '{}'", stamp.string());
+        std::println(libc::stderr(), "error: cannot write '{}'", stamp.string());
         return 1;
     }
     return 0;
@@ -292,7 +335,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
 // accepts here -- the engine's own (`tar`, `dir`) and each one a package of
 // the resolved graph declares with `mcpp::provides_pack_format`, with the
 // packages that provide it -- as the `mcpp.pack.formats` envelope. A plan
-// that describes (plan_only) in a directory of the mcpp home, as `emit
+// that describes (PrepareIntent::Describe) in a directory of the mcpp home, as `emit
 // build-database` plans: the build programs run, because they are what
 // declares a format, and nothing is written into the project. The plan is
 // the target's the pack would build (`--target`, the last when repeated, as
@@ -311,7 +354,7 @@ int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto v = parsed.value("features")) ov.features = *v;
     if (auto o = parsed.option("target"); o && !o->get().values.empty())
         ov.target_triple = o->get().values.back();
-    ov.plan_only = true;
+    ov.intent = mcpp::build::PrepareIntent::Describe;
     ov.work_dir = mcpp::home::root() / "cache" / "pack-formats"
                 / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
@@ -875,6 +918,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
         parsed.value("profile").value_or(""),
         parsed.is_flag_set("release"), parsed.is_flag_set("dev"));
     if (parsed.is_flag_set("no-strip")) opts.strip = false;
+    if (parsed.is_flag_set("all-programs")) opts.allPrograms = true;
     if (auto v = parsed.value("debug-symbols")) opts.debugSymbols = *v;
     if (auto v = parsed.value("features")) opts.features = *v;
 

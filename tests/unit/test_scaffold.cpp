@@ -1,14 +1,16 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.scaffold;
 import mcpp.scaffold.project_name;
 import mcpp.pm.dependency_selector;
 import mcpplibs.os.fs;
 
+using namespace mcpplibs::mtest;
+
 namespace {
 
-TEST(TemplateSpec, ParsesSharedExactPackageGrammar) {
+UTest parses_shared_exact_package_grammar{"TemplateSpec/ParsesSharedExactPackageGrammar", [] {
     struct Row {
         std::string input;
         std::optional<std::string> ns;
@@ -32,32 +34,32 @@ TEST(TemplateSpec, ParsesSharedExactPackageGrammar) {
 
     for (auto const& row : rows) {
         auto parsed = mcpp::scaffold::parse_template_spec(row.input);
-        ASSERT_TRUE(parsed.has_value()) << row.input;
-        EXPECT_EQ(parsed->package.namespace_, row.ns) << row.input;
-        EXPECT_EQ(parsed->package.name, row.name) << row.input;
-        EXPECT_EQ(parsed->version, row.version) << row.input;
-        EXPECT_EQ(parsed->templateName, row.tmpl) << row.input;
-        EXPECT_FALSE(parsed->legacyList) << row.input;
+        expect(fatal(parsed.has_value())) << row.input;
+        expect(eq(parsed->package.namespace_, row.ns)) << row.input;
+        expect(eq(parsed->package.name, row.name)) << row.input;
+        expect(eq(parsed->version, row.version)) << row.input;
+        expect(eq(parsed->templateName, row.tmpl)) << row.input;
+        expect(!parsed->legacyList) << row.input;
     }
-}
+}};
 
-TEST(TemplateSpec, BarePackageNormalizesToMcpplibs) {
+UTest bare_package_normalizes_to_mcpplibs{"TemplateSpec/BarePackageNormalizesToMcpplibs", [] {
     auto parsed = mcpp::scaffold::parse_template_spec("imgui");
-    ASSERT_TRUE(parsed.has_value());
+    expect(fatal(parsed.has_value()));
     auto coord = mcpp::pm::normalize_package_selector(parsed->package);
-    EXPECT_EQ(coord.namespace_, "mcpplibs");
-    EXPECT_EQ(coord.shortName, "imgui");
-}
+    expect(eq(coord.namespace_, "mcpplibs"));
+    expect(eq(coord.shortName, "imgui"));
+}};
 
-TEST(TemplateSpec, RecognizesTrailingColonOnlyAsLegacyListAlias) {
+UTest recognizes_trailing_colon_only_as_legacy_list_alias{"TemplateSpec/RecognizesTrailingColonOnlyAsLegacyListAlias", [] {
     auto parsed = mcpp::scaffold::parse_template_spec("ocornut.imgui@1.92.8:");
-    ASSERT_TRUE(parsed.has_value());
-    EXPECT_TRUE(parsed->legacyList);
-    EXPECT_EQ(parsed->version, "1.92.8");
-    EXPECT_FALSE(parsed->templateName.has_value());
-}
+    expect(fatal(parsed.has_value()));
+    expect(bool(parsed->legacyList));
+    expect(eq(parsed->version, "1.92.8"));
+    expect(!(parsed->templateName.has_value()));
+}};
 
-TEST(TemplateSpec, RejectsAmbiguousEmptyOrUnsafeComponents) {
+UTest rejects_ambiguous_empty_or_unsafe_components{"TemplateSpec/RejectsAmbiguousEmptyOrUnsafeComponents", [] {
     const std::vector<std::string> invalid{
         "", "@1.0.0", ":starter", ".imgui@1.0", "ocornut..imgui",
         "ocornut.imgui@", "ocornut.imgui:bad:extra",
@@ -68,90 +70,89 @@ TEST(TemplateSpec, RejectsAmbiguousEmptyOrUnsafeComponents) {
     };
     for (auto const& input : invalid) {
         auto parsed = mcpp::scaffold::parse_template_spec(input);
-        EXPECT_FALSE(parsed.has_value()) << input;
-        if (!parsed) EXPECT_FALSE(parsed.error().message.empty()) << input;
+        expect(!parsed.has_value()) << input;
+        if (!parsed) expect(!(parsed.error().message.empty())) << input;
     }
-}
+}};
 
-TEST(TemplateSelection, SoleTemplateWithoutExplicitDefaultAutoWins) {
+UTest sole_template_without_explicit_default_auto_wins{"TemplateSelection/SoleTemplateWithoutExplicitDefaultAutoWins", [] {
     std::vector<mcpp::scaffold::TemplateEntry> entries{
         {"solo", {.description = "only choice", .isDefault = false}},
     };
     auto chosen = mcpp::scaffold::select_template(entries, std::nullopt);
-    ASSERT_TRUE(chosen.has_value());
-    EXPECT_EQ((*chosen)->name, "solo");
-}
+    expect(fatal(chosen.has_value()));
+    expect(eq((*chosen)->name, "solo"));
+}};
 
-TEST(TemplateSelection, OneExplicitDefaultWinsAmongMany) {
+UTest one_explicit_default_wins_among_many{"TemplateSelection/OneExplicitDefaultWinsAmongMany", [] {
     std::vector<mcpp::scaffold::TemplateEntry> entries{
         {"a", {.isDefault = false}},
         {"b", {.isDefault = true}},
     };
     auto chosen = mcpp::scaffold::select_template(entries, std::nullopt);
-    ASSERT_TRUE(chosen.has_value());
-    EXPECT_EQ((*chosen)->name, "b");
-}
+    expect(fatal(chosen.has_value()));
+    expect(eq((*chosen)->name, "b"));
+}};
 
-TEST(TemplateSelection, MultipleWithoutDefaultAreAmbiguous) {
+UTest multiple_without_default_are_ambiguous{"TemplateSelection/MultipleWithoutDefaultAreAmbiguous", [] {
     std::vector<mcpp::scaffold::TemplateEntry> entries{
         {"a", {.isDefault = false}},
         {"b", {.isDefault = false}},
     };
     auto chosen = mcpp::scaffold::select_template(entries, std::nullopt);
-    ASSERT_FALSE(chosen.has_value());
-    EXPECT_NE(chosen.error().find("a"), std::string::npos);
-    EXPECT_NE(chosen.error().find("b"), std::string::npos);
-}
+    expect(fatal(!chosen.has_value()));
+    expect(ne(chosen.error().find("a"), std::string::npos));
+    expect(ne(chosen.error().find("b"), std::string::npos));
+}};
 
-TEST(TemplateSelection, ExplicitNameWinsAndUnknownListsChoices) {
+UTest explicit_name_wins_and_unknown_lists_choices{"TemplateSelection/ExplicitNameWinsAndUnknownListsChoices", [] {
     std::vector<mcpp::scaffold::TemplateEntry> entries{
         {"a", {.isDefault = false}},
         {"b", {.isDefault = false}},
     };
     auto chosen = mcpp::scaffold::select_template(entries, std::string_view{"b"});
-    ASSERT_TRUE(chosen.has_value());
-    EXPECT_EQ((*chosen)->name, "b");
+    expect(fatal(chosen.has_value()));
+    expect(eq((*chosen)->name, "b"));
 
     auto missing = mcpp::scaffold::select_template(
         entries, std::string_view{"missing"});
-    ASSERT_FALSE(missing.has_value());
-    EXPECT_NE(missing.error().find("a"), std::string::npos);
-    EXPECT_NE(missing.error().find("b"), std::string::npos);
-}
+    expect(fatal(!missing.has_value()));
+    expect(ne(missing.error().find("a"), std::string::npos));
+    expect(ne(missing.error().find("b"), std::string::npos));
+}};
 
-TEST(TemplateSelection, EmptyOrMultipleDefaultsAreProviderErrors) {
+UTest empty_or_multiple_defaults_are_provider_errors{"TemplateSelection/EmptyOrMultipleDefaultsAreProviderErrors", [] {
     std::vector<mcpp::scaffold::TemplateEntry> empty;
     auto noTemplates = mcpp::scaffold::select_template(empty, std::nullopt);
-    ASSERT_FALSE(noTemplates.has_value());
-    EXPECT_NE(noTemplates.error().find("no templates"), std::string::npos);
+    expect(fatal(!noTemplates.has_value()));
+    expect(ne(noTemplates.error().find("no templates"), std::string::npos));
 
     std::vector<mcpp::scaffold::TemplateEntry> entries{
         {"a", {.isDefault = true}},
         {"b", {.isDefault = true}},
     };
     auto duplicate = mcpp::scaffold::select_template(entries, std::nullopt);
-    ASSERT_FALSE(duplicate.has_value());
-    EXPECT_NE(duplicate.error().find("more than one default"),
-              std::string::npos);
-}
+    expect(fatal(!duplicate.has_value()));
+    expect(ne(duplicate.error().find("more than one default"), std::string::npos));
+}};
 
-TEST(ProjectName, AcceptsPortableBareAndQualifiedNames) {
+UTest accepts_portable_bare_and_qualified_names{"ProjectName/AcceptsPortableBareAndQualifiedNames", [] {
     auto bare = mcpp::scaffold::validate_project_name("hello-world");
-    ASSERT_TRUE(bare.has_value());
-    EXPECT_EQ(bare->directoryName, "hello-world");
-    EXPECT_EQ(bare->name, "hello-world");
-    EXPECT_TRUE(bare->namespace_.empty());
-    EXPECT_EQ(bare->qualifiedName, "hello-world");
+    expect(fatal(bare.has_value()));
+    expect(eq(bare->directoryName, "hello-world"));
+    expect(eq(bare->name, "hello-world"));
+    expect(bare->namespace_.empty());
+    expect(eq(bare->qualifiedName, "hello-world"));
 
     auto qualified = mcpp::scaffold::validate_project_name("acme.tools.app");
-    ASSERT_TRUE(qualified.has_value());
-    EXPECT_EQ(qualified->directoryName, "acme.tools.app");
-    EXPECT_EQ(qualified->namespace_, "acme.tools");
-    EXPECT_EQ(qualified->name, "app");
-    EXPECT_EQ(qualified->qualifiedName, "acme.tools.app");
-}
+    expect(fatal(qualified.has_value()));
+    expect(eq(qualified->directoryName, "acme.tools.app"));
+    expect(eq(qualified->namespace_, "acme.tools"));
+    expect(eq(qualified->name, "app"));
+    expect(eq(qualified->qualifiedName, "acme.tools.app"));
+}};
 
-TEST(ProjectName, RejectsPathEscapeControlsReservedNamesAndLegacyMarker) {
+UTest rejects_path_escape_controls_reserved_names_and_legacy_marker{"ProjectName/RejectsPathEscapeControlsReservedNamesAndLegacyMarker", [] {
     const std::vector<std::string> invalid{
         "", ".", "..", "/absolute", "a/b", "a\\b", "a:b", "a\"b",
         "a?b", "a*b", "a|b", "a<b", "a>b", "trail.", "trail ",
@@ -161,12 +162,12 @@ TEST(ProjectName, RejectsPathEscapeControlsReservedNamesAndLegacyMarker) {
     };
     for (auto const& name : invalid) {
         auto result = mcpp::scaffold::validate_project_name(name);
-        EXPECT_FALSE(result.has_value()) << name;
-        if (!result) EXPECT_FALSE(result.error().message.empty()) << name;
+        expect(!result.has_value()) << name;
+        if (!result) expect(!(result.error().message.empty())) << name;
     }
-}
+}};
 
-TEST(RenderTokens, ExpandsCompleteVocabularyWithoutRescanningValues) {
+UTest expands_complete_vocabulary_without_rescanning_values{"RenderTokens/ExpandsCompleteVocabularyWithoutRescanningValues", [] {
     mcpp::scaffold::RenderVars vars{
         .projectName = "app-{{template.name}}",
         .projectNamespace = "acme",
@@ -183,25 +184,23 @@ TEST(RenderTokens, ExpandsCompleteVocabularyWithoutRescanningValues) {
         "{{template.package.selector}}|{{template.package.version}}|"
         "{{template.name}}|{{self.name}}|{{self.version}}",
         vars);
-    ASSERT_TRUE(rendered.has_value()) << rendered.error().message;
-    EXPECT_EQ(*rendered,
-        "app-{{template.name}}|acme|acme.app|widgets.ui|starter|"
-        "widgets.ui.starter|2.0.0|window|widgets.ui.starter|2.0.0");
-}
+    if (auto&& failed = expect(fatal(rendered.has_value())); !failed) failed << rendered.error().message;
+    expect(eq(*rendered, "app-{{template.name}}|acme|acme.app|widgets.ui|starter|"
+        "widgets.ui.starter|2.0.0|window|widgets.ui.starter|2.0.0"));
+}};
 
-TEST(RenderTokens, RejectsUnknownOrUnterminatedTokens) {
+UTest rejects_unknown_or_unterminated_tokens{"RenderTokens/RejectsUnknownOrUnterminatedTokens", [] {
     mcpp::scaffold::RenderVars vars;
     auto unknown = mcpp::scaffold::render_tokens("{{project.typo}}", vars);
-    ASSERT_FALSE(unknown.has_value());
-    EXPECT_NE(unknown.error().message.find("project.typo"), std::string::npos);
+    expect(fatal(!unknown.has_value()));
+    expect(ne(unknown.error().message.find("project.typo"), std::string::npos));
 
     auto unterminated = mcpp::scaffold::render_tokens("{{project.name", vars);
-    ASSERT_FALSE(unterminated.has_value());
-    EXPECT_NE(unterminated.error().message.find("unterminated"),
-              std::string::npos);
-}
+    expect(fatal(!unterminated.has_value()));
+    expect(ne(unterminated.error().message.find("unterminated"), std::string::npos));
+}};
 
-TEST(ScaffoldTransaction, RollbackRemovesSiblingStagingTree) {
+UTest rollback_removes_sibling_staging_tree{"ScaffoldTransaction/RollbackRemovesSiblingStagingTree", [] {
     auto parent = std::filesystem::temp_directory_path()
         / std::format("mcpp-scaffold-rollback-{}",
                       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -209,47 +208,47 @@ TEST(ScaffoldTransaction, RollbackRemovesSiblingStagingTree) {
     std::filesystem::path stage;
     {
         auto tx = mcpp::scaffold::ScaffoldTransaction::begin(parent, "app");
-        ASSERT_TRUE(tx.has_value()) << tx.error();
+        if (auto&& failed = expect(fatal(tx.has_value())); !failed) failed << tx.error();
         stage = tx->staging_path();
         std::ofstream(stage / "partial.txt") << "partial";
-        EXPECT_TRUE(std::filesystem::exists(stage));
+        expect(std::filesystem::exists(stage));
     }
-    EXPECT_FALSE(std::filesystem::exists(stage));
-    EXPECT_FALSE(std::filesystem::exists(parent / "app"));
+    expect(!std::filesystem::exists(stage));
+    expect(!std::filesystem::exists(parent / "app"));
     std::filesystem::remove_all(parent);
-}
+}};
 
-TEST(ScaffoldTransaction, CommitIsAtomicAndRenameFailureRollsBack) {
+UTest commit_is_atomic_and_rename_failure_rolls_back{"ScaffoldTransaction/CommitIsAtomicAndRenameFailureRollsBack", [] {
     auto parent = std::filesystem::temp_directory_path()
         / std::format("mcpp-scaffold-commit-{}",
                       std::chrono::steady_clock::now().time_since_epoch().count());
     std::filesystem::create_directories(parent);
     {
         auto tx = mcpp::scaffold::ScaffoldTransaction::begin(parent, "ok");
-        ASSERT_TRUE(tx.has_value()) << tx.error();
+        if (auto&& failed = expect(fatal(tx.has_value())); !failed) failed << tx.error();
         std::ofstream(tx->staging_path() / "done.txt") << "done";
         auto committed = tx->commit();
-        ASSERT_TRUE(committed.has_value()) << committed.error();
-        EXPECT_TRUE(std::filesystem::exists(parent / "ok" / "done.txt"));
-        EXPECT_FALSE(std::filesystem::exists(tx->staging_path()));
+        if (auto&& failed = expect(fatal(committed.has_value())); !failed) failed << committed.error();
+        expect(std::filesystem::exists(parent / "ok" / "done.txt"));
+        expect(!(std::filesystem::exists(tx->staging_path())));
     }
     {
         auto tx = mcpp::scaffold::ScaffoldTransaction::begin(parent, "collision");
-        ASSERT_TRUE(tx.has_value()) << tx.error();
+        if (auto&& failed = expect(fatal(tx.has_value())); !failed) failed << tx.error();
         auto stage = tx->staging_path();
         std::ofstream(stage / "partial.txt") << "partial";
         std::filesystem::create_directories(parent / "collision");
         auto committed = tx->commit();
-        ASSERT_FALSE(committed.has_value());
-        EXPECT_TRUE(std::filesystem::exists(stage));
+        expect(fatal(!committed.has_value()));
+        expect(std::filesystem::exists(stage));
     }
     for (auto const& entry : std::filesystem::directory_iterator(parent)) {
-        EXPECT_FALSE(entry.path().filename().string().starts_with(".mcpp-new-"));
+        expect(!(entry.path().filename().string().starts_with(".mcpp-new-")));
     }
     std::filesystem::remove_all(parent);
-}
+}};
 
-TEST(ScaffoldFilesystem, AtomicRenameNeverReplacesExistingTarget) {
+UTest atomic_rename_never_replaces_existing_target{"ScaffoldFilesystem/AtomicRenameNeverReplacesExistingTarget", [] {
     auto parent = std::filesystem::temp_directory_path()
         / std::format("mcpp-scaffold-rename-{}",
                       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -262,21 +261,21 @@ TEST(ScaffoldFilesystem, AtomicRenameNeverReplacesExistingTarget) {
 
     auto collision = mcpplibs::os::fs::place(
         source, target);
-    ASSERT_FALSE(collision.has_value());
-    EXPECT_TRUE(std::filesystem::exists(source / "payload.txt"));
-    EXPECT_TRUE(std::filesystem::exists(target / "owner.txt"));
+    expect(fatal(!collision.has_value()));
+    expect(std::filesystem::exists(source / "payload.txt"));
+    expect(std::filesystem::exists(target / "owner.txt"));
 
     std::filesystem::remove_all(target);
     auto committed = mcpplibs::os::fs::place(
         source, target);
-    ASSERT_TRUE(committed.has_value()) << committed.error().message();
-    EXPECT_FALSE(std::filesystem::exists(source));
-    EXPECT_TRUE(std::filesystem::exists(target / "payload.txt"));
+    if (auto&& failed = expect(fatal(committed.has_value())); !failed) failed << committed.error().message();
+    expect(!std::filesystem::exists(source));
+    expect(std::filesystem::exists(target / "payload.txt"));
     std::filesystem::remove_all(parent);
-}
+}};
 
 #if !defined(_WIN32)
-TEST(ScaffoldTransaction, ReadWriteAndCopyFailuresRollbackCompletely) {
+UTest read_write_and_copy_failures_rollback_completely{"ScaffoldTransaction/ReadWriteAndCopyFailuresRollbackCompletely", [] {
     namespace fs = std::filesystem;
     auto parent = fs::temp_directory_path()
         / std::format("mcpp-scaffold-iofail-{}",
@@ -295,15 +294,15 @@ TEST(ScaffoldTransaction, ReadWriteAndCopyFailuresRollbackCompletely) {
     fs::path readStage;
     {
         auto tx = mcpp::scaffold::ScaffoldTransaction::begin(parent, "read-app");
-        ASSERT_TRUE(tx.has_value()) << tx.error();
+        if (auto&& failed = expect(fatal(tx.has_value())); !failed) failed << tx.error();
         readStage = tx->staging_path();
         auto result = mcpp::scaffold::instantiate(
             readProvider, readStage, vars);
-        EXPECT_FALSE(result.has_value());
+        expect(!result.has_value());
         fs::permissions(unreadable, fs::perms::owner_read);
     }
-    EXPECT_FALSE(fs::exists(readStage));
-    EXPECT_FALSE(fs::exists(parent / "read-app"));
+    expect(!fs::exists(readStage));
+    expect(!fs::exists(parent / "read-app"));
 
     auto exercise_locked_destination = [&](std::string_view caseName,
                                             std::string_view sourceName) {
@@ -314,31 +313,31 @@ TEST(ScaffoldTransaction, ReadWriteAndCopyFailuresRollbackCompletely) {
         {
             auto tx = mcpp::scaffold::ScaffoldTransaction::begin(
                 parent, std::format("{}-app", caseName));
-            EXPECT_TRUE(tx.has_value());
+            expect(tx.has_value());
             if (!tx) return;
             stage = tx->staging_path();
             fs::create_directories(stage / "locked");
             fs::permissions(stage / "locked",
                             fs::perms::owner_read | fs::perms::owner_exec);
             auto result = mcpp::scaffold::instantiate(provider, stage, vars);
-            EXPECT_FALSE(result.has_value()) << caseName;
+            expect(!result.has_value()) << caseName;
             fs::permissions(stage / "locked", fs::perms::owner_all);
         }
-        EXPECT_FALSE(fs::exists(stage)) << caseName;
-        EXPECT_FALSE(fs::exists(parent / std::format("{}-app", caseName)))
+        expect(!fs::exists(stage)) << caseName;
+        expect(!(fs::exists(parent / std::format("{}-app", caseName))))
             << caseName;
     };
     exercise_locked_destination("write", "mcpp.toml.in");
     exercise_locked_destination("copy", "data.bin");
 
     for (auto const& entry : fs::directory_iterator(parent)) {
-        EXPECT_FALSE(entry.path().filename().string().starts_with(".mcpp-new-"));
+        expect(!(entry.path().filename().string().starts_with(".mcpp-new-")));
     }
     fs::remove_all(parent);
-}
+}};
 #endif
 
-TEST(SelfDependencyInjection, ComparesCanonicalPackageIdentity) {
+UTest compares_canonical_package_identity{"SelfDependencyInjection/ComparesCanonicalPackageIdentity", [] {
     auto root = std::filesystem::temp_directory_path()
         / std::format("mcpp-inject-{}",
                       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -362,7 +361,7 @@ widget = "1.0.0"
     };
     auto injected = mcpp::scaffold::inject_self_dependency(
         manifest, vars, {"gui"});
-    ASSERT_TRUE(injected.has_value()) << injected.error();
+    if (auto&& failed = expect(fatal(injected.has_value())); !failed) failed << injected.error();
     std::string text;
     {
         std::ifstream is(manifest);
@@ -370,22 +369,20 @@ widget = "1.0.0"
         ss << is.rdbuf();
         text = ss.str();
     }
-    EXPECT_NE(text.find("[dependencies.acme]\nwidget = { version = \"2.0.0\", features = [\"gui\"] }"),
-              std::string::npos);
-    EXPECT_NE(text.find("[dependencies.compat]\nwidget = \"1.0.0\""),
-              std::string::npos);
+    expect(ne(text.find("[dependencies.acme]\nwidget = { version = \"2.0.0\", features = [\"gui\"] }"), std::string::npos));
+    expect(ne(text.find("[dependencies.compat]\nwidget = \"1.0.0\""), std::string::npos));
 
     auto again = mcpp::scaffold::inject_self_dependency(
         manifest, vars, {"gui"});
-    ASSERT_TRUE(again.has_value()) << again.error();
+    if (auto&& failed = expect(fatal(again.has_value())); !failed) failed << again.error();
     {
         std::ifstream is(manifest);
         std::stringstream ss;
         ss << is.rdbuf();
-        EXPECT_EQ(ss.str(), text);
+        expect(eq(ss.str(), text));
     }
     std::filesystem::remove_all(root);
-}
+}};
 
 } // namespace
 
@@ -400,7 +397,7 @@ widget = "1.0.0"
 // includes <stdio.h>. Measured: the injected dependency failed to compile
 // before the generated project was reached, in a project whose manifest
 // declares no dependencies at all.
-TEST(ScaffoldTemplate, InjectSelfCanBeDeclined) {
+UTest inject_self_can_be_declined{"ScaffoldTemplate/InjectSelfCanBeDeclined", [] {
     auto dir = std::filesystem::temp_directory_path() / "mcpp_tmpl_noself";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -409,15 +406,15 @@ TEST(ScaffoldTemplate, InjectSelfCanBeDeclined) {
         f << "[template]\ndescription = \"d\"\n[template.inject]\nself = false\n";
     }
     auto meta = mcpp::scaffold::load_meta(dir);
-    ASSERT_TRUE(meta.has_value()) << (meta ? "" : meta.error());
-    EXPECT_FALSE(meta->injectSelf);
+    if (auto&& failed = expect(fatal(meta.has_value())); !failed) failed << (meta ? "" : meta.error());
+    expect(!meta->injectSelf);
     std::filesystem::remove_all(dir);
-}
+}};
 
 // The default must stay ON: every template that does not say otherwise relies
 // on the injection, and a silent flip would leave them all without their own
 // package.
-TEST(ScaffoldTemplate, InjectSelfDefaultsToOn) {
+UTest inject_self_defaults_to_on{"ScaffoldTemplate/InjectSelfDefaultsToOn", [] {
     auto dir = std::filesystem::temp_directory_path() / "mcpp_tmpl_self_default";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -426,13 +423,13 @@ TEST(ScaffoldTemplate, InjectSelfDefaultsToOn) {
         f << "[template]\ndescription = \"d\"\n";
     }
     auto meta = mcpp::scaffold::load_meta(dir);
-    ASSERT_TRUE(meta.has_value()) << (meta ? "" : meta.error());
-    EXPECT_TRUE(meta->injectSelf);
+    if (auto&& failed = expect(fatal(meta.has_value())); !failed) failed << (meta ? "" : meta.error());
+    expect(bool(meta->injectSelf));
     std::filesystem::remove_all(dir);
-}
+}};
 
 // The table form still carries features, and must not be read as "declined".
-TEST(ScaffoldTemplate, InjectSelfTableFormStillInjects) {
+UTest inject_self_table_form_still_injects{"ScaffoldTemplate/InjectSelfTableFormStillInjects", [] {
     auto dir = std::filesystem::temp_directory_path() / "mcpp_tmpl_self_table";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
@@ -442,9 +439,9 @@ TEST(ScaffoldTemplate, InjectSelfTableFormStillInjects) {
              "[template.inject]\nself = { features = [\"x\"] }\n";
     }
     auto meta = mcpp::scaffold::load_meta(dir);
-    ASSERT_TRUE(meta.has_value()) << (meta ? "" : meta.error());
-    EXPECT_TRUE(meta->injectSelf);
-    ASSERT_EQ(meta->injectSelfFeatures.size(), 1u);
-    EXPECT_EQ(meta->injectSelfFeatures[0], "x");
+    if (auto&& failed = expect(fatal(meta.has_value())); !failed) failed << (meta ? "" : meta.error());
+    expect(bool(meta->injectSelf));
+    expect(fatal(eq(meta->injectSelfFeatures.size(), 1u)));
+    expect(eq(meta->injectSelfFeatures[0], "x"));
     std::filesystem::remove_all(dir);
-}
+}};

@@ -19,7 +19,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # delegator lives in mcpp's own tree and can simply point at what was built.
 if [ -z "${MCPP:-}" ]; then
   MCPP="$(bash "$REPO/.github/tools/newest_artifact.sh" "$REPO" mcpp 2>/dev/null || true)"
-  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 0; }
+  [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 77; }
   export MCPP
 fi
 exec bash "$REPO/bench/tests/harness.sh"

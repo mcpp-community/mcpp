@@ -27,6 +27,7 @@ import mcpp.toolchain.apple_sdk;
 import mcpp.toolchain.model;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 import mcpp.ui;
 
 export namespace mcpp::build {
@@ -65,6 +66,7 @@ namespace cfgpred {
 // `requires = ["mcpp:compiler=llvm"]` permanently unsatisfiable.
 struct Ctx {
     std::string os, arch, family, env, triple;
+    std::string objectFormat;   // the row's container, `cfg(object-format = ...)`
     // The selected platform (SPEC-013 §3): the platform's name (`openkal`)
     // and its package's (`openkal-platform`); `cfg(platform = ...)` matches
     // either. Empty when the target uses none.
@@ -76,6 +78,14 @@ struct Ctx {
     // ROCm device code in one artifact requires, so this layer holds a set
     // rather than the single answer the other five hold.
     std::vector<std::string> accelerators;
+    // THE INTERFACES OF THE KERNEL-ABI LAYER (`cfg(interface = "<name>")`): the
+    // resolved provider's `[kernel-abi] provides-interfaces`, compared by
+    // membership as `accelerator` is. A provider that states none provides
+    // every one; a graph without the layer provides none. A package selects
+    // its sources by what the implementation beneath it provides, and names
+    // no implementation.
+    std::vector<std::string> interfaces;
+    bool interfacesStated = false;
 
     std::string_view layer_value(std::string_view k) const {
         if (k == "compiler")         return compiler;
@@ -127,6 +137,10 @@ struct Ctx {
             if (v == "none") return accelerators.empty();
             return std::ranges::find(accelerators, v) != accelerators.end();
         }
+        if (k == "interface") {
+            if (kernelAbi.empty()) return false;
+            return !interfacesStated || std::ranges::find(interfaces, v) != interfaces.end();
+        }
         return layer_value(k) == v;
     }
 };
@@ -152,6 +166,7 @@ inline Ctx context_for(std::string_view targetTriple,
         c.arch   = t->arch;
         c.env    = t->env;
         c.family = t->family();
+        c.objectFormat = std::string(triple::object_format_word(t->object_format()));
         // Canonical spelling on BOTH sides of the later comparison, so an
         // `x86_64-w64-mingw32` key and an `x86_64-windows-gnu` build agree.
         c.triple = t->str();
@@ -206,7 +221,7 @@ using mcpp::manifest::cfg::kCfgTripleKeys;
 // either; only the schedule question (`uses_layer`) distinguishes them.
 using mcpp::manifest::cfg::kCfgEarlyLayerKeys;
 using mcpp::manifest::cfg::kCfgLayerKeys;
-using mcpp::manifest::cfg::kCfgBarewords;
+using mcpp::manifest::cfg::kCfgFamilyBareword;
 
 // Answerable before resolution. Its value comes from the build's own accel.
 inline bool is_cfg_early_layer_key(std::string_view k) {
@@ -267,11 +282,10 @@ struct Parser {
     }
     bool match_alias(const std::string& a) {
         if (seenWords) seenWords->push_back(a);
-        if (a == "windows") return c.os == "windows";
-        if (a == "linux")   return c.os == "linux";
-        if (a == "macos")   return c.os == "macos";
-        if (a == "unix")    return c.family == "unix";
-        return false;  // unknown bareword → no match, and `seenWords` reports it
+        if (a == kCfgFamilyBareword) return c.family == a;
+        // Any other word names a system: `os = "<word>"`. A word no row names
+        // matches nothing, and `seenWords` reports it.
+        return mcpp::manifest::cfg::is_bareword(a) && c.os == a;
     }
     bool match_kv(const std::string& k, const std::string& v) {
         if (seenKeys) seenKeys->push_back(k);
@@ -280,6 +294,7 @@ struct Parser {
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
         if (k == "env")    return c.env == v;
+        if (k == "object-format") return c.objectFormat == v;
         if (k == "platform")
             return !c.platform.empty() && (c.platform == v || c.platformPackage == v);
         // `accelerator` is answerable whenever the context carries the build's
@@ -331,10 +346,9 @@ inline bool matches(const std::string& predicate, const Ctx& c) {
         return p.expr();
     }
     // Bare OS/family alias sugar: `[target.linux]` ≡ `[target.'cfg(linux)']`.
-    // These aliases are never valid triples (no dash), so there is no ambiguity
+    // A bareword is never a valid triple (no dash), so there is no ambiguity
     // with the exact-triple namespace. Evaluated as the cfg bareword.
-    if (predicate == "windows" || predicate == "linux" ||
-        predicate == "macos"   || predicate == "unix") {
+    if (mcpp::manifest::cfg::is_bareword(predicate)) {
         Parser p{ predicate, 0, c };
         return p.expr();
     }
@@ -423,8 +437,7 @@ inline std::vector<std::string> os_only_platforms(const std::string& predicate) 
     // `Parser::expr()` in `matches()` — so both are eligible here. Anything
     // else (an exact triple, or the unparsed escape hatch) names neither an
     // OS nor a platform on its own.
-    static constexpr std::string_view kBareAliases[] = { "linux", "macos", "unix", "windows" };
-    if (!wrapped && std::ranges::find(kBareAliases, predicate) == std::end(kBareAliases))
+    if (!wrapped && !mcpp::manifest::cfg::is_bareword(predicate))
         return {};
     std::string_view inner = wrapped ? text.substr(4, text.size() - 5) : text;
 
@@ -473,6 +486,20 @@ inline bool uses_layer(const std::string& predicate) {
                                [](auto const& k) { return is_cfg_late_layer_key(k); });
 }
 
+// The systems the rows name (built-in and defined), and the family word.
+inline std::vector<std::string> system_barewords() {
+    std::set<std::string> systems;
+    for (auto const* r : mcpp::toolchain::target::rows())
+        if (!r->os.empty()) systems.emplace(r->os);
+    std::vector<std::string> out{ std::string(kCfgFamilyBareword) };
+    out.insert(out.end(), systems.begin(), systems.end());
+    return out;
+}
+inline bool known_bareword(std::string_view w) {
+    if (w == kCfgFamilyBareword) return true;
+    return std::ranges::any_of(mcpp::toolchain::target::rows(), [&](auto const* r) { return r->os == w; });
+}
+
 // Tokens outside the vocabulary. A predicate naming one of these used to
 // evaluate to false in silence, which is indistinguishable from a predicate
 // that correctly did not apply — so `[target.'cfg(c-abi = "musl")'.build]` was
@@ -489,7 +516,7 @@ inline std::vector<std::string> unknown_tokens(const std::string& predicate) {
             && !is_cfg_layer_key(k))
             add(k);
     for (auto const& w : scan.barewords)
-        if (std::ranges::find(kCfgBarewords, w) == std::end(kCfgBarewords))
+        if (!known_bareword(w))
             add(w);
     return out;
 }
@@ -499,8 +526,9 @@ inline std::string vocabulary_sentence() {
     std::string keys, words;
     for (auto k : kCfgTripleKeys) { if (!keys.empty()) keys += ", "; keys += k; }
     for (auto k : kCfgLayerKeys)  { if (!keys.empty()) keys += ", "; keys += k; }
-    for (auto w : kCfgBarewords)  { if (!words.empty()) words += ", "; words += w; }
-    return std::format("Supported keys: {}. Supported barewords: {}.", keys, words);
+    for (auto const& w : system_barewords()) { if (!words.empty()) words += ", "; words += w; }
+    return std::format("Supported keys: {}. Supported barewords: {}, and the system of a row a platform "
+                       "defines.", keys, words);
 }
 
 }  // namespace cfgpred
@@ -534,7 +562,9 @@ std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
     // outside the language keep their raw spelling.
     auto triple = tc.targetTriple.empty() ? std::string{"unknown"} : tc.targetTriple;
     if (auto t = mcpp::toolchain::triple::parse(triple)) triple = t->str();
-    return root / "target" / triple / fp.hex;
+    // Named by the configuration's lineage, which the commands compiled there
+    // name (2026-11-12 §17, W1); the evolving rest is recorded inside.
+    return root / "target" / triple / fp.lineage;
 }
 
 
@@ -570,7 +600,7 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
         s += flag;
     }
     s += " opt=";   s += root.buildConfig.optLevel;
-    s += " debug="; s += root.buildConfig.debug ? "1" : "0";
+    s += " debug="; s += root.buildConfig.debug ? (root.buildConfig.debugLines ? "lines" : "1") : "0";
     s += " lto=";   s += root.buildConfig.lto   ? "1" : "0";
     s += " strip="; s += root.buildConfig.strip ? "1" : "0";
     // Only when on: a profile that has neither keeps the identity it had.

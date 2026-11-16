@@ -59,6 +59,11 @@ echo "MCPP_HOME: $MCPP_HOME"
 
 CAPS=()
 OS="$(uname -s)"
+# x86_64-host: the machine's architecture, for a script that holds a provider
+# whose `hosts` name one (the cross entry of aarch64-linux-gnu is published for
+# linux-x86_64). A script that cannot hold anything elsewhere is excluded by
+# this token, which the run reports; it does not pass by printing a line.
+case "$(uname -m)" in x86_64|amd64) CAPS+=(x86_64-host) ;; esac
 
 case "$OS" in
     Linux)
@@ -274,7 +279,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 KNOWN_CAPS=(android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
             mingw mingw-cross mingw-host-headers msvc musl nasm no-msvc pack patchelf python3
             qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
-            xlings-msvc)
+            x86_64-host xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
@@ -417,11 +422,12 @@ SHARD_POS=0
 # CI record). Round-robin balances counts, not time: measured on 2026-10-01 the
 # two Windows shards differed by 3.6 minutes on average, and about fifteen tests
 # of over thirty seconds took 58-64 percent of a shard. E2E_TIMINGS names a
-# table of `<test>\t<milliseconds>` lines (tests/e2e/timings/<host>.tsv); the
-# tests are assigned longest first, each to the shard with the least time so
-# far, and a test the table does not know counts as the table's median. The
-# assignment depends only on the file list and the table, both in the
-# repository, so a shard's membership is reproducible from the commit, and it
+# table of `<test>\t<milliseconds>` lines (the e2e-timings artifact of a CI
+# run; CI itself divides by mtest's history, E2E_MTEST above); the tests are
+# assigned longest first, each to the shard with the least time so far, and a
+# test the table does not know counts as the table's median. The assignment
+# depends only on the file list and the table, so a shard's membership is
+# reproducible from them, and it
 # changes which shard runs a test, never whether one does.
 SHARD_MEMBERS=""
 if (( SHARD_TOTAL > 1 )) && [[ -n "${E2E_TIMINGS:-}" ]]; then
@@ -468,8 +474,8 @@ report() {
 }
 if [[ -n "${E2E_REPORT:-}" ]]; then : > "$E2E_REPORT"; fi
 
-# E2E_LIST=1 prints the tests this invocation would run (after E2E_ONLY and the
-# shard, before the capability check) and exits, so a shard's membership can be
+# E2E_LIST=1 prints the tests this invocation would run (after E2E_ONLY,
+# E2E_EXCLUDE and the shard, before the capability check) and exits, so a shard's membership can be
 # read without running it.
 if [[ "${E2E_LIST:-}" == "1" ]]; then
     for test in "$HERE"/[0-9]*.sh; do
@@ -478,16 +484,121 @@ if [[ "${E2E_LIST:-}" == "1" ]]; then
             # shellcheck disable=SC2053 -- glob match is the point
             [[ "$name" == $E2E_ONLY ]] || continue
         fi
+        if [[ -n "${E2E_EXCLUDE:-}" ]]; then
+            # shellcheck disable=SC2053 -- glob match is the point
+            [[ "$name" == $E2E_EXCLUDE ]] && continue
+        fi
         if (( SHARD_TOTAL > 1 )); then in_shard "$name" || continue; fi
         echo "$name"
     done
     exit 0
 fi
 
+# BY MTEST (design 2026-11-08 W8) when E2E_MTEST names the mtest program: the
+# tests are the programs of tests/e2e/mtest.toml, their `# requires:` tags and
+# `# resources:` resources. The capabilities this machine lacks exclude their
+# tests, E2E_SHARD selects a part by the store's history (mtest's `--shard`, the
+# longest first to the part with the least expected time) in place of the
+# timing table, and E2E_JOBS runs that many at once. E2E_SET names a set of
+# mtest (`pr`: the tests the change affects, by the store's coverage map, with
+# the smoke and regression sets; a test the map does not know is affected).
+# E2E_ONLY and E2E_EXCLUDE select as below. Each result is reported as the
+# serial run reports it.
+# The selection common to a run and its listings, in MTEST_SELECTION: this
+# machine's capabilities, E2E_ONLY and E2E_EXCLUDE.
+MTEST_SELECTION=()
+for cap in "${KNOWN_CAPS[@]}"; do
+    [[ " ${CAPS[*]} " == *" $cap "* ]] || MTEST_SELECTION+=(--exclude-tag "requires:$cap")
+done
+[[ -n "${E2E_ONLY:-}" ]] && MTEST_SELECTION+=(--program "$E2E_ONLY")
+[[ -n "${E2E_EXCLUDE:-}" ]] && MTEST_SELECTION+=(--exclude-program "$E2E_EXCLUDE")
+run_by_mtest() {
+    local args=(run --jobs "${E2E_JOBS:-1}" --timeout "${E2E_TEST_TIMEOUT}s" --report-json "$1"
+                ${MTEST_SELECTION[@]+"${MTEST_SELECTION[@]}"})
+    (( SHARD_TOTAL > 1 )) && args+=(--shard "$SHARD_IDX/$SHARD_TOTAL")
+    [[ -n "${E2E_SET:-}" ]] && args+=(--set "$E2E_SET")
+    # E2E_COVERAGE: the run measures the coverage map ([coverage] of mtest.toml).
+    [[ -n "${E2E_COVERAGE:-}" ]] && args+=(--coverage)
+    # The workflow run is the group its runs are reported together by
+    # (`mtest ci report`, ci.yml's test-report job).
+    [[ -n "${GITHUB_RUN_ID:-}" ]] && args+=(--group "$GITHUB_RUN_ID")
+    (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" "${args[@]}")
+}
+# The programs of a listing, one per line; the arguments narrow it.
+mtest_programs() {
+    (cd "$HERE" && MCPP="$MCPP" "$E2E_MTEST" list --json ${MTEST_SELECTION[@]+"${MTEST_SELECTION[@]}"} "$@") \
+      | "$py" -c 'import json, sys
+for u in json.load(sys.stdin).get("units", []): print(u["program"])' | tr -d '\r'
+}
+if [[ -n "${E2E_MTEST:-}" ]]; then
+    py=python3; command -v python3 >/dev/null 2>&1 || py=python
+    record="$(mktemp)"
+    run_by_mtest "$record" || true
+    # One `<status> <ms> <name>` line per case of the run's record.
+    results="$("$py" - "$record" <<'PY'
+import json, sys
+try:
+    run = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(0)
+for c in run.get("cases", []):
+    status = {"pass": "pass", "flaky": "pass", "timeout": "timeout", "skip": "skip"}.get(c.get("status"), "fail")
+    # The fourth word on: why a skipped script did not apply here (its `SKIP:` line).
+    print(status, int(c.get("ms", 0)), c.get("program", c.get("id", "")), c.get("reason", ""))
+PY
+)"
+    rm -f "$record"
+    MTEST_REPORTED=0
+    while read -r status ms name why; do
+        name="${name%$'\r'}"   # Windows' Python ends a printed line with CR LF
+        why="${why%$'\r'}"
+        [[ -n "$name" ]] || continue
+        ((++MTEST_REPORTED))
+        # A script that skipped itself ran nothing: it is reported as a skip with
+        # its reason, which the coverage check reads as "did not run here".
+        if [[ "$status" == skip ]]; then
+            ((SKIP++)); report skip "$name" "$ms" "skipped itself: ${why:-no reason given}"
+            continue
+        fi
+        TIMINGS+=("$ms $name")
+        case "$status" in
+            pass) ((PASS++)); report pass "$name" "$ms" "" ;;
+            timeout) ((FAIL++)); FAILED_TESTS+=("$name (TIMEOUT)"); TIMED_OUT_TESTS+=("$name")
+                     report timeout "$name" "$ms" "exceeded ${E2E_TEST_TIMEOUT}s" ;;
+            *) ((FAIL++)); FAILED_TESTS+=("$name"); report fail "$name" "$ms" "failed" ;;
+        esac
+    done <<<"$results"
+    # A SET LEAVES OUT WHAT THE CHANGE DOES NOT AFFECT, AND THE REPORT SAYS SO.
+    # The coverage check (rule R5) reads a test no report ran as uncovered; one
+    # the set left out is `unaffected`: the full runs of main cover it. Every
+    # shard lists the same programs, the shard being the set's own division.
+    if [[ -n "${E2E_SET:-}" && -n "${E2E_REPORT:-}" ]]; then
+        inSet=" $(mtest_programs --set "$E2E_SET" | tr '\n' ' ') "
+        while read -r name; do
+            [[ -n "$name" && "$inSet" != *" $name "* ]] || continue
+            report unaffected "$name" 0 "not in the set '$E2E_SET'"
+        done < <(mtest_programs)
+    fi
+    # A run the set gave nothing ran nothing; any other empty run is mtest's
+    # failure. A script that skipped itself is a case mtest reported: a part
+    # whose only script does not apply here is not an empty run.
+    if [[ $MTEST_REPORTED -eq 0 ]]; then
+        part=(); (( SHARD_TOTAL > 1 )) && part=(--shard "$SHARD_IDX/$SHARD_TOTAL")
+        if [[ -n "${E2E_SET:-}" ]] \
+           && [[ -z "$(mtest_programs --set "$E2E_SET" ${part[@]+"${part[@]}"})" ]]; then
+            echo "The set '$E2E_SET' gives this run no test."
+        else
+            echo "FATAL: mtest reported no case (E2E_MTEST=$E2E_MTEST)"
+            exit 1
+        fi
+    fi
+fi
+
 # Optional name filter: E2E_ONLY="<glob>" runs just the matching tests.
 # Used by the workflows that own ONE subject (see ci-windows-msvc-xlings.yml)
 # so the job name and the thing it runs cannot drift apart.
 for test in "$HERE"/[0-9]*.sh; do
+    [[ -z "${E2E_MTEST:-}" ]] || break
     if [[ -n "${E2E_ONLY:-}" ]]; then
         # shellcheck disable=SC2053 — glob match is the point
         [[ "$(basename "$test")" == $E2E_ONLY ]] || continue
@@ -495,6 +606,15 @@ for test in "$HERE"/[0-9]*.sh; do
     name="$(basename "$test")"
     if (( SHARD_TOTAL > 1 )); then
         in_shard "$name" || continue
+    fi
+    if [[ -n "${E2E_EXCLUDE:-}" ]]; then
+        # shellcheck disable=SC2053 -- glob match is the point
+        if [[ "$name" == $E2E_EXCLUDE ]]; then
+            echo "SKIP: $name (owned by a dedicated workflow step)"
+            ((SKIP++))
+            report skip "$name" 0 "owned by a dedicated workflow step"
+            continue
+        fi
     fi
     echo
     missing_cap="$(check_requires "$test")"
@@ -519,6 +639,12 @@ for test in "$HERE"/[0-9]*.sh; do
         echo "PASS: $name (${_dur})"
         ((PASS++))
         report pass "$name" "$_dur_ms" ""
+    elif [[ $rc -eq 77 ]]; then
+        # The script's own word for "nothing to hold on this machine" (the
+        # `skip_exit` of tests/e2e/mtest.toml): a skip, not a pass.
+        echo "SKIP: $name (skipped itself)"
+        ((SKIP++))
+        report skip "$name" "$_dur_ms" "skipped itself"
     elif [[ $rc -eq 124 ]]; then
         report timeout "$name" "$_dur_ms" "exceeded ${E2E_TEST_TIMEOUT}s"
         # GNU timeout: 124 = killed after deadline (TERM); 137 = SIGKILL after grace.

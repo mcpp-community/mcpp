@@ -7,10 +7,6 @@
 // This module is a LEAF dependency: it only imports `std` and
 // `mcpp.pm.compat`. It must NOT import mcpp.config or any other mcpp module.
 
-module;
-#include <cstdio>      // stderr
-#include <cstdlib>
-
 export module mcpp.provider.xlings;
 
 import std;
@@ -26,7 +22,7 @@ import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
 import mcpp.home;
 import mcpp.xpkg_version;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpplibs.os.fs;
 
 export namespace mcpp::provider::xlings {
@@ -165,7 +161,15 @@ namespace pinned {
     // are proven by its registrations; `--home` selects one run's home; and a
     // hook in a project's store finds `xlings` in its bin directory, which
     // `gcc.libstdcxx` (an `xim:gcc` edge) needs.
-    inline constexpr std::string_view kXlingsVersion   = "2026.10.26.1";
+    //
+    // Fourteenth, at 2026.11.16.1 (openxlings/xlings#716). On Windows a SubOS
+    // description and the other state files are replaced while another
+    // process reads them (bounded retry on a sharing conflict, POSIX rename
+    // semantics where offered); a concurrent install failed with "Failed to
+    // write file: ...\.xlings.json" (xlings#715, measured in mcpp's Windows
+    // e2e). A shim starts its program without cmd.exe, so an argument holding
+    // `"`, `&`, `%` or `^` reaches it whole.
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.16.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -423,6 +427,11 @@ std::vector<InvocationVar> invocation_env(const Env& env);
 // The runtime the home's `abi` link selects (`xlings config --runtime`).
 void select_runtime(const Env& env, std::string_view runtimeId);
 
+// Where the state an install writes lives, every link resolved: the home's
+// `subos`, whose environment an install for a project saves as well
+// (Provider::state_dir).
+std::filesystem::path state_dir(const Env& env);
+
 // Build full xlings interface command.
 // <prefix> interface <capability> --args '<argsJson>' 2>/dev/null
 std::string build_interface_command(const Env& env,
@@ -508,17 +517,29 @@ public:
         for (const auto& f : progress.files) {
             auto [it, added] = files_.try_emplace(f.name);
             auto& state = it->second;
-            if (added || f.sourceAttempt != state.attempt || f.downloadedBytes > state.bytes)
+            const bool inactive = f.finished || !f.started;
+            // Queued files appear in the batch before obtaining a download
+            // slot. Their active budget begins when they start, even before
+            // the first source attempt or byte has been reported.
+            if (added || (state.finished && !inactive)
+                || f.sourceAttempt != state.attempt || f.downloadedBytes > state.bytes)
                 state.progress = now;
             state.bytes = f.downloadedBytes;
             state.attempt = f.sourceAttempt;
-            state.finished = f.finished || !f.started;
+            state.finished = inactive;
         }
     }
+    std::string failure_reason(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
+        for (const auto& [name, state] : files_) {
+            if (!state.finished && now - state.progress >= idle_)
+                return std::format("download '{}' made no byte progress or source change for {}s (attempt {})",
+                    name, std::chrono::duration_cast<std::chrono::seconds>(now - state.progress).count(),
+                    state.attempt);
+        }
+        return {};
+    }
     bool expired(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
-        return std::ranges::any_of(files_, [&](const auto& f) {
-            return !f.second.finished && now - f.second.progress >= idle_;
-        });
+        return !failure_reason(now).empty();
     }
 };
 
@@ -534,9 +555,14 @@ public:
         : downloads_(idle), started_(start), preparation_(preparation) {}
     void observe(std::string_view line,
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    std::string failure_reason(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
+        if (auto reason = downloads_.failure_reason(now); !reason.empty()) return reason;
+        if (!downloadSeen_ && !localWork_ && now - started_ >= preparation_)
+            return "provider preparation made no download or local-work progress";
+        return {};
+    }
     bool expired(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const {
-        return downloads_.expired(now)
-            || (!downloadSeen_ && !localWork_ && now - started_ >= preparation_);
+        return !failure_reason(now).empty();
     }
 };
 

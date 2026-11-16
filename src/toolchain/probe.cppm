@@ -277,8 +277,18 @@ std::expected<std::string, DetectError> run_capture(const std::vector<std::strin
         return std::unexpected(DetectError{std::format("failed to execute: {}", cmd)});
     }
     if (r.exit_code != 0) {
+        // With its errors, the query's last line says why: a compiler that
+        // did not start ("No such file or directory") reads otherwise as one
+        // that answered nothing.
+        std::string why;
+        if (withErrors) {
+            auto out = trim_line(r.output);
+            if (auto nl = out.find_last_of('\n'); nl != std::string::npos) out.erase(0, nl + 1);
+            if (out.size() > 300) out.resize(300);
+            if (!out.empty()) why = ": " + out;
+        }
         return std::unexpected(DetectError{
-            std::format("'{}' exited with status {}", cmd, r.exit_code)});
+            std::format("'{}' exited with status {}{}", cmd, r.exit_code, why)});
     }
     return r.output;
 }
@@ -406,7 +416,9 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
     // function had put its directory on the link dirs. The compiler's own
     // needs are `compilerRuntimeDirs`, which this does not touch and which
     // still gets them.
-    if (auto tt = triple::parse(targetTriple); tt && tt->has_own_sysroot())
+    // Nor a target whose C library a platform describes (E1): these are the
+    // payload's directories for its own host.
+    if (auto tt = triple::parse(targetTriple); tt && (tt->has_own_sysroot() || tt->c_library_by_platform()))
         return dirs;
 
     auto root = compilerBin.parent_path().parent_path();

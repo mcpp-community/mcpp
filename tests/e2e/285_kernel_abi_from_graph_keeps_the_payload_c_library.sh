@@ -106,7 +106,7 @@ esac
 case "$out" in
   *"c-abi"*"graph"*)
     echo "SKIP: the C library came from the graph too — not the shape under test"
-    exit 0 ;;
+    exit 77 ;;
 esac
 
 if [ "$rc" != 0 ]; then

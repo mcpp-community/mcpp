@@ -20,7 +20,7 @@ import mcpp.targetside;
 import mcpp.build.version_floor;
 import mcpp.toolchain.platform;
 import mcpp.run;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.source_kind;
@@ -42,6 +42,8 @@ import mcpp.toolchain.stdmod;
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_select;
 import mcpp.toolchain.base;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
@@ -150,6 +152,11 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // On an ordinary edge the library is what the edge means, and the
         // field is not read.
         bool buildTable = false;
+        // `devTable`: the declaration is in a `[dev-dependencies]` table of the
+        // root or a selected member. The dependency serves the consumer's
+        // tests: its usage reaches the test units (`PackageRoot::testBuild`),
+        // not the consumer's own sources.
+        bool devTable = false;
         bool wantsLibrary = false;
         bool reexport = false;
         // `embed = true` and its `exclude` (design 2026-11-02 §14.1): the
@@ -211,6 +218,8 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // selected members that disagree about one dependency are refused,
         // since neither outranks the other.
         bool        fromSelectedMember = false;
+        // The root declared it with `override = true` (T2); mcpp.lock says so.
+        bool        overridden = false;
         // Reached ONLY through [dev-dependencies]. mcpp.lock excludes these:
         // dev-deps are resolved under `mcpp test` and not under `mcpp build`, so
         // recording them makes a VCS-committed file depend on which command ran
@@ -223,6 +232,9 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // A variant's patches, as its edge stated them (absolute paths), for
         // the lock (design 2026-11-02 §14.1).
         std::vector<std::string> patches;
+        // `constraint`, by who asked: a request made by a version a merge has
+        // since replaced is withdrawn with that version (supersededRequesters).
+        std::vector<std::pair<std::string, std::string>> constraintsBy;
     };
 
     struct WorkItem {
@@ -245,6 +257,9 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // inherited, unlike `buildOnly`: it is the table of this one
         // declaration, which is what an edge records (DependencyEdge).
         bool                                 fromBuildTable = false;
+        // The root's override answered this request (T2): its source is the
+        // root's, and the platform's version group does not bind it.
+        bool                                 overridden = false;
     };
 
     struct DeclaringManifest {
@@ -289,6 +304,26 @@ struct BuildProgramBinary {
 // Not copied: copying this by value would copy every dependency-graph and
 // plan structure prepare_build ever builds, silently, at whichever call
 // happened to pass it by value instead of by reference.
+// WHICH ROW AND WHICH PROVIDER A REQUEST WAS GIVEN (SPEC-016 §4), as the report,
+// the machine output, the lock and `mcpp why target` state it.
+struct TargetChoice {
+    std::string request;      // as written: `--target`, `[build] target`, the default
+    std::string identity;     // the row taken
+    std::string provider;     // its provider; empty when no provider serves it
+    int         priority = 0;
+    bool        fallback = false;   // the first candidate was not available here
+    std::string why;          // why the first candidate was not taken
+    std::vector<mcpp::toolchain::target::Candidate> candidates;
+};
+
+// The selection context of a configuration (prepare/target_choice.cpp): this host,
+// MSVC's presence, a declared family, a provider chosen by name, and the
+// priorities `[target.<selector>.priority]` of the project and the machine set.
+mcpp::toolchain::target::Context target_context(std::span<const mcpp::manifest::platform::Override> project,
+                                                std::span<const mcpp::manifest::platform::Override> config,
+                                                std::string family, std::string provider,
+                                                std::function<bool()> msvcInstalled);
+
 struct PrepareState {
     PrepareState(bool print_fingerprint_, bool includeDevDeps_,
                  std::vector<mcpp::manifest::Target> extraTargets_,
@@ -328,7 +363,20 @@ struct PrepareState {
     std::string targetPinCandidate;
     bool targetPinIsCapability = false;
     std::string targetRowPin;
+    // A PROVIDER THAT PAIRS WITH THE DECLARED COMPILER SUPPLIES THE SYSTEM
+    // (SPEC-016 §6): the payload the row's own toolchain names (the MinGW-w64
+    // payload of `x86_64-windows-gnu`) is then the declared clang's sysroot and
+    // C++ runtime. Empty when the compiler is the row's own.
+    std::string pairedSystem;
     std::string targetRowName;
+    TargetChoice targetChoice;
+    // The request names a row no definition knows yet, assumed while the platform
+    // chosen for it is fetched (mcpp#911 G1).
+    bool provisionalTarget = false;
+    // The row of the identity, with the facts of the provider that serves it
+    // (its toolchain, C library, linkage, platform) in place of the default
+    // provider's.
+    std::optional<mcpp::toolchain::triple::TargetInfo> selectedTarget;
     bool tcSpecIsMsvc = false;
     std::optional<std::filesystem::path> root;
     std::optional<mcpp::project::EffectiveManifest> effective;
@@ -533,6 +581,18 @@ struct PrepareState {
     }
     std::vector<PlanNote> planNotes;
     std::map<std::string, mcpp::pm::LockedGitSource> gitLockAnchors;
+    // The versions mcpp.lock records for the packages the platform put in the
+    // graph (`origin = "platform"`), by qualified name: a platform selected by a
+    // series (`^0.24`) is taken at the recorded release while it satisfies the
+    // series, until `mcpp update` drops the entry (SPEC-013 §14).
+    std::map<std::string, std::string> platformLockAnchors;
+    // THE PLATFORM'S VERSION GROUP AS A CONSTRAINT (SPEC-013 §7.5): its
+    // `[platform.versions]`, read as soon as the platform package is in the
+    // graph, so that each later request of a member resolves to the group's
+    // version or is refused naming both.
+    std::map<std::string, std::string> platformGroup;
+    std::string platformGroupFrom;   // `openkal-platform 0.24.1`, for a refusal
+    bool platformGroupRead = false;
     std::map<std::string, std::string> packageIdentityLockAnchors;
     // mcpp.lock as this run read it (design 2026-10-26 §4.1): the write at the
     // end compares, so a lock another run wrote meanwhile is not overwritten.
@@ -556,7 +616,8 @@ struct PrepareState {
     std::string runtimePayload;
     std::filesystem::path runtimeLibDir;
     bool runtimePayloadProvided = false;
-    std::function<std::expected<void, std::string>(const mcpp::toolchain::XimToolchainPackage&)> provide_runtime_payload;
+    std::function<std::expected<void, std::string>(const mcpp::toolchain::XimToolchainPackage&,
+                                                   const std::filesystem::path&)> provide_runtime_payload;
     std::string effectiveProfile;
     std::vector<std::filesystem::path> storeRoots;
     std::optional<std::string> tcSpec;
@@ -654,6 +715,9 @@ struct PrepareState {
     // by every site that used to read `[target.<t>].sysroot` itself.
     std::optional<mcpp::toolchain::base::Statement> baseStatement;
     std::string baseStatementFor;
+    // Decided by the engine's tier before the dependency graph was loaded:
+    // asked again once it is (a provider's base yields to a graph supplier).
+    bool baseStatementProvisional = false;
     // The artifact's runtime when a stated base re-derived it (§4.2 step 6).
     // `runtimeBindingSnapshot` stays what the COMPILER runs on and what a
     // host sub-build inherits; the plan and the context read this one.
@@ -730,7 +794,7 @@ struct PrepareState {
     std::map<std::size_t, BuildProgramBinary> buildProgramBinaries;
     // The roots (package directories) planned as build plugins (P3).
     std::set<std::string> buildPluginRoots;
-    // The build programs' graphs planned for description (`plan_only`).
+    // The build programs' graphs planned for description (`PrepareIntent::Describe`).
     std::vector<BuildProgramGraph> buildProgramGraphs;
     // A use of a deprecated reading (mcpp.pm.compat.registry) by the manifest
     // of package `i`: warned where that manifest can be edited -- the root, a
@@ -738,6 +802,10 @@ struct PrepareState {
     // recorded for `mcpp why compat` either way.
     std::function<void(std::string_view id, std::size_t i, std::string detail)>
         reportCompatUse;
+    // The same, naming what to write instead in the use's own words (the
+    // registry's replacement is an example).
+    std::function<void(std::string_view id, std::size_t i, std::string detail, std::string instead)>
+        reportCompatUseInstead;
     // Whether the manifest of package `i` is one the person running the build
     // can edit (SPEC-008 §4: a diagnostic is given to the package that can act
     // on it).
@@ -760,6 +828,29 @@ struct PrepareState {
     // (with these helpers as its own captures) and called repeatedly from
     // the worklist loop, well after its defining call returns. ────────────
     std::deque<WorkItem> worklist;
+    // THE REQUESTS OF A VERSION NO LONGER IN THE GRAPH. A merge that replaces
+    // `<ns>.<name>@<old>` takes that version's requests out with it: its
+    // queued items are not walked and its constraints no longer bound a merge.
+    // Kept, they reported a conflict between a version and a request of a
+    // version that had already left (os 0.4.4 and openkal-linux 0.26.0 after
+    // both were merged down, measured).
+    std::set<std::string> supersededRequesters;
+    // THE ROOT'S OVERRIDES (design 2026-11-10 supplement, T2): each
+    // `override = true` declaration of the root's tables and of
+    // `[workspace.dependencies]`, with the identity it answers for and the
+    // graph its table governs. Read once, before the walk.
+    struct RootOverride {
+        std::string                    key;          // the declaration's key as written
+        std::string                    ns, shortName;
+        mcpp::manifest::DependencySpec spec;
+        std::string                    declaredIn;   // "[dependencies] of app"
+        bool                           buildSide = false;   // [build-dependencies]
+    };
+    std::vector<RootOverride> rootOverrides;
+    std::set<std::string>     overrideStated;    // the lines printed, once each
+    // The root's own exact pins of a package that every consumer shares (T3),
+    // which `mcpp publish` refuses for a library; a dependency's are noted.
+    std::vector<std::string>  sharedExactPins;
     std::map<std::string, ResolvedKey> identityBySource;
     std::map<ResolvedKey, DeclaringManifest> declaringManifest;
     std::set<std::pair<std::string, std::string>> adoptionsReported;
@@ -808,10 +899,15 @@ struct PrepareState {
     std::function<std::expected<std::pair<std::filesystem::path, mcpp::manifest::Manifest>,
                                  std::string>(const std::string&, const std::string&,
                                               const std::string&, const std::string&,
-                                              const std::vector<std::string>&, const std::string&)>
+                                              const std::vector<std::string>&, const std::string&,
+                                              const std::string&)>
         loadVersionDepVariant;
 
     std::map<ResolvedKey, ResolvedRecord> resolved;
+    // The features asked of each resolved dependency so far (by dep_manifests
+    // slot) and whether its default set is seeded: the union of its edges, as
+    // its feature-deps and forwards were walked (mcpp#897).
+    std::map<std::size_t, std::pair<std::vector<std::string>, bool>> depFeatureRequests;
     std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
         toolEnvByConsumer;
     // The programs the graph built for this machine at the ROOT's request
@@ -842,6 +938,11 @@ struct PrepareState {
     // `platformData` was read in P1 (a directory, or a second pass), so the
     // target base reads the platform's `sysroot` (base.cpp, tier four).
     bool platformEarly = false;
+    // A `planned` row requested with a platform chosen for it and no toolchain
+    // named: the platform serves it when its statement lists the row with a
+    // toolchain, which is known once the platform is read (P1 for a directory
+    // or a second pass, P4 for a package fetched by this pass).
+    std::string plannedRow;
     // What build programs stated with the platform's directives (Tier::Program):
     // a dependency's, the root's, and the platform's plugin.
     mcpp::manifest::platform::Statement programPlatform;
@@ -872,7 +973,7 @@ struct PrepareState {
     std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     // Keyed like `deviceSourcesByPackage`, by `pkg.root.string()` (root
     // package included: `packages[0].root == *root`). Holds a package whose
-    // build program failed IN THIS PASS, under `plan_only` (`emit
+    // build program failed IN THIS PASS, under `PrepareIntent::Describe` (`emit
     // build-database`) — the one case a failed program does not already end
     // the whole call (SPEC-005 R5.2, #699 item 2, E3). A check whose premise
     // is that program's directives must not run for such a package: with no
@@ -887,6 +988,10 @@ struct PrepareState {
     std::vector<mcpp::targetside::Island> cxxIslands;
     std::optional<std::size_t> cxxLayerProviderIndex;
     bool targetSideResolved = false;
+    // The kernel interface is supplied by a package only the tests reach
+    // (`PackageRoot::devOnly`): it serves the dev-only packages and the test
+    // units, and the configuration of the shipped graph keeps none.
+    bool kernelAbiForTestsOnly = false;
     mcpp::modgraph::UsageRequirements targetSideUsage;
     // The same, with the engine's predefines and the realised C environment:
     // what the build's contract states (BuildPlan::contractTargetSide).
@@ -940,18 +1045,46 @@ std::expected<void, std::string> phase1_toolchain_spec_and_axes(PrepareState& st
 std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& state);
 std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state);
 std::expected<void, std::string> phase4a_graph_load(PrepareState& state);
+// graph_edges.cpp: the package index of a work item's consumer
+// (`WorkItem::consumerDepIndex`).
+std::size_t packageIndexForConsumer(std::size_t consumerDepIndex);
 // graph_edges.cpp: the edge one request adds to the graph, or the one it
 // merges with.
 void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
                           const std::string& writtenKey);
+// graph_edges.cpp: the package being built stands for itself in its tests'
+// graph -- an edge reached through its `[dev-dependencies]` naming it is its
+// own, recorded here; true when the request is so answered.
+bool names_the_root(PrepareState& state, const WorkItem& item, const ResolvedKey& key);
+// graph_edges.cpp: defines `PrepareState::computeUsageRequirements`.
+void define_usage_requirements(PrepareState& state);
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state);
 // graph.cpp: takes the link flags package `p` added to the root's pooled list
 // back out of it (a package that serves the build alone; an embedded one).
 void withdraw_link_flags(PrepareState& state, std::size_t p);
 // The lookups the later phases ask of the graph (graph_closures.cpp).
 void step4b_define_lookup_closures(PrepareState& state);
+// The root's overrides (overrides.cpp, T2): read before the walk; applied to a
+// dependency's request for an identity one of them answers for, which then
+// takes the root's source; a library's `override` is reported and ignored.
+void step4b_read_root_overrides(PrepareState& state);
+bool step4b_apply_root_override(PrepareState& state, WorkItem& item);
+// The root's override of a member of the platform's version group: it is not
+// pinned to the group, which is said once (SPEC-013: the platform gives the
+// defaults, the project may override them).
+bool step4b_root_overrides_group(PrepareState& state, const WorkItem& item, std::string_view shortName,
+                                 std::string_view groupVersion);
+// A request that pins one release of a package every consumer shares (it
+// provides a target-side layer or a kernel ABI): noted for a dependency,
+// recorded for the root (overrides.cpp, T3).
+void step4b_note_exact_pin(PrepareState& state, const WorkItem& item, const mcpp::manifest::Manifest& dep);
+// The root the graph records for a package: its build inputs, normalised at its
+// load site, with its include directories expanded (package_root.cpp).
+std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
+        PrepareState& state, const std::filesystem::path& packageRoot,
+        const mcpp::manifest::Manifest& manifest);
 // Where the build program of package `i` keeps its files: its cache, its
 // graph document, and the program mcpp synthesises for it. The root's and a
 // workspace member's are below their own target/; a dependency's is below the
@@ -1030,6 +1163,14 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t);
 const std::string* base_statement_text(PrepareState& state,
                                        const mcpp::toolchain::triple::Triple& t);
 std::expected<void, std::string> step2_resolve_base(PrepareState& state);
+// The directory a package statement names (`xim:<name>@<version>`): where its
+// payload stands, installed first when `install` and it does not stand.
+std::expected<std::filesystem::path, std::string>
+package_dir(PrepareState& state, const std::string& ref, bool install);
+// The provider entry the selection took: the one of that name that serves the
+// identity, the entry available on this host before one that is not. Null when
+// no provider serves it.
+const mcpp::toolchain::target::Provider* chosen_provider(const PrepareState& state);
 // The execution host's wrapper (`run_under`), decided once (§3.7).
 std::expected<void, std::string> step2_resolve_run_under(PrepareState& state);
 
@@ -1081,6 +1222,11 @@ std::string with_index_cause(std::string msg);
 // A new fingerprint of a lineage takes over its predecessor's directory, or
 // removes it when the toolchain changed (design 2026-10-31 §8.2).
 void adopt_predecessor_dir(const PrepareState& state, const std::filesystem::path& outputDir);
+// The configuration's directory, under its lock (2026-11-12 §17, W1): emptied
+// when the compiler build it records is not this one's, its compiler records
+// dropped when another engine wrote them; returns the engine its graph names,
+// made this one.
+std::filesystem::path renew_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 // `uses.list`, `lineage` and `toolchain` in the directory.
 void record_build_dir(const PrepareState& state, const std::filesystem::path& outputDir);
 
@@ -1128,7 +1274,7 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
                    const mcpp::manifest::Manifest& owner, std::size_t consumer);
 // After a run of `who`'s build program into `m`: when it asked for payloads,
 // install them in one batch and refill `e`; true when the program must run
-// again. Under `plan_only` nothing is installed: a note is recorded and false
+// again. Under `PrepareIntent::Describe` nothing is installed: a note is recorded and false
 // is returned.
 std::expected<bool, std::string>
 answer_payload_requests(PrepareState& state, mcpp::manifest::Manifest& m,
@@ -1160,6 +1306,13 @@ struct PackageInstances {
     std::vector<bool> host;
 };
 PackageInstances package_instances(const PrepareState& state);
+// The kernel-abi provider's stated interfaces for the build program of package
+// `i`, ';'-joined (E13): empty unless the package requires the layer and the
+// provider of the same instance (target or build program) states a list.
+std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i);
+// Whether the dependency graph supplies the target's system: a C library on
+// any target, a kernel interface where the target has no system of its own.
+bool graph_supplies_system(const PrepareState& state);
 // The platform's fields a package's build program stated (protocol 17), at the
 // build-program tier of the build's platform statement, named after `who`.
 void merge_program_platform(PrepareState& state, mcpp::manifest::platform::Statement stated,
@@ -1171,21 +1324,59 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
 // The platform through the phases (prepare/platform.cpp).
 mcpp::build::cfgpred::Ctx platform_cfg_context(const PrepareState& state);
 std::expected<void, std::string> step1_select_platform(PrepareState& state);
+// The provider a configuration chose by name, from the explicit platform choices
+// (SPEC-013 §3.1 steps 1-4): `builtin:<name>`, or the provider a chosen platform
+// package implements; "none" for `--platform none`; empty when nothing chose.
+// Registers a platform package's rows and providers (SPEC-016 §2, §3).
+void define_platform(const mcpp::manifest::platform::Statement& s, std::string_view shortName,
+                     std::string_view ref);
+// Before the request is parsed: the definitions of a platform chosen for it whose
+// manifest is on this machine (a directory, or the second pass's root); and a
+// provisional row for a request only a chosen platform can define.
+void define_early_platform(PrepareState& state);
+// The provider chosen by name for `t` (`builtin:<name>`, or the platform package
+// a built-in provider names); `none` for `--platform none`. A platform package no
+// built-in provider names leaves it empty and is reported in `platform` (its
+// short name).
+// `platform`: the short name of a chosen platform the engine's providers do not
+// name. `chosen`: the short name of any platform chosen for the request (the
+// flag, the environment or a table; not the built-in column), whichever
+// providers serve it.
+std::string named_provider(const PrepareState& state, const mcpp::toolchain::triple::Triple& t,
+                           std::span<const mcpp::manifest::platform::Override> config,
+                           std::string* platform = nullptr, std::string* chosen = nullptr);
+// The short name of the package a reference names (`path:<dir>` reads its manifest).
+std::string platform_short_name(std::string_view ref);
+
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
+// The capabilities packages require and nothing provides: each takes the
+// default its package states for the target (mcpp#911 G7). True when one was
+// added to the walk.
+std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+                                                              const std::string& name,
+                                                              mcpp::manifest::DependencySpec& spec);
+void step4b_read_platform_group(PrepareState& state, const std::string& resolvedShortName);
+std::expected<void, std::string> step4b_platform_within_engine(PrepareState& state);
 void step4b_platform_member_edges(PrepareState& state);
 void step5_platform_toolchain(PrepareState& state);
 void step13_platform_statement(PrepareState& state);
 // The platform's statement and the compile words it states for a unit of C++,
 // as they stand now (the std module's are asked for before step 13).
-mcpp::manifest::platform::Statement platform_statement(const PrepareState& state);
+mcpp::manifest::platform::Statement platform_statement(const PrepareState& state,
+                                                       std::vector<std::string>* conflicts = nullptr);
 std::vector<std::string> platform_unit_cxxflags(const PrepareState& state);
 std::expected<void, std::string> step13_finish_platform(PrepareState& state, BuildContext& ctx);
 // retarget.cpp: a retargetable driver told its target, sysroot and multilib.
 std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareState& state);
+// The system a paired provider supplies to the declared compiler (SPEC-016 §6).
+std::expected<void, std::string> step2_paired_system(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.
 std::optional<std::filesystem::path> take_platform_restart();
+// The identity a first pass found the C library names (SPEC-016 §5), taken once.
+std::optional<std::string> take_target_restart();
 std::expected<void, std::string> load_host_platform(PrepareState& state);
 std::string host_platform_choice(const PrepareState& state);
 // The statement and bootstrap spec of a toolchain phase that asked prepare to

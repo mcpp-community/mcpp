@@ -3,10 +3,12 @@
 // the suggested packages actually offer. Still DIAGNOSTIC ONLY: nothing here
 // feeds resolution, the lockfile, or the install layer.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pm.package_fetcher;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -45,7 +47,7 @@ std::string descriptor_with_versions(std::string_view ns,
         ns, name, xpmTable);
 }
 
-TEST(ShortNameScan, CarriesMergedDescendingVersionsPerMatch) {
+UTest carries_merged_descending_versions_per_match{"ShortNameScan/CarriesMergedDescendingVersionsPerMatch", [] {
     TempDir temp;
     write_descriptor(temp.path, "a.acme.widget.lua", descriptor_with_versions(
         "acme", "acme.widget",
@@ -60,17 +62,17 @@ TEST(ShortNameScan, CarriesMergedDescendingVersionsPerMatch) {
         {temp.path}, "widget");
 
     // Sorted by fqn; each record keeps its fqn AND its version union.
-    ASSERT_EQ(matches.size(), 1u);
-    EXPECT_EQ(matches[0].fqn, "acme.widget");
-    ASSERT_EQ(matches[0].versions.size(), 2u);
-    EXPECT_EQ(matches[0].versions[0], "1.0.0");
-    EXPECT_EQ(matches[0].versions[1], "0.9.0");
+    expect(fatal(eq(matches.size(), 1u)));
+    expect(eq(matches[0].fqn, "acme.widget"));
+    expect(fatal(eq(matches[0].versions.size(), 2u)));
+    expect(eq(matches[0].versions[0], "1.0.0"));
+    expect(eq(matches[0].versions[1], "0.9.0"));
 
     // The short name is matched on the SHORT component only: compat/gadget
     // must not appear for "widget".
-}
+}};
 
-TEST(ShortNameScan, DescriptorWithoutXpmYieldsEmptyVersions) {
+UTest descriptor_without_xpm_yields_empty_versions{"ShortNameScan/DescriptorWithoutXpmYieldsEmptyVersions", [] {
     TempDir temp;
     write_descriptor(temp.path, "a.acme.bare.lua", descriptor_with_versions(
         "acme", "acme.bare", "mcpp = { schema = \"0.1\" }"));
@@ -78,12 +80,12 @@ TEST(ShortNameScan, DescriptorWithoutXpmYieldsEmptyVersions) {
     auto matches = mcpp::pm::Fetcher::scan_short_name_matches(
         {temp.path}, "bare");
 
-    ASSERT_EQ(matches.size(), 1u);
-    EXPECT_EQ(matches[0].fqn, "acme.bare");
-    EXPECT_TRUE(matches[0].versions.empty());
-}
+    expect(fatal(eq(matches.size(), 1u)));
+    expect(eq(matches[0].fqn, "acme.bare"));
+    expect(matches[0].versions.empty());
+}};
 
-TEST(ShortNameScan, EmptyResultOnNoMatchIsNotAnError) {
+UTest empty_result_on_no_match_is_not_an_error{"ShortNameScan/EmptyResultOnNoMatchIsNotAnError", [] {
     TempDir temp;
     write_descriptor(temp.path, "a.acme.widget.lua", descriptor_with_versions(
         "acme", "acme.widget",
@@ -92,7 +94,7 @@ TEST(ShortNameScan, EmptyResultOnNoMatchIsNotAnError) {
     auto matches = mcpp::pm::Fetcher::scan_short_name_matches(
         {temp.path}, "nosuchthing");
 
-    EXPECT_TRUE(matches.empty());
-}
+    expect(matches.empty());
+}};
 
 } // namespace

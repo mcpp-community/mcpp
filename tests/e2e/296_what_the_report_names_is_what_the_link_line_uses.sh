@@ -215,7 +215,7 @@ esac
 
 if [ "$checked" = 0 ]; then
     echo "SKIP: nothing here produced a link line to relate to a report"
-    exit 0
+    exit 77
 fi
 [ "$fail" = 0 ] || exit 1
 echo "OK: what the report names is what the link line uses ($checked relations)"

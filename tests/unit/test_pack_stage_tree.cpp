@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack.stage_tree;
+
+using namespace mcpplibs::mtest;
 
 // The staged tree is what `mcpp pack` computes and, until `${mcpp.stage_dir}`,
 // then threw away. Two things about it are the engine's contract with a
@@ -37,57 +39,57 @@ std::string read_file(const std::filesystem::path& p) {
 
 } // namespace
 
-TEST(PackStageTree, TheManifestIsASiblingAndNeverAMember) {
+UTest the_manifest_is_a_sibling_and_never_a_member{"PackStageTree/TheManifestIsASiblingAndNeverAMember", [] {
     Tmp t;
     auto stage = t.path / "app-1.0.0-x86_64-linux-gnu";
     std::filesystem::create_directories(stage);
 
     auto manifest = mcpp::pack::stage_manifest_path(stage);
-    EXPECT_EQ(manifest.parent_path(), stage.parent_path());
+    expect(eq(manifest.parent_path(), stage.parent_path()));
     // A file INSIDE the tree would be collected by every format that packages
     // the directory wholesale, and would then ship inside the user's
     // installer. Asserted as a path relationship because that is the property,
     // and a spelling change that broke it would otherwise only show up as an
     // extra file in a released package.
-    EXPECT_FALSE(manifest.string().starts_with(stage.string() + "/"));
-    EXPECT_FALSE(manifest.string().starts_with(stage.string() + "\\"));
+    expect(!(manifest.string().starts_with(stage.string() + "/")));
+    expect(!(manifest.string().starts_with(stage.string() + "\\")));
 
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
     std::error_code ec;
     for (auto const& e : std::filesystem::recursive_directory_iterator(stage, ec))
-        FAIL() << "the manifest landed inside the tree: " << e.path().string();
-}
+        fail([&] { std::ostringstream text; text << "the manifest landed inside the tree: " << e.path().string(); return text.str(); }());
+}};
 
-TEST(PackStageTree, TheManifestChangesWhenTheStagedSetDoes) {
+UTest the_manifest_changes_when_the_staged_set_does{"PackStageTree/TheManifestChangesWhenTheStagedSetDoes", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "bin" / "app", "0123456789");
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
     const auto first = read_file(mcpp::pack::stage_manifest_path(stage));
-    EXPECT_NE(first.find("bin/app"), std::string::npos);
-    EXPECT_NE(first.find("10 "), std::string::npos);
+    expect(ne(first.find("bin/app"), std::string::npos));
+    expect(ne(first.find("10 "), std::string::npos));
 
     // A DEPENDENCY'S SHARED LIBRARY JOINING THE CLOSURE. This is the case the
     // manifest exists for: the program's own bytes need not have changed, so an
     // edge that depended only on the link output would report the previous
     // distributable as up to date.
     write_file(stage / "lib" / "libdep.so.1", "xx");
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
     const auto second = read_file(mcpp::pack::stage_manifest_path(stage));
-    EXPECT_NE(first, second);
-    EXPECT_NE(second.find("lib/libdep.so.1"), std::string::npos);
+    expect(ne(first, second));
+    expect(ne(second.find("lib/libdep.so.1"), std::string::npos));
 
     // A staged file whose LENGTH changed, with no entry added or removed.
     write_file(stage / "bin" / "app", "0123456789abcdef");
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
-    EXPECT_NE(read_file(mcpp::pack::stage_manifest_path(stage)), second);
-}
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
+    expect(ne(read_file(mcpp::pack::stage_manifest_path(stage)), second));
+}};
 
-TEST(PackStageTree, StagingTheSameTreeTwiceLeavesTheManifestUntouched) {
+UTest staging_the_same_tree_twice_leaves_the_manifest_untouched{"PackStageTree/StagingTheSameTreeTwiceLeavesTheManifestUntouched", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "bin" / "app", "same");
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
     auto manifest = mcpp::pack::stage_manifest_path(stage);
     const auto before = std::filesystem::last_write_time(manifest);
 
@@ -95,11 +97,11 @@ TEST(PackStageTree, StagingTheSameTreeTwiceLeavesTheManifestUntouched) {
     // input is indistinguishable from a changed input: a pack that staged the
     // same tree twice would rebuild the distributable both times. Same rule
     // `mcpp.build.stage` states at length for a staged BMI.
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
-    EXPECT_EQ(std::filesystem::last_write_time(manifest), before);
-}
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
+    expect(eq(std::filesystem::last_write_time(manifest), before));
+}};
 
-TEST(PackStageTree, TheOrderOfADirectoryWalkIsNotAPromise) {
+UTest the_order_of_a_directory_walk_is_not_a_promise{"PackStageTree/TheOrderOfADirectoryWalkIsNotAPromise", [] {
     // Two trees with the same contents produce the same bytes. Without the
     // sort, an iteration order that differed between runs would make the dist
     // edge dirty on every pack for no reason -- which reads as "packaging is
@@ -109,13 +111,12 @@ TEST(PackStageTree, TheOrderOfADirectoryWalkIsNotAPromise) {
         write_file(root / "s" / "bin" / "app", "aa");
         write_file(root / "s" / "lib" / "z.so", "bbb");
         write_file(root / "s" / "share" / "doc" / "readme", "c");
-        ASSERT_TRUE(mcpp::pack::write_stage_manifest(root / "s"));
+        expect(fatal(bool(mcpp::pack::write_stage_manifest(root / "s"))));
     }
-    EXPECT_EQ(read_file(mcpp::pack::stage_manifest_path(a.path / "s")),
-              read_file(mcpp::pack::stage_manifest_path(b.path / "s")));
-}
+    expect(eq(read_file(mcpp::pack::stage_manifest_path(a.path / "s")), read_file(mcpp::pack::stage_manifest_path(b.path / "s"))));
+}};
 
-TEST(PackStageTree, TheEngineOwnsFiveFormatNames) {
+UTest the_engine_owns_five_format_names{"PackStageTree/TheEngineOwnsFiveFormatNames", [] {
     // `tar`, `zip`, `dir`, `single-file` and `polyglot` are the shapes `mcpp pack` owns
     // (SPEC-014 §1.3); every other value of `--pkg-format` is a name a
     // package provides. The list lives beside the staged tree because two
@@ -123,13 +124,13 @@ TEST(PackStageTree, TheEngineOwnsFiveFormatNames) {
     // unknown name, and the declaration check, which warns of a package that
     // claims one of them and would therefore be silently unreachable.
     for (auto name : { "tar", "zip", "dir", "single-file", "polyglot" })
-        EXPECT_TRUE(mcpp::pack::is_builtin_pack_format(name)) << name;
-    EXPECT_FALSE(mcpp::pack::is_builtin_pack_format("appimage"));
-    EXPECT_FALSE(mcpp::pack::is_builtin_pack_format("okb"));
-    EXPECT_FALSE(mcpp::pack::is_builtin_pack_format("msi"));
-    EXPECT_FALSE(mcpp::pack::is_builtin_pack_format(""));
-    EXPECT_EQ(mcpp::pack::kBuiltinPackFormats.size(), 5u);
-}
+        expect(mcpp::pack::is_builtin_pack_format(name)) << name;
+    expect(!mcpp::pack::is_builtin_pack_format("appimage"));
+    expect(!mcpp::pack::is_builtin_pack_format("okb"));
+    expect(!mcpp::pack::is_builtin_pack_format("msi"));
+    expect(!mcpp::pack::is_builtin_pack_format(""));
+    expect(eq(mcpp::pack::kBuiltinPackFormats.size(), 5u));
+}};
 
 // ── #630 §3: the `closure` field ─────────────────────────────────────────
 //
@@ -139,17 +140,17 @@ TEST(PackStageTree, TheEngineOwnsFiveFormatNames) {
 // comment). What CAN be tested here, on every host, is the writer/reader
 // contract itself: both values round-trip through the manifest file.
 
-TEST(PackStageTree, DefaultClosureIsWalkedAndSaysSo) {
+UTest default_closure_is_walked_and_says_so{"PackStageTree/DefaultClosureIsWalkedAndSaysSo", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "bin" / "app", "x");
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage))));
     auto text = read_file(mcpp::pack::stage_manifest_path(stage));
-    EXPECT_EQ(text.substr(0, text.find('\n')), "closure = walked");
-    EXPECT_EQ(text.find("reason ="), std::string::npos);
-}
+    expect(eq(text.substr(0, text.find('\n')), "closure = walked"));
+    expect(eq(text.find("reason ="), std::string::npos));
+}};
 
-TEST(PackStageTree, NotWalkedRecordsTheReasonOnOneLine) {
+UTest not_walked_records_the_reason_on_one_line{"PackStageTree/NotWalkedRecordsTheReasonOnOneLine", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "bin" / "app", "x");
@@ -160,36 +161,36 @@ TEST(PackStageTree, NotWalkedRecordsTheReasonOnOneLine) {
                   "by running the artifact under\n"
                   "       the target's own dynamic linker.",
     };
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, closure));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage, closure))));
     auto text = read_file(mcpp::pack::stage_manifest_path(stage));
     auto firstLine = text.substr(0, text.find('\n'));
-    EXPECT_EQ(firstLine, "closure = not-walked");
+    expect(eq(firstLine, "closure = not-walked"));
     // Folded to ONE line -- the manifest is one entry per line, and the
     // reason text carries its own embedded newlines because it doubles as a
     // CLI diagnostic.
     auto secondLineEnd = text.find('\n', text.find('\n') + 1);
     auto secondLine = text.substr(text.find('\n') + 1, secondLineEnd - text.find('\n') - 1);
-    EXPECT_TRUE(secondLine.starts_with("reason = cannot package the Mach-O program"));
-    EXPECT_EQ(secondLine.find('\n'), std::string::npos);
+    expect(secondLine.starts_with("reason = cannot package the Mach-O program"));
+    expect(eq(secondLine.find('\n'), std::string::npos));
     // The rest of the manifest -- the staged file listing -- is unaffected.
-    EXPECT_NE(text.find("bin/app"), std::string::npos);
-}
+    expect(ne(text.find("bin/app"), std::string::npos));
+}};
 
-TEST(PackStageTree, WalkedAndNotWalkedProduceDifferentManifests) {
+UTest walked_and_not_walked_produce_different_manifests{"PackStageTree/WalkedAndNotWalkedProduceDifferentManifests", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "bin" / "app", "x");
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, mcpp::pack::ClosureStatus{true, ""}));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage, mcpp::pack::ClosureStatus{true, ""}))));
     auto walked = read_file(mcpp::pack::stage_manifest_path(stage));
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(
-        stage, mcpp::pack::ClosureStatus{false, "no such linker to ask"}));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(
+        stage, mcpp::pack::ClosureStatus{false, "no such linker to ask"}))));
     auto notWalked = read_file(mcpp::pack::stage_manifest_path(stage));
-    EXPECT_NE(walked, notWalked);
-}
+    expect(ne(walked, notWalked));
+}};
 
 // ── #634 A3: the `needs` lines ──────────────────────────────────────────
 
-TEST(PackStageTree, NeedsLinesFollowTheHeaderSortedAndOnceEach) {
+UTest needs_lines_follow_the_header_sorted_and_once_each{"PackStageTree/NeedsLinesFollowTheHeaderSortedAndOnceEach", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "lib" / "libfw.so", "fw");
@@ -202,16 +203,15 @@ TEST(PackStageTree, NeedsLinesFollowTheHeaderSortedAndOnceEach) {
         {"libc.so",  K::Platform, {}},
         {"libc.so",  K::Platform, {}},
     };
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, closure));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage, closure))));
     auto text = read_file(mcpp::pack::stage_manifest_path(stage));
-    EXPECT_EQ(text,
-        "closure = walked\n"
+    expect(eq(text, "closure = walked\n"
         "needs\tlibc.so\tplatform\n"
         "needs\tlibfw.so\tlib/libfw.so\n"
-        "2 lib/libfw.so\n");
-}
+        "2 lib/libfw.so\n"));
+}};
 
-TEST(PackStageTree, AnIncompleteClosureListsItsUnresolvedNamesAfterTheReason) {
+UTest an_incomplete_closure_lists_its_unresolved_names_after_the_reason{"PackStageTree/AnIncompleteClosureListsItsUnresolvedNamesAfterTheReason", [] {
     Tmp t;
     auto stage = t.path / "app";
     write_file(stage / "bin" / "app", "x");
@@ -220,61 +220,59 @@ TEST(PackStageTree, AnIncompleteClosureListsItsUnresolvedNamesAfterTheReason) {
     closure.walked = false;
     closure.reason = "the dependency closure of 'app' is incomplete";
     closure.needs  = {{"@rpath/libgone.dylib", K::Unresolved, {}}};
-    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, closure));
+    expect(fatal(bool(mcpp::pack::write_stage_manifest(stage, closure))));
     auto text = read_file(mcpp::pack::stage_manifest_path(stage));
-    EXPECT_EQ(text,
-        "closure = not-walked\n"
+    expect(eq(text, "closure = not-walked\n"
         "reason = the dependency closure of 'app' is incomplete\n"
         "needs\t@rpath/libgone.dylib\tunresolved\n"
-        "1 bin/app\n");
-}
+        "1 bin/app\n"));
+}};
 
-TEST(PackStageTree, ANameWithASpaceStaysOneField) {
+UTest a_name_with_a_space_stays_one_field{"PackStageTree/ANameWithASpaceStaysOneField", [] {
     using K = mcpp::pack::ClosureNeed::Kind;
-    EXPECT_EQ(mcpp::pack::render_closure_need(
-                  {"@rpath/My Kit.framework/My Kit", K::Staged, "bin/My Kit"}),
-              "needs\t@rpath/My Kit.framework/My Kit\tbin/My Kit");
-}
+    expect(eq(mcpp::pack::render_closure_need(
+                  {"@rpath/My Kit.framework/My Kit", K::Staged, "bin/My Kit"}), "needs\t@rpath/My Kit.framework/My Kit\tbin/My Kit"));
+}};
 
-TEST(PackStageTree, AMissingTreeIsRefusedRatherThanDescribedAsEmpty) {
+UTest a_missing_tree_is_refused_rather_than_described_as_empty{"PackStageTree/AMissingTreeIsRefusedRatherThanDescribedAsEmpty", [] {
     Tmp t;
     // An empty manifest for a directory that does not exist would say "nothing
     // is staged", which is what a correct pack of an empty bundle also says.
     // The two must not be spelled alike.
-    EXPECT_FALSE(mcpp::pack::write_stage_manifest(t.path / "never-staged"));
-    EXPECT_FALSE(std::filesystem::exists(
-        mcpp::pack::stage_manifest_path(t.path / "never-staged")));
-}
+    expect(!mcpp::pack::write_stage_manifest(t.path / "never-staged"));
+    expect(!(std::filesystem::exists(
+        mcpp::pack::stage_manifest_path(t.path / "never-staged"))));
+}};
 
 // ── #622 A5: the wasm32-emscripten stem family ───────────────────────────
 // "The launcher is the executable; the family is what the link also wrote" —
 // asked of the directory, never of a fixed extension list.
 
-TEST(PackStageTree, TheRequiredWasmModuleIsFound) {
+UTest the_required_wasm_module_is_found{"PackStageTree/TheRequiredWasmModuleIsFound", [] {
     Tmp t;
     write_file(t.path / "app.js", "launcher");
     write_file(t.path / "app.wasm", "\0asm");
     auto fam = mcpp::pack::emscripten_stem_family(t.path, "app.js");
-    EXPECT_TRUE(fam.hasWasm);
-    EXPECT_EQ(fam.siblings, (std::vector<std::string>{"app.wasm"}));
-}
+    expect(bool(fam.hasWasm));
+    expect(eq(fam.siblings, (std::vector<std::string>{"app.wasm"})));
+}};
 
 // The negative direction: a launcher with no `.wasm` beside it (a build
 // directory that does not match the graph) must report the absence, not a
 // family that happens to be empty of the required member.
-TEST(PackStageTree, AMissingWasmModuleIsReported) {
+UTest a_missing_wasm_module_is_reported{"PackStageTree/AMissingWasmModuleIsReported", [] {
     Tmp t;
     write_file(t.path / "app.js", "launcher");
     auto fam = mcpp::pack::emscripten_stem_family(t.path, "app.js");
-    EXPECT_FALSE(fam.hasWasm);
-    EXPECT_TRUE(fam.siblings.empty());
-}
+    expect(!fam.hasWasm);
+    expect(fam.siblings.empty());
+}};
 
 // Optional siblings travel when the link wrote them, and only files that
 // actually share the stem are picked up — a neighbouring, unrelated launcher
 // in the same directory (a second target) must not bleed into this one's
 // family.
-TEST(PackStageTree, OptionalSiblingsTravelAndUnrelatedFilesDoNot) {
+UTest optional_siblings_travel_and_unrelated_files_do_not{"PackStageTree/OptionalSiblingsTravelAndUnrelatedFilesDoNot", [] {
     Tmp t;
     write_file(t.path / "app.js", "launcher");
     write_file(t.path / "app.wasm", "\0asm");
@@ -283,7 +281,7 @@ TEST(PackStageTree, OptionalSiblingsTravelAndUnrelatedFilesDoNot) {
     write_file(t.path / "other.js", "a different target's launcher");
     write_file(t.path / "other.wasm", "\0asm");
     auto fam = mcpp::pack::emscripten_stem_family(t.path, "app.js");
-    EXPECT_TRUE(fam.hasWasm);
-    EXPECT_EQ(fam.siblings, (std::vector<std::string>{
-        "app.data", "app.wasm", "app.worker.js"}));
-}
+    expect(bool(fam.hasWasm));
+    expect(eq(fam.siblings, (std::vector<std::string>{
+        "app.data", "app.wasm", "app.worker.js"})));
+}};

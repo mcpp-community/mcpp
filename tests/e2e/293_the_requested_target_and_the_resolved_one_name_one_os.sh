@@ -134,7 +134,7 @@ done
 
 if [ "$built" = 0 ]; then
     echo "SKIP: no target resolved here — the sweep proved nothing ($skipped skipped)"
-    exit 0
+    exit 77
 fi
 echo "  ok  $built correct cross targets went through untouched"
 

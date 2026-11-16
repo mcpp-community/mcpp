@@ -173,6 +173,12 @@ std::optional<FailedCommand> failed_command_in(std::string_view output) {
     for_each_line(output, [&](std::string_view line) {
         if (auto at = line.find("command: "); at == 0) line.remove_prefix(9);
         auto words = split_words(line);
+        // A compile run through the capped executor (`<mcpp> __compiler-cap
+        // ... -- <compiler> ...`) names its compiler after the `--`.
+        if (words.size() > 1 && words[1] == "__compiler-cap") {
+            const auto end = std::ranges::find(words, std::string("--"));
+            words.erase(words.begin(), end == words.end() ? end : end + 1);
+        }
         if (words.empty() || !names_clang_driver(words.front())) return;
         FailedCommand cmd;
         cmd.compiler = words.front();

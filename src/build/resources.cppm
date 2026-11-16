@@ -95,6 +95,21 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
 
 std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple);
 
+// The toolchain's Windows header directories, which a resource script reaches
+// with `#include "winres.h"` as well as with angle brackets: the INCLUDE an
+// MSVC backend states, and on a GNU-ABI row the paired payload's (or a cross
+// gcc's own) `<arch>-w64-mingw32/include` (design 2026-11-10 E3). One list for the
+// compile's `/I` and for the scan of what the script reads.
+//
+// `system_headers` is the third source: the include directory of the package
+// the selected provider names for the system's own headers (`system-headers`,
+// SPEC-016 §3), for a row whose toolchain states none. It is read ONLY when
+// the two sources above found nothing, so a GNU-ABI row keeps its paired
+// payload's headers and an MSVC row its SDK's.
+std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
+                                                        std::string_view dialectId,
+                                                        const std::filesystem::path& system_headers = {});
+
 // Split a Windows environment list (PATH, INCLUDE, LIB) into its entries.
 //
 // `;` is the ONLY separator, and that is not a simplification. Every value that
@@ -194,6 +209,49 @@ bool is_llvm_windres(const std::filesystem::path& p) {
     std::error_code ec;
     const auto real = std::filesystem::canonical(p, ec);
     return !ec && named(real);
+}
+
+std::vector<std::filesystem::path> system_include_dirs(const mcpp::toolchain::Toolchain& tc,
+                                                        std::string_view dialectId,
+                                                        const std::filesystem::path& system_headers) {
+    std::vector<std::filesystem::path> out;
+    for (auto const& ev : tc.envOverrides) {
+        if (ev.key != "INCLUDE") continue;
+        for (auto dir : split_env_list(ev.value)) out.emplace_back(std::string(dir));
+    }
+    if (dialectId == "msvc") return out;
+    std::error_code ec;
+    // A gcc payload keeps the target's headers under `<triple>/include`.
+    auto add_triple_dirs = [&](const std::filesystem::path& root) {
+        for (auto const& entry : std::filesystem::directory_iterator(root, ec))
+            if (auto inc = entry.path() / "include";
+                entry.path().filename().string().ends_with("-w64-mingw32")
+                && std::filesystem::is_directory(inc, ec))
+                out.push_back(inc);
+    };
+    if (!tc.pairedSysroot.empty()) {
+        // A base package keeps the headers of every architecture in one
+        // `<root>/include` (E9).
+        if (std::filesystem::is_directory(tc.pairedSysroot / "include", ec))
+            out.push_back(tc.pairedSysroot / "include");
+        add_triple_dirs(tc.pairedSysroot);
+    } else if (!tc.binaryPath.empty()) {
+        // A cross gcc is its own payload: `<root>/bin/<triple>-gcc` beside
+        // `<root>/<triple>/include` (its configured sysroot names where it was
+        // built, not where it is).
+        add_triple_dirs(tc.binaryPath.parent_path().parent_path());
+    }
+    // THE THIRD SOURCE, ONLY WHERE THE TWO ABOVE FOUND NOTHING: a PE row whose
+    // system the graph supplies has neither a paired payload nor a cross gcc,
+    // and its llvm payload carries no Windows headers -- but the MinGW-w64
+    // sysroot payload the rows declare does, with every architecture's headers
+    // under one `<root>/include` (E9's layout). The caller resolved that
+    // payload; this stays a probe beside the directories it already probed,
+    // never a search of PATH.
+    if (out.empty() && !system_headers.empty()
+        && std::filesystem::is_directory(system_headers, ec))
+        out.push_back(system_headers);
+    return out;
 }
 
 std::string coff_target_flag(const RcTool& tool, std::string_view targetTriple) {
@@ -315,6 +373,21 @@ std::optional<RcTool> find_rc_tool(const mcpp::toolchain::Toolchain& tc,
         if (auto p = probe_dir(root / tc.targetTriple / "bin", names))
             return RcTool{*p, "gnu", is_llvm_windres(*p)};
     }
+    // THE PAYLOAD A PROVIDER PAIRS WITH THE COMPILER (SPEC-016 §6) CARRIES ITS
+    // OWN BINUTILS: clang with the MinGW-w64 payload found no windres beside
+    // clang and refused, while the payload's `bin/` held one (design
+    // 2026-11-10 E3, mcpp#911 N9).
+    if (!tc.pairedSysroot.empty())
+        if (auto p = probe_dir(tc.pairedSysroot / "bin", names))
+            return RcTool{*p, "gnu", is_llvm_windres(*p)};
+    // AND A CLANG ALWAYS HAS llvm-rc BESIDE IT. It writes a `.res`, which
+    // `ld.lld` links on a GNU-ABI Windows target as `lld-link` does (measured
+    // 2026-11-10: a VERSIONINFO linked into a PE by `clang
+    // --target=x86_64-w64-mingw32 -fuse-ld=lld m.c a.res`); so a target with no
+    // windres -- an openkal Windows row, any host without a MinGW payload --
+    // compiles its resources with the compiler's own tool.
+    if (tc.compiler == mcpp::toolchain::CompilerId::Clang)
+        if (auto p = probe_dir(compilerDir, {"llvm-rc"})) return RcTool{*p, "msvc"};
     return std::nullopt;
 }
 

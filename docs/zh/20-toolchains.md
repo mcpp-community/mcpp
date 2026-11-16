@@ -106,6 +106,41 @@ $ mcpp toolchain install llvm 23.1.3
 修订修复的是每个已装载荷都有的缺陷时，索引同时提高该版本的 `floor`，低于它的已装载荷在下一次构建时被替换，
 并说明原因。替换失败时已装载荷保留；`mcpp toolchain install` 此时报错，并说明仍在使用的修订号。
 
+## 族名所对应的包，与作为工具链的任意包（2026.11.13.1+）
+
+族名（`gcc@16.1.0`、`llvm@23.1.3`）是简写。它在某台主机上为某个目标安装索引里的哪个包，是数据：
+`modules/toolchain-model/data/builtin.toml` 的 `[[toolchain.payload]]` 条目，按序尝试，取第一条在本机服务该目标的。
+Linux x86_64 上为 `x86_64-linux-musl` 的 `gcc` 是 `musl-gcc`，其他主机上是 `x86_64-linux-musl-gcc`；为
+`x86_64-windows-gnu` 的 `gcc` 在 Windows 上是 `mingw-gcc`，其他主机上是 `mingw-cross-gcc`。条目陈述的载荷名
+（`musl-gcc@16.1.0`、`emsdk@6.0.9`）可直接使用，`mcpp toolchain list` 也经同一组条目识别已安装的载荷。
+
+族的版本属于索引而不属于引擎：索引发布之后，清单或 `--toolchain` 直接写它，不需要新的 mcpp。部分版本取该系列最新的正式版
+（`gcc@16.2` 即 16.2.0）。主干快照按 GCC 自报的形式写作 `<major>.0.0-<YYYYMMDD>`；日期是预发布段，因此 `gcc@17` 不选中它，
+只有写全版本才使用：
+
+```toml
+[toolchain]
+default = "gcc@16.2"                    # 16.2.x 中最新的正式版
+# default = "xim:gcc@17.0.0-20261108"   # GCC 2026-11-08 的主干（实验性）
+```
+
+索引里的其他包只要描述自身，就是工具链。`xim:<name>@<version>` 安装它，并按 `path:<根>` 加它的
+`.mcpp-toolchain.json`（schema 2）所陈述的表解析；键即清单 `{ path = ... }` 表的键，各自相对载荷根，越出载荷即被拒绝：
+
+```json
+{ "schema": 2, "family": "gcc", "prefix": "riscv64-elf-",
+  "sysroot": "riscv64-elf", "tools": { "cxx": "bin/riscv64-elf-g++" } }
+```
+
+`family` 是其驱动程序的选项写法（`gcc` 或 `llvm`）；未写时由 C++ 驱动程序的名字判定。没有该文件的包被拒绝，并指出文件名。
+不带 `xim:` 的未知名字被拒绝，消息列出族、表中的载荷与这种写法。
+
+### 没有 C++ 模块的编译器（2026.11.13.1+）
+
+GCC 14 之前的版本既没有 `-fmodules`，也没有 P1689 扫描（实测 DJGPP 的 GCC 12.2.0）。使用它时，mcpp 依据自己对源码的扫描，
+把不声明、不导入任何模块的 C++ 单元作为不带模块选项的翻译单元构建，C 单元与其他编译器相同。声明模块、属于模块单元或导入
+模块（含 `import std;`）的单元在规划时被拒绝，并指出文件及其所需。
+
 ## 切换默认工具链
 
 默认值是一*对*——toolchain 轴 + target 轴（省略 target 即宿主）：
@@ -218,7 +253,12 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 | `installed` | 本机已有的载荷就能产出它 | 无 |
 | `available` | 本宿主上存在可安装的载荷 | `mcpp toolchain install` |
 | `via dependency graph` | 编译器在本机，而该 target 的系统不在，由包供给 | 依赖一个实现该 target 内核接口与 C 库的包 |
-| `planned` | 已登记在词汇表中，尚未发布 | — |
+| `planned` | 已登记在词汇表中，尚未发布 | 为构建指定工具链，或选择服务该行的平台 |
+
+`planned` 行在两种情形下构建：构建指定了工具链（`[target.<row>] toolchain`、`--toolchain`），或为该请求选择的
+平台（`--platform`、`[target.<row>] platform`、配置）以工具链列出该行——列在 `[platform] targets` 中且有
+`toolchain`，或列在指定了工具链的 `[[platform.provider]]` 中（2026.11.14.1+）。由平台的陈述决定；不列出该行的
+平台会在拒绝信息中被指名。目标集合（`--target openkal`）的各个分支按同一规则逐一判断。
 
 **不出现在这个块里的 target，在本机根本构建不了**——而这句话现在比以前更窄。
 在 mcpp 2026.8.25.2 之前，这个块只列出载荷能服务的那些，于是「系统来自依赖图」
@@ -285,6 +325,13 @@ OS：
 归档顶着 MSVC 的名字，MSVC 拿不去用。若有脚本按 `*.lib` 收集
 `windows-gnu` 构建的产物，现在要改成 `*.a`。
 
+
+### clang 配 MinGW-w64 载荷（2026.11.9.1+）
+
+MinGW-w64 提供者与 gcc、llvm 配对。声明 llvm 时（`--toolchain llvm@<v>` 或 `[target.x86_64-windows-gnu] toolchain`），
+该载荷按 gcc 的方式安装，并成为 clang 的 sysroot：其 C 库、libstdc++（`bits/std.cc` 即 std 模块，`import std` 可用）与 GCC
+运行库，由 lld 链接。构建报告 `Pairs clang ... with the gcc@<v> payload`。
+
 ## Windows 上产出 Linux ELF(`x86_64-linux-musl`，无需 WSL)
 
 上一节的镜像：一台 Windows 机器直接产出**完全静态的 Linux 二进制**，不需要
@@ -341,8 +388,6 @@ toolset 之间、以及与系统 Visual Studio 之间都可以共存。
 > 机器都用同一个编译器。Windows 是唯一一处「拒绝使用已经装好的东西」代价大于
 > 收益的地方：Visual Studio 常常已经装了，又不总能重新分发。写
 > `<family>@system` 给其他任何一个族都会直接报错，并同时给出两种可能的意图。
-> （不带族的 `[toolchain] … = "system"`——即 PATH 上的编译器——是另一条、
-> 同样有意保留的逃生口，不受影响。）
 
 ### `[toolchain] … = "system"` —— 拒绝
 

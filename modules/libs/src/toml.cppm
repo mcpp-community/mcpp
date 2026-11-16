@@ -5,7 +5,7 @@
 //  - Booleans: key = true / false
 //  - Integers
 //  - Arrays of strings: key = ["a", "b"]
-//  - Inline tables (rudimentary): key = { version = "..." }
+//  - Inline tables: key = { version = "..." }, across lines as TOML 1.1 allows
 // Comments: # to end of line. Multiline strings ("""/''') supported; no datetime.
 
 export module mcpp.libs.toml;
@@ -379,14 +379,18 @@ inline std::expected<Value, ParseError> read_array(Lexer& L) {
     return Value{std::move(out)};
 }
 
+// `{ key = value, ... }`, as TOML 1.1 writes it: newlines and comments may
+// stand between the braces and the pairs, and a comma may follow the last
+// pair. A pair itself stays on one line (`key = value`), as at the top level.
 inline std::expected<Value, ParseError> read_inline_table(Lexer& L) {
     if (L.peek() != '{') return std::unexpected(ParseError{"expected '{'", L.position()});
+    const Position open = L.position();
     L.advance();
     Table tab;
-    L.skip_inline_whitespace();
-    if (L.peek() == '}') { L.advance(); return Value{tab}; }
     while (true) {
-        L.skip_inline_whitespace();
+        L.skip_whitespace_and_comments();
+        if (L.peek() == '}') { L.advance(); break; }
+        if (L.eof()) return std::unexpected(ParseError{"unterminated inline table", open});
         auto k = read_key(L);
         if (!k) return std::unexpected(k.error());
         L.skip_inline_whitespace();
@@ -398,7 +402,7 @@ inline std::expected<Value, ParseError> read_inline_table(Lexer& L) {
         auto v = read_value(L);
         if (!v) return std::unexpected(v.error());
         tab[*k] = std::move(*v);
-        L.skip_inline_whitespace();
+        L.skip_whitespace_and_comments();
         if (L.peek() == ',') { L.advance(); continue; }
         if (L.peek() == '}') { L.advance(); break; }
         return std::unexpected(ParseError{"expected ',' or '}' in inline table", L.position()});

@@ -13,6 +13,19 @@ own — dependencies are [05](05-dependencies.md), features are
 
 `mcpp.toml` is the project configuration file for the mcpp build tool, analogous to Cargo's `Cargo.toml` or Node's `package.json`. Place it in the project root; `mcpp build` discovers and reads it automatically.
 
+The file is TOML. An inline table may span several lines, carry comments and
+end with a comma after its last pair, as TOML 1.1 allows; each `key = value`
+pair stays on one line (#928). The same holds for every TOML file mcpp reads
+(`mcpp.lock`, `config.toml`, template metadata).
+
+```toml
+[dependencies]
+widget = {
+    version  = "2.0.0",
+    features = ["gui"],   # a comment inside the table
+}
+```
+
 ## 1. Minimal Examples
 
 mcpp is designed around **convention over configuration** — most fields have sensible defaults, so the simplest `mcpp.toml` is just a few lines:
@@ -297,7 +310,8 @@ main = { from = "openmui/player" }     # "<dependency>/<entry>"
   `extern "C"`: a declaration attached to a named module cannot be defined
   outside it.
 - An entry target states `main` (a file), and may state `start`,
-  `windows_entry`, `cflags`, `cxxflags`, `defines` and `required_features`.
+  `windows_entry`, `cflags`, `cxxflags`, `defines`, `required_features` and
+  `test-protocol`.
   Its `windows_entry` is inherited by the program that selects it; a program
   stating another is refused. Its `required_features` must be active: a
   selection otherwise is refused with the dependency line that enables them.
@@ -505,17 +519,26 @@ required_features = ["gui"]                   # only built when feature `gui` is
 |---|---|
 | `defines` | Preprocessor macros (`name` or `name=value`); desugar to `-D<x>` on both the C and C++ entry compile. |
 | `cxxflags` / `cflags` | Extra compile flags for this target. Do **not** put `-std=...` here — use `[package].standard`. |
+| `build` *(2026.11.9.1+)* | A table, `[targets.<name>.build]` with `defines`, `cxxflags` and `cflags`: the flags of every translation unit of this package the target links — its entry and the shared implementation sources. Where they differ from the package's, the units are compiled as the target's own variant (`obj/_variant/<name>/`); the other targets link the package's objects. A module interface is one per package and is not varied. |
 | `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. An entry target states the function its translation unit defines, and the program that selects it inherits it. |
 | `start` *(2026.10.26.2+)* | The symbol the image is entered at, on a freestanding target. See `start` above. |
+| `test-guide` *(2026.11.8.1+)* | Of an entry target: a file of the package, its guide to writing the tests it begins, which `mcpp test --guide` names ([08](08-testing.md#writing-a-test)). Refused on any other target. |
+| `test-capabilities` *(2026.11.10.1+)* | Of an entry target: the optional capabilities of the mcpp test spec its framework implements, by name (`["check-details", "metrics", "fixtures"]`; [SPEC-017](specs/test.md) B6). `mcpp test --guide` reports them, and a client relies on one only when it is stated. Refused on any other target. |
+| `test-session` *(2026.11.10.1+)* | Of an entry target: the command that starts its framework's test session (`["mtest", "serve", "--stdio"]`; SPEC-017 O9), which a client starts to run, add and cancel cases while it holds the session. `mcpp test --guide` reports it. Refused on any other target. |
+| `test-main` *(2026.11.8.1+)* | Of an entry target: `true` offers it as the beginning of a test file that defines no `main` in a package that depends on this one (or is this one) and states no `[test] main` ([08](08-testing.md#where-a-test-program-begins)). Refused on any other target. |
+| `test-protocol` *(2026.11.8.1+)* | Of an entry target: the version of the test protocol a test program that begins here implements, `1`; `mcpp test` then lists, selects and reports the program's cases ([08](08-testing.md#cases-the-test-protocol)). Refused on any other target. |
 | `windows_code_page` *(2026.9.26.1+)* | The ANSI code page of an executable on Windows: `"utf-8"`, embedded as an application manifest that Windows 10 version 1903 and later honour, or `"legacy"`, the system's code page. A program target that writes neither runs in the system's code page, except a program built as a host tool (§2.14), which defaults to `"utf-8"`. Refused on a library target; renders nothing on a target that is not PE. See *Paths and text encoding* in §2.3. |
 | `windows_long_paths` *(2026.10.16.1+)* | `true` embeds `longPathAware` in the executable's application manifest: the process may use paths longer than 260 characters where Windows enables them (`LongPathsEnabled`). `false` embeds nothing. A program target that writes neither embeds nothing, except a program built as a host tool (§2.14), which defaults to `true`. Refused on a library target; renders nothing on a target that is not PE. |
 | `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
-> target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
-> are compiled once and linked into every target (mcpp's compile-once model). They are the right
+> target's entry source** (its `main`) — never to shared module/impl objects, which are compiled
+> once and linked into every target (mcpp's compile-once model); the shared sources of one target
+> take its own flags through `[targets.<name>.build]`. An entry that several programs name is
+> compiled once per program whose flags differ (`obj/_entry/<name>/`, 2026.11.10.1+), so each
+> program links its own entry object. They are the right
 > tool when the flag only needs to affect a single binary's (or test's) own entry — for example a
 > per-test contract evaluation semantic (`-fcontract-evaluation-semantic=observe`) for a test whose
 > `main` exercises the violation, a feature macro the entry alone reads, or a local warning
@@ -535,9 +558,10 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | To **select a variant** of a shared library (e.g. a backend) | `[features]` on that library (§2.8) — additive, reaches the library's own compile |
 | A **whole-build mode** (sanitizers, contract semantics, opt level) | `[profile.<name>]` (§2.9) + `--profile`; also honored by `mcpp test --profile <name>` |
 
-mcpp deliberately does not compile a shared source two different ways within one build: a source
-maps to one object (and one BMI for modules), so divergence that must reach shared code belongs at
-the package/feature boundary, not on an individual target.
+A source maps to one object per set of flags: the package's object, and one variant for each
+target whose `[targets.<name>.build]` or entry flags differ from the package's. A module interface
+maps to one BMI per package and is not varied, so divergence that must reach a module interface
+belongs at the package/feature boundary, not on an individual target.
 
 ### 2.3 `[build]` — Build Configuration
 
@@ -556,6 +580,15 @@ the package/feature boundary, not on an individual target.
 > which is what a header-only distribution package needs to say. Until
 > mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
+
+> **A path without a pattern names one file** (2026.11.16.1+). A `sources`
+> entry with none of `*`, `?`, `[`, `{` names a file, and a file that does not
+> exist is an error naming the table that states it (`[build]`,
+> `[target.'<sel>'.build]`, `[features.<f>]`): it was skipped, and the build
+> failed at an importer of the module the file provides. In a package fetched
+> into a store, which its consumer cannot change, it is a warning. A file an action or
+> a build program of the build writes is the build's. A pattern that matches
+> nothing selects nothing, as a target's selection may.
 
 > **`**/` stands for whole directories.** In `sources` and every glob that
 > shares its grammar, `**/` matches zero or more directories and what follows
@@ -588,6 +621,7 @@ c_standard   = "c11"              # Standard for this package's C sources (defau
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
 ldflags      = ["-lfoo"]          # Extra link flags
+compiler_runtime_dir = "compiler-rt" # A compiler-runtime supplier: where its runtime stands (2026.11.10.1+; docs/22)
 defines      = ["BIZ=1", "QUX"]   # Preprocessor macros for every TU of this package; keyed by name (§ below)
 cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdlib is the old spelling
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
@@ -1048,6 +1082,19 @@ with two behaviours has to be.
 
 `bmi_schedule` decides when importers are unblocked.
 
+With GCC and `bmi_schedule = "on"`, ordinary compilation and detached code
+generation share the same total `jobs` limit (2026.11.7.1+). Additional
+scheduling and join tasks do not increase the number of compiler processes.
+A link shares the same limit (2026.11.16.1+): links that become ready together
+run as many at once as compiles do, not all at once.
+Cancelling the build ends its ordinary and detached compilers. An immediately
+following build waits for their cleanup before starting another compiler;
+partial outputs are rebuilt. A missing object from a completed module is
+recreated by that build. An unchanged build still performs no compilation.
+If a forcibly ended build leaves a compiler unit whose completion cannot be
+verified, the next build reports an occupied or unknown unit and retains its
+outputs; it does not start a replacement compiler in that slot.
+
 | value | |
 |---|---|
 | `"auto"` | **the default, and it currently means OFF** |
@@ -1460,7 +1507,7 @@ established, repeats the first line of the reason in the summary, and exits 2:
 ```
 warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
 smoke ... not run
-error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (plan 0.02s · build 0.39s · run 0.00s)
 ```
 
 Exit code 1 keeps its meaning — a test ran and failed — and 0 means every test
@@ -1507,7 +1554,7 @@ the platform's own key names ([35 — Platforms](35-platforms.md)):
 
 ```toml
 [target.'cfg(os = "openkal")']
-platform = "openkal-platform@0.23.3"          # or { path = "…" }, or "none"
+platform = "openkal-platform@^0.24"           # a series, a version, { path = "…" }, or "none"
 
 [target.'cfg(platform = "openkal")'.layers]
 c-abi = { path = "../openkal-musl" }
@@ -1523,7 +1570,8 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 | `tools.<name>` | the package that builds a tool for this machine, or `{ program = "<name>" }` |
 | `link` | `driver`, `flags`, `start`, `script`, `inputs`, `exe`, `shared`, `seal` |
 | `carrier` | `{ package, section, main }`: the program `--mode self-contained` builds |
-| `runner` | an argv, or `{ cmd, host, exclusive }`: `host = "same-arch"` runs an artifact only on a machine of its architecture |
+| `runner` | an argv, or `{ cmd, host, hosts, exclusive, requires, enabled, longlived }`: `host = "same-arch"` runs an artifact only on a machine of its architecture; a table without `cmd` adjusts the runner below it, as `{ enabled = true }` enables a runner its data states `enabled = false` (2026.11.16.1) |
+| `runners.<name>` | the same argv or table, for a named runner (the table form 2026.11.16.1) |
 
 `cfg(platform = "<name>")` selects by platform; `platform` itself is not
 accepted under such a selector. The same keys are read from
@@ -1558,7 +1606,10 @@ module graph directly. The declaration is **audited every build**: the
 compiler's own P1689 scan of the file (the `.ddi` dyndep input) is compared
 against it, and any divergence fails that compile edge with both sides
 printed — a stale declaration cannot silently corrupt the graph. An override
-glob that matches no source file is an error.
+glob that matches no file of the package is an error. A glob whose files exist
+and take no part in this build — a feature that is off, a `!` rule of a
+`[target.<selector>.build]` — is not: the declaration describes those files for
+the builds that compile them (2026.11.10.1+, mcpp#902).
 
 The same key exists in xpkg descriptors (index packages):
 
@@ -1621,7 +1672,7 @@ where it would become a BMI path that nothing reports.
 ```toml
 [profile.dist]
 opt      = 3              # -O level (a number, or the string "s"/"z")
-debug    = false          # -g
+debug    = false          # -g; /Z7 on cl.exe; "lines": the line tables alone
 lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gcc builds ship without the LTO plugin)
 strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
@@ -1632,6 +1683,13 @@ cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
+
+**Debug information on cl.exe (2026.11.7.1+).** `debug = true` compiles with
+`/Z7`: each object carries its own debug information. `/Zi` and `/ZI` write
+the debug information of every compile into one PDB through mspdbsrv.exe, a
+server that outlives the compile that started it and ends with that compile's
+process unit; `/Zi`, `/ZI` and `/FS` in a package's flags are refused before
+anything compiles.
 
 - Selection & default: a bare `mcpp build` uses the **`dev`** profile (`-O0 -g`) — the
   mainstream convention (cf. Cargo/Meson/CMake/Zig/Bazel). **Release is opt-in:**
@@ -1646,6 +1704,10 @@ ldflags  = []
 - Built-in profiles: `release` (-O2) / `dev`, `debug` (-O0 -g) / `dist` (-O3 + strip;
   **LTO is not enabled by default**). `[profile.<built-in name>]` can override a
   built-in definition wholesale.
+- **The order of the flag lists.** Each of `cflags`, `cxxflags` and `ldflags`
+  reaches a command as `[build]`'s, then the profile's, then
+  `[target.<selector>.build]`'s: where a compiler or a linker takes the last of
+  two words, the target block's wins (measured on 2026.11.16.1).
 - **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in
@@ -1658,9 +1720,11 @@ ldflags  = []
   checkouts of one tree then embed identical paths. A unit's map holds the fixed roots
   and the roots of its own package's dependency closure, so a dependency's command line
   is the same whichever workspace members a build selects (2026.10.26.2+). It applies to
-  what `build`, `run`
-  and `pack` produce, not to `mcpp test`: a test binary runs where it was built and
-  commonly finds its fixtures through `__FILE__`. A build with debug information
+  what `build`, `run`, `pack` and `mcpp test` compile, but for a test program's own
+  files: a test binary runs where it was built and commonly finds its fixtures through
+  `__FILE__`, and the code under test is the code that ships, so `mcpp build` and
+  `mcpp test` are one configuration (2026.11.8.1+; before, a test of a shipping profile
+  was a configuration of its own and compiled the whole graph again). A build with debug information
   also writes `source-map.gdbinit` and `source-map.lldbinit` beside its outputs, which
   map the paths back for a debugger. cl.exe has no documented equivalent and the build
   says so once. Write `ndebug = false` or `trim_paths = false` under the profile to keep
@@ -1682,6 +1746,14 @@ ldflags  = []
   build directory the skeleton names. `"off"` keeps all of it in the artifact.
   Mach-O (the debug map), PDB, MinGW, WebAssembly and freestanding targets are
   unchanged. `-gz=none` in a package's flags turns compression off.
+- **`debug = "lines"` (2026.11.13.1+)** keeps the line tables alone: `-g1` with
+  GCC, which is `-gline-tables-only` with clang. A backtrace, a sanitizer report
+  and a profiler still name a file and a line; a debugger sees no variables and
+  no types. A test program of a large closure is a fraction of its `debug = true`
+  size, which is what a profile for CI and full test runs wants (see
+  [08 — The size of a test build](08-testing.md#the-size-of-a-test-build)).
+  cl.exe has no level below `/Z7`, which `"lines"` compiles with there. Any other
+  string is refused.
 - **Each profile owns its own build directory.** The resolved profile knobs
   participate in the fingerprint, so `target/<triple>/` holds one hash directory
   per profile and switching between them is incremental instead of a full
@@ -1689,15 +1761,23 @@ ldflags  = []
   actually use.
 - **A configuration keeps one directory over time (2026.10.31.3+).** The part of
   the fingerprint a developer switches between -- the compiler family, the
-  target, the standard library's family, the standard and the configuration's
-  flags -- is the directory's lineage; the compiler's version, mcpp's version,
-  the std module and the runtime contract evolve. A new fingerprint of a lineage
+  target, the standard library's family, the standard, the configuration's
+  flags and the base as stated -- is the directory's lineage; the compiler's
+  version, mcpp's version, the std module and the runtime contract (what the
+  base contains) evolve. A new fingerprint of a lineage
   takes over the directory that lineage used last, and ninja rebuilds the edges
   whose commands changed: after an mcpp upgrade that leaves the flags as they
-  were, no unit is compiled again. A predecessor of another compiler build is
-  removed instead (its objects are not reusable). After a build or a test run,
+  were, no unit is compiled again. A predecessor of another compiler build, or
+  built against other contents of the base, is removed instead (its objects are
+  not reusable). After a build or a test run,
   at most once a day, the directories no configuration used for `[build]
   keep_days` days (config.toml; default 3, `0` keeps all) are removed.
+- **`[build] target_budget` bounds `target/` (2026.11.8.1+).** A size such as
+  `target_budget = "20GiB"` in `mcpp.toml` (or config.toml): after every build
+  or test run whose `target/` holds more, the directories no configuration
+  records as current are removed whatever their age, and when the directories
+  in use still hold more, the build warns, naming the three largest. Nothing in
+  use is removed (mcpp#874).
 
 ### 2.10 `[build] cache` — The Global Dependency Cache
 
@@ -1930,10 +2010,10 @@ platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 
 Declares the platforms the package supports (a CI matrix hint, shown via `mcpp why`).
 The vocabulary is fixed by mcpp (which owns the target/triple system):
-`linux | macos | windows | ios | android | emscripten` (mcpp 2026.9.12.3+;
+`linux | macos | windows | ios | android | emscripten | openkal | freebsd` (mcpp 2026.9.12.3+;
 `ios`, `android` and `emscripten` are new members of a vocabulary that was
-`linux | macos | windows` before); unknown values produce a warning, and an
-error under `--strict`.
+`linux | macos | windows` before, and `freebsd` is a member from 2026.11.10.1); unknown
+values produce a warning, and an error under `--strict`.
 
 A platform name is a target triple's `os`, except that an `env` naming a
 platform of its own wins. Android rows have `os = "linux"` and
@@ -2005,8 +2085,10 @@ generates the resource script automatically.
 | `version-info` | bool | `false` opts out of the generated version resource |
 | `[resources.version-info]` | table | `company`, `product`, `description`, `copyright`, `original-filename`, `internal-name` |
 
-**Only PE targets *compile* this.** On Linux and macOS the section is
-*inapplicable*: no resource units, no diagnostics, byte-identical build. You do
+**Only targets whose programs Windows runs *compile* this**: PE rows whose
+execution system is Windows. Elsewhere the section is *inapplicable* --- Linux,
+macOS, and a PE row another system loads, such as `x86_64-uefi` (2026.11.16.1):
+no resource units, no diagnostics, byte-identical build. You do
 **not** need (and cannot use) a `cfg(windows)` predicate — write it once,
 unconditionally.
 
@@ -2076,7 +2158,11 @@ statements (`ICON`, `RCDATA`, `MANIFEST`, the numeric type `24`, …), and makes
 them build inputs, so editing the icon relinks. A relative file name is resolved
 against the script's own directory, which is also where rc.exe, llvm-rc and
 windres look for it. Angled includes (`<windows.h>`) are the toolchain's
-and are covered by the toolchain fingerprint instead.
+and are covered by the toolchain fingerprint instead, as is a quoted include the
+toolchain's Windows headers hold (`"winres.h"`). A quoted include found nowhere is
+an input only when a build action writes it; otherwise the script's own
+preprocessing decides (`#if __has_include("x.h")`), and the resource compiler
+reports a missing one with the script's name and line (2026.11.10.1+).
 
 A file name reached through a macro (`1 ICON APP_ICON`) is invisible to that
 scan. mcpp names what it could not resolve and requires an explicit declaration:
@@ -2123,6 +2209,18 @@ discover = ["tests/**/*.cpp"]    # the default
 | `windows_long_paths` | `true` or `false` | whether every test program on Windows is long-path aware, in the meaning of the target key of the same name; the default is `false` *(2026.10.16.1+)* |
 | `main` | `{ from = "<dependency>/<entry>" }` | the entry target every test program begins in; each test file is then an ordinary translation unit of its program and defines no `main` (§2.2, `kind = "entry"`) *(2026.10.26.2+)* |
 | `start` | symbol | the symbol every test image is entered at, on a freestanding target (§2.2, `start`) *(2026.10.26.2+)* |
+| `programs` | `"file"` or `"directory"` | `"file"` (the default): every discovered file is a program; `"directory"`: the files of one directory below a glob's fixed directory are one program, named by the directory, beginning at the file that defines `main` when one does *(2026.11.8.1+)* |
+| `split` | `"file"`, `"case"`, `"auto"` or `"none"` | how a program that speaks the test protocol is run: a process per file of its cases (the default), per case, per file with a file the run store measured longer than its share divided into groups of its cases (`"auto"`, 2026.11.13.1+), or once *(2026.11.9.1+)* |
+| `link` | `"used"` or `"objects"` | `"used"` (the default): a test links what it reaches (`--gc-sections`, `-dead_strip`); `"objects"`: every object whole *(2026.11.9.1+)* |
+| `store` | directory or `"none"` | where a run is kept in the mtest store's form, relative to the project; the default is `target/mtest`; `"none"` keeps nothing *(2026.11.9.1+)* |
+| `features` | array of feature names | the features the package's own test build turns on, beside its defaults and `--features`; each is a feature `[features]` declares *(2026.11.16.1+)* |
+
+`[target.'<sel>'.test] discover` adds globs to `discover` for the targets the
+predicate selects, as a conditional `[build] sources` adds sources; a `!` glob
+removes the files it matches from the whole set *(2026.11.16.1+)*. It is the
+one key such a table holds: the others shape the test build rather than add to
+its inputs. The tests are discovered before dependencies resolve, so a
+predicate on a target-side layer (`kernel-abi`, `c-abi`, ...) is refused.
 
 The globs use the vocabulary of `[build] sources`. A test's name is its path
 relative to the fixed directory of the first glob that matched it, without the

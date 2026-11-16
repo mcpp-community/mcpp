@@ -15,7 +15,7 @@ import mcpp.build.version_floor;
 import mcpp.build.command_line;
 import mcpp.home;
 import mcpp.toolchain.platform;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -95,6 +95,8 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = state.resolvedTargetCanonical;
+        bpEnv.targetProvider = state.targetChoice.provider;
+        bpEnv.kernelAbiInterfaces = kernel_abi_interfaces_for(state, 0);
         // Everything the engine already knows and a build program would
         // otherwise hardcode: the payload ROOT (not the driver), the target's
         // C library, which compiler and which C++ standard library resolved,
@@ -153,7 +155,7 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
             bpEnv.programRunner   = program->runner;
             bpEnv.programIdentity = program->identity;
             bpEnv.programCompile  = program->compile;
-        } else if (!state.overrides.plan_only) {
+        } else if (!state.overrides.describes()) {
             return std::unexpected(program.error());
         } else {
             bpEnv.programError = program.error();
@@ -245,10 +247,10 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
                     *state.m, *state.root, host->first, host->second,
                     state.m->cppStandard, bpEnv);
             });
-        if (!bp && !state.overrides.plan_only) {
+        if (!bp && !state.overrides.describes()) {
             return std::unexpected(bp.error());
         }
-        // #699 item 2 (E3): under `emit build-database` (`plan_only`), a
+        // #699 item 2 (E3): under `emit build-database` (`PrepareIntent::Describe`), a
         // failing root build program describes the package without its
         // directives rather than costing the whole plan. Every mirror below
         // reads what the program would have added to `*m`, so skipping
@@ -512,6 +514,8 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
         auto& pkg = state.packages[i];
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = state.resolvedTargetCanonical;
+        bpEnv.targetProvider = state.targetChoice.provider;
+        bpEnv.kernelAbiInterfaces = kernel_abi_interfaces_for(state, i);
         fill_target_build_env(bpEnv, *state.m, state.tc ? &*state.tc : nullptr,
                               state.cfg_opt ? &*state.cfg_opt : nullptr);
         apply_graph_cxx_abi(bpEnv, state.packages);
@@ -587,7 +591,7 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
                     pkg.manifest.cppStandard, bpEnv);
             });
         if (!bp) {
-            if (!state.overrides.plan_only)
+            if (!state.overrides.describes())
                 return std::unexpected(std::format(
                     "workspace member '{}': {}", pkg.manifest.package.name, bp.error()));
             state.planNotes.push_back({"MCPP_BUILD_DATABASE_PROGRAM_FAILED",
@@ -611,6 +615,7 @@ std::expected<void, std::string> step9_member_build_programs(PrepareState& state
                     state.runnerProvider, pkg.manifest.package.name));
             rootBc.runner.assign(bc.runner.begin() + static_cast<std::ptrdiff_t>(runnerN),
                                  bc.runner.end());
+            rootBc.runnerFields = bc.runnerFields;
             state.runnerProvider = pkg.manifest.package.name;
         }
         for (auto const& [name, nr] : bc.namedRunners) {

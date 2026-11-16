@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 // #610 / #630 item 5 — `[target.<triple>]` has a scalar/array parser (a
 // sequence of `body.find("<key>")` blocks) and, further down in the same
@@ -127,28 +129,28 @@ std::vector<std::string> known_list(const std::string& region, std::string_view 
 
 }  // namespace
 
-TEST(TargetScalarKeys, EveryParsedNonTableKeyIsKnownToTheSweep) {
+UTest every_parsed_non_table_key_is_known_to_the_sweep{"TargetScalarKeys/EveryParsedNonTableKeyIsKnownToTheSweep", [] {
     auto source = read_file(repo_root() / "modules" / "manifest" / "src" / "toml.cppm");
-    ASSERT_FALSE(source.empty()) << "could not read toml.cppm";
+    expect(fatal(!source.empty())) << "could not read toml.cppm";
     auto region = target_entry_region(source);
-    ASSERT_FALSE(region.empty()) << "could not locate the [target.<triple>] entry parser";
+    if (auto&& failed = expect(fatal(!region.empty())); !failed) failed << "could not locate the [target.<triple>] entry parser";
 
     auto parsed = parsed_target_keys(region);
     auto knownScalars = known_list(region, "kKnownTargetScalars");
     auto knownArrays = known_list(region, "kKnownTargetArrays");
-    ASSERT_FALSE(knownScalars.empty());
-    ASSERT_FALSE(knownArrays.empty());
+    expect(fatal(!knownScalars.empty()));
+    expect(fatal(!knownArrays.empty()));
 
     // Direction 1 (the positive claim, and the failure mode #610 produced):
     // every key the parser reads as a scalar is in the sweep's scalar list,
     // and likewise for arrays. `min_api_level` is the case that used to fail
     // this.
     for (auto const& key : parsed.scalars)
-        EXPECT_NE(std::ranges::find(knownScalars, key), knownScalars.end())
+        expect(ne(std::ranges::find(knownScalars, key), knownScalars.end()))
             << "'" << key << "' is parsed as a scalar but missing from "
             << "kKnownTargetScalars, so the sweep would report it as unsupported";
     for (auto const& key : parsed.arrays)
-        EXPECT_NE(std::ranges::find(knownArrays, key), knownArrays.end())
+        expect(ne(std::ranges::find(knownArrays, key), knownArrays.end()))
             << "'" << key << "' is parsed as an array but missing from "
             << "kKnownTargetArrays";
 
@@ -156,14 +158,14 @@ TEST(TargetScalarKeys, EveryParsedNonTableKeyIsKnownToTheSweep) {
     // names something the parser reads. A stale list entry would pass every
     // manifest silently and give no test failure otherwise.
     for (auto const& key : knownScalars)
-        EXPECT_NE(std::ranges::find(parsed.scalars, key), parsed.scalars.end())
+        expect(ne(std::ranges::find(parsed.scalars, key), parsed.scalars.end()))
             << "kKnownTargetScalars names '" << key << "', which has no "
             << "body.find(...) parse site in the [target.<triple>] entry parser";
     for (auto const& key : knownArrays)
-        EXPECT_NE(std::ranges::find(parsed.arrays, key), parsed.arrays.end())
+        expect(ne(std::ranges::find(parsed.arrays, key), parsed.arrays.end()))
             << "kKnownTargetArrays names '" << key << "', which has no "
             << "body.find(...) parse site";
-}
+}};
 
 // The whole `[target.<selector>]` loop body: the scalar parser, the sweep, and
 // the conditional channel that follows it, up to the point the block is
@@ -204,43 +206,43 @@ std::vector<std::string> parsed_target_tables(const std::string& region) {
     return out;
 }
 
-TEST(TargetScalarKeys, EveryParsedSubTableIsKnownToTheSweep) {
+UTest every_parsed_sub_table_is_known_to_the_sweep{"TargetScalarKeys/EveryParsedSubTableIsKnownToTheSweep", [] {
     // #634: the sweep used to skip every table-valued key, so a misspelled
     // section, and a section an older engine does not read, did nothing
     // without a word. It now checks tables against `kKnownTargetTables`, and
     // this test holds that list to the parse sites in both directions, which
     // is the drift the skip was introduced to avoid.
     auto source = read_file(repo_root() / "modules" / "manifest" / "src" / "toml.cppm");
-    ASSERT_FALSE(source.empty()) << "could not read toml.cppm";
+    expect(fatal(!source.empty())) << "could not read toml.cppm";
     auto region = target_loop_region(source);
-    ASSERT_FALSE(region.empty()) << "could not locate the [target.<selector>] loop body";
+    if (auto&& failed = expect(fatal(!region.empty())); !failed) failed << "could not locate the [target.<selector>] loop body";
 
     auto parsed = parsed_target_tables(region);
     auto known = known_list(region, "kKnownTargetTables[]");
-    ASSERT_FALSE(parsed.empty());
-    ASSERT_FALSE(known.empty());
+    expect(fatal(!parsed.empty()));
+    expect(fatal(!known.empty()));
 
     for (auto const& key : parsed)
-        EXPECT_NE(std::ranges::find(known, key), known.end())
+        expect(ne(std::ranges::find(known, key), known.end()))
             << "'" << key << "' is parsed as a sub-table of [target.<selector>] "
             << "but missing from kKnownTargetTables, so the sweep would report it";
     for (auto const& key : known)
-        EXPECT_NE(std::ranges::find(parsed, key), parsed.end())
+        expect(ne(std::ranges::find(parsed, key), parsed.end()))
             << "kKnownTargetTables names '" << key << "', which has no parse site "
             << "in the [target.<selector>] loop body";
     // The table this list was introduced beside.
-    EXPECT_NE(std::ranges::find(parsed, std::string("targets")), parsed.end());
-}
+    expect(ne(std::ranges::find(parsed, std::string("targets")), parsed.end()));
+}};
 
-TEST(TargetScalarKeys, MinApiLevelIsParsedAndKnown) {
+UTest min_api_level_is_parsed_and_known{"TargetScalarKeys/MinApiLevelIsParsedAndKnown", [] {
     // A direct, non-derived check on the specific regression: `min_api_level`
     // must be both a parse site and a known scalar key. If this test passes
     // while the source-scan test above also passes, the fix is coherent; if
     // this one passes and the scan test fails, a *different* key drifted.
     auto source = read_file(repo_root() / "modules" / "manifest" / "src" / "toml.cppm");
     auto region = target_entry_region(source);
-    ASSERT_FALSE(region.empty());
-    EXPECT_NE(region.find("body.find(\"min_api_level\")"), std::string::npos);
+    expect(fatal(!region.empty()));
+    expect(ne(region.find("body.find(\"min_api_level\")"), std::string::npos));
     auto knownScalars = known_list(region, "kKnownTargetScalars");
-    EXPECT_NE(std::ranges::find(knownScalars, std::string("min_api_level")), knownScalars.end());
-}
+    expect(ne(std::ranges::find(knownScalars, std::string("min_api_level")), knownScalars.end()));
+}};

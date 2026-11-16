@@ -10,6 +10,8 @@ import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 
 export namespace mcpp::toolchain::gcc {
 
@@ -183,6 +185,14 @@ std::filesystem::path binutils_prefix_dir(const Toolchain& tc) {
     // at all, so answering with one would describe a flag nobody passes.
     if (tc.compiler != CompilerId::GCC) return {};
     if (is_musl_target(tc) || is_mingw_target(tc)) return {};
+    // A cross payload a row names by its GCC target (`gcc-triple`) is built
+    // with its own binutils, under the same prefix; a host `as` would read its
+    // assembly as the host's (measured: DJGPP's 32-bit `push` refused).
+    // The target is read in either spelling: the row's, once the build has
+    // named it, or the compiler's own `-dumpmachine`, which detection reads.
+    for (auto const* r : mcpp::toolchain::target::rows())
+        if (!r->gccTriple.empty() && (r->gccTriple == tc.targetTriple || r->triple == tc.targetTriple))
+            return {};
     // A GCC named by path (mcpp#755) finds its own assembler and linker, as
     // every self-contained GCC does; it is pointed elsewhere only when the
     // project stated where `as` (or `ld`) is.

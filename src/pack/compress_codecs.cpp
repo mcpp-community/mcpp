@@ -1,14 +1,16 @@
 // The codecs of mcpp.pack.compress: zlib (gzip, raw deflate), zstd and liblzma
-// (xz), each through its one-shot interface. The only unit that includes the
-// libraries' headers.
-module;
-#include <lzma.h>
-#include <zlib.h>
-#include <zstd.h>
-
+// (xz), each through its one-shot interface, from the mwrap modules of the
+// three libraries; no header of theirs is included.
 module mcpp.pack.compress;
 
 import std;
+import mcpplibs.mwrap.xz;
+import mcpplibs.mwrap.zlib;
+import mcpplibs.mwrap.zstd;
+
+namespace zm = mcpplibs::mwrap::zlib::macros;
+namespace zsm = mcpplibs::mwrap::zstd::macros;
+namespace xm = mcpplibs::mwrap::xz::macros;
 
 namespace mcpp::pack::compress::codec {
 
@@ -27,20 +29,23 @@ constexpr std::size_t kZlibPiece = std::size_t{1} << 30;
 std::expected<std::string, std::string> zlib_deflate(std::string_view in, int level,
                                                      int windowBits) {
     z_stream s{};
-    const int lvl = level < 0 ? Z_DEFAULT_COMPRESSION : level;
-    if (deflateInit2(&s, lvl, Z_DEFLATED, windowBits, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+    const int lvl = level < 0 ? zm::Z_DEFAULT_COMPRESSION : level;
+    // deflateInit2 is a macro over deflateInit2_: the version and the stream's
+    // size let the library check it was compiled against the same zlib.
+    if (deflateInit2_(&s, lvl, zm::Z_DEFLATED, windowBits, 8, zm::Z_DEFAULT_STRATEGY,
+                      zm::ZLIB_VERSION, static_cast<int>(sizeof(z_stream))) != zm::Z_OK)
         return std::unexpected(std::string("zlib: deflateInit2 failed"));
     gz_header header{};
     header.os = 255;
-    if (windowBits > 15 && deflateSetHeader(&s, &header) != Z_OK) {
+    if (windowBits > 15 && deflateSetHeader(&s, &header) != zm::Z_OK) {
         deflateEnd(&s);
         return std::unexpected(std::string("zlib: deflateSetHeader failed"));
     }
     std::string out;
     out.resize(std::min(in.size(), kZlibPiece) + in.size() / 1000 + 1024);
     std::size_t fed = 0, written = 0;
-    int rc = Z_OK;
-    while (rc != Z_STREAM_END) {
+    int rc = zm::Z_OK;
+    while (rc != zm::Z_STREAM_END) {
         if (s.avail_in == 0 && fed < in.size()) {
             const auto piece = std::min(in.size() - fed, kZlibPiece);
             s.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(in.data() + fed));
@@ -51,9 +56,9 @@ std::expected<std::string, std::string> zlib_deflate(std::string_view in, int le
         const auto room = std::min(out.size() - written, kZlibPiece);
         s.next_out  = reinterpret_cast<Bytef*>(out.data() + written);
         s.avail_out = static_cast<uInt>(room);
-        rc = ::deflate(&s, fed == in.size() ? Z_FINISH : Z_NO_FLUSH);
+        rc = ::deflate(&s, fed == in.size() ? zm::Z_FINISH : zm::Z_NO_FLUSH);
         written += room - s.avail_out;
-        if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
+        if (rc != zm::Z_OK && rc != zm::Z_STREAM_END && rc != zm::Z_BUF_ERROR) {
             deflateEnd(&s);
             return std::unexpected(std::format("zlib: deflate returned {}", rc));
         }
@@ -90,7 +95,7 @@ std::expected<std::string, std::string> zstd(std::string_view in, int level) {
 
 std::expected<std::string, std::string> unzstd(std::string_view frame) {
     const auto size = ZSTD_getFrameContentSize(frame.data(), frame.size());
-    if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN)
+    if (size == zsm::ZSTD_CONTENTSIZE_ERROR || size == zsm::ZSTD_CONTENTSIZE_UNKNOWN)
         return std::unexpected(std::string("zstd: the frame does not state its content size"));
     std::string out;
     out.resize(static_cast<std::size_t>(size));
@@ -129,21 +134,22 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
     if (size && *size > most)
         return std::unexpected(std::format("zlib: {} bytes cannot hold the {} it states", in.size(), *size));
     z_stream s{};
-    if (inflateInit2(&s, windowBits) != Z_OK)
+    if (inflateInit2_(&s, windowBits, zm::ZLIB_VERSION, static_cast<int>(sizeof(z_stream)))
+        != zm::Z_OK)   // inflateInit2, as for deflateInit2 above
         return std::unexpected(std::string("zlib: inflateInit2 failed"));
     std::string out;
     // One byte past a stated size: a stream that fills it holds more than it
     // said.
     out.resize(size ? *size + 1 : in.size() * 4 + 1024);
     std::size_t fed = 0, written = 0;
-    int rc = Z_OK;
-    while (rc == Z_OK || rc == Z_BUF_ERROR) {
+    int rc = zm::Z_OK;
+    while (rc == zm::Z_OK || rc == zm::Z_BUF_ERROR) {
         if (s.avail_in == 0 && fed < in.size()) {
             const auto piece = std::min(in.size() - fed, kZlibPiece);
             s.next_in  = reinterpret_cast<Bytef*>(const_cast<char*>(in.data() + fed));
             s.avail_in = static_cast<uInt>(piece);
             fed += piece;
-        } else if (rc == Z_BUF_ERROR && s.avail_in == 0 && written < out.size()) {
+        } else if (rc == zm::Z_BUF_ERROR && s.avail_in == 0 && written < out.size()) {
             break;   // the input ended before the stream did
         }
         if (written >= out.size()) {
@@ -161,11 +167,11 @@ std::expected<std::string, std::string> zlib_inflate(std::string_view in, int wi
         const auto room = std::min(out.size() - written, kZlibPiece);
         s.next_out  = reinterpret_cast<Bytef*>(out.data() + written);
         s.avail_out = static_cast<uInt>(room);
-        rc = ::inflate(&s, Z_NO_FLUSH);
+        rc = ::inflate(&s, zm::Z_NO_FLUSH);
         written += room - s.avail_out;
     }
     inflateEnd(&s);
-    if (rc != Z_STREAM_END) return std::unexpected(std::format("zlib: inflate returned {}", rc));
+    if (rc != zm::Z_STREAM_END) return std::unexpected(std::format("zlib: inflate returned {}", rc));
     out.resize(written);
     return out;
 }
@@ -181,8 +187,8 @@ std::expected<std::string, std::string> inflate(std::string_view in, std::size_t
 }
 
 std::expected<std::string, std::string> unxz(std::string_view in) {
-    lzma_stream s = LZMA_STREAM_INIT;
-    if (lzma_stream_decoder(&s, UINT64_MAX, 0) != LZMA_OK)
+    lzma_stream s{};   // LZMA_STREAM_INIT: every member zero
+    if (lzma_stream_decoder(&s, std::numeric_limits<std::uint64_t>::max(), 0) != LZMA_OK)
         return std::unexpected(std::string("xz: cannot start a decoder"));
     std::string out;
     out.resize(in.size() * 4 + 1024);

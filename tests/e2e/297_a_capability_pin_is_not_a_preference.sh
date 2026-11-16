@@ -45,7 +45,7 @@ gccver="$("$MCPP" toolchain list --format json 2>/dev/null \
           | jq -r '[.data.toolchains[] | select(.family=="gcc") | .version][0] // empty' | tr -d '\r')"
 if [ -z "$gccver" ]; then
     echo "SKIP: gcc is not installed here, and this test is about declaring it"
-    exit 0
+    exit 77
 fi
 
 # LISTED IS NOT USABLE. A registry entry extracted from another host's
@@ -69,7 +69,7 @@ serveReason="$(cd probe && "$MCPP" why toolchain --toolchain "gcc@$gccver" \
     | jq -r '.data.reason // "none"' | tr -d '\r')"
 if [ "$serveReason" != "none" ]; then
     echo "SKIP: gcc is not installed here, and this test is about declaring it"
-    exit 0
+    exit 77
 fi
 
 # ── Half one: a bare-metal target refuses, and says why ───────────────────
@@ -146,7 +146,7 @@ hostedTarget="$(cd "$work" && "$MCPP" why toolchain --toolchain "gcc@$gccver" \
                   --format json 2>/dev/null | jq -r '.data.triple.toolchain // empty' | tr -d '\r')"
 if [ -z "$hostedTarget" ]; then
     echo "SKIP: the query did not name a target for gcc@$gccver on this host"
-    exit 0
+    exit 77
 fi
 rm -rf target
 hosted="$(cd "$work" && "$MCPP" build --target "$hostedTarget" 2>&1 || true)"

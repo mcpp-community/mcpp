@@ -26,11 +26,11 @@ for d in "$HOME"/.mcpp/registry/data/xpkgs/*-x-qemu-riscv/*/bin \
          "$HOME"/.xlings/data/xpkgs/*-x-qemu-riscv/*/bin; do
     [[ -x "$d/qemu-system-riscv64" ]] && QEMU="$d/qemu-system-riscv64"
 done
-[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 0; }
+[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 77; }
 
 MH="${MCPP_HOME:-$HOME/.mcpp}"
 [[ -d "$MH/registry/data/xpkgs/xim-x-picolibc-riscv" ]] \
-    || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 0; }
+    || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 77; }
 
 # libc++'s headers come from the llvm payload; pick by CONTENT, not by name
 # order — an empty directory for an older version sorts first.
@@ -38,10 +38,10 @@ LLVM=""
 for d in "$MH"/registry/data/xpkgs/xim-x-llvm/*/; do
     [[ -x "$d/bin/clang++" ]] && LLVM="$d"
 done
-[[ -n "$LLVM" ]] || { echo "SKIP: no llvm payload with clang++"; exit 0; }
+[[ -n "$LLVM" ]] || { echo "SKIP: no llvm payload with clang++"; exit 77; }
 LLVM="${LLVM%/}"
 [[ -d "$LLVM/share/libc++/v1/std" ]] \
-    || { echo "SKIP: llvm payload has no libc++ std/*.inc"; exit 0; }
+    || { echo "SKIP: llvm payload has no libc++ std/*.inc"; exit 77; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT

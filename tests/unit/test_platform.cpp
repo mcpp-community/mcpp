@@ -1,10 +1,14 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.build.prepare_inputs;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.platform;
+
+using namespace mcpplibs::mtest;
 
 // SPEC-013 (design 2026-10-28): what a platform states, how it is read in its
 // three places, which platform a graph selects, how the tiers merge, and the
@@ -20,7 +24,7 @@ namespace {
 
 mm::Manifest parse(std::string_view text) {
     auto m = mm::parse_string(text);
-    if (!m) ADD_FAILURE() << m.error().format();
+    if (!m) expect(false) << m.error().format();
     return m ? *m : mm::Manifest{};
 }
 
@@ -81,41 +85,41 @@ openkal-musl = "0.22.3"
 
 // ── The reader ──────────────────────────────────────────────────────────────
 
-TEST(PlatformManifest, EveryGroupIsRead) {
+UTest every_group_is_read{"PlatformManifest/EveryGroupIsRead", [] {
     auto m = parse(kPlatform);
-    ASSERT_TRUE(m.platformDeclared);
+    expect(fatal(bool(m.platformDeclared)));
     auto const& p = m.platform;
-    EXPECT_EQ(p.targets.value, (std::vector<std::string>{"x86_64-openkal", "aarch64-openkal"}));
-    EXPECT_EQ(p.toolchain.value, "llvm@23.1.3");
-    EXPECT_EQ(p.runner.cmd, (std::vector<std::string>{"okrun", "{}"}));
-    EXPECT_EQ(p.runner.host, "same-arch");
-    EXPECT_EQ(p.carriers.at(0).package.spec.shortName, "openkal-run");
-    EXPECT_EQ(p.carriers.at(0).section, ".oke");
-    EXPECT_TRUE(p.carriers.at(0).main.ends_with("carrier/main.cpp"));
-    ASSERT_TRUE(p.layers.contains("c++-abi"));
-    EXPECT_EQ(p.layers.at("c++-abi").ref.spec.version, "0.16.3");
-    EXPECT_EQ(p.layers.at("c-abi").ref.spec.shortName, "openkal-musl");
-    EXPECT_FALSE(p.layers.at("c-abi").ref.spec.defaultFeatures);
-    EXPECT_EQ(p.layers.at("c-abi").ref.spec.features, (std::vector<std::string>{"posix"}));
-    EXPECT_TRUE(p.layers.at("kernel-abi").ref.off);
-    EXPECT_EQ(p.tools.at("okld").ref.spec.shortName, "openkal-tools");
-    EXPECT_EQ(p.tools.at("probe").ref.program, "probe-rs");
-    EXPECT_EQ(p.build.cxxflags, (std::vector<std::string>{"-fPIC"}));
-    ASSERT_EQ(p.buildCfg.size(), 1u);
-    EXPECT_EQ(p.link.driver.value, "lld");
-    EXPECT_EQ(p.link.start.value, "ok_main");
-    ASSERT_EQ(p.link.inputs.size(), 2u);
-    EXPECT_EQ(p.link.inputs[0].as, "ok-notes.S");
-    EXPECT_TRUE(p.link.inputs[1].file.ends_with("crt/x.o"));
-    EXPECT_EQ(p.link.seal.size(), 2u);
-    EXPECT_EQ(p.hosted.toolchain.value, "llvm@23.1.3");
-    EXPECT_TRUE(p.hosted.layers.contains("c-abi"));
-    EXPECT_EQ(p.versions.at("openkal-musl"), "0.22.3");
-    EXPECT_EQ(p.runner.origin.tier, mp::Tier::Platform);
-    EXPECT_GT(p.runner.origin.line, 0);
-}
+    expect(eq(p.targets.value, (std::vector<std::string>{"x86_64-openkal", "aarch64-openkal"})));
+    expect(eq(p.toolchain.value, "llvm@23.1.3"));
+    expect(eq(p.runner.cmd, (std::vector<std::string>{"okrun", "{}"})));
+    expect(eq(p.runner.host, "same-arch"));
+    expect(eq(p.carriers.at(0).package.spec.shortName, "openkal-run"));
+    expect(eq(p.carriers.at(0).section, ".oke"));
+    expect(p.carriers.at(0).main.ends_with("carrier/main.cpp"));
+    expect(fatal(p.layers.contains("c++-abi")));
+    expect(eq(p.layers.at("c++-abi").ref.spec.version, "0.16.3"));
+    expect(eq(p.layers.at("c-abi").ref.spec.shortName, "openkal-musl"));
+    expect(!(p.layers.at("c-abi").ref.spec.defaultFeatures));
+    expect(eq(p.layers.at("c-abi").ref.spec.features, (std::vector<std::string>{"posix"})));
+    expect(bool(p.layers.at("kernel-abi").ref.off));
+    expect(eq(p.tools.at("okld").ref.spec.shortName, "openkal-tools"));
+    expect(eq(p.tools.at("probe").ref.program, "probe-rs"));
+    expect(eq(p.build.cxxflags, (std::vector<std::string>{"-fPIC"})));
+    expect(fatal(eq(p.buildCfg.size(), 1u)));
+    expect(eq(p.link.driver.value, "lld"));
+    expect(eq(p.link.start.value, "ok_main"));
+    expect(fatal(eq(p.link.inputs.size(), 2u)));
+    expect(eq(p.link.inputs[0].as, "ok-notes.S"));
+    expect(p.link.inputs[1].file.ends_with("crt/x.o"));
+    expect(eq(p.link.seal.size(), 2u));
+    expect(eq(p.hosted.toolchain.value, "llvm@23.1.3"));
+    expect(p.hosted.layers.contains("c-abi"));
+    expect(eq(p.versions.at("openkal-musl"), "0.22.3"));
+    expect(eq(p.runner.origin.tier, mp::Tier::Platform));
+    expect(gt(p.runner.origin.line, 0));
+}};
 
-TEST(PlatformManifest, RefusalsNameTheKey) {
+UTest refusals_name_the_key{"PlatformManifest/RefusalsNameTheKey", [] {
     const std::string head = "[package]\nname = \"p\"\nversion = \"1.0.0\"\n";
     struct Row { std::string body; std::string_view says; };
     const Row rows[] = {
@@ -150,13 +154,13 @@ TEST(PlatformManifest, RefusalsNameTheKey) {
     };
     for (auto const& r : rows) {
         auto e = parse_error(head + r.body);
-        EXPECT_NE(e.find(r.says), std::string::npos) << r.body << "\n=> " << e;
+        expect(ne(e.find(r.says), std::string::npos)) << r.body << "\n=> " << e;
     }
-}
+}};
 
 // An unknown key, in `[platform]`, its tables or `[host]`, is a warning: a
 // manifest written for a later mcpp still reads (SPEC-013 §18.1).
-TEST(PlatformManifest, UnknownKeysWarn) {
+UTest unknown_keys_warn{"PlatformManifest/UnknownKeysWarn", [] {
     auto m = parse(R"(
 [package]
 name = "p"
@@ -182,11 +186,11 @@ runner = ["x"]
                                   "[platform.link] has unsupported key 'later'",
                                   "[platform.build] has unsupported key 'rustflags'",
                                   "[host] has unsupported key 'runner'" })
-        EXPECT_NE(all.find(key), std::string::npos) << key << "\n=> " << all;
-    EXPECT_EQ(m.platform.link.exe.value, "{name}.oke");
-}
+        expect(ne(all.find(key), std::string::npos)) << key << "\n=> " << all;
+    expect(eq(m.platform.link.exe.value, "{name}.oke"));
+}};
 
-TEST(PlatformManifest, OverridesAndHostAreRead) {
+UTest overrides_and_host_are_read{"PlatformManifest/OverridesAndHostAreRead", [] {
     auto m = parse(R"(
 [package]
 name = "app"
@@ -207,23 +211,23 @@ flags = ["--build-id"]
 [target.x86_64-openkal]
 platform = "none"
 )");
-    for (auto const& w : m.schemaWarnings) ADD_FAILURE() << "unexpected warning: " << w;
-    EXPECT_TRUE(m.hostPlatform.platformSet);
-    EXPECT_EQ(m.hostPlatform.platform.spec.shortName, "openkal-platform");
-    ASSERT_EQ(m.platformOverrides.size(), 2u);
+    for (auto const& w : m.schemaWarnings) expect(false) << "unexpected warning: " << w;
+    expect(bool(m.hostPlatform.platformSet));
+    expect(eq(m.hostPlatform.platform.spec.shortName, "openkal-platform"));
+    expect(fatal(eq(m.platformOverrides.size(), 2u)));
     auto const& o = m.platformOverrides[0];
-    EXPECT_EQ(o.fields.runner.cmd.front(), "my-okrun");
-    EXPECT_TRUE(o.fields.runner.exclusive);
-    EXPECT_TRUE(o.fields.layers.at("c-abi").ref.spec.path.ends_with("openkal-musl"));
-    EXPECT_TRUE(o.fields.tools.at("okld").ref.spec.path.ends_with("openkal-image/tools"));
-    EXPECT_EQ(o.fields.link.flags.value, (std::vector<std::string>{"--build-id"}));
-    EXPECT_EQ(o.fields.runner.origin.tier, mp::Tier::Manifest);
-    EXPECT_TRUE(m.platformOverrides[1].platformNone);
+    expect(eq(o.fields.runner.cmd.front(), "my-okrun"));
+    expect(bool(o.fields.runner.exclusive));
+    expect(o.fields.layers.at("c-abi").ref.spec.path.ends_with("openkal-musl"));
+    expect(o.fields.tools.at("okld").ref.spec.path.ends_with("openkal-image/tools"));
+    expect(eq(o.fields.link.flags.value, (std::vector<std::string>{"--build-id"})));
+    expect(eq(o.fields.runner.origin.tier, mp::Tier::Manifest));
+    expect(bool(m.platformOverrides[1].platformNone));
     // The runner's command is the row's template as well.
-    EXPECT_EQ(m.targetOverrides.at("cfg(platform = \"openkal\")").runner.front(), "my-okrun");
-}
+    expect(eq(m.targetOverrides.at("cfg(platform = \"openkal\")").runner.front(), "my-okrun"));
+}};
 
-TEST(PlatformManifest, ReferencesInEveryForm) {
+UTest references_in_every_form{"PlatformManifest/ReferencesInEveryForm", [] {
     struct Row { std::string_view text; std::string_view ns, name, version; };
     const Row rows[] = {
         { "openkal-platform@0.17.1",          "mcpplibs", "openkal-platform", "0.17.1" },
@@ -232,20 +236,20 @@ TEST(PlatformManifest, ReferencesInEveryForm) {
     };
     for (auto const& r : rows) {
         auto ref = mp::parse_ref_text(r.text);
-        ASSERT_TRUE(ref) << r.text;
-        EXPECT_EQ(ref->spec.namespace_, r.ns);
-        EXPECT_EQ(ref->spec.shortName, r.name);
-        EXPECT_EQ(ref->spec.version, r.version);
+        expect(fatal(bool(ref))) << r.text;
+        expect(eq(ref->spec.namespace_, r.ns));
+        expect(eq(ref->spec.shortName, r.name));
+        expect(eq(ref->spec.version, r.version));
     }
-    EXPECT_FALSE(mp::parse_ref_text("openkal-platform"));
-    EXPECT_FALSE(mp::parse_ref_text("@1.0"));
-    EXPECT_EQ(mp::platform_name("openkal-platform"), "openkal");
-    EXPECT_EQ(mp::platform_name("stm32-bsp"), "stm32-bsp");
-}
+    expect(!mp::parse_ref_text("openkal-platform"));
+    expect(!mp::parse_ref_text("@1.0"));
+    expect(eq(mp::platform_name("openkal-platform"), "openkal"));
+    expect(eq(mp::platform_name("stm32-bsp"), "stm32-bsp"));
+}};
 
 // ── Selection: the first tier that answers decides ─────────────────────────
 
-TEST(PlatformSelect, TheTiersInOrder) {
+UTest the_tiers_in_order{"PlatformSelect/TheTiersInOrder", [] {
     auto m = parse(R"(
 [package]
 name = "app"
@@ -270,22 +274,21 @@ platform = "machine-platform@1.0.0"
                                     : std::span<const mp::Override>{},
                              column };
         auto s = pf::select_target(in, t);
-        EXPECT_TRUE(s) << (s ? "" : s.error());
+        if (auto&& failed = expect(bool(s)); !failed) failed << (s ? "" : s.error());
         return s ? (s->none ? std::string("none") : s->ref.spec.shortName) + "|"
                        + std::string(mp::tier_name(s->origin.tier))
                  : std::string("error");
     };
-    EXPECT_EQ(pick("flag-platform@1.0.0", "env-platform@1.0.0", true, true, "row-platform@1.0.0"),
-              "flag-platform|flag");
-    EXPECT_EQ(pick("", "env-platform@1.0.0", true, true, "row-platform@1.0.0"), "env-platform|env");
-    EXPECT_EQ(pick("", "", true, true, "row-platform@1.0.0"), "project-platform|mcpp.toml");
-    EXPECT_EQ(pick("", "", false, true, "row-platform@1.0.0"), "machine-platform|mcpp.toml");
-    EXPECT_EQ(pick("", "", false, false, "row-platform@1.0.0"), "row-platform|built-in");
-    EXPECT_EQ(pick("", "", false, false, ""), "none|built-in");
-    EXPECT_EQ(pick("none", "", true, true, "row-platform@1.0.0"), "none|flag");
-}
+    expect(eq(pick("flag-platform@1.0.0", "env-platform@1.0.0", true, true, "row-platform@1.0.0"), "flag-platform|flag"));
+    expect(eq(pick("", "env-platform@1.0.0", true, true, "row-platform@1.0.0"), "env-platform|env"));
+    expect(eq(pick("", "", true, true, "row-platform@1.0.0"), "project-platform|mcpp.toml"));
+    expect(eq(pick("", "", false, true, "row-platform@1.0.0"), "machine-platform|mcpp.toml"));
+    expect(eq(pick("", "", false, false, "row-platform@1.0.0"), "row-platform|built-in"));
+    expect(eq(pick("", "", false, false, ""), "none|built-in"));
+    expect(eq(pick("none", "", true, true, "row-platform@1.0.0"), "none|flag"));
+}};
 
-TEST(PlatformSelect, TheMostSpecificSelectorDecides) {
+UTest the_most_specific_selector_decides{"PlatformSelect/TheMostSpecificSelectorDecides", [] {
     auto m = parse(R"(
 [package]
 name = "app"
@@ -297,45 +300,45 @@ platform = "arch@1.0.0"
 )");
     pf::ChoiceInputs in{ "", "", "", m.platformOverrides, {}, "" };
     auto s = pf::select_target(in, matcher("x86_64-openkal"));
-    ASSERT_TRUE(s);
-    EXPECT_EQ(s->ref.spec.shortName, "triple");
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "triple"));
     auto a = pf::select_target(in, matcher("aarch64-openkal"));
-    ASSERT_TRUE(a);
-    EXPECT_TRUE(a->none);
-}
+    expect(fatal(bool(a)));
+    expect(bool(a->none));
+}};
 
-TEST(PlatformSelect, TheHostGraph) {
+UTest the_host_graph{"PlatformSelect/TheHostGraph", [] {
     mp::Override project, config;
     config.platformSet = true;
     config.platform = *mp::parse_ref_text("machine@1.0.0");
     auto s = pf::select_host("", false, project, config);
-    ASSERT_TRUE(s);
-    EXPECT_EQ(s->ref.spec.shortName, "machine");
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "machine"));
     project.platformSet = true;
     project.platformNone = true;
     s = pf::select_host("", false, project, config);
-    ASSERT_TRUE(s);
-    EXPECT_TRUE(s->none);
+    expect(fatal(bool(s)));
+    expect(bool(s->none));
     s = pf::select_host("flag@2.0.0", true, project, config);
-    ASSERT_TRUE(s);
-    EXPECT_EQ(s->ref.spec.shortName, "flag");
-    EXPECT_EQ(s->origin.tier, mp::Tier::Flag);
-}
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "flag"));
+    expect(eq(s->origin.tier, mp::Tier::Flag));
+}};
 
-TEST(PlatformSelect, ADirectoryIsAPath) {
+UTest a_directory_is_a_path{"PlatformSelect/ADirectoryIsAPath", [] {
     auto s = pf::parse_choice("path:/opt/board", {});
-    ASSERT_TRUE(s);
+    expect(fatal(bool(s)));
     // Absolute on this machine: `D:/opt/board` on a Windows one.
-    EXPECT_TRUE(s->ref.spec.path.ends_with("/opt/board")) << s->ref.spec.path;
+    expect(s->ref.spec.path.ends_with("/opt/board")) << s->ref.spec.path;
     s = pf::parse_choice("../board", {});
-    ASSERT_TRUE(s);
-    EXPECT_FALSE(s->ref.spec.path.empty());
-    EXPECT_FALSE(pf::parse_choice("not-a-reference", {}));
-}
+    expect(fatal(bool(s)));
+    expect(!(s->ref.spec.path.empty()));
+    expect(!pf::parse_choice("not-a-reference", {}));
+}};
 
 // ── Merge: per field, flags appended, sequences replaced ───────────────────
 
-TEST(PlatformMerge, TheRulesOfSection45) {
+UTest the_rules_of_section45{"PlatformMerge/TheRulesOfSection45", [] {
     auto base = parse(kPlatform).platform;
     mp::Statement over;
     over.runner.cmd = {"my-okrun", "{}"};
@@ -346,85 +349,145 @@ TEST(PlatformMerge, TheRulesOfSection45) {
     over.link.sealSet = true;
     over.layers["c-abi"] = { mp::PackageRef{ .off = true }, {} };
     pf::merge(base, over);
-    EXPECT_EQ(base.runner.cmd.front(), "my-okrun");
-    EXPECT_EQ(base.runner.host, "same-arch");
-    EXPECT_EQ(base.build.cxxflags, (std::vector<std::string>{"-fPIC", "-DUSER"}));
-    EXPECT_EQ(base.link.flags.value, (std::vector<std::string>{"-shared", "--build-id"}));
-    ASSERT_EQ(base.link.seal.size(), 1u);
-    EXPECT_EQ(base.link.seal.front().front(), "sign");
-    EXPECT_EQ(base.link.inputs.size(), 2u);      // not stated: kept
-    EXPECT_TRUE(base.layers.at("c-abi").ref.off);
-    EXPECT_FALSE(base.layers.at("c++-abi").ref.off);
-    EXPECT_EQ(base.link.start.value, "ok_main");
-}
+    expect(eq(base.runner.cmd.front(), "my-okrun"));
+    expect(eq(base.runner.host, "same-arch"));
+    expect(eq(base.build.cxxflags, (std::vector<std::string>{"-fPIC", "-DUSER"})));
+    expect(eq(base.link.flags.value, (std::vector<std::string>{"-shared", "--build-id"})));
+    expect(fatal(eq(base.link.seal.size(), 1u)));
+    expect(eq(base.link.seal.front().front(), "sign"));
+    expect(eq(base.link.inputs.size(), 2u));      // not stated: kept
+    expect(bool(base.layers.at("c-abi").ref.off));
+    expect(!(base.layers.at("c++-abi").ref.off));
+    expect(eq(base.link.start.value, "ok_main"));
+}};
 
-TEST(PlatformMerge, AHostTripleTakesTheHostedPartOnly) {
+UTest enabled_belongs_to_the_command{"PlatformMerge/EnabledBelongsToTheCommand", [] {
+    // R1, R2: `cmd`, `requires` and `enabled` are one statement; a table without `cmd`
+    // adjusts the runner below it; `longlived` stands until a nearer statement writes it.
+    mp::Statement base;
+    base.runner.cmd = {"dirun", "{}"};
+    base.runner.requires_ = {"xim:dirun@0.4.0"};
+    base.runner.enabled = false;
+    base.runner.enabledSet = true;
+    base.runner.set = true;
+    base.runners["web"].cmd = {"emrun", "{}"};
+    base.runners["web"].longlived = base.runners["web"].longlivedSet = true;
+    base.runners["web"].set = true;
+
+    mp::Statement enable;                        // `runner = { enabled = true }`
+    enable.runner.enabled = true;
+    enable.runner.enabledSet = true;
+    enable.runners["web"].enabled = false;       // `runners.web = { enabled = false }`
+    enable.runners["web"].enabledSet = true;
+    auto a = base;
+    pf::merge(a, enable);
+    expect(bool(a.runner.enabled));
+    expect(eq(a.runner.cmd.front(), "dirun"));
+    expect(eq(a.runner.requires_.size(), 1u));
+    expect(!a.runners.at("web").enabled);
+    expect(eq(a.runners.at("web").cmd.front(), "emrun"));
+    expect(bool(a.runners.at("web").longlived));
+
+    mp::Statement replace;                       // `runner = ["wine", "{}"]`: a new statement
+    replace.runner.cmd = {"wine", "{}"};
+    replace.runner.set = true;
+    auto b = base;
+    pf::merge(b, replace);
+    expect(bool(b.runner.enabled));
+    expect(b.runner.requires_.empty());
+}};
+
+UTest a_runner_table_states_enabled_and_longlived{"PlatformManifest/ARunnerTableStatesEnabledAndLonglived", [] {
+    auto m = parse(R"(
+[package]
+name = "app"
+version = "0.1.0"
+
+[target.x86_64-freebsd]
+runner = { enabled = true }
+
+[target.wasm32-emscripten.runners]
+web = { cmd = ["emrun", "{}"], longlived = true, enabled = false }
+)");
+    for (auto const& w : m.schemaWarnings) expect(false) << "unexpected warning: " << w;
+    expect(fatal(eq(m.platformOverrides.size(), 2u)));
+    auto of = [&](std::string_view selector) -> const mp::Statement& {
+        for (auto const& o : m.platformOverrides)
+            if (o.selector == selector) return o.fields;
+        expect(fatal(false)) << "no override for " << selector;
+        return m.platformOverrides.front().fields;
+    };
+    auto const& f = of("x86_64-freebsd").runner;
+    expect(!f.set);
+    expect(bool(f.enabledSet) && bool(f.enabled));
+    auto const& web = of("wasm32-emscripten").runners.at("web");
+    expect(bool(web.set) && bool(web.longlived) && !web.enabled);
+    expect(eq(m.targetOverrides.at("wasm32-emscripten").namedRunners.at("web").front(), "emrun"));
+}};
+
+UTest a_host_triple_takes_the_hosted_part_only{"PlatformMerge/AHostTripleTakesTheHostedPartOnly", [] {
     auto p = parse(kPlatform).platform;
     auto h = pf::hosted_view(p);
-    EXPECT_EQ(h.toolchain.value, "llvm@23.1.3");
-    EXPECT_TRUE(h.layers.contains("c-abi"));
-    EXPECT_FALSE(h.layers.contains("c++-abi"));
-    EXPECT_FALSE(h.runner.set);
-    EXPECT_FALSE(h.link.driver.set);
-    EXPECT_TRUE(h.build.empty());
+    expect(eq(h.toolchain.value, "llvm@23.1.3"));
+    expect(h.layers.contains("c-abi"));
+    expect(!h.layers.contains("c++-abi"));
+    expect(!h.runner.set);
+    expect(!h.link.driver.set);
+    expect(h.build.empty());
     auto served = pf::serves(p, "board-platform", *mcpp::toolchain::triple::parse("x86_64-linux-gnu"));
-    ASSERT_TRUE(served);
-    EXPECT_TRUE(*served);
+    expect(fatal(bool(served)));
+    expect(bool(*served));
     auto target = pf::serves(p, "board-platform", *mcpp::toolchain::triple::parse("x86_64-openkal"));
-    ASSERT_TRUE(target);
-    EXPECT_FALSE(*target);
+    expect(fatal(bool(target)));
+    expect(!(*target));
     p.hosted = {};
     auto refused = pf::serves(p, "board-platform", *mcpp::toolchain::triple::parse("x86_64-linux-gnu"));
-    ASSERT_FALSE(refused);
-    EXPECT_NE(refused.error().find("[platform.hosted]"), std::string::npos);
-}
+    expect(fatal(!refused));
+    expect(ne(refused.error().find("[platform.hosted]"), std::string::npos));
+}};
 
-TEST(PlatformMerge, CfgTablesFollowTheTarget) {
+UTest cfg_tables_follow_the_target{"PlatformMerge/CfgTablesFollowTheTarget", [] {
     auto p = parse(kPlatform).platform;
     auto x = pf::evaluate_flags(p, matcher("x86_64-openkal"));
     auto a = pf::evaluate_flags(p, matcher("aarch64-openkal"));
-    EXPECT_EQ(x.cxxflags, (std::vector<std::string>{"-fPIC"}));
-    EXPECT_EQ(a.cxxflags, (std::vector<std::string>{"-fPIC", "-ffixed-x18"}));
-}
+    expect(eq(x.cxxflags, (std::vector<std::string>{"-fPIC"})));
+    expect(eq(a.cxxflags, (std::vector<std::string>{"-fPIC", "-ffixed-x18"})));
+}};
 
-TEST(PlatformMerge, CfgPlatformMatchesTheNameOrThePackage) {
-    EXPECT_TRUE(cfgpred::matches("cfg(platform = \"openkal\")",
+UTest cfg_platform_matches_the_name_or_the_package{"PlatformMerge/CfgPlatformMatchesTheNameOrThePackage", [] {
+    expect(cfgpred::matches("cfg(platform = \"openkal\")",
                                  cfgpred::context_for("x86_64-openkal", "openkal-platform")));
-    EXPECT_TRUE(cfgpred::matches("cfg(platform = \"openkal-platform\")",
+    expect(cfgpred::matches("cfg(platform = \"openkal-platform\")",
                                  cfgpred::context_for("x86_64-openkal", "openkal-platform")));
-    EXPECT_FALSE(cfgpred::matches("cfg(platform = \"openkal\")",
-                                  cfgpred::context_for("x86_64-openkal")));
-    EXPECT_GT(mcpp::manifest::cfg::specificity("cfg(os = \"openkal\")"),
-              mcpp::manifest::cfg::specificity("cfg(platform = \"openkal\")"));
-}
+    expect(!(cfgpred::matches("cfg(platform = \"openkal\")",
+                                  cfgpred::context_for("x86_64-openkal"))));
+    expect(gt(mcpp::manifest::cfg::specificity("cfg(os = \"openkal\")"), mcpp::manifest::cfg::specificity("cfg(platform = \"openkal\")")));
+}};
 
 // ── The link's templates ────────────────────────────────────────────────────
 
-TEST(PlatformLink, NamePatterns) {
+UTest name_patterns{"PlatformLink/NamePatterns", [] {
     auto e = pf::split_name_pattern("{name}.oke");
-    ASSERT_TRUE(e);
-    EXPECT_EQ(e->first, "");
-    EXPECT_EQ(e->second, ".oke");
+    expect(fatal(bool(e)));
+    expect(eq(e->first, ""));
+    expect(eq(e->second, ".oke"));
     auto s = pf::split_name_pattern("lib{name}.okso");
-    ASSERT_TRUE(s);
-    EXPECT_EQ(s->first, "lib");
-    EXPECT_EQ(s->second, ".okso");
-    EXPECT_FALSE(pf::split_name_pattern("name.oke"));
-    EXPECT_FALSE(pf::split_name_pattern("{name}{name}"));
-    EXPECT_FALSE(pf::split_name_pattern("bin/{name}"));
-}
+    expect(fatal(bool(s)));
+    expect(eq(s->first, "lib"));
+    expect(eq(s->second, ".okso"));
+    expect(!pf::split_name_pattern("name.oke"));
+    expect(!pf::split_name_pattern("{name}{name}"));
+    expect(!pf::split_name_pattern("bin/{name}"));
+}};
 
-TEST(PlatformLink, SealSteps) {
+UTest seal_steps{"PlatformLink/SealSteps", [] {
     const std::vector<std::string> check{"okld", "check", "{}", "--with", "{needed}"};
     const std::vector<std::string> two{"a.okso", "b.okso"};
-    EXPECT_EQ(pf::expand_step(check, "x.oke.tmp", two),
-              (std::vector<std::string>{"okld", "check", "x.oke.tmp", "--with", "a.okso",
-                                        "--with", "b.okso"}));
-    EXPECT_EQ(pf::expand_step(check, "x.oke.tmp", {}),
-              (std::vector<std::string>{"okld", "check", "x.oke.tmp"}));
-    EXPECT_EQ(pf::expand_step({"sign", "--image={}", "{needed}"}, "x", two),
-              (std::vector<std::string>{"sign", "--image=x", "a.okso", "b.okso"}));
-}
+    expect(eq(pf::expand_step(check, "x.oke.tmp", two), (std::vector<std::string>{"okld", "check", "x.oke.tmp", "--with", "a.okso",
+                                        "--with", "b.okso"})));
+    expect(eq(pf::expand_step(check, "x.oke.tmp", {}), (std::vector<std::string>{"okld", "check", "x.oke.tmp"})));
+    expect(eq(pf::expand_step({"sign", "--image={}", "{needed}"}, "x", two), (std::vector<std::string>{"sign", "--image=x", "a.okso", "b.okso"})));
+}};
 
 // ── The run (§10) ───────────────────────────────────────────────────────────
 
@@ -432,7 +495,7 @@ TEST(PlatformLink, SealSteps) {
 // this one when they agree; the execution host, with that architecture's
 // program, when one is named; refused otherwise. `--no-runner` and every
 // other runner are this machine's.
-TEST(PlatformRun, TheRunnerReachesTheArtifactsArchitecture) {
+UTest the_runner_reaches_the_artifacts_architecture{"PlatformRun/TheRunnerReachesTheArtifactsArchitecture", [] {
     using R = pf::RunnerReach;
     mp::Runner same;
     same.set = true;
@@ -457,14 +520,68 @@ TEST(PlatformRun, TheRunnerReachesTheArtifactsArchitecture) {
         { &none, "aarch64", true,  false, R::Here },
     };
     for (auto const& r : rows)
-        EXPECT_EQ(pf::runner_reach(*r.runner, r.target, "x86_64", r.executionHost, r.noRunner), r.want)
+        expect(eq(pf::runner_reach(*r.runner, r.target, "x86_64", r.executionHost, r.noRunner), r.want))
             << r.runner->host << " " << r.target << " executionHost=" << r.executionHost
             << " noRunner=" << r.noRunner;
-}
+    // N23: an x86_64 Linux machine executes i686 (the execution table), so a same-arch runner
+    // is built for i686 and started here; elsewhere the table states nothing and it is refused.
+    const bool linuxHost = std::string_view(mcpp::toolchain::platform::name) == "linux";
+    expect(eq(pf::runner_reach(same, "i686", "x86_64", false, false),
+              linuxHost ? R::TargetArchitecture : R::Refused));
+}};
+
+UTest the_execution_table_states_measured_relations{"PlatformRun/TheExecutionTableStatesMeasuredRelations", [] {
+    namespace tt = mcpp::toolchain::target;
+    expect(tt::executes("linux-x86_64", "i686"));
+    expect(tt::executes("linux-x86_64", "x86_64"));       // its own architecture
+    expect(!tt::executes("linux-aarch64", "i686"));
+    expect(!tt::executes("macos-aarch64", "x86_64"));     // not stated: not measured
+    expect(!tt::execution_relations().empty());
+}};
+
+UTest the_system_table_states_which_systems_read_resources{"PlatformRun/TheSystemTableStatesWhichSystemsReadResources", [] {
+    // N16: `[resources]` compile for the programs of a system whose loader reads them, a key of
+    // the system table; a PE image another system loads (a UEFI application) has none.
+    namespace tt = mcpp::toolchain::target;
+    auto const* windows = tt::find_system("windows");
+    expect(fatal(windows != nullptr));
+    expect(windows->resources);
+    auto const* linux_ = tt::find_system("linux");
+    expect(fatal(linux_ != nullptr));
+    expect(!linux_->resources);
+    auto const* uefi = tt::find_system("uefi");
+    expect(uefi == nullptr || !uefi->resources);
+}};
+
+UTest the_android_row_runs_in_the_emulator_on_request{"PlatformRun/TheAndroidRowRunsInTheEmulatorOnRequest", [] {
+    // G7, R1: an x86_64 Android program runs through dirun and the API 34 image's profile, on a
+    // machine of its architecture, one run at a time, once enabled. The aarch64 row states none:
+    // the emulator package serves no aarch64 machine.
+    namespace tt = mcpp::toolchain::target;
+    using provider = decltype(tt::providers())::value_type;
+    provider x86 = nullptr;
+    provider arm = nullptr;
+    for (auto const* p : tt::providers()) {
+        if (p->name != "android-ndk") continue;
+        for (auto sv : p->serves) {
+            if (sv == "x86_64-linux-android") x86 = p;
+            if (sv == "aarch64-linux-android") arm = p;
+        }
+    }
+    expect(fatal(x86 != nullptr && arm != nullptr));
+    expect(fatal(!x86->runner.empty()));
+    expect(eq(x86->runner.front(), std::string_view("dirun")));
+    expect(eq(x86->runnerHost, std::string_view("same-arch")));
+    expect(!x86->runnerEnabled) << "a runner that boots an emulator is enabled by default";
+    expect(x86->runnerExclusive) << "two runs would start two devices at one console port";
+    expect(std::ranges::find(x86->runnerRequires, std::string_view("xim:android-system-image@34-default-x86_64"))
+           != x86->runnerRequires.end());
+    expect(arm->runner.empty()) << "the aarch64 row names a runner no machine can install";
+}};
 
 // ── The report ──────────────────────────────────────────────────────────────
 
-TEST(PlatformReport, SourcesAndJson) {
+UTest sources_and_json{"PlatformReport/SourcesAndJson", [] {
     pf::Resolved r;
     r.active = true;
     r.package = "mcpplibs.openkal-platform";
@@ -473,24 +590,24 @@ TEST(PlatformReport, SourcesAndJson) {
     r.selection.origin = { mp::Tier::BuiltIn, {}, 0, "the target table" };
     r.layers["c-abi"] = { "openkal-musl@0.22.3", mp::Tier::Platform };
     r.layers["c++-abi"] = { "acme-runtime@1.0.0", mp::Tier::Graph };
-    EXPECT_EQ(r.display(), "openkal-platform 0.17.1");
-    EXPECT_EQ(r.identity(), "mcpplibs.openkal-platform@0.17.1");
+    expect(eq(r.display(), "openkal-platform 0.17.1"));
+    expect(eq(r.identity(), "mcpplibs.openkal-platform@0.17.1"));
     auto rows = pf::report_rows(r);
-    ASSERT_FALSE(rows.empty());
+    expect(fatal(!rows.empty()));
     bool graph = false;
     for (auto const& [k, v] : rows)
         if (k == "c++-abi") graph = v.find("(graph)") != std::string::npos;
-    EXPECT_TRUE(graph);
+    expect(bool(graph));
     auto json = pf::to_json(r);
-    EXPECT_NE(json.find("\"name\":\"mcpplibs.openkal-platform\""), std::string::npos);
-    EXPECT_NE(json.find("\"source\":\"built-in\""), std::string::npos);
-    EXPECT_NE(json.find("\"layers.c++-abi\""), std::string::npos);
-    EXPECT_EQ(pf::to_json(pf::Resolved{}), "null");
-}
+    expect(ne(json.find("\"name\":\"mcpplibs.openkal-platform\""), std::string::npos));
+    expect(ne(json.find("\"source\":\"built-in\""), std::string::npos));
+    expect(ne(json.find("\"layers.c++-abi\""), std::string::npos));
+    expect(eq(pf::to_json(pf::Resolved{}), "null"));
+}};
 
 // ── Runner hosts, carrier entries, descriptor keys (design 2026-10-29) ──────
 
-TEST(PlatformManifest, RunnerHostsCarrierEntriesAndDescriptorKeysAreRead) {
+UTest runner_hosts_carrier_entries_and_descriptor_keys_are_read{"PlatformManifest/RunnerHostsCarrierEntriesAndDescriptorKeysAreRead", [] {
     auto m = parse(R"(
 [package]
 name = "p"
@@ -507,26 +624,28 @@ carrier = [
 descriptor_keys = ["openkal", "linux"]
 )");
     auto const& p = m.platform;
-    EXPECT_TRUE(p.runner.hostsSet);
-    EXPECT_EQ(p.runner.hosts, (std::vector<std::string>{"linux-x86_64", "macos-aarch64"}));
+    expect(bool(p.runner.hostsSet));
+    expect(eq(p.runner.hosts, (std::vector<std::string>{"linux-x86_64", "macos-aarch64"})));
     // The entry of a model this mcpp does not build is skipped, not refused.
-    ASSERT_EQ(p.carriers.size(), 2u);
-    EXPECT_EQ(p.carriers[0].hosts, (std::vector<std::string>{"linux-x86_64"}));
-    EXPECT_EQ(p.carriers[0].build, "row");
-    EXPECT_EQ(p.descriptorKeys.value, (std::vector<std::string>{"openkal", "linux"}));
+    expect(fatal(eq(p.carriers.size(), 2u)));
+    expect(eq(p.carriers[0].hosts, (std::vector<std::string>{"linux-x86_64"})));
+    expect(eq(p.carriers[0].build, "row"));
+    expect(eq(p.descriptorKeys.value, (std::vector<std::string>{"openkal", "linux"})));
     // The entry naming the pair serves it; another pair takes the open entry.
-    EXPECT_EQ(mp::carrier_for(p, "linux-x86_64"), &p.carriers[0]);
-    EXPECT_EQ(mp::carrier_for(p, "windows-x86_64"), &p.carriers[1]);
-}
+    expect(eq(mp::carrier_for(p, "linux-x86_64"), &p.carriers[0]));
+    expect(eq(mp::carrier_for(p, "windows-x86_64"), &p.carriers[1]));
+}};
 
-TEST(PlatformManifest, ACarrierWithoutHostsServesEveryPairAndNoneServesNothing) {
+UTest a_carrier_without_hosts_serves_every_pair_and_none_serves_nothing{"PlatformManifest/ACarrierWithoutHostsServesEveryPairAndNoneServesNothing", [] {
     auto m = parse(kPlatform);
-    EXPECT_EQ(mp::carrier_for(m.platform, "macos-aarch64"), &m.platform.carriers.at(0));
+    expect(eq(mp::carrier_for(m.platform, "macos-aarch64"), &m.platform.carriers.at(0)));
     mp::Statement none;
-    EXPECT_EQ(mp::carrier_for(none, "linux-x86_64"), nullptr);
-}
+    expect(eq(mp::carrier_for(none, "linux-x86_64"), nullptr));
+}};
 
-TEST(PlatformManifest, HostPairsAndDescriptorKeysAreAClosedVocabulary) {
+// A host pair and a descriptor key are words: a platform's rows may name a
+// system and read descriptor blocks of their own (SPEC-016 §7).
+UTest host_pairs_and_descriptor_keys_are_words{"PlatformManifest/HostPairsAndDescriptorKeysAreWords", [] {
     const auto base = std::string(R"(
 [package]
 name = "p"
@@ -534,14 +653,17 @@ version = "1.0.0"
 [platform]
 targets = ["x86_64-openkal"]
 )");
-    EXPECT_NE(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["linux"] })" "\n"), "");
-    EXPECT_NE(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["freebsd-x86_64"] })" "\n"), "");
-    EXPECT_NE(parse_error(base + R"(descriptor_keys = ["macos"])" "\n").find("macosx"), std::string::npos);
-    EXPECT_NE(parse_error(base + R"(descriptor_keys = [])" "\n"), "");
-    EXPECT_EQ(parse_error(base + R"(descriptor_keys = ["openkal", "linux"])" "\n"), "");
-}
+    expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["linux"] })" "\n"), ""));
+    // A system a platform defines is a host's system as well (mcpp#911 G10).
+    expect(eq(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["freebsd-x86_64"] })" "\n"), ""));
+    expect(ne(parse_error(base + R"(runner = { cmd = ["okrun"], hosts = ["Linux-x86_64"] })" "\n"), ""));
+    expect(ne(parse_error(base + R"(descriptor_keys = ["mac os"])" "\n").find("macosx"), std::string::npos));
+    expect(eq(parse_error(base + R"(descriptor_keys = ["freebsd", "linux"])" "\n"), ""));
+    expect(ne(parse_error(base + R"(descriptor_keys = [])" "\n"), ""));
+    expect(eq(parse_error(base + R"(descriptor_keys = ["openkal", "linux"])" "\n"), ""));
+}};
 
-TEST(PlatformMerge, AnOverrideReplacesHostsCarriersAndDescriptorKeys) {
+UTest an_override_replaces_hosts_carriers_and_descriptor_keys{"PlatformMerge/AnOverrideReplacesHostsCarriersAndDescriptorKeys", [] {
     auto m = parse(kPlatform);
     mp::Statement over;
     over.runner.hosts = {"windows-x86_64"};
@@ -553,9 +675,245 @@ TEST(PlatformMerge, AnOverrideReplacesHostsCarriersAndDescriptorKeys) {
     over.carriers = {c};
     auto merged = m.platform;
     pf::merge(merged, over);
-    EXPECT_EQ(merged.runner.hosts, (std::vector<std::string>{"windows-x86_64"}));
-    EXPECT_EQ(merged.runner.cmd, m.platform.runner.cmd);
-    ASSERT_EQ(merged.carriers.size(), 1u);
-    EXPECT_EQ(merged.carriers[0].section, ".x");
-    EXPECT_EQ(merged.descriptorKeys.value, (std::vector<std::string>{"openkal"}));
-}
+    expect(eq(merged.runner.hosts, (std::vector<std::string>{"windows-x86_64"})));
+    expect(eq(merged.runner.cmd, m.platform.runner.cmd));
+    expect(fatal(eq(merged.carriers.size(), 1u)));
+    expect(eq(merged.carriers[0].section, ".x"));
+    expect(eq(merged.descriptorKeys.value, (std::vector<std::string>{"openkal"})));
+}};
+
+// D20 (design 2026-11-07 §4.10): the target table's default is one release; a
+// failed build names a newer one in the index with the line to write, and says
+// nothing when the project, the configuration or the command line chose.
+UTest a_newer_release_is_named_only_for_the_default{"PlatformDefault/ANewerReleaseIsNamedOnlyForTheDefault", [] {
+    namespace mp = mcpp::manifest::platform;
+    mp::Origin builtIn{}; builtIn.tier = mp::Tier::BuiltIn;
+    auto tip = mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "0.24.4", "2026.11.7.2");
+    expect(fatal(tip.has_value()));
+    if (auto&& failed = expect(ne(tip->find("openkal-platform 0.24.3, mcpp 2026.11.7.2's default"), std::string::npos)); !failed) failed << *tip;
+    if (auto&& failed = expect(ne(tip->find("platform = \"openkal-platform@0.24.4\""), std::string::npos)); !failed) failed << *tip;
+    for (auto tier : {mp::Tier::Manifest, mp::Tier::Config, mp::Tier::Env, mp::Tier::Flag}) {
+        mp::Origin chosen{}; chosen.tier = tier;
+        expect(!mcpp::platform::newer_release_tip(chosen, "openkal-platform", "0.24.3", "0.24.4", "x"));
+    }
+    expect(!mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "0.24.3", "x"));
+    expect(!mcpp::platform::newer_release_tip(builtIn, "openkal-platform", "0.24.3", "", "x"));
+}};
+
+// THE STRING FORM OF A REPOSITORY (SPEC-016 §8): `git+<url>` with at most one of
+// tag, rev, branch after `#`; none is the remote's default branch.
+UTest a_repository_reference_has_a_string_form{"PlatformManifest/ARepositoryReferenceHasAStringForm", [] {
+    auto tagged = mp::parse_ref_text("git+https://example.org/acme/toy-platform.git#tag=v1");
+    expect(fatal(tagged.has_value()));
+    expect(eq(tagged->spec.git, "https://example.org/acme/toy-platform.git"));
+    expect(eq(tagged->spec.gitRefKind, "tag"));
+    expect(eq(tagged->spec.gitRev, "v1"));
+    auto deflt = mp::parse_ref_text("git+git@example.org:acme/toy.git");
+    expect(fatal(deflt.has_value()));
+    expect(eq(deflt->spec.gitRefKind, "branch"));
+    expect(deflt->spec.gitRev.empty());
+    expect(!mp::parse_ref_text("git+https://example.org/x.git#sha=1").has_value());
+    expect(!mp::parse_ref_text("git+").has_value());
+}};
+
+// A PLATFORM'S STATEMENT IS CHECKED AGAINST THE ROWS AS IT IS READ (SPEC-016 §5):
+// a definition of a built-in row and a row defined twice are errors; a provider
+// that serves no row and a tie of priorities are warnings; the served
+// identities are ordered by identity, then priority, then provider.
+UTest a_platform_statement_is_checked_against_the_rows{"PlatformManifest/AStatementIsCheckedAgainstTheRows", [] {
+    constexpr std::string_view kHead = R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@23.1.3"
+)";
+    auto redefined = parse_error(std::string(kHead) + R"(
+[[platform.define]]
+triple = "x86_64-linux-gnu"
+
+[[platform.provider]]
+serves = ["x86_64-linux-gnu"]
+)");
+    if (auto&& failed = expect(ne(redefined.find("'x86_64-linux-gnu' is a built-in row"), std::string::npos)); !failed)
+        failed << redefined;
+    auto twice = parse_error(std::string(kHead) + R"(
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.provider]]
+serves = ["x86_64-toy"]
+)");
+    if (auto&& failed = expect(ne(twice.find("'x86_64-toy' is defined twice"), std::string::npos)); !failed)
+        failed << twice;
+
+    auto m = parse(std::string(kHead) + R"(
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.provider]]
+serves = ["x86_64-toy"]
+
+[[platform.provider]]
+name   = "second"
+serves = ["*-toy"]
+
+[[platform.provider]]
+name   = "nothing"
+serves = ["riscv64-nosuch"]
+)");
+    auto has = [&](std::string_view s) {
+        return std::ranges::any_of(m.schemaWarnings, [&](auto const& w) { return w.find(s) != std::string::npos; });
+    };
+    expect(has("'nothing' serves no row"));
+    expect(has("'x86_64-toy' is served by 'second' and 'toy' at priority 100"));
+    auto served = mp::served_identities(m.platform, "toy");
+    expect(fatal(eq(served.size(), std::size_t{2})));
+    expect(eq(served[0].identity, "x86_64-toy"));
+    expect(eq(served[0].provider, "second"));
+    expect(eq(served[1].provider, "toy"));
+}};
+
+// A planned row is served by a platform whose statement lists it with a
+// toolchain (2026.11.14.1): `[platform] targets` with its `toolchain`, or a
+// provider that names one. A row it lists nowhere, or lists with no toolchain,
+// is not served.
+UTest a_planned_row_is_served_by_a_statement_with_a_toolchain{"PlatformManifest/APlannedRowIsServedByAStatementWithAToolchain", [] {
+    auto with = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-openkal", "i686-openkal"]
+toolchain = "llvm@23.1.3"
+)");
+    expect(mp::serves_with_toolchain(with.platform, "toy-platform", "i686-openkal"));
+    expect(!mp::serves_with_toolchain(with.platform, "toy-platform", "riscv64-linux-musl"));
+
+    auto without = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets = ["i686-openkal"]
+)");
+    expect(!mp::serves_with_toolchain(without.platform, "toy-platform", "i686-openkal"));
+}};
+
+// A provider states the link and the runner of the identities it serves, over
+// either base: one platform states rows whose conventions differ (2026.11.13.1).
+UTest a_provider_states_its_link_and_runner{"PlatformMerge/AProviderStatesItsLinkAndRunner", [] {
+    auto m = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-toy"]
+toolchain = "llvm@23.1.3"
+runner    = ["toyrun", "{}"]
+
+[platform.build]
+cflags = ["-fPIC"]
+
+[platform.link]
+driver = "lld"
+flags  = ["-shared"]
+exe    = "{name}.toy"
+seal   = [["toyseal", "{}"]]
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple        = "x86_64-fw"
+object-format = "pe"
+exe-suffix    = ".efi"
+
+[[platform.provider]]
+serves = ["x86_64-fw"]
+base   = "none"
+hosted = true
+link   = { driver = "lld", flags = ["--subsystem", "efi_application"], exe = "{name}.efi", seal = [] }
+runner = { cmd = ["fwrun", "{}"] }
+)");
+    auto fw = pf::provider_view(m.platform, "x86_64-fw");
+    expect(eq(fw.link.flags.value, std::vector<std::string>{"--subsystem", "efi_application"}));
+    expect(eq(fw.link.exe.value, "{name}.efi"));
+    expect(fw.link.sealSet && fw.link.seal.empty()) << "the provider's empty seal replaces the platform's";
+    expect(eq(fw.runner.cmd, std::vector<std::string>{"fwrun", "{}"}));
+    expect(fw.build.cflags.empty()) << "base none takes none of the platform's compile";
+    auto toy = pf::provider_view(m.platform, "x86_64-toy");
+    expect(eq(toy.runner.cmd, std::vector<std::string>{"toyrun", "{}"}));
+    expect(eq(toy.link.flags.value, std::vector<std::string>{"-shared"}));
+}};
+
+// The platform's tools a view carries (2026.11.13.1): a provider with `base =
+// "none"` carries those its own conventions name; the platform's own rows carry
+// every tool but those only such a provider names.
+UTest a_row_carries_the_tools_its_conventions_name{"PlatformMerge/ARowCarriesTheToolsItsConventionsName", [] {
+    auto m = parse(R"(
+[package]
+name = "toy-platform"
+version = "0.1.0"
+
+[platform]
+targets   = ["x86_64-toy"]
+toolchain = "llvm@23.1.3"
+runner    = ["toyrun", "{}"]
+
+[platform.tools]
+toyseal = "toy-tools@1.0.0"
+toyrun  = "toy-tools@1.0.0"
+toyprof = "toy-tools@1.0.0"
+dosseal = "dos-tools@1.0.0"
+
+[platform.link]
+driver = "lld"
+seal   = [["toyseal", "{}"]]
+
+[[platform.define]]
+triple = "x86_64-toy"
+
+[[platform.define]]
+triple = "i686-dos"
+
+[[platform.define]]
+triple = "x86_64-fw"
+
+[[platform.provider]]
+serves = ["i686-dos"]
+base   = "none"
+link   = { driver = "lld", seal = [["dosseal", "{}"]] }
+runner = { cmd = ["dosrun", "{}"] }
+
+[[platform.provider]]
+serves = ["x86_64-fw"]
+base   = "none"
+link   = { driver = "lld", seal = [] }
+)");
+    auto names = [](const mcpp::manifest::platform::Statement& s) {
+        std::vector<std::string> out;
+        for (auto const& [k, _] : s.tools) out.push_back(k);
+        return out;
+    };
+    auto dos = pf::provider_view(m.platform, "i686-dos");
+    expect(eq(names(dos), std::vector<std::string>{"dosseal"})) << "its seal's program, and no other";
+    auto fw = pf::provider_view(m.platform, "x86_64-fw");
+    expect(fw.tools.empty()) << "a provider whose conventions run no tool carries none";
+    auto toy = pf::provider_view(m.platform, "x86_64-toy");
+    expect(eq(names(toy), std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
+        << "the platform's rows keep every tool but another row's seal";
+    // What a build of each row reads (2026.11.13.1): a row of the platform's own
+    // conventions is a view too, not the whole statement.
+    expect(eq(names(pf::view_of(m.platform, "x86_64-toy", false)),
+              std::vector<std::string>{"toyprof", "toyrun", "toyseal"}))
+        << "a build of the platform's own row provisions no other row's tool";
+    expect(eq(names(pf::view_of(m.platform, "i686-dos", false)), std::vector<std::string>{"dosseal"}));
+}};

@@ -6,9 +6,6 @@
 //
 // See .agents/docs/2026-05-12-compile-commands-design.md.
 
-module;
-#include <cstdlib>
-
 export module mcpp.build.flags;
 
 import std;
@@ -188,11 +185,23 @@ std::string render_link_intent_flags(
     LinkIntentFlavor flavor);
 
 CompileFlags compute_flags(const BuildPlan& plan);
+// A foreign build inherits target configuration, not the consuming
+// package's link inputs (which may be outputs of that foreign build).
+CompileFlags compute_build_contract_flags(const BuildPlan& plan);
 
 // The object format the TARGET produces (#647 E3). One derivation, read by
 // `compute_flags` for the runtime contract table and the link-line shape, and
 // by the build information a build program receives (#734 E2).
 dist::Format target_object_format(const mcpp::toolchain::Toolchain& tc);
+
+// THE SDK THE LINK NAMES with `-isysroot`, or empty when it names none. One
+// answer, read by the macOS link line and by the build programs
+// (`MCPP_TARGET_SDK`): a package that supplies a stub of a system library asks
+// whether the system's own is on the link, which only this decides. A Mach-O
+// link on a macOS host names one -- the located Apple SDK of a cross row, a
+// base stated as an Apple SDK, or the machine's SDK -- whichever party supplies
+// the C library; any other link names none.
+std::filesystem::path link_sdk(const mcpp::toolchain::Toolchain& tc);
 
 // #734 E2: the C++ runtime contract of the package's programs as the manifest
 // states it or its default gives it, spelled as `cxx_runtime` is written; and
@@ -660,7 +669,7 @@ bool realises_optimization(const mcpp::manifest::BuildConfig& bc) {
 
 std::string profile_descriptor(const mcpp::manifest::BuildConfig& bc) {
     std::string d = realises_optimization(bc) ? "optimized" : "unoptimized";
-    if (bc.debug) d += " + debuginfo";
+    if (bc.debug) d += bc.debugLines ? " + line tables" : " + debuginfo";
     if (bc.lto)   d += bc.ltoPartial ? " + lto (partial)" : " + lto";
     return d;
 }
@@ -676,6 +685,16 @@ dist::Format target_object_format(const mcpp::toolchain::Toolchain& tc) {
               mcpp::toolchain::platform::needs_explicit_libcxx ? dist::Format::MachO
             : mcpplibs::os::is_windows            ? dist::Format::Pe
                                                     : dist::Format::Elf);
+}
+
+std::filesystem::path link_sdk(const mcpp::toolchain::Toolchain& tc) {
+    if (link_shape(current_link_host(), target_object_format(tc), false, false) != LinkShape::AppleSdk)
+        return {};
+    if (!tc.base.apple.root.empty()) return tc.base.apple.root;
+    if (tc.base.stated() && tc.base.address == mcpp::toolchain::base::Address::AppleIsysroot)
+        return tc.base.root;
+    if (auto sdk = mcpp::toolchain::apple::sdk_path()) return *sdk;
+    return {};
 }
 
 std::string program_cxx_runtime(const mcpp::manifest::Manifest& m,
@@ -707,7 +726,7 @@ std::string program_msvc_crt_linkage(const mcpp::manifest::Manifest& m,
         ? "static" : "dynamic";
 }
 
-CompileFlags compute_flags(const BuildPlan& plan) {
+CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     CompileFlags f;
 
     // Central query points for per-toolchain decisions — prefer these over
@@ -942,6 +961,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         hopt.appleSdkCxxHeaders = plan.toolchain.base.apple.cxxHeaders;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+        // The machine description of a row a platform defines (E1, SPEC-016 §2.1).
+        if (auto spec = mcpp::freestanding::hosted_spec(plan.toolchain.targetTriple))
+            for (auto const& w : mcpp::freestanding::row_words(*spec))
+                compile_toolchain_flags += " " + w;
         for (auto const& w : mcpp::toolchain::apple_float_macro_words(plan.toolchain))
             compile_toolchain_flags += " " + ninja_command_word(w);
     } else {
@@ -1109,6 +1132,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                     return LinkIntentFlavor::Wasm;
                 case mcpp::toolchain::triple::ObjectFormat::Elf:
                     return LinkIntentFlavor::Elf;
+                case mcpp::toolchain::triple::ObjectFormat::Coff:
+                    // DJGPP links with GNU ld, which takes a search path and a
+                    // library in ELF's spelling (`-L`, `-l<name>`).
+                    return LinkIntentFlavor::Elf;
             }
         }
         auto triple = plan.toolchain.targetTriple;
@@ -1166,7 +1193,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     f.ldRuntimeFallback = farm_ld;
 
     std::filesystem::path binutilsBin;
-    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++") {
+    // A self-contained cross payload finds its own assembler and linker under
+    // its prefix: musl, MinGW, and a payload a row names by its GCC target.
+    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++"
+        && !mcpp::toolchain::row_states_gcc_target(plan.toolchain)) {
         auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
         if (!ar.empty())
             binutilsBin = ar.parent_path();
@@ -1189,7 +1219,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string opt_flag = (isMsvcDialect && optLevel == "0")
         ? " /Od"    // MSVC's no-opt spelling (there is no /O0)
         : std::format(" {}{}", d.optPrefix, optLevel);
-    if (prof.debug) opt_flag += std::format(" {}", d.debugFlags);
+    if (prof.debug) opt_flag += std::format(" {}", prof.debugLines ? d.lineDebugFlags : d.debugFlags);
     // DEBUG INFORMATION IS COMPRESSED where the linker copies it into every
     // artifact (mcpp#874): on ELF each program of a member, every test among
     // them, carries the DWARF of its whole closure, and zlib halves it (a
@@ -1213,6 +1243,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `/LTCG` on the link and the archive; before, it was not spelled at all,
     // and a build with `lto = true` reported `+ lto` while doing none.
     if (prof.lto) opt_flag += isMsvcDialect ? " /GL" : " -flto";
+    // ONE SECTION PER FUNCTION AND PER OBJECT (design 2026-11-09 §17.2), so
+    // that a link that keeps what it reaches (a test, `--gc-sections`) drops
+    // the rest of an object a module initializer pulls in. Measured on mcpp's
+    // unit tests: with whole objects the collection kept 15 of 17 MB of code.
+    // The freestanding prefix states it for its own units; cl.exe's `/Gy` is
+    // its default under optimisation.
+    if (!isMsvcDialect && !isFreestandingTarget) opt_flag += " -ffunction-sections -fdata-sections";
     // `ndebug` (design 2026-10-23 §15.4): the profiles that produce what is
     // shipped define NDEBUG for every unit of the graph, as CMake's Release,
     // Meson's `b_ndebug=if-release` and Cargo's release do.
@@ -1289,7 +1326,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `__cxa_throw` and the personality first, and libc++abi answered the rest
     // (mcpp#838, measured: `catch (const std::exception&)` missed).
     std::string user_ldflags;
-    for (auto const& word : mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)) {
+    const auto linkWords = packageLinkFlags
+        ? mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)
+        : std::vector<std::string>{};
+    for (auto const& word : linkWords) {
         const auto rendered = ninja_command_word(normalize_ldflag(plan.projectRoot, word));
         if (plan.cxxIsland && std::ranges::find(plan.cxxIsland->namedWords, word)
                                   != plan.cxxIsland->namedWords.end()) {
@@ -1389,16 +1429,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                         msvc_base, module_flag, std_module_flag,
                         std_compat_module_flag, prebuilt_module_flag,
                         opt_flag, pic_flag, compile_toolchain_flags, b_flag);
+    // The paired system's C++ library, on C++ commands only (SPEC-016 §6).
+    if (!isFreestandingTarget)
+        if (auto w = mcpp::toolchain::paired_stdlib_flag(plan.toolchain); !w.empty()) f.cxx += " " + w;
     // MSVC compiles C with cl.exe too; /std: for C uses cN spellings — skip
     // the C standard flag there (cl defaults are fine for the C entry TUs).
     //
     // `msvc_base` rides the GNU branch too: on the LLVM row it holds the CRT
     // word (`-fms-runtime-lib=*`) and nothing else, since `d.alwaysFlags` is
     // only ever set for the msvc dialect. Empty everywhere else, as before.
+    //
+    // AFTER THE STANDARD, AS ON THE C++ LINE. `msvc_base` begins with its own
+    // space and the standard's prefix does not: written before it, the two
+    // were one word, `-fms-runtime-lib=dll-std=c11`. clang reads no C library
+    // model in that word and no standard, and says nothing: every C unit of an
+    // MSVC-ABI build named the static C library (`/DEFAULTLIB:libcmt.lib`)
+    // beside C++ units that named the DLL's, and was compiled at the
+    // compiler's default C standard. Measured on a build of mcpp itself: 115
+    // of 655 objects, the C units of its three C dependencies.
     f.cc = isMsvcDialect
         ? std::format("{}{}{}{}", msvc_base, opt_flag, compile_toolchain_flags,
                       b_flag)
-        : std::format("{}{}{}{}{}{}{}", msvc_base, d.stdPrefix, c_std, opt_flag,
+        : std::format("{}{}{}{}{}{}{}", d.stdPrefix, c_std, msvc_base, opt_flag,
                       pic_flag, compile_toolchain_flags, b_flag);
 
     // GAS assembly (.S/.s via the C driver): the asm-safe subset — no -std
@@ -1603,7 +1655,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // (`llvm.libcxx` on the iOS rows, mcpp#630), and asking the C library
         // there answered "payload" and linked the SDK's `-lc++` under objects
         // compiled against the package's headers.
-        mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph() && !graphLibstdcxx;
+        // A base package's C++ run-time is not the toolchain's either (design
+        // 2026-11-10 E5): its libraries are on the link by name, and the
+        // payload's archives, built for the payload's host, are not.
+        mi.graphCxxRuntime = (plan.targetSide.cxx.fromGraph() && !graphLibstdcxx)
+            || !plan.toolchain.base.layers.cxx.empty();
 
         // AND THE DRIVER'S HALF, WHICH IS ASKED FIRST (#634 A6).
         //
@@ -1699,6 +1755,20 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (wantsArchives) {
             auto libcxxA    = find_archive("libc++.a");
             auto libcxxAbiA = find_archive("libc++abi.a");
+            // Another target's archives (MechanismInput::foreignCxxArchives): the
+            // directory names a triple of another architecture or system.
+            if (!libcxxA.empty()) {
+                const auto dir = std::filesystem::path(libcxxA).parent_path().filename().string();
+                const auto theirs = std::ranges::count(dir, '-') >= 2 ? mcpp::toolchain::triple::parse(dir) : std::nullopt;
+                const auto ours = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+                auto same_os = [](std::string_view a, std::string_view b) { return a.starts_with(b) || b.starts_with(a); };
+                if (theirs && ours && (theirs->arch != ours->arch || !same_os(theirs->os, ours->os))) {
+                    mi.foreignCxxArchives = true;
+                    mi.foreignCxxTriple = dir;
+                    libcxxA.clear();
+                    libcxxAbiA.clear();
+                }
+            }
             mi.libcxxArchive    = libcxxA.empty()    ? std::string{} : escape_path(libcxxA);
             mi.libcxxAbiArchive = libcxxAbiA.empty() ? std::string{} : escape_path(libcxxAbiA);
             {
@@ -1944,6 +2014,27 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (compressDebug) link_extra += " -gz=zlib";
     if (prof.strip) link_extra += " -s";
 
+    // A BASE PACKAGE'S RUN-TIMES ON THE LINK (design 2026-11-10 E5): where its
+    // compiler runtime stands (`compiler_runtime_dir`: clang reads it as its
+    // resource directory, gcc through `-B`), and, when it supplies the C++
+    // layer, its `ldflags` in place of the driver's own C++ library, which
+    // names the toolchain's. The run-time directory is as much a C link's as a
+    // C++ one's (`kLinkDriverFlagsC` states the same of the driver's own
+    // selection); the C++ library's words belong to the C++ link alone.
+    auto base_link_words = [&](bool cxx) {
+        std::string words;
+        auto const& L = plan.toolchain.base.layers;
+        if (!L.compilerRuntimeDir.empty())
+            words += plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
+                ? " -resource-dir=" + ninjaEsc(L.compilerRuntimeDir)
+                : " -B" + ninjaEsc(L.compilerRuntimeDir);
+        if (cxx && !L.cxx.empty() && !L.ldflags.empty()) {
+            words += " -nostdlib++";
+            for (auto const& w : L.ldflags) words += " " + ninja_command_word(w);
+        }
+        return words;
+    };
+
     // MinGW PE link — keyed on the TARGET (is_mingw_target), NOT the host: a
     // Linux-hosted cross build produces exactly the same PE link as a native
     // Windows MinGW build (host≠target). No rpath/loader/payload model. Static
@@ -1989,12 +2080,34 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Not a new condition but the string that names the machine: a mingw
         // g++ has an empty `crossTargetFlag`, so this is the identity for the
         // case the paragraph was written about, and the fix for the other one.
-        f.ld = std::format("{}{}{}{}{}", crossTarget, link_intent_ld,
+        // CLANG PAIRED WITH THE MinGW-w64 PAYLOAD (SPEC-016 §6): the payload
+        // is the sysroot, libstdc++ and libgcc its runtime, lld the linker;
+        // `-pthread` because the payload's threads are winpthreads, which the
+        // clang driver does not add by itself.
+        // A BASE PACKAGE THERE (E9) states libc++, libunwind and compiler-rt;
+        // the compiler runtime is read from the directory the base names
+        // (`[build] compiler_runtime_dir`), a resource directory of the link only,
+        // since the payload's own holds no runtime for this target.
+        auto const& layers = plan.toolchain.base.layers;
+        const std::string paired = plan.toolchain.pairedSysroot.empty() ? std::string{}
+            : layers.cxx == "libc++"
+            ? " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
+              + " -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -fuse-ld=lld"
+            : " --no-default-config --sysroot=" + ninjaEsc(plan.toolchain.pairedSysroot)
+              + " -stdlib=libstdc++ -rtlib=libgcc -fuse-ld=lld -pthread";
+        f.ld = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
                            user_ldflags, mingw_stdexp, link_extra);
+        // A static link over a base takes its archives, not the import
+        // libraries beside them (`libc++.dll.a`), which lld prefers otherwise.
+        const std::string baseStatic =
+            !plan.toolchain.pairedSysroot.empty() && !layers.cxx.empty() && f.linkage == "static"
+            ? " -static" : "";
+        f.ld += baseStatic + base_link_words(true);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}{}", crossTarget, link_intent_ld,
-                            user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}{}{}{}", crossTarget, paired, link_intent_ld,
+                            user_ldflags, link_extra, baseStatic);
+        f.ldC += base_link_words(false);
         return f;
     }
 
@@ -2169,16 +2282,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //     incompatible with arm64 (iOS Simulator18.0.0)
         //
         // which is why the cross path also carries `--no-default-config`.
+        //
+        // The choice is `link_sdk`'s, which the build programs read as well.
         std::string macos_sdk;
-        if (appleCross) {
-            macos_sdk = " -isysroot "
-                      + escape_path(plan.toolchain.base.apple.root);
-        } else if (plan.toolchain.base.stated()
-                   && plan.toolchain.base.address == mcpp::toolchain::base::Address::AppleIsysroot) {
-            macos_sdk = " -isysroot " + escape_path(plan.toolchain.base.root);
-        } else if (auto sdk = mcpp::toolchain::apple::sdk_path()) {
-            macos_sdk = " -isysroot " + escape_path(*sdk);
-        }
+        if (const auto sdk = link_sdk(plan.toolchain); !sdk.empty())
+            macos_sdk = " -isysroot " + escape_path(sdk);
         // AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.
         //
         // `-isysroot` and the deployment floor describe the TARGET OS. Every
@@ -2453,7 +2561,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (auto spec = mcpp::freestanding::resolve(
                 *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
             const auto prefix = mcpp::freestanding::compile_prefix(
-                *spec, plan.toolchain.targetCxxRuntime);
+                *spec, plan.toolchain.targetCxxRuntime, plan.toolchain.hostedC);
             f.cxx += prefix;
             f.cc  += prefix;
             f.as  += mcpp::freestanding::assemble_prefix(*spec);
@@ -2509,7 +2617,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // needed either: the payload's clang config file is a DRIVER
             // config, and nothing here runs the driver.
             std::string fsLd;
-            if (!spec->lldEmulation.empty()) {
+            // A PLATFORM'S `link.driver = "compiler"` IS HONOURED ON EVERY ROW
+            // (mcpp#911 G4): the compiler driver then links, adding the start
+            // files and libraries it knows for the target, where the row alone
+            // would call ld.lld with its emulation.
+            const bool platformCompilerDriver = plan.platform.active
+                && plan.platform.fields.link.driver.set
+                && plan.platform.fields.link.driver.value == "compiler";
+            if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
                 fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc);
             } else {
@@ -2587,6 +2702,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (p.fields.link.driver.value == "lld") {
             f.ldDriver = mcpp::freestanding::resolve_lld_any(plan.toolchain.binaryPath);
             f.ld  = words(p.fields.link.flags.value) + words(p.flags.ldflags) + user_ldflags;
+            // The row's emulation first, as for a bare-metal row (E1).
+            if (auto spec = mcpp::freestanding::hosted_spec(plan.toolchain.targetTriple))
+                for (auto const& w : mcpp::freestanding::row_link_words(*spec)) f.ld = " " + w + f.ld;
             // `lld` and `lld-link` are the same program, which chooses its
             // flavour from its name or from `-flavor`; a payload that ships
             // one of them and not `ld.lld` is asked for the ELF linker
@@ -2613,6 +2731,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
     }
 
+    // A BASE PACKAGE'S RUN-TIMES (design 2026-11-10 E5).
+    f.ld  += base_link_words(true);
+    f.ldC += base_link_words(false);
+
     // A LINKER STATED BY ROLE (mcpp#755, `tools = { ld = ... }`), AFTER EVERY
     // SHAPE HAS BUILT ITS LINE.
     //
@@ -2635,6 +2757,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         }
 
     return f;
+}
+
+CompileFlags compute_flags(const BuildPlan& plan) {
+    return compute_flags_impl(plan, true);
+}
+
+CompileFlags compute_build_contract_flags(const BuildPlan& plan) {
+    return compute_flags_impl(plan, false);
 }
 
 }  // namespace mcpp::build

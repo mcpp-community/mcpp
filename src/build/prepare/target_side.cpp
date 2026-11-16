@@ -14,7 +14,7 @@ import mcpp.build.version_floor;
 import mcpp.build.command_line;
 import mcpp.home;
 import mcpp.toolchain.platform;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -45,6 +45,7 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
 import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
@@ -312,6 +313,10 @@ step9_gather_target_side_candidates(PrepareState& state) {
                     if (ovr && (ovr->starts_with("path:") || ovr->find(':') == std::string::npos))
                         in.sysrootLibc = state.tc->base.libc.empty() ? std::string("sysroot")
                                                                      : state.tc->base.libc;
+                    // A base package states its C library (`provides`, E5),
+                    // and that name is the layer's, not the package's.
+                    else if (!state.tc->base.layers.cAbi.empty())
+                        in.sysrootLibc = state.tc->base.layers.cAbi;
                     // A hosted base whose C library is the row's own, measured
                     // and floor-checked by `step2_resolve_base`.
                     const auto& b = state.tc->base;
@@ -323,6 +328,12 @@ step9_gather_target_side_candidates(PrepareState& state) {
             }
             in.payloadLibcRef      = state.tc->base.package;
             in.payloadCxxInterface = state.tc->stdlibId;
+            if (auto const& L = state.tc->base.layers; !L.cxx.empty() || !L.compilerRuntime.empty()) {
+                in.baseRef = L.ref;
+                in.baseCxx = L.cxx;
+                in.baseCompilerRuntime = L.compilerRuntime;
+                in.baseHasStdModule = !L.stdModule.empty();
+            }
             // The compiler is a layer, and it is the one layer no package can
             // supply. It enters here so that a requirement has something to be
             // checked against and so the report can show the whole stack.
@@ -429,6 +440,24 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
         // about whether `kal_*` may be called from it.
         if (state.tc) state.tc->kernelAbiIsOpenkal =
             state.resolvedTargetSide.kernelAbi.interfaceName == "openkal";
+        // A KERNEL INTERFACE ONLY THE TESTS REACH. A dev-dependency that
+        // reaches the layer (mcpplibs.mtest over mcpplibs.os) serves the tests;
+        // the package's own sources compile under `mcpp test` as under `mcpp
+        // build`, so the configuration -- its fingerprint and the units of the
+        // shipped graph -- does not take the layer, and `__OPENKAL__` and the
+        // layer's headers reach the dev-only packages and the test units
+        // (docs/08 "Dev-dependencies"). A layer of the C environment or the
+        // C++ runtime is a property of every object a test links and stays
+        // the configuration's.
+        if (state.tc && state.tc->kernelAbiIsOpenkal && state.resolvedTargetSide.kernelAbi.fromGraph()) {
+            auto it = gather.byLayer.find(static_cast<int>(tsd::CapLayer::KernelAbi));
+            if (it != gather.byLayer.end() && !it->second.empty()
+                && it->second.front().index < state.packages.size()
+                && state.packages[it->second.front().index].devOnly) {
+                state.kernelAbiForTestsOnly = true;
+                state.tc->kernelAbiIsOpenkal = false;
+            }
+        }
 
         // [c-abi] REALISATION — design §3.2-§3.4. Everything below is
         // skipped, and every command line unchanged, for the graph this
@@ -468,9 +497,11 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
             auto realised = mcpp::toolchain::cenv::realise(
                 *state.resolvedTargetSide.cAbiDecl, tt ? tt->os : std::string{},
                 tt ? tt->arch : std::string{},
+                tt ? mcpp::toolchain::triple::to_string(tt->object_format()) : std::string_view{},
                 // A program its loader runs is told no operating system, as a
-                // bare machine is: the C library's identity macros are the only ones.
-                tt && (tt->is_freestanding() || tt->loader_supplies_os()));
+                // bare machine is, and so is a row whose compile triple names
+                // none: the C library's identity macros are the only ones.
+                tt && tt->compiler_told_no_os());
             if (!realised) {
                 refusal::record(refusal::Code::CEnvUnrealisable);
                 return std::unexpected(realised.error());
@@ -669,6 +700,41 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
     return {};
 }
 
+// What a layer only the tests reach gives: the dev-only packages' own units and
+// the test units of the root and the selected members (`testBuild`).
+static void for_tests(PrepareState& state, const mcpp::modgraph::UsageRequirements& usage) {
+    for (std::size_t i = 0; i < state.packages.size(); ++i) {
+        auto& p = state.packages[i];
+        auto& to = p.devOnly ? p.privateBuild : p.testBuild;
+        if (!p.devOnly && i != 0 && !p.selectedMember) continue;
+        state.appendUniquePaths(to.includeDirs, usage.includeDirs);
+        state.appendUniquePaths(to.includeDirsAfter, usage.includeDirsAfter);
+        state.appendUniqueFlags(to.cflags, usage.cflags);
+        state.appendUniqueFlags(to.cxxflags, usage.cxxflags);
+    }
+}
+
+// THE PACKAGE THAT RESOLVED AS THE KERNEL-ABI LAYER AND STATES ITS INTERFACES;
+// null when none states them. The list comes from the package that resolved as
+// the layer, not from the first one in the graph that stated one: a graph may
+// carry more than one candidate (a workspace member beside a dependency, a
+// second implementation behind a feature that did not activate), and only one
+// is the provider this build uses. `impl` is `name@version`; the name is what
+// precedes the separator, so `openkal` is not matched against `openkal-linux`.
+static const mcpp::modgraph::PackageRoot* kernel_abi_provider(const PrepareState& state) {
+    for (auto const& pkg : state.packages) {
+        if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
+        if (!state.resolvedTargetSide.kernelAbi.impl.empty()) {
+            auto const& impl = state.resolvedTargetSide.kernelAbi.impl;
+            const auto at = impl.find('@');
+            const auto implName = at == std::string::npos ? impl : impl.substr(0, at);
+            if (implName != pkg.manifest.package.name) continue;
+        }
+        return &pkg;
+    }
+    return nullptr;
+}
+
 static std::expected<void, std::string>
 step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -722,7 +788,11 @@ step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gathe
                 }
             };
             note_layer(tsd::CapLayer::CompilerRuntime, state.resolvedTargetSide.compilerRuntime);
-            note_layer(tsd::CapLayer::KernelAbi,       state.resolvedTargetSide.kernelAbi);
+            if (!state.kernelAbiForTestsOnly)
+                note_layer(tsd::CapLayer::KernelAbi, state.resolvedTargetSide.kernelAbi);
+            else if (auto it = gather.byLayer.find(static_cast<int>(tsd::CapLayer::KernelAbi));
+                     it != gather.byLayer.end() && !it->second.empty())
+                for_tests(state, state.packages[it->second.front().index].publicUsage);
             note_layer(tsd::CapLayer::CAbi,            state.resolvedTargetSide.cAbi);
             note_layer(tsd::CapLayer::CxxAbi,          state.resolvedTargetSide.cxx);
 
@@ -822,6 +892,15 @@ step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gathe
                 state.appendUniqueFlags(p.privateBuild.cflags,   engineDefines);
                 state.appendUniqueFlags(p.privateBuild.cxxflags, engineDefines);
             }
+            if (state.kernelAbiForTestsOnly) {
+                mcpp::modgraph::UsageRequirements kernel;
+                for (auto const& d : mcpp::toolchain::predefines::define_tokens(targetOs, true))
+                    if (std::ranges::find(engineDefines, d) == engineDefines.end()) {
+                        kernel.cflags.push_back(d);
+                        kernel.cxxflags.push_back(d);
+                    }
+                for_tests(state, kernel);
+            }
         }
 
         // THE CONTRACT'S TARGET SIDE: everything above that every unit receives,
@@ -898,22 +977,9 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
         // rather than a missing one.
         std::vector<std::string> providedInterfaces;
         std::string providerId;
-        for (auto& pkg : state.packages) {
-            if (pkg.manifest.kernelAbiProvidesInterfaces.empty()) continue;
-            // `impl` is `name@version`; the name is what precedes the
-            // separator. A substring test would match `openkal` against
-            // `openkal-linux@0.15.0` and read one implementation's list
-            // as another's.
-            if (!state.resolvedTargetSide.kernelAbi.impl.empty()) {
-                auto const& impl = state.resolvedTargetSide.kernelAbi.impl;
-                const auto at = impl.find('@');
-                const auto implName = at == std::string::npos
-                    ? impl : impl.substr(0, at);
-                if (implName != pkg.manifest.package.name) continue;
-            }
-            providedInterfaces = pkg.manifest.kernelAbiProvidesInterfaces;
-            providerId = pkg.manifest.package.name;
-            break;
+        if (auto const* pkg = kernel_abi_provider(state)) {
+            providedInterfaces = pkg->manifest.kernelAbiProvidesInterfaces;
+            providerId = pkg->manifest.package.name;
         }
         // A REQUIREMENT NOBODY ANSWERED IS SAID SO, because otherwise
         // "yes" and "never asked" are the same reading.
@@ -995,6 +1061,46 @@ step9_kernel_abi_interface_enumeration(PrepareState& state) {
     return {};
 }
 
+namespace {
+thread_local std::optional<std::string> g_targetRestart;
+}
+
+std::optional<std::string> take_target_restart() {
+    auto r = std::move(g_targetRestart);
+    g_targetRestart.reset();
+    return r;
+}
+
+static std::expected<void, std::string> cabi_identity(PrepareState& state) {
+    namespace tt = mcpp::toolchain::triple;
+    namespace tsd = mcpp::targetside;
+    auto const& ts = state.resolvedTargetSide;
+    if (ts.cAbi.absent() || !ts.cAbi.fromGraph() || ts.cAbi.interfaceName.empty()) return {};
+    // A native build keeps its identity unless a platform supplies the C
+    // library (SPEC-016 §4.7): the graph's own C library in a native build is
+    // the project's arrangement, reported as such.
+    const bool requested = !state.overrides.target_triple.empty();
+    if (!requested && !state.platform.active) return {};
+    auto id = tt::parse(requested ? state.overrides.target_triple : tt::host_triple().str());
+    if (!id || id->is_freestanding() || id->loader_supplies_os()) return {};
+    if (tsd::c_abi_request_satisfied(id->env.empty() ? tsd::payload_libc_name(id->os, id->env) : id->env,
+                                     ts.cAbi.interfaceName))
+        return {};
+    const std::string env = ts.cAbi.interfaceName == "glibc" ? std::string("gnu") : ts.cAbi.interfaceName;
+    const auto row = std::format("{}-{}-{}", id->arch, id->os, env);
+    if (!mcpp::toolchain::target::find_row(row))
+        return {};
+    // A WRITTEN C LIBRARY IS THE PROJECT'S SPELLING AND STAYS: the mismatch is
+    // reported (the target report's `asks for the ... C ABI`), not refused --
+    // refusing broke every configuration spelling the host's identity over a
+    // graph-supplied C library (e2e 282). Only a request that names none
+    // follows the C library.
+    if (!state.requestedCAbi.empty()) return {};
+    if (state.overrides.target_request) return {};   // the second pass: the row it was given
+    g_targetRestart = row;
+    return std::unexpected(std::string("mcpp:target-restart"));
+}
+
 static std::expected<void, std::string>
 step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -1039,6 +1145,10 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
             refusal::record(refusal::Code::LayerRequirement);
             return std::unexpected(*why);
         }
+        if (auto why = tsd::check_layer_cycle(state.resolvedTargetSide, gather.requirements)) {
+            refusal::record(refusal::Code::LayerCycle);
+            return std::unexpected(*why);
+        }
         // The islands: packages whose private C++ requirement the graph's C++
         // layer does not meet. Verified where their objects and the image
         // exist (phase 13 and after the link), not here.
@@ -1048,6 +1158,12 @@ step9_layering_and_requirement_checks(PrepareState& state, TargetSideGather& gat
         // is the same with or without it. Refusing was tried and broke every
         // project spelling the host target `x86_64-linux-gnu` — which is what
         // `mcpp toolchain list` prints, and therefore what people write.
+        // THE IDENTITY FOLLOWS THE C LIBRARY (SPEC-016 §5, I5). A C library the
+        // graph or the platform supplies, under a system whose env names its C
+        // library, and a row that names it: a request that wrote no env is
+        // prepared again for that row; one that wrote another is refused, since
+        // an identity is not replaced and cannot name what is not linked.
+        if (auto conflict = cabi_identity(state); !conflict) return std::unexpected(conflict.error());
         if (auto why = tsd::check_request(state.resolvedTargetSide))
             mcpp::diag::warning("target", *why);
 
@@ -1234,9 +1350,25 @@ step9_same_os_check_and_report(PrepareState& state) {
             // A program its loader runs is compiled for no operating system
             // by design (`<arch>-unknown-none-elf`): the loader is its environment.
             const bool okImage = want && got && want->loader_supplies_os() && got->is_freestanding();
+            // A row a platform defines states the triple its compiler is given
+            // (SPEC-016 §2); that triple's system is the one to compare.
+            const bool stated = want && got && want->defined()
+                && [&] { auto c = mcpp::toolchain::triple::parse(want->llvm_triple()); return c && c->os == got->os; }();
             if (want && got && !want->os.empty() && !got->os.empty()
-                && want->os != got->os && !okImage) {
+                && want->os != got->os && !okImage && !stated) {
                 refusal::record(refusal::Code::OsMismatch);
+                // A row no built-in provider serves is a platform's to serve
+                // (E4): the remedy is the platform, not a toolchain.
+                if (want->c_library_by_platform())
+                    return std::unexpected(std::format(
+                        "target '{}' is served by a platform, and none is selected for it.\n"
+                        "       Its C library and C++ run-time are the system's own, which a "
+                        "platform package states\n"
+                        "       (a sysroot and the layers over it). Select one with\n"
+                        "           [target.{}]\n"
+                        "           platform = \"<package>@<version>\"   # or {{ path = \"...\" }}\n"
+                        "       `mcpp why target --target {}` lists the candidates.",
+                        reportedTargetName, reportedTargetName, reportedTargetName));
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"
                     "       Those are different operating systems, so nothing "
@@ -1267,8 +1399,14 @@ step9_same_os_check_and_report(PrepareState& state) {
                              &state.resolvedTargetSide.cAbi, &state.resolvedTargetSide.cxx })
                 if (l->fromGraph() && injected(l->impl)) l->byPlatform = true;
         }
+        // The request as written and the identity it selected; the identity is
+        // the canonical name the rest of the report and the output directory use.
+        const auto& choice = state.targetChoice;
+        const bool selected = !choice.identity.empty();
         mcpp::ui::info("Target", tsd::format_report(
-            state.resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
+            state.resolvedTargetSide, selected ? choice.identity : reportedTargetName,
+            mcpp::log::is_verbose(), selected ? choice.request : std::string_view{},
+            choice.fallback ? std::string_view(choice.why) : std::string_view{}));
     return {};
 }
 
@@ -1382,6 +1520,10 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
         layerCtx.kernelAbi       = state.resolvedTargetSide.kernelAbi.interfaceName;
         layerCtx.cAbi            = state.resolvedTargetSide.cAbi.interfaceName;
         layerCtx.cxxAbi          = state.resolvedTargetSide.cxx.interfaceName;
+        if (auto const* pkg = kernel_abi_provider(state)) {
+            layerCtx.interfaces       = pkg->manifest.kernelAbiProvidesInterfaces;
+            layerCtx.interfacesStated = true;
+        }
         // A REQUIREMENT A LAYER DECIDES IS CHECKED NOW, WHEN THE LAYERS ARE
         // KNOWN. `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
         // ["mcpp:compiler-runtime=compiler-rt"]` states what one compiler needs
@@ -1677,6 +1819,11 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
         // resolution.json only: the graph document a build program reads is
         // part of its re-run key, and must not change with when it is asked.
         if (!forBuildProgram) {
+            // The package's root as the build reads it (its patches applied):
+            // the tree a patch of it is written from (docs/05).
+            std::error_code ec;
+            entry["manifest_dir"] = std::filesystem::absolute(state.packages[i].root, ec)
+                                        .lexically_normal().generic_string();
             static const std::vector<std::string> none;
             // A member's program keeps its cache in the project (step 9).
             const bool member = state.m->package.virtualRoot && i != 0
@@ -1748,7 +1895,7 @@ static std::expected<void, std::string> step9_device_sources_reach_an_action(Pre
     //
     // THE PREMISE OF THIS CHECK IS THE BUILD PROGRAM'S DIRECTIVES: an action
     // consuming a device source is one such directive. A package whose program
-    // failed in this pass (`plan_only`, above) applied none of them, so every
+    // failed in this pass (`PrepareIntent::Describe`, above) applied none of them, so every
     // device source would read as an orphan -- not a second defect, only the
     // shape the first one takes here. Such a package already carries its one
     // diagnostic, `MCPP_BUILD_DATABASE_PROGRAM_FAILED`; this check does not run
@@ -1963,8 +2110,11 @@ std::expected<void, std::string> phase9_target_side(PrepareState& state) {
     if (auto r = step9_layer_conditional_config(state); !r) return std::unexpected(r.error());
     if (auto r = step9_dependency_link_forms(state); !r) return std::unexpected(r.error());
     step9_define_graph_package_entry_closure(state);
-    if (auto r = step9_root_build_program(state); !r) return std::unexpected(r.error());
-    if (auto r = step9_member_build_programs(state); !r) return std::unexpected(r.error());
+    // The root's and the members' programs (see phase 6): none where nothing is compiled.
+    if (state.overrides.compiles()) {
+        if (auto r = step9_root_build_program(state); !r) return std::unexpected(r.error());
+        if (auto r = step9_member_build_programs(state); !r) return std::unexpected(r.error());
+    }
     if (auto r = step9_device_sources_reach_an_action(state); !r) return std::unexpected(r.error());
     if (auto r = step9_rerun_input_prepare_dir(state); !r) return std::unexpected(r.error());
 

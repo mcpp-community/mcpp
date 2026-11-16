@@ -29,9 +29,26 @@ stated on the build's own command lines.
   build-cache/  cache/  provisioned/ …
 
 <project>/.mcpp/
+  .gitignore                `*`: the directory ignores itself (2026.11.8.1+)
+  compiler-runs/<hash>/     the locks of a build's generated sources
   indices/<name>/           the data of the project's own [indices]
   xpkgs/                    the payloads they serve
 ```
+
+Processes share a home. Writing the provider's state is one process at a time
+(2026.11.10.1+): a process takes the state turn before it installs a package,
+adds or removes an index repository, or chooses the runtime; it keeps the turn
+for the package's own dependencies, and a process that waited for it looks for
+the package again first, so a package two builds ask for at once is installed
+once. The turn is the lock `.mcpp-state.lock` in the real directory of the
+state (`registry/subos`, every link resolved; 2026.11.13.1+), so homes that
+reach one state through a link take one turn. Releases before 2026.11.13.1
+took `registry/.install.lock`, for installs only.
+
+`<project>/.mcpp/` is the machine's state of the project, never its sources.
+mcpp writes `.gitignore` with the one line `*` into it whenever it creates or
+uses it, so version control ignores it in a project whose own ignore file does
+not name it.
 
 Ownership follows the index. An index mcpp serves keeps its data and its
 payloads in mcpp's home; the provider's own indexes (`xim` and the ones it adds)
@@ -87,6 +104,14 @@ rules are in [SPEC-010](specs/home-initialization.md).
 without installing tools. `self config --mirror auto|CN|GLOBAL` updates only local
 configuration, so it remains usable while the network is broken.
 
+An install tracks byte progress and source changes separately for each active
+download. Time spent waiting for a download slot does not consume that budget.
+Progress on another file does not renew a stalled file's budget.
+From 2026.11.7.1, a stalled-download diagnostic names the file, elapsed interval
+and source attempt. Provider preparation and process timeouts are reported
+separately. Mirror selection
+uses `mcpp self config --mirror auto`, `CN` or `GLOBAL`.
+
 ### Retention of build outputs (2026.10.31.3+)
 
 The build cache under `build-cache/v1/` is shared by every project of the home;
@@ -96,8 +121,12 @@ a project's `target/` is its own. Each has a retention, in config.toml:
 |---|---|---|
 | `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools) no build used for that many days |
 | `[build] keep_days` | 3 | after `mcpp build` or `mcpp test`, at most once a day per project: build directories no configuration used for that many days |
+| `[build] target_budget` | none | after every `mcpp build` or `mcpp test` whose `target/` holds more than this size (`"20GiB"`, `"512MiB"`): every build directory no configuration records as current, whatever its age (2026.11.8.1+) |
 
-`0` keeps everything. `mcpp self config --cache-unused-days <N>` and
+`0` keeps everything. `target_budget` is read from the project's (or
+workspace root's) `mcpp.toml`, else from config.toml. When the directories still
+in use hold more than the budget, the build warns and names the three largest;
+nothing in use is removed. `mcpp self config --cache-unused-days <N>` and
 `--keep-days <N>` write them; `mcpp self config` shows them.
 
 A cache entry's files never change after they are written, and a file system
@@ -234,6 +263,12 @@ way to the bundled one, with a note naming why.
 `[xlings] home` moves the registry; it names a home mcpp made. A home mcpp did
 not make (an `~/.xlings`) is refused there: reusing its packages is what
 `upstream` is for (§3).
+A registry that already exists keeps the places of its indices as the home that
+made it recorded them: a second home that names it reads those indices and
+stores and records none of its own there (2026.11.10.1). A home whose
+`registry` is a link to another home's borrows that registry the same way
+(2026.11.13.1): it writes neither the places of the indices, nor the
+upstreams, nor its `[index.repos]` tables' places into it.
 
 ## 6. Filesystems and long paths
 

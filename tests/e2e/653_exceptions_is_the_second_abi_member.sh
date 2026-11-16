@@ -39,8 +39,7 @@ for d in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-emsdk/*/emscripte
 done
 if [ "$have_emsdk" -ne 1 ]; then
     echo "SKIP: 653 -- no emsdk payload installed (looked under xim-x-emsdk/*/emscripten)"
-    echo "PASS: 653 (skipped)"
-    exit 0
+    exit 77
 fi
 
 echo "== 653/1: a Linux build of a manifest carrying the table is byte-identical to one without =="
@@ -72,7 +71,7 @@ diff -u "$TMP/plain.ninja" "$with_ninja" > "$TMP/ninja.diff" \
     || fail "a Linux build.ninja differs with the emscripten-only abi table present" "$TMP/ninja.diff"
 echo "  ok: build.ninja is byte-identical"
 
-echo "== 653/2: without exceptions, the build and link succeed but the run fails at the throw =="
+echo "== 653/2: the row's model catches; with exceptions off, the build and link succeed but the run fails at the throw =="
 
 mkdir -p "$TMP/excdep/src" "$TMP/app/src"
 cat > "$TMP/excdep/mcpp.toml" <<'TOML'
@@ -120,12 +119,18 @@ int main() {
 CPP
 
 cd "$TMP/app"
+# No table: the row's exception model (`exceptions = "wasm"`, mcpp 2026.11.16.1, N26) catches.
 write_app ''
+"$MCPP" run --target wasm32-emscripten > run-row.log 2>&1 \
+    || fail "the row's exception model did not catch the throw" run-row.log
+grep -q '^caught: boom$' run-row.log || fail "the row's model did not print the marker" run-row.log
+echo "  ok: with no table the row's model catches the throw"
+write_app $'[target.\'cfg(os = "emscripten")\'.abi]\nexceptions = false\n'
 "$MCPP" build --target wasm32-emscripten > build-noexc.log 2>&1 \
-    || fail "the build without the abi table failed (expected: it succeeds; only the run fails)" build-noexc.log
+    || fail "the build with exceptions off failed (expected: it succeeds; only the run fails)" build-noexc.log
 plain_dir=$(dirname "$(ls -t $(find target/wasm32-emscripten -name build.ninja -not -path '*/.build-mcpp/*') | head -1)")
 if "$MCPP" run --target wasm32-emscripten > run-noexc.log 2>&1; then
-    fail "mcpp run succeeded without -fexceptions -- the throw should have aborted" run-noexc.log
+    fail "mcpp run succeeded with exceptions off -- the throw should have aborted" run-noexc.log
 fi
 grep -q '^caught: boom$' run-noexc.log \
     && fail "the marker printed without -fexceptions" run-noexc.log
@@ -168,7 +173,7 @@ grep -qF -- '-fexceptions' "$stdmodule_json" \
     || fail "-fexceptions is not recorded on the std module's cached prebuild command" "$stdmodule_json"
 echo "  ok: -fexceptions reached the std module's prebuild command (recorded in the build cache build.ninja stages from)"
 
-echo "== 653/4: a dependency requiring exceptions is refused on the Web build without the table =="
+echo "== 653/4: a dependency requiring exceptions is served by the row's model, and refused with exceptions off =="
 
 mkdir -p "$TMP/excreq/src" "$TMP/app3/src"
 cat > "$TMP/excreq/mcpp.toml" <<'TOML'
@@ -198,8 +203,11 @@ runner = ["node"]
 TOML
 printf 'import excreq;\nint main() { return v() == 1 ? 0 : 1; }\n' > "$TMP/app3/src/main.cpp"
 cd "$TMP/app3"
+"$MCPP" build --target wasm32-emscripten > serve-exc.log 2>&1 \
+    || fail "the row's exception model did not serve a dependency requiring exceptions" serve-exc.log
+printf '%s' $'\n[target.\'cfg(os = "emscripten")\'.abi]\nexceptions = false\n' >> "$TMP/app3/mcpp.toml"
 if "$MCPP" build --target wasm32-emscripten > refuse-exc.log 2>&1; then
-    fail "a dependency requiring exceptions was built for the Web without the root's table" refuse-exc.log
+    fail "a dependency requiring exceptions was built for the Web with exceptions off" refuse-exc.log
 fi
 grep -qF "\`excreq\` requires the artefact's ABI to have exceptions (the package)" refuse-exc.log \
     || fail "the refusal does not name 'exceptions'" refuse-exc.log

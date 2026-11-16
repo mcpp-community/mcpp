@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.pack;
+
+using namespace mcpplibs::mtest;
 
 // #634 A3: the closure `mcpp pack` reads from the files for the PE, Android and
 // Mach-O rows. The rules are asserted here, over hand-built objects in a
@@ -203,7 +205,7 @@ using Names = std::vector<std::string>;
 
 // ── Android ──────────────────────────────────────────────────────────────
 
-TEST(PackClosureAndroid, TheStubDirectoryIsTheDevicesAndEveryOtherNameTravels) {
+UTest the_stub_directory_is_the_devices_and_every_other_name_travels{"PackClosureAndroid/TheStubDirectoryIsTheDevicesAndEveryOtherNameTravels", [] {
     Tree t;
     t.write("platform/libc.so", "stub");
     t.write("platform/libm.so", "stub");
@@ -221,14 +223,14 @@ TEST(PackClosureAndroid, TheStubDirectoryIsTheDevicesAndEveryOtherNameTravels) {
     in.platformDirs = {t.root / "platform"};
     auto r = mcpp::pack::read_closure(in);
 
-    EXPECT_EQ(member_dests(r), (Names{"libc++_shared.so", "libfw.so"}));
-    EXPECT_EQ(r.platform, (Names{"libc.so", "libm.so"}));
-    EXPECT_TRUE(r.unresolved.empty());
-    ASSERT_EQ(r.members.size(), 2u);
-    EXPECT_EQ(r.members[0].source, t.root / "ndk" / "libc++_shared.so");
-}
+    expect(eq(member_dests(r), (Names{"libc++_shared.so", "libfw.so"})));
+    expect(eq(r.platform, (Names{"libc.so", "libm.so"})));
+    expect(r.unresolved.empty());
+    expect(fatal(eq(r.members.size(), 2u)));
+    expect(eq(r.members[0].source, t.root / "ndk" / "libc++_shared.so"));
+}};
 
-TEST(PackClosureAndroid, ANameFoundNowhereLeavesTheClosureIncomplete) {
+UTest a_name_found_nowhere_leaves_the_closure_incomplete{"PackClosureAndroid/ANameFoundNowhereLeavesTheClosureIncomplete", [] {
     Tree t;
     t.write("platform/libc.so", "stub");
     auto app = t.write("build/libapp.so", elf_needing({"libgone.so", "libc.so"}));
@@ -240,16 +242,15 @@ TEST(PackClosureAndroid, ANameFoundNowhereLeavesTheClosureIncomplete) {
     in.platformDirs = {t.root / "platform"};
     auto r = mcpp::pack::read_closure(in);
 
-    EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{"libgone.so"}));
-    ASSERT_EQ(r.unresolved.size(), 1u);
-    EXPECT_NE(r.unresolved[0].why.find((t.root / "build").string()), std::string::npos)
-        << "the reason names where it looked: " << r.unresolved[0].why;
-}
+    expect(r.members.empty());
+    expect(eq(unresolved_names(r), (Names{"libgone.so"})));
+    expect(fatal(eq(r.unresolved.size(), 1u)));
+    if (auto&& failed = expect(ne(r.unresolved[0].why.find((t.root / "build").string()), std::string::npos)); !failed) failed << "the reason names where it looked: " << r.unresolved[0].why;
+}};
 
 // ── PE, unchanged by the generalisation ──────────────────────────────────
 
-TEST(PackClosurePe, SystemNamesAndNamesFoundNowhereAreTheTargets) {
+UTest system_names_and_names_found_nowhere_are_the_targets{"PackClosurePe/SystemNamesAndNamesFoundNowhereAreTheTargets", [] {
     Tree t;
     auto exe = t.write("bin/app.exe",
                        pe_importing({"KERNEL32.dll", "foo.dll", "missing.dll"}));
@@ -262,12 +263,12 @@ TEST(PackClosurePe, SystemNamesAndNamesFoundNowhereAreTheTargets) {
     in.searchDirs = {t.root / "bin", t.root / "deps"};
     auto r = mcpp::pack::read_closure(in);
 
-    EXPECT_EQ(member_dests(r), (Names{"bar.dll", "foo.dll"}));
-    EXPECT_EQ(r.platform, (Names{"KERNEL32.dll", "missing.dll"}));
-    EXPECT_TRUE(r.unresolved.empty()) << "PE's rule resolves every name";
-}
+    expect(eq(member_dests(r), (Names{"bar.dll", "foo.dll"})));
+    expect(eq(r.platform, (Names{"KERNEL32.dll", "missing.dll"})));
+    expect(r.unresolved.empty()) << "PE's rule resolves every name";
+}};
 
-TEST(PackClosurePe, ForceBundleReachesTheSystemList) {
+UTest force_bundle_reaches_the_system_list{"PackClosurePe/ForceBundleReachesTheSystemList", [] {
     Tree t;
     auto exe = t.write("bin/app.exe", pe_importing({"dbghelp.dll"}));
     t.write("deps/dbghelp.dll", pe_importing({}));
@@ -277,13 +278,13 @@ TEST(PackClosurePe, ForceBundleReachesTheSystemList) {
     in.rule        = mcpp::pack::ClosureRule::Pe;
     in.searchDirs  = {t.root / "deps"};
     auto without = mcpp::pack::read_closure(in);
-    EXPECT_EQ(without.platform, (Names{"dbghelp.dll"}));
+    expect(eq(without.platform, (Names{"dbghelp.dll"})));
 
     in.forceBundle = {"dbghelp.dll"};
     auto with = mcpp::pack::read_closure(in);
-    EXPECT_EQ(member_dests(with), (Names{"dbghelp.dll"}));
-    EXPECT_TRUE(with.platform.empty());
-}
+    expect(eq(member_dests(with), (Names{"dbghelp.dll"})));
+    expect(with.platform.empty());
+}};
 
 // ── SPEC-007 R4.2/R4.3: one destination, one writer (#723 self-review) ──
 //
@@ -302,7 +303,7 @@ std::string read_bytes(const std::filesystem::path& p) {
 
 }  // namespace
 
-TEST(PlaceRuntimeDlls, ANameTheDeployListPlacesIsNeitherOverwrittenNorPlaced) {
+UTest a_name_the_deploy_list_places_is_neither_overwritten_nor_placed{"PlaceRuntimeDlls/ANameTheDeployListPlacesIsNeitherOverwrittenNorPlaced", [] {
     Tree t;
     auto exe = t.write("bin/app.exe", pe_importing({"foo.dll"}));
     // The deploy list's own file, already beside the program (as it would be
@@ -313,16 +314,16 @@ TEST(PlaceRuntimeDlls, ANameTheDeployListPlacesIsNeitherOverwrittenNorPlaced) {
 
     auto r = mcpp::pack::place_runtime_dlls(
         exe, {t.root / "deps"}, /*placedBefore=*/{}, /*placedByDeploy=*/{"foo.dll"});
-    ASSERT_TRUE(r.has_value()) << r.error().message;
-    EXPECT_TRUE(r->names.empty()) << "the deploy list's name was placed a second time";
-    EXPECT_TRUE(r->sources.empty());
-    ASSERT_EQ(r->warnings.size(), 1u);
-    EXPECT_NE(r->warnings[0].find("foo.dll"), std::string::npos) << r->warnings[0];
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error().message;
+    expect(r->names.empty()) << "the deploy list's name was placed a second time";
+    expect(r->sources.empty());
+    expect(fatal(eq(r->warnings.size(), 1u)));
+    if (auto&& failed = expect(ne(r->warnings[0].find("foo.dll"), std::string::npos)); !failed) failed << r->warnings[0];
     // Not overwritten: the file beside the program is still the deploy list's.
-    EXPECT_EQ(read_bytes(t.root / "bin" / "foo.dll"), pe_importing({}) + "DEPLOYED");
-}
+    expect(eq(read_bytes(t.root / "bin" / "foo.dll"), pe_importing({}) + "DEPLOYED"));
+}};
 
-TEST(PlaceRuntimeDlls, ANameTheDeployListPlacesWithMatchingBytesIsSilent) {
+UTest a_name_the_deploy_list_places_with_matching_bytes_is_silent{"PlaceRuntimeDlls/ANameTheDeployListPlacesWithMatchingBytesIsSilent", [] {
     Tree t;
     auto exe = t.write("bin/app.exe", pe_importing({"foo.dll"}));
     const auto bytes = pe_importing({}) + "SAME";
@@ -331,12 +332,12 @@ TEST(PlaceRuntimeDlls, ANameTheDeployListPlacesWithMatchingBytesIsSilent) {
 
     auto r = mcpp::pack::place_runtime_dlls(
         exe, {t.root / "deps"}, {}, {"foo.dll"});
-    ASSERT_TRUE(r.has_value()) << r.error().message;
-    EXPECT_TRUE(r->names.empty());
-    EXPECT_TRUE(r->warnings.empty());
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error().message;
+    expect(r->names.empty());
+    expect(r->warnings.empty());
+}};
 
-TEST(PlaceRuntimeDlls, TheDeployListNameIsMatchedCaseInsensitively) {
+UTest the_deploy_list_name_is_matched_case_insensitively{"PlaceRuntimeDlls/TheDeployListNameIsMatchedCaseInsensitively", [] {
     Tree t;
     auto exe = t.write("bin/app.exe", pe_importing({"Foo.DLL"}));
     // The deploy list itself may spell the name differently (it named a
@@ -347,27 +348,27 @@ TEST(PlaceRuntimeDlls, TheDeployListNameIsMatchedCaseInsensitively) {
 
     auto r = mcpp::pack::place_runtime_dlls(
         exe, {t.root / "deps"}, {}, {"foo.dll"});
-    ASSERT_TRUE(r.has_value()) << r.error().message;
-    EXPECT_TRUE(r->names.empty())
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error().message;
+    expect(r->names.empty())
         << "PE names are case-insensitive; the deploy list's entry should still match";
-}
+}};
 
-TEST(PlaceRuntimeDlls, ANameNotInTheDeployListIsPlacedAsBefore) {
+UTest a_name_not_in_the_deploy_list_is_placed_as_before{"PlaceRuntimeDlls/ANameNotInTheDeployListIsPlacedAsBefore", [] {
     Tree t;
     auto exe = t.write("bin/app.exe", pe_importing({"foo.dll"}));
     t.write("deps/foo.dll", pe_importing({}) + "PAYLOAD");
 
     auto r = mcpp::pack::place_runtime_dlls(exe, {t.root / "deps"});
-    ASSERT_TRUE(r.has_value()) << r.error().message;
-    EXPECT_EQ(r->names, (Names{"foo.dll"}));
-    EXPECT_EQ(r->sources, (std::vector<std::filesystem::path>{t.root / "deps" / "foo.dll"}));
-    EXPECT_TRUE(r->warnings.empty());
-    EXPECT_EQ(read_bytes(t.root / "bin" / "foo.dll"), pe_importing({}) + "PAYLOAD");
-}
+    if (auto&& failed = expect(fatal(r.has_value())); !failed) failed << r.error().message;
+    expect(eq(r->names, (Names{"foo.dll"})));
+    expect(eq(r->sources, (std::vector<std::filesystem::path>{t.root / "deps" / "foo.dll"})));
+    expect(r->warnings.empty());
+    expect(eq(read_bytes(t.root / "bin" / "foo.dll"), pe_importing({}) + "PAYLOAD"));
+}};
 
 // ── Mach-O ───────────────────────────────────────────────────────────────
 
-TEST(PackClosureMachO, AnRpathDylibBesideTheProgramIsAMemberTransitively) {
+UTest an_rpath_dylib_beside_the_program_is_a_member_transitively{"PackClosureMachO/AnRpathDylibBesideTheProgramIsAMemberTransitively", [] {
     Tree t;
     auto app = t.write("bin/app",
         macho_naming({"@rpath/libfw.dylib", "/usr/lib/libSystem.B.dylib"},
@@ -383,12 +384,12 @@ TEST(PackClosureMachO, AnRpathDylibBesideTheProgramIsAMemberTransitively) {
     in.arch   = "aarch64";
     auto r = mcpp::pack::read_closure(in);
 
-    EXPECT_EQ(member_dests(r), (Names{"libdep.dylib", "libfw.dylib"}));
-    EXPECT_EQ(r.platform, (Names{"/usr/lib/libSystem.B.dylib", "/usr/lib/libc++.1.dylib"}));
-    EXPECT_TRUE(r.unresolved.empty());
-}
+    expect(eq(member_dests(r), (Names{"libdep.dylib", "libfw.dylib"})));
+    expect(eq(r.platform, (Names{"/usr/lib/libSystem.B.dylib", "/usr/lib/libc++.1.dylib"})));
+    expect(r.unresolved.empty());
+}};
 
-TEST(PackClosureMachO, ATrailingSlashAndExecutablePathQualifyAsTheProgramsDirectory) {
+UTest a_trailing_slash_and_executable_path_qualify_as_the_programs_directory{"PackClosureMachO/ATrailingSlashAndExecutablePathQualifyAsTheProgramsDirectory", [] {
     Tree t;
     auto app = t.write("bin/app",
         macho_naming({"@rpath/liba.dylib", "@executable_path/libb.dylib"},
@@ -400,11 +401,11 @@ TEST(PackClosureMachO, ATrailingSlashAndExecutablePathQualifyAsTheProgramsDirect
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
-    EXPECT_EQ(member_dests(r), (Names{"liba.dylib", "libb.dylib"}));
-    EXPECT_TRUE(r.unresolved.empty());
-}
+    expect(eq(member_dests(r), (Names{"liba.dylib", "libb.dylib"})));
+    expect(r.unresolved.empty());
+}};
 
-TEST(PackClosureMachO, AnAbsoluteInstallNameOutsideTheOsRootsIsUnresolved) {
+UTest an_absolute_install_name_outside_the_os_roots_is_unresolved{"PackClosureMachO/AnAbsoluteInstallNameOutsideTheOsRootsIsUnresolved", [] {
     Tree t;
     // The file exists on this machine; the loader on another one reads that
     // path, not the tree, so a copy would not be what loads. An install name
@@ -420,14 +421,13 @@ TEST(PackClosureMachO, AnAbsoluteInstallNameOutsideTheOsRootsIsUnresolved) {
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
-    EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{installName}));
-    ASSERT_EQ(r.unresolved.size(), 1u);
-    EXPECT_NE(r.unresolved[0].why.find("absolute install name"), std::string::npos)
-        << r.unresolved[0].why;
-}
+    expect(r.members.empty());
+    expect(eq(unresolved_names(r), (Names{installName})));
+    expect(fatal(eq(r.unresolved.size(), 1u)));
+    if (auto&& failed = expect(ne(r.unresolved[0].why.find("absolute install name"), std::string::npos)); !failed) failed << r.unresolved[0].why;
+}};
 
-TEST(PackClosureMachO, AnRpathOnlyAnAbsoluteEntryReachesIsUnresolved) {
+UTest an_rpath_only_an_absolute_entry_reaches_is_unresolved{"PackClosureMachO/AnRpathOnlyAnAbsoluteEntryReachesIsUnresolved", [] {
     Tree t;
     t.write("store/libfw.dylib", macho_naming({}, {}));
     auto app = t.write("bin/app",
@@ -437,11 +437,10 @@ TEST(PackClosureMachO, AnRpathOnlyAnAbsoluteEntryReachesIsUnresolved) {
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
-    EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{"@rpath/libfw.dylib"}));
-    ASSERT_EQ(r.unresolved.size(), 1u);
-    EXPECT_NE(r.unresolved[0].why.find("@loader_path"), std::string::npos)
-        << r.unresolved[0].why;
+    expect(r.members.empty());
+    expect(eq(unresolved_names(r), (Names{"@rpath/libfw.dylib"})));
+    expect(fatal(eq(r.unresolved.size(), 1u)));
+    if (auto&& failed = expect(ne(r.unresolved[0].why.find("@loader_path"), std::string::npos)); !failed) failed << r.unresolved[0].why;
 
     // The negative direction: the same dylib staged through a qualifying
     // rpath is a member, sourced from wherever the loader finds it here.
@@ -450,12 +449,12 @@ TEST(PackClosureMachO, AnRpathOnlyAnAbsoluteEntryReachesIsUnresolved) {
                      {(t.root / "store").string(), "@loader_path"}));
     in.object = app2;
     auto r2 = mcpp::pack::read_closure(in);
-    EXPECT_EQ(member_dests(r2), (Names{"libfw.dylib"}));
-    ASSERT_EQ(r2.members.size(), 1u);
-    EXPECT_EQ(r2.members[0].source, t.root / "store" / "libfw.dylib");
-}
+    expect(eq(member_dests(r2), (Names{"libfw.dylib"})));
+    expect(fatal(eq(r2.members.size(), 1u)));
+    expect(eq(r2.members[0].source, t.root / "store" / "libfw.dylib"));
+}};
 
-TEST(PackClosureMachO, ALoaderPathSubdirectoryIsStagedAtThatSubdirectory) {
+UTest a_loader_path_subdirectory_is_staged_at_that_subdirectory{"PackClosureMachO/ALoaderPathSubdirectoryIsStagedAtThatSubdirectory", [] {
     Tree t;
     auto app = t.write("bin/app", macho_naming({"@loader_path/plugins/libp.dylib"}, {}));
     t.write("bin/plugins/libp.dylib", macho_naming({"@loader_path/libq.dylib"}, {}));
@@ -465,11 +464,11 @@ TEST(PackClosureMachO, ALoaderPathSubdirectoryIsStagedAtThatSubdirectory) {
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
-    EXPECT_EQ(member_dests(r), (Names{"plugins/libp.dylib", "plugins/libq.dylib"}));
-    EXPECT_TRUE(r.unresolved.empty());
-}
+    expect(eq(member_dests(r), (Names{"plugins/libp.dylib", "plugins/libq.dylib"})));
+    expect(r.unresolved.empty());
+}};
 
-TEST(PackClosureMachO, ANameOutsideTheProgramsDirectoryIsUnresolved) {
+UTest a_name_outside_the_programs_directory_is_unresolved{"PackClosureMachO/ANameOutsideTheProgramsDirectoryIsUnresolved", [] {
     Tree t;
     t.write("Frameworks/libz.dylib", macho_naming({}, {}));
     auto app = t.write("bin/app",
@@ -479,11 +478,11 @@ TEST(PackClosureMachO, ANameOutsideTheProgramsDirectoryIsUnresolved) {
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
-    EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{"@executable_path/../Frameworks/libz.dylib"}));
-}
+    expect(r.members.empty());
+    expect(eq(unresolved_names(r), (Names{"@executable_path/../Frameworks/libz.dylib"})));
+}};
 
-TEST(PackClosureMachO, AMissingDylibIsUnresolvedAndNamed) {
+UTest a_missing_dylib_is_unresolved_and_named{"PackClosureMachO/AMissingDylibIsUnresolvedAndNamed", [] {
     Tree t;
     auto app = t.write("bin/app", macho_naming({"@rpath/libgone.dylib"}, {"@loader_path"}));
 
@@ -491,6 +490,6 @@ TEST(PackClosureMachO, AMissingDylibIsUnresolvedAndNamed) {
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
-    EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{"@rpath/libgone.dylib"}));
-}
+    expect(r.members.empty());
+    expect(eq(unresolved_names(r), (Names{"@rpath/libgone.dylib"})));
+}};

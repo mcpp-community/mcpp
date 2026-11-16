@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.build.prepare_inputs;
+
+using namespace mcpplibs::mtest;
 
 namespace cfgpred = mcpp::build::cfgpred;
 
@@ -34,34 +36,34 @@ bool m(std::string_view predicate, const cfgpred::Ctx& c) {
 // a = "rocm")` would then be unsatisfiable rather than "both are enabled".
 // Membership everywhere keeps `any`/`all`/`not` pure boolean combinators.
 
-TEST(CfgAccelerator, BareKeyIsMembership) {
+UTest bare_key_is_membership{"CfgAccelerator/BareKeyIsMembership", [] {
     auto cuda = resolved({"cuda"});
-    EXPECT_TRUE (m(R"(cfg(accelerator = "cuda"))", cuda));
-    EXPECT_FALSE(m(R"(cfg(accelerator = "rocm"))", cuda));
-}
+    expect(bool(m(R"(cfg(accelerator = "cuda"))", cuda)));
+    expect(!(m(R"(cfg(accelerator = "rocm"))", cuda)));
+}};
 
-TEST(CfgAccelerator, MultipleBackendsAreAllMembers) {
+UTest multiple_backends_are_all_members{"CfgAccelerator/MultipleBackendsAreAllMembers", [] {
     auto both = resolved({"cuda", "rocm"});
-    EXPECT_TRUE(m(R"(cfg(accelerator = "cuda"))", both));
-    EXPECT_TRUE(m(R"(cfg(accelerator = "rocm"))", both));
-}
+    expect(bool(m(R"(cfg(accelerator = "cuda"))", both)));
+    expect(bool(m(R"(cfg(accelerator = "rocm"))", both)));
+}};
 
-TEST(CfgAccelerator, CombinatorsStayPure) {
+UTest combinators_stay_pure{"CfgAccelerator/CombinatorsStayPure", [] {
     auto both = resolved({"cuda", "rocm"});
     auto cuda = resolved({"cuda"});
-    EXPECT_TRUE (m(R"(cfg(any(accelerator = "cuda", accelerator = "rocm")))", cuda));
-    EXPECT_TRUE (m(R"(cfg(all(accelerator = "cuda", accelerator = "rocm")))", both));
-    EXPECT_FALSE(m(R"(cfg(all(accelerator = "cuda", accelerator = "rocm")))", cuda));
-    EXPECT_TRUE (m(R"(cfg(not(accelerator = "rocm")))", cuda));
-}
+    expect(bool(m(R"(cfg(any(accelerator = "cuda", accelerator = "rocm")))", cuda)));
+    expect(bool(m(R"(cfg(all(accelerator = "cuda", accelerator = "rocm")))", both)));
+    expect(!(m(R"(cfg(all(accelerator = "cuda", accelerator = "rocm")))", cuda)));
+    expect(bool(m(R"(cfg(not(accelerator = "rocm")))", cuda)));
+}};
 
-TEST(CfgAccelerator, ComposesWithTripleKeys) {
+UTest composes_with_triple_keys{"CfgAccelerator/ComposesWithTripleKeys", [] {
     auto cuda = resolved({"cuda"});
-    EXPECT_TRUE (m(R"(cfg(all(linux, accelerator = "cuda")))", cuda));
-    EXPECT_FALSE(m(R"(cfg(all(windows, accelerator = "cuda")))", cuda));
-}
+    expect(bool(m(R"(cfg(all(linux, accelerator = "cuda")))", cuda)));
+    expect(!(m(R"(cfg(all(windows, accelerator = "cuda")))", cuda)));
+}};
 
-TEST(CfgAccelerator, AnsweredBeforeResolutionUnlikeTheOtherLayers) {
+UTest answered_before_resolution_unlike_the_other_layers{"CfgAccelerator/AnsweredBeforeResolutionUnlikeTheOtherLayers", [] {
     // `accelerator` is answerable in the FIRST merge pass, and the difference
     // from the other five layer keys is the schedule, not the subject. Its
     // value is an input to the build -- `--accel`, or `[build] accel` -- read
@@ -73,43 +75,43 @@ TEST(CfgAccelerator, AnsweredBeforeResolutionUnlikeTheOtherLayers) {
     // not be, and a CPU-only build of a project with a device island
     // downloaded the whole vendor toolkit.
     auto early = cfgpred::context_for("x86_64-linux-gnu");
-    ASSERT_FALSE(early.layersKnown);
+    expect(fatal(!early.layersKnown));
     early.accelerators = {"cuda"};
-    EXPECT_TRUE (m(R"(cfg(accelerator = "cuda"))", early));
-    EXPECT_FALSE(m(R"(cfg(accelerator = "vulkan"))", early));
+    expect(bool(m(R"(cfg(accelerator = "cuda"))", early)));
+    expect(!(m(R"(cfg(accelerator = "vulkan"))", early)));
 
     // A resolved layer key in the same position still answers false, and must:
     // the second pass owns it and would otherwise contribute the same inputs
     // twice through `append()`.
-    EXPECT_FALSE(m(R"(cfg(c-abi = "glibc"))", early));
+    expect(!(m(R"(cfg(c-abi = "glibc"))", early)));
 
     // No accel named: false for any backend, and `none` is how a section says
     // so without enumerating the backends it is not.
     auto nothing = cfgpred::context_for("x86_64-linux-gnu");
-    EXPECT_FALSE(m(R"(cfg(accelerator = "cuda"))", nothing));
-    EXPECT_TRUE (m(R"(cfg(accelerator = "none"))", nothing));
-}
+    expect(!(m(R"(cfg(accelerator = "cuda"))", nothing)));
+    expect(bool(m(R"(cfg(accelerator = "none"))", nothing)));
+}};
 
-TEST(CfgAccelerator, IsInTheVocabularyButNotAResolvedLayer) {
+UTest is_in_the_vocabulary_but_not_a_resolved_layer{"CfgAccelerator/IsInTheVocabularyButNotAResolvedLayer", [] {
     // Three separate questions, and only the middle one changed. It is a known
     // key (so a misspelling is still reported); it is not a triple key; and it
     // does NOT send its section to the pass that runs after resolution.
-    EXPECT_TRUE (cfgpred::unknown_tokens(R"(cfg(accelerator = "cuda"))").empty());
-    EXPECT_FALSE(cfgpred::uses_layer(R"(cfg(accelerator = "cuda"))"));
-    EXPECT_FALSE(cfgpred::uses_layer(R"(cfg(arch = "x86_64"))"));
-    EXPECT_TRUE (cfgpred::uses_layer(R"(cfg(c-abi = "musl"))"));
+    expect(cfgpred::unknown_tokens(R"(cfg(accelerator = "cuda"))").empty());
+    expect(!(cfgpred::uses_layer(R"(cfg(accelerator = "cuda"))")));
+    expect(!(cfgpred::uses_layer(R"(cfg(arch = "x86_64"))")));
+    expect(bool(cfgpred::uses_layer(R"(cfg(c-abi = "musl"))")));
     // A predicate mixing the two belongs to the late pass, which can answer
     // both. Ownership is by membership, not by which leg matched.
-    EXPECT_TRUE (cfgpred::uses_layer(
-        R"(cfg(all(accelerator = "cuda", c-abi = "musl")))"));
-}
+    expect(bool(cfgpred::uses_layer(
+        R"(cfg(all(accelerator = "cuda", c-abi = "musl")))")));
+}};
 
-TEST(CfgAccelerator, MisspellingIsReportedNotSilentlyFalse) {
+UTest misspelling_is_reported_not_silently_false{"CfgAccelerator/MisspellingIsReportedNotSilentlyFalse", [] {
     // A predicate naming a token outside the vocabulary used to evaluate to
     // false in silence, which is indistinguishable from one that correctly did
     // not apply.
     auto unknown = cfgpred::unknown_tokens(R"(cfg(acclerator = "cuda"))");
-    ASSERT_EQ(unknown.size(), 1u);
-    EXPECT_EQ(unknown[0], "acclerator");
-    EXPECT_TRUE(cfgpred::unknown_tokens(R"(cfg(accelerator = "cuda"))").empty());
-}
+    expect(fatal(eq(unknown.size(), 1u)));
+    expect(eq(unknown[0], "acclerator"));
+    expect(cfgpred::unknown_tokens(R"(cfg(accelerator = "cuda"))").empty());
+}};

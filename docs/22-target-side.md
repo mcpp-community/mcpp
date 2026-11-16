@@ -297,6 +297,27 @@ The check runs before compilation begins. The combination it rejects otherwise
 fails inside the runtime's own headers, in a message naming a file the reader
 has never opened and no decision mcpp made.
 
+### Default providers (2026.11.9.1+)
+
+A package that requires a capability states the providers it takes when nothing
+else provides it, per target (SPEC-002 §3.6):
+
+```toml
+[package]
+requires = ["mcpp:kernel-abi=openkal"]
+
+[defaults."mcpp:kernel-abi=openkal"]
+linux   = "openkal-linux@^0.25"
+macos   = "openkal-macos@^0.25"
+"*"     = "openkal-posix@^0.25"
+```
+
+A provider in the graph -- the consumer's dependency, or the package the
+platform adds for its layer -- is used instead; otherwise the default whose
+selector matches the target joins the graph as the package's dependency, and
+the build reports it (`Default ... for ... of ...`). A selector that names the
+target wins over `*`.
+
 The same statement is the recipe for a package whose install hook compiles a
 static library from source. The library is compiled against one C++ standard
 library and cannot be linked into a program that uses another, and the store
@@ -502,6 +523,7 @@ that names no C library:
 | Target | Request | Realisation |
 |---|---|---|
 | Linux | `posix` / `arch-default` | the default triple already satisfies it |
+| FreeBSD, NetBSD | `posix` / `arch-default` | as Linux: the ELF triple predefines `__unix__` and is LP64 with a 32-bit `wchar_t` (`<arch>-freebsd-musl`, a C library above openkal-freebsd) |
 | macOS | `posix` / `arch-default` | one token, `-D__unix__` — Apple's clang predefines `__APPLE__`/`__MACH__` on its default triple, never `__unix__` |
 | freestanding | `posix` / `arch-default` | the same one token, `-D__unix__`, for the same reason: nothing here defines it either |
 | Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only; plus `-D__MCPP_TARGET_WINDOWS__` (see the note below); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
@@ -989,7 +1011,9 @@ cxxflags = ["-D_GNU_SOURCE"]
 **A layer names the library, not the triple's env segment.** They coincide
 for `musl` and diverge for `gnu`: on Linux that segment asks for glibc, and on
 Windows it names the MinGW flavour of the toolchain, whose C runtime is the same
-UCRT the MSVC flavour links. The spelling is `c-abi = "glibc"`, never
+UCRT the MSVC flavour links. Both Windows payloads answer `ucrt` (the MSVC one
+from 2026.11.10.2), so a package that needs the Win32 C runtime states
+`requires = ["mcpp:c-abi=ucrt"]` once. The spelling is `c-abi = "glibc"`, never
 `c-abi = "gnu"`; the request, as opposed to the answer, is `env = "gnu"` — a
 different question (`docs/specs/target-side.md` §3.4).
 
@@ -1012,7 +1036,7 @@ did not match.
 
 ## Diagnostics
 
-Four conditions are reported by the engine rather than by a compiler.
+Five conditions are reported by the engine rather than by a compiler.
 
 | Condition | Report |
 |---|---|
@@ -1020,6 +1044,7 @@ Four conditions are reported by the engine rather than by a compiler.
 | two packages supply one layer | names both, and how each entered the graph |
 | a layer has no supplier | names the layer, and the capability to depend on |
 | the payload's C++ runtime sits above a foreign C library | names both, and the two ways out |
+| the suppliers of the layers require one another in a circle (2026.11.10.1+) | names each package, the layer it supplies and the layer it requires; `layer-cycle` |
 
 A message from a compiler or a linker about a target-side combination
 indicates a missing diagnostic. The engine knows the combination is untenable
@@ -1068,15 +1093,21 @@ openblas = "0.3.33"
 ldflags = ["-Llib", "-llibopenblas"]
 
 # cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
-# plus the bare aliases windows/unix/linux/macos).
+# plus barewords: `unix` and the name of a system).
 [target.'cfg(all(linux, not(arch = "aarch64")))'.build]
 cxxflags = ["-march=x86-64-v2"]
 ```
 
-`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']` — the bare
-aliases `windows` / `linux` / `macos` / `unix` are never valid target triples, so
-there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
-for arch/env conditions and combinators.
+`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']`. A bareword
+is data rather than a list: `unix` is `family = "unix"`, and any other word without a
+dash is `os = "<word>"` (`linux`, `macos`, `windows`, `freebsd`, or the system of a
+row a platform defines). A row states its family (`family` in the row table), so
+FreeBSD is of the `unix` family. A target triple always contains a dash, so a
+bareword is never a triple. A word that names no row's system is reported, as an
+unknown key is. Use the bare form for a single OS/family; use `cfg(...)` for arch/env
+conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`,
+`windows` and `unix` as barewords; a package read by such a release writes
+`cfg(os = "<system>")` for any other system.
 
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
   `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see [30 — build.mcpp](30-build-mcpp.md); the feature is
@@ -1161,14 +1192,23 @@ for arch/env conditions and combinators.
 - **Evaluated against the resolved target** — the `--target` triple for a cross
   build, otherwise the host. So a native Linux build never even *downloads* a
   `[target.windows]` dependency.
-- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates —
-  and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
+- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates;
+  `object-format` (mcpp 2026.11.13.1), the row's container (`elf`, `pe`,
+  `mach-o`, `wasm`, `coff`), which a package selects by when what it needs is a
+  convention every system of the container shares (the PE rows: the Microsoft
+  x64 calling convention, COFF sections) rather than a system — and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
   `compiler-runtime`, `kernel-abi`, `c-abi`, `c++-abi`
   ([22 — The Target Side](22-target-side.md)). `accelerator` is a key here too
   and is answered from this build's own `accel` — the backend names in
   `--accel` or `[build] accel` — so it is a membership test over a set, and
   `accelerator = "none"` is how a section says "this build named no backend"
-  without enumerating the ones it is not. Barewords `linux` / `macos` /
+  without enumerating the ones it is not. `interface` (mcpp 2026.11.13.1) is the kernel-abi
+  layer's second answer: an interface its provider states in `[kernel-abi]
+  provides-interfaces`, compared by membership as `accelerator` is. A provider
+  that states no list provides every interface; a graph without the layer
+  provides none. A package selects its sources by what the implementation
+  beneath it provides, and names no implementation:
+  `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`. Barewords `linux` / `macos` /
   `windows` / `unix` are sugar for the matching `os` / `family` test. A key
   outside this set is reported as a schema warning and the section does not
   apply — it used to answer false in silence, which is indistinguishable from
@@ -1252,6 +1292,63 @@ or clang's `/winsysroot` layout, whose `Windows Kits/10` is used when present.
 Any other value on such a row is rejected. See
 [20 — Clang on the MSVC ABI](20-toolchains.md#clang-on-the-msvc-abi-the-toolset-is-the-sysroot).
 
+#### Base packages: a sysroot that states its layers (2026.11.10.1+)
+
+A sysroot can say what it holds beside its C library. A **base package** is a sysroot whose root
+carries an ordinary package manifest: `provides` names the layers it supplies, and `[build]`
+states them with the keys any layer supplier uses, relative to the package root, which is the
+sysroot:
+
+```toml
+[package]
+name     = "x86_64-freebsd-sysroot"
+version  = "14.5"
+provides = ["mcpp:c-abi=freebsd-libc", "mcpp:c++-abi=libc++", "mcpp:compiler-runtime=libgcc",
+            "hosted-standard-library"]
+
+[build]
+include_dirs      = ["usr/include/c++/v1"]   # the C++ library's headers
+ldflags           = ["-lc++", "-lcxxrt"]     # the C++ libraries the link names
+std-module        = "usr/share/libc++/v1/std.cppm"
+std-compat-module = "usr/share/libc++/v1/std.compat.cppm"
+std-module-flags  = ["-D__fenv_static="]
+# compiler_runtime_dir = "compiler-rt"       # where the compiler runtime stands
+```
+
+Named as any sysroot is (`sysroot = "xim:x86_64-freebsd-sysroot@14.5"`, `{ path = "…" }`, a
+platform's or a provider's `sysroot`), the base answers the layers it states:
+
+- the report shows them as `prebuilt`, with the base's `<name>@<version>`;
+- the C++ headers, the `std` module and the C++ libraries of the link are the base's; the
+  toolchain payload's C++ runtime and its archives, built for the payload's own host, take no
+  part. A base that states no `std-module` leaves the build without `import std`;
+- `compiler_runtime_dir` (a `[build]` key, 2026.11.10.1+) names the directory of the compiler
+  runtime: clang reads it as its resource directory, gcc through `-B`.
+
+A base package is the sysroot of one identity. A platform gives each identity its own base
+through each provider's `sysroot` ([35](35-platforms.md)); a system whose driver tells its
+architectures apart inside one root (MinGW-w64) is served by one package.
+
+**A base package has one reading (2026.11.12.1+).** Its manifest states that the package root
+is the sysroot, and it is rendered as one (`--sysroot=<root>`) whatever its directories are
+called; the directory layout is probed only for a directory that carries no manifest. Where
+this machine does not load the artifact — the base is another architecture's or another
+system's — the link takes nothing of the toolchain payload's own run-time directories, a dynamic
+artifact names the row's `loader` as its program interpreter (`/lib/ld-linux-aarch64.so.1`), and
+no directory of this machine enters its RUNPATH. Such an artifact runs through a runner, which
+is given the base as `{sysroot}` ([41](41-devices.md)). A native dynamic artifact names the
+base's own loader, where it stands.
+
+The index carries `xim:x86_64-freebsd-sysroot` and `xim:aarch64-freebsd-sysroot` (FreeBSD's base
+system, with libc++'s module sources) and `xim:mingw-w64-sysroot` (llvm-mingw's target side:
+MinGW-w64 on UCRT, libc++, libunwind and compiler-rt, for x86_64 and aarch64). On a
+`*-windows-gnu` row the latter is clang's sysroot; the `mingw-llvm` provider names it, so every
+host builds the GNU-ABI Windows rows ([21](21-the-target-triple.md)). It also carries
+`xim:aarch64-linux-gnu-sysroot` (glibc for arm64 with the kernel headers, libc++ with its module
+sources, and compiler-rt), which the `glibc-sysroot` provider names: on linux-x86_64,
+`--target aarch64-linux-gnu` builds C, C++ and `import std` programs over it, dynamically or
+statically (2026.11.12.1+).
+
 A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and
 `mcpp::target_libc_profile()` the sub-directory for the target's ISA profile.
@@ -1288,9 +1385,10 @@ package needs.
 | Member | Type | Renders as | Reaches |
 |---|---|---|---|
 | `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
-| `exceptions` *(mcpp 2026.9.12.3+)* | boolean, or `"wasm"` / `"js"` *(2026.10.30.1+)* | on `os = "emscripten"` only, on the compile line through the dialect flags and on the link: `"wasm"` is `-fwasm-exceptions`, WebAssembly's own exception handling; `"js"` and `true` are `-fexceptions`, the JavaScript-based model. Nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
+| `exceptions` *(mcpp 2026.9.12.3+)* | boolean, or `"wasm"` / `"js"` *(2026.10.30.1+)* | on `os = "emscripten"` only, on the compile line through the dialect flags and on the link: `"wasm"` is `-fwasm-exceptions`, WebAssembly's own exception handling; `"js"` and `true` are `-fexceptions`, the JavaScript-based model; `false` states none. Unstated, the row's own model: `"wasm"` on `wasm32-emscripten` (2026.11.16.1; before, none). Nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
+| `longjmp` *(mcpp 2026.11.12.1+)* | `"wasm"` or `"js"` | on `os = "emscripten"` only, on the compile line of every C and C++ translation unit and on the link: `"wasm"` is `-sSUPPORT_LONGJMP=wasm`, WebAssembly's own stack switching; `"js"` is `-sSUPPORT_LONGJMP=emscripten`, the JavaScript model and the toolchain's default. Declared on any other row, it is refused. An absent member renders nothing | the same set `threads` reaches |
 
-Both members enter the dependency cache key through the dialect flags, so a
+All three members enter the dependency cache key through the flags they render, so a
 dependency built without one is never reused by a build with it, and one built
 with one exception model is never reused by a build with the other. An unknown
 member, and a value outside the table, are refused naming the values.
@@ -1312,6 +1410,23 @@ Aborted(Assertion failed: Exception thrown, but exception catching is not
 enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or
 -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.)
 ```
+
+**`longjmp = "wasm"` is what makes C's `sigsetjmp`/`siglongjmp` work under
+Emscripten.** With the toolchain's default JavaScript model the pair compiles
+into a stack copy, and a non-local exit over two call levels reads past the
+module's stack and dies at run time. With `-sSUPPORT_LONGJMP=wasm` on both the
+compiles and the link, the pair round-trips. A program whose non-local exits
+run deep also wants a bigger stack; that is a project knob of its own
+(`ldflags = ["-sSTACK_SIZE=..."]`), not an ABI fact, so the engine does not
+render it.
+
+**`longjmp` and `exceptions` name one mechanism.** WebAssembly's exception
+handling carries both the throw and the long jump, and the JavaScript model
+carries both. An unstated `longjmp` follows `exceptions`, as the SDK's own
+default does. A build that states one model for `exceptions` and the other for
+`longjmp` is refused with both statements, before any compile. A declared
+`longjmp` is part of the configuration's key; a project that does not state it
+keeps the key it had.
 
 **Only the root manifest decides.** The switch belongs to the artefact, and the
 root is the only package that builds one. A dependency that writes

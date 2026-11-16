@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.3 |
-| 版本 | 1.3 |
-| 最后修改 | 2026-10-30 |
-| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;逐条标注 |
-| 相关设计文档 | `.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
+| 状态 | 评审中 v1.10 |
+| 版本 | 1.10 |
+| 最后修改 | 2026-11-16 |
+| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;v1.10 条款 mcpp >= 2026.11.16.1;逐条标注 |
+| 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
 | 相关规范 | [SPEC-002](target-side.md)(目标侧的层)、[SPEC-004](manifest-semantics.md)(条件化形状)、[SPEC-006](toolchain-management.md)(工具链选择)、[SPEC-007](build-plugins.md)(构建程序与协议)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-014](packaging.md)(打包) |
 | 使用文档 | [35 —— 平台](../zh/35-platforms.md) |
@@ -35,8 +35,12 @@
 
 ## 1. `[platform]` 段
 
-一个包的清单含 `[platform]` 段时,该包是平台包。`[platform]` **必须**含 `targets`;否则清单被拒绝。
-**已实现**
+一个包的清单含 `[platform]` 段时,该包是平台包。`[platform]` **必须**含 `targets` 或至少一个
+`[[platform.provider]]`;否则清单被拒绝。**已实现**
+
+**行与提供者的一般形式(mcpp >= 2026.11.9.1)。** `[[platform.define]]` 定义平台的行,`[[platform.provider]]` 声明
+服务行的提供者(SPEC-016 §2、§3、§5);`[platform]` 是服务 `targets` 的提供者,`[platform.hosted]` 是服务宿主三元组的
+hosted 提供者,二者为一般形式的简写,照旧可读。服务某身份的 `[[platform.provider]]` 的字段代替平台语句的同名字段。
 
 ```toml
 [platform]
@@ -56,6 +60,9 @@ plugin    = "build.mcpp"
 [platform.link]     driver, flags, start, script, inputs, exe, shared, seal
 [platform.versions] <package> = "<version>"
 [platform.hosted]   targets, toolchain, layers
+
+[[platform.define]]   triple, clang-triple, object-format, family, execution, ...   (SPEC-016 §2.1)
+[[platform.provider]] serves, priority, hosts, pairs, toolchain, sysroot, layers, link, hosted, base, execution
 ```
 
 ### 1.1 键
@@ -138,7 +145,7 @@ plugin    = "build.mcpp"
 | 值 | 含义 |
 |---|---|
 | `none` | 不使用平台 |
-| `"<name>@<version>"`、包引用表 | 一个平台包,按普通依赖解析、获取与锁定 |
+| `"<name>@<约束>"`、包引用表 | 一个平台包,按普通依赖解析、获取与锁定;约束为版本或 SemVer 范围(`^0.24`),范围即一个平台系列(§14) |
 | `path:<dir>`,或写成路径的值(以 `/`、`./`、`../`、`~` 开头,Windows 盘符,或含路径分隔符且不含 `@`) | 一个目录中的平台包;命令行与环境变量中的相对路径相对于 mcpp 的启动目录 |
 
 一个目录的清单不可读时,选择**必须**以该清单的错误失败。**已实现**
@@ -198,11 +205,12 @@ plugin    = "build.mcpp"
 | `build` 的四个列表、`link.flags` | 拼接,平台的在前;使用者只能追加,不能删除平台的约定 |
 | `build` 的 `cfg(...)` 子表 | 追加 |
 | `link.inputs`、`link.seal` | 整体替换 |
-| `layers`、`tools`、`runners`、`versions` | 按键替换 |
-| `runner` | `cmd` 替换;`host`、`exclusive` 各自独立替换,只写 argv 的覆盖保留平台的 `host` 与 `exclusive` |
+| `layers`、`tools`、`versions` | 按键替换 |
+| `runner`、`runners` 的每个名字 | `cmd`、`requires` 与 `enabled` 是一条陈述,随 `cmd` 一起替换,未写的 `enabled` 为真;`host`、`hosts`、`exclusive`、`longlived`、`built-as` 各自独立替换。只写 argv 的覆盖保留平台的 `host` 与 `exclusive`;覆盖层(本机配置、工程)不含 `cmd` 的表只改它写出的键(v1.10) |
 | 其余 | 按字段替换 |
 
 `MCPP_TARGET_<T>_RUNNER` 以空白分隔的 argv 替换 `runner.cmd`;值为 `none` 时清除运行器。**已实现**
+`MCPP_TARGET_<T>_RUNNER_ENABLED` 为 `true`(`1`)或 `false`(`0`)时设定缺省运行器的 `enabled`,位于全部层之上(v1.10)。
 
 ## 7. 依赖图的补全
 
@@ -230,16 +238,24 @@ plugin    = "build.mcpp"
 根已经以构建依赖请求同名工具时让位;`{ program = "<name>" }` 不构建,在声明的载荷与 `PATH` 中查找。
 **已实现**
 
+一行所带的工具(mcpp >= 2026.11.13.1):`base = "none"` 的提供者所服务的身份只带其自身 `link` 的 `inputs`、`seal` 与 `runner`
+以第一个词指名的工具;其余身份带全部工具,只由 `base = "none"` 的提供者指名、且该身份自身约定不指名的工具除外。
+一行的工具因此不为另一行构建。**已实现**
+
 ### 7.4 工作空间成员
 
 工作空间的计划中,平台加入的层的包同时成为每个被选中成员的依赖边,使成员的链接闭包含有这些层。**已实现**
 
 ### 7.5 版本组
 
-`versions` 中的包以不同于组中版本的版本出现在图中时拒绝(`platform-version-group`),消息写出该包、两个版本、
-请求链与两条出路:选择携带所需版本的平台版本,或在请求处把该包写成组中的版本。只为本机构建的包(工具)
-与以 `path`、`git` 取得的包不受版本组约束。检查在每一轮补全之前与最后一轮之后进行,使工程固定的一个版本以
-版本组的冲突报告,而不是以平台加入的包遇到第二个版本报告。**已实现**
+版本组是解析的约束(mcpp >= 2026.11.7.1)。平台包是目标图解析的第一个包;读到它之后,图中对 `versions` 所列的包、
+以版本发出的每个请求,在请求的约束容许组中版本时解析为组中版本,不容许时拒绝(`platform-version-group`),消息写出
+该包、请求的约束与请求者、版本组及其版本,以及两条出路:选择携带所需版本的平台版本,或在请求处容许组中版本
+(`<包> = "^<版本>"`)。索引中有更新的补丁时,结果仍是组中版本。只为本机构建的包(工具)与以 `path`、`git` 取得的包
+不受版本组约束。
+
+解析之后的检查保留为断言:在每一轮补全之前与最后一轮之后,图中 `versions` 所列的包都是组中版本。早于 2026.11.7.1
+的引擎只做这一检查;对一个以兼容范围互相依赖、且整组一次发布到索引的家族,两者的结果相同。**已实现**
 
 ### 7.6 多版本改名的边界
 
@@ -268,13 +284,17 @@ plugin    = "build.mcpp"
 | 键 | 语义 |
 |---|---|
 | `driver` | `"compiler"`(编译器驱动链接,缺省)或 `"lld"`(`ld.lld` 直接链接) |
-| `flags` | `driver = "lld"` 时给 `ld.lld` 的参数,位于其他链接参数之前 |
+| `flags` | `driver = "lld"` 时给 `ld.lld` 的参数,位于其他链接参数之前;`driver = "compiler"` 时不交给任何程序,构建**必须**给出警告并指名 `[platform.build] ldflags`(v1.7) |
 | `start` | 入口符号(SPEC-004 §14);入口未定义是链接错误 |
 | `script` | 平台包中的链接脚本,以 `-T` 给出 |
 | `inputs` | `{ file = "<包内路径>" }`,或 `{ from = [argv], as = "<文件名>" }`:运行程序,把其标准输出保存为 `as`;以 `.S`、`.s` 结尾时先汇编,否则原样参与链接 |
 | `exe` | 可执行产物的名字模式,**必须**以 `{name}` 开头 |
 | `shared` | 共享产物的名字模式,`{name}` 恰好一次,不含目录 |
 | `seal` | 封装步骤,每步一个 argv(§9.3) |
+
+`driver = "compiler"` 在每一行生效,包括行本身以 `link-emulation` 直接调用 `ld.lld` 的裸机行(mcpp >= 2026.11.9.1)。
+平台的 `exe`、`shared` 中 `{name}` 之后的部分是平台的格式:构建程序的 `artifact-name` 改变它时被报告,平台的模式保留;
+项目与本机的陈述照常生效(mcpp >= 2026.11.9.1)。
 
 `driver = "lld"` 时引擎在编译器旁依次查找 `ld.lld`、`lld`、`lld-link`(Windows 载荷只带 `lld-link`);都没有时拒绝
 (`lld-required-absent`),消息写出平台的工具链。程序名不是 `ld.lld` 时引擎加 `-flavor gnu`。链接或封装命名的程序既非图中为本机构建、也不在本机可找到时拒绝
@@ -297,7 +317,29 @@ plugin    = "build.mcpp"
 | `cmd` | argv,非空;`{}` 为产物 |
 | `host` | `"same-arch"`:产物只在其架构的机器上运行;`"any"`:运行器可以从任何机器到达产物(模拟器、探针) |
 | `exclusive` | 为真时该目标的运行不重叠,`mcpp test` 串行运行 |
-| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为 `linux`、`macos`、`windows`):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** |
+| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为系统表中的系统,SPEC-016 §2.3):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** |
+| `requires` | 运行器从哪些包安装(`xim:<名>@<版本>`)。第一次 `mcpp run` 或 `mcpp test` 时按工具链的同一方式安装;构建不安装。模板的程序先在这些包中查找,再查 PATH。替换 `cmd` 的陈述同时替换它。**mcpp >= 2026.11.12.1** |
+| `built-as` | `{ "<os>-<arch>" = "<身份>" }`:为该宿主对构建的运行器程序是哪个身份。自带运行器的包(SPEC-014 §4.4)对引擎不持有约定的系统按它构建。**mcpp >= 2026.11.12.1** |
+| `enabled` | 是否使用该运行器,缺省为真。为假时 `mcpp run` 以状态 2 拒绝,`mcpp test` 使测试已构建而未运行(`unreachableIsBuilt` 的调用为"已构建、本机不运行"),消息带 `[runner-not-enabled]`、`requires` 与两种启用写法;拒绝在安装 `requires` 之前。`mcpp run --runner <name>` 指名的运行器视为启用;`--pkg-format` 找到的同名运行器不算指名。以 `host = "same-arch"` 到达不了产物的运行器不以此拒绝,而按到达拒绝。**mcpp >= 2026.11.16.1** |
+| `longlived` | 运行器没有自然结束,状态不是结论;`mcpp test` 不使用它。与构建程序的 `runner_longlived` 同义。**mcpp >= 2026.11.16.1** |
+
+运行器的程序(**mcpp >= 2026.11.16.1**):
+
+1. **查找。** `cmd` 首项先在 `requires` 的包中查找,再在图中各载荷的 `bin/` 与载荷根中查找,最后查 PATH;**禁止**查找
+   当前目录。不在 `bin/` 下的程序写作 `{pkg:<name>}/<路径>`。Windows 上无后缀的名字取系统的后缀(`.exe`、`.cmd`、
+   `.bat`),裸名字与带目录的名字相同;无后缀的同名文件不是程序。
+2. **执行。** argv 不经 shell。系统表为本机系统陈述 `command-scripts`(SPEC-016 §2.3)时,后缀属于它的程序由命令解释器
+   启动;参数含 `%`、`^`、`&`、`|`、`<`、`>`、`"`、回车或换行时**必须**在启动前拒绝并指出该参数,**禁止**把它交给
+   解释器改写或执行。
+3. **占位符。** 只替换 `{}`、`{sysroot}`、`{pkg:<name>}`,可位于词中;其余花括号原样保留;没有 `{}` 时产物附在末尾。
+4. **状态。** 运行器的退出状态是 `mcpp run` 的状态;`longlived` 的运行器的状态不是结论,`mcpp test` 不使用它。
+
+具名运行器 `runners.<name>` 取与 `runner` 相同的数组或表形式(**mcpp >= 2026.11.16.1**;此前只有数组)。平台与提供者
+陈述的运行器**必须**有 `cmd`;本机配置与工程的表可以只写 `enabled` 等键,调整其下一层的运行器。
+
+模板中 `{}` 为产物,`{sysroot}` 为该目标的基座(SPEC-006),`{pkg:<name>}` 为 `requires` 中该名字的包的根
+(**mcpp >= 2026.11.12.1**)。运行器陈述的最低一级是所选提供者条目的 `runner`(SPEC-016 §6),其上依次为平台、构建程序、
+本机配置、项目与环境变量。
 
 `host = "same-arch"` 而产物的架构不是本机架构时,`mcpp run` 与 `mcpp test` 拒绝运行,消息给出
 `[target.<triple>] run_under` 的写法;`run_under` 存在或给出 `--no-runner` 时不拒绝。运行器的合并顺序与 §6
@@ -348,6 +390,9 @@ run_under = ["qemu-aarch64"]
 需要载体的打包被拒绝并写出该键;本 mcpp 不构建程序的行(SPEC-014 §4.4)上的载体在生成工程之前被拒绝,写出系统、架构与行
 (2026.10.29.1)。
 
+**平台定义的系统(mcpp >= 2026.11.9.1)。** `--systems` 与载体项的 `hosts` 接受任何系统词:`<os>-<arch>` 的
+`<os>` 为内置系统或已解析平台定义的系统,`all` 包含后者。平台定义的系统上的程序建于定义它的平台之上,为该行的静态程序。
+
 **载体项的选择(mcpp >= 2026.10.30.1)。** 为 `<os>-<arch>` 构建载体程序时(上述三处与 §10 的执行宿主),所用的是
 `hosts` 列出该对的第一项,否则为第一个未写 `hosts` 的项;两者都没有时,如同平台未声明 `carrier`,打包或运行被拒绝,写出
 该对。`build` 不是 `"row"` 的项留给将来的构建模型(一个文件服务多个系统与架构的载体,mcpp#849),本 mcpp 读到时跳过并警告。
@@ -387,9 +432,18 @@ run_under = ["qemu-aarch64"]
 ## 14. 内置平台与目标表
 
 宿主目标(Linux、macOS、Windows、Android、iOS、Emscripten)的约定留在引擎中,无平台包。目标表有平台列:
-`x86_64-openkal`、`aarch64-openkal` 的值为 `mcpplibs.openkal-platform@<version>`,即这两个目标的内置支持;
-选择来源报告为 `built-in`。项目可以不等引擎更新,以 `[target.<selector>] platform` 选择另一个版本。
-**已实现**
+`x86_64-openkal`、`aarch64-openkal` 的值为一个确切的平台版本,即当前引擎验证过的版本(mcpp 2026.11.12.1 为 `mcpplibs.openkal-platform@0.27.1`),
+也是这两个目标的内置支持;选择来源报告为 `built-in`。项目可以以 `[target.<selector>] platform` 选择另一个版本或系列。
+锁中记录的版本不满足内置版本时不被采用,报告写出采用的版本与锁中记录的版本。使用内置版本的构建失败、且已同步的索引中
+有更新版本时,构建以一条 `tip` 写出两个版本与选择它的写法(mcpp >= 2026.11.7.2;2026.11.7.1 的值为系列 `^0.24`)。**已实现**
+
+**平台系列(mcpp >= 2026.11.7.1)。** 以范围选择的平台是一个系列:
+
+1. 锁中记录了这一平台包(`origin = "platform"`)且记录的版本满足范围时,取记录的版本(§15.1);
+2. 否则取范围内最新、且其 `[package] mcpp` 下限不高于当前引擎的版本;跳过的版本连同所需的引擎版本写入报告;
+3. 结果写入 `mcpp.lock`;`mcpp update`(或 `mcpp update <平台包>`)删除记录,下一次构建按第 2 条重新选择。
+
+平台发布补丁版本因此不需要发布 mcpp。精确版本(`@0.24.1`、`@=0.24.1`)按写出的取。**已实现**
 
 **描述符键(mcpp >= 2026.10.30.1)。** 每个目标行声明它读取依赖描述符的哪些按平台块及其顺序,第一个存在的块被读取;
 `xpm` 下的版本与 `mcpp` 段的按平台表都按此读取,构建机不参与:
@@ -419,6 +473,9 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 `targets`,读取时无 `targets` 的条目属于写锁的机器的原生配置。一次配置把自己的目标加入它解析到的条目、从没有解析到的
 条目中去掉,不再被任何配置解析的条目被删除;一个条目的版本改变时其 `targets` 只剩这次的配置;条目按身份排序。为本机的
 构建与为 `x86_64-openkal` 的构建、打包因此不互相改写锁。**已实现**
+
+以系列选择的平台包(§14)从锁中读回:记录的版本满足系列时被采用,这是锁对版本依赖的唯一一处约束;其他版本依赖
+每次按约束重新解析,锁只作断言(`--locked`)。**已实现**(mcpp >= 2026.11.7.1)
 
 ### 15.2 身份
 
@@ -488,7 +545,8 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 2. 选择按 §3.1、§4.1 的顺序;`none` 不使用平台;目录形式读取目录中的清单。
 3. `cfg(platform = ...)` 下写 `platform` 被拒绝。
 4. 图已提供某层时平台不加入该层的包,报告为 `graph`;`false` 不加入。
-5. 版本组冲突在任何链接之前拒绝,消息给出两条出路。
+5. 版本组冲突在任何编译之前拒绝,消息写出请求与版本组并给出两条出路;容许组中版本的范围解析为组中版本,
+   即使索引中有更新的版本;开发树不受约束(e2e 951、1020)。
 6. 封装失败不发布产物,保留上一次的产物。
 7. `same-arch` 的运行器不运行其他架构的产物,并给出 `run_under` 的写法;`mcpp test` 的人类输出给出完整的原因恰好一次(e2e 960)。
 8. 平台的工具在任何图中按宿主约定构建。
@@ -500,6 +558,10 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 12. 给出执行宿主时,`mcpp run` 与 `mcpp test` 交给它的运行器程序是产物架构的 ELF;本机有该架构的 qemu 时映像经它运行、
     测试通过;`mcpp self env` 报告拒绝的原因,给出执行宿主时报告另一架构的运行器(e2e 960)。
 13. 映像的单文件的载体是映像架构的程序;`--mode self-contained` 的单目标包是树,携带该架构的运行器(e2e 961)。
+14. 以系列选择的平台取引擎可读的最新版本,跳过下限更高的版本并写出;锁记录的版本在系列内时被采用,`mcpp update` 之后
+    取更新的版本(e2e 1021)。
+15. 内置平台为确切版本:不写平台的工程构建该版本并锁定;锁中记录的其他版本不被采用并写出;工程写出的平台照常采用
+    (e2e 1025;提示的条件与内容见单元测试 PlatformDefault)。
 
 ## 变更记录
 
@@ -509,3 +571,10 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.1 | 2026-10-28 | `[platform] universal`;载体的三种携带形式(运行器形式、映像、映像组的 zip)、`mcpp_carried_digest`、Mach-O 节名 `__carried`、按系统的行;平台阶段可声明包格式与 artifact action;`self env --host` 报告运行器与工具;判据 10、11(e2e 952、953)。 |
 | 1.2 | 2026-10-29 | mcpp 2026.10.29.1:§10 给出执行宿主时 `same-arch` 运行器的程序为产物架构的载体运行器形式,`mcpp test` 写出完整的拒绝原因一次;§11 单目标包与单文件的程序为产物架构的,不构建的行在生成工程之前被拒绝;§14 ok 映像与 Web;§16 `self env` 报告运行器程序的架构、执行宿主与拒绝,平台包的 `mcpp test` 运行给出执行宿主的目标;判据 7、12、13(e2e 960、961)。 |
 | 1.3 | 2026-10-30 | mcpp 2026.10.30.1(设计 2026-10-29 §4.3–§4.5、§13.3):§1.1 `universal` 弃用、不起作用;`runner.hosts`;`carrier` 接受列表,每项的 `hosts` 与 `build`;`descriptor_keys`;§10 执行宿主的运行器程序按 `hosts` 选择载体项;§11 携带映像的载体只属于单文件,树携带运行器形式;判据 13 改写(e2e 961)。 |
+| 1.5 | 2026-11-07 | mcpp 2026.11.7.2(设计 2026-11-07 §4.10,D20):§14 目标表的平台列为确切版本 0.24.3,锁中不满足的记录不被采用并写出;使用内置版本的构建失败且索引有更新版本时给出提示;判据 15 新增(e2e 1025)。 |
+| 1.4 | 2026-11-07 | mcpp 2026.11.7.1(设计 2026-11-07 §4.1.4、§4.2.2 A2/A3):§7.5 版本组参与解析,解析后的检查保留为断言;§3.2 平台引用接受 SemVer 约束;§14 目标表的平台列为系列 `^0.24`,系列取引擎可读的最新版本;§15.1 系列从锁中读回,`mcpp update` 移动它;判据 5 改写、14 新增(e2e 1020、1021)。 |
+| 1.6 | 2026-11-09 | mcpp 2026.11.9.1(SPEC-016,mcpp#911):§1 `[[platform.define]]` 与 `[[platform.provider]]` 为一般形式,`[platform]`、`[platform.hosted]` 为其简写;§9.2 `driver = "compiler"` 在每一行生效,平台的产物名模式不被构建程序改变;§11 平台定义的系统上的载体与 `--systems`;主机对为任意系统词。 |
+| 1.7 | 2026-11-10 | mcpp 2026.11.10.1(设计 2026-11-10 E8,mcpp#911 N6):§4 `link.flags` 在 `driver = "compiler"` 时给出警告。 |
+| 1.8 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 §5.2、§5.5):§10 运行器的 `requires` 与 `built-as`,模板占位 `{sysroot}`、`{pkg:<name>}`,提供者的 `runner` 为陈述的最低一级;`hosts` 的系统取自系统表。 |
+| 1.9 | 2026-11-14 | mcpp 2026.11.13.1:§7.3 一行所带的工具,`base = "none"` 的提供者只带其自身约定指名的工具,其余身份不带只由这类提供者指名的工具。 |
+| 1.10 | 2026-11-16 | mcpp 2026.11.16.1(设计 2026-11-15 R1、R2):§10 运行器的 `enabled` 与 `longlived`;具名运行器与 `runner` 同一种表;§6 覆盖层不含 `cmd` 的表、`enabled` 随 `cmd` 的陈述、`MCPP_TARGET_<T>_RUNNER_ENABLED`。;运行器的程序:查找、Windows 的后缀、命令解释器启动的脚本的参数、占位符与状态(R2)。 |

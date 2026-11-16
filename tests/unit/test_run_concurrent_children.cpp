@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpplibs.os;
 import mcpp.run;
+
+using namespace mcpplibs::mtest;
 
 // SUBSYSTEM-LEVEL, and the contract is B2-0 of the member-selection and
 // build-program-cost plan (#748): the launcher is safe for concurrent callers.
@@ -57,7 +59,16 @@ Outcome run_when_open(const std::atomic<bool>& gate, const std::vector<std::stri
 // instant, which makes an overlap likely, and the rounds are repeated. With the
 // launcher as it was, an overlap turns the quick reader's return into the slow
 // child's exit; with it fixed, no round can.
-TEST(ConcurrentChildren, AReaderReturnsWhenItsOwnChildExits) {
+//
+// The first start of a program on a fresh machine loads its image and has it
+// scanned, which on a Windows runner took the quick child longer than the slow
+// child's whole life (round 0 of run 43626158365: the quick reader returned
+// 427 ms after the slow one, where a shared pipe returns both together). Both
+// programs are started once before the rounds, so every round compares warm
+// starts and only a shared pipe can close the gap.
+UTest a_reader_returns_when_its_own_child_exits{"ConcurrentChildren/AReaderReturnsWhenItsOwnChildExits", [] {
+    expect(fatal(eq(proc::capture_exec(kQuick).exit_code, 0)));
+    expect(fatal(eq(proc::capture_exec(kSlow).exit_code, 0)));
     for (int round = 0; round < kRounds; ++round) {
         std::atomic<bool> gate{false};
         Outcome quick, slow;
@@ -67,18 +78,18 @@ TEST(ConcurrentChildren, AReaderReturnsWhenItsOwnChildExits) {
         tQuick.join();
         tSlow.join();
 
-        ASSERT_EQ(quick.exit_code, 0) << "round " << round << ": " << quick.output;
-        ASSERT_EQ(slow.exit_code, 0) << "round " << round << ": " << slow.output;
+        expect(fatal(eq(quick.exit_code, 0))) << "round " << round << ": " << quick.output;
+        expect(fatal(eq(slow.exit_code, 0))) << "round " << round << ": " << slow.output;
         // Each reader is handed its own child's output and nothing else.
-        EXPECT_NE(quick.output.find("quick"), std::string::npos) << quick.output;
+        expect(ne(quick.output.find("quick"), std::string::npos)) << quick.output;
         // The quick child was gone long before the slow one. Half the slow
         // child's life is the margin: it does not depend on how fast the
         // machine starts a process, only on the two readers not sharing a pipe.
         const auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(
             slow.end - quick.end);
-        EXPECT_GT(gap, kSlowFor / 2)
+        expect(gt(gap, kSlowFor / 2))
             << "round " << round << ": the reader of the child that exited at once "
             << "returned only " << gap.count() << " ms before the slow child did; "
             << "it waited for a child another thread started";
     }
-}
+}};

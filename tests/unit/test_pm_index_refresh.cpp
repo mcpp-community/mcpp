@@ -12,9 +12,9 @@
 //     host publishes no 1.2.3" is not "1.2.3 does not exist".
 //   ColdStartIgnoresDebounce — an absent index has nothing to debounce against.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.config;
 import mcpp.pm.dep_spec;
 import mcpp.pm.index_refresh;
@@ -22,6 +22,8 @@ import mcpp.pm.index_route;
 import mcpp.pm.index_spec;
 import mcpp.toolchain.platform;
 import mcpp.provider.xlings;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -139,7 +141,7 @@ constexpr std::string_view kOneVersion = R"(["1.2.0"] = { url = "u", sha256 = "s
 
 // ─── Rows that never reach the filesystem ────────────────────────────────
 
-TEST(PmIndexRefresh, PathAndGitDependenciesNeverRefresh) {
+UTest path_and_git_dependencies_never_refresh{"PmIndexRefresh/PathAndGitDependenciesNeverRefresh", [] {
     FakeRegistry reg("srcdeps");
     mcpp::pm::IndexMap indices;
     auto cfg = reg.config();
@@ -147,14 +149,14 @@ TEST(PmIndexRefresh, PathAndGitDependenciesNeverRefresh) {
 
     mcpp::pm::DependencySpec pathDep;
     pathDep.path = "../sibling";
-    EXPECT_EQ(decide(route, pathDep, reg.env()), RefreshReason::None);
+    expect(eq(decide(route, pathDep, reg.env()), RefreshReason::None));
 
     mcpp::pm::DependencySpec gitDep;
     gitDep.git = "https://example.invalid/x.git";
-    EXPECT_EQ(decide(route, gitDep, reg.env()), RefreshReason::None);
-}
+    expect(eq(decide(route, gitDep, reg.env()), RefreshReason::None));
+}};
 
-TEST(PmIndexRefresh, OfflineSuppressesEvenAGenuineMiss) {
+UTest offline_suppresses_even_a_genuine_miss{"PmIndexRefresh/OfflineSuppressesEvenAGenuineMiss", [] {
     FakeRegistry reg("offline");
     reg.mark_refreshed(std::chrono::hours{99});
     mcpp::pm::IndexMap indices;
@@ -164,16 +166,16 @@ TEST(PmIndexRefresh, OfflineSuppressesEvenAGenuineMiss) {
     auto spec = version_dep("mcpplibs", "absent", "1.0.0");
     mcpp::pm::RefreshPolicy offline; offline.offline = true;
 
-    EXPECT_EQ(decide(route, spec, reg.env(), offline), RefreshReason::SuppressedOffline);
-    EXPECT_FALSE(refreshes(route, spec, reg.env(), offline));
-}
+    expect(eq(decide(route, spec, reg.env(), offline), RefreshReason::SuppressedOffline));
+    expect(!(refreshes(route, spec, reg.env(), offline)));
+}};
 
 // mcpp-community/mcpp#648. `ftxui = "6.1.9"` omits the namespace, so the
 // exact coordinate is (mcpplibs, ftxui), which the index does not carry; the
 // resolver then reaches compat.ftxui through the deprecated bare-name rung and
 // the build succeeds from disk. The decision must walk the same rung, or every
 // build of such a manifest refreshes the index once the debounce has passed.
-TEST(PmIndexRefresh, BareNameResolvedThroughTheLegacyRungIsNotAMiss) {
+UTest bare_name_resolved_through_the_legacy_rung_is_not_a_miss{"PmIndexRefresh/BareNameResolvedThroughTheLegacyRungIsNotAMiss", [] {
     FakeRegistry reg("legacyrung");
     reg.publish_namespaced("compat", "ftxui", R"(["6.1.9"] = { url = "u", sha256 = "s" },)");
     reg.mark_refreshed(std::chrono::hours{99});
@@ -183,21 +185,21 @@ TEST(PmIndexRefresh, BareNameResolvedThroughTheLegacyRungIsNotAMiss) {
 
     auto bare = version_dep("mcpplibs", "ftxui", "6.1.9");
     bare.namespaceOmitted = true;
-    EXPECT_EQ(decide(route, bare, reg.env()), RefreshReason::None);
-    EXPECT_FALSE(refreshes(route, bare, reg.env()));
+    expect(eq(decide(route, bare, reg.env()), RefreshReason::None));
+    expect(!(refreshes(route, bare, reg.env())));
 
     // A constraint is checked against the descriptor the rung found.
     auto bareRange = version_dep("mcpplibs", "ftxui", "^7");
     bareRange.namespaceOmitted = true;
-    EXPECT_EQ(decide(route, bareRange, reg.env()), RefreshReason::VersionMiss);
+    expect(eq(decide(route, bareRange, reg.env()), RefreshReason::VersionMiss));
 
     // The namespace written out states an identity: the rung does not apply,
     // exactly as in the resolver, and the miss stands.
     auto stated = version_dep("mcpplibs", "ftxui", "6.1.9");
-    EXPECT_EQ(decide(route, stated, reg.env()), RefreshReason::DescriptorMiss);
-}
+    expect(eq(decide(route, stated, reg.env()), RefreshReason::DescriptorMiss));
+}};
 
-TEST(PmIndexRefresh, OfflineDoesNotMisreportAResolvableDependency) {
+UTest offline_does_not_misreport_a_resolvable_dependency{"PmIndexRefresh/OfflineDoesNotMisreportAResolvableDependency", [] {
     // The opt-outs are applied AFTER the local analysis, so a dependency that
     // resolved fine is reported as such even offline. Short-circuiting on the
     // flag first would answer "offline mode" for every dependency — hiding
@@ -210,11 +212,10 @@ TEST(PmIndexRefresh, OfflineDoesNotMisreportAResolvableDependency) {
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
 
     mcpp::pm::RefreshPolicy offline; offline.offline = true;
-    EXPECT_EQ(decide(route, version_dep("mcpplibs", "widget", "1.2.0"), reg.env(), offline),
-              RefreshReason::None);
-}
+    expect(eq(decide(route, version_dep("mcpplibs", "widget", "1.2.0"), reg.env(), offline), RefreshReason::None));
+}};
 
-TEST(PmIndexRefresh, AutoRefreshOptOutSuppressesAGenuineMiss) {
+UTest auto_refresh_opt_out_suppresses_a_genuine_miss{"PmIndexRefresh/AutoRefreshOptOutSuppressesAGenuineMiss", [] {
     FakeRegistry reg("optout");
     reg.mark_refreshed(std::chrono::hours{99});
     mcpp::pm::IndexMap indices;
@@ -224,12 +225,12 @@ TEST(PmIndexRefresh, AutoRefreshOptOutSuppressesAGenuineMiss) {
     auto spec = version_dep("mcpplibs", "absent", "1.0.0");
     mcpp::pm::RefreshPolicy off; off.autoRefresh = false;
 
-    EXPECT_EQ(decide(route, spec, reg.env(), off), RefreshReason::SuppressedDisabled);
-}
+    expect(eq(decide(route, spec, reg.env(), off), RefreshReason::SuppressedDisabled));
+}};
 
 // ─── INV-3: a miss must be refutable to mean anything ────────────────────
 
-TEST(PmIndexRefresh, InconclusiveNamespaceNeverRefreshes) {
+UTest inconclusive_namespace_never_refreshes{"PmIndexRefresh/InconclusiveNamespaceNeverRefreshes", [] {
     FakeRegistry reg("inconclusive");
     reg.mark_refreshed(std::chrono::hours{99});
     mcpp::pm::IndexMap indices;
@@ -241,13 +242,13 @@ TEST(PmIndexRefresh, InconclusiveNamespaceNeverRefreshes) {
     // so "absent" here is not evidence of anything.
     for (auto ns : { "xim", "somevendor" }) {
         auto spec = version_dep(ns, "thing", "1.0.0");
-        EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::SuppressedInconclusive)
+        expect(eq(decide(route, spec, reg.env()), RefreshReason::SuppressedInconclusive))
             << "namespace: " << ns;
-        EXPECT_FALSE(refreshes(route, spec, reg.env())) << "namespace: " << ns;
+        expect(!(refreshes(route, spec, reg.env()))) << "namespace: " << ns;
     }
-}
+}};
 
-TEST(PmIndexRefresh, LazyGitIndexNeverRefreshesTheGlobalOne) {
+UTest lazy_git_index_never_refreshes_the_global_one{"PmIndexRefresh/LazyGitIndexNeverRefreshesTheGlobalOne", [] {
     FakeRegistry reg("lazygit");
     reg.mark_refreshed(std::chrono::hours{99});
     mcpp::pm::IndexMap indices;
@@ -257,12 +258,12 @@ TEST(PmIndexRefresh, LazyGitIndexNeverRefreshesTheGlobalOne) {
 
     // Served by a custom index; syncing the shared registry would not help.
     auto spec = version_dep("acme", "widget", "1.0.0");
-    EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::None);
-}
+    expect(eq(decide(route, spec, reg.env()), RefreshReason::None));
+}};
 
 // ─── The three ways local state fails to answer ──────────────────────────
 
-TEST(PmIndexRefresh, PresentDescriptorIsTheSteadyStateAndCostsNothing) {
+UTest present_descriptor_is_the_steady_state_and_costs_nothing{"PmIndexRefresh/PresentDescriptorIsTheSteadyStateAndCostsNothing", [] {
     FakeRegistry reg("steady");
     reg.publish("widget", kOneVersion);
     reg.mark_refreshed(std::chrono::hours{99});   // old, and irrelevant
@@ -270,13 +271,11 @@ TEST(PmIndexRefresh, PresentDescriptorIsTheSteadyStateAndCostsNothing) {
     auto cfg = reg.config();
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
 
-    EXPECT_EQ(decide(route, version_dep("mcpplibs", "widget", "1.2.0"), reg.env()),
-              RefreshReason::None);
-    EXPECT_EQ(decide(route, version_dep("mcpplibs", "widget", "^1.2"), reg.env()),
-              RefreshReason::None);
-}
+    expect(eq(decide(route, version_dep("mcpplibs", "widget", "1.2.0"), reg.env()), RefreshReason::None));
+    expect(eq(decide(route, version_dep("mcpplibs", "widget", "^1.2"), reg.env()), RefreshReason::None));
+}};
 
-TEST(PmIndexRefresh, MissingDescriptorTriggersARefresh) {
+UTest missing_descriptor_triggers_a_refresh{"PmIndexRefresh/MissingDescriptorTriggersARefresh", [] {
     FakeRegistry reg("descmiss");
     reg.publish("widget", kOneVersion);
     reg.mark_refreshed(std::chrono::hours{99});
@@ -285,11 +284,11 @@ TEST(PmIndexRefresh, MissingDescriptorTriggersARefresh) {
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
 
     auto spec = version_dep("mcpplibs", "absent", "1.0.0");
-    EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::DescriptorMiss);
-    EXPECT_TRUE(refreshes(route, spec, reg.env()));
-}
+    expect(eq(decide(route, spec, reg.env()), RefreshReason::DescriptorMiss));
+    expect(bool(refreshes(route, spec, reg.env())));
+}};
 
-TEST(PmIndexRefresh, UnsatisfiableConstraintTriggersARefresh) {
+UTest unsatisfiable_constraint_triggers_a_refresh{"PmIndexRefresh/UnsatisfiableConstraintTriggersARefresh", [] {
     FakeRegistry reg("vermiss");
     reg.publish("widget", kOneVersion);          // only 1.2.0 exists
     reg.mark_refreshed(std::chrono::hours{99});
@@ -298,10 +297,10 @@ TEST(PmIndexRefresh, UnsatisfiableConstraintTriggersARefresh) {
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
 
     auto spec = version_dep("mcpplibs", "widget", "^9.9");
-    EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::VersionMiss);
-}
+    expect(eq(decide(route, spec, reg.env()), RefreshReason::VersionMiss));
+}};
 
-TEST(PmIndexRefresh, ExactVersionAbsentIsNotAVersionMiss) {
+UTest exact_version_absent_is_not_a_version_miss{"PmIndexRefresh/ExactVersionAbsentIsNotAVersionMiss", [] {
     FakeRegistry reg("exactver");
     reg.publish("widget", kOneVersion);          // only 1.2.0 exists
     reg.mark_refreshed(std::chrono::hours{99});
@@ -313,12 +312,12 @@ TEST(PmIndexRefresh, ExactVersionAbsentIsNotAVersionMiss) {
     // simply not be built for this host. Refreshing on it would fire on EVERY
     // build for such a dependency. The install layer covers the real case.
     auto spec = version_dep("mcpplibs", "widget", "9.9.9");
-    EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::None);
-}
+    expect(eq(decide(route, spec, reg.env()), RefreshReason::None));
+}};
 
 // ─── Debounce ────────────────────────────────────────────────────────────
 
-TEST(PmIndexRefresh, DebounceSuppressesTheSecondMissInAWindow) {
+UTest debounce_suppresses_the_second_miss_in_a_window{"PmIndexRefresh/DebounceSuppressesTheSecondMissInAWindow", [] {
     FakeRegistry reg("debounce");
     reg.publish("widget", kOneVersion);
     reg.mark_refreshed(std::chrono::seconds{5});   // just synced
@@ -327,11 +326,11 @@ TEST(PmIndexRefresh, DebounceSuppressesTheSecondMissInAWindow) {
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
 
     auto spec = version_dep("mcpplibs", "absent", "1.0.0");
-    EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::SuppressedDebounce);
-    EXPECT_FALSE(refreshes(route, spec, reg.env()));
-}
+    expect(eq(decide(route, spec, reg.env()), RefreshReason::SuppressedDebounce));
+    expect(!(refreshes(route, spec, reg.env())));
+}};
 
-TEST(PmIndexRefresh, ColdStartIgnoresDebounce) {
+UTest cold_start_ignores_debounce{"PmIndexRefresh/ColdStartIgnoresDebounce", [] {
     FakeRegistry reg("coldstart");
     reg.mark_refreshed(std::chrono::seconds{5});
     reg.remove_index();      // marker gone with it; no local index at all
@@ -340,35 +339,32 @@ TEST(PmIndexRefresh, ColdStartIgnoresDebounce) {
     mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
 
     auto spec = version_dep("mcpplibs", "widget", "1.0.0");
-    EXPECT_EQ(decide(route, spec, reg.env()), RefreshReason::IndexAbsent);
-    EXPECT_TRUE(refreshes(route, spec, reg.env()));
-}
+    expect(eq(decide(route, spec, reg.env()), RefreshReason::IndexAbsent));
+    expect(bool(refreshes(route, spec, reg.env())));
+}};
 
 // ─── decide_for_miss (the `mcpp add` half) ───────────────────────────────
 
-TEST(PmIndexRefresh, DecideForMissHonoursTheSameOptOutsAndDebounce) {
+UTest decide_for_miss_honours_the_same_opt_outs_and_debounce{"PmIndexRefresh/DecideForMissHonoursTheSameOptOutsAndDebounce", [] {
     FakeRegistry reg("formiss");
     reg.mark_refreshed(std::chrono::hours{99});
     auto env = reg.env();
 
     mcpp::pm::RefreshPolicy allowed;
-    EXPECT_TRUE(mcpp::pm::decide_for_miss(allowed, env, "pkg").shouldRefresh);
+    expect(bool(mcpp::pm::decide_for_miss(allowed, env, "pkg").shouldRefresh));
 
     mcpp::pm::RefreshPolicy offline; offline.offline = true;
-    EXPECT_EQ(mcpp::pm::decide_for_miss(offline, env, "pkg").reason,
-              RefreshReason::SuppressedOffline);
+    expect(eq(mcpp::pm::decide_for_miss(offline, env, "pkg").reason, RefreshReason::SuppressedOffline));
 
     mcpp::pm::RefreshPolicy disabled; disabled.autoRefresh = false;
-    EXPECT_EQ(mcpp::pm::decide_for_miss(disabled, env, "pkg").reason,
-              RefreshReason::SuppressedDisabled);
+    expect(eq(mcpp::pm::decide_for_miss(disabled, env, "pkg").reason, RefreshReason::SuppressedDisabled));
 
     // Two `mcpp add` typos in a row must not buy two multi-repo syncs.
     reg.mark_refreshed(std::chrono::seconds{5});
-    EXPECT_EQ(mcpp::pm::decide_for_miss(allowed, env, "pkg").reason,
-              RefreshReason::SuppressedDebounce);
-}
+    expect(eq(mcpp::pm::decide_for_miss(allowed, env, "pkg").reason, RefreshReason::SuppressedDebounce));
+}};
 
-TEST(PmIndexRefresh, SubjectEchoesWhatTheUserWrote) {
+UTest subject_echoes_what_the_user_wrote{"PmIndexRefresh/SubjectEchoesWhatTheUserWrote", [] {
     FakeRegistry reg("subject");
     reg.mark_refreshed(std::chrono::hours{99});
     mcpp::pm::IndexMap indices;
@@ -382,5 +378,5 @@ TEST(PmIndexRefresh, SubjectEchoesWhatTheUserWrote) {
     auto d = mcpp::pm::decide_for_dependency(
         route, "xim.nasm", spec, reg.env(),
         mcpp::toolchain::platform::TargetPlatform::for_os("linux"), {});
-    EXPECT_EQ(d.subject, "xim.nasm@2.16.03");
-}
+    expect(eq(d.subject, "xim.nasm@2.16.03"));
+}};

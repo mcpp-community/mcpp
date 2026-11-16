@@ -1,6 +1,7 @@
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
+import mcpplibs.os.process;
 import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
 import mcpp.freestanding.runner;
@@ -8,70 +9,72 @@ import mcpp.toolchain.triple;
 import mcpp.provider.xlings;
 import mcpp.build.build_program;
 
+using namespace mcpplibs::mtest;
+
 using namespace mcpp::freestanding;
 
 // ── the target table ────────────────────────────────────────────────────────
 
-TEST(FreestandingTarget, ResolvesTheKnownBareMetalTriples) {
+UTest resolves_the_known_bare_metal_triples{"FreestandingTarget/ResolvesTheKnownBareMetalTriples", [] {
     auto rv64 = resolve("riscv64-none-elf");
-    ASSERT_TRUE(rv64.has_value());
-    EXPECT_EQ(rv64->march,  "rv64gc");
-    EXPECT_EQ(rv64->mabi,   "lp64d");
-    EXPECT_EQ(rv64->libdir, "rv64gc/lp64d");
+    expect(fatal(rv64.has_value()));
+    expect(eq(rv64->march, "rv64gc"));
+    expect(eq(rv64->mabi, "lp64d"));
+    expect(eq(rv64->libdir, "rv64gc/lp64d"));
 
     auto rv32 = resolve("riscv32-none-elf");
-    ASSERT_TRUE(rv32.has_value());
-    EXPECT_EQ(rv32->march,  "rv32imac");
-    EXPECT_EQ(rv32->mabi,   "ilp32");
-    EXPECT_EQ(rv32->libdir, "rv32imac/ilp32");
-}
+    expect(fatal(rv32.has_value()));
+    expect(eq(rv32->march, "rv32imac"));
+    expect(eq(rv32->mabi, "ilp32"));
+    expect(eq(rv32->libdir, "rv32imac/ilp32"));
+}};
 
-TEST(FreestandingTarget, HostedTriplesResolveToNothing) {
+UTest hosted_triples_resolve_to_nothing{"FreestandingTarget/HostedTriplesResolveToNothing", [] {
     // The same call answers "is this a target I know how to build
     // freestanding", so a hosted triple must not produce a Spec — a caller
     // that got one would put -ffreestanding on an ordinary Linux build.
     for (const char* s : { "x86_64-linux-gnu", "x86_64-linux-musl",
                            "aarch64-macos", "x86_64-windows-gnu" }) {
-        EXPECT_FALSE(resolve(s).has_value()) << s;
+        expect(!(resolve(s).has_value())) << s;
     }
-}
+}};
 
-TEST(FreestandingTarget, UnknownBareMetalTripleIsNotInvented) {
+UTest unknown_bare_metal_triple_is_not_invented{"FreestandingTarget/UnknownBareMetalTripleIsNotInvented", [] {
     // Parses as freestanding, but mcpp has no ISA profile for it. Returning a
     // Spec here would mean guessing an -march, and a wrong -march produces an
     // object file that links and then executes garbage.
     auto t = mcpp::toolchain::triple::parse("arm-none-eabi");
-    ASSERT_TRUE(t.has_value());
-    EXPECT_TRUE(t->is_freestanding());
-    EXPECT_FALSE(resolve(*t).has_value());
-}
+    expect(fatal(t.has_value()));
+    expect(t->is_freestanding());
+    expect(!(resolve(*t).has_value()));
+}};
 
-TEST(FreestandingTarget, CompileFlagsCarryTheIsaAndFreestanding) {
+UTest compile_flags_carry_the_isa_and_freestanding{"FreestandingTarget/CompileFlagsCarryTheIsaAndFreestanding", [] {
     auto s = resolve("riscv64-none-elf");
-    ASSERT_TRUE(s.has_value());
+    expect(fatal(s.has_value()));
     auto fl = compile_flags(*s);
     auto has = [&](std::string_view f) {
         return std::ranges::find(fl, f) != fl.end();
     };
-    EXPECT_TRUE(has("-march=rv64gc"));
-    EXPECT_TRUE(has("-mabi=lp64d"));
-    EXPECT_TRUE(has("-mcmodel=medany"));
+    expect(bool(has("-march=rv64gc")));
+    expect(bool(has("-mabi=lp64d")));
+    expect(bool(has("-mcmodel=medany")));
     // -ffreestanding is a COMPILE flag, not a link one: it changes what the
     // compiler may assume about the library, and that has to hold for every
     // TU including a dependency's.
-    EXPECT_TRUE(has("-ffreestanding"));
+    expect(bool(has("-ffreestanding")));
     // The toolchain's libc++ headers are the HOST's: `#include <stdio.h>`
     // resolves to libc++'s wrapper, which opens a `__config_site` generated
     // for the host and absent here. A target-side C++ library reaches a
     // consumer as a MODULE, never as an include path.
-    EXPECT_TRUE(has("-nostdinc++"));
-}
+    expect(bool(has("-nostdinc++")));
+}};
 
 // ── the link line ───────────────────────────────────────────────────────────
 
-TEST(FreestandingLink, CarriesTargetSelectionAndRefusesTheHostedWorld) {
+UTest carries_target_selection_and_refuses_the_hosted_world{"FreestandingLink/CarriesTargetSelectionAndRefusesTheHostedWorld", [] {
     auto s = resolve("riscv64-none-elf");
-    ASSERT_TRUE(s.has_value());
+    expect(fatal(s.has_value()));
     LinkInputs in;
     in.lld = "/payload/bin/ld.lld";
     auto line = link_flags(*s, in, [](const std::filesystem::path& p) {
@@ -80,15 +83,15 @@ TEST(FreestandingLink, CarriesTargetSelectionAndRefusesTheHostedWorld) {
 
     // --target is the load-bearing one: clang is ONE binary for every target,
     // so without it the link silently produces host objects.
-    EXPECT_NE(line.find("--target=riscv64-none-elf"), std::string::npos);
-    EXPECT_NE(line.find("-nostdlib"), std::string::npos);
-    EXPECT_NE(line.find("-nostartfiles"), std::string::npos);
-    EXPECT_NE(line.find("-static"), std::string::npos);
-}
+    expect(ne(line.find("--target=riscv64-none-elf"), std::string::npos));
+    expect(ne(line.find("-nostdlib"), std::string::npos));
+    expect(ne(line.find("-nostartfiles"), std::string::npos));
+    expect(ne(line.find("-static"), std::string::npos));
+}};
 
-TEST(FreestandingLink, AddressesTheLinkerByPathNotByName) {
+UTest addresses_the_linker_by_path_not_by_name{"FreestandingLink/AddressesTheLinkerByPathNotByName", [] {
     auto s = resolve("riscv64-none-elf");
-    ASSERT_TRUE(s.has_value());
+    expect(fatal(s.has_value()));
     LinkInputs in;
     in.lld = "/payload/bin/ld.lld";
     auto line = link_flags(*s, in, [](const std::filesystem::path& p) {
@@ -97,60 +100,59 @@ TEST(FreestandingLink, AddressesTheLinkerByPathNotByName) {
     // `-fuse-ld=lld` resolves through PATH and finds GNU ld on any machine
     // with binutils earlier on it, which then dies with "unrecognised
     // emulation mode: elf64lriscv". Reproduced 2026-08-19.
-    EXPECT_NE(line.find("-fuse-ld=/payload/bin/ld.lld"), std::string::npos);
-    EXPECT_EQ(line.find("-fuse-ld=lld "), std::string::npos);
-}
+    expect(ne(line.find("-fuse-ld=/payload/bin/ld.lld"), std::string::npos));
+    expect(eq(line.find("-fuse-ld=lld "), std::string::npos));
+}};
 
-TEST(FreestandingLink, LinkerScriptOnlyWhenOneIsSupplied) {
+UTest linker_script_only_when_one_is_supplied{"FreestandingLink/LinkerScriptOnlyWhenOneIsSupplied", [] {
     auto s = resolve("riscv64-none-elf");
-    ASSERT_TRUE(s.has_value());
+    expect(fatal(s.has_value()));
     auto esc = [](const std::filesystem::path& p) { return p.string(); };
 
     LinkInputs none;
-    EXPECT_EQ(link_flags(*s, none, esc).find(" -T "), std::string::npos);
+    expect(eq(link_flags(*s, none, esc).find(" -T "), std::string::npos));
 
     LinkInputs with;
     with.linkerScript = "/board/link.ld";
-    EXPECT_NE(link_flags(*s, with, esc).find(" -T /board/link.ld"),
-              std::string::npos);
-}
+    expect(ne(link_flags(*s, with, esc).find(" -T /board/link.ld"), std::string::npos));
+}};
 
-TEST(FreestandingLink, LldIsIdentifiedByItsOwnVersionOutput) {
+UTest lld_is_identified_by_its_own_version_output{"FreestandingLink/LldIsIdentifiedByItsOwnVersionOutput", [] {
     // By output, not by filename — the filename is exactly what was wrong in
     // the failure this guards.
-    EXPECT_TRUE(version_output_is_lld("LLD 22.1.8 (compatible with GNU linkers)"));
-    EXPECT_FALSE(version_output_is_lld("GNU ld (GNU Binutils for Ubuntu) 2.42"));
-}
+    expect(version_output_is_lld("LLD 22.1.8 (compatible with GNU linkers)"));
+    expect(!(version_output_is_lld("GNU ld (GNU Binutils for Ubuntu) 2.42")));
+}};
 
 // ── the runner ──────────────────────────────────────────────────────────────
 
-TEST(FreestandingRunner, AppendsTheArtifactWhenNoPlaceholder) {
+UTest appends_the_artifact_when_no_placeholder{"FreestandingRunner/AppendsTheArtifactWhenNoPlaceholder", [] {
     std::vector<std::string> tmpl{ "qemu-system-riscv64", "-machine", "virt",
                                    "-kernel" };
     auto argv = expand(tmpl, "/build/firmware");
-    ASSERT_EQ(argv.size(), 5u);
-    EXPECT_EQ(argv.front(), "qemu-system-riscv64");
-    EXPECT_EQ(argv.back(),  "/build/firmware");
-}
+    expect(fatal(eq(argv.size(), 5u)));
+    expect(eq(argv.front(), "qemu-system-riscv64"));
+    expect(eq(argv.back(), "/build/firmware"));
+}};
 
-TEST(FreestandingRunner, SubstitutesThePlaceholderInPlace) {
+UTest substitutes_the_placeholder_in_place{"FreestandingRunner/SubstitutesThePlaceholderInPlace", [] {
     // The emulator that wants the image in the middle rather than at the end.
     std::vector<std::string> tmpl{ "runner", "--image={}", "--verbose" };
     auto argv = expand(tmpl, "/build/firmware");
-    ASSERT_EQ(argv.size(), 3u);
-    EXPECT_EQ(argv[1], "--image=/build/firmware");
-    EXPECT_EQ(argv[2], "--verbose");   // nothing appended when substituted
-}
+    expect(fatal(eq(argv.size(), 3u)));
+    expect(eq(argv[1], "--image=/build/firmware"));
+    expect(eq(argv[2], "--verbose"));   // nothing appended when substituted
+}};
 
-TEST(FreestandingRunner, TheMissingRunnerMessageNamesTheKeyAndTheTriple) {
+UTest the_missing_runner_message_names_the_key_and_the_triple{"FreestandingRunner/TheMissingRunnerMessageNamesTheKeyAndTheTriple", [] {
     // The user has just been told the build succeeded and the run did not; the
     // gap between those two is the whole content of the message, so it has to
     // carry something pasteable.
     auto msg = no_runner_message("riscv64-none-elf");
-    EXPECT_NE(msg.find("[target.riscv64-none-elf]"), std::string::npos);
-    EXPECT_NE(msg.find("runner = ["), std::string::npos);
-    EXPECT_NE(msg.find("board-support package"), std::string::npos);
-}
+    expect(ne(msg.find("[target.riscv64-none-elf]"), std::string::npos));
+    expect(ne(msg.find("runner = ["), std::string::npos));
+    expect(ne(msg.find("board-support package"), std::string::npos));
+}};
 
 // ── `[xlings] deps` → payload directory ─────────────────────────────────────
 //
@@ -159,33 +161,33 @@ TEST(FreestandingRunner, TheMissingRunnerMessageNamesTheKeyAndTheTriple) {
 // reconstructed `<home>/data/xpkgs/<ns>-x-<name>/<version>` would be coupled
 // to store internals mcpp is free to change.
 
-TEST(XpkgRef, ParsesEverySpellingAManifestMayWrite) {
+UTest parses_every_spelling_a_manifest_may_write{"XpkgRef/ParsesEverySpellingAManifestMayWrite", [] {
     using mcpp::provider::xlings::paths::parse_xpkg_ref;
 
     auto full = parse_xpkg_ref("xim:picolibc-riscv@1.8.12");
-    EXPECT_EQ(full.ns, "xim");
-    EXPECT_EQ(full.name, "picolibc-riscv");
-    EXPECT_EQ(full.version, "1.8.12");
+    expect(eq(full.ns, "xim"));
+    expect(eq(full.name, "picolibc-riscv"));
+    expect(eq(full.version, "1.8.12"));
 
     // No namespace: the manifest's default, spelled once in the parser rather
     // than at each call site.
     auto bare = parse_xpkg_ref("ninja");
-    EXPECT_EQ(bare.ns, "xim");
-    EXPECT_EQ(bare.name, "ninja");
-    EXPECT_TRUE(bare.version.empty());
+    expect(eq(bare.ns, "xim"));
+    expect(eq(bare.name, "ninja"));
+    expect(bare.version.empty());
 
     // A non-xim namespace is ordinary, not exotic: `local:` is what a package
     // under development resolves to.
     auto local = parse_xpkg_ref("local:qemu-riscv@9.2.4-1");
-    EXPECT_EQ(local.ns, "local");
-    EXPECT_EQ(local.name, "qemu-riscv");
-    EXPECT_EQ(local.version, "9.2.4-1");
-}
+    expect(eq(local.ns, "local"));
+    expect(eq(local.name, "qemu-riscv"));
+    expect(eq(local.version, "9.2.4-1"));
+}};
 
-TEST(XpkgPayload, APinnedRefResolvesToThatVersionOrToNothing) {
+UTest a_pinned_ref_resolves_to_that_version_or_to_nothing{"XpkgPayload/APinnedRefResolvesToThatVersionOrToNothing", [] {
     namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
-              / std::format("mcpp-xpkg-test-{}", ::getpid());
+              / std::format("mcpp-xpkg-test-{}", mcpplibs::os::process::self()->id);
     std::filesystem::remove_all(base);
     std::filesystem::create_directories(base / "xim-x-demo" / "1.0.0");
     std::filesystem::create_directories(base / "xim-x-demo" / "2.0.0");
@@ -193,30 +195,30 @@ TEST(XpkgPayload, APinnedRefResolvesToThatVersionOrToNothing) {
     // The whole point: asking for 1.0.0 and silently getting 2.0.0 is an
     // answer only discovered later, in the artifact.
     auto pinned = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@1.0.0"));
-    ASSERT_TRUE(pinned.has_value());
-    EXPECT_EQ(pinned->filename(), "1.0.0");
+    expect(fatal(pinned.has_value()));
+    expect(eq(pinned->filename(), "1.0.0"));
 
-    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@9.9.9"))
-                     .has_value());
+    expect(!(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@9.9.9"))
+                     .has_value()));
 
     std::filesystem::remove_all(base);
-}
+}};
 
-TEST(XpkgPayload, AnUnpinnedRefTakesTheHighestVersionNumerically) {
+UTest an_unpinned_ref_takes_the_highest_version_numerically{"XpkgPayload/AnUnpinnedRefTakesTheHighestVersionNumerically", [] {
     namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
-              / std::format("mcpp-xpkg-test2-{}", ::getpid());
+              / std::format("mcpp-xpkg-test2-{}", mcpplibs::os::process::self()->id);
     std::filesystem::remove_all(base);
     for (auto v : { "0.4.2", "0.4.9", "0.4.11" })
         std::filesystem::create_directories(base / "xim-x-demo" / v);
 
     // A plain string sort answers 0.4.9; picking the wrong payload is silent.
     auto latest = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("demo"));
-    ASSERT_TRUE(latest.has_value());
-    EXPECT_EQ(latest->filename(), "0.4.11");
+    expect(fatal(latest.has_value()));
+    expect(eq(latest->filename(), "0.4.11"));
 
     std::filesystem::remove_all(base);
-}
+}};
 
 // A CONSTRAINT IN THE VERSION POSITION IS A CONSTRAINT, NOT A DIRECTORY NAME.
 //
@@ -225,73 +227,73 @@ TEST(XpkgPayload, AnUnpinnedRefTakesTheHighestVersionNumerically) {
 // directory name -- so a range installed a payload and then reported that
 // nothing was installed. That is what made a rule package unable to state a
 // floor: it declared `>=8.5.0`, got it, and `xpkg_dir` answered "".
-TEST(XpkgPayload, AConstrainedRefTakesTheHighestInstalledVersionSatisfyingIt) {
+UTest a_constrained_ref_takes_the_highest_installed_version_satisfying_it{"XpkgPayload/AConstrainedRefTakesTheHighestInstalledVersionSatisfyingIt", [] {
     namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
-              / std::format("mcpp-xpkg-test3-{}", ::getpid());
+              / std::format("mcpp-xpkg-test3-{}", mcpplibs::os::process::self()->id);
     std::filesystem::remove_all(base);
     for (auto v : { "8.0.0", "8.5.0", "8.7.1" })
         std::filesystem::create_directories(base / "xim-x-demo" / v);
 
     auto floor = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=8.5.0"));
-    ASSERT_TRUE(floor.has_value());
-    EXPECT_EQ(floor->filename(), "8.7.1");
+    expect(fatal(floor.has_value()));
+    expect(eq(floor->filename(), "8.7.1"));
 
     // Bounded on both sides, so the highest is NOT the answer -- a test that
     // only used a lower bound would pass on an implementation that ignored the
     // requirement and took the newest. Spelled the way xlings reads a
     // conjunction (space-separated), because xlings is what resolved it.
     auto ranged = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=8.0.0 <8.7.0"));
-    ASSERT_TRUE(ranged.has_value());
-    EXPECT_EQ(ranged->filename(), "8.5.0");
+    expect(fatal(ranged.has_value()));
+    expect(eq(ranged->filename(), "8.5.0"));
 
     // Unsatisfiable is absent, not "the closest one".
-    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=9.0.0"))
-                     .has_value());
+    expect(!(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=9.0.0"))
+                     .has_value()));
 
     // AND AN EXACT PIN STILL MEANS EXACTLY THAT. The constrained path must not
     // capture a pinned-and-absent request: 8.6.0 is missing and 8.7.1 is right
     // there, and answering with it is the failure the pin exists to prevent.
-    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@8.6.0"))
-                     .has_value());
+    expect(!(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@8.6.0"))
+                     .has_value()));
 
     std::filesystem::remove_all(base);
-}
+}};
 
 // An installed version whose directory name is not a SemVer is addressable by
 // its exact spelling. `8.0.RC1` is a real CANN version.
-TEST(XpkgPayload, AnUnparseableVersionIsStillAddressableExactly) {
+UTest an_unparseable_version_is_still_addressable_exactly{"XpkgPayload/AnUnparseableVersionIsStillAddressableExactly", [] {
     namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
-              / std::format("mcpp-xpkg-test4-{}", ::getpid());
+              / std::format("mcpp-xpkg-test4-{}", mcpplibs::os::process::self()->id);
     std::filesystem::remove_all(base);
     std::filesystem::create_directories(base / "xim-x-demo" / "8.0.RC1");
 
     auto exact = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@8.0.RC1"));
-    ASSERT_TRUE(exact.has_value());
-    EXPECT_EQ(exact->filename(), "8.0.RC1");
+    expect(fatal(exact.has_value()));
+    expect(eq(exact->filename(), "8.0.RC1"));
 
     // xlings' grammar reads it as 8, 0, RC, 1, so a range can test it, and the
     // lookup answers what xlings selected. A key with no numeric segment at
     // all is a name, and a name never answers a range.
     auto ranged = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=1.0"));
-    ASSERT_TRUE(ranged.has_value());
-    EXPECT_EQ(ranged->filename(), "8.0.RC1");
+    expect(fatal(ranged.has_value()));
+    expect(eq(ranged->filename(), "8.0.RC1"));
     std::filesystem::create_directories(base / "xim-x-named" / "nightly");
-    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:named@>=1.0"))
-                     .has_value());
+    expect(!(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:named@>=1.0"))
+                     .has_value()));
 
     std::filesystem::remove_all(base);
-}
+}};
 
 // A BARE VERSION MEANS WHAT XLINGS MEANT BY IT (#712). The address
 // `libglvnd@1.7` installed `1.7.0.1`: one or two segments are a prefix range,
 // three or more are written-prefix equality, and a fourth segment is an
 // ordinary version. The lookup answered "" for every one of these before.
-TEST(XpkgPayload, ABareVersionSelectsWhatXlingsSelected) {
+UTest a_bare_version_selects_what_xlings_selected{"XpkgPayload/ABareVersionSelectsWhatXlingsSelected", [] {
     namespace xp = mcpp::provider::xlings::paths;
     auto base = std::filesystem::temp_directory_path()
-              / std::format("mcpp-xpkg-test5-{}", ::getpid());
+              / std::format("mcpp-xpkg-test5-{}", mcpplibs::os::process::self()->id);
     std::filesystem::remove_all(base);
     for (auto v : { "1.7.0.1", "1.2.0", "1.2.5", "1.3.0", "12.9.1.4", "12.9.10" })
         std::filesystem::create_directories(base / "xim-x-demo" / v);
@@ -301,48 +303,46 @@ TEST(XpkgPayload, ABareVersionSelectsWhatXlingsSelected) {
             xp::parse_xpkg_ref(std::format("xim:demo@{}", ver)));
         return p ? p->filename().string() : std::string{};
     };
-    EXPECT_EQ(pick("1.7"),     "1.7.0.1");   // prefix range [1.7, 1.8)
-    EXPECT_EQ(pick("1.7.0"),   "1.7.0.1");   // written prefix 1.7.0
-    EXPECT_EQ(pick("1.2"),     "1.2.5");     // the highest 1.2.x, never 1.3
-    EXPECT_EQ(pick("1.2.0"),   "1.2.0");     // three segments: 1.2.0 exactly
-    EXPECT_EQ(pick("12.9.1"),  "12.9.1.4");  // not 12.9.10
-    EXPECT_EQ(pick("1"),       "1.7.0.1");   // [1, 2)
-    EXPECT_EQ(pick("1.2.4"),   "");          // absent is absent
-    EXPECT_EQ(pick("1.8.12"),  "");          // never slides to a later minor
+    expect(eq(pick("1.7"), "1.7.0.1"));   // prefix range [1.7, 1.8)
+    expect(eq(pick("1.7.0"), "1.7.0.1"));   // written prefix 1.7.0
+    expect(eq(pick("1.2"), "1.2.5"));     // the highest 1.2.x, never 1.3
+    expect(eq(pick("1.2.0"), "1.2.0"));     // three segments: 1.2.0 exactly
+    expect(eq(pick("12.9.1"), "12.9.1.4"));  // not 12.9.10
+    expect(eq(pick("1"), "1.7.0.1"));   // [1, 2)
+    expect(eq(pick("1.2.4"), ""));          // absent is absent
+    expect(eq(pick("1.8.12"), ""));          // never slides to a later minor
 
     std::filesystem::remove_all(base);
-}
+}};
 
 // The revision xlings recorded for a payload (openxlings/xlings#620): the
 // field when present, 0 for a record that predates it, and nothing at all when
 // there is no record -- which is the case mcpp judges by its marker alone.
-TEST(XpkgPayload, InstalledRevisionReadsTheXlingsRecord) {
+UTest installed_revision_reads_the_xlings_record{"XpkgPayload/InstalledRevisionReadsTheXlingsRecord", [] {
     namespace xp = mcpp::provider::xlings::paths;
     auto dir = std::filesystem::temp_directory_path()
-             / std::format("mcpp-xpkg-rev-{}", ::getpid());
+             / std::format("mcpp-xpkg-rev-{}", mcpplibs::os::process::self()->id);
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
-    EXPECT_FALSE(xp::installed_revision(dir).has_value());
+    expect(!(xp::installed_revision(dir).has_value()));
     std::ofstream(dir / ".xpkg-install.json") << R"({"os":"linux","version":"2.44.3"})";
-    EXPECT_EQ(xp::installed_revision(dir), 0);
+    expect(eq(xp::installed_revision(dir), 0));
     std::ofstream(dir / ".xpkg-install.json") << R"({"version":"2.44.3","revision":1})";
-    EXPECT_EQ(xp::installed_revision(dir), 1);
+    expect(eq(xp::installed_revision(dir), 1));
     std::filesystem::remove_all(dir);
-}
+}};
 
-TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
+UTest both_spellings_are_derived_from_one_sanitizer{"XpkgEnvVar/BothSpellingsAreDerivedFromOneSanitizer", [] {
     using mcpp::build::xpkg_env_var;
     // The two sides of the channel must agree; drifting apart would make the
     // interface answer "" for a package that is right there.
-    EXPECT_EQ(xpkg_env_var("xim", "picolibc-riscv"),
-              "MCPP_XPKG_XIM_PICOLIBC_RISCV_DIR");
-    EXPECT_EQ(xpkg_env_var("", "picolibc-riscv"),
-              "MCPP_XPKG_PICOLIBC_RISCV_DIR");
-}
+    expect(eq(xpkg_env_var("xim", "picolibc-riscv"), "MCPP_XPKG_XIM_PICOLIBC_RISCV_DIR"));
+    expect(eq(xpkg_env_var("", "picolibc-riscv"), "MCPP_XPKG_PICOLIBC_RISCV_DIR"));
+}};
 
 // ── the target owns its C library ───────────────────────────────────────────
 
-TEST(FreestandingTarget, BareMetalRowsNameTheirSysroot) {
+UTest bare_metal_rows_name_their_sysroot{"FreestandingTarget/BareMetalRowsNameTheirSysroot", [] {
     // The axis that stops every bare-metal PACKAGE from naming a libc.
     // Before it, a board-support package and a standard-library subset each
     // had to carry `[xlings] deps = ["xim:picolibc-riscv@..."]`, which bound
@@ -351,115 +351,115 @@ TEST(FreestandingTarget, BareMetalRowsNameTheirSysroot) {
     for (const char* s : { "riscv64-none-elf", "riscv32-none-elf" }) {
         auto* k = mcpp::toolchain::triple::find_known_target(
             *mcpp::toolchain::triple::parse(s));
-        ASSERT_NE(k, nullptr) << s;
-        EXPECT_FALSE(k->sysroot.empty()) << s;
+        expect(fatal(ne(k, nullptr))) << s;
+        expect(!(k->sysroot.empty())) << s;
         // Same spelling the install channel takes, so the two cannot drift.
-        EXPECT_TRUE(k->sysroot.starts_with("xim:")) << s;
+        expect(k->sysroot.starts_with("xim:")) << s;
     }
-}
+}};
 
-TEST(FreestandingTarget, HostedRowsNameNone) {
+UTest hosted_rows_name_none{"FreestandingTarget/HostedRowsNameNone", [] {
     // A hosted target's libc comes with the compiler payload or through the
     // runtime binding. Naming one here would resolve a second copy.
     for (const char* s : { "x86_64-linux-gnu", "x86_64-linux-musl",
                            "aarch64-macos", "x86_64-windows-gnu" }) {
         auto* k = mcpp::toolchain::triple::find_known_target(
             *mcpp::toolchain::triple::parse(s));
-        ASSERT_NE(k, nullptr) << s;
-        EXPECT_TRUE(k->sysroot.empty()) << s;
+        expect(fatal(ne(k, nullptr))) << s;
+        expect(k->sysroot.empty()) << s;
     }
-}
+}};
 
 // ── whole-graph properties ──────────────────────────────────────────────────
 
-TEST(FreestandingFlags, ExceptionsAndRttiAreOffForTheWholeGraph) {
+UTest exceptions_and_rtti_are_off_for_the_whole_graph{"FreestandingFlags/ExceptionsAndRttiAreOffForTheWholeGraph", [] {
     auto spec = resolve("riscv64-none-elf");
-    ASSERT_TRUE(spec.has_value());
+    expect(fatal(spec.has_value()));
     auto f = compile_flags(*spec);
     // These live with the TARGET, not in a project's cxxflags, because a
     // BMI records them: a dependency compiled with exceptions cannot be
     // imported by a TU without them, and clang reports that as a .pcm
     // "configuration mismatch" rather than as a flag disagreement.
-    EXPECT_TRUE(std::ranges::find(f, "-fno-exceptions") != f.end());
-    EXPECT_TRUE(std::ranges::find(f, "-fno-rtti") != f.end());
+    expect(std::ranges::find(f, "-fno-exceptions") != f.end());
+    expect(std::ranges::find(f, "-fno-rtti") != f.end());
     // The company they keep — same argument, already shipped.
-    EXPECT_TRUE(std::ranges::find(f, "-ffreestanding") != f.end());
-    EXPECT_TRUE(std::ranges::find(f, "-nostdinc++") != f.end());
-}
+    expect(std::ranges::find(f, "-ffreestanding") != f.end());
+    expect(std::ranges::find(f, "-nostdinc++") != f.end());
+}};
 
-TEST(FreestandingFlags, HostedTargetsGetNoneOfThis) {
+UTest hosted_targets_get_none_of_this{"FreestandingFlags/HostedTargetsGetNoneOfThis", [] {
     // The flags are a property of a freestanding triple, and the cache key
     // reads them through the same resolve(). A hosted target must produce no
     // Spec, or every hosted key would move for no reason.
-    EXPECT_FALSE(resolve("x86_64-linux-gnu").has_value());
-}
+    expect(!(resolve("x86_64-linux-gnu").has_value()));
+}};
 
 // ── engine floor: a package that needs a newer mcpp ─────────────────────────
 
-TEST(BuildProgramCompatHint, RecognisesAllThreeFrontendSpellings) {
+UTest recognises_all_three_frontend_spellings{"BuildProgramCompatHint/RecognisesAllThreeFrontendSpellings", [] {
     using mcpp::build::mentions_missing_mcpp_api;
     // Measured, not assumed: `if constexpr (requires { mcpp::runner("x"); })`
     // is a HARD ERROR when the name is absent, so a package cannot probe for a
     // newer API in-language. The compiler's error IS the compat channel, and
     // these are the three ways it arrives.
-    EXPECT_TRUE(mentions_missing_mcpp_api(
-        "build.mcpp:57:11: error: 'runner' is not a member of 'mcpp'"));          // gcc
-    EXPECT_TRUE(mentions_missing_mcpp_api(
-        "build.mcpp:57:11: error: no member named 'runner' in namespace 'mcpp'"));// clang
-    EXPECT_TRUE(mentions_missing_mcpp_api(
-        "build.mcpp(57): error C2039: 'runner': is not a member of 'mcpp'"));     // cl.exe
-}
+    expect(bool(mentions_missing_mcpp_api(
+        "build.mcpp:57:11: error: 'runner' is not a member of 'mcpp'")));          // gcc
+    expect(bool(mentions_missing_mcpp_api(
+        "build.mcpp:57:11: error: no member named 'runner' in namespace 'mcpp'")));// clang
+    expect(bool(mentions_missing_mcpp_api(
+        "build.mcpp(57): error C2039: 'runner': is not a member of 'mcpp'")));     // cl.exe
+}};
 
-TEST(BuildProgramCompatHint, StaysOffFailuresThatAreNotAboutOurApi) {
+UTest stays_off_failures_that_are_not_about_our_api{"BuildProgramCompatHint/StaysOffFailuresThatAreNotAboutOurApi", [] {
     using mcpp::build::mentions_missing_mcpp_api;
     // The hint says "your mcpp may be too old". Attaching that to an ordinary
     // compile error would send the reader to the wrong place, so the match is
     // anchored on OUR namespace — a package's own missing symbol names its own.
-    EXPECT_FALSE(mentions_missing_mcpp_api(
+    expect(!mentions_missing_mcpp_api(
         "build.mcpp:12:5: error: 'runner' is not a member of 'board'"));
-    EXPECT_FALSE(mentions_missing_mcpp_api(
+    expect(!mentions_missing_mcpp_api(
         "build.mcpp:3:1: error: expected ';' after top level declarator"));
-    EXPECT_FALSE(mentions_missing_mcpp_api(
+    expect(!mentions_missing_mcpp_api(
         "build.mcpp:9:9: error: use of undeclared identifier 'mcpp_runner'"));
-}
+}};
 
 // ── artifact set ───────────────────────────────────────────────────────────
 
-TEST(FreestandingArtifacts, SizeOutputIsParsedNotPassedThrough) {
+UTest size_output_is_parsed_not_passed_through{"FreestandingArtifacts/SizeOutputIsParsedNotPassedThrough", [] {
     // Parsed so the printed shape is mcpp's, not the tool's: llvm-size and GNU
     // size differ in their headers, and a build whose output changed
     // appearance with the toolchain would be reporting the tool, not the size.
     auto s = parse_size_output(
         "   text\t   data\t    bss\t    dec\t    hex\tfilename\n"
         "   8836\t     80\t   5668\t  14584\t   38f8\tfirmware\n");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->text, 8836);
-    EXPECT_EQ(s->data, 80);
-    EXPECT_EQ(s->bss,  5668);
+    expect(fatal(s.has_value()));
+    expect(eq(s->text, 8836));
+    expect(eq(s->data, 80));
+    expect(eq(s->bss, 5668));
     // The number that decides whether the image fits.
-    EXPECT_EQ(size_total(*s), 14584);
-}
+    expect(eq(size_total(*s), 14584));
+}};
 
-TEST(FreestandingArtifacts, MalformedSizeOutputIsNotGuessedAt) {
+UTest malformed_size_output_is_not_guessed_at{"FreestandingArtifacts/MalformedSizeOutputIsNotGuessedAt", [] {
     // An informational line has no standing to invent numbers.
-    EXPECT_FALSE(parse_size_output("").has_value());
-    EXPECT_FALSE(parse_size_output("size: cannot open 'x'\n").has_value());
-}
+    expect(!(parse_size_output("").has_value()));
+    expect(!(parse_size_output("size: cannot open 'x'\n").has_value()));
+}};
 
-TEST(FreestandingArtifacts, MapFlagNamesTheArtifact) {
+UTest map_flag_names_the_artifact{"FreestandingArtifacts/MapFlagNamesTheArtifact", [] {
     auto f = map_flag("/build/bin/firmware",
                       [](const std::filesystem::path& p) { return p.string(); });
-    EXPECT_EQ(f, " -Wl,-Map=/build/bin/firmware.map");
-}
+    expect(eq(f, " -Wl,-Map=/build/bin/firmware.map"));
+}};
 
-TEST(FreestandingArtifacts, ObjcopyOnlyResolvesForABareMetalTarget) {
+UTest objcopy_only_resolves_for_a_bare_metal_target{"FreestandingArtifacts/ObjcopyOnlyResolvesForABareMetalTarget", [] {
     // A hosted binary is loaded by a loader that wants the ELF, so there is
     // nothing to convert — and resolving a tool for it would put an edge in
     // every hosted graph.
-    EXPECT_TRUE(resolve_objcopy("/payload/bin/clang++", "x86_64-linux-gnu").empty());
+    expect(resolve_objcopy("/payload/bin/clang++", "x86_64-linux-gnu").empty());
     // (The bare-metal case needs a real payload on disk, so it is asserted by
     // tests/e2e/130 instead: the artifact set has to actually appear.)
-}
+}};
 
 // ── aarch64-none-elf: the second bare-metal architecture ────────────────────
 //
@@ -476,32 +476,32 @@ TEST(FreestandingArtifacts, ObjcopyOnlyResolvesForABareMetalTarget) {
 // default assumes the low 2GiB and bare-metal RISC-V runs at 0x80000000;
 // aarch64's `small` already addresses +/-4GiB PC-relative, which covers any
 // single image wherever a linker script places it.
-TEST(FreestandingTarget, Aarch64UsesTheProcedureCallStandardNotADataModel) {
+UTest aarch64_uses_the_procedure_call_standard_not_a_data_model{"FreestandingTarget/Aarch64UsesTheProcedureCallStandardNotADataModel", [] {
     auto t = mcpp::toolchain::triple::parse("aarch64-none-elf");
-    ASSERT_TRUE(t.has_value());
+    expect(fatal(t.has_value()));
     auto s = mcpp::freestanding::resolve(t->str());
-    ASSERT_TRUE(s.has_value());
-    EXPECT_EQ(s->mabi, "aapcs");
-    EXPECT_NE(s->mabi, "lp64");
-    EXPECT_EQ(s->march, "armv8-a");
-    EXPECT_EQ(s->mcmodel, "small");
-}
+    expect(fatal(s.has_value()));
+    expect(eq(s->mabi, "aapcs"));
+    expect(ne(s->mabi, "lp64"));
+    expect(eq(s->march, "armv8-a"));
+    expect(eq(s->mcmodel, "small"));
+}};
 
 // The row resolves no C library, which is what makes it the zero-libc tier: the
 // first consumer of this target is a layer of machine mechanism that references
 // no C library symbol, and there is no aarch64 picolibc in the index to resolve
 // even if it wanted one.
-TEST(FreestandingTarget, Aarch64ResolvesNoCLibrary) {
+UTest aarch64_resolves_no_c_library{"FreestandingTarget/Aarch64ResolvesNoCLibrary", [] {
     auto t = mcpp::toolchain::triple::parse("aarch64-none-elf");
-    ASSERT_TRUE(t.has_value());
-    EXPECT_TRUE(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
+    expect(fatal(t.has_value()));
+    expect(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
 
     // The other side: a project may still ASK for one, and the override is
     // what carries the request. An empty column means "nothing by default", not
     // "nothing is possible".
     const std::string want = "xim:some-aarch64-libc@1.0";
-    EXPECT_EQ(mcpp::toolchain::triple::effective_sysroot(*t, &want), want);
-}
+    expect(eq(mcpp::toolchain::triple::effective_sysroot(*t, &want), want));
+}};
 
 // THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS RIGHT UNTIL 2026-08-21.
 //
@@ -521,27 +521,27 @@ TEST(FreestandingTarget, Aarch64ResolvesNoCLibrary) {
 // `.agents/tools/build-baremetal-sysroot.sh` produces them from the same
 // march/mabi pair this table carries, so the two cannot drift silently — but
 // they are named here so a reader knows where the other half lives.
-TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
+UTest multilib_directories_match_the_index_payloads{"FreestandingTarget/MultilibDirectoriesMatchTheIndexPayloads", [] {
     auto a = mcpp::freestanding::resolve("aarch64-none-elf");
-    ASSERT_TRUE(a.has_value());
-    EXPECT_EQ(a->libdir, "armv8-a/aapcs");
+    expect(fatal(a.has_value()));
+    expect(eq(a->libdir, "armv8-a/aapcs"));
     // The directory is the march/mabi pair, so it cannot disagree with the
     // flags the same row produces.
-    EXPECT_EQ(a->libdir, std::string(a->march) + "/" + std::string(a->mabi));
+    expect(eq(a->libdir, std::string(a->march) + "/" + std::string(a->mabi)));
 
     auto x = mcpp::freestanding::resolve("x86_64-none-elf");
-    ASSERT_TRUE(x.has_value());
-    EXPECT_EQ(x->libdir, "x86-64/sysv");
-    EXPECT_EQ(x->libdir, std::string(x->march) + "/" + std::string(x->mabi));
+    expect(fatal(x.has_value()));
+    expect(eq(x->libdir, "x86-64/sysv"));
+    expect(eq(x->libdir, std::string(x->march) + "/" + std::string(x->mabi)));
 
     // Filling this column does NOT give those targets a C library by
     // default. It is consulted only once a sysroot has been RESOLVED, and the
     // target table still binds none for these two rows — the zero-libc tier
     // stays the default and the package stays opt-in.
     auto t = mcpp::toolchain::triple::parse("aarch64-none-elf");
-    ASSERT_TRUE(t.has_value());
-    EXPECT_TRUE(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
-}
+    expect(fatal(t.has_value()));
+    expect(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
+}};
 
 // ── The two tables keyed on the same triple must agree ───────────────────────
 //
@@ -559,28 +559,28 @@ TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
 // The check is possible only because both are compile-time tables with a
 // single read point each. It costs fifteen lines and removes an entire class
 // of "added a target, forgot half of it".
-TEST(FreestandingTarget, EveryBareRowInTheTargetTableHasAnIsaProfile) {
+UTest every_bare_row_in_the_target_table_has_an_isa_profile{"FreestandingTarget/EveryBareRowInTheTargetTableHasAnIsaProfile", [] {
     for (const auto& info : mcpp::toolchain::triple::known_targets()) {
         if (info.note != "bare") continue;
         auto t = mcpp::toolchain::triple::parse(info.canonical);
-        ASSERT_TRUE(t.has_value()) << info.canonical;
-        EXPECT_TRUE(mcpp::freestanding::resolve(*t).has_value())
+        expect(fatal(t.has_value())) << info.canonical;
+        expect(mcpp::freestanding::resolve(*t).has_value())
             << info.canonical
             << " is a bare row in kKnownTargets with no row in freestanding::kTable";
     }
-}
+}};
 
-TEST(FreestandingTarget, EveryIsaProfileHasABareRowInTheTargetTable) {
+UTest every_isa_profile_has_a_bare_row_in_the_target_table{"FreestandingTarget/EveryIsaProfileHasABareRowInTheTargetTable", [] {
     for (const auto& spec : mcpp::freestanding::known()) {
         auto t = mcpp::toolchain::triple::parse(spec.triple);
-        ASSERT_TRUE(t.has_value()) << spec.triple;
+        expect(fatal(t.has_value())) << spec.triple;
         const auto* info = mcpp::toolchain::triple::find_known_target(*t);
-        ASSERT_NE(info, nullptr)
+        expect(fatal(ne(info, nullptr)))
             << spec.triple << " has an ISA profile but no row in kKnownTargets";
-        EXPECT_EQ(info->note, "bare")
+        expect(eq(info->note, "bare"))
             << spec.triple << " has an ISA profile but is not marked bare";
     }
-}
+}};
 
 // ── Cortex-M ────────────────────────────────────────────────────────────────
 //
@@ -612,17 +612,17 @@ bool has_flag(const mcpp::freestanding::Spec& s, std::string_view f) {
 // floats cross a call boundary, not whether the compiler may use the FPU inside
 // one — and `thumbv7em` implies an FPU. Measured on llvm 22.1.8: without
 // `-mfpu=none` the soft row emits `vmul.f32`.
-TEST(FreestandingTarget, SoftFloatArm32RowsDisableTheFpu) {
+UTest soft_float_arm32_rows_disable_the_fpu{"FreestandingTarget/SoftFloatArm32RowsDisableTheFpu", [] {
     int soft = 0, hard = 0;
     for (const auto& spec : mcpp::freestanding::known()) {
         if (!is_arm32(spec.triple)) continue;
         if (spec.triple.ends_with("-eabihf")) {
             ++hard;
-            EXPECT_FALSE(has_flag(spec, "-mfpu=none"))
+            expect(!has_flag(spec, "-mfpu=none"))
                 << spec.triple << " is a hard-float row and must not discard the FPU";
         } else {
             ++soft;
-            EXPECT_TRUE(has_flag(spec, "-mfpu=none"))
+            expect(has_flag(spec, "-mfpu=none"))
                 << spec.triple
                 << " is a soft-float row without -mfpu=none: it will emit FPU"
                    " instructions that fault on a part with no FPU";
@@ -630,47 +630,45 @@ TEST(FreestandingTarget, SoftFloatArm32RowsDisableTheFpu) {
     }
     // A denominator, because a loop that never ran satisfies every EXPECT
     // above. Both halves must be non-empty for the contrast to mean anything.
-    EXPECT_GT(soft, 0);
-    EXPECT_GT(hard, 0);
+    expect(gt(soft, 0));
+    expect(gt(hard, 0));
     // And the A-profile rows are in the denominator, which is the half a
     // spelling-based predicate lost without failing.
     int a_profile = 0;
     for (const auto& spec : mcpp::freestanding::known())
         if (spec.triple.starts_with("armv")) ++a_profile;
-    EXPECT_GT(a_profile, 0);
-}
+    expect(gt(a_profile, 0));
+}};
 
 // 32-bit ARM has no `-mcmodel`, and clang has a BareMetal toolchain for arm so
 // its driver reaches `ld.lld` without the x86_64 row's workaround. Both columns
 // being empty is what says so; a filled one would be a value nothing checks.
-TEST(FreestandingTarget, Arm32RowsNeedNoCodeModelAndNoDirectLldDriving) {
+UTest arm32_rows_need_no_code_model_and_no_direct_lld_driving{"FreestandingTarget/Arm32RowsNeedNoCodeModelAndNoDirectLldDriving", [] {
     int rows = 0;
     for (const auto& spec : mcpp::freestanding::known()) {
         if (!is_arm32(spec.triple)) continue;
         ++rows;
-        EXPECT_TRUE(spec.mcmodel.empty()) << spec.triple << " has no -mcmodel axis";
-        EXPECT_TRUE(spec.lldEmulation.empty())
+        expect(spec.mcmodel.empty()) << spec.triple << " has no -mcmodel axis";
+        expect(spec.lldEmulation.empty())
             << spec.triple << " reaches ld.lld through the clang driver";
-        EXPECT_EQ(spec.mabi, "aapcs") << spec.triple;
+        expect(eq(spec.mabi, "aapcs")) << spec.triple;
     }
-    EXPECT_GT(rows, 0);
-}
+    expect(gt(rows, 0));
+}};
 
 // The compile half of `--gc-sections`, which has to hold for EVERY freestanding
 // target rather than only the M-profile ones: a dependency's translation units
 // carry these flags too, and a project cannot reach those.
-TEST(FreestandingTarget, EveryRowCompilesWithPerFunctionSections) {
+UTest every_row_compiles_with_per_function_sections{"FreestandingTarget/EveryRowCompilesWithPerFunctionSections", [] {
     int rows = 0;
     for (const auto& spec : mcpp::freestanding::known()) {
         ++rows;
         auto flags = mcpp::freestanding::compile_flags(spec);
-        EXPECT_NE(std::find(flags.begin(), flags.end(), "-ffunction-sections"),
-                  flags.end()) << spec.triple;
-        EXPECT_NE(std::find(flags.begin(), flags.end(), "-fdata-sections"),
-                  flags.end()) << spec.triple;
+        expect(ne(std::find(flags.begin(), flags.end(), "-ffunction-sections"), flags.end())) << spec.triple;
+        expect(ne(std::find(flags.begin(), flags.end(), "-fdata-sections"), flags.end())) << spec.triple;
     }
-    EXPECT_GT(rows, 0);
-}
+    expect(gt(rows, 0));
+}};
 
 // THE MULTILIB KEY IS NOT `<march>/<mabi>` ON ARM, AND ASSUMING IT WAS
 // PRODUCES AN ABI SUBSTITUTION THAT NOTHING REPORTS.
@@ -689,30 +687,30 @@ TEST(FreestandingTarget, EveryRowCompilesWithPerFunctionSections) {
 // So the assertion is not "libdir is non-empty": it is that the soft and hard
 // variants of ONE architecture name DIFFERENT directories, which is the
 // property the layout exists to preserve.
-TEST(FreestandingTarget, Arm32SoftAndHardVariantsNameDifferentLibdirs) {
+UTest arm32_soft_and_hard_variants_name_different_libdirs{"FreestandingTarget/Arm32SoftAndHardVariantsNameDifferentLibdirs", [] {
     std::map<std::string, std::vector<std::string>> byMarch;
     int rows = 0;
     for (const auto& spec : mcpp::freestanding::known()) {
         if (!is_arm32(spec.triple)) continue;
         ++rows;
-        EXPECT_FALSE(spec.libdir.empty())
+        expect(!spec.libdir.empty())
             << spec.triple << " has no libdir, so an opt-in sysroot cannot be found";
         byMarch[std::string(spec.march)].push_back(std::string(spec.libdir));
     }
-    EXPECT_GT(rows, 0);
+    expect(gt(rows, 0));
 
     int pairs = 0;
     for (auto const& [march, dirs] : byMarch) {
         if (dirs.size() < 2) continue;
         ++pairs;
         std::set<std::string> distinct(dirs.begin(), dirs.end());
-        EXPECT_EQ(distinct.size(), dirs.size())
+        expect(eq(distinct.size(), dirs.size()))
             << march << " maps " << dirs.size() << " rows onto "
             << distinct.size() << " directories: a soft-float program would "
                "link a hard-float library, silently";
     }
     // A denominator. If no architecture had two rows the loop above would
     // assert nothing, and the property would be untested rather than held.
-    EXPECT_GT(pairs, 0) << "no architecture carries both float ABIs; the check "
+    expect(gt(pairs, 0)) << "no architecture carries both float ABIs; the check "
                            "above quantified over nothing";
-}
+}};

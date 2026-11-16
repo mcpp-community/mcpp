@@ -14,10 +14,12 @@
 // the compiler's PT_INTERP) are all things some earlier mechanism wrote, and a
 // machine can legitimately have none of them.
 
-#include <gtest/gtest.h>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.toolchain.post_install;
+
+using namespace mcpplibs::mtest;
 
 namespace tc = mcpp::toolchain;
 
@@ -39,32 +41,32 @@ struct Home {
     ~Home() { std::error_code ec; std::filesystem::remove_all(root, ec); }
 };
 
-TEST(RuntimeBindingFallback, OnePayloadIsAnAnswer) {
+UTest one_payload_is_an_answer{"RuntimeBindingFallback/OnePayloadIsAnAnswer", [] {
     Home h{"2.39"};
-    EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "glibc@2.39");
-}
+    expect(eq(tc::baked_runtime_binding(h.compiler), "glibc@2.39"));
+}};
 
 // The incident, in one assertion. Two payloads and nothing declaring which:
 // silence, not a coin flip.
-TEST(RuntimeBindingFallback, TwoPayloadsIsSilence) {
+UTest two_payloads_is_silence{"RuntimeBindingFallback/TwoPayloadsIsSilence", [] {
     Home h{"2.39", "2.44"};
-    EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "");
-}
+    expect(eq(tc::baked_runtime_binding(h.compiler), ""));
+}};
 
-TEST(RuntimeBindingFallback, NoPayloadIsSilence) {
+UTest no_payload_is_silence{"RuntimeBindingFallback/NoPayloadIsSilence", [] {
     Home h{};
-    EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "");
-}
+    expect(eq(tc::baked_runtime_binding(h.compiler), ""));
+}};
 
 // A compiler outside any xpkgs tree (a system gcc) has no payload set to read,
 // and must not acquire one from somewhere else.
-TEST(RuntimeBindingFallback, NonPayloadCompilerGetsNothing) {
-    EXPECT_EQ(tc::baked_runtime_binding("/usr/bin/g++"), "");
-}
+UTest non_payload_compiler_gets_nothing{"RuntimeBindingFallback/NonPayloadCompilerGetsNothing", [] {
+    expect(eq(tc::baked_runtime_binding("/usr/bin/g++"), ""));
+}};
 
-TEST(RuntimeBindingFallback, EmptyPathIsSilence) {
-    EXPECT_EQ(tc::baked_runtime_binding({}), "");
-}
+UTest empty_path_is_silence{"RuntimeBindingFallback/EmptyPathIsSilence", [] {
+    expect(eq(tc::baked_runtime_binding({}), ""));
+}};
 
 // A record that names a payload which is no longer installed.
 //
@@ -97,11 +99,11 @@ struct HomeWithSpecs {
     ~HomeWithSpecs() { std::error_code ec; std::filesystem::remove_all(root, ec); }
 };
 
-TEST(RuntimeBindingFallback, RecordNamingAnAbsentPayloadIsSkipped) {
+UTest record_naming_an_absent_payload_is_skipped{"RuntimeBindingFallback/RecordNamingAnAbsentPayloadIsSkipped", [] {
     HomeWithSpecs h{{"2.44"}, "2.39"};
     // Not "glibc@2.39": that payload is gone. The singleton rule answers.
-    EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "glibc@2.44");
-}
+    expect(eq(tc::baked_runtime_binding(h.compiler), "glibc@2.44"));
+}};
 
 // Linux only, and not as an exemption -- the mechanism does not exist
 // elsewhere. detect_baked_loader parses GCC specs, whose loader paths are
@@ -114,19 +116,19 @@ TEST(RuntimeBindingFallback, RecordNamingAnAbsentPayloadIsSkipped) {
 //
 // The other cases in this file are platform-neutral (they exercise the
 // payload set, not the parser) and keep running everywhere.
-TEST(RuntimeBindingFallback, RecordNamingAPresentPayloadWins) {
+UTest record_naming_a_present_payload_wins{"RuntimeBindingFallback/RecordNamingAPresentPayloadWins", [] {
     if constexpr (!std::filesystem::path::preferred_separator ||
                   std::filesystem::path::preferred_separator != '/')
-        GTEST_SKIP() << "GCC specs loader paths are POSIX; no such record here";
+        skip("GCC specs loader paths are POSIX; no such record here");
     HomeWithSpecs h{{"2.39", "2.44"}, "2.39"};
     // Two installed, so the singleton rule cannot answer -- but the record
     // names one that IS there, and that is what the artifact would load.
-    EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "glibc@2.39");
-}
+    expect(eq(tc::baked_runtime_binding(h.compiler), "glibc@2.39"));
+}};
 
-TEST(RuntimeBindingFallback, StaleRecordWithNothingToFallBackOnIsSilence) {
+UTest stale_record_with_nothing_to_fall_back_on_is_silence{"RuntimeBindingFallback/StaleRecordWithNothingToFallBackOnIsSilence", [] {
     HomeWithSpecs h{{"2.39", "2.44"}, "2.28"};
-    EXPECT_EQ(tc::baked_runtime_binding(h.compiler), "");
-}
+    expect(eq(tc::baked_runtime_binding(h.compiler), ""));
+}};
 
 }  // namespace

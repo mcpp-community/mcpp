@@ -1,7 +1,7 @@
-#include <gtest/gtest.h>
 #include <cstdlib>
 
 import std;
+import mcpplibs.mtest;
 import mcpp.invocation;
 import mcpp.home;
 import mcpplibs.os.platform;
@@ -9,6 +9,8 @@ import mcpplibs.os.windows;
 import mcpp.toolchain.stdmod;
 import mcpp.config;
 import mcpp.libs.toml;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
@@ -23,79 +25,75 @@ private:
 
 }  // namespace
 
-TEST(Home, ExplicitMcppHomeWins) {
+UTest explicit_mcpp_home_wins{"Home/ExplicitMcppHomeWins", [] {
     ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test");
     const auto expected = std::filesystem::weakly_canonical(std::filesystem::absolute("/tmp/mcpp-home-test"));
-    EXPECT_EQ(mcpp::home::root(), expected);
-    EXPECT_EQ(mcpp::home::cache_root(),
-              expected / "build-cache" / "v1");
-}
+    expect(eq(mcpp::home::root(), expected));
+    expect(eq(mcpp::home::cache_root(), expected / "build-cache" / "v1"));
+}};
 
-TEST(Home, CacheRootIsAlwaysRootSlashBuildCacheV1) {
+UTest cache_root_is_always_root_slash_build_cache_v1{"Home/CacheRootIsAlwaysRootSlashBuildCacheV1", [] {
     ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test-2");
-    EXPECT_EQ(mcpp::home::cache_root(), mcpp::home::root() / "build-cache" / "v1");
-}
+    expect(eq(mcpp::home::cache_root(), mcpp::home::root() / "build-cache" / "v1"));
+}};
 
 // The layout version has to be a path segment, not an implicit convention:
 // replacing the layout must never require migrating or deleting the old tree.
-TEST(Home, CacheRootCarriesTheLayoutVersion) {
+UTest cache_root_carries_the_layout_version{"Home/CacheRootCarriesTheLayoutVersion", [] {
     ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test-2b");
-    EXPECT_EQ(mcpp::home::cache_root().filename(), std::filesystem::path("v1"));
-    EXPECT_EQ(mcpp::home::cache_root().parent_path().filename(),
-              std::filesystem::path("build-cache"));
+    expect(eq(mcpp::home::cache_root().filename(), std::filesystem::path("v1")));
+    expect(eq(mcpp::home::cache_root().parent_path().filename(), std::filesystem::path("build-cache")));
     // Must NOT nest inside <home>/cache: GlobalConfig's index metadata cache
     // owns that name and its reset path removes the whole directory.
-    EXPECT_NE(mcpp::home::cache_root().parent_path().filename(),
-              std::filesystem::path("cache"));
+    expect(ne(mcpp::home::cache_root().parent_path().filename(), std::filesystem::path("cache")));
     // The pre-v1 root must stay resolvable and must be a DIFFERENT tree, so
     // `doctor` can report it and `cache clean --legacy` can reclaim it.
-    EXPECT_EQ(mcpp::home::legacy_bmi_root(), mcpp::home::root() / "bmi");
-    EXPECT_NE(mcpp::home::legacy_bmi_root(), mcpp::home::cache_root());
-}
+    expect(eq(mcpp::home::legacy_bmi_root(), mcpp::home::root() / "bmi"));
+    expect(ne(mcpp::home::legacy_bmi_root(), mcpp::home::cache_root()));
+}};
 
 // The user-home fallback must land on `.mcpp`, never on the legacy flat
 // `.mcpp-bmi` sibling that the pre-#311 std-module resolver produced whenever
 // neither MCPP_HOME nor HOME resolved (the default on Windows PowerShell).
-TEST(Home, FallbackUsesDotMcppNotLegacyFlatDir) {
+UTest fallback_uses_dot_mcpp_not_legacy_flat_dir{"Home/FallbackUsesDotMcppNotLegacyFlatDir", [] {
     ScopedEnv mcppHome("MCPP_HOME", nullptr);
     ScopedEnv userHome("HOME", nullptr);
 #if defined(_WIN32)
     ScopedEnv profile("USERPROFILE", nullptr);
 #endif
     auto root = mcpp::home::root();
-    EXPECT_EQ(root.filename(), std::filesystem::path(".mcpp"));
-    EXPECT_NE(mcpp::home::cache_root().filename(),
-              std::filesystem::path(".mcpp-bmi"));
-}
+    expect(eq(root.filename(), std::filesystem::path(".mcpp")));
+    expect(ne(mcpp::home::cache_root().filename(), std::filesystem::path(".mcpp-bmi")));
+}};
 
 // #311's D2 regression gate: the std module cache and the dep cache must
 // resolve to ONE root. `default_cache_root()` used to be a private copy of the
 // home resolution that drifted (no USERPROFILE, no self-contained detection),
 // so on Windows the std BMI landed in the current working directory.
-TEST(Home, StdModuleCacheRootEqualsHomeCacheRoot) {
+UTest std_module_cache_root_equals_home_cache_root{"Home/StdModuleCacheRootEqualsHomeCacheRoot", [] {
     {
         ScopedEnv home("MCPP_HOME", "/tmp/mcpp-home-test-3");
-        EXPECT_EQ(mcpp::toolchain::default_cache_root(), mcpp::home::cache_root());
+        expect(eq(mcpp::toolchain::default_cache_root(), mcpp::home::cache_root()));
     }
     {
         ScopedEnv mcppHome("MCPP_HOME", nullptr);
-        EXPECT_EQ(mcpp::toolchain::default_cache_root(), mcpp::home::cache_root());
+        expect(eq(mcpp::toolchain::default_cache_root(), mcpp::home::cache_root()));
     }
-}
+}};
 
 namespace {
-class HomeSelection : public ::testing::Test {
+class HomeSelection {
 protected:
     std::filesystem::path scratch = std::filesystem::temp_directory_path()
         / std::format("mcpp-home-{}", std::chrono::steady_clock::now().time_since_epoch().count());
     std::filesystem::path original = scratch / "original";
     std::filesystem::path target = scratch / "target";
     ScopedEnv env{"MCPP_HOME", mcpp::home::spelling(original).c_str()};
-    void SetUp() override {
+    void SetUp() {
         std::filesystem::create_directories(original);
         std::filesystem::create_directories(target);
     }
-    void TearDown() override {
+    void TearDown() {
         std::error_code ec;
         std::filesystem::remove_all(scratch, ec);
     }
@@ -106,111 +104,185 @@ protected:
 };
 }
 
-TEST_F(HomeSelection, DefaultOriginalAndEffectiveAreIdentical) {
+UTest default_original_and_effective_are_identical{"HomeSelection/DefaultOriginalAndEffectiveAreIdentical", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     const auto selected = mcpp::home::selection();
-    EXPECT_EQ(selected.original, std::filesystem::weakly_canonical(original));
-    EXPECT_EQ(selected.original, selected.effective);
-    EXPECT_FALSE(selected.redirected);
+    expect(eq(selected.original, std::filesystem::weakly_canonical(original)));
+    expect(eq(selected.original, selected.effective));
+    expect(!selected.redirected);
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, EnvironmentSelectsTheLocatorAndOnlyOneHopIsRead) {
+UTest environment_selects_the_locator_and_only_one_hop_is_read{"HomeSelection/EnvironmentSelectsTheLocatorAndOnlyOneHopIsRead", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     const auto third = scratch / "third";
     std::filesystem::create_directories(third);
     locator(original, target);
     locator(target, third);
     const auto selected = mcpp::home::selection();
-    EXPECT_EQ(selected.original, std::filesystem::weakly_canonical(original));
-    EXPECT_EQ(selected.effective, std::filesystem::weakly_canonical(target));
-    EXPECT_EQ(mcpp::home::cache_root(), selected.effective / "build-cache" / "v1");
-    EXPECT_TRUE(selected.redirected);
+    expect(eq(selected.original, std::filesystem::weakly_canonical(original)));
+    expect(eq(selected.effective, std::filesystem::weakly_canonical(target)));
+    expect(eq(mcpp::home::cache_root(), selected.effective / "build-cache" / "v1"));
+    expect(bool(selected.redirected));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, UnavailableTargetIsAnErrorInsteadOfAFallback) {
+UTest unavailable_target_is_an_error_instead_of_a_fallback{"HomeSelection/UnavailableTargetIsAnErrorInsteadOfAFallback", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     locator(original, scratch / "missing");
     const auto selected = mcpp::home::inspect(original);
-    ASSERT_FALSE(selected);
-    EXPECT_NE(selected.error().find("unavailable"), std::string::npos);
-    EXPECT_FALSE(std::filesystem::exists(original / "config.toml"));
+    expect(fatal(!selected));
+    expect(ne(selected.error().find("unavailable"), std::string::npos));
+    expect(!std::filesystem::exists(original / "config.toml"));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, ForceCanRepairAMalformedLocator) {
+UTest force_can_repair_a_malformed_locator{"HomeSelection/ForceCanRepairAMalformedLocator", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     std::ofstream(original / "home.toml") << "home = [\n";
-    EXPECT_FALSE(mcpp::home::choose(target, false));
+    expect(!mcpp::home::choose(target, false));
     const auto selected = mcpp::home::choose(target, true);
-    ASSERT_TRUE(selected) << selected.error();
-    EXPECT_TRUE(mcpp::home::save(*selected));
+    if (auto&& failed = expect(fatal(bool(selected))); !failed) failed << selected.error();
+    expect(bool(mcpp::home::save(*selected)));
     const auto restored = mcpp::home::inspect(original);
-    ASSERT_TRUE(restored) << restored.error();
-    EXPECT_EQ(restored->effective, std::filesystem::weakly_canonical(target));
+    if (auto&& failed = expect(fatal(bool(restored))); !failed) failed << restored.error();
+    expect(eq(restored->effective, std::filesystem::weakly_canonical(target)));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, ExistingHomeNeedsForceAndChangingItKeepsBothDataTrees) {
+UTest existing_home_needs_force_and_changing_it_keeps_both_data_trees{"HomeSelection/ExistingHomeNeedsForceAndChangingItKeepsBothDataTrees", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     std::ofstream(original / "config.toml") << "# existing\n";
     std::ofstream(target / "sentinel") << "keep\n";
-    EXPECT_FALSE(mcpp::home::choose(target, false));
+    expect(!mcpp::home::choose(target, false));
     const auto selected = mcpp::home::choose(target, true);
-    ASSERT_TRUE(selected) << selected.error();
-    ASSERT_TRUE(mcpp::home::save(*selected));
-    EXPECT_TRUE(std::filesystem::exists(original / "config.toml"));
-    EXPECT_TRUE(std::filesystem::exists(target / "sentinel"));
-    EXPECT_EQ(mcpp::invocation::get("MCPP_HOME").value_or(""), mcpp::home::spelling(original));
+    if (auto&& failed = expect(fatal(bool(selected))); !failed) failed << selected.error();
+    expect(fatal(bool(mcpp::home::save(*selected))));
+    expect(std::filesystem::exists(original / "config.toml"));
+    expect(std::filesystem::exists(target / "sentinel"));
+    expect(eq(mcpp::invocation::get("MCPP_HOME").value_or(""), mcpp::home::spelling(original)));
     const auto restored = mcpp::home::inspect(original);
-    ASSERT_TRUE(restored);
-    EXPECT_EQ(restored->previous, std::filesystem::weakly_canonical(original));
+    expect(fatal(bool(restored)));
+    expect(eq(restored->previous, std::filesystem::weakly_canonical(original)));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, ReturningToOriginalRemovesOnlyTheLocator) {
+UTest returning_to_original_removes_only_the_locator{"HomeSelection/ReturningToOriginalRemovesOnlyTheLocator", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     locator(original, target);
     std::ofstream(target / "config.toml") << "# existing\n";
     const auto selected = mcpp::home::choose(original, true);
-    ASSERT_TRUE(selected) << selected.error();
-    ASSERT_TRUE(mcpp::home::save(*selected));
-    EXPECT_FALSE(std::filesystem::exists(original / "home.toml"));
-    EXPECT_TRUE(std::filesystem::exists(target / "config.toml"));
-    EXPECT_EQ(mcpp::home::root(), std::filesystem::weakly_canonical(original));
+    if (auto&& failed = expect(fatal(bool(selected))); !failed) failed << selected.error();
+    expect(fatal(bool(mcpp::home::save(*selected))));
+    expect(!std::filesystem::exists(original / "home.toml"));
+    expect(std::filesystem::exists(target / "config.toml"));
+    expect(eq(mcpp::home::root(), std::filesystem::weakly_canonical(original)));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, NestedDirectoriesAreRefused) {
-    EXPECT_FALSE(mcpp::home::choose(original / "nested", true));
-    EXPECT_FALSE(mcpp::home::choose(scratch, true));
+UTest nested_directories_are_refused{"HomeSelection/NestedDirectoriesAreRefused", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
+    expect(!mcpp::home::choose(original / "nested", true));
+    expect(!mcpp::home::choose(scratch, true));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, ReadOnlyConfigurationDoesNotInitializeOrAcquireAProvider) {
+UTest read_only_configuration_does_not_initialize_or_acquire_a_provider{"HomeSelection/ReadOnlyConfigurationDoesNotInitializeOrAcquireAProvider", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     const auto cold = scratch / "cold";
     ScopedEnv home("MCPP_HOME", mcpp::home::spelling(cold).c_str());
     const auto config = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
-    ASSERT_TRUE(config) << config.error().message;
-    EXPECT_EQ(config->mcppHome, std::filesystem::weakly_canonical(cold));
-    EXPECT_FALSE(std::filesystem::exists(cold));
+    if (auto&& failed = expect(fatal(bool(config))); !failed) failed << config.error().message;
+    expect(eq(config->mcppHome, std::filesystem::weakly_canonical(cold)));
+    expect(!std::filesystem::exists(cold));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, UserSourceSurvivesOriginalPathNormalization) {
+UTest user_source_survives_original_path_normalization{"HomeSelection/UserSourceSurvivesOriginalPathNormalization", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     const auto user = mcpp::home::spelling(scratch);
     ScopedEnv env("MCPP_HOME", nullptr);
     ScopedEnv posixHome("HOME", user.c_str());
     ScopedEnv windowsHome("USERPROFILE", user.c_str());
     const auto selected = mcpp::home::inspect(scratch / ".mcpp");
-    ASSERT_TRUE(selected) << selected.error();
-    EXPECT_EQ(selected->source, "user");
+    if (auto&& failed = expect(fatal(bool(selected))); !failed) failed << selected.error();
+    expect(eq(selected->source, "user"));
 }
+    } fixture;
+    fixture.body();
+}};
 
-TEST_F(HomeSelection, MissingUserDirectoryCannotPublishALocatorInTheWorkingDirectory) {
+UTest missing_user_directory_cannot_publish_a_locator_in_the_working_directory{"HomeSelection/MissingUserDirectoryCannotPublishALocatorInTheWorkingDirectory", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     ScopedEnv explicitHome("MCPP_HOME", nullptr);
     ScopedEnv posixHome("HOME", nullptr);
     ScopedEnv windowsHome("USERPROFILE", nullptr);
     const auto selected = mcpp::home::choose(target, true);
-    ASSERT_FALSE(selected);
-    EXPECT_NE(selected.error().find("user directory"), std::string::npos);
+    expect(fatal(!selected));
+    expect(ne(selected.error().find("user directory"), std::string::npos));
 }
+    } fixture;
+    fixture.body();
+}};
 
 
-TEST_F(HomeSelection, UnicodeLocatorRoundTripDoesNotNarrowTheSelectedPath) {
+UTest unicode_locator_round_trip_does_not_narrow_the_selected_path{"HomeSelection/UnicodeLocatorRoundTripDoesNotNarrowTheSelectedPath", [] {
+    struct Case : HomeSelection {
+        Case() { SetUp(); }
+        ~Case() { TearDown(); }
+        void body() {
     if constexpr (mcpplibs::os::is_windows) {
         const auto acp = mcpplibs::os::windows::code_page();
-        ASSERT_NE(acp, 0u);
+        expect(fatal(ne(acp, 0u)));
         if (acp == 65001)
-            GTEST_SKIP() << "UTF-8 ACP cannot prove the legacy-code-page path conversion boundary; "
-                            "the actual CLI Unicode case still runs";
+            skip([&] { std::ostringstream text; text << "UTF-8 ACP cannot prove the legacy-code-page path conversion boundary; "
+                            "the actual CLI Unicode case still runs"; return text.str(); }());
     }
     // Devanagari cannot be represented by any legacy Windows ANSI code page.
     // Explicit UTF-8 code units keep this independent of compiler source encoding.
@@ -218,10 +290,13 @@ TEST_F(HomeSelection, UnicodeLocatorRoundTripDoesNotNarrowTheSelectedPath) {
         std::u8string(u8"selected space \u0915\u0916\u0917 \u65e5\u672c\u8a9e"));
     std::filesystem::create_directory(unicode);
     const auto selected = mcpp::home::choose(unicode, true);
-    ASSERT_TRUE(selected) << selected.error();
-    ASSERT_TRUE(mcpp::home::save(*selected));
+    if (auto&& failed = expect(fatal(bool(selected))); !failed) failed << selected.error();
+    expect(fatal(bool(mcpp::home::save(*selected))));
     const auto restored = mcpp::home::inspect(original);
-    ASSERT_TRUE(restored) << restored.error();
-    EXPECT_EQ(restored->effective, std::filesystem::weakly_canonical(unicode));
-    EXPECT_EQ(mcpp::home::from_utf8(mcpp::home::spelling(unicode)), unicode);
+    if (auto&& failed = expect(fatal(bool(restored))); !failed) failed << restored.error();
+    expect(eq(restored->effective, std::filesystem::weakly_canonical(unicode)));
+    expect(eq(mcpp::home::from_utf8(mcpp::home::spelling(unicode)), unicode));
 }
+    } fixture;
+    fixture.body();
+}};

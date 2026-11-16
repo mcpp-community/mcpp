@@ -43,10 +43,11 @@ export namespace mcpp::freestanding {
 // `-dumpmachine`) nothing about the driver's identity says which target is
 // wanted. Omit it and the build silently produces host objects — measured, and
 // the exact shape of the E1 defect this work exists to close.
-inline std::string compile_prefix(const Spec& s, bool targetCxxRuntime = false) {
+inline std::string compile_prefix(const Spec& s, bool targetCxxRuntime = false,
+                                  bool hostedC = false) {
     std::string out;
     out += " --target=" + std::string(s.triple);
-    for (auto const& f : compile_flags(s, targetCxxRuntime)) { out += ' '; out += f; }
+    for (auto const& f : compile_flags(s, targetCxxRuntime, hostedC)) { out += ' '; out += f; }
     return out;
 }
 
@@ -127,7 +128,10 @@ inline std::string link_flags_direct(const Spec& s, const LinkInputs& in,
                                          const std::filesystem::path&)>& esc)
 {
     std::string out;
-    out += " -m " + std::string(s.lldEmulation);
+    for (auto const& w : row_link_words(s)) {
+        out += ' ';
+        out += w;
+    }
     out += " -Bstatic";
     // No loader exists, so an image must not name one. The driver line reaches
     // this through `-static`; here it is said to the linker.

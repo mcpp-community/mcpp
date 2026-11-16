@@ -45,7 +45,7 @@ export module mcpp.build.tool_store;
 
 import std;
 import mcpp.invocation;
-import mcpp.libs.json;
+import nlohmann.json;
 import mcpp.manifest;
 import mcpp.toolchain.fingerprint;
 
