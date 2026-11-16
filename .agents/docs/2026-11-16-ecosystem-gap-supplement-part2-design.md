@@ -5,7 +5,7 @@ status: draft
 
 # 生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项
 
-**日期：** 2026-11-16 · **版本：** v2（评审稿，经第 12 节的多角度评审修订） · **基线：** mcpp 2026.11.16.1（main 另含 #929：多行内联表）、
+**日期：** 2026-11-16 · **版本：** v3（第 15 节的八项已定；第 13 节为与外部验证工程的双向交叉评审） · **基线：** mcpp 2026.11.16.1（main 另含 #929：多行内联表）、
 openkal-platform 0.29.0、dirun 0.5.0、ovmf 9.2.4-3、mcpp:plugins 0.22.0（平台以 0.20.0 构建）、xlings v2026.10.26.1 ·
 **前文：** [第一部分](2026-11-15-ecosystem-gap-supplement-design.md)（N1–N47，13.12–13.17 为本文的来源）
 
@@ -159,8 +159,11 @@ license_files = ["LICENSE", "ThirdPartyNotices.txt"]     # 通配符同 4.1；�
 - **机制**：打包时，对程序的链接闭包与运行闭包中的每一个包（静态库、共享库、带 `deploy` 文件的包、工程自身），
   把它的 `license_files` 放到 `share/licenses/<包名>/`，角色为 `metadata`（SPEC-014 §4.5 已有的角色与目录）。
   所有打包方式都进行，不只是 `self-contained`。
+- **缺省值**：不写时取包的根下的 `{LICENSE,LICENCE,COPYING,NOTICE}*`。缺省值是引擎的数据，包以 `license_files`
+  覆盖；多数包因此不需要写这个键。Python 的 PEP 639（`license-files`）是同样的做法。
 - **描述符**：xim 的 Lua 描述符在 `mcpp` 段写同名的键，可以写在各系统共用的块中。
-- **没有声明的包**：保留现有的按文件名查找作为退路，并在打包报告中列出“未声明许可证文件”的包（做得少时不沉默）。
+- **没有匹配的包**：缺省值与声明都没有匹配到文件时，打包报告列出这个包（做得少时不沉默）。现有的
+  `collect_licenses` 由这一机制取代。
 - **`[pack] include` 不变**：本工程的其他发布文件（README、图标、手册页）仍由它表达，锚点是包的根。
 
 四种角色因此各有一个归属，互不重叠：
@@ -209,7 +212,7 @@ license_files = { "onnxruntime-*/{LICENSE,ThirdPartyNotices.txt}" },
 | 运行时文件（`deploy`） | 程序所在目录 | 与产物相同 |
 | 运行文件（`--file`） | 本次运行的工作目录 | 与本次运行相同 |
 
-### 5.2 书写与名字（评审项）
+### 5.2 书写与名字（已定）
 
 ```sh
 mcpp run app --target x86_64-uefi --file tests/t.bat=TEST.BAT -- /c TEST.BAT
@@ -229,8 +232,7 @@ files = ["tests/uefi/**"]
   - 生态中这个概念已有一个发布过的拼写：dirun 的 `--file`。mcpp 的命令行用另一个词，就是同一概念的两种拼写；
   - `inputs` 与平台的 `link.inputs` 同名，但后者的 `from` 是一条命令的 argv（SPEC-013 §9.2），条目语法不同。
     v1 第 12 节写的换算规则“`{ file = x }` 即 `{ from = x }`”是错的，已删除。
-  - 剩余的不足：`[test] files` 可能被读成“测试的源文件”（那是 `discover`）。另一个候选是保留 `inputs`。
-    推荐 `--file` 与 `files`。
+  - 剩余的不足：`[test] files` 可能被读成“测试的源文件”（那是 `discover`）；文档在该键处写明。
 
 ### 5.3 工作目录
 
@@ -273,19 +275,34 @@ runner = {
 }
 ```
 
-### 6.2 同一平台写多行（评审项：本轮不做）
+### 6.2 平台列由索引补充（已定，取代 v1 的 `[platforms]`）
 
-外部工程为四行写了同一个平台的同一个版本（`i686-linux-musl`、`i686-openkal`、`x86_64-uefi`、`i686-dos-musl`
-各一行 `openkal-platform@0.29.0`）。v1 推荐新增 `[platforms] openkal-platform = "0.29.0"`。评审后改为不做：
+外部工程为四行写了同一个平台（`i686-linux-musl`、`i686-openkal`、`x86_64-uefi`、`i686-dos-musl` 各一行
+`openkal-platform@0.29.0`）。原因不在版本，而在于引擎不认识这些行：平台选择顺序的第 5 步“目标表的平台列”
+（SPEC-013 §3.1）只有引擎内置的数据。
 
-- **这四行不只是选版本，也是选行。** openkal-platform 的 `targets` 还列有 `x86_64-linux-gnu`、
-  `x86_64-linux-musl` 等宿主行（它的 hosted 部分）。“这个平台列出的每一行都由它提供”会把本机构建也交给平台，
-  这不是四行显式写法的含义。要避免，就得在 `[platforms]` 中再列出行，于是又回到了逐行书写。
-- **它是一个新的选择机制。** SPEC-013 §3.1 的六步顺序中要插入一步；解析时要先取得所列的每一个平台包，才能知道
-  哪些行属于它。
-- **没有功能缺口。** 四行对齐后是清楚的；升级时改四处，替换一次即可。
+**方案：这一列增加一个数据来源，即索引。** 清单不新增键。
 
-记录为独立的设计项：若以后做，前提是平台包的行在索引的元数据中可见，并且选择是按行集合而不是按整个平台。
+| 需要的东西 | 复用的语义 |
+|---|---|
+| 哪一行由哪个平台包提供 | 目标表的平台列（SPEC-013 §3.1 第 5 步） |
+| 取哪个版本 | 平台系列的规则：与当前引擎相容的最新版本，写入 `mcpp.lock`（SPEC-013 §14） |
+| 升级 | `mcpp update <平台包>` |
+| 工程固定或更换版本 | 既有的 `[target.<选择器>] platform`，顺序在前，不变 |
+| 索引中包一级的信息 | 条目中已有的目录字段（`licenses`、`repo`），`mcpp search` 已在读取 |
+
+**规则：**
+- 平台包的索引条目列出它提供的行。这份列表由索引的工具从平台包自己的清单生成，不手写；索引的 CI 检查同一行
+  只有一个平台包认领，并与包的清单一致。
+- 第 5 步先查内置表，内置表没有答案时查索引。内置表有答案的行不变，所以现有工程的行为不变。
+- 选择来源报告为 `index`。
+- 一处行为变化：内置表中“计划中”的行（如 `i686-linux-musl`）在索引中有平台包认领后可用。这是从拒绝变为可用。
+- 效果：`mcpp build --target x86_64-uefi` 不需要工程写任何一行；外部工程的四行变为零行。
+
+**v1 的 `[platforms]` 表被否定**：openkal-platform 的 `targets` 还列有 `x86_64-linux-gnu` 等宿主行，按平台整体
+选择会把本机构建也交给平台；它又是一个新的清单概念。按行查找的平台列没有这两个问题。
+
+**待实测**：早于本版本的引擎读到条目中的新字段时是否忽略；索引同步之后查找的开销。
 
 ### 6.3 索引数据的清理（不改引擎）
 
@@ -336,9 +353,10 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
 
 - **大小**：stub 读取 `PT_GNU_STACK` 的 `p_memsz`（lld 的 `-z stack-size=N`）。这是由产物的生成方式决定的属性，
   在链接时确定（openkal SPEC 6.5）。
-- **缺省值是数据**：1 MiB 写在 openkal-platform 的 DOS 行的链接参数中（`-z stack-size=1048576`），工程以自己的
+- **缺省值是数据（已定）**：1 MiB 写在 openkal-platform 的 DOS 行的链接参数中（`-z stack-size=1048576`），工程以自己的
   链接参数覆盖。stub 只在程序头没有声明时（不经平台构建的映像）才用内置的 1 MiB。缺省值因此在行的数据中可见，
-  并且有显式的覆盖方式。
+  并且有显式的覆盖方式。可执行文件声明自己的栈大小、由工具链给出缺省值，是没有操作系统代为决定的环境中的通行
+  做法（PE 的 `/STACK`，缺省 1 MiB；WebAssembly 的 `-z stack-size`）。通用键 `stack_size` 本轮不加（13.1 X6）。
 - **布局**：内存块改为 `[可加载段][保护页][栈]`。保护页通过 DPMI 1.0 的 `0507h`（设置页属性）设为未提交，栈向下
   越界时产生 `#PF`，经现有的故障报告输出。
   - 第一部分 13.13 第 3 条提出“把栈放到块的低端，越界离开描述符界限”。本节否定这一做法：程序的虚拟地址相对于
@@ -369,25 +387,36 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
   格式提供者可以直接使用这个模块；本轮不新建包。
 - ovmf 9.2.4-4：配置文件写明 `disk = "fat-image"`。r1–r3 不变。
 
-### 8.5 新行：OpenBSD、NetBSD、illumos
+### 8.5 新行与平台扩展包
 
-**模板（读 `builtin.toml` 与外部工程的 CI 确认）**：FreeBSD 的行只有构建，没有 runner；运行验证在 CI 的虚拟机
-动作中进行。新行按同一模板分两步，第一步不依赖磁盘映像。
+**分层（已定）**：常用的系统内置在 mcpp 中；小众与早期的系统放在一个官方的扩展包中。两处使用同一种数据格式
+（`builtin.toml` 的文件头写明它使用平台包的格式），所以一行成熟之后进入内置表只是数据的移动。
 
-| 步骤 | 内容 |
+**包（已定）**：仓库 `mcpp-community/mcpp-platforms`，包 `mcpp.platforms`，与 `mcpp-community/mcpp-plugins`
+（包 `mcpp.plugins`）对称。一个包，多行：每个系统各有一组 `[[platform.define]]` 与 `[[platform.provider]]`，带各自的
+工具链、sysroot、链接约定与 runner。openkal-platform 已经以这种方式提供 UEFI、DOS 与 i686 的行。
+
+| 角度 | 判断 |
 |---|---|
-| 第一步：构建 | xim 的 sysroot 包（官方安装集中的头文件、crt 与库）；平台包声明行（三元组、clang 三元组、`family = "unix"`、加载器）、工具链 llvm 与 sysroot；工程的 CI 在对应系统的虚拟机动作中运行产物，与 FreeBSD 相同 |
-| 第二步：`mcpp run` | 带 dirun 配置的磁盘映像包与 runner（`enabled = false`）。映像的体积、再分发条款与 GitCode 镜像的大小限制都还没有实测，单独立项 |
+| 使用 | `mcpp build --target x86_64-openbsd`；配合 6.2，工程不写平台 |
+| 架构 | 引擎中不出现系统名；SPEC-013 不变 |
+| 开发 | 加入一个系统 = 一段行的数据、一个 sysroot 包、一个磁盘映像包、一项 CI 检查 |
+| 发布 | 一条发布链；有问题的行标为 `preview` 或暂不收录，不阻塞其余的行 |
+| 限度 | 所有行在一个清单中；行数到十几个时再考虑分包 |
+| 待确认 | 打包目录的命名规则读取以 `-platform` 结尾的包名（SPEC-014 §4.2）；该规则只用于带 runner 的映像平台，实现时确认新包不受影响 |
 
-- **包的划分与名字（评审项）**：推荐每个系统一个平台包：`openbsd-platform`、`netbsd-platform`、
-  `illumos-platform`。
-  - 已有的平台包按系统命名（`openkal-platform`、`djgpp-platform`）；
-  - 平台的版本跟随 sysroot 的系统版本（OpenBSD 7.x、NetBSD 10.x），三个系统共用一个版本号没有含义；
-  - 一个系统的问题（见下方的待实测项）不阻塞另外两个的发布；
-  - v1 推荐的 `unix-platform` 名不副实：Linux、macOS、FreeBSD 同属 unix，却不在其中。
-  - 代价：三个仓库各有一次发布流程。三个包都只有数据，没有源码。
+**本轮的三个系统**：OpenBSD、NetBSD、illumos。构建与运行在同一个 PR 中完成，以提交作为阶段点，不拆到以后：
+
+| 阶段 | 内容 |
+|---|---|
+| 构建 | xim 的 sysroot 包（官方安装集中的头文件、crt 与库）；行的数据（三元组、clang 三元组、`family = "unix"`、加载器）、工具链 llvm |
+| 运行 | xim 的磁盘映像包，带 dirun 的配置；行的 runner（`enabled = false`）。这与 Android 行已有的机制相同：`android-system-image` 带 `dirun.toml`，runner 为 `dirun --profile {pkg:…}/dirun.toml` |
+
+- **收录规范**：仓库中有一份“加入一个平台”的文档，规定行的必填数据、sysroot 包与映像包的要求、CI 必须验证的
+  内容、`preview` 到稳定的条件、进入内置表的条件。语义以 mcpp 的 SPEC-013、SPEC-016 为准，这份文档只规定流程。
 - **待实测**：lld 能否按 OpenBSD 的规则查找带版本号的共享库（`libc.so.N.M`）；NetBSD 下 lld 能否链接（否则用
-  GNU ld）；illumos 的 libc 与 crt 的组成；三个系统的虚拟机动作是否可用。
+  GNU ld）；illumos 的 libc 与 crt 的组成；映像的体积、再分发条款与 GitCode 镜像的大小限制。实测出不可逾越的
+  限制时如实记录，不静默降级。
 - **约束**：OpenBSD 7.4 起只允许经 libc 发出系统调用（`pinsyscalls`），所以 OpenBSD 上的 okrun 以原生行构建；
   openkal 映像在 OpenBSD 上运行，以这一行为前提。
 
@@ -395,16 +424,16 @@ runner 已有规范：SPEC-013 §10 规定声明、查找、执行、占位符�
 
 | 仓库 | 改动 | 版本 |
 |---|---|---|
-| mcpp | `deploy` 的条目语法（4.1）；`license_files` 与打包时的暂存、报告（4.3）；`--file` 与 `[test] files`（5.2）；工作目录（5.3）；`MCPP_RUN_CLOSURE` 的 `run_files` 与 TSV 镜像（7.1）；SPEC-002、SPEC-004、SPEC-014、SPEC-017 的条款；中英文文档；把多行内联表写进示例 | 下一版 |
+| mcpp | `deploy` 的条目语法（4.1）；`license_files` 与打包时的暂存、报告（4.3）；`--file` 与 `[test] files`（5.2）；工作目录（5.3）；`MCPP_RUN_CLOSURE` 的 `run_files` 与 TSV 镜像（7.1）；平台列查索引（6.2）；SPEC-002、SPEC-004、SPEC-014、SPEC-017 的条款；中英文文档；把多行内联表写进示例 | 下一版 |
 | mcpp.plugins | dist-web 写明未提交的原因（8.3） | 补丁版本 |
 | dirun | `[payload] disk = "fat-image"`（8.4） | 0.6.0 |
 | openkal-uefi | 读取 `LoadOptions`（8.1） | 0.11.1 |
 | openkal-dos | 栈的大小、保护页与退路（8.2） | 0.1.1 |
-| `openbsd-platform`、`netbsd-platform`、`illumos-platform` | 各自的行、工具链与 sysroot（8.5 第一步） | 0.1.0 |
-| xim-pkgindex | dirun 0.6.0；ovmf 9.2.4-4；三个系统的 sysroot | — |
-| mcpp-index | openkal-uefi 0.11.1、openkal-dos 0.1.1、openkal-platform 0.29.1、三个新平台包、mcpp.plugins；`compat.onnxruntime` 改用 `license_files` 与 `library_dirs` 的清理（等新版 mcpp 发布后进行） | — |
+| mcpp-platforms（新，`mcpp-community`） | OpenBSD、NetBSD、illumos 的行、工具链、sysroot 与 runner；收录规范（8.5） | 0.1.0 |
+| xim-pkgindex | dirun 0.6.0；ovmf 9.2.4-4；三个系统的 sysroot 与磁盘映像 | — |
+| mcpp-index | openkal-uefi 0.11.1、openkal-dos 0.1.1、openkal-platform 0.29.1、`mcpp.platforms`、mcpp.plugins；平台条目中行的列表及其生成与校验工具（6.2）；`compat.onnxruntime` 改用 `license_files` 与 `library_dirs` 的清理（等新版 mcpp 发布后进行） | — |
 | openkal-platform | 0.29.1：新成员；ovmf r4 与 dirun 0.6.0；DOS 行的缺省栈大小（8.2）；以新版 plugins 构建；UEFI 检查增加含连续空白的参数；runner 改为多行（在要求新 mcpp 的版本中） | 0.29.1 |
-| 外部验证工程（fork） | 改用 `--file`，去掉对 dirun 的直接调用和对包目录的 `find`；DOS 与 UEFI 运行完整的脚本；三个新行 | — |
+| 外部验证工程（fork） | 改用 `--file`，去掉对 dirun 的直接调用和对包目录的 `find`；DOS、UEFI 与 Android 经 `mcpp run` 运行完整的脚本；三个新行；去掉平台的四行与 13.2 的两处过时绕行 | — |
 
 通用的能力在引擎与生态包中（文件的放置、许可证的收集、工作目录、FAT 映像、sysroot、行）；工程中只留下工程自己的
 事实（哪些文件是它的测试数据、它选用哪些行）。
@@ -416,8 +445,8 @@ openkal-uefi ─┐
 openkal-dos ──┼─> mcpp-index（成员）─> openkal-platform 0.29.1 ─> mcpp-index（平台）─┐
 dirun ─> xim-pkgindex（dirun、ovmf r4）───────────────────────┘                  │
 mcpp.plugins ─> mcpp-index（plugins）─> openkal-platform 0.29.1                    ├─> 外部验证工程
-mcpp（F、I）─> 发布 ────────────────────────────────────────────────────────────┤
-xim-pkgindex（sysroot）─> 三个新平台包 ─> mcpp-index（新平台包）─────────────────────┘
+mcpp（F、I、T）─> 发布 ────────────────────────────────────────────────────────────┤
+xim-pkgindex（sysroot、映像）─> mcpp-platforms ─> mcpp-index（mcpp.platforms）────────┘
 ```
 
 - 每个仓库一个 PR；xim-pkgindex 与 mcpp-index 是发布渠道，按前置的就绪时间各分两批（第一部分 §7 的规则）。
@@ -435,7 +464,8 @@ xim-pkgindex（sysroot）─> 三个新平台包 ─> mcpp-index（新平台包�
 | 8.1 | openkal-uefi 与 openkal-platform 的 CI 在 OVMF 中检查含连续空白的参数 |
 | 8.2 | openkal-dos 的 CI 中运行 #3 的复现程序，覆盖缺省栈、声明的栈与越界报告 |
 | 8.4 | dirun 的单元测试覆盖 FAT 映像的生成（含长文件名）；在 OVMF 中写文件并在同一次运行中读出 |
-| 8.5 | 新平台包的 CI：各构建一个 C 程序与一个 C++ 程序，并在虚拟机动作中运行 |
+| 6.2 | e2e：索引中有平台认领的行不写平台即可构建，来源报告为 `index`；内置的行不变；工程的 `platform` 优先；索引 CI 拒绝重复认领 |
+| 8.5 | mcpp-platforms 的 CI：每个系统构建一个 C 程序与一个 C++ 程序，并经 `mcpp run` 在磁盘映像中运行 |
 | 端到端 | 外部验证工程：DOS 与 UEFI 运行完整的脚本（含写文件的部分）；三个新行运行脚本；CI 中不出现包目录的路径 |
 
 ## 12. 多角度评审（v2）
@@ -453,9 +483,9 @@ xim-pkgindex（sysroot）─> 三个新平台包 ─> mcpp-index（新平台包�
 | R7 | 规范化 | v1 没有考虑已有的 `launch.cwd` 与外部启动者 | SPEC-017 B5 | 工作目录在写出 `launch` 时备好；写明粒度（5.3） |
 | R8 | 性能 | 每个测试进程一个目录时，`split = "case"` 的复制次数不受控；目录形式的 `deploy` 每次构建都复制 | SPEC-017 O1 | 每个测试程序一个目录；写时复制的克隆；`deploy` 的展开进入构建图并清理（4.1、5.3） |
 | R9 | 简洁 | dirun 读回文件没有读者 | 5.3：工作目录运行后删除 | 去掉读回；dirun 只生成映像（8.4） |
-| R10 | 通用架构 | `[platforms]` 会把平台列出的宿主行一并接管；它是新的选择机制 | openkal-platform `mcpp.toml` 的 `targets`；SPEC-013 §3.1 | 本轮不做，单独立项（6.2） |
+| R10 | 通用架构 | `[platforms]` 会把平台列出的宿主行一并接管；它是新的选择机制 | openkal-platform `mcpp.toml` 的 `targets`；SPEC-013 §3.1 | 改为平台列由索引补充（6.2） |
 | R11 | 缺省值是数据 | v1 把 DOS 的缺省栈大小只放在 stub 中 | AGENTS.md §2 | 写进平台行的链接参数，stub 的内置值只作退路（8.2） |
-| R12 | 生态一致 | v1 让新行同时带磁盘映像与 runner；`unix-platform` 名不副实 | FreeBSD 的行没有 runner（`builtin.toml`），运行在 CI 的虚拟机动作中；已有平台包按系统命名 | 分两步；每个系统一个平台包（8.5） |
+| R12 | 生态一致 | v1 让新行同时带磁盘映像与 runner；`unix-platform` 名不副实 | FreeBSD 的行没有 runner（`builtin.toml`），运行在 CI 的虚拟机动作中；已有平台包按系统命名 | 一个扩展包多行，构建与运行同在本轮（8.5） |
 | R13 | 用户体验 | 带 `--file` 的本机运行会改变工作目录 | 5.3 | 文档写明；`-v` 输出路径 |
 | R14 | 跨平台 | FAT 的 8.3 文件名会限制 `name` | — | 映像生成含长文件名（8.4） |
 | R15 | 边界 | `to` 拒绝 `..`，`../share` 的布局不能表达 | 4.1 的沿用规则 | 记录为已知边界，不在本轮（4.6） |
@@ -471,7 +501,58 @@ xim-pkgindex（sysroot）─> 三个新平台包 ─> mcpp-index（新平台包�
 | 兼容 | 升级后现有工程的行为 | 不变：字面路径的落点不变；没有运行文件时工作目录不变；旧的 ovmf 修订与旧平台不受影响 |
 | 简洁 | 新增的键 | `deploy` 增加 `name` 一个字段与两种写法；`license_files`；`[test] files` 与 `--file`。runner、插件协议没有新增 |
 
-## 13. 被否定的方案
+## 13. 双向交叉评审：通用设施与外部验证工程
+
+评审的问题有两个方向：工程中的哪些做法其实是通用设施的缺口（应当上移）；通用设施中有没有为这一个工程写死的内容
+（应当下移）。依据是工程的清单、构建程序、CI 与源码改动，以及对各仓库的检索和实测。
+
+### 13.1 工程中的绕行，对应通用设施的缺口
+
+| # | 工程中的做法 | 缺口 | 归属与处理 |
+|---|---|---|---|
+| X1 | UEFI 与 DOS：CI 直接调用 dirun，并在包目录中查找 dirun、固件与模拟器 | 运行文件不能经 mcpp 交付；固件的盘只读 | 本轮：第 5 节、8.4 |
+| X2 | Android：CI 以 adb 手工推送程序与脚本并运行，而该行已有 runner | 同 X1：runner 收不到脚本 | 本轮：`--file` 之后改为 `mcpp run`，作为验证项 |
+| X3 | FreeBSD：在 CI 的虚拟机动作中手工运行 | 该行没有 runner | 8.5 的磁盘映像机制同样适用；**评审项**：本轮是否为 FreeBSD 的行加上 runner |
+| X4 | 四行重复写平台 | 平台列只有内置数据 | 本轮：6.2 |
+| X5 | 构建程序按系统判断是否改产物名（`emscripten` 除外） | 工程给出的名字与行的后缀之间的先后不一致：emscripten 上工程的名字去掉了加载所必需的 `.js`，UEFI 上平台的 `{name}.efi` 却保留 | 新发现 N48。建议：行的数据陈述后缀是否为加载所必需，必需的后缀不被工程的模板去掉；工程无条件写一行即可。**评审项** |
+| X6 | wasm 的 `-sSTACK_SIZE=1048576` 写在构建程序中，DOS 依赖平台的缺省 | 同一个事实（需要 1 MiB 的栈）按链接器各写一次 | 通用键 `stack_size` 的证据；已定本轮不加，记录 |
+| X7 | 每个作业约 15 行安装 xlings 与 mcpp，带重试 | 没有公开的安装动作（mcpp 自己用仓库内的 `bootstrap-mcpp`） | 候选：`mcpp-community/setup-mcpp`。**评审项** |
+| X8 | 插件版本须与平台构建时的版本一致，工程写死 `0.20.0` | N45 | 本轮：8.3；之后工程写范围 |
+| X9 | CI 以 `find` 在 `target/` 下查找产物与打包目录 | 无：机器输出已有（docs/50） | 工程侧改用机器输出 |
+
+### 13.2 工程中已经过时的绕行
+
+| # | 做法 | 实测 | 处理 |
+|---|---|---|---|
+| Y1 | 为第二个程序另写一个入口文件，只为带上一个不同的宏 | mcpp 2026.11.16.1：两个目标共用同一个 `main`、`defines` 不同时，各自得到自己的目标文件，运行结果分别正确 | 删除包装文件，两个目标指向同一个入口 |
+| Y2 | FreeBSD 上直接指名包内的 okrun，绕过启动器 | N20 已在第一部分处理 | 以启动器验证后去掉 |
+
+### 13.3 通用设施中有没有为这个工程写死的内容
+
+| 检查 | 结果 |
+|---|---|
+| 检索 mcpp 的源码与模块、mcpp.plugins、dirun、openkal-platform、openkal-uefi、openkal-dos、openkal-musl 中的工程名与脚本名 | 没有。引擎中出现的命令解释器名字是 Windows 宿主的解释器（钩子的执行），与工程无关 |
+| ovmf 配置中的引用规则与结束标记 | 是 UEFI Shell 的通用规则，不含工程的内容 |
+| DOS 的 1 MiB 缺省栈 | 由这个工程暴露（每层约 80 KiB），取值是 PE 的行业缺省，写在数据中并可覆盖 |
+| N43 的参数截短 | edk2 Shell 的通用缺陷，任何带连续空白的参数都会遇到 |
+| N48 的命名规则 | 尚未实现；建议的规则以行的数据表达，不识别任何系统名 |
+
+### 13.4 正确地留在工程中的内容
+
+- 工程对 C 库的假设：`cfg(c-abi = "musl")` 下的宏、DJGPP 的替代实现。选择器是通用设施，事实是工程的。
+- 网页模板、版本资源、测试脚本与期望输出。
+- Emscripten 的链接选项中属于程序自身行为的部分（`SUPPORT_LONGJMP`、文件系统的选择）。
+
+### 13.5 覆盖度
+
+| 上游声明支持的系统 | 状态 |
+|---|---|
+| Linux、macOS、Windows、Android、FreeBSD、DOS、Web，以及 openkal 映像与 UEFI | 已有行（22 个目标） |
+| OpenBSD、NetBSD、illumos | 本轮（8.5） |
+| Haiku、Hurd、PureDarwin | 之后经 `mcpp.platforms` 的收录流程加入 |
+| System V R4 | 以系统自带的 C 编译器构建，没有 LLVM 的目标；不能以行的方式到达，记录为范围之外 |
+
+## 14. 被否定的方案
 
 | 方案 | 否定的原因 |
 |---|---|
@@ -484,18 +565,28 @@ xim-pkgindex（sysroot）─> 三个新平台包 ─> mcpp-index（新平台包�
 | 用插件包装 runner 来投递运行文件 | 运行文件属于运行期，插件在构建期执行；还需要复制平台 runner 的命令行 |
 | 为 `mcpp::deploy` 增加参数（v1） | 构建程序可以自己计算（R5） |
 | dirun 读回程序写下的文件（v1） | 没有读者（R9） |
-| `[platforms]`（v1 的 V1） | 会接管平台列出的宿主行；是新的选择机制；没有功能缺口（R10） |
+| `[platforms]`（v1 的 V1） | 会接管平台列出的宿主行；是新的清单概念。由平台列查索引取代（6.2） |
+| 每个系统一个平台包、各一个仓库（v2） | 分散，三条发布链；系统的版本本来就在行的数据中 |
+| 新行只做构建，运行另行立项（v2） | 已定的内容不拆到以后 |
 | 把栈放在块的低端，越界离开描述符界限（第一部分 13.13 的第 3 条） | 平坦模型下需要移动全部段的地址 |
 | ovmf 直接改用 QEMU 的可写 vvfat（`fat:rw:`） | QEMU 文档说明它不可靠，写入可能损坏宿主目录 |
-| 一个 `unix-platform` 包含三个系统（v1） | 名不副实；版本无法跟随各自的系统版本（R12） |
+| 名字 `unix-platform`、`sysroot-platform` | 限定了收录的范围；`mcpp.platforms` 与 `mcpp.plugins` 对称 |
 
-## 14. 待评审的决定点
+## 15. 决定与待评审的点
 
-1. 四种角色与各自的归属（3.1、4.3 末尾的表）。
-2. `deploy` 的条目语法：字符串形式、通配符、`name`，落点规则；键名用方案 A（4.1、4.2）。
-3. 发布文件用 `[package] license_files`，引擎统一放到 `share/licenses/<包名>/`，覆盖静态依赖（4.3）。
-4. 运行文件的名字：`--file` 与 `[test] files`（推荐），或 `--input` 与 `inputs`（5.2）；工作目录的规则与粒度（5.3）。
-5. `[platforms]` 本轮不做（6.2）。
+**已定（2026-11-16 的评审）：**
+
+1. 四种角色与各自的归属（3.1、4.3）。
+2. `deploy` 的条目语法与方案 A（4.1、4.2）。
+3. `[package] license_files`，带缺省值，引擎统一放到 `share/licenses/<包名>/`（4.3）。
+4. 运行文件：`--file` 与 `[test] files`；工作目录的规则，每个测试程序一个目录（5.2、5.3）。
+5. 平台列由索引补充，取代 `[platforms]`（6.2）。
 6. dirun 自带 FAT32 映像的生成，不做读回（8.4）。
-7. 新行分两步；每个系统一个平台包（8.5）。
-8. DOS 的缺省栈大小写在平台行的数据中（8.2）。
+7. 新行在一个 PR 中完成构建与运行；`mcpp-community/mcpp-platforms`，包 `mcpp.platforms`，一个包多行（8.5）。
+8. DOS 的缺省栈大小写在平台行的数据中；通用键 `stack_size` 本轮不加（8.2）。
+
+**待评审（第 13 节新提出）：**
+
+1. N48：行的数据陈述后缀是否为加载所必需，必需的后缀不被工程的名字模板去掉（13.1 X5）。
+2. 本轮是否为 FreeBSD 的行加上 runner，与三个新系统使用同一机制（13.1 X3）。
+3. 是否提供公开的安装动作 `mcpp-community/setup-mcpp`（13.1 X7）。
