@@ -538,6 +538,11 @@ required_features = ["gui"]                   # only built when feature `gui` is
 > 分发包需要表达的意思。在 mcpp 2026.8.18.1 之前两者逐字节相同，所以
 > 没有拼法能表达「什么都没有」，`src/` 下留下的任何文件都会被卷进来。
 
+> **不含模式的路径指名一个文件**（2026.11.16.1+）。不含 `*`、`?`、`[`、`{` 的 `sources` 条目指名一个
+> 文件，文件不存在时报错，并指出陈述它的表（`[build]`、`[target.'<sel>'.build]`、`[features.<f>]`）：
+> 此前它被跳过，构建在导入该文件所提供模块的地方失败。取入存储的包由其使用者无法修改，其中的这类条目是警告。构建中 action 或构建程序写出的文件属于构建。
+> 匹配为空的模式不选中任何文件，一个目标上的选择可以为空。
+
 > **`**/` 代表整段目录。** 在 `sources` 以及沿用其文法的每一处 glob 中，
 > `**/` 匹配零个或多个目录，其后的部分从一个路径段的开头算起：
 > `**/main.cpp` 选中每个 `main.cpp`，而不选中 `src/domain.cpp`。`*` 只在
@@ -983,6 +988,7 @@ bmi_schedule = "off"     # auto (default, = off) | on | off
 
 使用 GCC 且 `bmi_schedule = "on"` 时，普通编译与分离的代码生成共用同一个 `jobs` 总上限
 （2026.11.7.1+）。额外的调度和等待任务不增加编译器进程数量。
+链接共用同一上限（2026.11.16.1+）：同时就绪的链接按编译的并发数运行，而不是全部同时运行。
 取消构建会结束本轮普通编译器和分离的编译器。紧接着的构建等待它们完成清理后
 才启动新的编译器；未完成的输出会重新构建。已完成模块的 object 缺失时，
 该次构建会重新生成它。输入和输出均不变的构建仍不进行编译。
@@ -1422,7 +1428,8 @@ runner = { cmd = ["okrun", "{}"], host = "same-arch", exclusive = false }
 | `tools.<name>` | 为本机构建一个工具的包，或 `{ program = "<name>" }` |
 | `link` | `driver`、`flags`、`start`、`script`、`inputs`、`exe`、`shared`、`seal` |
 | `carrier` | `{ package, section, main }`：`--mode self-contained` 构建的程序 |
-| `runner` | 一个 argv，或 `{ cmd, host, exclusive }`：`host = "same-arch"` 只在产物架构的机器上运行它 |
+| `runner` | 一个 argv，或 `{ cmd, host, hosts, exclusive, requires, enabled, longlived }`：`host = "same-arch"` 只在产物架构的机器上运行它；不含 `cmd` 的表调整其下一层的 runner，如 `{ enabled = true }` 启用数据陈述 `enabled = false` 的 runner（2026.11.16.1） |
+| `runners.<name>` | 具名 runner 的同一种 argv 或表（表形式 2026.11.16.1） |
 
 `cfg(platform = "<name>")` 按平台选择；`platform` 本身不能写在这样的选择器下。同样的键也从
 `~/.mcpp/config.toml` 读取。平台包在 `[platform]` 下陈述它们，`[host] platform` 选择构建程序的平台。
@@ -1526,6 +1533,9 @@ cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
 ldflags  = []
 ```
+
+**标志列表的顺序。** `cflags`、`cxxflags` 与 `ldflags` 各自按 `[build]` 的、profile 的、`[target.<selector>.build]` 的
+顺序进入命令：编译器或链接器取两个词中后者时，目标块的生效（2026.11.16.1 实测）。
 
 **cl.exe 上的调试信息（2026.11.7.1+）。**`debug = true` 以 `/Z7` 编译：每个对象携带自己的调试信息。
 `/Zi` 与 `/ZI` 把全部编译的调试信息经由 mspdbsrv.exe 写入同一个 PDB；该服务在启动它的编译结束后继续存在，
@@ -1874,8 +1884,8 @@ icon = "assets/app.ico"
 | `version-info` | 布尔值 | `false` 退出自动生成版本资源 |
 | `[resources.version-info]` | 表 | `company`、`product`、`description`、`copyright`、`original-filename`、`internal-name` |
 
-**只有 PE 目标会*编译*它。** 在 Linux 与 macOS 上，这一节*不适用*：
-没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
+**只有程序由 Windows 运行的目标会*编译*它**：执行系统为 Windows 的 PE 行。在其他目标上这一节*不适用*——
+Linux、macOS，以及由其他系统加载的 PE 行，如 `x86_64-uefi`（2026.11.16.1）：没有资源单元、没有诊断、构建逐字节相同。**不需要**（也不能用）一个
 `cfg(windows)` 谓词——写一次，无条件生效即可。
 
 资源属于拥有可执行程序或共享库的包。依赖的 executable artifact 与共享库在通过
@@ -1989,6 +1999,12 @@ discover = ["tests/**/*.cpp"]    # the default
 | `split` | `"file"`、`"case"`、`"auto"` 或 `"none"` | 使用测试协议的程序的运行方式：按用例所在文件各一个进程（默认）、每个用例一个进程、按文件且把运行存储测得长于其份额的文件划分为用例组（`"auto"`，2026.11.13.1+），或只运行一次 *(2026.11.9.1+)* |
 | `link` | `"used"` 或 `"objects"` | `"used"`（默认）：测试只链接它用到的部分（`--gc-sections`、`-dead_strip`）；`"objects"`：保留每个目标文件的全部内容 *(2026.11.9.1+)* |
 | `store` | 目录或 `"none"` | 运行以 mtest 存储的形式保存的位置，相对项目；默认 `target/mtest`；`"none"` 不保存 *(2026.11.9.1+)* |
+| `features` | feature 名数组 | 包自身的测试构建在默认 feature 与 `--features` 之外打开的 feature；每个都须是 `[features]` 声明的 feature *(2026.11.16.1+)* |
+
+`[target.'<sel>'.test] discover` 为谓词选中的目标向 `discover` 追加 glob，如同条件 `[build] sources`
+追加源文件；以 `!` 开头的 glob 从整个集合中移除它匹配的文件 *(2026.11.16.1+)*。这是该表唯一的键：其它键
+决定测试构建的形态，而不是增加它的输入。测试在依赖解析之前发现，所以基于目标侧层（`kernel-abi`、`c-abi`
+等）的谓词被拒绝。
 
 这些 glob 使用与 `[build] sources` 相同的词汇。一个测试的名字，是它
 相对第一条匹配到它的 glob 所在的固定目录的路径，去掉扩展名。两个

@@ -721,8 +721,10 @@ target/dist/hello-0.1.0-openkal/
 
 其余的腿逐条规划、一起构建（`Packed leg <triple>`）。启动器由平台的 `runner` 生成：POSIX 脚本以自身目录的上一级为
 包的根，按 `uname -m`（`x86_64`、`amd64` → `x86_64`；`aarch64`、`arm64` → `aarch64`）选择架构目录，Git Bash、MSYS 与
-Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的参数启动运行器，先在 `libexec/<runner>/<os>-<arch>/`
-中、再在 `PATH` 上查找运行器。Windows 启动器是为 `x86_64-windows-gnu` 构建的引擎的程序：从自身路径找到包，选本机
+Cygwin 的 shell 交给 `bin/<name>.exe`，以该目录中的映像与自身的参数启动运行器。携带运行器的包启动
+`libexec/<runner>/<os>-<arch>/` 中的运行器，本机没有时以状态 126 退出，写出本机与包所含的系统；不携带运行器的包在
+`PATH` 上查找。`<os>` 是系统表中 `uname -s` 一列与之相等的系统（`linux`、`macos`、`freebsd` 等）。`--all-programs`
+时包中每个程序都有自己的一对启动器 `bin/<name>` 与 `bin/<name>.exe`。Windows 启动器是为 `x86_64-windows-gnu` 构建的引擎的程序：从自身路径找到包，选本机
 架构的映像，以同样的方式启动运行器；不生成 `.cmd`。构建的平台为该行提供宿主安排时，启动器在 mcpp 的 openkal 行固定的
 平台上构建，而不是项目选择的平台上，因为它使用的 `mcpplibs.os` 版本固定了该平台的 openkal。包中没有本机架构时以状态 126 退出，写出两者。
 `[runtime] deploy` 放置的文件位于每条腿的映像旁边。

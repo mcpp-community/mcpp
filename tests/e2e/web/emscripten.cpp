@@ -221,6 +221,33 @@ E2E emscripten{"emscripten", [] {
         expect(fatal(e2e::contains(s::text(r), "\"wasm\" or \"js\""))) << "the refusal does not name the values: " << s::text(r);
     };
 
+    "1091 an emscripten build catches and packs without its module"_test[s::elf] = [] {
+        // The row's exception model applies where the project states none: the program catches
+        // (N26). A link with -sSINGLE_FILE=1 writes no module: the build and a clean pack succeed,
+        // and the module an earlier link wrote is removed, not packed (N33).
+        if (!have_emsdk() || !s::on_path("node")) skip("1091 -- no emsdk payload or node on this machine");
+        s::project app(s::case_dir() / "app", {{"src/main.cpp", "import std;\nint main() {\n    try { throw std::runtime_error(\"boom\"); }\n    catch (std::exception const& e) { std::println(\"caught: {}\", e.what()); }\n}\n"}});
+        const std::string base = "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[target.wasm32-emscripten]\nrunner = [\"node\"]\n";
+        app.write("mcpp.toml", base);
+        auto r = app.mcpp({"run", "--target", "wasm32-emscripten"});
+        expect(fatal(e2e::succeeded(r) && s::has_line(s::text(r), "^caught: boom$"))) << "the row's model did not catch: " << s::text(r);
+        const auto bin = s::find_file(app.at("target/wasm32-emscripten"), "app.js");
+        expect(fatal(bin.has_value())) << "no launcher";
+        const auto module = bin->parent_path() / "app.wasm";
+        expect(fatal(fs::exists(module))) << "the ordinary link wrote no module";
+        app.write("mcpp.toml", base + "\n[target.wasm32-emscripten.build]\nldflags = [\"-sSINGLE_FILE=1\"]\n");
+        r = app.mcpp({"build", "--target", "wasm32-emscripten"});
+        expect(fatal(e2e::succeeded(r))) << "a single-file web link failed: " << s::text(r);
+        expect(fatal(!fs::exists(module))) << "the earlier link's module is still beside the launcher";
+        const auto linked = fs::last_write_time(*bin);
+        r = app.mcpp({"build", "--target", "wasm32-emscripten"});
+        expect(fatal(e2e::succeeded(r))) << "the second build failed: " << s::text(r);
+        expect(fatal(fs::last_write_time(*bin) == linked)) << "a link without its module is linked again";
+        r = app.mcpp({"pack", "--target", "wasm32-emscripten", "--pkg-format", "dir"});
+        expect(fatal(e2e::succeeded(r))) << "a single-file web link did not pack: " << s::text(r);
+        expect(fatal(!s::find_file(app.at("target/dist"), "app.wasm").has_value())) << "a module was packed";
+    };
+
     "1079 an emscripten rows longjmp model round trips"_test[s::elf] = [] {
         // `longjmp = "wasm"` makes a non-local exit over two call levels round-trip; on a Linux
         // row it is refused naming that row's os.

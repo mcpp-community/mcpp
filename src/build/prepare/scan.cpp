@@ -246,6 +246,16 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
         }
         return mcpp::modgraph::scan_packages(scannedPackages, closures);
     }();
+    // A `sources` entry that names a file which is not there (#938) stops a
+    // build of the tree it is written in, and is a warning in a package
+    // fetched into a store: its consumer cannot change it, and an engine that
+    // refused it would refuse a release that built before.
+    for (std::size_t i = 0; i < state.packages.size(); ++i) {
+        if (!state.compilesHere(i)) continue;
+        auto& into = state.editablePackage(i) ? state.scan.errors : state.scan.warnings;
+        for (auto& e : mcpp::modgraph::unnamed_sources(state.packages[i].root, state.packages[i].manifest))
+            into.push_back(std::move(e));
+    }
     if (!state.scan.errors.empty()) {
         std::string msg = "scanner errors:\n";
         for (auto& e : state.scan.errors) msg += "  " + e.format() + "\n";

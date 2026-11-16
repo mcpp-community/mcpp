@@ -186,3 +186,20 @@ UTest a_file_without_a_suffix_is_no_program{"RunnerLookup/AFileWithoutASuffixIsN
 }};
 
 #endif
+
+#if defined(_WIN32)
+// R2, A3: a name with a directory and no suffix takes the system's suffix, as a bare name does;
+// the file without one is not a program on Windows.
+UTest a_name_with_a_directory_takes_the_systems_suffix{"RunnerLookup/ANameWithADirectoryTakesTheSystemsSuffix", [] {
+    auto root = std::filesystem::temp_directory_path() / "mcpp-runner-lookup-dir-suffix";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "tools");
+    { std::ofstream o(root / "tools" / "x.cmd"); o << "@echo off\r\n"; }
+    { std::ofstream o(root / "tools" / "y"); o << "#!/bin/sh\n"; }
+    auto l = locate((root / "tools" / "x").string(), {}, "");
+    expect(fatal(l.program.has_value()));
+    expect(eq(l.program->filename().string(), std::string("x.cmd")));
+    expect(!locate((root / "tools" / "y").string(), {}, "").program.has_value());
+}};
+#endif
+

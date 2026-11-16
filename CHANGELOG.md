@@ -4,6 +4,148 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [Unreleased]
+
+## [2026.11.16.1] - 2026-11-16
+
+### Changed
+
+- The bundled xlings is 2026.11.16.1. On Windows it replaces a SubOS
+  description while another process reads it, where a concurrent install
+  failed with `Failed to write file: ...\.xlings.json` (xlings#715), and a shim
+  passes an argument holding `"`, `&`, `%` or `^` whole.
+
+### Added
+
+- `[target.'<sel>'.test] discover` selects a package's test programs by
+  target: its globs join `[test] discover` for the targets the predicate
+  selects, and a `!` glob removes tests there. A package on the Web holds a
+  test that needs a native-only dev-dependency without a second package (#942).
+- `[test] features` names the features a package's own test build turns on.
+  The tests are a consumer of the package and this is their request: `mcpp
+  build`, the programs the tests run and every other consumer keep the
+  package's defaults, and in a workspace each member's request stays on its own
+  edge (#941).
+- `x86_64-linux-android` runs in the Android Emulator on an x86_64 Linux
+  machine, once enabled: dirun (>= 0.4.0) boots the API 34 system image
+  through the image package's profile, and the target's runs do not overlap.
+  A provider's runner states `exclusive` (G7).
+- `mcpp::runner_spec` states a runner in a build program as the table of
+  data: `.arg()`, `.require()`, `.hosts()`, and `host`, `longlived`,
+  `exclusive`, `enabled` (protocol 19). `{pkg:<name>}` names a program outside
+  a package's `bin/`, installed by the first run. A name stated by
+  `runner_spec` and by the token calls is refused (R2).
+- A runner states `enabled = false` when its first use fetches a whole machine
+  image or an emulator, or leaves state outside the build tree and the package
+  store. `mcpp run` refuses it with status 2 and `mcpp test` leaves the tests
+  built and not run, naming `[runner-not-enabled]`, the packages its first use
+  installs and the ways of enabling it; nothing is installed first. A table
+  without `cmd` in `config.toml` or the project enables it (`runner = { enabled
+  = true }`), `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true` enables it once, and
+  `mcpp run --runner <name>` enables the runner it names. A runner whose `cmd`
+  a nearer tier replaces is enabled unless stated (R1).
+- The Windows rows on an x86_64 Linux machine state Wine as their runner
+  (`xim:wine@11.0`, `host = "same-arch"`), not enabled by default (X1).
+- A named runner takes the table of the default runner (`runners.<name> = {
+  cmd = [...], longlived = true, enabled = false }`) and merges by the same
+  rule; `longlived` states in data what `runner_longlived` states in a build
+  program. A provider's runner states `host` and `enabled` (R2).
+- The execution table (`[[platform.executes]]`, SPEC-016 §2.4): a machine runs
+  the programs of another architecture where it is stated, `linux-x86_64`
+  executing `i686`. There a `same-arch` runner is built for the artifact's
+  architecture and started on this machine, and a launcher whose package lacks
+  this machine's architecture takes one the machine executes: an i386 image
+  runs on x86_64 Linux through the i686 runner (design 2026-11-15 N23).
+- A row's `companions` (`.wasm` on wasm32-emscripten): removed before each
+  link, staged when the link wrote one, not an error when absent. A clean pack
+  with `-sSINGLE_FILE=1` failed, naming the missing module, and an earlier
+  link's module was packed beside a launcher that embeds its own (N33).
+
+- `mcpp::pack_program("<program>")` (build-program protocol 19): a pack-format
+  provider states the program of the package being packed that it assembles
+  from, and `mcpp pack --pkg-format <format>` with no program named packs that
+  program. A program named on the command line outranks it; providers that
+  state different programs, or a program the build does not have, are refused
+  by name (design 2026-11-15 N30).
+- A pack whose format provider submitted nothing lists, in the refusal, the
+  warnings the provider stated in that pass (`mcpp::warning`, `mcpp::report`)
+  as its reasons (N30).
+
+### Changed
+
+- A wasm32-emscripten build whose project states no `[abi] exceptions` uses
+  WebAssembly exception handling, the row's `exceptions = "wasm"`: a C++
+  exception is caught, and `setjmp`/`longjmp` follow the same model. The SDK's
+  default left catching off. `exceptions = "js"`, `true` or `false` states
+  another model or none (N26).
+- A package that carries its runner (`--mode self-contained`) starts only the
+  runner it carries for this machine, and a machine it holds none for exits
+  with status 126, naming the machine and the systems the package holds. The
+  POSIX and the Windows launcher fell back to a runner on `PATH`, which ran
+  another release's runner (design 2026-11-15 N20).
+- The POSIX launcher names the system by the system table's `uname` column, so
+  a FreeBSD machine finds `libexec/<runner>/freebsd-<arch>/`; it looked for
+  `FreeBSD-<arch>` (N20).
+
+### Fixed
+
+- A single file named for a system where the platform's runner does not exist
+  (`--systems macos` for an x86_64 image whose platform names no
+  `macos-x86_64` runner host) is refused before the build, by the reading
+  `--systems all` applies to leave it out; it was refused after the build.
+- `mcpp test --guide` reads the frameworks from the resolved graph and plans,
+  scans and builds nothing; at a workspace root it names the frameworks of
+  every member. It planned and built the whole workspace first (#932).
+- `mcpp test` over several members plans a configuration group's programs
+  together, as `mcpp build --workspace` does. Each member's programs were
+  planned alone, with that member's features for the packages it shares, and
+  rebuilt a shared module into the group's directory: three compiles of one
+  unchanged module in a run, and on Windows a failed rewrite of a module
+  another process had mapped (#936).
+- Under `bmi_schedule = "on"` with GCC a link holds a permit of the build's
+  compiler limit. Ninja runs six jobs per compiler there and only compilers
+  were bounded, so links that became ready together all ran at once: mcpp's
+  26 test programs relinked together at 1 to 1.8 GB each and a 16 GB machine
+  ran out of memory. A POSIX link is published through a temporary name by
+  `mcpp link-output --temporary`, one command, so the permit is held until the
+  artifact is in place.
+- A `sources` entry without a pattern that names no existing file is an error
+  naming its table, and a warning in a package fetched into a store. It was
+  skipped, and the build failed at an importer of its module (#938).
+- On Windows a runner named with a directory and no suffix (`../tools/x`)
+  takes the system's suffixes as a bare name does; it could not be started.
+  A `.bat` or `.cmd` program, which the system starts through its command
+  interpreter (the system table's `command-scripts`), is refused an argument
+  holding `%`, `^`, `&`, `|`, `<`, `>`, `"` or a line end, which the
+  interpreter rewrote or ran as a command (R2).
+- A name a build program, this machine or the project states for a program
+  (`mcpp::artifact_name("exe", "{name}")`) is followed on a built-in row as on
+  a platform's: a program named `cmd.exe` was `cmd.exe.exe` on
+  x86_64-windows-gnu and `cmd.exe` on x86_64-windows-musl (design 2026-11-15
+  N9).
+- A linked program is written under a temporary name that keeps its extension
+  (`<dir>/.<file>`, then renamed). DJGPP's driver names a second file after the
+  output's extension, so `<out>.tmp` left two programs in `bin/` on
+  i586-dos-djgpp (N9).
+- The carrier of an image whose row the built-in table keeps planned and the
+  project's platform lists with its toolchain is built (an i686 image's
+  i686-linux-musl runner); it was refused as a row this mcpp builds no program
+  for (N23).
+- `[resources]` and the application manifest are compiled only for a PE row
+  whose execution system reads them, the system table's `resources = true`
+  (the built-in `windows` entry); the UEFI row, a PE image the firmware
+  loads, failed the build with them (N16).
+- Two `[build-dependencies]` requests of one package that no version
+  satisfies are refused as such, naming both requesters, the merge's reason and
+  the `override` line. The engine tried to rename the second copy's modules,
+  which does not separate a build program's modules, and failed on the
+  requester's sources with a message about staging (a project asking for
+  `mcpp:plugins` 0.21.0 over a platform asking for 0.20.0: `stage: no source
+  files found under '<platform>'`) (design 2026-11-15 N29).
+- `mcpp pack --all-programs` of an ok image gives every program its own pair of
+  launchers, `bin/<name>` and `bin/<name>.exe`; only the chosen program had them
+  (N11).
+
 ## [2026.11.15.1] - 2026-11-15
 
 ### Added

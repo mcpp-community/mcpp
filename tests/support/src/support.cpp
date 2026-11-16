@@ -351,8 +351,16 @@ void inherit(const fs::path& h, bool whole) {
             fs::create_directories(h / "registry/data");
             link_or_copy(user / "registry/data" / name, h / "registry/data" / name);
         }
-    if (whole && env("MCPP_INHERIT_SUBOS").value_or("1") != "0" && fs::is_directory(user / "registry/subos", ec))
-        link_or_copy(user / "registry/subos", h / "registry/subos");
+    // THE SUBOS IS THE CASE'S OWN COPY, ITS LINKS KEPT AS LINKS. A link to the user's subos made
+    // it shared state: an install by the case wrote into the user's subos, and an install in the
+    // user's home by a case beside it appeared in this one's. The subos is a farm of links (about
+    // 1600 on a developer's home), so the copy costs what the link did.
+    if (whole && env("MCPP_INHERIT_SUBOS").value_or("1") != "0" && fs::is_directory(user / "registry/subos", ec)
+        && !fs::exists(fs::symlink_status(h / "registry/subos", ec))) {
+        fs::create_directories(h / "registry");
+        fs::copy(user / "registry/subos", h / "registry/subos",
+                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+    }
     if (whole && env("MCPP_INHERIT_CONFIG").value_or("1") != "0" && fs::is_regular_file(user / "config.toml", ec))
         fs::copy_file(user / "config.toml", h / "config.toml", fs::copy_options::overwrite_existing, ec);
     if (fs::is_directory(user / "bin", ec))
@@ -1185,13 +1193,19 @@ std::vector<process_entry> processes() {
         const auto name = e.path().filename().string();
         if (name.empty() || !std::ranges::all_of(name, [](char c) { return c >= '0' && c <= '9'; }))
             continue;
+        // A process that ends while it is read is no longer one: its files then fail with ESRCH,
+        // which the stream's buffer throws ("error reading the file: No such process").
         process_entry p;
-        p.pid = std::stoi(name);
-        std::ifstream(e.path() / "comm") >> p.name;
-        std::error_code ec2;
-        p.cwd = fs::read_symlink(e.path() / "cwd", ec2);
-        std::ifstream cmd(e.path() / "cmdline", std::ios::binary);
-        p.command_line.assign(std::istreambuf_iterator<char>(cmd), std::istreambuf_iterator<char>());
+        try {
+            p.pid = std::stoi(name);
+            std::ifstream(e.path() / "comm") >> p.name;
+            std::error_code ec2;
+            p.cwd = fs::read_symlink(e.path() / "cwd", ec2);
+            std::ifstream cmd(e.path() / "cmdline", std::ios::binary);
+            p.command_line.assign(std::istreambuf_iterator<char>(cmd), std::istreambuf_iterator<char>());
+        } catch (const std::exception&) {
+            continue;
+        }
         std::ranges::replace(p.command_line, '\0', ' ');
         out.push_back(std::move(p));
     }

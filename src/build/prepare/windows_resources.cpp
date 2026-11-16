@@ -264,7 +264,9 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
     //      see a typo in `icon = …` at all and only the Windows job went red,
     //      which is the same "find out late" failure the hard error exists to
     //      remove. Existence is checked everywhere; only COMPILATION is PE-only.
-    //   3. On a non-PE target nothing is compiled — no units, no warning,
+    //   3. On a target whose programs Windows does not run (not PE, or a PE
+    //      row whose execution system is another, UEFI's) nothing is
+    //      compiled — no units, no warning,
     //      byte-identical build. This is what makes `cfg(windows)` unnecessary
     //      (and it could not be used anyway: the conditional channel carries
     //      BuildInputs only).
@@ -634,7 +636,13 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 return {};
             };
 
-            if (trip.is_pe())
+            // Resources are a property of a program whose system reads them,
+            // not of the PE container: a UEFI application is a PE image the
+            // firmware loads, and `[resources]` compiled into it failed the
+            // build (design 2026-11-15 N16). The system table states it for
+            // the row's execution system (SPEC-016 §2.3).
+            auto const* sys = mcpp::toolchain::target::find_system(trip.execution_system());
+            if (trip.is_pe() && sys && sys->resources)
                 if (auto r = plan_resources(); !r) return std::unexpected(r.error());
         }
     }

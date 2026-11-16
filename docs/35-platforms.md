@@ -100,8 +100,8 @@ runner = ["my-okrun", "{}"]
 |---|---|
 | compile flags, `link.flags` | appended after the platform's; a convention cannot be removed |
 | `link.inputs`, `link.seal` | replaced whole |
-| `layers`, `tools`, `runners` | replaced key by key; `<layer> = false` leaves the layer out |
-| `runner` | the argv is replaced; `host` and `exclusive` are kept unless stated |
+| `layers`, `tools` | replaced key by key; `<layer> = false` leaves the layer out |
+| `runner`, each of `runners` | `cmd`, `requires` and `enabled` are replaced together, and a runner whose `cmd` is replaced is enabled unless stated; `host`, `hosts`, `exclusive` and `longlived` are kept unless stated; a table without `cmd` in `config.toml` or the project adjusts the keys it writes (2026.11.16.1) |
 | every other field | replaced |
 
 The same tables are accepted in `~/.mcpp/config.toml` for one machine. A layer
@@ -317,6 +317,16 @@ machine description is the platform's: a target whose machine differs from a
 built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
 shorthands of a provider.
 
+**A row's companions and exception model (2026.11.16.1+).** `companions = [".wasm"]`
+names the files the link may write beside a program, named after it: they are removed
+before each link, staged when the link wrote one, and not an error when it did not.
+`exceptions` is the model of the row's builds when the project states no
+`[target.<sel>.abi] exceptions`; under `"wasm"` the long-jump model is `"wasm"` too
+(the built-in `wasm32-emscripten` row states `"wasm"`). A machine
+runs another architecture's programs only where the execution table states it
+(`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
+the artifact's architecture and started on this machine.
+
 **A defined row is read as a built-in one (2026.11.10.1+).** Its `march` and
 `link-emulation` reach the compile and an `ld.lld` link (`mcpp why flags` marks them
 `row`); nothing the toolchain payload built for its own host — its libc++ headers,
@@ -401,7 +411,10 @@ it enters below the entries that answer `<arch>-<os>` today
 
 A system that states a `uname` joins a file that carries one program per
 system (`mcpp pack --pkg-format single-file`); the system that states none
-leads the file as its PE. A platform whose runner is built for several systems
+leads the file as its PE. A system whose loader reads a program's resource
+section states `resources = true` (the built-in `windows` entry): a project's
+`[resources]` compile into the programs of its rows, and not into a PE image
+another system loads, such as a UEFI application (2026.11.16.1). A platform whose runner is built for several systems
 states the identity of each:
 
 ```toml

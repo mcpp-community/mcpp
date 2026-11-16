@@ -212,6 +212,8 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.sharedSuffix = set.keep(d.sharedSuffix);
         r.loader = set.keep(d.loader);
         r.descriptorKeys = set.keep(d.descriptorKeys);
+        r.companions = set.keep(d.companions);
+        r.exceptions = set.keep(d.exceptions);
         r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);
         r.defined = true;
         set.rows.push_back(r);
@@ -232,10 +234,14 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         p.runner = set.keep(sp.runner);
         p.runnerHosts = set.keep(sp.runnerHosts);
         p.runnerRequires = set.keep(sp.runnerRequires);
+        p.runnerHost = set.keep(sp.runnerHost);
+        p.runnerEnabled = sp.runnerEnabled;
+        p.runnerExclusive = sp.runnerExclusive;
         set.providers.push_back(p);
     };
     for (auto const& sys : s.systems)
-        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname) });
+        set.systems.push_back({ set.keep(sys.name), set.keep(sys.uname), sys.resources,
+                                set.keep(sys.commandScripts) });
     // A platform the engine's own providers name (openkal-platform) is served by
     // those; its shorthands are not registered twice.
     const bool builtin = std::ranges::any_of(mcpp::toolchain::builtin::kProviders, [&](auto const& b) {
@@ -1050,6 +1056,11 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
         if (here) {
             s.runner.cmd.assign(p->runner.begin(), p->runner.end());
             s.runner.requires_.assign(p->runnerRequires.begin(), p->runnerRequires.end());
+            s.runner.host = std::string(p->runnerHost);
+            s.runner.enabled = p->runnerEnabled;
+            s.runner.enabledSet = !p->runnerEnabled;
+            s.runner.exclusive = p->runnerExclusive;
+            s.runner.exclusiveSet = p->runnerExclusive;
             s.runner.origin = mp::Origin{ mp::Tier::BuiltIn, {}, 0,
                 std::format("the provider '{}' of {}", p->name, state.targetChoice.identity) };
             s.runner.set = true;
@@ -1070,6 +1081,16 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
     mcpp::platform::merge(program, state.m->buildConfig.programPlatform);
     // A build program's runner and named runners (`mcpp::runner`), the BSP
     // spelling of the same fields.
+    // The rest of a runner's table (`runner_spec`, R2): the same fields as
+    // data, so `{pkg:<name>}` and `enabled` mean in a build program what they
+    // mean in a platform.
+    auto table = [](mp::Runner& r, const mcpp::manifest::NamedRunner& f) {
+        r.requires_ = f.requires_;
+        if (!f.hosts.empty()) { r.hosts = f.hosts; r.hostsSet = true; }
+        if (!f.host.empty()) r.host = f.host;
+        if (!f.enabled) { r.enabled = false; r.enabledSet = true; }
+        if (f.exclusive) { r.exclusive = true; r.exclusiveSet = true; }
+    };
     if (!state.m->buildConfig.runner.empty()) {
         program.runner.cmd = state.m->buildConfig.runner;
         program.runner.set = true;
@@ -1079,11 +1100,19 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             program.runner.exclusive = true;
             program.runner.exclusiveSet = true;
         }
+        table(program.runner, state.m->buildConfig.runnerFields);
     }
     for (auto const& [name, nr] : state.m->buildConfig.namedRunners) {
         auto it = state.namedRunnerProvider.find(name);
-        program.runners[name] = mp::Words{ nr.argv, mp::Origin{ mp::Tier::Program, {}, 0,
-            it == state.namedRunnerProvider.end() ? state.m->package.name : it->second }, true };
+        mp::Runner r;
+        r.cmd = nr.argv;
+        r.origin = mp::Origin{ mp::Tier::Program, {}, 0,
+            it == state.namedRunnerProvider.end() ? state.m->package.name : it->second };
+        r.set = !nr.argv.empty();
+        r.longlived = nr.longLived;
+        r.longlivedSet = nr.longLived;
+        table(r, nr);
+        program.runners[name] = std::move(r);
     }
     mcpp::platform::merge(s, program);
     std::vector<mp::Override> config;
@@ -1100,11 +1129,22 @@ mp::Statement platform_statement(const PrepareState& state, std::vector<std::str
             s.runner.cmd = split_words(*e);
             // The command replaces the runner whole, as every other tier's does
             // (`merge`): the packages the replaced one was installed from are
-            // not this command's.
+            // not this command's, and it is enabled unless stated otherwise.
             s.runner.requires_.clear();
+            s.runner.enabled = true;
+            s.runner.enabledSet = false;
             s.runner.origin = mp::Origin{ mp::Tier::Env, {}, 0, envKey };
             s.runner.set = !s.runner.cmd.empty();
         }
+    }
+    // THE ONE-OFF ENABLING (R1): `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED`, the
+    // spelling of the variables beside it, nearest of all.
+    const auto enabledKey = target_env_name(t, "RUNNER_ENABLED");
+    if (auto e = mcpp::invocation::get(enabledKey); e && !e->empty()) {
+        if (*e == "true" || *e == "1") { s.runner.enabled = true; s.runner.enabledSet = true; }
+        else if (*e == "false" || *e == "0") { s.runner.enabled = false; s.runner.enabledSet = true; }
+        else mcpp::diag::warning("runner/enabled", std::format(
+            "{}={} is not true or false (ignored)", enabledKey, *e));
     }
     return s;
 }

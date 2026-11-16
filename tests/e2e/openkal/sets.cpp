@@ -419,7 +419,7 @@ E2E sets{"sets", timeout{std::chrono::minutes{30}}, [] {
             expect(fatal(e2e::succeeded(r))) << "C: --systems all: " << s::text(r);
             for (std::string_view p : {"linux-x86_64", "linux-aarch64", "windows-x86_64", "macos-aarch64", "freebsd-x86_64", "freebsd-aarch64"})
                 expect(fatal(!s::glob(app.at("all"), std::format("sf-0.1.0-{}*", p)).empty())) << "C: no file for " << p << ": " << s::text(r);
-            expect(fatal(e2e::contains(s::text(r), "Not covered macos-x86_64 (no carrier row"))) << "C: the pair without a row is not said: " << s::text(r);
+            expect(fatal(e2e::contains(s::text(r), "Not covered macos-x86_64 (x86_64-macos: "))) << "C: the pair without a carrier is not said: " << s::text(r);
         }
         // D
         r = app.mcpp({"pack", "--target", "openkal", "--pkg-format", "single-file", "-o", "one-file"});

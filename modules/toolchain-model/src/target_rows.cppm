@@ -51,6 +51,12 @@ const Row* find_row(std::string_view triple);
 std::vector<const System*> systems();
 const System* find_system(std::string_view name);
 
+// Whether the machine `host` (`<os>-<arch>`) executes programs of `arch`: its
+// own architecture, or one the execution table states for it (N23).
+bool executes(std::string_view host, std::string_view arch);
+// The execution table itself, for a launcher that carries it as data.
+std::span<const Executes> execution_relations();
+
 // Whether a defined row names this os, or this env under this os: the words the
 // parser accepts beyond its own.
 bool defines_os(std::string_view os);
@@ -156,6 +162,16 @@ const System* find_system(std::string_view name) {
     for (auto const* s : systems())
         if (s->name == name) return s;
     return nullptr;
+}
+
+std::span<const Executes> execution_relations() { return mcpp::toolchain::builtin::kExecutes; }
+
+bool executes(std::string_view host, std::string_view arch) {
+    if (const auto dash = host.rfind('-'); dash != std::string_view::npos && host.substr(dash + 1) == arch)
+        return true;
+    for (auto const& e : mcpp::toolchain::builtin::kExecutes)
+        if (e.host == host && std::ranges::contains(e.arches, arch)) return true;
+    return false;
 }
 
 bool defines_os(std::string_view os) {

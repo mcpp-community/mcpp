@@ -181,9 +181,15 @@ windows = "llvm@{0}"
         r = p.mcpp({"build", "--release", "--toolchain", own});
         expect(fatal(e2e::succeeded(r))) << "--toolchain " << own << " failed:\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "Resolved " + own))) << "--toolchain did not reach toolchain resolution:\n" << s::text(r);
-        if (s::on_linux()) {
+        // An llvm the home holds, as 671 reads it: the case runs in the user's home, and naming an
+        // llvm it lacks installed one there while the other cases read that home (a home cold on a
+        // CI runner, 2026-11-16: llvm/36 inherited the payload half made and its install refused).
+        const auto store = s::shared_home() / "registry/data/xpkgs/xim-x-llvm" / llvm / "bin";
+        if (s::on_linux() && fs::exists(store / "clang++")) {
             r = p.mcpp({"build", "--release", "--toolchain", "llvm@" + llvm});
             expect(fatal(e2e::contains(s::text(r), "Resolved llvm@" + llvm))) << "--toolchain lost to the manifest pin:\n" << s::text(r);
+        } else if (s::on_linux()) {
+            std::println("NOT MEASURED: llvm@{} is not installed in this home", llvm);
         }
 
         (void)p.mcpp({"build", "--release"});

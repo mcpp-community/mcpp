@@ -24,10 +24,23 @@ struct TestTargetSet {
 // `[test] discover` when the manifest says nothing.
 inline constexpr std::string_view kDefaultTestDiscover = "tests/**/*.cpp";
 
+// The globs of the `[target.<sel>.test]` tables whose predicate `targetTriple`
+// matches (empty: the package's `[build] target`, else this machine), in
+// manifest order (mcpp#942). A predicate on a target-side layer is refused:
+// the tests are discovered before the graph is resolved. Defined in an
+// implementation unit, which reads the predicates as prepare reads them.
+std::expected<std::vector<std::string>, std::string>
+conditional_test_globs(const mcpp::manifest::Manifest& m, std::string_view targetTriple);
+
 // 损坏 manifest 时仅提供 best-effort 文件清单；严格调用方仍须走 prepare/validate。
+//
+// `targetTriple` is the target the tests are built for; empty: the package's
+// `[build] target`, else this machine (the rule `workspace_groups` follows).
+// It selects the `[target.<sel>.test]` tables whose globs join the set.
 std::expected<TestTargetSet, std::string>
 discover_test_targets(const std::filesystem::path& manifestRoot,
-                      std::string_view packageFilter) {
+                      std::string_view packageFilter,
+                      std::string_view targetTriple = {}) {
     auto packageRoot = manifestRoot;
     std::optional<mcpp::manifest::Manifest> packageManifest;
 
@@ -53,6 +66,15 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         result.discoverDeclared = true;
     } else {
         result.discover = { std::string(kDefaultTestDiscover) };
+    }
+    // THE TESTS OF THIS TARGET (mcpp#942). A `[target.<sel>.test] discover`
+    // whose predicate the target matches adds its globs to the set, as a
+    // conditional `[build] sources` adds to the sources; a `!` glob removes
+    // what it matches from the whole set.
+    if (packageManifest) {
+        auto conditional = conditional_test_globs(*packageManifest, targetTriple);
+        if (!conditional) return std::unexpected(conditional.error());
+        result.discover.insert(result.discover.end(), conditional->begin(), conditional->end());
     }
 
     // `[test] discover` IN THE VOCABULARY OF `[build] sources` (#634 A5):

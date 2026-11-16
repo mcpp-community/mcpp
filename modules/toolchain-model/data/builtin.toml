@@ -43,6 +43,12 @@
 #                   `-mcmodel` (empty: the driver's default), the multilib
 #                   directory of a C library, extra compile flags, and the
 #                   `ld.lld -m` emulation when clang's driver cannot reach lld
+#   exceptions      the exception model of the row's builds when the project
+#                   states none (`[target.<sel>.abi] exceptions`); under `wasm`
+#                   the long-jump model is `wasm` too
+#   companions      the files the link may write beside a program, named after
+#                   it (`.wasm` beside `app.js`): removed before each link,
+#                   staged when written, not an error when absent
 #
 # Provider keys
 #   name            the provider's name; `builtin:<name>` selects it
@@ -63,9 +69,15 @@
 #   system-headers  the package whose headers state the system's own interfaces,
 #                   read by the steps that compile against them (resources)
 #   runner          how an artifact of the arrangement is started when nothing
-#                   nearer says: `{ cmd = [argv], hosts = [...], requires = [...] }`.
-#                   `{}` is the artifact, `{sysroot}` the arrangement's base;
-#                   `requires` are installed on the first run, never by a build
+#                   nearer says: `{ cmd = [argv], host = "same-arch", hosts = [...],
+#                   requires = [...], enabled = false }`. `{}` is the artifact,
+#                   `{sysroot}` the arrangement's base; `requires` are installed
+#                   on the first run, never by a build. `enabled = false` for a
+#                   runner whose first use fetches a whole machine image or an
+#                   emulator, or leaves state outside the build tree and the
+#                   package store (a VM, an Android emulator, Wine); a project
+#                   or this machine enables it (SPEC-016 §6). `exclusive = true`
+#                   when the runs cannot overlap (a device at one address)
 #
 # ONE ENTRY STATES ONE ARRANGEMENT OF PAYLOADS. A native arrangement and a cross
 # one are two entries, each with its `hosts`; an entry whose facts depend on the
@@ -78,6 +90,12 @@
 #   uname           the word `uname -s` answers there; a file that carries one
 #                   program per system selects by it, and a system without the
 #                   key joins no such file
+#   resources       the system's loader reads a program's resource section: a
+#                   project's `[resources]` compile into its programs (false
+#                   when absent)
+#   command-scripts the suffixes of the files the system starts through its
+#                   command interpreter; an argument holding the interpreter's
+#                   syntax (`%`, `^`, `&`, `|`, `<`, `>`, `"`) is refused
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
@@ -438,6 +456,15 @@ triple   = "wasm32-emscripten"
 tier     = "verified"
 note     = "wasm"
 standard = true
+# WebAssembly exception handling unless the project states another model
+# (design 2026-11-15 N26): a C++ exception is caught, and `setjmp`/`longjmp`
+# take the same mechanism. Emscripten's default leaves catching off, and a
+# program's `catch` was never reached. `[target.<sel>.abi] exceptions` states
+# another model (`"js"`, `true`) or none (`false`).
+exceptions = "wasm"
+# The module Emscripten writes beside the launcher (`app.wasm` beside `app.js`),
+# none under `-sSINGLE_FILE=1` (N33).
+companions = [".wasm"]
 
 # OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
 # `okrun` on Linux, macOS and Windows of that architecture.
@@ -508,6 +535,12 @@ hosts    = ["linux-{arch}", "linux-x86_64"]
 linkage  = "static"
 
 # MinGW-w64: gcc, or clang with the payload as its sysroot (SPEC-016 §6).
+# On an x86_64 Linux machine a Windows program runs through Wine (design
+# 2026-11-15 X1, R1). The runner is not enabled by default: Wine creates a
+# prefix in the home directory on its first run. A project or this machine
+# enables it (`[target.<sel>] runner = { enabled = true }`), once
+# `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`. It runs programs of the machine's
+# architecture (`same-arch`): an aarch64 Windows program is not offered.
 [[platform.provider]]
 name      = "mingw"
 serves    = ["x86_64-windows-gnu"]
@@ -516,6 +549,7 @@ hosts     = ["windows-*", "linux-x86_64"]
 toolchain = "gcc@16.1.0"
 pairs     = ["gcc", "llvm"]
 linkage   = "static"
+runner    = { cmd = ["wine", "{}"], host = "same-arch", hosts = ["linux-x86_64"], requires = ["xim:wine@11.0"], enabled = false }
 
 # MinGW-w64 as a base package (E9): the target side of llvm-mingw (MinGW-w64
 # on UCRT, libc++, libunwind, compiler-rt) beside llvm, on every host and both
@@ -529,6 +563,7 @@ toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 sysroot   = "xim:mingw-w64-sysroot@20261104-2"
 linkage   = "static"
+runner    = { cmd = ["wine", "{}"], host = "same-arch", hosts = ["linux-x86_64"], requires = ["xim:wine@11.0"], enabled = false }
 
 [[platform.provider]]
 name     = "msvc"
@@ -575,9 +610,27 @@ pairs     = ["llvm"]
 linkage   = "static"
 
 # bionic is inside the NDK; no package adds it to another compiler.
+#
+# An x86_64 program runs in the Android Emulator booting the API 34 system image,
+# through the image package's dirun profile (design 2026-11-15 G7, R1): the
+# emulator boots an image of the machine's architecture only (`same-arch`) and
+# starts its device at one console port, so the runs of the target do not
+# overlap (`exclusive`). Not enabled by default: the first run fetches the
+# emulator and a system image. The emulator package is built for linux-x86_64
+# alone, so the aarch64 row states no runner until it serves an aarch64 machine.
 [[platform.provider]]
 name      = "android-ndk"
-serves    = ["*-linux-android"]
+serves    = ["x86_64-linux-android"]
+priority  = 100
+hosts     = ["*"]
+toolchain = "android-ndk@30.0.16248370"
+pairs     = ["android-ndk"]
+sysroot   = "toolchain"
+runner    = { cmd = ["dirun", "--profile", "{pkg:android-system-image}/dirun.toml", "--var", "emulator={pkg:android-emulator}/emulator", "--var", "adb={pkg:android-platform-tools}/adb", "--", "{}"], host = "same-arch", hosts = ["linux-x86_64"], exclusive = true, enabled = false, requires = ["xim:dirun@0.4.0", "xim:android-system-image@34-default-x86_64", "xim:android-emulator@37.1.11-2", "xim:android-platform-tools@37.0.1-2"] }
+
+[[platform.provider]]
+name      = "android-ndk"
+serves    = ["aarch64-linux-android"]
 priority  = 100
 hosts     = ["*"]
 toolchain = "android-ndk@30.0.16248370"
@@ -646,7 +699,25 @@ uname = "FreeBSD"
 
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
-name  = "windows"
+name            = "windows"
+resources       = true
+command-scripts = [".bat", ".cmd"]
+
+# ── Execution relations ──────────────────────────────────────────────────────
+#
+# Executes keys (`[[platform.executes]]`)
+#   host            the machine, `<os>-<arch>`
+#   arches          the architectures whose programs it starts besides its own;
+#                   a runner stated for a machine of the artifact's architecture
+#                   (`host = "same-arch"`) runs there too
+#
+# Only a relation a CI has measured is stated. An x86_64 Linux kernel runs i386
+# programs (IA-32 emulation), which the i686 rows' CI runs on GitHub's x86_64
+# Linux machines (openkal-platform 0.28.0; mcpp e2e `i686`). Windows' WOW64 is
+# not stated until a CI measures an i686 runner there.
+[[platform.executes]]
+host   = "linux-x86_64"
+arches = ["i686"]
 
 # ── Toolchain payloads ───────────────────────────────────────────────────────
 #

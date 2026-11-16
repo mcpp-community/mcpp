@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.2 |
-| 版本 | 1.2 |
-| 最后修改 | 2026-11-12 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1 |
-| 相关设计文档 | `.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md` |
+| 状态 | 评审中 v1.3 |
+| 版本 | 1.3 |
+| 最后修改 | 2026-11-16 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1 |
+| 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
 | 使用文档 | [21 —— 目标三元组](../zh/21-the-target-triple.md)、[35 —— 平台](../zh/35-platforms.md) |
@@ -37,7 +37,7 @@
 
 行的字段：`triple`（`<arch>-<os>[-<env>]`）、`tier`（verified、preview、planned）、`standard`、`exact`、`march`、`mabi`、
 `code-model`、`multilib`、`flags`、`link-emulation`、`clang-triple`、`object-format`、`family`、`data-model`、`exe-suffix`、
-`shared-suffix`、`loader`、`execution`、`descriptor-keys`。
+`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`。
 
 - 一个系统可能用到两种以上 C 库时，身份**必须**含 env；env 即 C 库。业界原生标识无 env 段的系统，其原生身份为两段
   （`aarch64-macos`），其余 C 库以 env 区分（`aarch64-macos-musl`）。
@@ -49,6 +49,12 @@
 - `loader` 是该行的动态程序所写的程序解释器：运行它的机器上的路径（`/lib/ld-linux-aarch64.so.1`）。内置行与平台定义的行
   同一读法；引擎不另持有按架构的加载器表（v1.2）。
 - `execution` 是产物运行的系统，未写时为 os 段。内核相同而系统不同的行**必须**写出它（Android 的行为 `android`）（v1.2）。
+- `exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型；其为 `wasm` 且 `longjmp` 未陈述时，
+  `longjmp` 亦为 `wasm`。
+  `wasm32-emscripten` 为 `wasm`：C++ 异常可被捕获，`setjmp`/`longjmp` 取同一机制；工程以 `exceptions = "js"`、`true`
+  或 `false` 陈述其他模型或不启用（v1.3）。
+- `companions` 是链接可能在程序旁写出、以程序命名的文件，后缀替换程序的后缀（`app.js` 旁的 `app.wasm`）。每次链接前
+  删除；链接写出的被暂存；缺席不是错误（`-sSINGLE_FILE=1` 不写）（v1.3）。
 
 ### 2.2 内置行
 
@@ -70,12 +76,32 @@
 |---|---|
 | `name` | 该系统各行的 os 段 |
 | `uname` | `uname -s` 在该系统上的回答；每个系统一个程序的单文件按它选择程序 |
+| `resources` | 该系统的加载器读取程序的资源节；工程的 `[resources]` 编入其行的程序，未写为 false（v1.3） |
+| `command-scripts` | 该系统经命令解释器启动的文件的后缀；在该系统上启动这类文件时，含解释器语法的参数被拒绝（SPEC-013 §10）（v1.3） |
 
 - 陈述了 `uname` 的系统可以进入多系统单文件；表中未陈述 `uname` 的系统，其程序是文件开头的 PE；表中没有的系统被拒绝，
   并指名 `[[platform.system]]`。
 - `mcpp pack --systems all` 取表中的全部系统，加上平台定义了行的系统；其中没有程序可构建的对逐个写为未覆盖（SPEC-014 §4.5）。
 - 同一系统陈述两次时取先陈述者；内置数据先于平台。
+- 资源随行的 `execution` 所指系统而定，不随 PE 容器：UEFI 应用是固件加载的 PE，不编入资源。内置数据中 `windows` 陈述
+  `resources = true`（v1.3）。
+- 内置数据中 `windows` 陈述 `command-scripts = [".bat", ".cmd"]`（v1.3）。
 - 引擎源码中系统名的出现次数由检查持有（`.github/tools/check_system_names.py` 与其基线），只许减少。
+
+### 2.4 执行关系（v1.3）
+
+`[[platform.executes]]` 陈述一台机器除自身架构外还执行哪些架构的程序。只陈述 CI 实测过的关系。
+
+| 键 | 语义 |
+|---|---|
+| `host` | 机器，`<os>-<arch>` |
+| `arches` | 它执行的其他架构 |
+
+- `host = "same-arch"` 的 runner 在执行该架构的机器上即可运行：引擎为产物的架构构建平台的 runner（载体不携带映像的
+  形式），在本机启动（`mcpp run`、`mcpp test`）。
+- 启动器在包中没有本机架构时，按表取本机执行的架构（POSIX 与 Windows 启动器同一数据）。
+- 内置数据：`linux-x86_64` 执行 `i686`。
+- 载体所在的行若为 planned，而构建它的平台以工具链列出该行，则该行可构建（与工程自身的构建同一规则）。
 
 ## 3. 提供者
 
@@ -166,6 +192,14 @@
   环境变量（SPEC-013 §4.5）。`hosts` 列出该运行器所在的宿主，空为任一宿主。模板中 `{}` 是产物，`{sysroot}` 是该安排的
   基座，`{pkg:<name>}` 是 `requires` 中该名字的包的根；模板的程序先在 `requires` 的包中查找，再查 PATH。`requires` 的包
   在第一次 `mcpp run` 或 `mcpp test` 时按工具链的同一方式安装；构建不安装它们。
+- **提供者运行器的 `host` 与 `enabled`（v1.3）。** 提供者的 `runner` 取平台运行器的 `host`（`same-arch`、`any`）与
+  `enabled`（SPEC-013 §10）。首次使用需取得整机镜像或模拟器、或在构建树与包仓库之外留下状态的运行器，数据**应当**陈述
+  `enabled = false`：虚拟机、Android 模拟器与 Wine（在家目录建立 prefix）关闭；用户态模拟器（qemu-user）、okrun、node
+  不关闭。内置数据：`x86_64-windows-gnu` 与 `aarch64-windows-gnu` 的 MinGW 提供者在 `linux-x86_64` 上陈述
+  `{ cmd = ["wine", "{}"], host = "same-arch", requires = ["xim:wine@11.0"], enabled = false }`；`same-arch` 使 aarch64 的
+  Windows 程序不经它运行。提供者的 `runner` 也可陈述 `exclusive`（该目标的运行不重叠）。`x86_64-linux-android` 的提供者在
+  `linux-x86_64` 上陈述经 dirun 与 API 34 系统镜像包的配置运行的 runner，`same-arch`、`exclusive = true`、
+  `enabled = false`；`aarch64-linux-android` 不陈述 runner（模拟器包不服务 aarch64 机器）。
 - **运行器的身份（v1.2）。** 平台的 `runner` 可陈述 `built-as = { "<os>-<arch>" = "<身份>" }`：为该宿主对构建的运行器程序
   是哪个身份。自带运行器的包按它为各系统构建运行器；引擎只对它一向认识的三个系统保留约定，其余系统无此陈述即无程序。
 - **`link.flags` 与链接驱动（v1.1）。** `[platform.link] flags` 只交给 ld.lld；`driver = "compiler"` 的平台陈述它时，构建
@@ -200,3 +234,4 @@
 | 1.0 | 2026-11-09 | 初版：行、提供者、选择、平台定义的行、C 环境、执行、报告与锁 |
 | 1.1 | 2026-11-10 | `clang-triple`；内置行的系统词；FreeBSD 两种身份与 32 位 planned 行；提供者 sysroot 为基座陈述的最后一级；`mingw-llvm` 与 `aarch64-windows-gnu`；C 库由平台描述的行与内置行同一读法；打包读文件闭包；`link.flags` 的警告；构建程序的 `MCPP_KERNEL_ABI_INTERFACES` |
 | 1.2 | 2026-11-12 | 行的 `loader` 与 `execution` 为内置行所读；系统表（`uname`）；提供者的 `tier`、`system-headers`、`runner`；一条条目一种安排；请求的回答是契约；`glibc-sysroot`；一个执行谓词，另一系统的程序不被启动；程序解释器与基座包的单一读法；运行器的占位、`requires` 与 `built-as` |
+| 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 G7、N16、N23、N26、N33、R1、R2、X1）：执行关系表（§2.4）；系统表的 `resources` 与 `command-scripts`（§2.3）；提供者运行器的 `host`、`enabled` 与 `exclusive`（§6）；Android 行的运行器（G7）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |

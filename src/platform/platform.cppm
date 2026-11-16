@@ -23,6 +23,9 @@ import std;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;   // the execution relations (N23)
+import mcpp.toolchain.target_select; // host_pair
+import mcpp.toolchain.platform;
 import mcpp.invocation;
 
 export namespace mcpp::platform {
@@ -143,7 +146,10 @@ std::vector<std::string> expand_step(const std::vector<std::string>& step,
 // runs the artifact on a machine of its architecture: here when the two
 // agree; on the execution host (`run_under`) otherwise, whose architecture is
 // the artifact's, so the program is that architecture's; refused when no
-// execution host is named. `--no-runner` states the triple is native here.
+// execution host is named. A machine the execution table states executes the
+// artifact's architecture (`[[platform.executes]]`) is that execution host
+// itself: the program is that architecture's, started here (design
+// 2026-11-15 N23). `--no-runner` states the triple is native here.
 // Every other runner reaches the artifact from this machine.
 enum class RunnerReach { Here, TargetArchitecture, Refused };
 RunnerReach runner_reach(const mcpp::manifest::platform::Runner& runner, std::string_view targetArch,
@@ -349,6 +355,38 @@ std::expected<Selection, std::string> select_host(std::string_view flagOrEnv, bo
     return none;
 }
 
+// ONE RUNNER OVER ANOTHER (SPEC-013 §10; R1, R2): `cmd`, `requires` and
+// `enabled` are one statement, replaced together; `host`, `hosts`,
+// `exclusive`, `longlived` and `built-as` each stand until a nearer statement
+// writes them. A table without `cmd` adjusts the runner below it.
+void merge_runner(mp::Runner& b, const mp::Runner& o) {
+    if (o.set) {
+        b.cmd = o.cmd;
+        b.requires_ = o.requires_;
+        b.origin = o.origin;
+        b.set = true;
+        b.enabled = o.enabledSet ? o.enabled : true;
+        b.enabledSet = o.enabledSet;
+    } else if (o.enabledSet) {
+        b.enabled = o.enabled;
+        b.enabledSet = true;
+    }
+    if (!o.builtAs.empty()) b.builtAs = o.builtAs;
+    if (!o.host.empty()) b.host = o.host;
+    if (o.exclusiveSet) {
+        b.exclusive = o.exclusive;
+        b.exclusiveSet = true;
+    }
+    if (o.longlivedSet) {
+        b.longlived = o.longlived;
+        b.longlivedSet = true;
+    }
+    if (o.hostsSet) {
+        b.hosts = o.hosts;
+        b.hostsSet = true;
+    }
+}
+
 void merge(mp::Statement& b, const mp::Statement& o) {
     auto text = [](mp::Text& to, const mp::Text& from) { if (from.set) to = from; };
     auto words = [](mp::Words& to, const mp::Words& from) { if (from.set) to = from; };
@@ -359,23 +397,8 @@ void merge(mp::Statement& b, const mp::Statement& o) {
     // `exclusive`; a table, or a program's `run-host`, states what it states.
     // `requires` are the packages of THAT command, so a statement that
     // replaces the command replaces them.
-    if (o.runner.set) {
-        b.runner.cmd = o.runner.cmd;
-        b.runner.requires_ = o.runner.requires_;
-        b.runner.origin = o.runner.origin;
-        b.runner.set = true;
-    }
-    if (!o.runner.builtAs.empty()) b.runner.builtAs = o.runner.builtAs;
-    if (!o.runner.host.empty()) b.runner.host = o.runner.host;
-    if (o.runner.exclusiveSet) {
-        b.runner.exclusive = o.runner.exclusive;
-        b.runner.exclusiveSet = true;
-    }
-    if (o.runner.hostsSet) {
-        b.runner.hosts = o.runner.hosts;
-        b.runner.hostsSet = true;
-    }
-    for (auto const& [k, v] : o.runners) b.runners[k] = v;
+    merge_runner(b.runner, o.runner);
+    for (auto const& [k, v] : o.runners) merge_runner(b.runners[k], v);
     if (!o.carriers.empty()) b.carriers = o.carriers;
     words(b.descriptorKeys, o.descriptorKeys);
     text(b.plugin, o.plugin);
@@ -459,12 +482,12 @@ void take_provider_fields(mp::Statement& s, const mp::ProviderSpec& pr) {
 // THE PROGRAMS A STATEMENT'S CONVENTIONS RUN: its link's inputs, its seal's steps,
 // its runner and its named runners, each by its first word.
 std::set<std::string> named_programs(const mp::Link& l, const mp::Runner& runner,
-                                     const std::map<std::string, mp::Words>& runners) {
+                                     const std::map<std::string, mp::Runner>& runners) {
     std::set<std::string> out;
     for (auto const& in : l.inputs) if (!in.from.empty()) out.insert(in.from.front());
     for (auto const& step : l.seal) if (!step.empty()) out.insert(step.front());
     if (!runner.cmd.empty()) out.insert(runner.cmd.front());
-    for (auto const& [_, w] : runners) if (!w.value.empty()) out.insert(w.value.front());
+    for (auto const& [_, w] : runners) if (!w.cmd.empty()) out.insert(w.cmd.front());
     return out;
 }
 
@@ -638,6 +661,14 @@ RunnerReach runner_reach(const mp::Runner& runner, std::string_view targetArch,
                          std::string_view hostArch, bool executionHostNamed, bool noRunner) {
     if (noRunner || !runner.set || runner.host != "same-arch" || targetArch == hostArch)
         return RunnerReach::Here;
+    // A MACHINE THAT EXECUTES THE ARTIFACT'S ARCHITECTURE besides its own is
+    // its own execution host of that architecture (N23): the runner is the
+    // platform's runner built for that architecture, started here, as it is
+    // handed to a named execution host. An x86_64 Linux machine runs an i386
+    // image through the i686 runner; its own runner refuses the image.
+    if (mcpp::toolchain::target::executes(
+            mcpp::toolchain::target::host_pair(mcpp::toolchain::platform::name, hostArch), targetArch))
+        return RunnerReach::TargetArchitecture;
     return executionHostNamed ? RunnerReach::TargetArchitecture : RunnerReach::Refused;
 }
 
@@ -705,7 +736,8 @@ std::vector<std::pair<std::string, std::string>> report_rows(const Resolved& r) 
         rows.emplace_back("runner", std::format("{} ({})", f.runner.cmd.empty() ? std::string() : f.runner.cmd.front(),
                                                 origin_text(f.runner.origin)));
     for (auto const& [name, w] : f.runners)
-        rows.emplace_back("runner " + name, std::format("{} ({})", argv_text(w.value), origin_text(w.origin)));
+        if (w.set)
+            rows.emplace_back("runner " + name, std::format("{} ({})", argv_text(w.cmd), origin_text(w.origin)));
     if (f.link.driver.set && f.link.driver.value != "compiler")
         rows.emplace_back("link", std::format("{}{} ({})", f.link.driver.value,
                                               f.link.start.set ? ", start " + f.link.start.value : "",
@@ -735,7 +767,7 @@ std::string to_json(const Resolved& r) {
     };
     if (f.toolchain.set) field("toolchain", q(f.toolchain.value), f.toolchain.origin);
     if (f.runner.set) field("runner", arr(f.runner.cmd), f.runner.origin);
-    for (auto const& [k, w] : f.runners) field("runners." + k, arr(w.value), w.origin);
+    for (auto const& [k, w] : f.runners) if (w.set) field("runners." + k, arr(w.cmd), w.origin);
     for (auto const& [layer, l] : r.layers) {
         mp::Origin origin{l.tier, {}, 0, {}};
         if (auto it = f.layers.find(layer); it != f.layers.end() && l.tier != mp::Tier::Graph)

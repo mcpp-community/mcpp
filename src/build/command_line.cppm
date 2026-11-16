@@ -27,6 +27,16 @@ std::string quote(std::string_view s);
 std::string quote_windows(std::string_view s);
 std::string quote_posix(std::string_view s);
 
+// AN ARGUMENT A COMMAND INTERPRETER WOULD READ AS SYNTAX (design 2026-11-15
+// R2, A3). A script the system starts through its interpreter (`.bat`,
+// `.cmd`: the system table's `command-scripts`) receives its arguments
+// through that interpreter's parser, which expands `%`, escapes with `^`,
+// chains with `&` and `|`, redirects with `<` and `>`, and ends a quoted
+// span at `"` -- whatever quoting the caller applied (the class of
+// CVE-2024-24576). The first such argument, described for a refusal; empty
+// when every argument passes as written.
+std::string command_script_problem(std::span<const std::string> args);
+
 // AN ARGUMENT OF A COMMAND PRINTED FOR A PERSON TO PASTE (mcpp#832). Left as
 // it is when the shell would read it as one word anyway, so the common
 // message reads as it always did; quoted by this host's shell rules when it

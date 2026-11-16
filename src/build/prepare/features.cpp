@@ -2049,6 +2049,7 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
                         state.runnerProvider, pkg.manifest.package.name));
                 }
                 state.m->buildConfig.runner = std::move(supplied);
+                state.m->buildConfig.runnerFields = bcDep.runnerFields;
                 state.runnerProvider = pkg.manifest.package.name;
             }
             for (auto const& [name, nr] : bcDep.namedRunners) {

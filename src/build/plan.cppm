@@ -797,6 +797,14 @@ std::vector<mcpp::runtime::search::Dir> runtime_search_closure(
 bool path_is_under_any(const std::filesystem::path&              p,
                        const std::vector<std::filesystem::path>& roots);
 
+// THE TEST FRAMEWORKS A PACKAGE STATES (docs/08): each entry of `m` that
+// states its guide, its protocol, its session or capabilities, or that it
+// begins a test, appended to `out`. `dir` is the package's root, which a
+// guide's path is relative to. Read by the plan and by `mcpp test --guide`,
+// which reads a resolved graph and plans nothing (#932).
+void collect_test_frameworks(const mcpp::manifest::Manifest& m, const std::filesystem::path& dir,
+                             std::vector<TestFramework>& out);
+
 // True if a source file defines a top-level `int main(`/`auto main(` entry,
 // ignoring comments and string/raw-string literals. Drives the archive-vs-inline
 // choice for kind="lib" dependencies (see plan.cppm).
@@ -902,6 +910,20 @@ trim_map(const std::vector<mcpp::modgraph::PackageRoot>& packages,
 } // namespace mcpp::build
 
 namespace mcpp::build {
+
+void collect_test_frameworks(const mcpp::manifest::Manifest& m, const std::filesystem::path& dir,
+                             std::vector<TestFramework>& out) {
+    for (auto const& entry : m.targets) {
+        if (entry.kind != mcpp::manifest::Target::Entry) continue;
+        if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain
+            && entry.testCapabilities.empty() && entry.testSession.empty()) continue;
+        out.push_back({
+            qualified_package_name(m), m.package.version,
+            std::format("{}/{}", m.package.name, entry.name), entry.testProtocol,
+            entry.testGuide.empty() ? std::string{} : (dir / entry.testGuide).lexically_normal().generic_string(),
+            m.package.repo, entry.testCapabilities, entry.testSession});
+    }
+}
 
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
     if (!manifest.package.namespace_.empty()
@@ -1976,7 +1998,16 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // The patterns were checked where they were read.
     // `ArtifactNaming` holds views; these are views into the platform's own
     // strings, which outlive the plan's construction.
-    if (platform && platform->active) {
+    //
+    // THE STATEMENT NAMES THEM ON EVERY ROW (design 2026-11-15 N9), with a
+    // platform or without: a build program, this machine or the project that
+    // names a program `{name}` is followed on a built-in row as on a
+    // platform's. The row's own suffix (`.exe` of a Windows row) was appended
+    // regardless where no platform was selected, and a program the project
+    // named `cmd.exe` was `cmd.exe.exe` on x86_64-windows-gnu and `cmd.exe` on
+    // x86_64-windows-musl. A platform's own suffix still stands against a
+    // build program (`keep_platform_naming`).
+    if (platform) {
         constexpr std::string_view kName = "{name}";
         auto const& l = platform->fields.link;
         if (l.exe.set && mcpp::platform::split_name_pattern(l.exe.value)) {
@@ -3597,20 +3628,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
     // The test frameworks of the graph: each package's entry that states its
     // guide, its protocol or that it begins a test (docs/08).
-    for (std::size_t i = 0; i < std::max<std::size_t>(packages.size(), 1); ++i) {
-        auto const& m = i == 0 ? manifest : packages[i].manifest;
-        auto const& dir = i == 0 ? projectRoot : packages[i].root;
-        for (auto const& entry : m.targets) {
-            if (entry.kind != mcpp::manifest::Target::Entry) continue;
-            if (entry.testGuide.empty() && !entry.testProtocol && !entry.testMain
-                && entry.testCapabilities.empty() && entry.testSession.empty()) continue;
-            plan.testFrameworks.push_back({
-                qualified_package_name(m), m.package.version,
-                std::format("{}/{}", m.package.name, entry.name), entry.testProtocol,
-                entry.testGuide.empty() ? std::string{} : (dir / entry.testGuide).lexically_normal().generic_string(),
-                m.package.repo, entry.testCapabilities, entry.testSession});
-        }
-    }
+    for (std::size_t i = 0; i < std::max<std::size_t>(packages.size(), 1); ++i)
+        collect_test_frameworks(i == 0 ? manifest : packages[i].manifest,
+                                i == 0 ? projectRoot : packages[i].root, plan.testFrameworks);
 
     // 4. Link units (one per [targets.X])
     // When any TestBinary target exists, skip Binary/Library/SharedLibrary

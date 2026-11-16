@@ -715,6 +715,12 @@ export struct BuildContext {
     // refines: the plan knows the set of formats and this knows who provides
     // each.
     std::map<std::string, std::vector<std::string>> packFormatProviders;
+    // By provider (a package in `packFormatProviders`): the programs it stated
+    // with `mcpp::pack_program`, and the warnings it stated in this pass, which
+    // a pack whose provider submitted nothing gives as the provider's reasons
+    // (design 2026-11-15 N30).
+    std::map<std::string, std::vector<std::string>> packPrograms;
+    std::map<std::string, std::vector<std::string>> packReasons;
 };
 
 // The selected member a package acts for in a packaging pass: the package
@@ -1133,6 +1139,14 @@ export std::expected<BuildContext, std::string>
 prepare_build(bool print_fingerprint, bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {});
+
+// THE RESOLVED GRAPH, AND NOTHING AFTER IT (#932): the packages `prepare_build`
+// reads -- the manifest and its workspace, the toolchain request, the graph's
+// resolution -- with the same phases, and no toolchain resolved after the
+// graph, no build program, no scan and no plan. For a question the declared
+// data answers (`mcpp test --guide`), which a plan would answer minutes later.
+export std::expected<std::vector<mcpp::modgraph::PackageRoot>, std::string>
+resolve_graph(bool includeDevDeps, BuildOverrides overrides);
 
 // ONE CONFIGURATION, PREPARED WITHOUT A BUILD (SPEC-013 §9): what `mcpp self
 // env --target` reports and what `mcpp toolchain install --target` fetches --

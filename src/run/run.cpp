@@ -13,6 +13,8 @@ import mcpplibs.os.interrupt;
 import mcpp.invocation;
 import mcpp.build.command_line;
 import mcpp.runtime.launch_env;
+import mcpp.toolchain.platform;
+import mcpp.toolchain.target_rows;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -207,6 +209,24 @@ std::optional<std::filesystem::path> program_of(const std::string& name) {
     return mcpp::invocation::which(name);
 }
 
+// A SCRIPT THIS MACHINE STARTS THROUGH ITS COMMAND INTERPRETER (the system
+// table's `command-scripts`), given an argument the interpreter would read as
+// syntax: the refusal, or empty. Decided before the start, so the argument is
+// neither rewritten nor run as a command (design 2026-11-15 R2, A3).
+std::string command_script_refusal(const std::filesystem::path& program, std::span<const std::string> args) {
+    auto const* sys = mcpp::toolchain::target::find_system(mcpp::toolchain::platform::name);
+    if (!sys || sys->commandScripts.empty()) return {};
+    auto ext = program.extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (std::ranges::find(sys->commandScripts, std::string_view(ext)) == sys->commandScripts.end()) return {};
+    auto problem = mcpp::build::command_line::command_script_problem(args);
+    if (problem.empty()) return {};
+    return std::format("cannot start '{}': {}; a {} file is started through the command interpreter, and the "
+                       "argument is refused rather than rewritten. Start a program (.exe) instead, or pass the "
+                       "value another way (a file, an environment variable).\n",
+                       program.string(), problem, ext);
+}
+
 // Lines of `acc` up to its last line end, to `on_line`, without the ends.
 void deliver_lines(std::string& acc, const std::function<void(std::string_view)>& on_line, bool splitOnCr,
                    bool all) {
@@ -242,6 +262,11 @@ Outcome launch(const Spec& s) {
     o.program = *program;
     o.argv0 = s.argv.front();
     o.args.assign(s.argv.begin() + 1, s.argv.end());
+    if (auto why = command_script_refusal(*program, o.args); !why.empty()) {
+        out.spawn_error = static_cast<int>(std::errc::invalid_argument);
+        out.spawn_message = std::move(why);
+        return out;
+    }
     o.cwd = s.cwd;
     o.env = child_env(s.env, s.hostTool, s.unset);
     o.in = s.nullInput ? os::process::stdio::null : os::process::stdio::inherit;
@@ -489,6 +514,11 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
         o.program = *program;
         o.argv0 = argv.front();
         o.args.assign(argv.begin() + 1, argv.end());
+        if (auto why = command_script_refusal(*program, o.args); !why.empty()) {
+            if (spawn_error) *spawn_error = static_cast<int>(std::errc::invalid_argument);
+            else std::fputs(why.c_str(), libc::stderr());
+            return 125;
+        }
         o.env = child_env(extraEnv, false);
         o.in = o.out = o.err = os::process::stdio::inherit;
         std::fflush(libc::stdout());

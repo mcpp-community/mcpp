@@ -1321,6 +1321,14 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 auto& who = ctx.packFormatProviders[f];
                 if (std::ranges::find(who, owner) == who.end()) who.push_back(owner);
             }
+            // The program each provider assembles from, and what it said
+            // (N30): read by `mcpp pack` for the format's providers only.
+            if (!mm.buildConfig.packFormats.empty()) {
+                if (!mm.buildConfig.packPrograms.empty())
+                    ctx.packPrograms[owner] = mm.buildConfig.packPrograms;
+                if (!mm.buildConfig.statedReasons.empty())
+                    ctx.packReasons[owner] = mm.buildConfig.statedReasons;
+            }
         };
         collect(*state.m, 0);
         for (std::size_t i = 1; i < state.packages.size(); ++i)

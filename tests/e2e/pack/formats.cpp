@@ -219,6 +219,48 @@ int main() { mcpp::provides_pack_format("zap"); return 0; }
         r = silent.mcpp({"pack", "--pkg-format", "zap"});
         expect(fatal(failed(r))) << "a format nothing claimed reported success\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "no action claimed --pkg-format 'zap'"))) << "the refusal does not name the unclaimed format\n" << s::text(r);
+        // N30: what the provider stated in the pass is the refusal's reason.
+        auto declines = variant("declines", R"cpp(import mcpp;
+#include <string_view>
+int main() {
+    mcpp::provides_pack_format("zap");
+    if (std::string_view(mcpp::pack_format()) == "zap") mcpp::warning("zap needs a program named tool");
+    return 0;
+}
+)cpp");
+        r = declines.mcpp({"pack", "--pkg-format", "zap"});
+        expect(fatal(failed(r))) << "a declined format reported success\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "said: zap needs a program named tool"))) << "the refusal does not carry the provider's reason\n" << s::text(r);
+        // N30: the program the provider states is the one packed when none is named, and a
+        // program it states that the build has not is refused by the provider's name.
+        auto chooses = variant("chooses", R"cpp(import mcpp;
+#include <string>
+#include <string_view>
+int main() {
+    mcpp::provides_pack_format("zap");
+    mcpp::pack_program(MCPP_PACK_PROGRAM);
+    if (std::string_view(mcpp::pack_format()) != "zap") return 0;
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = std::string(mcpp::out_dir()) + "/app.zap";
+    mcpp::action a;
+    a.id = "zap"; a.role = "artifact";
+    a.arg((root + "/dist.sh").c_str()).arg("x").arg("${mcpp.stage_dir}/bin").arg(out.c_str())
+     .input("${mcpp.target_file:tool}").output(out.c_str()).submit();
+    return 0;
+}
+)cpp");
+        chooses.write("mcpp.toml", chooses.read("mcpp.toml") + "\n[targets.tool]\nkind = \"bin\"\nmain = \"src/tool.cpp\"\n");
+        chooses.write("src/tool.cpp", "int main() { return 0; }\n");
+        const auto stated = chooses.read("build.mcpp");
+        chooses.write("build.mcpp", std::string(stated).replace(stated.find("MCPP_PACK_PROGRAM"), 17, "\"tool\""));
+        r = chooses.mcpp({"pack", "--pkg-format", "zap"});
+        expect(fatal(e2e::succeeded(r))) << "the stated program was not packed\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "packing tool, the program app states for its format"))) << "the choice is not said\n" << s::text(r);
+        const auto zc = s::find_file(chooses.at("target"), "app.zap");
+        expect(fatal(zc.has_value() && has_exact_line(s::read_file(*zc), "tool"))) << "the staged tree's bin/ does not hold tool\n" << s::text(r);
+        chooses.write("build.mcpp", std::string(stated).replace(stated.find("MCPP_PACK_PROGRAM"), 17, "\"nope\""));
+        r = chooses.mcpp({"pack", "--pkg-format", "zap"});
+        expect(fatal(failed(r) && e2e::contains(s::text(r), "states the program 'nope' (mcpp::pack_program)"))) << "a stated program the build has not was not refused by name\n" << s::text(r);
         auto twoshapes = variant("twoshapes", R"cpp(import mcpp;
 #include <string>
 #include <string_view>

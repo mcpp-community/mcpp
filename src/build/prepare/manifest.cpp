@@ -266,6 +266,14 @@ select_workspace_members(PrepareState& state, const std::filesystem::path& wsRoo
                 claimed.insert(t);
             }
         }
+        // THE MEMBER'S TESTS ARE A CONSUMER OF IT (mcpp#941): a test plan
+        // requests its `[test] features` on the member's own edge, so another
+        // member that declares a feature of the same name is not asked for it,
+        // and a plan without the tests (`mcpp build`, the programs the tests
+        // run) requests none.
+        if (state.includeDevDeps)
+            for (auto const& f : member->testFeatures)
+                if (std::ranges::find(requested, f) == requested.end()) requested.push_back(f);
         mcpp::manifest::DependencySpec spec;
         spec.path = dir.string();
         spec.namespace_ = member->package.namespace_;
@@ -583,6 +591,22 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     }
 
     if (auto r = step0_workspace_handling(state); !r) return std::unexpected(r.error());
+
+    // A TEST PLAN OF ONE PACKAGE (mcpp#941): the package's `[test] features`
+    // join the request of the package under test, as `--features` would state
+    // them for this build; every reader of the root request sees them, and the
+    // recorded graph names them. A plan without the tests requests none, so the
+    // artifact and the programs the tests run are the package's defaults. A
+    // host-tool sub-build is not the package under test.
+    if (state.includeDevDeps && !state.workspacePlan() && !state.overrides.preloaded_manifest
+        && !state.m->testFeatures.empty()) {
+        auto tokens = mcpp::build::feature_request_tokens(state.overrides.features);
+        for (auto const& f : state.m->testFeatures) {
+            if (std::ranges::find(tokens, f) != tokens.end()) continue;
+            state.overrides.features += (state.overrides.features.empty() ? "" : ",") + f;
+            tokens.push_back(f);
+        }
+    }
 
 
     if (auto bad = mcpp::project::unresolved_workspace_dependency_error(*state.m, *state.root))

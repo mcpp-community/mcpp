@@ -1514,6 +1514,13 @@ struct RunnerChoice {
     // with no base, `{pkg:<name>}` outside `requires`): the launch is refused
     // naming it, since the word would reach the runner as it is written.
     std::string unplaced;
+    // THE RUNNER IS NOT ENABLED (R1): stated `enabled = false` and not enabled
+    // by this machine, the project, the environment or `--runner <name>`. A
+    // run and a test refuse before installing anything; `requires` is what
+    // its first use would install.
+    bool notEnabled = false;
+    std::vector<std::string> requires_;
+    std::string name;                   // the named runner; empty: the default
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -1565,6 +1572,39 @@ void settle_runner_places(const BuildContext& ctx, RunnerChoice& c,
     }
 }
 
+// MCPP_TARGET_<TRIPLE>_<KEY>, the spelling of the target's variables.
+std::string target_variable(std::string_view triple, std::string_view key) {
+    std::string out = "MCPP_TARGET_";
+    for (char c : triple)
+        out += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+             : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    return out + "_" + std::string(key);
+}
+
+// The refusal of a runner that is not enabled (R1, design 2026-11-15 §5.1):
+// what it needs, and the two ways of enabling it. The token is the one a
+// program reads (docs/50).
+std::string not_enabled_message(const RunnerChoice& c) {
+    std::string needs;
+    for (auto const& r : c.requires_) needs += (needs.empty() ? "" : ", ") + r;
+    const std::string what = c.name.empty()
+        ? std::format("{} runs through a runner that is not enabled", c.tripleKey)
+        : std::format("the runner '{}' of {} is not enabled", c.name, c.tripleKey);
+    std::string out = what + " [runner-not-enabled]";
+    if (!needs.empty()) out += std::format("\n  it needs: {} (installed on first use)", needs);
+    if (c.name.empty()) {
+        out += std::format("\n  enable:   [target.{}] runner = {{ enabled = true }}   # mcpp.toml, or config.toml "
+                           "for this machine", c.tripleKey);
+        out += std::format("\n  once:     {}=true mcpp run --target {}",
+                           target_variable(c.tripleKey, "RUNNER_ENABLED"), c.tripleKey);
+    } else {
+        out += std::format("\n  enable:   [target.{}.runners] {} = {{ enabled = true }}   # mcpp.toml, or "
+                           "config.toml for this machine", c.tripleKey, c.name);
+        out += std::format("\n  once:     mcpp run --target {} --runner {}", c.tripleKey, c.name);
+    }
+    return out;
+}
+
 // The refusal of a template whose place this build does not have.
 std::string unplaced_message(const RunnerChoice& c) {
     return std::format(
@@ -1596,9 +1636,13 @@ std::string install_runner_packages(const RunnerChoice& c) {
 // `which` selects the slot; everything else is shared.
 RunnerChoice choose_device_action(const BuildContext& ctx,
                                   std::string_view which,
-                                  bool noRunner = false) {
+                                  bool noRunner = false,
+                                  // `--runner <name>` typed: naming a runner
+                                  // enables it for this run (R1).
+                                  bool named = false) {
     RunnerChoice c;
     const bool isDefault = which.empty();
+    c.name = std::string(which);
     const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (ft) c.freestanding = ft->is_freestanding();
     c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
@@ -1612,20 +1656,33 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
         using T = mcpp::manifest::platform::Tier;
         return programHad && (o.tier == T::Manifest || o.tier == T::Config || o.tier == T::Env);
     };
+    // A RUNNER THAT IS NOT ENABLED IS NOT SETTLED (R1): its packages are
+    // what its first use would install, and nothing is installed for it.
+    // A runner that does not reach the artifact from this machine (`host =
+    // "same-arch"` and another architecture) is not offered for enabling: the
+    // run is refused for the reach (`unreachable_execution`).
+    auto take = [&](const mcpp::manifest::platform::Runner& r) {
+        c.requires_ = r.requires_;
+        const bool reaches = !ft || mcpp::platform::runner_reach(r, ft->arch, mcpp::toolchain::platform::host_arch,
+                                                                 !ctx.runUnder.empty(), noRunner)
+                                        != mcpp::platform::RunnerReach::Refused;
+        c.notEnabled = !r.enabled && !named && reaches;
+        if (!c.notEnabled) settle_runner_places(ctx, c, r.requires_);
+    };
     if (isDefault) {
         if (pf.runner.set) {
             c.tmpl = pf.runner.cmd;
             c.fromManifest = overrides_program(pf.runner.origin,
                                                !ctx.manifest.buildConfig.runner.empty());
-            settle_runner_places(ctx, c, pf.runner.requires_);
+            take(pf.runner);
         }
-    } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end()) {
-        c.tmpl = it->second.value;
+    } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end() && it->second.set) {
+        c.tmpl = it->second.cmd;
         auto nr = ctx.manifest.buildConfig.namedRunners.find(std::string(which));
         c.fromManifest = overrides_program(it->second.origin,
                                            nr != ctx.manifest.buildConfig.namedRunners.end());
-        if (nr != ctx.manifest.buildConfig.namedRunners.end() && !c.fromManifest)
-            c.longLived = nr->second.longLived;
+        c.longLived = it->second.longlived;
+        take(it->second);
     }
     // AND THE TOOLCHAIN'S OWN ANSWER, WHEN NOTHING ABOVE GAVE ONE.
     //
@@ -1647,7 +1704,7 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
     // manifest cannot carry: the triple is native here. On a freestanding
     // target that leaves nothing to execute, and the caller's existing
     // no-runner error is the correct answer.
-    if (noRunner && !c.tmpl.empty()) { c.tmpl.clear(); c.ignored = true; }
+    if (noRunner && !c.tmpl.empty()) { c.tmpl.clear(); c.ignored = true; c.notEnabled = false; }
     return c;
 }
 
@@ -1675,7 +1732,7 @@ export struct RunnerOnThisMachine {
 nlohmann::json launch_configuration(const BuildContext& ctx) {
     auto runners = nlohmann::json::array();
     for (const auto& [name, entry] : ctx.plan.platform.fields.runners)
-        if (!entry.value.empty()) runners.push_back(name);
+        if (!entry.cmd.empty()) runners.push_back(name);
     return {{"triple", ctx.tc.targetTriple}, {"profile", ctx.profile},
             {"platform", nlohmann::json::parse(mcpp::platform::to_json(ctx.plan.platform), nullptr, false)},
             {"runners", std::move(runners)}};
@@ -1685,6 +1742,10 @@ export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
     RunnerOnThisMachine out;
     const auto choice = choose_runner(ctx);
     out.arch = std::string(mcpp::toolchain::platform::host_arch);
+    if (choice.notEnabled) {
+        out.refusal = not_enabled_message(choice);
+        return out;
+    }
     if (auto why = unreachable_execution(ctx, choice.tripleKey, false, !choice.tmpl.empty())) out.refusal = *why;
     if (!ctx.runUnder.empty()) {
         auto host = locate_run_under(ctx, choice.tripleKey);
@@ -2572,6 +2633,9 @@ struct FastPathIdentity {
     std::string features;
     // See toolchain_request_identity.
     std::string toolchainRequest;
+    // `[test] features` (mcpp#941), normalised: what a test plan of this
+    // package adds to `features`, and so what its recorded graph names.
+    std::string testFeatures;
 };
 
 std::optional<FastPathIdentity>
@@ -2594,6 +2658,11 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         m->hooks.active(),
         normalize_features(featuresRequested),
         toolchain_request_identity(),
+        normalize_features([&] {
+            std::string joined;
+            for (auto const& f : m->testFeatures) joined += (joined.empty() ? "" : ",") + f;
+            return joined;
+        }()),
     };
 }
 
@@ -2637,19 +2706,20 @@ export int list_runners(const std::string& package_filter,
     const std::string key = ft ? ft->str() : ctx->tc.targetTriple;
     std::println("Target {}", key);
 
-    if (!pf.runner.set && pf.runners.empty()) {
+    const bool anyNamed = std::ranges::any_of(pf.runners, [](auto const& e) { return e.second.set; });
+    if (!pf.runner.set && !anyNamed) {
         std::println("  (none — this project reaches its artifact by executing it)");
         return 0;
     }
     if (pf.runner.set)
-        std::println("  {:<12} {}   ({})", "(default)", pf.runner.cmd.front(),
-                     mcpp::platform::origin_text(pf.runner.origin));
+        std::println("  {:<12} {}   ({}){}", "(default)", pf.runner.cmd.front(),
+                     mcpp::platform::origin_text(pf.runner.origin),
+                     pf.runner.enabled ? "" : "   [not enabled]");
     for (auto const& [name, w] : pf.runners) {
-        auto nr = bc.namedRunners.find(name);
-        const bool longLived = nr != bc.namedRunners.end() && nr->second.longLived;
-        std::println("  {:<12} {}   ({}){}", name,
-                     w.value.empty() ? std::string("(no argv)") : w.value.front(),
-                     mcpp::platform::origin_text(w.origin), longLived ? "   [long-lived]" : "");
+        if (!w.set) continue;
+        std::println("  {:<12} {}   ({}){}{}", name, w.cmd.front(),
+                     mcpp::platform::origin_text(w.origin), w.longlived ? "   [long-lived]" : "",
+                     w.enabled ? "" : "   [not enabled]");
     }
     if (bc.runExclusive || pf.runner.exclusive)
         std::println("  note: this target's runs cannot overlap; `mcpp test` "
@@ -3469,13 +3539,18 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     // while debugging, or naming `qemu-aarch64-static` for a cross target.
     const bool isRunSlot = runner_name.empty();
     const std::string slotName{runner_name};
-    auto choice = choose_device_action(ctx, runner_name, no_runner);
+    const bool namedRunner = !runner_name.empty() && !runner_from_format;
+    auto choice = choose_device_action(ctx, runner_name, no_runner, namedRunner);
+    if (choice.notEnabled) {
+        std::println(libc::stderr(), "error: {}", not_enabled_message(choice));
+        return 2;
+    }
     if (!choice.missing.empty()) {
         if (auto why = install_runner_packages(choice); !why.empty()) {
             std::println(libc::stderr(), "error: {}", why);
             return 2;
         }
-        choice = choose_device_action(ctx, runner_name, no_runner);
+        choice = choose_device_action(ctx, runner_name, no_runner, namedRunner);
     }
     if (!choice.unplaced.empty()) {
         std::println(libc::stderr(), "error: {}", unplaced_message(choice));
@@ -4518,8 +4593,10 @@ inline constexpr std::string_view kTestingDocs =
 using mcpp::build::test_protocol::kMtestRelease;
 using mcpp::build::test_protocol::kMtestRepo;
 
-static void print_test_guide(const BuildContext& ctx, bool json) {
-    const auto& frameworks = ctx.plan.testFrameworks;
+// `members`: how many members the frameworks were gathered from, when more
+// than one (a workspace root, `--workspace`).
+static void print_test_guide(std::span<const mcpp::build::TestFramework> frameworks, bool json,
+                             std::size_t members = 0) {
     if (json) {
         nlohmann::ordered_json list = nlohmann::ordered_json::array();
         for (auto const& f : frameworks)
@@ -4535,6 +4612,7 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
             {"docs", kTestingDocs},
         };
         if (frameworks.empty()) g["suggest"] = {{"dev-dependency", std::format("mcpplibs.mtest = \"{}\"", kMtestRelease)}, {"repo", kMtestRepo}};
+        if (members > 1) g["members"] = members;
         std::println("{}", nlohmann::ordered_json{{"guide", g}}.dump());
         std::fflush(libc::stdout());
         return;
@@ -4543,7 +4621,8 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
         std::println("No test framework: a test is a program under tests/, judged by its exit status.");
         std::println("A framework of cases (mtest): [dev-dependencies] mcpplibs.mtest = \"{}\"  ({})", kMtestRelease, kMtestRepo);
     } else {
-        std::println("Test frameworks:");
+        if (members > 1) std::println("Test frameworks of {} members (one member's: mcpp test -p <member> --guide):", members);
+        else std::println("Test frameworks:");
         for (auto const& f : frameworks) {
             std::println("  {} {} ({}{})", f.package, f.version, f.entry,
                          f.protocol ? std::format(", test protocol {}", f.protocol) : std::string{});
@@ -4567,6 +4646,53 @@ static void print_test_guide(const BuildContext& ctx, bool json) {
     std::println("  mcpp test --message-format json    each case's result, a failure's place and both sides");
     std::println("  mcpp test <test> --print-launch    how the test starts, for a debugger");
     std::println("Testing in mcpp: {}", kTestingDocs);
+}
+
+// `mcpp test --guide` (#932): the frameworks are declared data, read from the
+// resolved graph -- with the dev-dependencies, where frameworks are -- and
+// nothing is planned or built: no toolchain after the graph, no build program,
+// no scan, no build lock. It is the command a failing test names next, and in
+// a workspace of 140 members a plan of the tests took minutes before it.
+// `groups`: the configuration groups of several selected members, each
+// resolved as `mcpp test` plans it, and their frameworks united; empty for one
+// package, resolved with `base`.
+export int print_test_guide_of(const BuildOverrides& base, const std::filesystem::path& wsRoot,
+                               const std::vector<std::vector<std::string>>& groups, bool json) {
+    std::vector<TestFramework> frameworks;
+    std::set<std::string> seen;
+    auto gather = [&](BuildOverrides ov) -> bool {
+        // The resolution's narration ("Workspace building ...") describes a
+        // build, which this is not; its refusal is still said.
+        const bool wasQuiet = mcpp::ui::is_quiet();
+        mcpp::ui::set_quiet(true);
+        auto packages = resolve_graph(/*includeDevDeps=*/true, std::move(ov));
+        mcpp::ui::set_quiet(wasQuiet);
+        if (!packages) { mcpp::ui::error(packages.error()); return false; }
+        std::vector<TestFramework> found;
+        for (auto const& p : *packages) collect_test_frameworks(p.manifest, p.root, found);
+        for (auto& f : found)
+            if (seen.insert(f.package + '\x1f' + f.version + '\x1f' + f.entry).second) frameworks.push_back(std::move(f));
+        return true;
+    };
+    std::size_t members = 0;
+    if (groups.empty()) {
+        if (!gather(base)) return 2;
+    } else {
+        std::vector<std::string> request;
+        for (auto const& g : groups) request.insert(request.end(), g.begin(), g.end());
+        members = request.size();
+        for (auto const& g : groups) {
+            BuildOverrides ov = base;
+            ov.package_filter.clear();
+            ov.project_root = wsRoot;
+            ov.workspace_members = g;
+            ov.workspace_request = request;
+            ov.member_targets.clear();
+            if (!gather(std::move(ov))) return 2;
+        }
+    }
+    print_test_guide(frameworks, json, members);
+    return 0;
 }
 
 // A planned test build, and what the tests run against it need: the plan, the
@@ -4908,7 +5034,21 @@ static void test_bulk(TestBuild& tb, const TestOptions& testOpts, Keep&& keep) {
 // holds under a runner exactly as it does on the host.
 static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool json) {
     auto* ctx = &*tb.ctx;
-    tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+    const bool namedRunner = !testOpts.runnerName.empty();
+    tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner, namedRunner);
+    // A runner that is not enabled leaves the tests built and not run, with
+    // the way to enable it, as an artifact this machine does not reach does
+    // (below); nothing is installed for it.
+    if (tb.runnerChoice.notEnabled) {
+        const auto why = not_enabled_message(tb.runnerChoice);
+        if (testOpts.unreachableIsBuilt) {
+            tb.builtNotRunHere = true;
+            if (!json) mcpp::ui::info("note", std::format("built, not run on this host: {}", why));
+            return;
+        }
+        tb.invocationNotRunReason = why;
+        return;
+    }
     if (!tb.runnerChoice.missing.empty()) {
         // A package that cannot be installed leaves the tests not run, said
         // once for the build as a missing program is.
@@ -4918,7 +5058,7 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
             tb.runnerFatal = 2;
             return;
         }
-        tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner);
+        tb.runnerChoice = choose_device_action(*ctx, testOpts.runnerName, testOpts.noRunner, namedRunner);
     }
     if (!tb.runnerChoice.unplaced.empty()) {
         tb.invocationNotRunReason = unplaced_message(tb.runnerChoice);
@@ -6599,7 +6739,7 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
         return std::nullopt;
     };
     if (!testOpts.since.empty() || !testOpts.changed.empty()) return declined("a change selects the tests (--since, --changed)");
-    if (!testOpts.archive.empty() || testOpts.guide || print_launch_flag()) return declined("an archive, the guide or a launch is asked for");
+    if (!testOpts.archive.empty() || print_launch_flag()) return declined("an archive or a launch is asked for");
     if (!testOpts.runnerName.empty() || testOpts.noRunner) return declined("a runner is named");
     if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") return declined("MCPP_LOCKED=1 asks for a locked resolution");
     if (auto v = mcpp::invocation::get("MCPP_MANAGED_ONLY"); v && *v != "0") return declined("MCPP_MANAGED_ONLY asks for the sources to be checked");
@@ -6608,11 +6748,13 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     if (!want) return declined("the manifest or the request could not be read");
     if (want->hooksActive) return declined("the project declares [hooks]");
     if (!want->defaultTarget.empty()) return declined("the project names a default target");
+    // A test plan names the package's `[test] features` beside the request.
+    const auto testRequest = normalize_features(want->features + "," + want->testFeatures);
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries)
         if (e.targetTriple.empty() && e.profile == want->profile && e.cacheMode == want->cacheMode
-            && e.features == want->features && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
+            && e.features == testRequest && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest
             && e.selection == kTestPlanSelection) { match = &e; break; }
     if (!match) return declined("no recorded test graph matches this request");
     if (match->runtimeBinding && !match->runtimeBinding->baseIdentity.empty())
@@ -6632,7 +6774,7 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     if (test_graph_stamp(outputDir / graphFile) != record.value("graph_stamp", ""))
         return declined("the test graph is not the one the record was written with");
     auto admitted = admit_recorded_build(*match, {
-        .request = mcpp::build::request_tag(record.value("group", ""), want->features),
+        .request = mcpp::build::request_tag(record.value("group", ""), testRequest),
         .manifest = projectRoot / "mcpp.toml",
         .projectSourcesNewer = [&](fs::file_time_type graphTime) {
             if (sources_newer_than(projectRoot, graphTime, want->resourceScripts, want->extTable)) return true;
@@ -6773,7 +6915,7 @@ export int run_tests(std::span<const std::string> passthrough,
     }
 
     auto discovered = mcpp::build::discover_test_targets(
-        *root, overrides.package_filter);
+        *root, overrides.package_filter, overrides.target_triple);
     if (!discovered) {
         mcpp::ui::error(discovered.error());
         return 2;
@@ -6964,11 +7106,6 @@ export int run_tests(std::span<const std::string> passthrough,
         }
     }
 
-    if (testOpts.guide) {
-        print_test_guide(*ctx, json);
-        return 0;
-    }
-
     // 4. A package is named by the build that compiles it: Phase A's report
     // writes its line the first time one of its steps runs, as `mcpp build`
     // does, and a test binary's line prints in Phase B beside its result. The
@@ -7041,7 +7178,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
         mcpp::ui::error("no mcpp.toml found in current directory or any parent");
         return 2;
     }
-    auto discovered = mcpp::build::discover_test_targets(*root, base.package_filter);
+    auto discovered = mcpp::build::discover_test_targets(*root, base.package_filter, base.target_triple);
     if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
     // Nothing to build, a listing, or a filter that selects nothing: the
     // answer does not depend on the target, and is the one-leg answer.
@@ -7458,50 +7595,81 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
         }
         // EACH MEMBER'S PROGRAMS, BUILT BEFORE ITS TESTS AND NAMED TO THEM (L5),
         // as for one package. A workspace's test plan holds a member's test
-        // programs only, so its own programs are built by the member's plan;
+        // programs only, so its own programs are built by a plan of programs;
         // without this a member's test found no MCPP_BIN_<NAME> under
         // `--workspace` and found it under `-p` (found by mtest's conformance
         // suite).
+        //
+        // ONE PLAN OF THE GROUP, AS `mcpp build --workspace` PLANS IT (#936).
+        // A plan of one member resolved the features of the packages it shares
+        // with the others from that member alone, and built them into the
+        // group's directory, at the same paths: a dependency's module was
+        // compiled by the group's test plan, again by each member's plan of
+        // programs, and again by the test pass that followed (three compiles
+        // of one unchanged module in one run, measured), and on Windows a
+        // rewrite of a module another process had mapped failed the run. The
+        // members of the group are planned together, so a package is built
+        // with the configuration the tests' build gives it; a member is
+        // planned alone only to say whose programs did not build.
+        std::vector<std::size_t> buildable, withPrograms;
         for (auto i : who) {
             if (slots[i].packageFailed || slots[i].session < 0) continue;
+            buildable.push_back(i);
             auto m = mcpp::manifest::load(wsRoot / members[i].path / "mcpp.toml", {.insideWorkspace = true});
-            if (!m || std::ranges::none_of(m->targets, [](auto const& t) {
+            if (m && std::ranges::any_of(m->targets, [](auto const& t) {
                     return t.kind == mcpp::manifest::Target::Binary
                         || t.kind == mcpp::manifest::Target::Application; }))
-                continue;
+                withPrograms.push_back(i);
+        }
+        // The programs of `of`, planned with the members `planFor`: false
+        // when they did not build, the reason left for the caller.
+        auto programs_of = [&](const std::vector<std::size_t>& of, const std::vector<std::size_t>& planFor,
+                               std::string& why) {
             BuildOverrides po = base;
             po.package_filter.clear();
             po.project_root = wsRoot;
             po.will_run = false;
-            po.workspace_members = { members[i].path };
-            po.workspace_request = { members[i].path };
+            po.workspace_members.clear();
+            for (auto i : planFor) po.workspace_members.push_back(members[i].path);
+            po.workspace_request.clear();
+            for (auto const& m : members) po.workspace_request.push_back(m.path);
             po.member_targets.clear();
             auto binCtx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false, {}, std::move(po));
-            if (!binCtx) {
-                slots[i].packageFailed = true;
-                slots[i].packageOutput = binCtx.error();
-                continue;
-            }
+            if (!binCtx) { why = binCtx.error(); return false; }
             // `--no-programs`: planned for their names, and the environment's.
             if (!testOpts.noPrograms
                 && run_build_plan(*binCtx, mcpp::log::is_verbose(), false, base.target_triple) != 0) {
-                slots[i].packageFailed = true;
-                slots[i].packageOutput = std::format("the programs of member '{}' did not build", members[i].path);
-                continue;
+                why.clear();
+                return false;
             }
-            auto& env = tb.memberProgramEnv[slots[i].owner];
-            for (auto const& lu : binCtx->plan.linkUnits) {
-                if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
-                env.emplace_back(program_env_key(lu.targetName),
-                                 testOpts.noPrograms ? std::string{}
-                                                     : (binCtx->outputDir / lu.output).lexically_normal().string());
-            }
-            if (testOpts.noPrograms && !testOpts.noRun)
-                if (auto why = programs_from_environment(env)) {
-                    slots[i].packageFailed = true;
-                    slots[i].packageOutput = *why;
-                    continue;
+            for (auto i : of) {
+                auto& env = tb.memberProgramEnv[slots[i].owner];
+                for (auto const& lu : binCtx->plan.linkUnits) {
+                    if (lu.kind != LinkUnit::Binary || (!lu.memberOf.empty() && lu.memberOf != slots[i].owner)) continue;
+                    env.emplace_back(program_env_key(lu.targetName),
+                                     testOpts.noPrograms ? std::string{}
+                                                         : (binCtx->outputDir / lu.output).lexically_normal().string());
                 }
+            }
+            return true;
+        };
+        if (!withPrograms.empty()) {
+            std::string why;
+            if (!programs_of(withPrograms, buildable, why)) {
+                for (auto i : withPrograms) {
+                    if (buildable.size() > 1 && programs_of({i}, {i}, why)) continue;
+                    slots[i].packageFailed = true;
+                    slots[i].packageOutput = why.empty()
+                        ? std::format("the programs of member '{}' did not build", members[i].path) : why;
+                }
+            }
+        }
+        for (auto i : withPrograms) {
+            if (slots[i].packageFailed || !testOpts.noPrograms || testOpts.noRun) continue;
+            if (auto why = programs_from_environment(tb.memberProgramEnv[slots[i].owner])) {
+                slots[i].packageFailed = true;
+                slots[i].packageOutput = *why;
+            }
         }
         // The test goals of the members that can run.
         std::set<std::string> runnable;

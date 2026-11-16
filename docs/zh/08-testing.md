@@ -118,6 +118,39 @@ mtest 自身的运行一样读取它们（Markdown 报告、最慢的用例、�
 `[build] sources` 承载整套套件，其唯一的测试程序驱动套件，用
 `mcpp test -p <member>` 选中。
 
+### 目标的测试，以及测试构建打开的 feature（2026.11.16.1+）
+
+包的测试程序是测试构建的输入，所以目标像选择源文件一样选择它们：
+
+```toml
+[target.'cfg(os = "emscripten")'.test]
+discover = ["!tests/native/**"]      # 不为 Web 构建
+
+[target.'cfg(os = "emscripten")'.dev-dependencies]
+# ……它们导入的包写在 `[target.'cfg(not(os = "emscripten"))'.dev-dependencies]`
+```
+
+谓词与目标相符的 `[target.'<sel>'.test]` 表，其 glob 追加到 `[test] discover`；`!` 开头的 glob 从整个集合中
+移除它匹配的文件，正向的 glob 只在它选中的目标上增加测试（`discover = ["tests/*.cpp"]` 配合
+`[target.'cfg(not(os = "emscripten"))'.test] discover = ["tests/native/*.cpp"]`）。目标是 `--target`，否则是包的
+`[build] target`，否则是本机。在某个目标上被排除的测试不是该目标的测试：`mcpp test --list --target <triple>`
+给出这个集合。处处都能构建、只在部分机器上成立的用例属于测试协议（带原因的跳过），不属于这张表。
+
+测试是其包的消费者，`[test] features` 就是这个消费者的请求：
+
+```toml
+[features]
+ktx2 = { sources = ["src/ktx2/*.cppm"] }
+
+[test]
+features = ["ktx2"]
+```
+
+测试规划在默认 feature 与 `--features` 之外打开它们，见于 `mcpp test`、`mcpp test -p <member>` 与
+`mcpp test --workspace`。在工作空间中，它们在该成员自己的边上请求，声明了同名 feature 的另一个成员不被请求。
+`mcpp build`、测试运行的程序（`MCPP_BIN_<NAME>`）以及包的其它消费者保持默认 feature。测试与 `mcpp build`
+共用一个构建目录，所以先后构建两者会重新编译 feature 改变的部分，与交替使用 `--features` 相同。
+
 ### 测试程序的起点
 
 提供 `main` 的测试框架把它声明为入口目标（`kind = "entry"`，docs/04 §2.2），包为
@@ -210,7 +243,8 @@ test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.
 
 **测试按名字找到包的程序**（2026.10.27.1+）。`mcpp test` 先按 `mcpp build` 的方式构建包的程序，并给每个测试
 `MCPP_BIN_<NAME>`：程序 `<name>` 的路径，名字转为大写，字母与数字之外的字符写作 `_`（`my-tool` 为
-`MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。
+`MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。选中多个成员时，一个配置组的程序一起规划，与
+`mcpp build --workspace` 相同，因此它们共用的包以一种配置构建（2026.11.16.1+）。
 
 `--no-programs`（2026.11.13.1+）不构建它们：程序只为得到名字而规划，每个测试从环境的 `MCPP_BIN_<NAME>`
 取得各程序，用于在别处构建的程序（一个 CI 作业测试另一个作业构建的二进制）。环境未指定的程序在任何测试运行前
@@ -414,7 +448,9 @@ mcpp test --guide            # 框架、它们的指南，以及用例相关的�
 
 框架在其入口上陈述编写测试的指南，`test-guide = "<文件>"`（2026.11.8.1+；协议的 P2.5）：包中的一个
 文件，从已安装的包读取，与其版本一致。`mcpp test --guide` 列出本包的每个测试框架及其指南与仓库，以及列出、
-选择、解释用例的命令；没有框架时，给出上文的契约与接入 mtest 的写法。失败的运行以
+选择、解释用例的命令；没有框架时，给出上文的契约与接入 mtest 的写法。框架是声明的数据：guide 从解析后的
+图（含 dev-dependencies）读取它们，在任何位置都不规划、不扫描、不构建（2026.11.16.1+）。选中多个成员时（workspace
+根或 `--workspace`），列出所有成员的框架。失败的运行以
 `how these tests are written: mcpp test --guide (...)` 结尾，`--message-format json` 的记录带有 `guide`。
 将要编写测试、或要读懂测试为何失败的人或 agent，从这里开始。
 

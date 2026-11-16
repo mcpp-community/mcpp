@@ -163,6 +163,48 @@ A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
 
+### The tests of a target and the features they are built with (2026.11.16.1+)
+
+The test programs of a package are the test build's inputs, so the target
+selects them as it selects sources:
+
+```toml
+[target.'cfg(os = "emscripten")'.test]
+discover = ["!tests/native/**"]      # not built for the Web
+
+[target.'cfg(os = "emscripten")'.dev-dependencies]
+# ... and `[target.'cfg(not(os = "emscripten"))'.dev-dependencies]` for what they import
+```
+
+The globs of a `[target.'<sel>'.test]` table whose predicate the target matches
+are added to `[test] discover`; a `!` glob removes what it matches from the
+whole set, and a positive glob adds tests on the targets it selects
+(`discover = ["tests/*.cpp"]` with `[target.'cfg(not(os = "emscripten"))'.test]
+discover = ["tests/native/*.cpp"]`). The target is `--target`, else the
+package's `[build] target`, else this machine. A test excluded on a target is
+not one of its tests: `mcpp test --list --target <triple>` names the set, and a
+case that is built everywhere and holds on some machines only is the test
+protocol's (a skip with its reason), not this table's.
+
+The tests are a consumer of their package, and `[test] features` is that
+consumer's request:
+
+```toml
+[features]
+ktx2 = { sources = ["src/ktx2/*.cppm"] }
+
+[test]
+features = ["ktx2"]
+```
+
+A test plan turns them on beside the defaults and `--features`, in `mcpp test`,
+`mcpp test -p <member>` and `mcpp test --workspace`. In a workspace they are
+requested on the member's own edge, so another member that declares a feature
+of the same name is not asked for it. `mcpp build`, the programs the tests run
+(`MCPP_BIN_<NAME>`) and every other consumer of the package keep its defaults.
+The tests and `mcpp build` share one build directory, so building one after the
+other compiles again what the features change, as alternating `--features` does.
+
 ### Where a test program begins
 
 A test framework that supplies `main` declares it as an entry target
@@ -282,7 +324,10 @@ The selection narrows what a pattern or `-p` names and adds nothing to it.
 the package's programs first, as `mcpp build` does, and gives each test
 `MCPP_BIN_<NAME>`: the path of program `<name>`, upper-cased, every character
 other than a letter or a digit written `_` (`MCPP_BIN_MY_TOOL` for `my-tool`).
-A test that runs the program it tests reads it from there.
+A test that runs the program it tests reads it from there. Under several
+members the programs of a configuration group are planned together, as
+`mcpp build --workspace` plans them, so a package they share is built with
+one configuration (2026.11.16.1+).
 
 `--no-programs` (2026.11.13.1+) builds none of them: the programs are planned
 for their names, and each test takes each program from the environment's
@@ -548,6 +593,10 @@ A framework states its guide to writing tests on its entry, `test-guide = "<file
 package and of its version. `mcpp test --guide` names each test framework of the
 package with its guide and repository, and the commands that list, select and
 explain cases; with none, it states the contract above and how to take mtest.
+The frameworks are declared data: the guide reads them from the resolved
+graph, the dev-dependencies included, and plans, scans and builds nothing,
+wherever it is asked (2026.11.16.1+). Where several members are selected, a
+workspace root or `--workspace`, it names the frameworks of all of them.
 A failed run ends with `how these tests are written: mcpp test --guide (...)`,
 and a record of `--message-format json` carries `guide`. A person or an agent
 about to write a test, or reading why one failed, starts there.

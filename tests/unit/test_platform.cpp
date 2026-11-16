@@ -5,6 +5,8 @@ import mcpp.manifest;
 import mcpp.platform;
 import mcpp.build.prepare_inputs;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;
+import mcpp.toolchain.platform;
 
 using namespace mcpplibs::mtest;
 
@@ -359,6 +361,70 @@ UTest the_rules_of_section45{"PlatformMerge/TheRulesOfSection45", [] {
     expect(eq(base.link.start.value, "ok_main"));
 }};
 
+UTest enabled_belongs_to_the_command{"PlatformMerge/EnabledBelongsToTheCommand", [] {
+    // R1, R2: `cmd`, `requires` and `enabled` are one statement; a table without `cmd`
+    // adjusts the runner below it; `longlived` stands until a nearer statement writes it.
+    mp::Statement base;
+    base.runner.cmd = {"dirun", "{}"};
+    base.runner.requires_ = {"xim:dirun@0.4.0"};
+    base.runner.enabled = false;
+    base.runner.enabledSet = true;
+    base.runner.set = true;
+    base.runners["web"].cmd = {"emrun", "{}"};
+    base.runners["web"].longlived = base.runners["web"].longlivedSet = true;
+    base.runners["web"].set = true;
+
+    mp::Statement enable;                        // `runner = { enabled = true }`
+    enable.runner.enabled = true;
+    enable.runner.enabledSet = true;
+    enable.runners["web"].enabled = false;       // `runners.web = { enabled = false }`
+    enable.runners["web"].enabledSet = true;
+    auto a = base;
+    pf::merge(a, enable);
+    expect(bool(a.runner.enabled));
+    expect(eq(a.runner.cmd.front(), "dirun"));
+    expect(eq(a.runner.requires_.size(), 1u));
+    expect(!a.runners.at("web").enabled);
+    expect(eq(a.runners.at("web").cmd.front(), "emrun"));
+    expect(bool(a.runners.at("web").longlived));
+
+    mp::Statement replace;                       // `runner = ["wine", "{}"]`: a new statement
+    replace.runner.cmd = {"wine", "{}"};
+    replace.runner.set = true;
+    auto b = base;
+    pf::merge(b, replace);
+    expect(bool(b.runner.enabled));
+    expect(b.runner.requires_.empty());
+}};
+
+UTest a_runner_table_states_enabled_and_longlived{"PlatformManifest/ARunnerTableStatesEnabledAndLonglived", [] {
+    auto m = parse(R"(
+[package]
+name = "app"
+version = "0.1.0"
+
+[target.x86_64-freebsd]
+runner = { enabled = true }
+
+[target.wasm32-emscripten.runners]
+web = { cmd = ["emrun", "{}"], longlived = true, enabled = false }
+)");
+    for (auto const& w : m.schemaWarnings) expect(false) << "unexpected warning: " << w;
+    expect(fatal(eq(m.platformOverrides.size(), 2u)));
+    auto of = [&](std::string_view selector) -> const mp::Statement& {
+        for (auto const& o : m.platformOverrides)
+            if (o.selector == selector) return o.fields;
+        expect(fatal(false)) << "no override for " << selector;
+        return m.platformOverrides.front().fields;
+    };
+    auto const& f = of("x86_64-freebsd").runner;
+    expect(!f.set);
+    expect(bool(f.enabledSet) && bool(f.enabled));
+    auto const& web = of("wasm32-emscripten").runners.at("web");
+    expect(bool(web.set) && bool(web.longlived) && !web.enabled);
+    expect(eq(m.targetOverrides.at("wasm32-emscripten").namedRunners.at("web").front(), "emrun"));
+}};
+
 UTest a_host_triple_takes_the_hosted_part_only{"PlatformMerge/AHostTripleTakesTheHostedPartOnly", [] {
     auto p = parse(kPlatform).platform;
     auto h = pf::hosted_view(p);
@@ -457,6 +523,60 @@ UTest the_runner_reaches_the_artifacts_architecture{"PlatformRun/TheRunnerReache
         expect(eq(pf::runner_reach(*r.runner, r.target, "x86_64", r.executionHost, r.noRunner), r.want))
             << r.runner->host << " " << r.target << " executionHost=" << r.executionHost
             << " noRunner=" << r.noRunner;
+    // N23: an x86_64 Linux machine executes i686 (the execution table), so a same-arch runner
+    // is built for i686 and started here; elsewhere the table states nothing and it is refused.
+    const bool linuxHost = std::string_view(mcpp::toolchain::platform::name) == "linux";
+    expect(eq(pf::runner_reach(same, "i686", "x86_64", false, false),
+              linuxHost ? R::TargetArchitecture : R::Refused));
+}};
+
+UTest the_execution_table_states_measured_relations{"PlatformRun/TheExecutionTableStatesMeasuredRelations", [] {
+    namespace tt = mcpp::toolchain::target;
+    expect(tt::executes("linux-x86_64", "i686"));
+    expect(tt::executes("linux-x86_64", "x86_64"));       // its own architecture
+    expect(!tt::executes("linux-aarch64", "i686"));
+    expect(!tt::executes("macos-aarch64", "x86_64"));     // not stated: not measured
+    expect(!tt::execution_relations().empty());
+}};
+
+UTest the_system_table_states_which_systems_read_resources{"PlatformRun/TheSystemTableStatesWhichSystemsReadResources", [] {
+    // N16: `[resources]` compile for the programs of a system whose loader reads them, a key of
+    // the system table; a PE image another system loads (a UEFI application) has none.
+    namespace tt = mcpp::toolchain::target;
+    auto const* windows = tt::find_system("windows");
+    expect(fatal(windows != nullptr));
+    expect(windows->resources);
+    auto const* linux_ = tt::find_system("linux");
+    expect(fatal(linux_ != nullptr));
+    expect(!linux_->resources);
+    auto const* uefi = tt::find_system("uefi");
+    expect(uefi == nullptr || !uefi->resources);
+}};
+
+UTest the_android_row_runs_in_the_emulator_on_request{"PlatformRun/TheAndroidRowRunsInTheEmulatorOnRequest", [] {
+    // G7, R1: an x86_64 Android program runs through dirun and the API 34 image's profile, on a
+    // machine of its architecture, one run at a time, once enabled. The aarch64 row states none:
+    // the emulator package serves no aarch64 machine.
+    namespace tt = mcpp::toolchain::target;
+    using provider = decltype(tt::providers())::value_type;
+    provider x86 = nullptr;
+    provider arm = nullptr;
+    for (auto const* p : tt::providers()) {
+        if (p->name != "android-ndk") continue;
+        for (auto sv : p->serves) {
+            if (sv == "x86_64-linux-android") x86 = p;
+            if (sv == "aarch64-linux-android") arm = p;
+        }
+    }
+    expect(fatal(x86 != nullptr && arm != nullptr));
+    expect(fatal(!x86->runner.empty()));
+    expect(eq(x86->runner.front(), std::string_view("dirun")));
+    expect(eq(x86->runnerHost, std::string_view("same-arch")));
+    expect(!x86->runnerEnabled) << "a runner that boots an emulator is enabled by default";
+    expect(x86->runnerExclusive) << "two runs would start two devices at one console port";
+    expect(std::ranges::find(x86->runnerRequires, std::string_view("xim:android-system-image@34-default-x86_64"))
+           != x86->runnerRequires.end());
+    expect(arm->runner.empty()) << "the aarch64 row names a runner no machine can install";
 }};
 
 // ── The report ──────────────────────────────────────────────────────────────

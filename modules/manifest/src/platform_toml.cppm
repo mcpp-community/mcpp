@@ -37,7 +37,11 @@ struct Reader {
     std::expected<PackageRef, std::string>
     ref(const mcpp::libs::toml::Value& v, std::string_view where, bool allowOff, bool allowProgram) const;
 
-    std::expected<Runner, std::string> runner(const mcpp::libs::toml::Value& v, std::string_view where) const;
+    // `overriding`: the table of an override tier (this machine's config.toml,
+    // the project), which may adjust the runner below it without a command
+    // (`{ enabled = true }`).
+    std::expected<Runner, std::string> runner(const mcpp::libs::toml::Value& v, std::string_view where,
+                                              bool overriding = false) const;
 
     std::expected<void, std::string>
     flags(const mcpp::libs::toml::Table& t, std::string_view where, Flags& out,
@@ -238,7 +242,8 @@ Reader::ref(const toml::Value& v, std::string_view where, bool allowOff, bool al
     return r;
 }
 
-std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::string_view where) const {
+std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::string_view where,
+                                                  bool overriding) const {
     Runner r;
     r.origin = at(v, std::string(where));
     r.set = true;
@@ -263,6 +268,14 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
                 if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
                 r.exclusive = val.as_bool();
                 r.exclusiveSet = true;
+            } else if (k == "enabled") {
+                if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
+                r.enabled = val.as_bool();
+                r.enabledSet = true;
+            } else if (k == "longlived") {
+                if (!val.is_bool()) return std::unexpected(std::format("{} must be true or false", key));
+                r.longlived = val.as_bool();
+                r.longlivedSet = true;
             } else if (k == "hosts") {
                 auto h = host_pairs(val, key);
                 if (!h) return std::unexpected(h.error());
@@ -287,12 +300,18 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
             } else {
                 warn(std::format(
                     "{}: '{}' is not a key of a runner (ignored); the keys are cmd, host, hosts, "
-                    "exclusive, requires, built-as", where, k));
+                    "exclusive, requires, enabled, longlived, built-as", where, k));
             }
         }
     } else {
         return std::unexpected(std::format(
             "{} must be an array of strings or {{ cmd = [...], host = \"same-arch\" }}", where));
+    }
+    // An override table adjusts the runner below it: without `cmd` it states
+    // the keys it writes and replaces no command.
+    if (r.cmd.empty() && overriding && v.is_table() && !v.as_table().contains("cmd")) {
+        r.set = false;
+        return r;
     }
     if (r.cmd.empty())
         return std::unexpected(std::format(
@@ -587,11 +606,11 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
              {"gcc-triple", &r.gccTriple},
              {"object-format", &r.objectFormat}, {"family", &r.family}, {"data-model", &r.dataModel},
              {"exe-suffix", &r.exeSuffix}, {"shared-suffix", &r.sharedSuffix}, {"loader", &r.loader},
-             {"execution", &r.execution}, {"march", &r.march}, {"mabi", &r.mabi},
+             {"execution", &r.execution}, {"exceptions", &r.exceptions}, {"march", &r.march}, {"mabi", &r.mabi},
              {"code-model", &r.codeModel}, {"multilib", &r.multilib}, {"link-emulation", &r.linkEmulation}})
         if (auto e = text(key, *to); !e) return std::unexpected(e.error());
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::vector<std::string>*>>{
-             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}})
+             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions}})
         if (auto it = t.find(key); it != t.end()) {
             auto w = strings(it->second, std::format("{}.{}", where, key));
             if (!w) return std::unexpected(w.error());
@@ -721,13 +740,11 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
             s.runner = std::move(*r);
         } else if (k == "runners") {
             if (!v.is_table())
-                return std::unexpected(std::format("{} must be a table of <name> = [argv]", key));
+                return std::unexpected(std::format("{} must be a table of <name> = [argv] or <name> = {{ cmd = [argv] }}", key));
             for (auto const& [rk, rv] : v.as_table()) {
-                auto rkey = std::format("{}.{}", key, rk);
-                auto w = strings(rv, rkey);
-                if (!w) return std::unexpected(w.error());
-                if (w->empty()) return std::unexpected(std::format("{} is empty", rkey));
-                s.runners[rk] = Words{ std::move(*w), at(rv, rkey), true };
+                auto r = runner(rv, std::format("{}.{}", key, rk));
+                if (!r) return std::unexpected(r.error());
+                s.runners[rk] = std::move(*r);
             }
         } else if (k == "carrier") {
             auto c = carriers(v, key);
@@ -797,6 +814,18 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                     if (!contains(kSystemKeys, sk)) {
                         warn(std::format("{}: '{}' is not a key of a system (ignored); the keys are {}",
                                          where, sk, list_of(kSystemKeys)));
+                        continue;
+                    }
+                    if (sk == "command-scripts") {
+                        auto w = strings(sv, std::format("{}.command-scripts", where));
+                        if (!w) return std::unexpected(w.error());
+                        sys.commandScripts = std::move(*w);
+                        continue;
+                    }
+                    if (sk == "resources") {
+                        if (!sv.is_bool())
+                            return std::unexpected(std::format("{}.resources must be a boolean", where));
+                        sys.resources = sv.as_bool();
                         continue;
                     }
                     if (!sv.is_string())
@@ -907,16 +936,15 @@ Reader::override_(const toml::Table& t, std::string_view selector) const {
             if (auto r = link(v.as_table(), key, o.fields.link); !r) return std::unexpected(r.error());
 
         } else if (k == "runner") {
-            auto r = runner(v, key);
+            auto r = runner(v, key, true);
             if (!r) return std::unexpected(r.error());
             o.fields.runner = std::move(*r);
         } else if (k == "runners") {
             if (!v.is_table()) continue;   // the table's own reader refuses the shape
             for (auto const& [rk, rv] : v.as_table()) {
-                auto rkey = std::format("{}.{}", key, rk);
-                auto w = strings(rv, rkey);
-                if (!w) continue;          // ditto
-                o.fields.runners[rk] = Words{ std::move(*w), at(rv, rkey), true };
+                auto r = runner(rv, std::format("{}.{}", key, rk), true);
+                if (!r) return std::unexpected(r.error());
+                o.fields.runners[rk] = std::move(*r);
             }
         }
         // Every other key belongs to the table's other readers.

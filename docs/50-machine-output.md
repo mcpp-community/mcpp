@@ -295,7 +295,7 @@ and only the first belongs to the program:
 | `0`–`124` | the program ran; this is its own status, passed through unchanged. The exception is `101`, below |
 | `101` | `mcpp run` could not build the program: its planning or its build failed, and nothing was started. This is the status Cargo gives a failed `cargo run` build |
 | `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else; `126` also answers `mcpp run --pkg-format <f>` for a distributable that is a directory and meets no runner, refused before the spawn with the same meaning (2026.9.14.2+) |
-| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare |
+| `2` | mcpp refused the request before building anything, or after building it and before starting anything: a usage error, `--pkg-format` with `--no-runner`, a program or a runner that the project does not declare, a runner that is not enabled (the message carries `[runner-not-enabled]`; 2026.11.16.1+) |
 
 Until 2026.9.30.2 a failed build exited `1` and a failed planning `2`, so that
 a compile error and a program that returns `1` could not be told apart by a
@@ -410,7 +410,8 @@ of another architecture and a `same-arch` runner, it is the platform's runner
 for that architecture, located where the first run builds it (`built: false`
 until then; `self env` builds nothing). `runUnderProgram` is the execution
 host's program, and `runner.refusal` the reason runs are refused on this
-machine (`null` when they are not). For `--host` the host platform's
+machine (`null` when they are not; a runner that is not enabled is one, with
+`[runner-not-enabled]`). For `--host` the host platform's
 `runner` and `tools` are reported once the project's build programs have been
 built under it. A reason the project's sources would be refused for (an `import
 std` with no C++ run-time in the graph) is a `warning` diagnostic with the code

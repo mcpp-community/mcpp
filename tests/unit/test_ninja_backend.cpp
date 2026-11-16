@@ -169,6 +169,35 @@ UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/Ordinar
         << "a join must not wait for a second permit";
 }};
 
+UTest links_hold_a_permit_of_the_schedule_bound{"NinjaBackend/LinksHoldAPermitOfTheScheduleBound", [] {
+    // A link takes a permit of the semaphore the compilers share, so links that
+    // become ready together do not all run at once; an archive holds none, and a
+    // graph without a cap wraps nothing.
+    auto plan = minimal_plan();
+    plan.toolchain.version = "16.1.0";
+    plan.scheduleTag = "detach-codegen";
+    plan.scheduleCompilerCap = 2;
+    auto rule = [](const std::string& text, std::string_view name) {
+        const auto start = text.find("rule " + std::string(name) + "\n");
+        return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
+    };
+    const auto text = emit_ninja_string(plan);
+    const std::string permit = "$mcpp __compiler-cap --sem .mcpp-sched --output $out -- ";
+    for (const auto name : {"cxx_link", "cxx_shared"}) {
+        const auto r = rule(text, name);
+        expect(ne(r.find(permit), std::string::npos)) << name << "\n" << r;
+        // The permit wraps the publication, so the artifact is in place when
+        // the command it holds exits.
+        if constexpr (!mcpplibs::os::is_windows)
+            expect(ne(r.find(permit + "$mcpp link-output --output $out --temporary -- "), std::string::npos))
+                << name << "\n" << r;
+    }
+    expect(eq(rule(text, "cxx_archive").find("__compiler-cap"), std::string::npos)) << rule(text, "cxx_archive");
+    expect(eq(text.find("--cap"), std::string::npos)) << "the graph names no number of compilers";
+    plan.scheduleCompilerCap = 0;
+    expect(eq(rule(emit_ninja_string(plan), "cxx_link").find("__compiler-cap"), std::string::npos));
+}};
+
 UTest objective_c_source_uses_c_object_rule_and_c_flags{"NinjaBackend/ObjectiveCSourceUsesCObjectRuleAndCFlags", [] {
     auto plan = minimal_plan();
     plan.compileUnits.push_back({

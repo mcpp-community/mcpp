@@ -7146,3 +7146,38 @@ bar = { git = "https://example.com/bar.git", tag = "v1", rev = "abc" }
     expect(fatal(!two.has_value()));
     expect(ne(two.error().format().find("a git dependency names at most one"), std::string::npos));
 }};
+
+UTest test_features_name_declared_features{"Manifest/TestFeaturesNameDeclaredFeatures", [] {
+    // mcpp#941: `[test] features` names features the package declares; another name is refused.
+    const std::string head =
+        "[package]\nname = \"tf\"\nversion = \"0.1.0\"\n"
+        "[features]\nextra = { sources = [\"src/extra/*.cppm\"] }\n";
+    auto m = mcpp::manifest::parse_string(head + "[test]\nfeatures = [\"extra\", \"extra\"]\n");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(eq(m->testFeatures, std::vector<std::string>{"extra"}));
+    expect(m->schemaWarnings.empty());
+    auto undeclared = mcpp::manifest::parse_string(head + "[test]\nfeatures = [\"nope\"]\n");
+    expect(fatal(!undeclared.has_value()));
+    expect(ne(undeclared.error().format().find("[test] features names 'nope', which [features] does not declare (declared: extra)"),
+              std::string::npos)) << undeclared.error().format();
+    auto notList = mcpp::manifest::parse_string(head + "[test]\nfeatures = \"extra\"\n");
+    expect(fatal(!notList.has_value()));
+}};
+
+UTest a_conditional_test_table_carries_discover_alone{"Manifest/AConditionalTestTableCarriesDiscoverAlone", [] {
+    // mcpp#942: `[target.<sel>.test] discover` is kept on its conditional section, a section that
+    // holds nothing else is not dropped as empty, and another key is a warning.
+    auto m = mcpp::manifest::parse_string(
+        "[package]\nname = \"bt\"\nversion = \"0.1.0\"\n"
+        "[target.'cfg(os = \"emscripten\")'.test]\ndiscover = [\"!tests/native/**\"]\nprograms = \"directory\"\n");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(fatal(eq(m->conditionalConfigs.size(), 1u)));
+    expect(eq(m->conditionalConfigs.front().testDiscover, std::vector<std::string>{"!tests/native/**"}));
+    expect(!mcpp::manifest::is_empty(m->conditionalConfigs.front()));
+    expect(fatal(eq(m->schemaWarnings.size(), 1u)));
+    expect(ne(m->schemaWarnings.front().find("contributes test programs only: discover"), std::string::npos));
+    auto bad = mcpp::manifest::parse_string(
+        "[package]\nname = \"bt\"\nversion = \"0.1.0\"\n"
+        "[target.'cfg(os = \"emscripten\")'.test]\ndiscover = \"tests/x.cpp\"\n");
+    expect(fatal(!bad.has_value()));
+}};

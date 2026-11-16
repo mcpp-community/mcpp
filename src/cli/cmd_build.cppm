@@ -60,8 +60,9 @@ namespace mcpp::cli {
 // another member's package name would be read as that member: a member is
 // discovered from its own directory or refused, and never from another's.
 std::expected<mcpp::build::TestTargetSet, std::string>
-discover_member_tests(const std::filesystem::path& wsRoot, const std::string& mp) {
-    auto d = mcpp::build::discover_test_targets(wsRoot, mp);
+discover_member_tests(const std::filesystem::path& wsRoot, const std::string& mp,
+                      std::string_view targetTriple = {}) {
+    auto d = mcpp::build::discover_test_targets(wsRoot, mp, targetTriple);
     if (!d) return d;
     std::error_code ec;
     const bool same = std::filesystem::equivalent(d->packageRoot, wsRoot / mp, ec);
@@ -81,10 +82,11 @@ struct GroupTests {
     std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> discovery;
 };
 std::expected<GroupTests, std::string>
-group_tests(const std::filesystem::path& wsRoot, const std::vector<std::string>& group) {
+group_tests(const std::filesystem::path& wsRoot, const std::vector<std::string>& group,
+            std::string_view targetTriple = {}) {
     GroupTests out;
     for (auto const& mp : group) {
-        auto d = discover_member_tests(wsRoot, mp);
+        auto d = discover_member_tests(wsRoot, mp, targetTriple);
         if (!d) return std::unexpected(std::format("{}: {}", mp, d.error()));
         if (!d->targets.empty()) out.targets[mp] = std::move(d->targets);
         out.discovery.emplace_back(d->packageRoot, std::move(d->discover));
@@ -358,7 +360,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
                 mo.workspace_members = g;
                 mo.workspace_request = request;
                 if (configure_only) {
-                    auto tests = group_tests(root, g);
+                    auto tests = group_tests(root, g, leg.triple);
                     if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); return 2; }
                     spec.includeDevDeps = !tests->targets.empty();
                     mo.member_targets = std::move(tests->targets);
@@ -373,7 +375,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
         if (configure_only) {
             // The surface an editor needs, as for one target: the tests and
             // the dev-dependencies.
-            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter);
+            auto discovered = mcpp::build::discover_test_targets(root, ov.package_filter, leg.triple);
             if (!discovered) { mcpp::ui::error(discovered.error()); return 2; }
             spec.includeDevDeps = !discovered->targets.empty();
             spec.extraTargets = std::move(discovered->targets);
@@ -460,8 +462,8 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
             where("no mcpp.toml found in current directory or any parent");
             return 2;
         }
-        auto discovered = mcpp::build::discover_test_targets(*root,
-                                                              memberOv.package_filter);
+        auto discovered = mcpp::build::discover_test_targets(*root, memberOv.package_filter,
+                                                              memberOv.target_triple);
         if (!discovered) {
             where(discovered.error());
             return 2;
@@ -523,7 +525,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
                         if (int r = configure_member(std::move(one), mp, &configured); r != 0) rc = r;
                     }
                 };
-                auto tests = group_tests((*selection)->root, g);
+                auto tests = group_tests((*selection)->root, g, ov.target_triple);
                 if (!tests && g.size() > 1) { configure_one_by_one(); continue; }
                 if (!tests) { mcpp::ui::error(std::format("{}", tests.error())); rc = 2; continue; }
                 mcpp::build::BuildOverrides mo = ov;
@@ -882,7 +884,8 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> discovery;
             bool includeDevDeps = false;
             if (req.group.empty()) {
-                auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter);
+                auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter,
+                                                                      mo.target_triple);
                 if (!discovered) {
                     fail_plan(req.member.empty() ? discovered.error()
                               : std::format("{}: {}", req.member, discovered.error()));
@@ -892,7 +895,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 discovery.emplace_back(discovered->packageRoot, discovered->discover);
                 extraTargets = std::move(discovered->targets);
             } else {
-                auto tests = group_tests(wsRoot, req.group);
+                auto tests = group_tests(wsRoot, req.group, mo.target_triple);
                 if (!tests && req.group.size() == 1) { fail_plan(tests.error()); continue; }
                 if (!tests) {
                     for (auto const& mp : req.group) plan_alone(mp);
@@ -1222,10 +1225,6 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto since = parsed.value("since")) to.since = *since;
     if (auto c = parsed.option("changed")) to.changed = c->get().values;
     to.guide = parsed.is_flag_set("guide");
-    if (to.guide && (parsed.is_flag_set("workspace") || parsed.option_or_empty("package").values.size() > 1)) {
-        mcpp::ui::error("--guide describes one package's tests; name it with -p");
-        return 2;
-    }
     if (auto sd = parsed.value("seed")) {
         std::uint64_t seed = 0;
         auto [p, ec] = std::from_chars(sd->data(), sd->data() + sd->size(), seed);
@@ -1376,6 +1375,21 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     // selection design 2026-09-30, S4).
     auto selection = mcpp::cli::select_members(member_request(parsed));
     if (!selection) { mcpp::ui::error(std::format("{}", selection.error())); return 2; }
+    // THE GUIDE (#932) is read from the resolved graph and nothing is planned
+    // or built, wherever it is asked: a package, a member, a workspace root.
+    // Several members are resolved by their configuration groups, as their
+    // tests are planned, and their frameworks united.
+    if (to.guide) {
+        std::vector<std::vector<std::string>> groups;
+        std::filesystem::path wsRoot;
+        if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)) {
+            wsRoot = (*selection)->root;
+            if (auto g = workspace_groups(wsRoot, (*selection)->members, ov.target_triple)) groups = std::move(*g);
+            else for (auto const& mp : (*selection)->members) groups.push_back({mp});
+        }
+        return mcpp::build::print_test_guide_of(ov, wsRoot, groups,
+                                                to.format == mcpp::build::TestMessageFormat::Json);
+    }
     if (*selection && ((*selection)->whole || (*selection)->members.size() > 1)
         && !to.archive.empty()) {
         mcpp::ui::error("--archive holds the tests of one package: select one member (-p)");
@@ -1494,7 +1508,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                 for (auto const& mp : members) {
                     mcpp::build::WorkspaceTestMember wm;
                     wm.path = mp;
-                    auto d = discover_member_tests(sel.root, mp);
+                    auto d = discover_member_tests(sel.root, mp, ov.target_triple);
                     if (!d) {
                         wm.error = std::format("{}: {}", mp, d.error());
                     } else {
@@ -1829,8 +1843,13 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // nothing holds any more are deleted here. A process started while the linker
 // writes fails to start (file not found, sharing violation) -- Windows never
 // starts an image that is being written -- rather than running half of one.
-// (POSIX links write `<artifact>.tmp` and rename it over the name in the
-// edge's own shell command: a rename replaces a running program there.)
+// On POSIX (`--temporary`) the linker writes `<dir>/.<artifact>` -- the
+// argument after its `-o`, renamed; the name keeps its extension, as a driver
+// that names a file after it writes a second one otherwise (design 2026-11-15
+// N9) -- and the file is renamed over the artifact once the linker succeeds: a
+// rename replaces a running program there, and a program started meanwhile
+// never meets a partial file. The publication is one command, so an edge that
+// holds a permit for the link holds it until the artifact is in place.
 export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
                            std::span<const std::string> command) {
     namespace fs = std::filesystem;
@@ -1840,6 +1859,48 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
         return 2;
     }
     std::error_code ec;
+    // The row's companions (`--companions .wasm`, design 2026-11-15 N33): the
+    // files named after the artifact that an earlier link wrote and this one
+    // may not, removed first.
+    if (auto c = parsed.option_or_empty("companions").value(); !c.empty())
+        for (auto part : std::views::split(std::string_view(c), ',')) {
+            auto companion = out;
+            companion.replace_extension(std::string(std::string_view(part.begin(), part.end())));
+            fs::remove(companion, ec);
+        }
+    // Moved aside when the edge asks (`--aside`, a Windows host, where a
+    // running program's file cannot be overwritten). An edge that reaches here
+    // for its companions alone does not: an aside file would be named like a
+    // companion (`app.js.old-1`).
+    if (parsed.is_flag_set("temporary")) {
+        std::vector<std::string> argv(command.begin(), command.end());
+        const auto temporary = out.parent_path() / ("." + out.filename().string());
+        auto named = std::ranges::adjacent_find(argv, [&](const std::string& a, const std::string& b) {
+            return a == "-o" && fs::path(b) == out;
+        });
+        if (named == argv.end()) {
+            std::println(libc::stderr(), "error: link-output --temporary: the linker command names no `-o {}`",
+                         out.string());
+            return 2;
+        }
+        *std::next(named) = temporary.string();
+        const auto linked = mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                                      .streams = mcpp::run::Streams::inherit});
+        if (linked.exit_code != 0) {
+            fs::remove(temporary, ec);
+            return linked.exit_code;
+        }
+        fs::rename(temporary, out, ec);
+        if (ec) {
+            std::println(libc::stderr(), "error: link-output: cannot rename {} over {}: {}",
+                         temporary.string(), out.string(), ec.message());
+            fs::remove(temporary, ec);
+            return 1;
+        }
+        return 0;
+    }
+    if (!parsed.is_flag_set("aside"))
+        return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
     const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();
     const auto stem = out.filename().string() + ".old-";
     for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))

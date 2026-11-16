@@ -17,6 +17,7 @@ import mcpp.pack.compress;
 import mcpp.pack.zip;
 import mcpp.pack.polyglot;      // a polyglot file is refused by name (§8)
 import mcpp.toolchain.triple;   // the system of a package's leg (§8)
+import mcpp.toolchain.target_rows;  // the system table: `uname -s` words (N20)
 import mcpp.libs.toml;          // a generated manifest quotes its keys (mcpp#911 B1)
 import mcpplibs.os;
 
@@ -79,9 +80,11 @@ std::string posix_launcher(const Launch& l);
 // the launch facts as constants and builds it for `<arch>-windows-gnu` like
 // the single-file launcher: it finds the package from its own path
 // (`env::image`, not argv[0]), picks the image of this machine's architecture,
-// looks for the runner in `libexec/<loader>/windows-<arch>/` and then on PATH,
-// and becomes it. A POSIX shell on Windows (Git Bash, MSYS, Cygwin) picks the
-// script of the same name, which hands over to this program.
+// runs the runner in `libexec/<loader>/windows-<arch>/` when the package
+// carries one (and otherwise refuses with 126, naming the systems it holds),
+// or the runner on PATH when it carries none, and becomes it. A POSIX shell
+// on Windows (Git Bash, MSYS, Cygwin) picks the script of the same name, which
+// hands over to this program.
 std::string exe_launcher_manifest(std::string_view name, std::string_view version);
 std::string exe_launcher_main(const Launch& l);
 
@@ -1012,6 +1015,26 @@ std::string posix_launcher(const Launch& l) {
     std::string cases;
     for (auto const& [arch, file] : l.entry)
         cases += std::format("  {}) entry={} ;;\n", sh_word(arch), sh_word(file));
+    // THE SYSTEM BY THE SYSTEM TABLE (SPEC-016 §2.3): the word `uname -s`
+    // answers on each system the table knows, mapped to the system's name,
+    // which is how the package names its directories (`libexec/<loader>/
+    // <system>-<arch>`). A system the table does not know is its word in
+    // lower case. The word was used as it stood, so FreeBSD looked for
+    // `FreeBSD-x86_64` beside the `freebsd-x86_64` the package holds.
+    std::string systems;
+    for (auto const* s : mcpp::toolchain::target::systems())
+        if (!s->uname.empty())
+            systems += std::format("  {}) os={} ;;\n", sh_word(s->uname), sh_word(s->name));
+    // AN ARCHITECTURE THIS MACHINE ALSO EXECUTES (the execution table, N23): a
+    // package without this machine's architecture takes one the machine runs
+    // besides its own, in the table's order -- an i686 package on x86_64 Linux.
+    std::string also;
+    for (auto const& e : mcpp::toolchain::target::execution_relations()) {
+        std::string words;
+        for (auto a : e.arches) words += (words.empty() ? "" : " ") + sh_word(a);
+        also += std::format("    {}) for a in {}; do case \" $arches \" in *\" $a \"*) arch=$a; break ;; esac; done ;;\n",
+                            sh_word(e.host), words);
+    }
     // The runner: its program found in the package, then on PATH; none, the
     // image itself.
     std::string find, args = " \"$@\"";
@@ -1020,11 +1043,19 @@ std::string posix_launcher(const Launch& l) {
     } else {
         args = runner_args(l.runner, { sh_word, "\"$image\"", "" }) + args;
         find = std::format("runner={}\n", sh_word(l.runner.front()));
+        // A PACKAGE THAT CARRIES ITS RUNNER RUNS IT, OR SAYS WHICH IT HOLDS.
+        // A runner of another release found on PATH is not this package's
+        // runner, so a machine the package holds none for is refused, naming
+        // the systems it holds.
         if (!l.loader.empty())
             find = std::format(
                 "loader={0}\n"
                 "runner=\"$top/libexec/$loader/$os-$arch/$loader\"\n"
-                "[ -x \"$runner\" ] || runner={1}\n", sh_word(l.loader), sh_word(l.runner.front()));
+                "if [ ! -x \"$runner\" ]; then\n"
+                "  held=$(ls \"$top/libexec/$loader\" 2>/dev/null | paste -s -d ' ' -)\n"
+                "  printf '%s: this machine is %s-%s; the package holds %s for: %s\\n' {1} \"$os\" \"$arch\" \"$loader\" \"${{held:-none}}\" >&2\n"
+                "  exit 126\n"
+                "fi\n", sh_word(l.loader), sh_word(l.name));
     }
     return std::format(
         "#!/bin/sh\n"
@@ -1050,10 +1081,15 @@ std::string posix_launcher(const Launch& l) {
         "  *) arch=$(uname -m) ;;\n"
         "esac\n"
         "case \"$(uname -s)\" in\n"
-        "  Linux) os=linux ;;\n"
-        "  Darwin) os=macos ;;\n"
+        "{5}"
         "  MINGW*|MSYS*|CYGWIN*) exec \"$top/bin/\"{0}.exe \"$@\" ;;\n"
-        "  *) os=$(uname -s) ;;\n"
+        "  *) os=$(uname -s | tr '[:upper:]' '[:lower:]') ;;\n"
+        "esac\n"
+        "arches={2}\n"
+        "case \" $arches \" in *\" $arch \"*) ;; *)\n"
+        "  case \"$os-$arch\" in\n"
+        "{6}"
+        "  esac ;;\n"
         "esac\n"
         "case \"$arch\" in\n"
         "{1}"
@@ -1067,7 +1103,7 @@ std::string posix_launcher(const Launch& l) {
         "  printf '%s: %s carries com.apple.quarantine (a browser downloaded it), and macOS may refuse to start it; remove the mark with: xattr -dr com.apple.quarantine %s\\n' {0} \"$runner\" \"$top\" >&2\n"
         "fi\n"
         "exec \"$runner\"{4}\n",
-        sh_word(l.name), cases, sh_word(arch_list(l)), find, args);
+        sh_word(l.name), cases, sh_word(arch_list(l)), find, args, systems, also);
 }
 
 std::string exe_launcher_manifest(std::string_view name, std::string_view version) {
@@ -1093,6 +1129,9 @@ std::string exe_launcher_main(const Launch& l) {
     std::string words;
     const std::string entry = l.entry.empty() ? std::string() : l.entry.begin()->second;
     for (auto const& w : l.runner) words += std::format("    {},\n", cxx(w));
+    std::string also;
+    for (auto const& e : mcpp::toolchain::target::execution_relations())
+        for (auto a : e.arches) also += std::format("    {{{}, {}}},\n", cxx(e.host), cxx(a));
     return std::format(R"MCPP(// The Windows launcher of {0} (design 2026-10-29 §4.3), written by mcpp pack.
 import std;
 import mcpplibs.os;
@@ -1105,6 +1144,9 @@ constexpr std::string_view kLoader = {2};
 constexpr std::string_view kEntry = {3};
 constexpr std::string_view kRunner[] = {{
 {4}    std::string_view{{}},
+}};
+constexpr std::pair<std::string_view, std::string_view> kAlso[] = {{
+{5}    {{}},
 }};
 
 int main(int argc, char** argv) {{
@@ -1120,9 +1162,14 @@ int main(int argc, char** argv) {{
     std::string machine = os::env::get("PROCESSOR_ARCHITEW6432").value_or(
                           os::env::get("PROCESSOR_ARCHITECTURE").value_or(""));
     for (auto& c : machine) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    const std::string arch = machine == "AMD64" || machine == "X86_64" ? "x86_64"
+    std::string arch = machine == "AMD64" || machine == "X86_64" ? "x86_64"
                            : machine == "ARM64" || machine == "AARCH64" ? "aarch64" : machine;
     std::error_code dec;
+    // An architecture this machine also executes (the execution table, N23).
+    for (auto const& [host, also] : kAlso)
+        if (!fs::is_directory(top / "lib" / arch, dec) && host == "windows-" + arch
+            && fs::is_directory(top / "lib" / std::string(also), dec))
+            arch = std::string(also);
     if (!fs::is_directory(top / "lib" / arch, dec)) {{
         std::string all;
         for (auto const& d : fs::directory_iterator(top / "lib", dec))
@@ -1143,11 +1190,23 @@ int main(int argc, char** argv) {{
     if (kRunner[0].empty()) {{
         o.program = image;
     }} else {{
-        fs::path carried;
-        if (!kLoader.empty())
-            carried = top / "libexec" / std::string(kLoader) / ("windows-" + arch) / (std::string(kLoader) + ".exe");
-        std::error_code ec;
-        o.program = !carried.empty() && fs::exists(carried, ec) ? carried : fs::path(std::string(kRunner[0]));
+        // A package that carries its runner runs it, or says which systems
+        // it holds one for: a runner of another release on PATH is not this
+        // package's runner (as the POSIX launcher).
+        o.program = fs::path(std::string(kRunner[0]));
+        if (!kLoader.empty()) {{
+            const fs::path held = top / "libexec" / std::string(kLoader);
+            o.program = held / ("windows-" + arch) / (std::string(kLoader) + ".exe");
+            std::error_code ec;
+            if (!fs::exists(o.program, ec)) {{
+                std::string all;
+                for (auto const& d : fs::directory_iterator(held, ec))
+                    all += (all.empty() ? "" : " ") + d.path().filename().string();
+                std::println(std::cerr, "{{}}: this machine is windows-{{}}; the package holds {{}} for: {{}}",
+                             kName, arch, kLoader, all.empty() ? std::string("none") : all);
+                return 126;
+            }}
+        }}
         first = 1;
     }}
     for (std::size_t i = first; !kRunner[i].empty(); ++i) {{
@@ -1168,7 +1227,7 @@ int main(int argc, char** argv) {{
     std::println(std::cerr, "{{}}: cannot start {{}}", kName, program);
     return 127;
 }}
-)MCPP", l.name, cxx(l.name), cxx(l.loader), cxx(entry), words);
+)MCPP", l.name, cxx(l.name), cxx(l.loader), cxx(entry), words, also);
 }
 
 // ─── mcpp-package.json ────────────────────────────────────────────────────
