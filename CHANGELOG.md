@@ -8,6 +8,11 @@
 
 ### Added
 
+- `runner = true` and `runner = false` in `[target.<selector>]` are
+  `{ enabled = true }` and `{ enabled = false }`: the consent to use the runner
+  a row's data states. The refusal of a runner that is not enabled names this
+  spelling and, for a platform's row, `[target.'cfg(platform = "<name>")']
+  runner = true` for every row of the platform (SPEC-013 §10, e2e 1092).
 - A `[runtime] deploy` entry is a path or a table, and its `from` is a glob of
   the engine's one dialect (`*`, `**`, `?`, `{a,b}`). `"share/data.bin"` is
   `{ from = "share/data.bin" }`, placed beside the program; a match is placed

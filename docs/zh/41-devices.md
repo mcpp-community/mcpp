@@ -107,8 +107,16 @@ runner 能从任何机器抵达产物。给出执行宿主（`run_under`）时�
 
 ```toml
 [target.x86_64-windows-gnu]
-runner = { enabled = true }      # mcpp.toml，或本机的 config.toml
+runner = true                    # mcpp.toml，或本机的 config.toml
+
+[target.'cfg(platform = "platforms")']
+runner = true                    # 平台的每一行（2026.11.17.1 起）
 ```
+
+runner 是什么（`cmd`、`requires`、`host`）由其数据陈述：提供者、平台、构建程序，或替换它的工程与本机；是否使用是运行者的
+许可：工程、本机、环境变量或 `--runner`。因此许可不写在平台的引用（`platform = {...}`）中：平台可以来自包索引，内置行可以
+没有平台，本机可以只给许可。`runner = true` 与 `runner = false` 即 `{ enabled = true }` 与 `{ enabled = false }`
+（2026.11.17.1 起）。
 
 不含 `cmd` 的表调整其下一层的 runner。`cmd`、`requires` 与 `enabled` 是一条陈述：替换 `cmd` 的层陈述另一个 runner，
 除非写出否则为启用，因此已写 `runner = ["wine", "{}"]` 的工程行为不变。`MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`
