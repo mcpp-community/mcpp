@@ -1,6 +1,6 @@
 ---
 subject: cross-platform
-status: draft
+status: active
 ---
 
 # 生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项
@@ -773,8 +773,9 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
 - **mimalloc 的随机数（待定）**：openkal-uefi 的程序在 OVMF 中启动时输出
   `mimalloc: warning: thread …: unable to use secure randomness`。UEFI 下 mimalloc 没有取得安全随机数的途径；
   可行的做法是由 openkal-uefi 经 `EFI_RNG_PROTOCOL` 提供，不可用时静默退回。不在本轮范围内，记为后续项。
-- **dirun 在 macOS 上的文件大小**：FAT 映像的写入在 macOS 上把一个三级目录中的文件记为 0 字节；改为向文件
-  本身询问大小（`std::filesystem::file_size(path)`），并在测试中先检查源文件的大小，结果待 CI 确认。
+- **dirun 的测试在 macOS 上失败**：FAT 的测试在 macOS 上读到一个文件为 0 字节。原因在测试：同一测试程序的用例可以
+  同时运行，四个用例共用一个源目录，一个用例重建目录时另一个正在写映像。改为每个用例一个源目录；写入方以
+  `std::filesystem::file_size(path)` 询问大小并报告错误。
 - **磁盘空间**：本机 `/home` 的可用空间一度降到 1 GB 以下，e2e 因 `No space left on device` 失败；清理过期的临时
   目录与构建缓存之后重跑通过。磁盘映像的制作（M3、P7b）需要先确认空间。
 

@@ -52,7 +52,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### cross-platform
 
-- [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — draft
+- [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — active
 - [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
 - [生态方案：跨平台通用基础设施（mcpp + openkal + xim），以一个 C89 工程为验证](2026-11-10-cross-platform-ecosystem-design.md) — active
 
@@ -203,7 +203,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
-- [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — draft
+- [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — active
 - [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
 - [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
 - [CI 与发布的时间成本：按测量调度的测试、分片、并行发布](2026-11-14-ci-and-release-time-cost-design.md) — active
