@@ -47,6 +47,10 @@
   first, the project's `[indices]` rank before the shared ones, and the report
   names the source `index`. The entries are read once per command, and only
   for such a row (design 2026-11-16 §6.2, SPEC-013 §14).
+- An inline table may span several lines, carry comments and end with a comma
+  after its last pair, as TOML 1.1 allows, in every TOML file mcpp reads; a
+  pair stays on one line. `mcpp add` and `mcpp remove` replace and erase such a
+  value whole, and `mcpp index pin` refuses one, saying why (#928, #929).
 
 ### Changed
 

@@ -14,7 +14,7 @@
 Node 的 `package.json`。把它放在工程根目录；`mcpp build` 会自动发现并读取它。
 
 该文件是 TOML。内联表可以跨多行书写、包含注释，并在最后一对之后带一个逗号，
-这与 TOML 1.1 的规定一致；每一对 `key = value` 仍写在一行之内(#928)。mcpp
+这与 TOML 1.1 的规定一致(mcpp 2026.11.17.1+)；每一对 `key = value` 仍写在一行之内(#928)。mcpp
 读取的每个 TOML 文件(`mcpp.lock`、`config.toml`、模板元数据)都遵循同一规则。
 
 ```toml
