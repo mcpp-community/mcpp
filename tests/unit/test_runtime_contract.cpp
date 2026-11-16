@@ -504,6 +504,25 @@ package = {
     expect(eq(parsed->runtimeConfig.linkIntent.deployFiles, std::vector<std::filesystem::path>{"bin/backend.dll"}));
 }};
 
+// Design 2026-11-16 §4.3 in a descriptor, in the segment every system shares.
+UTest xpkg_reads_license_files{"RuntimeContract/XpkgReadsLicenseFiles", [] {
+    constexpr auto lua = R"(
+package = {
+  spec = "1", namespace = "compat", name = "ort",
+  xpm = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+  mcpp = {
+    license_files = { "onnxruntime-*/{LICENSE,ThirdPartyNotices.txt}" },
+    sources = { "src/x.cpp" },
+  },
+}
+)";
+    auto parsed = mf::synthesize_from_xpkg_lua(
+        lua, "ort", "1.0.0", mcpp::toolchain::platform::HostPlatform::current());
+    if (auto&& failed = expect(fatal(bool(parsed))); !failed) failed << parsed.error().format();
+    expect(fatal(parsed->package.licenseFiles.has_value()));
+    expect(eq(parsed->package.licenseFiles->front(), std::string("onnxruntime-*/{LICENSE,ThirdPartyNotices.txt}")));
+}};
+
 // The expansion of one entry: a match keeps its path below the glob's fixed
 // directory, a literal path lands in `to`, braces are one glob, `name` renames
 // the one match, and a glob that matches nothing or a `name` over several is

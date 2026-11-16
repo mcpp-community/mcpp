@@ -273,6 +273,7 @@ inline constexpr std::string_view kKnownXpkgKeys[] = {
     "linux", "macosx", "modules", "provides", "requires", "runtime",
     "scan_overrides",
     "schema", "sources", "target_cfg", "targets", "windows",
+    "license_files",
     // The per-platform blocks of the rows that read their own (design
     // 2026-10-29 §5.1): the Web, Apple's phones, ok images, bare metal.
     "android", "emscripten", "ios", "openkal", "none",
@@ -1469,6 +1470,23 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');
+        }
+        else if (key == "license_files") {
+            // design 2026-11-16 §4.3: the package's license files, globs
+            // relative to its root.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `license_files =`", m.sourcePath, 0, 0});
+            }
+            std::vector<std::string> files;
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto s = cur.read_string();
+                if (!s.empty()) files.push_back(std::move(s));
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+            m.package.licenseFiles = std::move(files);
         }
         else if (key == "sources") {
             if (!cur.consume('{')) {

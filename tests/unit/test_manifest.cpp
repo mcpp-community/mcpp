@@ -5904,6 +5904,25 @@ deploy = [
     expect(m->schemaWarnings.empty());
 }};
 
+// Design 2026-11-16 §4.3: `license_files` is the package's; unset means the
+// engine's default, an empty list states that there is none.
+UTest package_license_files_are_read{"Manifest/PackageLicenseFilesAreRead", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name          = "ort"
+version       = "1.0.0"
+license_files = ["LICENSE", "ThirdPartyNotices.txt"]
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(fatal(m->package.licenseFiles.has_value()));
+    expect(eq(m->package.licenseFiles->size(), 2u));
+    expect(m->schemaWarnings.empty());
+    auto none = mcpp::manifest::parse_string("[package]\nname = \"x\"\nversion = \"1.0.0\"\n");
+    expect(fatal(none.has_value()));
+    expect(!none->package.licenseFiles.has_value());
+    expect(eq(mcpp::manifest::default_license_files().front(), std::string("{LICENSE,LICENCE,COPYING,NOTICE}*")));
+}};
+
 // ── `requires_abi` (design 2026-09-12, section 5.2) ────────────────────────
 
 UTest requires_abi_threads_parses_on_the_package_and_on_a_feature{"Manifest/RequiresAbiThreadsParsesOnThePackageAndOnAFeature", [] {

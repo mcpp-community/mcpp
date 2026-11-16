@@ -1104,6 +1104,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
 
     if (auto v = doc->get_string("package.description")) m.package.description = *v;
     if (auto v = doc->get_string("package.license"))     m.package.license     = *v;
+    if (auto v = doc->get_string_array("package.license_files")) m.package.licenseFiles = *v;
     if (auto v = doc->get_string("package.repo"))        m.package.repo        = *v;
     if (auto v = doc->get_string_array("package.authors")) m.package.authors  = *v;
     if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
@@ -1846,7 +1847,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // MUST stay in sync with the `doc->get_*("package.<key>")` reads above.
     static constexpr std::string_view kKnownPackageKeys[] = {
         "accelerators", "authors", "c-environment", "description", "exclusive",
-        "license", "mcpp", "metadata", "name", "namespace", "platforms", "provides",
+        "license", "license_files", "mcpp", "metadata", "name", "namespace", "platforms", "provides",
         "repo", "requires", "requires_abi", "standard", "std-compat-module",
         "std-module", "std-module-flags", "version",
     };

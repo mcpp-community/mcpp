@@ -18,6 +18,16 @@
   globs are expanded each time the build is planned, and a copy that is no
   longer placed is removed from beside the program. `deploy_files = [x]` is
   `deploy = [x]`. Descriptors read the same entries (design 2026-11-16 §4.1).
+- `[package] license_files` names a package's license and notice files, and
+  every `mcpp pack`, in every mode, stages them for each package of the
+  program's graph under `share/licenses/<package>/` with the role `metadata`:
+  static libraries included, which carry the obligation as shared ones do. A
+  package that states none uses `{LICENSE,LICENCE,COPYING,NOTICE}*` at its
+  root; a package for which nothing is found is named in the report. This
+  replaces the search that ran only in `self-contained` packs, under seven
+  fixed names, and said nothing when it found none; that mode still looks for
+  the default files beside the shared objects it bundles that no package
+  declares, and names those without (design 2026-11-16 §4.3).
 
 ### Changed
 

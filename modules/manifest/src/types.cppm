@@ -74,6 +74,10 @@ struct Package {
     bool                        virtualRoot = false;
     std::string                 description;
     std::string                 license;
+    // `license_files` (design 2026-11-16 §4.3): the package's license and
+    // notice files, globs relative to its root, staged by every pack under
+    // `share/licenses/<package>/`. Unset: `default_license_files()`.
+    std::optional<std::vector<std::string>> licenseFiles;
     std::vector<std::string>    authors;
     std::string                 repo;
     // `mcpp = ">=V"`: the oldest mcpp release this package supports, stored as
@@ -1388,6 +1392,14 @@ struct RuntimeArtifact {
     std::string           digest;
     std::string           hostFingerprint;
 };
+
+// THE LICENSE FILES OF A PACKAGE THAT STATES NONE: engine data, the files a
+// package root conventionally holds (design 2026-11-16 §4.3, after PEP 639's
+// default). A package states `license_files` to replace it.
+inline const std::vector<std::string>& default_license_files() {
+    static const std::vector<std::string> patterns{"{LICENSE,LICENCE,COPYING,NOTICE}*"};
+    return patterns;
+}
 
 // `runtime.deploy` (#615): a file placed in a DIRECTORY RELATIVE TO THE
 // EXECUTABLE, which `deploy_files` cannot express, because it flattens every

@@ -441,6 +441,16 @@ struct TestFramework {
     std::vector<std::string> session;
 };
 
+// A package's license files, as a pack stages them (design 2026-11-16 §4.3):
+// the package as its directory under `share/licenses/` names it, its root, and
+// its `license_files` or the engine's default.
+struct LicenseSource {
+    std::string                package;
+    std::filesystem::path      root;
+    std::vector<std::string>   patterns;
+    bool                       declared = false;
+};
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     // Every package of the graph, as the report names it; the backend writes
@@ -456,6 +466,9 @@ struct BuildPlan {
     // `-L` (openkal-musl's empty archives), and a path dependency's root can
     // be anywhere on the machine, not only under the store.
     std::vector<std::filesystem::path> packageRoots;
+    // Every package of the graph with its license files (§4.3), the root's
+    // first: the program's link and run closure, whatever its linkage.
+    std::vector<LicenseSource>         licenseSources;
     // THE PATHS AN ARTIFACT CARRIES, MAPPED (`trim_paths`; design 2026-10-23
     // §15.3, mcpp#832): each package's root to `<name>@<version>`, and the
     // store, the home, the build directory, the toolchain and the target base
@@ -2044,6 +2057,14 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     plan.toolchain        = tc;
     plan.fingerprint      = fp;
     for (auto const& p : packages) plan.packageRoots.push_back(p.root);
+    for (auto const& p : packages) {
+        auto const& pkg = p.manifest.package;
+        if (pkg.virtualRoot) continue;
+        plan.licenseSources.push_back({
+            pkg.namespace_.empty() ? pkg.name : pkg.namespace_ + "." + pkg.name, p.root,
+            pkg.licenseFiles.value_or(mcpp::manifest::default_license_files()),
+            pkg.licenseFiles.has_value()});
+    }
     if (manifest.buildConfig.trimPaths)
         plan.trimMap = trim_map(packages, tc, outputDir, storeRoots);
 

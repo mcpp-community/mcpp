@@ -68,6 +68,7 @@ version     = "0.1.0"              # Semantic version (required)
 standard    = "c++23"              # C++ standard (default c++23; can be set to c++20 / c++26)
 description = "My awesome app"     # Description (optional)
 license     = "MIT"                # License (optional)
+license_files = ["LICENSE", "ThirdPartyNotices.txt"]   # 许可证与声明文件（可选）
 authors     = ["Alice", "Bob"]     # Author list (optional)
 repo        = "https://github.com/user/myapp"  # Repository URL (optional)
 ```
@@ -88,6 +89,12 @@ repo        = "https://github.com/user/myapp"  # Repository URL (optional)
   BMI 的缓存键。
 - `c++latest`：解析为所用工具链支持的最新标准档位。适合本地实验，但不
   推荐用在要求可复现的发布包上。
+
+`license_files` *（2026.11.17.1+）* 列出包的许可证与声明文件，是相对包根的通配符（方言同 `sources`）。每次 `mcpp pack`
+在每种方式下，都把程序依赖图中每个包——工程自身、它的静态库与共享库、它携带其运行时文件的包——的许可证文件放到
+`share/licenses/<包>/`，角色为 `metadata`。未写这个键的包取引擎的缺省值：包根下的 `{LICENSE,LICENCE,COPYING,NOTICE}*`，
+所以多数包不必写；许可证文件在别处的包写明它们。两者都找不到文件的包在打包报告中列出，声明的通配符没有匹配时给出警告。
+描述符在 `mcpp` 段写同名的键。
 - `c++fly`：`c++latest` **加上所用工具链能启用的每一项实验性标准特性**
   （语言特性加标准库）。在 GCC ≥ 16 上会打开 C++26 反射（`-freflection`）
   与 contracts；在 Clang/libc++ 上会加上 `-fexperimental-library`；工具链
