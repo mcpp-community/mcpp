@@ -56,6 +56,7 @@ mcpp、openkal、xlings/xim 的包、dirun 与 mcpp:plugins 是通用基础设�
 | N14 | UEFI 程序收不到参数 | 平台的 UEFI runner 命令缺 `--`；ovmf 配置把程序放作 `BOOTX64.EFI` 由固件直启，没有加载参数。**已实测**：不放 `BOOTX64.EFI` 时 OVMF 进入内置 Shell，执行 `startup.nsh`，参数到达程序，状态经 debug-exit 取回（Shell 有 5 秒倒计时） | 数据 · openkal-platform、ovmf 包 |
 | N34 | UEFI 程序读不到任何文件：`cd` 为 `/`，`dir` 为 File Not Found | openkal-uefi 未实现 `fs`（其 README 写明 `fs` 待 SIMPLE_FILE_SYSTEM） | 实现 · openkal-uefi |
 | N35 | UEFI 参数含引号时切分错误 | openkal-uefi 按空格切分 load options；由 Shell 启动时，Shell 已给出 `EFI_SHELL_PARAMETERS_PROTOCOL` 的 argv | 实现 · openkal-uefi |
+| N42 | UEFI 参数中的空白在启动文件中未引用 | dirun 0.4.0 以空格连接 `{args}` 写入 `startup.nsh`，Shell 按空白切分（13.9） | 实现 · dirun 0.5.0 `[payload] quote`；数据 · ovmf r3 |
 | N15 | UEFI 上 mimalloc 警告无安全随机源 | 未接 EFI_RNG_PROTOCOL | 实现 · openkal-uefi |
 | N19 | okrun 打不开含 `//` 的路径 | 打开映像前未规范化 | 实现 · openkal-image |
 | N12 | dirun 0.3.2 携带的 okrun 落后，仍有 `../` 错误 | dirun 自带一份 okrun 副本 | 运行器 · dirun |
@@ -697,3 +698,26 @@ profile 给出一次提示。需要评审后实现，不在本轮。
   - `cli/commands` 的 231 在 Linux 上以用户 home 执行 `mcpp build --toolchain llvm@23.1.3`，home 没有 llvm 时会向用户 home 安装。现在与 671 相同：home 有 llvm 时测量，否则打印 `NOT MEASURED`。
   - `inherited` home 原先把用户的 `registry/subos` 整个链接进用例 home，用例的安装因此写入用户的 subos。现在用例的 subos 是副本，链接保持为链接（`cp -a`，`fs::copy_options::copy_symlinks`）。subos 是链接的集合（开发者 home 上约 1600 个），复制的代价与链接相当。
   - `signals/340`：support 的 `processes()` 读 `/proc/<pid>/cmdline` 时进程恰好结束，读返回 ESRCH，libstdc++ 的 `basic_filebuf::underflow` 抛出异常。读取期间结束的进程按不存在处理。
+
+### 13.9 N42：载荷参数写入启动文件时没有按读取者引用（openkal-platform 0.29.0 的 CI 中定位，已修复）
+
+- 现象：openkal-platform 0.29.0 的 UEFI 检查以 `mcpp run --target x86_64-uefi -- one "two three"` 运行，程序收到 `["one", "two", "three"]`。
+- 根因：N35 只覆盖了程序一侧。openkal-uefi 0.11.0 读取 Shell 给出的 argv（`EFI_SHELL_PARAMETERS_PROTOCOL`），这一侧正确。但参数先由 dirun 写入 `startup.nsh`（ovmf 配置的 `APP.EFI {args}`），dirun 0.4.0 用空格连接 `{args}`，不加引用；Shell 在引号外按空白切分，一个参数于是变成两个。
+- 设计：引用方式由读取这一行的程序决定，所以属于配置文件，不属于 dirun 的代码。
+  - dirun 0.5.0 新增 `[payload] quote`，取 `posix`、`uefi-shell` 或 `none`（默认，按原样，与 0.4.0 相同）。`[command] quote` 接受同一组取值。
+  - `uefi-shell`：空词，或含空白、`"`、`^`、`%`、`#` 的词，放入双引号，并在这四个字符前加 `^`（UEFI Shell 规范 2.2：引号外按空白切分，`^` 使下一个字符按字面读取）。
+  - `none` 用于没有引用规则的读取者（DOS 的 COMMAND.COM），这样的读取者无法接收含空白的参数。
+  - ovmf 包修订 3 的配置文件写明 `quote = "uefi-shell"`。r1 与 r2 的配置文件不变，钉住旧修订的平台不受影响。openkal-platform 0.29.0 的 runner 依赖 `xim:dirun@0.5.0` 与 `xim:ovmf@9.2.4-3`。
+- 验证：dirun 单元测试覆盖四种字符、空词与未知取值的拒绝；在 OVMF（edk2 9.2.4）与 QEMU 中实测，程序收到 `["one", "two three", "q\"x", "50%#", ""]`，返回 42。
+
+### 13.10 CI 粒度：版本组成员未进入 mcpp 读取的索引（openkal-platform，已修复）
+
+- 现象：平台 PR 引用的成员（openkal-musl 0.29.8、openkal-uefi 0.11.0）尚未进入索引时，九个作业都在第一次解析时失败，报告相同的错误。
+- 原因有三层：成员尚未被收入 mcpp-index；收入后索引产物的指针约两分钟后才更新；GitHub raw 的 CDN 在此后数分钟内仍返回旧指针。
+- 设计：openkal-platform 的 CI 增加作业 `resolves`，其余作业依赖它。该作业读取 mcpp 实际同步的索引副本（`mcpp index status` 给出的路径），逐个列出平台引用的成员是否在其中（`tools/family_release.py visible`），缺失的成员只在一处报告并点名。
+- 发版顺序：成员先收入索引，索引产物发布后，再运行平台的 PR CI（mcpp-index #801 与 #807 的做法）。
+
+### 13.11 待评审：平台仓库中的 `mcpp why deps`
+
+- 在 openkal-platform 仓库中以 mcpp 2026.11.16.1 执行 `mcpp why deps --target x86_64-openkal`，内置平台 0.28.0 的 openkal-tools 0.6.3 与仓库所述的 0.6.4 合并失败（`'=0.6.4,=0.6.3' matches none`）。`mcpp test` 把仓库本身当作平台，不受影响。
+- 待定：在平台包自身的仓库中，`why`、`build` 等命令是否也应以该包为平台（与 `mcpp test` 一致）。本轮不改。
