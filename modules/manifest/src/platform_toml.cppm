@@ -247,6 +247,18 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
     Runner r;
     r.origin = at(v, std::string(where));
     r.set = true;
+    // `runner = true | false`: an override's consent alone, `{ enabled = ... }`.
+    // A runner's statement (a platform's, a provider's) states its command.
+    if (v.is_bool()) {
+        if (!overriding)
+            return std::unexpected(std::format(
+                "{} states a runner by its command: an array of strings or {{ cmd = [...] }}; "
+                "`true` and `false` enable or disable a runner stated elsewhere", where));
+        r.enabled = v.as_bool();
+        r.enabledSet = true;
+        r.set = false;
+        return r;
+    }
     if (v.is_array()) {
         auto c = strings(v, where);
         if (!c) return std::unexpected(c.error());
@@ -305,7 +317,8 @@ std::expected<Runner, std::string> Reader::runner(const toml::Value& v, std::str
         }
     } else {
         return std::unexpected(std::format(
-            "{} must be an array of strings or {{ cmd = [...], host = \"same-arch\" }}", where));
+            "{} must be an array of strings or {{ cmd = [...], host = \"same-arch\" }}{}", where,
+            overriding ? ", or true / false to enable or disable the runner stated for the row" : ""));
     }
     // An override table adjusts the runner below it: without `cmd` it states
     // the keys it writes and replaces no command.

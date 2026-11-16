@@ -4320,7 +4320,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 // The table form, `{ cmd = [...], host = "same-arch", exclusive =
                 // true }`, is the platform reader's (SPEC-013 §2.3); its command
                 // is the template here as well.
-                if (!it->second.is_array() && it->second.is_table()) {
+                if (!it->second.is_array() && (it->second.is_table() || it->second.is_bool())) {
                     mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                         &m.schemaWarnings};
                     auto r = rd.runner(it->second, std::format("[target.{}].runner", triple), true);
@@ -4329,8 +4329,9 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     runnerAdjusts = !r->set;
                 } else if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
-                        "[target.{}].runner must be an array of strings or {{ cmd = [...], "
-                        "host = \"same-arch\" }}, e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
+                        "[target.{}].runner must be an array of strings, {{ cmd = [...], "
+                        "host = \"same-arch\" }}, or true / false (enable the runner stated for the row), "
+                        "e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
                         triple)));
                 }
                 if (it->second.is_array()) for (auto& el : it->second.as_array()) {

@@ -1617,6 +1617,9 @@ struct RunnerChoice {
     // `[target.…]` lookup matches. Derived here, once, so the lookup and the
     // message it produces cannot disagree about which target they mean.
     std::string tripleKey;
+    // The `cfg(platform = ...)` name of the platform in use (SPEC-013 §5):
+    // the selector that enables a runner for every row of the platform.
+    std::string platform;
 };
 
 // THE PLACES A RUNNER'S TEMPLATE NAMES (SPEC-016 §6). `{sysroot}` is the base
@@ -1680,8 +1683,11 @@ std::string not_enabled_message(const RunnerChoice& c) {
     std::string out = what + " [runner-not-enabled]";
     if (!needs.empty()) out += std::format("\n  it needs: {} (installed on first use)", needs);
     if (c.name.empty()) {
-        out += std::format("\n  enable:   [target.{}] runner = {{ enabled = true }}   # mcpp.toml, or config.toml "
+        out += std::format("\n  enable:   [target.{}] runner = true   # mcpp.toml, or config.toml "
                            "for this machine", c.tripleKey);
+        if (!c.platform.empty())
+            out += std::format("\n            [target.'cfg(platform = \"{}\")'] runner = true   # every row of "
+                               "the platform", c.platform);
         out += std::format("\n  once:     {}=true mcpp run --target {}",
                            target_variable(c.tripleKey, "RUNNER_ENABLED"), c.tripleKey);
     } else {
@@ -1733,6 +1739,10 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
     const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (ft) c.freestanding = ft->is_freestanding();
     c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
+    if (ctx.plan.platform.active) {
+        const auto& pkg = ctx.plan.platform.package;
+        c.platform = mcpp::manifest::platform::platform_name(pkg.substr(pkg.rfind('.') + 1));
+    }
     // THE STATEMENT PREPARE MERGED (SPEC-013 §4.5): the platform's runner, a
     // build program's (`mcpp::runner`), this machine's, the project's
     // `[target.<selector>]` (a cfg selector as well as a triple, whichever
