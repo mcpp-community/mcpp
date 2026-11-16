@@ -1,7 +1,8 @@
 // `runtime.deploy` and a build program's deploy: a file placed in a directory relative to the
 // executable (the root's and a dependency's), seen by a test program too; two sources for one
 // destination placed once when their bytes agree and refused at build time when they do not; a
-// destination outside the executable's directory refused (formerly tests/e2e/646, 810).
+// destination outside the executable's directory refused (formerly tests/e2e/646, 810); the
+// entry grammar of design 2026-11-16 §4.1 and the removal of copies no longer placed (1102).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -109,6 +110,45 @@ int main(int, char** argv) {
         r = app.mcpp({"build"});
         expect(fatal(!r)) << "FAIL: a destination outside the executable's directory was accepted: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "runtime.deploy[1]: `to` has a `.` or `..` component"))) << "FAIL: the refusal does not name the entry and the component: " << s::text(r);
+    };
+
+    "1102 deploy entries are strings, globs and renames, and a copy no longer placed goes"_test = [] {
+        // Design 2026-11-16 §4.1: a string is `{ from }`; a glob keeps the path below its fixed
+        // directory; braces are one glob; `name` renames the one match. A file that stops matching
+        // leaves the program's directory on the next build. A glob that matches nothing, and a
+        // `name` over several files, are refused naming the entry.
+        s::project app(s::case_dir() / "app", {{"src/main.cpp", "int main() { return 0; }\n"},
+                                               {"share/data.bin", "data\n"},
+                                               {"share/icd.d/x.json", "x\n"},
+                                               {"share/icd.d/sub/y.json", "y\n"},
+                                               {"res/a.json", "a\n"}, {"res/b.bin", "b\n"}, {"res/c.txt", "c\n"},
+                                               {"tools/x.conf", "conf\n"}});
+        const std::string head = "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[runtime]\ndeploy = [\n";
+        const std::string entries = "  \"share/data.bin\",\n  { from = \"share/icd.d/**\", to = \"vulkan/icd.d\" },\n"
+                                    "  { from = \"res/*.{json,bin}\", to = \"res\" },\n  { from = \"tools/x.conf\", name = \"app.conf\" },\n";
+        app.write("mcpp.toml", head + entries + "]\n");
+        auto r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        std::optional<fs::path> bin;
+        for (const auto& f : s::find_files(app.at("target"), R"(app(\.exe)?)"))
+            if (f.generic_string().contains("/bin/") && !f.generic_string().contains("/.build-mcpp/")) { bin = f.parent_path(); break; }
+        expect(fatal(bin.has_value())) << "no program under target/";
+        for (auto rel : {"data.bin", "vulkan/icd.d/x.json", "vulkan/icd.d/sub/y.json", "res/a.json", "res/b.bin", "app.conf"})
+            expect(fatal(fs::is_regular_file(*bin / rel))) << rel << " is not beside the program";
+        expect(fatal(!fs::exists(*bin / "res/c.txt"))) << "a file the braces do not name was placed";
+        fs::remove(app.at("share/icd.d/sub/y.json"));
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(!fs::exists(*bin / "vulkan/icd.d/sub/y.json"))) << "the copy of a file that no longer matches stayed";
+        expect(fatal(fs::is_regular_file(*bin / "vulkan/icd.d/x.json"))) << "a file that still matches was removed";
+        app.write("mcpp.toml", head + entries + "  \"none/*.dat\",\n]\n");
+        r = app.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "a glob that matches nothing was accepted";
+        expect(fatal(e2e::contains(s::text(r), "runtime.deploy[5]: `none/*.dat` matches no file"))) << s::text(r);
+        app.write("mcpp.toml", head + "  { from = \"res/*\", name = \"one\" },\n]\n");
+        r = app.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "a name over three files was accepted";
+        expect(fatal(e2e::contains(s::text(r), "`name` renames one file, and `res/*` matches 3"))) << s::text(r);
     };
 
     "810 two packages deploy the same bytes to one name"_test[s::gcc][s::elf] = [] {

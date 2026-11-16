@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- A `[runtime] deploy` entry is a path or a table, and its `from` is a glob of
+  the engine's one dialect (`*`, `**`, `?`, `{a,b}`). `"share/data.bin"` is
+  `{ from = "share/data.bin" }`, placed beside the program; a match is placed
+  under `to` at its path below the glob's fixed directory, so
+  `{ from = "share/vulkan/icd.d/**", to = "vulkan/icd.d" }` keeps the tree; and
+  `name` renames the one file `from` matches. A glob that matches nothing, or a
+  `name` over several files, is refused naming the package and the entry. The
+  globs are expanded each time the build is planned, and a copy that is no
+  longer placed is removed from beside the program. `deploy_files = [x]` is
+  `deploy = [x]`. Descriptors read the same entries (design 2026-11-16 §4.1).
+
 ### Changed
 
 - A row whose executable suffix is part of loading its programs states

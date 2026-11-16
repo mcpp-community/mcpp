@@ -1684,8 +1684,11 @@ link_library_dirs        = ["lib"]
 transitive_needed_dirs   = ["runtime/closure"]
 runtime_search_dirs      = ["runtime"]
 frameworks               = ["WindowKit"]
-deploy_files             = ["bin/widget.dll"]
-deploy                   = [ { from = "share/vulkan/icd.d/widget_icd.json", to = "vulkan/icd.d" } ]
+deploy = [
+    "bin/widget.dll",                                          # 放在程序旁
+    { from = "share/vulkan/icd.d/**", to = "vulkan/icd.d" },   # 一棵目录，保持结构
+    { from = "tools/widget.conf", name = "app.conf" },         # 改名
+]
 
 # Use an exact canonical identity when multiple providers exist.
 [runtime."display.present"]
@@ -1752,19 +1755,26 @@ Link intent 把各个发现阶段分开处理：
 | `deploy_files` | 拷贝边 | 拷贝边 | 拷贝到输出旁边；从不是链接器旗标 |
 | `deploy` *（2026.9.12.2+）* | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/` | 拷贝边，进 `bin/<to>/`；从不是链接器旗标 |
 
-`deploy` 把一个文件放进相对可执行文件的某个目录，而 `deploy_files`
-表达不了这一点，因为它把每一条都放在可执行文件旁边。一个读取固定
-子目录的加载器需要它：macOS 上的 Vulkan loader 从
-`<可执行文件目录>/vulkan/icd.d` 读取驱动 manifest。每一条都是恰好
-两个字符串组成的表。`from` 相对声明它的包根目录，`to` 相对可执行
-文件所在目录，`"."` 意味着那个目录本身。两者在每个宿主上都以 `/`
-分隔，都不能是绝对路径、不能命名一个驱动器、不能含有空、`.` 或 `..`
-组成部分；不满足的条目会被拒绝，拒绝信息点名它的索引。两个或更多
+`deploy` 列出包的运行时文件：程序运行时从自己所在目录读取的文件。读取固定子目录的加载器需要它们在那里：
+macOS 上的 Vulkan loader 从 `<可执行文件目录>/vulkan/icd.d` 读取驱动 manifest。条目是一个字符串或一张表
+*（字符串形式、通配符与 `name`：2026.11.17.1+）*：
+
+| 字段 | 含义 |
+|---|---|
+| `from` | 相对声明它的包的根；可以是引擎唯一的通配符方言（`*`、`**`、`?`、`{a,b}`），与 `sources`、`[pack] include` 相同 |
+| `to` | 目的地目录，相对程序所在目录；缺省的 `"."` 即该目录 |
+| `name` | 目的地的文件名；此时 `from` 必须恰好匹配一个文件 |
+
+字符串即 `{ from = <字符串> }`。`from` 匹配到的文件放在 `to` 下，路径取它相对于通配符固定目录（第一个通配符之前的
+目录）的部分：`share/vulkan/icd.d/**` 保持 `share/vulkan/icd.d` 之下的结构；字面路径的固定目录是它的上级目录，所以落在
+`to` 本身。通配符没有匹配到文件，或 `name` 的 `from` 匹配到多个文件，是错误，并指出包与条目。字面路径在规划时可以不存在，
+因为构建程序可能生成它。通配符在每次规划构建时对包内的文件展开；不再匹配的文件从程序旁移除。`from`、`to` 与 `name`
+在每个宿主上都以 `/` 分隔，都不能是绝对路径、不能命名驱动器、不能含有空、`.` 或 `..` 组成部分；不满足的条目被拒绝，
+拒绝信息指出它的序号。`deploy_files = [x]` 即 `deploy = [x]`，是字符串形式较早的拼写；新清单写 `deploy`。两个或更多
 来源指向同一个目的地会合并为一次拷贝，字节相同则放置（mcpp#723）；
 不同则在施工时失败，点名每一个来源与该目的地。一个文件名出现在两个
-不同目录下不算冲突。`deploy` 是一个独立的键，而不是 `deploy_files` 的
-表格形式，因为一个早于它出现的描述符读取器，遇到 `deploy_files` 里的
-`{` 会无法终止，而它会跳过一个不认识的 `runtime` 键。`mcpp pack` 把
+不同目录下不算冲突。发布到索引的包只有声明 `mcpp = ">=2026.11.17.1"` 时才能使用字符串形式、通配符或 `name`：
+更早的 mcpp 对 `deploy` 中的字符串报 `must be a table`，对条目中的未知键报错。`mcpp pack` 把
 这两个键指向的文件，以打包出的可执行文件为参照，拷贝到同样的相对
 路径。
 

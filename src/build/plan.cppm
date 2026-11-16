@@ -14,6 +14,7 @@ import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
+import mcpp.modgraph.glob;     // a deploy glob's fixed directory (design 2026-11-16 §4.1)
 import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -273,7 +274,18 @@ struct ResolvedRuntimeContract {
     std::vector<mcpp::manifest::RuntimeArtifact>    artifacts;
     mcpp::manifest::LinkIntent                      linkIntent;
     std::vector<RuntimeCapabilityProvider>           providers;
+    // A deploy glob that matched no file, or a `name` whose `from` did not
+    // match exactly one: each a sentence naming the package and the entry.
+    std::vector<std::string>                         errors;
 };
+
+// The files a deploy entry of `root`'s package places (design 2026-11-16
+// §4.1): each match of `from` under `to`, at its path relative to the glob's
+// fixed directory, renamed by `name`. A literal `from` (no wildcard) is
+// returned as written, existing or not: a build may generate it. Exported as a
+// pure seam for the tests.
+std::expected<std::vector<mcpp::manifest::DeployEntry>, std::string>
+expand_deploy_entry(const std::filesystem::path& root, const mcpp::manifest::DeployEntry& entry);
 
 // Normalize structured and legacy runtime metadata and stamp every fact with
 // the exact package identity that supplied it.  Exported as a pure seam for
@@ -1286,6 +1298,12 @@ local_include_dirs_after_for_manifest(const std::filesystem::path& root,
 
 namespace {
 
+// A deploy path with a wildcard of the engine's one glob dialect, which
+// `glob_literal_prefix` reads the same way.
+bool has_wildcard(std::string_view path) {
+    return path.find_first_of("*?{[") != std::string_view::npos;
+}
+
 void append_unique_path(std::vector<std::filesystem::path>& out,
                         std::filesystem::path path)
 {
@@ -1295,6 +1313,35 @@ void append_unique_path(std::vector<std::filesystem::path>& out,
 }
 
 } // namespace
+
+std::expected<std::vector<mcpp::manifest::DeployEntry>, std::string>
+expand_deploy_entry(const std::filesystem::path& root, const mcpp::manifest::DeployEntry& entry) {
+    const std::string pattern = entry.from.generic_string();
+    const std::string to = entry.to.empty() ? std::string(".") : entry.to;
+    if (entry.from.is_absolute() || !has_wildcard(pattern))
+        return std::vector<mcpp::manifest::DeployEntry>{{entry.from, to, entry.name}};
+    std::vector<mcpp::manifest::DeployEntry> out;
+    std::set<std::filesystem::path> seen;
+    for (auto const& branch : mcpp::modgraph::expand_braces(pattern)) {
+        const auto base = (root / mcpp::modgraph::glob_literal_prefix(branch)).lexically_normal();
+        for (auto const& file : mcpp::modgraph::expand_glob(root, branch)) {
+            if (!seen.insert(file.lexically_normal()).second) continue;
+            const auto rel = file.lexically_normal().lexically_relative(base);
+            auto dir = std::filesystem::path(to);
+            if (rel.has_parent_path()) dir /= rel.parent_path();
+            auto dirText = dir.lexically_normal().generic_string();
+            if (dirText.empty()) dirText = ".";
+            if (dirText.size() > 1 && dirText.ends_with('/')) dirText.pop_back();
+            out.push_back({file.lexically_relative(root), dirText, entry.name});
+        }
+    }
+    if (out.empty())
+        return std::unexpected(std::format("`{}` matches no file under {}", pattern, root.generic_string()));
+    if (!entry.name.empty() && out.size() != 1)
+        return std::unexpected(std::format("`name` renames one file, and `{}` matches {}", pattern, out.size()));
+    std::ranges::sort(out, {}, [](auto const& e) { return e.from; });
+    return out;
+}
 
 ResolvedRuntimeContract resolve_runtime_contract(
     const std::vector<mcpp::modgraph::PackageRoot>& packages)
@@ -1390,8 +1437,22 @@ ResolvedRuntimeContract resolve_runtime_contract(
                      out.linkIntent.transitiveNeededDirs);
         append_paths(runtime.linkIntent.runtimeSearchDirs,
                      out.linkIntent.runtimeSearchDirs);
-        append_paths(runtime.linkIntent.deployFiles,
-                     out.linkIntent.deployFiles);
+        // A `deploy_files` entry is the string form of a `deploy` entry: a glob
+        // is expanded by the same rule; a literal path keeps its own list.
+        std::vector<mcpp::manifest::DeployEntry> entries;
+        for (std::size_t i = 0; i < runtime.linkIntent.deployFiles.size(); ++i) {
+            auto const& f = runtime.linkIntent.deployFiles[i];
+            if (f.is_absolute() || !has_wildcard(f.generic_string())) {
+                append_unique_path(out.linkIntent.deployFiles, absolute_from(package.root, f));
+                continue;
+            }
+            auto expanded = expand_deploy_entry(package.root, {f, ".", {}});
+            if (!expanded) {
+                out.errors.push_back(std::format("{}: runtime.deploy_files[{}]: {}", package.manifest.package.name, i + 1, expanded.error()));
+                continue;
+            }
+            entries.insert(entries.end(), expanded->begin(), expanded->end());
+        }
         // `runtime.deploy` (#615): the source resolves against the package that
         // declared it; the destination stays relative, because it is relative
         // to an executable this package has not seen.
@@ -1405,12 +1466,20 @@ ResolvedRuntimeContract resolve_runtime_contract(
         // manifest, because it may be an action's own declared output. Both
         // shapes pass through this one line correctly without it knowing
         // which one it was handed.
-        for (auto const& entry : runtime.linkIntent.deploy) {
+        for (std::size_t i = 0; i < runtime.linkIntent.deploy.size(); ++i) {
+            auto expanded = expand_deploy_entry(package.root, runtime.linkIntent.deploy[i]);
+            if (!expanded) {
+                out.errors.push_back(std::format("{}: runtime.deploy[{}]: {}", package.manifest.package.name, i + 1, expanded.error()));
+                continue;
+            }
+            entries.insert(entries.end(), expanded->begin(), expanded->end());
+        }
+        for (auto& entry : entries) {
             mcpp::manifest::DeployEntry resolved{
-                absolute_from(package.root, entry.from), entry.to};
+                absolute_from(package.root, entry.from), entry.to, entry.name};
             const bool seen = std::ranges::any_of(out.linkIntent.deploy,
                 [&](auto const& e) {
-                    return e.from == resolved.from && e.to == resolved.to;
+                    return e.from == resolved.from && e.to == resolved.to && e.name == resolved.name;
                 });
             if (!seen) out.linkIntent.deploy.push_back(std::move(resolved));
         }
@@ -2150,9 +2219,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // over the member's closure, placed in its product directory (workspace
     // design 2026-09-29 §15). `out` is the plan or a link group; both carry
     // the same fields.
+    std::vector<std::string> runtimeErrors;
     auto derive_runtime = [&](const std::vector<mcpp::modgraph::PackageRoot>& pkgs,
                               const std::filesystem::path& binDir, auto& out) {
         auto runtimeContract = resolve_runtime_contract(pkgs);
+        if (runtimeErrors.empty()) runtimeErrors = runtimeContract.errors;
         out.runtimeRequirements = std::move(runtimeContract.requirements);
         out.runtimeArtifacts = std::move(runtimeContract.artifacts);
         out.linkIntent = std::move(runtimeContract.linkIntent);
@@ -2196,11 +2267,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         const bool peTarget = targetTriple.empty() ? bool(mcpplibs::os::is_windows)
                                                    : targetTriple.is_pe();
         auto add_deploy = [&](const std::filesystem::path& source,
-                              std::string_view toDir = {}) {
+                              std::string_view toDir = {}, std::string_view name = {}) {
             const auto normalized = source.lexically_normal();
             auto destDir = binDir;
             if (!toDir.empty() && toDir != ".") destDir /= std::filesystem::path(toDir);
-            const auto dest = destDir / source.filename();
+            const auto dest = destDir / (name.empty() ? source.filename() : std::filesystem::path(name));
             auto existing = std::ranges::find_if(out.runtimeDeployFiles,
                 [&](auto const& value) { return value.is_destination(dest, peTarget); });
             if (existing != out.runtimeDeployFiles.end()) {
@@ -2217,7 +2288,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             add_deploy(source);
         }
         for (auto const& entry : out.linkIntent.deploy) {
-            add_deploy(entry.from, entry.to);
+            add_deploy(entry.from, entry.to, entry.name);
         }
         // A DLL found in a runtime search directory is a DERIVED candidate
         // (SPEC-007 R4.3). The plan lists it and does not decide: which file sits
@@ -2295,6 +2366,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     };
     derive_runtime(packages, std::filesystem::path("bin"), plan);
+    if (!runtimeErrors.empty()) {
+        std::string text = "a runtime file cannot be placed:";
+        for (auto const& e : runtimeErrors) text += "\n  " + e;
+        return std::unexpected(text);
+    }
 
     // 1a. Object addressing.
     //

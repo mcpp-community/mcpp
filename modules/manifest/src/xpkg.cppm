@@ -2355,15 +2355,27 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     std::size_t index = 0;
                     while (!rc.eof() && rc.peek() != '}') {
                         ++index;
+                        // A string is `{ from = <string> }` (design 2026-11-16 §4.1).
+                        if (rc.at_string_start()) {
+                            std::string from = rc.read_string();
+                            if (auto p = deploy_path_problem("from", from, false); !p.empty())
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.deploy[{}]: {}", index, p),
+                                    m.sourcePath, 0, 0});
+                            m.runtimeConfig.linkIntent.deploy.push_back({from, ".", {}});
+                            rc.skip_ws_and_comments();
+                            continue;
+                        }
                         if (rc.peek() != '{') {
                             return std::unexpected(ManifestError{
-                                std::format("runtime.deploy[{}] must be a table with "
-                                            "`from` and `to`", index),
+                                std::format("runtime.deploy[{}] must be a path or a table "
+                                            "with `from`", index),
                                 m.sourcePath, 0, 0});
                         }
                         auto entryBody = rc.read_table_body();
                         LuaCursor entry{entryBody};
-                        std::string from, to;
+                        std::string from, to = ".", name;
+                        bool named = false;
                         entry.skip_ws_and_comments();
                         while (!entry.eof()) {
                             auto field = entry.read_key();
@@ -2380,10 +2392,11 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             }
                             if (field == "from") from = entry.read_string();
                             else if (field == "to") to = entry.read_string();
+                            else if (field == "name") { name = entry.read_string(); named = true; }
                             else {
                                 return std::unexpected(ManifestError{
                                     std::format("runtime.deploy[{}] has unsupported key "
-                                                "'{}'; the keys are `from` and `to`",
+                                                "'{}'; the keys are `from`, `to` and `name`",
                                                 index, field),
                                     m.sourcePath, 0, 0});
                             }
@@ -2397,7 +2410,12 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             return std::unexpected(ManifestError{
                                 std::format("runtime.deploy[{}]: {}", index, p),
                                 m.sourcePath, 0, 0});
-                        m.runtimeConfig.linkIntent.deploy.push_back({from, to});
+                        if (named)
+                            if (auto p = deploy_name_problem(name); !p.empty())
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.deploy[{}]: {}", index, p),
+                                    m.sourcePath, 0, 0});
+                        m.runtimeConfig.linkIntent.deploy.push_back({from, to, name});
                         rc.skip_ws_and_comments();
                     }
                     rc.consume('}');

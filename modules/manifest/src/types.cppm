@@ -1394,10 +1394,29 @@ struct RuntimeArtifact {
 // entry into `bin/<filename>`. The Vulkan loader on macOS reads its driver
 // manifest from `<executable dir>/vulkan/icd.d`, and a flattened copy is never
 // found there.
+//
+// THE ENTRY GRAMMAR (design 2026-11-16 §4.1). An entry is a string, which is
+// `{ from = <string> }`, or a table. `from` is relative to the package root and
+// may be a glob of the engine's one dialect (`*`, `**`, `?`, `{a,b}`); a match
+// is placed under `to` at its path relative to the glob's fixed directory (a
+// literal path's fixed directory is its parent, so a literal file lands in
+// `to` itself). `name` renames the one file `from` must then match.
 struct DeployEntry {
-    std::filesystem::path from;   // relative to the package root
+    std::filesystem::path from;   // relative to the package root; a glob before planning
     std::string           to;     // relative to the executable's directory; "." is that directory
+    std::string           name;   // the destination's file name; empty: the source's
 };
+
+// The problem with a deploy entry's `name`, or an empty string: one path
+// component, the same rule as a component of `to`.
+inline std::string deploy_name_problem(std::string_view v) {
+    if (v.empty()) return "`name` is empty";
+    if (v.find('/') != std::string_view::npos || v.find('\\') != std::string_view::npos)
+        return "`name` is a file name, not a path";
+    if (v == "." || v == "..") return "`name` is `.` or `..`";
+    if (v.find(':') != std::string_view::npos) return "`name` names a drive or a scheme";
+    return {};
+}
 
 // One rule for a path a deploy entry names, checked on the string so that the
 // answer is the same on every host; see the payload descriptor's `frontend`

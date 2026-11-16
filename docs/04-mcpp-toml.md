@@ -1857,8 +1857,11 @@ link_library_dirs        = ["lib"]
 transitive_needed_dirs   = ["runtime/closure"]
 runtime_search_dirs      = ["runtime"]
 frameworks               = ["WindowKit"]
-deploy_files             = ["bin/widget.dll"]
-deploy                   = [ { from = "share/vulkan/icd.d/widget_icd.json", to = "vulkan/icd.d" } ]
+deploy = [
+    "bin/widget.dll",                                          # beside the program
+    { from = "share/vulkan/icd.d/**", to = "vulkan/icd.d" },   # a tree, its structure kept
+    { from = "tools/widget.conf", name = "app.conf" },         # renamed
+]
 
 # Use an exact canonical identity when multiple providers exist.
 [runtime."display.present"]
@@ -1930,23 +1933,39 @@ Link intent keeps discovery stages separate:
 | `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
 | `deploy` *(2026.9.12.2+)* | copy edge into `bin/<to>/` | copy edge into `bin/<to>/` | copy edge into `bin/<to>/`; never a linker flag |
 
-`deploy` places a file in a directory relative to the executable, which
-`deploy_files` cannot express because it places every entry beside the
-executable. A loader that reads a fixed subdirectory needs it: the Vulkan loader
-on macOS reads driver manifests from `<executable dir>/vulkan/icd.d`. Each entry
-is a table of exactly two strings. `from` is relative to the declaring package's
-root, and `to` is relative to the executable's directory, where `"."` means that
-directory itself. Both are separated by `/` on every host, and neither may be
-absolute, name a drive, or contain an empty, `.` or `..` component; an entry
-that does is refused, and the refusal names its index. Two or more sources for
+`deploy` lists the runtime files of a package: the files a program reads from
+its own directory when it runs. A loader that reads a fixed subdirectory needs
+them there: the Vulkan loader on macOS reads driver manifests from
+`<executable dir>/vulkan/icd.d`. An entry is a string or a table
+*(the string form, globs and `name`: 2026.11.17.1+)*:
+
+| Field | Meaning |
+|---|---|
+| `from` | relative to the declaring package's root; a glob of the engine's one dialect (`*`, `**`, `?`, `{a,b}`), the same as `sources` and `[pack] include` |
+| `to` | the destination directory, relative to the executable's directory; `"."`, the default, is that directory itself |
+| `name` | the destination's file name; `from` must then match exactly one file |
+
+A string is `{ from = <string> }`. A file `from` matches is placed under `to` at
+its path relative to the glob's fixed directory, the directory before the first
+wildcard: `share/vulkan/icd.d/**` keeps the tree below `share/vulkan/icd.d`, and
+a literal path, whose fixed directory is its parent, lands in `to` itself. A
+glob that matches no file, or a `name` whose `from` matches more than one, is
+an error naming the package and the entry. A literal path need not exist when
+the build is planned, since a build program may generate it. The globs are
+expanded over the package's files each time the build is planned; a file that
+no longer matches is removed from beside the program. `from`, `to` and `name`
+are separated by `/` on every host, and none may be absolute, name a drive, or
+contain an empty, `.` or `..` component; an entry that does is refused, and the
+refusal names its index. `deploy_files = [x]` is `deploy = [x]`, the earlier
+spelling of the string form; new manifests write `deploy`. Two or more sources for
 one destination merge into a single copy, placed once every source is
 byte-identical (mcpp#723); they are refused at build time, naming every source
 and the destination, when they are not. One file name in two directories is
-not a collision. `deploy` is a key of its own rather than a table
-form of `deploy_files`, because a descriptor reader that predates it meets `{`
-inside `deploy_files` and does not terminate, whereas it skips a `runtime` key it
-does not know. `mcpp pack` stages the files of both keys at the same relative
-path beside the packed executable.
+not a collision. A package published to an index uses the string form, a glob
+or `name` only with `mcpp = ">=2026.11.17.1"`: an earlier mcpp refuses a
+string in `deploy` (`must be a table`) and an unknown key in an entry. `mcpp
+pack` stages the files of both keys at the same relative path beside the packed
+executable.
 
 For one compatibility train, `library_dirs` maps only to runtime search,
 `dlopen_libs` maps to required run-phase soname requirements, and

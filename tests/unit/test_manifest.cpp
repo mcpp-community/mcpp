@@ -5855,8 +5855,12 @@ UTest runtime_deploy_refuses_each_malformed_entry_naming_it{"Manifest/RuntimeDep
         {R"({ from = ".", to = "x" })", "`from` has a `.` or `..` component"},
         {R"({ from = "a//b.json", to = "x" })", "`from` has an empty path component"},
         {R"({ from = "a.json", dest = "x" })", "has unsupported key 'dest'"},
-        {R"({ from = "a.json", to = 3 })", "`from` and `to` must be strings"},
-        {R"("a.json")", "must be a table with `from` and `to`"},
+        {R"({ from = "a.json", to = 3 })", "`from`, `to` and `name` must be strings"},
+        {R"({ to = "x" })", "has no `from`"},
+        {R"({ from = "a.json", name = "x/y" })", "`name` is a file name, not a path"},
+        {R"({ from = "a.json", name = ".." })", "`name` is `.` or `..`"},
+        {R"(3)", "must be a path or a table with `from`"},
+        {R"("../a.json")", "`from` has a `.` or `..` component"},
     };
     for (auto [entry, expected] : cases) {
         const auto src = std::format(R"(
@@ -5871,6 +5875,33 @@ deploy = [ {} ]
         if (auto&& failed = expect(ne(m.error().message.find(expected), std::string::npos)); !failed) failed << entry << " -> " << m.error().message;
         if (auto&& failed = expect(ne(m.error().message.find("runtime.deploy[1]"), std::string::npos)); !failed) failed << m.error().message;
     }
+}};
+
+// Design 2026-11-16 §4.1: a string is `{ from = <string> }`; `to` defaults to
+// "."; `name` renames; a glob is kept as written for planning to expand.
+UTest runtime_deploy_reads_strings_globs_and_names{"Manifest/RuntimeDeployReadsStringsGlobsAndNames", [] {
+    constexpr auto src = R"(
+[package]
+name    = "icd"
+version = "0.1.0"
+[runtime]
+deploy = [
+    "share/data.bin",
+    { from = "share/vulkan/icd.d/**", to = "vulkan/icd.d" },
+    { from = "tools/x.conf", name = "app.conf" },
+]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    auto const& d = m->runtimeConfig.linkIntent.deploy;
+    expect(fatal(eq(d.size(), 3u)));
+    expect(eq(d[0].from, std::filesystem::path("share/data.bin")));
+    expect(eq(d[0].to, "."));
+    expect(eq(d[0].name, ""));
+    expect(eq(d[1].from, std::filesystem::path("share/vulkan/icd.d/**")));
+    expect(eq(d[2].to, "."));
+    expect(eq(d[2].name, "app.conf"));
+    expect(m->schemaWarnings.empty());
 }};
 
 // ── `requires_abi` (design 2026-09-12, section 5.2) ────────────────────────

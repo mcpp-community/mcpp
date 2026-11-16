@@ -3445,36 +3445,48 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         out = it->second.as_string();
         return true;
     };
-    // `runtime.deploy` (#615): `{ from, to }` tables. A key of its own rather
-    // than a table form of `deploy_files`; see manifest::DeployEntry and the
-    // matching branch of the descriptor reader.
+    // `runtime.deploy` (#615; the entry grammar of design 2026-11-16 §4.1): a
+    // string, which is `{ from = <string> }`, or a `{ from, to, name }` table.
+    // See manifest::DeployEntry and the matching branch of the descriptor reader.
     if (auto* deploy = doc->get("runtime.deploy")) {
         if (!deploy->is_array())
             return std::unexpected(error(origin,
-                "runtime.deploy must be an array of `{ from = \"...\", to = \"...\" }` tables"));
+                "runtime.deploy must be an array of paths or `{ from = \"...\", to = \"...\" }` tables"));
         std::size_t index = 0;
         for (auto const& value : deploy->as_array()) {
             ++index;
-            if (!value.is_table())
-                return std::unexpected(error(origin, std::format(
-                    "runtime.deploy[{}] must be a table with `from` and `to`", index)));
-            auto const& table = value.as_table();
-            for (auto const& [key, _] : table)
-                if (key != "from" && key != "to")
+            std::string from, to = ".", name;
+            if (value.is_string()) {
+                from = value.as_string();
+            } else if (value.is_table()) {
+                auto const& table = value.as_table();
+                for (auto const& [key, _] : table)
+                    if (key != "from" && key != "to" && key != "name")
+                        return std::unexpected(error(origin, std::format(
+                            "runtime.deploy[{}] has unsupported key '{}'; the keys are "
+                            "`from`, `to` and `name`", index, key)));
+                if (!table.contains("from"))
                     return std::unexpected(error(origin, std::format(
-                        "runtime.deploy[{}] has unsupported key '{}'; the keys are "
-                        "`from` and `to`", index, key)));
-            std::string from, to;
-            if (!table_string(table, "from", from) || !table_string(table, "to", to))
+                        "runtime.deploy[{}] has no `from`", index)));
+                if (!table_string(table, "from", from) || !table_string(table, "to", to)
+                    || !table_string(table, "name", name))
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.deploy[{}]: `from`, `to` and `name` must be strings", index)));
+                if (table.contains("name"))
+                    if (auto p = deploy_name_problem(name); !p.empty())
+                        return std::unexpected(error(origin,
+                            std::format("runtime.deploy[{}]: {}", index, p)));
+            } else {
                 return std::unexpected(error(origin, std::format(
-                    "runtime.deploy[{}]: `from` and `to` must be strings", index)));
+                    "runtime.deploy[{}] must be a path or a table with `from`", index)));
+            }
             if (auto p = deploy_path_problem("from", from, false); !p.empty())
                 return std::unexpected(error(origin,
                     std::format("runtime.deploy[{}]: {}", index, p)));
             if (auto p = deploy_path_problem("to", to, true); !p.empty())
                 return std::unexpected(error(origin,
                     std::format("runtime.deploy[{}]: {}", index, p)));
-            m.runtimeConfig.linkIntent.deploy.push_back({from, to});
+            m.runtimeConfig.linkIntent.deploy.push_back({from, to, name});
         }
     }
     if (auto* requirements = doc->get("runtime.requirements")) {
