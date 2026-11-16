@@ -227,8 +227,13 @@ A test plan turns them on beside the defaults and `--features`, in `mcpp test`,
 requested on the member's own edge, so another member that declares a feature
 of the same name is not asked for it. `mcpp build`, the programs the tests run
 (`MCPP_BIN_<NAME>`) and every other consumer of the package keep its defaults.
-The tests and `mcpp build` share one build directory, so building one after the
-other compiles again what the features change, as alternating `--features` does.
+A test plan that asks a package for features this way, or through a
+dev-dependency entry that asks a package the manifest also depends on for
+features (or for none of its defaults), configures that package otherwise than
+`mcpp build`. It builds in a build directory of its own, so each configuration
+is compiled once and neither compiles over the other's module interfaces; a test
+plan that asks for nothing shares the build's directory (2026.11.17.1+; before,
+the two shared one directory and compiled each other's files again, mcpp#945).
 
 ### Where a test program begins
 
@@ -445,7 +450,7 @@ A dev-dependency reaches the test units and nothing else of the package
 the files under `tests/`; the package's own sources are compiled under
 `mcpp test` with the commands `mcpp build` gives them, so the code under test is
 the code that ships, and `mcpp build` and `mcpp test` share one build directory
-and one compile database. A kernel interface that only a dev-dependency reaches
+and one compile database while the tests ask the package for no features. A kernel interface that only a dev-dependency reaches
 (`mcpplibs.mtest` over `mcpplibs.os` reaches openkal's) is given to the
 dev-dependencies and the test units alone: they see `__OPENKAL__` and openkal's
 headers, and the package's own sources do not. A C library or a C++ runtime that

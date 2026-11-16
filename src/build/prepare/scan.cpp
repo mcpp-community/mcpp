@@ -1009,6 +1009,49 @@ static void step11_compute_fingerprint(PrepareState& state) {
         fpi.compileFlags += " #accel=";
         fpi.compileFlags += accel;
     }
+    // THE TESTS' CONFIGURATION (mcpp#945). A test plan configures a package
+    // otherwise than `mcpp build` when the tests ask it for features: the
+    // package's `[test] features`, or a dev-dependency entry that asks a
+    // package the manifest also depends on for features (or for none of its
+    // defaults). The module interfaces and objects of a build directory are
+    // named by module and package, not by configuration, so two
+    // configurations in one directory compile each other's files again --
+    // three compiles of one module in a workspace run, and on Windows a
+    // rewrite of an interface another compile had open. Such a test plan
+    // builds in a directory of its own; one that asks for nothing shares the
+    // build's, which the tests' programs and `mcpp build` reuse.
+    if (state.includeDevDeps) {
+        std::vector<std::string> asks;
+        auto add = [&](const mcpp::manifest::Manifest& m) {
+            const auto who = m.package.namespace_.empty() ? m.package.name
+                                                          : m.package.namespace_ + "." + m.package.name;
+            for (auto const& f : m.testFeatures) asks.push_back(who + "[test]" + f);
+            for (auto const& [key, dev] : m.devDependencies) {
+                auto dep = m.dependencies.find(key);
+                if (dep == m.dependencies.end()) continue;
+                std::vector<std::string> extra;
+                for (auto const& f : dev.features)
+                    if (std::ranges::find(dep->second.features, f) == dep->second.features.end())
+                        extra.push_back(f);
+                const bool fewerDefaults = !dev.defaultFeatures && dep->second.defaultFeatures;
+                if (extra.empty() && !fewerDefaults) continue;
+                std::ranges::sort(extra);
+                std::string w = who + ">" + key + ":";
+                for (auto const& f : extra) w += f + ",";
+                if (fewerDefaults) w += "-default";
+                asks.push_back(std::move(w));
+            }
+        };
+        if (state.workspacePlan())
+            for (auto const& [dir, member] : state.selectedMemberManifests) add(member);
+        else
+            add(*state.m);
+        if (!asks.empty()) {
+            std::ranges::sort(asks);
+            fpi.compileFlags += " #test=";
+            for (auto const& a : asks) { fpi.compileFlags += a; fpi.compileFlags += ';'; }
+        }
+    }
     if (state.m->cppStandard.experimental) {
         // c++fly gate flags are derived (not manifest-declared): fold them in
         // so a cppfly table change across mcpp versions re-fingerprints.

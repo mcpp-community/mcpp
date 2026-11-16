@@ -166,8 +166,10 @@ features = ["ktx2"]
 
 测试规划在默认 feature 与 `--features` 之外打开它们，见于 `mcpp test`、`mcpp test -p <member>` 与
 `mcpp test --workspace`。在工作空间中，它们在该成员自己的边上请求，声明了同名 feature 的另一个成员不被请求。
-`mcpp build`、测试运行的程序（`MCPP_BIN_<NAME>`）以及包的其它消费者保持默认 feature。测试与 `mcpp build`
-共用一个构建目录，所以先后构建两者会重新编译 feature 改变的部分，与交替使用 `--features` 相同。
+`mcpp build`、测试运行的程序（`MCPP_BIN_<NAME>`）以及包的其它消费者保持默认 feature。以这种方式，或经 dev 依赖条目
+（向本清单同时依赖的包要求 feature，或不要其默认 feature）向包要求 feature 的测试规划，以不同于 `mcpp build` 的配置构建该包。
+它在自己的构建目录中构建，因此每种配置只编译一次，互不覆盖对方的模块接口；不要求任何 feature 的测试规划与构建共用目录
+（2026.11.17.1 起；此前二者共用一个目录、互相重新编译，mcpp#945）。
 
 ### 测试程序的起点
 
@@ -328,7 +330,7 @@ counters = { path = "../counters" }
 
 dev 依赖只到达测试单元，不到达包的其他部分（2026.11.8.1+）。它的包含目录与接口定义只给
 `tests/` 下的文件；包自己的源文件在 `mcpp test` 下以 `mcpp build` 给出的命令编译，因此被
-测试的代码就是发布的代码，`mcpp build` 与 `mcpp test` 共用一个构建目录和一份编译数据库。
+测试的代码就是发布的代码，在测试不向包要求 feature 时，`mcpp build` 与 `mcpp test` 共用一个构建目录和一份编译数据库。
 只有 dev 依赖到达的内核接口（`mcpplibs.mtest` 经 `mcpplibs.os` 到达 openkal 的接口）只给
 dev 依赖与测试单元：它们看到 `__OPENKAL__` 与 openkal 的头文件，包自己的源文件看不到。
 dev 依赖提供的 C 库或 C++ 运行时是测试所链接的每个目标文件的属性，仍属于整个配置。

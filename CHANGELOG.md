@@ -75,6 +75,17 @@
   array of tables before the platform reader saw it, so a platform could define
   rows for a system but not state the system (`uname`, `resources`,
   `command-scripts`; SPEC-016 §2.3).
+- A test plan that configures a package otherwise than `mcpp build` (its
+  `[test] features`, or a dev-dependency entry that asks a package the
+  manifest also depends on for features) builds in a directory of its own
+  (#945). The two configurations shared one directory, whose module
+  interfaces and objects are named by module and package, and compiled each
+  other's files again: three compiles of one module per `mcpp test
+  --workspace`, and on Windows a rewrite of an interface another compile had
+  open. Each configuration now compiles once (e2e 1107).
+- A file a build program writes again with the same content keeps its time,
+  so a program that writes its outputs on every run does not recompile what
+  imports them (#945).
 - A failed build whose ninja output names no failed step prints ninja's last
   lines rather than a bare `error: build failed` (#945).
 - A base package whose C++ layer another package supplies (a provider's
