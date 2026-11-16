@@ -352,10 +352,7 @@ other than a letter or a digit written `_` (`MCPP_BIN_MY_TOOL` for `my-tool`).
 A test that runs the program it tests reads it from there. Under several
 members the programs of a configuration group are planned together, as
 `mcpp build --workspace` plans them, so a package they share is built with
-one configuration (2026.11.16.1+). The programs are planned with the
-package's dev-dependencies, as the tests are, so a feature a dev-dependency
-asks of a shared package is the programs' too and the package is compiled once
-(2026.11.17.1+); `[test] features` stay the tests' own.
+one configuration (2026.11.16.1+).
 
 `--no-programs` (2026.11.13.1+) builds none of them: the programs are planned
 for their names, and each test takes each program from the environment's

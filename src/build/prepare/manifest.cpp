@@ -271,7 +271,7 @@ select_workspace_members(PrepareState& state, const std::filesystem::path& wsRoo
         // member that declares a feature of the same name is not asked for it,
         // and a plan without the tests (`mcpp build`, the programs the tests
         // run) requests none.
-        if (state.includeDevDeps && !state.overrides.programs_of_tests)
+        if (state.includeDevDeps)
             for (auto const& f : member->testFeatures)
                 if (std::ranges::find(requested, f) == requested.end()) requested.push_back(f);
         mcpp::manifest::DependencySpec spec;
@@ -598,8 +598,8 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     // recorded graph names them. A plan without the tests requests none, so the
     // artifact and the programs the tests run are the package's defaults. A
     // host-tool sub-build is not the package under test.
-    if (state.includeDevDeps && !state.overrides.programs_of_tests && !state.workspacePlan()
-        && !state.overrides.preloaded_manifest && !state.m->testFeatures.empty()) {
+    if (state.includeDevDeps && !state.workspacePlan() && !state.overrides.preloaded_manifest
+        && !state.m->testFeatures.empty()) {
         auto tokens = mcpp::build::feature_request_tokens(state.overrides.features);
         for (auto const& f : state.m->testFeatures) {
             if (std::ranges::find(tokens, f) != tokens.end()) continue;

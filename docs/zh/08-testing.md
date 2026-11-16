@@ -262,9 +262,7 @@ test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.
 **测试按名字找到包的程序**（2026.10.27.1+）。`mcpp test` 先按 `mcpp build` 的方式构建包的程序，并给每个测试
 `MCPP_BIN_<NAME>`：程序 `<name>` 的路径，名字转为大写，字母与数字之外的字符写作 `_`（`my-tool` 为
 `MCPP_BIN_MY_TOOL`）。运行被测程序的测试从这里读取它。选中多个成员时，一个配置组的程序一起规划，与
-`mcpp build --workspace` 相同，因此它们共用的包以一种配置构建（2026.11.16.1+）。程序与测试一样带着包的
-dev-dependencies 规划，dev-dependency 向共用的包要求的 feature 也是程序的，包只编译一次（2026.11.17.1+）；
-`[test] features` 仍只属于测试。
+`mcpp build --workspace` 相同，因此它们共用的包以一种配置构建（2026.11.16.1+）。
 
 `--no-programs`（2026.11.13.1+）不构建它们：程序只为得到名字而规划，每个测试从环境的 `MCPP_BIN_<NAME>`
 取得各程序，用于在别处构建的程序（一个 CI 作业测试另一个作业构建的二进制）。环境未指定的程序在任何测试运行前

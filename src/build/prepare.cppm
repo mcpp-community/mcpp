@@ -995,12 +995,6 @@ export struct BuildOverrides {
     // One says which PACKAGES enter the graph, the other which TOOLS are
     // installed, and `mcpp run` needs the second without the first.
     bool        will_run = false;
-    // THE PROGRAMS A TEST RUNS (mcpp#945). Planned with the dev-dependencies, so
-    // the packages they share with the tests are configured as the tests' plan
-    // configures them and are not compiled again over it; but without the
-    // package's `[test] features`, which are the tests' own request (mcpp#941):
-    // the programs are the package's defaults.
-    bool        programs_of_tests = false;
     // ── The packaging pass, when this prepare is one (mcpp 2026.9.11.1+) ────
     //
     // `mcpp pack --format <name>` prepares TWICE, and these two fields are the
