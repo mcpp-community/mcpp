@@ -20,6 +20,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_rows;   // a row's fixed executable suffix (N48)
 import mcpp.pack.prebuilt;   // is_distribution_package — a shipped shared lib is not rebuilt
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
@@ -1993,6 +1994,16 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return t ? *t : mcpp::toolchain::triple::Triple{};
     }();
     auto naming = naming_for(tc);
+    // A ROW WHOSE SUFFIX IS PART OF LOADING (N48): the template decides what
+    // precedes the row's suffix, and the suffix ends the name once. Owned
+    // here, since `naming` holds views and the joined suffix is new text.
+    const std::string_view rowExeSuffix = naming.exeSuffix;
+    const bool exeSuffixFixed = [&] {
+        auto const* row = targetTriple.empty() ? nullptr
+                        : mcpp::toolchain::target::find_row(targetTriple.str());
+        return row && row->exeSuffixFixed;
+    }();
+    std::string joinedExeSuffix;
     // A PLATFORM NAMES ITS ARTIFACTS (`[platform.link] exe`, `shared`): an
     // ok image is `<name>.oke`, an image another loads `lib<name>.okso`.
     // The patterns were checked where they were read.
@@ -2012,7 +2023,15 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         auto const& l = platform->fields.link;
         if (l.exe.set && mcpp::platform::split_name_pattern(l.exe.value)) {
             const std::string_view v = l.exe.value;
-            if (v.starts_with(kName)) naming.exeSuffix = v.substr(kName.size());
+            if (v.starts_with(kName)) {
+                const std::string_view tail = v.substr(kName.size());
+                if (exeSuffixFixed && !rowExeSuffix.empty() && !tail.ends_with(rowExeSuffix)) {
+                    joinedExeSuffix = std::string(tail) + std::string(rowExeSuffix);
+                    naming.exeSuffix = joinedExeSuffix;
+                } else {
+                    naming.exeSuffix = tail;
+                }
+            }
         }
         if (l.shared.set && mcpp::platform::split_name_pattern(l.shared.value)) {
             const std::string_view v = l.shared.value;

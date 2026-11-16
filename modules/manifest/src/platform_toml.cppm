@@ -617,7 +617,7 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
             *to = std::move(*w);
         }
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, bool*>>{
-             {"standard", &r.standard}, {"exact", &r.exact}})
+             {"standard", &r.standard}, {"exact", &r.exact}, {"exe-suffix-fixed", &r.exeSuffixFixed}})
         if (auto it = t.find(key); it != t.end()) {
             if (!it->second.is_bool()) return std::unexpected(std::format("{}.{} must be true or false", where, key));
             *to = it->second.as_bool();

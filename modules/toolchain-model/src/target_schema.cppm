@@ -57,6 +57,11 @@ struct Row {
     // (`[target.<sel>.abi] exceptions`; design 2026-11-15 N26): `wasm` on
     // wasm32-emscripten. Empty: the toolchain's default.
     std::string_view exceptions;
+    // THE ROW'S EXECUTABLE SUFFIX IS PART OF HOW ITS PROGRAMS ARE LOADED (design
+    // 2026-11-16 N48): `.js` of wasm32-emscripten, which pairs the launcher with
+    // its module. A name template (`artifact_name("exe", "{name}")`) decides what
+    // precedes it; the suffix ends the name, once.
+    bool             exeSuffixFixed = false;
     bool             defined = false; // stated by a platform package
 };
 

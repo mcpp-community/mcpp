@@ -263,7 +263,10 @@ hosted   = true                    # C 环境有 `main`
 
 **行的附带文件与异常模型（2026.11.16.1+）。** `companions = [".wasm"]` 指链接可能在程序旁写出、以程序命名的文件：每次链接前
 删除，链接写出时被暂存，未写出不是错误。`exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型，
-为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
+为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。`exe-suffix-fixed = true`
+（2026.11.17.1+）陈述行的可执行文件后缀是加载其程序的一部分：名字模板（`artifact_name("exe", "{name}")`、`link.exe`）
+只决定后缀之前的部分，名字以该后缀结尾且只出现一次。内置的 `wasm32-emscripten` 行陈述它，所以命名为 `{name}` 的程序
+仍是 `app.wasm` 旁的 `app.js`。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
 SPEC-016 §2.4）；此时 `same-arch` 的 runner 为产物的架构构建，在本机启动。
 
 **定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`

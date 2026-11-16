@@ -49,6 +49,10 @@
 #   companions      the files the link may write beside a program, named after
 #                   it (`.wasm` beside `app.js`): removed before each link,
 #                   staged when written, not an error when absent
+#   exe-suffix-fixed
+#                   the row's executable suffix is part of loading its
+#                   programs: a name template (`artifact_name`, `link.exe`)
+#                   decides what precedes it, and the name ends in it once
 #
 # Provider keys
 #   name            the provider's name; `builtin:<name>` selects it
@@ -465,6 +469,9 @@ exceptions = "wasm"
 # The module Emscripten writes beside the launcher (`app.wasm` beside `app.js`),
 # none under `-sSINGLE_FILE=1` (N33).
 companions = [".wasm"]
+# `.js` pairs the launcher with its module: a name template decides what
+# precedes it, and the name ends in `.js` (N48).
+exe-suffix-fixed = true
 
 # OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
 # `okrun` on Linux, macOS and Windows of that architecture.

@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A row whose executable suffix is part of loading its programs states
+  `exe-suffix-fixed = true`, and a name template keeps that suffix: a build
+  program's `artifact_name("exe", "{name}")` names the Web row's launcher
+  `app.js` beside `app.wasm`, where it was a bare `app` that neither node nor a
+  browser loads, and `{name}.js` gives `app.js`, not `app.js.js`. The built-in
+  `wasm32-emscripten` row states it; a platform states it for its own rows.
+  The engine reads no system name for this (design 2026-11-16 N48).
+
 ## [2026.11.16.1] - 2026-11-16
 
 ### Changed

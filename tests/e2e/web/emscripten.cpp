@@ -248,6 +248,26 @@ E2E emscripten{"emscripten", [] {
         expect(fatal(!s::find_file(app.at("target/dist"), "app.wasm").has_value())) << "a module was packed";
     };
 
+    "1101 a stated name keeps the web row's launcher suffix"_test[s::elf] = [] {
+        // The row's `.js` is part of loading (`exe-suffix-fixed`, design 2026-11-16 N48): a build
+        // program that names the program `{name}` gets `app.js` beside `app.wasm`, and one that
+        // names it `{name}.js` gets the same file, not `app.js.js`.
+        if (!have_emsdk() || !s::on_path("node")) skip("1101 -- no emsdk payload or node on this machine");
+        for (std::string_view pattern : {"{name}", "{name}.js"}) {
+            s::project app(s::case_dir() / (pattern == "{name}" ? "bare" : "js"),
+                           {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[target.wasm32-emscripten]\nrunner = [\"node\"]\n"},
+                            {"src/main.cpp", "import std;\nint main() { std::println(\"named\"); }\n"},
+                            {"build.mcpp", std::format("import mcpp;\nint main() {{ mcpp::artifact_name(\"exe\", \"{}\"); return 0; }}\n", pattern)}});
+            auto r = app.mcpp({"run", "--target", "wasm32-emscripten"});
+            expect(fatal(e2e::succeeded(r) && s::has_line(s::text(r), "^named$"))) << pattern << ": " << s::text(r);
+            const auto js = s::find_file(app.at("target/wasm32-emscripten"), "app.js");
+            expect(fatal(js.has_value())) << pattern << ": no app.js";
+            expect(fatal(fs::is_regular_file(js->parent_path() / "app.wasm"))) << pattern << ": no app.wasm beside app.js";
+            expect(fatal(!fs::exists(js->parent_path() / "app"))) << pattern << ": a launcher without its suffix";
+            expect(fatal(!fs::exists(js->parent_path() / "app.js.js"))) << pattern << ": the suffix was doubled";
+        }
+    };
+
     "1079 an emscripten rows longjmp model round trips"_test[s::elf] = [] {
         // `longjmp = "wasm"` makes a non-local exit over two call levels round-trip; on a Linux
         // row it is refused naming that row's os.

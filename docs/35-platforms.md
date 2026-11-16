@@ -322,7 +322,12 @@ names the files the link may write beside a program, named after it: they are re
 before each link, staged when the link wrote one, and not an error when it did not.
 `exceptions` is the model of the row's builds when the project states no
 `[target.<sel>.abi] exceptions`; under `"wasm"` the long-jump model is `"wasm"` too
-(the built-in `wasm32-emscripten` row states `"wasm"`). A machine
+(the built-in `wasm32-emscripten` row states `"wasm"`). `exe-suffix-fixed = true`
+(2026.11.17.1+) states that the row's executable suffix is part of loading its
+programs: a name template (`artifact_name("exe", "{name}")`, `link.exe`) decides
+what precedes the suffix, and the name ends in it once. The built-in
+`wasm32-emscripten` row states it, so a program named `{name}` is still `app.js`
+beside `app.wasm`. A machine
 runs another architecture's programs only where the execution table states it
 (`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
 the artifact's architecture and started on this machine.

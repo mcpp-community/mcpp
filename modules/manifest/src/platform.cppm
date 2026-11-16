@@ -264,7 +264,7 @@ struct RowSpec {
                 exeSuffix, sharedSuffix, loader, execution, exceptions;
     std::string march, mabi, codeModel, multilib, linkEmulation;
     std::vector<std::string> flags, descriptorKeys, companions;
-    bool standard = true, exact = false;
+    bool standard = true, exact = false, exeSuffixFixed = false;
     Origin origin;
 };
 
@@ -393,6 +393,7 @@ inline constexpr std::string_view kDefineKeys[] = {
     "triple", "tier", "note", "standard", "exact", "clang-triple", "gcc-triple", "object-format", "family",
     "data-model", "exe-suffix", "shared-suffix", "loader", "execution", "march", "mabi",
     "code-model", "multilib", "flags", "link-emulation", "descriptor-keys", "companions", "exceptions",
+    "exe-suffix-fixed",
 };
 inline constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
