@@ -79,6 +79,15 @@
   open, which failed the run.
 - A failed build whose ninja output names no failed step prints ninja's last
   lines rather than a bare `error: build failed` (#945).
+- A base package whose C++ layer another package supplies (a provider's
+  `layers`, a dependency's `provides`) no longer puts its `ldflags`, its C++
+  library's, on the link: a NetBSD program built with libc++ from source also
+  named the base's libstdc++, and carried two C++ runtimes (SPEC-002 §2.5,
+  e2e 1108).
+- A package whose version directory holds a `mcpp.toml` is rooted there,
+  whatever directories lie beside it: an OpenBSD sysroot, which holds only
+  `usr/`, was taken for an extracted tarball, its manifest was lost, and the
+  build judged `usr/` a library prefix ("no crt1.o").
 
 ## [2026.11.16.1] - 2026-11-16
 

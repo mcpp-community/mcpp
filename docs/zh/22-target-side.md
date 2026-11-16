@@ -1110,6 +1110,9 @@ std-module-flags  = ["-D__fenv_static="]
 - 报告把这些层标为 `prebuilt`，并附基座的 `<名>@<版本>`；
 - C++ 头文件、`std` 模块与链接的 C++ 库取自基座；工具链载荷为其自身宿主构建的 C++ 运行时及其归档不参与。基座未给出
   `std-module` 时，该构建没有 `import std`；
+- 另一个包供给 `c++-abi` 层时（依赖的 `provides`、平台或提供者的 `layers`），它只在该层取代基座：基座的 C++ 头文件
+  不进入编译，其 `ldflags` 不进入链接，一个映像只有一个 C++ 运行时；C 库与编译器运行时仍取自基座（2026.11.17.1+）。
+  系统自带的 C++ 库不带模块源码时（NetBSD 的 libstdc++），以这种方式得到 `import std`：在其 C 库之上构建的 libc++；
 - `compiler_runtime_dir`（`[build]` 的键，2026.11.10.1+）指名编译器运行时所在的目录：clang 读作资源目录，gcc 经 `-B`
   读取。
 

@@ -288,6 +288,67 @@ driver = "compiler"
         expect(fatal(!e2e::succeeded(r))) << "the musl row was served by a platform that does not serve it: " << out;
         expect(fatal(e2e::contains(out, "serves x86_64-freebsd, aarch64-freebsd and not x86_64-freebsd-musl"))) << "the refusal does not name what the platform serves: " << out;
     };
+
+    "1108 a base's c++ library leaves the link when a package supplies the c++ layer"_test[s::llvm] = [] {
+        // A base whose C++ library has no module sources (GCC's libstdc++ on NetBSD) is
+        // paired with libc++ from a package (the provider's `layers`): the C++ layer is the
+        // package's, and the base's `ldflags`, which are its C++ library's (SPEC-002 §2.5),
+        // leave the link as its headers leave the compile, so one image has one C++ run-time.
+        // The compiler run-time stays the base's.
+        const auto t = s::case_dir();
+        fs::create_directories(t / "toy-sysroot/usr/lib");
+        s::project(t / "toy-sysroot", {
+            {"usr/include/g++/toy_vector", "#pragma once\n"},
+            {"mcpp.toml", "[package]\nname     = \"toy-sysroot\"\nversion  = \"1.0\"\nprovides = [\"mcpp:c-abi=toy-libc\", \"mcpp:c++-abi=libstdc++\", \"mcpp:compiler-runtime=libgcc\",\n            \"hosted-standard-library\"]\n\n[build]\ninclude_dirs = [\"usr/include/g++\"]\nldflags      = [\"-ltoystdcxx\"]\n"}});
+        s::project(t / "cxx", {{"mcpp.toml", "[package]\nname     = \"toycxx\"\nversion  = \"0.1.0\"\nprovides = [\"mcpp:c++-abi=libc++\", \"hosted-standard-library\"]\n\n[build]\nsources = []\n"}});
+        auto platform = [&](bool layer) {
+            s::project(t / "plat", {{"mcpp.toml", std::format(R"([package]
+name    = "toy-netbsd-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{}"
+
+[[platform.system]]
+name  = "toynet"
+uname = "ToyNet"
+
+[[platform.define]]
+triple        = "x86_64-toynet"
+clang-triple  = "x86_64-unknown-netbsd10.2"
+object-format = "elf"
+family        = "unix"
+execution     = "toynet"
+tier          = "preview"
+
+[[platform.provider]]
+serves  = ["x86_64-toynet"]
+sysroot = {{ path = "../toy-sysroot" }}
+{}hosted  = true
+
+[platform.link]
+driver = "compiler"
+)", s::llvm_version(), layer ? "layers  = { \"c++-abi\" = { path = \"../cxx\" } }\n" : "")}});
+        };
+        s::project app(t / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[target.x86_64-toynet]\nplatform = { path = \"../plat\" }\n"},
+                                   {"src/main.cpp", "int main() { return 0; }\n"}});
+
+        platform(false);
+        auto r = app.mcpp({"why", "flags", "--target", "x86_64-toynet"});
+        auto out = s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "the plan over the base failed: " << out;
+        expect(fatal(s::has_line(out, R"(c\+\+-abi +libstdc\+\+ +\(toy-sysroot@1\.0, prebuilt)"))) << "the C++ layer is not the base's: " << out;
+        expect(fatal(s::has_line(out, R"((^| )-ltoystdcxx( |$))"))) << "the link does not name the base's C++ library: " << out;
+
+        platform(true);
+        r = app.mcpp({"why", "flags", "--target", "x86_64-toynet"});
+        out = s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "the plan with the package's C++ layer failed: " << out;
+        expect(fatal(s::has_line(out, R"(c\+\+-abi +libc\+\+ +\(toycxx@0\.1\.0)"))) << "the C++ layer is not the package's: " << out;
+        expect(fatal(s::has_line(out, R"(compiler-runtime +libgcc +\(toy-sysroot@1\.0, prebuilt)"))) << "the compiler run-time is not the base's: " << out;
+        expect(fatal(s::no_line(out, R"((^| )-ltoystdcxx( |$))"))) << "the base's C++ library is still on the link: " << out;
+        expect(fatal(!e2e::contains(out, (t / "toy-sysroot/usr/include/g++").string()))) << "a unit carries the base's C++ headers: " << out;
+    };
 }};
 
 }  // namespace
