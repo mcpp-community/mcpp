@@ -323,21 +323,48 @@ void define_early_platform(PrepareState& state) {
 }
 
 std::string index_platform_for(const PrepareState& state, std::string_view triple) {
-    // One scan of the indices per process: the column is consulted only for a
-    // row the built-in table does not answer, and the answer does not change
-    // while one command runs. The project's own indices ([indices] of
-    // mcpp.toml) rank before the shared ones; one rank's claims are compared.
+    // One scan of a set of index roots per process: the column is consulted
+    // only for a row the built-in table does not answer, and the answer does
+    // not change while one command runs. The project's own indices ([indices]
+    // of mcpp.toml) rank before the shared ones; one rank's claims are
+    // compared. The roots are found and the scan runs with no lock held: the
+    // configuration and the provider may wait on the home's lock, which a
+    // leg prepared beside this one may hold while it reaches this function.
     struct Claim {
         int rank;
         std::string package;
     };
+    using Claims = std::map<std::string, std::vector<Claim>>;
+    auto cfg = state.get_cfg(false);
+    if (!cfg) return {};
+    // (root, rank, the namespace of a descriptor that names none)
+    std::vector<std::tuple<fs::path, int, std::string>> roots;
+    const auto add = [&](fs::path dir, int rank, std::string ns) {
+        if (std::ranges::none_of(roots, [&](auto const& r) { return std::get<0>(r) == dir; }))
+            roots.emplace_back(std::move(dir), rank, std::move(ns));
+    };
+    if (state.root && state.m) {
+        const auto project = state.projectIndexRoot();
+        for (auto const& [name, spec] : state.m->indices)
+            if (spec.is_local()) add(mcpp::config::resolve_project_index_path(*state.root, spec), 0, name);
+        for (auto const& dir : mcpp::provider::layout().index_roots_of(project / ".mcpp"))
+            add(dir, 0, dir.filename().string());
+        for (auto const& data : mcpp::config::project_xlings_data_roots(project))
+            for (auto const& dir : mcpp::provider::layout().index_roots_of(data.parent_path()))
+                add(dir, 0, dir.filename().string());
+    }
+    for (auto const& dir : mcpp::provider::open(mcpp::config::make_xlings_env(**cfg))->index_roots())
+        add(dir, 1, std::string(mcpp::pm::kDefaultNamespace));
+    std::string rootsKey;
+    for (auto const& [root, rank, defaultNs] : roots) rootsKey += std::format("{}\t{}\t{}\n", root.string(), rank, defaultNs);
     static std::mutex lock;
-    static std::optional<std::map<std::string, std::vector<Claim>>> claims;
-    std::scoped_lock guard(lock);
+    static std::map<std::string, std::shared_ptr<const Claims>> scanned;
+    std::shared_ptr<const Claims> claims;
+    {
+        std::scoped_lock guard(lock);
+        if (auto found = scanned.find(rootsKey); found != scanned.end()) claims = found->second;
+    }
     if (!claims) {
-        claims.emplace();
-        auto cfg = state.get_cfg(false);
-        if (!cfg) return {};
         // `<key> = ` at the start of a line or after `{` or `,`: the first such
         // key is the package table's own (its keys precede its nested tables).
         auto field = [](std::string_view lua, std::string_view key) -> std::size_t {
@@ -360,24 +387,7 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
             if (q2 != std::string_view::npos) out = std::string(lua.substr(q1 + 1, q2 - q1 - 1));
             return out;
         };
-        // (root, rank, the namespace of a descriptor that names none)
-        std::vector<std::tuple<fs::path, int, std::string>> roots;
-        const auto add = [&](fs::path dir, int rank, std::string ns) {
-            if (std::ranges::none_of(roots, [&](auto const& r) { return std::get<0>(r) == dir; }))
-                roots.emplace_back(std::move(dir), rank, std::move(ns));
-        };
-        if (state.root && state.m) {
-            const auto project = state.projectIndexRoot();
-            for (auto const& [name, spec] : state.m->indices)
-                if (spec.is_local()) add(mcpp::config::resolve_project_index_path(*state.root, spec), 0, name);
-            for (auto const& dir : mcpp::provider::layout().index_roots_of(project / ".mcpp"))
-                add(dir, 0, dir.filename().string());
-            for (auto const& data : mcpp::config::project_xlings_data_roots(project))
-                for (auto const& dir : mcpp::provider::layout().index_roots_of(data.parent_path()))
-                    add(dir, 0, dir.filename().string());
-        }
-        for (auto const& dir : mcpp::provider::open(mcpp::config::make_xlings_env(**cfg))->index_roots())
-            add(dir, 1, std::string(mcpp::pm::kDefaultNamespace));
+        auto built = std::make_shared<Claims>();
         for (auto const& [root, rank, defaultNs] : roots) {
             std::error_code ec;
             const auto pkgs = root / "pkgs";
@@ -403,13 +413,15 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
                     if (lua[p] != '"') continue;
                     const auto q = lua.find('"', p + 1);
                     if (q == std::string::npos || q > close) break;
-                    auto& who = (*claims)[lua.substr(p + 1, q - p - 1)];
+                    auto& who = (*built)[lua.substr(p + 1, q - p - 1)];
                     if (std::ranges::none_of(who, [&](auto const& c) { return c.package == pkg; }))
                         who.push_back({rank, pkg});
                     p = q;
                 }
             }
         }
+        std::scoped_lock guard(lock);
+        claims = scanned.try_emplace(rootsKey, std::move(built)).first->second;
     }
     auto it = claims->find(std::string(triple));
     if (it == claims->end() || it->second.empty()) return {};
