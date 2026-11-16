@@ -162,16 +162,21 @@ E2E path{"path", [] {
     };
 
     "23 remove update"_test = [] {
-        // `mcpp remove` deletes one entry of [dependencies] and keeps the others, and exits 1 for
-        // a name the manifest does not hold; `mcpp update <name>` drops that entry of mcpp.lock;
+        // `mcpp remove` deletes one entry of [dependencies], one written over several
+        // lines too, and keeps the others, and exits 1 for a name the manifest does not hold; `mcpp update <name>` drops that entry of mcpp.lock;
         // `mcpp update` removes the lock. The dependencies are written into mcpp.toml rather than
         // added, so the case exercises remove and update whatever the index holds.
         const s::options fresh{.where = s::home::fresh};
         auto app = s::project::scaffold("myapp");
-        app.write("mcpp.toml", app.read("mcpp.toml") + "\n[dependencies]\nfoo = \"1.0.0\"\nbar = \"2.0.0\"\n");
+        app.write("mcpp.toml", app.read("mcpp.toml") + "\n[dependencies]\nfoo = \"1.0.0\"\nbaz = {\n    version  = \"3.0.0\",   # an inline table over several lines (TOML 1.1)\n    features = [\"x\"],\n}\nbar = \"2.0.0\"\n");
         auto r = app.mcpp({"remove", "foo"}, fresh);
         expect(fatal(e2e::contains(s::text(r), "Removing"))) << "remove foo: " << s::text(r);
         expect(s::no_line(app.read("mcpp.toml"), R"(^("foo"|foo) = )")) << "foo not actually removed: " << app.read("mcpp.toml");
+        expect(s::has_line(app.read("mcpp.toml"), R"(^("bar"|bar) = "2\.0\.0")")) << "bar accidentally removed: " << app.read("mcpp.toml");
+        // an entry written over several lines goes whole, not only the line that opens it (#928)
+        r = app.mcpp({"remove", "baz"}, fresh);
+        expect(fatal(e2e::contains(s::text(r), "Removing"))) << "remove baz: " << s::text(r);
+        expect(s::lacks(app.read("mcpp.toml"), "baz") && s::lacks(app.read("mcpp.toml"), "3.0.0") && s::lacks(app.read("mcpp.toml"), "features") && s::no_line(app.read("mcpp.toml"), R"(^\}$)")) << "baz not wholly removed: " << app.read("mcpp.toml");
         expect(s::has_line(app.read("mcpp.toml"), R"(^("bar"|bar) = "2\.0\.0")")) << "bar accidentally removed: " << app.read("mcpp.toml");
         r = app.mcpp({"remove", "nonexistent"}, fresh);
         expect(eq(r.status, 1)) << "remove nonexistent should exit 1: " << s::text(r);

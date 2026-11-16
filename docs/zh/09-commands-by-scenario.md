@@ -246,7 +246,8 @@ tip: the refreshed package index `mcpplibs` requires a newer mcpp; this run used
 `--offline`（或 `MCPP_OFFLINE=1`）在单次调用中禁止网络，宁可失败也不拉取。
 `--locked` 在解析结果与 `mcpp.lock` 不一致时失败，而不是改写它，这正是 CI
 作业需要的形状。`mcpp index pin <name> <rev>` 把一个自定义索引的某个
-commit 记进 `mcpp.toml`;`mcpp index unpin` 移除它。
+commit 记进 `mcpp.toml`;`mcpp index unpin` 移除它。二者编辑写在一行之内的
+`[indices]` 条目；内联表跨多行的条目会被拒绝。
 
 ## 下载进度
 

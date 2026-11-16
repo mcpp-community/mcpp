@@ -102,6 +102,50 @@ UTest a_unicode_escape_names_a_scalar_value{"Toml/AUnicodeEscapeNamesAScalarValu
     if (auto&& failed = expect(ne(bad.error().message.find("\\uDFFF"), std::string::npos)); !failed) failed << bad.error().message;
 }};
 
+// TOML 1.1: an inline table may span lines, hold comments, and end with a
+// comma. Each was refused with `expected key`, so the multi-line `runner = {...}`
+// of docs/35 could not be read.
+UTest an_inline_table_spans_lines{"Toml/AnInlineTableSpansLines", [] {
+    auto d = t::parse(R"(
+runner = {   # a comment after the brace
+    cmd   = ["dirun", "--", "{}"],
+    hosts = ["linux-x86_64",
+             "macos-aarch64"],
+    # a comment line between pairs
+    env   = { A = "1", B = { C = 2, }, },
+}
+after = true
+)");
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(eq(*d->get_string_array("runner.cmd"), std::vector<std::string>({"dirun", "--", "{}"})));
+    expect(eq(*d->get_string_array("runner.hosts"), std::vector<std::string>({"linux-x86_64", "macos-aarch64"})));
+    expect(eq(d->get_string("runner.env.A").value_or(""), "1"));
+    expect(eq(d->get_int("runner.env.B.C").value_or(-1), 2));
+    expect(eq(d->get_bool("after").value_or(false), true));
+
+    d = t::parse("empty = {\n}\nx = { a = 1, }");
+    if (auto&& failed = expect(fatal(d.has_value())); !failed) failed << d.error().message;
+    expect(fatal(d->get_table("empty") != nullptr));
+    expect(d->get_table("empty")->empty());
+    expect(eq(d->get_int("x.a").value_or(-1), 1));
+}};
+
+// What TOML 1.1 still refuses in an inline table: a pair split across lines,
+// a missing separator, an empty element, and a table that never closes.
+UTest an_inline_table_keeps_each_pair_on_one_line{"Toml/AnInlineTableKeepsEachPairOnOneLine", [] {
+    expect(!(t::parse("x = { a\n= 1 }").has_value()));
+    expect(!(t::parse("x = { a =\n1 }").has_value()));
+    expect(!(t::parse("x = { a = 1\nb = 2 }").has_value()));
+    expect(!(t::parse("x = { a = 1,, }").has_value()));
+    expect(!(t::parse("x = { , }").has_value()));
+
+    auto open = t::parse("x = {\n  a = 1,\n");
+    expect(fatal(!open.has_value()));
+    if (auto&& failed = expect(eq(open.error().message, "unterminated inline table")); !failed) failed << open.error().message;
+    expect(eq(open.error().where.line, 1u));
+    expect(eq(open.error().where.column, 5u));
+}};
+
 UTest reject_unterminated_string{"Toml/RejectUnterminatedString", [] {
     auto d = t::parse(R"(x = "no end)");
     expect(!d.has_value());

@@ -475,6 +475,51 @@ widget = "1.0.0"
     expect(ne(invalid.error().find("invalid manifest"), std::string::npos));
 }};
 
+// An entry written as an inline table over several lines (TOML 1.1) is
+// replaced whole: replacing its first line alone left the rest of the old
+// value behind, and the edit was refused as an invalid manifest.
+UTest replaces_an_entry_written_over_several_lines{"ManifestEditor/ReplacesAnEntryWrittenOverSeveralLines", [] {
+    constexpr std::string_view source = R"([package]
+name = "app"
+version = "0.1.0"
+
+[dependencies.acme]
+widget = {
+    version  = "1.0.0",    # the brace } in a comment is no close
+    features = ["gui",
+                "a]b"],
+}
+gadget = "1.0.0"
+)";
+    auto edited = mcpp::manifest::upsert_dependency_text(source, {
+        .namespace_ = "acme",
+        .shortName = "widget",
+        .version = "2.0.0",
+    });
+    if (auto&& failed = expect(fatal(edited.has_value())); !failed) failed << edited.error();
+    expect(ne(edited->find("[dependencies.acme]\nwidget = \"2.0.0\"\ngadget = \"1.0.0\"\n"), std::string::npos));
+    auto parsed = mcpp::manifest::parse_string(*edited);
+    if (auto&& failed = expect(fatal(parsed.has_value())); !failed) failed << parsed.error().format();
+    expect(fatal(eq(parsed->dependencies.size(), 2u)));
+    expect(eq(parsed->dependencies.at("acme.widget").version, "2.0.0"));
+    expect(eq(parsed->dependencies.at("acme.widget").features, std::vector<std::string>{}));
+    expect(eq(parsed->dependencies.at("acme.gadget").version, "1.0.0"));
+}};
+
+// The end of an assignment is the newline after its value, wherever the value
+// closes: brackets inside strings and comments do not count.
+UTest an_assignment_ends_where_its_value_closes{"ManifestEditor/AnAssignmentEndsWhereItsValueCloses", [] {
+    using mcpp::manifest::assignment_end;
+    constexpr std::string_view one = "a = \"1\"\nb = 2\n";
+    expect(eq(assignment_end(one, 0), one.find('\n')));
+    expect(eq(assignment_end(one, 8), one.size() - 1));
+
+    constexpr std::string_view many = "a = {\n  x = \"}\", # ]\n  y = ['{',\n       \"\\\"[\"],\n}\nb = 2";
+    expect(eq(assignment_end(many, 0), many.find("\nb = 2")));
+    expect(eq(assignment_end("a = { x = 1 }", 0), 13u));
+    expect(eq(assignment_end("a = {\n", 0), 6u));       // never closes: the end of the text
+}};
+
 UTest multiple_entries_across_platforms{"ListXpkgVersions/MultipleEntriesAcrossPlatforms", [] {
     constexpr auto src = R"(
 package = {
