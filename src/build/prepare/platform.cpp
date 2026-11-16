@@ -271,12 +271,36 @@ void define_early_platform(PrepareState& state) {
         if (auto sel = mcpp::platform::parse_choice(chosenText, mp::Origin{mp::Tier::Flag, {}, 0, "--platform"});
             sel && !sel->none)
             chosen = sel->ref;
-    } else {
+    } else if (!raw.empty()) {
+        // The tables whose selector the request answers by its words alone: the
+        // triple, or a `cfg` of its arch, os and env, which a triple no row
+        // defines yet (`x86_64-netbsd`) states as written. The project's tables
+        // before the machine's, the most specific of each (SPEC-004 §3.1.1), as
+        // the selection proper chooses once the row is defined (§3.1).
         std::vector<mp::Override> config;
         if (auto cfg = state.get_cfg(false); cfg) config = (*cfg)->platformOverrides;
-        for (auto const* tables : { &state.m->platformOverrides, &config })
-            for (auto const& o : *tables)
-                if (!chosen && o.selector == raw && o.platformSet && !o.platformNone) chosen = o.platform;
+        const auto project = project_tables(*state.m);
+        auto lexical = cfgpred::context_for(raw);
+        if (lexical.os.empty()) {
+            // No row knows the system yet: `<arch>-<os>[-<env>]` as written.
+            std::vector<std::string> seg;
+            for (auto part : std::views::split(std::string_view(raw), '-')) seg.emplace_back(part.begin(), part.end());
+            if (seg.size() >= 2 && seg.size() <= 3 && std::ranges::none_of(seg, [](auto const& x) { return x.empty(); })) {
+                lexical.os = seg[1];
+                if (seg.size() == 3) lexical.env = seg[2];
+            }
+        }
+        const auto words = matcher(std::move(lexical));
+        const std::array<const std::vector<mp::Override>*, 2> spans{&project, &config};
+        for (auto const* tables : spans) {
+            const mp::Override* most = nullptr;
+            for (auto const* o : mcpp::platform::matching(*tables, words))
+                if (o->platformSet) most = o;
+            if (most) {
+                if (!most->platformNone) chosen = most->platform;
+                break;
+            }
+        }
     }
     fs::path root = state.overrides.platform_root;
     if (root.empty() && chosen && !chosen->spec.path.empty()) root = chosen->spec.path;

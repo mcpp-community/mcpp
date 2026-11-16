@@ -350,6 +350,16 @@ machine description is the platform's: a target whose machine differs from a
 built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
 shorthands of a provider.
 
+A table whose selector names the row by its words selects the platform for
+every row it matches, though the row is defined only by the platform: before
+the row is defined, `cfg(...)` is answered by the triple as written
+(`<arch>-<os>[-<env>]`), so one table serves several rows (2026.11.17.1+):
+
+```toml
+[target.'cfg(any(os = "netbsd", os = "openbsd"))']
+platform = { path = "../platforms" }
+```
+
 **A row's companions and exception model (2026.11.16.1+).** `companions = [".wasm"]`
 names the files the link may write beside a program, named after it: they are removed
 before each link, staged when the link wrote one, and not an error when it did not.

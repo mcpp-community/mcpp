@@ -84,6 +84,11 @@
   library's, on the link: a NetBSD program built with libc++ from source also
   named the base's libstdc++, and carried two C++ runtimes (SPEC-002 §2.5,
   e2e 1108).
+- A `cfg(...)` table names the platform of a row only that platform defines:
+  `[target.'cfg(any(os = "netbsd", os = "openbsd"))'] platform = ...` was
+  refused as an unknown target, because the selection read only tables keyed
+  by the triple. A selector is answered by the triple's own words
+  (`<arch>-<os>[-<env>]`) until a row defines it (SPEC-013 §3.1, e2e 1040).
 - A package whose version directory holds a `mcpp.toml` is rooted there,
   whatever directories lie beside it: an OpenBSD sysroot, which holds only
   `usr/`, was taken for an extracted tarball, its manifest was lost, and the

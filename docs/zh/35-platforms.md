@@ -289,6 +289,14 @@ hosted   = true                    # C 环境有 `main`
 未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
 提供者的两种简写。
 
+按行的字面成分写出的选择器为它命中的每一行选择平台，即使该行只由平台定义：行被定义之前，`cfg(...)` 按三元组的写法
+（`<arch>-<os>[-<env>]`）求值，于是一张表可服务多行（2026.11.17.1 起）：
+
+```toml
+[target.'cfg(any(os = "netbsd", os = "openbsd"))']
+platform = { path = "../platforms" }
+```
+
 **行的附带文件与异常模型（2026.11.16.1+）。** `companions = [".wasm"]` 指链接可能在程序旁写出、以程序命名的文件：每次链接前
 删除，链接写出时被暂存，未写出不是错误。`exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型，
 为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。`exe-suffix-fixed = true`

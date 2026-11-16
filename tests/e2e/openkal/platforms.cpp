@@ -384,6 +384,16 @@ cflags = ["-DTOY_SYSTEM=1"]
         const auto listing = s::tar_list(app.at("target/dist/toyapp-0.1.0-x86_64-toyos.tar.gz"));
         expect(fatal(std::ranges::any_of(listing, [](const std::string& e) { return e.ends_with("bin/toyapp.toy"); }))) << "the package holds no program";
 
+        // A selector of the row's words names its platform as the triple does: the row is
+        // unknown until the platform defines it, and `cfg(os = ...)` is answered by the triple
+        // as written (`<arch>-<os>[-<env>]`).
+        const auto exact = app.read("mcpp.toml");
+        app.write("mcpp.toml", replaced(exact, "[target.x86_64-toyos]\nplatform", "[target.'cfg(any(os = \"toyos\", os = \"toynet\"))']\nplatform"));
+        r = app.mcpp({"build", "--target", "x86_64-toyos"});
+        expect(fatal(e2e::succeeded(r))) << "a cfg selector did not name the platform of the row it defines: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "Platform toy-platform 0.1.0"))) << "the platform is not the one the selector names: " << s::text(r);
+        app.write("mcpp.toml", exact);
+
         // `sed -i '/^\[target.x86_64-toyos\]/,/^platform/d'`
         app.write("mcpp.toml", replaced(app.read("mcpp.toml"), "[target.x86_64-toyos]\nplatform = { path = \"../toy\" }\n", ""));
         r = app.mcpp({"build", "--target", "x86_64-toyos"});
