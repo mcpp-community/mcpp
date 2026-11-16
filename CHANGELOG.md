@@ -62,6 +62,13 @@
   `wasm32-emscripten` row states it; a platform states it for its own rows.
   The engine reads no system name for this (design 2026-11-16 N48).
 
+### Fixed
+
+- A platform package's `[[platform.system]]` is read: the manifest refused the
+  array of tables before the platform reader saw it, so a platform could define
+  rows for a system but not state the system (`uname`, `resources`,
+  `command-scripts`; SPEC-016 §2.3).
+
 ## [2026.11.16.1] - 2026-11-16
 
 ### Changed

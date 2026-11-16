@@ -119,6 +119,31 @@ UTest every_group_is_read{"PlatformManifest/EveryGroupIsRead", [] {
     expect(gt(p.runner.origin.line, 0));
 }};
 
+// A platform names the systems of the rows it defines (SPEC-016 §2.3): the manifest
+// accepts the array of tables the platform reader reads (refused before 2026.11.17.1).
+UTest a_system_is_read{"PlatformManifest/ASystemIsRead", [] {
+    auto m = parse(R"([package]
+name    = "rows"
+version = "0.1.0"
+
+[[platform.system]]
+name  = "netbsd"
+uname = "NetBSD"
+
+[[platform.define]]
+triple       = "x86_64-netbsd"
+clang-triple = "x86_64-unknown-netbsd10.2"
+execution    = "netbsd"
+
+[[platform.provider]]
+serves = ["x86_64-netbsd"]
+)");
+    expect(fatal(bool(m.platformDeclared)));
+    expect(fatal(eq(m.platform.systems.size(), 1u)));
+    expect(eq(m.platform.systems[0].name, "netbsd"));
+    expect(eq(m.platform.systems[0].uname, "NetBSD"));
+}};
+
 UTest refusals_name_the_key{"PlatformManifest/RefusalsNameTheKey", [] {
     const std::string head = "[package]\nname = \"p\"\nversion = \"1.0.0\"\n";
     struct Row { std::string body; std::string_view says; };
