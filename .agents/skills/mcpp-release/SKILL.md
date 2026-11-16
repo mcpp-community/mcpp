@@ -104,6 +104,10 @@ gh pr create --title "chore: bump version to $NEW_VERSION" --body "..."
 # CI 绿后合入；版本 bump 同样禁止直推 main（见 mcpp-contributing）
 ```
 
+要随这一版发布的 PR，合入前必须有一次全集的 CI。做法是给 PR 打上 `ci:full` 标签（需要测量时加 `ci:bench`），
+然后推送（标签在 push 启动运行时读取）。这样 PR 自己的运行就是全集，结果在 PR 的检查中可见。不要以
+`gh workflow run ci.yml --ref <分支>` 另开一次运行，也不要取消 PR 的运行（见 mcpp-contributing 第 5 节）。
+
 ### 3. 创建并推送 tag
 
 ```bash

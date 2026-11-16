@@ -136,6 +136,24 @@ discover = ["!tests/native/**"]      # 不为 Web 构建
 `[build] target`，否则是本机。在某个目标上被排除的测试不是该目标的测试：`mcpp test --list --target <triple>`
 给出这个集合。处处都能构建、只在部分机器上成立的用例属于测试协议（带原因的跳过），不属于这张表。
 
+### 测试的运行文件（2026.11.17.1+）
+
+`[test] files` 列出测试程序在其工作目录中找到的文件，条目语法与 `[runtime] deploy` 相同：一个路径，或
+`{ from, to, name }`，`to` 与 `name` 相对于该目录。`[target.'<sel>'.test] files` 为它选中的目标追加文件。它不是测试的源文件，
+源文件由 `discover` 给出：
+
+```toml
+[test]
+files = ["tests/data/**", { from = "tests/t.bat", name = "TEST.BAT" }]
+
+[target.'cfg(os = "uefi")'.test]
+files = ["tests/uefi/**"]
+```
+
+此时每个测试程序在构建树中的 `run/test-<名字>/` 中运行，启动前文件被复制进去；`split` 分出的进程共用它。通过的程序的目录
+被删除，失败的程序的目录被保留并在报告中写出（`Kept the working directory of ...`）。程序有自己文件系统的 runner（虚拟机、
+固件）把文件放到程序旁，与运行时文件相同。没有 `[test] files` 的包，测试仍在 `mcpp test` 启动处运行。
+
 测试是其包的消费者，`[test] features` 就是这个消费者的请求：
 
 ```toml
@@ -148,8 +166,10 @@ features = ["ktx2"]
 
 测试规划在默认 feature 与 `--features` 之外打开它们，见于 `mcpp test`、`mcpp test -p <member>` 与
 `mcpp test --workspace`。在工作空间中，它们在该成员自己的边上请求，声明了同名 feature 的另一个成员不被请求。
-`mcpp build`、测试运行的程序（`MCPP_BIN_<NAME>`）以及包的其它消费者保持默认 feature。测试与 `mcpp build`
-共用一个构建目录，所以先后构建两者会重新编译 feature 改变的部分，与交替使用 `--features` 相同。
+`mcpp build`、测试运行的程序（`MCPP_BIN_<NAME>`）以及包的其它消费者保持默认 feature。以这种方式，或经 dev 依赖条目
+（向本清单同时依赖的包要求 feature，或不要其默认 feature）向包要求 feature 的测试规划，以不同于 `mcpp build` 的配置构建该包。
+它在自己的构建目录中构建，因此每种配置只编译一次，互不覆盖对方的模块接口；不要求任何 feature 的测试规划与构建共用目录
+（2026.11.17.1 起；此前二者共用一个目录、互相重新编译，mcpp#945）。
 
 ### 测试程序的起点
 
@@ -310,7 +330,7 @@ counters = { path = "../counters" }
 
 dev 依赖只到达测试单元，不到达包的其他部分（2026.11.8.1+）。它的包含目录与接口定义只给
 `tests/` 下的文件；包自己的源文件在 `mcpp test` 下以 `mcpp build` 给出的命令编译，因此被
-测试的代码就是发布的代码，`mcpp build` 与 `mcpp test` 共用一个构建目录和一份编译数据库。
+测试的代码就是发布的代码，在测试不向包要求 feature 时，`mcpp build` 与 `mcpp test` 共用一个构建目录和一份编译数据库。
 只有 dev 依赖到达的内核接口（`mcpplibs.mtest` 经 `mcpplibs.os` 到达 openkal 的接口）只给
 dev 依赖与测试单元：它们看到 `__OPENKAL__` 与 openkal 的头文件，包自己的源文件看不到。
 dev 依赖提供的 C 库或 C++ 运行时是测试所链接的每个目标文件的属性，仍属于整个配置。

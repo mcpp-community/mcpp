@@ -2020,7 +2020,11 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // layer, its `ldflags` in place of the driver's own C++ library, which
     // names the toolchain's. The run-time directory is as much a C link's as a
     // C++ one's (`kLinkDriverFlagsC` states the same of the driver's own
-    // selection); the C++ library's words belong to the C++ link alone.
+    // selection); the C++ library's words belong to the C++ link alone, and
+    // only while the base is what supplies that layer: when a package of the
+    // graph or the platform supplies it (`provides`, a platform's `layers`),
+    // the base's C++ library is withheld from the link as its headers are
+    // withheld from the compile, so one image has one C++ run-time.
     auto base_link_words = [&](bool cxx) {
         std::string words;
         auto const& L = plan.toolchain.base.layers;
@@ -2028,7 +2032,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             words += plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang
                 ? " -resource-dir=" + ninjaEsc(L.compilerRuntimeDir)
                 : " -B" + ninjaEsc(L.compilerRuntimeDir);
-        if (cxx && !L.cxx.empty() && !L.ldflags.empty()) {
+        if (cxx && !L.cxx.empty() && !L.ldflags.empty() && !plan.targetSide.cxx.fromGraph()) {
             words += " -nostdlib++";
             for (auto const& w : L.ldflags) words += " " + ninja_command_word(w);
         }

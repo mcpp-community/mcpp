@@ -32,6 +32,12 @@ inline constexpr std::string_view kDefaultTestDiscover = "tests/**/*.cpp";
 std::expected<std::vector<std::string>, std::string>
 conditional_test_globs(const mcpp::manifest::Manifest& m, std::string_view targetTriple);
 
+// The run files of the package's tests (design 2026-11-16 §5.2): `[test]
+// files`, then the `[target.<sel>.test] files` whose predicate `targetTriple`
+// matches, read as `conditional_test_globs` reads its tables.
+std::expected<std::vector<mcpp::manifest::DeployEntry>, std::string>
+test_run_files(const mcpp::manifest::Manifest& m, std::string_view targetTriple);
+
 // 损坏 manifest 时仅提供 best-effort 文件清单；严格调用方仍须走 prepare/validate。
 //
 // `targetTriple` is the target the tests are built for; empty: the package's

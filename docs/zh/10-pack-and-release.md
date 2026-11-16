@@ -379,6 +379,15 @@ mcpp run --target aarch64-ios-sim      --pkg-format app
 拒绝，点名该 flag 与同一个格式集合。`mcpp test` 不受影响：测试二进制在每一行
 上都是一个程序。
 
+### 程序所携带各包的许可证文件（2026.11.17.1+）
+
+每次打包都把程序依赖图中每个包的许可证与声明文件放到 `share/licenses/<包>/`：工程自身的、静态库的（链入程序后与共享库
+有同样的义务）与共享库的。包的 `[package] license_files` 给出这些文件；未写时取包根下引擎的缺省值
+`{LICENSE,LICENCE,COPYING,NOTICE}*`。这些文件在 `mcpp-package.json` 中的角色为 `metadata`。找不到文件的包在报告中列出
+（`Licenses none found for ...`）。`self-contained` 打包还为它捆绑的、不属于任何包的共享对象（工具链的 C 库）在旁边查找
+缺省的文件，放到 `share/licenses/<soname>/`，并列出找不到的对象。`[pack] include` 的角色不变：工程其余的发布文件
+（README、图标、手册页）。
+
 ### 打包产物的构建输入，以及随包内容
 
 与 `mcpp build` 相比有两点不同，都源于同一个原因：「这个产物要离开本机」。

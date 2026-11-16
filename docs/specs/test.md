@@ -52,7 +52,10 @@
 3. 程序名是其路径相对于首个匹配 glob 的固定目录、去掉扩展名的部分。同名的两个文件被拒绝，并写出两者。
 4. `[test] main = { from = "<依赖>/<入口>" }` 为每个程序提供起点；`[test] start` 为每个测试镜像陈述入口符号；`windows_code_page`、`windows_long_paths` 与同名目标键含义相同。
 5. `[test] split` 与 `[test] store` 分别属于 O1 与 B4；`[test] link` 规定测试链接其所达（`"used"`，缺省）或全部目标文件（`"objects"`）。
-6. `[test]` 中的其他键产生警告，在 `--strict` 下为错误。
+6. `[test] files` 列出每个测试程序的工作目录中应有的文件，条目语法与 `[runtime] deploy` 相同（SPEC-004 §15），`to` 与
+   `name` 相对于工作目录；`[target.<选择器>.test] files` 为该选择器选中的目标追加文件。工作目录的规则见 SPEC-002 §6.2.1
+   （mcpp >= 2026.11.17.1）。
+7. `[test]` 中的其他键产生警告，在 `--strict` 下为错误。
 
 ### B2. 协议核心
 
@@ -179,7 +182,7 @@
 1. `mcpp test --no-run --message-format json` 判断所选测试是否最新，只在需要时构建，并为每个程序写出状态为 `built` 的程序记录。记录**必须**带 `launch`：
    - `argv`：经由执行宿主或运行器的完整参数向量，含 `--` 之后的参数；
    - `env`：mcpp 交给程序的环境（运行时库目录、运行时环境的变量、`MCPP_BIN_<NAME>`、工具目录）；
-   - `cwd`：程序的工作目录；
+   - `cwd`：程序的工作目录；声明了 `[test] files` 时为已备好的目录（SPEC-002 §6.2.1）；
    - `via`：`run_under`、`runner` 或空。
 2. 协议的变量（P2.1）与所选用例属于启动者自己，`launch` 中不含。
 3. 构建状态与构建目录的锁只在 mcpp 一处。启动者（包括 O9 的会话）**禁止**自行构建测试程序；它请求 B5，并按 `launch` 启动。
@@ -354,4 +357,5 @@ mcpp 以 feature（docs/50 §4）宣告它实现的条款；客户端按需门�
 | 2.0 | 2026-11-10 | 改为 mcpp 测试规范：合并 SPEC-017 v1.0、mtest 协议版本 1 的规范正文与 SPEC-004 的 `[test]` 键；分为基础能力 B1–B6 与可选能力 O1–O9；新增 B5 启动描述、B6 的 `test-capabilities` 与 `test-session`、O3 检查点细节、O8 输出归属、O9 测试会话（mcpp#914、mcpp#915） |
 | 2.1 | 2026-11-14 | P3.3 的位置与能力（`only`、`except`、`capabilities`、列为跳过时的 `reason`；mtest 0.8.0），及 mcpp 的实现 |
 | 2.2 | 2026-11-14 | O10 按测量调度（顺序、`split = "auto"`、`--shard`、`--failed`）；B4 的 `shard` 与 `part_of` |
+| 2.4 | 2026-11-17 | B1 第 6 条 `[test] files`；B5 的 `cwd` 为已备好的工作目录（mcpp 2026.11.17.1，设计 2026-11-16 §5） |
 | 2.3 | 2026-11-15 | P4.3 排除与按声明选择（mtest 0.9.0）；O10 按声明的用例划分并以测量判定是否保留（`divides`），用例的用时按程序与标识记取 |

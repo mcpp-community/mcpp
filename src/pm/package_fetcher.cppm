@@ -49,6 +49,22 @@ struct CallError {
 
 using CallResult = mcpp::provider::CallResult;
 
+// The root of a payload as its provider placed it under the version
+// directory. The version directory is the root when it holds `bin/`,
+// `include/` or `lib/` (xim packages), or a `mcpp.toml` (a base package states
+// its root by its manifest, SPEC-002 §2.5, whatever directories the system's
+// layout puts beneath it: an OpenBSD sysroot holds only `usr/`); otherwise its
+// one subdirectory is (an extracted source tarball, mcpplibs packages).
+std::filesystem::path payload_root(const std::filesystem::path& verdir) {
+    std::error_code ec;
+    for (auto marker : {"bin", "include", "lib", "mcpp.toml"})
+        if (std::filesystem::exists(verdir / marker, ec)) return verdir;
+    std::vector<std::filesystem::path> subs;
+    for (auto& e : std::filesystem::directory_iterator(verdir, ec))
+        if (e.is_directory(ec)) subs.push_back(e.path());
+    return subs.size() == 1 ? subs.front() : verdir;
+}
+
 // What a caller wants of one payload (design 2026-10-17 D3).
 //
 // A packaging revision the index raised is a newer packaging, not a broken
@@ -1203,22 +1219,9 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         p.sourceDir = (subs.size() == 1) ? subs.front() : p.root;
     };
 
-    // The payload as the provider placed it: a version dir that holds bin/,
-    // include/ or lib/ is the root (xim packages); otherwise its one
-    // subdirectory (an extracted source tarball, mcpplibs packages).
     auto make_payload = [&](const std::filesystem::path& verdir) -> XpkgPayload {
         XpkgPayload payload;
-        std::error_code ec;
-        std::vector<std::filesystem::path> subs;
-        for (auto& e : std::filesystem::directory_iterator(verdir, ec)) {
-            if (e.is_directory()) subs.push_back(e.path());
-        }
-        bool verdir_is_root = std::filesystem::exists(verdir / "bin")
-                           || std::filesystem::exists(verdir / "include")
-                           || std::filesystem::exists(verdir / "lib");
-        payload.root = verdir_is_root            ? verdir
-                     : (subs.size() == 1)        ? subs.front()
-                     :                              verdir;
+        payload.root = payload_root(verdir);
         fill_payload(payload);
         return payload;
     };

@@ -489,6 +489,25 @@ test` and `mcpp pack` keep their statuses. A program, or a runner
 failed build; [50 — Machine-Readable Output](50-machine-output.md) §6 gives the
 bands.
 
+### The files of one run (`--file`, 2026.11.17.1+)
+
+`--file FROM[=TO]` (repeatable) copies FROM, a file or a directory relative to
+where `mcpp run` is started, into the run's working directory as TO, which is
+FROM's name when omitted; it is dirun's `--file HOST=GUEST`. With it, the
+program runs in a directory of the build tree, `run/<id>/`, removed after the
+program ends, so a relative path after `--` names a file there, not in the
+directory `mcpp run` was started from; `-v` writes the directory's path. A
+runner receives the files with the program's runtime files
+(`MCPP_RUN_CLOSURE`'s `run_files`, `MCPP_RUNTIME_FILES`), and one whose program
+has a file system of its own delivers them beside the program:
+
+```sh
+mcpp run --target x86_64-uefi --file tests/t.bat=TEST.BAT -- /c TEST.BAT
+```
+
+With `--file`, `mcpp` waits for the program in order to remove the directory,
+rather than being replaced by it.
+
 ### The program and the terminal *(2026.10.5.1+)*
 
 The program `mcpp run` starts owns the terminal as it would if the shell had

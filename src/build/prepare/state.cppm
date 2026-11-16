@@ -1347,6 +1347,11 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
                            std::string* platform = nullptr, std::string* chosen = nullptr);
 // The short name of the package a reference names (`path:<dir>` reads its manifest).
 std::string platform_short_name(std::string_view ref);
+// THE PLATFORM COLUMN FROM THE INDEX (design 2026-11-16 §6.2; SPEC-013 §3.1
+// step 5): the platform package whose index entry lists `triple` among its
+// `platform_rows`, as `<namespace>.<name>@*` (the series of §14), when the
+// built-in table has no answer for it. Empty when no entry claims the row.
+std::string index_platform_for(const PrepareState& state, std::string_view triple);
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);

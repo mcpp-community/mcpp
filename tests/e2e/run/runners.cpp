@@ -418,6 +418,18 @@ int main() {
         p.write("mcpp.toml", base + std::format("\n[target.{}]\nrunner = [\"{}\"]\n", host, runner));
         r = p.mcpp({"run"});
         expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "F: an argv runner is enabled: " << s::text(r);
+
+        // `runner = true | false` is `{ enabled = ... }`: it enables or disables the runner a
+        // wider table states, and the refusal names the spelling.
+        p.write("mcpp.toml", base + std::format(
+            "\n[target.'cfg(unix)']\nrunner = {{ cmd = [\"{}\"], enabled = false }}\n[target.{}]\nrunner = true\n", runner, host));
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "G: runner = true did not enable it: " << s::text(r);
+        p.write("mcpp.toml", base + std::format(
+            "\n[target.'cfg(unix)']\nrunner = [\"{}\"]\n[target.{}]\nrunner = false\n", runner, host));
+        r = p.mcpp({"run"});
+        expect(fatal(r.started && r.status == 2 && e2e::contains(s::text(r), "[runner-not-enabled]"))) << "H: runner = false did not disable it: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), std::format("[target.{}] runner = true", host)))) << "H: the refusal does not name the spelling: " << s::text(r);
     };
 
     "1093 a build program states a runner as its table"_test[s::unix_shell] = [] {

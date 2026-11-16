@@ -51,6 +51,7 @@ import mcpp.pack.polyglot;
 import mcpp.pack.compress;
 import mcpp.pack.distribution;
 import mcpp.modgraph.glob;     // [pack] include / exclude
+import mcpp.modgraph.scanner;  // license_files globs (design 2026-11-16 §4.3)
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.invocation;
@@ -314,6 +315,17 @@ struct Plan {
     // From manifest [pack]
     std::vector<std::string>             includeGlobs;
     std::vector<std::string>             excludeGlobs;
+    // THE LICENSE FILES OF EVERY PACKAGE OF THE PROGRAM'S CLOSURE (design
+    // 2026-11-16 §4.3), set by the caller from the build plan: each package's
+    // `license_files`, or the engine's default, staged under
+    // `share/licenses/<package>/` by every mode.
+    struct LicenseSource {
+        std::string                package;
+        std::filesystem::path      root;
+        std::vector<std::string>   patterns;
+        bool                       declared = false;
+    };
+    std::vector<LicenseSource>           licenseSources;
     std::vector<std::string>             alsoSkipLibs;
     std::vector<std::string>             hostProvidedLibs;   // Options::hostProvidedLibs
     std::vector<std::string>             forceBundleLibs;
@@ -1360,40 +1372,52 @@ std::string find_loader_soname(const std::vector<ResolvedDep>& deps) {
     return {};
 }
 
-// Walk each bundled .so's parent directory looking for a license file
-// (COPYING / LICENSE / LICENSE.txt etc.) and copy it under
-// <stagingRoot>/share/licenses/<soname>/. Best-effort: silently skips
-// libs without a discoverable license file (the user will see those
-// gaps when they audit the bundle).
-void collect_licenses(const std::vector<ResolvedDep>& deps,
-                      const std::filesystem::path& stagingRoot)
+// The files `patterns` (license_files globs) select under `root`, each with
+// the name it takes in its package's license directory: its own file name, or
+// its path below `root` where two selected files share a name.
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>>
+license_files_of(const std::filesystem::path& root, const std::vector<std::string>& patterns) {
+    std::vector<std::filesystem::path> files;
+    std::set<std::filesystem::path> seen;
+    for (auto const& g : patterns)
+        for (auto const& f : mcpp::modgraph::expand_glob(root, g))
+            if (seen.insert(f.lexically_normal()).second) files.push_back(f.lexically_normal());
+    std::map<std::string, int> names;
+    for (auto const& f : files) ++names[f.filename().string()];
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> out;
+    for (auto const& f : files)
+        out.push_back({f, names[f.filename().string()] > 1 ? f.lexically_relative(root) : f.filename()});
+    return out;
+}
+
+// THE LICENSES OF THE SHARED OBJECTS A SELF-CONTAINED PACK BUNDLES THAT NO
+// PACKAGE OF THE GRAPH DECLARES (a toolchain's C library, its C++ runtime):
+// the engine's default license files in the object's directory or up to three
+// above it, under `share/licenses/<soname>/`. Returns the objects for which
+// none was found, which the pack reports.
+std::vector<std::string> collect_bundled_licenses(const std::vector<ResolvedDep>& deps,
+                                                  const std::filesystem::path& stagingRoot)
 {
-    static constexpr std::array kLicenseNames = {
-        "LICENSE", "LICENSE.txt", "LICENCE", "COPYING",
-        "COPYING.LIB", "COPYRIGHT", "NOTICE",
-    };
+    std::vector<std::string> without;
     std::error_code ec;
-    auto outRoot = stagingRoot / "share" / "licenses";
+    const auto outRoot = stagingRoot / "share" / "licenses";
     for (auto& d : deps) {
-        auto libDir = std::filesystem::path(d.path).parent_path();
-        // Walk up at most 3 levels to catch e.g. /usr/lib/x86_64-linux-gnu
-        // → /usr/share/doc/libfoo/copyright (Debian convention).
-        for (int up = 0; up < 3; ++up) {
-            for (auto& name : kLicenseNames) {
-                auto cand = libDir / name;
-                if (std::filesystem::exists(cand, ec)) {
-                    auto dst = outRoot / d.soname / name;
-                    std::filesystem::create_directories(dst.parent_path(), ec);
-                    std::filesystem::copy_file(cand, dst,
-                        std::filesystem::copy_options::overwrite_existing, ec);
-                    goto next;
-                }
+        auto dir = std::filesystem::path(d.path).parent_path();
+        bool found = false;
+        for (int up = 0; up < 4 && !found && !dir.empty(); ++up) {
+            for (auto const& [src, name] : license_files_of(dir, mcpp::manifest::default_license_files())) {
+                if (!std::filesystem::is_regular_file(src, ec)) continue;
+                const auto dst = outRoot / d.soname / name;
+                std::filesystem::create_directories(dst.parent_path(), ec);
+                std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+                found = true;
             }
-            libDir = libDir.parent_path();
-            if (libDir.empty() || libDir == "/") break;
+            if (dir == dir.root_path()) break;
+            dir = dir.parent_path();
         }
-        next: continue;
+        if (!found) without.push_back(d.soname);
     }
+    return without;
 }
 
 void copy_if_exists(const std::filesystem::path& src,
@@ -1655,6 +1679,43 @@ std::expected<std::vector<std::string>, Error> stage_included(const Plan& plan) 
     return staged;
 }
 
+// `license_files` of every package of the closure (design 2026-11-16 §4.3),
+// under `share/licenses/<package>/`, in every mode. A package whose declared
+// globs select nothing is warned about; packages with no declaration whose
+// default finds nothing are listed in one line. Neither stops the pack.
+std::expected<void, Error> stage_licenses(const Plan& plan) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> silent;
+    std::set<std::string> done;
+    for (auto const& src : plan.licenseSources) {
+        if (!done.insert(src.package).second) continue;
+        const auto files = license_files_of(src.root, src.patterns);
+        if (files.empty()) {
+            if (src.declared)
+                mcpp::ui::warning(std::format("{}: license_files selects no file under {}", src.package,
+                                              src.root.generic_string()));
+            else
+                silent.push_back(src.package);
+            continue;
+        }
+        std::error_code ec;
+        for (auto const& [from, name] : files) {
+            const auto to = plan.stagingRoot / "share" / "licenses" / src.package / name;
+            fs::create_directories(to.parent_path(), ec);
+            fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+            if (ec) return std::unexpected(Error{std::format("cannot stage the license file {}: {}",
+                                                             from.string(), ec.message())});
+        }
+    }
+    if (!silent.empty()) {
+        std::string names;
+        for (auto const& n : silent) names += (names.empty() ? "" : ", ") + n;
+        mcpp::ui::info("Licenses", std::format("none found for {} (no license_files, and no {} at the root)",
+                                               names, mcpp::manifest::default_license_files().front()));
+    }
+    return {};
+}
+
 std::expected<void, Error> finalize_tree(const Plan& plan) {
     namespace fs = std::filesystem;
     namespace d = mcpp::pack::distribution;
@@ -1662,6 +1723,7 @@ std::expected<void, Error> finalize_tree(const Plan& plan) {
     if (!fs::is_directory(plan.stagingRoot, ec)) return {};
     auto included = stage_included(plan);
     if (!included) return std::unexpected(included.error());
+    if (auto r = stage_licenses(plan); !r) return std::unexpected(r.error());
     const auto canonical = [](std::string const& t) {
         if (t.empty()) return mcpp::toolchain::triple::host_triple().str();
         auto parsed = mcpp::toolchain::triple::parse(t);
@@ -3489,7 +3551,12 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                     if (auto r = write_bundle_all_wrappers(plan.stagingRoot,
                             plan.binaryName, loader, localeData, gconvData); !r)
                         return std::unexpected(Error{r.error()});
-                    collect_licenses(toBundle, plan.stagingRoot);
+                    if (auto without = collect_bundled_licenses(toBundle, plan.stagingRoot); !without.empty()) {
+                        std::string names;
+                        for (auto const& n : without) names += (names.empty() ? "" : ", ") + n;
+                        mcpp::ui::info("Licenses", std::format(
+                            "no license file found beside the bundled {}", names));
+                    }
                 }
             } else {
                 // Static / BundleProject: drop a thin shell wrapper at the

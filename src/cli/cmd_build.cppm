@@ -1160,6 +1160,20 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);
     mcpp::build::set_print_launch(parsed.is_flag_set("print-launch"));
+    if (auto o = parsed.option("file"); o && !o->get().values.empty()) {
+        std::vector<mcpp::build::RunFile> files;
+        std::error_code cwdEc;
+        const auto base = std::filesystem::current_path(cwdEc);
+        for (auto const& spec : o->get().values) {
+            auto f = mcpp::build::parse_run_file(spec, base);
+            if (!f) {
+                mcpp::ui::error(f.error());
+                return 2;
+            }
+            files.push_back(std::move(*f));
+        }
+        mcpp::build::set_run_files(std::move(files));
+    }
     // A launch asked for as JSON streams the build's events, and its envelope is
     // the last line (design 2026-11-07 §4.9): an editor shows the build as it goes.
     if (auto mf = parsed.value("message-format"); mf && *mf != "human" && *mf != "json") {

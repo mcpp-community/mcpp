@@ -4,11 +4,11 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.10 |
-| 版本 | 1.10 |
+| 状态 | 评审中 v1.11 |
+| 版本 | 1.11 |
 | 最后修改 | 2026-11-16 |
-| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;v1.10 条款 mcpp >= 2026.11.16.1;逐条标注 |
-| 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
+| 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;v1.10 条款 mcpp >= 2026.11.16.1;v1.11 条款(§14 索引的平台列) mcpp >= 2026.11.17.1;逐条标注 |
+| 相关设计文档 | `.agents/docs/2026-11-16-ecosystem-gap-supplement-part2-design.md`、`.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
 | 相关规范 | [SPEC-002](target-side.md)(目标侧的层)、[SPEC-004](manifest-semantics.md)(条件化形状)、[SPEC-006](toolchain-management.md)(工具链选择)、[SPEC-007](build-plugins.md)(构建程序与协议)、[SPEC-011](concurrency.md)(原子发布)、[SPEC-014](packaging.md)(打包) |
 | 使用文档 | [35 —— 平台](../zh/35-platforms.md) |
@@ -135,10 +135,15 @@ plugin    = "build.mcpp"
 2. `MCPP_TARGET_<T>_PLATFORM`;
 3. 工程的 `[target.<selector>] platform`(工作空间层先于根包,§13);
 4. `config.toml` 的 `[target.<selector>] platform`;
-5. 目标表的平台列(§14);
+5. 目标表的平台列(§14):引擎的内置表,内置表没有答案时为索引(v1.11);
 6. 无:宿主目标的内置约定,或无平台。
 
 第 3、4 步在命中的表中取具体程度最高者(SPEC-004 §3.1.1)。**已实现**
+
+所求的三元组尚无任何行定义时(由平台定义的行),第 3、4 步的选择器按三元组的字面成分求值:
+`<arch>-<os>[-<env>]` 的 `arch`、`os`、`env`;族、目标格式等由行给出的成分在行被定义之前不匹配。
+于是 `[target.'cfg(any(os = "netbsd", os = "openbsd"))'] platform` 为它所定义的各行指名平台,与逐行写出
+三元组等价。**已实现**(mcpp >= 2026.11.17.1)
 
 ### 3.2 值
 
@@ -337,6 +342,13 @@ plugin    = "build.mcpp"
 具名运行器 `runners.<name>` 取与 `runner` 相同的数组或表形式(**mcpp >= 2026.11.16.1**;此前只有数组)。平台与提供者
 陈述的运行器**必须**有 `cmd`;本机配置与工程的表可以只写 `enabled` 等键,调整其下一层的运行器。
 
+**陈述与许可分属两层。** 运行器是什么(`cmd`、`requires`、`host`、`hosts`)由其数据陈述:提供者、平台、构建程序,
+或替换它的工程与本机;是否使用(`enabled`)是运行者的许可:工程、本机配置、环境变量或 `--runner`。平台包的引用
+(`platform = {...}`)**不**带运行器的键:平台可以来自索引的平台列,内置行可以没有平台,本机可以只给许可。覆盖层的
+`runner = true`、`runner = false` 即 `{ enabled = true }`、`{ enabled = false }`;陈述运行器的层写布尔值时被拒绝,
+消息给出 `cmd` 的写法。为平台服务的每一行许可时写 `[target.'cfg(platform = "<名>")'] runner = true`(§5)。
+**mcpp >= 2026.11.17.1**
+
 模板中 `{}` 为产物,`{sysroot}` 为该目标的基座(SPEC-006),`{pkg:<name>}` 为 `requires` 中该名字的包的根
 (**mcpp >= 2026.11.12.1**)。运行器陈述的最低一级是所选提供者条目的 `runner`(SPEC-016 §6),其上依次为平台、构建程序、
 本机配置、项目与环境变量。
@@ -444,6 +456,31 @@ run_under = ["qemu-aarch64"]
 3. 结果写入 `mcpp.lock`;`mcpp update`(或 `mcpp update <平台包>`)删除记录,下一次构建按第 2 条重新选择。
 
 平台发布补丁版本因此不需要发布 mcpp。精确版本(`@0.24.1`、`@=0.24.1`)按写出的取。**已实现**
+
+**索引的平台列(mcpp >= 2026.11.17.1)。** 平台包的索引条目可以列出它提供的行:
+
+```lua
+package = {
+    namespace     = "mcpplibs",
+    name          = "openkal-platform",
+    platform_rows = { "x86_64-uefi", "i686-dos-musl", "i686-linux-musl", "i686-openkal" },
+    -- ...
+}
+```
+
+1. 第 5 步先查内置表。内置表没有答案的行查索引:引擎不认识的行、平台定义的行(SPEC-016 §2)、`planned` 行,以及
+   内置表持有、平台列为空而本机没有内置提供者服务该行本身的行(如 `x86_64-freebsd`;选择把请求补全为另一行,
+   如 `x86_64-freebsd-musl`,不算内置表回答了它)。内置表有答案的行不查索引,其选择不变,宿主的行也是如此。
+2. 认领一行的平台包以系列 `<命名空间>.<名字>@*` 选择,按本节的平台系列取版本并写入锁;选择来源报告为 `index`。
+3. 工程自己的索引(`[indices]`)先于共享的索引;同一层有多个平台包认领一行时取名字最小者,并给出警告列出它们。
+   索引的检查应保证一行只有一个平台包认领。
+4. `planned` 行由认领它的平台服务时可以构建,与工程选择平台相同(§3.1 第 3 步)。
+5. 条目是平台包清单的派生数据:列表由索引的工具从平台包最新版本的清单生成,索引的 CI 检查二者一致,且一行只有
+   一个平台包认领。列入的行:`[platform] targets`、`[[platform.define]] triple`、`[[platform.provider]] serves`,
+   其中的模式(`*-linux-musl`)代表它在平台自己的行与引擎内置表的行中匹配到的行;`[platform.hosted] targets`
+   中只列入引擎不认识或登记为 `planned` 的行,所以索引从不为宿主自己的行指定平台。早于本版本的引擎不读这个字段。
+
+每条命令至多扫描一次索引的条目,且只在内置表没有答案时扫描(约 400 个条目时整个拒绝过程 0.05 s)。**已实现**
 
 **描述符键(mcpp >= 2026.10.30.1)。** 每个目标行声明它读取依赖描述符的哪些按平台块及其顺序,第一个存在的块被读取;
 `xpm` 下的版本与 `mcpp` 段的按平台表都按此读取,构建机不参与:
@@ -562,6 +599,9 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
     取更新的版本(e2e 1021)。
 15. 内置平台为确切版本:不写平台的工程构建该版本并锁定;锁中记录的其他版本不被采用并写出;工程写出的平台照常采用
     (e2e 1025;提示的条件与内容见单元测试 PlatformDefault)。
+16. 工程的索引在 `platform_rows` 中列出的行不需要工程的声明即选择该平台,报告来源 `index`;`planned` 行由认领的平台服务;
+    内置表持有而本机没有提供者的行同样由索引回答;宿主的行不经索引;工程的声明优先;两个认领被写出并取第一个;
+    没有这一列时行未知、`planned` 行被拒绝(e2e 1106)。
 
 ## 变更记录
 
@@ -578,3 +618,5 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.8 | 2026-11-12 | mcpp 2026.11.12.1(设计 2026-11-12 §5.2、§5.5):§10 运行器的 `requires` 与 `built-as`,模板占位 `{sysroot}`、`{pkg:<name>}`,提供者的 `runner` 为陈述的最低一级;`hosts` 的系统取自系统表。 |
 | 1.9 | 2026-11-14 | mcpp 2026.11.13.1:§7.3 一行所带的工具,`base = "none"` 的提供者只带其自身约定指名的工具,其余身份不带只由这类提供者指名的工具。 |
 | 1.10 | 2026-11-16 | mcpp 2026.11.16.1(设计 2026-11-15 R1、R2):§10 运行器的 `enabled` 与 `longlived`;具名运行器与 `runner` 同一种表;§6 覆盖层不含 `cmd` 的表、`enabled` 随 `cmd` 的陈述、`MCPP_TARGET_<T>_RUNNER_ENABLED`。;运行器的程序:查找、Windows 的后缀、命令解释器启动的脚本的参数、占位符与状态(R2)。 |
+| 1.11 | 2026-11-16 | mcpp 2026.11.17.1(设计 2026-11-16 §6.2):§3.1 第 5 步与 §14 索引的平台列 `platform_rows`;判据 16(e2e 1106)。 |
+| 1.12 | 2026-11-17 | mcpp 2026.11.17.1:§3.1 尚无行定义的三元组按字面成分求值选择器(e2e 1040);§10 运行器的陈述与许可分属两层,覆盖层的 `runner = true`/`false`(e2e 1092)。 |

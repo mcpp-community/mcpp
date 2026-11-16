@@ -195,6 +195,17 @@ gh run view <run-id> --log-failed  # 查看失败日志
 
 `ci-aarch64-fresh-install`、`measure-windows-tool-crt` 与 `pypi-publish` 仍是按路径触发的独立工作流。缓存只在 main 上由一个 job 保存；PR 只恢复。
 
+**全集与选集。** PR 的 push 触发的运行，e2e 只跑 `pr` 集合，即改动影响到的用例；main 的 push 与手动启动的运行跑 `full`。
+合入前需要全集的 PR（引擎改动、要随下一版发布的改动），做法是给 PR 打上 `ci:full` 标签（要测量开销时再加
+`ci:bench`），然后推送。标签在 push 启动运行时读取，所以要先打标签、后推送。这样 PR 自己的运行就是全集，结果
+直接显示在 PR 的检查中。不要另外以 `gh workflow run ci.yml --ref <分支>` 启动一次运行，也不要取消 PR 的运行：
+分支上的运行不出现在 PR 的检查中，两次运行还会同时占用 runner。
+
+```bash
+gh pr edit <pr-number> --add-label ci:full   # 先打标签
+git push                                     # 再推送：这次运行跑 full
+```
+
 **以 PR 实际 required checks 为准，所有未跳过的 required checks 必须通过。** 如果某个平台失败：
 1. 下载日志分析原因
 2. 修复后 push 到同一分支，CI 自动重跑

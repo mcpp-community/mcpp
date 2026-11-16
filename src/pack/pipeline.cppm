@@ -1143,6 +1143,8 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
     // parameter comment on `extraLegs` above. A no-op (default-constructed,
     // empty) for every caller before this item.
     plan->extraSharedLegs = std::move(run.extraLegs);
+    for (auto const& l : ctx.plan.licenseSources)
+        plan->licenseSources.push_back({l.package, l.root, l.patterns, l.declared});
     // #649 E5: the shared libraries this graph built, primary leg. From the
     // plan's link units, never from a directory listing: a vendor library
     // deployed beside the program is not one of them and stays as shipped.

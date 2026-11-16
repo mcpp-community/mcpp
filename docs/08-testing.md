@@ -186,6 +186,31 @@ not one of its tests: `mcpp test --list --target <triple>` names the set, and a
 case that is built everywhere and holds on some machines only is the test
 protocol's (a skip with its reason), not this table's.
 
+### A test's run files (2026.11.17.1+)
+
+`[test] files` names the files a test program finds in its working directory,
+in the entry grammar of `[runtime] deploy`: a path, or `{ from, to, name }`,
+with `to` and `name` relative to that directory. A
+`[target.'<sel>'.test] files` table adds files for the targets it selects.
+Not the test's sources, which `discover` names:
+
+```toml
+[test]
+files = ["tests/data/**", { from = "tests/t.bat", name = "TEST.BAT" }]
+
+[target.'cfg(os = "uefi")'.test]
+files = ["tests/uefi/**"]
+```
+
+Each test program then runs in a directory of the build tree,
+`run/test-<name>/`, into which the files are copied before it starts; the
+processes a split divides it into share it. The directory of a program that
+passed is removed, and that of one that failed is kept and named in the report
+(`Kept the working directory of ...`). A runner whose program has a file system
+of its own (a virtual machine, firmware) delivers the files beside the program,
+as it delivers the runtime files. A package without `[test] files` runs its
+tests where `mcpp test` was started, as before.
+
 The tests are a consumer of their package, and `[test] features` is that
 consumer's request:
 
@@ -202,8 +227,13 @@ A test plan turns them on beside the defaults and `--features`, in `mcpp test`,
 requested on the member's own edge, so another member that declares a feature
 of the same name is not asked for it. `mcpp build`, the programs the tests run
 (`MCPP_BIN_<NAME>`) and every other consumer of the package keep its defaults.
-The tests and `mcpp build` share one build directory, so building one after the
-other compiles again what the features change, as alternating `--features` does.
+A test plan that asks a package for features this way, or through a
+dev-dependency entry that asks a package the manifest also depends on for
+features (or for none of its defaults), configures that package otherwise than
+`mcpp build`. It builds in a build directory of its own, so each configuration
+is compiled once and neither compiles over the other's module interfaces; a test
+plan that asks for nothing shares the build's directory (2026.11.17.1+; before,
+the two shared one directory and compiled each other's files again, mcpp#945).
 
 ### Where a test program begins
 
@@ -420,7 +450,7 @@ A dev-dependency reaches the test units and nothing else of the package
 the files under `tests/`; the package's own sources are compiled under
 `mcpp test` with the commands `mcpp build` gives them, so the code under test is
 the code that ships, and `mcpp build` and `mcpp test` share one build directory
-and one compile database. A kernel interface that only a dev-dependency reaches
+and one compile database while the tests ask the package for no features. A kernel interface that only a dev-dependency reaches
 (`mcpplibs.mtest` over `mcpplibs.os` reaches openkal's) is given to the
 dev-dependencies and the test units alone: they see `__OPENKAL__` and openkal's
 headers, and the package's own sources do not. A C library or a C++ runtime that

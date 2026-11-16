@@ -812,6 +812,11 @@ int run(int argc, char** argv) {
                 .help("Play a game in the status row while it builds: --play-game=snake|stack|runner, or one at random"))
             .option(cl::Option("print-launch")
                 .help("Build, then print how the program would be started (argv, the environment mcpp adds, cwd, runner) as the mcpp.launch envelope, instead of starting it"))
+            // RUN FILES (design 2026-11-16 §5): the spelling dirun's `--file
+            // HOST=GUEST` already has, for the same concept.
+            .option(cl::Option("file").takes_value().multiple().value_name("FROM[=TO]")
+                .help("Copy FROM into the run's working directory as TO (default: its name); "
+                      "the program then runs in a directory of the build tree, removed after it ends; repeatable"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("With --print-launch: human (default) | json (the build's events as NDJSON, then the envelope as the last line)"))
             .action([&passthrough](const cl::ParsedArgs& p) {

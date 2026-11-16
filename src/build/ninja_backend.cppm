@@ -94,12 +94,28 @@ std::string ninja_not_found_advice(const mcpp::toolchain::Toolchain& tc);
 
 // Helper exposed for testing / debugging
 std::string emit_ninja_string(const BuildPlan& plan);
+// THE COPIES A BUILD NO LONGER PLACES ARE REMOVED (design 2026-11-16 §4.1). A
+// file that stops matching a deploy glob leaves its edge, and ninja does not
+// remove the output of an edge that is gone, so the copy would stay beside the
+// program and in its runtime environment. `placed.list`, beside build.ninja,
+// holds the destinations of the previous graph; one that is not among
+// `placed` now is removed when it is a file inside `outputDir`.
+void sweep_stale_placements(const std::filesystem::path& outputDir,
+                            const std::vector<std::filesystem::path>& placed);
 // The same, and when the plan places two or more files beside its programs,
 // the placement list the one `stage_list` edge reads (#734 E4), for the caller
 // to write as `<outputDir>/placements.list`. Empty when there is no such edge.
+// `placed`, when given, receives every destination placed beside a program,
+// relative to the output directory (the stale-copy sweep reads it).
 std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
-                              mcpp::build::progress::Attribution* attribution = nullptr);
+                              mcpp::build::progress::Attribution* attribution = nullptr,
+                              std::vector<std::filesystem::path>* placed = nullptr);
 std::string filter_ninja_output(std::string_view output,
+                                std::span<const std::string> commandPrefixes);
+// What a failed build that named no failed step says (mcpp#945): the filtered
+// output, or, when the filter leaves nothing, the last lines ninja printed as
+// they are -- never a bare "build failed".
+std::string failure_diagnostics(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
 
 // One ninja run read line by line into its build's report (build progress
@@ -1357,6 +1373,27 @@ std::string graph_link_library_advice(std::string_view output,
     return out;
 }
 
+std::string failure_diagnostics(std::string_view output,
+                                std::span<const std::string> commandPrefixes) {
+    auto filtered = filter_ninja_output(output, commandPrefixes);
+    if (filtered.find_first_not_of(" \t\r\n") != std::string::npos) return filtered;
+    std::vector<std::string> lines;
+    std::istringstream in{std::string(output)};
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto trimmed = ltrim_copy(line);
+        if (trimmed.empty() || trimmed.starts_with("\x1b[0m@@mcpp ") || trimmed.starts_with("@@mcpp ")) continue;
+        lines.push_back(std::move(line));
+    }
+    if (lines.empty())
+        return "the build stopped with no output: ninja named no failed step and printed nothing\n";
+    constexpr std::size_t kTail = 40;
+    std::string out = "ninja named no failed step; its last lines:\n";
+    for (std::size_t i = lines.size() > kTail ? lines.size() - kTail : 0; i < lines.size(); ++i)
+        out += "  " + lines[i] + "\n";
+    return out;
+}
+
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes) {
     std::string filtered;
@@ -1475,8 +1512,38 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     return emit_ninja_string(plan, nullptr);
 }
 
+void sweep_stale_placements(const std::filesystem::path& outputDir,
+                            const std::vector<std::filesystem::path>& placed) {
+    namespace fs = std::filesystem;
+    std::set<std::string> now;
+    std::string text;
+    for (auto const& d : placed) {
+        const auto rel = d.is_absolute() ? d.lexically_normal().lexically_relative(outputDir) : d.lexically_normal();
+        const auto line = rel.generic_string();
+        if (line.empty() || line.starts_with("..")) continue;
+        if (now.insert(line).second) text += line + "\n";
+    }
+    const auto listPath = outputDir / "placed.list";
+    std::error_code ec;
+    std::string old;
+    if (fs::exists(listPath, ec)) {
+        std::ifstream in(listPath, std::ios::binary);
+        old.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    if (old == text) return;
+    std::istringstream lines(old);
+    for (std::string line; std::getline(lines, line);) {
+        if (line.empty() || now.contains(line) || line.starts_with("..")) continue;
+        const auto stale = outputDir / fs::path(line);
+        if (fs::is_regular_file(stale, ec)) fs::remove(stale, ec);
+    }
+    fs::create_directories(outputDir, ec);
+    std::ofstream(listPath, std::ios::binary | std::ios::trunc) << text;
+}
+
 std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
-                              mcpp::build::progress::Attribution* attribution) {
+                              mcpp::build::progress::Attribution* attribution,
+                              std::vector<std::filesystem::path>* placed) {
     // dyndep requires P1689 scanning capability:
     //   GCC: built-in -fdeps-format=p1689r5
     //   Clang: external clang-scan-deps tool (same P1689 output format)
@@ -1584,6 +1651,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         for (auto const& pl : plan.linkGroups[g].placements)
             placedFiles.push_back({{pl.source}, pl.dest});
     }
+    if (placed)
+        for (auto const& d : placedFiles) placed->push_back(d.dest);
 
     // ── A platform's link inputs and seal (SPEC-013 §4, §4.6) ──────────────
     //
@@ -4605,7 +4674,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
-    auto manifest = emit_ninja_string(plan, &placements, &attribution);
+    std::vector<std::filesystem::path> placed;
+    auto manifest = emit_ninja_string(plan, &placements, &attribution, &placed);
+    if (!opts.dryRun) sweep_stale_placements(plan.outputDir, placed);
     stage("emit-ninja");
     // The step record, beside build.ninja like the other files the fast path
     // reads (build progress design 2026-09-29, §6.3).
@@ -5244,7 +5315,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // What was reported as it happened is not repeated: a failed step's
         // diagnostics (default output), or every line (--verbose).
         auto diagnostics = reported || (report && opts.verbose) ? std::string{}
-                         : opts.verbose ? out : filter_ninja_output(out, prefixes);
+                         : opts.verbose ? out : failure_diagnostics(out, prefixes);
         // Appended here as well as on the fast path (execute.cppm): the two
         // paths report failure through different channels, and advice attached
         // to only one of them would appear or not depending on whether

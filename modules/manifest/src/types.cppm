@@ -74,6 +74,10 @@ struct Package {
     bool                        virtualRoot = false;
     std::string                 description;
     std::string                 license;
+    // `license_files` (design 2026-11-16 §4.3): the package's license and
+    // notice files, globs relative to its root, staged by every pack under
+    // `share/licenses/<package>/`. Unset: `default_license_files()`.
+    std::optional<std::vector<std::string>> licenseFiles;
     std::vector<std::string>    authors;
     std::string                 repo;
     // `mcpp = ">=V"`: the oldest mcpp release this package supports, stored as
@@ -1389,15 +1393,42 @@ struct RuntimeArtifact {
     std::string           hostFingerprint;
 };
 
+// THE LICENSE FILES OF A PACKAGE THAT STATES NONE: engine data, the files a
+// package root conventionally holds (design 2026-11-16 §4.3, after PEP 639's
+// default). A package states `license_files` to replace it.
+inline const std::vector<std::string>& default_license_files() {
+    static const std::vector<std::string> patterns{"{LICENSE,LICENCE,COPYING,NOTICE}*"};
+    return patterns;
+}
+
 // `runtime.deploy` (#615): a file placed in a DIRECTORY RELATIVE TO THE
 // EXECUTABLE, which `deploy_files` cannot express, because it flattens every
 // entry into `bin/<filename>`. The Vulkan loader on macOS reads its driver
 // manifest from `<executable dir>/vulkan/icd.d`, and a flattened copy is never
 // found there.
+//
+// THE ENTRY GRAMMAR (design 2026-11-16 §4.1). An entry is a string, which is
+// `{ from = <string> }`, or a table. `from` is relative to the package root and
+// may be a glob of the engine's one dialect (`*`, `**`, `?`, `{a,b}`); a match
+// is placed under `to` at its path relative to the glob's fixed directory (a
+// literal path's fixed directory is its parent, so a literal file lands in
+// `to` itself). `name` renames the one file `from` must then match.
 struct DeployEntry {
-    std::filesystem::path from;   // relative to the package root
+    std::filesystem::path from;   // relative to the package root; a glob before planning
     std::string           to;     // relative to the executable's directory; "." is that directory
+    std::string           name;   // the destination's file name; empty: the source's
 };
+
+// The problem with a deploy entry's `name`, or an empty string: one path
+// component, the same rule as a component of `to`.
+inline std::string deploy_name_problem(std::string_view v) {
+    if (v.empty()) return "`name` is empty";
+    if (v.find('/') != std::string_view::npos || v.find('\\') != std::string_view::npos)
+        return "`name` is a file name, not a path";
+    if (v == "." || v == "..") return "`name` is `.` or `..`";
+    if (v.find(':') != std::string_view::npos) return "`name` names a drive or a scheme";
+    return {};
+}
 
 // One rule for a path a deploy entry names, checked on the string so that the
 // answer is the same on every host; see the payload descriptor's `frontend`
@@ -1743,6 +1774,9 @@ struct ConditionalConfig {
     // tests are discovered, before dependencies resolve: a predicate on a
     // target-side layer cannot select them.
     std::vector<std::string>            testDiscover;
+    // `[target.<sel>.test] files` (design 2026-11-16 §5.2): run files of the
+    // tests of the targets the predicate selects, after `[test] files`.
+    std::vector<DeployEntry>            testFiles;
     // `[target.<sel>.runtime]` — the DIALECT-NEUTRAL half of a link line.
     //
     // `inputs.ldflags` above is spelled the GNU way and native `cl.exe` rejects
@@ -1895,7 +1929,7 @@ inline bool is_empty(const ConditionalConfig& c) {
         // before it is ever evaluated, the same failure #296 was filed for.
         && c.dialectCxxflags.empty()
         // mcpp#942: a section that only selects test programs.
-        && c.testDiscover.empty();
+        && c.testDiscover.empty() && c.testFiles.empty();
 }
 
 // `[lib]` — library "root" interface convention.
@@ -2290,6 +2324,10 @@ struct Manifest {
     // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
     std::vector<std::string>    testDiscover;
     bool                        testDiscoverDeclared = false;
+    // `[test] files` (design 2026-11-16 §5.2): the files the working directory
+    // of each test program holds, in the entry grammar of `[runtime] deploy`;
+    // `to` and `name` are relative to that directory.
+    std::vector<DeployEntry>    testFiles;
     // `[test] features` (mcpp#941): the features the package's own test build
     // turns on, beside its defaults and `--features`. The tests are a consumer
     // of the package, and this is that consumer's request: it is resolved in

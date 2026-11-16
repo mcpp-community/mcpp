@@ -103,7 +103,7 @@ C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只
 | 环境变量 | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
 | 工程 | `[target.<selector>] platform = "openkal-platform@0.24.0"`,或 `{ path = "…" }` |
 | 本机 | `~/.mcpp/config.toml` 中的同一个键 |
-| 目标表 | 平台列(`mcpp toolchain list`) |
+| 目标表 | 平台列(`mcpp toolchain list`),其次索引(见下文) |
 
 `platform` 不能写在 `cfg(platform = …)` 选择器下。`none` 只以引擎对该目标的约定构建。
 
@@ -177,6 +177,25 @@ platform = "openkal-platform@0.28.0"     # 一个版本,或一个系列:"openkal
 之后的构建在系列容许时采用记录的版本。`mcpp update`(或 `mcpp update openkal-platform`)删除这条记录,下一次构建重新
 取最新版本。
 
+## 索引列出的行(2026.11.17.1+)
+
+内置表中没有平台的行,即引擎不认识的行(如 `x86_64-uefi`)、`planned` 行(如 `i686-linux-musl`),以及内置表持有、
+平台列为空而本机没有内置提供者为之服务的行(如 `x86_64-freebsd`,其系统由平台的 sysroot 提供),采用索引条目中
+列出它的平台:
+
+```lua
+package = {
+    namespace     = "mcpplibs",
+    name          = "openkal-platform",
+    platform_rows = { "x86_64-uefi", "i686-dos-musl", "i686-linux-musl", "i686-openkal" },
+    -- ...
+}
+```
+
+`mcpp build --target x86_64-uefi` 因此不需要 `mcpp.toml` 中的任何一行。行以系列(`openkal-platform@*`)选择平台包,
+版本的选择、锁定与更新同上,报告的来源为 `index`。工程自己的 `[target.<selector>] platform` 仍然在前,工程自己的
+`[indices]` 先于共享的索引。这份列表由索引的工具从平台的清单生成;2026.11.17.1 之前的引擎忽略它。
+
 ## 编写平台包
 
 平台包是带 `[platform]` 段的包。openkal-platform 的节选:
@@ -191,14 +210,23 @@ mcpp      = ">=2026.11.3.1"
 [platform]
 targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
-runner    = { cmd = ["okrun", "{}"], host = "same-arch", hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"] }
+runner    = {
+    cmd   = ["okrun", "{}"],
+    host  = "same-arch",
+    hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"],
+}
 carrier   = { package = "openkal-run@0.5.0", section = ".oke", main = "carrier/main.cpp" }
 plugin    = "build.mcpp"
 
 [platform.layers]
 compiler-runtime = "openkal-llvm-runtime@0.19.0"
 "c++-abi"        = "openkal-llvm-runtime@0.19.0"
-c-abi            = { name = "openkal-musl", version = "0.28.0", default-features = false, features = ["posix", "malloc-mimalloc"] }
+c-abi            = {
+    name             = "openkal-musl",
+    version          = "0.28.0",
+    default-features = false,
+    features         = ["posix", "malloc-mimalloc"],
+}
 
 [platform.tools]
 okld  = "openkal-tools@0.5.0"
@@ -261,9 +289,20 @@ hosted   = true                    # C 环境有 `main`
 未运行」（docs/41）。行的机器描述属于平台：机器与内置行不同的目标是另一行。`[platform]` 与 `[platform.hosted]` 仍是
 提供者的两种简写。
 
+按行的字面成分写出的选择器为它命中的每一行选择平台，即使该行只由平台定义：行被定义之前，`cfg(...)` 按三元组的写法
+（`<arch>-<os>[-<env>]`）求值，于是一张表可服务多行（2026.11.17.1 起）：
+
+```toml
+[target.'cfg(any(os = "netbsd", os = "openbsd"))']
+platform = { path = "../platforms" }
+```
+
 **行的附带文件与异常模型（2026.11.16.1+）。** `companions = [".wasm"]` 指链接可能在程序旁写出、以程序命名的文件：每次链接前
 删除，链接写出时被暂存，未写出不是错误。`exceptions` 是工程未陈述 `[target.<sel>.abi] exceptions` 时该行构建的异常模型，
-为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
+为 `"wasm"` 时 long-jump 模型亦为 `"wasm"`（内置的 `wasm32-emscripten` 行为 `"wasm"`）。`exe-suffix-fixed = true`
+（2026.11.17.1+）陈述行的可执行文件后缀是加载其程序的一部分：名字模板（`artifact_name("exe", "{name}")`、`link.exe`）
+只决定后缀之前的部分，名字以该后缀结尾且只出现一次。内置的 `wasm32-emscripten` 行陈述它，所以命名为 `{name}` 的程序
+仍是 `app.wasm` 旁的 `app.js`。机器只在执行关系表陈述时运行另一架构的程序（`[[platform.executes]]`，
 SPEC-016 §2.4）；此时 `same-arch` 的 runner 为产物的架构构建，在本机启动。
 
 **定义的行与内置行同一读法（2026.11.10.1+）。** 它的 `march` 与 `link-emulation` 进入编译与 `ld.lld` 链接（`mcpp why flags`

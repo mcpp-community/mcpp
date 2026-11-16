@@ -5855,8 +5855,12 @@ UTest runtime_deploy_refuses_each_malformed_entry_naming_it{"Manifest/RuntimeDep
         {R"({ from = ".", to = "x" })", "`from` has a `.` or `..` component"},
         {R"({ from = "a//b.json", to = "x" })", "`from` has an empty path component"},
         {R"({ from = "a.json", dest = "x" })", "has unsupported key 'dest'"},
-        {R"({ from = "a.json", to = 3 })", "`from` and `to` must be strings"},
-        {R"("a.json")", "must be a table with `from` and `to`"},
+        {R"({ from = "a.json", to = 3 })", "`from`, `to` and `name` must be strings"},
+        {R"({ to = "x" })", "has no `from`"},
+        {R"({ from = "a.json", name = "x/y" })", "`name` is a file name, not a path"},
+        {R"({ from = "a.json", name = ".." })", "`name` is `.` or `..`"},
+        {R"(3)", "must be a path or a table with `from`"},
+        {R"("../a.json")", "`from` has a `.` or `..` component"},
     };
     for (auto [entry, expected] : cases) {
         const auto src = std::format(R"(
@@ -5871,6 +5875,77 @@ deploy = [ {} ]
         if (auto&& failed = expect(ne(m.error().message.find(expected), std::string::npos)); !failed) failed << entry << " -> " << m.error().message;
         if (auto&& failed = expect(ne(m.error().message.find("runtime.deploy[1]"), std::string::npos)); !failed) failed << m.error().message;
     }
+}};
+
+// Design 2026-11-16 §4.1: a string is `{ from = <string> }`; `to` defaults to
+// "."; `name` renames; a glob is kept as written for planning to expand.
+UTest runtime_deploy_reads_strings_globs_and_names{"Manifest/RuntimeDeployReadsStringsGlobsAndNames", [] {
+    constexpr auto src = R"(
+[package]
+name    = "icd"
+version = "0.1.0"
+[runtime]
+deploy = [
+    "share/data.bin",
+    { from = "share/vulkan/icd.d/**", to = "vulkan/icd.d" },
+    { from = "tools/x.conf", name = "app.conf" },
+]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    auto const& d = m->runtimeConfig.linkIntent.deploy;
+    expect(fatal(eq(d.size(), 3u)));
+    expect(eq(d[0].from, std::filesystem::path("share/data.bin")));
+    expect(eq(d[0].to, "."));
+    expect(eq(d[0].name, ""));
+    expect(eq(d[1].from, std::filesystem::path("share/vulkan/icd.d/**")));
+    expect(eq(d[2].to, "."));
+    expect(eq(d[2].name, "app.conf"));
+    expect(m->schemaWarnings.empty());
+}};
+
+// Design 2026-11-16 §4.3: `license_files` is the package's; unset means the
+// engine's default, an empty list states that there is none.
+UTest package_license_files_are_read{"Manifest/PackageLicenseFilesAreRead", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name          = "ort"
+version       = "1.0.0"
+license_files = ["LICENSE", "ThirdPartyNotices.txt"]
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(fatal(m->package.licenseFiles.has_value()));
+    expect(eq(m->package.licenseFiles->size(), 2u));
+    expect(m->schemaWarnings.empty());
+    auto none = mcpp::manifest::parse_string("[package]\nname = \"x\"\nversion = \"1.0.0\"\n");
+    expect(fatal(none.has_value()));
+    expect(!none->package.licenseFiles.has_value());
+    expect(eq(mcpp::manifest::default_license_files().front(), std::string("{LICENSE,LICENCE,COPYING,NOTICE}*")));
+}};
+
+// Design 2026-11-16 §5.2: `[test] files` in the deploy entry grammar, and the
+// conditional form for the tests of a target.
+UTest test_files_are_read{"Manifest/TestFilesAreRead", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "t"
+version = "0.1.0"
+[test]
+files = ["tests/data/**", { from = "tests/t.bat", name = "TEST.BAT" }]
+[target.'cfg(os = "uefi")'.test]
+files = ["tests/uefi/**"]
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    expect(fatal(eq(m->testFiles.size(), 2u)));
+    expect(eq(m->testFiles[1].name, "TEST.BAT"));
+    bool conditional = false;
+    for (auto const& cc : m->conditionalConfigs)
+        if (cc.testFiles.size() == 1 && cc.testFiles.front().from == std::filesystem::path("tests/uefi/**")) conditional = true;
+    expect(conditional);
+    expect(m->schemaWarnings.empty());
+    auto bad = mcpp::manifest::parse_string("[package]\nname = \"t\"\nversion = \"0.1.0\"\n[test]\nfiles = [{ to = \"x\" }]\n");
+    expect(fatal(!bad.has_value()));
+    expect(ne(bad.error().message.find("[test] files[1] has no `from`"), std::string::npos)) << bad.error().message;
 }};
 
 // ── `requires_abi` (design 2026-09-12, section 5.2) ────────────────────────
@@ -7220,7 +7295,7 @@ UTest a_conditional_test_table_carries_discover_alone{"Manifest/AConditionalTest
     expect(eq(m->conditionalConfigs.front().testDiscover, std::vector<std::string>{"!tests/native/**"}));
     expect(!mcpp::manifest::is_empty(m->conditionalConfigs.front()));
     expect(fatal(eq(m->schemaWarnings.size(), 1u)));
-    expect(ne(m->schemaWarnings.front().find("contributes test programs only: discover"), std::string::npos));
+    expect(ne(m->schemaWarnings.front().find("contributes test programs and their files only: discover, files"), std::string::npos));
     auto bad = mcpp::manifest::parse_string(
         "[package]\nname = \"bt\"\nversion = \"0.1.0\"\n"
         "[target.'cfg(os = \"emscripten\")'.test]\ndiscover = \"tests/x.cpp\"\n");

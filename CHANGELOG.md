@@ -4,7 +4,104 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [Unreleased]
+## [2026.11.17.1] - 2026-11-17
+
+### Added
+
+- `runner = true` and `runner = false` in `[target.<selector>]` are
+  `{ enabled = true }` and `{ enabled = false }`: the consent to use the runner
+  a row's data states. The refusal of a runner that is not enabled names this
+  spelling and, for a platform's row, `[target.'cfg(platform = "<name>")']
+  runner = true` for every row of the platform (SPEC-013 §10, e2e 1092).
+- A `[runtime] deploy` entry is a path or a table, and its `from` is a glob of
+  the engine's one dialect (`*`, `**`, `?`, `{a,b}`). `"share/data.bin"` is
+  `{ from = "share/data.bin" }`, placed beside the program; a match is placed
+  under `to` at its path below the glob's fixed directory, so
+  `{ from = "share/vulkan/icd.d/**", to = "vulkan/icd.d" }` keeps the tree; and
+  `name` renames the one file `from` matches. A glob that matches nothing, or a
+  `name` over several files, is refused naming the package and the entry. The
+  globs are expanded each time the build is planned, and a copy that is no
+  longer placed is removed from beside the program. `deploy_files = [x]` is
+  `deploy = [x]`. Descriptors read the same entries (design 2026-11-16 §4.1).
+- `[package] license_files` names a package's license and notice files, and
+  every `mcpp pack`, in every mode, stages them for each package of the
+  program's graph under `share/licenses/<package>/` with the role `metadata`:
+  static libraries included, which carry the obligation as shared ones do. A
+  package that states none uses `{LICENSE,LICENCE,COPYING,NOTICE}*` at its
+  root; a package for which nothing is found is named in the report. This
+  replaces the search that ran only in `self-contained` packs, under seven
+  fixed names, and said nothing when it found none; that mode still looks for
+  the default files beside the shared objects it bundles that no package
+  declares, and names those without (design 2026-11-16 §4.3).
+- `mcpp run --file FROM[=TO]` (repeatable; dirun's spelling) and `[test]
+  files` (in the `deploy` entry grammar, with `[target.'<sel>'.test] files`)
+  name the files a run finds in its working directory. With them, a program
+  runs in a directory of the build tree, `run/<id>/`, into which they are
+  copied: removed after `mcpp run`, removed after a test program that passed
+  and kept, and named, after one that failed. Without them, a program runs
+  where mcpp was started, as before. A runner receives them as `run_files` in
+  `MCPP_RUN_CLOSURE` (schema 2) and in `MCPP_RUNTIME_FILES` beside the runtime
+  files, so a runner whose program has a file system of its own delivers them
+  beside the program (design 2026-11-16 §5, §7).
+- A platform package's index entry lists the rows it serves,
+  `platform_rows = { "x86_64-uefi", ... }`, and a row the built-in table has no
+  platform for takes that package as a series (`<ns>.<name>@*`): `mcpp build
+  --target x86_64-uefi` needs no `[target.x86_64-uefi] platform`, a `planned`
+  row such as `i686-linux-musl` builds once a platform claims it, and so does a
+  row the table holds with no platform and no built-in provider here, such as
+  `x86_64-freebsd`, rather than being completed to a sibling row. A row the
+  table answers, a host row included, is unchanged, a project's own statement still comes
+  first, the project's `[indices]` rank before the shared ones, and the report
+  names the source `index`. The entries are read once per command, and only
+  for such a row (design 2026-11-16 §6.2, SPEC-013 §14).
+- An inline table may span several lines, carry comments and end with a comma
+  after its last pair, as TOML 1.1 allows, in every TOML file mcpp reads; a
+  pair stays on one line. `mcpp add` and `mcpp remove` replace and erase such a
+  value whole, and `mcpp index pin` refuses one, saying why (#928, #929).
+
+### Changed
+
+- A row whose executable suffix is part of loading its programs states
+  `exe-suffix-fixed = true`, and a name template keeps that suffix: a build
+  program's `artifact_name("exe", "{name}")` names the Web row's launcher
+  `app.js` beside `app.wasm`, where it was a bare `app` that neither node nor a
+  browser loads, and `{name}.js` gives `app.js`, not `app.js.js`. The built-in
+  `wasm32-emscripten` row states it; a platform states it for its own rows.
+  The engine reads no system name for this (design 2026-11-16 N48).
+
+### Fixed
+
+- A platform package's `[[platform.system]]` is read: the manifest refused the
+  array of tables before the platform reader saw it, so a platform could define
+  rows for a system but not state the system (`uname`, `resources`,
+  `command-scripts`; SPEC-016 §2.3).
+- A test plan that configures a package otherwise than `mcpp build` (its
+  `[test] features`, or a dev-dependency entry that asks a package the
+  manifest also depends on for features) builds in a directory of its own
+  (#945). The two configurations shared one directory, whose module
+  interfaces and objects are named by module and package, and compiled each
+  other's files again: three compiles of one module per `mcpp test
+  --workspace`, and on Windows a rewrite of an interface another compile had
+  open. Each configuration now compiles once (e2e 1107).
+- A file a build program writes again with the same content keeps its time,
+  so a program that writes its outputs on every run does not recompile what
+  imports them (#945).
+- A failed build whose ninja output names no failed step prints ninja's last
+  lines rather than a bare `error: build failed` (#945).
+- A base package whose C++ layer another package supplies (a provider's
+  `layers`, a dependency's `provides`) no longer puts its `ldflags`, its C++
+  library's, on the link: a NetBSD program built with libc++ from source also
+  named the base's libstdc++, and carried two C++ runtimes (SPEC-002 §2.5,
+  e2e 1108).
+- A `cfg(...)` table names the platform of a row only that platform defines:
+  `[target.'cfg(any(os = "netbsd", os = "openbsd"))'] platform = ...` was
+  refused as an unknown target, because the selection read only tables keyed
+  by the triple. A selector is answered by the triple's own words
+  (`<arch>-<os>[-<env>]`) until a row defines it (SPEC-013 §3.1, e2e 1040).
+- A package whose version directory holds a `mcpp.toml` is rooted there,
+  whatever directories lie beside it: an OpenBSD sysroot, which holds only
+  `usr/`, was taken for an extracted tarball, its manifest was lost, and the
+  build judged `usr/` a library prefix ("no crt1.o").
 
 ## [2026.11.16.1] - 2026-11-16
 

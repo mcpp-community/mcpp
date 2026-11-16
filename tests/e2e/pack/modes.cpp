@@ -312,6 +312,34 @@ deploy = [ { from = "share/vulkan/icd.d/lvp_icd.json", to = "vulkan/icd.d" } ]
         const auto notes = *root / "bin/notes.txt";
         expect(fs::exists(notes) && e2e::contains(s::read_file(notes), "notes")) << "runtime.deploy_files did not reach bin/ in the bundle\n" << s::text(r);
     };
+    "1103 every package's license files reach share/licenses"_test = [] {
+        // Design 2026-11-16 §4.3: each package of the closure stages its `license_files`, or the
+        // engine's default {LICENSE,LICENCE,COPYING,NOTICE}*, under share/licenses/<package>/ with
+        // the role `metadata`, whatever the linkage; a package with none is named in the report.
+        const auto tmp = s::case_dir();
+        s::project a(tmp / "a", {{"mcpp.toml", "[package]\nname = \"a\"\nversion = \"0.1.0\"\nlicense_files = [\"LICENSE.md\", \"third/*-NOTICE.txt\"]\n\n[targets.a]\nkind = \"lib\"\n"},
+                                 {"src/a.cppm", "export module a;\nexport int av() { return 1; }\n"},
+                                 {"LICENSE.md", "A\n"}, {"third/x-NOTICE.txt", "x\n"}});
+        s::project b(tmp / "b", {{"mcpp.toml", "[package]\nname = \"b\"\nversion = \"0.1.0\"\n\n[targets.b]\nkind = \"lib\"\n"},
+                                 {"src/b.cppm", "export module b;\nexport int bv() { return 2; }\n"}, {"COPYING", "B\n"}});
+        s::project c(tmp / "c", {{"mcpp.toml", "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[targets.c]\nkind = \"lib\"\n"},
+                                 {"src/c.cppm", "export module c;\nexport int cv() { return 3; }\n"}});
+        s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\na = { path = \"../a\" }\nb = { path = \"../b\" }\nc = { path = \"../c\" }\n"},
+                                     {"src/main.cpp", "import a;\nimport b;\nimport c;\nint main() { return av() + bv() + cv() - 6; }\n"},
+                                     {"LICENSE", "app\n"}});
+        auto r = app.mcpp({"pack", "--pkg-format", "dir"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        std::optional<fs::path> root;
+        for (const auto& e : entries(app.at("target/dist")))
+            if (!root && fs::is_directory(e) && e.filename().string().starts_with("app-0.1.0-")) root = e;
+        expect(fatal(root.has_value())) << "no staged tree\n" << s::text(r);
+        for (auto rel : {"share/licenses/app/LICENSE", "share/licenses/mcpplibs.a/LICENSE.md",
+                         "share/licenses/mcpplibs.a/x-NOTICE.txt", "share/licenses/mcpplibs.b/COPYING"})
+            expect(fatal(fs::is_regular_file(*root / rel))) << rel << " is not in the tree\n" << s::text(r);
+        expect(fatal(!fs::exists(*root / "share/licenses/mcpplibs.c"))) << "a package with no license has a directory";
+        expect(fatal(e2e::contains(s::text(r), "none found for mcpplibs.c"))) << "the package with none is not named\n" << s::text(r);
+        expect(fatal(e2e::contains(s::read_file(*root / "mcpp-package.json"), "\"share/licenses/mcpplibs.b/COPYING\""))) << "the license is not described";
+    };
     "652 an application is a kind"_test[s::elf][s::gcc] = [] {
         // `kind = "app"` (#622 A3): an unrecognized kind is refused listing every kind; on an
         // ELF host an app links as an executable beside a bin; `mcpp run` runs either and still

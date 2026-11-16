@@ -57,6 +57,11 @@ mcpp、openkal、xlings/xim 的包、dirun 与 mcpp:plugins 是通用基础设�
 | N34 | UEFI 程序读不到任何文件：`cd` 为 `/`，`dir` 为 File Not Found | openkal-uefi 未实现 `fs`（其 README 写明 `fs` 待 SIMPLE_FILE_SYSTEM） | 实现 · openkal-uefi |
 | N35 | UEFI 参数含引号时切分错误 | openkal-uefi 按空格切分 load options；由 Shell 启动时，Shell 已给出 `EFI_SHELL_PARAMETERS_PROTOCOL` 的 argv | 实现 · openkal-uefi |
 | N42 | UEFI 参数中的空白在启动文件中未引用 | dirun 0.4.0 以空格连接 `{args}` 写入 `startup.nsh`，Shell 按空白切分（13.9） | 实现 · dirun 0.5.0 `[payload] quote`；数据 · ovmf r3 |
+| N43 | UEFI 参数含连续空白时被截短（`"two   words"` 到达为 `two   wor`） | OVMF（edk2 9.2.4）内置 Shell 交给程序的 argv 已截短；dirun 写出的行与 openkal-uefi 的转换均已核对（13.12） | 外部 · edk2 Shell；待评审 |
+| N44 | DOS 行的程序在栈超过 64 KiB 后静默结束（状态 0），或挂起 | openkal-dos 的 stub 把首个栈固定为 64 KiB，栈越界不产生故障（mcpplibs/openkal-dos#3；13.13） | 实现 · openkal-dos；待评审 |
+| N45 | 工程自行命名的 emscripten 程序在 dist-web 0.20.0 下打包失败，报“no action claimed” | N9 使行的 `.js` 让位于工程命名，旧的 dist-web 按 `<name>.js` 查找；报告不含原因（13.14） | 插件 · mcpp.plugins；平台 · plugins 版本 |
+| N46 | 单次运行无法附带输入文件（脚本、数据） | 运行器协议有 `MCPP_RUNTIME_FILES`，但其条目只来自随产物发布的 `[runtime]`（13.15） | 引擎；待评审 |
+| N47 | UEFI 行的程序不能写文件 | ovmf 配置以只读的 `fat:{dir}` 挂载载荷目录（13.16） | 运行器 · dirun、ovmf 包；待评审 |
 | N15 | UEFI 上 mimalloc 警告无安全随机源 | 未接 EFI_RNG_PROTOCOL | 实现 · openkal-uefi |
 | N19 | okrun 打不开含 `//` 的路径 | 打开映像前未规范化 | 实现 · openkal-image |
 | N12 | dirun 0.3.2 携带的 okrun 落后，仍有 `../` 错误 | dirun 自带一份 okrun 副本 | 运行器 · dirun |
@@ -721,3 +726,72 @@ profile 给出一次提示。需要评审后实现，不在本轮。
 
 - 在 openkal-platform 仓库中以 mcpp 2026.11.16.1 执行 `mcpp why deps --target x86_64-openkal`，内置平台 0.28.0 的 openkal-tools 0.6.3 与仓库所述的 0.6.4 合并失败（`'=0.6.4,=0.6.3' matches none`）。`mcpp test` 把仓库本身当作平台，不受影响。
 - 待定：在平台包自身的仓库中，`why`、`build` 等命令是否也应以该包为平台（与 `mcpp test` 一致）。本轮不改。
+
+### 13.12 N43：UEFI Shell 截短含连续空白的参数（外部验证工程中定位，待评审）
+
+- 现象：`mcpp run --target x86_64-uefi -- "two   words" "x   y   z" "ab   cdefg" "aaaaaaaaaaaa   b"` 中，程序收到 `["two   wor", "x   y   z", "ab   cdef", "aaaaaaaaaaaa "]`。截短只出现在含三个以上连续空白、且长度在 10 以上的参数中，长度更短的参数完整到达。
+- 已排除：
+  - dirun：`startup.nsh` 中的行为 `APP.EFI "two   words" …`，Shell 的 `echo` 对同一写法输出完整文本。
+  - 引用写法：`"…"`、`^ ` 转义和两者混用，结果相同。
+  - openkal-uefi：0.11.0 逐个转换 `EFI_SHELL_PARAMETERS_PROTOCOL` 的 `Argv`，不做切分。
+- 结论：截短发生在 edk2 Shell 为应用程序生成 `Argv` 的过程中，属于 xim 的 ovmf 9.2.4 所带的 Shell。
+- 候选：
+  1. openkal-uefi 在 Shell 启动时改读映像的 `LoadOptions`，按 Shell 的规则自行切分。前提是 `LoadOptions` 保留完整的行，尚未实测。
+  2. 换用修复了该问题的 edk2 版本（需先确认上游状态）。
+  3. 在 openkal-platform 的文档中写明此限制。
+
+### 13.13 N44：DOS 行的首个栈（openkal-dos#3 的第二种表现，待评审）
+
+- 现象：一个批处理解释器在 `i686-dos-musl` 上执行脚本，到第一个 `IF` 时以状态 0 结束，没有输出，也没有故障报告。
+- 定位：
+  - 同一份源码在 Linux 上，栈限制为 96 KiB 时正常运行，64 KiB 时段错误。该程序一层嵌套命令执行持有约 80 KiB 的栈缓冲区。
+  - openkal-dos 0.1.0 的 `stub/stub.S` 把首个栈设为 `0x10000`，且栈与可加载段位于同一块内存中，越界写入相邻内存，而不是产生故障。
+  - #3 记录的是同一原因下的挂起。
+- 候选设计：
+  1. 首个栈默认 1 MiB，与 Windows 主线程一致。
+  2. 可执行文件可以声明栈大小（`PT_GNU_STACK` 的 `p_memsz`，即 `ld -z stack-size`），由 stub 读取。
+  3. 栈置于内存块低端，越界时离开描述符的界限，产生 `#SS` 或 `#PF`，经现有的故障报告输出。
+- 发布路径：openkal-dos 0.1.1，收入索引，再由 openkal-platform 0.29.1 引用。
+
+### 13.14 N45：N9 与 dist-web 0.20.0
+
+- 现象：工程以 `artifact_name("exe", "{name}")` 去掉宿主追加的后缀；在 mcpp 2026.11.16.1 下，emscripten 行的启动文件从 `<name>.js` 变为 `<name>`，wasm 文件从 `<name>.wasm` 变为去掉扩展名后的 `<stem>.wasm`。dist-web 0.20.0 按原名查找，未提交任何产物，引擎报告“no action claimed --pkg-format 'web'”。
+- 判断：产物名的变化是 N9 的既定行为，已写入 CHANGELOG。不足有两处：
+  1. 引擎的报告没有给出提供者未提交的原因（N30 的机制要求提供者陈述原因，dist-web 0.20.0 没有陈述）。
+  2. openkal-platform 0.29.0 以 plugins 0.20.0 构建，一次构建只容纳一个 plugins 版本，选用该平台行的工程因此无法单独升级 dist-web。
+- 工程侧的处理：只在非 emscripten 行上调用 `artifact_name`。
+- 候选：dist-web 在找不到启动文件时以警告陈述原因；openkal-platform 的下一个补丁版本跟进 plugins 的最新版本。
+
+### 13.15 N46：单次运行的输入文件（待评审）
+
+- 现象：一个程序在 UEFI 与 DOS 行上运行脚本时，脚本需要放在程序旁边。现有的做法只能绕过 mcpp 直接调用 dirun，在包目录中查找 dirun、ovmf 与 qemu 的路径，并在脚本里写死它们的版本。这样做依赖存储布局，重复了平台的 runner 数据，也绕过了按需启用与运行器协议。
+- 现有机制：运行器协议的 `MCPP_RUNTIME_FILES` 已由 dirun（0.4.0 起，经 `[payload] place` 旁或文件盘）与 Android runner（adb）投递；但它的条目只来自 `[runtime] deploy` 与 `deploy_files`，二者随产物发布，不适合测试输入。
+- 候选设计：
+  1. `mcpp run --file HOST[=DEST]`（可重复），只为本次运行向 `MCPP_RUNTIME_FILES` 追加条目，`DEST` 相对于程序所在目录。
+  2. 测试作用域的同类声明，供 `mcpp test` 的用例使用。
+  3. 在此之上，可由 mcpp.plugins 提供脚本测试（发现 `tests/*.<ext>` 与对应的预期输出，经目标的 runner 运行，归一化行尾与颜色转义后比对），使 `mcpp test --target <triple>` 覆盖解释器类工程。
+- 待定：在本机直接运行时（不经过 runner），`DEST` 的落点有三种候选：只校验、复制到临时工作目录、或要求 `HOST` 与 `DEST` 是同一路径。
+- 不采用插件包装 runner 的做法：运行输入属于运行期，而插件在构建期执行；包装 runner 需要复制平台 runner 的命令行，而各 runner 的命令行不同。
+
+### 13.16 N47：UEFI 载荷目录只读（待评审）
+
+- ovmf 配置以 `-drive …,readonly=on,file=fat:{dir}` 挂载载荷目录。QEMU 的 vvfat 写入不可靠，因此只读挂载是有意为之；代价是程序写文件失败（openkal-uefi 把 `EFI_WRITE_PROTECTED` 报为 `kal_err_permission`，这一侧正确）。
+- 候选：dirun 为载荷生成一个可写的 FAT 映像，运行后读回其中的改动，由配置文件选择（例如 `[payload] disk = "fat-image"`）。
+
+### 13.17 更多目标行的分层（待评审）
+
+- 一个新系统的支持分三层，各层都只用数据：
+  - xim：sysroot 包，以及“磁盘映像加其 dirun 配置”的包。
+  - 平台包（mcpp-index）：行、工具链，以及 `enabled = false` 的 runner，命令形如 `dirun --profile {pkg:<image>}/dirun.toml`。
+  - 工程：只写 `[target] <triple>.platform`。
+- FreeBSD 行（`x86_64-freebsd-sysroot@14.5`、`freebsd-disk-image`）是现成的模板。
+- 候选与可行性：
+
+| 档 | 系统 | 依据 |
+|---|---|---|
+| A | OpenBSD、NetBSD | clang 支持其三元组；sysroot 取自官方安装集；可在 QEMU 中运行。待实测：lld 对 OpenBSD 版本化共享库（`libc.so.N.M`）的查找；NetBSD 下 lld 能否链接 |
+| A | illumos（OmniOS、OpenIndiana） | `x86_64-pc-solaris2.11`；作为 System V R4 系统的现代后代，映像可公开分发 |
+| B | Haiku、GNU/Hurd | clang 支持其三元组；Haiku 的官方工具链为 GCC，需要专用的 dirun 配置；Hurd 在 QEMU 中运行慢且不稳定 |
+| C | PureDarwin、原版 System V R4 | 没有可用的 SDK 与可启动的映像；原版 SVR4 没有对应的 LLVM 目标，头文件、库与映像有版权，只能做成“自带 sysroot 与映像”的本地平台 |
+
+- OpenBSD 自 7.4 起只允许经 libc 发出系统调用（`pinsyscalls`），因此 OpenBSD 上的 okrun 须以原生行构建；openkal 镜像在 OpenBSD 上运行，以原生行为前提。

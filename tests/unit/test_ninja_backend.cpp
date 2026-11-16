@@ -1327,6 +1327,24 @@ UTest filter_keeps_staging_diagnostics_and_failed_target{"NinjaBackend/FilterKee
     expect(eq(filtered.find("ninja: Entering directory"), std::string::npos)) << filtered;
 }};
 
+// ── mcpp#945: a failure that names no step is never reported bare ────────────
+
+UTest failure_diagnostics_never_empty{"NinjaBackend/AFailureThatNamesNoStepShowsNinjasLastLines", [] {
+    std::vector<std::string> prefixes = {"/usr/bin/clang++"};
+    // A: a named step keeps the filter's answer.
+    const std::string named = "FAILED: obj/a.o \n/usr/bin/clang++ -c a.cpp -o obj/a.o\na.cpp:1:1: error: x\n";
+    expect(eq(failure_diagnostics(named, prefixes), filter_ninja_output(named, prefixes)));
+    // B: output the filter removes entirely (command lines and ninja's own stop) is shown as it is.
+    const std::string unnamed = "ninja: Entering directory `target/x'\n[1/2] /usr/bin/clang++ -c b.cpp\n"
+                                "ninja: build stopped: interrupted by user.\n";
+    expect(fatal(eq(filter_ninja_output(unnamed, prefixes).find_first_not_of(" \n"), std::string::npos)));
+    const auto shown = failure_diagnostics(unnamed, prefixes);
+    expect(ne(shown.find("ninja named no failed step"), std::string::npos)) << shown;
+    expect(ne(shown.find("interrupted by user"), std::string::npos)) << shown;
+    // C: no output at all is said so.
+    expect(ne(failure_diagnostics("", prefixes).find("printed nothing"), std::string::npos));
+}};
+
 // ── Cache-served units: stage edges, not compile edges ──────────────────────
 //
 // The global dependency cache used to copy artifacts into the build dir from

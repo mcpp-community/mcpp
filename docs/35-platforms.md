@@ -119,7 +119,7 @@ The first of these that answers selects the target's platform:
 | the environment | `MCPP_TARGET_X86_64_OPENKAL_PLATFORM=…` |
 | the project | `[target.<selector>] platform = "openkal-platform@0.24.0"`, or `{ path = "…" }` |
 | this machine | the same key in `~/.mcpp/config.toml` |
-| the target table | the platform column (`mcpp toolchain list`) |
+| the target table | the platform column (`mcpp toolchain list`), then the package index (below) |
 
 `platform` is not accepted under a `cfg(platform = …)` selector. `none` builds
 with the engine's conventions for the target and nothing else.
@@ -215,6 +215,30 @@ next build takes the recorded release while the series admits it. `mcpp update`
 (or `mcpp update openkal-platform`) drops the record, and the build after it
 takes the newest release again.
 
+## A row the index names (2026.11.17.1+)
+
+A row the built-in table has no platform for — a row the engine does not know,
+such as `x86_64-uefi`, a `planned` one, such as `i686-linux-musl`, or one the
+table holds with no platform and no built-in provider here, such as
+`x86_64-freebsd`, whose system a platform's sysroot provides — takes the
+platform whose index entry lists it:
+
+```lua
+package = {
+    namespace     = "mcpplibs",
+    name          = "openkal-platform",
+    platform_rows = { "x86_64-uefi", "i686-dos-musl", "i686-linux-musl", "i686-openkal" },
+    -- ...
+}
+```
+
+`mcpp build --target x86_64-uefi` then needs no line in `mcpp.toml`. The row
+selects the package as a series (`openkal-platform@*`), so the release is chosen,
+locked and updated as above, and the build reports the source as `index`. A
+project's own `[target.<selector>] platform` still comes first, and so do the
+project's own `[indices]` before the shared ones. The list is generated from the
+platform's manifest by the index's tools; engines before 2026.11.17.1 ignore it.
+
 ## Writing a platform package
 
 A platform package is a package with a `[platform]` section. openkal-platform,
@@ -230,14 +254,23 @@ mcpp      = ">=2026.11.3.1"
 [platform]
 targets   = ["x86_64-openkal", "aarch64-openkal"]
 toolchain = "llvm@23.1.3"
-runner    = { cmd = ["okrun", "{}"], host = "same-arch", hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"] }
+runner    = {
+    cmd   = ["okrun", "{}"],
+    host  = "same-arch",
+    hosts = ["linux-x86_64", "linux-aarch64", "macos-aarch64", "windows-x86_64"],
+}
 carrier   = { package = "openkal-run@0.5.0", section = ".oke", main = "carrier/main.cpp" }
 plugin    = "build.mcpp"
 
 [platform.layers]
 compiler-runtime = "openkal-llvm-runtime@0.19.0"
 "c++-abi"        = "openkal-llvm-runtime@0.19.0"
-c-abi            = { name = "openkal-musl", version = "0.28.0", default-features = false, features = ["posix", "malloc-mimalloc"] }
+c-abi            = {
+    name             = "openkal-musl",
+    version          = "0.28.0",
+    default-features = false,
+    features         = ["posix", "malloc-mimalloc"],
+}
 
 [platform.tools]
 okld  = "openkal-tools@0.5.0"
@@ -317,12 +350,27 @@ machine description is the platform's: a target whose machine differs from a
 built-in row is another row. `[platform]` and `[platform.hosted]` remain the two
 shorthands of a provider.
 
+A table whose selector names the row by its words selects the platform for
+every row it matches, though the row is defined only by the platform: before
+the row is defined, `cfg(...)` is answered by the triple as written
+(`<arch>-<os>[-<env>]`), so one table serves several rows (2026.11.17.1+):
+
+```toml
+[target.'cfg(any(os = "netbsd", os = "openbsd"))']
+platform = { path = "../platforms" }
+```
+
 **A row's companions and exception model (2026.11.16.1+).** `companions = [".wasm"]`
 names the files the link may write beside a program, named after it: they are removed
 before each link, staged when the link wrote one, and not an error when it did not.
 `exceptions` is the model of the row's builds when the project states no
 `[target.<sel>.abi] exceptions`; under `"wasm"` the long-jump model is `"wasm"` too
-(the built-in `wasm32-emscripten` row states `"wasm"`). A machine
+(the built-in `wasm32-emscripten` row states `"wasm"`). `exe-suffix-fixed = true`
+(2026.11.17.1+) states that the row's executable suffix is part of loading its
+programs: a name template (`artifact_name("exe", "{name}")`, `link.exe`) decides
+what precedes the suffix, and the name ends in it once. The built-in
+`wasm32-emscripten` row states it, so a program named `{name}` is still `app.js`
+beside `app.wasm`. A machine
 runs another architecture's programs only where the execution table states it
 (`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
 the artifact's architecture and started on this machine.

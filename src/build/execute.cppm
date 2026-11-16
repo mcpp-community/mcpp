@@ -1234,17 +1234,97 @@ write_runtime_files_list(
 //   MCPP_SYSROOT       the stated target base, when there is one
 //
 // The closure manifest is versioned (`schema`), names the artifact, every
-// file it loads or reads from its own directory (the entries of
-// MCPP_RUNTIME_FILES, which stays for runners written against it), and the
-// base's root -- what a runner that moves the artifact to another machine has
-// to move with it.
-constexpr int kRunClosureSchema = 1;
+// file it loads or reads from its own directory (`files`), the files the run's
+// working directory holds (`run_files`, schema 2, design 2026-11-16 §7.1), and
+// the base's root -- what a runner that moves the artifact to another machine
+// has to move with it. MCPP_RUNTIME_FILES, which stays for runners written
+// against it, lists both: where the program has a file system of its own, its
+// directory is its working directory.
+constexpr int kRunClosureSchema = 2;
+
+// ─── RUN FILES (design 2026-11-16 §5) ─────────────────────────────────────
+//
+// The files the working directory of one run holds: `mcpp run --file
+// FROM[=TO]`, `[test] files`. With none, a program runs where mcpp was
+// started, as before. With some, it runs in a directory of the build tree,
+// `run/<id>/`, prepared before it starts and removed after it ends (`mcpp
+// test` keeps a failed test's); a runner whose program has a file system of
+// its own delivers them beside the program, through the same lists as the
+// runtime files.
+export struct RunFile {
+    std::filesystem::path from;   // absolute
+    std::string           to;     // relative to the working directory
+};
+
+std::vector<RunFile>& run_files_setting() {
+    static std::vector<RunFile> files;
+    return files;
+}
+export void set_run_files(std::vector<RunFile> files) { run_files_setting() = std::move(files); }
+
+// `FROM[=TO]` as dirun's `--file HOST=GUEST` writes it: FROM relative to
+// `base`, TO relative to the working directory and by default FROM's name.
+export std::expected<RunFile, std::string> parse_run_file(std::string_view spec,
+                                                          const std::filesystem::path& base) {
+    const auto eq = spec.find('=');
+    const std::string from{spec.substr(0, eq)};
+    std::string to = eq == std::string_view::npos ? std::string() : std::string(spec.substr(eq + 1));
+    if (from.empty()) return std::unexpected(std::format("--file {}: no file before `=`", spec));
+    auto path = std::filesystem::path(from);
+    if (path.is_relative()) path = base / path;
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+        return std::unexpected(std::format("--file {}: {} does not exist", spec, path.generic_string()));
+    if (to.empty()) to = path.lexically_normal().filename().generic_string();
+    if (auto p = mcpp::manifest::deploy_path_problem("TO", to, false); !p.empty())
+        return std::unexpected(std::format("--file {}: {}", spec, p));
+    return RunFile{path.lexically_normal(), to};
+}
+
+// The working directory `<outputDir>/run/<id>/`, emptied, then each file (a
+// directory: its tree) copied to its destination. Copies, never links: a
+// program that writes a run file must not change its source. Returns the
+// placed files as (destination, copy).
+struct PreparedRunDir {
+    std::filesystem::path dir;
+    std::vector<std::pair<std::string, std::filesystem::path>> files;
+};
+std::expected<PreparedRunDir, std::string>
+prepare_run_dir(const std::filesystem::path& outputDir, std::string_view id, const std::vector<RunFile>& files) {
+    namespace fs = std::filesystem;
+    PreparedRunDir out;
+    out.dir = outputDir / "run" / std::string(id);
+    std::error_code ec;
+    fs::remove_all(out.dir, ec);
+    fs::create_directories(out.dir, ec);
+    if (ec) return std::unexpected(std::format("cannot create the run's directory {}: {}", out.dir.string(), ec.message()));
+    for (auto const& f : files) {
+        const auto to = out.dir / fs::path(f.to);
+        fs::create_directories(to.parent_path(), ec);
+        if (fs::is_directory(f.from, ec)) {
+            for (auto const& e : fs::recursive_directory_iterator(f.from, ec)) {
+                if (!e.is_regular_file(ec)) continue;
+                const auto rel = e.path().lexically_relative(f.from);
+                fs::create_directories((to / rel).parent_path(), ec);
+                fs::copy_file(e.path(), to / rel, fs::copy_options::overwrite_existing, ec);
+                if (ec) return std::unexpected(std::format("cannot copy {}: {}", e.path().string(), ec.message()));
+                out.files.emplace_back((fs::path(f.to) / rel).generic_string(), to / rel);
+            }
+        } else {
+            fs::copy_file(f.from, to, fs::copy_options::overwrite_existing, ec);
+            if (ec) return std::unexpected(std::format("cannot copy {}: {}", f.from.string(), ec.message()));
+            out.files.emplace_back(f.to, to);
+        }
+    }
+    return out;
+}
 
 std::expected<std::filesystem::path, std::string>
 write_run_closure(const mcpp::build::BuildContext& ctx,
                   const std::filesystem::path& artifact,
                   const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
-                  std::string_view mode, std::string_view triple, std::filesystem::path tree = {}) {
+                  std::string_view mode, std::string_view triple, std::filesystem::path tree = {},
+                  const std::vector<std::pair<std::string, std::filesystem::path>>& runFiles = {}) {
     namespace fs = std::filesystem;
     std::error_code ec;
     if (tree.empty()) tree = ctx.outputDir;
@@ -1270,7 +1350,11 @@ write_run_closure(const mcpp::build::BuildContext& ctx,
     for (std::size_t i = 0; i < carried.size(); ++i)
         j += std::format("{}\n    {{ \"dest\": {}, \"source\": {} }}", i ? "," : "",
                          quote(carried[i].first), quote(carried[i].second.generic_string()));
-    j += std::format("{}],\n  \"sysroot\": {}\n}}\n", carried.empty() ? "" : "\n  ",
+    j += std::format("{}],\n  \"run_files\": [", carried.empty() ? "" : "\n  ");
+    for (std::size_t i = 0; i < runFiles.size(); ++i)
+        j += std::format("{}\n    {{ \"dest\": {}, \"source\": {} }}", i ? "," : "",
+                         quote(runFiles[i].first), quote(runFiles[i].second.generic_string()));
+    j += std::format("{}],\n  \"sysroot\": {}\n}}\n", runFiles.empty() ? "" : "\n  ",
                      quote(ctx.tc.base.stated() ? ctx.tc.base.root.generic_string() : std::string{}));
     std::ofstream os(path, std::ios::binary | std::ios::trunc);
     os << j;
@@ -1313,12 +1397,15 @@ run_contract_env(const mcpp::build::BuildContext& ctx, const std::filesystem::pa
 std::expected<std::vector<std::pair<std::string, std::string>>, std::string>
 runner_handoff_env(const mcpp::build::BuildContext& ctx, const std::filesystem::path& artifact,
                    const std::vector<std::pair<std::string, std::filesystem::path>>& carried,
-                   std::string_view mode, std::string_view triple, const std::filesystem::path& tree = {}) {
+                   std::string_view mode, std::string_view triple, const std::filesystem::path& tree = {},
+                   const std::vector<std::pair<std::string, std::filesystem::path>>& runFiles = {}) {
     std::vector<std::pair<std::string, std::string>> env;
-    auto listed = write_runtime_files_list(ctx, artifact, carried, tree);
+    auto both = carried;
+    both.insert(both.end(), runFiles.begin(), runFiles.end());
+    auto listed = write_runtime_files_list(ctx, artifact, both, tree);
     if (!listed) return std::unexpected(listed.error());
     env.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
-    auto closure = write_run_closure(ctx, artifact, carried, mode, triple, tree);
+    auto closure = write_run_closure(ctx, artifact, carried, mode, triple, tree, runFiles);
     if (!closure) return std::unexpected(closure.error());
     for (auto& kv : run_contract_env(ctx, artifact, mode, triple, *closure)) env.push_back(std::move(kv));
     return env;
@@ -1530,6 +1617,9 @@ struct RunnerChoice {
     // `[target.…]` lookup matches. Derived here, once, so the lookup and the
     // message it produces cannot disagree about which target they mean.
     std::string tripleKey;
+    // The `cfg(platform = ...)` name of the platform in use (SPEC-013 §5):
+    // the selector that enables a runner for every row of the platform.
+    std::string platform;
 };
 
 // THE PLACES A RUNNER'S TEMPLATE NAMES (SPEC-016 §6). `{sysroot}` is the base
@@ -1593,8 +1683,11 @@ std::string not_enabled_message(const RunnerChoice& c) {
     std::string out = what + " [runner-not-enabled]";
     if (!needs.empty()) out += std::format("\n  it needs: {} (installed on first use)", needs);
     if (c.name.empty()) {
-        out += std::format("\n  enable:   [target.{}] runner = {{ enabled = true }}   # mcpp.toml, or config.toml "
+        out += std::format("\n  enable:   [target.{}] runner = true   # mcpp.toml, or config.toml "
                            "for this machine", c.tripleKey);
+        if (!c.platform.empty())
+            out += std::format("\n            [target.'cfg(platform = \"{}\")'] runner = true   # every row of "
+                               "the platform", c.platform);
         out += std::format("\n  once:     {}=true mcpp run --target {}",
                            target_variable(c.tripleKey, "RUNNER_ENABLED"), c.tripleKey);
     } else {
@@ -1646,6 +1739,10 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
     const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (ft) c.freestanding = ft->is_freestanding();
     c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
+    if (ctx.plan.platform.active) {
+        const auto& pkg = ctx.plan.platform.package;
+        c.platform = mcpp::manifest::platform::platform_name(pkg.substr(pkg.rfind('.') + 1));
+    }
     // THE STATEMENT PREPARE MERGED (SPEC-013 §4.5): the platform's runner, a
     // build program's (`mcpp::runner`), this machine's, the project's
     // `[target.<selector>]` (a cfg selector as well as a triple, whichever
@@ -2538,7 +2635,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // --verbose); what remains is the advice below.
         if (!reported) mcpp::ui::error("build failed");
         if (!reported && !(reporting && verbose))
-            mcpp::ui::block(verbose ? out : mcpp::build::filter_ninja_output(out, prefixes));
+            mcpp::ui::block(verbose ? out : mcpp::build::failure_diagnostics(out, prefixes));
         // Read from the RAW output, not from `diagnostics`: the filter drops
         // command lines, and a future filter change must not be able to
         // silently remove the advice along with them.
@@ -2636,6 +2733,9 @@ struct FastPathIdentity {
     // `[test] features` (mcpp#941), normalised: what a test plan of this
     // package adds to `features`, and so what its recorded graph names.
     std::string testFeatures;
+    // `[test] files`, unconditional or conditional (design 2026-11-16 §5.3):
+    // the tests' working directories are prepared on the full path.
+    bool testFiles = false;
 };
 
 std::optional<FastPathIdentity>
@@ -2663,6 +2763,8 @@ fast_path_identity(const std::filesystem::path& projectRoot,
             for (auto const& f : m->testFeatures) joined += (joined.empty() ? "" : ",") + f;
             return joined;
         }()),
+        !m->testFiles.empty() || std::ranges::any_of(m->conditionalConfigs,
+                                                     [](auto const& cc) { return !cc.testFiles.empty(); }),
     };
 }
 
@@ -3325,6 +3427,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // `--locked` is an assertion about resolution.
     if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1")
         return fast_path_declined("run", "MCPP_LOCKED=1 asks for a locked resolution");
+    if (!run_files_setting().empty())
+        return fast_path_declined("run", "the run names files (--file): its working directory is prepared on the full path");
     // `--managed-only` is checked against the sources prepare decides, which
     // a fast path does not run (mcpp#755).
     if (auto v = mcpp::invocation::get("MCPP_MANAGED_ONLY"); v && *v != "0")
@@ -3641,6 +3745,25 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     }
     std::optional<std::filesystem::path> runtimeFilesList;
     std::vector<std::pair<std::string, std::filesystem::path>> carriedFiles;
+    // THE RUN'S WORKING DIRECTORY (design 2026-11-16 §5.3): prepared when the
+    // run names files, before the launch is composed, so that a launch
+    // described instead of started (`--print-launch`) names a directory that
+    // holds them.
+    std::optional<PreparedRunDir> runDir;
+    if (!run_files_setting().empty()) {
+        static std::atomic<unsigned> serial{0};
+        const auto self = mcpplibs::os::process::self();
+        auto prepared = prepare_run_dir(ctx.outputDir, std::format("run-{}-{}", self ? self->id : 0, serial.fetch_add(1)),
+                                        run_files_setting());
+        if (!prepared) {
+            std::println(libc::stderr(), "error: {}", prepared.error());
+            return 2;
+        }
+        runDir = std::move(*prepared);
+        mcpp::log::verbose("run", std::format("the working directory is {}", runDir->dir.generic_string()));
+    }
+    const std::vector<std::pair<std::string, std::filesystem::path>> noRunFiles;
+    auto const& runFiles = runDir ? runDir->files : noRunFiles;
     if (!choice.tmpl.empty()) {
         // The program is located by mcpp, not by posix_spawnp: a declared
         // payload's bin/ and then its root, then PATH — see runner_lookup for the shim
@@ -3671,7 +3794,9 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         // holds its own files, so its list is empty and still exists.
         carriedFiles = format_name.empty() ? runtime_files_for(ctx, exe)
                                            : std::vector<std::pair<std::string, std::filesystem::path>>{};
-        auto listed = write_runtime_files_list(ctx, exe, carriedFiles);
+        auto listedFiles = carriedFiles;
+        listedFiles.insert(listedFiles.end(), runFiles.begin(), runFiles.end());
+        auto listed = write_runtime_files_list(ctx, exe, listedFiles);
         if (!listed) {
             std::println(libc::stderr(), "error: {}", listed.error());
             return 1;
@@ -3705,7 +3830,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         mcpp::ui::status("Via", std::format("{}  [{}]", shown, ctx.runUnderOrigin));
     }
     if (!host.prefix.empty() || !choice.tmpl.empty()) {
-        auto closure = write_run_closure(ctx, exe, carriedFiles, "run", choice.tripleKey);
+        auto closure = write_run_closure(ctx, exe, carriedFiles, "run", choice.tripleKey, {}, runFiles);
         if (!closure) {
             std::println(libc::stderr(), "error: {}", closure.error());
             return 1;
@@ -3741,7 +3866,8 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     ctx.buildLock.reset();
     if (print_launch_flag()) {
         mcpp::build::result::Launch launch{argv, childEnv,
-                                           std::filesystem::current_path().generic_string(),
+                                           runDir ? runDir->dir.generic_string()
+                                                  : std::filesystem::current_path().generic_string(),
                                            !host.prefix.empty() ? "run_under"
                                            : !choice.tmpl.empty() ? "runner" : ""};
         mcpp::wire::Envelope env{.kind = "mcpp.launch",
@@ -3755,7 +3881,32 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         return 0;
     }
     int spawnErr = 0;
-    const int rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
+    int rc = 0;
+    if (runDir) {
+        // mcpp waits for the program, which runs in the prepared directory,
+        // and removes the directory after it: the program is not exec'd.
+        mcpp::run::Options o;
+        o.env = childEnv;
+        o.cwd = runDir->dir.string();
+        o.input = mcpp::run::Input::inherit;
+        o.streams = mcpp::run::Streams::inherit;
+        o.report_spawn_failure = false;
+        // The directory is the run's: removed after it, and by the interrupt
+        // watcher when a request ends mcpp while the program runs, so no
+        // `run-<pid>-<n>` is left behind (mcpp waits here; it cannot exec).
+        const auto removeDir = [dir = runDir->dir] {
+            std::error_code rmEc;
+            std::filesystem::remove_all(dir, rmEc);
+        };
+        const int cleanup = mcpp::run::add_cleanup(removeDir);
+        auto r = mcpp::run::execute(argv, o);
+        mcpp::run::remove_cleanup(cleanup);
+        rc = r.exit_code;
+        spawnErr = r.spawn_error;
+        removeDir();
+    } else {
+        rc = mcpp::run::run_foreground(argv, childEnv, &spawnErr);
+    }
     if (spawnErr != 0) {
         using namespace mcpp::build::runner_lookup;
         if (!choice.tmpl.empty() || !host.prefix.empty())
@@ -5688,6 +5839,35 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     };
     std::map<std::filesystem::path, int> objectMarkers;
 
+    // THE TESTS' RUN FILES (design 2026-11-16 §5.3): a working directory per
+    // test program, `run/test-<name>/`, which the processes its split divides
+    // it into share; prepared before the program's launch is composed, so a
+    // launch described (`--no-run`) names a directory that holds them;
+    // removed after the program passes, kept and named when it fails. Only a
+    // package that states `[test] files` pays for the copies.
+    std::vector<RunFile> testRunFiles;
+    {
+        auto entries = mcpp::build::test_run_files(ctx->manifest, ctx->tc.targetTriple);
+        if (!entries) {
+            mcpp::ui::error(entries.error());
+            return 2;
+        }
+        for (auto const& e : *entries) {
+            auto expanded = mcpp::build::expand_deploy_entry(ctx->projectRoot, e);
+            if (!expanded) {
+                mcpp::ui::error(std::format("[test] files: {}", expanded.error()));
+                return 2;
+            }
+            for (auto const& x : *expanded) {
+                const auto from = (ctx->projectRoot / x.from).lexically_normal();
+                auto to = (x.to.empty() || x.to == ".") ? std::filesystem::path() : std::filesystem::path(x.to);
+                to /= x.name.empty() ? from.filename() : std::filesystem::path(x.name);
+                testRunFiles.push_back({from, to.generic_string()});
+            }
+        }
+    }
+    std::map<std::string, std::filesystem::path> testRunDirs;
+
     // An archive's tests are composed by its reader; they run as the plan's do.
     if (tb.archived) {
         runnable = *tb.archived;
@@ -5776,6 +5956,20 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         for (auto& kv : tb.programEnv) childEnv.push_back(kv);
         if (auto mp = tb.memberProgramEnv.find(lu.memberOf); mp != tb.memberProgramEnv.end())
             for (auto& kv : mp->second) childEnv.push_back(kv);
+        // Its working directory, when the package states run files.
+        std::optional<PreparedRunDir> testDir;
+        if (!testRunFiles.empty()) {
+            std::string leaf(lu.targetName);
+            for (auto& ch : leaf)
+                if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '.') ch = '_';
+            auto prepared = prepare_run_dir(ctx->outputDir, "test-" + leaf, testRunFiles);
+            if (!prepared) {
+                if (invocationNotRunReason.empty()) invocationNotRunReason = prepared.error();
+            } else {
+                testDir = std::move(*prepared);
+                testRunDirs[lu.targetName] = testDir->dir;
+            }
+        }
         // ...and, through a runner, the files the test carries with it, as
         // `mcpp run` hands them over (see `runtime_files_for`). Written here,
         // in the single-threaded pass, one list per test program.
@@ -5786,7 +5980,9 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             // own product directory with that group's deploy set.
             const std::string_view of = owner.empty() ? std::string_view(lu.memberOf) : owner;
             with_member(*ctx, of, [&] { carried = runtime_files_for(*ctx, exe, of); });
-            if (auto handoff = runner_handoff_env(*ctx, exe, carried, "test", runnerChoice.tripleKey))
+            const std::vector<std::pair<std::string, std::filesystem::path>> none;
+            if (auto handoff = runner_handoff_env(*ctx, exe, carried, "test", runnerChoice.tripleKey, {},
+                                                  testDir ? testDir->files : none))
                 for (auto& kv : *handoff) childEnv.push_back(std::move(kv));
             else if (invocationNotRunReason.empty())
                 invocationNotRunReason = handoff.error();
@@ -5812,6 +6008,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // its file carries (P2.3). A version this mcpp does not speak runs as
         // a program that implements none.
         auto& added = runnable.back();
+        if (testDir) added.cwd = testDir->dir;
         const int version = test_protocol_of(*ctx, lu, objectMarkers);
         if (version == mcpp::build::test_protocol::kVersion) {
             added.protocol = version;
@@ -6224,6 +6421,18 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         }
         else { ++failed; failures.push_back(r.name); }
     }
+    // A passed program's working directory goes; a failed one's stays, for the
+    // reader to look into, and is named (design 2026-11-16 §5.3). A launch only
+    // described (`--no-run`) keeps every directory for the program it names.
+    if (!testOpts.noRun)
+        for (auto const& [name, dir] : testRunDirs) {
+            const bool failedHere = std::ranges::any_of(failures, [&](std::string const& f) {
+                return f == name || f.starts_with(name + "/");
+            });
+            std::error_code rmEc;
+            if (!failedHere) std::filesystem::remove_all(dir, rmEc);
+            else if (!json) mcpp::ui::info("Kept", std::format("the working directory of {}: {}", name, dir.generic_string()));
+        }
 
     summary.passed = passed;
     summary.failed = failed;
@@ -6747,6 +6956,7 @@ fast_test_plan(const std::filesystem::path& projectRoot, const TestOptions& test
     auto want = fast_path_identity(projectRoot);
     if (!want) return declined("the manifest or the request could not be read");
     if (want->hooksActive) return declined("the project declares [hooks]");
+    if (want->testFiles) return declined("the tests have run files ([test] files)");
     if (!want->defaultTarget.empty()) return declined("the project names a default target");
     // A test plan names the package's `[test] features` beside the request.
     const auto testRequest = normalize_features(want->features + "," + want->testFeatures);

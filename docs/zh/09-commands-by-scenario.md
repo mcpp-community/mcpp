@@ -384,6 +384,20 @@ $ echo $?
 
 无法启动的程序保留拒绝时的状态（`127` 找不到，`126` 不可执行，`125` 其他），`mcpp build`、`mcpp test`、`mcpp pack` 的状态不变。程序本身，或者 runner（`--runner`、`[target.<triple>].runner`），自己返回 101 时，读起来与构建失败相同；各区间见 [50 —— 机器可读输出](50-machine-output.md) §6。
 
+### 一次运行的文件（`--file`，2026.11.17.1+）
+
+`--file FROM[=TO]`（可重复）把 FROM（相对 `mcpp run` 启动处的文件或目录）复制到本次运行的工作目录中，名为 TO，省略时取
+FROM 的名字；写法与 dirun 的 `--file HOST=GUEST` 相同。给出它时，程序在构建树中的目录 `run/<标识>/` 中运行，程序结束后
+该目录被删除，所以 `--` 之后的相对路径指向那里，而不是 `mcpp run` 启动处；`-v` 写出该目录的路径。runner 与程序的运行时
+文件一起收到这些文件（`MCPP_RUN_CLOSURE` 的 `run_files`、`MCPP_RUNTIME_FILES`），程序有自己文件系统的 runner 把它们放到
+程序旁：
+
+```sh
+mcpp run --target x86_64-uefi --file tests/t.bat=TEST.BAT -- /c TEST.BAT
+```
+
+给出 `--file` 时，`mcpp` 等待程序结束以删除该目录，而不是被程序替换。
+
 ### 程序与终端 *(2026.10.5.1+)*
 
 `mcpp run` 启动的程序拥有终端，与由 shell 直接启动时相同：它读取终端的输入，Ctrl-C、Ctrl-\ 与 Ctrl-Z 送达程序，由程序决定其含义。runner 与具名 runner（`--runner`）同样如此。

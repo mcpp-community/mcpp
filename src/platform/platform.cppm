@@ -69,6 +69,7 @@ struct ChoiceInputs {
     std::span<const mcpp::manifest::platform::Override> project;   // the plan root's tables, the workspace layer's first
     std::span<const mcpp::manifest::platform::Override> config;    // config.toml's
     std::string_view              column;    // the target table's platform column
+    bool                          columnFromIndex = false;   // the column's answer is the index's
     std::string                   flagKey = "--platform";   // or MCPP_PLATFORM, from the environment
 };
 
@@ -325,7 +326,9 @@ std::expected<Selection, std::string> select_target(const ChoiceInputs& in, cons
         return s;
     }
     if (!in.column.empty()) {
-        auto s = parse_choice(in.column, mp::Origin{mp::Tier::BuiltIn, {}, 0, "the target table"});
+        auto s = parse_choice(in.column, in.columnFromIndex
+            ? mp::Origin{mp::Tier::Index, {}, 0, "the package index"}
+            : mp::Origin{mp::Tier::BuiltIn, {}, 0, "the target table"});
         if (!s) return s;
         return s;
     }

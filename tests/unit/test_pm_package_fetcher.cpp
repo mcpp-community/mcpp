@@ -372,3 +372,29 @@ UTest only_a_missing_package_refreshes_the_index{"PmInstallFailurePolicy/OnlyAMi
     expect(bool(mcpp::pm::install_failure_policy("").refreshIndex));
     expect(bool(mcpp::pm::install_failure_policy("").retry));
 }};
+
+// ─── Where a payload's root is ───
+//
+// A base package states its root by its manifest: an OpenBSD sysroot holds
+// only `usr/` beside its `mcpp.toml`, and descending into `usr/` as into an
+// extracted tarball lost the manifest, so the build then judged `usr/` a
+// library prefix ("no crt1.o").
+UTest a_manifest_marks_the_version_directory_as_the_root{"PmPayloadRoot/AManifestMarksTheVersionDirectoryAsTheRoot", [] {
+    const auto base = make_tempdir("mcpp-payload-root");
+    const auto sysroot = base / "sysroot";
+    std::filesystem::create_directories(sysroot / "usr" / "lib");
+    std::ofstream(sysroot / "mcpp.toml") << "[package]\nname = \"s\"\nversion = \"1\"\n";
+    expect(eq(mcpp::pm::payload_root(sysroot), sysroot));
+
+    // An extracted source tarball: the one subdirectory is the root.
+    const auto tarball = base / "tarball";
+    std::filesystem::create_directories(tarball / "pkg-1.0" / "src");
+    expect(eq(mcpp::pm::payload_root(tarball), tarball / "pkg-1.0"));
+
+    // An xim payload with the usual directories is its own root.
+    const auto xim = base / "xim";
+    std::filesystem::create_directories(xim / "bin");
+    expect(eq(mcpp::pm::payload_root(xim), xim));
+
+    std::filesystem::remove_all(base);
+}};

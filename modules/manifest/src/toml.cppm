@@ -662,6 +662,52 @@ void locate_named_key(ManifestError& e, const t::Document& doc) {
 
 // One `requires` array, of `[package]` or of a `[target.<sel>]` (design
 // 2026-10-26 §6.3, D20): each entry a string, or a table
+// A list of file entries (design 2026-11-16 §4.1): a string, which is
+// `{ from = <string> }`, or a `{ from, to, name }` table; `to` defaults to ".".
+// `where` names the key for the messages (`runtime.deploy`, `[test] files`).
+std::expected<std::vector<DeployEntry>, std::string>
+read_file_entries(const t::Value& v, std::string_view where) {
+    if (!v.is_array())
+        return std::unexpected(std::format(
+            "{} must be an array of paths or `{{ from = \"...\", to = \"...\" }}` tables", where));
+    std::vector<DeployEntry> out;
+    std::size_t index = 0;
+    for (auto const& value : v.as_array()) {
+        ++index;
+        std::string from, to = ".", name;
+        bool named = false;
+        if (value.is_string()) {
+            from = value.as_string();
+        } else if (value.is_table()) {
+            auto const& table = value.as_table();
+            for (auto const& [key, kv] : table) {
+                if (key != "from" && key != "to" && key != "name")
+                    return std::unexpected(std::format(
+                        "{}[{}] has unsupported key '{}'; the keys are `from`, `to` and `name`",
+                        where, index, key));
+                if (!kv.is_string())
+                    return std::unexpected(std::format(
+                        "{}[{}]: `from`, `to` and `name` must be strings", where, index));
+                (key == "from" ? from : key == "to" ? to : name) = kv.as_string();
+                named = named || key == "name";
+            }
+            if (!table.contains("from"))
+                return std::unexpected(std::format("{}[{}] has no `from`", where, index));
+        } else {
+            return std::unexpected(std::format("{}[{}] must be a path or a table with `from`", where, index));
+        }
+        if (auto p = deploy_path_problem("from", from, false); !p.empty())
+            return std::unexpected(std::format("{}[{}]: {}", where, index, p));
+        if (auto p = deploy_path_problem("to", to, true); !p.empty())
+            return std::unexpected(std::format("{}[{}]: {}", where, index, p));
+        if (named)
+            if (auto p = deploy_name_problem(name); !p.empty())
+                return std::unexpected(std::format("{}[{}]: {}", where, index, p));
+        out.push_back({from, to, name});
+    }
+    return out;
+}
+
 // `{ layer = "<capability>", visibility = "public" | "private" }`. A string
 // is a public requirement, as it always was. `private` is accepted for the
 // C++ layer alone -- a second C library in one image is not an island, it is
@@ -1040,9 +1086,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         "target.*.build.flags",  // #258 — middle segment is the cfg predicate
         "runtime.requirements",
         "runtime.artifacts",
-        // #615: `deploy = [{ from = "...", to = "..." }]`. The reader refuses
-        // every entry that is not a table of exactly those two strings.
+        // #615: `deploy = [{ from = "...", to = "..." }]`; `[test] files`
+        // (design 2026-11-16 §5.2) in the same entry grammar.
+        // `read_file_entries` type-checks every entry.
         "runtime.deploy",
+        "test.files",
+        "target.*.test.files",
         // #544: `deps = [{ linux = "..." }]` — every entry a per-platform
         // table — is the same Value shape as `[[xlings.deps]]`, and the guard
         // cannot tell the inline form from the doubled-bracket typo. The
@@ -1063,10 +1112,11 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         // 2026-10-29 §4.5): the platform reader type-checks every entry.
         "platform.carrier",
         "target.*.carrier",
-        // `[[platform.define]]` and `[[platform.provider]]` (SPEC-016 §2, §3):
-        // the platform reader type-checks every entry.
+        // `[[platform.define]]`, `[[platform.provider]]` and `[[platform.system]]`
+        // (SPEC-016 §2, §2.3, §3): the platform reader type-checks every entry.
         "platform.define",
         "platform.provider",
+        "platform.system",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
@@ -1074,7 +1124,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
             "[[runtime.artifacts]], [[runtime.deploy]], [[platform.link.inputs]], "
-            "[[platform.carrier]], [[platform.define]], [[platform.provider]] and [xlings] deps entries",
+            "[[platform.carrier]], [[platform.define]], [[platform.provider]], [[platform.system]], "
+            "[[test.files]] and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -1104,6 +1155,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
 
     if (auto v = doc->get_string("package.description")) m.package.description = *v;
     if (auto v = doc->get_string("package.license"))     m.package.license     = *v;
+    if (auto v = doc->get_string_array("package.license_files")) m.package.licenseFiles = *v;
     if (auto v = doc->get_string("package.repo"))        m.package.repo        = *v;
     if (auto v = doc->get_string_array("package.authors")) m.package.authors  = *v;
     if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
@@ -1846,7 +1898,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // MUST stay in sync with the `doc->get_*("package.<key>")` reads above.
     static constexpr std::string_view kKnownPackageKeys[] = {
         "accelerators", "authors", "c-environment", "description", "exclusive",
-        "license", "mcpp", "metadata", "name", "namespace", "platforms", "provides",
+        "license", "license_files", "mcpp", "metadata", "name", "namespace", "platforms", "provides",
         "repo", "requires", "requires_abi", "standard", "std-compat-module",
         "std-module", "std-module-flags", "version",
     };
@@ -3445,37 +3497,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         out = it->second.as_string();
         return true;
     };
-    // `runtime.deploy` (#615): `{ from, to }` tables. A key of its own rather
-    // than a table form of `deploy_files`; see manifest::DeployEntry and the
-    // matching branch of the descriptor reader.
+    // `runtime.deploy` (#615; the entry grammar of design 2026-11-16 §4.1): a
+    // string, which is `{ from = <string> }`, or a `{ from, to, name }` table.
+    // See manifest::DeployEntry and the matching branch of the descriptor reader.
     if (auto* deploy = doc->get("runtime.deploy")) {
-        if (!deploy->is_array())
-            return std::unexpected(error(origin,
-                "runtime.deploy must be an array of `{ from = \"...\", to = \"...\" }` tables"));
-        std::size_t index = 0;
-        for (auto const& value : deploy->as_array()) {
-            ++index;
-            if (!value.is_table())
-                return std::unexpected(error(origin, std::format(
-                    "runtime.deploy[{}] must be a table with `from` and `to`", index)));
-            auto const& table = value.as_table();
-            for (auto const& [key, _] : table)
-                if (key != "from" && key != "to")
-                    return std::unexpected(error(origin, std::format(
-                        "runtime.deploy[{}] has unsupported key '{}'; the keys are "
-                        "`from` and `to`", index, key)));
-            std::string from, to;
-            if (!table_string(table, "from", from) || !table_string(table, "to", to))
-                return std::unexpected(error(origin, std::format(
-                    "runtime.deploy[{}]: `from` and `to` must be strings", index)));
-            if (auto p = deploy_path_problem("from", from, false); !p.empty())
-                return std::unexpected(error(origin,
-                    std::format("runtime.deploy[{}]: {}", index, p)));
-            if (auto p = deploy_path_problem("to", to, true); !p.empty())
-                return std::unexpected(error(origin,
-                    std::format("runtime.deploy[{}]: {}", index, p)));
-            m.runtimeConfig.linkIntent.deploy.push_back({from, to});
-        }
+        auto entries = read_file_entries(*deploy, "runtime.deploy");
+        if (!entries) return std::unexpected(error(origin, entries.error()));
+        for (auto& e : *entries) m.runtimeConfig.linkIntent.deploy.push_back(std::move(e));
     }
     if (auto* requirements = doc->get("runtime.requirements")) {
         if (!requirements->is_array()) {
@@ -3809,10 +3837,16 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 }
                 continue;
             }
+            if (key == "files") {
+                auto entries = read_file_entries(value, "[test] files");
+                if (!entries) return std::unexpected(error(origin, entries.error()));
+                m.testFiles = std::move(*entries);
+                continue;
+            }
             if (key != "discover") {
                 m.schemaWarnings.push_back(std::format(
                     "[test] has unsupported key '{}' (ignored). Supported keys: "
-                    "discover, features, link, main, programs, split, start, store, windows_code_page, "
+                    "discover, features, files, link, main, programs, split, start, store, windows_code_page, "
                     "windows_long_paths.", key));
                 continue;
             }
@@ -4286,7 +4320,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 // The table form, `{ cmd = [...], host = "same-arch", exclusive =
                 // true }`, is the platform reader's (SPEC-013 §2.3); its command
                 // is the template here as well.
-                if (!it->second.is_array() && it->second.is_table()) {
+                if (!it->second.is_array() && (it->second.is_table() || it->second.is_bool())) {
                     mcpp::manifest::platform::Reader rd{origin, mcpp::manifest::platform::Tier::Manifest,
                                                         &m.schemaWarnings};
                     auto r = rd.runner(it->second, std::format("[target.{}].runner", triple), true);
@@ -4295,8 +4329,9 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     runnerAdjusts = !r->set;
                 } else if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
-                        "[target.{}].runner must be an array of strings or {{ cmd = [...], "
-                        "host = \"same-arch\" }}, e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
+                        "[target.{}].runner must be an array of strings, {{ cmd = [...], "
+                        "host = \"same-arch\" }}, or true / false (enable the runner stated for the row), "
+                        "e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
                         triple)));
                 }
                 if (it->second.is_array()) for (auto& el : it->second.as_array()) {
@@ -4934,10 +4969,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     return std::unexpected(error(origin, std::format(
                         "[target.{}.test] must be a table", triple)));
                 for (auto& [tk, tv] : t->second.as_table()) {
+                    if (tk == "files") {
+                        auto entries = read_file_entries(tv, std::format("[target.{}.test] files", triple));
+                        if (!entries) return std::unexpected(error(origin, entries.error()));
+                        for (auto& e : *entries) cc.testFiles.push_back(std::move(e));
+                        continue;
+                    }
                     if (tk != "discover") {
                         m.schemaWarnings.push_back(std::format(
                             "[target.{}.test] has unsupported key '{}' (ignored). A conditional "
-                            "section contributes test programs only: discover.", triple, tk));
+                            "section contributes test programs and their files only: discover, files.",
+                            triple, tk));
                         continue;
                     }
                     bool listOk = tv.is_array();

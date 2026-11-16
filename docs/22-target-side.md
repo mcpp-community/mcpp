@@ -1322,6 +1322,12 @@ platform's or a provider's `sysroot`), the base answers the layers it states:
 - the C++ headers, the `std` module and the C++ libraries of the link are the base's; the
   toolchain payload's C++ runtime and its archives, built for the payload's own host, take no
   part. A base that states no `std-module` leaves the build without `import std`;
+- a package that supplies the `c++-abi` layer instead (a dependency's `provides`, a platform's
+  or a provider's `layers`) takes the base's place for that layer alone: the base's C++ headers
+  leave the compile and its `ldflags` leave the link, so an image has one C++ runtime, while
+  the C library and the compiler runtime stay the base's (2026.11.17.1+). A system whose own
+  C++ library ships no module sources (NetBSD's libstdc++) gets `import std` this way, from
+  libc++ built over its C library;
 - `compiler_runtime_dir` (a `[build]` key, 2026.11.10.1+) names the directory of the compiler
   runtime: clang reads it as its resource directory, gcc through `-B`.
 

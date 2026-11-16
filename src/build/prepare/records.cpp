@@ -734,9 +734,11 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
                 {"deploy_files", path_array(ctx.plan.linkIntent.deployFiles)},
                 {"deploy", [&] {
                     auto a = nlohmann::json::array();
-                    for (auto const& d : ctx.plan.linkIntent.deploy)
-                        a.push_back({{"from", d.from.generic_string()},
-                                     {"to", d.to}});
+                    for (auto const& d : ctx.plan.linkIntent.deploy) {
+                        nlohmann::json e{{"from", d.from.generic_string()}, {"to", d.to}};
+                        if (!d.name.empty()) e["name"] = d.name;
+                        a.push_back(std::move(e));
+                    }
                     return a;
                 }()},
             }},

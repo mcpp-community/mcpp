@@ -130,8 +130,20 @@ installed before it is enabled.
 
 ```toml
 [target.x86_64-windows-gnu]
-runner = { enabled = true }      # mcpp.toml, or config.toml for this machine
+runner = true                    # mcpp.toml, or config.toml for this machine
+
+[target.'cfg(platform = "platforms")']
+runner = true                    # every row of a platform (2026.11.17.1+)
 ```
+
+What a runner is (`cmd`, `requires`, `host`) is stated by its data: the
+provider, the platform, a build program, or a project or machine that replaces
+it. Whether it is used is the consent of whoever runs it: the project, the
+machine, the environment or `--runner`. The consent is therefore not written in
+the platform's reference (`platform = {...}`): the platform may come from the
+package index, a built-in row may have none, and a machine may consent alone.
+`runner = true` and `runner = false` are `{ enabled = true }` and
+`{ enabled = false }` (2026.11.17.1+).
 
 A table without `cmd` adjusts the runner below it. `cmd`, `requires` and
 `enabled` are one statement: a tier that replaces `cmd` states another runner,

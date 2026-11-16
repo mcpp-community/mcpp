@@ -119,6 +119,31 @@ UTest every_group_is_read{"PlatformManifest/EveryGroupIsRead", [] {
     expect(gt(p.runner.origin.line, 0));
 }};
 
+// A platform names the systems of the rows it defines (SPEC-016 §2.3): the manifest
+// accepts the array of tables the platform reader reads (refused before 2026.11.17.1).
+UTest a_system_is_read{"PlatformManifest/ASystemIsRead", [] {
+    auto m = parse(R"([package]
+name    = "rows"
+version = "0.1.0"
+
+[[platform.system]]
+name  = "netbsd"
+uname = "NetBSD"
+
+[[platform.define]]
+triple       = "x86_64-netbsd"
+clang-triple = "x86_64-unknown-netbsd10.2"
+execution    = "netbsd"
+
+[[platform.provider]]
+serves = ["x86_64-netbsd"]
+)");
+    expect(fatal(bool(m.platformDeclared)));
+    expect(fatal(eq(m.platform.systems.size(), 1u)));
+    expect(eq(m.platform.systems[0].name, "netbsd"));
+    expect(eq(m.platform.systems[0].uname, "NetBSD"));
+}};
+
 UTest refusals_name_the_key{"PlatformManifest/RefusalsNameTheKey", [] {
     const std::string head = "[package]\nname = \"p\"\nversion = \"1.0.0\"\n";
     struct Row { std::string body; std::string_view says; };
@@ -286,6 +311,17 @@ platform = "machine-platform@1.0.0"
     expect(eq(pick("", "", false, false, "row-platform@1.0.0"), "row-platform|built-in"));
     expect(eq(pick("", "", false, false, ""), "none|built-in"));
     expect(eq(pick("none", "", true, true, "row-platform@1.0.0"), "none|flag"));
+    // The column answered by the index (design 2026-11-16 §6.2): the same place, its own source.
+    pf::ChoiceInputs indexed{ "", "", "", {}, {}, "acme.row-platform@*" };
+    indexed.columnFromIndex = true;
+    auto s = pf::select_target(indexed, t);
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "row-platform"));
+    expect(eq(std::string(mp::tier_name(s->origin.tier)), "index"));
+    indexed.project = m.platformOverrides;
+    s = pf::select_target(indexed, t);
+    expect(fatal(bool(s)));
+    expect(eq(s->ref.spec.shortName, "project-platform")) << "the project's statement comes before the index";
 }};
 
 UTest the_most_specific_selector_decides{"PlatformSelect/TheMostSpecificSelectorDecides", [] {

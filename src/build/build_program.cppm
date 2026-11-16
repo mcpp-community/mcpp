@@ -1122,6 +1122,48 @@ install_hook_env(const BuildProgramEnv& env) {
     };
 }
 
+// A FILE A RUN WROTE AGAIN AS IT WAS KEEPS ITS TIME (mcpp#945). A build program
+// commonly writes its outputs on every run, and it runs again whenever its
+// cached answer is another configuration's: the run record is one per
+// package, the output directory one per configuration. A generated source
+// rewritten with its old content but a new time compiled its module and every
+// importer again. Each regular file of the output directory is stamped before
+// the run; one the run left with the same size and content gets its time back,
+// so the build sees no change.
+struct OutputStamp {
+    std::uintmax_t size = 0;
+    fs::file_time_type time;
+    std::string hash;
+};
+
+std::map<fs::path, OutputStamp> stamp_outputs(const fs::path& outDir) {
+    std::map<fs::path, OutputStamp> out;
+    std::error_code ec;
+    if (!fs::is_directory(outDir, ec)) return out;
+    for (fs::recursive_directory_iterator it(outDir, fs::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const auto size = it->file_size(ec);
+        // A large output (an archive, an image) is not read twice per run.
+        if (ec || size > (std::uintmax_t{64} << 20)) continue;
+        const auto time = it->last_write_time(ec);
+        if (ec) continue;
+        out.emplace(it->path(), OutputStamp{size, time, mcpp::toolchain::hash_file(it->path())});
+    }
+    return out;
+}
+
+void keep_unchanged_times(const std::map<fs::path, OutputStamp>& before) {
+    for (auto const& [path, was] : before) {
+        std::error_code ec;
+        const auto time = fs::last_write_time(path, ec);
+        if (ec || time == was.time) continue;
+        if (fs::file_size(path, ec) != was.size || ec) continue;
+        if (mcpp::toolchain::hash_file(path) != was.hash) continue;
+        fs::last_write_time(path, was.time, ec);
+    }
+}
+
 std::expected<void, std::string> run_build_program_impl(
     mcpp::manifest::Manifest& m,
     const fs::path& root,
@@ -1278,8 +1320,10 @@ std::expected<void, std::string> run_build_program_impl(
         }
         if (!placed) argv.push_back(bin.string());
     }
+    const auto stamps = stamp_outputs(outDir);
     auto rres = mcpp::run::capture_exec_deadline(
         argv, childEnv, deadline, &timedOut, root.string());
+    if (!timedOut && rres.exit_code == 0) keep_unchanged_times(stamps);
     if (timedOut) {
         // Name the manifest to edit. Without this the user edits their OWN
         // mcpp.toml when a dependency's build program is what timed out, and

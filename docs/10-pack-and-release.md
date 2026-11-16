@@ -443,6 +443,22 @@ a library, with no `--pkg-format`, is refused naming the flag and that same
 format set. `mcpp test` is unaffected: a test binary is a program on every
 row.
 
+### The license files of the packages a program carries (2026.11.17.1+)
+
+Every pack stages the license and notice files of each package of the
+program's graph under `share/licenses/<package>/`: the project's own, its
+static libraries' (linked into the program, they carry the same obligation as
+a shared one) and its shared libraries'. A package's `[package] license_files`
+names them; where it states none, the engine's default
+`{LICENSE,LICENCE,COPYING,NOTICE}*` at the package root applies. The files have
+the role `metadata` in `mcpp-package.json`. A package for which no file is
+found is named in the report (`Licenses none found for ...`). A
+`self-contained` pack also looks for the default files beside each shared
+object it bundles that no package declares (a toolchain's C library), under
+`share/licenses/<soname>/`, and names the objects for which it finds none.
+`[pack] include` keeps its role: the project's other release files (a README,
+an icon, a manual page).
+
 ### The build inputs of a packed artifact, and its contents
 
 Two things differ from `mcpp build`, and both exist because a package leaves
