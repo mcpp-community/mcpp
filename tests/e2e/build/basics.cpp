@@ -101,6 +101,195 @@ E2E basics{"basics", [] {
         expect(s::lacks(s::text(r), "std.cc")) << "std module re-built when it shouldn't be";
     };
 
+    "1110 an importer follows a gcc interface, not its clock or its line maps"_test[s::gcc] = [] {
+        // mcpp#946 O1, O2, O6. Outside UTC a touched interface compiles no importer (the
+        // stamp is masked with any zone). A line inserted below the declarations moves the
+        // line maps alone: the BMI is kept, the run says so, and the importer is not compiled.
+        // `bmi_cutoff = exact` (here the environment's) compiles it, and the program is the
+        // same. A changed exported body compiles the importer under either cutoff.
+        auto p = s::project::scaffold("casc");
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport inline int c_inl() { return 10; }\n"
+                              "int c_val() {\n    int x = 1;\n    return x;\n}\nint c_other() { return 7; }\n");
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_inl() + c_val(); }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        const s::options zone{.env = {{"TZ", "Asia/Shanghai"}}};
+        auto r = p.mcpp({"build"}, zone);
+        expect(fatal(e2e::succeeded(r))) << "the first build failed: " << s::text(r);
+        touch(p.at("src/c.cppm"));
+        r = p.mcpp({"build", "--verbose"}, zone);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "b.cppm")) << "A: a touched interface compiled its importer outside UTC: " << s::text(r);
+
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport inline int c_inl() { return 10; }\n"
+                              "int c_val() {\n    int x = 1;\n    // a line\n    return x;\n}\nint c_other() { return 7; }\n");
+        r = p.mcpp({"build", "--verbose"}, zone);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "b.cppm")) << "B: line maps alone compiled the importer: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.gcm changed in locations only and is kept"))) << "B: the run does not say what it kept: " << s::text(r);
+
+        r = p.mcpp({"build", "--verbose"}, s::options{.env = {{"TZ", "Asia/Shanghai"}, {"MCPP_BMI_CUTOFF", "exact"}}});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "b.cppm"))) << "C: the exact cutoff did not compile the importer of a kept BMI: " << s::text(r);
+        r = p.mcpp({"run"}, zone);
+        expect(fatal(e2e::contains(s::text(r), "value 11"))) << "C: the program changed: " << s::text(r);
+
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport inline int c_inl() { return 20; }\n"
+                              "int c_val() {\n    int x = 1;\n    // a line\n    return x;\n}\nint c_other() { return 7; }\n");
+        r = p.mcpp({"run", "--verbose"}, zone);
+        expect(fatal(e2e::contains(s::text(r), "value 21"))) << "D: a changed exported body did not reach the importer: " << s::text(r);
+        expect(e2e::contains(s::text(r), "c.gcm") && e2e::contains(s::text(r), "importers were compiled again")) << "D: the run does not name the changed BMI: " << s::text(r);
+    };
+
+    "1111 a touched interface compiles no importer, whatever the host and the compiler"_test = [] {
+        // mcpp#946 O7. The previous BMI is held by the executor of the compile edge, not by a
+        // shell fragment of the generated command, so a host without a POSIX shell ends the
+        // rebuild at the interface as every other does. A changed interface still reaches the
+        // importer.
+        auto p = s::project::scaffold("held");
+        p.write("src/c.cppm", "export module c;\nexport inline int c_inl() { return 10; }\n");
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_inl() + 1; }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the first build failed: " << s::text(r);
+        expect(s::lacks(graph_text(p), ".bak")) << "the generated command still keeps the BMI itself";
+        touch(p.at("src/c.cppm"));
+        r = p.mcpp({"build", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.cppm"))) << "the touched interface was not compiled: " << s::text(r);
+        expect(s::lacks(s::text(r), "b.cppm")) << "a touched interface compiled its importer: " << s::text(r);
+        p.write("src/c.cppm", "export module c;\nexport inline int c_inl() { return 20; }\n");
+        r = p.mcpp({"run", "--verbose"});
+        expect(fatal(e2e::contains(s::text(r), "value 21"))) << "a changed interface did not reach the importer: " << s::text(r);
+    };
+
+    "1112 a private module fragment is a unit of its own"_test = [] {
+        // SPEC-019 §5. The fragment of a one-file module is built as an implementation unit:
+        // an edit of it compiles that unit and no importer, on a compiler that builds a
+        // fragment as written (and replaces the BMI with any byte of it) and on one that does
+        // not build one at all. A diagnostic names the source as written; the interface part
+        // still reaches the importers; `as-written` hands the source to the compiler.
+        auto p = s::project::scaffold("frag");
+        const auto unit = [](std::string_view inlined, std::string_view fragment) {
+            return std::format("module;\n#include \"local.h\"\nexport module c;\nexport int c_val();\n"
+                               "export inline int c_inl() {{ return {}; }}\nmodule :private;\n{}\n", inlined, fragment);
+        };
+        p.write("src/local.h", "#pragma once\ninline int from_header() { return 100; }\n");
+        p.write("src/c.cppm", unit("10", "int c_val() { return 1 + from_header() - 100; }"));
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_inl() + c_val(); }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        auto r = p.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 11"))) << "A: a module with a private fragment did not build and run: " << s::text(r);
+        // The compile database answers for the file a person opens, not only for the units
+        // built for it.
+        {
+            std::string db;
+            for (const auto& f : s::glob(p.at("target"), "*/*/compile_commands.json")) db = s::read_file(f);
+            expect(fatal(e2e::contains(db, "c.private.cpp"))) << "A: the fragment's unit is not in the compile database";
+            // JSON writes a Windows separator as two backslashes.
+            std::string generic;
+            for (std::size_t i = 0; i < db.size(); ++i) {
+                if (db[i] == '\\') { generic += '/'; if (i + 1 < db.size() && db[i + 1] == '\\') ++i; }
+                else generic += db[i];
+            }
+            expect(std::regex_search(generic, std::regex(R"re("file":\s*"[^"]*/src/c\.cppm")re")))
+                << "A: the source as written has no entry in the compile database: " << db;
+        }
+
+        p.write("src/c.cppm", unit("10", "// a line\nint c_val() { return 2 + from_header() - 100; }"));
+        r = p.mcpp({"build", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.private"))) << "B: the fragment's unit was not compiled: " << s::text(r);
+        expect(s::lacks(s::text(r), "--output obj/b.m.o") && s::lacks(s::text(r), "--output obj/main.o")) << "B: an edit of the fragment compiled an importer: " << s::text(r);
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 12"))) << "B: the edit is not in the program: " << s::text(r);
+
+        p.write("src/c.cppm", unit("10", "int c_val() { return undeclared_name; }"));
+        r = p.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "C: a fragment that does not compile built";
+        expect(e2e::contains(s::text(r), "c.cppm") && s::lacks(s::text(r), "c.private.cpp:")) << "C: the diagnostic does not name the source as written: " << s::text(r);
+
+        p.write("src/c.cppm", unit("20", "int c_val() { return 2 + from_header() - 100; }"));
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 22"))) << "D: an edit of the interface did not reach the importer: " << s::text(r);
+    };
+
+    "1117 a library whose root has a private fragment is its source as written"_test = [] {
+        // The lib root a manifest names is a file a person wrote; the units built for it are
+        // not. Validation finds the root, the interface is the root's module, and the package
+        // publishes the file as written.
+        auto p = s::project::scaffold("fraglib");
+        p.remove("src/main.cpp");
+        p.remove("tests/test_smoke.cpp");
+        p.write("mcpp.toml", "[package]\nname = \"fraglib\"\nversion = \"0.1.0\"\n[lib]\npath = \"src/fraglib.cppm\"\n[targets.fraglib]\nkind = \"lib\"\n");
+        p.write("src/fraglib.cppm", "export module fraglib;\nexport int answer();\nmodule :private;\nint answer() { return 42; }\n");
+        p.write("tests/answer.cpp", "import fraglib;\nint main() { return answer() == 42 ? 0 : 1; }\n");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "a library whose root has a private fragment did not build: " << s::text(r);
+        expect(s::lacks(s::text(r), "[lib].path") && s::lacks(s::text(r), "lib root")) << "the root as written was not found: " << s::text(r);
+        r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << "its test did not link the fragment's unit: " << s::text(r);
+    };
+
+    "1113 a fragment is handed to the compiler as written on request"_test[s::llvm] = [] {
+        // `private_fragment = "as-written"` (and MCPP_BUILDOPT=off): the source is the unit,
+        // and an edit of its fragment compiles the importers, as the compiler has it. A fragment
+        // that reads what is local to the interface is left as written and builds.
+        auto p = s::project::scaffold("frag");
+        const std::string tc = "llvm@" + s::llvm_version();
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nmodule :private;\nint c_val() { return 1; }\n");
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_val(); }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        const s::options written{.env = {{"MCPP_PRIVATE_FRAGMENT", "as-written"}}};
+        auto r = p.mcpp({"run", "--toolchain", tc}, written);
+        expect(fatal(e2e::contains(s::text(r), "value 1"))) << s::text(r);
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nmodule :private;\nint c_val() { return 2; }\n");
+        r = p.mcpp({"build", "--verbose", "--toolchain", tc}, written);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "--output obj/b.m.o")) << "A: as written, clang compiles the importer of an edited fragment: " << s::text(r);
+        expect(s::lacks(s::text(r), "c.private")) << "A: the fragment was built as a unit under as-written";
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n// again\n");
+        r = p.mcpp({"build", "--toolchain", tc}, s::options{.env = {{"MCPP_PRIVATE_FRAGMENT", "sometimes"}}});
+        expect(e2e::contains(s::text(r), "invalid private_fragment 'sometimes'")) << "B: an unknown value is not said: " << s::text(r);
+        p.write("src/c.cppm", "export module c;\nnamespace { int hidden = 5; }\nexport int c_val();\nmodule :private;\nint c_val() { return hidden; }\n");
+        r = p.mcpp({"run", "--verbose", "--toolchain", tc});
+        expect(fatal(e2e::contains(s::text(r), "value 5"))) << "C: a fragment that reads an unnamed namespace did not build as written: " << s::text(r);
+        expect(e2e::contains(s::text(r), "built as written (line 2: an unnamed namespace")) << "C: why it is left as written is not said: " << s::text(r);
+    };
+
+    "1114 a build says once that a module of one file compiled its importers"_test = [] {
+        // SPEC-019 §6. `hub` is one file imported by five modules and, through them, by main:
+        // an edit that replaces its BMI is followed by one note naming the module, the units
+        // and the fragment that ends it. A second such edit says nothing; a module whose
+        // bodies are after `module :private;` is never named.
+        auto p = s::project::scaffold("wide");
+        const auto hub = [](int v, std::string_view tail) {
+            return std::format("export module hub;\nexport inline int hub_value() {{ return {}; }}\n{}", v, tail);
+        };
+        p.write("src/hub.cppm", hub(1, ""));
+        std::string imports, sum = "0";
+        for (int i = 0; i < 5; ++i) {
+            p.write(std::format("src/m{}.cppm", i), std::format("export module m{0};\nimport hub;\nexport inline int v{0}() {{ return hub_value(); }}\n", i));
+            imports += std::format("import m{};\n", i);
+            sum += std::format(" + v{}()", i);
+        }
+        p.write("src/main.cpp", std::format("import std;\n{}int main() {{ std::println(\"value {{}}\", {}); }}\n", imports, sum));
+        auto r = p.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 5"))) << s::text(r);
+        expect(s::lacks(s::text(r), "is the whole of module")) << "A: a first build gave the advice: " << s::text(r);
+        p.write("src/hub.cppm", hub(2, ""));
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 10"))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "hub.cppm is the whole of module hub, which 6 units import"))) << "B: the advice is not given: " << s::text(r);
+        p.write("src/hub.cppm", hub(3, ""));
+        r = p.mcpp({"run"});
+        expect(s::lacks(s::text(r), "is the whole of module")) << "C: the advice is given again: " << s::text(r);
+        auto q = s::project::scaffold("wide2");
+        q.write("src/hub.cppm", hub(1, "export int deep();\nmodule :private;\nint deep() { return 1; }\n"));
+        q.write("src/main.cpp", "import std;\nimport hub;\nint main() { std::println(\"value {}\", hub_value() + deep()); }\n");
+        r = q.mcpp({"run"});
+        expect(fatal(e2e::contains(s::text(r), "value 2"))) << s::text(r);
+    };
+
     "07 static library"_test[s::elf] = [] {
         // A `kind = "lib"` target is archived (cxx_archive) into a non-empty libmathlib.a of objects.
         auto p = s::project::scaffold("mathlib");

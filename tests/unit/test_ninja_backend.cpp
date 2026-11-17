@@ -11,6 +11,7 @@ import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
+import mcpp.provider.select;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
 import mcpplibs.os.platform;
@@ -157,8 +158,17 @@ UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/Ordinar
         expect(ne(start, std::string::npos)) << name;
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
-    for (const auto name : {"cxx_module", "cxx_object", "c_object", "asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        expect(ne(rule(name).find("__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- "), std::string::npos)) << name;
+    const std::string executor = "__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d";
+    for (const auto name : {"asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
+        expect(ne(rule(name).find(executor + " -- "), std::string::npos)) << name;
+    // A C or C++ compile names its output as an object the executor keeps when
+    // the bytes are the ones it had; the module rule names its BMI as well
+    // (SPEC-018 §1). No rule keeps a file by a shell fragment of its command.
+    for (const auto name : {"cxx_object", "c_object"})
+        expect(ne(rule(name).find(executor + " --object -- "), std::string::npos)) << name;
+    expect(ne(rule("cxx_module").find(executor + " --object --bmi \"$bmi_out\" -- "), std::string::npos));
+    expect(eq(text.find(".bak"), std::string::npos));
+    expect(eq(text.find("bmi-equal"), std::string::npos));
     // The generation carries the cap: the graph names no number of compilers,
     // so it is the same whatever the job count (e2e 861).
     expect(eq(text.find("--cap"), std::string::npos));
@@ -1343,6 +1353,27 @@ UTest failure_diagnostics_never_empty{"NinjaBackend/AFailureThatNamesNoStepShows
     expect(ne(shown.find("interrupted by user"), std::string::npos)) << shown;
     // C: no output at all is said so.
     expect(ne(failure_diagnostics("", prefixes).find("printed nothing"), std::string::npos));
+}};
+
+// A ninja that names no step says how it ended: its status or the signal, and
+// whether it is the ninja mcpp pins (ninja-build/ninja#2662).
+UTest failure_diagnostics_state_how_ninja_ended{"NinjaBackend/AFailureThatNamesNoStepStatesHowNinjaEnded", [] {
+    std::vector<std::string> prefixes = {"/usr/bin/clang++"};
+    expect(eq(ninja_exit_note(0, ""), std::string{}));
+    const auto plain = ninja_exit_note(1, "");
+    expect(ne(plain.find("exited with status 1"), std::string::npos)) << plain;
+    const auto sig = failure_diagnostics("", prefixes, 128 + 11, "");
+    expect(ne(sig.find("ended by signal 11 (SIGSEGV)"), std::string::npos)) << sig;
+    expect(ne(sig.find("printed nothing"), std::string::npos)) << sig;
+    const auto nt = ninja_exit_note(static_cast<int>(0xC0000005u), "");
+    expect(ne(nt.find("0xC0000005 (access violation)"), std::string::npos)) << nt;
+    const auto pin = std::format("/store/xim-x-ninja/{}/ninja", mcpp::provider::kNinjaVersion);
+    expect(eq(ninja_exit_note(1, pin).find("ninja-build/ninja#2662"), std::string::npos));
+    const auto other = ninja_exit_note(1, "/usr/bin/ninja");
+    expect(ne(other.find("not the ninja mcpp pins"), std::string::npos)) << other;
+    // A named step keeps the filter's answer, whatever the status.
+    const std::string named = "FAILED: obj/a.o \n/usr/bin/clang++ -c a.cpp -o obj/a.o\na.cpp:1:1: error: x\n";
+    expect(eq(failure_diagnostics(named, prefixes, 1, "/usr/bin/ninja"), filter_ninja_output(named, prefixes)));
 }};
 
 // ── Cache-served units: stage edges, not compile edges ──────────────────────

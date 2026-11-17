@@ -145,7 +145,7 @@ interface_closure(const mcpp::modgraph::Graph& graph,
         stack.erase(stack.begin());          // breadth-first: root first, then its imports
         if (!seen.insert(idx).second) continue;
         auto const& u = graph.units[idx];
-        out.published.push_back(u.path);
+        out.published.push_back(u.written());
         // Interface-ness is only ever in question for a PARTITION. `module M;`
         // provides nothing, so the only declaration that can provide a bare
         // `M` is `export module M;` — asking about it there would flag every
@@ -153,9 +153,9 @@ interface_closure(const mcpp::modgraph::Graph& graph,
         // is how a real warning gets ignored.
         if (u.provides && u.provides->logicalName.find(':') != std::string::npos) {
             if (u.providesInterface == false)
-                out.publishedImplementationPartitions.push_back(u.path);
+                out.publishedImplementationPartitions.push_back(u.written());
             else if (!u.providesInterface.has_value())
-                out.publishedUndeterminedPartitions.push_back(u.path);
+                out.publishedUndeterminedPartitions.push_back(u.written());
         }
 
         for (auto const& req : u.requires_) {

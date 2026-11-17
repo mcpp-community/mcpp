@@ -9,6 +9,7 @@ import mcpplibs.os.ipc;
 import mcpplibs.os.dirs;
 import mcpp.home;
 import mcpp.build.stage;
+import mcpp.buildopt.keep;
 import mcpp.toolchain.fingerprint;
 
 export namespace mcpp::build::schedule::transaction {
@@ -234,7 +235,7 @@ struct Attempt {
         if(!certificate)return std::unexpected(certificate.error());
         if(!*certificate)return {};
         if(auto certified=baseline();!certified)return std::unexpected(certified.error());
-        if(mcpp::build::stage::bmi_equivalent(bmi,backup())&&!copy_atomic(backup(),bmi))
+        if(mcpp::buildopt::keep::keeps_previous(bmi,backup())&&!copy_atomic(backup(),bmi))
             return std::unexpected("cannot settle an equivalent BMI");
         return {};
     }

@@ -45,6 +45,9 @@ import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.buildopt.keep;
+import mcpp.buildopt.advice;
+import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
@@ -115,8 +118,14 @@ std::string filter_ninja_output(std::string_view output,
 // What a failed build that named no failed step says (mcpp#945): the filtered
 // output, or, when the filter leaves nothing, the last lines ninja printed as
 // they are -- never a bare "build failed".
+// `exitCode` and `ninjaProgram` state how ninja itself ended, where no step
+// is named: its status or the signal that ended it, and whether the program
+// is the pinned ninja (the one with the correction of ninja-build/ninja#2662).
 std::string failure_diagnostics(std::string_view output,
-                                std::span<const std::string> commandPrefixes);
+                                std::span<const std::string> commandPrefixes,
+                                int exitCode = 0, std::string_view ninjaProgram = {});
+// How a ninja that named no failed step ended, one line; empty for status 0.
+std::string ninja_exit_note(int exitCode, std::string_view ninjaProgram);
 
 // One ninja run read line by line into its build's report (build progress
 // design 2026-09-29, §6.1). `argv` must not carry `--quiet`: the status lines
@@ -1373,8 +1382,43 @@ std::string graph_link_library_advice(std::string_view output,
     return out;
 }
 
+std::string ninja_exit_note(int exitCode, std::string_view ninjaProgram) {
+    if (exitCode == 0) return {};
+    std::string how;
+    const auto status = static_cast<unsigned>(exitCode);
+    // The status says which by its value: a process ended by an exception
+    // exits with an NTSTATUS (0xC0000000 and above), and one ended by a signal
+    // is reported as 128 plus the signal, as a shell reports it (mcpp.run).
+    if (status >= 0xC0000000u) {
+        const char* name = status == 0xC0000005u ? "access violation"
+                         : status == 0xC0000374u ? "heap corruption"
+                         : status == 0xC0000409u ? "stack buffer overrun"
+                         : status == 0xC00000FDu ? "stack overflow" : "an exception";
+        how = std::format("ninja ended with status 0x{:08X} ({})", status, name);
+    } else if (exitCode > 128 && exitCode <= 128 + 64) {
+        const int sig = exitCode - 128;
+        const char* name = sig == 11 ? "SIGSEGV" : sig == 6 ? "SIGABRT" : sig == 7 ? "SIGBUS"
+                         : sig == 9 ? "SIGKILL" : sig == 15 ? "SIGTERM" : sig == 4 ? "SIGILL"
+                         : sig == 8 ? "SIGFPE" : "";
+        how = std::format("ninja was ended by signal {}{}", sig,
+                          *name ? std::format(" ({})", name) : std::string{});
+    } else {
+        how = std::format("ninja exited with status {}", exitCode);
+    }
+    // A ninja that is not the pinned one lacks the correction of
+    // ninja-build/ninja#2662, whose symptom is this failure (mcpp#945).
+    const auto pin = std::format("/{}/", mcpp::provider::kNinjaVersion);
+    if (!ninjaProgram.empty()
+        && std::filesystem::path(ninjaProgram).generic_string().find(pin) == std::string::npos)
+        how += std::format("; it is `{}`, not the ninja mcpp pins ({}), which carries the "
+                           "correction of ninja-build/ninja#2662",
+                           ninjaProgram, mcpp::provider::kNinjaVersion);
+    return how + "\n";
+}
+
 std::string failure_diagnostics(std::string_view output,
-                                std::span<const std::string> commandPrefixes) {
+                                std::span<const std::string> commandPrefixes,
+                                int exitCode, std::string_view ninjaProgram) {
     auto filtered = filter_ninja_output(output, commandPrefixes);
     if (filtered.find_first_not_of(" \t\r\n") != std::string::npos) return filtered;
     std::vector<std::string> lines;
@@ -1386,9 +1430,11 @@ std::string failure_diagnostics(std::string_view output,
         lines.push_back(std::move(line));
     }
     if (lines.empty())
-        return "the build stopped with no output: ninja named no failed step and printed nothing\n";
+        return "the build stopped with no output: ninja named no failed step and printed nothing\n"
+               + ninja_exit_note(exitCode, ninjaProgram);
     constexpr std::size_t kTail = 40;
-    std::string out = "ninja named no failed step; its last lines:\n";
+    std::string out = ninja_exit_note(exitCode, ninjaProgram)
+                    + "ninja named no failed step; its last lines:\n";
     for (std::size_t i = lines.size() > kTail ? lines.size() - kTail : 0; i < lines.size(); ++i)
         out += "  " + lines[i] + "\n";
     return out;
@@ -1565,6 +1611,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // graph is the same whatever the job count (e2e 861).
     const std::string compilerPrefix = plan.scheduleCompilerCap > 0
         ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
+        : std::string{};
+    // The same executor for an edge that writes a BMI: it holds the previous
+    // BMI while the compiler runs and puts it back when the new one is
+    // equivalent (`mcpp.buildopt.keep`), which is what lets `restat` end the rebuild at
+    // this edge. The executor does it, not a shell fragment of the command, so
+    // every host has it (SPEC-018 §3); `$bmi_out` is empty on an edge of this
+    // rule that provides no module, and the executor then keeps nothing.
+    //
+    // `--object`: `$out` is an object, kept when the compiler writes the bytes
+    // it had, so that what archives or links it is not run (mcpp#946 O5). A
+    // BMI edge of the two-phase schedule writes no object and names its BMI
+    // as `$out`.
+    auto bmi_keeping_prefix = [&](std::string_view bmi) {
+        return plan.scheduleCompilerCap > 0
+            ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}"
+                          " --bmi \"{}\" -- ", bmi == "$out" ? "" : " --object", bmi)
+            : std::string{};
+    };
+    const std::string objectPrefix = plan.scheduleCompilerCap > 0
+        ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object -- ")
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -2164,35 +2230,29 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
     append("rule cxx_module\n");
     if constexpr (mcpplibs::os::is_windows) {
-        // Windows: skip BMI restat optimization (requires POSIX shell).
         const std::string payload = " $local_includes";
         append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags"
                            " $module_output $module_lang {}{}\n",
-                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
+                           win_depfile_filter, bmi_keeping_prefix("$bmi_out"), rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
         append_cxx_deps();
     } else {
+        // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it must
+        // precede `-c $in` (which compile_tail carries) or it applies to
+        // nothing.
+        //
+        // The previous BMI used to be kept by this command itself -- `cp -p`
+        // before the compiler, `$mcpp bmi-equal` and `mv` after it -- which a
+        // host without a POSIX shell could not run, so the Windows rule above
+        // had no cutoff at all. The comparison was never `cmp -s`: GCC stamps a
+        // wall clock into the BMI, so a byte compare never reports "unchanged"
+        // (measured: touching a module with 46 importers and no content change
+        // cost 73.0 s before the comparison read the BMI, 0.22 s after).
         append(std::format("  command = "
-               "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
-                 "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
-               "fi && "
-               // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it
-               // must precede `-c $in` (which compile_tail carries) or it
-               // applies to nothing.
                "{}$cxx $local_includes $cxxflags $unit_cxxflags"
-               " $module_output $module_lang {}{}{} && "
-               // `$mcpp bmi-equal`, not `cmp -s`: GCC stamps a wall clock into
-               // the BMI content, so a byte compare NEVER reports "unchanged"
-               // and this whole fast path was dead. Measured: touching a module
-               // with 46 importers and no content change cost 73.0 s before,
-               // 0.22 s after.
-               "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
-                  "$mcpp bmi-equal \"$bmi_out\" \"$bmi_out.bak\"; then "
-                 "mv \"$bmi_out.bak\" \"$bmi_out\"; "
-               "else "
-                 "rm -f \"$bmi_out.bak\"; "
-               "fi\n", compilerPrefix, mmd_flag, compile_tail, mmd_filter));
+               " $module_output $module_lang {}{}{}\n",
+               bmi_keeping_prefix("$bmi_out"), mmd_flag, compile_tail, mmd_filter));
         append_cxx_deps();
     }
     append("  description = MOD $out\n");
@@ -2259,27 +2319,23 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (twoPhase) {
         // Edge A — the BMI, and nothing else. `$out` is the BMI here.
         append("rule cxx_precompile\n");
+        // The executor keeps the previous BMI as it does for `cxx_module`:
+        // ninja's `restat` compares the output's MTIME, and a compiler that
+        // rewrites an equivalent BMI still moves it. What ends the rebuild
+        // here is putting the old file back.
         if constexpr (mcpplibs::os::is_windows) {
             const std::string payload = " $local_includes";
             append(std::format(
-                "  command = {}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
-                win_depfile_filter, rsp_ref(payload), traits.bmiOnlyFlags,
+                "  command = {}{}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                win_depfile_filter, bmi_keeping_prefix("$out"), rsp_ref(payload), traits.bmiOnlyFlags,
                 module_src_flags, mmd_flag, dial.outputObjPrefix));
             append_rspfile(payload);
             append_cxx_deps();
         } else {
-            // Same bak / bmi-equal / restore dance as cxx_module, and for the
-            // same reason: ninja's `restat` compares the output's MTIME, and a
-            // compiler that rewrites a byte-identical BMI still moves it. What
-            // suppresses the cascade is putting the old file back.
             append(std::format(
                 "  command = "
-                "if [ -f \"$out\" ]; then cp -p \"$out\" \"$out.bak\"; fi && "
-                "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out && "
-                "if [ -f \"$out.bak\" ] && $mcpp bmi-equal \"$out\" \"$out.bak\"; then "
-                  "mv \"$out.bak\" \"$out\"; "
-                "else rm -f \"$out.bak\"; fi\n",
-                traits.bmiOnlyFlags, module_src_flags, mmd_flag,
+                "{}$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                bmi_keeping_prefix("$out"), traits.bmiOnlyFlags, module_src_flags, mmd_flag,
                 dial.outputObjPrefix));
             append_cxx_deps();
         }
@@ -2293,15 +2349,15 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule cxx_module_object\n");
         if constexpr (mcpplibs::os::is_windows) {
             const std::string payload = " $local_includes";
-            append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
-                               win_depfile_filter, rsp_ref(payload), module_src_flags,
+            append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
+                               win_depfile_filter, objectPrefix, rsp_ref(payload), module_src_flags,
                                mmd_flag, compile_tail));
             append_rspfile(payload);
             append_cxx_deps();
         } else {
             append(std::format(
-                "  command = $cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
-                module_src_flags, mmd_flag, compile_tail, mmd_filter));
+                "  command = {}$cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
+                objectPrefix, module_src_flags, mmd_flag, compile_tail, mmd_filter));
             append_cxx_deps();
         }
         append("  description = OBJ $out\n");
@@ -2312,13 +2368,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if constexpr (mcpplibs::os::is_windows) {
         const std::string payload = " $local_includes";
         append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
-                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
+                           win_depfile_filter, objectPrefix, rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
     } else {
         append(std::format(
             "  command = {}$cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
-            compilerPrefix, mmd_flag, compile_tail, mmd_filter));
+            objectPrefix, mmd_flag, compile_tail, mmd_filter));
     }
     append("  description = OBJ $out\n");
     append_cxx_deps();
@@ -2330,7 +2386,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule c_object\n");
         const std::string payload = " $local_includes";
         append(std::format("  command = {}$cc{} $cflags $unit_cflags {}{}\n",
-                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
+                           objectPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
         append_cxx_deps();
@@ -2705,10 +2761,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // the scan does not do.
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
+            //
+            // `-o` IS A FILE OF THE SCAN'S OWN. The driver creates it, empty,
+            // whatever `-M` leaves it to write, and it used to be the unit's
+            // object: every scan of a unit emptied the object the unit had.
+            // Nothing read that object before its compile ran again, so
+            // nothing failed -- and the compile then had no previous object
+            // to find its output equal to (mcpp#946 O5). What the dyndep file
+            // names is `-fdeps-target`.
             append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$deps_target "
-                   "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
+                   "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan\n",
                    compilerPrefix, rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
@@ -5023,6 +5087,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
+    // The directory's BMI cutoff for this run (mcpp.buildopt.keep). A graph
+    // compiled with contracts is compared exactly: a contract's violation
+    // names the line of its assertion, read from the line maps.
+    mcpp::buildopt::keep::run_begin(plan.outputDir,
+        plan.manifest.buildConfig.bmiIgnoreLocations && manifest.find("-fcontracts") == std::string::npos);
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
     // reads it. ninja 1.12.1 loads a dyndep file whose producer is up to date
@@ -5156,6 +5225,23 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             return std::unexpected(BuildError{settled.error(), plan.outputDir});
     }
     bool ok = (ninjaExit == 0) && !buildTimedOut;
+    const auto bmiRun = mcpp::buildopt::keep::run_end(plan.outputDir);
+    for (auto const& line : mcpp::buildopt::keep::summary(bmiRun))
+        mcpp::ui::info("note", line);
+    if (bmiRun.objectsSame)
+        mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",
+                                                bmiRun.objectsSame));
+    // What the rebuild says of a module that is one file (SPEC-019 §6).
+    if (ok && !bmiRun.changed.empty()) {
+        namespace advice = mcpp::buildopt::advice;
+        std::vector<advice::Unit> units;
+        units.reserve(plan.compileUnits.size());
+        for (auto const& cu : plan.compileUnits)
+            units.push_back({cu.source.filename().string(), cu.providesModule, cu.imports,
+                             cu.declaration == mcpp::modgraph::ModuleDeclaration::Implementation});
+        for (auto const& c : advice::single_file_cascades(units, bmiRun.changed))
+            if (advice::first_time(plan.outputDir, c.module)) mcpp::ui::info("note", advice::line(c));
+    }
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
     if (report) {
@@ -5315,7 +5401,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // What was reported as it happened is not repeated: a failed step's
         // diagnostics (default output), or every line (--verbose).
         auto diagnostics = reported || (report && opts.verbose) ? std::string{}
-                         : opts.verbose ? out : failure_diagnostics(out, prefixes);
+                         : opts.verbose ? out : failure_diagnostics(out, prefixes, ninjaExit, ninjaProgram);
         // Appended here as well as on the fast path (execute.cppm): the two
         // paths report failure through different channels, and advice attached
         // to only one of them would appear or not depending on whether
@@ -5368,11 +5454,19 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 // program sees, is this function's answer too.
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
+    // A store that holds several versions answers with the pinned one
+    // (mcpp#945): a scan of the versions answers in directory order, and the
+    // pin is the version that carries the correction of ninja-build/ninja#2662.
+    auto pinned = [&](const std::filesystem::path& versionDir) {
+        std::error_code ec;
+        auto p = versionDir.parent_path() / std::string(mcpp::provider::kNinjaVersion) / ninja_name;
+        return std::filesystem::is_regular_file(p, ec) ? p : versionDir / ninja_name;
+    };
     if (auto nb = mcpp::provider::beside_binary(tc.binaryPath, "ninja", ninja_name))
-        return nb->string();
+        return pinned(nb->parent_path()).string();
     if (auto home = mcpp::provider::in_home_store("ninja", ninja_name)) {
         std::error_code ec;
-        if (std::filesystem::is_regular_file(*home / ninja_name, ec)) return (*home / ninja_name).string();
+        if (auto p = pinned(*home); std::filesystem::is_regular_file(p, ec)) return p.string();
     }
     return "ninja";
 }

@@ -86,6 +86,8 @@ std::set<std::filesystem::path> closure_of(const BuildPlan& plan, const LinkUnit
     std::set<std::string> modules;
     auto visit = [&](const CompileUnit* cu) {
         if (files.insert(cu->source.lexically_normal()).second) work.push_back(cu);
+        // A unit built for a source file is built from that file.
+        if (!cu->writtenAs.empty()) files.insert(cu->writtenAs.lexically_normal());
     };
     for (auto const& object : lu.objects) {
         auto it = byObject.find(object);
@@ -127,6 +129,7 @@ Affected affected_tests(const BuildPlan& plan, const std::vector<std::string>& c
         if (auto m = module_of(cu); !m.empty()) units[m].push_back(&cu);
         byObject.emplace(cu.object, &cu);
         bySource.emplace(cu.source.lexically_normal(), &cu);
+        if (!cu.writtenAs.empty()) bySource.emplace(cu.writtenAs.lexically_normal(), &cu);
     }
     std::vector<std::pair<const LinkUnit*, std::set<std::filesystem::path>>> tests;
     for (auto const& lu : plan.linkUnits)

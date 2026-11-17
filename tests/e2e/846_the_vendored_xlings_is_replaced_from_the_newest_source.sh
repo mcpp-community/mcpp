@@ -48,7 +48,10 @@ for cand in "$MCPP_HOME"/registry/data/xpkgs/xim-x-ninja/*/ninja$EXE \
     if [ -f "$cand" ]; then NINJA="$cand"; break; fi
 done
 [ -n "$NINJA" ] || fail "setup: no ninja binary to stand in for an older xlings"
+# mcpp reads the dotted number of what the binary answers, so a ninja that
+# answers `1.12.1-mcpp.1` is named `1.12.1`.
 older=$("$NINJA" --version 2>/dev/null | head -1)
+older=${older%%-*}
 case "$older" in
     [0-9]*.*) ;;
     *) fail "setup: the stand-in '$NINJA' answered '$older', not a dotted version" ;;

@@ -999,6 +999,11 @@ struct BuildConfig : BuildInputs {
     // compiler doing the build, and resolving it at parse time would freeze one
     // machine's answer into a manifest that travels.
     std::string bmiSchedule;
+    // `[build] private_fragment` -- how a private module fragment is built
+    // (SPEC-019): "unit" (the default: the fragment is a unit of its own, so an
+    // edit of it reaches no importer) or "as-written". Text, validated where it
+    // is read with `MCPP_PRIVATE_FRAGMENT` (mcpp.buildopt.source).
+    std::string privateFragment;
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a
@@ -1257,6 +1262,9 @@ struct BuildConfig : BuildInputs {
     // `-ffile-prefix-map` for every unit (the profile's `trim_paths`): the
     // paths an artifact carries name packages and roles, not this machine.
     bool                                trimPaths = false;
+    // A GCC BMI whose line maps alone moved is kept (the profile's
+    // `bmi_cutoff = "ignore-locations"`, resolved; SPEC-018).
+    bool                                bmiIgnoreLocations = false;
     // The units compiled in the build directory keep their debug information
     // beside their objects (`split_debuginfo = "unpacked"`, resolved).
     bool                                splitDebuginfo = false;
@@ -2232,6 +2240,9 @@ struct Profile {
     bool        ndebugDeclared   = false;
     bool        trimPaths        = false;
     bool        trimPathsDeclared = false;
+    // `bmi_cutoff` (mcpp#946): "ignore-locations" or "exact", as written.
+    std::string bmiCutoff;
+    bool        bmiCutoffDeclared = false;
     // `split_debuginfo` (design 2026-10-31 §4.1): "unpacked" leaves the
     // debug information of the units compiled in the build directory beside
     // their objects, "off" puts it in the artifact. Default by the profile's

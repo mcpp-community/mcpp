@@ -70,6 +70,7 @@
 - [10 —— 发布打包](10-pack-and-release.md)
 - [11 —— 发布一个库到 mcpp-index](11-publishing-a-library.md)
 - [12 —— 分发预编译库](12-binary-distribution.md)
+- [13 —— 代码与工程风格](13-code-and-project-style.md)——模块的形态、头文件、宏,以及 mcpp 的构建所增加的
 
 ### 2x —— 工具链与目标
 
@@ -79,6 +80,7 @@
 - [23 —— 项目环境](23-the-project-environment.md)
 - [24 —— 基于 openkal 的交叉构建](24-openkal-cross.md)
 - [25 —— home、索引与 store](25-home-indices-and-store.md)
+- [26 —— 构建优化](26-build-optimizations.md)——mcpp 在标准构建之外做的事、默认开启的条目与参数
 
 ### 3x —— 扩展 mcpp 与它的生态
 
@@ -175,3 +177,5 @@
   - [SPEC-015 —— 目标集合与腿：写法与展开，命令对多条腿的语义，测试归档](../specs/target-sets.md)
   - [SPEC-016 —— 目标与提供者：行、提供者、选择规则、平台定义的行、报告与锁](../specs/targets-and-providers.md)
   - [SPEC-017 —— mcpp 测试规范：测试程序、测试协议、记录、存储、启动描述与框架声明；基础能力与可选能力](../specs/test.md)
+  - [SPEC-018 —— 模块的重编译：按 BMI 内容截断、GCC 的时间戳与行映射、`bmi_cutoff`、构建目录的记录](../specs/module-rebuilds.md)
+  - [SPEC-019 —— 构建优化：登记表、级别、接缝、总开关，私有模块片段作为独立单元，构建后的建议](../specs/build-optimizations.md)

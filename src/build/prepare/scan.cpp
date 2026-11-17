@@ -41,6 +41,7 @@ import mcpp.toolchain.provider;   // capabilities_for: whether C++ units can be 
 import mcpp.toolchain.triple;
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
+import mcpp.buildopt.source;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
 import mcpp.build.graph_shape;  // #407: the graph says which mode wrote it
 import mcpp.build.build_program;
@@ -58,6 +59,106 @@ namespace mcpp::build {
 // graph (or one of its extra targets) imports `std` -- the single value
 // several of the steps below need, computed here because it depends on the
 // scan this step performs.
+// THE SOURCE SEAM (SPEC-019 §5): a unit an entry of mcpp.buildopt.source gives
+// other units for is replaced by them. The units are files under the work
+// root, written when their text differs, and scanned as any source is; they
+// keep the unit's package, flags and include directories, and the directory
+// of the source as written stays searched for what it includes.
+//
+// One entry today: a private module fragment as a unit of its own. A fragment
+// the entry leaves as written is said once where the compiler does not build
+// one at all, since the error that follows is the compiler's.
+static void build_private_fragments_as_units(PrepareState& state,
+                                             const std::vector<mcpp::modgraph::PackageRoot>& packages) {
+    namespace fs = std::filesystem;
+    namespace source = mcpp::buildopt::source;
+    const bool asUnit = source::private_fragment_as_unit(*state.m, [](std::string_view bad) {
+        mcpp::diag::warning("build", std::format(
+            "ignoring invalid private_fragment '{}' (expected \"unit\" or \"as-written\")", bad));
+    });
+    if (!asUnit) return;
+    auto& units = state.scan.graph.units;
+    const auto count = units.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!units[i].provides || units[i].scanOverridden) continue;
+        const auto written = units[i].path;
+        std::string text;
+        {
+            std::ifstream in(written, std::ios::binary);
+            text.assign(std::istreambuf_iterator<char>(in), {});
+        }
+        if (text.find("private") == std::string::npos) continue;
+        auto split = source::private_fragment(text, written.generic_string());
+        if (!split) continue;
+        if (!*split) {
+            const auto why = std::format("{}: the private module fragment is built as written ({})",
+                                         written.string(), split->error());
+            if (state.tc && state.tc->compiler == mcpp::toolchain::CompilerId::GCC)
+                mcpp::diag::warning("build", why + "; this compiler does not build one as written");
+            else
+                mcpp::log::verbose("build", why);
+            continue;
+        }
+        // The package whose root holds the source: its extension table reads
+        // the units, as it read the source.
+        const mcpp::modgraph::PackageRoot* owner = nullptr;
+        for (auto const& pkg : packages) {
+            const auto rel = written.lexically_relative(pkg.root);
+            if (rel.empty() || *rel.begin() == "..") continue;
+            if (!owner || pkg.root.native().size() > owner->root.native().size()) owner = &pkg;
+        }
+        if (!owner) continue;
+        const auto extTable = mcpp::extension_table_for(owner->manifest.buildConfig.moduleExtensions,
+                                                        owner->manifest.buildConfig.deviceExtensions);
+        std::string package = units[i].packageName;
+        for (char& c : package)
+            if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_')) c = '_';
+        const auto rel = units[i].relPath.empty() ? written.filename() : units[i].relPath;
+        const auto dir = (state.workRoot / "target" / ".buildopt" / "private-fragment" / package / rel).parent_path();
+        const auto interfaceFile = dir / written.filename();
+        const auto implementationFile = dir / (written.stem().string() + ".private.cpp");
+        auto write = [](const fs::path& file, const std::string& want) {
+            std::string have;
+            {
+                std::ifstream in(file, std::ios::binary);
+                have.assign(std::istreambuf_iterator<char>(in), {});
+            }
+            if (have == want && fs::exists(file)) return true;
+            std::error_code ec;
+            fs::create_directories(file.parent_path(), ec);
+            std::ofstream out(file, std::ios::binary | std::ios::trunc);
+            out.write(want.data(), static_cast<std::streamsize>(want.size()));
+            return bool(out);
+        };
+        if (!write(interfaceFile, (*split)->interfaceUnit) || !write(implementationFile, (*split)->implementation)) {
+            mcpp::log::verbose("build", std::format("{}: the units of the private module fragment could not be written; built as written", written.string()));
+            continue;
+        }
+        auto interfaceUnit = mcpp::modgraph::scan_file(interfaceFile, units[i].packageName, extTable);
+        auto implementation = mcpp::modgraph::scan_file(implementationFile, units[i].packageName, extTable);
+        if (!interfaceUnit || !implementation) {
+            mcpp::log::verbose("build", std::format("{}: the units of the private module fragment do not scan; built as written", written.string()));
+            continue;
+        }
+        auto carry = [&](mcpp::modgraph::SourceUnit& to, const fs::path& relPath) {
+            auto const& from = units[i];
+            to.relPath = relPath;
+            to.writtenAs = written;
+            to.localIncludeDirs = from.localIncludeDirs;
+            to.localIncludeDirs.insert(to.localIncludeDirs.begin(), written.parent_path());
+            to.localIncludeDirsAfter = from.localIncludeDirsAfter;
+            to.packageCflags = from.packageCflags;
+            to.packageCxxflags = from.packageCxxflags;
+            to.packageAsmflags = from.packageAsmflags;
+        };
+        carry(*interfaceUnit, rel);
+        carry(*implementation, rel.parent_path() / implementationFile.filename());
+        mcpp::log::verbose("build", std::format("{}: the private module fragment is a unit of its own", written.string()));
+        units[i] = std::move(*interfaceUnit);
+        units.push_back(std::move(*implementation));
+    }
+}
+
 static std::expected<bool, std::string> step11_scan_sources(PrepareState& state) {
 
     // mcpp#225 (E2): observability marker for the source-discovery phase —
@@ -264,6 +365,7 @@ static std::expected<bool, std::string> step11_scan_sources(PrepareState& state)
     for (auto& w : state.scan.warnings) {
         mcpp::diag::warning("modgraph/scan", w.format());
     }
+    build_private_fragments_as_units(state, scannedPackages);
 
     state.report = mcpp::modgraph::validate(state.scan.graph, *state.m, *state.root);
     for (auto& w : state.report.warnings) {

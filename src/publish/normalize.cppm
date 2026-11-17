@@ -241,6 +241,17 @@ struct Walk {
             if (auto sib = mcpp::project::load_effective_manifest(target);
                 sib && !sib->manifest.package.version.empty())
                 version = sib->manifest.package.version;
+            // A SIBLING IS PUBLISHED UNDER ITS OWN VERSION (mcpp#947): the
+            // member's manifest states it, and the edge takes it, as the
+            // refusal below wrote it for the author to copy. Measured on a
+            // workspace of 150 members: 311 such edges among the 67 a
+            // release publishes. A member with no version is still refused.
+            if (version != "<version>") {
+                spec["version"] = t::Value{version};
+                spec.erase(std::string("path"));
+                changed = true;
+                return false;
+            }
             return std::unexpected(std::format(
                 "{}: [{}] '{}' reaches the workspace member '{}' by path, and "
                 "the published archive contains only this package's directory. "

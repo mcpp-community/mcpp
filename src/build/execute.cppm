@@ -34,6 +34,7 @@ import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
+import mcpp.buildopt.keep;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
@@ -1447,6 +1448,23 @@ std::optional<std::filesystem::path> platform_tool(const mcpp::build::BuildConte
 // architecture, the same program, made the way another architecture's is
 // (under the checkout's target/carrier-pack/). Any other preparation that did
 // not locate the tool reports the runner not found, as before.
+// A RUNNER EXISTS ON THE HOSTS ITS DATA STATES (`runner.hosts`, SPEC-013
+// §4.5). On another host it is not this machine's way to run the artifact:
+// the row runs as a row without a runner does, directly where its system is
+// this machine's and refused for the reach elsewhere. Measured on 2026.11.17.1:
+// a Windows host was asked to enable the Wine runner of `x86_64-windows-musl`
+// (`hosts = ["linux-x86_64"]`) for an artifact it executes itself. A runner
+// this machine, the project or the environment states is stated for here.
+bool runner_exists_here(const mcpp::manifest::platform::Runner& r) {
+    using T = mcpp::manifest::platform::Tier;
+    if (!r.hostsSet || r.origin.tier == T::Manifest || r.origin.tier == T::Config
+        || r.origin.tier == T::Env)
+        return true;
+    const auto here = std::format("{}-{}", mcpp::toolchain::platform::name,
+                                                         mcpp::toolchain::platform::host_arch);
+    return std::ranges::contains(r.hosts, here) || std::ranges::contains(r.hosts, std::string("*"));
+}
+
 struct RunnerTool {
     std::filesystem::path program;
     std::string           arch;   // the architecture it is built for
@@ -1541,7 +1559,7 @@ std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext
     // (`runner = { ..., host = "same-arch" }`, SPEC-013): an ok image's loader
     // is a program of this machine, and an image of another architecture is
     // not one it can map.
-    if (auto const& r = ctx.plan.platform.fields.runner; t
+    if (auto const& r = ctx.plan.platform.fields.runner; t && runner_exists_here(r)
         && mcpp::platform::runner_reach(r, t->arch, mcpp::toolchain::platform::host_arch,
                                         !ctx.runUnder.empty(), noRunner)
                == mcpp::platform::RunnerReach::Refused)
@@ -1608,6 +1626,10 @@ struct RunnerChoice {
     bool notEnabled = false;
     std::vector<std::string> requires_;
     std::string name;                   // the named runner; empty: the default
+    // The hosts the stated runner exists for, when this machine is not one
+    // of them (`runner.hosts`): the runner is not taken, and a refusal for
+    // the reach names them.
+    std::vector<std::string> otherHosts;
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -1716,6 +1738,24 @@ std::string install_runner_packages(const RunnerChoice& c) {
     return {};
 }
 
+// The stated runner exists for other hosts (`runner.hosts`): a refusal for
+// the reach says so, since the reader finds a runner in the platform's data.
+std::string other_hosts_note(const RunnerChoice& c) {
+    if (c.otherHosts.empty()) return {};
+    std::string hosts;
+    for (auto const& h : c.otherHosts) hosts += (hosts.empty() ? "" : ", ") + h;
+    return std::format("\n       The runner stated for {} exists for {}, not for this {} host (runner.hosts).",
+                       c.tripleKey, hosts,
+                       std::format("{}-{}", mcpp::toolchain::platform::name,
+                                                          mcpp::toolchain::platform::host_arch));
+}
+std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
+                                                 const RunnerChoice& c, bool noRunner) {
+    auto why = unreachable_execution(ctx, c.tripleKey, noRunner, !c.tmpl.empty());
+    if (why) *why += other_hosts_note(c);
+    return why;
+}
+
 // ONE READER FOR FOUR SLOTS, PARAMETERISED BY THE SLOT.
 //
 // `run`, `flash`, `monitor` and `debug` resolve identically: a dependency
@@ -1767,13 +1807,18 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
         if (!c.notEnabled) settle_runner_places(ctx, c, r.requires_);
     };
     if (isDefault) {
-        if (pf.runner.set) {
+        if (pf.runner.set && !runner_exists_here(pf.runner)) {
+            c.otherHosts = pf.runner.hosts;
+        } else if (pf.runner.set) {
             c.tmpl = pf.runner.cmd;
             c.fromManifest = overrides_program(pf.runner.origin,
                                                !ctx.manifest.buildConfig.runner.empty());
             take(pf.runner);
         }
-    } else if (auto it = pf.runners.find(std::string(which)); it != pf.runners.end() && it->second.set) {
+    } else if (auto it = pf.runners.find(std::string(which));
+               it != pf.runners.end() && it->second.set && !runner_exists_here(it->second)) {
+        c.otherHosts = it->second.hosts;
+    } else if (it != pf.runners.end() && it->second.set) {
         c.tmpl = it->second.cmd;
         auto nr = ctx.manifest.buildConfig.namedRunners.find(std::string(which));
         c.fromManifest = overrides_program(it->second.origin,
@@ -1843,7 +1888,7 @@ export RunnerOnThisMachine runner_on_this_machine(const BuildContext& ctx) {
         out.refusal = not_enabled_message(choice);
         return out;
     }
-    if (auto why = unreachable_execution(ctx, choice.tripleKey, false, !choice.tmpl.empty())) out.refusal = *why;
+    if (auto why = unreachable_execution(ctx, choice, false)) out.refusal = *why;
     if (!ctx.runUnder.empty()) {
         auto host = locate_run_under(ctx, choice.tripleKey);
         if (!host.error.empty()) out.refusal = host.error;
@@ -2580,6 +2625,14 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     int status = 0;
     bool reported = false;
     const auto prefixes = read_ninja_command_prefixes(ninjaPath);
+    // The directory keeps the BMI cutoff its graph was written with; the
+    // environment states another for this run (mcpp.buildopt.keep).
+    {
+        std::optional<bool> cutoff;
+        if (auto stated = mcpp::invocation::get("MCPP_BMI_CUTOFF"))
+            cutoff = *stated == mcpp::buildopt::keep::kIgnoreLocations;
+        mcpp::buildopt::keep::run_begin(outputDir, cutoff);
+    }
     // The scan pass comes first here as on the full path (build wall-time
     // plan, W2): the same passes, so the same counts.
     std::optional<std::vector<std::string>> scanArgv;
@@ -2621,6 +2674,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         out = std::move(r.output);
         status = r.exit_code;
     }
+    const auto bmiRun = mcpp::buildopt::keep::run_end(outputDir);
+    for (auto const& line : mcpp::buildopt::keep::summary(bmiRun))
+        mcpp::ui::info("note", line);
+    if (bmiRun.objectsSame)
+        mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",
+                                                bmiRun.objectsSame));
     if (compilerRun) {
         if (auto settled = compilerRun->finish(); !settled) {
             mcpp::ui::error(settled.error());
@@ -2635,7 +2694,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         // --verbose); what remains is the advice below.
         if (!reported) mcpp::ui::error("build failed");
         if (!reported && !(reporting && verbose))
-            mcpp::ui::block(verbose ? out : mcpp::build::failure_diagnostics(out, prefixes));
+            mcpp::ui::block(verbose ? out : mcpp::build::failure_diagnostics(out, prefixes, status, ninjaProgram));
         // Read from the RAW output, not from `diagnostics`: the filter drops
         // command lines, and a future filter change must not be able to
         // silently remove the advice along with them.
@@ -3702,7 +3761,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
     }
     if (isRunSlot && choice.freestanding && choice.tmpl.empty()) {
         std::println(libc::stderr(), "error: {}",
-            mcpp::freestanding::no_runner_message(choice.tripleKey));
+            mcpp::freestanding::no_runner_message(choice.tripleKey) + other_hosts_note(choice));
         return 2;
     }
     // A DISTRIBUTABLE THAT IS A DIRECTORY, AND NOTHING TO RUN IT (#634 B3).
@@ -3728,7 +3787,7 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         return 126;
     }
     if (isRunSlot) {
-        if (auto why = unreachable_execution(ctx, choice.tripleKey, no_runner, !choice.tmpl.empty())) {
+        if (auto why = unreachable_execution(ctx, choice, no_runner)) {
             std::println(libc::stderr(), "error: {}", *why);
             return 2;
         }
@@ -3964,7 +4023,7 @@ std::optional<ChosenLeg> choose_run_leg(std::span<const mcpp::toolchain::target_
         }
         const auto chosen = choose_runner(*ctx, noRunner);
         const auto key = chosen.tripleKey;
-        if (auto why = unreachable_execution(*ctx, key, noRunner, !chosen.tmpl.empty())) {
+        if (auto why = unreachable_execution(*ctx, chosen, noRunner)) {
             passed.push_back(std::format("{}: {}", leg->triple, why->substr(0, why->find('\n'))));
             continue;
         }
@@ -5234,14 +5293,13 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
             runnerChoice.tripleKey));
     if (runnerChoice.freestanding && runnerChoice.tmpl.empty()) {
         std::println(libc::stderr(), "error: {}",
-            mcpp::freestanding::no_runner_message(runnerChoice.tripleKey));
+            mcpp::freestanding::no_runner_message(runnerChoice.tripleKey) + other_hosts_note(runnerChoice));
         tb.runnerFatal = 2;
         return;
     }
     // Not run, with the reason, as a missing runner is: the tests built. Or,
     // where the caller asks, built and not run (a platform package's targets).
-    if (auto why = unreachable_execution(*ctx, runnerChoice.tripleKey, testOpts.noRunner,
-                                         !runnerChoice.tmpl.empty())) {
+    if (auto why = unreachable_execution(*ctx, runnerChoice, testOpts.noRunner)) {
         if (testOpts.unreachableIsBuilt) {
             tb.builtNotRunHere = true;
             if (!json) mcpp::ui::info("note", std::format("built, not run on this host: {}", *why));

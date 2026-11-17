@@ -259,9 +259,9 @@ include_dirs = ["util/inc"]
         }
         auto r = repo.mcpp_in("util", {"publish", "--dry-run", "--allow-dirty"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "publish of a member with a workspace layer failed: " << s::text(r);
-        const auto archive = repo.at("util/target/dist/util-0.3.0.tar.gz");
+        const auto archive = repo.at("util/target/dist/probe.util-0.3.0.tar.gz");
         expect(fatal(fs::is_regular_file(archive))) << "no archive at " << archive;
-        s::tar_extract(archive, tmp / "out", {"util-0.3.0/mcpp.toml"});
+        s::tar_extract(archive, tmp / "out", {"probe.util-0.3.0/mcpp.toml"});
         // The reading is Python's tomllib, as the script's was: the support has no TOML reader.
         const auto python = s::on_path("python3");
         expect(fatal(python.has_value())) << "python3 is needed to read the archived manifest";
@@ -272,8 +272,8 @@ row = m["target"]['cfg(os = "linux")']["build"]
 assert row["cxxflags"] == ["-DWS_COND=1", "-DOWN_COND=1"], row
 assert row["include_dirs"] == ["inc"], row
 )"}});
-        auto c = s::run(*python, {"-I", (tmp / "check/check.py").string(), (tmp / "out/util-0.3.0/mcpp.toml").string()});
-        expect(fatal(e2e::succeeded(c))) << "the archived manifest is not what the member was built with: " << s::text(c) << "\n" << s::read_file(tmp / "out/util-0.3.0/mcpp.toml");
+        auto c = s::run(*python, {"-I", (tmp / "check/check.py").string(), (tmp / "out/probe.util-0.3.0/mcpp.toml").string()});
+        expect(fatal(e2e::succeeded(c))) << "the archived manifest is not what the member was built with: " << s::text(c) << "\n" << s::read_file(tmp / "out/probe.util-0.3.0/mcpp.toml");
         auto text = repo.read("mcpp.toml");
         text.replace(text.find(R"(include_dirs = ["util/inc"])"), std::string_view(R"(include_dirs = ["util/inc"])").size(), R"(include_dirs = ["shared/inc"])");
         repo.write("mcpp.toml", text);

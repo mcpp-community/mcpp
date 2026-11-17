@@ -153,10 +153,14 @@ struct DeprecationUse {
     std::string where;    // the manifest that wrote it
     std::string detail;   // the table, key or entry, as the warning names it
     bool        warned = false;   // false: in a manifest the user cannot edit
+    // What to write for THIS use, where the reader states it (the key itself,
+    // unquoted). Empty: the registry row's `canonical`, an example.
+    std::string instead;
 };
 
 // Recorded by every reader that applies a deprecated reading, warned or not.
-void record_use(std::string_view id, std::string where, std::string detail, bool warned);
+void record_use(std::string_view id, std::string where, std::string detail, bool warned,
+                std::string instead = {});
 // Every use recorded so far, de-duplicated, in the order first seen.
 std::vector<DeprecationUse> recorded_uses();
 
@@ -169,15 +173,17 @@ std::mutex& uses_mutex() { static std::mutex m; return m; }
 std::vector<DeprecationUse>& uses_store() { static std::vector<DeprecationUse> v; return v; }
 }  // namespace
 
-void record_use(std::string_view id, std::string where, std::string detail, bool warned) {
+void record_use(std::string_view id, std::string where, std::string detail, bool warned,
+                std::string instead) {
     std::lock_guard lock(uses_mutex());
     auto& v = uses_store();
     for (auto& u : v)
         if (u.id == id && u.where == where && u.detail == detail) {
             u.warned = u.warned || warned;
+            if (u.instead.empty()) u.instead = std::move(instead);
             return;
         }
-    v.push_back({std::string(id), std::move(where), std::move(detail), warned});
+    v.push_back({std::string(id), std::move(where), std::move(detail), warned, std::move(instead)});
 }
 
 std::vector<DeprecationUse> recorded_uses() {

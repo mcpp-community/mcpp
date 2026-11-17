@@ -58,12 +58,17 @@ E2E subos{"subos", [] {
         fs::create_directories(home / "registry/subos/default");
         if (!fs::is_directory(real / "registry/data/xpkgs")) skip(std::format("no xpkgs payloads to inherit from {}", real.string()));
         fs::create_directory_symlink(real / "registry/data/xpkgs", home / "registry/data/xpkgs");
+        // What the provider reads is linked; what it writes is this home's own. A link to the
+        // user's `.xlings.json` made it shared state: this home's index directory and store were
+        // declared in the user's file, and a case beside this one fetched a package into a store
+        // that was gone when it looked ("install path missing after fetch"). The runtime links
+        // (abi, abi.gen) and the logs are the user's home's, by its own name.
         for (const auto& d : fs::directory_iterator(real / "registry")) {
-            const auto b = d.path().filename();
-            if (b == "data" || b == "subos") continue;
+            const auto b = d.path().filename().string();
+            if (b == "data" || b == "subos" || b == "logs" || b.starts_with("abi") || b.ends_with(".lock")) continue;
             std::error_code ec;
             if (d.is_directory()) fs::create_directory_symlink(d.path(), home / "registry" / b, ec);
-            else fs::create_symlink(d.path(), home / "registry" / b, ec);
+            else fs::copy_file(d.path(), home / "registry" / b, ec);
         }
         const s::options o{.env = {{"MCPP_HOME", home.string()}}};
         const auto llvm = s::llvm_version();

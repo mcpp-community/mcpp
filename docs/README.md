@@ -74,6 +74,7 @@ Within a part the order is a reading order, not an alphabet.
 - [10 — Packaging an Application for Release](10-pack-and-release.md)
 - [11 — Publishing a Library to mcpp-index](11-publishing-a-library.md)
 - [12 — Distributing a Prebuilt Library](12-binary-distribution.md)
+- [13 — Code and Project Style](13-code-and-project-style.md) — the shape of a module, headers, macros, and what mcpp's build adds
 
 ### 2x — Toolchains and targets
 
@@ -83,6 +84,7 @@ Within a part the order is a reading order, not an alphabet.
 - [23 — The Project Environment](23-the-project-environment.md)
 - [24 — Cross-Compilation Over openkal](24-openkal-cross.md)
 - [25 — The Home, Its Indices and Its Store](25-home-indices-and-store.md)
+- [26 — Build Optimizations](26-build-optimizations.md) — what mcpp does beyond the standard build, what is on, and its parameters
 
 ### 3x — Extending mcpp and its ecosystem
 
@@ -180,3 +182,5 @@ downstream tooling.
   - [SPEC-015 — Target sets and legs: spelling and expansion, commands over several legs, test archives](specs/target-sets.md)
   - [SPEC-016 — Targets and providers: rows, providers, the selection, platform-defined rows, reports and the lock](specs/targets-and-providers.md)
   - [SPEC-017 — The mcpp test spec: test programs, the test protocol, records, the store, launch descriptions and framework declarations; base and optional capabilities](specs/test.md)
+  - [SPEC-018 — The rebuild of modules: the cutoff by BMI content, GCC's stamps and line maps, `bmi_cutoff`, the build directory's record](specs/module-rebuilds.md)
+  - [SPEC-019 — Build optimizations: the register, levels, seams, the statement that turns all of it off, the private module fragment as a unit, the advice after a build](specs/build-optimizations.md)

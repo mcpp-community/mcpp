@@ -1543,6 +1543,22 @@ int install_with_progress(const Env& env, std::string_view target,
             if (!quiet) print_status("Error", message);
             return;
         }
+        // What the provider repaired in the home while it installed (xlings
+        // protocol 1.11): a record that pointed at nothing, dropped so that it
+        // refuses no install. Said here as an install the user asked for says
+        // it (fetcher/progress.cppm): it changed the home, whichever install
+        // came upon it -- an upgraded home's first is the pinned ninja.
+        if (kind == "data" && ls.find_str("dataKind") == "scope_repaired") {
+            auto j = nlohmann::json::parse(line, nullptr, false);
+            if (!quiet && j.is_object() && j.contains("payload") && j["payload"].contains("repairs")
+                && j["payload"]["repairs"].is_array())
+                for (const auto& r : j["payload"]["repairs"])
+                    print_status("Repaired", std::format(
+                        "{}@{} in mcpp's package home had no registration; {}",
+                        r.value("target", std::string{}), r.value("version", std::string{}),
+                        r.value("action", std::string{}) == "deactivated" ? "deactivated" : "dropped"));
+            return;
+        }
         if (kind != "data" || ls.find_str("dataKind") != "download_progress") return;
         const auto prog = download_progress_of(line);
         if (!prog) return;
@@ -1772,21 +1788,65 @@ void ensure_ninja(const Env& env, bool quiet,
 {
     auto root = paths::xim_tool_root(env, "ninja");
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
+    // THE PINNED VERSION, NOT ANY VERSION (mcpp#945). A home that holds
+    // another ninja installs the pinned one beside it: the pin is what carries
+    // a correction, and "some ninja exists" kept every home made before the
+    // pin moved on the version it had. Where the install fails (no network),
+    // the home keeps the ninja it has and the build says which it runs; the
+    // install is asked again after a day, not on every run.
+    std::string other;
+    const auto attempt = root / ".pinned-attempt";
     if (std::filesystem::exists(root)) {
         std::error_code ec;
+        if (std::filesystem::exists(root / std::string(pinned::kNinjaVersion) / ninja_name, ec)) return;
         for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-            if (std::filesystem::exists(v.path() / ninja_name)) return;
+            if (std::filesystem::exists(v.path() / ninja_name)) other = v.path().filename().string();
         }
-        // Directory exists but no version has a working binary — residue.
-        if (!quiet)
-            print_status("Repairing", "ninja (incomplete installation, cleaning up)");
-        std::filesystem::remove_all(root, ec);
+        if (other.empty()) {
+            // Directory exists but no version has a working binary — residue.
+            if (!quiet)
+                print_status("Repairing", "ninja (incomplete installation, cleaning up)");
+            std::filesystem::remove_all(root, ec);
+        } else if (auto at = std::filesystem::last_write_time(attempt, ec);
+                   !ec && std::filesystem::file_time_type::clock::now() - at < std::chrono::hours(24)) {
+            return;
+        }
     }
+    // A HOME THAT HAS A NINJA IS TOLD IN ONE LINE. ninja is the backend of a
+    // build, which a developer does not handle: the pin that moved is taken
+    // through xlings as every payload is, beside the version the home has,
+    // and the run names what it replaces.
     if (!quiet)
-        print_status("Bootstrap", "ninja into mcpp sandbox (one-time)");
+        print_status(other.empty() ? "Bootstrap" : "Updating",
+            other.empty() ? std::string("ninja into mcpp sandbox (one-time)")
+                          : std::format("ninja {} -> {} (the build backend, through xlings)", other, pinned::kNinjaVersion));
     mcpp::log::ScopedTimer _t_ninja("init", std::format("bootstrap ninja@{}", pinned::kNinjaVersion));
     int rc = install_with_progress(env,
         std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
+    if (rc != 0 && !other.empty()) {
+        std::ofstream(attempt) << pinned::kNinjaVersion << "\n";
+        if (!quiet)
+            std::println(libc::stderr(),
+                "warning: ninja {} could not be installed (exit {}); builds run ninja {}, which "
+                "lacks the correction of ninja-build/ninja#2662",
+                pinned::kNinjaVersion, rc, other);
+        return;
+    }
+    if (rc != 0) {
+        // AN INDEX THAT DOES NOT LIST THE PIN YET (a mirror behind, a cached
+        // index) still lists the version the pin is a correction of: a fresh
+        // home takes that one and says what it lacks, and the pin is asked
+        // again after a day.
+        if (!quiet)
+            std::println(libc::stderr(),
+                "warning: ninja {} could not be installed (exit {}); installing ninja {}, which "
+                "lacks the correction of ninja-build/ninja#2662",
+                pinned::kNinjaVersion, rc, pinned::kNinjaBaseVersion);
+        rc = install_with_progress(env,
+            std::format("xim:ninja@{}", pinned::kNinjaBaseVersion), cb, quiet);
+        std::error_code ec;
+        if (rc == 0 && std::filesystem::exists(root, ec)) std::ofstream(attempt) << pinned::kNinjaVersion << "\n";
+    }
     if (rc != 0 && !quiet) {
         std::println(libc::stderr(),
             "warning: failed to bootstrap ninja into mcpp sandbox (exit {})",

@@ -90,52 +90,69 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
     return 0;
 }
 
-// `mcpp publish [--dry-run] [--allow-dirty]`.
-export int publish_package(bool dry_run, bool allow_dirty) {
-    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
-    if (!root) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
+// What `mcpp publish` is asked (mcpp#947).
+export struct PublishRequest {
+    bool dryRun = false;
+    bool allowDirty = false;
+    // The tag's template (`{version}`, `{name}`, `{namespace}`); empty: `v{version}`.
+    std::string tag;
+    // The members of a workspace to publish, as `[workspace] members` spells
+    // them, and its root. Empty: the package the command is run in.
+    std::filesystem::path    workspaceRoot;
+    std::vector<std::string> members;
+};
 
-    // Sanity: working tree clean (best-effort via git status).
-    if (!allow_dirty && std::filesystem::exists(*root / ".git")) {
-        auto gitStatus = mcpp::run::execute({ "git", "-C", root->string(), "status", "--porcelain" });
-        std::string out = gitStatus.output;
-        if (!out.empty()) {
-            mcpp::ui::error("working tree has uncommitted changes; pass --allow-dirty to skip this check");
-            std::println(libc::stderr(), "{}", out);
-            return 1;
-        }
-    }
+namespace {
 
+struct Published {
+    std::string identity, version, tag, repo, sha;
+    std::filesystem::path archive, descriptor;
+    std::string descriptorFile;   // its name in an index
+    std::string lua;
+};
+
+// One package into `distDir`: its archive, named by its identity, and its
+// descriptor.
+std::expected<Published, int> publish_one(const std::filesystem::path& root,
+                                          const std::filesystem::path& distDir,
+                                          const PublishRequest& req) {
     // The effective manifest (#690), and the normalised form the archive
     // carries: a workspace member's own file is valid only inside its
     // workspace, and the archive contains the member alone.
-    auto eff = mcpp::project::load_effective_manifest(*root);
+    auto eff = mcpp::project::load_effective_manifest(root);
     if (!eff) {
         mcpp::ui::error(std::format("manifest parse: {}", eff.error()));
-        return 2;
+        return std::unexpected(2);
     }
-    auto normalized = normalize_for_publish(*root, *eff);
+    auto normalized = normalize_for_publish(root, *eff);
     if (!normalized) {
         mcpp::ui::error(normalized.error());
-        return 2;
+        return std::unexpected(2);
     }
     auto m = std::optional<mcpp::manifest::Manifest>(descriptor_manifest(*eff, *normalized));
-    auto scan = mcpp::modgraph::scan_package(*root, *m);
+    auto scan = mcpp::modgraph::scan_package(root, *m);
     if (!scan.errors.empty()) {
         for (auto& e : scan.errors) mcpp::ui::error(e.format());
-        return 2;
+        return std::unexpected(2);
     }
 
     auto& pkg = m->package;
-    mcpp::ui::status("Packaging", std::format("{} v{}", pkg.name, pkg.version));
+    Published out;
+    out.identity = mcpp::publish::archive_identity(pkg.namespace_, pkg.name);
+    out.version = pkg.version;
+    out.repo = pkg.repo;
+    out.descriptorFile = mcpp::publish::descriptor_file_name(pkg.namespace_, pkg.name);
+    const auto prefix = pkg.namespace_.empty() ? std::string{} : pkg.namespace_ + ".";
+    auto tag = mcpp::publish::release_tag(req.tag, pkg.namespace_,
+        pkg.name.starts_with(prefix) ? pkg.name.substr(prefix.size()) : pkg.name, pkg.version);
+    if (!tag) { mcpp::ui::error(tag.error()); return std::unexpected(2); }
+    out.tag = *tag;
+    mcpp::ui::status("Packaging", std::format("{} v{}", out.identity, pkg.version));
 
-    // Output dir: target/dist/
-    auto distDir = *root / "target" / "dist";
     std::error_code ec;
     std::filesystem::create_directories(distDir, ec);
-
-    auto tarball = distDir / std::format("{}-{}.tar.gz", pkg.name, pkg.version);
-    auto xpkgPath = distDir / std::format("{}.lua", pkg.name);
+    out.archive = distDir / std::format("{}-{}.tar.gz", out.identity, pkg.version);
+    out.descriptor = distDir / out.descriptorFile;
 
     // 1. Pack source via `git archive` (respects .gitignore). A normalised
     //    manifest replaces `mcpp.toml` and the file as written is kept beside
@@ -145,94 +162,146 @@ export int publish_package(bool dry_run, bool allow_dirty) {
     if (normalized->changed) {
         overlays.push_back({ "mcpp.toml",      normalized->text });
         overlays.push_back({ "mcpp.toml.orig", normalized->original });
-        auto manifestCopy = distDir / std::format("{}-{}.mcpp.toml", pkg.name, pkg.version);
+        auto manifestCopy = distDir / std::format("{}-{}.mcpp.toml", out.identity, pkg.version);
         std::ofstream os(manifestCopy, std::ios::binary);
         os << normalized->text;
         if (!os) {
             mcpp::ui::error(std::format("cannot write '{}'", manifestCopy.string()));
-            return 1;
+            return std::unexpected(1);
         }
         mcpp::ui::status("Manifest",
             std::format("{} (normalised; the archive carries it as mcpp.toml)",
                         manifestCopy.string()));
     }
     if (auto err = mcpp::publish::make_release_tarball(
-            *root, pkg.name, pkg.version, tarball, overlays);
+            root, out.identity, pkg.version, out.archive, overlays);
         !err.empty())
     {
         mcpp::ui::error(std::format("tarball: {}", err));
-        return 1;
+        return std::unexpected(1);
     }
-    auto tarballSize = std::filesystem::file_size(tarball, ec);
+    auto tarballSize = std::filesystem::file_size(out.archive, ec);
 
     // 2. Compute SHA-256.
-    auto sha = mcpp::publish::sha256_of_file(tarball);
-    if (sha.empty()) {
+    out.sha = mcpp::publish::sha256_of_file(out.archive);
+    if (out.sha.empty()) {
         mcpp::ui::error("sha256: failed to hash tarball (is `sha256sum` installed?)");
-        return 1;
+        return std::unexpected(1);
     }
 
-    // 3. Compute the convention-based GitHub Release URL from manifest.repo.
-    auto url = mcpp::publish::release_tarball_url(
-        pkg.repo, pkg.name, pkg.version);
+    // 3. The release's URL by convention, from manifest.repo and the tag.
+    auto url = mcpp::publish::release_tarball_url(pkg.repo, out.identity, pkg.version, out.tag);
     if (url.empty()) {
         mcpp::ui::error(std::format(
             "cannot derive tarball URL: [package].repo='{}' is empty or not "
             "a https URL. Set [package].repo in mcpp.toml.", pkg.repo));
-        return 1;
+        return std::unexpected(1);
     }
 
     // 4. Build release info + emit xpkg.lua.
-    auto release = mcpp::publish::make_release_info(pkg.version, url, sha);
-    auto lua = mcpp::publish::emit_xpkg(*m, scan.graph, release);
-
+    auto release = mcpp::publish::make_release_info(pkg.version, url, out.sha);
+    out.lua = mcpp::publish::emit_xpkg(*m, scan.graph, release);
     {
-        std::ofstream os(xpkgPath);
-        os << lua;
+        std::ofstream os(out.descriptor);
+        os << out.lua;
         if (!os) {
-            mcpp::ui::error(std::format(
-                "cannot write '{}'", xpkgPath.string()));
+            mcpp::ui::error(std::format("cannot write '{}'", out.descriptor.string()));
+            return std::unexpected(1);
+        }
+    }
+    mcpp::ui::status("Tarball", std::format("{} ({} bytes)", out.archive.string(), tarballSize));
+    mcpp::ui::status("SHA-256", out.sha);
+    mcpp::ui::status("Xpkg",    out.descriptor.string());
+    return out;
+}
+
+} // namespace
+
+// `mcpp publish [--dry-run] [--allow-dirty] [--tag TEMPLATE] [--workspace | -p MEMBER...]`.
+export int publish_package(const PublishRequest& req) {
+    auto here = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!here) { mcpp::ui::error("no mcpp.toml in current dir or parents"); return 2; }
+    const auto top = req.members.empty() ? *here : req.workspaceRoot;
+
+    // Sanity: working tree clean (best-effort via git status).
+    if (!req.allowDirty && std::filesystem::exists(top / ".git")) {
+        auto gitStatus = mcpp::run::execute({ "git", "-C", top.string(), "status", "--porcelain" });
+        std::string out = gitStatus.output;
+        if (!out.empty()) {
+            mcpp::ui::error("working tree has uncommitted changes; pass --allow-dirty to skip this check");
+            std::println(libc::stderr(), "{}", out);
             return 1;
         }
     }
 
-    mcpp::ui::status("Tarball",
-        std::format("{} ({} bytes)", tarball.string(), tarballSize));
-    mcpp::ui::status("SHA-256", sha);
-    mcpp::ui::status("Xpkg",    xpkgPath.string());
-
-    if (dry_run) {
-        std::println("");
-        std::println("--- xpkg.lua content ---");
-        std::print("{}", lua);
-        std::println("--- end ---");
+    // Every archive of one run is in one directory, the workspace's where
+    // members are published: that directory is what a release attaches.
+    const auto distDir = top / "target" / "dist";
+    std::vector<Published> done;
+    if (req.members.empty()) {
+        auto one = publish_one(*here, distDir, req);
+        if (!one) return one.error();
+        done.push_back(std::move(*one));
+    }
+    for (auto const& member : req.members) {
+        auto one = publish_one((req.workspaceRoot / member).lexically_normal(), distDir, req);
+        if (!one) return one.error();
+        // Two packages under one tag with one archive name would be one asset.
+        for (auto const& before : done)
+            if (before.tag == one->tag && before.archive == one->archive) {
+                mcpp::ui::error(std::format(
+                    "two members are published as '{}' under the tag '{}': their identity and "
+                    "version are equal", one->archive.filename().string(), one->tag));
+                return 2;
+            }
+        done.push_back(std::move(*one));
     }
 
-    // 5. Print step-by-step PR instructions: guidance about what to do next,
-    // which is narration. The document a `--dry-run` prints above is the result.
-    char first = pkg.name.empty() ? '?' : pkg.name[0];
+    // SHA256SUMS beside the archives, one per tag (`sha256sum -c` reads it).
+    std::map<std::string, std::string> sums;
+    for (auto const& p : done)
+        sums[p.tag] += std::format("{}  {}\n", p.sha, p.archive.filename().string());
+    if (!req.members.empty())
+        for (auto const& [tag, text] : sums) {
+            const auto file = distDir / (sums.size() == 1 ? std::string("SHA256SUMS") : std::format("SHA256SUMS-{}", tag));
+            std::ofstream(file, std::ios::binary | std::ios::trunc) << text;
+            mcpp::ui::status("Checksums", file.string());
+        }
+
+    if (req.dryRun)
+        for (auto const& p : done) {
+            std::println("");
+            if (req.members.empty()) std::println("--- xpkg.lua content ---");
+            else                     std::println("--- {} ---", p.descriptorFile);
+            std::print("{}", p.lua);
+            std::println("--- end ---");
+        }
+
+    // Step-by-step PR instructions: guidance about what to do next, which is
+    // narration. The documents a `--dry-run` prints above are the result.
     mcpp::ui::line("");
     mcpp::ui::line("Next steps to publish to mcpp-index:");
-    mcpp::ui::line("");
-    mcpp::ui::line("  1. Tag this commit and push:");
-    mcpp::ui::line(std::format("       git tag -a v{0} -m \"v{0}\"", pkg.version));
-    mcpp::ui::line("       git push --tags");
-    mcpp::ui::line("");
-    mcpp::ui::line("  2. Upload the tarball to your repo's GitHub Release:");
-    mcpp::ui::line(std::format("       URL: {}/releases/new?tag=v{}", pkg.repo, pkg.version));
-    mcpp::ui::line(std::format("       Attach: {}", tarball.string()));
+    for (auto const& [tag, text] : sums) {
+        mcpp::ui::line("");
+        mcpp::ui::line(std::format("  1. Tag this commit and push:"));
+        mcpp::ui::line(std::format("       git tag -a {0} -m \"{0}\"", tag));
+        mcpp::ui::line("       git push --tags");
+        mcpp::ui::line("");
+        mcpp::ui::line("  2. Upload to your repo's GitHub Release:");
+        std::string repo;
+        for (auto const& p : done) if (p.tag == tag) {
+            if (repo.empty()) { repo = p.repo; mcpp::ui::line(std::format("       URL: {}/releases/new?tag={}", repo, tag)); }
+            mcpp::ui::line(std::format("       Attach: {}", p.archive.string()));
+        }
+    }
     mcpp::ui::line("");
     mcpp::ui::line("  3. Open a PR to mcpp-index:");
     mcpp::ui::line("       Fork:  https://github.com/mcpplibs/mcpp-index");
-    mcpp::ui::line(std::format("       Add:   pkgs/{}/{}.lua", first, pkg.name));
-    mcpp::ui::line(std::format("       (file content is in {})", xpkgPath.string()));
+    for (auto const& p : done) {
+        mcpp::ui::line(std::format("       Add:   pkgs/{}/{}", p.descriptorFile.empty() ? '?' : p.descriptorFile[0], p.descriptorFile));
+        mcpp::ui::line(std::format("       (file content is in {})", p.descriptor.string()));
+    }
     mcpp::ui::line("");
-    // TODO(post-v0.0.3): if `gh` CLI is on PATH and authenticated, offer
-    //   `mcpp publish --auto` to:
-    //     - gh release create v<v> <tarball>
-    //     - fork mcpp-index, add pkg lua, gh pr create
-    //   See docs/11-publishing-a-library.md.
-    mcpp::ui::line("Tip: future versions of mcpp may automate steps 2-3 via the gh CLI.");
     return 0;
 }
 

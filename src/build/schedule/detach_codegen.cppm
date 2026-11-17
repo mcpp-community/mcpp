@@ -74,6 +74,7 @@ import mcpplibs.os.process;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.build.stage;
+import mcpp.buildopt.keep;
 import mcpp.build.schedule.compiler_transaction;
 import mcpp.home;
 import mcpp.home.files;
@@ -177,7 +178,8 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
 int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
                const std::filesystem::path& output = {},
-               const std::filesystem::path& depfile = {});
+               const std::filesystem::path& depfile = {},
+               const std::filesystem::path& bmi = {}, bool object = false);
 
 }  // namespace mcpp::build::schedule::detach
 
@@ -517,7 +519,7 @@ void settle_bmi(const std::filesystem::path& bmi) {
     // Equivalent → put the PREVIOUS file back, so its mtime does not advance and
     // ninja's restat stops the cascade. The rename is atomic, so the BMI is
     // readable throughout: there is no moment at which importers see nothing.
-    if (stage::bmi_equivalent(bmi, backup))
+    if (mcpp::buildopt::keep::keeps_previous(bmi, backup))
         std::filesystem::rename(backup, bmi, ec);
     else
         std::filesystem::remove(backup, ec);
@@ -1096,12 +1098,75 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
     return 0;
 }
 
+// WHAT AN ORDINARY COMPILE WROTE BEFORE, HELD WHILE THE COMPILER RUNS.
+//
+// The previous file under another name beside its own; when the compiler has
+// written one that stays (`mcpp::buildopt::keep::keeps_previous` for a BMI, which reads
+// its format and the directory's cutoff; `keeps_previous_object` for an
+// object, whose bytes decide; both record the answer in the build directory),
+// the previous file takes its place again and the output's time has not
+// moved, so ninja's `restat` ends the rebuild at this edge: no importer is
+// compiled for the BMI, nothing is archived or linked for the object. In every
+// other outcome -- a different file, a failed or interrupted compiler, nothing
+// written before -- the held file is removed and the compiler's output stands.
+//
+// For the BMI this was a shell fragment of the generated command (`cp -p`,
+// `bmi-equal`, `mv`), which a host without a POSIX shell did not run; here
+// every host does. A BMI is copied, since a compiler that fails must leave the
+// one its importers were compiled against; an object is renamed, since nothing
+// reads it while its own edge runs.
+struct Previous {
+    enum class Kind { Bmi, Object };
+    Kind kind;
+    std::filesystem::path file, held;
+    Previous(Kind k, const std::filesystem::path& of) : kind(k) {
+        std::error_code ec;
+        if (of.empty() || !std::filesystem::is_regular_file(of, ec)) return;
+        auto to = suffixed(of, k == Kind::Bmi ? ".bak" : ".prev");
+        if (k == Kind::Object) {
+            std::filesystem::rename(of, to, ec);
+            if (ec) return;
+        } else {
+            std::filesystem::copy_file(of, to, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) return;
+            const auto time = std::filesystem::last_write_time(of, ec);
+            if (!ec) std::filesystem::last_write_time(to, time, ec);
+            if (ec) { std::filesystem::remove(to, ec); return; }
+        }
+        file = of;
+        held = std::move(to);
+    }
+    Previous(const Previous&) = delete;
+    Previous& operator=(const Previous&) = delete;
+    void settle(bool compiled) {
+        if (held.empty()) return;
+        std::error_code ec;
+        if (compiled && (kind == Kind::Bmi ? mcpp::buildopt::keep::keeps_previous(file, held)
+                                           : mcpp::buildopt::keep::keeps_previous_object(file, held))) {
+            std::filesystem::rename(held, file, ec);
+            if (!ec) { held.clear(); return; }
+        }
+        // No output at all (the compiler was not started, or failed and its
+        // output was removed): the object it had is the one there is.
+        if (kind == Kind::Object && !std::filesystem::exists(file, ec)) std::filesystem::rename(held, file, ec);
+        else std::filesystem::remove(held, ec);
+        held.clear();
+    }
+    ~Previous() { settle(false); }
+};
+
 int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
-               const std::filesystem::path& output, const std::filesystem::path& depfile) {
+               const std::filesystem::path& output, const std::filesystem::path& depfile,
+               const std::filesystem::path& bmi, bool object) {
     if (argv.empty()) return 2;
     auto actor = std::make_shared<Actor>();
     if (!actor->ready) return 130;
+    Previous previousBmi{Previous::Kind::Bmi, bmi};
+    Previous previousObject{Previous::Kind::Object, object ? output : std::filesystem::path{}};
+    // Before the transaction certifies what the compiler retired: the
+    // certificate names the output as it stands.
+    auto settle = [&](bool compiled) { previousBmi.settle(compiled); previousObject.settle(compiled); };
     if(actor->owner.managed) {
         auto prepared=transactions::Attempt::prepare(actor->owner.generation,true,{},output,{},depfile);
         if(!prepared) {std::println(std::cerr,"mcpp: {}",prepared.error());return 1;}
@@ -1124,6 +1189,7 @@ int run_capped(const std::vector<std::string>& argv,
             .input=mcpp::run::Input::inherit,.streams=mcpp::run::Streams::inherit,
             .should_stop=[&] {return !actor->owner.active();},.declared_unit=unit.get()});
         if(auto retired=retire_owned(*unit,actor->owner);!retired) {std::println(std::cerr,"mcpp: {}",retired.error());return 1;}
+        settle(result.exit_code==0&&actor->owner.active());
         if(!attempt.retired(result.exit_code)||!attempt.result(result.exit_code))return 1;
         if(!transactions::release_reservation(permit->reservation,attempt.directory))return 1;
         return result.exit_code;
@@ -1148,6 +1214,7 @@ int run_capped(const std::vector<std::string>& argv,
         }
         return actor->owner.active() ? result.exit_code : 130;
     }
+    settle(true);
     return result.exit_code;
 }
 

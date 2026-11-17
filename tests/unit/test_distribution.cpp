@@ -717,6 +717,10 @@ UTest format_is_taken_from_the_target_and_not_the_fallback{"Distribution/FormatI
         expect(eq(dist::format_for("x86_64-linux-gnu", fb), dist::Format::Elf));
         expect(eq(dist::format_for("aarch64-linux-musl", fb), dist::Format::Elf));
         expect(eq(dist::format_for("riscv64-none-elf", fb), dist::Format::Elf));
+        // An ELF system other than Linux: the branch named `linux` and `none`
+        // only, so these reached `fb` and a macOS host linked them as Mach-O.
+        expect(eq(dist::format_for("aarch64-linux-android", fb), dist::Format::Elf));
+        expect(eq(dist::format_for("x86_64-freebsd", fb), dist::Format::Elf));
     }
 }};
 

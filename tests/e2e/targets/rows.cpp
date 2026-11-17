@@ -358,9 +358,11 @@ int main() {
         expect(fatal(run.status == 44)) << "static: mcpp run exited " << run.status << ", the program returns 44: " << s::text(run);
     };
 
-    "1077 a program of another system is built not run"_test[s::llvm] = [] {
-        // `mcpp run` builds a FreeBSD program on this host and refuses to start it, naming the
-        // artifact's system and the runner declaration; --no-runner is believed.
+    "1077 a program of another system is not started until its runner is enabled"_test[s::llvm] = [] {
+        // `mcpp run` builds a FreeBSD program on this host and does not start it: the row's
+        // platform states a runner (openkal-platform 0.29.1: dirun), which no declaration has
+        // enabled. The refusal names what the runner needs and the declaration that enables
+        // it; --no-runner is believed.
         const std::string T = std::string(s::on_x86_64() ? "x86_64" : "aarch64") + "-freebsd-musl";
         auto p = s::project::scaffold("app");
         auto r = p.mcpp({"build", "--target", T});
@@ -369,12 +371,31 @@ int main() {
         r = p.mcpp({"run", "--target", T});
         const auto run = s::text(r);
         expect(fatal(e2e::exited(r, 2))) << "run exited " << r.status << ", expected the refusal's 2: " << run;
-        expect(fatal(e2e::contains(run, "built, not run"))) << "the run does not say built, not run: " << run;
-        expect(fatal(e2e::contains(run, "artifacts run on freebsd"))) << "the artifact's system is not named: " << run;
-        expect(fatal(e2e::contains(run, std::format("[target.{}] runner = ", T)))) << "the runner declaration does not name the row: " << run;
+        expect(fatal(e2e::contains(run, "[runner-not-enabled]"))) << "the run does not say its runner is not enabled: " << run;
+        expect(fatal(e2e::contains(run, "it needs:"))) << "what the runner needs is not named: " << run;
+        expect(fatal(e2e::contains(run, std::format("[target.{}] runner = true", T)))) << "the runner declaration does not name the row: " << run;
         expect(fatal(s::lacks(run, "Running"))) << "the artifact was started: " << run;
         r = p.mcpp({"run", "--target", T, "--no-runner"});
-        expect(fatal(s::lacks(s::text(r), "built, not run"))) << "--no-runner was not believed: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "[runner-not-enabled]"))) << "--no-runner was not believed: " << s::text(r);
+    };
+
+    "1116 a row of another ELF system builds on a host of any format"_test[s::llvm] = [] {
+        // A target that parses is ELF unless it says otherwise. The format was asked of the
+        // host for every system but `linux` and `none`, so `x86_64-freebsd` (the system's own
+        // ABI, served by the platform the index lists for the row) linked as Mach-O on a macOS
+        // host (`ld64.lld: unknown argument '--disable-new-dtags'`) and without its sysroot on
+        // a Windows host (`cannot open crt1.o`). The program is an ELF of that system on
+        // every host, and its link names no SDK of the host.
+        auto p = s::project::scaffold("bsd");
+        auto r = p.mcpp({"build", "--target", "x86_64-freebsd", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << "x86_64-freebsd did not build on this host: " << s::text(r);
+        const auto exe = program_under(p.at("target/x86_64-freebsd"), "bsd", true);
+        expect(fatal(exe.has_value())) << "no program: " << s::text(r);
+        const auto bytes = s::read_file(*exe);
+        expect(fatal(bytes.starts_with("\x7f" "ELF"))) << "the program is not an ELF";
+        const bool freebsd = (bytes.size() > 7 && bytes[7] == 9) || bytes.contains(std::string_view("FreeBSD\0", 8));
+        expect(freebsd) << "the ELF is not a FreeBSD program";
+        expect(s::lacks(s::text(r), "MacOSX") && s::lacks(s::text(r), "-isysroot")) << "the build names an SDK of the host: " << s::text(r);
     };
 }};
 

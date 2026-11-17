@@ -292,7 +292,10 @@ int main() {
         expect(fatal(statically_linked(s::read_header(*exe)))) << "A: not static";
         r = app.mcpp({"build", "--target", "x86_64-freebsd"});
         expect(fatal(e2e::succeeded(r))) << "B: x86_64-freebsd with no platform did not build: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "x86_64-freebsd-musl"))) << "B: the request does not say it took the musl identity: " << s::text(r);
+        // What serves the request is the index's to say (SPEC-013 §7): a platform it lists for
+        // the row (mcpp.platforms: the system's own ABI), else the musl identity.
+        expect(fatal(e2e::contains(s::text(r), "x86_64-freebsd-musl") || e2e::contains(s::text(r), "the platform's (platforms ")))
+            << "B: the request does not say what served it: " << s::text(r);
     };
 }};
 

@@ -176,21 +176,44 @@ keep that working.
   resolved source, and a dependency on a sibling member is published as a
   version dependency. The manifest as written is kept beside it as
   `mcpp.toml.orig`, and the normalised file is also written to
-  `target/dist/<name>-<version>.mcpp.toml` for review. The archive is built from
+  `target/dist/<identity>-<version>.mcpp.toml` for review. The archive is built from
   git objects with the commit's dates, so two runs produce the same bytes. A
   package that is not a workspace member is archived exactly as before.
 
-A sibling dependency states the version it is published under:
+A sibling dependency is published under the sibling's version. A `path` edge that
+states none takes the `version` of the sibling's own manifest *(2026.11.17.2+;
+before, the edge was refused and the refusal named the line to write)*; one that
+states a version is published with it:
 
 ```toml
 [dependencies]
-"acme.util" = { path = "../util", version = "0.3.0" }   # path for development, version for consumers
+acme.util = { path = "../util" }                      # published as acme.util = "<the version of ../util>"
+acme.net  = { path = "../net", version = "0.3.0" }    # published as written
 ```
 
-`mcpp publish` refuses a sibling dependency without `version` and names the
-member's version and the line to write. It refuses a `path` dependency outside
-the package that is not a workspace member, and an inherited include directory
-outside the member's directory, because the archive contains neither.
+A sibling whose manifest states no version is refused. `mcpp publish` also
+refuses a `path` dependency outside the package that is not a workspace member,
+and an inherited include directory outside the member's directory, because the
+archive contains neither.
+
+### Names, the tag and several members *(mcpp 2026.11.17.2+)*
+
+| Item | Rule |
+|---|---|
+| Archive and its top directory | the package's identity: `<namespace>.<name>-<version>.tar.gz`; a package with no namespace keeps `<name>-<version>.tar.gz`. Two members that share a short name across namespaces (`omui.core`, `hanim.core`) are two archives under one tag |
+| Descriptor | `namespace` and a one-segment `name` (SPEC-001 §3.2), in the file the index uses: `<name>.lua` in `mcpplibs`, `<namespace>.<name>.lua` in another namespace |
+| Tag | `--tag <template>` of `{version}`, `{name}` and `{namespace}`; `v{version}` without it. The descriptor's URL is `<repo>/releases/download/<tag>/<archive>` |
+| Several members | `mcpp publish --workspace` (with `--exclude`), or `-p <member>` repeated: one archive and one descriptor per member in the workspace's `target/dist`, and `SHA256SUMS` beside them in the form `sha256sum -c` reads |
+
+```bash
+mcpp publish --workspace --tag 'v{version}'      # every member, one tag where the versions are equal
+mcpp publish -p mlibs.math -p mlibs.unicode      # two members
+```
+
+The tag's template is evaluated for each member. Members whose tags are equal
+are one release; where the tags differ, each has its own checksum file,
+`SHA256SUMS-<tag>`. `mcpp publish` writes archives, checksums and descriptors;
+it creates no tag and no release.
 
 ## Manifest keys that need a version floor
 

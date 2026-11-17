@@ -1,4 +1,4 @@
-// mcpp.build.stage::bmi_equivalent — the comparison that decides whether an
+// mcpp.buildopt.keep.gcm::equivalent — the comparison that decides whether an
 // importer must be rebuilt.
 //
 // Asserted from BOTH sides on purpose. A function that always returned `true`
@@ -9,11 +9,11 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <chrono>
 
 import mcpplibs.mtest;
-import mcpplibs.os.process;
 
-import mcpp.build.stage;
+import mcpp.buildopt.keep.gcm;
 
 using namespace mcpplibs::mtest;
 
@@ -21,7 +21,7 @@ namespace {
 
 std::filesystem::path tmpdir() {
     auto d = std::filesystem::temp_directory_path() /
-             ("mcpp-bmi-eq-" + std::to_string(mcpplibs::os::process::self()->id));
+             ("mcpp-bmi-eq-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(d);
     return d;
 }
@@ -46,7 +46,7 @@ UTest identical_files_are_equivalent{"BmiEquivalent/IdenticalFilesAreEquivalent"
     const auto d = tmpdir();
     auto a = write(d / "a.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
     auto b = write(d / "b.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
-    expect(bool(mcpp::build::stage::bmi_equivalent(a, b)));
+    expect(bool(mcpp::buildopt::keep::gcm::equivalent(a, b)));
 }};
 
 // The whole reason this function exists: GCC stamps a wall clock into the BMI,
@@ -56,7 +56,7 @@ UTest differing_only_in_the_embedded_timestamp{"BmiEquivalent/DifferingOnlyInThe
     const auto d = tmpdir();
     auto a = write(d / "t1.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
     auto b = write(d / "t2.gcm", bmi_like("2026/08/12 02:25:33 UTC"));
-    expect(bool(mcpp::build::stage::bmi_equivalent(a, b)));
+    expect(bool(mcpp::buildopt::keep::gcm::equivalent(a, b)));
 }};
 
 // The side that must NOT be lost: a real interface change still cascades.
@@ -64,7 +64,7 @@ UTest differing_payload_is_not_equivalent{"BmiEquivalent/DifferingPayloadIsNotEq
     const auto d = tmpdir();
     auto a = write(d / "p1.gcm", bmi_like("2026/08/12 02:25:01 UTC", "PAYLOAD"));
     auto b = write(d / "p2.gcm", bmi_like("2026/08/12 02:25:01 UTC", "PAYLOAX"));
-    expect(!mcpp::build::stage::bmi_equivalent(a, b));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, b));
 }};
 
 // A payload difference must not be masked just because a timestamp is nearby.
@@ -72,14 +72,14 @@ UTest payload_difference_is_not_hidden_by_a_timestamp_difference{"BmiEquivalent/
     const auto d = tmpdir();
     auto a = write(d / "m1.gcm", bmi_like("2026/08/12 02:25:01 UTC", "PAYLOAD"));
     auto b = write(d / "m2.gcm", bmi_like("2026/08/12 09:59:59 UTC", "PAYLOAX"));
-    expect(!mcpp::build::stage::bmi_equivalent(a, b));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, b));
 }};
 
 UTest different_sizes_are_never_equivalent{"BmiEquivalent/DifferentSizesAreNeverEquivalent", [] {
     const auto d = tmpdir();
     auto a = write(d / "s1.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
     auto b = write(d / "s2.gcm", bmi_like("2026/08/12 02:25:01 UTC") + "EXTRA");
-    expect(!mcpp::build::stage::bmi_equivalent(a, b));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, b));
 }};
 
 // No stamps at all → strict comparison, which is the old behaviour. This is the
@@ -90,8 +90,8 @@ UTest without_stamps_it_is_a_strict_compare{"BmiEquivalent/WithoutStampsItIsAStr
     auto a = write(d / "n1.gcm", "no stamps here");
     auto b = write(d / "n2.gcm", "no stamps here");
     auto c = write(d / "n3.gcm", "no stamps HERE");
-    expect(bool(mcpp::build::stage::bmi_equivalent(a, b)));
-    expect(!mcpp::build::stage::bmi_equivalent(a, c));
+    expect(bool(mcpp::buildopt::keep::gcm::equivalent(a, b)));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, c));
 }};
 
 // A value that merely follows the prefix but is not a timestamp must not be
@@ -101,13 +101,45 @@ UTest non_timestamp_after_the_prefix_is_not_masked{"BmiEquivalent/NonTimestampAf
     const auto d = tmpdir();
     auto a = write(d / "f1.gcm", "buildtime: not-a-timestamp-xxxxxA");
     auto b = write(d / "f2.gcm", "buildtime: not-a-timestamp-xxxxxB");
-    expect(!mcpp::build::stage::bmi_equivalent(a, b));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, b));
 }};
 
 UTest missing_file_is_not_equivalent{"BmiEquivalent/MissingFileIsNotEquivalent", [] {
     const auto d = tmpdir();
     auto a = write(d / "e1.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
-    expect(!mcpp::build::stage::bmi_equivalent(a, d / "does-not-exist.gcm"));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, d / "does-not-exist.gcm"));
+}};
+
+// `localtime:` carries the host's zone abbreviation (gcc 16.1.0: `CST` under
+// Asia/Shanghai, `-03` under America/Sao_Paulo). A stamp that admitted ` UTC`
+// alone left the cutoff without effect outside UTC (mcpp#946, O1).
+std::string bmi_zoned(const std::string& utc, const std::string& local,
+                      const std::string& payload = "PAYLOAD") {
+    return "GCM\x01" + payload + std::string("\0", 1) +
+           "buildtime: " + utc + std::string("\0", 1) +
+           "localtime: " + local + std::string("\0", 1) + "TAIL";
+}
+
+UTest a_local_stamp_of_any_zone_is_masked{"BmiEquivalent/ALocalStampOfAnyZoneIsMasked", [] {
+    const auto d = tmpdir();
+    auto a = write(d / "z1.gcm", bmi_zoned("2026/11/17 03:56:30 UTC", "2026/11/17 11:56:30 CST"));
+    auto b = write(d / "z2.gcm", bmi_zoned("2026/11/17 03:57:41 UTC", "2026/11/17 11:57:41 CST"));
+    expect(bool(mcpp::buildopt::keep::gcm::equivalent(a, b)));
+    auto c = write(d / "z3.gcm", bmi_zoned("2026/11/17 03:56:30 UTC", "2026/11/17 00:56:30 -03"));
+    auto e = write(d / "z4.gcm", bmi_zoned("2026/11/17 03:59:02 UTC", "2026/11/17 00:59:02 -03"));
+    expect(bool(mcpp::buildopt::keep::gcm::equivalent(c, e)));
+    // The payload still counts under a zoned stamp.
+    auto f = write(d / "z5.gcm", bmi_zoned("2026/11/17 03:59:02 UTC", "2026/11/17 11:59:02 CST", "PAYLOAX"));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, f));
+}};
+
+// A stamp ends at its terminator: text that goes on past a zone's length is
+// not a stamp and is compared.
+UTest a_stamp_without_a_terminated_zone_is_compared{"BmiEquivalent/AStampWithoutATerminatedZoneIsCompared", [] {
+    const auto d = tmpdir();
+    auto a = write(d / "n1.gcm", "buildtime: 2026/11/17 03:56:30 UTCABCDEFGHI-A");
+    auto b = write(d / "n2.gcm", "buildtime: 2026/11/17 03:56:31 UTCABCDEFGHI-A");
+    expect(!mcpp::buildopt::keep::gcm::equivalent(a, b));
 }};
 
 // A real BMI carries exactly two stamps — one `buildtime:`, one `localtime:` —
@@ -123,7 +155,7 @@ UTest more_stamps_than_gcc_emits_falls_back_to_strict_compare{"BmiEquivalent/Mor
     // Two stamps: masked, so the differing clock does not count.
     auto two_a = write(d / "t1.gcm", bmi_like("2026/08/12 02:25:01 UTC"));
     auto two_b = write(d / "t2.gcm", bmi_like("2026/08/12 02:25:09 UTC"));
-    expect(bool(mcpp::build::stage::bmi_equivalent(two_a, two_b)));
+    expect(bool(mcpp::buildopt::keep::gcm::equivalent(two_a, two_b)));
 
     // The same two, plus a third stamp-shaped string in the payload that
     // differs. It must NOT be masked, so the two files are different.
@@ -133,5 +165,5 @@ UTest more_stamps_than_gcc_emits_falls_back_to_strict_compare{"BmiEquivalent/Mor
     auto three_b = write(d / "u2.gcm",
                          bmi_like("2026/08/12 02:25:09 UTC",
                                   "buildtime: 2020/01/02 00:00:00 UTC"));
-    expect(!mcpp::build::stage::bmi_equivalent(three_a, three_b));
+    expect(!mcpp::buildopt::keep::gcm::equivalent(three_a, three_b));
 }};

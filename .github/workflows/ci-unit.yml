@@ -301,6 +301,31 @@ jobs:
           archive: ${{ runner.temp }}/unit/unit.tar.gz
           shard: ${{ matrix.shard }}/${{ strategy.job-total }}
 
+      # A compiler that did not start is a state of the home, not of a test:
+      # the loader its payload is bound through (<home>/registry/abi), the
+      # generations of that link and what xlings did in the home, as they are
+      # when a shard fails.
+      - name: The home's runtime links and what xlings did, when a test failed
+        if: failure() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          for home in "${MCPP_HOME:-$HOME/.mcpp}/registry" "$HOME/.xlings"; do
+            echo "== $home"
+            ls -la --time-style=full-iso "$home" | grep -i abi
+            ls -la --time-style=full-iso "$home/abi/" "$home/abi.gen" 2>&1 | head -20
+            for g in "$home"/abi.gen/*/; do echo "$g: $(find "$g" -type l | wc -l) links, $(find "$g" -xtype l | wc -l) dangling"; ls -la "$g"*/ld-* 2>&1 | head -4; done
+            cat "$home/abi.json" 2>/dev/null
+            echo "-- abi.ndjson"; cat "$home/logs/abi.ndjson" 2>/dev/null
+            echo "-- payloads"; ls -ld --time-style=full-iso "$home"/data/xpkgs/*/* 2>/dev/null
+            for b in xim-x-gcc/*/bin/g++ xim-x-binutils/*/bin/as xim-x-llvm/*/bin/clang; do
+              for f in "$home"/data/xpkgs/$b; do [ -e "$f" ] && echo "$f: $(readelf -l "$f" 2>/dev/null | grep -o 'interpreter: [^]]*')"; done
+            done
+            echo "-- operations"; ls -la --time-style=full-iso "$home"/logs/ops/*/ 2>/dev/null | tail -80
+            for f in "$home"/logs/ops/*/*.ndjson; do [ -f "$f" ] && { echo "## $f"; head -c 1500 "$f"; echo; }; done 2>/dev/null | head -c 60000
+          done
+          exit 0
+
   # The Windows cases only a job with the MinGW cross toolchain runs, from the
   # tests the archive stage wrote (no build here); each case is held to its
   # `ok` line, so a skip cannot pass as a run.

@@ -59,6 +59,7 @@ inline constexpr KeyClass kKeyRegistry[] = {
     // 2026-11-10 E5): `-resource-dir` for clang, `-B` for gcc.
     {"build", "compiler_runtime_dir",    KeyScope::Usage,         KeyMerge::Scalar,  false, false},
     // The bytes target/ may hold (mcpp#874); read by the sweep after a build.
+    {"build", "private_fragment",        KeyScope::Configuration, KeyMerge::Scalar,  false, false},
     {"build", "target_budget",           KeyScope::Metadata,      KeyMerge::Scalar,  false, false},
     {"build", "cxxflags",                KeyScope::Package,       KeyMerge::List,    true,  true },
     {"build", "cxx_runtime",             KeyScope::Configuration, KeyMerge::Scalar,  true,  false},

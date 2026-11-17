@@ -131,9 +131,24 @@ static int refuse_shared_exact_pins() {
 }
 
 export int cmd_publish(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    if (int rc = refuse_shared_exact_pins(); rc != 0) return rc;
-    return mcpp::publish::publish_package(
-        parsed.is_flag_set("dry-run"), parsed.is_flag_set("allow-dirty"));
+    mcpp::publish::PublishRequest req;
+    req.dryRun = parsed.is_flag_set("dry-run");
+    req.allowDirty = parsed.is_flag_set("allow-dirty");
+    req.tag = parsed.value("tag").value_or("");
+    // The members `-p` and `--workspace` name, read as every command reads
+    // them (mcpp#947): each is published as the package it is, into the
+    // workspace's `target/dist`.
+    const auto asked = mcpp::cli::member_request(parsed);
+    if (asked.all || !asked.packages.empty() || !asked.excludes.empty()) {
+        auto sel = mcpp::cli::select_members(asked);
+        if (!sel) { mcpp::ui::error(sel.error()); return 2; }
+        if (!*sel) { mcpp::ui::error("-p and --workspace name members of a workspace, and this directory is not in one"); return 2; }
+        req.workspaceRoot = (*sel)->root;
+        req.members = (*sel)->members;
+    } else if (int rc = refuse_shared_exact_pins(); rc != 0) {
+        return rc;
+    }
+    return mcpp::publish::publish_package(req);
 }
 
 // `mcpp place-dlls --output <stamp> --depfile <d> <program> <dir>...`

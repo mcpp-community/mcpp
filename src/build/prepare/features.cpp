@@ -573,7 +573,16 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
                 return false;
             });
 
-            for (auto& f : active) {
+            // IN THE ORDER OF THEIR NAMES, NOT OF THEIR ACTIVATION. `active`
+            // holds a package's features in the order the root's graph turned
+            // them on, so the same set gave one command line under one root and
+            // another under the next; members of a workspace share a build
+            // directory, and every unit of the package was compiled again for
+            // an order (mcpp#945: `-DMCPP_FEATURE_ENGINE -DMCPP_FEATURE_PROGRAM`
+            // against `-DMCPP_FEATURE_OBJECT -DMCPP_FEATURE_ENGINE`, 34 edges).
+            auto named = active;
+            std::ranges::sort(named);
+            for (auto& f : named) {
                 auto def = "-DMCPP_FEATURE_" + sanitize(f);
                 pkg.manifest.buildConfig.cflags.push_back(def);
                 pkg.manifest.buildConfig.cxxflags.push_back(def);

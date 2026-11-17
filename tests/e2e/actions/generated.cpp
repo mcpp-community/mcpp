@@ -140,7 +140,9 @@ int main() {
         const auto gen_before = mtime(p.at("src/gen/config.h"));
         const auto main_before = mtime(mains.front());
         std::this_thread::sleep_for(std::chrono::seconds{1});  // a rewrite observable at 1 s granularity
-        fs::last_write_time(p.at("src/other.cpp"), fs::file_time_type::clock::now());
+        // A change of the unit, not of its time: an object compiled to the bytes it had keeps
+        // its time (SPEC-018 §1).
+        p.write("src/other.cpp", "int other() { int unrelated = 0; return unrelated; }\n");
         expect(fatal(e2e::succeeded(p.mcpp({"build"})))) << "incremental rebuild failed";
         expect(fatal(mtime(others.front()) > gen_before)) << "other.o was not recompiled — test premise broken";
         const auto gen_after = mtime(p.at("src/gen/config.h"));

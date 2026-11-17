@@ -4,6 +4,123 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.17.2] - 2026-11-17
+
+### Added
+
+- `[profile.<name>] bmi_cutoff = "ignore-locations" | "exact"`, and
+  `MCPP_BMI_CUTOFF` for one run. With GCC, a line inserted where no recorded
+  entity follows it changes a BMI's line maps and nothing else; under
+  `ignore-locations`, the default, the previous BMI is kept and its importers are
+  not compiled. Their diagnostics and debug information name the earlier lines
+  until they are compiled for another reason. A BMI that names
+  `__builtin_LINE` or `__builtin_source_location` (a template's body that reads
+  its line), and a graph compiled with `-fcontracts`, are compared exactly;
+  `mcpp pack` uses `exact` where the profile carries debug information; an
+  `exact` run first removes what an earlier run kept (SPEC-018, mcpp#946 O2,
+  e2e 1110).
+- A build states what its BMIs did, one line each: which changed, so that their
+  importers were compiled again, and which were kept with earlier lines. The
+  build directory records it in `bmi-changes.tsv` and `bmi-kept.list`
+  (mcpp#946 O6).
+- `mcpp publish --tag <template>` (`{version}`, `{name}`, `{namespace}`;
+  `v{version}` without it), and `mcpp publish --workspace` or `-p <member>`
+  repeated: one archive and one descriptor per member in the workspace's
+  `target/dist`, with `SHA256SUMS` (mcpp#947).
+- A private module fragment is built as a unit of its own (`private-fragment`, on by
+  default): the text before `module :private;` is the interface unit and the fragment an
+  implementation unit of the same module, both naming the file as written through
+  `#line`. An edit of the fragment compiles that unit and no importer -- measured with
+  clang 23.1.3, which otherwise compiles every importer, and with gcc 16.1.0, which does
+  not build a fragment as written at all. A fragment that reads what is local to the
+  interface (a macro of the purview, an unnamed namespace, a namespace-scope `static`,
+  a using-directive) is built as written, with the line that decided it.
+  `[build] private_fragment = "unit" | "as-written"`, `MCPP_PRIVATE_FRAGMENT`
+  (SPEC-019 §5, e2e 1112, 1113).
+- An object compiled to the bytes it had is kept, and nothing is archived or linked for
+  it (`keep-object`; mcpp#946 O5). Comparing an object costs 0.29 ms against 0.8-1.45 s
+  for a link of mcpp's own programs; `--verbose` counts the objects kept.
+- The previous BMI is held, compared and put back by the executor of the compile edge,
+  not by a shell fragment of the generated command: a Windows host ends a rebuild at an
+  unchanged interface as every other host does (mcpp#946 O7, e2e 1111). The internal
+  `mcpp bmi-equal` is gone with the fragment that called it.
+- A build says once, of a module that is one file and that at least five units import,
+  that its bodies are compiled with its interface and what ends that (SPEC-019 §6,
+  e2e 1114).
+- `MCPP_BUILDOPT=off`: the standard build for one invocation -- nothing kept, no other
+  shape of the graph, sources built as written.
+- `mcpp.buildopt` (`modules/buildopt`): everything mcpp does to a build beyond what the
+  compiler and ninja do, in one package -- the register of its entries with their level,
+  default and parameter (`registry`), which previous file of an edge stays (`keep`, and
+  `keep.gcm` for GCC's BMI format), the shape of the module edges (`schedule`, from
+  `src/build/schedule/policy.cppm`), the units a source is built as (`source`), and what
+  a build says of its rebuild (`advice`). Its README lists the entries.
+- SPEC-019, build optimizations; chapters 13 (code and project style) and 26 (build
+  optimizations), in both languages.
+- SPEC-018, the rebuild of modules.
+
+### Changed
+
+- xlings 2026.11.17.2. A symbolic link to a directory extracted on Windows is a
+  directory link (openxlings/xlings#719), which the NetBSD and OpenBSD sysroots need on a
+  Windows host. A home reached through a symbolic link is the home it was created as
+  (openxlings/xlings#720): an install through the link no longer leaves the home's runtime
+  links and a toolchain's interpreter naming the link.
+- mcpp pins ninja `1.12.1-mcpp.1`: ninja 1.12.1 with the correction of
+  ninja-build/ninja#2662, where loading a dyndep file while an edge finished
+  invalidated the iterators of the loops finishing it. On a project of 150
+  members a workspace test ended with a compiler crash while reading a module,
+  or with no failed step named. A home that holds another ninja installs the
+  pin beside it on its next run; where the index it reads does not list the pin,
+  it takes 1.12.1 and says what that lacks. A build takes the pinned version
+  from a store that holds several (mcpp#945).
+- A sibling `path` dependency that states no `version` is published under the
+  sibling's own version; before, it was refused. An archive, its top directory
+  and its descriptor are named by the package's identity
+  (`mlibs.math-0.1.0.tar.gz`, `mlibs.math.lua`); a package with no namespace is
+  named as before. A generated descriptor states `namespace` and a one-segment
+  `name` (SPEC-001 §3.2), where it stated the fully-qualified name (mcpp#947).
+- A platform's runner is taken on the hosts it states (`runner.hosts`). On
+  another host the row runs as a row without a runner: directly where its
+  system is this machine's, refused for the reach elsewhere, naming the hosts.
+  A Windows host was asked to enable the Wine runner of `x86_64-windows-musl`
+  (SPEC-013 §10, e2e 1109).
+- The platform the engine's target table selects is
+  `mcpplibs.openkal-platform@0.29.1`.
+
+### Fixed
+
+- A target of an ELF system other than Linux built on a macOS or a Windows host took
+  the host's link line and the host's SDK: `x86_64-openbsd` and `x86_64-freebsd` on macOS
+  linked as Mach-O (`ld64.lld: error: unknown argument '--disable-new-dtags'`),
+  `x86_64-netbsd` compiled against the macOS SDK (`use of undeclared identifier
+  '_CTYPE_BL'`), and `x86_64-freebsd` on Windows linked without its sysroot. A target that
+  parses is ELF unless it says otherwise, and the macOS SDK is the sysroot of a Mach-O
+  target only.
+- Members of a workspace share a build directory, and a package's units had another
+  command line under each member: the include directories of its dependencies came in
+  the order the root's graph was walked, and its features' `-DMCPP_FEATURE_*` in the
+  order they were activated. The set was the same; every member compiled the package
+  again. Measured on a workspace of 31 members: 753 of 3544 edges differed between two
+  members by order alone, and a run with no source changed compiled them (`command line
+  changed`, 2779 times). Usage is carried dependencies first, and the defines are in the
+  order of their names; the same two members then differ in no edge (mcpp#945, e2e 1115).
+- An install that comes upon a record of the home with no registration says what it
+  repaired, whichever install it is: an upgraded home's first is the pinned ninja.
+- GCC's module scan wrote its output over the unit's object, emptying it on every scan.
+  The scan writes a file of its own.
+- With GCC the BMI cutoff had no effect on a host whose time zone is not UTC:
+  the stamp `localtime:` carries the zone's abbreviation, and a stamp was masked
+  only where it ended in ` UTC`. A touched interface compiled every importer.
+  The stamp is masked to its terminator (mcpp#946 O1).
+- A build that ninja ended without naming a failed step states how ninja ended:
+  its status, the signal, or the NTSTATUS, and whether the ninja it ran is the
+  pinned one (mcpp#945).
+- `--strict` names the key it refuses, where it printed the registry's example
+  (`mcpplibs.cmdline = "0.0.2"`) for every quoted dependency key.
+- A `[target.'cfg(...)'] platform` whose selector names a layer (`c-abi`, ...)
+  is warned of: a layer is what the selected platform states (SPEC-013 §3.1).
+
 ## [2026.11.17.1] - 2026-11-17
 
 ### Added

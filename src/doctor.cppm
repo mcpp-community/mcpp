@@ -1504,7 +1504,9 @@ nlohmann::json compat_uses_json() {
         if (auto const* d = mcpp::pm::compat::find_deprecation(u.id)) {
             row["since"] = std::string(d->since);
             row["floor"] = std::string(d->floor);
-            row["canonical"] = std::string(d->canonical);
+            // What this use is to be written as, where its reader stated it;
+            // the row's example otherwise.
+            row["canonical"] = u.instead.empty() ? std::string(d->canonical) : u.instead;
             row["docs"] = std::string(d->docs);
         }
         uses.push_back(std::move(row));
