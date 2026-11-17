@@ -101,6 +101,45 @@ E2E basics{"basics", [] {
         expect(s::lacks(s::text(r), "std.cc")) << "std module re-built when it shouldn't be";
     };
 
+    "1110 an importer follows a gcc interface, not its clock or its line maps"_test[s::gcc] = [] {
+        // mcpp#946 O1, O2, O6. Outside UTC a touched interface compiles no importer (the
+        // stamp is masked with any zone). A line inserted below the declarations moves the
+        // line maps alone: the BMI is kept, the run says so, and the importer is not compiled.
+        // `bmi_cutoff = exact` (here the environment's) compiles it, and the program is the
+        // same. A changed exported body compiles the importer under either cutoff.
+        auto p = s::project::scaffold("casc");
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport inline int c_inl() { return 10; }\n"
+                              "int c_val() {\n    int x = 1;\n    return x;\n}\nint c_other() { return 7; }\n");
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_inl() + c_val(); }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        const s::options zone{.env = {{"TZ", "Asia/Shanghai"}}};
+        auto r = p.mcpp({"build"}, zone);
+        expect(fatal(e2e::succeeded(r))) << "the first build failed: " << s::text(r);
+        touch(p.at("src/c.cppm"));
+        r = p.mcpp({"build", "--verbose"}, zone);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "b.cppm")) << "A: a touched interface compiled its importer outside UTC: " << s::text(r);
+
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport inline int c_inl() { return 10; }\n"
+                              "int c_val() {\n    int x = 1;\n    // a line\n    return x;\n}\nint c_other() { return 7; }\n");
+        r = p.mcpp({"build", "--verbose"}, zone);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "b.cppm")) << "B: line maps alone compiled the importer: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.gcm changed in locations only and is kept"))) << "B: the run does not say what it kept: " << s::text(r);
+
+        r = p.mcpp({"build", "--verbose"}, s::options{.env = {{"TZ", "Asia/Shanghai"}, {"MCPP_BMI_CUTOFF", "exact"}}});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "b.cppm"))) << "C: the exact cutoff did not compile the importer of a kept BMI: " << s::text(r);
+        r = p.mcpp({"run"}, zone);
+        expect(fatal(e2e::contains(s::text(r), "value 11"))) << "C: the program changed: " << s::text(r);
+
+        p.write("src/c.cppm", "export module c;\nexport int c_val();\nexport inline int c_inl() { return 20; }\n"
+                              "int c_val() {\n    int x = 1;\n    // a line\n    return x;\n}\nint c_other() { return 7; }\n");
+        r = p.mcpp({"run", "--verbose"}, zone);
+        expect(fatal(e2e::contains(s::text(r), "value 21"))) << "D: a changed exported body did not reach the importer: " << s::text(r);
+        expect(e2e::contains(s::text(r), "c.gcm") && e2e::contains(s::text(r), "importers were compiled again")) << "D: the run does not name the changed BMI: " << s::text(r);
+    };
+
     "07 static library"_test[s::elf] = [] {
         // A `kind = "lib"` target is archived (cxx_archive) into a non-empty libmathlib.a of objects.
         auto p = s::project::scaffold("mathlib");
