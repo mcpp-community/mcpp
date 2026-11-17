@@ -18,6 +18,10 @@
 
 ### Changed
 
+- `mcpplibs.openkal-platform@0.29.2` is the default platform of the rows openkal serves
+  (0.29.1 in 2026.11.17.2). It states the hosts of each runner, so a row the machine starts
+  itself, `x86_64-windows-musl` on a Windows host, runs with no runner; a project no
+  longer states the release to get that.
 - The FreeBSD rows link on a Windows host with the FreeBSD sysroot packages' revision 2
   (xim-pkgindex): FreeBSD's crt objects and static archives hold zlib-compressed debug
   sections, which the lld of the Windows LLVM payload, built without zlib, does not read;

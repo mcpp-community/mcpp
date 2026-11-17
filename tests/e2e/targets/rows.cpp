@@ -360,7 +360,7 @@ int main() {
 
     "1077 a program of another system is not started until its runner is enabled"_test[s::llvm] = [] {
         // `mcpp run` builds a FreeBSD program on this host and does not start it: the row's
-        // platform states a runner (openkal-platform 0.29.1: dirun), which no declaration has
+        // platform states a runner (openkal-platform 0.29: dirun), which no declaration has
         // enabled. The refusal names what the runner needs and the declaration that enables
         // it; --no-runner is believed.
         const std::string T = std::string(s::on_x86_64() ? "x86_64" : "aarch64") + "-freebsd-musl";
