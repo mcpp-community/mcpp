@@ -341,3 +341,20 @@ openkal-platform 0.29.2 采用这两个版本；UEFI 与 DOS 的检查程序创�
 
 `mcpp publish` 没有 `--strict`，(1) 中"`--strict` 仍拒绝"不适用；兄弟成员的清单没有版本时仍拒绝。成员的 tag 不同时各有
 `SHA256SUMS-<tag>`。描述符的文件名与索引一致：`mcpplibs` 中为 `<name>.lua`，其他命名空间为 `<namespace>.<name>.lua`。
+
+### 10.5 非 Linux 宿主构建 BSD 行（6.3）：原因重新归属，未在本轮完成
+
+逐条读出 mcpp-platforms 0.1.0 在 macOS 与 Windows 宿主上的失败记录后，五处的归属与 6.3 的表不同：
+
+| 宿主 | 记录 | 归属 |
+|---|---|---|
+| Windows，NetBSD | `sys/cdefs.h:76: cannot open file …/machine/cdefs.h` | sysroot 中的 `machine` 是符号链接；归档在 Windows 上解包后它不是目录。属于包的解包（xlings），不是引擎 |
+| Windows，FreeBSD | `ld.lld: unable to find library -lgcc`、`-lgcc_s` | FreeBSD 的 `libgcc.a` 是指向 `libcompiler_rt.a` 的符号链接，`libgcc_s.so` 同理：与上一条同一原因。6.3 所记的"crt 找不到、程序名带 `.exe`"不是这条记录的内容 |
+| macOS，OpenBSD | `ld64.lld: unknown argument '--disable-new-dtags'` | 引擎：链接经由 Mach-O 的链接器 |
+| macOS，NetBSD | libc++ 的 `__locale`：`_CTYPE_BL` 未声明 | 引擎或 `llvm.libcxx` 的构建：C++ 层按宿主的配置编译 |
+| macOS，FreeBSD | std 模块的预编译读到 Apple SDK 的头文件 | 引擎：SDK 进入了非 Apple 的行 |
+
+Windows 的两条是一处修正，位置在解包（符号链接在 Windows 上以复制落地），需要 xlings 的一次发布；macOS 的三条在引擎，每条都需要
+在 macOS 宿主上逐次测量。两者都不能在没有该宿主的机器上完成，本轮没有做；mcpp-platforms 的 CI 仍只含 Linux 宿主，其文档
+写明宿主的范围。这是本方案中唯一没有落地的已定条目。
+
