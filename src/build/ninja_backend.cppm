@@ -46,6 +46,8 @@ import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.buildopt.keep;
+import mcpp.buildopt.advice;
+import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
@@ -5229,6 +5231,17 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (bmiRun.objectsSame)
         mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",
                                                 bmiRun.objectsSame));
+    // What the rebuild says of a module that is one file (SPEC-019 §6).
+    if (ok && !bmiRun.changed.empty()) {
+        namespace advice = mcpp::buildopt::advice;
+        std::vector<advice::Unit> units;
+        units.reserve(plan.compileUnits.size());
+        for (auto const& cu : plan.compileUnits)
+            units.push_back({cu.source.filename().string(), cu.providesModule, cu.imports,
+                             cu.declaration == mcpp::modgraph::ModuleDeclaration::Implementation});
+        for (auto const& c : advice::single_file_cascades(units, bmiRun.changed))
+            if (advice::first_time(plan.outputDir, c.module)) mcpp::ui::info("note", advice::line(c));
+    }
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
     if (report) {

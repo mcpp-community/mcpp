@@ -1796,12 +1796,17 @@ void ensure_ninja(const Env& env, bool quiet,
             return;
         }
     }
+    // A HOME THAT HAS A NINJA IS TOLD IN ONE LINE. ninja is the backend of a
+    // build, which a developer does not handle: the pin that moved is taken
+    // through xlings as every payload is, beside the version the home has,
+    // and the run says so once instead of narrating an installation.
     if (!quiet)
-        print_status("Bootstrap", other.empty() ? std::string("ninja into mcpp sandbox (one-time)")
-            : std::format("ninja {} into mcpp sandbox (beside {})", pinned::kNinjaVersion, other));
+        print_status(other.empty() ? "Bootstrap" : "Updating",
+            other.empty() ? std::string("ninja into mcpp sandbox (one-time)")
+                          : std::format("ninja {} -> {} (the build backend, through xlings)", other, pinned::kNinjaVersion));
     mcpp::log::ScopedTimer _t_ninja("init", std::format("bootstrap ninja@{}", pinned::kNinjaVersion));
     int rc = install_with_progress(env,
-        std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
+        std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet || !other.empty());
     if (rc != 0 && !other.empty()) {
         std::ofstream(attempt) << pinned::kNinjaVersion << "\n";
         if (!quiet)

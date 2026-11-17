@@ -195,6 +195,11 @@ private_fragment(std::string_view text, std::string_view spelling) {
                         return Result{std::unexpected(std::format(
                             "line {}: an unnamed namespace before the fragment", i + 1))};
                 }
+                // A function defined at namespace scope: `static int f() {`.
+                if (const auto st = trim(statement); !ns && st.starts_with("static") && word_at(st, 0, "static")
+                    && std::ranges::all_of(scopes, [](bool s) { return s; }))
+                    return Result{std::unexpected(std::format(
+                        "line {}: `static` at namespace scope before the fragment", i + 1))};
                 scopes.push_back(ns);
                 statement.clear();
             } else if (ch == '}') {
@@ -215,12 +220,6 @@ private_fragment(std::string_view text, std::string_view spelling) {
             }
         }
         statement += ' ';
-        // A function defined at namespace scope: `static int f() {` reaches
-        // the brace before any `;`.
-        const bool atNamespace = std::ranges::all_of(scopes, [](bool ns) { return ns; });
-        if (const auto st = trim(statement); atNamespace && st.starts_with("static") && word_at(st, 0, "static"))
-            return Result{std::unexpected(std::format(
-                "line {}: `static` at namespace scope before the fragment", i + 1))};
     }
 
     Units units;
