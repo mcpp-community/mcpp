@@ -82,6 +82,9 @@ struct CompileUnit {
     // Unit came from a scan_overrides declaration — plan-vs-ddi
     // verification is mandatory for it (ninja_backend emits --expect-*).
     bool                            scanOverridden = false;
+    // The source file as written, when `source` is a unit built for it
+    // (mcpp.modgraph SourceUnit::writtenAs); empty otherwise.
+    std::filesystem::path           writtenAs;
     // The module declaration form the scanner read (mcpp.modgraph.graph).
     // Stated as the unit's role by the build database.
     mcpp::modgraph::ModuleDeclaration declaration = mcpp::modgraph::ModuleDeclaration::None;
@@ -2797,6 +2800,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
         for (auto& req : u.requires_) cu.imports.push_back(req.logicalName);
         cu.scanOverridden = u.scanOverridden;
+        cu.writtenAs = u.writtenAs;
         cu.declaration    = u.declaration;
         // A C++ unit of the provider that neither provides nor imports a
         // module (`import std` included) and declares none: the one kind of

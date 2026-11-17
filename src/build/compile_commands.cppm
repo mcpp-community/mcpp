@@ -553,6 +553,25 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
         nlohmann::json args = nlohmann::json::array();
         for (auto& a : inv.arguments) args.push_back(std::move(a));
 
+        // THE FILE AS WRITTEN HAS AN ENTRY TOO. A unit the source seam gave
+        // for a source (a private module fragment as a unit of its own) is a
+        // file of the build directory; the file a person opens is the source,
+        // and a language server asks the database about that one. Its entry is
+        // the interface unit's command over the source as written -- the
+        // command a build with `private_fragment = "as-written"` runs.
+        if (inv.unit && !inv.unit->writtenAs.empty() && !inv.unit->providesModule.empty()) {
+            const auto written = native_string(inv.unit->writtenAs);
+            nlohmann::json writtenArgs = args;
+            for (auto& a : writtenArgs)
+                if (a.is_string() && a.get<std::string>() == inv.file) a = written;
+            nlohmann::json entry;
+            entry["directory"] = inv.directory;
+            entry["file"] = written;
+            entry["arguments"] = std::move(writtenArgs);
+            entry["output"] = inv.output;
+            entries.push_back(std::move(entry));
+        }
+
         nlohmann::json entry;
         entry["directory"] = std::move(inv.directory);
         entry["file"] = std::move(inv.file);

@@ -179,6 +179,18 @@ E2E basics{"basics", [] {
         p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
         auto r = p.mcpp({"run"});
         expect(fatal(e2e::contains(s::text(r), "value 11"))) << "A: a module with a private fragment did not build and run: " << s::text(r);
+        // The compile database answers for the file a person opens, not only for the units
+        // built for it.
+        {
+            std::string db;
+            for (const auto& f : s::glob(p.at("target"), "*/*/compile_commands.json")) db = s::read_file(f);
+            expect(fatal(e2e::contains(db, "c.private.cpp"))) << "A: the fragment's unit is not in the compile database";
+            const auto written = p.at("src/c.cppm").generic_string();
+            std::string generic = db;
+            std::ranges::replace(generic, '\\', '/');
+            expect(e2e::contains(generic, std::format("\"file\": \"{}\"", written)) || e2e::contains(generic, std::format("\"file\":\"{}\"", written)))
+                << "A: the source as written has no entry in the compile database: " << db;
+        }
 
         p.write("src/c.cppm", unit("10", "// a line\nint c_val() { return 2 + from_header() - 100; }"));
         r = p.mcpp({"build", "--verbose"});

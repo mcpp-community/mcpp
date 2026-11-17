@@ -111,6 +111,11 @@ struct SourceUnit {
     // Unit built from a manifest scan_overrides declaration instead of a
     // real scan — plan-vs-ddi verification is mandatory for these.
     bool                            scanOverridden     = false;
+    // The source file this unit is built from, when the unit is not that file:
+    // a unit the source seam gave for it (a private module fragment as a unit
+    // of its own, SPEC-019). Empty: `path` is the source as written. What
+    // answers "which units is this file built as" reads it.
+    std::filesystem::path           writtenAs;
 };
 
 // A package's closure: the qualified names of the packages whose modules its

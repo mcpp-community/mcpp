@@ -143,6 +143,7 @@ static void build_private_fragments_as_units(PrepareState& state,
         auto carry = [&](mcpp::modgraph::SourceUnit& to, const fs::path& relPath) {
             auto const& from = units[i];
             to.relPath = relPath;
+            to.writtenAs = written;
             to.localIncludeDirs = from.localIncludeDirs;
             to.localIncludeDirs.insert(to.localIncludeDirs.begin(), written.parent_path());
             to.localIncludeDirsAfter = from.localIncludeDirsAfter;
