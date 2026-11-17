@@ -219,7 +219,9 @@ int main() {
         const auto doctor = s::text(app.mcpp({"self", "doctor"}));
         expect(fatal(s::contains_nocase(doctor, "mismatch"))) << "FAIL: doctor did not surface the stored runtime mismatch: " << doctor;
         // 3
-        app.write("src/main.cpp", "int main() { return 0; }\n// touched so the artifact is relinked and the verdict is re-derived\n");
+        // Another program, so that it is linked again and the verdict re-derived: a source compiled
+        // to the object it had is not linked (SPEC-018 §1), and its artifact keeps its verdict.
+        app.write("src/main.cpp", "int main() { int relinked = 0; return relinked; }\n");
         r = app.mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "FAIL: a rebuilt artifact must be re-validated, not stay condemned: " << s::text(r);
         doc = s::json_file(*cache);
