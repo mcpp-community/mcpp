@@ -362,6 +362,15 @@ mcpp-platforms 的草稿 PR #2 在 macOS 与 Windows 宿主上各运行三行并
 v4 把 macOS 的 FreeBSD 记为"读到 Apple SDK 的头文件"、把 Windows 的 FreeBSD 记为符号链接，均与记录不符，以上表为准。
 修正经 mcpp#949 的 CI 与 xlings 的 Windows CI 验证后，mcpp-platforms 的 CI 加入 macOS 与 Windows 宿主。
 
+发布后在 mcpp-platforms#3 的 CI 中测得（mcpp 2026.11.17.2，xlings 2026.11.17.2）：
+
+| 宿主 | NetBSD、OpenBSD | FreeBSD |
+|---|---|---|
+| macOS arm64 | 构建通过 | 构建通过 |
+| Windows x86_64 | 构建通过 | 编译通过，链接失败 |
+
+Windows 上的 FreeBSD 行在以上两处修正之后停在第三处：FreeBSD 的 `crtend.o` 与 `libgcc.a` 带有 zlib 压缩的调试段，而 Windows 的 LLVM 包中的 lld 未带 zlib（`is compressed with ELFCOMPRESS_ZLIB, but lld is not built with zlib support`）。修正属于该 LLVM 包。e2e 1116 在 Windows 宿主上因 LLVM 能力不成立而跳过，所以 mcpp#949 的 CI 没有测到这一点；该两格不在 mcpp-platforms 的 Windows 构建矩阵中，文档按测得的结果陈述。
+
 ### 10.6 内容不变的重复运行仍在编译（2.4）：命令行随根而变
 
 真实工程（31 个成员的工作区）上以 ninja 的 explain 连续运行三遍，第三遍没有任何源文件变化，仍有 2779 条"command line
