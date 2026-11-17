@@ -5,7 +5,7 @@ status: active
 
 # 第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项
 
-**日期：** 2026-11-17 · **版本：** v3（按 2026-11-17 的答复修订，待确认；修订依据见第 9 节） · **基线：** mcpp 2026.11.17.1、openkal-platform 0.29.1、mcpp.platforms 0.1.0、
+**日期：** 2026-11-17 · **版本：** v4（已确认并实施；实施中测得的结果见第 10 节） · **基线：** mcpp 2026.11.17.1、openkal-platform 0.29.1、mcpp.platforms 0.1.0、
 djgpp-platform 0.2.0、setup-mcpp v1.0.1、ninja 1.12.1（xim）· **前文：** [第二部分](2026-11-16-ecosystem-gap-supplement-part2-design.md)
 （第 18 节记录 #945 在真实工程上的结果）
 
@@ -285,3 +285,59 @@ PR、提交为检查点、一轮完成；6.2 与 6.3 进入本轮；外部验证
 | 范围（v3） | 两轮 | 用户决定：单 PR、提交为检查点 | 第 7 节 |
 | 跨平台（v3） | 分叉 CI 的四个资产如何与现有资产同形状未陈述 | `xlings-res/ninja` 只有 README，无构建配方；现有 linux-x86_64 为静态 ELF | 2.2：构建前以 `file` 与大小核对现有四个资产，配方写入分叉的 CI |
 
+## 10. 实施记录（v4，2026-11-17）
+
+实施与方案不同之处，以及实施中测得的事实。
+
+### 10.1 ninja
+
+- **补丁为 #2840 的第一个提交。** 该提交把两处循环改为按下标遍历（`build.cc` 8 行增、6 行删），在 v1.12.1 上无冲突；第二个
+  提交只把同样的循环改写为一个范围辅助类，不改变行为，未取。分叉 `mcpp-community/ninja`，分支 `mcpp/1.12.1`，CI 在四个宿主上
+  运行 ninja 自己的测试并产出与 1.12.1 同形状的资产（实测现有资产：x86_64 为静态 glibc，aarch64 为静态 musl，macOS 为两种架构
+  合一的 Mach-O，Windows 为 MSVC）。
+- **更新工具排除预发布。** `xpkgindex-update` 跳过标为 draft 或 prerelease 的 release，`xlings-res/ninja` 的该 release 标为
+  prerelease。索引的校验要求新版本写明每个架构的 `url` 与 `sha256`，条目按此写出。
+- **"已有的 home 下次运行时安装固定版本"在 2026.11.17.1 上不成立。** `ensure_ninja` 在任一版本的 ninja 存在时即返回；`ninja_program_for`
+  取目录遍历给出的第一个版本，顺序未定义。实施：引导按固定版本判断，缺失时安装；构建在同一存放处优先取固定版本。索引尚未列出
+  固定版本时（镜像滞后、缓存的索引）新 home 安装 1.12.1 并说明其缺少的修正；已有的 home 保留原有版本，一天之后再试。
+
+### 10.2 `mcpp.bmi`
+
+截断的实现从 `src/build/stage.cppm` 移出，成为独立的包 `modules/bmi`：
+
+| 模块 | 内容 |
+|---|---|
+| `mcpp.bmi` | 与编译器无关：两个 BMI 的差别（按格式分派，未知格式按字节）、一条边的提问 `keeps_previous`、构建目录的取值与记录、运行结束时的说明 |
+| `mcpp.bmi.gcc` | GCC 的 `.gcm`：两个时间戳、行映射段与配置段的两个校验和 |
+| `mcpp.bmi.difference` | 两者共用的词汇（相同、仅位置、变化） |
+
+新增一种格式的读者即新增一个模块与分派中的一行。三种调度（未拆分的规则、拆分 BMI 的两种）经同一提问比较，因此取值不写入
+命令，而写入构建目录的 `bmi-cutoff`；切换到 `exact` 时移除 `bmi-kept.list` 所列的 BMI，其边与导入者随之运行。v3 的"取值写入
+编译命令"由此取代：不必使每个接口单元重新编译。
+
+- **M1 通过。** `import std` 之下模板体内的 `std::source_location::current()` 在 BMI 中留下 `__builtin_source_location`；守卫的
+  名字表为 `__builtin_LINE` 与 `__builtin_source_location`。以 `-fcontracts` 编译的图按确切内容比较。默认值为 `ignore-locations`。
+- **`.gnu.c++.cfg` 中随位置变化的是第 0–3 字节（该段的校验和）与第 8–11 字节（模块的校验和）**，其余字节相同时才判为仅位置。
+- **取值的层次没有机器层。** profile 的键（`ndebug`、`trim_paths`）在 `config.toml` 中均无对应；`bmi_cutoff` 与之一致：环境、
+  profile、引擎默认。
+- **O5 不实施。** 被编辑单元的对象在带调试信息的 profile 下随行号变化；不带调试信息时只有不改变代码的编辑（注释）使对象不变。
+  O1、O2 之后 GCC 下这类编辑不再到达导入者，剩余的收益是一次归档与链接，代价是每次编译多一次对象的保留与比较。
+- **O7 未在 Windows 上测量。** 未拆分的规则在 Windows 上不比较 BMI，规范（SPEC-018 §1）写明这一例外；每条编译命令已经由
+  mcpp 的执行器启动，比较可以移入该执行器而不依赖 shell，这是它的落点。
+
+### 10.3 文件系统缺口的原因
+
+v3 把三处缺口的原因标为假设。复现后两处的原因都不在所猜的位置，第三处是同一原因：
+
+| 现象 | 原因 | 修正 |
+|---|---|---|
+| UEFI：列目录给出 `f2.`，改名被固件拒绝 | 仅发布档。openkal-uefi 的源码以 `x86_64-unknown-uefi` 编译，`wchar_t` 为 16 位；优化器把测量 UTF-16 名字长度的循环替换为 `wcslen`，链接到 C 库中 32 位 `wchar_t` 的 `wcslen`，长度有误。列目录按该长度转换，改名把该长度的名字写入 `EFI_FILE_INFO` | openkal-uefi 0.11.2：`-fno-builtin`（openkal-windows 已因同一原因如此）；C 库示例在两种 profile 下运行 |
+| DOS：子目录的列举为空 | openkal-musl 的 `chdir` 不释放此前工作目录的句柄。i686 Linux 上一个 20 行的脚本留下 20 个未关闭的目录句柄；openkal-dos 有 32 个目录，其后 `opendir` 失败 | openkal-musl 0.29.9 |
+| DOS：`opendir("/okd")`、`chdir("/")` 失败 | 提供的目录都以卷命名，没有名为 `/` 的目录 | openkal-musl 0.29.9：以分隔符开头的名字是当前目录所在卷的根 |
+
+openkal-platform 0.29.2 采用这两个版本；UEFI 与 DOS 的检查程序创建目录、写入、改名、列举并删除文件。
+
+### 10.4 #947
+
+`mcpp publish` 没有 `--strict`，(1) 中"`--strict` 仍拒绝"不适用；兄弟成员的清单没有版本时仍拒绝。成员的 tag 不同时各有
+`SHA256SUMS-<tag>`。描述符的文件名与索引一致：`mcpplibs` 中为 `<name>.lua`，其他命名空间为 `<namespace>.<name>.lua`。
