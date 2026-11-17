@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.3 |
-| 版本 | 1.3 |
-| 最后修改 | 2026-11-16 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1 |
+| 状态 | 评审中 v1.5 |
+| 版本 | 1.5 |
+| 最后修改 | 2026-11-18 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1 |
 | 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
@@ -58,6 +58,19 @@
 - `exe-suffix-fixed` 陈述行的可执行文件后缀是加载其程序的一部分（缺省为假）。为真时，名字模板（构建程序的
   `artifact_name`、`link.exe`）只决定后缀之前的部分，后缀总在名字末尾出现一次：模板的结果已以该后缀结尾时不重复。
   内置的 `wasm32-emscripten` 行为真（`.js` 使启动文件与模块成对）。引擎不按系统名判断（v1.4）。
+- `object-format`、`exe-suffix`、`shared-suffix` 按三级读取，先陈述者生效：行，行的系统（§2.3），对象格式的约定（v1.5）。
+  内置行与平台定义的行同一读法；引擎不按系统名判断，宿主的命名不为任何行作答。
+
+  | 格式 | 程序 | 静态库 | 共享库 |
+  |---|---|---|---|
+  | `elf`（行与系统都未陈述格式时） | 无后缀 | `lib<name>.a` | `.so` |
+  | `mach-o` | 无后缀 | `lib<name>.a` | `.dylib` |
+  | `pe` | `.exe` | `lib<name>.a`；env 为 `msvc` 时 `<name>.lib` | `.dll`，带导入库 |
+  | `coff` | 无后缀 | `lib<name>.a` | `.so` |
+  | `wasm` | 无后缀 | `lib<name>.a` | 不支持 |
+
+  行与系统都未陈述格式而 arch 段为 `wasm32`、`wasm64` 时，格式为 `wasm`。既不是表中的行、os 段也不是表中系统的三元组，
+  其命名取宿主的；空请求（为本机构建）同样取宿主的。
 
 ### 2.2 内置行
 
@@ -81,6 +94,9 @@
 | `uname` | `uname -s` 在该系统上的回答；每个系统一个程序的单文件按它选择程序 |
 | `resources` | 该系统的加载器读取程序的资源节；工程的 `[resources]` 编入其行的程序，未写为 false（v1.3） |
 | `command-scripts` | 该系统经命令解释器启动的文件的后缀；在该系统上启动这类文件时，含解释器语法的参数被拒绝（SPEC-013 §10）（v1.3） |
+| `object-format` | 该系统各行的对象格式（`elf`、`mach-o`、`pe`、`wasm`、`coff`）；行自己的陈述在先（§2.1）（v1.5） |
+| `exe-suffix` | 该系统的程序的后缀；行自己的陈述在先（v1.5） |
+| `shared-suffix` | 该系统的共享库的后缀；行自己的陈述在先（v1.5） |
 
 - 陈述了 `uname` 的系统可以进入多系统单文件；表中未陈述 `uname` 的系统，其程序是文件开头的 PE；表中没有的系统被拒绝，
   并指名 `[[platform.system]]`。
@@ -89,6 +105,10 @@
 - 资源随行的 `execution` 所指系统而定，不随 PE 容器：UEFI 应用是固件加载的 PE，不编入资源。内置数据中 `windows` 陈述
   `resources = true`（v1.3）。
 - 内置数据中 `windows` 陈述 `command-scripts = [".bat", ".cmd"]`（v1.3）。
+- 内置数据中 `windows` 陈述 `object-format = "pe"`，`macos` 陈述 `object-format = "mach-o"`；iOS 的行各自陈述
+  `mach-o`，ok 镜像的行陈述 `.oke` 与 `.okso`，`wasm32-emscripten` 陈述 `.js`（v1.5）。此前这些由引擎中按系统名的分支
+  表达，没有分支的内置行（FreeBSD、裸机、iOS）取宿主的命名。
+- 平台定义的行可以不陈述 `object-format`：未陈述时取其系统的，再取 ELF（v1.5）。
 - 引擎源码中系统名的出现次数由检查持有（`.github/tools/check_system_names.py` 与其基线），只许减少。
 
 ### 2.4 执行关系（v1.3）
@@ -237,5 +257,6 @@
 | 1.0 | 2026-11-09 | 初版：行、提供者、选择、平台定义的行、C 环境、执行、报告与锁 |
 | 1.1 | 2026-11-10 | `clang-triple`；内置行的系统词；FreeBSD 两种身份与 32 位 planned 行；提供者 sysroot 为基座陈述的最后一级；`mingw-llvm` 与 `aarch64-windows-gnu`；C 库由平台描述的行与内置行同一读法；打包读文件闭包；`link.flags` 的警告；构建程序的 `MCPP_KERNEL_ABI_INTERFACES` |
 | 1.2 | 2026-11-12 | 行的 `loader` 与 `execution` 为内置行所读；系统表（`uname`）；提供者的 `tier`、`system-headers`、`runner`；一条条目一种安排；请求的回答是契约；`glibc-sysroot`；一个执行谓词，另一系统的程序不被启动；程序解释器与基座包的单一读法；运行器的占位、`requires` 与 `built-as` |
+| 1.5 | 2026-11-18 | mcpp 2026.11.18.1（设计 2026-11-17 §12）：`object-format`、`exe-suffix`、`shared-suffix` 的三级读取（行、系统、格式的约定）；系统表的这三个键；内置行的命名不取宿主的 |
 | 1.4 | 2026-11-17 | mcpp 2026.11.17.1（设计 2026-11-16 N48）：行的 `exe-suffix-fixed` |
 | 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 G7、N16、N23、N26、N33、R1、R2、X1）：执行关系表（§2.4）；系统表的 `resources` 与 `command-scripts`（§2.3）；提供者运行器的 `host`、`enabled` 与 `exclusive`（§6）；Android 行的运行器（G7）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |

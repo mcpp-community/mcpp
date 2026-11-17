@@ -9,14 +9,26 @@
 ### Fixed
 
 - A FreeBSD row built on a Windows host named its program `<name>.exe` and its archives
-  `.lib`: the row had no naming of its own, so the host's was taken. A row of the table is
-  named by its object format, which is its data; the bare-metal rows and the iOS rows
-  answered with the host's naming too (21 rows of the snapshot). The host's naming is the
-  answer for a triple that is no row only. Measured in mcpp-platforms' CI, where the
-  build finished and no `bin/hello` existed.
+  `.lib`: the engine named artifacts by a branch per system, and a built-in row without a
+  branch took the host's naming (21 rows of the snapshot: FreeBSD, bare metal, iOS). A
+  row's `object-format`, `exe-suffix` and `shared-suffix` are read from data in three
+  steps: the row, its system, the convention of the object format (SPEC-016 v1.5). The
+  built-in rows and a platform's rows share the reading, the engine names no system for
+  it, and the host's naming answers only for a triple that is neither a row nor of a
+  system the table states. Measured in mcpp-platforms' CI, where the build finished and
+  no `bin/hello` existed. The names of the other built-in rows are unchanged (the rows
+  snapshot).
 - e2e 1116 (a row of another ELF system on a host of any format) ran on Linux hosts only:
   its capability, `llvm`, is a Linux one. It runs wherever the LLVM payload is, and holds
   the program to the row's name.
+
+### Added
+
+- `[[platform.system]]` accepts `object-format`, `exe-suffix` and `shared-suffix`: what
+  the system's rows share. A row's own statement precedes them. A `[[platform.define]]`
+  row may leave `object-format` unstated: it is then its system's, then ELF. The
+  built-in table states `pe` for Windows and `mach-o` for macOS this way, and the
+  suffixes of the ok images and of `wasm32-emscripten` on their rows.
 
 ### Changed
 

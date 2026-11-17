@@ -353,6 +353,20 @@ name  = "haiku"
 uname = "Haiku"                                  # `uname -s` 在该系统上的回答
 ```
 
+**对象格式与文件名（2026.11.18.1+）。** 行的 `object-format`、`exe-suffix`、`shared-suffix` 按三级读取，先陈述者生效：行，
+行的系统（`[[platform.system]]` 接受同样三个键，陈述其各行共有的值），对象格式的约定。内置行经同一读法，其陈述是内置表
+中的数据；构建机器的命名不为任何行作答，因此一个目标在每种宿主上是同一组文件名。
+
+| 格式 | 程序 | 静态库 | 共享库 |
+|---|---|---|---|
+| `elf`（两者都未陈述格式时） | 无后缀 | `lib<name>.a` | `.so` |
+| `mach-o` | 无后缀 | `lib<name>.a` | `.dylib` |
+| `pe` | `.exe` | `lib<name>.a`；env 为 `msvc` 时 `<name>.lib` | `.dll`，带导入库 |
+| `coff` | 无后缀 | `lib<name>.a` | `.so` |
+| `wasm` | 无后缀 | `lib<name>.a` | 不支持 |
+
+程序取其他后缀的行陈述它（`exe-suffix = ".efi"`）。未陈述 `object-format` 的行取其系统的，再取 ELF。
+
 提供者的 `runner` 是运行器陈述的最低一级：构建程序的、本机 `config.toml` 的、项目的
 `[target.<selector>] runner` 与 `MCPP_TARGET_<TRIPLE>_RUNNER` 依次替换它。平台自己的 `runner` 属于 `[platform] targets`，
 不替换它（2026.11.13.1）：提供者陈述它所服务的身份的运行器、链接（`link`）与基座（`sysroot`），`base = "platform"` 与

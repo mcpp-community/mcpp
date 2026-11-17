@@ -100,6 +100,16 @@
 #   command-scripts the suffixes of the files the system starts through its
 #                   command interpreter; an argument holding the interpreter's
 #                   syntax (`%`, `^`, `&`, `|`, `<`, `>`, `"`) is refused
+#   object-format   the container the objects of the system's rows come in
+#                   (elf | mach-o | pe | wasm | coff); a row's own statement
+#                   precedes it, and ELF is what neither states
+#   exe-suffix      the suffix of the system's programs
+#   shared-suffix   the suffix of its shared libraries
+#
+# A row's `object-format`, `exe-suffix` and `shared-suffix` are read row first,
+# then system, then the convention of the object format (elf: none, `.so`;
+# mach-o: none, `.dylib`; pe: `.exe`, `.dll`). No engine source names a system
+# for them, and no host answers for a row.
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
@@ -205,6 +215,8 @@ standard = true
 
 [[platform.define]]
 triple   = "i686-openkal"
+exe-suffix    = ".oke"
+shared-suffix = ".okso"
 tier     = "planned"
 note     = "ok"
 standard = true
@@ -439,16 +451,19 @@ exact    = true
 
 [[platform.define]]
 triple   = "aarch64-ios"
+object-format = "mach-o"
 tier     = "preview"
 standard = true
 
 [[platform.define]]
 triple   = "aarch64-ios-sim"
+object-format = "mach-o"
 tier     = "verified"
 standard = true
 
 [[platform.define]]
 triple   = "x86_64-ios-sim"
+object-format = "mach-o"
 tier     = "verified"
 standard = true
 
@@ -471,18 +486,23 @@ exceptions = "wasm"
 companions = [".wasm"]
 # `.js` pairs the launcher with its module: a name template decides what
 # precedes it, and the name ends in `.js` (N48).
+exe-suffix       = ".js"
 exe-suffix-fixed = true
 
 # OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
 # `okrun` on Linux, macOS and Windows of that architecture.
 [[platform.define]]
 triple   = "x86_64-openkal"
+exe-suffix    = ".oke"
+shared-suffix = ".okso"
 tier     = "verified"
 note     = "ok"
 standard = true
 
 [[platform.define]]
 triple   = "aarch64-openkal"
+exe-suffix    = ".oke"
+shared-suffix = ".okso"
 tier     = "verified"
 note     = "ok"
 standard = true
@@ -697,8 +717,9 @@ name  = "linux"
 uname = "Linux"
 
 [[platform.system]]
-name  = "macos"
-uname = "Darwin"
+name          = "macos"
+uname         = "Darwin"
+object-format = "mach-o"
 
 [[platform.system]]
 name  = "freebsd"
@@ -707,6 +728,7 @@ uname = "FreeBSD"
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
 name            = "windows"
+object-format   = "pe"
 resources       = true
 command-scripts = [".bat", ".cmd"]
 

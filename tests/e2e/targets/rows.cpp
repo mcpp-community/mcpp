@@ -401,6 +401,67 @@ int main() {
         expect(freebsd) << "the ELF is not a FreeBSD program";
         expect(s::lacks(s::text(r), "MacOSX") && s::lacks(s::text(r), "-isysroot")) << "the build names an SDK of the host: " << s::text(r);
     };
+
+    "1117 a platform's system states what its rows share"_test[s::llvm] = [] {
+        // SPEC-016 v1.5: `object-format`, `exe-suffix` and `shared-suffix` are read row
+        // first, then the row's system. The row here states none of them and its system
+        // states the program's suffix, so the plan names the program by it. The toy base
+        // holds no C library; the plan is what is read, and the link's outcome is not.
+        const auto t = s::case_dir();
+        fs::create_directories(t / "toy-sysroot/usr/lib");
+        s::project(t / "toy-sysroot", {{"mcpp.toml", "[package]\nname     = \"toy-sysroot\"\nversion  = \"1.0\"\nprovides = [\"mcpp:c-abi=toy-libc\", \"mcpp:c++-abi=libstdc++\", \"mcpp:compiler-runtime=libgcc\",\n            \"hosted-standard-library\"]\n"}});
+        s::project(t / "plat", {{"mcpp.toml", std::format(R"([package]
+name    = "toy-system-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{}"
+
+[[platform.system]]
+name          = "toynet"
+uname         = "ToyNet"
+exe-suffix    = ".tny"
+shared-suffix = ".tso"
+
+[[platform.define]]
+triple       = "x86_64-toynet"
+clang-triple = "x86_64-unknown-netbsd10.2"
+family       = "unix"
+execution    = "toynet"
+tier         = "preview"
+
+[[platform.define]]
+triple       = "aarch64-toynet"
+clang-triple = "aarch64-unknown-netbsd10.2"
+exe-suffix   = ".own"
+family       = "unix"
+execution    = "toynet"
+tier         = "preview"
+
+[[platform.provider]]
+serves  = ["*-toynet"]
+sysroot = {{ path = "../toy-sysroot" }}
+hosted  = true
+
+[platform.link]
+driver = "compiler"
+)", s::llvm_version())}});
+        s::project app(t / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[target.'cfg(os = \"toynet\")']\nplatform = { path = \"../plat\" }\n"},
+                                   {"src/main.cpp", "int main() { return 0; }\n"}});
+        auto planned = [&](std::string_view triple) {
+            auto r = app.mcpp({"build", "--target", std::string(triple)});
+            std::string plan;
+            std::error_code ec;
+            for (fs::recursive_directory_iterator it(app.at(std::format("target/{}", triple)), ec), end; !ec && it != end; it.increment(ec))
+                if (it->path().filename() == "build.ninja") plan += s::read_file(it->path());
+            return std::pair(plan, s::text(r));
+        };
+        auto [sys, out] = planned("x86_64-toynet");
+        expect(fatal(e2e::contains(sys, "bin/app.tny"))) << "the program is not named by its system's suffix: " << out;
+        auto [own, out2] = planned("aarch64-toynet");
+        expect(fatal(e2e::contains(own, "bin/app.own"))) << "the row's own suffix does not precede its system's: " << out2;
+        expect(fatal(!e2e::contains(own, "bin/app.tny"))) << "the system's suffix was taken over the row's";
+    };
 }};
 
 }  // namespace

@@ -275,8 +275,8 @@ struct Triple {
     // fallback would otherwise claim ELF for it -- the silent wrong answer this
     // whole axis exists to remove.
     ObjectFormat object_format() const {
-        // A row that states its format -- one a platform defines, or a built-in
-        // row whose data carries `object-format` -- is taken as written.
+        // READ FROM THE DATA (SPEC-016 §2.3): the row's own statement, then
+        // its system's. The engine names no system here.
         auto stated = [](std::string_view f) {
             if (f == "pe") return ObjectFormat::Pe;
             if (f == "mach-o") return ObjectFormat::MachO;
@@ -284,11 +284,10 @@ struct Triple {
             if (f == "coff") return ObjectFormat::Coff;
             return ObjectFormat::Elf;
         };
-        if (auto* d = defined()) return stated(d->objectFormat);
         if (auto const* r = mcpp::toolchain::target::find_row(str()); r && !r->objectFormat.empty())
             return stated(r->objectFormat);
-        if (os == "windows")                  return ObjectFormat::Pe;
-        if (os == "macos" || os == "ios")     return ObjectFormat::MachO;
+        if (auto const* s = mcpp::toolchain::target::find_system(os); s && !s->objectFormat.empty())
+            return stated(s->objectFormat);
         if (arch.starts_with("wasm"))         return ObjectFormat::Wasm;
         return ObjectFormat::Elf;
     }
@@ -862,107 +861,48 @@ struct ArtifactNaming {
 // the decision testable from any host (and keeps this module dependency-free).
 inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hostNaming) {
     if (t.empty()) return hostNaming;
-    if (auto* d = t.defined()) {
-        const bool pe = t.is_pe();
-        return ArtifactNaming{
-            .exeSuffix = d->exeSuffix, .libPrefix = "lib",
-            .staticLibExt = ".a",
-            .sharedLibExt = !d->sharedSuffix.empty() ? d->sharedSuffix
-                          : pe ? std::string_view(".dll")
-                          : t.is_mach_o() ? std::string_view(".dylib") : std::string_view(".so"),
-            .sharedNeedsImportLib = pe,
-        };
-    }
+    // ONE READING FOR EVERY ROW (SPEC-016 §2.3; design 2026-11-17 §12): the
+    // row's statement, then its system's, then the convention of the object
+    // format. The engine names no system here, and the host answers only for a
+    // triple that is neither a row nor of a system the table states -- left to
+    // the host, a FreeBSD row built on a Windows host was `bin/hello.exe`
+    // (measured, mcpp-community/mcpp-platforms#4), and 21 rows of the snapshot
+    // answered that way.
+    auto const* row = mcpp::toolchain::target::find_row(t.str());
+    auto const* sys = mcpp::toolchain::target::find_system(t.os);
+    if (!row && !sys) return hostNaming;
 
-    if (t.os == "windows") {
-        // PE. The static-library convention splits on env, not on os.
-        const bool msvc = t.is_msvc_env();
-        return ArtifactNaming{
-            .exeSuffix            = ".exe",
-            .libPrefix            = msvc ? "" : "lib",
-            .staticLibExt         = msvc ? ".lib" : ".a",
-            .sharedLibExt         = ".dll",
-            .sharedNeedsImportLib = true,
-        };
+    // THE CONVENTIONS OF THE FORMATS. A PE static library splits on the ABI
+    // (`msvc`), not on a system. A wasm row has no shared library: a side
+    // module needs `-sSIDE_MODULE`, a link contract this engine does not
+    // render, so the empty suffix with `sharedNeedsImportLib` is the "not
+    // supported" marker the plan refuses on (prepare.cppm).
+    ArtifactNaming n{ .exeSuffix = "", .libPrefix = "lib", .staticLibExt = ".a", .sharedLibExt = ".so",
+                      .sharedNeedsImportLib = false };
+    switch (t.object_format()) {
+    case ObjectFormat::Pe:
+        n.exeSuffix = ".exe";
+        n.sharedLibExt = ".dll";
+        n.sharedNeedsImportLib = true;
+        if (t.is_msvc_env()) { n.libPrefix = ""; n.staticLibExt = ".lib"; }
+        break;
+    case ObjectFormat::MachO: n.sharedLibExt = ".dylib"; break;
+    case ObjectFormat::Wasm:  n.sharedLibExt = ""; n.sharedNeedsImportLib = true; break;
+    default: break;
     }
-    if (t.os == "macos") {
-        return ArtifactNaming{
-            .exeSuffix = "", .libPrefix = "lib",
-            .staticLibExt = ".a", .sharedLibExt = ".dylib",
-            .sharedNeedsImportLib = false,
-        };
-    }
-    if (t.os == "linux") {
-        return ArtifactNaming{
-            .exeSuffix = "", .libPrefix = "lib",
-            .staticLibExt = ".a", .sharedLibExt = ".so",
-            .sharedNeedsImportLib = false,
-        };
-    }
-    // SPEC 12: an executable image is `*.oke`, an image another loads `*.okso`.
-    if (t.os == "openkal") {
-        return ArtifactNaming{
-            .exeSuffix = ".oke", .libPrefix = "lib",
-            .staticLibExt = ".a", .sharedLibExt = ".okso",
-            .sharedNeedsImportLib = false,
-        };
-    }
-    if (t.os == "emscripten") {
-        // `artifact_naming`'s one sentence, unchanged: the executable is the
-        // file a runner executes, in the row's own convention. On this row
-        // that file is the JavaScript launcher — what the emsdk payload's
-        // `node` runs and what a browser loads — so the row's convention for
-        // "the executable" is `.js`, not the ELF/host-borrowed bare name this
-        // used to fall back to (a different file on Linux vs. Windows hosts).
-        //
-        // Read, not recalled: Emscripten's own CMake toolchain fixes
-        // `CMAKE_EXECUTABLE_SUFFIX ".js"` (`Platform/Emscripten.cmake`) and
-        // Rust's `wasm32-unknown-emscripten` target spec sets
-        // `exe_suffix: ".js"` — both because emcc's `-o` extension selects
-        // what it emits, and anything but `.js`/`.html`/`.wasm` falls back to
-        // the `.js` case. A future `wasm32-wasi` row would answer `.wasm` by
-        // the same sentence, the way Rust's other wasm targets do, because
-        // there the module IS the executable a runner executes.
-        //
-        // `sharedLibExt` is empty and `sharedNeedsImportLib` is set as the
-        // "shared libraries are not supported for this target" marker (see
-        // the field comment above): a wasm side module needs `-sSIDE_MODULE`,
-        // a link contract this engine does not render, so the fallback answer
-        // (a `.so`-shaped file that does not work as one) is refused instead
-        // of produced — see the plan-time refusal in prepare.cppm.
-        return ArtifactNaming{
-            .exeSuffix = ".js", .libPrefix = "lib",
-            .staticLibExt = ".a", .sharedLibExt = "",
-            .sharedNeedsImportLib = true,
-        };
-    }
-    // A ROW OF THE TABLE WITH NO BRANCH ABOVE IS NAMED BY ITS OBJECT FORMAT,
-    // which is the row's data (`object_format()`), not by the host. Left to the
-    // host answer below, a FreeBSD row built on a Windows host was
-    // `bin/hello.exe` and its archives `.lib` (measured,
-    // mcpp-community/mcpp-platforms#4: the build finished and no `bin/hello`
-    // existed); the bare-metal rows and the iOS rows answered the same way,
-    // 21 rows of the snapshot in all.
-    if (mcpp::toolchain::target::find_row(t.str())) {
-        switch (t.object_format()) {
-        case ObjectFormat::Elf:
-            return ArtifactNaming{
-                .exeSuffix = "", .libPrefix = "lib",
-                .staticLibExt = ".a", .sharedLibExt = ".so",
-                .sharedNeedsImportLib = false,
-            };
-        case ObjectFormat::MachO:
-            return ArtifactNaming{
-                .exeSuffix = "", .libPrefix = "lib",
-                .staticLibExt = ".a", .sharedLibExt = ".dylib",
-                .sharedNeedsImportLib = false,
-            };
-        default: break;
-        }
-    }
-    // Not a row and outside the triple language: fall back to the host answer
-    // rather than guessing. A wrong guess here silently misnames every artifact.
-    return hostNaming;
+    // What the data states over the convention. The executable is the file a
+    // runner executes: `.js` of wasm32-emscripten (the launcher `node` runs and
+    // a browser loads; Emscripten's CMake toolchain and Rust's target spec fix
+    // the same suffix), `.oke` of an ok image, `.efi` of a UEFI application.
+    auto first = [](std::string_view a, std::string_view b) { return !a.empty() ? a : b; };
+    if (auto s = first(row ? row->exeSuffix : std::string_view{}, sys ? sys->exeSuffix : std::string_view{});
+        !s.empty())
+        n.exeSuffix = s;
+    if (auto s = first(row ? row->sharedSuffix : std::string_view{},
+                       sys ? sys->sharedSuffix : std::string_view{});
+        !s.empty())
+        n.sharedLibExt = s;
+    return n;
 }
 
 // ── The link form of `kind = "app"` ──────────────────────────────────────────

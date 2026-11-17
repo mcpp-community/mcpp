@@ -130,6 +130,12 @@ version = "0.1.0"
 name  = "netbsd"
 uname = "NetBSD"
 
+[[platform.system]]
+name          = "quux"
+object-format = "pe"
+exe-suffix    = ".app"
+shared-suffix = ".mod"
+
 [[platform.define]]
 triple       = "x86_64-netbsd"
 clang-triple = "x86_64-unknown-netbsd10.2"
@@ -139,9 +145,16 @@ execution    = "netbsd"
 serves = ["x86_64-netbsd"]
 )");
     expect(fatal(bool(m.platformDeclared)));
-    expect(fatal(eq(m.platform.systems.size(), 1u)));
+    expect(fatal(eq(m.platform.systems.size(), 2u)));
     expect(eq(m.platform.systems[0].name, "netbsd"));
     expect(eq(m.platform.systems[0].uname, "NetBSD"));
+    expect(eq(m.platform.systems[0].objectFormat, "")) << "unstated: the row's, then ELF";
+    // What a system's rows share (2026.11.18.1): read before the format's convention.
+    expect(eq(m.platform.systems[1].objectFormat, "pe"));
+    expect(eq(m.platform.systems[1].exeSuffix, ".app"));
+    expect(eq(m.platform.systems[1].sharedSuffix, ".mod"));
+    expect(fatal(eq(m.platform.defines.size(), 1u)));
+    expect(eq(m.platform.defines[0].objectFormat, "")) << "a row that states no format is its system's";
 }};
 
 UTest refusals_name_the_key{"PlatformManifest/RefusalsNameTheKey", [] {

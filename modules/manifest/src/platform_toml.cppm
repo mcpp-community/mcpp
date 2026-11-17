@@ -100,6 +100,12 @@ std::string list_of(std::span<const std::string_view> keys) {
     return out;
 }
 
+// The containers an object comes in (SPEC-016 §2): a row's and a system's
+// `object-format`.
+bool is_object_format(std::string_view f) {
+    return f == "elf" || f == "mach-o" || f == "pe" || f == "wasm" || f == "coff";
+}
+
 bool contains(std::span<const std::string_view> keys, std::string_view k) {
     return std::ranges::find(keys, k) != keys.end();
 }
@@ -644,8 +650,8 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
                                            "\"x86_64-freebsd\"", where));
     if (r.tier != "verified" && r.tier != "preview" && r.tier != "planned")
         return std::unexpected(std::format("{}.tier is verified, preview or planned", where));
-    if (r.objectFormat != "elf" && r.objectFormat != "mach-o" && r.objectFormat != "pe" && r.objectFormat != "wasm"
-        && r.objectFormat != "coff")
+    // Unstated, the format is the row's system's, then ELF (SPEC-016 §2.3).
+    if (!r.objectFormat.empty() && !is_object_format(r.objectFormat))
         return std::unexpected(std::format("{}.object-format is elf, mach-o, pe, wasm or coff", where));
     return r;
 }
@@ -843,8 +849,13 @@ std::expected<Statement, std::string> Reader::statement(const toml::Table& t) co
                     }
                     if (!sv.is_string())
                         return std::unexpected(std::format("{}.{} must be a string", where, sk));
-                    (sk == "name" ? sys.name : sys.uname) = sv.as_string();
+                    (sk == "name" ? sys.name : sk == "uname" ? sys.uname
+                     : sk == "object-format" ? sys.objectFormat
+                     : sk == "exe-suffix" ? sys.exeSuffix : sys.sharedSuffix) = sv.as_string();
                 }
+                if (!sys.objectFormat.empty() && !is_object_format(sys.objectFormat))
+                    return std::unexpected(
+                        std::format("{}.object-format is elf, mach-o, pe, wasm or coff", where));
                 if (sys.name.empty())
                     return std::unexpected(std::format("{} names no system: write name = \"<os>\"", where));
                 s.systems.push_back(std::move(sys));

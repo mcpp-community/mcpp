@@ -4,6 +4,8 @@ import mcpplibs.mtest;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.triple;
+import mcpp.toolchain.target_schema;
+import mcpp.toolchain.target_rows;
 
 using namespace mcpplibs::mtest;
 
@@ -120,9 +122,8 @@ UTest unknown_os_falls_back_to_host{"ArtifactNaming/UnknownOsFallsBackToHost", [
     expect(eq(n.staticLibExt, ".HOST"));
 }};
 
-// A bare-metal `none` OS is not the emscripten row and must keep falling back
-// to the host answer when it is no row of the table — the emscripten branch
-// below must not widen the fallback it sits next to.
+// A bare-metal `none` OS that is no row of the table has neither a row nor a
+// system to answer for it, and falls back to the host answer.
 UTest none_os_falls_back_to_host{"ArtifactNaming/NoneOsFallsBackToHost", [] {
     tr::Triple none; none.arch = "aarch64"; none.os = "none";
     auto n = tr::artifact_naming(none, kBogusHost);
@@ -145,6 +146,81 @@ UTest a_row_is_named_by_its_object_format{"ArtifactNaming/ARowIsNamedByItsObject
     expect(eq(n.exeSuffix, ""));
     expect(eq(n.staticLibExt, ".a"));
     expect(eq(n.sharedLibExt, ".dylib"));
+}};
+
+// A TRIPLE OF A SYSTEM THE TABLE STATES is named by that system's data when it
+// is no row: the host answers only where the data knows neither the row nor
+// the system.
+UTest a_system_of_the_table_answers_for_a_triple_that_is_no_row{
+    "ArtifactNaming/ASystemOfTheTableAnswersForATripleThatIsNoRow", [] {
+    tr::Triple elf; elf.arch = "sparc64"; elf.os = "freebsd";
+    auto n = tr::artifact_naming(elf, kBogusHost);
+    expect(eq(n.exeSuffix, ""));
+    expect(eq(n.staticLibExt, ".a"));
+    expect(eq(n.sharedLibExt, ".so"));
+    tr::Triple pe; pe.arch = "sparc64"; pe.os = "windows"; pe.env = "gnu";
+    expect(pe.object_format() == tr::ObjectFormat::Pe);
+    expect(eq(tr::artifact_naming(pe, kBogusHost).exeSuffix, ".exe"));
+    tr::Triple macho; macho.arch = "sparc64"; macho.os = "macos";
+    expect(macho.object_format() == tr::ObjectFormat::MachO);
+    expect(eq(tr::artifact_naming(macho, kBogusHost).sharedLibExt, ".dylib"));
+}};
+
+// ROW, THEN SYSTEM, THEN THE FORMAT'S CONVENTION (SPEC-016 §2.3), for a
+// platform's rows as for the table's: a system a platform states gives its
+// rows their format and suffixes, a row's own statement precedes it, and what
+// neither states is the convention of the format.
+UTest a_row_is_read_before_its_system_and_the_format_last{
+    "ArtifactNaming/ARowIsReadBeforeItsSystemAndTheFormatLast", [] {
+    namespace tg = mcpp::toolchain::target;
+    tg::DefinitionSet set;
+    set.source = "naming-test-platform";
+    auto row = [&](std::string_view triple) -> tg::Row& {
+        auto& id = set.strings.emplace_back(triple);
+        const std::string_view v = id;
+        const auto dash = v.find('-');
+        tg::Row r{};
+        r.triple = v;
+        r.arch = v.substr(0, dash);
+        r.os = v.substr(dash + 1);
+        r.tier = "preview";
+        r.defined = true;
+        return set.rows.emplace_back(r);
+    };
+    row("x86_64-quux");                                    // states nothing
+    auto& own = row("aarch64-quux");                       // states its own
+    own.objectFormat = "elf";
+    own.exeSuffix = ".elf";
+    own.sharedSuffix = ".so.1";
+    row("x86_64-plainos");                                 // no system, nothing stated
+    auto& coff = row("i586-oldos");
+    coff.objectFormat = "coff";
+    set.systems.push_back({ .name = "quux", .objectFormat = "pe", .exeSuffix = ".app", .sharedSuffix = ".mod" });
+    tg::define(std::move(set));
+
+    auto sys = T("x86_64-quux");
+    expect(sys.object_format() == tr::ObjectFormat::Pe) << "the system's format";
+    auto n = tr::artifact_naming(sys, kBogusHost);
+    expect(eq(n.exeSuffix, ".app"));
+    expect(eq(n.sharedLibExt, ".mod"));
+    expect(eq(n.staticLibExt, ".a"));
+    expect(n.sharedNeedsImportLib) << "the format's convention where the system states no key";
+
+    auto mine = T("aarch64-quux");
+    expect(mine.object_format() == tr::ObjectFormat::Elf) << "the row's own format";
+    n = tr::artifact_naming(mine, kBogusHost);
+    expect(eq(n.exeSuffix, ".elf"));
+    expect(eq(n.sharedLibExt, ".so.1"));
+    expect(!n.sharedNeedsImportLib);
+
+    n = tr::artifact_naming(T("x86_64-plainos"), kBogusHost);
+    expect(eq(n.exeSuffix, "")) << "ELF where neither states a format";
+    expect(eq(n.libPrefix, "lib"));
+    expect(eq(n.sharedLibExt, ".so"));
+
+    n = tr::artifact_naming(T("i586-oldos"), kBogusHost);
+    expect(eq(n.exeSuffix, ""));
+    expect(eq(n.staticLibExt, ".a"));
 }};
 
 // ── wasm32-emscripten: the executable is the file a runner executes, and on
