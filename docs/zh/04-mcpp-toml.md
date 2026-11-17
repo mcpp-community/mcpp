@@ -601,6 +601,7 @@ dependency_linkage = "static"     # How dependencies arrive: static (default) | 
 cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
 jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
+private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
 ```
 
 `[build] ldflags` 中以绝对路径指向一个已存在文件的词（预构建的归档、目标文件）是带有它的每次链接的输入：文件改变即重新

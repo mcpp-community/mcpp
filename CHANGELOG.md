@@ -27,9 +27,36 @@
   `v{version}` without it), and `mcpp publish --workspace` or `-p <member>`
   repeated: one archive and one descriptor per member in the workspace's
   `target/dist`, with `SHA256SUMS` (mcpp#947).
-- `mcpp.bmi` (`modules/bmi`): the cutoff by BMI content as a package of its own.
-  What is specific to one compiler's file format is a module beside it,
-  `mcpp.bmi.gcc`.
+- A private module fragment is built as a unit of its own (`private-fragment`, on by
+  default): the text before `module :private;` is the interface unit and the fragment an
+  implementation unit of the same module, both naming the file as written through
+  `#line`. An edit of the fragment compiles that unit and no importer -- measured with
+  clang 23.1.3, which otherwise compiles every importer, and with gcc 16.1.0, which does
+  not build a fragment as written at all. A fragment that reads what is local to the
+  interface (a macro of the purview, an unnamed namespace, a namespace-scope `static`,
+  a using-directive) is built as written, with the line that decided it.
+  `[build] private_fragment = "unit" | "as-written"`, `MCPP_PRIVATE_FRAGMENT`
+  (SPEC-019 §5, e2e 1112, 1113).
+- An object compiled to the bytes it had is kept, and nothing is archived or linked for
+  it (`keep-object`; mcpp#946 O5). Comparing an object costs 0.29 ms against 0.8-1.45 s
+  for a link of mcpp's own programs; `--verbose` counts the objects kept.
+- The previous BMI is held, compared and put back by the executor of the compile edge,
+  not by a shell fragment of the generated command: a Windows host ends a rebuild at an
+  unchanged interface as every other host does (mcpp#946 O7, e2e 1111). The internal
+  `mcpp bmi-equal` is gone with the fragment that called it.
+- A build says once, of a module that is one file and that at least five units import,
+  that its bodies are compiled with its interface and what ends that (SPEC-019 §6,
+  e2e 1114).
+- `MCPP_BUILDOPT=off`: the standard build for one invocation -- nothing kept, no other
+  shape of the graph, sources built as written.
+- `mcpp.buildopt` (`modules/buildopt`): everything mcpp does to a build beyond what the
+  compiler and ninja do, in one package -- the register of its entries with their level,
+  default and parameter (`registry`), which previous file of an edge stays (`keep`, and
+  `keep.gcm` for GCC's BMI format), the shape of the module edges (`schedule`, from
+  `src/build/schedule/policy.cppm`), the units a source is built as (`source`), and what
+  a build says of its rebuild (`advice`). Its README lists the entries.
+- SPEC-019, build optimizations; chapters 13 (code and project style) and 26 (build
+  optimizations), in both languages.
 - SPEC-018, the rebuild of modules.
 
 ### Changed
@@ -58,6 +85,15 @@
 
 ### Fixed
 
+- A target of an ELF system other than Linux built on a macOS or a Windows host took
+  the host's link line and the host's SDK: `x86_64-openbsd` and `x86_64-freebsd` on macOS
+  linked as Mach-O (`ld64.lld: error: unknown argument '--disable-new-dtags'`),
+  `x86_64-netbsd` compiled against the macOS SDK (`use of undeclared identifier
+  '_CTYPE_BL'`), and `x86_64-freebsd` on Windows linked without its sysroot. A target that
+  parses is ELF unless it says otherwise, and the macOS SDK is the sysroot of a Mach-O
+  target only.
+- GCC's module scan wrote its output over the unit's object, emptying it on every scan.
+  The scan writes a file of its own.
 - With GCC the BMI cutoff had no effect on a host whose time zone is not UTC:
   the stamp `localtime:` carries the zone's abbreviation, and a stamp was masked
   only where it ended in ` UTC`. A touched interface compiled every importer.

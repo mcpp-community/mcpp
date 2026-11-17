@@ -80,3 +80,19 @@ UTest register_states_every_entry{"Registry/EveryEntryStatesItsDefaultAndWhatSta
     expect(registry::find(registry::kPrivateFragment) != nullptr);
     expect(registry::find("no-such-entry") == nullptr);
 }};
+
+// The README lists the register: an entry added to one is added to the other.
+UTest readme_lists_the_register{"Registry/TheReadmeListsEveryEntryWithItsDefault", [] {
+    namespace registry = mcpp::buildopt::registry;
+    const auto readme = std::filesystem::path(std::source_location::current().file_name()).parent_path().parent_path() / "README.md";
+    std::ifstream in(readme, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(in), {}};
+    if (text.empty()) skip("the package's README is not beside its tests here");
+    for (auto const& e : registry::kEntries) {
+        const auto row = std::format("| `{}` | {} | {} | {} |", e.id, registry::to_string(e.seam),
+                                     registry::to_string(e.level), e.byDefault ? "on" : "off");
+        expect(has(text, row)) << row;
+        if (!e.env.empty()) expect(has(text, e.env)) << e.env;
+    }
+    expect(has(text, registry::kStandardEnv));
+}};

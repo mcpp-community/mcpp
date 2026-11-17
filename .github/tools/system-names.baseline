@@ -1,6 +1,6 @@
 # One number per word: its occurrences in the engine's sources
 # (.github/tools/check_system_names.py). The numbers only fall.
-linux 64
+linux 63
 macos 51
 windows 72
 freebsd 1
