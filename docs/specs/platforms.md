@@ -4,9 +4,9 @@
 |---|---|
 | 规范编号 | SPEC-013 |
 | 标题 | 平台:一类目标的可复用配置,其声明、选择、合并、对依赖图的补全、链接与封装、运行器与载体 |
-| 状态 | 评审中 v1.11 |
-| 版本 | 1.11 |
-| 最后修改 | 2026-11-16 |
+| 状态 | 评审中 v1.12 |
+| 版本 | 1.12 |
+| 最后修改 | 2026-11-17 |
 | 对应实现 | mcpp >= 2026.10.27.1;§10 的执行宿主与 §11 的载体架构 mcpp >= 2026.10.29.1;`runner.hosts`、载体列表、`descriptor_keys` 与 `universal` 的弃用 mcpp >= 2026.10.30.1;§7.5 版本组参与解析、§14 平台系列与 §15.1 系列的锁 mcpp >= 2026.11.7.1;§14 内置平台为确切版本与提示 mcpp >= 2026.11.7.2;v1.7 条款 mcpp >= 2026.11.10.1;v1.10 条款 mcpp >= 2026.11.16.1;v1.11 条款(§14 索引的平台列) mcpp >= 2026.11.17.1;逐条标注 |
 | 相关设计文档 | `.agents/docs/2026-11-16-ecosystem-gap-supplement-part2-design.md`、`.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-10-28-platforms-design.md`、`.agents/docs/2026-10-28-platforms-part2-packaging-and-distribution-design.md`、`.agents/docs/2026-10-29-openkal-run-test-pack-design.md` |
 | 相关 issue | mcpp#846、mcpp#847、mcpp#848 |
@@ -144,6 +144,13 @@ plugin    = "build.mcpp"
 `<arch>-<os>[-<env>]` 的 `arch`、`os`、`env`;族、目标格式等由行给出的成分在行被定义之前不匹配。
 于是 `[target.'cfg(any(os = "netbsd", os = "openbsd"))'] platform` 为它所定义的各行指名平台,与逐行写出
 三元组等价。**已实现**(mcpp >= 2026.11.17.1)
+
+平台被选定之前,选择器可用的是三元组所写的成分(`arch`、`os`、`env`)与族。层(`c-abi`、`c++-abi`、
+`kernel-abi`、`compiler-runtime`)由被选定的平台陈述,因此以层为条件的 `platform` 只对行自身的数据已
+陈述该层的行成立:实测 `cfg(c-abi = "musl")` 为 `x86_64-linux-musl` 选定了平台,而没有为
+`x86_64-macos-musl` 选定,后者取了引擎的默认值。工程的 `[target.'cfg(...)'] platform` 的选择器指名层时,
+mcpp **必须**给出警告(`manifest/platform-selector`),并指出按三元组的成分书写(`cfg(env = "musl")`)。
+**已实现**(mcpp >= 2026.11.17.2)
 
 ### 3.2 值
 
@@ -322,7 +329,7 @@ plugin    = "build.mcpp"
 | `cmd` | argv,非空;`{}` 为产物 |
 | `host` | `"same-arch"`:产物只在其架构的机器上运行;`"any"`:运行器可以从任何机器到达产物(模拟器、探针) |
 | `exclusive` | 为真时该目标的运行不重叠,`mcpp test` 串行运行 |
-| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为系统表中的系统,SPEC-016 §2.3):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** |
+| `hosts` | 运行器程序存在的 `<os>-<arch>`(`os` 为系统表中的系统,SPEC-016 §2.3):需要该运行器的包能在哪里运行(SPEC-014 §4.4 的 `runs_on.with`)。`host = "any"` 时与产物的架构无关。**mcpp >= 2026.10.30.1** | 当前宿主不在其中时,平台陈述的运行器**禁止**被采用:该行按没有运行器的行处理——行的执行系统是本机的系统时直接运行,否则以不可达拒绝,消息列出 `hosts`;它不被要求启用。工程、本机与环境陈述的运行器是为本机陈述的,不受此限。**mcpp >= 2026.11.17.2**(此前只按架构判定,Windows 宿主上 `x86_64-windows-musl` 被要求启用 Linux 上的 Wine 运行器)
 | `requires` | 运行器从哪些包安装(`xim:<名>@<版本>`)。第一次 `mcpp run` 或 `mcpp test` 时按工具链的同一方式安装;构建不安装。模板的程序先在这些包中查找,再查 PATH。替换 `cmd` 的陈述同时替换它。**mcpp >= 2026.11.12.1** |
 | `built-as` | `{ "<os>-<arch>" = "<身份>" }`:为该宿主对构建的运行器程序是哪个身份。自带运行器的包(SPEC-014 §4.4)对引擎不持有约定的系统按它构建。**mcpp >= 2026.11.12.1** |
 | `enabled` | 是否使用该运行器,缺省为真。为假时 `mcpp run` 以状态 2 拒绝,`mcpp test` 使测试已构建而未运行(`unreachableIsBuilt` 的调用为"已构建、本机不运行"),消息带 `[runner-not-enabled]`、`requires` 与两种启用写法;拒绝在安装 `requires` 之前。`mcpp run --runner <name>` 指名的运行器视为启用;`--pkg-format` 找到的同名运行器不算指名。以 `host = "same-arch"` 到达不了产物的运行器不以此拒绝,而按到达拒绝。**mcpp >= 2026.11.16.1** |
@@ -620,3 +627,4 @@ openkal-platform 的 `targets` 因此不含 WebAssembly。Web 经 `wasm32-emscri
 | 1.10 | 2026-11-16 | mcpp 2026.11.16.1(设计 2026-11-15 R1、R2):§10 运行器的 `enabled` 与 `longlived`;具名运行器与 `runner` 同一种表;§6 覆盖层不含 `cmd` 的表、`enabled` 随 `cmd` 的陈述、`MCPP_TARGET_<T>_RUNNER_ENABLED`。;运行器的程序:查找、Windows 的后缀、命令解释器启动的脚本的参数、占位符与状态(R2)。 |
 | 1.11 | 2026-11-16 | mcpp 2026.11.17.1(设计 2026-11-16 §6.2):§3.1 第 5 步与 §14 索引的平台列 `platform_rows`;判据 16(e2e 1106)。 |
 | 1.12 | 2026-11-17 | mcpp 2026.11.17.1:§3.1 尚无行定义的三元组按字面成分求值选择器(e2e 1040);§10 运行器的陈述与许可分属两层,覆盖层的 `runner = true`/`false`(e2e 1092)。 |
+| 1.12 | 2026-11-17 | mcpp 2026.11.17.2(设计 2026-11-17 §5):§3.1 平台选定之前可用的谓词,以层选择平台时的警告;§10 `hosts` 参与运行器的采用;§14 目标表的平台列为 0.29.1 |

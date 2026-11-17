@@ -1258,7 +1258,7 @@ struct BuildConfig : BuildInputs {
     // paths an artifact carries name packages and roles, not this machine.
     bool                                trimPaths = false;
     // A GCC BMI whose line maps alone moved is kept (the profile's
-    // `bmi_cutoff = "ignore-locations"`, resolved; SPEC-012).
+    // `bmi_cutoff = "ignore-locations"`, resolved; SPEC-018).
     bool                                bmiIgnoreLocations = false;
     // The units compiled in the build directory keep their debug information
     // beside their objects (`split_debuginfo = "unpacked"`, resolved).

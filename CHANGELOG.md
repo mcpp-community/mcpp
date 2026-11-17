@@ -4,6 +4,72 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.17.2] - 2026-11-17
+
+### Added
+
+- `[profile.<name>] bmi_cutoff = "ignore-locations" | "exact"`, and
+  `MCPP_BMI_CUTOFF` for one run. With GCC, a line inserted where no recorded
+  entity follows it changes a BMI's line maps and nothing else; under
+  `ignore-locations`, the default, the previous BMI is kept and its importers are
+  not compiled. Their diagnostics and debug information name the earlier lines
+  until they are compiled for another reason. A BMI that names
+  `__builtin_LINE` or `__builtin_source_location` (a template's body that reads
+  its line), and a graph compiled with `-fcontracts`, are compared exactly;
+  `mcpp pack` uses `exact` where the profile carries debug information; an
+  `exact` run first removes what an earlier run kept (SPEC-018, mcpp#946 O2,
+  e2e 1110).
+- A build states what its BMIs did, one line each: which changed, so that their
+  importers were compiled again, and which were kept with earlier lines. The
+  build directory records it in `bmi-changes.tsv` and `bmi-kept.list`
+  (mcpp#946 O6).
+- `mcpp publish --tag <template>` (`{version}`, `{name}`, `{namespace}`;
+  `v{version}` without it), and `mcpp publish --workspace` or `-p <member>`
+  repeated: one archive and one descriptor per member in the workspace's
+  `target/dist`, with `SHA256SUMS` (mcpp#947).
+- `mcpp.bmi` (`modules/bmi`): the cutoff by BMI content as a package of its own.
+  What is specific to one compiler's file format is a module beside it,
+  `mcpp.bmi.gcc`.
+- SPEC-018, the rebuild of modules.
+
+### Changed
+
+- mcpp pins ninja `1.12.1-mcpp.1`: ninja 1.12.1 with the correction of
+  ninja-build/ninja#2662, where loading a dyndep file while an edge finished
+  invalidated the iterators of the loops finishing it. On a project of 150
+  members a workspace test ended with a compiler crash while reading a module,
+  or with no failed step named. A home that holds another ninja installs the
+  pin beside it on its next run; where the index it reads does not list the pin,
+  it takes 1.12.1 and says what that lacks. A build takes the pinned version
+  from a store that holds several (mcpp#945).
+- A sibling `path` dependency that states no `version` is published under the
+  sibling's own version; before, it was refused. An archive, its top directory
+  and its descriptor are named by the package's identity
+  (`mlibs.math-0.1.0.tar.gz`, `mlibs.math.lua`); a package with no namespace is
+  named as before. A generated descriptor states `namespace` and a one-segment
+  `name` (SPEC-001 §3.2), where it stated the fully-qualified name (mcpp#947).
+- A platform's runner is taken on the hosts it states (`runner.hosts`). On
+  another host the row runs as a row without a runner: directly where its
+  system is this machine's, refused for the reach elsewhere, naming the hosts.
+  A Windows host was asked to enable the Wine runner of `x86_64-windows-musl`
+  (SPEC-013 §10, e2e 1109).
+- The platform the engine's target table selects is
+  `mcpplibs.openkal-platform@0.29.1`.
+
+### Fixed
+
+- With GCC the BMI cutoff had no effect on a host whose time zone is not UTC:
+  the stamp `localtime:` carries the zone's abbreviation, and a stamp was masked
+  only where it ended in ` UTC`. A touched interface compiled every importer.
+  The stamp is masked to its terminator (mcpp#946 O1).
+- A build that ninja ended without naming a failed step states how ninja ended:
+  its status, the signal, or the NTSTATUS, and whether the ninja it ran is the
+  pinned one (mcpp#945).
+- `--strict` names the key it refuses, where it printed the registry's example
+  (`mcpplibs.cmdline = "0.0.2"`) for every quoted dependency key.
+- A `[target.'cfg(...)'] platform` whose selector names a layer (`c-abi`, ...)
+  is warned of: a layer is what the selected platform states (SPEC-013 §3.1).
+
 ## [2026.11.17.1] - 2026-11-17
 
 ### Added

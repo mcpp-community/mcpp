@@ -985,7 +985,7 @@ export struct BuildOverrides {
     std::string profile_fallback;
     // The products leave this machine (`mcpp pack`): where they carry debug
     // information, a BMI is compared exactly, so that the lines an object
-    // names are those of its sources (`bmi_cutoff`, SPEC-012).
+    // names are those of its sources (`bmi_cutoff`, SPEC-018).
     bool        distributes = false;
     std::string features;            // --features a,b,c (root package activation)
     bool        strict = false;      // --strict: schema warnings become errors

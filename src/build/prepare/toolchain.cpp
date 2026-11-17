@@ -290,7 +290,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // again (before 2026.11.8.1 a release test was a configuration of its
         // own, and compiled the whole graph again).
         state.m->buildConfig.trimPaths = pr.trimPathsDeclared ? pr.trimPaths : shipping;
-        // `bmi_cutoff` (mcpp#946 O2, SPEC-012): a GCC BMI whose line maps alone
+        // `bmi_cutoff` (mcpp#946 O2, SPEC-018): a GCC BMI whose line maps alone
         // moved is kept, unless the profile or the environment states `exact`.
         // The environment is the override of one run.
         {

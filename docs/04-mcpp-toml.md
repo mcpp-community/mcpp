@@ -1689,6 +1689,7 @@ strip    = true           # -s at link time
 ndebug     = true         # -DNDEBUG for every unit of the graph (default: on for release/dist)
 trim_paths = true         # -ffile-prefix-map per unit (default: on for release/dist)
 split_debuginfo = "off"   # "unpacked": debug information beside the objects (default: dev/debug)
+bmi_cutoff = "exact"      # "ignore-locations" (default): a GCC BMI whose line maps alone moved is kept
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1719,6 +1720,19 @@ anything compiles.
   reaches a command as `[build]`'s, then the profile's, then
   `[target.<selector>.build]`'s: where a compiler or a linker takes the last of
   two words, the target block's wins (measured on 2026.11.16.1).
+- **`bmi_cutoff` (2026.11.17.2+)** states when an importer follows a module's
+  interface ([SPEC-018](specs/module-rebuilds.md)). An importer is compiled again
+  when the BMI it imports changed. With GCC, a line inserted where no recorded
+  entity follows it changes the BMI's line maps and nothing else;
+  `"ignore-locations"`, the default, keeps the previous BMI, and the importers are
+  not compiled. Their diagnostics, debug information and coverage then name the
+  earlier lines of that module until they are compiled for another reason, and
+  the build says so in one line. `"exact"` compiles them; `MCPP_BMI_CUTOFF=exact`
+  states it for one run, and removes what an earlier run kept. `mcpp pack` uses
+  `exact` where the profile carries debug information. A BMI that reads a line
+  into the program (`__builtin_LINE()`, `std::source_location::current()` in a
+  template's body) and a graph compiled with `-fcontracts` are compared exactly
+  under either value. Clang's BMI has no such part and the key has no effect on it.
 - **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in

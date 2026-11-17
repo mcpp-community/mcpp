@@ -1547,6 +1547,7 @@ lto      = true           # -flto; /GL + /LTCG on cl.exe (note: some packaged gc
 strip    = true           # -s at link time
 ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默认开)
 trim_paths = true         # 按单元的 -ffile-prefix-map(release/dist 默认开)
+bmi_cutoff = "exact"      # "ignore-locations"(默认):只有行映射变化的 GCC BMI 被保留
 split_debuginfo = "off"   # "unpacked":调试信息留在对象旁(dev/debug 默认)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
@@ -1576,6 +1577,15 @@ ldflags  = []
 - 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
   （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
   覆盖一个内置定义。
+- **`bmi_cutoff`(2026.11.17.2+)** 规定导入者何时跟随模块的接口
+  ([SPEC-018](../specs/module-rebuilds.md))。所导入的 BMI 变化时,导入者重新编译。GCC 下,在
+  其后没有已记录实体的位置插入一行,只改变 BMI 的行映射;默认值 `"ignore-locations"` 保留
+  原 BMI,导入者不编译。此后它们的诊断、调试信息与覆盖率给出该模块此前的行号,直到因别的
+  原因重新编译,构建以一行说明。`"exact"` 使其编译;`MCPP_BMI_CUTOFF=exact` 只对一次运行
+  生效,并移除此前保留的 BMI。profile 带调试信息时 `mcpp pack` 使用 `exact`。把行号读入程序
+  的 BMI(模板体内的 `__builtin_LINE()`、`std::source_location::current()`)与以
+  `-fcontracts` 编译的图,在两种取值下都按确切内容比较。Clang 的 BMI 没有这样的部分,该键对它
+  无效。
 - **`ndebug` 与 `trim_paths`(2026.10.24.1+)** 跟随业界惯例:`release` 与 `dist` 默认开启,
   `dev`、`debug` 以及未陈述它们的自定义 profile 默认关闭。`ndebug` 为每个单元定义 `NDEBUG`,
   `assert` 因此不再展开,与 CMake 的 Release、Meson 的 `b_ndebug=if-release` 相同。`trim_paths`

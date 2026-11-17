@@ -154,20 +154,38 @@ mcpp 的构建沙箱与网络隔离，`file://` 和 `http://127.0.0.1` 形式的
 - **在成员目录中执行 `mcpp publish` 或 `mcpp emit xpkg`。** 归档只包含成员自己的目录，
   因此其中的 `mcpp.toml` 被归一化：成员继承的值被写出，`x.workspace = true` 条目取得
   解析后的来源，对兄弟成员的依赖以版本依赖发布。原样的清单以 `mcpp.toml.orig` 保留在
-  旁边，归一化后的文件同时写到 `target/dist/<name>-<version>.mcpp.toml` 供审阅。归档由
+  旁边，归一化后的文件同时写到 `target/dist/<identity>-<version>.mcpp.toml` 供审阅。归档由
   git 对象按提交的日期构建，两次运行产生相同的字节。不是工作空间成员的包与此前一样
   原样归档。
 
-兄弟依赖写出它发布时的版本：
+兄弟依赖按兄弟成员的版本发布。不写版本的 `path` 边取兄弟成员自己清单中的 `version`
+*（2026.11.17.2+；此前该边被拒绝，拒绝消息给出应写的一行）*；写了版本的按所写发布：
 
 ```toml
 [dependencies]
-"acme.util" = { path = "../util", version = "0.3.0" }   # path 用于开发，version 用于使用方
+acme.util = { path = "../util" }                      # 发布为 acme.util = "<../util 的版本>"
+acme.net  = { path = "../net", version = "0.3.0" }    # 按所写发布
 ```
 
-`mcpp publish` 拒绝不带 `version` 的兄弟依赖，并给出该成员的版本和应写的一行。它同样
-拒绝包外、且不是工作空间成员的 `path` 依赖，以及位于成员目录之外的继承头文件目录，因为
-归档中二者都不存在。
+兄弟成员的清单没有版本时拒绝。`mcpp publish` 同样拒绝包外、且不是工作空间成员的 `path`
+依赖，以及位于成员目录之外的继承头文件目录，因为归档中二者都不存在。
+
+### 名字、tag 与多个成员 *（mcpp 2026.11.17.2+）*
+
+| 项 | 规则 |
+|---|---|
+| 归档与其顶层目录 | 包的身份：`<namespace>.<name>-<version>.tar.gz`；没有命名空间的包保持 `<name>-<version>.tar.gz`。跨命名空间共用短名的两个成员（`omui.core`、`hanim.core`）是同一 tag 下的两个归档 |
+| 描述符 | `namespace` 与单段的 `name`（SPEC-001 §3.2），文件名与索引相同：`mcpplibs` 中为 `<name>.lua`，其他命名空间为 `<namespace>.<name>.lua` |
+| tag | `--tag <模板>`，可含 `{version}`、`{name}`、`{namespace}`；不写时为 `v{version}`。描述符的 URL 为 `<repo>/releases/download/<tag>/<归档>` |
+| 多个成员 | `mcpp publish --workspace`（可带 `--exclude`），或重复 `-p <成员>`：每个成员一个归档与一个描述符，位于工作空间的 `target/dist`，旁边是 `sha256sum -c` 可读的 `SHA256SUMS` |
+
+```bash
+mcpp publish --workspace --tag 'v{version}'      # 全部成员；版本相同时为一个 tag
+mcpp publish -p mlibs.math -p mlibs.unicode      # 两个成员
+```
+
+tag 的模板对每个成员求值。tag 相同的成员属于同一 release；tag 不同时各有自己的校验文件
+`SHA256SUMS-<tag>`。`mcpp publish` 写出归档、校验和与描述符，不创建 tag，也不创建 release。
 
 ## 需要版本下限的 manifest 键
 

@@ -29,7 +29,7 @@ export namespace mcpp::bmi {
 // What the two files differ in, by the reader of their format.
 Difference difference(const std::filesystem::path& a, const std::filesystem::path& b);
 
-// THE CUTOFF OF ONE BUILD DIRECTORY (`[profile.<name>] bmi_cutoff`, SPEC-012).
+// THE CUTOFF OF ONE BUILD DIRECTORY (`[profile.<name>] bmi_cutoff`, SPEC-018).
 //
 // Three files of the build directory, which is the directory every edge of
 // its graph runs in: `bmi-cutoff` states the cutoff (`ignore-locations`;

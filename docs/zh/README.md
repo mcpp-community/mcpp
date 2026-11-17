@@ -175,3 +175,4 @@
   - [SPEC-015 —— 目标集合与腿：写法与展开，命令对多条腿的语义，测试归档](../specs/target-sets.md)
   - [SPEC-016 —— 目标与提供者：行、提供者、选择规则、平台定义的行、报告与锁](../specs/targets-and-providers.md)
   - [SPEC-017 —— mcpp 测试规范：测试程序、测试协议、记录、存储、启动描述与框架声明；基础能力与可选能力](../specs/test.md)
+  - [SPEC-018 —— 模块的重编译：按 BMI 内容截断、GCC 的时间戳与行映射、`bmi_cutoff`、构建目录的记录](../specs/module-rebuilds.md)
