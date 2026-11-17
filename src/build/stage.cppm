@@ -276,19 +276,37 @@ bool same_content(const std::filesystem::path& a, const std::filesystem::path& b
 
 namespace {
 
-// GCC writes the stamp as `<prefix>YYYY/MM/DD HH:MM:SS UTC`. Fixed width, so a
-// match can be masked without re-parsing.
-constexpr std::size_t kStampLen = std::string_view("2026/08/12 02:25:01 UTC").size();
+// GCC writes the stamp as `<prefix>YYYY/MM/DD HH:MM:SS <zone>` and ends it with
+// a NUL. `buildtime:` is in UTC; `localtime:` carries the host's zone
+// abbreviation, which is `UTC` only on a UTC host (measured with gcc 16.1.0:
+// `CST` under Asia/Shanghai, `-03` under America/Sao_Paulo). A stamp that
+// admitted ` UTC` alone left the cutoff without effect on every other host
+// (mcpp#946, O1).
+constexpr std::size_t kStampDateLen = std::string_view("2026/08/12 02:25:01 ").size();
+constexpr std::size_t kMaxZoneLen = 8;
 
-bool looks_like_stamp(std::string_view v) {
-    if (v.size() != kStampLen) return false;
+// The length of the stamp that starts `v`, zone included, or 0 when `v` does
+// not start with one. The zone is 1 to 8 characters of a zone abbreviation
+// and is followed by the terminator.
+std::size_t stamp_length(std::string_view v) {
+    if (v.size() < kStampDateLen + 2) return 0;
     auto digit = [&](std::size_t i) { return v[i] >= '0' && v[i] <= '9'; };
-    return digit(0) && digit(1) && digit(2) && digit(3) && v[4] == '/'
+    const bool date = digit(0) && digit(1) && digit(2) && digit(3) && v[4] == '/'
         && digit(5) && digit(6) && v[7] == '/'
         && digit(8) && digit(9) && v[10] == ' '
         && digit(11) && digit(12) && v[13] == ':'
         && digit(14) && digit(15) && v[16] == ':'
-        && digit(17) && digit(18) && v.substr(19) == " UTC";
+        && digit(17) && digit(18) && v[19] == ' ';
+    if (!date) return 0;
+    std::size_t zone = 0;
+    for (; kStampDateLen + zone < v.size(); ++zone) {
+        const char c = v[kStampDateLen + zone];
+        if (c == '\0') return zone == 0 ? 0 : kStampDateLen + zone;
+        const bool abbreviation = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9') || c == '+' || c == '-';
+        if (!abbreviation || zone == kMaxZoneLen) return 0;
+    }
+    return 0;
 }
 
 // GCC writes exactly one `buildtime:` and one `localtime:` into a BMI header —
@@ -307,9 +325,9 @@ std::vector<std::pair<std::size_t, std::size_t>> stamp_spans(std::string_view da
         for (std::size_t at = data.find(prefix); at != std::string_view::npos;
              at = data.find(prefix, at + 1)) {
             const auto start = at + prefix.size();
-            if (start + kStampLen > data.size()) continue;
-            if (!looks_like_stamp(data.substr(start, kStampLen))) continue;
-            spans.emplace_back(start, start + kStampLen);
+            const auto length = stamp_length(data.substr(start));
+            if (length == 0) continue;
+            spans.emplace_back(start, start + length);
         }
     }
     std::ranges::sort(spans);
@@ -329,8 +347,8 @@ bool bmi_equivalent(const std::filesystem::path& a, const std::filesystem::path&
     auto da = read_all(a);
     auto db = read_all(b);
     if (!da || !db) return false;
-    // The stamps are fixed width, so equivalent BMIs always have equal size. A
-    // size difference is a real difference, never a maskable one.
+    // Two BMIs of one host carry stamps of one width, so equivalent BMIs have
+    // equal size. A size difference is read as a real difference.
     if (da->size() != db->size()) return false;
 
     const auto sa = stamp_spans(*da);

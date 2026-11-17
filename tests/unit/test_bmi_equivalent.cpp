@@ -110,6 +110,38 @@ UTest missing_file_is_not_equivalent{"BmiEquivalent/MissingFileIsNotEquivalent",
     expect(!mcpp::build::stage::bmi_equivalent(a, d / "does-not-exist.gcm"));
 }};
 
+// `localtime:` carries the host's zone abbreviation (gcc 16.1.0: `CST` under
+// Asia/Shanghai, `-03` under America/Sao_Paulo). A stamp that admitted ` UTC`
+// alone left the cutoff without effect outside UTC (mcpp#946, O1).
+std::string bmi_zoned(const std::string& utc, const std::string& local,
+                      const std::string& payload = "PAYLOAD") {
+    return "GCM\x01" + payload + std::string("\0", 1) +
+           "buildtime: " + utc + std::string("\0", 1) +
+           "localtime: " + local + std::string("\0", 1) + "TAIL";
+}
+
+UTest a_local_stamp_of_any_zone_is_masked{"BmiEquivalent/ALocalStampOfAnyZoneIsMasked", [] {
+    const auto d = tmpdir();
+    auto a = write(d / "z1.gcm", bmi_zoned("2026/11/17 03:56:30 UTC", "2026/11/17 11:56:30 CST"));
+    auto b = write(d / "z2.gcm", bmi_zoned("2026/11/17 03:57:41 UTC", "2026/11/17 11:57:41 CST"));
+    expect(bool(mcpp::build::stage::bmi_equivalent(a, b)));
+    auto c = write(d / "z3.gcm", bmi_zoned("2026/11/17 03:56:30 UTC", "2026/11/17 00:56:30 -03"));
+    auto e = write(d / "z4.gcm", bmi_zoned("2026/11/17 03:59:02 UTC", "2026/11/17 00:59:02 -03"));
+    expect(bool(mcpp::build::stage::bmi_equivalent(c, e)));
+    // The payload still counts under a zoned stamp.
+    auto f = write(d / "z5.gcm", bmi_zoned("2026/11/17 03:59:02 UTC", "2026/11/17 11:59:02 CST", "PAYLOAX"));
+    expect(!mcpp::build::stage::bmi_equivalent(a, f));
+}};
+
+// A stamp ends at its terminator: text that goes on past a zone's length is
+// not a stamp and is compared.
+UTest a_stamp_without_a_terminated_zone_is_compared{"BmiEquivalent/AStampWithoutATerminatedZoneIsCompared", [] {
+    const auto d = tmpdir();
+    auto a = write(d / "n1.gcm", "buildtime: 2026/11/17 03:56:30 UTCABCDEFGHI-A");
+    auto b = write(d / "n2.gcm", "buildtime: 2026/11/17 03:56:31 UTCABCDEFGHI-A");
+    expect(!mcpp::build::stage::bmi_equivalent(a, b));
+}};
+
 // A real BMI carries exactly two stamps — one `buildtime:`, one `localtime:` —
 // checked across BMIs from 10 KiB to 645 KiB. A third one did not come from
 // GCC's header, so it is not mcpp's to ignore: masking a timestamp-shaped
