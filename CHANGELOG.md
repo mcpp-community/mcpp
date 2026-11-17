@@ -4,6 +4,25 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.18.1] - 2026-11-18
+
+### Fixed
+
+- A FreeBSD row built on a Windows host named its program `<name>.exe` and its archives
+  `.lib`: `freebsd` is a word of the triple language and had no naming of its own, so the
+  host's was taken. It is named as a Linux row is. Measured in mcpp-platforms' CI, where
+  the build finished and no `bin/hello` existed.
+- e2e 1116 (a row of another ELF system on a host of any format) ran on Linux hosts only:
+  its capability, `llvm`, is a Linux one. It runs wherever the LLVM payload is, and holds
+  the program to the row's name.
+
+### Changed
+
+- The FreeBSD rows link on a Windows host with the FreeBSD sysroot packages' revision 2
+  (xim-pkgindex): FreeBSD's crt objects and static archives hold zlib-compressed debug
+  sections, which the lld of the Windows LLVM payload, built without zlib, does not read;
+  revision 2 holds them decompressed. No change of mcpp.
+
 ## [2026.11.17.2] - 2026-11-17
 
 ### Added

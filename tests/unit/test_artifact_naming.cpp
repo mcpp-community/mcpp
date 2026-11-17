@@ -47,6 +47,19 @@ UTest linux_target_ignores_host_answer{"ArtifactNaming/LinuxTargetIgnoresHostAns
     expect(!n.sharedNeedsImportLib);
 }};
 
+// `freebsd` is a word of the triple language; it had no answer of its own and
+// took the host's, so a FreeBSD row built on a Windows host was `hello.exe`.
+UTest freebsd_target_ignores_host_answer{"ArtifactNaming/FreebsdTargetIgnoresHostAnswer", [] {
+    for (std::string_view triple : {"x86_64-freebsd", "aarch64-freebsd"}) {
+        auto n = tr::artifact_naming(T(triple), kBogusHost);
+        expect(eq(n.exeSuffix, ""));
+        expect(eq(n.libPrefix, "lib"));
+        expect(eq(n.staticLibExt, ".a"));
+        expect(eq(n.sharedLibExt, ".so"));
+        expect(!n.sharedNeedsImportLib);
+    }
+}};
+
 UTest macos_target_ignores_host_answer{"ArtifactNaming/MacosTargetIgnoresHostAnswer", [] {
     auto n = tr::artifact_naming(T("aarch64-macos"), kBogusHost);
     expect(eq(n.exeSuffix, ""));

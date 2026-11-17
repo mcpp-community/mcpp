@@ -379,7 +379,10 @@ int main() {
         expect(fatal(s::lacks(s::text(r), "[runner-not-enabled]"))) << "--no-runner was not believed: " << s::text(r);
     };
 
-    "1116 a row of another ELF system builds on a host of any format"_test[s::llvm] = [] {
+    "1116 a row of another ELF system builds on a host of any format"_test[s::scan_deps] = [] {
+        // Run on every host that holds the LLVM payload (`scan-deps` is true of it on Linux,
+        // macOS and Windows; `llvm` is a Linux capability, and under it this case never ran
+        // on the two hosts it is about).
         // A target that parses is ELF unless it says otherwise. The format was asked of the
         // host for every system but `linux` and `none`, so `x86_64-freebsd` (the system's own
         // ABI, served by the platform the index lists for the row) linked as Mach-O on a macOS
@@ -389,8 +392,9 @@ int main() {
         auto p = s::project::scaffold("bsd");
         auto r = p.mcpp({"build", "--target", "x86_64-freebsd", "--verbose"});
         expect(fatal(e2e::succeeded(r))) << "x86_64-freebsd did not build on this host: " << s::text(r);
-        const auto exe = program_under(p.at("target/x86_64-freebsd"), "bsd", true);
-        expect(fatal(exe.has_value())) << "no program: " << s::text(r);
+        // Named as the row names a program, with no suffix of the host (`bsd.exe` on Windows).
+        const auto exe = program_under(p.at("target/x86_64-freebsd"), "bsd");
+        expect(fatal(exe.has_value())) << "no program named `bsd`: " << s::text(r);
         const auto bytes = s::read_file(*exe);
         expect(fatal(bytes.starts_with("\x7f" "ELF"))) << "the program is not an ELF";
         const bool freebsd = (bytes.size() > 7 && bytes[7] == 9) || bytes.contains(std::string_view("FreeBSD\0", 8));

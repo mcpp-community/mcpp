@@ -892,7 +892,12 @@ inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hos
             .sharedNeedsImportLib = false,
         };
     }
-    if (t.os == "linux") {
+    // `freebsd` is a word of the triple language as `linux` is, and names its
+    // artifacts the same way. Left to the host answer below, a FreeBSD row built
+    // on a Windows host was `bin/hello.exe` and its archives `.lib` (measured,
+    // mcpp-community/mcpp-platforms#4: the build finished and no `bin/hello`
+    // existed).
+    if (t.os == "linux" || t.os == "freebsd") {
         return ArtifactNaming{
             .exeSuffix = "", .libPrefix = "lib",
             .staticLibExt = ".a", .sharedLibExt = ".so",
