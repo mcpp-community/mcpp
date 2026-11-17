@@ -114,7 +114,7 @@ void step4b_define_lookup_closures(PrepareState& state) {
         const bool warn = state.editablePackage(i);
         const auto where = i < state.packages.size()
             ? (state.packages[i].root / "mcpp.toml").string() : std::string{};
-        mcpp::pm::compat::record_use(id, where, detail, warn);
+        mcpp::pm::compat::record_use(id, where, detail, warn, instead);
         mcpp::log::info("compat", std::format("{} {}: {}{}", id, where, detail,
                                               warn ? "" : " (not editable here; not warned)"));
         if (!warn) return;

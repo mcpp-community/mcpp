@@ -35,7 +35,14 @@ using Env = mcpp::provider::Location;
 
 namespace pinned {
     inline constexpr std::string_view kPatchelfVersion = "0.18.0";
-    inline constexpr std::string_view kNinjaVersion    = "1.12.1";
+    // ninja 1.12.1 with the correction of ninja-build/ninja#2662 (mcpp#945):
+    // loading a dyndep file while an edge finishes invalidated the iterators
+    // of the loops that finish it. A version key of its own in xim-pkgindex,
+    // not `latest`; `ninja --version` answers this string.
+    inline constexpr std::string_view kNinjaVersion    = "1.12.1-mcpp.1";
+    // The upstream version the pin corrects: what a home takes where the
+    // index it reads does not list the pin.
+    inline constexpr std::string_view kNinjaBaseVersion = "1.12.1";
     // The xlings a release bundles at <install>/registry/bin/xlings, and the
     // version `mcpp self env` reports.
     //

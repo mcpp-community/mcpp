@@ -54,7 +54,8 @@ std::expected<void, std::string> refuse_deprecated_readings_under_strict(const P
         if (!u.warned) continue;
         auto const* d = mcpp::pm::compat::find_deprecation(u.id);
         uses += std::format("\n       {}: {} ({}; write {})", u.where, u.detail, u.id,
-                            d ? std::string(d->canonical) : std::string("the canonical spelling"));
+                            !u.instead.empty() ? u.instead
+                            : d ? std::string(d->canonical) : std::string("the canonical spelling"));
     }
     if (uses.empty()) return {};
     return std::unexpected("--strict refuses the deprecated readings this build uses:" + uses);

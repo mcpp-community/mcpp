@@ -11,6 +11,8 @@ import nlohmann.json;
 import mcpp.manifest;
 import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
+import mcpp.provider.select;
+import mcpplibs.os.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
 import mcpplibs.os.platform;
@@ -1343,6 +1345,30 @@ UTest failure_diagnostics_never_empty{"NinjaBackend/AFailureThatNamesNoStepShows
     expect(ne(shown.find("interrupted by user"), std::string::npos)) << shown;
     // C: no output at all is said so.
     expect(ne(failure_diagnostics("", prefixes).find("printed nothing"), std::string::npos));
+}};
+
+// A ninja that names no step says how it ended: its status or the signal, and
+// whether it is the ninja mcpp pins (ninja-build/ninja#2662).
+UTest failure_diagnostics_state_how_ninja_ended{"NinjaBackend/AFailureThatNamesNoStepStatesHowNinjaEnded", [] {
+    std::vector<std::string> prefixes = {"/usr/bin/clang++"};
+    expect(eq(ninja_exit_note(0, ""), std::string{}));
+    const auto plain = ninja_exit_note(1, "");
+    expect(ne(plain.find("exited with status 1"), std::string::npos)) << plain;
+    if (!mcpplibs::os::is_windows) {
+        const auto sig = failure_diagnostics("", prefixes, 128 + 11, "");
+        expect(ne(sig.find("ended by signal 11 (SIGSEGV)"), std::string::npos)) << sig;
+        expect(ne(sig.find("printed nothing"), std::string::npos)) << sig;
+    } else {
+        const auto nt = ninja_exit_note(static_cast<int>(0xC0000005u), "");
+        expect(ne(nt.find("0xC0000005 (access violation)"), std::string::npos)) << nt;
+    }
+    const auto pin = std::format("/store/xim-x-ninja/{}/ninja", mcpp::provider::kNinjaVersion);
+    expect(eq(ninja_exit_note(1, pin).find("ninja-build/ninja#2662"), std::string::npos));
+    const auto other = ninja_exit_note(1, "/usr/bin/ninja");
+    expect(ne(other.find("not the ninja mcpp pins"), std::string::npos)) << other;
+    // A named step keeps the filter's answer, whatever the status.
+    const std::string named = "FAILED: obj/a.o \n/usr/bin/clang++ -c a.cpp -o obj/a.o\na.cpp:1:1: error: x\n";
+    expect(eq(failure_diagnostics(named, prefixes, 1, "/usr/bin/ninja"), filter_ninja_output(named, prefixes)));
 }};
 
 // ── Cache-served units: stage edges, not compile edges ──────────────────────

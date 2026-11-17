@@ -473,6 +473,69 @@ int main() {
         expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "RUNNER-RAN"))) << "D: the named runner did not run: " << s::text(r);
     };
 
+    "1109 a runner is taken on the hosts it states"_test[s::elf][s::llvm] = [] {
+        // Design 2026-11-17 §5: a platform's runner states `hosts`. On a host it does not
+        // name, the runner is not taken: the row is refused for the reach, naming the hosts,
+        // and is not asked to be enabled. On a host it names, `enabled = false` is refused as
+        // before.
+        const auto t = s::case_dir();
+        const auto LLVM_VERSION = s::llvm_version();
+        const auto platform = [&](std::string_view hosts) {
+            return std::format(R"cpp([package]
+name    = "hosts-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{0}"
+
+[[platform.define]]
+triple        = "x86_64-hostsos"
+clang-triple  = "x86_64-unknown-linux-gnu"
+object-format = "elf"
+family        = "unix"
+execution     = "hostsos"
+
+[[platform.provider]]
+serves = ["x86_64-hostsos"]
+runner = {{ cmd = ["mcpp-e2e-no-such-runner", "{{}}"], hosts = [{1}], requires = ["xim:mcpp-e2e-not-installed@1.0"], enabled = false }}
+
+[platform.build]
+cflags  = ["-ffreestanding", "-fno-stack-protector"]
+
+[platform.link]
+driver = "lld"
+flags  = ["-e", "_start"]
+
+[platform.layers]
+"kernel-abi"       = false
+"c-abi"            = false
+"c++-abi"          = false
+"compiler-runtime" = false
+)cpp", LLVM_VERSION, hosts);
+        };
+        s::project plat{t / "plat", {{"mcpp.toml", platform(R"("elsewhere-x86_64")")}}};
+        s::project app{t / "app", {{"mcpp.toml", R"cpp([package]
+name    = "words"
+version = "0.1.0"
+
+[targets.words]
+kind = "bin"
+main = "src/main.c"
+
+[target.x86_64-hostsos]
+platform = { path = "../plat" }
+)cpp"}, {"src/main.c", "void _start(void) { for (;;) {} }\n"}}};
+        auto r = app.mcpp({"run", "--target", "x86_64-hostsos"});
+        expect(fatal(r.started && r.status != 0)) << "A: a row of another system ran: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "[runner-not-enabled]"))) << "A: a runner of another host was asked to be enabled: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "exists for elsewhere-x86_64"))) << "A: the refusal does not name the runner's hosts: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "(runner.hosts)"))) << "A: the refusal does not name the key: " << s::text(r);
+        plat.write("mcpp.toml", platform(R"("linux-x86_64", "linux-aarch64")"));
+        r = app.mcpp({"run", "--target", "x86_64-hostsos"});
+        expect(fatal(r.started && r.status == 2 && e2e::contains(s::text(r), "[runner-not-enabled]")))
+            << "B: a runner of this host that is not enabled was not refused for that: " << s::text(r);
+    };
+
     "684 a runner supplied twice is refused"_test[s::unix_shell] = [] {
         // A runner name a dependency's build program supplies alone is accepted (3); supplied
         // by the project's build program too, it is refused naming both (1); the manifest's

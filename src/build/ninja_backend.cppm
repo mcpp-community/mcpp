@@ -115,8 +115,14 @@ std::string filter_ninja_output(std::string_view output,
 // What a failed build that named no failed step says (mcpp#945): the filtered
 // output, or, when the filter leaves nothing, the last lines ninja printed as
 // they are -- never a bare "build failed".
+// `exitCode` and `ninjaProgram` state how ninja itself ended, where no step
+// is named: its status or the signal that ended it, and whether the program
+// is the pinned ninja (the one with the correction of ninja-build/ninja#2662).
 std::string failure_diagnostics(std::string_view output,
-                                std::span<const std::string> commandPrefixes);
+                                std::span<const std::string> commandPrefixes,
+                                int exitCode = 0, std::string_view ninjaProgram = {});
+// How a ninja that named no failed step ended, one line; empty for status 0.
+std::string ninja_exit_note(int exitCode, std::string_view ninjaProgram);
 
 // One ninja run read line by line into its build's report (build progress
 // design 2026-09-29, §6.1). `argv` must not carry `--quiet`: the status lines
@@ -1373,8 +1379,41 @@ std::string graph_link_library_advice(std::string_view output,
     return out;
 }
 
+std::string ninja_exit_note(int exitCode, std::string_view ninjaProgram) {
+    if (exitCode == 0) return {};
+    std::string how;
+    const auto status = static_cast<unsigned>(exitCode);
+    if (mcpplibs::os::is_windows && status >= 0xC0000000u) {
+        // An NTSTATUS, which is what a process ended by an exception exits with.
+        const char* name = status == 0xC0000005u ? "access violation"
+                         : status == 0xC0000374u ? "heap corruption"
+                         : status == 0xC0000409u ? "stack buffer overrun"
+                         : status == 0xC00000FDu ? "stack overflow" : "an exception";
+        how = std::format("ninja ended with status 0x{:08X} ({})", status, name);
+    } else if (!mcpplibs::os::is_windows && exitCode > 128 && exitCode <= 128 + 64) {
+        const int sig = exitCode - 128;
+        const char* name = sig == 11 ? "SIGSEGV" : sig == 6 ? "SIGABRT" : sig == 7 ? "SIGBUS"
+                         : sig == 9 ? "SIGKILL" : sig == 15 ? "SIGTERM" : sig == 4 ? "SIGILL"
+                         : sig == 8 ? "SIGFPE" : "";
+        how = std::format("ninja was ended by signal {}{}", sig,
+                          *name ? std::format(" ({})", name) : std::string{});
+    } else {
+        how = std::format("ninja exited with status {}", exitCode);
+    }
+    // A ninja that is not the pinned one lacks the correction of
+    // ninja-build/ninja#2662, whose symptom is this failure (mcpp#945).
+    const auto pin = std::format("/{}/", mcpp::provider::kNinjaVersion);
+    if (!ninjaProgram.empty()
+        && std::filesystem::path(ninjaProgram).generic_string().find(pin) == std::string::npos)
+        how += std::format("; it is `{}`, not the ninja mcpp pins ({}), which carries the "
+                           "correction of ninja-build/ninja#2662",
+                           ninjaProgram, mcpp::provider::kNinjaVersion);
+    return how + "\n";
+}
+
 std::string failure_diagnostics(std::string_view output,
-                                std::span<const std::string> commandPrefixes) {
+                                std::span<const std::string> commandPrefixes,
+                                int exitCode, std::string_view ninjaProgram) {
     auto filtered = filter_ninja_output(output, commandPrefixes);
     if (filtered.find_first_not_of(" \t\r\n") != std::string::npos) return filtered;
     std::vector<std::string> lines;
@@ -1386,9 +1425,11 @@ std::string failure_diagnostics(std::string_view output,
         lines.push_back(std::move(line));
     }
     if (lines.empty())
-        return "the build stopped with no output: ninja named no failed step and printed nothing\n";
+        return "the build stopped with no output: ninja named no failed step and printed nothing\n"
+               + ninja_exit_note(exitCode, ninjaProgram);
     constexpr std::size_t kTail = 40;
-    std::string out = "ninja named no failed step; its last lines:\n";
+    std::string out = ninja_exit_note(exitCode, ninjaProgram)
+                    + "ninja named no failed step; its last lines:\n";
     for (std::size_t i = lines.size() > kTail ? lines.size() - kTail : 0; i < lines.size(); ++i)
         out += "  " + lines[i] + "\n";
     return out;
@@ -5315,7 +5356,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         // What was reported as it happened is not repeated: a failed step's
         // diagnostics (default output), or every line (--verbose).
         auto diagnostics = reported || (report && opts.verbose) ? std::string{}
-                         : opts.verbose ? out : failure_diagnostics(out, prefixes);
+                         : opts.verbose ? out : failure_diagnostics(out, prefixes, ninjaExit, ninjaProgram);
         // Appended here as well as on the fast path (execute.cppm): the two
         // paths report failure through different channels, and advice attached
         // to only one of them would appear or not depending on whether
@@ -5368,11 +5409,19 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 // program sees, is this function's answer too.
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
+    // A store that holds several versions answers with the pinned one
+    // (mcpp#945): a scan of the versions answers in directory order, and the
+    // pin is the version that carries the correction of ninja-build/ninja#2662.
+    auto pinned = [&](const std::filesystem::path& versionDir) {
+        std::error_code ec;
+        auto p = versionDir.parent_path() / std::string(mcpp::provider::kNinjaVersion) / ninja_name;
+        return std::filesystem::is_regular_file(p, ec) ? p : versionDir / ninja_name;
+    };
     if (auto nb = mcpp::provider::beside_binary(tc.binaryPath, "ninja", ninja_name))
-        return nb->string();
+        return pinned(nb->parent_path()).string();
     if (auto home = mcpp::provider::in_home_store("ninja", ninja_name)) {
         std::error_code ec;
-        if (std::filesystem::is_regular_file(*home / ninja_name, ec)) return (*home / ninja_name).string();
+        if (auto p = pinned(*home); std::filesystem::is_regular_file(p, ec)) return p.string();
     }
     return "ninja";
 }

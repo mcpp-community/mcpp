@@ -255,8 +255,36 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
     target::define(std::move(set));
 }
 
+// A PLATFORM IS SELECTED BY WHAT THE REQUEST SPELLS (SPEC-013 §3.1): `arch`,
+// `os`, `env` and the families. A layer (`c-abi`, ...) is what the selected
+// platform states, so a selector that names one holds only for a row whose
+// own data states the layer. Measured on a project of 26 targets:
+// `cfg(c-abi = "musl")` selected the platform for `x86_64-linux-musl` and not
+// for `x86_64-macos-musl`, which then took the engine's default.
+void warn_platform_selected_by_a_layer(const mcpp::manifest::Manifest& m) {
+    for (auto const& o : project_tables(m)) {
+        if (!o.platformSet || !o.selector.starts_with("cfg(")) continue;
+        for (auto layer : mp::kLayers) {
+            const auto at = o.selector.find(layer);
+            if (at == std::string::npos) continue;
+            // A whole word: `c-abi` is not found inside `c++-abi`.
+            const auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '+' || c == '_'; };
+            if ((at > 0 && word(o.selector[at - 1]))
+                || (at + layer.size() < o.selector.size() && word(o.selector[at + layer.size()])))
+                continue;
+            mcpp::diag::warning("manifest/platform-selector", std::format(
+                "[target.'{}'] platform: the selector names the layer `{}`, which the platform "
+                "itself states; before a platform is selected it holds only for a row whose own "
+                "data states it. Select by what the triple spells: `arch`, `os`, `env` "
+                "(for example cfg(env = \"musl\")).", o.selector, layer));
+            break;
+        }
+    }
+}
+
 void define_early_platform(PrepareState& state) {
     const auto raw = state.overrides.target_triple;
+    if (state.m) warn_platform_selected_by_a_layer(*state.m);
     // The explicit choice for this request, by the words that need no parse: the
     // flag, the environment and the tables whose selector is the request itself.
     std::optional<mp::PackageRef> chosen;
