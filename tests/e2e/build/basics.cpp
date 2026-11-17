@@ -185,10 +185,13 @@ E2E basics{"basics", [] {
             std::string db;
             for (const auto& f : s::glob(p.at("target"), "*/*/compile_commands.json")) db = s::read_file(f);
             expect(fatal(e2e::contains(db, "c.private.cpp"))) << "A: the fragment's unit is not in the compile database";
-            const auto written = p.at("src/c.cppm").generic_string();
-            std::string generic = db;
-            std::ranges::replace(generic, '\\', '/');
-            expect(e2e::contains(generic, std::format("\"file\": \"{}\"", written)) || e2e::contains(generic, std::format("\"file\":\"{}\"", written)))
+            // JSON writes a Windows separator as two backslashes.
+            std::string generic;
+            for (std::size_t i = 0; i < db.size(); ++i) {
+                if (db[i] == '\\') { generic += '/'; if (i + 1 < db.size() && db[i + 1] == '\\') ++i; }
+                else generic += db[i];
+            }
+            expect(std::regex_search(generic, std::regex(R"re("file":\s*"[^"]*/src/c\.cppm")re")))
                 << "A: the source as written has no entry in the compile database: " << db;
         }
 
