@@ -120,14 +120,24 @@ UTest unknown_os_falls_back_to_host{"ArtifactNaming/UnknownOsFallsBackToHost", [
     expect(eq(n.staticLibExt, ".HOST"));
 }};
 
-// A bare-metal `none` OS is not the emscripten row and must keep falling back
-// to the host answer — the emscripten branch below must not widen the
-// fallback it sits next to.
-UTest none_os_falls_back_to_host{"ArtifactNaming/NoneOsFallsBackToHost", [] {
+// A bare-metal `none` OS is an ELF word of the language: named as ELF from
+// every host, and not as the emscripten row beside it (`.js`). It took the
+// host's answer, so a `*-none-elf` program was `.exe` on a Windows host.
+UTest none_os_is_named_as_elf{"ArtifactNaming/NoneOsIsNamedAsElfFromEveryHost", [] {
     tr::Triple none; none.arch = "aarch64"; none.os = "none";
     auto n = tr::artifact_naming(none, kBogusHost);
-    expect(eq(n.exeSuffix, ".HOST"));
-    expect(eq(n.staticLibExt, ".HOST"));
+    expect(eq(n.exeSuffix, ""));
+    expect(eq(n.libPrefix, "lib"));
+    expect(eq(n.staticLibExt, ".a"));
+    expect(eq(n.sharedLibExt, ".so"));
+}};
+
+// iOS is a Mach-O row and names what it builds as macOS does.
+UTest ios_is_named_as_macos{"ArtifactNaming/IosIsNamedAsMacos", [] {
+    auto n = tr::artifact_naming(T("aarch64-ios"), kBogusHost);
+    expect(eq(n.exeSuffix, ""));
+    expect(eq(n.staticLibExt, ".a"));
+    expect(eq(n.sharedLibExt, ".dylib"));
 }};
 
 // ── wasm32-emscripten: the executable is the file a runner executes, and on
