@@ -45,7 +45,7 @@ import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
-import mcpp.bmi;
+import mcpp.buildopt.keep;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
@@ -1612,7 +1612,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         : std::string{};
     // The same executor for an edge that writes a BMI: it holds the previous
     // BMI while the compiler runs and puts it back when the new one is
-    // equivalent (`mcpp.bmi`), which is what lets `restat` end the rebuild at
+    // equivalent (`mcpp.buildopt.keep`), which is what lets `restat` end the rebuild at
     // this edge. The executor does it, not a shell fragment of the command, so
     // every host has it (SPEC-018 §3); `$bmi_out` is empty on an edge of this
     // rule that provides no module, and the executor then keeps nothing.
@@ -5085,10 +5085,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
-    // The directory's BMI cutoff for this run (mcpp.bmi). A graph
+    // The directory's BMI cutoff for this run (mcpp.buildopt.keep). A graph
     // compiled with contracts is compared exactly: a contract's violation
     // names the line of its assertion, read from the line maps.
-    mcpp::bmi::run_begin(plan.outputDir,
+    mcpp::buildopt::keep::run_begin(plan.outputDir,
         plan.manifest.buildConfig.bmiIgnoreLocations && manifest.find("-fcontracts") == std::string::npos);
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
@@ -5223,8 +5223,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             return std::unexpected(BuildError{settled.error(), plan.outputDir});
     }
     bool ok = (ninjaExit == 0) && !buildTimedOut;
-    const auto bmiRun = mcpp::bmi::run_end(plan.outputDir);
-    for (auto const& line : mcpp::bmi::summary(bmiRun))
+    const auto bmiRun = mcpp::buildopt::keep::run_end(plan.outputDir);
+    for (auto const& line : mcpp::buildopt::keep::summary(bmiRun))
         mcpp::ui::info("note", line);
     if (bmiRun.objectsSame)
         mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",

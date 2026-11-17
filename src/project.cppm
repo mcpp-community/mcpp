@@ -1134,6 +1134,7 @@ export std::string root_position_key(
     if (!abiLongjmp.empty()) field("abi_longjmp", abiLongjmp);
     field("accel", b.accel);
     field("bmi_schedule", b.bmiSchedule);
+    field("private_fragment", b.privateFragment);
     field("jobs", b.jobs);
     field("cache", b.cacheMode);
     field("allow_host_libs", b.allowHostLibs ? "1" : "0");
@@ -1200,6 +1201,7 @@ virtual_workspace_root(const mcpp::manifest::Manifest& workspace,
     b.runExclusive = f.runExclusive;
     b.jobs = f.jobs;
     b.bmiSchedule = f.bmiSchedule;
+    b.privateFragment = f.privateFragment;
     b.accel = f.accel;
     b.staticStdlib = f.staticStdlib;
     b.cxxRuntime = f.cxxRuntime;

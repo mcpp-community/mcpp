@@ -34,7 +34,7 @@ import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
-import mcpp.bmi;
+import mcpp.buildopt.keep;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
@@ -2626,12 +2626,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     bool reported = false;
     const auto prefixes = read_ninja_command_prefixes(ninjaPath);
     // The directory keeps the BMI cutoff its graph was written with; the
-    // environment states another for this run (mcpp.bmi).
+    // environment states another for this run (mcpp.buildopt.keep).
     {
         std::optional<bool> cutoff;
         if (auto stated = mcpp::invocation::get("MCPP_BMI_CUTOFF"))
-            cutoff = *stated == mcpp::bmi::kIgnoreLocations;
-        mcpp::bmi::run_begin(outputDir, cutoff);
+            cutoff = *stated == mcpp::buildopt::keep::kIgnoreLocations;
+        mcpp::buildopt::keep::run_begin(outputDir, cutoff);
     }
     // The scan pass comes first here as on the full path (build wall-time
     // plan, W2): the same passes, so the same counts.
@@ -2674,8 +2674,8 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         out = std::move(r.output);
         status = r.exit_code;
     }
-    const auto bmiRun = mcpp::bmi::run_end(outputDir);
-    for (auto const& line : mcpp::bmi::summary(bmiRun))
+    const auto bmiRun = mcpp::buildopt::keep::run_end(outputDir);
+    for (auto const& line : mcpp::buildopt::keep::summary(bmiRun))
         mcpp::ui::info("note", line);
     if (bmiRun.objectsSame)
         mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",

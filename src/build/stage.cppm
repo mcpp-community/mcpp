@@ -87,7 +87,7 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
 // when the plan is built, so its content cannot be compared there. This is
 // where the invariant is actually checked, because by build time every source
 // exists: every source is compared against the first by content
-// (`same_content`, never masking the way `mcpp::bmi::gcc::equivalent` does — a deploy
+// (`same_content`, never masking the way `mcpp::buildopt::keep::gcm::equivalent` does — a deploy
 // target is an ordinary file, not a BMI with a compiler-embedded clock), and
 // the first is staged when they all agree. Disagreement is refused, naming
 // every source and the destination, so the message points at every producer

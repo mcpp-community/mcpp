@@ -999,6 +999,11 @@ struct BuildConfig : BuildInputs {
     // compiler doing the build, and resolving it at parse time would freeze one
     // machine's answer into a manifest that travels.
     std::string bmiSchedule;
+    // `[build] private_fragment` -- how a private module fragment is built
+    // (SPEC-019): "unit" (the default: the fragment is a unit of its own, so an
+    // edit of it reaches no importer) or "as-written". Text, validated where it
+    // is read with `MCPP_PRIVATE_FRAGMENT` (mcpp.buildopt.source).
+    std::string privateFragment;
     // feature name → extra source globs gated by that feature. A glob listed
     // here is EXCLUDED from the default build and only compiled/linked when the
     // feature is active for this package (resolved in prepare_build). Lets a

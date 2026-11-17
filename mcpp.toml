@@ -149,7 +149,7 @@ mcpp.versioning      = { path = "modules/versioning" }
 mcpp.source-kind     = { path = "modules/source-kind" }
 mcpp.graph           = { path = "modules/graph" }
 mcpp.dyndep          = { path = "modules/dyndep" }
-mcpp.bmi             = { path = "modules/bmi" }
+mcpp.buildopt        = { path = "modules/buildopt" }
 mcpp.manifest        = { path = "modules/manifest" }
 mcpp.toolchain-model = { path = "modules/toolchain-model" }
 mcpp.buildmcpp       = { path = "modules/buildmcpp" }
@@ -172,7 +172,7 @@ members = [
     "modules/source-kind",
     "modules/graph",
     "modules/dyndep",
-    "modules/bmi",
+    "modules/buildopt",
     "modules/manifest",
     "modules/toolchain-model",
     "modules/buildmcpp",

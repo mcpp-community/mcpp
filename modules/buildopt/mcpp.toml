@@ -1,0 +1,24 @@
+# mcpp.buildopt — what mcpp does beyond what the compiler and ninja do.
+#
+# A build with none of it is the standard build: one edge per unit, every
+# output the compiler writes stands, and what follows an output is run. Each
+# thing mcpp adds to that is an entry of one register (mcpp.buildopt.registry)
+# with its level, its default and its switch, and its decision is in this
+# package: which previous file stays (keep), which shape the module edges take
+# (schedule), which units a source is built as (source). The general pipeline
+# asks at three seams and knows no entry. README.md lists the entries.
+
+[package]
+name        = "buildopt"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The build optimizations of mcpp: their register, and the decisions of each"
+license     = "Apache-2.0"
+
+[dependencies]
+mcpp.invocation      = { path = "../invocation" }
+mcpp.manifest        = { path = "../manifest" }
+mcpp.toolchain-model = { path = "../toolchain-model" }
+
+[dev-dependencies]
+mcpplibs.mtest = "0.9.0"

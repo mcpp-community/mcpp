@@ -1,15 +1,15 @@
-// mcpp.bmi: what two BMIs differ in, and the cutoff of a build directory
+// mcpp.buildopt.keep: what two BMIs differ in, and the cutoff of a build directory
 // (mcpp#946 O2, O6). The GCC files are built here as the ELF32 file GCC
 // writes, with the sections the reader names; the offsets of the two
 // checksums in `.gnu.c++.cfg` are those measured with gcc 16.1.0.
 import std;
 import mcpplibs.mtest;
-import mcpp.bmi;
-import mcpp.bmi.gcc;
+import mcpp.buildopt.keep;
+import mcpp.buildopt.keep.gcm;
 
 using namespace mcpplibs::mtest;
 namespace fs = std::filesystem;
-using mcpp::bmi::Difference;
+using mcpp::buildopt::keep::Difference;
 
 namespace {
 
@@ -85,9 +85,9 @@ Gcm shifted(Gcm g) {
 UTest lines_alone{"BmiCutoff/AGccBmiWhoseLineMapsAloneMovedDiffersInLocationsOnly", [] {
     const auto d = tmpdir();
     const auto a = write(d / "a.gcm", gcm({}));
-    expect(mcpp::bmi::gcc::is_format(gcm({})));
-    expect(mcpp::bmi::difference(a, write(d / "same.gcm", gcm({.clock = "2026/11/17 04:00:00"}))) == Difference::Same);
-    expect(mcpp::bmi::difference(a, write(d / "b.gcm", gcm(shifted({})))) == Difference::LocationsOnly);
+    expect(mcpp::buildopt::keep::gcm::is_format(gcm({})));
+    expect(mcpp::buildopt::keep::difference(a, write(d / "same.gcm", gcm({.clock = "2026/11/17 04:00:00"}))) == Difference::Same);
+    expect(mcpp::buildopt::keep::difference(a, write(d / "b.gcm", gcm(shifted({})))) == Difference::LocationsOnly);
 }};
 
 UTest anything_else{"BmiCutoff/AnEntityOrTheRestOfTheConfigurationIsAChange", [] {
@@ -95,13 +95,13 @@ UTest anything_else{"BmiCutoff/AnEntityOrTheRestOfTheConfigurationIsAChange", []
     const auto a = write(d / "a.gcm", gcm({}));
     auto entity = shifted({});
     entity.entity[6] = 'X';
-    expect(mcpp::bmi::difference(a, write(d / "e.gcm", gcm(entity))) == Difference::Changed);
+    expect(mcpp::buildopt::keep::difference(a, write(d / "e.gcm", gcm(entity))) == Difference::Changed);
     auto rest = shifted({});
     rest.cfg[13] = 'X';
-    expect(mcpp::bmi::difference(a, write(d / "c.gcm", gcm(rest))) == Difference::Changed);
+    expect(mcpp::buildopt::keep::difference(a, write(d / "c.gcm", gcm(rest))) == Difference::Changed);
     auto longer = shifted({});
     longer.olm += "x";
-    expect(mcpp::bmi::difference(a, write(d / "l.gcm", gcm(longer))) == Difference::Changed);
+    expect(mcpp::buildopt::keep::difference(a, write(d / "l.gcm", gcm(longer))) == Difference::Changed);
 }};
 
 // A template body that reads its line is instantiated from the line maps: the
@@ -112,16 +112,16 @@ UTest a_body_that_reads_its_line{"BmiCutoff/ABmiThatNamesALocationBuiltinIsCompa
         Gcm g;
         g.entity += std::string(builtin);
         const auto a = write(d / "a.gcm", gcm(g));
-        expect(mcpp::bmi::difference(a, write(d / "b.gcm", gcm(shifted(g)))) == Difference::Changed) << builtin;
+        expect(mcpp::buildopt::keep::difference(a, write(d / "b.gcm", gcm(shifted(g)))) == Difference::Changed) << builtin;
     }
 }};
 
 UTest another_format{"BmiCutoff/AFileOfNoKnownFormatIsComparedByItsBytes", [] {
     const auto d = tmpdir();
     const auto a = write(d / "a.pcm", "CPCH-one");
-    expect(mcpp::bmi::difference(a, write(d / "b.pcm", "CPCH-one")) == Difference::Same);
-    expect(mcpp::bmi::difference(a, write(d / "c.pcm", "CPCH-two")) == Difference::Changed);
-    expect(mcpp::bmi::difference(a, d / "absent.pcm") == Difference::Changed);
+    expect(mcpp::buildopt::keep::difference(a, write(d / "b.pcm", "CPCH-one")) == Difference::Same);
+    expect(mcpp::buildopt::keep::difference(a, write(d / "c.pcm", "CPCH-two")) == Difference::Changed);
+    expect(mcpp::buildopt::keep::difference(a, d / "absent.pcm") == Difference::Changed);
 }};
 
 // The directory states the cutoff; an edge asks in it; the run's record names
@@ -136,30 +136,30 @@ UTest the_directory{"BmiCutoff/TheDirectoryStatesTheCutoffAndRecordsTheRun", [] 
     write("gcm.cache/d.gcm", gcm(other));
     write("gcm.cache/d.gcm.bak", gcm({}));
 
-    mcpp::bmi::run_begin(d, false);
-    expect(!mcpp::bmi::keeps_previous("gcm.cache/c.gcm", "gcm.cache/c.gcm.bak"));
-    auto run = mcpp::bmi::run_end(d);
+    mcpp::buildopt::keep::run_begin(d, false);
+    expect(!mcpp::buildopt::keep::keeps_previous("gcm.cache/c.gcm", "gcm.cache/c.gcm.bak"));
+    auto run = mcpp::buildopt::keep::run_end(d);
     expect(run.changed == std::vector<std::string>{"c.gcm"} && run.kept.empty());
 
-    mcpp::bmi::run_begin(d, true);
-    expect(mcpp::bmi::keeps_previous("gcm.cache/c.gcm", "gcm.cache/c.gcm.bak"));
-    expect(!mcpp::bmi::keeps_previous("gcm.cache/d.gcm", "gcm.cache/d.gcm.bak"));
-    run = mcpp::bmi::run_end(d);
+    mcpp::buildopt::keep::run_begin(d, true);
+    expect(mcpp::buildopt::keep::keeps_previous("gcm.cache/c.gcm", "gcm.cache/c.gcm.bak"));
+    expect(!mcpp::buildopt::keep::keeps_previous("gcm.cache/d.gcm", "gcm.cache/d.gcm.bak"));
+    run = mcpp::buildopt::keep::run_end(d);
     expect(run.kept == std::vector<std::string>{"c.gcm"} && run.changed == std::vector<std::string>{"d.gcm"});
-    const auto lines = mcpp::bmi::summary(run);
+    const auto lines = mcpp::buildopt::keep::summary(run);
     expect(lines.size() == 2u);
     expect(lines.back().find("bmi_cutoff = \"exact\"") != std::string::npos) << lines.back();
 
     // The cutoff the directory states holds for a run that states none.
-    mcpp::bmi::run_begin(d, std::nullopt);
-    expect(mcpp::bmi::keeps_previous("gcm.cache/c.gcm", "gcm.cache/c.gcm.bak"));
-    (void)mcpp::bmi::run_end(d);
+    mcpp::buildopt::keep::run_begin(d, std::nullopt);
+    expect(mcpp::buildopt::keep::keeps_previous("gcm.cache/c.gcm", "gcm.cache/c.gcm.bak"));
+    (void)mcpp::buildopt::keep::run_end(d);
 
     // An exact run removes the BMI kept with earlier lines, so its edge runs.
-    mcpp::bmi::run_begin(d, false);
+    mcpp::buildopt::keep::run_begin(d, false);
     expect(!fs::exists("gcm.cache/c.gcm"));
     expect(fs::exists("gcm.cache/d.gcm"));
-    expect(mcpp::bmi::summary(mcpp::bmi::run_end(d)).empty());
+    expect(mcpp::buildopt::keep::summary(mcpp::buildopt::keep::run_end(d)).empty());
     fs::current_path(back);
 }};
 

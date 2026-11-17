@@ -1,18 +1,18 @@
-// mcpp.bmi.gcc — what mcpp knows of a GCC BMI (`.gcm`).
+// mcpp.buildopt.keep.gcm — what mcpp knows of a GCC BMI (`.gcm`).
 //
 // A `.gcm` is not a function of the interface alone: it holds two wall-clock
 // stamps, and its line maps move with a line inserted above a recorded
 // location. Both defeat a cutoff by content, and both are properties of one
 // compiler's file format. Everything that reads that format is in this file.
 // The cutoff itself -- the question an edge asks, the build directory's
-// statement and its record -- is mcpp.bmi and knows no format.
+// statement and its record -- is mcpp.buildopt.keep and knows no format.
 
-export module mcpp.bmi.gcc;
+export module mcpp.buildopt.keep.gcm;
 
 import std;
-import mcpp.bmi.difference;
+import mcpp.buildopt.keep.difference;
 
-export namespace mcpp::bmi::gcc {
+export namespace mcpp::buildopt::keep::gcm {
 
 // Whether the bytes are a BMI of GCC's: the ELF file it writes.
 bool is_format(std::string_view bytes);
@@ -76,9 +76,9 @@ bool equivalent(const std::filesystem::path& a, const std::filesystem::path& b);
 // folded where it is parsed and its own section changes.
 Difference difference(const std::filesystem::path& a, const std::filesystem::path& b);
 
-} // namespace mcpp::bmi::gcc
+} // namespace mcpp::buildopt::keep::gcm
 
-namespace mcpp::bmi::gcc {
+namespace mcpp::buildopt::keep::gcm {
 
 bool is_format(std::string_view bytes) {
     return bytes.size() >= 52 && bytes.substr(0, 4) == "\x7f" "ELF";
@@ -237,7 +237,7 @@ bool equal_outside(std::string_view a, std::string_view b,
 } // namespace
 
 Difference difference(const std::filesystem::path& a, const std::filesystem::path& b) {
-    if (gcc::equivalent(a, b)) return Difference::Same;
+    if (gcm::equivalent(a, b)) return Difference::Same;
     auto da = read_all(a);
     auto db = read_all(b);
     if (!da || !db || da->size() != db->size()) return Difference::Changed;
@@ -253,4 +253,4 @@ Difference difference(const std::filesystem::path& a, const std::filesystem::pat
     return equal_outside(*da, *db, spans) ? Difference::LocationsOnly : Difference::Changed;
 }
 
-} // namespace mcpp::bmi::gcc
+} // namespace mcpp::buildopt::keep::gcm

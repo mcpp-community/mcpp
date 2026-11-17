@@ -1,4 +1,5 @@
-// mcpp.bmi — the cutoff by BMI content, for every compiler.
+// mcpp.buildopt.keep — which previous file of an edge stays: the cutoff by
+// content, for every compiler.
 //
 // A module edge keeps the BMI before it, compiles, and asks here whether the
 // previous file stays: where it does, ninja's `restat` leaves the importers
@@ -14,19 +15,20 @@
 //   summary         what a run says of its BMIs
 //
 // What is specific to one compiler's file format is a module of its own
-// beside this one: mcpp.bmi.gcc reads a `.gcm` (two stamps, line maps in a
+// beside this one: mcpp.buildopt.keep.gcm reads a `.gcm` (two stamps, line maps in a
 // section of their own). Clang's `.pcm` has no reader: it holds no stamp and
 // no structure that isolates locations (mcpp#946 O4), so its bytes decide.
 // A reader for another format is added as a module and one line of
 // `difference`.
 
-export module mcpp.bmi;
+export module mcpp.buildopt.keep;
 
 import std;
-export import mcpp.bmi.difference;
-import mcpp.bmi.gcc;
+export import mcpp.buildopt.keep.difference;
+import mcpp.buildopt.keep.gcm;
+import mcpp.buildopt.registry;
 
-export namespace mcpp::bmi {
+export namespace mcpp::buildopt::keep {
 
 // What the two files differ in, by the reader of their format.
 Difference difference(const std::filesystem::path& a, const std::filesystem::path& b);
@@ -82,9 +84,9 @@ Run run_end(const std::filesystem::path& dir);
 // kept one what was not done and the key that states otherwise.
 std::vector<std::string> summary(const Run& run);
 
-} // namespace mcpp::bmi
+} // namespace mcpp::buildopt::keep
 
-namespace mcpp::bmi {
+namespace mcpp::buildopt::keep {
 
 namespace {
 bool same_bytes(const std::filesystem::path& a, const std::filesystem::path& b) {
@@ -100,11 +102,13 @@ Difference difference(const std::filesystem::path& a, const std::filesystem::pat
     char head[52] = {};
     std::ifstream in(a, std::ios::binary);
     in.read(head, sizeof head);
-    if (gcc::is_format(std::string_view(head, static_cast<std::size_t>(in.gcount())))) return gcc::difference(a, b);
+    if (gcm::is_format(std::string_view(head, static_cast<std::size_t>(in.gcount())))) return gcm::difference(a, b);
     return same_bytes(a, b) ? Difference::Same : Difference::Changed;
 }
 
 bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous) {
+    // The standard build (MCPP_BUILDOPT=off): what the compiler wrote stands.
+    if (registry::standard_only()) return false;
     if (!same_bytes(object, previous)) return false;
     const auto line = object.generic_string() + "\n";
     std::ofstream out(std::filesystem::path{kObjectsFile}, std::ios::app | std::ios::binary);
@@ -123,7 +127,8 @@ std::vector<std::string> read_lines(const std::filesystem::path& p) {
 } // namespace
 
 bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::path& previous) {
-    const auto found = bmi::difference(bmi, previous);
+    if (registry::standard_only()) return false;
+    const auto found = keep::difference(bmi, previous);
     if (found == Difference::Same) return true;
     bool keep = false;
     if (found == Difference::LocationsOnly) {
@@ -143,7 +148,10 @@ void run_begin(const std::filesystem::path& dir, std::optional<bool> ignoreLocat
     if (!std::filesystem::is_directory(dir, ec)) return;
     const auto cutoffFile = dir / kCutoffFile;
     const auto have = read_lines(cutoffFile);
-    const bool ignore = ignoreLocations.value_or(!have.empty() && have.front() == kIgnoreLocations);
+    // The standard build keeps nothing, so it is exact: a BMI an earlier run
+    // kept with earlier lines is removed below as under `exact`.
+    const bool ignore = !registry::standard_only()
+        && ignoreLocations.value_or(!have.empty() && have.front() == kIgnoreLocations);
     const std::string_view want = ignore ? kIgnoreLocations : std::string_view("exact");
     if (have.empty() || have.front() != want)
         std::ofstream(cutoffFile, std::ios::trunc | std::ios::binary) << want << "\n";
@@ -206,4 +214,4 @@ Run run_end(const std::filesystem::path& dir) {
     return run;
 }
 
-} // namespace mcpp::bmi
+} // namespace mcpp::buildopt::keep

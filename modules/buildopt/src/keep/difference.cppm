@@ -1,4 +1,4 @@
-// mcpp.bmi.difference — what two BMIs of one module differ in.
+// mcpp.buildopt.keep.difference — what two BMIs of one module differ in.
 //
 // The vocabulary the cutoff and every format reader share. `Same`: equal for
 // an importer (bytes, or bytes but for what the format's reader masks).
@@ -6,10 +6,10 @@
 // importer of the previous BMI reads the previous lines. `Changed`: anything
 // an importer can observe.
 
-export module mcpp.bmi.difference;
+export module mcpp.buildopt.keep.difference;
 
-export namespace mcpp::bmi {
+export namespace mcpp::buildopt::keep {
 
 enum class Difference { Same, LocationsOnly, Changed };
 
-} // namespace mcpp::bmi
+} // namespace mcpp::buildopt::keep

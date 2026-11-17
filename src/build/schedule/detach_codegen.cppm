@@ -74,7 +74,7 @@ import mcpplibs.os.process;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.build.stage;
-import mcpp.bmi;
+import mcpp.buildopt.keep;
 import mcpp.build.schedule.compiler_transaction;
 import mcpp.home;
 import mcpp.home.files;
@@ -519,7 +519,7 @@ void settle_bmi(const std::filesystem::path& bmi) {
     // Equivalent → put the PREVIOUS file back, so its mtime does not advance and
     // ninja's restat stops the cascade. The rename is atomic, so the BMI is
     // readable throughout: there is no moment at which importers see nothing.
-    if (mcpp::bmi::keeps_previous(bmi, backup))
+    if (mcpp::buildopt::keep::keeps_previous(bmi, backup))
         std::filesystem::rename(backup, bmi, ec);
     else
         std::filesystem::remove(backup, ec);
@@ -1101,7 +1101,7 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
 // WHAT AN ORDINARY COMPILE WROTE BEFORE, HELD WHILE THE COMPILER RUNS.
 //
 // The previous file under another name beside its own; when the compiler has
-// written one that stays (`mcpp::bmi::keeps_previous` for a BMI, which reads
+// written one that stays (`mcpp::buildopt::keep::keeps_previous` for a BMI, which reads
 // its format and the directory's cutoff; `keeps_previous_object` for an
 // object, whose bytes decide; both record the answer in the build directory),
 // the previous file takes its place again and the output's time has not
@@ -1141,8 +1141,8 @@ struct Previous {
     void settle(bool compiled) {
         if (held.empty()) return;
         std::error_code ec;
-        if (compiled && (kind == Kind::Bmi ? mcpp::bmi::keeps_previous(file, held)
-                                           : mcpp::bmi::keeps_previous_object(file, held))) {
+        if (compiled && (kind == Kind::Bmi ? mcpp::buildopt::keep::keeps_previous(file, held)
+                                           : mcpp::buildopt::keep::keeps_previous_object(file, held))) {
             std::filesystem::rename(held, file, ec);
             if (!ec) { held.clear(); return; }
         }
