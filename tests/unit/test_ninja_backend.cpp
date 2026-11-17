@@ -12,7 +12,6 @@ import mcpp.manifest;
 import mcpp.modgraph.scanner;   // PackageRoot, for trim_map
 import mcpp.toolchain.dialect;
 import mcpp.provider.select;
-import mcpplibs.os.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.triple;
 import mcpplibs.os.platform;
@@ -1354,14 +1353,11 @@ UTest failure_diagnostics_state_how_ninja_ended{"NinjaBackend/AFailureThatNamesN
     expect(eq(ninja_exit_note(0, ""), std::string{}));
     const auto plain = ninja_exit_note(1, "");
     expect(ne(plain.find("exited with status 1"), std::string::npos)) << plain;
-    if (!mcpplibs::os::is_windows) {
-        const auto sig = failure_diagnostics("", prefixes, 128 + 11, "");
-        expect(ne(sig.find("ended by signal 11 (SIGSEGV)"), std::string::npos)) << sig;
-        expect(ne(sig.find("printed nothing"), std::string::npos)) << sig;
-    } else {
-        const auto nt = ninja_exit_note(static_cast<int>(0xC0000005u), "");
-        expect(ne(nt.find("0xC0000005 (access violation)"), std::string::npos)) << nt;
-    }
+    const auto sig = failure_diagnostics("", prefixes, 128 + 11, "");
+    expect(ne(sig.find("ended by signal 11 (SIGSEGV)"), std::string::npos)) << sig;
+    expect(ne(sig.find("printed nothing"), std::string::npos)) << sig;
+    const auto nt = ninja_exit_note(static_cast<int>(0xC0000005u), "");
+    expect(ne(nt.find("0xC0000005 (access violation)"), std::string::npos)) << nt;
     const auto pin = std::format("/store/xim-x-ninja/{}/ninja", mcpp::provider::kNinjaVersion);
     expect(eq(ninja_exit_note(1, pin).find("ninja-build/ninja#2662"), std::string::npos));
     const auto other = ninja_exit_note(1, "/usr/bin/ninja");

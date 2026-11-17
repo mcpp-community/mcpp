@@ -1384,14 +1384,16 @@ std::string ninja_exit_note(int exitCode, std::string_view ninjaProgram) {
     if (exitCode == 0) return {};
     std::string how;
     const auto status = static_cast<unsigned>(exitCode);
-    if (mcpplibs::os::is_windows && status >= 0xC0000000u) {
-        // An NTSTATUS, which is what a process ended by an exception exits with.
+    // The status says which by its value: a process ended by an exception
+    // exits with an NTSTATUS (0xC0000000 and above), and one ended by a signal
+    // is reported as 128 plus the signal, as a shell reports it (mcpp.run).
+    if (status >= 0xC0000000u) {
         const char* name = status == 0xC0000005u ? "access violation"
                          : status == 0xC0000374u ? "heap corruption"
                          : status == 0xC0000409u ? "stack buffer overrun"
                          : status == 0xC00000FDu ? "stack overflow" : "an exception";
         how = std::format("ninja ended with status 0x{:08X} ({})", status, name);
-    } else if (!mcpplibs::os::is_windows && exitCode > 128 && exitCode <= 128 + 64) {
+    } else if (exitCode > 128 && exitCode <= 128 + 64) {
         const int sig = exitCode - 128;
         const char* name = sig == 11 ? "SIGSEGV" : sig == 6 ? "SIGABRT" : sig == 7 ? "SIGBUS"
                          : sig == 9 ? "SIGKILL" : sig == 15 ? "SIGTERM" : sig == 4 ? "SIGILL"
