@@ -182,7 +182,16 @@ namespace pinned {
     // whatever the order of the archive's entries: `usr/include/machine ->
     // amd64` of the NetBSD and OpenBSD sysroots was a file link, and a build
     // for those rows on a Windows host opened no header under it.
-    inline constexpr std::string_view kXlingsVersion   = "2026.11.17.1";
+    //
+    // Sixteenth, at 2026.11.17.2 (openxlings/xlings#720). A home reached by
+    // another name -- a symbolic link to it -- is the home it was created as:
+    // the runtime links and what is bound into a payload's programs name the
+    // home's own path. Installed through a link (a test home whose `registry`
+    // linked the shared one), LLVM left the shared home's 52 runtime links and
+    // clang's interpreter naming the link, and no compiler of the shared home
+    // started once the link was removed (measured in this repository's CI on
+    // a runner with no cache, mcpp#949).
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.17.2";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

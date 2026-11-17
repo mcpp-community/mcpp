@@ -61,9 +61,11 @@
 
 ### Changed
 
-- xlings 2026.11.17.1: a symbolic link to a directory extracted on Windows is a
+- xlings 2026.11.17.2. A symbolic link to a directory extracted on Windows is a
   directory link (openxlings/xlings#719), which the NetBSD and OpenBSD sysroots need on a
-  Windows host.
+  Windows host. A home reached through a symbolic link is the home it was created as
+  (openxlings/xlings#720): an install through the link no longer leaves the home's runtime
+  links and a toolchain's interpreter naming the link.
 - mcpp pins ninja `1.12.1-mcpp.1`: ninja 1.12.1 with the correction of
   ninja-build/ninja#2662, where loading a dyndep file while an edge finished
   invalidated the iterators of the loops finishing it. On a project of 150
