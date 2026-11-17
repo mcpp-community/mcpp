@@ -92,6 +92,16 @@
   '_CTYPE_BL'`), and `x86_64-freebsd` on Windows linked without its sysroot. A target that
   parses is ELF unless it says otherwise, and the macOS SDK is the sysroot of a Mach-O
   target only.
+- Members of a workspace share a build directory, and a package's units had another
+  command line under each member: the include directories of its dependencies came in
+  the order the root's graph was walked, and its features' `-DMCPP_FEATURE_*` in the
+  order they were activated. The set was the same; every member compiled the package
+  again. Measured on a workspace of 31 members: 753 of 3544 edges differed between two
+  members by order alone, and a run with no source changed compiled them (`command line
+  changed`, 2779 times). Usage is carried dependencies first, and the defines are in the
+  order of their names; the same two members then differ in no edge (mcpp#945, e2e 1115).
+- An install that comes upon a record of the home with no registration says what it
+  repaired, whichever install it is: an upgraded home's first is the pinned ninja.
 - GCC's module scan wrote its output over the unit's object, emptying it on every scan.
   The scan writes a file of its own.
 - With GCC the BMI cutoff had no effect on a host whose time zone is not UTC:

@@ -1543,6 +1543,22 @@ int install_with_progress(const Env& env, std::string_view target,
             if (!quiet) print_status("Error", message);
             return;
         }
+        // What the provider repaired in the home while it installed (xlings
+        // protocol 1.11): a record that pointed at nothing, dropped so that it
+        // refuses no install. Said here as an install the user asked for says
+        // it (fetcher/progress.cppm): it changed the home, whichever install
+        // came upon it -- an upgraded home's first is the pinned ninja.
+        if (kind == "data" && ls.find_str("dataKind") == "scope_repaired") {
+            auto j = nlohmann::json::parse(line, nullptr, false);
+            if (!quiet && j.is_object() && j.contains("payload") && j["payload"].contains("repairs")
+                && j["payload"]["repairs"].is_array())
+                for (const auto& r : j["payload"]["repairs"])
+                    print_status("Repaired", std::format(
+                        "{}@{} in mcpp's package home had no registration; {}",
+                        r.value("target", std::string{}), r.value("version", std::string{}),
+                        r.value("action", std::string{}) == "deactivated" ? "deactivated" : "dropped"));
+            return;
+        }
         if (kind != "data" || ls.find_str("dataKind") != "download_progress") return;
         const auto prog = download_progress_of(line);
         if (!prog) return;
@@ -1799,14 +1815,14 @@ void ensure_ninja(const Env& env, bool quiet,
     // A HOME THAT HAS A NINJA IS TOLD IN ONE LINE. ninja is the backend of a
     // build, which a developer does not handle: the pin that moved is taken
     // through xlings as every payload is, beside the version the home has,
-    // and the run says so once instead of narrating an installation.
+    // and the run names what it replaces.
     if (!quiet)
         print_status(other.empty() ? "Bootstrap" : "Updating",
             other.empty() ? std::string("ninja into mcpp sandbox (one-time)")
                           : std::format("ninja {} -> {} (the build backend, through xlings)", other, pinned::kNinjaVersion));
     mcpp::log::ScopedTimer _t_ninja("init", std::format("bootstrap ninja@{}", pinned::kNinjaVersion));
     int rc = install_with_progress(env,
-        std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet || !other.empty());
+        std::format("xim:ninja@{}", pinned::kNinjaVersion), cb, quiet);
     if (rc != 0 && !other.empty()) {
         std::ofstream(attempt) << pinned::kNinjaVersion << "\n";
         if (!quiet)

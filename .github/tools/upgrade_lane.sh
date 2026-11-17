@@ -284,7 +284,9 @@ if [ "$VARIANT" = orphan ]; then
   run new-provision "$W" "$NEW" toolchain install "$TC" || fail "toolchain install could not replace the payload"
   grep -q "installed asset registration missing" "$W/new-provision.log" \
     && fail "the replacement was refused by the dangling record"
-  grep -qi "deactivated\|dangling" "$W/new-provision.log" \
+  # Said by the install that came upon it: the first run's, when this commit
+  # pins another ninja than the previous release, else this one.
+  grep -qi "deactivated\|dangling" "$W/new-provision.log" "$W/new-run1.log" \
     || fail "the repaired record is not reported"
   run new-run-after-provision "$W/p-new" "$NEW" run || fail "the run after the replacement failed"
 fi

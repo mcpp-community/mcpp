@@ -550,6 +550,53 @@ main = "src/main.cpp"
         r = ws.mcpp({"run"}, o);
         expect(fatal(e2e::succeeded(r))) << "the program did not return 0 (pinned_value() + WS_FLAG != 2): " << s::text(r);
     };
+
+    "1115 a package has one command line under every member"_test = [] {
+        // mcpp#945. Members of a workspace share a build directory, and a package's units were
+        // given its dependencies' include directories in the order the ROOT's graph was walked:
+        // under one member `-Imid -Ized -Ia`, under another `-Imid -Ia -Ized` (what `mid` carries
+        // of `a` had or had not arrived when `shared` read it). The set was the same,
+        // the command line was not, and every member compiled the package again. Built for one
+        // member, then for another whose graph reaches the dependencies in another order, the
+        // package's unit is compiled once.
+        const auto tmp = s::case_dir();
+        const auto lib = [](std::string_view name, std::string_view deps) {
+            return std::format("[package]\nnamespace = \"ord\"\nname = \"{0}\"\nversion = \"0.1.0\"\n\n[build]\ninclude_dirs = [\"inc\"]\n"
+                               "{1}\n[targets.ord_{0}]\nkind = \"lib\"\n", name, deps);
+        };
+        const auto bin = [](std::string_view name, std::string_view deps) {
+            return std::format("[package]\nnamespace = \"ord\"\nname = \"{0}\"\nversion = \"0.1.0\"\n\n{1}\n[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", name, deps);
+        };
+        const std::string main_cpp = "import ord.shared;\nint main() { return shared_value() == 3 ? 0 : 1; }\n";
+        s::project ws(tmp / "ws", {
+            {"mcpp.toml", "[workspace]\nmembers = [\"a\", \"zed\", \"mid\", \"shared\", \"one\", \"two\"]\n"},
+            {"a/mcpp.toml", lib("a", "")},
+            {"a/inc/a.h", "#define ORD_A 1\n"},
+            {"a/src/a.cppm", "export module ord.a;\nexport int a_value() { return 1; }\n"},
+            {"zed/mcpp.toml", lib("zed", "")},
+            {"zed/inc/zed.h", "#define ORD_ZED 1\n"},
+            {"zed/src/zed.cppm", "export module ord.zed;\nexport int zed_value() { return 1; }\n"},
+            {"mid/mcpp.toml", lib("mid", "[dependencies]\n\"ord.a\" = { path = \"../a\" }\n")},
+            {"mid/inc/mid.h", "#define ORD_MID 1\n"},
+            {"mid/src/mid.cppm", "export module ord.mid;\nimport ord.a;\nexport int mid_value() { return a_value(); }\n"},
+            {"shared/mcpp.toml", lib("shared", "[dependencies]\n\"ord.mid\" = { path = \"../mid\" }\n\"ord.zed\" = { path = \"../zed\" }\n")},
+            {"shared/inc/shared.h", "#define ORD_SHARED 1\n"},
+            {"shared/src/shared.cppm", "module;\n#include \"a.h\"\n#include \"zed.h\"\n#include \"mid.h\"\nexport module ord.shared;\nimport ord.mid;\nimport ord.zed;\n"
+                                       "export int shared_value() { return mid_value() + zed_value() + ORD_A; }\n"},
+            {"one/mcpp.toml", bin("one", "[dependencies]\n\"ord.shared\" = { path = \"../shared\" }\n")},
+            {"one/src/main.cpp", main_cpp},
+            {"two/mcpp.toml", bin("two", "[dependencies]\n\"ord.mid\" = { path = \"../mid\" }\n\"ord.shared\" = { path = \"../shared\" }\n")},
+            {"two/src/main.cpp", main_cpp},
+        });
+        auto r = ws.mcpp({"build", "-p", "one"});
+        expect(fatal(e2e::succeeded(r))) << "the first member did not build: " << s::text(r);
+        r = ws.mcpp({"build", "-p", "two", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << "the second member did not build: " << s::text(r);
+        expect(s::lacks(s::text(r), "shared.cppm")) << "A: the package was compiled again for the second member: " << s::text(r);
+        r = ws.mcpp({"build", "-p", "one", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::lacks(s::text(r), "shared.cppm") && s::lacks(s::text(r), "mid.cppm")) << "B: back at the first member a package was compiled again: " << s::text(r);
+    };
 }};
 
 }  // namespace

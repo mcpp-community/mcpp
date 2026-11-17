@@ -166,10 +166,46 @@ bool names_the_root(PrepareState& state, const WorkItem& item, const ResolvedKey
 // publishes.
 void define_usage_requirements(PrepareState& state) {
     state.computeUsageRequirements = [&state] {
+        // DEPENDENCIES BEFORE THEIR CONSUMERS, WHATEVER THE ROOT. The edges are
+        // recorded in the order the root's graph was walked, and a pass over
+        // them in that order hands a consumer its dependencies' directories in
+        // an order that depends on which package is the root: what one edge
+        // carried had or had not arrived yet. The set was the same and the
+        // order was not, so a package's units had one command line under one
+        // workspace member and another under the next, and a workspace's
+        // members share a build directory. Measured on a workspace of 31
+        // members (mcpp#945, 2026-11-17): between two members 753 of 3544
+        // edges differed in the order of `-I` alone, and a run with no source
+        // changed compiled them again (`ninja explain: command line changed`,
+        // 2779 times in one pass).
+        //
+        // Ordered by depth -- a package after everything it depends on -- a
+        // dependency's usage is complete before a consumer reads it, so a
+        // consumer's directories are its own, then each dependency's in the
+        // order the consumer states its edges: a function of the package.
+        std::vector<std::size_t> depth(state.packages.size(), 0);
+        for (std::size_t pass = 0, grew = 1; grew && pass <= state.packages.size(); ++pass) {
+            grew = 0;
+            for (auto const& edge : state.dependencyEdges) {
+                if (edge.consumerPackageIndex >= depth.size() || edge.dependencyPackageIndex >= depth.size()
+                    || edge.consumerPackageIndex == edge.dependencyPackageIndex) continue;
+                if (depth[edge.consumerPackageIndex] <= depth[edge.dependencyPackageIndex]) {
+                    depth[edge.consumerPackageIndex] = depth[edge.dependencyPackageIndex] + 1;
+                    grew = 1;
+                }
+            }
+        }
+        std::vector<std::size_t> order(state.dependencyEdges.size());
+        std::ranges::iota(order, std::size_t{0});
+        std::ranges::stable_sort(order, {}, [&](std::size_t i) {
+            const auto consumer = state.dependencyEdges[i].consumerPackageIndex;
+            return consumer < depth.size() ? depth[consumer] : std::size_t{0};
+        });
         bool changed = true;
         while (changed) {
             changed = false;
-            for (auto const& edge : state.dependencyEdges) {
+            for (const auto at : order) {
+                auto const& edge = state.dependencyEdges[at];
                 if (edge.consumerPackageIndex >= state.packages.size()
                     || edge.dependencyPackageIndex >= state.packages.size()) {
                     continue;
