@@ -47,8 +47,8 @@ UTest linux_target_ignores_host_answer{"ArtifactNaming/LinuxTargetIgnoresHostAns
     expect(!n.sharedNeedsImportLib);
 }};
 
-// `freebsd` is a word of the triple language; it had no answer of its own and
-// took the host's, so a FreeBSD row built on a Windows host was `hello.exe`.
+// The FreeBSD rows had no answer of their own and took the host's, so one built
+// on a Windows host was `hello.exe`. A row is named by its object format.
 UTest freebsd_target_ignores_host_answer{"ArtifactNaming/FreebsdTargetIgnoresHostAnswer", [] {
     for (std::string_view triple : {"x86_64-freebsd", "aarch64-freebsd"}) {
         auto n = tr::artifact_naming(T(triple), kBogusHost);
@@ -120,20 +120,27 @@ UTest unknown_os_falls_back_to_host{"ArtifactNaming/UnknownOsFallsBackToHost", [
     expect(eq(n.staticLibExt, ".HOST"));
 }};
 
-// A bare-metal `none` OS is an ELF word of the language: named as ELF from
-// every host, and not as the emscripten row beside it (`.js`). It took the
-// host's answer, so a `*-none-elf` program was `.exe` on a Windows host.
-UTest none_os_is_named_as_elf{"ArtifactNaming/NoneOsIsNamedAsElfFromEveryHost", [] {
+// A bare-metal `none` OS is not the emscripten row and must keep falling back
+// to the host answer when it is no row of the table — the emscripten branch
+// below must not widen the fallback it sits next to.
+UTest none_os_falls_back_to_host{"ArtifactNaming/NoneOsFallsBackToHost", [] {
     tr::Triple none; none.arch = "aarch64"; none.os = "none";
     auto n = tr::artifact_naming(none, kBogusHost);
-    expect(eq(n.exeSuffix, ""));
-    expect(eq(n.libPrefix, "lib"));
-    expect(eq(n.staticLibExt, ".a"));
-    expect(eq(n.sharedLibExt, ".so"));
+    expect(eq(n.exeSuffix, ".HOST"));
+    expect(eq(n.staticLibExt, ".HOST"));
 }};
 
-// iOS is a Mach-O row and names what it builds as macOS does.
-UTest ios_is_named_as_macos{"ArtifactNaming/IosIsNamedAsMacos", [] {
+// A ROW of the table is named by its object format from every host: the
+// bare-metal rows as ELF, the iOS rows as Mach-O. They took the host's answer,
+// so a `*-none-elf` program was `.exe` on a Windows host.
+UTest a_row_is_named_by_its_object_format{"ArtifactNaming/ARowIsNamedByItsObjectFormat", [] {
+    for (std::string_view triple : {"aarch64-none-elf", "riscv64-none-elf", "thumbv7m-none-eabi"}) {
+        auto n = tr::artifact_naming(T(triple), kBogusHost);
+        expect(eq(n.exeSuffix, "")) << triple;
+        expect(eq(n.libPrefix, "lib")) << triple;
+        expect(eq(n.staticLibExt, ".a")) << triple;
+        expect(eq(n.sharedLibExt, ".so")) << triple;
+    }
     auto n = tr::artifact_naming(T("aarch64-ios"), kBogusHost);
     expect(eq(n.exeSuffix, ""));
     expect(eq(n.staticLibExt, ".a"));

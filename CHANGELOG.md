@@ -9,11 +9,11 @@
 ### Fixed
 
 - A FreeBSD row built on a Windows host named its program `<name>.exe` and its archives
-  `.lib`: `freebsd` is a word of the triple language and had no naming of its own, so the
-  host's was taken. It is named as a Linux row is. Measured in mcpp-platforms' CI, where
-  the build finished and no `bin/hello` existed. The same held of `none` (the bare-metal
-  rows) and of `ios`; every word of the language now has its own naming, and the host's
-  is the answer for a word outside it only.
+  `.lib`: the row had no naming of its own, so the host's was taken. A row of the table is
+  named by its object format, which is its data; the bare-metal rows and the iOS rows
+  answered with the host's naming too (21 rows of the snapshot). The host's naming is the
+  answer for a triple that is no row only. Measured in mcpp-platforms' CI, where the
+  build finished and no `bin/hello` existed.
 - e2e 1116 (a row of another ELF system on a host of any format) ran on Linux hosts only:
   its capability, `llvm`, is a Linux one. It runs wherever the LLVM payload is, and holds
   the program to the row's name.

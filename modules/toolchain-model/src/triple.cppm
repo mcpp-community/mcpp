@@ -885,21 +885,14 @@ inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hos
             .sharedNeedsImportLib = true,
         };
     }
-    // iOS names what it builds as macOS does (a Mach-O row).
-    if (t.os == "macos" || t.os == "ios") {
+    if (t.os == "macos") {
         return ArtifactNaming{
             .exeSuffix = "", .libPrefix = "lib",
             .staticLibExt = ".a", .sharedLibExt = ".dylib",
             .sharedNeedsImportLib = false,
         };
     }
-    // The ELF words of the triple language name their artifacts one way:
-    // `linux`, `freebsd`, and `none` (a machine with no system). Left to the
-    // host answer below, a FreeBSD row built on a Windows host was
-    // `bin/hello.exe` and its archives `.lib` (measured,
-    // mcpp-community/mcpp-platforms#4: the build finished and no `bin/hello`
-    // existed), and a `*-none-elf` row was named the same way there.
-    if (t.os == "linux" || t.os == "freebsd" || t.os == "none") {
+    if (t.os == "linux") {
         return ArtifactNaming{
             .exeSuffix = "", .libPrefix = "lib",
             .staticLibExt = ".a", .sharedLibExt = ".so",
@@ -943,9 +936,32 @@ inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hos
             .sharedNeedsImportLib = true,
         };
     }
-    // Outside the triple language (every word of it is answered above): fall
-    // back to the host answer rather than guessing. A wrong guess here silently
-    // misnames every artifact.
+    // A ROW OF THE TABLE WITH NO BRANCH ABOVE IS NAMED BY ITS OBJECT FORMAT,
+    // which is the row's data (`object_format()`), not by the host. Left to the
+    // host answer below, a FreeBSD row built on a Windows host was
+    // `bin/hello.exe` and its archives `.lib` (measured,
+    // mcpp-community/mcpp-platforms#4: the build finished and no `bin/hello`
+    // existed); the bare-metal rows and the iOS rows answered the same way,
+    // 21 rows of the snapshot in all.
+    if (mcpp::toolchain::target::find_row(t.str())) {
+        switch (t.object_format()) {
+        case ObjectFormat::Elf:
+            return ArtifactNaming{
+                .exeSuffix = "", .libPrefix = "lib",
+                .staticLibExt = ".a", .sharedLibExt = ".so",
+                .sharedNeedsImportLib = false,
+            };
+        case ObjectFormat::MachO:
+            return ArtifactNaming{
+                .exeSuffix = "", .libPrefix = "lib",
+                .staticLibExt = ".a", .sharedLibExt = ".dylib",
+                .sharedNeedsImportLib = false,
+            };
+        default: break;
+        }
+    }
+    // Not a row and outside the triple language: fall back to the host answer
+    // rather than guessing. A wrong guess here silently misnames every artifact.
     return hostNaming;
 }
 
