@@ -378,6 +378,25 @@ int main() {
         r = p.mcpp({"run", "--target", T, "--no-runner"});
         expect(fatal(s::lacks(s::text(r), "[runner-not-enabled]"))) << "--no-runner was not believed: " << s::text(r);
     };
+
+    "1116 a row of another ELF system builds on a host of any format"_test[s::llvm] = [] {
+        // A target that parses is ELF unless it says otherwise. The format was asked of the
+        // host for every system but `linux` and `none`, so `x86_64-freebsd` (the system's own
+        // ABI, served by the platform the index lists for the row) linked as Mach-O on a macOS
+        // host (`ld64.lld: unknown argument '--disable-new-dtags'`) and without its sysroot on
+        // a Windows host (`cannot open crt1.o`). The program is an ELF of that system on
+        // every host, and its link names no SDK of the host.
+        auto p = s::project::scaffold("bsd");
+        auto r = p.mcpp({"build", "--target", "x86_64-freebsd", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << "x86_64-freebsd did not build on this host: " << s::text(r);
+        const auto exe = program_under(p.at("target/x86_64-freebsd"), "bsd", true);
+        expect(fatal(exe.has_value())) << "no program: " << s::text(r);
+        const auto bytes = s::read_file(*exe);
+        expect(fatal(bytes.starts_with("\x7f" "ELF"))) << "the program is not an ELF";
+        const bool freebsd = (bytes.size() > 7 && bytes[7] == 9) || bytes.contains(std::string_view("FreeBSD\0", 8));
+        expect(freebsd) << "the ELF is not a FreeBSD program";
+        expect(s::lacks(s::text(r), "MacOSX") && s::lacks(s::text(r), "-isysroot")) << "the build names an SDK of the host: " << s::text(r);
+    };
 }};
 
 }  // namespace
