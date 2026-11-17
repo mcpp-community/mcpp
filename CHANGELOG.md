@@ -97,6 +97,12 @@
   '_CTYPE_BL'`), and `x86_64-freebsd` on Windows linked without its sysroot. A target that
   parses is ELF unless it says otherwise, and the macOS SDK is the sysroot of a Mach-O
   target only.
+  Measured after the release in the CI of mcpp-platforms: the NetBSD and OpenBSD rows
+  build on macOS and Windows hosts and the FreeBSD rows on macOS hosts. On a Windows host
+  the FreeBSD rows compile and do not link: FreeBSD's `crtend.o` and `libgcc.a` hold
+  zlib-compressed debug sections, and the lld of the Windows LLVM payload is built without
+  zlib. e2e 1116 does not run on Windows hosts (its LLVM capability does not hold there),
+  so this was not seen before the release.
 - Members of a workspace share a build directory, and a package's units had another
   command line under each member: the include directories of its dependencies came in
   the order the root's graph was walked, and its features' `-DMCPP_FEATURE_*` in the
