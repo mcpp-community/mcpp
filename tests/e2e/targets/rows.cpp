@@ -402,7 +402,7 @@ int main() {
         expect(s::lacks(s::text(r), "MacOSX") && s::lacks(s::text(r), "-isysroot")) << "the build names an SDK of the host: " << s::text(r);
     };
 
-    "1117 a platform's system states what its rows share"_test[s::llvm] = [] {
+    "1118 a platform's system states what its rows share"_test[s::llvm] = [] {
         // SPEC-016 v1.5: `object-format`, `exe-suffix` and `shared-suffix` are read row
         // first, then the row's system. The row here states none of them and its system
         // states the program's suffix, so the plan names the program by it. The toy base
