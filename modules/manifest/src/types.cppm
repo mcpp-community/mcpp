@@ -1257,6 +1257,9 @@ struct BuildConfig : BuildInputs {
     // `-ffile-prefix-map` for every unit (the profile's `trim_paths`): the
     // paths an artifact carries name packages and roles, not this machine.
     bool                                trimPaths = false;
+    // A GCC BMI whose line maps alone moved is kept (the profile's
+    // `bmi_cutoff = "ignore-locations"`, resolved; SPEC-012).
+    bool                                bmiIgnoreLocations = false;
     // The units compiled in the build directory keep their debug information
     // beside their objects (`split_debuginfo = "unpacked"`, resolved).
     bool                                splitDebuginfo = false;
@@ -2232,6 +2235,9 @@ struct Profile {
     bool        ndebugDeclared   = false;
     bool        trimPaths        = false;
     bool        trimPathsDeclared = false;
+    // `bmi_cutoff` (mcpp#946): "ignore-locations" or "exact", as written.
+    std::string bmiCutoff;
+    bool        bmiCutoffDeclared = false;
     // `split_debuginfo` (design 2026-10-31 §4.1): "unpacked" leaves the
     // debug information of the units compiled in the build directory beside
     // their objects, "off" puts it in the artifact. Default by the profile's

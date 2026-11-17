@@ -290,6 +290,21 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // again (before 2026.11.8.1 a release test was a configuration of its
         // own, and compiled the whole graph again).
         state.m->buildConfig.trimPaths = pr.trimPathsDeclared ? pr.trimPaths : shipping;
+        // `bmi_cutoff` (mcpp#946 O2, SPEC-012): a GCC BMI whose line maps alone
+        // moved is kept, unless the profile or the environment states `exact`.
+        // The environment is the override of one run.
+        {
+            auto cutoff = mcpp::invocation::get("MCPP_BMI_CUTOFF").value_or(
+                pr.bmiCutoffDeclared ? pr.bmiCutoff : std::string("ignore-locations"));
+            if (cutoff != "ignore-locations" && cutoff != "exact")
+                return std::unexpected(std::format(
+                    "bmi_cutoff = \"{}\" ([profile.{}] or MCPP_BMI_CUTOFF): expected \"ignore-locations\" or \"exact\"",
+                    cutoff, pname));
+            // What is packed with debug information names the lines of its
+            // sources: exact, whatever the profile states.
+            state.m->buildConfig.bmiIgnoreLocations =
+                cutoff == "ignore-locations" && !(state.overrides.distributes && pr.debug);
+        }
         // `split_debuginfo` (design 2026-10-31 §4.1 (b)): unpacked for the
         // profiles a developer debugs. A debugger finds a unit's `.dwo` through
         // the build directory the skeleton names, which `trim_paths` replaces.

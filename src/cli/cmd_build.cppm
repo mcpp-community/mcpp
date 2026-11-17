@@ -21,6 +21,7 @@ import mcpp.build.coff_exports;
 import mcpp.build.pe_exports;
 import mcpp.modgraph.glob;          // escaped_spelling, for coff-def's warning
 import mcpp.build.stage;
+import mcpp.bmi;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
 import mcpp.build.test_schedule;   // --shard, --failed
@@ -2354,7 +2355,7 @@ export int cmd_bmi_equal(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(libc::stderr(), "error: bmi-equal requires exactly two paths");
         return 2;
     }
-    const bool same = mcpp::build::stage::bmi_equivalent(
+    const bool same = mcpp::bmi::keeps_previous(
         mcpplibs::os::fs::extended(std::filesystem::path{parsed.positional(0)}),
         mcpplibs::os::fs::extended(std::filesystem::path{parsed.positional(1)}));
     // Exit status IS the answer, so it can drive `if ...; then` in the rule

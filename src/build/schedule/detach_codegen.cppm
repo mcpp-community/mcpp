@@ -74,6 +74,7 @@ import mcpplibs.os.process;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.build.stage;
+import mcpp.bmi;
 import mcpp.build.schedule.compiler_transaction;
 import mcpp.home;
 import mcpp.home.files;
@@ -517,7 +518,7 @@ void settle_bmi(const std::filesystem::path& bmi) {
     // Equivalent → put the PREVIOUS file back, so its mtime does not advance and
     // ninja's restat stops the cascade. The rename is atomic, so the BMI is
     // readable throughout: there is no moment at which importers see nothing.
-    if (stage::bmi_equivalent(bmi, backup))
+    if (mcpp::bmi::keeps_previous(bmi, backup))
         std::filesystem::rename(backup, bmi, ec);
     else
         std::filesystem::remove(backup, ec);

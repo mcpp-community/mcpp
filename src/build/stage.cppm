@@ -87,7 +87,7 @@ std::expected<StageOutcome, StageError> stage_file(const std::filesystem::path& 
 // when the plan is built, so its content cannot be compared there. This is
 // where the invariant is actually checked, because by build time every source
 // exists: every source is compared against the first by content
-// (`same_content`, never masking the way `bmi_equivalent` does — a deploy
+// (`same_content`, never masking the way `mcpp::bmi::gcc::equivalent` does — a deploy
 // target is an ordinary file, not a BMI with a compiler-embedded clock), and
 // the first is staged when they all agree. Disagreement is refused, naming
 // every source and the destination, so the message points at every producer
@@ -107,40 +107,6 @@ std::expected<StageOutcome, StageError> stage_files(
 // Byte-for-byte comparison (exported for tests). False when either file is
 // unreadable or the sizes differ.
 bool same_content(const std::filesystem::path& a, const std::filesystem::path& b);
-
-// Are two BMIs equivalent for the purpose of "did this module's interface
-// change?" — i.e. identical except for the wall clock GCC stamps into them.
-//
-// WHY THIS EXISTS. The `cxx_module` rule keeps the previous BMI, recompiles,
-// and restores the old file when the new one has the same content, so ninja's
-// restat sees an unchanged output and does NOT rebuild the importers. That
-// mechanism was designed in 2026-05-12 and has NEVER ONCE FIRED, because GCC
-// writes
-//
-//     buildtime: 2026/08/12 02:25:01 UTC
-//     localtime: 2026/08/12 02:25:01 UTC
-//
-// INTO THE BMI CONTENT. Two compilations of identical source a second apart
-// differ by exactly four bytes, so a plain `cmp` always reports "changed".
-// Measured on this repository: touching a module with 46 importers and no
-// content change cost 73.0 s and re-ran 180 edges — indistinguishable from a
-// full rebuild.
-//
-// The earlier design note anticipated only that GCC would rewrite the FILE
-// (mtime churn) and prescribed a content compare as the fix; it did not
-// anticipate that the timestamp is part of the content, which is why the fix
-// as written could not work.
-//
-// Deliberately NOT solved with SOURCE_DATE_EPOCH: that pins the epoch for the
-// whole compilation and so changes what `__DATE__` and `__TIME__` expand to in
-// USER code. Masking the two fields here changes what mcpp considers equal and
-// nothing else.
-//
-// Conservative by construction: if the expected stamps are not found, or the
-// two files disagree about where they are, this falls back to a strict
-// comparison. It can report "different" for BMIs that are equivalent; it must
-// never report "same" for BMIs that are not.
-bool bmi_equivalent(const std::filesystem::path& a, const std::filesystem::path& b);
 
 // Parse a --verify / MCPP_STAGE_VERIFY value. Unknown values fall back to the
 // safe default (Content).
@@ -272,101 +238,6 @@ bool same_content(const std::filesystem::path& a, const std::filesystem::path& b
             return false;
     }
     return true;
-}
-
-namespace {
-
-// GCC writes the stamp as `<prefix>YYYY/MM/DD HH:MM:SS <zone>` and ends it with
-// a NUL. `buildtime:` is in UTC; `localtime:` carries the host's zone
-// abbreviation, which is `UTC` only on a UTC host (measured with gcc 16.1.0:
-// `CST` under Asia/Shanghai, `-03` under America/Sao_Paulo). A stamp that
-// admitted ` UTC` alone left the cutoff without effect on every other host
-// (mcpp#946, O1).
-constexpr std::size_t kStampDateLen = std::string_view("2026/08/12 02:25:01 ").size();
-constexpr std::size_t kMaxZoneLen = 8;
-
-// The length of the stamp that starts `v`, zone included, or 0 when `v` does
-// not start with one. The zone is 1 to 8 characters of a zone abbreviation
-// and is followed by the terminator.
-std::size_t stamp_length(std::string_view v) {
-    if (v.size() < kStampDateLen + 2) return 0;
-    auto digit = [&](std::size_t i) { return v[i] >= '0' && v[i] <= '9'; };
-    const bool date = digit(0) && digit(1) && digit(2) && digit(3) && v[4] == '/'
-        && digit(5) && digit(6) && v[7] == '/'
-        && digit(8) && digit(9) && v[10] == ' '
-        && digit(11) && digit(12) && v[13] == ':'
-        && digit(14) && digit(15) && v[16] == ':'
-        && digit(17) && digit(18) && v[19] == ' ';
-    if (!date) return 0;
-    std::size_t zone = 0;
-    for (; kStampDateLen + zone < v.size(); ++zone) {
-        const char c = v[kStampDateLen + zone];
-        if (c == '\0') return zone == 0 ? 0 : kStampDateLen + zone;
-        const bool abbreviation = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-            || (c >= '0' && c <= '9') || c == '+' || c == '-';
-        if (!abbreviation || zone == kMaxZoneLen) return 0;
-    }
-    return 0;
-}
-
-// GCC writes exactly one `buildtime:` and one `localtime:` into a BMI header —
-// verified across BMIs from 10 KiB to 645 KiB, always 2. Anything beyond that
-// came from somewhere else (a string literal in user code that happens to look
-// like a stamp), and masking it would hide a REAL difference. Finding more than
-// this many makes the comparison fall back to strict equality.
-constexpr std::size_t kMaxStampSpans = 2;
-
-// Byte spans to ignore, in ascending order. Only spans whose payload actually
-// looks like a timestamp are masked — a prefix that happens to appear in some
-// other position is left to compare strictly.
-std::vector<std::pair<std::size_t, std::size_t>> stamp_spans(std::string_view data) {
-    std::vector<std::pair<std::size_t, std::size_t>> spans;
-    for (std::string_view prefix : {"buildtime: ", "localtime: "}) {
-        for (std::size_t at = data.find(prefix); at != std::string_view::npos;
-             at = data.find(prefix, at + 1)) {
-            const auto start = at + prefix.size();
-            const auto length = stamp_length(data.substr(start));
-            if (length == 0) continue;
-            spans.emplace_back(start, start + length);
-        }
-    }
-    std::ranges::sort(spans);
-    return spans;
-}
-
-std::optional<std::string> read_all(const std::filesystem::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return std::nullopt;
-    return std::string((std::istreambuf_iterator<char>(in)),
-                       std::istreambuf_iterator<char>());
-}
-
-} // namespace
-
-bool bmi_equivalent(const std::filesystem::path& a, const std::filesystem::path& b) {
-    auto da = read_all(a);
-    auto db = read_all(b);
-    if (!da || !db) return false;
-    // Two BMIs of one host carry stamps of one width, so equivalent BMIs have
-    // equal size. A size difference is read as a real difference.
-    if (da->size() != db->size()) return false;
-
-    const auto sa = stamp_spans(*da);
-    const auto sb = stamp_spans(*db);
-    // Disagreement about WHERE the stamps are is itself a structural
-    // difference; fall back to strict equality rather than guessing.
-    if (sa != sb) return *da == *db;
-    if (sa.empty() || sa.size() > kMaxStampSpans) return *da == *db;
-
-    std::size_t cursor = 0;
-    for (const auto& [start, end] : sa) {
-        if (start > cursor
-            && std::memcmp(da->data() + cursor, db->data() + cursor, start - cursor) != 0)
-            return false;
-        cursor = end;
-    }
-    return cursor >= da->size()
-        || std::memcmp(da->data() + cursor, db->data() + cursor, da->size() - cursor) == 0;
 }
 
 Verify parse_verify(std::string_view value) {

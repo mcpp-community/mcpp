@@ -1737,6 +1737,7 @@ PackOutcome run_pack(PackRun run) {
 
     // ─── Build first (pack implies a fresh build) ────────────────────
     mcpp::build::BuildOverrides base;
+    base.distributes = true;
     if (run.opts.mode == mcpp::pack::Mode::Static && run.opts.targetTriple.empty())
         base.target_triple = std::format("{}-linux-musl", mcpp::toolchain::platform::host_arch);
     else

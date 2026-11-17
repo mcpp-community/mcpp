@@ -1,0 +1,15 @@
+# mcpp.bmi — the cutoff by BMI content, and the readers of BMI formats.
+#
+# A leaf: it compares files and keeps three files of a build directory. The
+# cutoff (mcpp.bmi) knows no compiler; what is specific to one compiler's file
+# format is a module of its own (mcpp.bmi.gcc).
+
+[package]
+name        = "bmi"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The cutoff by BMI content, and the readers of BMI formats"
+license     = "Apache-2.0"
+
+[dev-dependencies]
+mcpplibs.mtest = "0.9.0"

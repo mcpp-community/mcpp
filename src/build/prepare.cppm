@@ -983,6 +983,10 @@ export struct BuildOverrides {
     // nor `[build] default-profile` says. Empty = "dev", which is every
     // interactive command. `mcpp pack` sets "release": see resolve_profile_name.
     std::string profile_fallback;
+    // The products leave this machine (`mcpp pack`): where they carry debug
+    // information, a BMI is compared exactly, so that the lines an object
+    // names are those of its sources (`bmi_cutoff`, SPEC-012).
+    bool        distributes = false;
     std::string features;            // --features a,b,c (root package activation)
     bool        strict = false;      // --strict: schema warnings become errors
     std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)

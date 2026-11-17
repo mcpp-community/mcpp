@@ -45,6 +45,7 @@ import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.bmi;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
@@ -5064,6 +5065,11 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
+    // The directory's BMI cutoff for this run (mcpp.bmi). A graph
+    // compiled with contracts is compared exactly: a contract's violation
+    // names the line of its assertion, read from the line maps.
+    mcpp::bmi::run_begin(plan.outputDir,
+        plan.manifest.buildConfig.bmiIgnoreLocations && manifest.find("-fcontracts") == std::string::npos);
 
     // THE STAGED CACHE IS PLACED BY A PASS OF ITS OWN, before the graph that
     // reads it. ninja 1.12.1 loads a dyndep file whose producer is up to date
@@ -5197,6 +5203,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             return std::unexpected(BuildError{settled.error(), plan.outputDir});
     }
     bool ok = (ninjaExit == 0) && !buildTimedOut;
+    for (auto const& line : mcpp::bmi::summary(mcpp::bmi::run_end(plan.outputDir)))
+        mcpp::ui::info("note", line);
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
     if (report) {

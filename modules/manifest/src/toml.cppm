@@ -1329,6 +1329,10 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 pr.trimPaths = it->second.as_bool();
                 pr.trimPathsDeclared = true;
             }
+            if (auto it = tt.find("bmi_cutoff"); it != tt.end() && it->second.is_string()) {
+                pr.bmiCutoff = it->second.as_string();
+                pr.bmiCutoffDeclared = true;
+            }
             if (auto it = tt.find("split_debuginfo"); it != tt.end() && it->second.is_string()) {
                 pr.splitDebuginfo = it->second.as_string();
                 pr.splitDebuginfoDeclared = true;
