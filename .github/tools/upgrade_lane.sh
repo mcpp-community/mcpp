@@ -26,7 +26,8 @@
 #             mismatch").
 #
 # Asserted, every variant: the first `mcpp new && mcpp run` of the new mcpp
-# succeeds and downloads nothing; a second run likewise; `mcpp self doctor`
+# succeeds and downloads nothing but the ninja this commit pins; a second run
+# downloads nothing at all; `mcpp self doctor`
 # in the project installs nothing and names the toolchain the build uses.
 # snapshot: `mcpp index update` names the newer packagings, the run after it
 # still downloads nothing, and `mcpp toolchain list` offers the new one.
@@ -116,7 +117,14 @@ run() {
   echo "::endgroup::"
   return $rc
 }
-downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | sort -u | tr '\n' ' '; }
+# The one download an upgraded home makes: the ninja this commit pins, when the
+# previous release pinned another (mcpp#945: the pin carries a correction, so a
+# home takes it with the upgrade, beside the ninja it has). It is taken once --
+# `any_download` holds the runs after the first to nothing at all.
+PIN=$(sed -n 's/.*kNinjaVersion *= *"\([^"]*\)".*/\1/p' "$(dirname "$0")/../../src/provider/xlings/xlings.cppm" | head -1)
+[ -n "$PIN" ] || { echo "::error::upgrade lane: the pinned ninja is not read from xlings.cppm"; exit 1; }
+any_download() { grep -o "Downloading [^ ]*" "$W/$1.log" | sort -u | tr '\n' ' '; }
+downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | grep -vxF "Downloading xim:ninja@$PIN" | sort -u | tr '\n' ' '; }
 new_project() {  # <dir> <bin>
   (cd "$W" && "$2" new "$1" > /dev/null 2>&1) || mkdir -p "$W/$1"
   printf '\n[toolchain]\ndefault = "%s"\n' "$TC" >> "$W/$1/mcpp.toml"
@@ -232,7 +240,7 @@ run new-run1 "$W/p-new" "$NEW" run || fail "the first run of the new mcpp failed
 # revision 0 → 1`); the vendored xlings update is not one.
 grep -Eq "^\s*(Updating|Reinstalling) [^ ]+@" "$W/new-run1.log" && fail "the first run replaced a payload"
 run new-run2 "$W/p-new" "$NEW" run || fail "the second run failed"
-[ -z "$(downloads new-run2)" ] || fail "the second run downloaded: $(downloads new-run2)"
+[ -z "$(any_download new-run2)" ] || fail "the second run downloaded: $(any_download new-run2)"
 run new-run-old-project "$W/p-old" "$NEW" run || fail "the project the previous release made does not run"
 [ -z "$(downloads new-run-old-project)" ] || fail "the old project's run downloaded: $(downloads new-run-old-project)"
 
