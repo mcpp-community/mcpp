@@ -8,6 +8,8 @@
 //                   bytes are a format mcpp reads, else the bytes decide
 //   keeps_previous  the question an edge asks, under the build directory's
 //                   cutoff, recording what it found
+//   keeps_previous_object
+//                   the same question of an object, which its bytes answer
 //   run_begin/end   the cutoff and the record of one run of a build directory
 //   summary         what a run says of its BMIs
 //
@@ -44,11 +46,19 @@ inline constexpr std::string_view kCutoffFile  = "bmi-cutoff";
 inline constexpr std::string_view kChangesFile = "bmi-changes.tsv";
 inline constexpr std::string_view kKeptFile    = "bmi-kept.list";
 inline constexpr std::string_view kIgnoreLocations = "ignore-locations";
+// The objects a run compiled to the bytes they had, one per line.
+inline constexpr std::string_view kObjectsFile = "objects-same.list";
 
 // What an edge asks after compiling an interface: whether the BMI before it
 // stays. Reads the cutoff and records the difference in the current
 // directory.
 bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::path& previous);
+
+// What an edge asks after compiling an object: whether the object before it
+// stays. The bytes decide and nothing else does -- an object has no reader and
+// no cutoff, and one that differs in a single byte is linked. Records an
+// object that stays in the current directory.
+bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous);
 
 // Before a run of the graph in `dir`: states the cutoff, starts the record of
 // changes, and, where the cutoff is exact, removes every BMI an earlier run
@@ -63,6 +73,7 @@ void run_begin(const std::filesystem::path& dir, std::optional<bool> ignoreLocat
 struct Run {
     std::vector<std::string> changed;   // replaced: their importers were compiled again
     std::vector<std::string> kept;      // locations only, kept: their importers were not
+    std::size_t objectsSame = 0;        // compiled to the bytes they had: not linked again
 };
 Run run_end(const std::filesystem::path& dir);
 
@@ -75,17 +86,30 @@ std::vector<std::string> summary(const Run& run);
 
 namespace mcpp::bmi {
 
+namespace {
+bool same_bytes(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ea, eb;
+    const auto sa = std::filesystem::file_size(a, ea), sb = std::filesystem::file_size(b, eb);
+    if (ea || eb || sa != sb) return false;
+    std::ifstream fa(a, std::ios::binary), fb(b, std::ios::binary);
+    return fa && fb && std::equal(std::istreambuf_iterator<char>(fa), {}, std::istreambuf_iterator<char>(fb));
+}
+} // namespace
+
 Difference difference(const std::filesystem::path& a, const std::filesystem::path& b) {
     char head[52] = {};
     std::ifstream in(a, std::ios::binary);
     in.read(head, sizeof head);
     if (gcc::is_format(std::string_view(head, static_cast<std::size_t>(in.gcount())))) return gcc::difference(a, b);
-    std::error_code ea, eb;
-    const auto sa = std::filesystem::file_size(a, ea), sb = std::filesystem::file_size(b, eb);
-    if (ea || eb || sa != sb) return Difference::Changed;
-    std::ifstream fa(a, std::ios::binary), fb(b, std::ios::binary);
-    return fa && fb && std::equal(std::istreambuf_iterator<char>(fa), {}, std::istreambuf_iterator<char>(fb))
-        ? Difference::Same : Difference::Changed;
+    return same_bytes(a, b) ? Difference::Same : Difference::Changed;
+}
+
+bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous) {
+    if (!same_bytes(object, previous)) return false;
+    const auto line = object.generic_string() + "\n";
+    std::ofstream out(std::filesystem::path{kObjectsFile}, std::ios::app | std::ios::binary);
+    out.write(line.data(), static_cast<std::streamsize>(line.size()));
+    return true;
 }
 
 namespace {
@@ -124,6 +148,7 @@ void run_begin(const std::filesystem::path& dir, std::optional<bool> ignoreLocat
     if (have.empty() || have.front() != want)
         std::ofstream(cutoffFile, std::ios::trunc | std::ios::binary) << want << "\n";
     std::filesystem::remove(dir / kChangesFile, ec);
+    std::filesystem::remove(dir / kObjectsFile, ec);
     if (ignore) return;
     const auto keptFile = dir / kKeptFile;
     for (auto const& bmi : read_lines(keptFile)) std::filesystem::remove(dir / bmi, ec);
@@ -153,6 +178,7 @@ std::vector<std::string> summary(const Run& run) {
 
 Run run_end(const std::filesystem::path& dir) {
     Run run;
+    run.objectsSame = read_lines(dir / kObjectsFile).size();
     const auto keptFile = dir / kKeptFile;
     auto kept = read_lines(keptFile);
     const auto before = kept;

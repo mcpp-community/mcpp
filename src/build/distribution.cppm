@@ -134,8 +134,17 @@ Format format_for(std::string_view targetTriple, Format hostFallback) {
         // opposite-hosts defect above for macOS and would still get iOS
         // wrong the same way, since iOS's `os` is `ios`.
         if (parsed->is_mach_o())     return Format::MachO;
-        if (parsed->os == "linux"
-            || parsed->os == "none") return Format::Elf;
+        // EVERY OTHER PARSED TARGET IS ELF, AS THE TRIPLE ITSELF ANSWERS
+        // (`object_format`). This used to name two systems, `linux` and
+        // `none`, so a target of any other ELF system reached `hostFallback`:
+        // an `x86_64-openbsd` link on a macOS host took the Apple SDK line,
+        //
+        //     ld64.lld: error: unknown argument '--disable-new-dtags'
+        //
+        // and its compile read the macOS SDK's headers under the target's own
+        // (`use of undeclared identifier '_CTYPE_BL'`, x86_64-netbsd). The
+        // fallback is for a spelling that does not parse.
+        return Format::Elf;
         // THE FOURTH MEMBER, and this comment used to say it was deferred
         // "to whoever gives this module a mechanism for it". A wasm target
         // parses here and fell out of every branch -- `is_pe()` and

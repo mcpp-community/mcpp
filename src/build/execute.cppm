@@ -2674,8 +2674,12 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         out = std::move(r.output);
         status = r.exit_code;
     }
-    for (auto const& line : mcpp::bmi::summary(mcpp::bmi::run_end(outputDir)))
+    const auto bmiRun = mcpp::bmi::run_end(outputDir);
+    for (auto const& line : mcpp::bmi::summary(bmiRun))
         mcpp::ui::info("note", line);
+    if (bmiRun.objectsSame)
+        mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",
+                                                bmiRun.objectsSame));
     if (compilerRun) {
         if (auto settled = compilerRun->finish(); !settled) {
             mcpp::ui::error(settled.error());

@@ -358,9 +358,11 @@ int main() {
         expect(fatal(run.status == 44)) << "static: mcpp run exited " << run.status << ", the program returns 44: " << s::text(run);
     };
 
-    "1077 a program of another system is built not run"_test[s::llvm] = [] {
-        // `mcpp run` builds a FreeBSD program on this host and refuses to start it, naming the
-        // artifact's system and the runner declaration; --no-runner is believed.
+    "1077 a program of another system is not started until its runner is enabled"_test[s::llvm] = [] {
+        // `mcpp run` builds a FreeBSD program on this host and does not start it: the row's
+        // platform states a runner (openkal-platform 0.29.1: dirun), which no declaration has
+        // enabled. The refusal names what the runner needs and the declaration that enables
+        // it; --no-runner is believed.
         const std::string T = std::string(s::on_x86_64() ? "x86_64" : "aarch64") + "-freebsd-musl";
         auto p = s::project::scaffold("app");
         auto r = p.mcpp({"build", "--target", T});
@@ -369,12 +371,12 @@ int main() {
         r = p.mcpp({"run", "--target", T});
         const auto run = s::text(r);
         expect(fatal(e2e::exited(r, 2))) << "run exited " << r.status << ", expected the refusal's 2: " << run;
-        expect(fatal(e2e::contains(run, "built, not run"))) << "the run does not say built, not run: " << run;
-        expect(fatal(e2e::contains(run, "artifacts run on freebsd"))) << "the artifact's system is not named: " << run;
-        expect(fatal(e2e::contains(run, std::format("[target.{}] runner = ", T)))) << "the runner declaration does not name the row: " << run;
+        expect(fatal(e2e::contains(run, "[runner-not-enabled]"))) << "the run does not say its runner is not enabled: " << run;
+        expect(fatal(e2e::contains(run, "it needs:"))) << "what the runner needs is not named: " << run;
+        expect(fatal(e2e::contains(run, std::format("[target.{}] runner = true", T)))) << "the runner declaration does not name the row: " << run;
         expect(fatal(s::lacks(run, "Running"))) << "the artifact was started: " << run;
         r = p.mcpp({"run", "--target", T, "--no-runner"});
-        expect(fatal(s::lacks(s::text(r), "built, not run"))) << "--no-runner was not believed: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "[runner-not-enabled]"))) << "--no-runner was not believed: " << s::text(r);
     };
 }};
 

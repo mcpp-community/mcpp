@@ -1610,6 +1610,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const std::string compilerPrefix = plan.scheduleCompilerCap > 0
         ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
         : std::string{};
+    // The same executor for an edge that writes a BMI: it holds the previous
+    // BMI while the compiler runs and puts it back when the new one is
+    // equivalent (`mcpp.bmi`), which is what lets `restat` end the rebuild at
+    // this edge. The executor does it, not a shell fragment of the command, so
+    // every host has it (SPEC-018 §3); `$bmi_out` is empty on an edge of this
+    // rule that provides no module, and the executor then keeps nothing.
+    //
+    // `--object`: `$out` is an object, kept when the compiler writes the bytes
+    // it had, so that what archives or links it is not run (mcpp#946 O5). A
+    // BMI edge of the two-phase schedule writes no object and names its BMI
+    // as `$out`.
+    auto bmi_keeping_prefix = [&](std::string_view bmi) {
+        return plan.scheduleCompilerCap > 0
+            ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}"
+                          " --bmi \"{}\" -- ", bmi == "$out" ? "" : " --object", bmi)
+            : std::string{};
+    };
+    const std::string objectPrefix = plan.scheduleCompilerCap > 0
+        ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object -- ")
+        : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
     // mid-compile has nothing to release. What clang has instead is a driver
@@ -2208,35 +2228,29 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
     append("rule cxx_module\n");
     if constexpr (mcpplibs::os::is_windows) {
-        // Windows: skip BMI restat optimization (requires POSIX shell).
         const std::string payload = " $local_includes";
         append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags"
                            " $module_output $module_lang {}{}\n",
-                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
+                           win_depfile_filter, bmi_keeping_prefix("$bmi_out"), rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
         append_cxx_deps();
     } else {
+        // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it must
+        // precede `-c $in` (which compile_tail carries) or it applies to
+        // nothing.
+        //
+        // The previous BMI used to be kept by this command itself -- `cp -p`
+        // before the compiler, `$mcpp bmi-equal` and `mv` after it -- which a
+        // host without a POSIX shell could not run, so the Windows rule above
+        // had no cutoff at all. The comparison was never `cmp -s`: GCC stamps a
+        // wall clock into the BMI, so a byte compare never reports "unchanged"
+        // (measured: touching a module with 46 importers and no content change
+        // cost 73.0 s before the comparison read the BMI, 0.22 s after).
         append(std::format("  command = "
-               "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out\" ]; then "
-                 "cp -p \"$bmi_out\" \"$bmi_out.bak\"; "
-               "fi && "
-               // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it
-               // must precede `-c $in` (which compile_tail carries) or it
-               // applies to nothing.
                "{}$cxx $local_includes $cxxflags $unit_cxxflags"
-               " $module_output $module_lang {}{}{} && "
-               // `$mcpp bmi-equal`, not `cmp -s`: GCC stamps a wall clock into
-               // the BMI content, so a byte compare NEVER reports "unchanged"
-               // and this whole fast path was dead. Measured: touching a module
-               // with 46 importers and no content change cost 73.0 s before,
-               // 0.22 s after.
-               "if [ -n \"$bmi_out\" ] && [ -f \"$bmi_out.bak\" ] && "
-                  "$mcpp bmi-equal \"$bmi_out\" \"$bmi_out.bak\"; then "
-                 "mv \"$bmi_out.bak\" \"$bmi_out\"; "
-               "else "
-                 "rm -f \"$bmi_out.bak\"; "
-               "fi\n", compilerPrefix, mmd_flag, compile_tail, mmd_filter));
+               " $module_output $module_lang {}{}{}\n",
+               bmi_keeping_prefix("$bmi_out"), mmd_flag, compile_tail, mmd_filter));
         append_cxx_deps();
     }
     append("  description = MOD $out\n");
@@ -2303,27 +2317,23 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if (twoPhase) {
         // Edge A — the BMI, and nothing else. `$out` is the BMI here.
         append("rule cxx_precompile\n");
+        // The executor keeps the previous BMI as it does for `cxx_module`:
+        // ninja's `restat` compares the output's MTIME, and a compiler that
+        // rewrites an equivalent BMI still moves it. What ends the rebuild
+        // here is putting the old file back.
         if constexpr (mcpplibs::os::is_windows) {
             const std::string payload = " $local_includes";
             append(std::format(
-                "  command = {}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
-                win_depfile_filter, rsp_ref(payload), traits.bmiOnlyFlags,
+                "  command = {}{}$cxx{} $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                win_depfile_filter, bmi_keeping_prefix("$out"), rsp_ref(payload), traits.bmiOnlyFlags,
                 module_src_flags, mmd_flag, dial.outputObjPrefix));
             append_rspfile(payload);
             append_cxx_deps();
         } else {
-            // Same bak / bmi-equal / restore dance as cxx_module, and for the
-            // same reason: ninja's `restat` compares the output's MTIME, and a
-            // compiler that rewrites a byte-identical BMI still moves it. What
-            // suppresses the cascade is putting the old file back.
             append(std::format(
                 "  command = "
-                "if [ -f \"$out\" ]; then cp -p \"$out\" \"$out.bak\"; fi && "
-                "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out && "
-                "if [ -f \"$out.bak\" ] && $mcpp bmi-equal \"$out\" \"$out.bak\"; then "
-                  "mv \"$out.bak\" \"$out\"; "
-                "else rm -f \"$out.bak\"; fi\n",
-                traits.bmiOnlyFlags, module_src_flags, mmd_flag,
+                "{}$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}$in {}$out\n",
+                bmi_keeping_prefix("$out"), traits.bmiOnlyFlags, module_src_flags, mmd_flag,
                 dial.outputObjPrefix));
             append_cxx_deps();
         }
@@ -2337,15 +2347,15 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule cxx_module_object\n");
         if constexpr (mcpplibs::os::is_windows) {
             const std::string payload = " $local_includes";
-            append(std::format("  command = {}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
-                               win_depfile_filter, rsp_ref(payload), module_src_flags,
+            append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags{} {}{}\n",
+                               win_depfile_filter, objectPrefix, rsp_ref(payload), module_src_flags,
                                mmd_flag, compile_tail));
             append_rspfile(payload);
             append_cxx_deps();
         } else {
             append(std::format(
-                "  command = $cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
-                module_src_flags, mmd_flag, compile_tail, mmd_filter));
+                "  command = {}$cxx $local_includes $cxxflags $unit_cxxflags{} {}{}{}\n",
+                objectPrefix, module_src_flags, mmd_flag, compile_tail, mmd_filter));
             append_cxx_deps();
         }
         append("  description = OBJ $out\n");
@@ -2356,13 +2366,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     if constexpr (mcpplibs::os::is_windows) {
         const std::string payload = " $local_includes";
         append(std::format("  command = {}{}$cxx{} $cxxflags $unit_cxxflags {}{}\n",
-                           win_depfile_filter, compilerPrefix, rsp_ref(payload), mmd_flag,
+                           win_depfile_filter, objectPrefix, rsp_ref(payload), mmd_flag,
                            compile_tail));
         append_rspfile(payload);
     } else {
         append(std::format(
             "  command = {}$cxx $local_includes $cxxflags $unit_cxxflags {}{}{}\n",
-            compilerPrefix, mmd_flag, compile_tail, mmd_filter));
+            objectPrefix, mmd_flag, compile_tail, mmd_filter));
     }
     append("  description = OBJ $out\n");
     append_cxx_deps();
@@ -2374,7 +2384,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         append("rule c_object\n");
         const std::string payload = " $local_includes";
         append(std::format("  command = {}$cc{} $cflags $unit_cflags {}{}\n",
-                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
+                           objectPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = CC $out\n");
         append_cxx_deps();
@@ -2749,10 +2759,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // the scan does not do.
         } else if (plan.scanDepsPath.empty()) {
             // GCC path: compiler-integrated P1689 scanning.
+            //
+            // `-o` IS A FILE OF THE SCAN'S OWN. The driver creates it, empty,
+            // whatever `-M` leaves it to write, and it used to be the unit's
+            // object: every scan of a unit emptied the object the unit had.
+            // Nothing read that object before its compile ran again, so
+            // nothing failed -- and the compile then had no previous object
+            // to find its output equal to (mcpp#946 O5). What the dyndep file
+            // names is `-fdeps-target`.
             append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags -fmodules "
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$deps_target "
-                   "-M -MM -MF $out.dep $unit_lang -E $in -o $compile_target\n",
+                   "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan\n",
                    compilerPrefix, rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
@@ -5205,8 +5223,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             return std::unexpected(BuildError{settled.error(), plan.outputDir});
     }
     bool ok = (ninjaExit == 0) && !buildTimedOut;
-    for (auto const& line : mcpp::bmi::summary(mcpp::bmi::run_end(plan.outputDir)))
+    const auto bmiRun = mcpp::bmi::run_end(plan.outputDir);
+    for (auto const& line : mcpp::bmi::summary(bmiRun))
         mcpp::ui::info("note", line);
+    if (bmiRun.objectsSame)
+        mcpp::log::verbose("build", std::format("{} object(s) compiled to the bytes they had: not archived or linked again",
+                                                bmiRun.objectsSame));
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
     if (report) {

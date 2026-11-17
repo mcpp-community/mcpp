@@ -15,6 +15,7 @@ namespace {
 
 mcpp::manifest::Manifest minimal_manifest() {
     mcpp::manifest::Manifest m;
+    m.package.namespace_  = "mcpplibs";
     m.package.name        = "mcpplibs.hello";
     m.package.version     = "0.1.0";
     m.package.description = "Modular C++23 hello";

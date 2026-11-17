@@ -606,6 +606,11 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
             lm.systemIncludes.push_back(tc.base.payload->linuxInclude);
     };
 
+    // A target that parses and is not Mach-O; a target that says nothing is the
+    // machine's own.
+    const auto parsedTarget = triple::parse(tc.targetTriple);
+    const bool names_another_system = parsedTarget && !parsedTarget->is_mach_o();
+
     if (lm.clangWithCfg) {
         // Bundled LLVM: payload first (PR #62 principle — the sysroot comes
         // from the toolchain payload, not from an environment directory),
@@ -617,11 +622,16 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
             lm.mode = CLibMode::Sysroot;
             lm.sysroot = tc.base.root;
         }
-        else if (auto sdk = mcpplibs::os::is_macos ? mcpp::toolchain::apple::sdk_path()
-                                                     : std::nullopt) {
+        else if (auto sdk = mcpplibs::os::is_macos && !names_another_system
+                                ? mcpp::toolchain::apple::sdk_path() : std::nullopt) {
             // `macosx@system`: the SDK `xcrun` answers on an Apple host. Only
             // there -- `sdk_path` reads `SDKROOT` on every host now, and an
-            // SDK must not become the sysroot of a Linux build.
+            // SDK must not become the sysroot of a Linux build. AND ONLY FOR A
+            // MACH-O TARGET: the host alone used to decide, so a target of
+            // another system whose base is a sysroot package compiled against
+            // the macOS SDK on a macOS host (x86_64-netbsd, 2026-11-17:
+            // `--sysroot=.../MacOSX.sdk`, then libc++'s `__locale` on
+            // `use of undeclared identifier '_CTYPE_BL'`).
             lm.mode = CLibMode::Sysroot;
             lm.sysroot = *sdk;
         }

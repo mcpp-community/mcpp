@@ -281,17 +281,24 @@ int run(int argc, char** argv) {
         std::filesystem::path semaphore;
         std::filesystem::path output;
         std::filesystem::path depfile;
+        std::filesystem::path bmi;
+        bool object = false;
         int cap = 0, i = 2;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
             const std::string_view option = argv[i];
-            if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile") || i + 1 >= argc) {
-                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] -- <compiler>...");
+            // `--output` is an object of a compile: it is kept when the
+            // compiler writes the bytes it had.
+            if (option == "--object") { object = true; continue; }
+            if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile"
+                 && option != "--bmi") || i + 1 >= argc) {
+                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] [--object] [--bmi <file>] -- <compiler>...");
                 return 2;
             }
             const std::string_view value = argv[++i];
             if (option == "--sem") semaphore = value;
             else if (option == "--output") output = value;
             else if (option == "--depfile") depfile = value;
+            else if (option == "--bmi") bmi = value;
             else {
                 const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
                 if (ec != std::errc{} || end != value.data() + value.size()) return 2;
@@ -301,7 +308,7 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object);
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;
@@ -1426,9 +1433,6 @@ int run(int argc, char** argv) {
             .option(cl::Option("exports-file").takes_value().value_name("PATH").help("the target's `exports` patterns, one per line"))
             .option(cl::Option("required").help("a consumer of this build links the DLL: an empty export surface is an error"))
             .action(cmd_coff_def))
-        .subcommand(cl::App("bmi-equal")
-            .description("(internal: invoked by ninja) Compare two BMIs ignoring the compiler's embedded timestamp")
-            .action(cmd_bmi_equal))
         // The three edges of the detach-codegen schedule. Internal, and named as
         // such: they are only ever invoked by a generated build.ninja.
         .subcommand(cl::App("bmi-compile")
@@ -1899,7 +1903,7 @@ int run(int argc, char** argv) {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",
+                "version", "dyndep", "why", "resolve", "stage", "coff-def",
                 "place-dlls", "link-output", "platform-step",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });

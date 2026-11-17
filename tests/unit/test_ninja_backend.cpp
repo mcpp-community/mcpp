@@ -158,8 +158,17 @@ UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/Ordinar
         expect(ne(start, std::string::npos)) << name;
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
-    for (const auto name : {"cxx_module", "cxx_object", "c_object", "asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        expect(ne(rule(name).find("__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- "), std::string::npos)) << name;
+    const std::string executor = "__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d";
+    for (const auto name : {"asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
+        expect(ne(rule(name).find(executor + " -- "), std::string::npos)) << name;
+    // A C or C++ compile names its output as an object the executor keeps when
+    // the bytes are the ones it had; the module rule names its BMI as well
+    // (SPEC-018 §1). No rule keeps a file by a shell fragment of its command.
+    for (const auto name : {"cxx_object", "c_object"})
+        expect(ne(rule(name).find(executor + " --object -- "), std::string::npos)) << name;
+    expect(ne(rule("cxx_module").find(executor + " --object --bmi \"$bmi_out\" -- "), std::string::npos));
+    expect(eq(text.find(".bak"), std::string::npos));
+    expect(eq(text.find("bmi-equal"), std::string::npos));
     // The generation carries the cap: the graph names no number of compilers,
     // so it is the same whatever the job count (e2e 861).
     expect(eq(text.find("--cap"), std::string::npos));

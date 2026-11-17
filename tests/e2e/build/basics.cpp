@@ -140,6 +140,28 @@ E2E basics{"basics", [] {
         expect(e2e::contains(s::text(r), "c.gcm") && e2e::contains(s::text(r), "importers were compiled again")) << "D: the run does not name the changed BMI: " << s::text(r);
     };
 
+    "1111 a touched interface compiles no importer, whatever the host and the compiler"_test = [] {
+        // mcpp#946 O7. The previous BMI is held by the executor of the compile edge, not by a
+        // shell fragment of the generated command, so a host without a POSIX shell ends the
+        // rebuild at the interface as every other does. A changed interface still reaches the
+        // importer.
+        auto p = s::project::scaffold("held");
+        p.write("src/c.cppm", "export module c;\nexport inline int c_inl() { return 10; }\n");
+        p.write("src/b.cppm", "export module b;\nimport c;\nexport inline int b_inl() { return c_inl() + 1; }\n");
+        p.write("src/main.cpp", "import std;\nimport b;\nint main() { std::println(\"value {}\", b_inl()); }\n");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the first build failed: " << s::text(r);
+        expect(s::lacks(graph_text(p), ".bak")) << "the generated command still keeps the BMI itself";
+        touch(p.at("src/c.cppm"));
+        r = p.mcpp({"build", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "c.cppm"))) << "the touched interface was not compiled: " << s::text(r);
+        expect(s::lacks(s::text(r), "b.cppm")) << "a touched interface compiled its importer: " << s::text(r);
+        p.write("src/c.cppm", "export module c;\nexport inline int c_inl() { return 20; }\n");
+        r = p.mcpp({"run", "--verbose"});
+        expect(fatal(e2e::contains(s::text(r), "value 21"))) << "a changed interface did not reach the importer: " << s::text(r);
+    };
+
     "07 static library"_test[s::elf] = [] {
         // A `kind = "lib"` target is archived (cxx_archive) into a non-empty libmathlib.a of objects.
         auto p = s::project::scaffold("mathlib");

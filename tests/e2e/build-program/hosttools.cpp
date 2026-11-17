@@ -997,9 +997,10 @@ int main() {
         expect(eq(compiled(a), std::size_t{0})) << "A: a stale program was compiled again";
         expect(stamp() == s0) << "A: the library was compiled again";
         expect(e2e::contains(s::text(a), "T859 value one")) << "A: the program gave another value";
-        // B.
+        // B. The edit adds code: an object compiled to the bytes it had keeps its time
+        // (SPEC-018 §1), and the stamp is the object's.
         second();
-        rules.write("src/rule859.cppm", "module;\n#include \"value.h\"\nexport module t859.rules;\nimport mcpp;\nexport int rule_value() { return T859_VALUE + 0; }\n");
+        rules.write("src/rule859.cppm", "module;\n#include \"value.h\"\nexport module t859.rules;\nimport mcpp;\nexport int rule_value() { return T859_VALUE + 0; }\nexport int rule_other() { return 7; }\n");
         auto b = rerun("2");
         expect(eq(compiled(b), std::size_t{1})) << "B: an edit to the interface did not compile the program again";
         expect(stamp() != s0) << "B: an edit to the interface did not compile the library";
