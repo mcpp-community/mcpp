@@ -176,7 +176,13 @@ namespace pinned {
     // write file: ...\.xlings.json" (xlings#715, measured in mcpp's Windows
     // e2e). A shim starts its program without cmd.exe, so an argument holding
     // `"`, `&`, `%` or `^` reaches it whole.
-    inline constexpr std::string_view kXlingsVersion   = "2026.11.16.1";
+    //
+    // Fifteenth, at 2026.11.17.1 (openxlings/xlings#719). A symbolic link of an
+    // archive whose text names a directory is a directory link on Windows,
+    // whatever the order of the archive's entries: `usr/include/machine ->
+    // amd64` of the NetBSD and OpenBSD sysroots was a file link, and a build
+    // for those rows on a Windows host opened no header under it.
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.17.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
