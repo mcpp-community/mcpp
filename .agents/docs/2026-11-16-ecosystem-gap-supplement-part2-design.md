@@ -832,3 +832,9 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
   拒绝;目录列举给出的名字不带扩展名(`f1.`)。openkal DOS 的栈改为 1 MiB 之后脚本运行到底,但子目录的列举为空。
   三处属于 openkal-uefi 与 openkal-dos 的实现,不在本轮的条目中;外部验证工程在这两行上运行脚本中不写文件的部分,
   并写明原因,作为下一轮的条目。
+- **BSD 行的宿主（P10 的 CI）**：六个行在 Linux 宿主上构建并运行;在 macOS 与 Windows 宿主上全部失败,原因是宿主的
+  约定进入了行:macOS 上 Apple SDK 的头文件进入 std 模块的编译(FreeBSD)、libc++ 按宿主的 ctype 定义编译(NetBSD,
+  `_CTYPE_BL`)、Mach-O 链接器收到 ELF 选项(OpenBSD,`--disable-new-dtags`);Windows 上 sysroot 的头文件打不开
+  (NetBSD)、crt 对象找不到且程序名带 `.exe`(FreeBSD)。引擎的目标矩阵此前没有原生 FreeBSD 行,所以没有测到。
+  `mcpp.platforms` 0.1.0 的 CI 只在 Linux 宿主(x86_64、aarch64)上构建,文档写明宿主的范围;这些属于引擎,列入
+  下一轮(交叉构建由行而不是宿主决定)。
