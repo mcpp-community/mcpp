@@ -45,7 +45,7 @@ UTest contains_required_fields{"XpkgEmit/ContainsRequiredFields", [] {
     auto out = emit_xpkg(m, g, rel);
 
     expect(ne(out.find("AUTO-GENERATED"), std::string::npos));
-    expect(ne(out.find("name = \"mcpplibs.hello\""), std::string::npos));
+    expect(ne(out.find("    name = \"hello\""), std::string::npos));
     expect(ne(out.find("import_std = true"), std::string::npos));
     expect(ne(out.find("\"mcpplibs.hello\""), std::string::npos));   // module
     expect(ne(out.find("manifest = \"mcpp.toml\""), std::string::npos));
@@ -96,6 +96,41 @@ UTest xpkg_emit_release_tarball_url{"XpkgEmit/ReleaseTarballUrl", [] {
     expect(eq(release_tarball_url("", "bar", "0.1.0"), ""));
     // non-http(s) repo URL → empty (don't trust ssh:// / git@ for downloads)
     expect(eq(release_tarball_url("git@github.com:foo/bar.git", "bar", "0.1.0"), ""));
+}};
+
+// mcpp#947: a release's tag is a template, an archive is named by the
+// package's identity, and a descriptor is filed as the index files it.
+UTest xpkg_emit_names_of_a_release{"XpkgEmit/TheNamesAPublishedPackageIsFiledUnder", [] {
+    using namespace mcpp::publish;
+    expect(eq(release_tarball_url("https://github.com/foo/ws", "mlibs.math", "0.1.0", "r0.1.0"),
+              "https://github.com/foo/ws/releases/download/r0.1.0/mlibs.math-0.1.0.tar.gz"));
+    expect(eq(archive_identity("mlibs", "math"), "mlibs.math"));
+    expect(eq(archive_identity("mlibs", "mlibs.math"), "mlibs.math"));
+    expect(eq(archive_identity("", "math"), "math"));
+    expect(eq(descriptor_file_name("mlibs", "math"), "mlibs.math.lua"));
+    expect(eq(descriptor_file_name("mcpplibs", "cmdline"), "cmdline.lua"));
+    expect(eq(descriptor_file_name("mcpplibs.capi", "lua"), "mcpplibs.capi.lua.lua"));
+    expect(eq(descriptor_file_name("", "opencv"), "opencv.lua"));
+    expect(eq(*release_tag("", "mlibs", "math", "0.1.0"), "v0.1.0"));
+    expect(eq(*release_tag("{namespace}-{name}-{version}", "mlibs", "math", "0.1.0"), "mlibs-math-0.1.0"));
+    expect(!release_tag("v{versoin}", "mlibs", "math", "0.1.0").has_value());
+    expect(!release_tag("{version", "mlibs", "math", "0.1.0").has_value());
+    expect(!release_tag("a tag {version}", "mlibs", "math", "0.1.0").has_value());
+}};
+
+// The descriptor's name is one segment and its namespace carries the path
+// (SPEC-001 §3.2), whichever of the two the manifest's name is written as.
+UTest xpkg_emit_name_is_one_segment{"XpkgEmit/TheNameIsOneSegment", [] {
+    auto m = minimal_manifest();
+    auto g = minimal_graph();
+    m.package.namespace_ = "mlibs";
+    m.package.name = "math";
+    auto out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    expect(ne(out.find("namespace = \"mlibs\""), std::string::npos)) << out;
+    expect(ne(out.find("    name = \"math\""), std::string::npos)) << out;
+    m.package.name = "mlibs.math";
+    out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    expect(ne(out.find("    name = \"math\""), std::string::npos)) << out;
 }};
 
 #if !defined(_WIN32)

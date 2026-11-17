@@ -44,9 +44,27 @@ ReleaseInfo placeholder_release(std::string_view version);
 // Compute the convention-based GitHub Release tarball URL for a package:
 //   "<repo>/releases/download/v<version>/<name>-<version>.tar.gz"
 // Returns empty string if `repo` is empty or doesn't look like a https URL.
+// `name` is the archive's name: the package's identity (`archive_identity`).
+// `tag` empty: `v<version>`.
 std::string release_tarball_url(std::string_view repo,
                                 std::string_view name,
-                                std::string_view version);
+                                std::string_view version,
+                                std::string_view tag = {});
+
+// THE NAMES A PUBLISHED PACKAGE IS FILED UNDER (mcpp#947). Several packages of
+// one repository are released under one tag, and two of them may share a short
+// name across namespaces (`omui.core`, `hanim.core`): the archive and its
+// directory are named by the identity, `<namespace>.<name>`; a package with
+// no namespace keeps its name.
+std::string archive_identity(std::string_view ns, std::string_view name);
+// The descriptor's file in an index: `<name>.lua` in the default namespace,
+// `<namespace>.<name>.lua` in another.
+std::string descriptor_file_name(std::string_view ns, std::string_view name);
+// The tag a release is published under, from a template of `{version}`,
+// `{name}` and `{namespace}`; empty template: `v{version}`. An unknown
+// placeholder is an error.
+std::expected<std::string, std::string> release_tag(std::string_view tmpl, std::string_view ns,
+                                                    std::string_view name, std::string_view version);
 
 // Compute SHA-256 of `file` by shelling out to `sha256sum` (universally
 // available on Linux). Returns empty string on failure.
@@ -203,14 +221,18 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
     // carries the "AUTO-GENERATED … do not edit by hand" banner). Emitting the
     // FQN here closes the generator half of that loop; `mcpp xpkg parse` closes
     // the lint half. Design: 2026-06-26 §4.5 prescribed this and it never landed.
+    //
+    // THE NAME IS ONE SEGMENT AND THE NAMESPACE CARRIES THE PATH (SPEC-001
+    // §3.2; mcpp#947): the shape the index files and its lint asks for. The
+    // fully-qualified name written here before stays readable.
     if (!manifest.package.namespace_.empty()) {
         auto prefix = manifest.package.namespace_ + ".";
-        auto fqn = manifest.package.name.starts_with(prefix)
-            ? manifest.package.name
-            : prefix + manifest.package.name;
+        auto shortName = manifest.package.name.starts_with(prefix)
+            ? manifest.package.name.substr(prefix.size())
+            : manifest.package.name;
         out += std::format("    namespace = {},\n",
                            lua_escape(manifest.package.namespace_));
-        out += std::format("    name = {},\n", lua_escape(fqn));
+        out += std::format("    name = {},\n", lua_escape(shortName));
     } else {
         out += std::format("    name = {},\n", lua_escape(manifest.package.name));
     }
@@ -365,17 +387,51 @@ ReleaseInfo placeholder_release(std::string_view version) {
     return r;
 }
 
+std::string archive_identity(std::string_view ns, std::string_view name) {
+    if (ns.empty() || name.starts_with(std::string(ns) + ".")) return std::string(name);
+    return std::format("{}.{}", ns, name);
+}
+
+std::string descriptor_file_name(std::string_view ns, std::string_view name) {
+    const auto identity = archive_identity(ns, name);
+    constexpr std::string_view kDefault = "mcpplibs.";
+    return std::format("{}.lua", identity.starts_with(kDefault) && identity.find('.', kDefault.size()) == std::string::npos
+                                     ? identity.substr(kDefault.size()) : identity);
+}
+
+std::expected<std::string, std::string> release_tag(std::string_view tmpl, std::string_view ns,
+                                                    std::string_view name, std::string_view version) {
+    if (tmpl.empty()) tmpl = "v{version}";
+    std::string out;
+    for (std::size_t i = 0; i < tmpl.size();) {
+        if (tmpl[i] != '{') { out += tmpl[i++]; continue; }
+        const auto end = tmpl.find('}', i);
+        const auto word = end == std::string_view::npos ? std::string_view{} : tmpl.substr(i + 1, end - i - 1);
+        if (word == "version") out += version;
+        else if (word == "name") out += name;
+        else if (word == "namespace") out += ns;
+        else return std::unexpected(std::format(
+            "--tag '{}': '{}' is not a placeholder; a tag names {{version}}, {{name}} and {{namespace}}",
+            tmpl, tmpl.substr(i, end == std::string_view::npos ? std::string_view::npos : end - i + 1)));
+        i = end + 1;
+    }
+    if (out.empty() || out.find_first_of(" \t~^:?*[\\") != std::string::npos)
+        return std::unexpected(std::format("--tag '{}' gives '{}', which is not a tag's name", tmpl, out));
+    return out;
+}
+
 std::string release_tarball_url(std::string_view repo,
                                 std::string_view name,
-                                std::string_view version)
+                                std::string_view version,
+                                std::string_view tag)
 {
     // Strip trailing ".git" if present.
     std::string r{repo};
     if (r.ends_with(".git")) r.resize(r.size() - 4);
     if (r.empty()) return {};
     if (!r.starts_with("https://") && !r.starts_with("http://")) return {};
-    return std::format("{}/releases/download/v{}/{}-{}.tar.gz",
-                       r, version, name, version);
+    return std::format("{}/releases/download/{}/{}-{}.tar.gz",
+                       r, tag.empty() ? std::format("v{}", version) : std::string(tag), name, version);
 }
 
 std::string sha256_of_file(const std::filesystem::path& file) {

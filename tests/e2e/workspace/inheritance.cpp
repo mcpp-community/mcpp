@@ -307,14 +307,14 @@ cxxflags = ["-DWS_FLAG=1"]
 
         auto r = repo.mcpp_in("util", {"publish", "--dry-run", "--allow-dirty"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "publish of a member that omits version failed: " << s::text(r);
-        const auto archive = repo.at("util/target/dist/util-0.3.0.tar.gz");
+        const auto archive = repo.at("util/target/dist/probe.util-0.3.0.tar.gz");
         expect(fatal(fs::is_regular_file(archive))) << "no archive at " << archive << ": " << s::text(r);
         const auto members = s::tar_list(archive);
-        expect(fatal(std::ranges::find(members, "util-0.3.0/mcpp.toml.orig") != members.end())) << "the archive does not keep the original manifest";
-        const auto util_toml = archived(archive, "util-0.3.0/mcpp.toml");
+        expect(fatal(std::ranges::find(members, "probe.util-0.3.0/mcpp.toml.orig") != members.end())) << "the archive does not keep the original manifest";
+        const auto util_toml = archived(archive, "probe.util-0.3.0/mcpp.toml");
         for (std::string_view want : {R"(version = "0.3.0")", R"(license = "MIT")", R"(cxxflags = ["-DWS_FLAG=1"])"})
             expect(fatal(e2e::contains(util_toml, want))) << "the archived mcpp.toml lacks: " << want << "\n" << util_toml;
-        expect(fatal(archived(archive, "util-0.3.0/mcpp.toml.orig") == repo.read("util/mcpp.toml"))) << "mcpp.toml.orig is not the file as written";
+        expect(fatal(archived(archive, "probe.util-0.3.0/mcpp.toml.orig") == repo.read("util/mcpp.toml"))) << "mcpp.toml.orig is not the file as written";
         const auto sha1 = s::sha256(s::read_file(archive));
         fs::remove_all(repo.at("util/target"));
         r = repo.mcpp_in("util", {"publish", "--dry-run", "--allow-dirty"}, inherited);
@@ -327,7 +327,7 @@ cxxflags = ["-DWS_FLAG=1"]
         s::project app(tmp / "app", {
             {"mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
                                       "\"probe.util\" = {{ path = \"{}\" }}\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n",
-                                      (tmp / "unpacked/util-0.3.0").generic_string())},
+                                      (tmp / "unpacked/probe.util-0.3.0").generic_string())},
             {"src/main.cpp", "import std;\nimport probe.util;\nint main() { std::println(\"value={}\", util_value()); return util_value() == 42 ? 0 : 1; }\n"},
         });
         r = app.mcpp({"run"}, inherited);
@@ -350,15 +350,37 @@ cxxflags = ["-DWS_FLAG=1"]
 
         r = repo.mcpp_in("lib", {"publish", "--dry-run", "--allow-dirty"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "publish of a member with a versioned sibling edge failed: " << s::text(r);
-        const auto lib_toml = archived(repo.at("lib/target/dist/lib-0.3.0.tar.gz"), "lib-0.3.0/mcpp.toml");
+        const auto lib_toml = archived(repo.at("lib/target/dist/probe.lib-0.3.0.tar.gz"), "probe.lib-0.3.0/mcpp.toml");
         expect(fatal(e2e::contains(lib_toml, R"("probe.util" = { version = "0.3.0" })"))) << "the sibling edge is not a version edge:\n" << lib_toml;
         expect(fatal(s::lacks(lib_toml, "path"))) << "a path survived";
         r = repo.mcpp_in("lib", {"emit", "xpkg"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "emit xpkg: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), R"(["probe.util"] = "0.3.0")"))) << "the descriptor does not list the sibling: " << s::text(r);
         r = repo.mcpp_in("edgeless", {"publish", "--dry-run", "--allow-dirty"}, inherited);
-        expect(fatal(failed(r))) << "a path-only sibling edge was published: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), R"(version = "0.3.0")"))) << "the refusal does not name the version to add: " << s::text(r);
+        // mcpp#947 (1): a sibling edge that states no version takes the sibling's own.
+        expect(fatal(e2e::succeeded(r))) << "a path-only sibling edge was not published under the sibling's version: " << s::text(r);
+        const auto edgeless_toml = archived(repo.at("edgeless/target/dist/probe.edgeless-0.3.0.tar.gz"), "probe.edgeless-0.3.0/mcpp.toml");
+        expect(fatal(e2e::contains(edgeless_toml, R"(version = "0.3.0")") && s::lacks(edgeless_toml, "path")))
+            << "the path-only sibling edge is not a version edge:\n" << edgeless_toml;
+
+        // mcpp#947 (2)-(5): every member in one run, into the workspace's dist: archives by
+        // identity, a descriptor of the index's shape each, the checksums, and the tag.
+        r = repo.mcpp({"publish", "--workspace", "--dry-run", "--allow-dirty", "--tag", "probe-{version}"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "publish --workspace failed: " << s::text(r);
+        for (std::string_view f : {"probe.util-0.3.0.tar.gz", "probe.lib-0.3.0.tar.gz", "probe.edgeless-0.3.0.tar.gz",
+                                   "probe.util.lua", "probe.lib.lua", "probe.edgeless.lua", "SHA256SUMS"})
+            expect(fatal(repo.exists(std::format("target/dist/{}", f)))) << "publish --workspace did not write " << f << ": " << s::text(r);
+        const auto sums = repo.read("target/dist/SHA256SUMS");
+        expect(fatal(s::count_lines(sums, "tar.gz") == 3u)) << "SHA256SUMS does not list the three archives:\n" << sums;
+        expect(fatal(e2e::contains(sums, s::sha256(s::read_file(repo.at("target/dist/probe.util-0.3.0.tar.gz"))))))
+            << "SHA256SUMS does not state an archive's checksum:\n" << sums;
+        const auto lua = repo.read("target/dist/probe.util.lua");
+        expect(fatal(e2e::contains(lua, R"(namespace = "probe")") && e2e::contains(lua, R"(    name = "util")")))
+            << "the descriptor is not namespace and one-segment name:\n" << lua;
+        expect(fatal(e2e::contains(lua, "/releases/download/probe-0.3.0/probe.util-0.3.0.tar.gz")))
+            << "the descriptor's url does not carry the tag and the identity:\n" << lua;
+        r = repo.mcpp({"publish", "-p", "probe.util", "--dry-run", "--allow-dirty", "--tag", "{verison}"}, inherited);
+        expect(fatal(failed(r) && e2e::contains(s::text(r), "is not a placeholder"))) << "an unknown placeholder was accepted: " << s::text(r);
         r = repo.mcpp_in("util", {"emit", "xpkg"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "emit xpkg in a member that omits version: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "['0.3.0']"))) << "descriptor version: " << s::text(r);
