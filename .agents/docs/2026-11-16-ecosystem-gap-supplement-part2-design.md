@@ -838,3 +838,18 @@ mcpp-index）因前置条件就绪的时间不同，必须分批，批次在表�
   (NetBSD)、crt 对象找不到且程序名带 `.exe`(FreeBSD)。引擎的目标矩阵此前没有原生 FreeBSD 行,所以没有测到。
   `mcpp.platforms` 0.1.0 的 CI 只在 Linux 宿主(x86_64、aarch64)上构建,文档写明宿主的范围;这些属于引擎,列入
   下一轮(交叉构建由行而不是宿主决定)。
+- **#945 在真实工程上（2026.11.17.1 发布之后）**：`mcpp build --workspace` 通过；随后两次 `mcpp test --workspace`
+  （148 个成员，llvm@23.1.3）各有一次构建失败，落在同一组（导入 GPU 模块、带构建程序的包）：第一次 clang 在读取
+  模块时崩溃（`ASTReader::loadDeclUpdateRecords`，两处），第二次 ninja 以非零状态结束而不指名失败的步骤。其余失败
+  是本机无 GPU 时的测试本身。第二次运行仍有 136 个包有编译行，内容不变的重复运行本应没有。已排除：同一目录的并发
+  写（组依次构建，目录锁是每个打开文件描述的 `flock`）、另一工程经共享 BMI 缓存改写（缓存以改名发布，只向工程复制）。
+  与症状一致的原因是 ninja 的 ninja-build/ninja#2662：`Plan::EdgeFinished` 加载 dyndep 文件时使 `NodeFinished`
+  与 `EdgeFinished` 正在遍历的迭代器失效（1.12.1 与 1.13.2 均有，间歇出现于重建；修正 ninja-build/ninja#2840
+  未合入）。引擎已为缓存放置单独一遍；按目标构建（`mcpp test`）与 `-k` 的扫描在主遍中进行，构建程序重跑后各包的
+  动作节点不再是最新，扫描的 dyndep 文件因而在主遍的完成回调中加载，即该缺陷的条件。未经修正的 ninja 对照验证
+  （第二个构建目录约 9.5 GB，本机空间不足）。#945 保持打开；待定：带 #2840 的 ninja 包，或在主遍之前加载全部
+  dyndep；无论哪种，ninja 未指名步骤而失败时报告其退出状态或信号。
+- **早期平台选择看到的谓词**：`[target.'cfg(c-abi = "musl")'] platform` 不匹配 `x86_64-macos-musl`，而
+  `cfg(env = "musl")` 匹配：平台选定之前，一行的 C 库是其平台将要陈述的。SPEC-013 §3.1 应写明早期选择可用的
+  谓词（三元组的字面成分）。外部验证工程以 `cfg(any(env = "musl", os = "openkal", os = "uefi"))` 选择
+  openkal-platform 0.29.1：引擎内置的默认（0.28.0）以 mcpp.plugins 0.20.0 构建，与 0.29.1 所用的 0.22.1 不能同处一次构建。
