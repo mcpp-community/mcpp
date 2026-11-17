@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-364 records.
+365 records.
 
 ## By subject
 
@@ -30,6 +30,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### build
 
+- [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [大型工作区的构建空间与复用（mcpp#874）](2026-10-31-workspace-space-and-reuse-design.md) — active
 - [依赖 image 的资源归属、模块扫描边界与锁文件稳定写入](2026-10-21-resource-ownership-module-scan-and-lock-write-design.md) — active
 
@@ -203,6 +204,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — active
 - [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
 - [发布的发布面与 macOS 链接的 SDK 契约（2026-11-14 补充）](2026-11-14-release-publication-and-macos-sdk-design.md) — active
