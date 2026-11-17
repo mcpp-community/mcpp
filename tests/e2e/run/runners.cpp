@@ -105,8 +105,11 @@ E2E runners{"runners", [] {
             expect(fatal(e2e::contains(t, "--no-runner"))) << "escape hatch not mentioned: " << t;
             expect(fatal(spoiled(bin))) << "the artifact was rebuilt under the run; the criterion measured nothing";
             for (int n = 1; n <= 2; ++n) {
+                // Another program each round, so that it is linked again over the binary the
+                // round before spoiled: a test compiled to the object it had is not linked
+                // (SPEC-018 §1), and a touch alone would leave the spoiled binary in place.
+                p.write("tests/one.cpp", std::format("int main() {{ int v = {0}; return v - {0}; }}\n", n));
                 if (n == 2) p.write("tests/two.cpp", "int main() { return 0; }\n");
-                for (const auto& f : s::glob(p.at("tests"), "*.cpp")) fs::last_write_time(f, fs::file_time_type::clock::now());
                 r = p.mcpp({"test"}, o);
                 expect(fatal(e2e::succeeded(r))) << "test build+run before patching (" << n << "): " << s::text(r);
                 expect(fatal(s::has_line(s::text(r), std::format(R"(ok\. {} passed; 0 failed)", n)))) << "sanity: tests should pass unpatched (" << n << "): " << s::text(r);
