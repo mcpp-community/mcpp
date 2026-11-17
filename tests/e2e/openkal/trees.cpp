@@ -176,7 +176,8 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
             expect(fatal(s::read_file(root / "windows-x86_64/okrun.exe").starts_with("MZ"))) << "E: windows-x86_64 is not a PE: " << s::text(r);
             for (const auto& e : fs::recursive_directory_iterator(root))
                 expect(fatal(e.path().filename() != "mcpp-package.json")) << "E: a runner carries its package description: " << e.path();
-            expect(fatal(e2e::contains(s::text(r), "no runner for macos-x86_64"))) << "E: the planned row is not said: " << s::text(r);
+            // openkal-platform 0.29 serves x86_64-macos with its toolchain: the row is built.
+            expect(fatal(s::read_file(root / "macos-x86_64/okrun").starts_with("\xcf\xfa\xed\xfe"))) << "E: macos-x86_64 is not a Mach-O: " << s::text(r);
         }
     };
 
@@ -283,10 +284,10 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         expect(fatal(!e2e::succeeded(r))) << "E: -o with two systems was accepted: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "single files (one per leg and system)"))) << "E: the refusal: " << s::text(r);
         expect(fatal(s::lacks(s::text(r), "Compiling"))) << "E: refused after compiling: " << s::text(r);
+        // A row the platform serves is built as a single file as well (x86_64-macos over
+        // openkal-platform 0.29).
         r = img.mcpp({"pack", "--target", "x86_64-openkal", "--pkg-format", "single-file", "--systems", "linux,macos"}, o);
-        expect(fatal(!e2e::succeeded(r))) << "E: a single file for x86_64-macos was accepted: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "x86_64-macos"))) << "E: the refusal does not name the row: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "--systems linux"))) << "E: the refusal does not give the systems that are built: " << s::text(r);
+        expect(fatal(e2e::succeeded(r))) << "E: a single file for x86_64-macos: " << s::text(r);
     };
 
     "957 packages merge and describe themselves"_test[s::llvm][s::python3][s::unix_shell] = [] {
