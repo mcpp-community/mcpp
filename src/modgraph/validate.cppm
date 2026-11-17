@@ -191,10 +191,14 @@ ValidateReport validate(const Graph&                    g,
         // the library author's choice — no name-matching enforced.
         const mcpp::modgraph::SourceUnit* lib_unit = nullptr;
         for (auto& u : g.units) {
-            auto u_rel = u.path.is_absolute() && !projectRoot.empty()
-                ? std::filesystem::relative(u.path, projectRoot)
-                : u.path;
-            if (u_rel == lib_root_rel || u.path == lib_root_rel) {
+            // The file as written: a unit built for it (SPEC-019 §5) is the
+            // lib root when its source is.
+            const auto& file = u.written();
+            if (u.provides == std::nullopt && !u.writtenAs.empty()) continue;
+            auto u_rel = file.is_absolute() && !projectRoot.empty()
+                ? std::filesystem::relative(file, projectRoot)
+                : file;
+            if (u_rel == lib_root_rel || file == lib_root_rel) {
                 lib_unit = &u;
                 break;
             }

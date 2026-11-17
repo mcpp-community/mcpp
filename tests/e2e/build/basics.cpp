@@ -210,6 +210,23 @@ E2E basics{"basics", [] {
         expect(fatal(e2e::contains(s::text(r), "value 22"))) << "D: an edit of the interface did not reach the importer: " << s::text(r);
     };
 
+    "1117 a library whose root has a private fragment is its source as written"_test = [] {
+        // The lib root a manifest names is a file a person wrote; the units built for it are
+        // not. Validation finds the root, the interface is the root's module, and the package
+        // publishes the file as written.
+        auto p = s::project::scaffold("fraglib");
+        p.remove("src/main.cpp");
+        p.remove("tests/test_smoke.cpp");
+        p.write("mcpp.toml", "[package]\nname = \"fraglib\"\nversion = \"0.1.0\"\n[lib]\npath = \"src/fraglib.cppm\"\n[targets.fraglib]\nkind = \"lib\"\n");
+        p.write("src/fraglib.cppm", "export module fraglib;\nexport int answer();\nmodule :private;\nint answer() { return 42; }\n");
+        p.write("tests/answer.cpp", "import fraglib;\nint main() { return answer() == 42 ? 0 : 1; }\n");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "a library whose root has a private fragment did not build: " << s::text(r);
+        expect(s::lacks(s::text(r), "[lib].path") && s::lacks(s::text(r), "lib root")) << "the root as written was not found: " << s::text(r);
+        r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << "its test did not link the fragment's unit: " << s::text(r);
+    };
+
     "1113 a fragment is handed to the compiler as written on request"_test[s::llvm] = [] {
         // `private_fragment = "as-written"` (and MCPP_BUILDOPT=off): the source is the unit,
         // and an edit of its fragment compiles the importers, as the compiler has it. A fragment

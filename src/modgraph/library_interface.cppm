@@ -91,7 +91,7 @@ LibraryInterface library_interface(const Graph& g, const mcpp::manifest::Manifes
         out.root = rootFile;
         for (auto const& u : g.units)
             if (u.packageName == packageName && u.provides
-                && u.path.lexically_normal() == rootFile) {
+                && u.written().lexically_normal() == rootFile) {
                 out.rootModule = primary(u.provides->logicalName);
                 break;
             }
@@ -112,7 +112,7 @@ LibraryInterface library_interface(const Graph& g, const mcpp::manifest::Manifes
         for (auto const& u : g.units)
             if (u.packageName == packageName && u.provides
                 && u.provides->logicalName.find(':') == std::string::npos
-                && files.contains(u.path.lexically_normal()))
+                && files.contains(u.written().lexically_normal()))
                 closeOver(primary(u.provides->logicalName));
     }
     return out;

@@ -116,6 +116,9 @@ struct SourceUnit {
     // of its own, SPEC-019). Empty: `path` is the source as written. What
     // answers "which units is this file built as" reads it.
     std::filesystem::path           writtenAs;
+    // The file a person wrote for this unit: what a manifest names (`[lib]
+    // path`, a feature's sources) and what a package publishes.
+    const std::filesystem::path& written() const { return writtenAs.empty() ? path : writtenAs; }
 };
 
 // A package's closure: the qualified names of the packages whose modules its
