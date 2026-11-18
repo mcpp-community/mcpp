@@ -399,7 +399,16 @@ int main() {
         expect(fatal(bytes.starts_with("\x7f" "ELF"))) << "the program is not an ELF";
         const bool freebsd = (bytes.size() > 7 && bytes[7] == 9) || bytes.contains(std::string_view("FreeBSD\0", 8));
         expect(freebsd) << "the ELF is not a FreeBSD program";
-        expect(s::lacks(s::text(r), "MacOSX") && s::lacks(s::text(r), "-isysroot")) << "the build names an SDK of the host: " << s::text(r);
+        // No command of the build names an SDK of the host. The probe of the toolchain's
+        // own compiler reports the host's SDK in the verbose log (`probe: sysroot`) before
+        // any command is written; that line is the host's description and reaches none.
+        const std::string log = s::text(r);
+        bool sdk = log.contains("-isysroot");
+        for (auto line : std::views::split(log, '\n')) {
+            const std::string_view l(line.begin(), line.end());
+            sdk = sdk || (l.contains("MacOSX") && !l.contains("probe: "));
+        }
+        expect(!sdk) << "a command of the build names an SDK of the host: " << s::text(r);
     };
 
     "1118 a platform's system states what its rows share"_test[s::llvm] = [] {
