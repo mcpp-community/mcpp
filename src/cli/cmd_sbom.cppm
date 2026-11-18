@@ -102,12 +102,16 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     const auto lockPath = *root / "mcpp.lock";
     std::vector<mcpp::lockfile::LockedPackage> pkgs;
-    if (auto lock = mcpp::lockfile::load(lockPath)) {
+    // Asked before loading: `load` reads a file that is not there as an empty
+    // lock, so its answer cannot tell "nothing recorded" from "no dependencies".
+    if (std::filesystem::exists(lockPath)) {
+        auto lock = mcpp::lockfile::load(lockPath);
+        if (!lock) {
+            mcpp::ui::error(std::format(
+                "mcpp.lock exists but could not be read: {}", lock.error().message));
+            return 2;
+        }
         pkgs = lock->packages;
-    } else if (std::filesystem::exists(lockPath)) {
-        mcpp::ui::error(std::format(
-            "mcpp.lock exists but could not be read: {}", lock.error().message));
-        return 2;
     } else {
         // NOT AN ERROR, AND NOT SILENCE EITHER. A project with no
         // dependencies has no lock and its bill of materials is one component,

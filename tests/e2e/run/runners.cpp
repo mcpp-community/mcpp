@@ -184,6 +184,14 @@ E2E runners{"runners", [] {
         expect(fatal(e2e::contains(s::text(r), "differs from mcpp.lock"))) << "the refusal does not say what is wrong: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "9.9.9 -> 0.0.1"))) << "the refusal does not name which package moved, and to what: " << s::text(r);
         q.write("mcpp.lock", lock);
+        // A lock that is not there is not a lock that differs: the refusal says to record one,
+        // and a refused --locked writes none for the next run to pass against.
+        fs::remove(q.at("mcpp.lock"));
+        r = q.mcpp({"build", "--locked"});
+        expect(fatal(failed(r))) << "--locked accepted a project with no mcpp.lock";
+        expect(fatal(e2e::contains(s::text(r), "no readable mcpp.lock"))) << "the refusal does not say the lock is missing: " << s::text(r);
+        expect(fatal(!q.exists("mcpp.lock"))) << "a refused --locked wrote mcpp.lock";
+        q.write("mcpp.lock", lock);
         r = q.mcpp({"emit", "sbom", "-o", "sbom.json"});
         expect(fatal(e2e::succeeded(r))) << "mcpp emit sbom: " << s::text(r);
         auto d = s::json_file(q.at("sbom.json"));
@@ -205,6 +213,13 @@ E2E runners{"runners", [] {
         for (const auto& c : s::json_file(q.at("sbom2.json"))["components"])
             if (c["name"] == "cmdline") versions.push_back(c["version"]);
         expect(fatal(versions == std::vector<std::string>{"7.7.7"})) << "sbom re-resolved instead of reading the lock";
+        q.write("mcpp.lock", lock);
+        // Nothing recorded is said on the narration stream, and the document stays valid.
+        fs::remove(q.at("mcpp.lock"));
+        r = q.mcpp({"emit", "sbom"});
+        expect(fatal(e2e::succeeded(r))) << "mcpp emit sbom with no lock: " << s::text(r);
+        expect(fatal(e2e::contains(r.err, "no mcpp.lock"))) << "sbom did not say that nothing was recorded: " << r.err;
+        expect(fatal(s::json(r.out)["components"].empty())) << "sbom with no lock is not a root-only document: " << r.out;
         q.write("mcpp.lock", lock);
 
         s::project(work / "bsp", {{"mcpp.toml", "[package]\nname    = \"demo-board-rt\"\nversion = \"0.1.0\"\n\n[features]\ndefault  = [\"emulator\"]\nemulator = []\nhardware = []\n"},

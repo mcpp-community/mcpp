@@ -129,6 +129,60 @@ static std::optional<std::string> target_drift(const PrepareState& state,
                        c.why.empty() ? std::string{} : "; " + c.why);
 }
 
+// THE `--locked` ASSERTION: this resolution is the recorded one, or the
+// failure names what moved. `partialWorkspace` is a plan of some of a
+// workspace's members, whose unresolved entries are not drift.
+static std::expected<void, std::string> check_locked(const PrepareState& state,
+                                                     const mcpp::lockfile::Lockfile& lock,
+                                                     const std::optional<mcpp::lockfile::LockedTarget>& priorTarget,
+                                                     const std::filesystem::path& lockPath,
+                                                     bool partialWorkspace) {
+    // `load` reads a missing file as an empty lock, which would
+    // report every package as drift from a file that is not there.
+    auto prior = mcpp::lockfile::load(lockPath);
+    if (!prior || !std::filesystem::exists(lockPath)) {
+        return std::unexpected(std::format(
+            "--locked was given and there is no readable mcpp.lock at {}\n"
+            "       Run the same command without --locked once to record "
+            "this resolution, then commit mcpp.lock.",
+            lockPath.string()));
+    }
+    auto key = [](const mcpp::lockfile::LockedPackage& p) {
+        const std::string sn = lock_short_name(p);
+        return p.namespace_.empty() ? sn
+                                    : p.namespace_ + "." + sn;
+    };
+    std::map<std::string, std::string> was, now;
+    // An override is part of the recorded resolution (T2): the
+    // same version chosen by a merge or by the root is drift.
+    auto recorded = [](const mcpp::lockfile::LockedPackage& p) {
+        return p.overridden ? p.version + " (override)" : p.version;
+    };
+    for (auto const& p : prior->packages) was[key(p)] = recorded(p);
+    for (auto const& p : lock.packages)    now[key(p)] = recorded(p);
+    std::vector<std::string> drift;
+    if (auto d = target_drift(state, priorTarget)) drift.push_back(std::move(*d));
+    for (auto const& [k, v] : now) {
+        auto it = was.find(k);
+        if (it == was.end())      drift.push_back(k + " " + v + " (not in the lock)");
+        else if (it->second != v) drift.push_back(k + " " + it->second + " -> " + v);
+    }
+    // A plan of some of a workspace's members resolves some of
+    // the lock; what it did not resolve is not drift.
+    if (!partialWorkspace)
+        for (auto const& [k, v] : was)
+            if (!now.contains(k)) drift.push_back(k + " " + v + " (no longer resolved)");
+    if (!drift.empty()) {
+        std::string msg = "--locked was given and this resolution "
+                          "differs from mcpp.lock:";
+        for (auto const& d : drift) msg += "\n         " + d;
+        msg += "\n       Re-run without --locked to update the lock, "
+               "or pin the dependency that moved.";
+        return std::unexpected(msg);
+    }
+    return {};
+}
+
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx) {
     // Write/update mcpp.lock for any version-based deps that succeeded.
     // Path deps are intentionally NOT locked — their source is local filesystem.
@@ -459,47 +513,8 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             // true and useless; which package moved, from which version to
             // which, is what the reader does something about.
             if (mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1") {
-                auto prior = mcpp::lockfile::load(lockPath);
-                if (!prior) {
-                    return std::unexpected(std::format(
-                        "--locked was given and there is no readable mcpp.lock at {}\n"
-                        "       Run the same command without --locked once to record "
-                        "this resolution, then commit mcpp.lock.",
-                        lockPath.string()));
-                }
-                auto key = [](const mcpp::lockfile::LockedPackage& p) {
-                    const std::string sn = lock_short_name(p);
-                    return p.namespace_.empty() ? sn
-                                                : p.namespace_ + "." + sn;
-                };
-                std::map<std::string, std::string> was, now;
-                // An override is part of the recorded resolution (T2): the
-                // same version chosen by a merge or by the root is drift.
-                auto recorded = [](const mcpp::lockfile::LockedPackage& p) {
-                    return p.overridden ? p.version + " (override)" : p.version;
-                };
-                for (auto const& p : prior->packages) was[key(p)] = recorded(p);
-                for (auto const& p : lock.packages)    now[key(p)] = recorded(p);
-                std::vector<std::string> drift;
-                if (auto d = target_drift(state, priorTarget)) drift.push_back(std::move(*d));
-                for (auto const& [k, v] : now) {
-                    auto it = was.find(k);
-                    if (it == was.end())      drift.push_back(k + " " + v + " (not in the lock)");
-                    else if (it->second != v) drift.push_back(k + " " + it->second + " -> " + v);
-                }
-                // A plan of some of a workspace's members resolves some of
-                // the lock; what it did not resolve is not drift.
-                if (!partialWorkspace)
-                    for (auto const& [k, v] : was)
-                        if (!now.contains(k)) drift.push_back(k + " " + v + " (no longer resolved)");
-                if (!drift.empty()) {
-                    std::string msg = "--locked was given and this resolution "
-                                      "differs from mcpp.lock:";
-                    for (auto const& d : drift) msg += "\n         " + d;
-                    msg += "\n       Re-run without --locked to update the lock, "
-                           "or pin the dependency that moved.";
-                    return std::unexpected(msg);
-                }
+                if (auto r = check_locked(state, lock, priorTarget, lockPath, partialWorkspace); !r)
+                    return std::unexpected(std::move(r.error()));
             }
             // OPTIMISTIC: no lock is held while the graph resolves (it may
             // reach the network). What this run read is compared with what is
