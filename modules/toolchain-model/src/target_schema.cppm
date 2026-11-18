@@ -30,8 +30,10 @@ struct Row {
     std::string_view multilib;        // a C library's multilib directory
     std::span<const std::string_view> flags;   // extra compile flags
     std::string_view linkEmulation;   // `ld.lld -m`, when the driver reaches no lld
-    // The facts of a defined row (a platform's). Empty on a built-in row,
-    // whose system's conventions answer them.
+    // The facts a row states for itself. `objectFormat`, `exeSuffix` and
+    // `sharedSuffix` left empty are its system's (`System`), then the
+    // convention of the object format; the others, empty on a built-in row,
+    // are answered by the engine's conventions for the row's system.
     std::string_view clangTriple;     // `{version}` / `{version:<default>}`
     // The target a cross GCC payload is built for, in GNU's spelling
     // (`i586-pc-msdosdjgpp`): the payload is `<gcc-triple>-gcc` and its
@@ -145,6 +147,13 @@ struct System {
     // as its own syntax, so an argument holding one is refused before the
     // start rather than passed to be rewritten or run as a command.
     std::span<const std::string_view> commandScripts;
+    // WHAT THE SYSTEM'S ROWS SHARE (design 2026-11-17 §12): the container its
+    // objects come in and the suffixes of its programs and shared libraries.
+    // A row's own statement precedes these; one neither states is the
+    // convention of the object format (`triple::artifact_naming`).
+    std::string_view objectFormat;    // elf | mach-o | pe | wasm | coff; empty: unstated
+    std::string_view exeSuffix;
+    std::string_view sharedSuffix;
 };
 
 // AN ARCHITECTURE A MACHINE EXECUTES BESIDES ITS OWN (design 2026-11-15 N23):

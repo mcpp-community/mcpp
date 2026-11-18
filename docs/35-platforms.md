@@ -430,6 +430,25 @@ name  = "haiku"
 uname = "Haiku"                                  # what `uname -s` answers there
 ```
 
+**Object format and file names (2026.11.18.1+).** A row's `object-format`,
+`exe-suffix` and `shared-suffix` are read in three steps, the first statement
+taken: the row, the row's system (`[[platform.system]]` accepts the same three
+keys for what its rows share), and the convention of the object format. The
+same reading serves the built-in rows, whose statements are data of the
+built-in table; the build machine's naming answers for no row, so a target has
+one set of file names on every host.
+
+| Format | Program | Static library | Shared library |
+|---|---|---|---|
+| `elf` (when neither states one) | no suffix | `lib<name>.a` | `.so` |
+| `mach-o` | no suffix | `lib<name>.a` | `.dylib` |
+| `pe` | `.exe` | `lib<name>.a`; `<name>.lib` under the `msvc` env | `.dll` with an import library |
+| `coff` | no suffix | `lib<name>.a` | `.so` |
+| `wasm` | no suffix | `lib<name>.a` | not supported |
+
+A row whose program has another suffix states it (`exe-suffix = ".efi"`). A
+row that states no `object-format` takes its system's, then ELF.
+
 A provider's `runner` is the lowest tier of the runner statement: a build
 program's, this machine's `config.toml`, the project's `[target.<selector>]
 runner` and `MCPP_TARGET_<TRIPLE>_RUNNER` each replace it. The platform's own

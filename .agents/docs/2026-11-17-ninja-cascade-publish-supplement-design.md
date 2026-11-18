@@ -371,6 +371,15 @@ v4 把 macOS 的 FreeBSD 记为"读到 Apple SDK 的头文件"、把 Windows 的
 
 Windows 上的 FreeBSD 行在以上两处修正之后停在第三处：FreeBSD 的 `crtend.o` 与 `libgcc.a` 带有 zlib 压缩的调试段，而 Windows 的 LLVM 包中的 lld 未带 zlib（`is compressed with ELFCOMPRESS_ZLIB, but lld is not built with zlib support`）。修正属于该 LLVM 包。e2e 1116 在 Windows 宿主上因 LLVM 能力不成立而跳过，所以 mcpp#949 的 CI 没有测到这一点；该两格不在 mcpp-platforms 的 Windows 构建矩阵中，文档按测得的结果陈述。
 
+随后的更正（2026-11-18）：
+
+| 原因 | 记录 | 修正 |
+|---|---|---|
+| FreeBSD 基座的链接输入带 zlib 压缩的调试段 | Windows：`crtend.o`、`libgcc.a` 等 31 个文件，lld 报 `ELFCOMPRESS_ZLIB` | 基座包 14.5 修订 2（xim-pkgindex#1184）：调试段解压，内容不变，`PROVENANCE.md` 陈述该改动 |
+| `freebsd` 是三元组语言的词，却没有自己的产物命名，取了宿主的 | Windows：修订 2 之下构建完成，产物名为 `bin/hello.exe`，`bin/hello` 不存在 | mcpp 2026.11.18.1：`freebsd` 与 `linux` 同样命名；e2e 1116 改为在持有 LLVM 包的每种宿主上运行，并要求产物名与行一致 |
+
+Windows 的 LLVM 包中的 lld 仍不读取用户自己的对象中 zlib 压缩的段，这属于该 LLVM 包。
+
 ### 10.6 内容不变的重复运行仍在编译（2.4）：命令行随根而变
 
 真实工程（31 个成员的工作区）上以 ninja 的 explain 连续运行三遍，第三遍没有任何源文件变化，仍有 2779 条"command line
@@ -467,3 +476,105 @@ using 指令）按原样构建并给出所在行。其效果与手写的接口�
 
 ninja 是构建的后端，开发者不直接处理它：固定版本经 xlings 安装在已有版本旁边，升级后的首次运行说明所替换的版本；安装失败时沿用已有
 版本，一天之后再试。升级测试据此改为：首次运行只允许这一项下载，第二次运行不允许任何下载。
+
+## 12. 行的事实来自数据：对象格式与产物命名（2026-11-18）
+
+### 12.1 现状与缺陷
+
+内置表（`modules/toolchain-model/data/builtin.toml`）与平台包使用同一 schema（`[[platform.define]]`、`[[platform.system]]`、
+`[[platform.provider]]`），但两者的读法不同：
+
+| | 平台包定义的行 | 内置行 |
+|---|---|---|
+| 对象格式 | 行的 `object-format` | `object_format()` 中按系统词的分支（`windows`、`macos`、`ios`），其余为 ELF |
+| 产物命名 | 行的 `exe-suffix`、`shared-suffix` | `artifact_naming()` 中按系统词的五个分支（`windows`、`macos`、`linux`、`openkal`、`emscripten`），没有分支的行取**宿主**的命名 |
+
+后果在 10.5 的记录中测得：mcpp-platforms 定义的 NetBSD、OpenBSD 行在 Windows 宿主上一次构建通过；引擎自带的 FreeBSD 行产物名为
+`hello.exe`。行快照中取宿主命名的内置行共 21 行（FreeBSD 4 行、裸机 14 行、iOS 3 行），在 Linux 宿主上与正确答案相同，所以此前
+没有暴露。两套读法也意味着同一个事实有两个出处：新增一个系统时，平台包写数据，引擎却要加分支。
+
+### 12.2 原则
+
+SPEC-016 已规定："系统的事实是数据：行的键、系统表的键或提供者的键"，引擎源码中的系统名由 `check_system_names.py` 的基线持有，
+只许减少。本节把对象格式与产物命名两项事实按这一规定落到数据上，使内置行与平台包的行经同一条路读取。
+
+### 12.3 方案：三级读取
+
+一行的三项事实 `object-format`、`exe-suffix`、`shared-suffix` 按以下次序读取，先陈述者生效：
+
+1. **行**（`[[platform.define]]`）：该行自己的陈述。
+2. **系统**（`[[platform.system]]`，按行的 os 段）：该系统各行共有的陈述。本节为系统表新增这三个键。
+3. **格式的约定**：引擎只认识对象格式这一封闭词汇的约定，不认识任何系统。
+
+| 格式 | 程序 | 静态库 | 共享库 | 导入库 |
+|---|---|---|---|---|
+| `elf`（缺省） | 无后缀 | `lib*.a` | `.so` | 否 |
+| `mach-o` | 无后缀 | `lib*.a` | `.dylib` | 否 |
+| `pe` | `.exe` | `lib*.a`；`msvc` 环境为 `*.lib` | `.dll` | 是 |
+| `coff` | 无后缀 | `lib*.a` | `.so` | 否 |
+| `wasm` | 无后缀 | `lib*.a` | 不支持 | — |
+
+`msvc` 是三元组的环境段（一种 ABI），不是系统名，保留在引擎中。WebAssembly 的架构段（`wasm32`、`wasm64`）在行未陈述格式时
+决定格式，同样不是系统名。
+
+宿主的命名只在两种情况下作答：空三元组（为本机构建），以及既不是表中的行、其 os 段也不是表中系统的三元组（引擎不认识，不猜）。
+
+### 12.4 内置数据的陈述
+
+此前由代码分支表达的内容改为数据，取值不变：
+
+| 位置 | 陈述 | 取代的分支 |
+|---|---|---|
+| 系统 `windows` | `object-format = "pe"` | `os == "windows"`（格式与命名） |
+| 系统 `macos` | `object-format = "mach-o"` | `os == "macos"`（格式与命名） |
+| 行 `aarch64-ios`、`aarch64-ios-sim`、`x86_64-ios-sim` | `object-format = "mach-o"` | `os == "ios"`（格式） |
+| 行 `i686-openkal`、`x86_64-openkal`、`aarch64-openkal` | `exe-suffix = ".oke"`、`shared-suffix = ".okso"` | `os == "openkal"`（命名） |
+| 行 `wasm32-emscripten` | `exe-suffix = ".js"` | `os == "emscripten"`（命名） |
+| 系统 `linux`、`freebsd` | 不陈述（ELF 为缺省） | `os == "linux"`（命名） |
+
+iOS 与 ok 镜像的陈述落在行上而不新增系统条目：系统表同时是打包的词汇（`mcpp pack --systems all` 取表中全部系统；表中未陈述
+`uname` 的系统，其程序是多系统单文件开头的 PE），新增条目会改变这两处的行为，而那不是本节要改的。裸机行（`*-none-*`）没有
+系统，由格式的缺省作答（ELF）。
+
+### 12.5 兼容性
+
+- **内置行**：行快照（`tests/fixtures/target-rows.snapshot`）逐行记录每个内置行的格式与命名。实施前后只有 12.1 所述 21 行变化
+  （由宿主的命名变为各自格式的命名），其余各行逐字相同。
+- **已发布的平台包**：逐一核对其 `[[platform.define]]`。PE 与 COFF 的行都陈述了 `exe-suffix`（`x86_64-uefi` 为 `.efi`，
+  `i586-dos-djgpp`、`i686-dos-musl` 为 `.exe`），ELF 的行未陈述（NetBSD、OpenBSD）；三级读取对它们给出与此前相同的结果。
+- **读法变化的两处**：平台定义的 PE 行未陈述 `exe-suffix` 时，此前没有后缀，现为格式的约定 `.exe`；平台定义的行未陈述
+  `object-format` 时，此前为 ELF，现先取其系统的（os 段为 `windows`、`macos` 的行因此得到 PE、Mach-O）。已发布的平台包中
+  没有落在这两处的行。
+- **平台包的 schema**：系统的三个键是可选的，行的 `object-format` 由必写变为可选。更早的 mcpp 对不认识的系统键给出警告并
+  忽略，平台包以 `[package] mcpp` 的下限陈述它需要的版本。
+- **宿主**：结果不再随宿主而变，这正是修正的内容；在 Linux 宿主上，21 行的取值与此前相同。
+
+### 12.6 多角度的考量
+
+| 角度 | 说明 |
+|---|---|
+| 规范 | 落实 SPEC-016 "系统的事实是数据"；系统表新增的键写入 SPEC-016 §2.3 |
+| 通用性 | 平台包可以为它定义的系统陈述一次格式与后缀，不必在每一行重复；新系统不需要引擎的分支 |
+| 跨平台 | 命名与格式由目标的数据决定，同一目标在 Linux、macOS、Windows 宿主上得到同一组文件名 |
+| 兼容性 | 见 12.5：内置行以快照为证，平台包逐一核对，新键可选 |
+| 简洁 | `artifact_naming()` 与 `object_format()` 各自成为一次三级读取加一张格式表；五个系统词分支与三个格式分支删除，基线下降 |
+| 复用 | 内置行与平台包的行经同一函数；`mcpp pack`、链接、运行各处读取的仍是同一个答案 |
+| 测试 | 命名的单元测试以伪造的宿主命名为入参，从任一宿主验证；快照持有全部内置行；e2e 1116 在持有 LLVM 包的每种宿主上运行 |
+
+### 12.7 不在本次之内
+
+引擎中其余按系统词的分支（编译器三元组的拼写、SDK 的定位、家族的约定等）仍由基线持有，各自在被改动时移入数据；本节只处理
+schema 已有键名的两项事实。
+
+### 12.8 实施与验证
+
+随 mcpp#951（2026.11.18.1）实施：系统表的三个键（生成器、schema、平台清单的解析与校验）；内置数据的陈述；
+`object_format()` 与 `artifact_naming()` 改为三级读取；SPEC-016 v1.5（§2.1、§2.3）与用户文档（docs/35）。
+
+| 验证 | 结果 |
+|---|---|
+| 行快照（42 个内置行的格式与命名） | 由分支改为数据前后逐字相同 |
+| 系统名基线 | `linux` 63→62，`macos` 51→49，`windows` 72→70，`emscripten` 18→17，`ios` 24→23 |
+| 单元测试 | 行先于系统、系统先于格式的约定；表中系统的非行三元组不取宿主的命名；清单读取系统的三个键 |
+| e2e 1118 | 平台包的系统陈述 `exe-suffix`，未陈述的行得到它，陈述了的行取自己的 |
+| e2e 1116 | 在持有 LLVM 包的每种宿主上构建 `x86_64-freebsd` 并核对程序名 |

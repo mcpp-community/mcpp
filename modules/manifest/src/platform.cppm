@@ -262,7 +262,7 @@ struct Hosted {
 // engine's table does not have, with the facts a build of it needs.
 struct RowSpec {
     std::string triple;
-    std::string tier = "preview", note, clangTriple, gccTriple, objectFormat = "elf", family, dataModel,
+    std::string tier = "preview", note, clangTriple, gccTriple, objectFormat, family, dataModel,
                 exeSuffix, sharedSuffix, loader, execution, exceptions;
     std::string march, mabi, codeModel, multilib, linkEmulation;
     std::vector<std::string> flags, descriptorKeys, companions;
@@ -301,6 +301,8 @@ struct SystemSpec {
     std::string name, uname;
     bool resources = false;
     std::vector<std::string> commandScripts;
+    // What the system's rows share unless a row states its own.
+    std::string objectFormat, exeSuffix, sharedSuffix;
     Origin origin;
 };
 
@@ -401,7 +403,9 @@ inline constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "pairs", "toolchain", "sysroot", "linkage", "base",
     "hosted", "layers", "link", "execution", "tier", "system-headers", "runner",
 };
-inline constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources", "command-scripts" };
+inline constexpr std::string_view kSystemKeys[] = {
+    "name", "uname", "resources", "command-scripts", "object-format", "exe-suffix", "shared-suffix",
+};
 inline constexpr std::string_view kBuildKeys[] = { "cflags", "cxxflags", "asmflags", "ldflags" };
 inline constexpr std::string_view kLinkKeys[] = {
     "driver", "flags", "start", "script", "inputs", "exe", "shared", "seal",

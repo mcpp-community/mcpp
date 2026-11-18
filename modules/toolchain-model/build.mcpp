@@ -24,7 +24,10 @@ constexpr std::string_view kProviderKeys[] = {
     "platform", "tier", "system-headers", "runner",
 };
 constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled", "exclusive" };
-constexpr std::string_view kSystemKeys[] = { "name", "uname", "resources", "command-scripts" };
+constexpr std::string_view kSystemKeys[] = {
+    "name", "uname", "resources", "command-scripts", "object-format", "exe-suffix", "shared-suffix",
+};
+constexpr std::string_view kObjectFormats[] = { "elf", "mach-o", "pe", "wasm", "coff" };
 constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
 constexpr std::string_view kPayloadKeys[] = {
     "name", "aliases", "family", "serves", "hosts", "frontend-dir", "frontends", "builds-for", "glibc-fixup", "family-version",
@@ -219,8 +222,14 @@ std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::str
         if (!it->second.is_bool()) throw Failure{std::format("{}: `resources` is not true or false", where)};
         resources = it->second.as_bool();
     }
-    return std::format("    {{ .name = {}, .uname = {}, .resources = {}, .commandScripts = {} }},\n", lit(name),
-                       lit(text(t, "uname", where)), resources, arrays.add(words(t, "command-scripts", where)));
+    const auto format = text(t, "object-format", where);
+    if (!format.empty() && !std::ranges::contains(kObjectFormats, std::string_view(format)))
+        throw Failure{std::format("{}: `object-format` is elf, mach-o, pe, wasm or coff", where)};
+    return std::format("    {{ .name = {}, .uname = {}, .resources = {}, .commandScripts = {}, .objectFormat = {}, "
+                       ".exeSuffix = {}, .sharedSuffix = {} }},\n",
+                       lit(name), lit(text(t, "uname", where)), resources,
+                       arrays.add(words(t, "command-scripts", where)), lit(format),
+                       lit(text(t, "exe-suffix", where)), lit(text(t, "shared-suffix", where)));
 }
 
 std::string executes_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {

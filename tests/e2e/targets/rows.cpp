@@ -360,7 +360,7 @@ int main() {
 
     "1077 a program of another system is not started until its runner is enabled"_test[s::llvm] = [] {
         // `mcpp run` builds a FreeBSD program on this host and does not start it: the row's
-        // platform states a runner (openkal-platform 0.29.1: dirun), which no declaration has
+        // platform states a runner (openkal-platform 0.29: dirun), which no declaration has
         // enabled. The refusal names what the runner needs and the declaration that enables
         // it; --no-runner is believed.
         const std::string T = std::string(s::on_x86_64() ? "x86_64" : "aarch64") + "-freebsd-musl";
@@ -379,7 +379,10 @@ int main() {
         expect(fatal(s::lacks(s::text(r), "[runner-not-enabled]"))) << "--no-runner was not believed: " << s::text(r);
     };
 
-    "1116 a row of another ELF system builds on a host of any format"_test[s::llvm] = [] {
+    "1116 a row of another ELF system builds on a host of any format"_test[s::scan_deps] = [] {
+        // Run on every host that holds the LLVM payload (`scan-deps` is true of it on Linux,
+        // macOS and Windows; `llvm` is a Linux capability, and under it this case never ran
+        // on the two hosts it is about).
         // A target that parses is ELF unless it says otherwise. The format was asked of the
         // host for every system but `linux` and `none`, so `x86_64-freebsd` (the system's own
         // ABI, served by the platform the index lists for the row) linked as Mach-O on a macOS
@@ -389,13 +392,84 @@ int main() {
         auto p = s::project::scaffold("bsd");
         auto r = p.mcpp({"build", "--target", "x86_64-freebsd", "--verbose"});
         expect(fatal(e2e::succeeded(r))) << "x86_64-freebsd did not build on this host: " << s::text(r);
-        const auto exe = program_under(p.at("target/x86_64-freebsd"), "bsd", true);
-        expect(fatal(exe.has_value())) << "no program: " << s::text(r);
+        // Named as the row names a program, with no suffix of the host (`bsd.exe` on Windows).
+        const auto exe = program_under(p.at("target/x86_64-freebsd"), "bsd");
+        expect(fatal(exe.has_value())) << "no program named `bsd`: " << s::text(r);
         const auto bytes = s::read_file(*exe);
         expect(fatal(bytes.starts_with("\x7f" "ELF"))) << "the program is not an ELF";
         const bool freebsd = (bytes.size() > 7 && bytes[7] == 9) || bytes.contains(std::string_view("FreeBSD\0", 8));
         expect(freebsd) << "the ELF is not a FreeBSD program";
-        expect(s::lacks(s::text(r), "MacOSX") && s::lacks(s::text(r), "-isysroot")) << "the build names an SDK of the host: " << s::text(r);
+        // No command of the build names an SDK of the host. The probe of the toolchain's
+        // own compiler reports the host's SDK in the verbose log (`probe: sysroot`) before
+        // any command is written; that line is the host's description and reaches none.
+        const std::string log = s::text(r);
+        bool sdk = log.contains("-isysroot");
+        for (auto line : std::views::split(log, '\n')) {
+            const std::string_view l(line.begin(), line.end());
+            sdk = sdk || (l.contains("MacOSX") && !l.contains("probe: "));
+        }
+        expect(!sdk) << "a command of the build names an SDK of the host: " << s::text(r);
+    };
+
+    "1118 a platform's system states what its rows share"_test[s::llvm] = [] {
+        // SPEC-016 v1.5: `object-format`, `exe-suffix` and `shared-suffix` are read row
+        // first, then the row's system. The row here states none of them and its system
+        // states the program's suffix, so the plan names the program by it. The toy base
+        // holds no C library; the plan is what is read, and the link's outcome is not.
+        const auto t = s::case_dir();
+        fs::create_directories(t / "toy-sysroot/usr/lib");
+        s::project(t / "toy-sysroot", {{"mcpp.toml", "[package]\nname     = \"toy-sysroot\"\nversion  = \"1.0\"\nprovides = [\"mcpp:c-abi=toy-libc\", \"mcpp:c++-abi=libstdc++\", \"mcpp:compiler-runtime=libgcc\",\n            \"hosted-standard-library\"]\n"}});
+        s::project(t / "plat", {{"mcpp.toml", std::format(R"([package]
+name    = "toy-system-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{}"
+
+[[platform.system]]
+name          = "toynet"
+uname         = "ToyNet"
+exe-suffix    = ".tny"
+shared-suffix = ".tso"
+
+[[platform.define]]
+triple       = "x86_64-toynet"
+clang-triple = "x86_64-unknown-netbsd10.2"
+family       = "unix"
+execution    = "toynet"
+tier         = "preview"
+
+[[platform.define]]
+triple       = "aarch64-toynet"
+clang-triple = "aarch64-unknown-netbsd10.2"
+exe-suffix   = ".own"
+family       = "unix"
+execution    = "toynet"
+tier         = "preview"
+
+[[platform.provider]]
+serves  = ["*-toynet"]
+sysroot = {{ path = "../toy-sysroot" }}
+hosted  = true
+
+[platform.link]
+driver = "compiler"
+)", s::llvm_version())}});
+        s::project app(t / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[target.'cfg(os = \"toynet\")']\nplatform = { path = \"../plat\" }\n"},
+                                   {"src/main.cpp", "int main() { return 0; }\n"}});
+        auto planned = [&](std::string_view triple) {
+            auto r = app.mcpp({"build", "--target", std::string(triple)});
+            std::string plan;
+            std::error_code ec;
+            for (fs::recursive_directory_iterator it(app.at(std::format("target/{}", triple)), ec), end; !ec && it != end; it.increment(ec))
+                if (it->path().filename() == "build.ninja") plan += s::read_file(it->path());
+            return std::pair(plan, s::text(r));
+        };
+        auto [sys, out] = planned("x86_64-toynet");
+        expect(fatal(e2e::contains(sys, "bin/app.tny"))) << "the program is not named by its system's suffix: " << out;
+        auto [own, out2] = planned("aarch64-toynet");
+        expect(fatal(e2e::contains(own, "bin/app.own"))) << "the row's own suffix does not precede its system's: " << out2;
+        expect(fatal(!e2e::contains(own, "bin/app.tny"))) << "the system's suffix was taken over the row's";
     };
 }};
 
