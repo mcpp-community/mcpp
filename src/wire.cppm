@@ -313,11 +313,23 @@ inline nlohmann::json to_json(const Envelope& e) {
     return out;
 }
 
+// THE TEXT OF A DOCUMENT THAT CARRIES WHAT A PROGRAM WROTE (design 2026-11-19
+// §20 T3). JSON is UTF-8 (RFC 8259 §8.1), and no program's bytes may end mcpp
+// with an internal error, as a compiler's GBK diagnostic did when it reached
+// `result.json` (mcpp#970): a sequence that is not UTF-8 is written as U+FFFD.
+// A program's text is decoded where mcpp reads it (T2), so what this replaces
+// is a byte a program wrote as UTF-8 and was not -- a GCC diagnostic quoting a
+// Latin-1 source line; the terminal and the logs keep it as written.
+template <class Json>
+inline std::string text(const Json& document, int indent = -1) {
+    return document.dump(indent, ' ', false, Json::error_handler_t::replace);
+}
+
 // Serialise and write to stdout. Two spaces, trailing newline: a client reads
 // it with a JSON parser either way, and a person reading a bug report should
 // not have to reformat it first.
 inline void emit(const Envelope& e) {
-    std::println("{}", to_json(e).dump(2));
+    std::println("{}", text(to_json(e), 2));
 }
 
 // ── Negotiation ────────────────────────────────────────────────────────────

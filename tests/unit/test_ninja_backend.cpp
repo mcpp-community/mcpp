@@ -141,6 +141,50 @@ UTest bitcode_export_tools_come_from_the_selected_llvm_and_are_quoted_as_words{"
     expect(eq(emit_ninja_string(plan).find("coff_args ="), std::string::npos));
 }};
 
+// mcpp#970 (design 2026-11-19 §20): cl.exe's compile writes its
+// /sourceDependencies record, which the executor writes as the Make rule
+// every compile edge reads; no compile reads the /showIncludes text. The
+// executor, link-output and the archive edge read the text of the cl.exe
+// toolchain's programs in the console's code page. A GNU toolchain's commands
+// carry neither word.
+UTest msvc_compiles_read_the_record_and_its_tools_text_is_decoded{"NinjaBackend/MsvcCompilesReadTheRecordAndItsToolsTextIsDecoded", [] {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath = "cl.exe";
+    plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
+    plan.scheduleCompilerCap = 2;
+    plan.compileUnits.push_back({.source = "src/main.cpp", .kind = mcpp::SourceKind::Cxx,
+                                 .object = "obj/main.obj", .packageName = "app"});
+    LinkUnit lib;
+    lib.kind = LinkUnit::StaticLibrary;
+    lib.targetName = "core";
+    lib.output = "lib/core.lib";
+    lib.objects = {"obj/main.obj"};
+    plan.linkUnits.push_back(lib);
+    const auto text = emit_ninja_string(plan);
+    auto rule = [&](std::string_view name) {
+        const auto start = text.find("rule " + std::string(name) + "\n");
+        expect(fatal(ne(start, std::string::npos))) << name;
+        return text.substr(start, text.find("\n\n", start) - start);
+    };
+    const auto object = rule("cxx_object");
+    expect(ne(object.find("/sourceDependencies $out.json"), std::string::npos)) << object;
+    expect(ne(object.find("--source-dependencies $out.json --text console -- "), std::string::npos)) << object;
+    expect(ne(object.find("deps = gcc\n  depfile = $out.d"), std::string::npos)) << object;
+    expect(eq(text.find("/showIncludes"), std::string::npos));
+    expect(eq(text.find("deps = msvc"), std::string::npos));
+    const auto archive = rule("cxx_archive");
+    expect(ne(archive.find("$mcpp link-output --output $out --text console -- $ar"), std::string::npos)) << archive;
+    expect(ne(rule("cxx_link").find(" --text console -- $ld"), std::string::npos)) << rule("cxx_link");
+
+    auto gnu = minimal_plan();
+    gnu.scheduleCompilerCap = 2;
+    gnu.compileUnits.push_back({.source = "src/main.cpp", .kind = mcpp::SourceKind::Cxx, .object = "obj/main.o"});
+    const auto gnuText = emit_ninja_string(gnu);
+    expect(eq(gnuText.find("--source-dependencies"), std::string::npos));
+    expect(eq(gnuText.find("--text"), std::string::npos));
+}};
+
 UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/OrdinaryCompilersShareTheDetachedScheduleBound", [] {
     auto plan = minimal_plan();
     plan.toolchain.version = "16.1.0";
@@ -2248,7 +2292,13 @@ UTest names_the_consumer_directory_for_each_driver_spelling{"ConsumerIncludeScop
     const std::string cl =
         "dep.cpp(1): fatal error C1083: Cannot open include file: 'cfg7.h': "
         "No such file or directory\n";
-    for (auto const& out : {gcc, clang, cl}) {
+    // The same report from cl.exe with the Chinese resources (mcpp#970, probe
+    // mcpp#971): the words and the quote marks are the language's.
+    const std::string clChinese =
+        "dep.cpp(1): fatal error C1083: \xE6\x97\xA0\xE6\xB3\x95\xE6\x89\x93\xE5\xBC\x80"
+        "\xE5\x8C\x85\xE6\x8B\xAC\xE6\x96\x87\xE4\xBB\xB6: \xE2\x80\x9C" "cfg/nested.h\xE2\x80\x9D: "
+        "No such file or directory\n";
+    for (auto const& out : {gcc, clang, cl, clChinese}) {
         auto advice = mcpp::build::consumer_include_scope_advice(out, dirs);
         expect(fatal(!advice.empty())) << out;
         expect(ne(advice.find((root / "appinc").string()), std::string::npos)) << advice;
@@ -2266,6 +2316,10 @@ UTest silent_when_the_header_is_not_the_consumers_or_no_header_is_missing{"Consu
     // A failure that is not a missing header, although cfg7.h is the consumer's.
     expect(mcpp::build::consumer_include_scope_advice(
         "dep.c:3:1: error: unknown type name 'cfg7'\n", dirs).empty());
+    // A source file that cannot be opened is C1083 too, with no line of a file.
+    expect(mcpp::build::consumer_include_scope_advice(
+        "c1xx: fatal error C1083: Cannot open source file: 'cfg7.h': No such file or directory\n",
+        dirs).empty());
     // No root include directories at all (the fast path before any plan wrote
     // the sidecar).
     expect(mcpp::build::consumer_include_scope_advice(

@@ -917,6 +917,11 @@ mcpp build [target] [-p <member>] [--release] --message-format json
 | `artifacts` | `name`、`kind`（`bin`、`test`、`shared`、`static`）、`path`；可运行的产物另有 `launch`；陈述了程序起点或入口符号时另有 `entry` |
 | `diagnostics` | 失败构建的编译器诊断：`severity`、`message`、`path`、`range` |
 
+**文本** *（2026.11.19.1+）*。结果记录、事件流与每个信封都是 UTF-8。编译器的文本在 mcpp 读入它的地方按其工具链
+说明的编码解码（[SPEC-012](../specs/human-output.md) §5：cl.exe、link.exe、lib.exe 与 rc.exe 按它们运行所在控制台的
+代码页写出），所以 `message` 是编译器所用语言的原文。程序写出的不是 UTF-8 的字节写作 U+FFFD；终端与日志中的输出
+保持程序写出的样子。cl.exe 的 `note` 与它的 `error`、`warning` 一样带有所在文件的位置。
+
 `launch` 是 `mcpp run` 启动该产物的方式：`argv`、`cwd`、`env` 与 `via`。`env` 只含
 mcpp 为程序设置或改写的变量（加载器的搜索路径、运行时载荷需要的变量），从不包含
 调用方的其余变量，因此记录中不含调用方的机密。`via` 为 `null`、`"runner"`（由

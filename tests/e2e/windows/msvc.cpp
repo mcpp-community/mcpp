@@ -2,7 +2,8 @@
 // (modules, `import std` at C++20, incremental); one toolset is chosen once and every consumer reads
 // it; a build program reads the toolset as facts and builds the build program of a cross target;
 // objects carry their own debug information; LTO meets export discovery; two programs each bind
-// their own module of one name; clang's missing coroutines on the 32-bit ABI are explained
+// their own module of one name; clang's missing coroutines on the 32-bit ABI are explained; the
+// headers a compile read and the text cl.exe wrote reach mcpp in any language and code page (970)
 // (formerly tests/e2e/95, 99, 177, 180, 241, 760, 825, 848, 887, 889, 892, 1017, 1023).
 import std;
 import mcpplibs.mtest;
@@ -474,6 +475,66 @@ int main() { f(); }
         expect(fatal(e2e::contains(s::text(r), "mspdbsrv") && e2e::contains(s::text(r), "/Z7"))) << "the refusal does not say why /Zi is refused and what to write: " << s::text(r);
         expect(fatal(!e2e::contains(s::text(r), "Compiling"))) << "the refusal came after compiling began: " << s::text(r);
     };
+    "970 msvc reads what a compile read and what it wrote in any language and code page"_test[s::msvc] = [] {
+        // mcpp#970 (design 2026-11-19 §20): the headers a compile read come from cl.exe's
+        // /sourceDependencies record, so an edit of a header rebuilds whatever the installed language
+        // and the console's code page; cl.exe's text is decoded where the executor reads it, so a
+        // failure under a console in code page 936 reaches the terminal and result.json as the text it
+        // was, and nothing ends mcpp with an internal error. The project's directory is not ASCII and
+        // its header's has a space. A console of its own (`start /wait`) holds code page 936, so the
+        // console the other cases share keeps its own.
+        const auto root = s::case_dir() / fs::path(u8"\u4e2d\u6587\u00e9");
+        s::project p(root, {{"mcpp.toml", "[package]\nname    = \"cpwords\"\nversion = \"0.1.0\"\n[toolchain]\nwindows = \"msvc@system\"\n"
+                                          "[build]\ninclude_dirs = [\"inc dir\"]\n"},
+                            {"inc dir/hdr.h", "#pragma once\ninline int value() { return 0; }\n"},
+                            {"src/main.cpp", "#include \"hdr.h\"\nint main() { return value(); }\n"}});
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the project did not build: " << s::text(r);
+        const auto graph = s::read_file(ninja_of(p.dir()));
+        expect(fatal(e2e::contains(graph, "/sourceDependencies"))) << "cl.exe's compile writes no record";
+        expect(fatal(!e2e::contains(graph, "/showIncludes") && !e2e::contains(graph, "deps = msvc")))
+            << "a compile still reads the /showIncludes text";
+        // The header the compile read is its input: an edit rebuilds, and fails where it should.
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        p.write("inc dir/hdr.h", "#pragma once\nstatic_assert(false, \"edited\");\ninline int value() { return 0; }\n");
+        r = p.mcpp({"build"});
+        expect(fatal(failed(r))) << "an edit of the header did not rebuild the unit that includes it: " << s::text(r);
+        p.write("inc dir/hdr.h", "#pragma once\ninline int value() { return 0; }\n");
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the restored header did not build: " << s::text(r);
+
+        // A failure under a console in code page 936: cl.exe writes GBK, the executor reads it as such.
+        p.write("src/main.cpp", "#include \"hdr.h\"\nint main() { return \u672a\u5b9a\u4e49_\u00e9; }\n");
+        const auto script = s::case_dir() / "cp936.bat";
+        {
+            std::ofstream bat(script, std::ios::binary);
+            bat << "@echo off\r\nchcp 936 >nul\r\ncd /d \"%CP_PROJECT%\"\r\n\"%CP_MCPP%\" build > \"%CP_OUT%\" 2>&1\r\n"
+                   "exit /b %errorlevel%\r\n";
+        }
+        const auto output = s::case_dir() / "cp936.txt";
+        // The paths as UTF-8, which the environment carries to cmd.exe whatever its code page.
+        const auto utf8 = [](const fs::path& path) {
+            const auto text = path.u8string();
+            return std::string(text.begin(), text.end());
+        };
+        r = s::run("cmd.exe", {"/d", "/c", "start", "/wait", "/min", "cmd.exe", "/d", "/c", utf8(script)},
+                   s::case_dir(),
+                   {{"CP_PROJECT", utf8(p.dir())}, {"CP_MCPP", s::mcpp_path()}, {"CP_OUT", utf8(output)}});
+        const auto said = s::read_file(output);
+        expect(fatal(!said.empty())) << "the build in the console of code page 936 wrote nothing: " << s::text(r);
+        expect(fatal(!e2e::contains(said, "internal:"))) << "mcpp ended with an internal error: " << said;
+        const std::string identifier = "\xE6\x9C\xAA\xE5\xAE\x9A\xE4\xB9\x89_\xC3\xA9";
+        expect(fatal(e2e::contains(said, identifier) && e2e::contains(said, "C2065")))
+            << "the terminal does not show cl.exe's diagnostic as the text it was: " << said;
+        const auto last = s::json_file(p.at("target/.last-result.json"))["data"];
+        const auto result = s::json_file(fs::path(last["result"].get<std::string>()))["data"];
+        expect(fatal(result["status"] == "failed")) << result.dump();
+        bool named = false;
+        for (auto const& d : result["diagnostics"])
+            named = named || d["message"].get<std::string>().contains(identifier);
+        expect(fatal(named)) << "result.json does not carry cl.exe's diagnostic as UTF-8: " << result.dump();
+    };
+
     "241 windows ucrt runtime identity"_test[s::msvc] = [] {
         // The Windows SDK has an identity, `ucrt@<version>`, in the runtime binding of the cl.exe row
         // (pinned msvc@system; 760 states it of the clang row): it takes part in the contract hash

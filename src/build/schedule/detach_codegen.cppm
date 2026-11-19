@@ -71,6 +71,11 @@ export module mcpp.build.schedule.detach_codegen;
 import std;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;
+import mcpplibs.os.env;
+import mcpplibs.os.platform;
+import mcpplibs.os.stdio;
+import mcpplibs.os.text;
+import mcpp.build.depfile;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.build.stage;
@@ -194,12 +199,23 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
 // its own and this executor publishes them (design 2026-11-19 §10.6); the
 // value is the toolchain's auxiliary naming (`OutputRelocation::auxNaming`),
 // or `none`.
+//
+// `reading` is what the executor reads for the compiler (design 2026-11-19
+// §20): the record of the files the compile read when the compiler writes one
+// that is not the Make rule `depfile` (cl.exe's `/sourceDependencies`, written
+// as `depfile` once the compile succeeds), and the encoding of the compiler's
+// text when it is not UTF-8, in which case its two streams are read through
+// one pipe and written on as UTF-8.
+struct Reading {
+    std::filesystem::path         sourceDependencies;
+    mcpplibs::os::text::encoding  text = mcpplibs::os::text::encoding::utf8;
+};
 int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
                const std::filesystem::path& output = {},
                const std::filesystem::path& depfile = {},
                const std::filesystem::path& bmi = {}, bool object = false,
-               std::string_view relocate = {});
+               std::string_view relocate = {}, const Reading& reading = {});
 
 }  // namespace mcpp::build::schedule::detach
 
@@ -1340,10 +1356,80 @@ struct Previous {
     ~Previous() { settle(false); }
 };
 
+namespace {
+
+// THE NAME OF AN ENTRY AS THE FILE SYSTEM SPELLS IT, for a name the record
+// spelled in lower case (§20 T1): the entry whose name is the same without
+// ASCII case, else the one the system opens for that name.
+std::string on_disk_name(const std::string& dir, const std::string& name) {
+    namespace fs = std::filesystem;
+    const auto directory = mcpplibs::os::fs::from_utf8(dir);
+    std::error_code ec;
+    for (fs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+        std::string entry = mcpplibs::os::fs::utf8(it->path().filename());
+        if (mcpp::build::depfile::detail::same_text(entry, name, true)) return entry;
+    }
+    const auto wanted = directory / mcpplibs::os::fs::from_utf8(name);
+    ec.clear();
+    for (fs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code same;
+        if (fs::equivalent(it->path(), wanted, same)) return mcpplibs::os::fs::utf8(it->path().filename());
+    }
+    return name;
+}
+
+// The compiler's record of the files it read, written as the Make rule ninja
+// reads (§20 T1), and then removed. A failed compile leaves no rule: ninja
+// reads none for a failed edge.
+std::expected<void, std::string> write_inputs_rule(const std::filesystem::path& record,
+                                                   const std::filesystem::path& depfile,
+                                                   const std::filesystem::path& output, bool compiled) {
+    std::error_code ec;
+    if (!compiled) {
+        std::filesystem::remove(record, ec);
+        return {};
+    }
+    std::ifstream in(record, std::ios::binary);
+    if (!in) return std::unexpected(std::format("the compiler wrote no record of the files it read ({})",
+                                                mcpp::home::spelling(record)));
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    in.close();
+    // The rule names the edge's output as the edge does: the text ninja gave.
+    const std::string target = mcpplibs::os::fs::generic_utf8(output);
+    mcpp::build::depfile::SourceRecord source{.record = text, .target = target};
+    source.buildDir = mcpplibs::os::fs::generic_utf8(std::filesystem::current_path(ec));
+    for (const char* variable : {"INCLUDE", "EXTERNAL_INCLUDE"})
+        if (auto value = mcpp::invocation::get(variable))
+            for (auto const& dir : mcpplibs::os::env::split_list(*value))
+                source.toolchainDirs.push_back(mcpplibs::os::fs::generic_utf8(dir));
+    source.foldCase = mcpplibs::os::conventions().case_insensitive_names;
+    source.spelled = on_disk_name;
+    auto rule = mcpp::build::depfile::rule_from_source_dependencies(source);
+    if (!rule) return std::unexpected(std::format("{}: {}", mcpp::home::spelling(record), rule.error()));
+    {
+        std::ofstream out(depfile, std::ios::binary | std::ios::trunc);
+        out << *rule;
+        out.close();
+        if (!out) return std::unexpected(std::format("{} cannot be written", mcpp::home::spelling(depfile)));
+    }
+    std::filesystem::remove(record, ec);
+    return {};
+}
+
+// The compiler's text, decoded where it is read (§20 T2): a line on.
+void write_line(std::string_view line) {
+    std::string out(line);
+    out += '\n';
+    (void)mcpplibs::os::stdio::write_output(out);
+}
+
+}  // namespace
+
 int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
                const std::filesystem::path& output, const std::filesystem::path& depfile,
-               const std::filesystem::path& bmi, bool object, std::string_view relocate) {
+               const std::filesystem::path& bmi, bool object, std::string_view relocate,
+               const Reading& reading) {
     if (argv.empty()) { std::println(std::cerr, "mcpp: __compiler-cap: no compiler command was given"); return 2; }
     auto actor = std::make_shared<Actor>();
     if (!actor->ready) return 130;
@@ -1352,6 +1438,18 @@ int run_capped(const std::vector<std::string>& argv,
     // helper that ended with 1 or 2 and nothing on its error stream left a
     // failed build with no cause (Termux, 2026-11-18).
     const auto out_name=output.empty() ? std::string("a compile") : mcpp::home::spelling(output);
+    const bool decoding = reading.text != mcpplibs::os::text::encoding::utf8;
+    // The compiler's record of the files it read, as the rule ninja reads
+    // (§20 T1); the status the edge ends with.
+    auto read_inputs = [&](int compiled) {
+        if (reading.sourceDependencies.empty()) return compiled;
+        auto ruled = write_inputs_rule(reading.sourceDependencies, depfile, output,
+                                       compiled == 0 && actor->owner.active());
+        if (ruled) return compiled;
+        std::println(std::cerr, "mcpp: writing the files the compile read as its dependency file for {}: {}",
+                     out_name, ruled.error());
+        return 1;
+    };
     auto ended=[&](int status,std::string_view step,std::string_view why) {
         std::println(std::cerr,"mcpp: {} for {}: {}",step,out_name,why);return status;
     };
@@ -1405,17 +1503,21 @@ int run_capped(const std::vector<std::string>& argv,
         if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{}))
             return ended(2,"recording the compiler's admission","its record cannot be written");
         const auto result=mcpp::run::execute(command,{
-            .input=mcpp::run::Input::inherit,.streams=mcpp::run::Streams::inherit,
-            .should_stop=[&] {return !actor->owner.active();},.declared_unit=unit.get()});
+            .input=mcpp::run::Input::inherit,.streams=decoding?mcpp::run::Streams::merged:mcpp::run::Streams::inherit,
+            .on_line=decoding?std::function<void(std::string_view)>(write_line):nullptr,
+            .should_stop=[&] {return !actor->owner.active();},.declared_unit=unit.get(),.text=reading.text});
         if(auto retired=retire_owned(*unit,actor->owner);!retired)
             return ended(1,"retiring the compiler unit",retired.error());
-        if(auto settled=settle(result.exit_code==0&&actor->owner.active());!settled)
+        // A compile whose record cannot be written as its rule failed: a rule
+        // that is not there would leave the files it read untracked.
+        const int status=read_inputs(result.exit_code);
+        if(auto settled=settle(status==0&&actor->owner.active());!settled)
             return ended(1,"publishing the compile's outputs",settled.error());
-        if(!attempt.retired(result.exit_code)||!attempt.result(result.exit_code))
+        if(!attempt.retired(status)||!attempt.result(status))
             return ended(1,"certifying the compiler's result","its record cannot be written");
         if(!transactions::release_reservation(permit->reservation,attempt.directory))
             return ended(1,"releasing the compiler slot","its reservation cannot be released");
-        return result.exit_code;
+        return status;
     }
     // An interrupted compile in place leaves no output a later build would
     // take for complete; a relocated one leaves its own directory only.
@@ -1429,15 +1531,18 @@ int run_capped(const std::vector<std::string>& argv,
     if (!actor->owner.active()) return 130;
     const auto result = mcpp::run::execute(command, {
         .input = mcpp::run::Input::inherit,
-        .streams = mcpp::run::Streams::inherit,
-        .should_stop = [&] { return !actor->owner.active(); }});
-    if (!actor->owner.active() || result.exit_code != 0) {
+        .streams = decoding ? mcpp::run::Streams::merged : mcpp::run::Streams::inherit,
+        .on_line = decoding ? std::function<void(std::string_view)>(write_line) : nullptr,
+        .should_stop = [&] { return !actor->owner.active(); },
+        .text = reading.text});
+    const int status = read_inputs(result.exit_code);
+    if (!actor->owner.active() || status != 0) {
         std::error_code ec;
         if (!withdrawn.empty()) std::filesystem::remove_all(withdrawn, ec);
-        return actor->owner.active() ? result.exit_code : 130;
+        return actor->owner.active() ? status : 130;
     }
     if (auto settled = settle(true); !settled) return ended(1, "publishing the compile's outputs", settled.error());
-    return result.exit_code;
+    return status;
 }
 
 }  // namespace mcpp::build::schedule::detach

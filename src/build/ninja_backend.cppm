@@ -1158,13 +1158,26 @@ std::string missing_header_in(std::string_view line) {
             return std::string(line.substr(open + 1, at - open - 1));
         return {};
     }
-    constexpr std::string_view kCl = "Cannot open include file: '";
-    if (auto at = line.find(kCl); at != std::string_view::npos) {
-        auto from = at + kCl.size();
-        auto close = line.find('\'', from);
-        if (close != std::string_view::npos)
-            return std::string(line.substr(from, close - from));
-        return {};
+    // cl.exe, in every language: `<file>(<line>): fatal error C1083: <words>:
+    // <quote><name><quote>: <reason>`. The words, the quote marks and the
+    // reason are the installed language's (`'x.h'`, `“x.h”`); the location,
+    // the code and the place of the name are not (design 2026-11-19 §20 T4).
+    // A missing source file is C1083 too, reported with no line of a file.
+    constexpr std::string_view kC1083 = "): fatal error C1083: ";
+    if (auto at = line.find(kC1083); at != std::string_view::npos) {
+        const auto rest = line.substr(at + kC1083.size());
+        const auto first = rest.find(": ");
+        const auto last = rest.rfind(": ");
+        if (first == std::string_view::npos || last <= first + 2) return {};
+        auto quoted = rest.substr(first + 2, last - first - 2);
+        // One mark at each end, a character of UTF-8 each.
+        std::size_t lead = 1;
+        if (static_cast<unsigned char>(quoted[0]) >= 0x80)
+            while (lead < quoted.size() && (static_cast<unsigned char>(quoted[lead]) & 0xC0) == 0x80) ++lead;
+        std::size_t tail = quoted.size() - 1;
+        while (tail > lead && (static_cast<unsigned char>(quoted[tail]) & 0xC0) == 0x80) --tail;
+        if (tail <= lead) return {};
+        return std::string(quoted.substr(lead, tail - lead));
     }
     constexpr std::string_view kGcc = "fatal error: ";
     constexpr std::string_view kEnoent = ": No such file or directory";
@@ -1644,6 +1657,17 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const std::string compilerPrefix = plan.scheduleCompilerCap > 0
         ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
         : std::string{};
+    // WHAT THE EXECUTOR READS FOR THE COMPILER (design 2026-11-19 §20): the
+    // record of the files a compile read, when the compiler writes one that is
+    // not a Make rule (cl.exe's `/sourceDependencies`, T1), and the encoding of
+    // the text it writes, when that is not UTF-8 (`console`, T2). A GNU
+    // toolchain's commands carry neither and are unchanged.
+    const auto& readingDialect = mcpp::toolchain::dialect_for(plan.toolchain);
+    const std::string recordWord =
+        readingDialect.inputsRecord == std::string_view("source-dependencies")
+            ? std::string(" --source-dependencies $out.json") : std::string{};
+    const std::string textWord = readingDialect.textEncoding == std::string_view("utf-8")
+        ? std::string{} : std::format(" --text {}", readingDialect.textEncoding);
     // A COMPILE WRITES PATHS OF ITS OWN ATTEMPT where the toolchain's outputs
     // are relocatable, and the executor publishes them (design 2026-11-19
     // §10.6): a compiler that outlives its build cannot rewrite a published
@@ -1654,11 +1678,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         ? std::format(" --relocate {}", relocation.auxNaming.empty() ? std::string_view("none") : relocation.auxNaming)
         : std::string{};
     const std::string driverPrefix = plan.scheduleCompilerCap > 0
-        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{} -- ", relocateWord)
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}{}{} -- ",
+                      relocateWord, recordWord, textWord)
         : std::string{};
     const std::string scanPrefix = plan.scheduleCompilerCap > 0
-        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{} -- ",
-                      relocation.relocatable ? " --relocate none" : "")
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}{} -- ",
+                      relocation.relocatable ? " --relocate none" : "", textWord)
         : std::string{};
     // The same executor for an edge that writes a BMI: it holds the previous
     // BMI while the compiler runs and puts it back when the new one is
@@ -1674,12 +1699,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     auto bmi_keeping_prefix = [&](std::string_view bmi) {
         return plan.scheduleCompilerCap > 0
             ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}"
-                          " --bmi \"{}\"{} -- ", bmi == "$out" ? "" : " --object", bmi, relocateWord)
+                          " --bmi \"{}\"{}{}{} -- ", bmi == "$out" ? "" : " --object", bmi, relocateWord,
+                          recordWord, textWord)
             : std::string{};
     };
     const std::string objectPrefix = plan.scheduleCompilerCap > 0
-        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object{} -- ",
-                      relocateWord)
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object{}{}{} -- ",
+                      relocateWord, recordWord, textWord)
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -2101,17 +2127,21 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // Command spellings come from the toolchain's CommandDialect (gnu vs
     // msvc); the rule *structure* is shared across compilers.
-    // msvc: /showIncludes feeds ninja's deps=msvc header tracking; the
-    // stable-English prefix is guaranteed by VSLANG=1033 in envOverrides.
-    const bool msvcDeps = dial.ninjaDepsMode == std::string_view("msvc");
+    // THE FILES A COMPILE READ COME FROM THE COMPILER'S RECORD FOR PROGRAMS
+    // (mcpp#970, design 2026-11-19 §20 T1). cl.exe writes its JSON record
+    // (`/sourceDependencies $out.json`), which the executor writes as the Make
+    // rule every compile edge reads. Until 2026.11.19.1 these edges read the
+    // `/showIncludes` lines through ninja's `deps = msvc`: their prefix is a
+    // string of the installed language and their paths text of the console's
+    // code page, so a Visual Studio with only Chinese resources recorded no
+    // header at all, and `VSLANG=1033` could not make it English.
+    const bool msvcDialect = dial.id == std::string_view("msvc");
+    const bool sourceRecord = dial.inputsRecord == std::string_view("source-dependencies");
     const std::string compile_tail = std::format(
         "{}{} $in {}$out",
-        msvcDeps ? "/showIncludes " : "", dial.compileOnly, dial.outputObjPrefix);
-    auto append_deps = [&] {
-        if (msvcDeps) append("  deps = msvc\n");
-    };
+        sourceRecord ? "/sourceDependencies $out.json " : "", dial.compileOnly, dial.outputObjPrefix);
     // mcpp#235: cxx_module/cxx_object had NO depfile at all on non-MSVC —
-    // only the msvcDeps branch tracked header deps (via /showIncludes). So
+    // only cl.exe's edges tracked header deps (then via /showIncludes). So
     // editing a file #include'd inside a module's purview (or a plain
     // header pulled in by a .cpp) never invalidated the compile edge: the
     // P1689 scan already emits a `.dep`/`.d`-shaped list of textual
@@ -2146,7 +2176,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // (see the existing "Windows: skip BMI restat optimization" branch
     // below), so a non-MSVC Windows toolchain keeps the pre-#235
     // behavior (no depfile) rather than depend on an unavailable filter —
-    // msvcDeps (cl.exe) is unaffected either way (deps=msvc, no -MMD).
+    // cl.exe was unaffected either way (it had no -MMD).
     //
     // #257: these are TWO decisions, and 0.0.97 conflated them. Emitting a
     // depfile at all is the minimum correctness contract for textual include
@@ -2165,7 +2195,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     //
     // WHETHER A UNIT EMITS A GNU DEPFILE IS A PROPERTY OF THE COMPILER, NOT
     // OF THE HOST (the 2026-09-28 design, WS2). Until 2026.9.28.2 this read
-    // `!msvcDeps && !is_windows`, so every clang++ build on Windows -- the
+    // `!(cl.exe) && !is_windows`, so every clang++ build on Windows -- the
     // default Windows row since #718 -- got no `-MMD`, and a header edit did
     // not rebuild the objects and BMIs that include it. Every GNU-dialect
     // compiler writes one now, on every host; only HOW GCC's filtered form
@@ -2175,8 +2205,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     //   * Windows: no shell to chain a filter in, so `mcpp depfile-filter`
     //     runs the compile itself and keeps the first record of the raw
     //     depfile (the same rule as the awk program).
-    // cl.exe keeps deps=msvc via /showIncludes, the equivalent mechanism.
-    const bool gnuDepfile = !msvcDeps;
+    // cl.exe's record reaches the same Make rule through the executor (T1).
+    const bool gnuDepfile = dial.inputsRecord == std::string_view("make");
     const bool needsGnuModuleFilter =
         gnuDepfile && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
     const std::string mmd_flag =
@@ -2192,13 +2222,11 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         (needsGnuModuleFilter && mcpplibs::os::is_windows)
         ? "$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "
         : "";
+    // Both records arrive as the Make rule `$out.d`: the GNU driver writes it,
+    // and the executor writes cl.exe's.
     auto append_cxx_deps = [&] {
-        if (gnuDepfile) {
-            append("  deps = gcc\n");
-            append("  depfile = $out.d\n");
-        } else {
-            append_deps();
-        }
+        append("  deps = gcc\n");
+        append("  depfile = $out.d\n");
     };
     // C and GAS units include headers too, and had no depfile on ANY
     // toolchain — the second half of the same asymmetry #257 reports. They
@@ -2236,7 +2264,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // makes the response-file shape reachable from a non-Windows test host,
     // the same over-approximation the link rules use (`separateLinker ||
     // is_windows`).
-    const bool useCompileRsp = mcpplibs::os::is_windows || msvcDeps;
+    const bool useCompileRsp = mcpplibs::os::is_windows || msvcDialect;
     // THE BYTE ORDER MARK, FOR THE TOOLS THAT NEED ONE TO READ UTF-8 (#693).
     //
     // build.ninja is UTF-8, and Ninja copies `rspfile_content` into the
@@ -2257,7 +2285,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (!useCompileRsp) return;
         append("  rspfile = $out.rsp\n");
         append(std::format("  rspfile_content ={}{}\n",
-                           msvcDeps ? " " + std::string(kUtf8ByteOrderMark) : "", payload));
+                           msvcDialect ? " " + std::string(kUtf8ByteOrderMark) : "", payload));
     };
 
     // Tell the driver, every time, that this TU is a module interface.
@@ -2491,10 +2519,15 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // script pulls in is declared instead, from a scan of the .rc plus
         // [resources].extra-inputs, and lands on this edge as implicit inputs.
         append("rule rc_object\n");
+        // The cl.exe toolchain's rc.exe writes its text as cl.exe does (T2).
+        const std::string rcPrefix = plan.scheduleCompilerCap > 0
+            ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{} -- ",
+                          plan.rcStyle == "msvc" ? textWord : std::string{})
+            : std::string{};
         if (plan.rcStyle == "msvc")
-            append(std::format("  command = {}$rc /nologo $rcflags /fo $out $in\n", compilerPrefix));
+            append(std::format("  command = {}$rc /nologo $rcflags /fo $out $in\n", rcPrefix));
         else
-            append(std::format("  command = {}$rc -O coff $rcflags -o $out $in\n", compilerPrefix));
+            append(std::format("  command = {}$rc -O coff $rcflags -o $out $in\n", rcPrefix));
         append("  description = RC $out\n\n");
     }
 
@@ -2570,11 +2603,14 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (auto const* row = mcpp::toolchain::target::find_row(t->str()))
             for (auto c : row->companions) companions += (companions.empty() ? "" : ",") + std::string(c);
     const std::string companionOption = companions.empty() ? std::string() : " --companions " + companions;
+    // link.exe and lib.exe write their text as cl.exe does: `link-output`
+    // decodes it where it reads it (design 2026-11-19 §20 T2).
     auto publish_link = [&](std::string cmd) {
         if constexpr (mcpplibs::os::is_windows) {
-            return "$mcpp link-output --output $out --aside" + companionOption + " -- " + cmd;
+            return "$mcpp link-output --output $out --aside" + companionOption + textWord + " -- " + cmd;
         } else {
-            if (!companions.empty()) return "$mcpp link-output --output $out" + companionOption + " -- " + cmd;
+            if (!companions.empty() || !textWord.empty())
+                return "$mcpp link-output --output $out" + companionOption + textWord + " -- " + cmd;
             if (inPlaceTarget) return cmd;
             if (cmd.find("-o $out") == std::string::npos) return cmd;
             // Through a temporary name, `<dir>/.<file>` (cmd_link_output): one
@@ -2606,6 +2642,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // The permit wraps the publication: the attempt's output is the
             // artifact in place when the command it holds exits.
             if (desc != "AR") cmd = linkPrefix + publish_link(std::move(cmd));
+            // An archive holds no permit; a lib.exe whose text is not UTF-8
+            // still runs through `link-output`, which only decodes it.
+            else if (!textWord.empty()) cmd = "$mcpp link-output --output $out" + textWord + " -- " + cmd;
             append(std::format("rule {}\n", name));
             if (useRsp) {
                 if (auto pos = cmd.find("$in"); pos != std::string::npos)
@@ -2803,7 +2842,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // the same TU (it wraps it), so it carries the same unbounded
         // include payload through the same response file (#261).
         const std::string scanPayload = " $local_includes";
-        if (msvcDeps) {
+        if (msvcDialect) {
             // MSVC: compiler-integrated P1689 via /scanDependencies (scan
             // only — no codegen); /TP because our module units are .cppm.
             append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags "
@@ -5100,7 +5139,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     r.compileCommands = cdb ? cdb->commandCount : 0;
     r.ninjaProgram = ninjaProgram;
     if (!plan.toolchain.envOverrides.empty()) {
-        // Toolchain-declared env (MSVC INCLUDE/LIB/PATH/VSLANG). Encode all
+        // Toolchain-declared env (MSVC INCLUDE/LIB/PATH). Encode all
         // pairs (plus any runtime-dirs pair) into the fast-path cache's
         // single env slot: "@env" key + \x1f-separated k=v records — the
         // fast path must re-create this exact environment for ninja.

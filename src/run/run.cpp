@@ -627,9 +627,16 @@ int stream_exec(const std::vector<std::string>& argv, const Env& extraEnv,
 // ─── Any program, as the caller states ───────────────────────────────────
 
 RunResult execute(const std::vector<std::string>& argv, const Options& opt) {
+    // A program whose text is not UTF-8 is read as UTF-8 from here on.
+    std::optional<os::text::decoder> decode;
+    std::function<void(std::string_view)> decodedLine;
+    if (opt.text != os::text::encoding::utf8) {
+        decode.emplace(opt.text);
+        if (opt.on_line) decodedLine = [&](std::string_view line) { opt.on_line((*decode)(line)); };
+    }
     Spec s{ .argv = argv, .env = opt.env, .unset = opt.unset, .hostTool = opt.host_tool, .cwd = opt.cwd,
             .nullInput = opt.input == Input::none, .total = opt.total, .idle = opt.idle,
-            .onLine = opt.on_line ? &opt.on_line : nullptr, .splitOnCr = opt.split_on_cr,
+            .onLine = decodedLine ? &decodedLine : (opt.on_line ? &opt.on_line : nullptr), .splitOnCr = opt.split_on_cr,
             .shouldStop = opt.should_stop ? &opt.should_stop : nullptr, .oneString = opt.one_string,
             .declaredUnit = opt.declared_unit };
     switch (opt.streams) {
@@ -643,8 +650,8 @@ RunResult execute(const std::vector<std::string>& argv, const Options& opt) {
     auto o = launch(s);
     RunResult r;
     r.exit_code = o.exit_code;
-    r.output = std::move(o.output);
-    r.error_output = std::move(o.error_output);
+    r.output = decode ? (*decode)(o.output) : std::move(o.output);
+    r.error_output = decode ? (*decode)(o.error_output) : std::move(o.error_output);
     r.timed_out = o.timed_out;
     r.spawn_error = o.spawn_error;
     if (o.spawn_error != 0) {
@@ -673,10 +680,11 @@ Shell shell(std::string_view command) {
     }
 }
 
-RunResult capture_shell(std::string_view command, const Env& extraEnv) {
+RunResult capture_shell(std::string_view command, const Env& extraEnv, os::text::encoding text) {
     auto sh = shell(command);
     auto o = launch({ .argv = sh.argv, .env = extraEnv, .out = Output::stdout_err_shown, .nullInput = true,
                       .oneString = sh.one_string });
+    if (text != os::text::encoding::utf8) o.output = os::text::decoder(text)(o.output);
     return result_of(std::move(o), nullptr, true);
 }
 

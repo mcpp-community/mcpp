@@ -625,6 +625,14 @@ staging 成 `.ifc` BMI，用 `/interface /TP /ifcOutput` 编译 `.cppm` 模块
 单元，用 `/scanDependencies` 扫描依赖，并通过 response file 调用
 `link.exe`/`lib.exe` 完成链接。
 
+**一次编译读取的头文件与编译器的文本，与语言无关** *（2026.11.19.1+）*。每次编译写出 cl.exe 的
+`/sourceDependencies` 记录，mcpp 把它写为该编译的依赖文件，所以无论安装的 Visual Studio 是哪种语言、
+控制台用哪个代码页，修改头文件都会重新编译包含它的单元。cl.exe、link.exe、lib.exe 与 rc.exe 按它们运行
+所在控制台的代码页写出文本（没有控制台时为系统的 ANSI 代码页），mcpp 按此读取，所以它们的诊断原样到达终端
+与 `result.json`。mcpp 不设置 `VSLANG`：编译器使用用户环境的语言（`VSLANG`，否则为 Visual Studio 的界面语言），
+装有英文资源时 `VSLANG=1033` 得到英文诊断。控制台代码页不能表示的字符由 cl.exe 自己写成 `?`；UTF-8 控制台
+（`chcp 65001`）保留全部字符。
+
 **Windows SDK 跟随来源走**，因为两种来源回答的是不同的问题，SDK 的选定
 也必须如此：
 

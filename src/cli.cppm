@@ -31,6 +31,7 @@ import mcpp.wire;
 import mcpp.cli.cmd_sbom;
 import mcpplibs.os.platform;
 import mcpplibs.os.fs;
+import mcpplibs.os.text;
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.runtime.search;
@@ -283,6 +284,7 @@ int run(int argc, char** argv) {
         std::filesystem::path depfile;
         std::filesystem::path bmi;
         std::string relocate;
+        mcpp::build::schedule::detach::Reading reading;
         bool object = false;
         int cap = 0, i = 2;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
@@ -291,8 +293,9 @@ int run(int argc, char** argv) {
             // compiler writes the bytes it had.
             if (option == "--object") { object = true; continue; }
             if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile"
-                 && option != "--bmi" && option != "--relocate") || i + 1 >= argc) {
-                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] [--object] [--bmi <file>] [--relocate <naming>] -- <compiler>...");
+                 && option != "--bmi" && option != "--relocate" && option != "--source-dependencies"
+                 && option != "--text") || i + 1 >= argc) {
+                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] [--object] [--bmi <file>] [--relocate <naming>] [--source-dependencies <file>] [--text console] -- <compiler>...");
                 return 2;
             }
             const std::string_view value = argv[++i];
@@ -301,7 +304,14 @@ int run(int argc, char** argv) {
             else if (option == "--depfile") depfile = value;
             else if (option == "--bmi") bmi = value;
             else if (option == "--relocate") relocate = value;
-            else {
+            else if (option == "--source-dependencies") reading.sourceDependencies = value;
+            else if (option == "--text") {
+                if (value != "console") {
+                    std::println(libc::stderr(), "error: __compiler-cap: --text takes `console`, not `{}`", value);
+                    return 2;
+                }
+                reading.text = mcpplibs::os::text::encoding::console;
+            } else {
                 const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
                 if (ec != std::errc{} || end != value.data() + value.size()) return 2;
             }
@@ -310,7 +320,8 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object, relocate);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object, relocate,
+                                                         reading);
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;
@@ -1417,6 +1428,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("companions").takes_value().value_name("SUFFIXES").help("the row's companions, removed before the link (`.wasm`)"))
             .option(cl::Option("aside").help("move the previous artifact aside first (a Windows host)"))
             .option(cl::Option("temporary").help("link under a temporary name in the artifact's directory, then rename it over the artifact (POSIX)"))
+            .option(cl::Option("text").takes_value().value_name("ENCODING").help("`console`: the command writes its text in the console's code page, which is read as UTF-8 (link.exe, lib.exe)"))
             .action([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_link_output(p, std::span<const std::string>(passthrough));
             }))

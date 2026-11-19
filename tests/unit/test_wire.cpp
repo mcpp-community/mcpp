@@ -288,3 +288,18 @@ UTest null_data_is_omitted{"WireGolden/NullDataIsOmitted", [] {
 }};
 
 }  // namespace
+
+// A document that carries what a program wrote is UTF-8 whatever it wrote
+// (design 2026-11-19 §20 T3): cl.exe's GBK diagnostic, which ended mcpp with
+// `type_error.316` in result.json (mcpp#970), is written with U+FFFD.
+UTest a_programs_bytes_never_end_the_writer{"WireText/AProgramsBytesNeverEndTheWriter", [] {
+    const nlohmann::json doc{{"message", std::string("error C2065: '\xCE\xB4\xB6\xA8\xD2\xE5_\xA8\xA6'")}};
+    std::string text;
+    expect(nothrow([&] { text = w::text(doc); }));
+    const auto back = nlohmann::json::parse(text, nullptr, false);
+    expect(fatal(!back.is_discarded())) << text;
+    expect(ne(back["message"].get<std::string>().find("\xEF\xBF\xBD"), std::string::npos));
+    const nlohmann::ordered_json utf8{{"message", "\xE6\x9C\xAA\xE5\xAE\x9A\xE4\xB9\x89"}};
+    expect(eq(w::text(utf8), std::string("{\"message\":\"\xE6\x9C\xAA\xE5\xAE\x9A\xE4\xB9\x89\"}")))
+        << "UTF-8 is written as it is";
+}};

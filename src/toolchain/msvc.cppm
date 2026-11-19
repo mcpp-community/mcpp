@@ -439,7 +439,10 @@ std::filesystem::path vc_redist_dir_for_tools_dir(
 //   INCLUDE = <tools>\include; <sdk>\Include\<v>\{ucrt,um,shared,winrt}
 //   LIB     = <tools>\lib\<arch>; <sdk>\Lib\<v>\{ucrt,um}\<arch>
 //   PATH    = <cl dir>;<existing PATH>       (mspdb*.dll etc.)
-//   VSLANG  = 1033  (stable English /showIncludes prefix for ninja deps=msvc)
+// No VSLANG: the compiler's language is the user's environment's. Until
+// 2026.11.19.1 this set VSLANG=1033 for an English /showIncludes prefix, which
+// a Visual Studio without English resources ignores; the files a compile read
+// now come from cl.exe's /sourceDependencies record (design 2026-11-19 §20).
 std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
                                      std::string_view arch,
                                      const WindowsSdk& sdk);
@@ -1524,8 +1527,6 @@ std::vector<EnvVar> build_env_for_cl(const std::filesystem::path& clPath,
         path += p;
     }
     env.push_back({"PATH", std::move(path)});
-    // Stable English "Note: including file:" prefix for ninja's deps=msvc.
-    env.push_back({"VSLANG", "1033"});
     return env;
 }
 
@@ -1778,7 +1779,7 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
         tc.importStdMinLevel = std_module_min_level_for_stl(tc.stdModuleSource);
     }
 
-    // Build environment (INCLUDE/LIB/PATH/VSLANG). SDK absence keeps
+    // Build environment (INCLUDE/LIB/PATH). SDK absence keeps
     // detection working (selection UX on SDK-less boxes); the build path
     // errors with guidance when envOverrides is empty.
     //

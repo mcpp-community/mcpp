@@ -2579,7 +2579,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
 
     std::vector<std::pair<std::string, std::string>> childEnv;
     if (runtimeEnvKey == "@env") {
-        // Multi-var encoding (MSVC INCLUDE/LIB/PATH/VSLANG + optional runtime
+        // Multi-var encoding (MSVC INCLUDE/LIB/PATH + optional runtime
         // pair): \x1f-separated k=v records in the single value slot.
         std::string_view rest = runtimeEnvValue;
         while (!rest.empty()) {
@@ -3427,7 +3427,7 @@ bool& launch_stream_flag() {
 export void set_launch_stream(bool on) { launch_stream_flag() = on; }
 
 void emit_launch(const mcpp::wire::Envelope& env) {
-    if (launch_stream_flag()) mcpp::ui::terminal::write_protocol_stdout(mcpp::wire::to_json(env).dump() + "\n");
+    if (launch_stream_flag()) mcpp::ui::terminal::write_protocol_stdout(mcpp::wire::text(mcpp::wire::to_json(env)) + "\n");
     else mcpp::wire::emit(env);
 }
 
@@ -4746,7 +4746,7 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
     }
     if (!r.guide.empty()) record["guide"] = r.guide;
     if (r.launch) record["launch"] = mcpp::build::result::to_json(*r.launch);
-    std::println("{}", record.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
+    std::println("{}", mcpp::wire::text(record));
     std::fflush(libc::stdout());
 }
 
@@ -5679,8 +5679,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                                 if (it.key() != "id") body[it.key()] = *it;
                         }
                         std::scoped_lock lock(reportMutex);
-                        std::println("{}", nlohmann::ordered_json{{"case", std::move(body)}}.dump(
-                                               -1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
+                        std::println("{}", mcpp::wire::text(nlohmann::ordered_json{{"case", std::move(body)}}));
                         std::fflush(libc::stdout());
                     }
                 };

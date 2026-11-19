@@ -56,8 +56,30 @@
   given a map too, which names each module at its name. The files named after the object (`.dwo`,
   `.gcno`) keep their names through `-dumpdir` and `-dumpbase`; clang's are named
   `<object stem>.<source stem>.<ext>`.
+- mcpp does not set `VSLANG` for cl.exe: the compiler speaks the language of the user's
+  environment (`VSLANG`, else Visual Studio's), where it spoke English whenever the English
+  resources were installed. `VSLANG=1033` asks for English (mcpp#970).
+- A build program that pins `mcpp.plugins` below 0.26 shares no host graph with
+  `openkal-platform@0.31.0`, whose build program links `mcpp.plugins` 0.26.1: such a pin is
+  refused as irreconcilable on the rows openkal serves, and moves to 0.26.1.
 
 ### Fixed
+
+- A header edit rebuilt nothing on a Visual Studio without English resources: the files a
+  cl.exe compile read came from its `/showIncludes` lines, whose prefix is a string of the
+  installed language (`注意: 包含文件:`), and `VSLANG=1033` cannot make it English (mcpp#970).
+  They come from cl.exe's `/sourceDependencies` record, the same in every language and console
+  code page, which the executor writes as the compile's dependency file (SPEC-011 §5.1); a
+  header under the build directory keeps its spelling, so a generated header is the node its
+  generator writes. A record that cannot be read fails the compile with the reason.
+- A cl.exe failure on a Chinese console ended mcpp with `internal: unhandled exception:
+  [json.exception.type_error.316] invalid UTF-8 byte`, and its diagnostics were unreadable:
+  cl.exe, link.exe, lib.exe and rc.exe write their text in the code page of the console they run
+  in, and mcpp read it as UTF-8 (mcpp#970). The executor reads their text in that page (with no
+  console, the system's ANSI code page) and writes it on as UTF-8 (SPEC-012 §5), and every
+  document that carries a program's text writes a byte that is not UTF-8 as U+FFFD. A cl.exe
+  `note` in `result.json` carries the location of its file, and the advice for a header a
+  dependency lost names it in every language (`C1083`).
 
 - A build interrupted in another process space -- a container job that reuses the working
   directory, a rebuilt development container, an agent's sandbox session -- could never be

@@ -39,6 +39,7 @@ import nlohmann.json;
 import mcpp.log;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;   // platform-step: a program's output alone
+import mcpplibs.os.stdio;     // link-output: a linker's text, decoded
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.run;
@@ -315,7 +316,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     // One line, as every record of the stream is: a reader splits stdout on
     // newlines and parses each line, the last of which is this envelope.
-    std::println("{}", mcpp::wire::to_json(env).dump());
+    std::println("{}", mcpp::wire::text(mcpp::wire::to_json(env)));
     return rc;
 }
 
@@ -1864,6 +1865,10 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // rename replaces a running program there, and a program started meanwhile
 // never meets a partial file. The publication is one command, so an edge that
 // holds a permit for the link holds it until the artifact is in place.
+//
+// `--text console` (design 2026-11-19 §20 T2): link.exe and lib.exe write their
+// text in the console's code page, so the command's two streams are read
+// through one pipe and written on as UTF-8, the text of everything mcpp reads.
 export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
                            std::span<const std::string> command) {
     namespace fs = std::filesystem;
@@ -1872,6 +1877,23 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
         std::println(libc::stderr(), "error: link-output needs --output <artifact> -- <linker command>");
         return 2;
     }
+    const std::string text = parsed.option_or_empty("text").value();
+    if (!text.empty() && text != "console") {
+        std::println(libc::stderr(), "error: link-output: --text takes `console`, not `{}`", text);
+        return 2;
+    }
+    // The linker, on this program's streams or through the decoding pipe.
+    auto run_linker = [&](const std::vector<std::string>& argv) {
+        if (text.empty())
+            return mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                             .streams = mcpp::run::Streams::inherit}).exit_code;
+        return mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                         .streams = mcpp::run::Streams::merged,
+                                         .on_line = [](std::string_view line) {
+                                             (void)mcpplibs::os::stdio::write_output(std::string(line) + "\n");
+                                         },
+                                         .text = mcpplibs::os::text::encoding::console}).exit_code;
+    };
     std::error_code ec;
     // The row's companions (`--companions .wasm`, design 2026-11-15 N33): the
     // files named after the artifact that an earlier link wrote and this one
@@ -1898,11 +1920,9 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
             return 2;
         }
         *std::next(named) = temporary.string();
-        const auto linked = mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
-                                                      .streams = mcpp::run::Streams::inherit});
-        if (linked.exit_code != 0) {
+        if (const int linked = run_linker(argv); linked != 0) {
             fs::remove(temporary, ec);
-            return linked.exit_code;
+            return linked;
         }
         fs::rename(temporary, out, ec);
         if (ec) {
@@ -1913,8 +1933,10 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
         }
         return 0;
     }
-    if (!parsed.is_flag_set("aside"))
+    if (!parsed.is_flag_set("aside")) {
+        if (!text.empty()) return run_linker(std::vector<std::string>(command.begin(), command.end()));
         return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
+    }
     const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();
     const auto stem = out.filename().string() + ".old-";
     for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
@@ -1931,6 +1953,7 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
             break;
         }
     }
+    if (!text.empty()) return run_linker(std::vector<std::string>(command.begin(), command.end()));
     return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
 }
 
@@ -2115,7 +2138,7 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
             env.data = nullptr;
             env.diagnostics.push_back({"MCPP_CONFIGURATION_FAILED", mcpp::wire::Severity::Error,
                                        failure});
-            std::println("{}", mcpp::wire::to_json(env).dump());
+            std::println("{}", mcpp::wire::text(mcpp::wire::to_json(env)));
         } else {
             mcpp::ui::error(failure);
         }

@@ -1029,6 +1029,15 @@ terminal is therefore visible to an IDE that reads the record, and the reverse.
 | `artifacts` | `name`, `kind` (`bin`, `test`, `shared`, `static`), `path`, for a runnable product `launch`, and `entry` when the program's beginning or its entry symbol was stated |
 | `diagnostics` | the compilers' diagnostics of a failed build: `severity`, `message`, `path`, `range` |
 
+**Text** *(2026.11.19.1+)*. The record, the event stream and every envelope are
+UTF-8. A compiler's text is decoded where mcpp reads it, in the encoding its
+toolchain states ([SPEC-012](specs/human-output.md) §5: cl.exe, link.exe,
+lib.exe and rc.exe write in the code page of the console they run in), so a
+`message` holds the compiler's words in the language it speaks. A byte a
+program wrote that is not UTF-8 is written as U+FFFD; the terminal and the logs
+keep the program's output as it was written. A cl.exe `note` carries the
+location of its file, as its `error` and `warning` lines do.
+
 `launch` is how `mcpp run` starts the product: `argv`, `cwd`, `env` and
 `via`. `env` holds only the variables mcpp sets or rewrites for the program
 (its loader's search path, the variables a runtime payload needs), never the
