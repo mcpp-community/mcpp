@@ -21,9 +21,20 @@
 // recorded without a hash, and the next walk reads the file.
 //
 // WHAT IS WALKED. Every regular file below the root, except `target`, `.git`
-// and `.mcpp`, and except a subdirectory holding its own `mcpp.toml`: that is
-// another package (a workspace member), with its own digest where something
-// depends on it -- the tool store's rule (SPEC-004 §10.1).
+// and `.mcpp`, the compile database the engine writes beside a project's
+// manifest (`compile_commands.json`), and a subdirectory holding its own
+// `mcpp.toml`: that is another package (a workspace member), with its own
+// digest where something depends on it (SPEC-004 §10.1).
+//
+// ONE IDENTITY FOR A TREE WITHOUT A VERSION (mcpp#974). The build programs'
+// identity, the tool store's key and the dependency cache's key all name a
+// `path` package by this digest: a content, not a time, so an edit and its
+// reversal return to the same key, and two checkouts of the same sources --
+// a CI run after another -- are one entry.
+//
+// THE ROWS FILE IS SHARED. Two preparations may walk one tree at once (two
+// projects that reach it), so each writes its rows under a name of its own and
+// renames it over the file.
 
 export module mcpp.build.source_digest;
 
@@ -99,6 +110,7 @@ std::string source_tree_digest(const fs::path& root, const fs::path& statCache) 
             continue;
         }
         if (!it->is_regular_file(tec)) continue;
+        if (it->path().filename() == "compile_commands.json") continue;
         const auto rel = utf8(it->path().lexically_relative(root));
         Row r;
         r.size = it->file_size(tec);
@@ -127,7 +139,9 @@ std::string source_tree_digest(const fs::path& root, const fs::path& statCache) 
 
     if (moved && !statCache.empty()) {
         fs::create_directories(statCache.parent_path(), ec);
-        const auto tmp = statCache.string() + ".tmp";
+        const auto tmp = std::format("{}.{:016x}.tmp", statCache.string(),
+                                     (static_cast<std::uint64_t>(std::random_device{}()) << 32)
+                                         ^ static_cast<std::uint64_t>(std::random_device{}()));
         {
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
             out << "mcpp-source-digest-v1\n";
@@ -135,6 +149,7 @@ std::string source_tree_digest(const fs::path& root, const fs::path& statCache) 
                 out << std::format("{}\t{}\t{}\t{}\n", rel, r.size, r.mtime, r.hash);
         }
         fs::rename(tmp, statCache, ec);
+        if (ec) fs::remove(tmp, ec);
     }
     return digest;
 }

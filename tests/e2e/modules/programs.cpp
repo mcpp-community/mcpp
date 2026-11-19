@@ -174,7 +174,8 @@ main = "main.cpp"
     "857 a host module several members import is compiled once"_test = [] {
         // A path host-module library three members' build programs import is compiled once per
         // standard: two graphs (m1 and m2 share one, m3 has its own), none per member, and none of
-        // its modules enters the global cache, which holds the engine's interface.
+        // its modules enters the global cache, which holds the engine's interface: the library is
+        // below the workspace's directory, one of the project's own trees (mcpp#974).
         const s::options home{.where = s::home::inherited, .env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         s::project ws({{"mcpp.toml", "[workspace]\nmembers = [\"m1\", \"m2\", \"m3\"]\n"},
                        {"rules/mcpp.toml", "[package]\nname    = \"rule857\"\nversion = \"0.1.0\"\n[targets.rule857]\nkind = \"lib\"\n"},
@@ -215,7 +216,7 @@ main = "main.cpp"
         const fs::path cache_root = cache_dir.substr(0, cache_dir.find('\n'));
         bool leaked = false;
         for (const auto& e : s::find_files(cache_root / "pkg", R"(entry\.json)")) leaked = leaked || s::read_file(e).contains("t857.rules");
-        expect(fatal(!leaked)) << "D: a module of a path dependency was written below the global cache root";
+        expect(fatal(!leaked)) << "D: a module of a path dependency below the workspace was written below the global cache root";
         expect(fatal(!s::find_files(cache_root / "pkg/_engine", R"(entry\.json)").empty())) << "D: the engine interface is not in the global cache\n" << s::text(r);
     };
 

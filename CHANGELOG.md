@@ -20,6 +20,19 @@
 
 ### Changed
 
+- A `path` or `git` dependency's build enters the global cache, named by its sources: a `git`
+  dependency by its resolved commit, a `path` dependency by the digest of its tree's content
+  (`<version>+path.<digest>` in `mcpp cache list`). Two projects that reach one library through
+  `path`, a clean build, and a CI run that restores `$MCPP_HOME/build-cache` reuse one entry
+  while the library's sources are the same, wherever the tree is checked out; before, every
+  dependent compiled it again (mcpp#974). The project's own trees -- the root, its workspace
+  members, any package below the project's directory or the directory of the build a build
+  program or host tool serves -- are built in place. A tree is read again before its entry is
+  written, and one that changed while it compiled is not stored, which the build reports as a
+  degradation (`build/cache`); the entry the same tree left under its previous digest is
+  removed as the new one is written. A host tool from a `path` package and the build
+  programs' identity name the tree by the same digest of content, where the tool store used
+  modification times, so a fresh checkout reuses a tool's entry too.
 - `mcpplibs.openkal-platform@0.31.0` is the default platform of the rows openkal serves
   (0.29.2 in 2026.11.18.1): the openkal 0.26 family, in which a start is bounded by the
   environment alone and one refused for its size is `E2BIG`, and an observation of a unit

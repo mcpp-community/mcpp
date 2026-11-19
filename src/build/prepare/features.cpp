@@ -1469,10 +1469,10 @@ step6_check_tool_self_request(PrepareState& state, HostToolCtx& ctx) {
 
 // The dependency closure a host tool's own build resolves (mcpp#874): its
 // package's `[dependencies]`, transitively, read from the manifests. A path
-// package is its version and its tree's stamp, and is walked into; a git or
-// index package is what the manifest asks for. Dev-dependencies are never in
-// it: the tool's build builds no tests.
-static std::vector<std::string> tool_upstream_keys(const std::filesystem::path& root,
+// package is its version and the digest of its tree's content (mcpp#974), and
+// is walked into; a git or index package is what the manifest asks for.
+// Dev-dependencies are never in it: the tool's build builds no tests.
+static std::vector<std::string> tool_upstream_keys(PrepareState& state, const std::filesystem::path& root,
                                                    const mcpp::manifest::Manifest& manifest) {
     namespace fs = std::filesystem;
     std::vector<std::string> keys;
@@ -1494,7 +1494,7 @@ static std::vector<std::string> tool_upstream_keys(const std::filesystem::path& 
             const auto at = fs::weakly_canonical(dir / spec.path, ec);
             auto dm = mcpp::manifest::load(at / "mcpp.toml", {.insideWorkspace = true});
             keys.push_back(std::format("{}@{}+path.{}", name, dm ? dm->package.version : std::string{},
-                                       mcpp::build::tool_store::tree_stamp(at)));
+                                       tree_content_digest(state, at).substr(0, 16)));
             if (dm && seen.insert(at).second) work.emplace_back(at, std::move(*dm));
         }
     }
@@ -1551,24 +1551,14 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     ctx.key.packageName      = ctx.depName;
     // THE VERSION IDENTIFIES THE SOURCES ONLY FOR AN INDEX
     // PACKAGE. A `git` package is keyed by its commit and a
-    // `path` package by a stamp of its tree, because both
-    // change under an unchanged version and the store then
-    // serves a binary built from sources that no longer exist
-    // (#630, item 6; measured 2026-09-08 with examples/12).
-    // The same rule applies to every upstream below.
+    // `path` package by the digest of its tree's content,
+    // because both change under an unchanged version and the
+    // store then serves a binary built from sources that no
+    // longer exist (#630, item 6; measured 2026-09-08 with
+    // examples/12). The same rule applies to every upstream
+    // below, and is the dependency cache's (mcpp#974).
     auto source_keyed_version = [&](std::size_t pkgIdx) {
-        const auto& man = state.packages[pkgIdx].manifest.package;
-        std::string v = man.version;
-        if (pkgIdx >= 1 && pkgIdx - 1 < state.dep_cache_identities.size()) {
-            const auto& id = state.dep_cache_identities[pkgIdx - 1];
-            if (id.sourceKind == "git" && !id.sourceRef.empty())
-                v += "+git." + id.sourceRef;
-            else if (id.sourceKind == "path")
-                v += "+path." + mcpp::build::tool_store::tree_stamp(
-                    id.sourceRef.empty() ? state.packages[pkgIdx].root
-                                         : std::filesystem::path(id.sourceRef));
-        }
-        return v;
+        return state.packages[pkgIdx].manifest.package.version + source_identity_suffix(state, pkgIdx);
     };
     ctx.key.version          = source_keyed_version(ctx.depIdx);
     ctx.key.targetName       = ctx.toolName;
@@ -1592,7 +1582,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     // `mcpp build`), and a root's dev-dependencies are walked while its tests
     // are built. Either way the key changed between commands, the tool's path
     // with it, and every action that ran the tool ran again.
-    ctx.key.upstreamKeys = tool_upstream_keys(state.packages[ctx.depIdx].root,
+    ctx.key.upstreamKeys = tool_upstream_keys(state, state.packages[ctx.depIdx].root,
                                               state.packages[ctx.depIdx].manifest);
     std::ranges::sort(ctx.key.upstreamKeys);
 
@@ -1678,6 +1668,8 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
     sub.tool_depth    = state.overrides.tool_depth + 1;
     sub.tool_chain_sources = state.overrides.tool_chain_sources;
     sub.tool_chain_sources.push_back(ctx.toolSource);
+    sub.own_roots     = state.overrides.own_roots;
+    sub.own_roots.push_back(state.workRoot);
     // The PRISTINE manifest the resolver produced for this
     // package — `packages[depIdx].manifest` is a copy that
     // feature activation has already mutated, and re-activating

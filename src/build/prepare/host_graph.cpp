@@ -46,6 +46,7 @@ import mcpp.manifest;
 import mcpp.config;   // resolve_project_index_path
 import mcpp.modgraph.scanner;
 import mcpplibs.os.platform;
+import mcpp.home;
 import mcpp.home.files;
 import mcpp.pm.mangle;
 import mcpp.toolchain.fingerprint;
@@ -251,6 +252,32 @@ std::string standard_of(const PrepareState& state, std::size_t i) {
     return s.empty() ? std::string("c++23") : s;
 }
 
+}  // namespace
+
+fs::path tree_digest_rows(const fs::path& root) {
+    return mcpp::home::root() / "build-cache" / "digests"
+         / (mcpp::toolchain::hash_string(path_text(root)).substr(0, 16) + ".tsv");
+}
+
+std::string tree_content_digest(PrepareState& state, const fs::path& root) {
+    const auto key = path_text(root);
+    if (auto it = state.treeDigests.find(key); it != state.treeDigests.end()) return it->second;
+    auto digest = mcpp::build::source_tree_digest(root, tree_digest_rows(root));
+    state.treeDigests.emplace(key, digest);
+    return digest;
+}
+
+std::string source_identity_suffix(PrepareState& state, std::size_t pkgIdx) {
+    if (pkgIdx == 0 || pkgIdx - 1 >= state.dep_cache_identities.size()) return {};
+    const auto& id = state.dep_cache_identities[pkgIdx - 1];
+    if (id.sourceKind == "git" && !id.sourceRef.empty()) return "+git." + id.sourceRef;
+    if (id.sourceKind != "path") return {};
+    const fs::path root = id.sourceRef.empty() ? state.packages[pkgIdx].root : fs::path(id.sourceRef);
+    return "+path." + tree_content_digest(state, root).substr(0, 16);
+}
+
+namespace {
+
 // The identity of program `i`: what its compile and link read.
 std::string program_identity(PrepareState& state, std::size_t i, const ProgramSource& src,
                              const HostToolchain& tc) {
@@ -268,12 +295,9 @@ std::string program_identity(PrepareState& state, std::size_t i, const ProgramSo
         std::string source = ident ? ident->sourceKind + ":" + ident->sourceRef : "";
         std::string tree;
         // A tree that can change in place: anything but an index package or
-        // a pinned git checkout.
-        if (!ident || (ident->sourceKind != "version" && ident->sourceKind != "git")) {
-            const auto cache = host_root(state) / "digests"
-                             / (mcpp::toolchain::hash_string(path_text(pkg.root)) + ".tsv");
-            tree = mcpp::build::source_tree_digest(pkg.root, cache);
-        }
+        // a pinned git checkout (`source_identity_suffix` names the same).
+        if (!ident || (ident->sourceKind != "version" && ident->sourceKind != "git"))
+            tree = tree_content_digest(state, pkg.root);
         const auto& f = d < state.buildProgramFeaturesByPackage.size()
             ? state.buildProgramFeaturesByPackage[d] : std::vector<std::string>{};
         text += std::format("package {} {} {} [{}] {}\n", qualified(pkg.manifest),
@@ -750,6 +774,8 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     sub.strict       = state.overrides.strict;
     sub.tool_depth   = state.overrides.tool_depth + 1;
     sub.tool_chain_sources = state.overrides.tool_chain_sources;
+    sub.own_roots    = state.overrides.own_roots;
+    sub.own_roots.push_back(state.workRoot);
     sub.tool_chain   = state.overrides.tool_chain.empty()
         ? std::string("root → build programs")
         : state.overrides.tool_chain + " → build programs";

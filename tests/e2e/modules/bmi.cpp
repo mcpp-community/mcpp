@@ -1,7 +1,7 @@
-// BMIs and their cache: path dependencies stay out of the build cache, a custom index's nested
-// objects are cached and staged, purview and header edits rebuild, staging neither cascades nor
-// rewrites an equal destination, the split schedule end to end, a staged BMI that waits for a
-// module compiled here, and the std module compiled once by two builds that find it missing
+// BMIs and their cache: a path dependency outside the project is cached by its tree's digest, a
+// custom index's nested objects are cached and staged, purview and header edits rebuild, staging
+// neither cascades nor rewrites an equal destination, the split schedule end to end, a staged BMI
+// that waits for a module compiled here, and the std module compiled once by two builds that find it missing
 // (formerly tests/e2e/19, 49, 118, 170, 171, 234, 849, 1039). 1039 removes the shared home's std
 // entry that 170 and 171 stage from; in one program its `machine` resource keeps them apart.
 import std;
@@ -24,13 +24,15 @@ std::optional<fs::path> graph_of(const fs::path& root) {
     return std::nullopt;
 }
 
-// Any path below `root` whose text contains `part` (`find <root> -path "*<part>*"`).
-bool any_path(const fs::path& root, std::string_view part) {
+// The build cache's entries whose name begins with `prefix` (`<pkg>/<namespace>/<prefix>*`), sorted.
+std::vector<fs::path> entries_of(const fs::path& pkg, std::string_view prefix) {
+    std::vector<fs::path> out;
     std::error_code ec;
-    if (!fs::exists(root, ec)) return false;
-    for (auto it = fs::recursive_directory_iterator(root, ec); it != fs::recursive_directory_iterator(); it.increment(ec))
-        if (it->path().string().contains(part)) return true;
-    return false;
+    for (const auto& ns : fs::directory_iterator(pkg, ec))
+        for (const auto& e : fs::directory_iterator(ns.path(), ec))
+            if (e.path().filename().string().starts_with(prefix)) out.push_back(e.path());
+    std::ranges::sort(out);
+    return out;
 }
 
 // `sed 's/<from>/<to>/'` over a file: the first occurrence on each line.
@@ -99,39 +101,55 @@ std::string lua_xpm(std::string_view name) {
 
 E2E bmi{"bmi", [] {
     "19 bmi cache reuse"_test = [] {
-        // Path dependencies, direct and transitive, never enter the build cache nor `cache
-        // list`, and an edit to a transitive one reaches the binary.
+        // A path dependency outside the project, direct or transitive, is kept in the build
+        // cache under the digest of its tree (mcpp#974): a clean build takes it from there, an
+        // edit is a new key that replaces the entry built from the same tree, the edit reaches
+        // the binary, and `cache list` names the entry by `+path.`. A package below the
+        // project's own directory is what is being edited, and is built in place.
         const s::options home{.where = s::home::inherited};
         const auto mcpp_home = s::case_home(s::home::inherited);
+        const auto pkg = mcpp_home / "build-cache/v1/pkg";
         const auto tmp = s::case_dir();
         const auto run = [&](const fs::path& dir, std::vector<std::string> args) { return s::mcpp(std::move(args), dir, home); };
+        const auto lib = [](std::string_view name) {
+            return std::format("[package]\nname        = \"{0}\"\nversion     = \"0.1.0\"\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n[modules]\nsources = [\"src/**/*.cppm\"]\n[targets.{0}]\nkind = \"lib\"\n", name);
+        };
         expect(fatal(e2e::succeeded(run(tmp, {"new", "mylibA"}))));
         s::project a(tmp / "mylibA", {{"src/greet.cppm", "export module mylibA.greet;\nimport std;\nexport auto greet() -> void { std::println(\"hi\"); }\n"},
-                                      {"mcpp.toml", "[package]\nname        = \"mylibA\"\nversion     = \"0.1.0\"\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n[modules]\nsources = [\"src/**/*.cppm\"]\n[targets.mylibA]\nkind = \"lib\"\n"}});
+                                      {"mcpp.toml", lib("mylibA")}});
         a.remove("src/main.cpp");
         expect(fatal(e2e::succeeded(run(tmp, {"new", "myapp"}))));
-        s::project app(tmp / "myapp", {{"src/main.cpp", "import std;\nimport mylibA.greet;\nint main() { greet(); return 0; }\n"},
-                                       {"mcpp.toml", "[package]\nname        = \"myapp\"\nversion     = \"0.1.0\"\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n[modules]\nsources = [\"src/**/*.cppm\", \"src/**/*.cpp\"]\n[targets.myapp]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n[dependencies.mylibA]\npath = \"../mylibA\"\n"}});
+        s::project app(tmp / "myapp", {{"src/main.cpp", "import std;\nimport mylibA.greet;\nimport mylibC.own;\nint main() { greet(); return own(); }\n"},
+                                       {"vendor/mylibC/src/own.cppm", "export module mylibC.own;\nexport auto own() -> int { return 0; }\n"},
+                                       {"vendor/mylibC/mcpp.toml", lib("mylibC")},
+                                       {"mcpp.toml", "[package]\nname        = \"myapp\"\nversion     = \"0.1.0\"\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n[modules]\nsources = [\"src/**/*.cppm\", \"src/**/*.cpp\"]\n[targets.myapp]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n[dependencies.mylibA]\npath = \"../mylibA\"\n[dependencies.mylibC]\npath = \"vendor/mylibC\"\n"}});
         auto r = app.mcpp({"build", "-v"}, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
-        expect(fatal(fs::is_directory(mcpp_home / "build-cache/v1"))) << "missing " << (mcpp_home / "build-cache/v1").string();
-        expect(fatal(!any_path(mcpp_home / "build-cache/v1/pkg", "mylibA"))) << "path dep mylibA was populated into the build cache (must be skipped)";
-        expect(fatal(s::no_line(s::text(r), R"(Cached mylibA|Compiling mylibA .*cached [0-9]+ unit)"))) << "path dep wrongly labeled Cached\n" << s::text(r);
+        const auto firstA = entries_of(pkg, "mylibA@0.1.0+path.");
+        expect(fatal(firstA.size() == 1)) << "mylibA has " << firstA.size() << " entries in the build cache, expected one\n" << s::text(r);
+        expect(fatal(entries_of(pkg, "mylibC@").empty())) << "mylibC, below the project's directory, entered the build cache";
 
-        expect(fatal(e2e::succeeded(run(tmp, {"new", "mylibB"}))));
-        s::project b(tmp / "mylibB", {{"src/inner.cppm", "export module mylibB.inner;\nexport auto inner() -> int { return 7; }\n"},
-                                      {"mcpp.toml", "[package]\nname        = \"mylibB\"\nversion     = \"0.1.0\"\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n[modules]\nsources = [\"src/**/*.cppm\"]\n[targets.mylibB]\nkind = \"lib\"\n"}});
-        b.remove("src/main.cpp");
-        a.write("src/greet.cppm", "export module mylibA.greet;\nimport std;\nimport mylibB.inner;\nexport auto greet() -> void { std::println(\"hi {}\", inner()); }\n");
-        a.write("mcpp.toml", a.read("mcpp.toml") + "[dependencies.mylibB]\npath = \"../mylibB\"\n");
         app.remove("target");
         r = app.mcpp({"build"}, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
-        for (std::string_view name : {"mylibA", "mylibB"})
-            expect(fatal(!any_path(mcpp_home / "build-cache/v1/pkg", name))) << "local package " << name << " entered the build cache";
+        expect(fatal(s::has_line(s::text(r), R"(Cached +mylibA v0\.1\.0 \(\.\./mylibA, [0-9]+ units?\))"))) << "a clean build did not take mylibA from the cache\n" << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Compiling +mylibC )"))) << "mylibC was not compiled in place\n" << s::text(r);
+
+        expect(fatal(e2e::succeeded(run(tmp, {"new", "mylibB"}))));
+        s::project b(tmp / "mylibB", {{"src/inner.cppm", "export module mylibB.inner;\nexport auto inner() -> int { return 7; }\n"},
+                                      {"mcpp.toml", lib("mylibB")}});
+        b.remove("src/main.cpp");
+        a.write("src/greet.cppm", "export module mylibA.greet;\nimport std;\nimport mylibB.inner;\nexport auto greet() -> void { std::println(\"hi {}\", inner()); }\n");
+        a.write("mcpp.toml", a.read("mcpp.toml") + "[dependencies.mylibB]\npath = \"../mylibB\"\n");
+        r = app.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        const auto nowA = entries_of(pkg, "mylibA@0.1.0+path.");
+        expect(fatal(nowA.size() == 1 && nowA != firstA)) << "the edited mylibA did not replace its entry: " << nowA.size() << " entries\n" << s::text(r);
+        expect(fatal(entries_of(pkg, "mylibB@0.1.0+path.").size() == 1)) << "the transitive mylibB did not enter the build cache";
         const auto list = s::text(app.mcpp({"cache", "list"}, home));
         for (std::string_view name : {"mylibA", "mylibB"})
-            expect(fatal(s::lacks(list, name))) << "cache list shows local package " << name << "\n" << list;
+            expect(fatal(s::has_line(list, std::format(R"({}[^\n]*\+path\.)", name)))) << "cache list does not name " << name << " by its tree\n" << list;
+        expect(fatal(s::lacks(list, "mylibC"))) << "cache list shows mylibC\n" << list;
         b.write("src/inner.cppm", "export module mylibB.inner;\nexport auto inner() -> int { return 99; }\n");
         r = app.mcpp({"run"}, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);

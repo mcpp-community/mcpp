@@ -101,9 +101,10 @@ cache gc`): an ok image's prepared copies and snapshots for another boot
 After a successful build, at most once a day, every entry -- package, host tool
 or `std` -- that no build has used for `[cache] unused_days` days (config.toml;
 default 30, `0` turns it off) is removed. A hit marks an entry used. A `path`
-host tool's entry is replaced when its tree changes: the entry built from the
-same tree under the previous stamp is removed as the new one is written
-(2026.10.31.3+). Before a build, mcpp warns when the file system it writes to
+host tool's or `path` dependency's entry is replaced when its tree changes: the
+entry built from the same tree under the previous digest of its content is
+removed as the new one is written (host tools 2026.10.31.3+, dependencies and
+the content digest 2026.11.19.1+). Before a build, mcpp warns when the file system it writes to
 has less free space than the larger of 2 GiB and 1.25 times what the
 configuration's last build wrote (recorded in `<output>/.mcpp-written`); the
 warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc

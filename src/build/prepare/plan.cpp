@@ -17,6 +17,7 @@ import mcpp.runtime.elf;          // DT_NEEDED of a library the line names
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpp.home;
+import mcpp.build.source_digest;
 import mcpplibs.os.platform;
 import mcpp.invocation;
 import mcpp.effects;
@@ -95,6 +96,23 @@ namespace mcpp::build {
 // the two records steps live in records.cpp and are declared in `:state`.
 
 static void step13_report_packages(PrepareState& state, BuildContext& ctx);
+
+// WHETHER A PACKAGE'S SOURCES ARE NAMED, so that its build is shared through the
+// global cache by that name (mcpp#974): an index package by its version, a git
+// dependency by its resolved commit, a path dependency by the digest of its
+// tree's content. The project's own trees -- the root, a selected member, any
+// package below this build's root or the root of a build above it -- are named
+// by nothing and built in place: they are what is being edited.
+static bool sources_named(const PrepareState& state, std::size_t i) {
+    if (i == 0 || i - 1 >= state.dep_cache_identities.size()) return false;
+    const auto& id = state.dep_cache_identities[i - 1];
+    if (id.sourceKind == "version") return true;
+    if (id.sourceKind == "git") return !id.sourceRef.empty();
+    if (id.sourceKind != "path" || state.packages[i].selectedMember) return false;
+    std::vector<std::filesystem::path> own = state.overrides.own_roots;
+    own.push_back(state.workRoot);
+    return !mcpp::build::path_is_under_any(state.packages[i].root, own);
+}
 
 static std::expected<void, std::string> step13_source_packages(PrepareState& state, BuildContext& ctx) {
     {
@@ -1758,6 +1776,9 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 pa.indexName   = state.dep_cache_identities[idx - 1].indexName;
                 pa.packageName = state.dep_cache_identities[idx - 1].packageName;
                 pa.version     = state.dep_cache_identities[idx - 1].version;
+                // A git or path dependency's sources by their own name (mcpp#974),
+                // so its key, and every key that folds it in, moves with them.
+                if (sources_named(state, idx)) pa.version += source_identity_suffix(state, idx);
             }
             if (pa.packageName.empty()) {
                 // The root package, or a package with no resolution identity.
@@ -1793,10 +1814,7 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 pa.cflags.push_back(state.ltoOffWord);
                 pa.cxxflags.push_back(state.ltoOffWord);
             }
-            const bool selfIsIndex = idx > 0
-                && idx - 1 < state.dep_cache_identities.size()
-                && state.dep_cache_identities[idx - 1].sourceKind == "version";
-            if (!selfIsIndex) localTaint[idx] = 1;
+            if (!sources_named(state, idx)) localTaint[idx] = 1;
             for (auto& e : state.dependencyEdges) {
                 if (e.consumerPackageIndex != idx || serves_root_tests(e)) continue;
                 // `idx`'s dependencies precede it in `keyOrder`, so their
@@ -1844,8 +1862,13 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
             // opposite — anything it cannot prove came from the immutable
             // xpkgs store stays out, because the failure mode here is a
             // silently wrong object rather than a rejected command.
-            if (!depIdent || depIdent->sourceKind != "version") continue;
-            // ...and neither may anything it was built against be local.
+            //
+            // A GIT OR PATH DEPENDENCY NAMES ITS SOURCES TOO (mcpp#974): its
+            // resolved commit, or the digest of its tree's content, is in its
+            // key (`sources_named`), so a change to the sources is a change of
+            // key. The project's own trees are not named and stay out.
+            if (!depIdent || !sources_named(state, i)) continue;
+            // ...and neither may anything it was built against be unnamed.
             if (localTaint[i]) continue;
             // ...and the package's sources must ACTUALLY be in the immutable
             // store, not merely labelled as coming from it.
@@ -1875,13 +1898,14 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
             // and the package stops looking like a store package at all. The
             // question here is where the payload was INSTALLED, which is a
             // statement about the path, not about the inode.
-            if (!mcpp::build::path_is_under_any(pkgRoot.root, state.storeRoots))
+            const bool fromStore = depIdent->sourceKind == "version";
+            if (fromStore && !mcpp::build::path_is_under_any(pkgRoot.root, state.storeRoots))
                 continue;
 
             const auto& depName = depIdent->packageName;
-            const auto& depVer  = depIdent->version.empty()
+            const auto depVer  = (depIdent->version.empty()
                 ? pkgRoot.manifest.package.version
-                : depIdent->version;
+                : depIdent->version) + (fromStore ? std::string{} : source_identity_suffix(state, i));
 
             auto bmiT = mcpp::toolchain::bmi_traits(*state.tc);
             mcpp::bmi_cache::CacheKey key {
@@ -1964,7 +1988,12 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                 }
                 mcpp::bmi_cache::touch_accessed(key);
                 state.usedCacheRecords.insert(key.entryFile().string());
-                ctx.cachedDeps.push_back({depName, depVer, unitIdx.size()});
+                // By the name the package report gives it: a dependency key
+                // is not always its qualified name (`greet` for the default
+                // namespace's `mcpplibs.greet`), and the line then read
+                // `Compiling` for a package the cache served.
+                ctx.cachedDeps.push_back({mcpp::build::qualified_package_name(pkgRoot.manifest), depVer,
+                                          unitIdx.size()});
                 continue;       // no populate task; it is already cached
             }
             // A valid entry that does not hold what we asked for means the
@@ -1984,7 +2013,17 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                     probe.layoutMismatch.front()));
             }
             for (auto u : unitIdx) ctx.plan.compileUnits[u].fillsCache = true;
-            ctx.depsToPopulate.push_back({ std::move(key), std::move(arts) });
+            BuildContext::CacheTask task{ std::move(key), std::move(arts) };
+            // The tree is read again before its entry is written: a source
+            // edited while it compiled is not stored under the digest of the
+            // sources before the edit (mcpp#974).
+            if (depIdent->sourceKind == "path") {
+                task.treeRoot = depIdent->sourceRef.empty() ? pkgRoot.root
+                                                            : std::filesystem::path(depIdent->sourceRef);
+                task.treeRows = tree_digest_rows(task.treeRoot);
+                task.treeDigest = tree_content_digest(state, task.treeRoot);
+            }
+            ctx.depsToPopulate.push_back(std::move(task));
         }
     }
     // ──────────────────────────────────────────────────────────────────
@@ -2009,8 +2048,7 @@ static void step13_split_debuginfo(PrepareState& state, BuildContext& ctx) {
         return;
     std::set<std::string> fromIndex;
     for (std::size_t i = 1; i < state.packages.size(); ++i)
-        if (i - 1 < state.dep_cache_identities.size()
-            && state.dep_cache_identities[i - 1].sourceKind == "version")
+        if (sources_named(state, i))
             fromIndex.insert(mcpp::build::qualified_package_name(state.packages[i].manifest));
     const auto split = mcpp::manifest::flag_element("-gsplit-dwarf");
     for (auto& cu : ctx.plan.compileUnits) {
@@ -2430,10 +2468,52 @@ void focus_on_member(BuildContext& ctx) {
     ctx.projectRoot = m.root;
 }
 
+// AN EDITED TREE'S PREVIOUS ENTRY IS REPLACED (mcpp#974), as a `path` host
+// tool's is (tool_store::write_entry, mcpp#874). Every edit of a `path`
+// dependency is a new key, and none would be collected before `[cache]
+// unused_days`: the tree an entry was built from is written beside it, and an
+// entry of the same package from the same tree under another digest is removed
+// as this one is written. Another checkout of the package is another tree, and
+// keeps its entries.
+static void replace_tree_siblings(const mcpp::bmi_cache::CacheKey& key, const std::filesystem::path& tree) {
+    namespace fs = std::filesystem;
+    const auto plus = key.version.find("+path.");
+    if (plus == std::string::npos) return;
+    const auto origin = tree.lexically_normal().generic_u8string();
+    const std::string text(origin.begin(), origin.end());
+    std::error_code ec;
+    std::ofstream(key.dir() / "source", std::ios::binary | std::ios::trunc) << text;
+    const auto versionDir = key.dir().parent_path();
+    const auto prefix = std::format("{}@{}", key.packageName, key.version.substr(0, plus + 6));
+    auto from_this_tree = [&](const fs::path& entry) {
+        std::ifstream in(entry / "source", std::ios::binary);
+        return in && std::string{std::istreambuf_iterator<char>(in), {}} == text;
+    };
+    for (auto const& v : fs::directory_iterator(versionDir.parent_path(), ec)) {
+        const auto name = v.path().filename().u8string();
+        if (v.path() == versionDir || !std::string(name.begin(), name.end()).starts_with(prefix)) continue;
+        std::error_code kec;
+        for (auto const& entry : fs::directory_iterator(v.path(), kec))
+            if (from_this_tree(entry.path())) fs::remove_all(entry.path(), kec);
+        fs::remove(v.path(), kec);   // only when nothing else is left in it
+    }
+}
+
 void populate_dependency_cache(BuildContext& ctx) {
     if (ctx.cacheMode != CacheMode::Global) ctx.depsToPopulate.clear();
     for (auto& task : ctx.depsToPopulate) {
+        if (!task.treeRoot.empty()) {
+            if (mcpp::build::source_tree_digest(task.treeRoot, task.treeRows) != task.treeDigest) {
+                const auto tree = task.treeRoot.lexically_normal().generic_u8string();
+                mcpp::diag::degraded("build/cache", std::format(
+                    "the sources of {} changed while it was built ({}), so its build was not stored in the global cache",
+                    task.key.packageName, std::string(tree.begin(), tree.end())),
+                    "the next build compiles it again, from the sources it then finds");
+                continue;
+            }
+        }
         auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
+        if (pr && !task.treeRoot.empty()) replace_tree_siblings(task.key, task.treeRoot);
         if (!pr) {
             mcpp::ui::warning(std::format(
                 "bmi cache populate failed for {}@{}: {}",

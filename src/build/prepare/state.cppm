@@ -752,6 +752,9 @@ struct PrepareState {
     std::string bootstrapSpec;
     std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
     std::vector<DepCacheIdentity> dep_cache_identities;
+    // The content digest of each tree that can change in place, once per
+    // preparation (`tree_content_digest`, mcpp#974).
+    std::map<std::string, std::string> treeDigests;
     std::map<std::string, GitLockIdentity> root_git_lock_identities;
     // Git dependencies reached through another package, by qualified
     // identity; written to mcpp.lock beside the root's and read back as their
@@ -1107,6 +1110,19 @@ void step4b_note_exact_pin(PrepareState& state, const WorkItem& item, const mcpp
 std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
         PrepareState& state, const std::filesystem::path& packageRoot,
         const mcpp::manifest::Manifest& manifest);
+// THE IDENTITY OF A PACKAGE'S SOURCES (mcpp#974): what names the bytes a
+// package's build reads where its version does not. An index package's version
+// does, its payload being immutable: empty. A `git` package's resolved commit:
+// `+git.<commit>`. A `path` package's tree by the digest of its content:
+// `+path.<digest>`. One answer for the dependency cache, the tool store and the
+// build programs' identity (host_graph.cpp).
+std::string source_identity_suffix(PrepareState& state, std::size_t pkgIdx);
+// The content digest of a tree that can change in place, once per tree in a
+// preparation; the stat rows that spare reading unchanged files are kept under
+// the home, shared by every project that reaches the tree.
+std::string tree_content_digest(PrepareState& state, const std::filesystem::path& root);
+// Where those stat rows are kept for `root`.
+std::filesystem::path tree_digest_rows(const std::filesystem::path& root);
 // Where the build program of package `i` keeps its files: its cache, its
 // graph document, and the program mcpp synthesises for it. The root's and a
 // workspace member's are below their own target/; a dependency's is below the

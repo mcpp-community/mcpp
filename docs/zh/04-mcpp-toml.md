@@ -1684,14 +1684,20 @@ cache = "global"   # "global" (default) | "local" | "off"
 `[build] cache` **>** `global`。一个无法识别的取值会被报告（`--strict`
 下是错误），而不是静默回落到 `global`。
 
-**不会**被缓存的：`path` 与 `git` 依赖，不论层级多深，以及
-workspace 成员。它们的源码可以在 `name@version` 不变的情况下改变，
-所以没有任何基于那个身份的键能察觉到变化。
+条目以构建它的源码命名 *(2026.11.19.1+)*：索引包以 `name@version`，`git` 依赖以解析得到的提交，
+`path` 依赖以其源码树内容的摘要，在 `mcpp cache list` 中写作 `<version>+path.<摘要>`。摘要覆盖依赖根目录下
+每个文件的相对路径与内容，不含 `target/`、`.git/`、`.mcpp/`、`compile_commands.json` 与含自己 `mcpp.toml`
+的子目录。两个经 `path` 使用同一个库的工程、一次 clean 之后的构建、以及恢复 `$MCPP_HOME/build-cache` 的
+CI 运行，只要库的源码相同就复用同一个条目，与源码树检出在哪里无关；一次修改是一个新键，同一棵树在先前摘要下
+的条目在写入新条目时移除。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。
 
-构建程序 import 的库遵循同一条规则（2026.10.11.1+）。引擎接口（`mcpp.core`）与索引包保存在
-全局缓存中；`path` 或 `git` 包、或 workspace 成员在 `target/.build-mcpp/host/` 下的构建程序图
-中编译，绝不进入全局缓存。`--cache local` 与 `--cache off` 把它们全部保存在工程内。见
-[30 — 构建程序图](30-build-mcpp.md)。
+**不会**被缓存的：工程自己的树，即正在编辑的那些——根包、workspace 成员，以及位于工程目录之下（或构建程序、
+宿主工具所服务的那次构建的目录之下）的任何包。2026.11.19.1 之前，`path` 与 `git` 依赖不论层级多深都不缓存
+（mcpp#974）。
+
+构建程序 import 的库遵循同一条规则（2026.10.11.1+）：引擎接口（`mcpp.core`）、索引包与以名字识别的 `git`、
+`path` 依赖保存在全局缓存中，工程自己的包在 `target/.build-mcpp/host/` 下的构建程序图中编译。
+`--cache local` 与 `--cache off` 把它们全部保存在工程内。见[30 — 构建程序图](30-build-mcpp.md)。
 
 查看与回收：
 

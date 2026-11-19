@@ -1884,14 +1884,30 @@ Precedence: `--cache <mode>` **>** `MCPP_BUILD_CACHE` **>** `[build] cache` **>*
 `global`. An unrecognized value is reported (an error under `--strict`) rather
 than silently falling back to `global`.
 
-What is **not** cached: `path` and `git` dependencies, at any depth, and
-workspace members. Their sources can change without their `name@version`
-changing, so no key over that identity could notice the change.
+An entry is named by the sources it was built from *(2026.11.19.1+)*: an index
+package by its `name@version`, a `git` dependency by its resolved commit, and a
+`path` dependency by the digest of its tree's content, shown as
+`<version>+path.<digest>` in `mcpp cache list`. The digest covers every file's
+relative path and content below the dependency's root, except `target/`,
+`.git/`, `.mcpp/`, `compile_commands.json` and a subdirectory with its own
+`mcpp.toml`. Two projects that reach one library through `path`, a clean build,
+and a CI run that restores `$MCPP_HOME/build-cache` reuse one entry while the
+library's sources are the same, wherever its tree is checked out; an edit is a
+new key, and the entry built from the same tree under the previous digest is
+removed as the new one is written. A `path` dependency's tree is read again
+before its entry is written, and a tree that changed while it compiled is not
+stored.
 
-The libraries a build program imports follow the same rule (2026.10.11.1+). The
-engine interface (`mcpp.core`) and index packages are kept in the global cache;
-a `path` or `git` package or a workspace member is compiled in the build
-programs' graph under `target/.build-mcpp/host/`, never in the global cache.
+What is **not** cached: the project's own trees, which are what is being edited
+-- the root package, its workspace members, and any package below the project's
+directory (or below the directory of the build a build program or a host tool is
+built for). Before 2026.11.19.1, `path` and `git` dependencies were not cached at
+any depth (mcpp#974).
+
+The libraries a build program imports follow the same rule (2026.10.11.1+): the
+engine interface (`mcpp.core`), index packages and named `git` and `path`
+dependencies are kept in the global cache, and the project's own packages are
+compiled in the build programs' graph under `target/.build-mcpp/host/`.
 `--cache local` and `--cache off` keep all of them in the project. See
 [30 — The build programs' graph](30-build-mcpp.md).
 

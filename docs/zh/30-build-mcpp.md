@@ -1492,13 +1492,15 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 
 **这个键里有源码，以每种来源能给出的形式。** 已发布的版本不可变，所以对来自索引的
 工具，版本本身就标识了源码。`git` 工具按解析出的 commit 键控。`path` 工具没有随源码
-移动的版本，所以按树的印记键控：每个普通文件的相对路径、大小与修改时间，不计
-`target/`、`.git/`、`.mcpp/` 与 compile database。于是改动工具的 emitter 在下一次构建
-到达消费者，改回去也到达，而没有变化的树仍是 store 命中、不重建。在
+移动的版本，所以按树内容的摘要键控，与依赖缓存是同一个身份（[04 §2.10](04-mcpp-toml.md)）：
+每个普通文件的相对路径与内容，不计 `target/`、`.git/`、`.mcpp/`、compile database 与带
+自己 `mcpp.toml` 的子目录 *（2026.11.19.1 起；此前是每个文件的路径、大小与修改时间）*。
+于是改动工具的 emitter 在下一次构建到达消费者，改回去也到达，而内容没有变化的树仍是
+store 命中、不重建，检出或复制改变了全部修改时间之后也是。在
 [`examples/12-a-new-device-language`](../../examples/12-a-new-device-language/)
 上实测；此前这个键只有版本，改动 emitter 之后 `mcpp run` 打印的是上一次的答案，直到
-版本被抬高。树被编辑时条目会累积；`mcpp cache clean` 清空 store，路径是
-`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`。
+版本被抬高。新条目写出时，同一棵树在先前摘要下的条目被删除；`mcpp cache clean` 清空
+store，路径是 `<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`。
 
 **工具构建写出的路径长度有界（2026.9.15.2+）。** 子构建在
 `<mcpp cache dir>/tool/.build/<hash>/` 中进行，这个目录由条目与消费工程命名，不嵌套在

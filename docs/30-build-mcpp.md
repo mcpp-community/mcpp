@@ -1789,16 +1789,20 @@ Four properties worth knowing:
 published version is immutable, so for a tool that arrives from an index the
 version alone identifies its sources. A `git` tool is keyed by the commit it
 resolved to. A `path` tool has no version that moves when its sources do, so
-it is keyed by a stamp of its tree: every regular file's relative path, size
-and modification time, with `target/`, `.git/`, `.mcpp/` and the compile
-database excluded. An edit to the tool's emitter therefore reaches the
-consumer on the next build, and so does its reversal, while a tree that did
-not change is a store hit and is not rebuilt. Measured on
-[`examples/12-a-new-device-language`](../examples/12-a-new-device-language/);
+it is keyed by the digest of its tree's content, the identity the dependency
+cache uses ([04 §2.10](04-mcpp-toml.md)): every regular file's relative path
+and content, with `target/`, `.git/`, `.mcpp/`, the compile database and a
+subdirectory with its own `mcpp.toml` excluded *(2026.11.19.1+; before, each
+file's path, size and modification time)*. An edit to the tool's emitter
+therefore reaches the consumer on the next build, and so does its reversal,
+while a tree whose content did not change is a store hit and is not rebuilt,
+also after a checkout or a copy that changed every modification time. Measured
+on [`examples/12-a-new-device-language`](../examples/12-a-new-device-language/);
 before this rule the key held the version alone and a change to the emitter
 left `mcpp run` printing the previous answer until the version was bumped.
-Entries accumulate as a tree is edited; `mcpp cache clean` empties the store,
-which lives at `<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
+The entry built from the same tree under the previous digest is removed when
+the new one is written; `mcpp cache clean` empties the store, which lives at
+`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
 
 **The paths a tool build writes are bounded (2026.9.15.2+).** The sub-build
 runs in `<mcpp cache dir>/tool/.build/<hash>/`, a directory named by the entry
