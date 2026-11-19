@@ -159,14 +159,21 @@ UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/Ordinar
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
     const std::string executor = "__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d";
-    for (const auto name : {"asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        expect(ne(rule(name).find(executor + " -- "), std::string::npos)) << name;
+    // GCC 16 writes its outputs below an attempt of the compile's own, which the
+    // executor publishes (design 2026-11-19 §10.6): the driver's compiles, its
+    // assembler and its scans, a scan with no auxiliary outputs to name. NASM,
+    // not measured, writes in place.
+    for (const auto name : {"asm_object", "asm_object_raw"})
+        expect(ne(rule(name).find(executor + " --relocate dumpbase -- "), std::string::npos)) << name;
+    expect(ne(rule("cxx_scan").find(executor + " --relocate none -- "), std::string::npos));
+    expect(ne(rule("nasm_object").find(executor + " -- "), std::string::npos));
     // A C or C++ compile names its output as an object the executor keeps when
     // the bytes are the ones it had; the module rule names its BMI as well
     // (SPEC-018 §1). No rule keeps a file by a shell fragment of its command.
     for (const auto name : {"cxx_object", "c_object"})
-        expect(ne(rule(name).find(executor + " --object -- "), std::string::npos)) << name;
-    expect(ne(rule("cxx_module").find(executor + " --object --bmi \"$bmi_out\" -- "), std::string::npos));
+        expect(ne(rule(name).find(executor + " --object --relocate dumpbase -- "), std::string::npos)) << name;
+    expect(ne(rule("cxx_module").find(executor + " --object --bmi \"$bmi_out\" --relocate dumpbase -- "),
+              std::string::npos));
     expect(eq(text.find(".bak"), std::string::npos));
     expect(eq(text.find("bmi-equal"), std::string::npos));
     // The generation carries the cap: the graph names no number of compilers,
@@ -1495,6 +1502,50 @@ UTest object_only_package_builds_own_objects_alongside_cache_fills{"NinjaBackend
     auto defaults = ninja.substr(at, ninja.find('\n', at + 1) - at);
     expect(ne(defaults.find(" obj/provider.o"), std::string::npos)) << defaults;
     expect(eq(count_occurrences(defaults, " obj/dep.o"), 1u)) << defaults;
+}};
+
+// A cache fill is its package's every artifact. Under the two-phase shape a
+// module's BMI is an edge its object does not wait for, so the fill asks for
+// the BMI by name: a module no unit of the build imported was never compiled to
+// a BMI, and the fill was refused for it (mcpp's own clang build, `openkal.time`).
+UTest a_cache_fill_asks_for_every_bmi_of_its_package{"NinjaBackend/ACacheFillAsksForEveryBmiOfItsPackage", [] {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.version = "23.1.3";
+    plan.toolchain.binaryPath = "/usr/bin/clang++";
+    plan.scanDepsPath = "/usr/bin/clang-scan-deps";
+    plan.scheduleTag = "two-phase";
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/time.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/dep/0011aabb/src/time.m.o",
+        .packageName = "dep",
+        .providesModule = "dep.time",
+        .bmiFile = "dep/0011aabb/dep.time.pcm",
+        .fillsCache = true,
+    });
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.linkUnits.push_back({
+        .targetName = "app",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/main.o"},
+        .output = "bin/app",
+        .entryMain = "src/main.cpp",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    expect(fatal(ne(ninja.find("build pcm.cache/dep/0011aabb/dep.time.pcm : cxx_precompile"), std::string::npos)))
+        << "the fixture is not the two-phase shape\n" << ninja;
+    auto at = ninja.rfind("\ndefault ");
+    expect(fatal(ne(at, std::string::npos))) << ninja;
+    auto defaults = ninja.substr(at, ninja.find('\n', at + 1) - at);
+    expect(ne(defaults.find(" obj/dep/0011aabb/src/time.m.o"), std::string::npos)) << defaults;
+    expect(ne(defaults.find(" pcm.cache/dep/0011aabb/dep.time.pcm"), std::string::npos)) << defaults;
 }};
 
 // A cached unit whose cachedObject was never filled in is a bug upstream, not a

@@ -1355,63 +1355,10 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
             std::ranges::unique(ctx.plan.providedPackFormats).begin(),
             ctx.plan.providedPackFormats.end());
         ctx.plan.packFormat = state.overrides.pack_format;
-        if (!stageDirNoPass.empty()) {
-            std::string ids;
-            for (auto const& n : stageDirNoPass) ids += (ids.empty() ? "" : ", ") + n;
-            if (!stageDirShared.empty())
-                return std::unexpected(std::format(
-                    "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and {}.\n"
-                    "  A staged tree belongs to one member, and one run of this package's "
-                    "program serves all of them.\n"
-                    "  use: provide the format from each member's own build program, or pack "
-                    "the members one at a time", ids, stageDirShared));
-            if (!stageDirWhy.empty()) {
-                return std::unexpected(std::format(
-                    "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and no "
-                    "tree could be staged for this target.\n"
-                    "  {}\n"
-                    "  The format was requested and the provider was reached; what is "
-                    "missing is the staged\n"
-                    "  closure itself. A member that names a built file with "
-                    "${{mcpp.target_file:<name>}} instead\n"
-                    "  of reading the tree is unaffected on this target.",
-                    ids, stageDirWhy));
-            }
-            return std::unexpected(std::format(
-                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and this "
-                "build is not packaging.\n"
-                "  The staged tree is produced by `mcpp pack` after the link, so "
-                "it does not exist during\n"
-                "  a plain build and there is nothing for the placeholder to name.\n"
-                "  Gate the submission on the format you provide:\n"
-                "      mcpp::provides_pack_format(\"<name>\");            // always\n"
-                "      if (std::string_view(mcpp::pack_format()) == \"<name>\")  "
-                "// then submit\n"
-                "  and reach the tree with `mcpp pack --format <name>`.", ids));
-        }
-        if (!stageDirWrongRole.empty()) {
-            std::string ids;
-            for (auto const& n : stageDirWrongRole) ids += (ids.empty() ? "" : ", ") + n;
-            return std::unexpected(std::format(
-                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}} with a role "
-                "other than \"artifact\".\n"
-                "  Only an artifact action runs after the link, and the staged tree "
-                "is a link output's\n"
-                "  successor: a source, object or check action is scheduled before "
-                "there is anything to stage.\n"
-                "  use: role = \"artifact\"", ids));
-        }
-        if (!objectsWrongRole.empty()) {
-            std::string ids;
-            for (auto const& n : objectsWrongRole) ids += (ids.empty() ? "" : ", ") + n;
-            return std::unexpected(std::format(
-                "build.mcpp action(s) [{}] reference ${{mcpp.objects:<name>}} or "
-                "${{mcpp.objects_rsp:<name>}} with a role other than \"artifact\" or \"check\".\n"
-                "  The list names the objects a link takes; a source, object or prepare action "
-                "runs before\n"
-                "  that link or feeds it, so the list it would read is not yet decided.\n"
-                "  use: role = \"artifact\" (or \"check\")", ids));
-        }
+        if (auto refused = mcpp::build::refuse_action_roles(
+                {stageDirNoPass, stageDirWrongRole, objectsWrongRole, stageDirWhy, stageDirShared});
+            !refused)
+            return std::unexpected(refused.error());
         if (auto refused = mcpp::build::refuse_unresolved_references(
                 ctx.plan, unresolvedTargets, ambiguousTargets, unresolvedArtifacts);
             !refused)

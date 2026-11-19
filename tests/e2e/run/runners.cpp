@@ -15,10 +15,16 @@ namespace {
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 // `printf '\xff\xff' | dd of=<file> bs=1 seek=18 conv=notrunc`: the ELF's e_machine spoiled.
+// The program's time is kept: a link edge records the files it read with the time of its output
+// (SPEC-004 §8.1), and an output newer than that record is one the build makes again.
 void spoil_machine(const fs::path& file) {
-    std::fstream f(file, std::ios::in | std::ios::out | std::ios::binary);
-    f.seekp(18);
-    f.write("\xff\xff", 2);
+    const auto time = fs::last_write_time(file);
+    {
+        std::fstream f(file, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(18);
+        f.write("\xff\xff", 2);
+    }
+    fs::last_write_time(file, time);
 }
 
 // `od -An -tx1 -j18 -N2`: the two bytes at offset 18 are 0xff 0xff.

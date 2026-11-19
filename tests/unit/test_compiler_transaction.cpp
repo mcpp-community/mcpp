@@ -391,3 +391,42 @@ UTest failed_close_cannot_publish_or_acknowledge_a_record{"CompilerTransaction/F
     for(const auto& entry:fs::directory_iterator(t.root))
         expect(!(entry.path().filename().string().starts_with(".mcpp-record-")));
 }};
+// Design 2026-11-19 §10.6: an admitted attempt whose unit no observation answers (`unknown'
+// here) holds recovery back while it writes in place, and is settled at once when it writes
+// below an attempt of its own: what it did not publish is discarded, and its outputs are
+// withdrawn so that their edges run again.
+UTest a_relocated_attempt_is_settled_without_observation{"CompilerTransaction/ARelocatedAttemptIsSettledWithoutObservation", [] {
+    Transaction t;auto a=t.prepare();expect(fatal(bool(a.prepare_backup())));t.admitted(a);
+    std::ofstream(t.object)<<"previous object";
+    expect(fatal(bool(tx::recover(a))));expect(!*tx::recover(a)) << "an unobserved in-place attempt was settled";
+    const auto own=t.root/".mcpp-attempts/a1";
+    fs::create_directories(own/"out");std::ofstream(own/"out/unit.o")<<"unpublished";
+    expect(fatal(bool(a.relocate(own))));
+    const auto loaded=tx::Attempt::load(a.directory);expect(fatal(bool(loaded)));
+    expect(bool(tx::validate(*loaded)));
+    auto settled=tx::recover(*loaded);
+    expect(fatal(bool(settled)));expect(*settled);
+    expect(!fs::exists(own)) << "the attempt's unpublished files remain";
+    expect(!fs::exists(t.object)) << "an abandoned attempt's object was kept";
+    expect(!fs::exists(t.reservation));
+}};
+// Design 2026-11-19 §10.3 C: an attempt that writes in place, whose unit was made in another
+// process space (an `L2` reference names its space by number only, which openkal-linux 0.27
+// answers as another space), cannot be observed from here. It holds recovery back, counted
+// as undecided, unless the caller states that the generation's locks are free; then it is
+// settled as abandoned and counted as such.
+UTest an_unobservable_unit_is_settled_when_the_caller_holds_the_locks{"CompilerTransaction/AnUnobservableUnitIsSettledWhenTheCallerHoldsTheLocks", [] {
+    if(!fs::exists("/proc/sys/kernel/random/boot_id"))skip("the reference of another process space is spelled for Linux");
+    std::string boot=Transaction::contents("/proc/sys/kernel/random/boot_id");
+    while(!boot.empty()&&(boot.back()=='\n'||boot.back()=='\r'))boot.pop_back();
+    Transaction t;auto a=t.prepare();expect(fatal(bool(a.prepare_backup())));t.admitted(a);
+    const auto reference=std::format("L2;4242;1;{};pid:[1]",boot);
+    expect(fatal(bool(tx::publish(a.directory/"unit","mcpp-unit-v1",{reference,"1","1",tx::spelling(t.generation/"actors/helper.lock")}))));
+    tx::Recovery met;
+    auto held=tx::recover(a,nullptr,&met,false);
+    expect(fatal(bool(held)));expect(!*held);expect(eq(met.unknown, 1u));expect(eq(met.unobservable, 0u));
+    met=tx::Recovery{};
+    auto settled=tx::recover(a,nullptr,&met,true);
+    expect(fatal(bool(settled)));expect(*settled);expect(eq(met.unobservable, 1u));
+    expect(eq(Transaction::contents(t.bmi), "verified old BMI"));
+}};

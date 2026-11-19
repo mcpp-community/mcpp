@@ -1644,6 +1644,22 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const std::string compilerPrefix = plan.scheduleCompilerCap > 0
         ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
         : std::string{};
+    // A COMPILE WRITES PATHS OF ITS OWN ATTEMPT where the toolchain's outputs
+    // are relocatable, and the executor publishes them (design 2026-11-19
+    // §10.6): a compiler that outlives its build cannot rewrite a published
+    // output. The C and C++ drivers, their assembler, and the dependency scans;
+    // the NASM and resource compilers write in place, not having been measured.
+    const auto relocation = mcpp::toolchain::output_relocation(plan.toolchain);
+    const std::string relocateWord = relocation.relocatable
+        ? std::format(" --relocate {}", relocation.auxNaming.empty() ? std::string_view("none") : relocation.auxNaming)
+        : std::string{};
+    const std::string driverPrefix = plan.scheduleCompilerCap > 0
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{} -- ", relocateWord)
+        : std::string{};
+    const std::string scanPrefix = plan.scheduleCompilerCap > 0
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{} -- ",
+                      relocation.relocatable ? " --relocate none" : "")
+        : std::string{};
     // The same executor for an edge that writes a BMI: it holds the previous
     // BMI while the compiler runs and puts it back when the new one is
     // equivalent (`mcpp.buildopt.keep`), which is what lets `restat` end the rebuild at
@@ -1658,11 +1674,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     auto bmi_keeping_prefix = [&](std::string_view bmi) {
         return plan.scheduleCompilerCap > 0
             ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}"
-                          " --bmi \"{}\" -- ", bmi == "$out" ? "" : " --object", bmi)
+                          " --bmi \"{}\"{} -- ", bmi == "$out" ? "" : " --object", bmi, relocateWord)
             : std::string{};
     };
     const std::string objectPrefix = plan.scheduleCompilerCap > 0
-        ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object -- ")
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object{} -- ",
+                      relocateWord)
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -2302,9 +2319,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // rules — the assumption "one flag element == one argv token" has been
         // wrong in this file before.
         append("rule cxx_module_bmi\n");
-        append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
+        append(std::format("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
                " --self $mcpp --sem $sched_sem --object $obj_out"
-               " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
+               " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d{}\n", relocateWord));
         append(std::format(
             "  rspfile = $out.cmd\n"
             "  rspfile_content = $cxx $local_includes $cxxflags $unit_cxxflags{}{} {} $in {}$obj_out\n",
@@ -2439,7 +2456,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         const std::string payload = " $local_includes";
         append("rule asm_object\n");     // .S — preprocessed, tracks #include
         append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}{}\n",
-                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
+                           driverPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n");
         append_cxx_deps();
@@ -2447,7 +2464,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
         append("rule asm_object_raw\n");  // .s — not preprocessed, no depfile
         append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}\n",
-                           compilerPrefix, rsp_ref(payload), compile_tail));
+                           driverPrefix, rsp_ref(payload), compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n\n");
     }
@@ -2791,7 +2808,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             // only — no codegen); /TP because our module units are .cppm.
             append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags "
                    "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
-                   compilerPrefix, rsp_ref(scanPayload)));
+                   scanPrefix, rsp_ref(scanPayload)));
             // No $unit_lang here: /TP above already applies to every input,
             // and cl has no per-suffix recognition problem to fix — a module
             // interface is identified by /interface at COMPILE time, which
@@ -2810,7 +2827,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$deps_target "
                    "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan\n",
-                   compilerPrefix, rsp_ref(scanPayload)));
+                   scanPrefix, rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -2823,7 +2840,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                    "  command = {}$scan_deps -format=p1689 -o $out -- "
                    "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
                    "-o $compile_target\n",
-                   compilerPrefix, rsp_ref(scanPayload)));
+                   scanPrefix, rsp_ref(scanPayload)));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");
@@ -4296,10 +4313,18 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // (for example a C ABI provider). Once cache fills or build actions emit
     // an explicit `default`, ninja no longer selects the other terminal edges.
     // A cache fill must also finish even when no link or importer asks for it:
-    // the entry is its package's every artifact or nothing.
-    for (auto const& cu : plan.compileUnits)
-        if (plan.linkUnits.empty() || (cu.fillsCache && !cu.servedFromCache))
+    // the entry is its package's every artifact or nothing. A two-phase module
+    // unit writes its BMI on an edge of its own that its object does not wait
+    // for, so the BMI is asked for by name: a module no unit of the build
+    // imports was otherwise never compiled to a BMI, and the fill was refused
+    // for it (`openkal.time` in mcpp's own clang build).
+    for (auto const& cu : plan.compileUnits) {
+        const bool fills = cu.fillsCache && !cu.servedFromCache;
+        if (plan.linkUnits.empty() || fills)
             actionDefaults += " " + escape_ninja_path(cu.object);
+        if (fills && !cu.providesModule.empty())
+            actionDefaults += " " + unit_bmi(cu);
+    }
 
     if (!plan.linkUnits.empty() || !actionDefaults.empty()) {
         std::string defaults;

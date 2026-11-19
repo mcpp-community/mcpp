@@ -103,7 +103,7 @@ main = "main.cpp"
         std::size_t nq = 0, nf = 0;
         for (const auto& f : s::find_files(a.at("app/target"), R"(boost\..*)")) {
             const auto g = f.generic_string();
-            if (std::regex_search(g, std::regex{R"(\.cache/.*updater/boost\.)"})) ++nq;
+            if (std::regex_search(g, std::regex{R"(\.cache/.*updater/[0-9a-f]{8}/boost\.)"})) ++nq;
             if (std::regex_search(g, std::regex{R"(\.cache/boost\.)"})) ++nf;
         }
         expect(fatal(nq == 1u && nf == 1u)) << "A: expected the updater's BMI below its directory and the app's at its name, found " << nq << " and " << nf;
@@ -158,17 +158,17 @@ main = "main.cpp"
         expect(fatal(failed(r))) << "F: one file twice in one program was accepted\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "one file is reached as two packages"))) << "F: the refusal does not say that one file is reached as two packages\n" << s::text(r);
 
+        // G: the root's own modules lie at their names, where every compiler looks unaided. A GCC
+        // compile that writes its BMI below its attempt names it through a map (design 2026-11-19
+        // §10.6), and that map names each module at its name too.
         r = a.mcpp_in("updater", {"build"});
         expect(fatal(e2e::succeeded(r))) << "G: a plain build failed\n" << s::text(r);
-        bool modmap = false;
-        std::error_code ec;
-        for (auto it = fs::recursive_directory_iterator(a.at("updater/target"), ec); it != fs::recursive_directory_iterator(); it.increment(ec))
-            modmap = modmap || (it->is_directory() && it->path().filename() == "modmap");
-        expect(fatal(!modmap)) << "G: a plan of the root's own modules wrote a module map";
         auto graphs = s::find_files(a.at("updater/target"), R"(build\.ninja)");
         std::ranges::sort(graphs);
         expect(fatal(!graphs.empty())) << "G: no build.ninja";
-        expect(fatal(s::no_line(s::read_file(graphs.front()), R"(module-map|fmodule-mapper|cache/[^ ]*/boost\.)"))) << "G: a plan of the root's own modules binds a module name";
+        expect(fatal(s::no_line(s::read_file(graphs.front()), R"(cache/[^ ]*/boost\.)"))) << "G: a plan of the root's own modules binds a module name below a directory";
+        for (const auto& map : s::find_files(a.at("updater/target"), R"(.*\.map)"))
+            expect(fatal(s::no_line(s::read_file(map), R"(^boost [^ ]*/)"))) << "G: " << map << " binds the root's module below a directory";
     };
 
     "857 a host module several members import is compiled once"_test = [] {

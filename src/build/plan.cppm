@@ -944,6 +944,17 @@ std::expected<void, std::string> refuse_unresolved_references(
     const std::map<std::string, std::vector<std::string>>& ambiguousTargets,
     const std::set<std::string>& unresolvedArtifacts);
 
+// The references an action's arguments made that its role or this run cannot
+// answer: `${mcpp.stage_dir}` where no tree is staged (`stageDirNoPass`; the
+// package several packed members reach is `stageDirShared`, the stage's own
+// reason `stageDirWhy`), and `${mcpp.stage_dir}` or `${mcpp.objects:<name>}`
+// used by a role that runs before what it names. Each set holds action ids.
+struct ActionRoleReferences {
+    std::set<std::string> stageDirNoPass, stageDirWrongRole, objectsWrongRole;
+    std::string stageDirWhy, stageDirShared;
+};
+std::expected<void, std::string> refuse_action_roles(const ActionRoleReferences& r);
+
 // The objects a package contributes to an image that links it whole: its
 // module units, which link unconditionally, then its implementation units, in
 // plan order. A shared library that carries a private copy of a graph C++
@@ -4784,6 +4795,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 cu.bmiFile = bmi_file(cu.packageName, cu.providesModule);
 
         const bool gcc = traits.moduleFileUsePrefix.empty();
+        // A relocated GCC compile names its own BMI through a copy of its map
+        // (design 2026-11-19 §10.6), and GCC's mapper answers only what it
+        // lists: a unit that provides a module is given a map wherever its BMI
+        // lies, the root's included.
+        const bool mapsOwn = gcc && mcpp::toolchain::output_relocation(tc).relocatable;
         std::string_view prefix = traits.moduleFileUsePrefix;
         while (!prefix.empty() && prefix.front() == ' ') prefix.remove_prefix(1);
         const bool separate = !prefix.empty() && prefix.back() == ' ';
@@ -4818,7 +4834,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             const bool importsQualified = std::ranges::any_of(reach, [&](auto const& e) {
                 return !e.second.first.empty() && e.second.first != rootPackage;
             });
-            if (!ownQualified && !importsQualified) continue;   // every BMI at its name
+            if (!ownQualified && !importsQualified && !(mapsOwn && !cu.providesModule.empty()))
+                continue;   // every BMI at its name
 
             std::map<std::string, std::string, std::less<>> entries;   // name -> BMI path
             for (auto const& [name, at] : reach) entries.emplace(name, at.second);
@@ -5041,6 +5058,67 @@ TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view nam
     // have: to the one unit, or to the last of the units that share the name.
     if (members.size() > 1) answer.members.assign(members.begin(), members.end());
     return answer;
+}
+
+std::expected<void, std::string> refuse_action_roles(const ActionRoleReferences& r) {
+    if (!r.stageDirNoPass.empty()) {
+        std::string ids;
+        for (auto const& n : r.stageDirNoPass) ids += (ids.empty() ? "" : ", ") + n;
+        if (!r.stageDirShared.empty())
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and {}.\n"
+                "  A staged tree belongs to one member, and one run of this package's "
+                "program serves all of them.\n"
+                "  use: provide the format from each member's own build program, or pack "
+                "the members one at a time", ids, r.stageDirShared));
+        if (!r.stageDirWhy.empty()) {
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and no "
+                "tree could be staged for this target.\n"
+                "  {}\n"
+                "  The format was requested and the provider was reached; what is "
+                "missing is the staged\n"
+                "  closure itself. A member that names a built file with "
+                "${{mcpp.target_file:<name>}} instead\n"
+                "  of reading the tree is unaffected on this target.",
+                ids, r.stageDirWhy));
+        }
+        return std::unexpected(std::format(
+            "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and this "
+            "build is not packaging.\n"
+            "  The staged tree is produced by `mcpp pack` after the link, so "
+            "it does not exist during\n"
+            "  a plain build and there is nothing for the placeholder to name.\n"
+            "  Gate the submission on the format you provide:\n"
+            "      mcpp::provides_pack_format(\"<name>\");            // always\n"
+            "      if (std::string_view(mcpp::pack_format()) == \"<name>\")  "
+            "// then submit\n"
+            "  and reach the tree with `mcpp pack --format <name>`.", ids));
+    }
+    if (!r.stageDirWrongRole.empty()) {
+        std::string ids;
+        for (auto const& n : r.stageDirWrongRole) ids += (ids.empty() ? "" : ", ") + n;
+        return std::unexpected(std::format(
+            "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}} with a role "
+            "other than \"artifact\".\n"
+            "  Only an artifact action runs after the link, and the staged tree "
+            "is a link output's\n"
+            "  successor: a source, object or check action is scheduled before "
+            "there is anything to stage.\n"
+            "  use: role = \"artifact\"", ids));
+    }
+    if (!r.objectsWrongRole.empty()) {
+        std::string ids;
+        for (auto const& n : r.objectsWrongRole) ids += (ids.empty() ? "" : ", ") + n;
+        return std::unexpected(std::format(
+            "build.mcpp action(s) [{}] reference ${{mcpp.objects:<name>}} or "
+            "${{mcpp.objects_rsp:<name>}} with a role other than \"artifact\" or \"check\".\n"
+            "  The list names the objects a link takes; a source, object or prepare action "
+            "runs before\n"
+            "  that link or feeds it, so the list it would read is not yet decided.\n"
+            "  use: role = \"artifact\" (or \"check\")", ids));
+    }
+    return {};
 }
 
 std::expected<void, std::string> refuse_unresolved_references(

@@ -897,11 +897,12 @@ a = { path = "../a" }
         expect(s::count_lines(s::text(r), "compat.zlib+p") >= 2u) << "the refusal does not name both variants\n" << s::text(r);
     };
     "952 a build interrupted in another process space continues"_test[s::gcc][s::elf] = [] {
-        // mcpp#952, design 2026-11-19 §10.3 C and D. A build killed inside a pid namespace of its
-        // own leaves admitted compiler units this process space can never observe. The next build
-        // continues, settles them as abandoned and says so once (`compiler-run/unobservable`, whose
-        // text names the process space);
-        // `mcpp clean` then leaves no generation of the configuration behind.
+        // mcpp#952, design 2026-11-19 §10.3 C and D, §10.6. A build killed inside a pid namespace of
+        // its own leaves admitted compiler units this process space can never observe. The next
+        // build continues. GCC's compiles wrote below attempts of their own, so they are settled
+        // without being observed and nothing is reported; a compiler that writes in place would be
+        // settled as abandoned and reported once (`compiler-run/unobservable`). `mcpp clean` then
+        // leaves no generation of the configuration behind.
         const auto unshare = s::on_path("unshare");
         const auto timeout = s::on_path("timeout");
         if (!unshare || !timeout || !e2e::succeeded(s::run(*unshare, {"-Urpf", "--mount-proc", "true"})))
@@ -937,11 +938,121 @@ a = { path = "../a" }
         if (!hit) skip("952 -- no kill landed while a compiler was admitted");
         auto r = hit->mcpp({"build"});
         expect(fatal(e2e::succeeded(r))) << "the build after the interrupted one was refused: " << s::text(r);
-        expect(s::count_lines(s::text(r), "cannot be observed from this process space") == 1u)
-            << "the abandoned units were not reported once: " << s::text(r);
+        expect(s::count_lines(s::text(r), "cannot be observed from this process space") == 0u)
+            << "a relocated attempt was observed: " << s::text(r);
         r = hit->mcpp({"clean"});
         expect(fatal(e2e::succeeded(r))) << "mcpp clean failed: " << s::text(r);
         expect(s::find_files(hit->dir() / ".mcpp", "owner").empty()) << "a compiler-run generation survived mcpp clean";
+    };
+    "952 a compiler that outlives its build writes only its own attempt"_test[s::gcc][s::elf] = [] {
+        // Design 2026-11-19 §10.6 (N1). A build is cut while two compiles run -- a module
+        // interface, compiled under the GCC schedule that publishes its BMI early, and a plain
+        // unit -- and its compilers, units of their own, keep running. Writing in place, the
+        // next build waited for them and was refused (`compiler-run-occupied`); writing below
+        // their attempts, the next build continues at once, and what the orphans write after it
+        // reaches nothing it published.
+        const auto bash = s::on_path("bash"), setsid = s::on_path("setsid"), pgrep = s::on_path("pgrep");
+        if (!bash || !setsid || !pgrep || !s::on_path("pkill"))
+            skip("952 -- bash, setsid, pgrep and pkill are needed to cut a build and keep its compilers");
+        // About 15 s of constant evaluation each on GCC 16.1.
+        auto spin = [](std::string_view name) {
+            return std::format("constexpr unsigned long long {}(unsigned long long x) {{\n"
+                               "    for (unsigned k = 0; k < 3000; ++k)\n"
+                               "        for (unsigned j = 0; j < 3000; ++j) x = x * 6364136223846793005ull + 1442695040888963407ull;\n"
+                               "    return x;\n}}\n", name);
+        };
+        s::project p({{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[build]\n"
+                                    "cxxflags = [\"-fconstexpr-ops-limit=4294967296\"]\n\n"
+                                    "[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
+        p.write("src/slow.cppm", "export module slow;\n" + spin("spin_m")
+                + "export unsigned long long slow_value() { constexpr auto v = spin_m(1); return v % 1000; }\n");
+        p.write("src/plain.cpp", spin("spin_p") + "unsigned long long plain_value() { constexpr auto v = spin_p(2); return v % 1000; }\n");
+        p.write("src/main.cpp", "import std;\nimport slow;\nunsigned long long plain_value();\n"
+                                "int main() { std::println(\"{}\", slow_value() + plain_value()); }\n");
+        // A file the builds published: below the build directory and not below an attempt.
+        auto published = [&](std::string_view name) {
+            std::vector<fs::path> out;
+            for (const auto& f : s::find_files(p.at("target"), name))
+                if (!f.generic_string().contains("/.mcpp-attempts/")) out.push_back(f);
+            return out;
+        };
+        auto app = [&] {
+            for (const auto& f : published("app"))
+                if (f.parent_path().filename() == "bin") return output_of(f);
+            return std::string{};
+        };
+        // The compiles of the two units (the auxiliary name `-dumpbase` is the compiles', not the
+        // scans'), of this project.
+        const auto running = std::format(
+            "n=0; for c in $(pgrep -f 'cc1plus .*-dumpbase (slow[.]m|plain)'); do "
+            "grep -q '{0}/' /proc/$c/cmdline 2>/dev/null && n=$((n+1)); done; echo $n", p.dir().string());
+        // A helper whose build ended ends its compiler's unit; one killed outright cannot, and its
+        // compiler, the unit's, runs on. The helpers first, by their own ids, then the build's group.
+        const auto script = std::format(
+            "cd '{0}' && {1} bash -c 'echo $$ > build.pid; exec \"$0\" build' '{2}' > cut.log 2>&1 &\n"
+            "for i in $(seq 1 1200); do [ \"$({3})\" -ge 2 ] && break; sleep 0.1; done\n"
+            "sleep 1\n"
+            "pkill -KILL -f '^{0}/target/[^ ]*/mcpp (__compiler-cap|bmi-supervise|bmi-compile)'\n"
+            "kill -KILL -- -$(cat build.pid); wait; {3}\n",
+            p.dir().string(), setsid->string(), s::mcpp_path(), running);
+        auto cut = s::run(*bash, {"-c", script});
+        if (std::atoi(cut.out.c_str()) < 2) skip("952 -- the compilers had ended when the build was cut");
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build after the cut one was refused: " << s::text(r);
+        expect(!e2e::contains(s::text(r), "compiler-run-occupied")) << s::text(r);
+        expect(!e2e::contains(s::text(r), "cannot be observed")) << "a relocated attempt was observed: " << s::text(r);
+        const auto object = published(R"(plain\.o)");
+        const auto bmi = published(R"(slow\.gcm)");
+        expect(fatal(object.size() == 1u && bmi.size() == 1u)) << "the published object and BMI were not found";
+        const auto objectBytes = s::read_file(object.front()), bmiBytes = s::read_file(bmi.front());
+        const auto value = app();
+        expect(fatal(!value.empty())) << "the program does not run";
+        // The orphans end on their own; what they write after the build lands below their attempts,
+        // which the build removed.
+        for (int i = 0; i < 1800 && std::atoi(s::run(*bash, {"-c", running}).out.c_str()) > 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        expect(eq(s::read_file(object.front()), objectBytes)) << "an orphan rewrote the published object";
+        expect(eq(s::read_file(bmi.front()), bmiBytes)) << "an orphan rewrote the published BMI";
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(eq(app(), value));
+        std::size_t attempts = 0;
+        for (const auto& f : s::find_files(p.at("target"), ".*"))
+            attempts += f.generic_string().contains("/.mcpp-attempts/");
+        expect(eq(attempts, 0u)) << "an attempt's files outlived the builds";
+    };
+    "952 a clang compile names its auxiliary outputs after the published object"_test[s::llvm][s::elf] = [] {
+        // Design 2026-11-19 §10.6, P3. A clang driver that takes `-dumpdir`, which detection asks
+        // of it, compiles below an attempt as GCC does. Told the object's final name, it writes a
+        // split-DWARF file beside the published object, `<object stem>.<source stem>.dwo`: none
+        // is left below an attempt, and a second build does nothing.
+        const s::options home{.where = s::home::inherited};
+        s::project p({{"mcpp.toml", std::format("[package]\nname = \"aux\"\nversion = \"0.1.0\"\n"
+                                                "[toolchain]\ndefault = \"llvm@{}\"\n"
+                                                "[build]\ncxxflags = [\"-gsplit-dwarf\"]\n"
+                                                "[targets.aux]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n",
+                                                s::llvm_version())},
+                      {"src/helper.cpp", "int helper() { return 42; }\n"},
+                      {"src/main.cpp", "int helper();\nint main() { return helper() == 42 ? 0 : 1; }\n"}});
+        auto r = p.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        std::string ninja;
+        for (const auto& f : s::find_files(p.at("target"), R"(build\.ninja)")) ninja += s::read_file(f);
+        expect(fatal(e2e::contains(ninja, "--relocate dumpdir"))) << "the driver's compiles were not relocated";
+        const auto dwo = s::find_files(p.at("target"), R"(.*\.dwo)");
+        expect(fatal(!dwo.empty())) << "no split-DWARF file was written";
+        for (const auto& f : dwo) {
+            expect(!f.generic_string().contains("/.mcpp-attempts/")) << "a .dwo is below an attempt: " << f;
+            const auto name = f.filename().string();
+            bool beside = false;
+            for (const auto& o : s::find_files(f.parent_path(), R"(.*\.o)"))
+                beside |= o.parent_path() == f.parent_path() && name.starts_with(o.stem().string() + ".");
+            expect(beside) << f << " is not named after an object beside it";
+        }
+        r = p.mcpp({"build", "--verbose"}, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(eq(s::count_matching(s::text(r), R"(^\[[0-9]+/)"), 0u)) << "the second build compiled again:\n"
+                                                                       << s::text(r);
     };
 }};
 

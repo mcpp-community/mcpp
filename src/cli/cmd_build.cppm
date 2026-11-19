@@ -2540,6 +2540,8 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     req.bmi       = file_path("bmi");
     req.object    = file_path("object");
     req.bmiTarget = opt_value(parsed, "bmi");
+    req.objectTarget = opt_value(parsed, "object");
+    req.relocate  = opt_value(parsed, "relocate");
     req.slot      = file_path("slot");
     req.self      = std::filesystem::path{opt_value(parsed, "self")};
     req.semaphore = file_path("sem");
@@ -2582,7 +2584,9 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(libc::stderr(), "error: bmi-supervise needs --slot");
         return 2;
     }
-    return mcpp::build::schedule::detach::supervise(slot, semaphore, cap, object, command);
+    const auto relocation = opt_value(parsed, "relocation");
+    return mcpp::build::schedule::detach::supervise(slot, semaphore, cap, object, command,
+        relocation.empty() ? std::filesystem::path{} : std::filesystem::path{relocation});
 }
 
 // Phase 2: join the detached compiler before anything reads its object.

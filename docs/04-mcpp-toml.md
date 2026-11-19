@@ -1108,8 +1108,27 @@ Cancelling the build ends its ordinary and detached compilers. An immediately
 following build waits for their cleanup before starting another compiler;
 partial outputs are rebuilt. A missing object from a completed module is
 recreated by that build. An unchanged build still performs no compilation.
-If a forcibly ended build leaves a compiler unit whose completion cannot be
-verified, the next build waits for it within a bound (2026.11.19.1+):
+
+A compile writes its outputs below an attempt of its own,
+`<build dir>/.mcpp-attempts/<attempt>/`, and the executor publishes them by
+rename once the compiler has ended, a module's BMI the moment it is complete,
+where the toolchain's outputs are relocatable: GCC 11 and later, and a clang
+driver that takes `-dumpdir`, which mcpp asks of the driver once (LLVM 17 and
+later; Apple clang 16 and emcc 6.0.9 take it under numbers of their own),
+except for CodeView targets (`*-windows-msvc`), whose objects record their own
+path (2026.11.19.1+). An object or a BMI equal to
+the published one leaves the published file as it was. A compiler that
+outlives its build (the build killed, its container or sandbox gone) writes
+only its own attempt, and the next build continues at once: the attempts the
+interrupted build did not publish are discarded without being observed. The
+auxiliary files a compiler names after the object (`.dwo`, `.gcno`) keep their
+names and are written in place; clang names them
+`<object stem>.<source stem>.<ext>`.
+
+Where a toolchain writes in place (cl.exe, clang for `*-windows-msvc`, NASM and
+the resource compilers), a forcibly ended build that leaves a compiler unit
+whose completion cannot be verified makes the next build wait for it within a
+bound (2026.11.19.1+):
 
 - a unit that is empty is recovered, as before;
 - a unit that is occupied, or not yet decidable, makes the build refuse with

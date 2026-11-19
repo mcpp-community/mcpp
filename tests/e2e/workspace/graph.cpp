@@ -105,7 +105,7 @@ std::map<std::pair<std::string, std::string>, std::vector<std::string>> units(st
 // A word with the package instance it names (`obj/<package>/<digest>/`, and the module map whose
 // name hashes the instances it lists) replaced: what remains when only the instance differs.
 std::string without_instance(const std::string& word) {
-    static const std::regex instance{R"(/[0-9a-f]{8}/)"}, map{R"((modmap/[^/ ]+)-[0-9a-f]{8}\.)"};
+    static const std::regex instance{R"([/\\][0-9a-f]{8}[/\\])"}, map{R"((modmap[/\\][^/\\ ]+)-[0-9a-f]{8}\.)"};
     return std::regex_replace(std::regex_replace(word, instance, "/<instance>/"), map, "$1-<map>.");
 }
 

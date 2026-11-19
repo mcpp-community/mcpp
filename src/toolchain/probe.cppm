@@ -51,6 +51,14 @@ bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp
 // name (design 2026-11-19 §6.2).
 bool linker_reports_inputs(const std::vector<std::string>& argv, bool direct,
                            const mcpp::run::Env& env = {});
+// Whether a clang driver takes `-dumpdir`, from which it names a compile's
+// auxiliary outputs (`.dwo`, `-ftime-trace`): a compile then writes its object
+// below an attempt of its own and its auxiliary outputs keep the names they
+// have in place (design 2026-11-19 §10.6). LLVM took the word in 17; Apple
+// clang 16 and emcc 6.0.9 take it under numbers of their own, so the driver is
+// asked by one compile of an empty unit, and the answer is kept under the
+// driver's identity.
+bool driver_takes_dumpdir(const std::filesystem::path& compiler, const mcpp::run::Env& env = {});
 
 std::string extract_version(std::string_view s);
 std::string first_line_of(std::string_view s);
@@ -295,6 +303,41 @@ bool linker_reports_inputs(const std::vector<std::string>& argv, bool direct,
                        mcpp::build::command_line::display(argv), yes ? "yes" : "no",
                        yes ? std::string{} : " (" + first_line_of(r.output) + ")"));
     if (mcpp::effects::writes_global_cache()) std::ofstream(answer) << (yes ? "yes\n" : "no\n");
+    return answered[key] = yes;
+}
+
+bool driver_takes_dumpdir(const std::filesystem::path& compiler, const mcpp::run::Env& env) {
+    static std::mutex mutex;
+    static std::map<std::string, bool> answered;
+    const auto key = probe_cache_key({compiler.string(), "-dumpdir"}, env, true);
+    std::lock_guard lock(mutex);
+    if (auto it = answered.find(key); it != answered.end()) return it->second;
+    const auto work = mcpp::home::root() / "cache" / "probe" / "dumpdir";
+    const auto answer = work / (mcpp::toolchain::hash_string(key) + ".answer");
+    if (std::ifstream in(answer); in) {
+        std::string v;
+        in >> v;
+        if (v == "yes" || v == "no") return answered[key] = (v == "yes");
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(work, ec);
+    const auto src = work / "empty.c";
+    if (!std::filesystem::exists(src, ec)) std::ofstream(src, std::ios::binary).flush();
+    const auto stem = work / std::format("probe-{:x}", std::random_device{}());
+    const auto object = stem.string() + ".o";
+    auto r = mcpp::run::execute({compiler.string(), "-dumpdir", stem.string() + ".", "-c", "-x", "c",
+                                 src.string(), "-o", object},
+                                {.env = env, .host_tool = true, .streams = mcpp::run::Streams::merged,
+                                 .report_spawn_failure = false});
+    // A word a driver knows and does not use is said in a warning, which
+    // names it: such a driver is not taken as naming its outputs from it.
+    const bool yes = r.exit_code == 0 && r.output.find("dumpdir") == std::string::npos;
+    std::filesystem::remove(object, ec);
+    mcpp::log::verbose("toolchain", std::format("'{}' takes -dumpdir: {}{}", compiler.string(),
+                       yes ? "yes" : "no", yes ? std::string{} : " (" + first_line_of(r.output) + ")"));
+    // An answer the driver did not give (it did not start) is not kept.
+    if (mcpp::effects::writes_global_cache() && (yes || !r.output.empty()))
+        std::ofstream(answer) << (yes ? "yes\n" : "no\n");
     return answered[key] = yes;
 }
 

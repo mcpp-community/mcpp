@@ -282,6 +282,7 @@ int run(int argc, char** argv) {
         std::filesystem::path output;
         std::filesystem::path depfile;
         std::filesystem::path bmi;
+        std::string relocate;
         bool object = false;
         int cap = 0, i = 2;
         for (; i < argc && std::string_view(argv[i]) != "--"; ++i) {
@@ -290,8 +291,8 @@ int run(int argc, char** argv) {
             // compiler writes the bytes it had.
             if (option == "--object") { object = true; continue; }
             if ((option != "--sem" && option != "--cap" && option != "--output" && option != "--depfile"
-                 && option != "--bmi") || i + 1 >= argc) {
-                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] [--object] [--bmi <file>] -- <compiler>...");
+                 && option != "--bmi" && option != "--relocate") || i + 1 >= argc) {
+                std::println(libc::stderr(), "error: __compiler-cap: expected --sem <dir> [--cap <N>] [--object] [--bmi <file>] [--relocate <naming>] -- <compiler>...");
                 return 2;
             }
             const std::string_view value = argv[++i];
@@ -299,6 +300,7 @@ int run(int argc, char** argv) {
             else if (option == "--output") output = value;
             else if (option == "--depfile") depfile = value;
             else if (option == "--bmi") bmi = value;
+            else if (option == "--relocate") relocate = value;
             else {
                 const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), cap);
                 if (ec != std::errc{} || end != value.data() + value.size()) return 2;
@@ -308,7 +310,7 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object);
+        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object, relocate);
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;
@@ -1458,6 +1460,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("command-file").takes_value().value_name("PATH").help("file holding the compiler command line"))
             .option(cl::Option("dep-from").takes_value().value_name("PATH").help("scanner depfile to adopt"))
             .option(cl::Option("dep-to").takes_value().value_name("PATH").help("where ninja expects this edge's depfile"))
+            .option(cl::Option("relocate").takes_value().value_name("NAMING").help("write below an attempt of its own and publish (design 2026-11-19 §10.6)"))
             .action(cmd_bmi_compile))
         .subcommand(cl::App("bmi-supervise")
             .description("(internal) Run a compiler to completion and record its status")
@@ -1466,6 +1469,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("cap").takes_value().value_name("N"))
             .option(cl::Option("object").takes_value().value_name("PATH"))
             .option(cl::Option("command-file").takes_value().value_name("PATH"))
+            .option(cl::Option("relocation").takes_value().value_name("DIR"))
             .action(cmd_bmi_supervise))
         .subcommand(cl::App("bmi-await")
             .description("(internal) Join a detached compiler and replay its diagnostics")

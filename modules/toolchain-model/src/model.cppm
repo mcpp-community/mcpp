@@ -243,6 +243,12 @@ struct Toolchain {
     // Why no std module was found, when the compiler did not answer the
     // question (its probe failed); empty when it answered that it has none.
     std::string                         stdModuleUnanswered;
+    // Whether the clang driver takes `-dumpdir` and names a compile's
+    // auxiliary outputs from it, asked of the driver at detection
+    // (`mcpp::toolchain::driver_takes_dumpdir`). A driver's own number does
+    // not say: Apple clang 16 and every emcc number were measured to take it,
+    // and LLVM before 17 refuses the word. Read by `output_relocation`.
+    bool                                takesDumpdir = false;
 
     // Something about HOW this toolchain was resolved that the user has to be
     // told, but which is not a failure. Non-empty ⇒ the caller MUST surface it.
@@ -516,6 +522,39 @@ BmiTraits bmi_traits(const Toolchain& tc);
 // units without module flags.
 bool compiles_modules(const Toolchain& tc);
 
+// WHETHER A COMPILE MAY WRITE ITS OUTPUTS AT PATHS OF ITS OWN ATTEMPT, which
+// the compiler executor then publishes by rename (design 2026-11-19 §10.6).
+// A compiler that writes the published path directly lets one that outlives
+// its build rewrite an output the next build trusts; one that writes paths of
+// its own attempt cannot, and an interrupted build is recovered by discarding
+// what it did not publish. Three premises, measured on GCC 16.1 and clang
+// 23.1.3 (2026-11-19):
+//
+//   P1  a GCC BMI written where its compile's module map names it, then
+//       renamed, is read by its importers; a BMI records the paths of its
+//       imports as the map spells them, and not its own;
+//   P2  clang's `-fmodule-output=` and `-o` likewise; an object's bytes do not
+//       depend on its path on ELF, Mach-O and wasm (with and without `-g`);
+//   P3  the auxiliary outputs named after the object (`.dwo`, `.gcno`) keep
+//       their names when the compile is told the object's final base name
+//       (`auxNaming`); no prefix map rewrites the name a skeleton records.
+//
+// An object of a CodeView target names its own path (clang for
+// `*-windows-msvc` at `-O2` without `-g`, measured; cl.exe the same by its
+// `S_OBJNAME`), so its bytes depend on where it was written: those compilers
+// write in place, and an interrupted build is recovered by observation. So
+// does a clang driver that refuses `-dumpdir` (`Toolchain::takesDumpdir`),
+// whose auxiliary outputs would be named after the attempt.
+struct OutputRelocation {
+    bool relocatable = false;
+    // How the executor tells the compile its object's final base name:
+    // "dumpbase" adds `-dumpdir <dir>/ -dumpbase <stem>` (GCC 11+, the names
+    // GCC derives from `-o`); "dumpdir" adds `-dumpdir <dir>/<stem>.` (clang,
+    // which then names an auxiliary output `<stem>.<source stem>.<ext>`).
+    std::string_view auxNaming;
+};
+OutputRelocation output_relocation(const Toolchain& tc);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -633,6 +672,17 @@ bool target_supports_full_static(std::string_view targetTriple, bool hostCapabil
     // linkage there is a static program (design 2026-11-10 E7; `--mode static`
     // packed a dynamic one, mcpp#911 N8).
     return t->os == "linux" || t->c_library_by_platform();
+}
+
+OutputRelocation output_relocation(const Toolchain& tc) {
+    if (tc.compiler == CompilerId::MSVC || is_msvc_target(tc)) return {};
+    // GCC's number is its own: `-dumpbase` and `-dumpdir` name the auxiliary
+    // outputs as in place from GCC 11 (its auxiliary-output naming change).
+    if (is_gcc(tc)) {
+        const int major = std::atoi(tc.version.c_str());
+        return major == 0 || major >= 11 ? OutputRelocation{true, "dumpbase"} : OutputRelocation{};
+    }
+    return is_clang(tc) && tc.takesDumpdir ? OutputRelocation{true, "dumpdir"} : OutputRelocation{};
 }
 
 bool compiles_modules(const Toolchain& tc) {

@@ -32,7 +32,23 @@
   and `mcpp clean --report` lists them. The root package's objects keep their place. A
   `<package>@<digest>` name was measured and not taken: ninja quotes an output that holds
   `@`, and a rule writing `"$out.d"` then names a file with quotes in it. The objects of the
-  previous layout are not read again and go with `mcpp clean`.
+  previous layout are not read again and go with `mcpp clean`. The build cache keys a
+  dependency's BMIs by its instance too, so each is compiled once more after the upgrade and
+  served from the cache from then on.
+- A compile writes its outputs below an attempt of its own, `<build dir>/.mcpp-attempts/<attempt>/`,
+  and the executor publishes them by rename once the compiler has ended, a module's BMI the
+  moment it is complete, where the toolchain's outputs are relocatable: GCC 11 and later, and a
+  clang driver that takes `-dumpdir`, asked of the driver once (LLVM 17 and later; Apple clang 16
+  and emcc 6.0.9 take it under numbers of their own), CodeView targets excepted (design 2026-11-19 §10.6,
+  SPEC-011 §5.1). A compiler that outlives its build writes only its own attempt: the next build
+  continues at once, and the attempts the interrupted build did not publish are discarded without
+  being observed. `compiler-run-occupied` remains for the toolchains that write in place. Measured
+  first: a GCC BMI written where its module map names it and then renamed is read by its importers,
+  and records its imports, not itself; an object's bytes do not depend on its path on ELF, Mach-O
+  and wasm, and do on CodeView, at `-O2` without `-g`. A GCC module unit of the root package is
+  given a map too, which names each module at its name. The files named after the object (`.dwo`,
+  `.gcno`) keep their names through `-dumpdir` and `-dumpbase`; clang's are named
+  `<object stem>.<source stem>.<ext>`.
 
 ### Fixed
 
@@ -103,8 +119,9 @@
   declares is an input (SPEC-004 §8.1). Where the linker writes what it read
   (`--dependency-file`: GNU ld from 2.35, gold, ld.lld), the link edge records it as a
   compile edge records the compiler's report, so a library found through `-L`/`-l` relinks
-  the program when it changes. Whether a linker accepts the option is measured once and kept
-  in the probe cache.
+  the program when it changes, and one that is gone links again and is named by the linker. As
+  for a compile, a program changed outside the build is linked again. Whether a linker accepts
+  the option is measured once and kept in the probe cache.
 - Every member of a workspace whose root states `[workspace.target.<selector>.abi]` was
   warned that it declares `[target.<selector>.abi]`, which only the root decides: a build of
   about 60 members for wasm32-emscripten printed the warning 262 times (mcpp#954). A
@@ -119,6 +136,11 @@
   the feature active (SPEC-007 R6.3), so a multi-step action is a program the plugin carries.
   A tool no edge and no feature declares is reported (`build-program/undeclared-tool`) with
   the line that declares it.
+- Under clang's two-phase schedule a dependency's cache entry was filled only when the build
+  imported every module of the package: the BMI is compiled on an edge of its own, which the
+  object does not wait for, so a module no unit imported had no BMI, and the fill was refused
+  (`bmi cache populate failed for openkal@0.26.0: expected build output missing:
+  .../openkal.time.pcm` in mcpp's own build). A fill asks for every BMI of its package.
 
 ## [2026.11.18.1] - 2026-11-18
 

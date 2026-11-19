@@ -240,6 +240,19 @@ struct Attempt {
         return {};
     }
     bool publication() const { return publish(directory/"published","mcpp-publication-v1",{}); }
+    // THE ATTEMPT WRITES PATHS OF ITS OWN (design 2026-11-19 §10.6), stated
+    // before its compiler is admitted: `directory` holds what it writes, and
+    // nothing it did not publish is where a build reads it.
+    bool relocate(const fs::path& outputs) const {
+        return publish(directory/"relocated","mcpp-relocated-v1",{spelling(outputs)});
+    }
+    std::expected<std::optional<fs::path>,std::string> relocation() const {
+        auto record=read(directory/"relocated","mcpp-relocated-v1");
+        if(!record)return std::unexpected(record.error());
+        if(!*record)return std::optional<fs::path>{};
+        if((**record).size()!=1||!named((**record)[0]).is_absolute())return std::unexpected("invalid compiler relocation record");
+        return std::optional<fs::path>{named((**record)[0])};
+    }
     bool result(int rc) const { return publish(directory/"result","mcpp-result-v1",{std::to_string(rc)}); }
     bool retired(int rc) const {
         auto output=identity(object);if(!output)output=Fields{"missing","missing"};
@@ -266,7 +279,7 @@ std::expected<void,std::string> validate(const Attempt& attempt) {
         Shape{"controller","mcpp-controller-v1",3},
         Shape{"reservation","mcpp-reservation-pointer-v1",1}, Shape{"admitted","mcpp-admitted-v1",0},
         Shape{"published","mcpp-publication-v1",0}, Shape{"retired","mcpp-retired-v1",3},
-        Shape{"result","mcpp-result-v1",1}}) {
+        Shape{"result","mcpp-result-v1",1}, Shape{"relocated","mcpp-relocated-v1",1}}) {
         auto record=read(attempt.directory/shape.file,shape.tag);
         if(!record)return std::unexpected(record.error());
         if(!*record)continue;
@@ -281,7 +294,7 @@ std::expected<void,std::string> validate(const Attempt& attempt) {
         else if(file=="unit")valid=!fields[0].empty()&&decimal<std::uint64_t>(fields[1])&&fields[1]!="0"
             &&decimal<std::uint64_t>(fields[2])&&fields[2]!="0"&&named(fields[3]).is_absolute();
         else if(file=="baseline")valid=fields[0]==spelling(attempt.bmi)&&digest(fields[1]);
-        else if(file=="reservation")valid=named(fields[0]).is_absolute();
+        else if(file=="reservation"||file=="relocated")valid=named(fields[0]).is_absolute();
         if(!valid)return std::unexpected("invalid compiler transaction record value");
     }
     const auto has=[&](std::string_view file){return present.contains(file);};
@@ -548,13 +561,21 @@ struct Recovery {
 // process space, so the generation's controllers, helpers and writers have
 // ended in every space that shares this directory, and an attempt whose unit
 // cannot be observed is settled as an abandoned one.
+// A RELOCATED ATTEMPT IS NOT OBSERVED (§10.6): its compiler, running or not,
+// writes only below the attempt, and what it published is complete. It is
+// settled at once, its unpublished files discarded.
 std::expected<bool,std::string> recover(const Attempt& attempt,ObserverMap* held=nullptr,
                                         Recovery* met=nullptr,bool abandonUnobservable=false) {
-    const auto state=observed(attempt,held);if(!state)return std::unexpected(state.error());
-    if(*state==Observation::unobservable&&abandonUnobservable) {if(met)++met->unobservable;}
-    else if(*state!=Observation::empty) {
-        if(met)++(*state==Observation::occupied ? met->occupied : met->unknown);
-        return false;
+    const auto relocation=attempt.relocation();if(!relocation)return std::unexpected(relocation.error());
+    if(*relocation) {
+        if(auto valid=validate(attempt);!valid)return std::unexpected(valid.error());
+    } else {
+        const auto state=observed(attempt,held);if(!state)return std::unexpected(state.error());
+        if(*state==Observation::unobservable&&abandonUnobservable) {if(met)++met->unobservable;}
+        else if(*state!=Observation::empty) {
+            if(met)++(*state==Observation::occupied ? met->occupied : met->unknown);
+            return false;
+        }
     }
     auto retired=read(attempt.directory/"retired","mcpp-retired-v1");
     auto result=attempt.ordinary ? read(attempt.directory/"result","mcpp-result-v1") : Record{std::optional<Fields>{}};
@@ -585,7 +606,17 @@ std::expected<bool,std::string> recover(const Attempt& attempt,ObserverMap* held
         }
     }
     std::error_code ec;
-    if(!committed) {
+    if(!committed&&*relocation) {
+        // What it published before its compile failed or was cut is withdrawn,
+        // so that its edges run again, as an in-place attempt's outputs are.
+        if(*published&&!attempt.bmi.empty()) {fs::remove(attempt.bmi,ec);if(ec)return std::unexpected("cannot invalidate an abandoned BMI");}
+        if(*admitted)for(const auto& path:{attempt.object,attempt.dep})if(!path.empty()) {
+            fs::remove(path,ec);if(ec)return std::unexpected("cannot invalidate an abandoned compiler output");
+        }
+        if(!attempt.slot.empty())for(std::string_view tail:{".rc",".rc.tmp"}) {
+            fs::remove(suffix(attempt.slot,tail),ec);if(ec)return std::unexpected("cannot invalidate an abandoned compiler status");
+        }
+    } else if(!committed) {
         const auto baseline=attempt.baseline();if(!baseline)return std::unexpected(baseline.error());
         if(*baseline) {
             if(*published) {
@@ -624,6 +655,9 @@ std::expected<bool,std::string> recover(const Attempt& attempt,ObserverMap* held
         fs::remove(suffix(attempt.bmi,".bak.cert"),ec);if(ec)return std::unexpected("cannot retire the carried baseline certificate");
         fs::remove(suffix(attempt.bmi,".bak"),ec);if(ec)return std::unexpected("cannot retire the carried baseline");
     }
+    // A compiler still running may hold a file of it, which the system does
+    // not let go: what remains goes with the build directory's next sweep.
+    if(*relocation)fs::remove_all(**relocation,ec);
     auto reservation=read(attempt.directory/"reservation","mcpp-reservation-pointer-v1");
     if(!reservation)return std::unexpected(reservation.error());
     if(*reservation) {
