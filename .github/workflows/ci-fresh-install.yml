@@ -282,9 +282,13 @@ jobs:
           - distro: fedora-latest
             image: fedora:latest
             setup: dnf -y install curl bash tar gzip xz git findutils binutils file glibc-langpack-en
+          # A full upgrade, as Arch supports: a partial one (`-Sy`) installed
+          # OpenSSL 4 beside packages built against libcrypto.so.3 and was
+          # refused (`breaks dependency 'libcrypto.so=3-64'`, every run since
+          # 2026-11-07, mcpp#953).
           - distro: arch
             image: archlinux:latest
-            setup: pacman -Sy --noconfirm curl bash tar gzip xz git findutils binutils file
+            setup: pacman -Syu --noconfirm curl bash tar gzip xz git findutils binutils file
           - distro: tumbleweed
             image: opensuse/tumbleweed:latest
             setup: zypper -n install curl bash tar gzip xz git findutils binutils file
