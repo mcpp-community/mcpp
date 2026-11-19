@@ -280,7 +280,7 @@ int lib_c(void) { return LEVEL; }
         // the original as mcpp.toml.orig, reproducibly; a consumer of the unpacked archive (and
         // a released client, when $MCPP_BOOT names one) builds it; a versioned sibling edge is
         // published as a version edge, a path-only one is refused naming the version to add;
-        // `emit xpkg` reads the effective manifest; a package that needs no normalisation is
+        // `emit xpkg` points at the archived manifest; a package that needs no normalisation is
         // archived as `git archive HEAD`.
         const auto tmp = s::case_dir();
         s::project repo(tmp / "repo", {
@@ -355,7 +355,10 @@ cxxflags = ["-DWS_FLAG=1"]
         expect(fatal(s::lacks(lib_toml, "path"))) << "a path survived";
         r = repo.mcpp_in("lib", {"emit", "xpkg"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "emit xpkg: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), R"(["probe.util"] = "0.3.0")"))) << "the descriptor does not list the sibling: " << s::text(r);
+        // mcpp#960: the descriptor points at the archived manifest, which carries the sibling's
+        // version edge (checked above); it states no dependency of its own.
+        expect(fatal(e2e::contains(s::text(r), R"(mcpp = "*/mcpp.toml")"))) << "the descriptor does not point at the manifest: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), R"(["probe.util"])"))) << "the descriptor states a dependency beside its manifest: " << s::text(r);
         r = repo.mcpp_in("edgeless", {"publish", "--dry-run", "--allow-dirty"}, inherited);
         // mcpp#947 (1): a sibling edge that states no version takes the sibling's own.
         expect(fatal(e2e::succeeded(r))) << "a path-only sibling edge was not published under the sibling's version: " << s::text(r);
