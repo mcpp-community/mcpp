@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-365 records.
+366 records.
 
 ## By subject
 
@@ -90,6 +90,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### ecosystem
 
+- [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — active
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
 - [测试与依赖解析补充方案：mcpp、mcpp test、mtest、mcpp-ide](2026-11-10-test-and-resolution-supplement-design.md) — active
 - [生态顶层方案：#885 收尾之后的工作流、原则与依赖](2026-11-08-ecosystem-top-level-design.md) — active
@@ -204,6 +205,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — active
 - [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — active
 - [生态缺口补充方案：一个 C 程序走遍全部目标所暴露的通用问题](2026-11-15-ecosystem-gap-supplement-design.md) — active
