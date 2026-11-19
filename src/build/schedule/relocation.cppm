@@ -32,6 +32,7 @@ export module mcpp.build.schedule.relocation;
 
 import std;
 import mcpp.buildopt.keep;
+import mcpp.home.files;
 
 export namespace mcpp::build::schedule::relocation {
 
@@ -295,12 +296,16 @@ std::string published_text(const Plan& plan, std::string text) {
 }
 
 // Moves `from` over `to`: one rename, so a reader sees the old file or the
-// new one and never a part of either.
+// new one and never a part of either. Windows refuses the rename while another
+// program holds the file, and a virus scanner opens a compile's output the
+// moment it is written: a GCC BMI published from a cross build on a Windows
+// runner was refused once among some 350 ("being used by another process").
+// The refusal is retried for up to 30 s, longer than a scan of the largest
+// output takes.
 std::expected<void, std::string> replace(const fs::path& from, const fs::path& to) {
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
-    fs::rename(from, to, ec);
-    if (!ec) return {};
+    if (mcpp::home::replace_file_within(from, to, ec, std::chrono::seconds{30})) return {};
     return std::unexpected(std::format("cannot publish {} as {}: {}", from.generic_string(),
                                        to.generic_string(), ec.message()));
 }

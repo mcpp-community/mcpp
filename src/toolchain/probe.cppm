@@ -312,13 +312,19 @@ bool driver_takes_dumpdir(const std::filesystem::path& compiler, const mcpp::run
     const auto key = probe_cache_key({compiler.string(), "-dumpdir"}, env, true);
     std::lock_guard lock(mutex);
     if (auto it = answered.find(key); it != answered.end()) return it->second;
-    const auto work = mcpp::home::root() / "cache" / "probe" / "dumpdir";
-    const auto answer = work / (mcpp::toolchain::hash_string(key) + ".answer");
+    const auto kept = mcpp::home::root() / "cache" / "probe" / "dumpdir";
+    const auto answer = kept / (mcpp::toolchain::hash_string(key) + ".answer");
     if (std::ifstream in(answer); in) {
         std::string v;
         in >> v;
         if (v == "yes" || v == "no") return answered[key] = (v == "yes");
     }
+    // Asked, by a query too (`self env`, `toolchain list`), in a directory of
+    // its own; only a run that writes the global cache keeps the answer, and a
+    // cold home is not created for a query.
+    const bool keep = mcpp::effects::writes_global_cache();
+    const auto work = keep ? kept
+        : std::filesystem::temp_directory_path() / std::format("mcpp-dumpdir-{:x}", std::random_device{}());
     std::error_code ec;
     std::filesystem::create_directories(work, ec);
     const auto src = work / "empty.c";
@@ -333,11 +339,11 @@ bool driver_takes_dumpdir(const std::filesystem::path& compiler, const mcpp::run
     // names it: such a driver is not taken as naming its outputs from it.
     const bool yes = r.exit_code == 0 && r.output.find("dumpdir") == std::string::npos;
     std::filesystem::remove(object, ec);
+    if (!keep) std::filesystem::remove_all(work, ec);
     mcpp::log::verbose("toolchain", std::format("'{}' takes -dumpdir: {}{}", compiler.string(),
                        yes ? "yes" : "no", yes ? std::string{} : " (" + first_line_of(r.output) + ")"));
     // An answer the driver did not give (it did not start) is not kept.
-    if (mcpp::effects::writes_global_cache() && (yes || !r.output.empty()))
-        std::ofstream(answer) << (yes ? "yes\n" : "no\n");
+    if (keep && (yes || !r.output.empty())) std::ofstream(answer) << (yes ? "yes\n" : "no\n");
     return answered[key] = yes;
 }
 

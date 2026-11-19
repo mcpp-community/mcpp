@@ -124,7 +124,12 @@ bool replace_file(const std::filesystem::path& source, const std::filesystem::pa
     // the time: programs started at once on a loaded Windows runner each read
     // config.toml, and a writer that tried a dozen times in two seconds found
     // it held at each (unit Config/ConfigValueIsReplacedWhole, 2026-11-14).
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    return replace_file_within(source, destination, ec, std::chrono::seconds{2});
+}
+
+bool replace_file_within(const std::filesystem::path& source, const std::filesystem::path& destination,
+                         std::error_code& ec, std::chrono::milliseconds patience) {
+    const auto deadline = std::chrono::steady_clock::now() + patience;
     auto delay = std::chrono::milliseconds{1};
     for (;;) {
         const auto r = mcpplibs::os::fs::rename(source, destination, true);

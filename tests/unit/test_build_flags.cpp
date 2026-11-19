@@ -353,14 +353,26 @@ UTest every_place_a_word_carries_a_path_is_a_link_input{"LinkWordInputs/EveryPla
     const auto a = dir.path / "a.a", m = dir.path / "v.map", js = dir.path / "lib.js",
                rsp = dir.path / "libs.rsp";
     touch(a); touch(m); touch(js);
-    std::ofstream(rsp) << a.string() << "\n";
+    {
+        std::ofstream out(rsp, std::ios::binary);
+        out << a.string() << "\n";
+        expect(fatal(bool(out.flush()))) << "the response file was not written: " << rsp;
+    }
     const std::set<std::filesystem::path> none;
     using mcpp::build::link_word_inputs;
+    // The paths a word gave, for a failure to name (one failed once on a CI
+    // runner and not again with the same seed).
+    auto named = [](const std::vector<std::filesystem::path>& paths) {
+        std::string out;
+        for (const auto& p : paths) out += "\n  " + p.string();
+        return out.empty() ? std::string("\n  (none)") : out;
+    };
     expect(link_word_inputs(a.string(), false, none) == std::vector{a});
     expect(link_word_inputs("--js-library=" + js.string(), false, none) == std::vector{js});
     expect(link_word_inputs("-Wl,--version-script=" + m.string(), false, none) == std::vector{m});
     expect(link_word_inputs("-Wl,-force_load," + a.string(), false, none) == std::vector{a});
-    expect(link_word_inputs("@" + rsp.string(), false, none) == std::vector{rsp, a});
+    const auto viaResponseFile = link_word_inputs("@" + rsp.string(), false, none);
+    expect(viaResponseFile == std::vector{rsp, a}) << "@" << rsp.string() << " gave:" << named(viaResponseFile);
 }};
 
 UTest a_directory_or_a_relative_path_is_no_link_input{"LinkWordInputs/ADirectoryOrARelativePathIsNone", [] {

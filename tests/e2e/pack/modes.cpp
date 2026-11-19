@@ -583,11 +583,15 @@ ldflags = ["-L{0}/ext/lib", "-lext"{1}]
         expect(fatal(failed(r))) << "--format dir succeeded with libext.so gone\n" << s::text(r);
         expect(e2e::contains(s::text(r), "-lext")) << "the link does not name the library that is gone\n" << s::text(r);
         fs::rename(ext.at("lib/libext.so.away"), ext.at("lib/libext.so"));
-        // A library the link finds and no run path names: needed, and found by no loader.
+        // A library the link finds and no run path names: needed, and found by no loader. The
+        // pack refuses it; where the program's interpreter is a private loader (a toolchain
+        // payload's), the build refuses it first, by its runtime closure. Each names it.
         extapp.write("mcpp.toml", extapp_manifest(""));
         r = extapp.mcpp({"pack", "--pkg-format", "dir"});
         expect(fatal(failed(r))) << "--format dir succeeded with libext.so out of the loader's reach\n" << s::text(r);
-        expect(e2e::contains(s::text(r), "libext.so: the loader finds no file for it")) << "the refusal does not name libext.so\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "libext.so: the loader finds no file for it")
+               || e2e::contains(s::text(r), "libext.so not found on the search path this artifact will actually use"))
+            << "the refusal does not name libext.so\n" << s::text(r);
     };
     "1043 several programs and a dotted name are packed as stated"_test[s::elf][s::unix_shell] = [] {
         // Several programs, none named after the package: the first by name is packed and the
