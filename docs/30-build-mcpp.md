@@ -801,7 +801,10 @@ sources (SPEC-004 §8.1):
    records the files the linker read, as a compile edge records the headers the
    compiler read: libraries found through `-L`/`-l` and files a linker script
    pulls in with `INPUT` are covered. Whether the linker accepts the option is
-   measured once per linker and kept in the probe cache.
+   measured once per linker and kept in the probe cache. When a project's
+   `[build] ldflags` name `--dependency-file`, the linker writes that file, as
+   it writes only one, and mcpp adds no option of its own: those links have
+   rule 1 only, and the build reports it (`build/link-report`).
 
 A relative path and a file that neither exists when the build is planned nor is
 declared by an action are not inputs, unless the linker reports them.

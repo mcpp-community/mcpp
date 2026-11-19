@@ -121,7 +121,10 @@
   compile edge records the compiler's report, so a library found through `-L`/`-l` relinks
   the program when it changes, and one that is gone links again and is named by the linker. As
   for a compile, a program changed outside the build is linked again. Whether a linker accepts
-  the option is measured once and kept in the probe cache.
+  the option is measured once and kept in the probe cache. A project whose `[build] ldflags`
+  name `--dependency-file` keeps that file, the linker writing only one; mcpp adds no option of
+  its own, and the build reports that the link's record holds only the files its words name
+  (`build/link-report`).
 - Every member of a workspace whose root states `[workspace.target.<selector>.abi]` was
   warned that it declares `[target.<selector>.abi]`, which only the root decides: a build of
   about 60 members for wasm32-emscripten printed the warning 262 times (mcpp#954). A

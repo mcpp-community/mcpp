@@ -503,6 +503,24 @@ int main() { std::println("val {}", val()); }
         r = app.mcpp({"run"});
         expect(fatal(e2e::succeeded(r))) << "the second run\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "val 42"))) << "a replaced library found through -L/-l did not relink the program\n" << s::text(r);
+        // A link that names its own dependency file keeps it, the linker writing the last one
+        // named, and the build says what its record then lacks.
+        app.write("mcpp.toml", std::format(R"cpp([package]
+name    = "app"
+version = "0.1.0"
+
+[build]
+ldflags = ["-L{0}/prebuilt", "-lval", "-Wl,--dependency-file={0}/own.d"]
+
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+)cpp", work_s));
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build with the link's own dependency file\n" << s::text(r);
+        expect(fs::is_regular_file(work / "own.d")) << "the link's own dependency file was not written\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "names its own --dependency-file"))
+            << "the build did not report the link's own dependency file\n" << s::text(r);
     };
     "1062 link flags on a compiler link are named not dropped"_test[s::elf][s::llvm] = [] {
         // [platform.link] flags a compiler-driven link does not use are named with the remedy

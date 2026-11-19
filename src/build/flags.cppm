@@ -2863,9 +2863,25 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         const bool direct = !f.ldDriver.empty();
         std::vector<std::string> argv { direct ? f.ldDriver.string() : f.cxxBinary.string() };
         for (auto const& w : link_selection_words(f.ld)) argv.push_back(w);
+        // A link that names a dependency file of its own keeps it: GNU ld and
+        // ld.lld write one file, the last named, and the engine's option would
+        // follow the project's words. The engine then asks for no report, and
+        // the link's record holds only the files its words name.
+        const bool own = std::ranges::any_of(linkWords, [](const std::string& w) {
+            return w.contains("--dependency-file");
+        });
         if (mcpp::toolchain::linker_reports_inputs(argv, direct,
-                                                   mcpp::toolchain::compiler_env(plan.toolchain)))
-            f.linkReport = direct ? " --dependency-file=$out.d" : " -Wl,--dependency-file=$out.d";
+                                                   mcpp::toolchain::compiler_env(plan.toolchain))) {
+            if (!own)
+                f.linkReport = direct ? " --dependency-file=$out.d" : " -Wl,--dependency-file=$out.d";
+            else
+                mcpp::diag::degraded("build/link-report",
+                    "[build] ldflags names its own --dependency-file, so the link records no report "
+                    "of what the linker read",
+                    "a library the linker finds by searching (-L, -l) relinks the program only when a "
+                    "word of the link names it",
+                    "remove --dependency-file from [build] ldflags to have mcpp record the link's inputs");
+        }
     }
 
     return f;
