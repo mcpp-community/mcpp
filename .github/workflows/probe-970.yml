@@ -1,0 +1,71 @@
+name: probe 970
+
+# Temporary: measures what cl.exe and link.exe write, and in which encoding
+# (mcpp#970). Prints facts; asserts nothing.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  english:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: build the probe
+        shell: cmd
+        run: cl /nologo /EHsc /std:c++20 /utf-8 /Fe:probe970.exe .github\probe\probe970.cpp user32.lib
+      - name: run the probe (as the runner starts a step)
+        shell: cmd
+        run: probe970.exe en > probe-en.txt 2>&1 & type probe-en.txt
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          { echo '```'; cat probe-en.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  chinese:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: add the Chinese (zh-cn) language pack to Visual Studio
+        shell: pwsh
+        run: |
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vs = & "$installer\vswhere.exe" -latest -property installationPath
+          Write-Host "Visual Studio: $vs"
+          $start = Get-Date
+          $p = Start-Process -FilePath "$installer\vs_installer.exe" -ArgumentList @('modify', '--installPath', "`"$vs`"", '--addProductLang', 'zh-cn', '--quiet', '--norestart', '--nocache') -Wait -PassThru
+          Write-Host "vs_installer exit: $($p.ExitCode)"
+          while (Get-Process -Name setup, vs_installer, vs_installershell -ErrorAction SilentlyContinue) { Start-Sleep 15 }
+          Write-Host ("minutes: {0:N1}" -f ((Get-Date) - $start).TotalMinutes)
+          Get-ChildItem -Recurse -Filter clui.dll "$vs\VC\Tools\MSVC" | Select-Object -ExpandProperty FullName
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: build the probe
+        shell: cmd
+        run: cl /nologo /EHsc /std:c++20 /utf-8 /Fe:probe970.exe .github\probe\probe970.cpp user32.lib
+      - name: run the probe in Chinese, in English and by default
+        shell: cmd
+        run: |
+          set VSLANG=2052
+          probe970.exe zh-2052 > probe-zh.txt 2>&1
+          set VSLANG=1033
+          probe970.exe zh-1033 > probe-zh-1033.txt 2>&1
+          set VSLANG=
+          probe970.exe zh-unset > probe-zh-unset.txt 2>&1
+          type probe-zh.txt
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          for f in probe-zh.txt probe-zh-1033.txt probe-zh-unset.txt; do
+            { echo "### $f"; echo '```'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
