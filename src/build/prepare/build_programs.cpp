@@ -200,9 +200,10 @@ std::expected<void, std::string> step9_root_build_program(PrepareState& state) {
             doc["kind"] = "mcpp.graph";
             doc["version"] = 1;
             nlohmann::json list = nlohmann::json::array();
-            for (auto i : order) list.push_back(state.graph_package_entry(i, true, nullptr));
+            for (auto i : order)
+                if (!state.withdrawnSlots.contains(i)) list.push_back(state.graph_package_entry(i, true, nullptr));
             doc["packages"] = std::move(list);
-            const auto text = doc.dump(2) + "\n";
+            const auto text = mcpp::wire::text(doc, 2) + "\n";
             const auto graphPath = bpEnv.artifactsDir / "graph.json";
             std::error_code gec;
             std::filesystem::create_directories(graphPath.parent_path(), gec);
@@ -448,7 +449,7 @@ write_graph_document(PrepareState& state, std::size_t subject,
         list.push_back(std::move(entry));
     }
     doc["packages"] = std::move(list);
-    const auto text = doc.dump(2) + "\n";
+    const auto text = mcpp::wire::text(doc, 2) + "\n";
     const auto graphPath = artifactsDir / "graph.json";
     std::error_code gec;
     std::filesystem::create_directories(graphPath.parent_path(), gec);

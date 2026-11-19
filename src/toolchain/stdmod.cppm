@@ -46,6 +46,7 @@ import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.msvc_coroutines;
+import mcpp.toolchain.dialect;
 
 export namespace mcpp::toolchain {
 
@@ -121,8 +122,9 @@ namespace {
 
 std::expected<std::string, StdModError> run_capture_command(
     const std::string& cmd,
-    const std::vector<std::pair<std::string, std::string>>& env) {
-    auto r = mcpp::run::capture_shell(cmd, env);
+    const std::vector<std::pair<std::string, std::string>>& env,
+    mcpplibs::os::text::encoding text) {
+    auto r = mcpp::run::capture_shell(cmd, env, text);
     if (r.exit_code != 0) {
         // Include the command: its --sysroot/-isystem flags are the first
         // thing needed to diagnose header-resolution failures.
@@ -260,9 +262,13 @@ std::expected<std::string, StdModError> run_commands(
     const std::vector<std::string>& commands, const Toolchain& tc) {
     std::vector<std::pair<std::string, std::string>> env;
     for (auto& ev : tc.envOverrides) env.emplace_back(ev.key, ev.value);
+    // The compiler's text in the encoding its dialect states (design
+    // 2026-11-19 §20 T2): cl.exe's in the console's code page.
+    const auto text = mcpp::toolchain::dialect_for(tc).textEncoding == std::string_view("console")
+        ? mcpplibs::os::text::encoding::console : mcpplibs::os::text::encoding::utf8;
     std::string out;
     for (auto const& cmd : commands) {
-        if (auto r = run_capture_command(cmd, env); !r) return std::unexpected(r.error());
+        if (auto r = run_capture_command(cmd, env, text); !r) return std::unexpected(r.error());
         else out += *r;
     }
     return out;

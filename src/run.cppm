@@ -18,6 +18,7 @@ export module mcpp.run;
 
 import std;
 import mcpplibs.os.process;
+export import mcpplibs.os.text;
 
 export namespace mcpp::run {
 
@@ -162,6 +163,11 @@ struct Options {
     // An explicitly declared unit whose registration precedes this start.
     // Its owner retains the unit until retirement and final bookkeeping.
     mcpplibs::os::process::owned_unit* declared_unit = nullptr;
+    // THE ENCODING OF THE PROGRAM'S TEXT (design 2026-11-19 §20 T2). mcpp's
+    // text is UTF-8; a program that writes another is read as UTF-8 here, each
+    // line and the kept output alike, where its bytes enter mcpp. `console`:
+    // the convention of the cl.exe toolchain's programs (mcpplibs.os.text).
+    mcpplibs::os::text::encoding text = mcpplibs::os::text::encoding::utf8;
 };
 RunResult execute(const std::vector<std::string>& argv, const Options& options = {});
 
@@ -180,7 +186,8 @@ Shell shell(std::string_view command);
 // A command line mcpp composed as text and records as such (a std module's
 // build commands, kept in its metadata): its standard output read, its own
 // redirections deciding the rest, an empty standard input.
-RunResult capture_shell(std::string_view command, const Env& extraEnv = {});
+RunResult capture_shell(std::string_view command, const Env& extraEnv = {},
+                        mcpplibs::os::text::encoding text = mcpplibs::os::text::encoding::utf8);
 
 // A user-authored command (`[hooks]`) on mcpp's streams, in `cwd`, bounded.
 // 127 when the interpreter could not be started.

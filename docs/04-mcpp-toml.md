@@ -644,10 +644,16 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
 ```
 
-A word of `[build] ldflags` that names an existing file by absolute path (a
-prebuilt archive, an object) is an input of every link that carries it: a
-changed file relinks (mcpp 2026.10.31.1+). A relative word is read by the
-linker against the build directory and is not tracked.
+A file a word of `[build] ldflags` names by absolute path is an input of every
+link that carries it, whether it is the whole word (a prebuilt archive, an
+object), an option's value (`--js-library=<file>`,
+`-Wl,--version-script=<file>`), a `,`-separated segment
+(`-Wl,-force_load,<file>`) or a response file and what it lists; on an ELF
+target whose linker reports what it read, a library found through `-L`/`-l` is
+one too. A changed input relinks (whole words mcpp 2026.10.31.1+, the rest
+2026.11.19.1+); see [Files a link reads](30-build-mcpp.md#files-a-link-reads).
+A relative word is read by the linker against the build directory and is not
+tracked.
 
 
 #### Compile-flag syntax *(mcpp 2026.9.17.1+)*
@@ -1102,9 +1108,49 @@ Cancelling the build ends its ordinary and detached compilers. An immediately
 following build waits for their cleanup before starting another compiler;
 partial outputs are rebuilt. A missing object from a completed module is
 recreated by that build. An unchanged build still performs no compilation.
-If a forcibly ended build leaves a compiler unit whose completion cannot be
-verified, the next build reports an occupied or unknown unit and retains its
-outputs; it does not start a replacement compiler in that slot.
+
+A compile writes its outputs below an attempt of its own,
+`<build dir>/.mcpp-attempts/<attempt>/`, and the executor publishes them by
+rename once the compiler has ended, a module's BMI the moment it is complete,
+where the toolchain's outputs are relocatable: GCC 11 and later, and a clang
+driver that takes `-dumpdir`, which mcpp asks of the driver once (LLVM 17 and
+later; Apple clang 16 and emcc 6.0.9 take it under numbers of their own),
+except for CodeView targets (`*-windows-msvc`), whose objects record their own
+path (2026.11.19.1+). An object or a BMI equal to
+the published one leaves the published file as it was. A compiler that
+outlives its build (the build killed, its container or sandbox gone) writes
+only its own attempt, and the next build continues at once: the attempts the
+interrupted build did not publish are discarded without being observed. The
+auxiliary files a compiler names after the object (`.dwo`, `.gcno`) keep their
+names and are written in place; clang names them
+`<object stem>.<source stem>.<ext>`.
+
+Where a toolchain writes in place (cl.exe, clang for `*-windows-msvc`, NASM and
+the resource compilers), a forcibly ended build that leaves a compiler unit
+whose completion cannot be verified makes the next build wait for it within a
+bound (2026.11.19.1+):
+
+- a unit that is empty is recovered, as before;
+- a unit that is occupied, or not yet decidable, makes the build refuse with
+  the number of such units, the state directory and the way out
+  (`[compiler-run-occupied]`): when no compiler of the configuration is
+  running, `mcpp clean`, then build again;
+- a unit that cannot be observed from this process space at all (the build
+  was interrupted in another container or sandbox session, or the system did
+  not keep the unit's identity) is settled as abandoned when the old build's
+  owner and helper locks are free, which holds across process spaces that
+  share the directory; its unpublished outputs are discarded and the build
+  reports `degraded` (`compiler-run/unobservable`) once.
+
+`mcpp clean`, `--stale` and `--older-than` retire a configuration's compiler
+runs before removing its directory, and leave a configuration whose run a
+build holds, naming it. An admission the build's owner refuses names its
+condition (`outside-generation`, `record-unreadable`, `actor-outside`,
+`actor-not-held`, `controller-ended`, `unit-unobservable`, `owner-stopping`),
+and every helper that ends a compile for any reason but the compiler's status
+or a cancellation says which step ended it. Where the system gives a program
+nothing to declare a compiler unit from, the build compiles without declaring
+units and reports `degraded` (`compiler-run/no-unit`) once.
 
 | value | |
 |---|---|
@@ -1555,9 +1601,15 @@ A runner reached this way receives `MCPP_RUN_TRIPLE`, `MCPP_RUN_KIND` (`exe` /
 `bundle`), `MCPP_RUN_MODE` (`run` / `test`), `MCPP_RUN_ID`, `MCPP_RUN_CLOSURE`
 (a versioned JSON naming the artifact, the files it carries, the run's files
 (`run_files`, schema 2, 2026.11.17.1+) and the base) and,
-when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's. An
-Apple artifact on a host that is not macOS, with no `run_under`, is refused
-before anything is spawned, naming this key.
+when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's.
+
+Whether an artifact runs on this machine is one question for every row
+(SPEC-016 §6): its execution system is this machine's, or a runner or an
+execution host is stated for it. An artifact of another system with neither is
+refused before anything is spawned, naming `runner` and `run_under`. A macOS or
+iOS artifact on a host that is not macOS is such an artifact and no more: with a
+runner whose `hosts` include this machine it runs through that runner
+*(mcpp 2026.11.19.1+; before, such a row was refused whatever runner was declared)*.
 
 #### 2.7.3.3 The platform keys (2026.10.27.1+)
 
@@ -1832,14 +1884,30 @@ Precedence: `--cache <mode>` **>** `MCPP_BUILD_CACHE` **>** `[build] cache` **>*
 `global`. An unrecognized value is reported (an error under `--strict`) rather
 than silently falling back to `global`.
 
-What is **not** cached: `path` and `git` dependencies, at any depth, and
-workspace members. Their sources can change without their `name@version`
-changing, so no key over that identity could notice the change.
+An entry is named by the sources it was built from *(2026.11.19.1+)*: an index
+package by its `name@version`, a `git` dependency by its resolved commit, and a
+`path` dependency by the digest of its tree's content, shown as
+`<version>+path.<digest>` in `mcpp cache list`. The digest covers every file's
+relative path and content below the dependency's root, except `target/`,
+`.git/`, `.mcpp/`, `compile_commands.json` and a subdirectory with its own
+`mcpp.toml`. Two projects that reach one library through `path`, a clean build,
+and a CI run that restores `$MCPP_HOME/build-cache` reuse one entry while the
+library's sources are the same, wherever its tree is checked out; an edit is a
+new key, and the entry built from the same tree under the previous digest is
+removed as the new one is written. A `path` dependency's tree is read again
+before its entry is written, and a tree that changed while it compiled is not
+stored.
 
-The libraries a build program imports follow the same rule (2026.10.11.1+). The
-engine interface (`mcpp.core`) and index packages are kept in the global cache;
-a `path` or `git` package or a workspace member is compiled in the build
-programs' graph under `target/.build-mcpp/host/`, never in the global cache.
+What is **not** cached: the project's own trees, which are what is being edited
+-- the root package, its workspace members, and any package below the project's
+directory (or below the directory of the build a build program or a host tool is
+built for). Before 2026.11.19.1, `path` and `git` dependencies were not cached at
+any depth (mcpp#974).
+
+The libraries a build program imports follow the same rule (2026.10.11.1+): the
+engine interface (`mcpp.core`), index packages and named `git` and `path`
+dependencies are kept in the global cache, and the project's own packages are
+compiled in the build programs' graph under `target/.build-mcpp/host/`.
 `--cache local` and `--cache off` keep all of them in the project. See
 [30 — The build programs' graph](30-build-mcpp.md).
 

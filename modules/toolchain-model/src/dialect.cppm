@@ -78,10 +78,22 @@ struct CommandDialect {
     // Artifact naming.
     std::string_view objExt;           // ".o"     | ".obj"
 
-    // Ninja integration.
-    // deps mode for header dependencies ("" = none today for gnu — module
-    // deps go through the P1689/dyndep pipeline instead).
-    std::string_view ninjaDepsMode;    // ""       | "msvc"
+    // THE FILES A COMPILE READ ARE TAKEN FROM A RECORD THE COMPILER WRITES FOR
+    // PROGRAMS (mcpp#970, design 2026-11-19 §20 T1), never from the text it
+    // writes for people. "make": the rule a GNU driver writes (-MMD -MF).
+    // "source-dependencies": cl.exe's JSON record (/sourceDependencies <file>),
+    // which the compiler executor writes as the same rule. Every compile edge
+    // reads a Make rule (`deps = gcc`). Until 2026.11.19.1 cl.exe's edges read
+    // the `/showIncludes` lines (`deps = msvc`), whose prefix is a string of
+    // the installed language and whose paths are text of the console's code
+    // page: a Visual Studio without English resources recorded no header.
+    std::string_view inputsRecord;     // "make"   | "source-dependencies"
+    // THE ENCODING OF THE TEXT THE DIALECT'S PROGRAMS WRITE (T2): "utf-8", or
+    // "console" -- the output code page of the console the program is attached
+    // to, else the system's ANSI code page (mcpplibs.os.text), measured with
+    // cl.exe and link.exe. A program whose text is not UTF-8 runs through an
+    // executor that decodes it where it is read.
+    std::string_view textEncoding;     // "utf-8"  | "console"
     // Whether link/archive command lines must go through a response file
     // (Windows 8191-char command-line limit; cl/link/lib accept @file).
     bool rspfileLink = false;
@@ -270,7 +282,8 @@ constexpr CommandDialect kGnuDialect{
     .staticRuntime   = "-static",
     .outputExePrefix = "-o ",
     .objExt          = ".o",
-    .ninjaDepsMode   = "",
+    .inputsRecord    = "make",
+    .textEncoding    = "utf-8",
     .rspfileLink     = false,
     .linkStyle       = CommandDialect::LinkStyle::Driver,
     .archiveCmd      = "$ar rcs $out $in",
@@ -311,7 +324,8 @@ constexpr CommandDialect kMsvcDialect{
     .dynamicRuntime  = "/MD",
     .outputExePrefix = "/Fe:",
     .objExt          = ".obj",
-    .ninjaDepsMode   = "msvc",
+    .inputsRecord    = "source-dependencies",
+    .textEncoding    = "console",
     .rspfileLink     = true,
     .linkStyle       = CommandDialect::LinkStyle::SeparateLinker,
     .archiveCmd      = "$ar /nologo /OUT:$out $in",

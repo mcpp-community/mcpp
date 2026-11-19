@@ -705,6 +705,20 @@ environment from the VC tools + Windows SDK (no `vcvarsall` involved), stages
 `/interface /TP /ifcOutput`, scans with `/scanDependencies`, and links with
 `link.exe`/`lib.exe` through response files.
 
+**The headers a compile read, and the compiler's text, in any language**
+*(2026.11.19.1+)*. Each compile writes cl.exe's `/sourceDependencies` record,
+whose paths mcpp gives ninja as the compile's dependencies, so an edit of a header
+rebuilds the units that include it whatever language the installed Visual
+Studio speaks and whatever code page the console uses. cl.exe, link.exe,
+lib.exe and rc.exe write their text in the code page of the console they run
+in (with no console, the system's ANSI code page), and mcpp reads it as such,
+so their diagnostics reach the terminal and `result.json` as written. mcpp does
+not set `VSLANG`: the compiler speaks the language of the user's environment
+(`VSLANG`, else Visual Studio's), and `VSLANG=1033` asks for English where the
+English resources are installed. A character the console's code page cannot
+represent arrives as `?` from cl.exe itself; a console in UTF-8
+(`chcp 65001`) keeps every character.
+
 **The Windows SDK follows the origin**, because the two origins answer
 different questions and so must the SDK:
 

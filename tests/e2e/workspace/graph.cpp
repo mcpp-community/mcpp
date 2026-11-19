@@ -102,8 +102,17 @@ std::map<std::pair<std::string, std::string>, std::vector<std::string>> units(st
     return out;
 }
 
+// A word with the package instance it names (`obj/<package>/<digest>/`, and the module map whose
+// name hashes the instances it lists) replaced: what remains when only the instance differs.
+std::string without_instance(const std::string& word) {
+    static const std::regex instance{R"([/\\][0-9a-f]{8}[/\\])"}, map{R"((modmap[/\\][^/\\ ]+)-[0-9a-f]{8}\.)"};
+    return std::regex_replace(std::regex_replace(word, instance, "/<instance>/"), map, "$1-<map>.");
+}
+
 // 872's comparison: the units both databases hold, `member`'s among them, have the same arguments,
-// except for words that all contain `allowed`. What differs, or "" when nothing does.
+// except for words that all contain `allowed`. A package's instance follows its features (mcpp#953),
+// so where a difference is allowed, words that differ only by the instance are part of it. What
+// differs, or "" when nothing does.
 std::string differences(std::string_view a, std::string_view b, std::string_view member, std::string_view allowed = "") {
     const auto ua = units(a), ub = units(b);
     bool any = false;
@@ -115,7 +124,13 @@ std::string differences(std::string_view a, std::string_view b, std::string_view
         if (args == other->second) continue;
         std::set<std::string> sa(args.begin(), args.end()), sb(other->second.begin(), other->second.end()), diff;
         std::ranges::set_symmetric_difference(sa, sb, std::inserter(diff, diff.end()));
-        if (!allowed.empty() && !diff.empty() && std::ranges::all_of(diff, [&](const std::string& t) { return t.contains(allowed); })) continue;
+        if (!allowed.empty() && !diff.empty()) {
+            std::set<std::string> na, nb, rest;
+            for (const auto& t : sa) na.insert(without_instance(t));
+            for (const auto& t : sb) nb.insert(without_instance(t));
+            std::ranges::set_symmetric_difference(na, nb, std::inserter(rest, rest.end()));
+            if (std::ranges::all_of(rest, [&](const std::string& t) { return t.contains(allowed); })) continue;
+        }
         out += k.second + " (" + k.first + ") differs:";
         for (const auto& t : diff) out += " " + t;
         out += "\n";
@@ -335,7 +350,7 @@ export int consumer_flag_v() {
             in >> v >> x >> f;
             return std::tuple{v, x, f};
         };
-        const std::regex lib_object{R"((^|/)lib/src/lib\.m\.o$)"};
+        const std::regex lib_object{R"((^|/)lib/[0-9a-f]{8}/src/lib\.m\.o$)"};
         auto r = ws.mcpp({"build", "--workspace"});
         expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build: " << s::text(r);
         const auto dirs = graph_dirs(ws.dir());
@@ -663,7 +678,10 @@ int main() {
 
     "912 two configuration groups share the build programs graph"_test[s::unix_shell] = [] {
         // Two members in two configurations whose build programs share a build dependency: one
-        // graph of build programs, the library compiled once, each member's value right.
+        // graph of build programs, the library compiled once, each member's value right. The
+        // library is a tree beside the workspace, which the global cache names by its sources
+        // (mcpp#974): the second group would stage the first group's entry over the object it
+        // compiled. The graph's sharing is measured under `--cache local`.
         const auto tmp = s::case_dir();
         s::project(tmp / "shared", {{"mcpp.toml", "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n[targets.shared]\nkind = \"lib\"\n"},
                                     {"src/shared.cppm", "export module shared;\nexport int shared_value() { return 42; }\n"}});
@@ -675,11 +693,11 @@ int main() {
             ws.write(m + "/build.mcpp", "import std;\nimport mcpp;\nimport shared;\nint main() { mcpp::cxxflag(std::format(\"-DV={}\", shared_value()).c_str()); }\n");
         }
         ws.write("a/mcpp.toml", ws.read("a/mcpp.toml") + "[profile.dev]\nopt = 1\n");
-        auto r = ws.mcpp({"build", "--workspace"}, inherited);
+        auto r = ws.mcpp({"build", "--workspace", "--cache", "local"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build: " << s::text(r);
         expect(fatal(graph_dirs(ws.dir()).size() == 2u)) << "A: the members were not two configuration groups";
         for (std::string m : {"a", "b"})
-            expect(fatal(s::last_starting(ws.mcpp({"run", "-p", m}, inherited).out, "V=") == "V=42")) << "A: " << m << "'s value";
+            expect(fatal(s::last_starting(ws.mcpp({"run", "-p", m, "--cache", "local"}, inherited).out, "V=") == "V=42")) << "A: " << m << "'s value";
         std::size_t planned = 0;
         for (const auto& e : fs::directory_iterator(ws.at("target/.build-mcpp/host")))
             if (e.is_directory() && e.path().filename() != "digests") ++planned;

@@ -750,6 +750,76 @@ UTest the_cxx_layer_decides_whose_libcxx_headers_are_emitted{"HostFlags/TheCxxLa
 }};
 
 
+// A base package's C++ layer reaches a clang driver with no cfg beside it
+// (mcpp#965): the Windows LLVM payload carries none, and the std module of a
+// libstdc++ base (the Hurd and Haiku rows of mcpp-platforms) was precompiled
+// there with neither the base's directories nor `-nostdinc++`. The words are
+// the layer's on every host; only the cfg bypass follows the file.
+UTest a_bases_cxx_layer_reaches_a_driver_with_no_cfg{"HostFlags/ABasesCxxLayerReachesADriverWithNoCfg", [] {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / "mcpp_hostflags_nocfg_fixture";
+    fs::remove_all(root);
+    fs::create_directories(root / "bin");
+    { std::ofstream(root / "bin" / "clang++"); }
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+    const auto has = [](const std::vector<std::string>& v, std::string_view f) {
+        return std::ranges::find(v, f) != v.end();
+    };
+
+    auto tc = tc_for(CompilerId::Clang);
+    tc.binaryPath = root / "bin" / "clang++";
+    const auto inc = fs::path("/base/usr/include/c++/15");
+    const auto machine = fs::path("/base/usr/include/x86_64-gnu/c++/15");
+    tc.base.layers.cxx = "libstdc++";
+    tc.base.layers.cxxIncludes = {inc, machine};
+    expect(fatal(!mcpp::toolchain::resolve_clang_driver(tc).hasCfg)) << "the fixture has a cfg";
+
+    HostFlagOptions std_module;
+    std_module.cfgBypass         = HostFlagOptions::CfgBypass::Always;
+    std_module.cAbiPrebuilt      = true;
+    std_module.clangStdlibSelect = true;
+    const auto a = mcpp::toolchain::host_compile_tokens(tc, std_module, mcpp::toolchain::no_escape);
+    expect(bool(has(a, "-nostdinc++")));
+    expect(bool(has(a, "-stdlib=libstdc++"))) << "the library selected is the layer's";
+    expect(!has(a, "-stdlib=libc++"));
+    expect(bool(has(a, "-isystem" + inc.string())));
+    expect(bool(has(a, "-isystem" + machine.string())));
+    expect(!has(a, "--no-default-config")) << "a cfg that is not there is not bypassed";
+
+    // With a cfg, the same words after its bypass, as on Linux.
+    { std::ofstream(root / "bin" / "clang++.cfg"); }
+    const auto b = mcpp::toolchain::host_compile_tokens(tc, std_module, mcpp::toolchain::no_escape);
+    expect(bool(has(b, "--no-default-config")));
+    expect(bool(has(b, "-nostdinc++")));
+    expect(bool(has(b, "-stdlib=libstdc++")));
+    expect(bool(has(b, "-isystem" + machine.string())));
+    fs::remove(root / "bin" / "clang++.cfg");
+
+    // A graph-supplied layer closes the driver's own search with no cfg too:
+    // `-nostdinc++` for the C++ layer, `-nostdlibinc` for the C library.
+    auto graphTc = tc_for(CompilerId::Clang);
+    graphTc.binaryPath = root / "bin" / "clang++";
+    HostFlagOptions graph;
+    graph.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    graph.cAbiPrebuilt = false;
+    graph.cxxFromGraph = true;
+    const auto c = mcpp::toolchain::host_compile_tokens(graphTc, graph, mcpp::toolchain::no_escape);
+    expect(bool(has(c, "-nostdinc++")));
+    expect(bool(has(c, "-nostdlibinc")));
+    expect(!has(c, "--no-default-config"));
+
+    // GCC keeps its own search, base or no base.
+    auto gcc = tc_for(CompilerId::GCC);
+    gcc.binaryPath = root / "bin" / "g++";
+    gcc.base.layers = tc.base.layers;
+    const auto d = mcpp::toolchain::host_compile_tokens(gcc, std_module, mcpp::toolchain::no_escape);
+    expect(!has(d, "-nostdinc++"));
+    expect(!has(d, "-nostdlibinc"));
+}};
+
 // The floating macros an Apple SDK leaves to <float.h> once modules are on
 // (apple_float_macro_words). Stated for clang on an Apple target and for
 // nothing else, as the SDK's own spellings, and quotable by every reader.

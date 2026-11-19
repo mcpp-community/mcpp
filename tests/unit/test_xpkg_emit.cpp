@@ -2,7 +2,8 @@
 import std;
 import mcpplibs.mtest;
 import mcpp.manifest;
-import mcpp.modgraph.graph;
+import mcpp.pm.descriptor;
+import mcpp.toolchain.platform;
 import mcpp.invocation;
 import mcpp.publish.xpkg_emit;
 import mcpp.diag;
@@ -27,37 +28,66 @@ mcpp::manifest::Manifest minimal_manifest() {
     return m;
 }
 
-mcpp::modgraph::Graph minimal_graph() {
-    mcpp::modgraph::Graph g;
-    mcpp::modgraph::SourceUnit u;
-    u.path = "/x/hello.cppm";
-    u.provides = mcpp::modgraph::ModuleId{"mcpplibs.hello"};
-    g.units.push_back(u);
-    return g;
-}
-
 } // namespace
 
 UTest contains_required_fields{"XpkgEmit/ContainsRequiredFields", [] {
     auto m   = minimal_manifest();
-    auto g   = minimal_graph();
     auto rel = placeholder_release("0.1.0");
 
-    auto out = emit_xpkg(m, g, rel);
+    auto out = emit_xpkg(m, rel);
 
     expect(ne(out.find("AUTO-GENERATED"), std::string::npos));
     expect(ne(out.find("    name = \"hello\""), std::string::npos));
-    expect(ne(out.find("import_std = true"), std::string::npos));
-    expect(ne(out.find("\"mcpplibs.hello\""), std::string::npos));   // module
-    expect(ne(out.find("manifest = \"mcpp.toml\""), std::string::npos));
-    expect(ne(out.find("[\"mcpplibs.primitives\"]"), std::string::npos));   // dep
+    // The pointer form (SPEC-001 §3.5): where the manifest is, and nothing the
+    // manifest states.
+    expect(ne(out.find("    mcpp = \"*/mcpp.toml\",\n"), std::string::npos)) << out;
+    expect(eq(out.find("manifest ="), std::string::npos)) << out;
+    expect(eq(out.find("modules ="), std::string::npos)) << out;
+    expect(eq(out.find("mcpplibs.primitives"), std::string::npos)) << out;
+}};
+
+// mcpp#960: what `mcpp publish` writes is what every reader reads. The
+// descriptor goes back through the one function the build, `xpkg parse` and
+// `mcpp new --template` read it with, over a payload laid out as the archive is.
+UTest what_is_written_is_read{"XpkgEmit/WhatIsWrittenIsRead", [] {
+    auto m = minimal_manifest();
+    const auto out = emit_xpkg(m, placeholder_release("0.1.0"));
+    const auto field = mcpp::manifest::extract_mcpp_field(out);
+    expect(fatal(field.kind == mcpp::manifest::McppField::StringPath)) << out;
+    expect(eq(field.value, std::string("*/mcpp.toml")));
+
+    const auto versionDir = std::filesystem::temp_directory_path()
+        / std::format("mcpp-xpkg-emit-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto top = versionDir / "hello-0.1.0";
+    std::filesystem::create_directories(top);
+    { std::ofstream(top / "mcpp.toml") << "[package]\nname = \"hello\"\nversion = \"0.1.0\"\n"; }
+    const auto stated = mcpp::pm::descriptor_manifest(
+        out, versionDir, "hello", "0.1.0", mcpp::toolchain::platform::HostPlatform::current());
+    expect(fatal(stated.has_value())) << (stated ? std::string{} : stated.error());
+    expect(stated->form == mcpp::pm::DescriptorManifest::Form::Pointer);
+    expect(stated->manifestPath == top / "mcpp.toml") << stated->manifestPath.string();
+    expect(stated->packageRoot == top) << stated->packageRoot.string();
+    expect(!mcpp::pm::descriptor_is_inline(out));
+    expect(mcpp::pm::descriptor_payload_present(
+        out, versionDir, "hello", "0.1.0", mcpp::toolchain::platform::HostPlatform::current()));
+
+    // The table `mcpp publish` wrote before: neither form, and the refusal
+    // says which form a payload with a manifest takes.
+    const std::string before = "package = { name = \"hello\", mcpp = { schema = \"0.1\", "
+                               "language = \"c++23\", manifest = \"mcpp.toml\" } }";
+    const auto refused = mcpp::pm::descriptor_manifest(
+        before, versionDir, "hello", "0.1.0", mcpp::toolchain::platform::HostPlatform::current());
+    expect(fatal(!refused.has_value()));
+    expect(ne(refused.error().find("mcpp = \"*/mcpp.toml\""), std::string::npos)) << refused.error();
+
+    std::error_code ec;
+    std::filesystem::remove_all(versionDir, ec);
 }};
 
 UTest rejects_lua_injection{"XpkgEmit/RejectsLuaInjection", [] {
     auto m = minimal_manifest();
     m.package.description = "evil\"injection";
-    auto g = minimal_graph();
-    auto out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    auto out = emit_xpkg(m, placeholder_release("0.1.0"));
 
     // The escaped form must be present, NOT the raw quote.
     expect(ne(out.find("evil\\\"injection"), std::string::npos));
@@ -65,12 +95,11 @@ UTest rejects_lua_injection{"XpkgEmit/RejectsLuaInjection", [] {
 
 UTest escapes_control_characters{"XpkgEmit/EscapesControlCharacters", [] {
     auto m = minimal_manifest();
-    auto g = minimal_graph();
 
     // Description with backslash, CR, NUL, BEL, DEL — all must be escaped.
     m.package.description = std::string("a\\b\rc") + std::string(1, '\0')
                           + std::string("d\x07") + std::string(1, '\x7f') + "e";
-    auto out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    auto out = emit_xpkg(m, placeholder_release("0.1.0"));
 
     // Backslash → doubled
     expect(ne(out.find("a\\\\b"), std::string::npos));
@@ -123,14 +152,13 @@ UTest xpkg_emit_names_of_a_release{"XpkgEmit/TheNamesAPublishedPackageIsFiledUnd
 // (SPEC-001 §3.2), whichever of the two the manifest's name is written as.
 UTest xpkg_emit_name_is_one_segment{"XpkgEmit/TheNameIsOneSegment", [] {
     auto m = minimal_manifest();
-    auto g = minimal_graph();
     m.package.namespace_ = "mlibs";
     m.package.name = "math";
-    auto out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    auto out = emit_xpkg(m, placeholder_release("0.1.0"));
     expect(ne(out.find("namespace = \"mlibs\""), std::string::npos)) << out;
     expect(ne(out.find("    name = \"math\""), std::string::npos)) << out;
     m.package.name = "mlibs.math";
-    out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    out = emit_xpkg(m, placeholder_release("0.1.0"));
     expect(ne(out.find("    name = \"math\""), std::string::npos)) << out;
 }};
 
@@ -187,9 +215,8 @@ UTest long_bracket_sequence_in_value_is_harmless{"XpkgEmit/LongBracketSequenceIn
     // ASCII and pass through; what matters is the surrounding quotes
     // are intact and no escape is needed for them).
     auto m = minimal_manifest();
-    auto g = minimal_graph();
     m.package.description = "trick: ]==] more stuff";
-    auto out = emit_xpkg(m, g, placeholder_release("0.1.0"));
+    auto out = emit_xpkg(m, placeholder_release("0.1.0"));
     expect(ne(out.find("\"trick: ]==] more stuff\""), std::string::npos));
 }};
 
@@ -228,10 +255,9 @@ version = "0.1.0"
 )";
     auto m = mcpp::manifest::parse_string(src);
     if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << (m ? std::string{} : m.error().format());
-    auto g = minimal_graph();
 
     mcpp::diag::reset();
-    auto out = emit_xpkg(*m, g, placeholder_release("0.1.0"));
+    auto out = emit_xpkg(*m, placeholder_release("0.1.0"));
 
     expect(ne(block(out, "linux   = {").find("xim:gtk4"), std::string::npos))
         << out;
@@ -255,10 +281,9 @@ version = "0.1.0"
 )";
     auto m = mcpp::manifest::parse_string(src);
     if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << (m ? std::string{} : m.error().format());
-    auto g = minimal_graph();
 
     mcpp::diag::reset();
-    auto out = emit_xpkg(*m, g, placeholder_release("0.1.0"));
+    auto out = emit_xpkg(*m, placeholder_release("0.1.0"));
 
     expect(eq(block(out, "linux   = {").find("xim:gtk4"), std::string::npos));
     expect(eq(block(out, "macosx  = {").find("xim:gtk4"), std::string::npos));

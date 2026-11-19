@@ -93,6 +93,10 @@ private:
 // seconds.
 bool replace_file(const std::filesystem::path& source, const std::filesystem::path& destination,
                   std::error_code& ec);
+// The same, retried for up to `patience`: a compile's output, which a virus
+// scanner opens the moment it is written (design 2026-11-19 §10.6).
+bool replace_file_within(const std::filesystem::path& source, const std::filesystem::path& destination,
+                         std::error_code& ec, std::chrono::milliseconds patience);
 
 // `text` written beside `file` under a name of this writer's own and renamed over
 // it (replace_file): a process reading the file while this one writes it sees the

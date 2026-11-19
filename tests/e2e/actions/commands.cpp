@@ -228,6 +228,75 @@ int main() {
         expect(eq(mtime(*copy), before)) << "the copy was rewritten on a no-op rebuild";
     };
 
+    "959 an action reads a link unit's objects and writes through mcpp self"_test[s::gcc][s::unix_shell] = [] {
+        // mcpp#959, design 2026-11-19 §8.2-§8.3. `${mcpp.objects:app}` is a file listing the
+        // objects the program's link takes, one absolute path per line; `${mcpp.objects_rsp:app}`
+        // is the same list for a tool that reads `@file`, here the toolchain's `ar`, in a build
+        // directory whose path holds a space. `${mcpp.self} write` writes the lines after `--`
+        // and the appended list; a no-op build runs neither action, and a changed source runs
+        // them again. A source action that names the token is refused with the role.
+        const auto root = s::case_dir() / "with space";
+        const std::string program = R"cpp(import std;
+import mcpp;
+int main() {
+    mcpp::action w;
+    w.id = "list";
+    w.role = "artifact";
+    w.arg("${mcpp.self}").arg("write").arg("--output").arg("${mcpp.out_dir}/objs.txt")
+     .arg("--append").arg(mcpp::objects_of("app")).arg("--").arg("# the objects of app")
+     .output("${mcpp.out_dir}/objs.txt")
+     .submit();
+    mcpp::action a;
+    a.id = "archive";
+    a.role = "artifact";
+    a.arg(mcpp::tool("ar")).arg("rcs").arg("${mcpp.out_dir}/app-objects.a")
+     .arg(std::format("@{}", mcpp::objects_rsp_of("app").c_str()).c_str())
+     .output("${mcpp.out_dir}/app-objects.a")
+     .submit();
+}
+)cpp";
+        s::project p{root, s::files{{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                                    {"src/main.cpp", "#include <cstdio>\nint helper();\nint main() { std::printf(\"%d\\n\", helper()); }\n"},
+                                    {"src/helper.cpp", "int helper() { return 7; }\n"},
+                                    {"build.mcpp", program}}};
+        auto r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "build failed: " << s::text(r);
+        const auto listed = s::find_files(p.at("target"), R"(objs\.txt)");
+        expect(fatal(!listed.empty())) << "the write action produced nothing";
+        const auto text = s::read_file(listed.front());
+        expect(fatal(text.starts_with("# the objects of app\n"))) << "the lines after -- are not first:\n" << text;
+        expect(fatal(s::count_lines(text, "/main.o") == 1u && s::count_lines(text, "/helper.o") == 1u))
+            << "the list does not name each object once:\n" << text;
+        for (std::istringstream in{text}; !in.eof();) {
+            std::string line;
+            std::getline(in, line);
+            if (line.empty() || line.starts_with("#")) continue;
+            expect(fs::path(line).is_absolute() && fs::is_regular_file(line)) << "not an absolute path of an object: " << line;
+        }
+        const auto archive = s::find_files(p.at("target"), R"(app-objects\.a)");
+        expect(fatal(!archive.empty())) << "the archive action produced nothing";
+        const auto members = s::run(*s::on_path("ar"), {"t", archive.front().string()}).out;
+        expect(e2e::contains(members, "main.o") && e2e::contains(members, "helper.o"))
+            << "ar read the response file wrongly in a path with a space:\n" << members;
+        const auto before = mtime(listed.front());
+        std::this_thread::sleep_for(std::chrono::seconds{1});
+        r = p.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "no-op rebuild failed: " << s::text(r);
+        expect(s::lacks(s::text(r), "app-objects.a")) << "a no-op build ran the archive action: " << s::text(r);
+        expect(eq(mtime(listed.front()), before)) << "the written file was rewritten on a no-op build";
+        p.write("src/helper.cpp", "int helper() { return 8; }\n");
+        r = p.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "rebuild failed: " << s::text(r);
+        expect(e2e::contains(s::text(r), "app-objects.a")) << "a recompiled object did not run the action: " << s::text(r);
+        p.write("build.mcpp", "import mcpp;\nint main() {\n    mcpp::action a;\n    a.id = \"early\";\n    a.role = \"source\";\n"
+                              "    a.arg(\"${mcpp.self}\").arg(\"write\").arg(\"--output\").arg(\"${mcpp.out_dir}/gen.h\")\n"
+                              "     .arg(\"--append\").arg(mcpp::objects_of(\"app\")).arg(\"--\").output(\"${mcpp.out_dir}/gen.h\").submit();\n}\n");
+        r = p.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "a source action reading the object list was accepted";
+        expect(e2e::contains(s::text(r), "with a role other than \"artifact\" or \"check\"") && e2e::contains(s::text(r), "early"))
+            << "the refusal does not name the action and the roles: " << s::text(r);
+    };
+
     "799 an action runs with its env and cwd"_test = [] {
         // `mcpp::action::env` and `::cwd`: the command sees the variable and runs in the
         // directory, its declared output is not resolved against that directory, a changed

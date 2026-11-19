@@ -200,12 +200,16 @@ UTest member_bmis_are_qualified_and_the_map_is_the_units_reach{"ModuleAddress/Me
     auto gcc = plan_core(t, mcpp::toolchain::CompilerId::GCC, true, &err);
     expect(fatal(bool(gcc))) << err;
     auto const& iface = gcc->core.at("core.cppm");
-    expect(eq(iface.bmiFile, "core/corelib.gcm"));
+    // Below the package's instance directory, `<package>/<digest>` (mcpp#953),
+    // one directory for every module of the instance.
+    const std::regex instance{R"(core/[0-9a-f]{8}/corelib\.gcm)"};
+    expect(fatal(std::regex_match(iface.bmiFile, instance))) << iface.bmiFile;
+    const auto dir = std::filesystem::path(iface.bmiFile).parent_path().generic_string();
     // GCC's map is rooted at the BMI directory, as its default mapper is, so
     // a BMI records its imports at the same paths whichever mapper made it.
     expect(iface.mapContent.starts_with("$root gcm.cache\n")) << iface.mapContent;
-    expect(ne(iface.mapContent.find("corelib core/corelib.gcm\n"), std::string::npos));
-    expect(ne(iface.mapContent.find("m core/m.gcm\n"), std::string::npos));
+    expect(ne(iface.mapContent.find("corelib " + dir + "/corelib.gcm\n"), std::string::npos)) << iface.mapContent;
+    expect(ne(iface.mapContent.find("m " + dir + "/m.gcm\n"), std::string::npos)) << iface.mapContent;
     expect(ne(iface.mapContent.find("std std.gcm\n"), std::string::npos));
     expect(eq(iface.mapContent.find("tool"), std::string::npos))
         << "the map names a module the unit does not reach:\n" << iface.mapContent;
@@ -216,12 +220,13 @@ UTest member_bmis_are_qualified_and_the_map_is_the_units_reach{"ModuleAddress/Me
     auto clang = plan_core(t, mcpp::toolchain::CompilerId::Clang, true, &err);
     expect(fatal(bool(clang))) << err;
     auto const& ci = clang->core.at("core.cppm");
-    expect(eq(ci.bmiFile, "core/corelib.pcm"));
+    expect(fatal(std::regex_match(ci.bmiFile, std::regex{R"(core/[0-9a-f]{8}/corelib\.pcm)"}))) << ci.bmiFile;
+    const auto cdir = std::filesystem::path(ci.bmiFile).parent_path().generic_string();
     // clang reads the imported module's BMI from the argument file; its own
     // module is written through -fmodule-output and is not listed there.
     expect(fatal(eq(ci.arguments.size(), 1u)));
     expect(ci.arguments.front().starts_with("-fmodule-file=m="));
-    expect(ci.arguments.front().ends_with("pcm.cache/core/m.pcm")) << ci.arguments.front();
+    expect(ci.arguments.front().ends_with("pcm.cache/" + cdir + "/m.pcm")) << ci.arguments.front();
     expect(fatal(!ci.flags.empty()));
     expect(ci.flags.back().find(".modmap") != std::string::npos) << ci.flags.back();
     expect(eq(ci.flags.back().front(), '@'));
@@ -229,7 +234,10 @@ UTest member_bmis_are_qualified_and_the_map_is_the_units_reach{"ModuleAddress/Me
 
 // The root package's modules stay at their names, and a unit that reaches only
 // those and `std` is told nothing: a project without dependency modules is laid
-// out, and every command spelled, as before.
+// out, and every command spelled, as before. A GCC unit that provides a module
+// is given a map all the same: a relocated compile names its own BMI through a
+// copy of the map (design 2026-11-19 §10.6), and GCC's mapper answers only the
+// names it lists, so the map lists each at its name.
 UTest root_modules_stay_flat_and_need_no_map{"ModuleAddress/RootModulesStayFlatAndNeedNoMap", [] {
     Tmp t;
     const auto proj = t.path / "proj";
@@ -254,12 +262,19 @@ UTest root_modules_stay_flat_and_need_no_map{"ModuleAddress/RootModulesStayFlatA
         auto plan = make_plan(root, toolchain(id), {}, graph, topo, packages, proj,
                               proj / "target" / "t", {}, {}, {});
         if (auto&& failed = expect(fatal(bool(plan))); !failed) failed << plan.error();
-        expect(plan->moduleScopes.empty());
+        const bool gcc = id == mcpp::toolchain::CompilerId::GCC;
         for (auto const& cu : plan->compileUnits) {
-            expect(cu.moduleScope.empty()) << cu.source;
+            expect(eq(cu.moduleScope.empty(), !(gcc && !cu.providesModule.empty()))) << cu.source;
             if (!cu.providesModule.empty())
                 expect(eq(cu.bmiFile.find('/'), std::string::npos)) << cu.bmiFile;
         }
+        if (!gcc) {
+            expect(plan->moduleScopes.empty());
+            continue;
+        }
+        expect(fatal(eq(plan->moduleScopes.size(), 1u)));
+        expect(eq(plan->moduleScopes.begin()->second.content,
+                  std::string("$root gcm.cache\nm m.gcm\nstd std.gcm\nstd.compat std.compat.gcm\n")));
     }
 }};
 

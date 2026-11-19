@@ -160,6 +160,15 @@ error: openkal-musl is requested as '^0.27.0' by app, and the platform openkal-p
 只为本机构建的包(工具的)以及从目录或仓库取得的包不受版本组约束。早于 2026.11.7.1 的 mcpp 改为在解析之后检查
 版本组;一个家族以一次索引改动整组发布时,两者结果相同。
 
+版本组的版本是它所约束的请求的约束,参与目标的每一次合并*(mcpp 2026.11.19.1+)*。没有版本满足全部请求时,拒绝列出
+每一个请求及其请求者,版本组的约束以平台的名字列出。构建程序的请求在目标的请求之后解析,目标已取得的版本满足它时取该
+版本:构建程序的 `>=1.0, <2.0` 与版本组的 `=1.1.0` 并存时两者都取 1.1.0,与两者声明的先后无关。构建程序解析自己的
+构建依赖(05 —— 依赖),所以只有构建程序使用的包、或目标的版本不满足的请求,不受版本组约束。
+
+**插件与工程的 `build.mcpp` 是两个程序 *(mcpp 2026.11.19.1+)*。** 两者各自解析构建依赖:平台的插件可以用
+`mcpp.plugins` 0.26.1,而工程的 `build.mcpp` 用 0.22.1,工程不再抄写平台内部构建工具的版本。`mcpp.lock` 把第二个
+版本记为条目 `<名字>+b<摘要>`,并写出 `programs = ["build:<包>@<版本>"]`。
+
 ## 内置平台是一个版本
 
 目标表为两个 ok 映像目标选择一个 openkal-platform 版本,即当前 mcpp 验证过的版本:mcpp 2026.11.10.1 为 0.25.0,2026.11.8.1 与 2026.11.9.1 为 0.24.4,2026.11.7.2 为 0.24.3
@@ -176,6 +185,17 @@ platform = "openkal-platform@0.28.0"     # 一个版本,或一个系列:"openkal
 系列取其中 `[package] mcpp` 下限当前 mcpp 满足的最新版本,并写出因需要更新的引擎而跳过的版本;`mcpp.lock` 记录结果,
 之后的构建在系列容许时采用记录的版本。`mcpp update`(或 `mcpp update openkal-platform`)删除这条记录,下一次构建重新
 取最新版本。
+
+系列也跳过版本组不容许本次构建某个请求的版本*(mcpp 2026.11.19.1+)*:构建以低于它的系列重新规划,报告写出该版本与
+拒绝它的请求,
+
+```
+    Platform plat v0.2.0 is not usable by this build: its version group names fam 1.2.0, and proj requests '~1.1.0'
+    Platform plat ^0 → v0.1.0 (the newest this build can use)
+```
+
+所以平台的新版本改变版本组,不使以系列选择它的工程停止构建。没有可用的版本时构建被拒绝(`platform-version-group`),
+消息列出每个版本与拒绝它的请求。精确写出的版本与 `mcpp.lock` 记录的版本按写出的取,其版本组的拒绝即构建的拒绝。
 
 ## 索引列出的行(2026.11.17.1+)
 
@@ -195,6 +215,11 @@ package = {
 `mcpp build --target x86_64-uefi` 因此不需要 `mcpp.toml` 中的任何一行。行以系列(`openkal-platform@*`)选择平台包,
 版本的选择、锁定与更新同上,报告的来源为 `index`。工程自己的 `[target.<selector>] platform` 仍然在前,工程自己的
 `[indices]` 先于共享的索引。这份列表由索引的工具从平台的清单生成;2026.11.17.1 之前的引擎忽略它。
+
+本地索引副本没有列出、否则会被拒绝的行(引擎不认识的行,或 `planned` 行),与依赖一样是一次索引未命中
+*(2026.11.19.1 起,mcpp#967)*:按同样的控制(`--offline`、`[index] auto_refresh`、去抖、每条命令至多一次同步,
+见 [05](05-dependencies.md))刷新一次索引,再读平台列。随后的拒绝写出索引是否已刷新及未刷新的原因。此前,在本地
+副本取得之后才列入的行被拒绝为未知目标,直到 `mcpp index update`。
 
 ## 编写平台包
 
@@ -419,7 +444,7 @@ mcpp toolchain install --target x86_64-openkal        # fetch and build what the
 | `platform-not-a-platform` | 所选的包没有 `[platform]` | 选择一个平台包,或 `none` |
 | `platform-target-unserved` | 平台不服务该三元组 | 为它的某个 `targets` 构建,或为消息给出的宿主行构建 |
 | `platform-tool-absent` | 链接或封装要运行的程序既未构建、也未找到 | 在 `[target.'cfg(platform = "…")'.tools]` 下写出构建它的包 |
-| `platform-version-group` | 家族中某个包的另一个版本在图中 | 选择携带该版本的平台版本,或钉住版本组中的版本 |
+| `platform-version-group` | 家族中某个包的另一个版本在图中,或系列中没有版本容许本次构建的请求 | 选择携带该版本的平台版本,或钉住版本组中的版本 |
 | `platform-phase-directive` | 插件陈述了平台阶段不接受的指令 | 改由包自己的构建程序陈述 |
 | `lld-required-absent` | 平台以 `ld.lld` 链接,而工具链没有它 | 使用平台的工具链 |
 

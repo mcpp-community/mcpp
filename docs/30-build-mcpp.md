@@ -776,12 +776,41 @@ If nothing in the build can receive the outputs (an archive-only package), mcpp
 reports a degradation: the edge is reachable only through a link, so with no
 link the command would never run and the build would say nothing.
 
-> Naming a pre-built object in `[build].ldflags` also reaches the linker, and
-> should not be used for anything the build produces: ldflags is a flat string
-> in the link command, not a file in the graph, so nothing tracks it and editing
-> it reports `ninja: no work to do`. For Windows resources specifically, use
-> [`[resources]`](04-mcpp-toml.md) —
-> `object` is the escape hatch for everything else.
+> A pre-built object named in `[build].ldflags` also reaches the linker, and a
+> file named there is an input of the link (see *Files a link reads* below), but
+> the action's outputs are the files the build produces. For Windows resources
+> specifically, use [`[resources]`](04-mcpp-toml.md) — `object` is the escape
+> hatch for everything else.
+
+#### Files a link reads
+
+A link is run again when a file it reads changes. Its inputs come from two
+sources (SPEC-004 §8.1):
+
+1. **Files a link word names.** For each word of the link line — `[build]
+   ldflags`, `mcpp:link-flag=` and what dependencies propagate — the candidates
+   are the whole word, the part after `=`, each `,`-separated segment and the
+   part after `=` within it, and, under the MSVC link dialect, the part after
+   the first `:` of a word beginning with `/`. A candidate is an input when it
+   is an absolute path naming an existing regular file or a file an action of
+   the build declares. `@<file>` adds the response file and the absolute paths
+   it lists, split into words by the rules of the tool that reads it: those of
+   `CommandLineToArgvW` under the MSVC link dialect, where a backslash escapes
+   only a quote, and a GNU driver's otherwise *(2026.11.19.1+)*.
+   `--js-library=<file>`, `-Wl,--version-script=<file>`,
+   `-Wl,-force_load,<file>` and `/DEF:<file>` are covered.
+2. **The linker's report.** On an ELF target whose linker accepts
+   `--dependency-file=<file>` (GNU ld from 2.35, gold, ld.lld), the link edge
+   records the files the linker read, as a compile edge records the headers the
+   compiler read: libraries found through `-L`/`-l` and files a linker script
+   pulls in with `INPUT` are covered. Whether the linker accepts the option is
+   measured once per linker and kept in the probe cache. When a project's
+   `[build] ldflags` name `--dependency-file`, the linker writes that file, as
+   it writes only one, and mcpp adds no option of its own: those links have
+   rule 1 only, and the build reports it (`build/link-report`).
+
+A relative path and a file that neither exists when the build is planned nor is
+declared by an action are not inputs, unless the linker reports them.
 
 **You must name the output files.** mcpp fixes the source set, the fingerprint
 and the module graph during prepare, so an output whose *name* is unknown
@@ -1149,8 +1178,17 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
 | `${mcpp.contract}` *(2026.10.30.1+)* | path to the configuration's contract, `mcpp-contract.json`, beside its compile database: the compiler of each language with the words every unit is compiled with (target, sysroot, target-side headers, platform and profile flags), and the link driver, its words and the archiver. A foreign build system reads it to compile for the target as the engine does; a package's own include directories are not in it, nor the engine's C++ dialect and module words (`-std=`, `-fmodules`), which are its choice for its own units. Since 2026.11.7.1, link arguments describe the target configuration; the consuming package's link flags and libraries are excluded, since they can name outputs the foreign build has yet to produce |
 | `${mcpp.target_file:<name>}` | the built file of target `<name>` |
+| `${mcpp.objects:<name>}` *(2026.11.19.1+)* | the absolute path of a file listing the files the link of target `<name>` takes as explicit inputs — its objects, the objects of statically linked dependencies and of the standard module, not the libraries named by `-l` — one absolute path per line, in link order. `artifact` and `check` roles only; the list and every file in it are inputs of the action, so a recompiled object runs it again. `mcpp::objects_of("<name>")` returns the token (protocol 20) |
+| `${mcpp.objects_rsp:<name>}` *(2026.11.19.1+)* | the same list in response-file quoting, for a tool that reads `@file` (`ar`, `llvm-ar`, `lib.exe`); a path with a space is quoted. `mcpp::objects_rsp_of("<name>")` returns the token |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --pkg-format <name>` |
-| `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor |
+| `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor. `${mcpp.self} write --output <file> [--append <file>]... -- <line>...` *(2026.11.19.1+)* writes the lines after `--`, each followed by a newline, then the bytes of each `--append` file (declare them as the action's inputs), and writes only when the bytes differ |
+
+The engine's own commands are bounded by one criterion (SPEC-007 R3.17): one
+output, whose content the declared inputs and the argv decide, the same on every
+run. `stage` and `write` meet it. Deleting, creating directories, globbing or
+running several programs in order do not: a multi-step action is a program a
+plugin carries, declared as a tool of one of its features (see *Host tools from a dependency*
+below), not a vocabulary the engine interprets.
 
 Every path a `${mcpp.*}` token expands to is spelled with **forward slashes**.
 A token is spliced into the text the build program wrote, and that text spells
@@ -1751,16 +1789,20 @@ Four properties worth knowing:
 published version is immutable, so for a tool that arrives from an index the
 version alone identifies its sources. A `git` tool is keyed by the commit it
 resolved to. A `path` tool has no version that moves when its sources do, so
-it is keyed by a stamp of its tree: every regular file's relative path, size
-and modification time, with `target/`, `.git/`, `.mcpp/` and the compile
-database excluded. An edit to the tool's emitter therefore reaches the
-consumer on the next build, and so does its reversal, while a tree that did
-not change is a store hit and is not rebuilt. Measured on
-[`examples/12-a-new-device-language`](../examples/12-a-new-device-language/);
+it is keyed by the digest of its tree's content, the identity the dependency
+cache uses ([04 §2.10](04-mcpp-toml.md)): every regular file's relative path
+and content, with `target/`, `.git/`, `.mcpp/`, the compile database and a
+subdirectory with its own `mcpp.toml` excluded *(2026.11.19.1+; before, each
+file's path, size and modification time)*. An edit to the tool's emitter
+therefore reaches the consumer on the next build, and so does its reversal,
+while a tree whose content did not change is a store hit and is not rebuilt,
+also after a checkout or a copy that changed every modification time. Measured
+on [`examples/12-a-new-device-language`](../examples/12-a-new-device-language/);
 before this rule the key held the version alone and a change to the emitter
 left `mcpp run` printing the previous answer until the version was bumped.
-Entries accumulate as a tree is edited; `mcpp cache clean` empties the store,
-which lives at `<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
+The entry built from the same tree under the previous digest is removed when
+the new one is written; `mcpp cache clean` empties the store, which lives at
+`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
 
 **The paths a tool build writes are bounded (2026.9.15.2+).** The sub-build
 runs in `<mcpp cache dir>/tool/.build/<hash>/`, a directory named by the entry
@@ -1846,6 +1888,13 @@ dependencies and its implementation units — and `build.mcpp` is compiled by
 the same plan, so a BMI and the program importing it agree on standard,
 dialect and compiler by construction. A library several programs use is
 compiled once for them, and a program of another standard is in another graph.
+Each build program resolves its own `[build-dependencies]` (05 — Dependencies,
+*Each build program resolves its own build dependencies*); programs that hold
+one package at different versions are in different graphs,
+`<group>-<digest>`, named by those versions (mcpp 2026.11.19.1+), and a
+program that holds none of them stays in `<group>`. The programs of the build
+are compared among themselves: under `mcpp test`, a development dependency's
+program does not move them to another graph.
 `mcpp build` in that directory reproduces the compile of the build programs.
 The compiled program is also placed beside its package's run record, as
 `target/.build-mcpp/build.mcpp.bin` (`build.mcpp.exe` on Windows), to be run by
@@ -2006,6 +2055,17 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
 - **Visibility, not execution.** `dep_bin()` returns a path; whether anything
   runs is still the consumer's `build.mcpp`'s decision. Nothing changes about
   who builds the tool or how the tool store is keyed.
+- **A feature's tool reaches every build program that links the package's
+  library** (2026.11.19.1+). A plugin's library runs inside the build program
+  of whichever package links it, a framework's user included; with
+  `[features.<f>] tools = ["<bin>"]` active, each of those programs sees the
+  tool, so a plugin carries its own program. Before that release the path
+  reached only the package whose edge named the plugin, and `dep_bin` answered
+  `""` one package away.
+- **A tool nobody declared is reported** (2026.11.19.1+, protocol 20).
+  `dep_bin` answers `""` for a tool no edge and no active feature declares, and
+  the engine warns (`build-program/undeclared-tool`) naming the package, the
+  tool and the line that declares it.
 - **Unqualified names are resolved by a ladder, not by luck.** Once two
   libraries can re-export, both may offer the tail `protobuf`. The
   fully-qualified `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` is always published; the

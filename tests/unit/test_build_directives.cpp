@@ -1104,14 +1104,26 @@ UTest deploy_row_is_protocol_eleven_with_link_global_scope_and_a_tag{"BuildDirec
     expect(eq(def->scope, dirs::Scope::LinkGlobal));
     expect(eq(def->sinceProtocol, 11));
     expect(!(def->tag.empty()));
-    expect(eq(dirs::kProtocolVersion, 19));
+    expect(eq(dirs::kProtocolVersion, 20));
 }};
 
-UTest protocol_nineteen_is_accepted_and_twenty_is_not{"BuildDirectives/ProtocolNineteenIsAcceptedAndTwentyIsNot", [] {
-    auto ok = parse("mcpp:protocol=19\n");
+UTest protocol_twenty_is_accepted_and_twenty_one_is_not{"BuildDirectives/ProtocolTwentyIsAcceptedAndTwentyOneIsNot", [] {
+    auto ok = parse("mcpp:protocol=20\n");
     expect(!(dirs::protocol_error(ok).has_value()));
-    auto no = parse("mcpp:protocol=20\n");
+    auto no = parse("mcpp:protocol=21\n");
     expect(dirs::protocol_error(no).has_value());
+}};
+
+// Design 2026-11-19 §8.4: a tool `dep_bin` was asked for and no edge or feature
+// declares is an advisory of protocol 20, kept with the program's record.
+UTest undeclared_tool_is_a_protocol_twenty_advisory{"BuildDirectives/UndeclaredToolIsAProtocolTwentyAdvisory", [] {
+    auto def = dirs::find_by_wire("undeclared-tool");
+    expect(fatal(ne(def, nullptr)));
+    expect(eq(def->scope, dirs::Scope::Advisory));
+    expect(eq(def->sinceProtocol, 20));
+    expect(!(def->tag.empty()));
+    auto d = parse("mcpp:protocol=20\nmcpp:undeclared-tool=plug\tsteps\n");
+    expect(eq(d.at(dirs::Slot::UndeclaredTools).size(), std::size_t{1}));
 }};
 
 // SPEC-013 §4.1: the platform's fields a program states (protocol 17) become a

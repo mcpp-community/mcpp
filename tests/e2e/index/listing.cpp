@@ -54,17 +54,20 @@ void pin_and_unpin(const s::project& p, const s::options& o) {
 
 E2E listing{"listing", [] {
     "06 emit xpkg"_test = [] {
-        // `emit xpkg` writes a Lua entry from the manifest: the header, the name, the module, the
-        // manifest pointer and import_std; `--output` writes the file, which lua loads.
+        // `emit xpkg` writes a Lua entry from the manifest: the header, the name and the
+        // pointer to the manifest in the archive (SPEC-001 §3.5); `--output` writes the file,
+        // which lua loads, and `xpkg parse` reads what was written (mcpp#960).
         auto p = s::project::scaffold("emit-test");
         p.write("src/foo.cppm", "export module emit-test;\nimport std;\nexport int answer() { return 42; }\n");
         auto r = p.mcpp({"emit", "xpkg"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
-        for (std::string_view w : {"AUTO-GENERATED", "name = \"emit-test\"", "\"emit-test\"", "manifest = \"mcpp.toml\"", "import_std = true"})
+        for (std::string_view w : {"AUTO-GENERATED", "name = \"emit-test\"", "mcpp = \"*/mcpp.toml\""})
             expect(fatal(e2e::contains(r.out, w))) << "missing " << w << ": " << r.out;
         r = p.mcpp({"emit", "xpkg", "--output", "myout.lua"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(p.exists("myout.lua"))) << "--output didn't write file";
+        r = p.mcpp({"xpkg", "parse", "myout.lua"});
+        expect(fatal(e2e::succeeded(r))) << "the descriptor `emit xpkg` wrote does not parse: " << s::text(r);
         if (auto lua = s::on_path("lua")) {
             auto l = e2e::run({.argv = {lua->string(), "-e", "loadfile('myout.lua')()"}, .cwd = p.dir()});
             expect(fatal(l.started && l.status == 0)) << "Lua failed to load output: " << l.err;

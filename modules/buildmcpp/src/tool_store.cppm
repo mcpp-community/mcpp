@@ -100,28 +100,10 @@ struct Key {
 std::string key_hex(const Key& k);
 nlohmann::json to_json(const Key& k);
 
-// THE IDENTITY OF A SOURCE TREE THAT HAS NO VERSION OF ITS OWN.
-//
-// An index package's `name@version` names immutable content, so the version
-// alone identifies the bytes a tool was built from. A `path` package changes
-// under an unchanged version, and a `git` package at a branch moves; the store
-// keyed on the version alone then keeps a binary built from sources that no
-// longer exist. Measured (2026-09-08, examples/12): an emitter change in a path
-// tool package reached the consumer only after the package's version was
-// bumped, and until then every build reported success over the previous
-// compiler's output.
-//
-// A `git` package is keyed by its resolved commit, which is immutable content.
-// A `path` package is keyed by this stamp: every regular file's relative path,
-// size and modification time, in sorted order, hashed. It is what ninja itself
-// trusts to decide a rebuild, costs one `stat` per file rather than a read,
-// and moves in both directions -- an edit and its reversal each produce a new
-// key, which is what the criterion demands. Build products, the version
-// control directory and the engine's own scratch are excluded, since they
-// change without the sources changing. So is any directory below the root
-// that holds its own mcpp.toml: that is another package, keyed by its own
-// stamp when the tool depends on it and no input otherwise (#705).
-std::string tree_stamp(const std::filesystem::path& root);
+// A SOURCE TREE THAT HAS NO VERSION OF ITS OWN is named in a key by the digest
+// of its content (`<version>+path.<digest>`), which the engine computes once for
+// the build programs, this store and the dependency cache (mcpp.build
+// source_digest, mcpp#974). A `git` package is keyed by its resolved commit.
 
 // <cacheRoot>/tool/<index>/<pkg>@<ver>/<keyHex>/
 std::filesystem::path entry_dir(const std::filesystem::path& cacheRoot, const Key& k);
@@ -218,43 +200,6 @@ nlohmann::json to_json(const Key& k) {
     j["features"]          = k.features;
     j["upstream_keys"]     = k.upstreamKeys;
     return j;
-}
-
-std::string tree_stamp(const fs::path& root) {
-    std::vector<std::string> rows;
-    std::error_code ec;
-    fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
-    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        const auto& p = it->path();
-        const auto name = p.filename();
-        if (it->is_directory(ec)) {
-            // A directory holding its own mcpp.toml is ANOTHER PACKAGE (#705).
-            // If the tool depends on it, that package is in the key through
-            // `upstreamKeys` with its own stamp; if not, nothing in it is an
-            // input of this tool. The case that forced this is a consumer
-            // nested inside the tool's tree -- a fixture, an example, a
-            // workspace member: every build of the consumer wrote under its
-            // own directory and so rebuilt the tool it was building with.
-            if (name == "target" || name == ".git" || name == ".mcpp"
-                || fs::is_regular_file(p / "mcpp.toml", ec))
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (!it->is_regular_file(ec)) continue;
-        if (name == "compile_commands.json") continue;
-        // UTF-8, not the code page: this is a walk of a tree mcpp does not
-        // control, and a stamp is an identity (check_narrow_conversions.sh).
-        const auto rel8 = p.lexically_relative(root).generic_u8string();
-        const std::string rel(rel8.begin(), rel8.end());
-        const auto sz  = fs::file_size(p, ec);
-        const auto mt  = fs::last_write_time(p, ec).time_since_epoch().count();
-        rows.push_back(std::format("{}|{}|{}", rel, sz, mt));
-    }
-    std::ranges::sort(rows);
-    std::string joined;
-    for (auto const& r : rows) { joined += r; joined += '\n'; }
-    return mcpp::toolchain::hash_string(joined);
 }
 
 std::string key_hex(const Key& k) {

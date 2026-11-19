@@ -32,6 +32,7 @@ import mcpp.version;                 // MCPP_VERSION
 import mcpp.run;
 import mcpp.ui.terminal;
 import mcpp.invocation;
+import mcpp.wire;                    // text: a document that carries what a program wrote
 
 export namespace mcpp::build::result {
 
@@ -274,7 +275,7 @@ std::string render(const Record& r) {
         {"mcpp", {{"version", std::string(mcpp::MCPP_VERSION)}}},
         {"data", to_json(r)},
     };
-    return doc.dump(2) + "\n";
+    return mcpp::wire::text(doc, 2) + "\n";
 }
 std::string render_last(const Record& r) {
     nlohmann::json last{
@@ -286,7 +287,7 @@ std::string render_last(const Record& r) {
                   {"finishedAt", r.finishedAt == 0 ? nlohmann::json(nullptr)
                                                    : nlohmann::json(r.finishedAt)}}},
     };
-    return last.dump(2) + "\n";
+    return mcpp::wire::text(last, 2) + "\n";
 }
 }  // namespace
 
@@ -358,7 +359,10 @@ std::vector<Diagnostic> parse_compiler_diagnostics(std::string_view text) {
         }
         return std::nullopt;
     };
-    // MSVC: <path>(<line>[,<col>]): <severity> <code>: <message>
+    // MSVC: <path>(<line>[,<col>]): <severity>[ <code>]: <message>. The
+    // location, the severity and the code are the same in every language of
+    // cl.exe and the message is the installed language's (measured in English
+    // and Chinese, design 2026-11-19 §20 T4); a `note` carries no code.
     const auto msvc = [&](std::string_view line) -> std::optional<Diagnostic> {
         auto paren = line.find("): ");
         if (paren == std::string_view::npos) return std::nullopt;
@@ -367,12 +371,17 @@ std::vector<Diagnostic> parse_compiler_diagnostics(std::string_view text) {
         auto rest = line.substr(paren + 3);
         std::size_t len = 0;
         auto severity = severity_at(rest, len);
-        if (severity.empty() || rest.substr(len).substr(0, 1) != " ") return std::nullopt;
-        auto codeEnd = rest.find(": ", len);
-        if (codeEnd == std::string_view::npos) return std::nullopt;
+        if (severity.empty()) return std::nullopt;
+        std::size_t messageAt = len + 2;
+        if (rest.substr(len).substr(0, 2) != ": ") {
+            if (rest.substr(len).substr(0, 1) != " ") return std::nullopt;
+            auto codeEnd = rest.find(": ", len);
+            if (codeEnd == std::string_view::npos) return std::nullopt;
+            messageAt = codeEnd + 2;
+        }
         Diagnostic d;
         d.severity = std::move(severity);
-        d.message = std::string(rest.substr(codeEnd + 2));
+        d.message = std::string(rest.substr(messageAt));
         d.path = std::string(line.substr(0, open));
         auto nums = line.substr(open + 1, paren - open - 1);
         auto comma = nums.find(',');
@@ -444,7 +453,7 @@ void write_last_of_legs(const std::filesystem::path& projectRoot,
                   {"finishedAt", finishedAt == 0 ? nlohmann::json(nullptr) : nlohmann::json(finishedAt)},
                   {"legs", std::move(legs)}}},
     };
-    write_atomically(projectRoot / "target" / ".last-result.json", last.dump(2) + "\n");
+    write_atomically(projectRoot / "target" / ".last-result.json", mcpp::wire::text(last, 2) + "\n");
 }
 
 void emit(std::string_view event, nlohmann::json fields) {
@@ -452,7 +461,7 @@ void emit(std::string_view event, nlohmann::json fields) {
     nlohmann::json line{{"schemaVersion", 1}, {"kind", "mcpp.event"}, {"event", std::string(event)}};
     for (auto it = fields.begin(); it != fields.end(); ++it) line[it.key()] = it.value();
     std::lock_guard lock(g_emit);
-    mcpp::ui::terminal::write_protocol_stdout(line.dump() + "\n");
+    mcpp::ui::terminal::write_protocol_stdout(mcpp::wire::text(line) + "\n");
 }
 
 }  // namespace mcpp::build::result

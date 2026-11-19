@@ -129,6 +129,128 @@ static std::optional<std::string> target_drift(const PrepareState& state,
                        c.why.empty() ? std::string{} : "; " + c.why);
 }
 
+// The name of a package as the lock and the platform's reach compare it.
+static std::string qualified_of(const mcpp::manifest::Manifest& m) {
+    auto n = mcpp::pm::compat::resolve_package_name(m.package.name, m.package.namespace_);
+    return mcpp::pm::compat::qualified_name(
+        n.namespace_.empty() ? std::string(mcpp::pm::kDefaultNamespace) : n.namespace_, n.shortName);
+}
+
+// WHAT THE PROJECT'S OWN GRAPH REACHES (SPEC-013 §15.1): from the root and the
+// selected members along the edges, never entering a package the platform
+// added. A package the platform added, and one only those reach (its layers'
+// implementations, its tools' and its plugin's libraries), is the platform's.
+static std::set<std::string> project_reaches(const PrepareState& state) {
+    std::set<std::string> projectReaches;
+    const auto n = state.packages.size();
+    std::vector<bool> own(n, false);
+    std::vector<std::size_t> stack;
+    for (std::size_t i = 0; i < n; ++i)
+        if (i == 0 || state.packages[i].selectedMember) { own[i] = true; stack.push_back(i); }
+    while (!stack.empty()) {
+        const auto p = stack.back();
+        stack.pop_back();
+        for (auto const& e : state.dependencyEdges) {
+            const auto d = e.dependencyPackageIndex;
+            if (e.consumerPackageIndex != p || d >= n || own[d]) continue;
+            if (state.platformInjected.contains(qualified_of(state.packages[d].manifest))) continue;
+            own[d] = true;
+            stack.push_back(d);
+        }
+    }
+    for (std::size_t i = 0; i < n; ++i)
+        if (own[i]) projectReaches.insert(qualified_of(state.packages[i].manifest));
+    return projectReaches;
+}
+
+// The lock's version entries: the whole resolved graph, one entry per package
+// and version.
+static void lock_version_entries(PrepareState& state, mcpp::lockfile::Lockfile& lock,
+                                 const std::set<std::string>& projectReaches,
+                                 const std::function<std::string(const ResolvedKey&)>& lock_name_for) {
+    // Version deps: the whole resolved graph, at the versions actually
+    // chosen. `resolved` is an ordered map, so the file is deterministic.
+    //
+    // ONE ENTRY PER PACKAGE AND VERSION (design 2026-11-19 §21 A3). The
+    // target's records sort before the build programs' (an empty scope
+    // first), so a package's first version is the target's, or the first
+    // program's; a version only other programs hold is an entry of its
+    // own, `<name>+b<digest of those programs>`, listing them.
+    struct Held { std::string first; std::map<std::string, std::vector<std::string>> programs; };
+    std::map<std::tuple<std::string, std::string, std::string>, Held> heldBy;
+    for (auto const& [key, rec] : state.resolved) {
+        if (rec.source != "version" || rec.version.empty() || rec.devOnly) continue;
+        auto& h = heldBy[{key.ns, key.shortName, key.variant}];
+        if (h.first.empty()) h.first = rec.version;
+        if (rec.version != h.first) h.programs[rec.version].push_back(key.scope);
+    }
+    std::set<std::string> versionLocked;
+    for (auto const& [key, rec] : state.resolved) {
+        if (rec.source != "version") continue;   // path / git handled elsewhere
+        if (rec.version.empty()) continue;
+        // See ResolvedRecord::devOnly: `mcpp test` resolves dev-deps and
+        // `mcpp build` does not, so writing them would make the file depend
+        // on which command ran last.
+        if (rec.devOnly) continue;
+        mcpp::lockfile::LockedPackage lp;
+        lp.name       = lock_name_for(key);
+        lp.namespace_ = key.ns;
+        lp.version    = rec.version;
+        lp.overridden = rec.overridden;
+        // A variant is its own entry, and says which patches made it
+        // (design 2026-11-02 §14.1): each by its path, relative to the
+        // project where it is inside it, and its SHA-256.
+        if (!key.variant.empty()) {
+            lp.name += "+p" + key.variant.substr(0, 12);
+            lp.variant = key.variant;
+            for (auto const& p : rec.patches) {
+                std::filesystem::path path(p);
+                auto rel = path.lexically_relative(*state.root);
+                const auto shown = (!rel.empty() && !rel.generic_string().starts_with(".."))
+                    ? rel.generic_string() : path.generic_string();
+                lp.patches.push_back(std::format("{}#sha256:{}", shown,
+                    mcpp::pm::patch::file_sha256(path).value_or("unreadable")));
+            }
+        }
+        // Use the namespace and resolved version as the source identifier.
+        // For custom indices, include the index name for traceability.
+        auto sourceIndex = lp.namespace_.empty()
+            ? std::string(mcpp::pm::kDefaultNamespace)
+            : lp.namespace_;
+        lp.source     = std::format("index+{}@{}", sourceIndex, lp.version);
+        // Use a deterministic hash based on namespace + name + version.
+        // A future PR can replace this with a real content hash from the
+        // xpkg.lua's declared sha256 or from the install plan.
+        //
+        // NOT `std::hash<std::string>`: its output is implementation-defined
+        // (MSVC FNV-1a, libstdc++/libc++ MurmurHash), so the same dependency
+        // used to hash differently on Windows and Linux while the `fnv1a:`
+        // prefix claimed otherwise. `index_package_digest` is FNV-1a on
+        // every host.
+        lp.hash = mcpp::pm::index_package_digest(sourceIndex, lp.name, lp.version);
+        // After the digest, which names the package's bytes and not the
+        // programs that hold them.
+        if (auto const& h = heldBy[{key.ns, key.shortName, key.variant}]; rec.version != h.first) {
+            auto programs = h.programs.at(rec.version);
+            std::ranges::sort(programs);
+            std::string joined;
+            for (auto const& p : programs) joined += p + "\n";
+            lp.name += "+b" + mcpp::toolchain::hash_string(joined).substr(0, 12);
+            lp.programs = std::move(programs);
+        }
+        // The platform's packages say so (SPEC-013 §15.1).
+        const auto qualified = mcpp::pm::compat::qualified_name(
+            key.ns.empty() ? std::string(mcpp::pm::kDefaultNamespace) : key.ns, key.shortName);
+        if (state.platform.active
+            && (state.platformInjected.contains(qualified) || !projectReaches.contains(qualified)))
+            lp.origin = "platform";
+        // One entry per identity: a dependency declared by the root and by
+        // a member under different spellings is one package.
+        if (!versionLocked.insert(lock_identity(lp)).second) continue;
+        lock.packages.push_back(std::move(lp));
+    }
+}
+
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx) {
     // Write/update mcpp.lock for any version-based deps that succeeded.
     // Path deps are intentionally NOT locked — their source is local filesystem.
@@ -259,95 +381,7 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
             lock.packages.push_back(std::move(lp));
         }
 
-        // WHAT THE PROJECT'S OWN GRAPH REACHES (SPEC-013 §15.1): from the
-        // root and the selected members along the edges, never entering a
-        // package the platform added. A package the platform added, and one
-        // only those reach (its layers' implementations, its tools' and its
-        // plugin's libraries), is the platform's.
-        auto qualified_of = [](const mcpp::manifest::Manifest& m) {
-            auto n = mcpp::pm::compat::resolve_package_name(m.package.name, m.package.namespace_);
-            return mcpp::pm::compat::qualified_name(
-                n.namespace_.empty() ? std::string(mcpp::pm::kDefaultNamespace) : n.namespace_, n.shortName);
-        };
-        std::set<std::string> projectReaches;
-        {
-            const auto n = state.packages.size();
-            std::vector<bool> own(n, false);
-            std::vector<std::size_t> stack;
-            for (std::size_t i = 0; i < n; ++i)
-                if (i == 0 || state.packages[i].selectedMember) { own[i] = true; stack.push_back(i); }
-            while (!stack.empty()) {
-                const auto p = stack.back();
-                stack.pop_back();
-                for (auto const& e : state.dependencyEdges) {
-                    const auto d = e.dependencyPackageIndex;
-                    if (e.consumerPackageIndex != p || d >= n || own[d]) continue;
-                    if (state.platformInjected.contains(qualified_of(state.packages[d].manifest))) continue;
-                    own[d] = true;
-                    stack.push_back(d);
-                }
-            }
-            for (std::size_t i = 0; i < n; ++i)
-                if (own[i]) projectReaches.insert(qualified_of(state.packages[i].manifest));
-        }
-
-        // Version deps: the whole resolved graph, at the versions actually
-        // chosen. `resolved` is an ordered map, so the file is deterministic.
-        std::set<std::string> versionLocked;
-        for (auto const& [key, rec] : state.resolved) {
-            if (rec.source != "version") continue;   // path / git handled elsewhere
-            if (rec.version.empty()) continue;
-            // See ResolvedRecord::devOnly: `mcpp test` resolves dev-deps and
-            // `mcpp build` does not, so writing them would make the file depend
-            // on which command ran last.
-            if (rec.devOnly) continue;
-            mcpp::lockfile::LockedPackage lp;
-            lp.name       = lock_name_for(key);
-            lp.namespace_ = key.ns;
-            lp.version    = rec.version;
-            lp.overridden = rec.overridden;
-            // A variant is its own entry, and says which patches made it
-            // (design 2026-11-02 §14.1): each by its path, relative to the
-            // project where it is inside it, and its SHA-256.
-            if (!key.variant.empty()) {
-                lp.name += "+p" + key.variant.substr(0, 12);
-                lp.variant = key.variant;
-                for (auto const& p : rec.patches) {
-                    std::filesystem::path path(p);
-                    auto rel = path.lexically_relative(*state.root);
-                    const auto shown = (!rel.empty() && !rel.generic_string().starts_with(".."))
-                        ? rel.generic_string() : path.generic_string();
-                    lp.patches.push_back(std::format("{}#sha256:{}", shown,
-                        mcpp::pm::patch::file_sha256(path).value_or("unreadable")));
-                }
-            }
-            // Use the namespace and resolved version as the source identifier.
-            // For custom indices, include the index name for traceability.
-            auto sourceIndex = lp.namespace_.empty()
-                ? std::string(mcpp::pm::kDefaultNamespace)
-                : lp.namespace_;
-            lp.source     = std::format("index+{}@{}", sourceIndex, lp.version);
-            // Use a deterministic hash based on namespace + name + version.
-            // A future PR can replace this with a real content hash from the
-            // xpkg.lua's declared sha256 or from the install plan.
-            //
-            // NOT `std::hash<std::string>`: its output is implementation-defined
-            // (MSVC FNV-1a, libstdc++/libc++ MurmurHash), so the same dependency
-            // used to hash differently on Windows and Linux while the `fnv1a:`
-            // prefix claimed otherwise. `index_package_digest` is FNV-1a on
-            // every host.
-            lp.hash = mcpp::pm::index_package_digest(sourceIndex, lp.name, lp.version);
-            // The platform's packages say so (SPEC-013 §15.1).
-            const auto qualified = mcpp::pm::compat::qualified_name(
-                key.ns.empty() ? std::string(mcpp::pm::kDefaultNamespace) : key.ns, key.shortName);
-            if (state.platform.active
-                && (state.platformInjected.contains(qualified) || !projectReaches.contains(qualified)))
-                lp.origin = "platform";
-            // One entry per identity: a dependency declared by the root and by
-            // a member under different spellings is one package.
-            if (!versionLocked.insert(lock_identity(lp)).second) continue;
-            lock.packages.push_back(std::move(lp));
-        }
+        lock_version_entries(state, lock, project_reaches(state), lock_name_for);
         // A workspace's lock is at its root and records every member's
         // resolution (§15). A plan of some of its members updates the entries
         // it resolved and keeps the others; a plan of all of them writes the
@@ -522,9 +556,11 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         // Same data, second consumer: the "Compiling <dep> v<version>" banner.
         // It reads this rather than re-deriving from the manifest, so the banner
         // and the lock cannot disagree about what was built.
+        // The target's version where a build program holds another (§21 A1):
+        // the target's records come first, and a later one does not replace it.
         for (auto const& [key, rec] : state.resolved) {
             if (rec.source != "version" || rec.version.empty()) continue;
-            ctx.resolvedVersions[lock_name_for(key)] = rec.version;
+            ctx.resolvedVersions.try_emplace(lock_name_for(key), rec.version);
         }
     }
     return {};
@@ -687,7 +723,8 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
         {
             nlohmann::json graphPackages = nlohmann::json::array();
             for (std::size_t i = 0; i < state.packages.size(); ++i)
-                graphPackages.push_back(state.graph_package_entry(i, /*forBuildProgram=*/false, nullptr));
+                if (!state.withdrawnSlots.contains(i))
+                    graphPackages.push_back(state.graph_package_entry(i, /*forBuildProgram=*/false, nullptr));
             j["graph"] = { {"packages", std::move(graphPackages)} };
         }
 

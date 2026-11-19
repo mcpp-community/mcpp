@@ -551,29 +551,47 @@ int main() { std::puts("1-2-3"); return fw_anchor() == 41 && named_anchor() == 1
         expect(fatal(e2e::succeeded(run))) << "the staged program does not run\n" << s::text(run);
         expect(fatal(s::has_line(s::text(run), "^1-2-3$"))) << "the staged program did not print 1-2-3\n" << s::text(run);
 
-        s::project ext{tmp / "ext", {{"ext.cpp", "int ext_value() { return 1; }\n"}}};
+        s::project ext{tmp / "ext", {{"ext.c", "int ext_value(void) { return 1; }\n"}}};
         fs::create_directories(ext.at("lib"));
-        auto gxx = e2e::run({.argv = {"g++", "-shared", "-fPIC", "-Wl,-soname,libext.so", "-o", ext.at("lib/libext.so").string(), ext.at("ext.cpp").string()}});
-        expect(fatal(e2e::succeeded(gxx))) << "g++ failed\n" << s::text(gxx);
+        const auto cc = s::host_cc();
+        expect(fatal(cc.has_value())) << "no host C compiler links a shared object";
+        auto built = e2e::run({.argv = {cc->string(), "-shared", "-fPIC", "-Wl,-soname,libext.so", "-o", ext.at("lib/libext.so").string(), ext.at("ext.c").string()}});
+        expect(fatal(e2e::succeeded(built))) << "the host C compiler failed\n" << s::text(built);
         const auto TMP = tmp.generic_string();
-        s::project extapp{tmp / "extapp", {{"mcpp.toml", std::format(R"cpp([package]
+        auto extapp_manifest = [&](std::string_view runpath) {
+            return std::format(R"cpp([package]
 name    = "extapp"
 version = "0.1.0"
 [toolchain]
 linux = "gcc@16.1.0"
 [build]
-ldflags = ["-L{0}/ext/lib", "-lext", "-Wl,-rpath,{0}/ext/lib"]
-)cpp", TMP)}, {"src/main.cpp", "int ext_value();\nint main() { return ext_value() == 1 ? 0 : 1; }\n"}}};
+ldflags = ["-L{0}/ext/lib", "-lext"{1}]
+)cpp", TMP, runpath);
+        };
+        s::project extapp{tmp / "extapp", {{"mcpp.toml", extapp_manifest(std::format(", \"-Wl,-rpath,{}/ext/lib\"", TMP))},
+                                           {"src/main.cpp", "extern \"C\" int ext_value();\nint main() { return ext_value() == 1 ? 0 : 1; }\n"}}};
         r = extapp.mcpp({"pack", "--pkg-format", "dir"});
         expect(fatal(e2e::succeeded(r))) << "the pack with a prebuilt library failed\n" << s::text(r);
         const auto etree = dist_dir(extapp, "extapp-0.1.0-");
         expect(fatal(etree.has_value())) << "no staged tree\n" << s::text(r);
         const fs::path emanifest = etree->string() + ".stage-manifest";
         expect(fatal(has_exact_line(emanifest, "needs\tlibext.so\tlib/libext.so"))) << "libext.so is not stated as bundled\n" << s::read_file(emanifest);
-        fs::remove(ext.at("lib/libext.so"));
+        // A library the link read and that is gone is an input of the link that is gone (SPEC-004
+        // §8.1, mcpp#931): the pack's build links again, and the link names it.
+        fs::rename(ext.at("lib/libext.so"), ext.at("lib/libext.so.away"));
         r = extapp.mcpp({"pack", "--pkg-format", "dir"});
         expect(fatal(failed(r))) << "--format dir succeeded with libext.so gone\n" << s::text(r);
-        expect(e2e::contains(s::text(r), "libext.so: the loader finds no file for it")) << "the refusal does not name libext.so\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "-lext")) << "the link does not name the library that is gone\n" << s::text(r);
+        fs::rename(ext.at("lib/libext.so.away"), ext.at("lib/libext.so"));
+        // A library the link finds and no run path names: needed, and found by no loader. The
+        // pack refuses it; where the program's interpreter is a private loader (a toolchain
+        // payload's), the build refuses it first, by its runtime closure. Each names it.
+        extapp.write("mcpp.toml", extapp_manifest(""));
+        r = extapp.mcpp({"pack", "--pkg-format", "dir"});
+        expect(fatal(failed(r))) << "--format dir succeeded with libext.so out of the loader's reach\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "libext.so: the loader finds no file for it")
+               || e2e::contains(s::text(r), "libext.so not found on the search path this artifact will actually use"))
+            << "the refusal does not name libext.so\n" << s::text(r);
     };
     "1043 several programs and a dotted name are packed as stated"_test[s::elf][s::unix_shell] = [] {
         // Several programs, none named after the package: the first by name is packed and the

@@ -16,6 +16,7 @@ import std;
 import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.manifest;
+import mcpp.pm.descriptor;
 import mcpp.toolchain.platform;
 import mcpp.ui;
 import mcpp.wire;
@@ -188,12 +189,11 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 1;
     }
 
-    // Form A descriptors carry no `mcpp = {}` table — build info comes
-    // from the fetched source's own mcpp.toml. Nothing further to parse.
+    // The pointer form (Form A; SPEC-001 §3.5) carries no table: build info
+    // comes from the manifest in the payload. Nothing further to parse.
     // The xpm version tables are independent of that segment and are the
     // resolver's source of truth, so both spellings publish them here.
-    auto field = mcpp::manifest::extract_mcpp_field(lua);
-    if (field.kind != mcpp::manifest::McppField::TableBody) {
+    if (!mcpp::pm::descriptor_is_inline(lua)) {
         if (asJson) {
             emit_xpkg(std::format(
                 "{{\"namespace\":\"{}\",\"name\":\"{}\",\"versions\":{},"

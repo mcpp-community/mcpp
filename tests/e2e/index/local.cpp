@@ -192,6 +192,55 @@ exit 0
         expect(fatal(s::has_line(s::text(r), R"(Cached compat\.widget v1\.0\.0 \((index [^,)]+, )?[0-9]+ units?\))"))) << "the cached namespaced dependency should be reported as compat.widget: " << s::text(r);
     };
 
+    "960 what publish writes is what a consumer reads"_test[s::gcc][s::fresh_sandbox] = [] {
+        // mcpp#960, SPEC-001 §3.5. `mcpp publish` writes the pointer form of the descriptor's
+        // `mcpp` field; `mcpp xpkg parse` reads the file it wrote; a project that names the
+        // package through a local index builds against the published archive and runs. The
+        // table the command wrote before, which names a manifest, is refused with the line to
+        // write in its place.
+        const auto tmp = s::case_dir();
+        (void)s::case_home(s::home::inherited);
+        const auto git = s::on_path("git");
+        if (!git) skip("git is not installed");
+        s::project lib(tmp / "lib", {
+            {"mcpp.toml", "[package]\nnamespace = \"probe\"\nname = \"sdk\"\nversion = \"0.1.0\"\ndescription = \"probe\"\nlicense = \"MIT\"\nrepo = \"https://github.com/example/probe\"\n\n[targets.sdk]\nkind = \"lib\"\n"},
+            {"src/sdk.cppm", "export module probe.sdk;\nexport int sdk_value() { return 42; }\n"}});
+        for (std::vector<std::string> args : {std::vector<std::string>{"init", "-q", "-b", "main", "."}, {"add", "-A"},
+                                              {"-c", "user.email=e2e@example.invalid", "-c", "user.name=e2e", "commit", "-qm", "init"}}) {
+            auto g = s::run(*git, args, lib.dir());
+            expect(fatal(e2e::succeeded(g))) << "git failed: " << s::text(g);
+        }
+        auto r = lib.mcpp({"publish", "--dry-run"}, inherited());
+        expect(fatal(e2e::succeeded(r))) << "publish failed: " << s::text(r);
+        const auto lua = lib.at("target/dist/probe.sdk.lua");
+        const auto archive = lib.at("target/dist/probe.sdk-0.1.0.tar.gz");
+        expect(fatal(fs::is_regular_file(lua) && fs::is_regular_file(archive))) << "publish wrote no descriptor or no archive: " << s::text(r);
+        const auto written = s::read_file(lua);
+        expect(fatal(e2e::contains(written, "mcpp = \"*/mcpp.toml\""))) << "the descriptor is not in the pointer form:\n" << written;
+        expect(fatal(!e2e::contains(written, "manifest ="))) << "the descriptor names a manifest in a table:\n" << written;
+        r = lib.mcpp({"xpkg", "parse", lua.string()}, inherited());
+        expect(fatal(e2e::succeeded(r))) << "the descriptor publish wrote does not parse: " << s::text(r);
+
+        s::project index(tmp / "local-index", {{"pkgs/p/probe.sdk.lua", written}});
+        s::project app(tmp / "project/app", {
+            {"src/main.cpp", "import std;\nimport probe.sdk;\nint main() { std::println(\"v={}\", sdk_value()); }\n"},
+            {"mcpp.toml", std::format("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[indices]\nprobe = {{ path = \"{}\" }}\n\n[dependencies.probe]\nsdk = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", index.dir().generic_string())}});
+        fs::create_directories(app.at(".mcpp/.xlings/data/xpkgs/probe.sdk/0.1.0"));
+        s::tar_extract(archive, app.at(".mcpp/.xlings/data/xpkgs/probe.sdk/0.1.0"));
+        r = app.mcpp({"run"}, inherited());
+        expect(fatal(e2e::succeeded(r))) << "a consumer of the published descriptor does not build: " << s::text(r);
+        expect(fatal(e2e::contains(r.out, "v=42"))) << s::text(r);
+
+        // What the command wrote before: a summary and `manifest = "mcpp.toml"`.
+        auto before = written;
+        const std::string_view pointer = "mcpp = \"*/mcpp.toml\",";
+        before.replace(before.find(pointer), pointer.size(), "mcpp = { schema = \"0.1\", language = \"c++23\", import_std = true, manifest = \"mcpp.toml\" },");
+        s::project older(tmp / "older", {{"probe.sdk.lua", before}});
+        r = older.mcpp({"xpkg", "parse", "probe.sdk.lua"}, inherited());
+        expect(fatal(r.started && r.status != 0)) << "a table that names a manifest was accepted: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "mcpp = \"*/mcpp.toml\""))) << "the refusal does not state the line to write: " << s::text(r);
+    };
+
     "60 stale xpkg cache reinstall"_test[s::gcc][s::fresh_sandbox] = [] {
         // A payload directory without its marker is installed again (through the interface,
         // never direct), mcpp writes no marker into the payload, and the program runs on the

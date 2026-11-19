@@ -141,6 +141,50 @@ UTest bitcode_export_tools_come_from_the_selected_llvm_and_are_quoted_as_words{"
     expect(eq(emit_ninja_string(plan).find("coff_args ="), std::string::npos));
 }};
 
+// mcpp#970 (design 2026-11-19 §20): cl.exe's compile writes its
+// /sourceDependencies record, which the executor gives ninja as lines with
+// mcpp's prefix (`deps = msvc`); no compile reads the /showIncludes text. The
+// executor, link-output and the archive edge read the text of the cl.exe
+// toolchain's programs in the console's code page. A GNU toolchain's commands
+// carry neither word.
+UTest msvc_compiles_read_the_record_and_its_tools_text_is_decoded{"NinjaBackend/MsvcCompilesReadTheRecordAndItsToolsTextIsDecoded", [] {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath = "cl.exe";
+    plan.toolchain.targetTriple = "x86_64-pc-windows-msvc";
+    plan.scheduleCompilerCap = 2;
+    plan.compileUnits.push_back({.source = "src/main.cpp", .kind = mcpp::SourceKind::Cxx,
+                                 .object = "obj/main.obj", .packageName = "app"});
+    LinkUnit lib;
+    lib.kind = LinkUnit::StaticLibrary;
+    lib.targetName = "core";
+    lib.output = "lib/core.lib";
+    lib.objects = {"obj/main.obj"};
+    plan.linkUnits.push_back(lib);
+    const auto text = emit_ninja_string(plan);
+    auto rule = [&](std::string_view name) {
+        const auto start = text.find("rule " + std::string(name) + "\n");
+        expect(fatal(ne(start, std::string::npos))) << name;
+        return text.substr(start, text.find("\n\n", start) - start);
+    };
+    const auto object = rule("cxx_object");
+    expect(ne(object.find("/sourceDependencies $out.json"), std::string::npos)) << object;
+    expect(ne(object.find("--source-dependencies $out.json --text console -- "), std::string::npos)) << object;
+    expect(ne(object.find("deps = msvc\n  msvc_deps_prefix = mcpp.inputs:\n"), std::string::npos)) << object;
+    expect(eq(object.find("depfile = $out.d"), std::string::npos)) << object;
+    expect(eq(text.find("/showIncludes"), std::string::npos));
+    const auto archive = rule("cxx_archive");
+    expect(ne(archive.find("$mcpp link-output --output $out --text console -- $ar"), std::string::npos)) << archive;
+    expect(ne(rule("cxx_link").find(" --text console -- $ld"), std::string::npos)) << rule("cxx_link");
+
+    auto gnu = minimal_plan();
+    gnu.scheduleCompilerCap = 2;
+    gnu.compileUnits.push_back({.source = "src/main.cpp", .kind = mcpp::SourceKind::Cxx, .object = "obj/main.o"});
+    const auto gnuText = emit_ninja_string(gnu);
+    expect(eq(gnuText.find("--source-dependencies"), std::string::npos));
+    expect(eq(gnuText.find("--text"), std::string::npos));
+}};
+
 UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/OrdinaryCompilersShareTheDetachedScheduleBound", [] {
     auto plan = minimal_plan();
     plan.toolchain.version = "16.1.0";
@@ -159,14 +203,21 @@ UTest ordinary_compilers_share_the_detached_schedule_bound{"NinjaBackend/Ordinar
         return start == std::string::npos ? std::string{} : text.substr(start, text.find("\n\n", start) - start);
     };
     const std::string executor = "__compiler-cap --sem .mcpp-sched --output $out --depfile $out.d";
-    for (const auto name : {"asm_object", "asm_object_raw", "nasm_object", "cxx_scan"})
-        expect(ne(rule(name).find(executor + " -- "), std::string::npos)) << name;
+    // GCC 16 writes its outputs below an attempt of the compile's own, which the
+    // executor publishes (design 2026-11-19 §10.6): the driver's compiles, its
+    // assembler and its scans, a scan with no auxiliary outputs to name. NASM,
+    // not measured, writes in place.
+    for (const auto name : {"asm_object", "asm_object_raw"})
+        expect(ne(rule(name).find(executor + " --relocate dumpbase -- "), std::string::npos)) << name;
+    expect(ne(rule("cxx_scan").find(executor + " --relocate none -- "), std::string::npos));
+    expect(ne(rule("nasm_object").find(executor + " -- "), std::string::npos));
     // A C or C++ compile names its output as an object the executor keeps when
     // the bytes are the ones it had; the module rule names its BMI as well
     // (SPEC-018 §1). No rule keeps a file by a shell fragment of its command.
     for (const auto name : {"cxx_object", "c_object"})
-        expect(ne(rule(name).find(executor + " --object -- "), std::string::npos)) << name;
-    expect(ne(rule("cxx_module").find(executor + " --object --bmi \"$bmi_out\" -- "), std::string::npos));
+        expect(ne(rule(name).find(executor + " --object --relocate dumpbase -- "), std::string::npos)) << name;
+    expect(ne(rule("cxx_module").find(executor + " --object --bmi \"$bmi_out\" --relocate dumpbase -- "),
+              std::string::npos));
     expect(eq(text.find(".bak"), std::string::npos));
     expect(eq(text.find("bmi-equal"), std::string::npos));
     // The generation carries the cap: the graph names no number of compilers,
@@ -1497,6 +1548,58 @@ UTest object_only_package_builds_own_objects_alongside_cache_fills{"NinjaBackend
     expect(eq(count_occurrences(defaults, " obj/dep.o"), 1u)) << defaults;
 }};
 
+// A cache fill is its package's every artifact. Under the two-phase shape a
+// module's BMI is an edge its object does not wait for, so the fill asks for
+// the BMI by name: a module no unit of the build imported was never compiled to
+// a BMI, and the fill was refused for it (mcpp's own clang build, `openkal.time`).
+UTest a_cache_fill_asks_for_every_bmi_of_its_package{"NinjaBackend/ACacheFillAsksForEveryBmiOfItsPackage", [] {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.version = "23.1.3";
+    plan.toolchain.binaryPath = "/usr/bin/clang++";
+    plan.scanDepsPath = "/usr/bin/clang-scan-deps";
+    plan.scheduleTag = "two-phase";
+    plan.compileUnits.push_back({
+        .source = "/store/dep/src/time.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/dep/0011aabb/src/time.m.o",
+        .packageName = "dep",
+        .providesModule = "dep.time",
+        .bmiFile = "dep/0011aabb/dep.time.pcm",
+        .fillsCache = true,
+    });
+    plan.compileUnits.push_back({
+        .source = "src/main.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.linkUnits.push_back({
+        .targetName = "app",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/main.o"},
+        .output = "bin/app",
+        .entryMain = "src/main.cpp",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    expect(fatal(ne(ninja.find("build pcm.cache/dep/0011aabb/dep.time.pcm : cxx_precompile"), std::string::npos)))
+        << "the fixture is not the two-phase shape\n" << ninja;
+    auto at = ninja.rfind("\ndefault ");
+    expect(fatal(ne(at, std::string::npos))) << ninja;
+    auto defaults = ninja.substr(at, ninja.find('\n', at + 1) - at);
+    expect(ne(defaults.find(" obj/dep/0011aabb/src/time.m.o"), std::string::npos)) << defaults;
+    expect(ne(defaults.find(" pcm.cache/dep/0011aabb/dep.time.pcm"), std::string::npos)) << defaults;
+    // A command that names its goals builds no `default`; the fills have a name
+    // of their own that its goal set takes (`mcpp test`, the build programs' graph).
+    auto fills = ninja.find("\nbuild mcpp-cache-fills : phony");
+    expect(fatal(ne(fills, std::string::npos))) << ninja;
+    auto line = ninja.substr(fills + 1, ninja.find('\n', fills + 1) - fills - 1);
+    expect(ne(line.find(" obj/dep/0011aabb/src/time.m.o"), std::string::npos)) << line;
+    expect(ne(line.find(" pcm.cache/dep/0011aabb/dep.time.pcm"), std::string::npos)) << line;
+    expect(eq(line.find(" obj/main.o"), std::string::npos)) << "a unit that fills nothing is in the fills: " << line;
+}};
+
 // A cached unit whose cachedObject was never filled in is a bug upstream, not a
 // reason to emit a stage edge with an empty input — it must fall back to being
 // compiled rather than producing an unbuildable graph.
@@ -2197,7 +2300,24 @@ UTest names_the_consumer_directory_for_each_driver_spelling{"ConsumerIncludeScop
     const std::string cl =
         "dep.cpp(1): fatal error C1083: Cannot open include file: 'cfg7.h': "
         "No such file or directory\n";
-    for (auto const& out : {gcc, clang, cl}) {
+    // The same report from cl.exe with the Chinese resources (mcpp#970, probe
+    // mcpp#971): the words and the quote marks are the language's.
+    const std::string clChinese =
+        "dep.cpp(1): fatal error C1083: \xE6\x97\xA0\xE6\xB3\x95\xE6\x89\x93\xE5\xBC\x80"
+        "\xE5\x8C\x85\xE6\x8B\xAC\xE6\x96\x87\xE4\xBB\xB6: \xE2\x80\x9C" "cfg/nested.h\xE2\x80\x9D: "
+        "No such file or directory\n";
+    // The shapes the words may take in other languages: a space before the
+    // colon, none after it, and the name after a sentence with one colon.
+    const std::string clSpaced =
+        "dep.cpp(1): fatal error C1083: impossible d'ouvrir le fichier include : 'cfg7.h' : "
+        "No such file or directory\n";
+    const std::string clTight =
+        "dep.cpp(1): fatal error C1083: include \xE3\x83\x95\xE3\x82\xA1\xE3\x82\xA4\xE3\x83\xAB\xE3\x80\x82"
+        "'cfg7.h':No such file or directory\n";
+    const std::string clSentence =
+        "dep.cpp(1): fatal error C1083: \xED\x8F\xAC\xED\x95\xA8 \xED\x8C\x8C\xEC\x9D\xBC. 'cfg/nested.h': "
+        "No such file or directory\n";
+    for (auto const& out : {gcc, clang, cl, clChinese, clSpaced, clTight, clSentence}) {
         auto advice = mcpp::build::consumer_include_scope_advice(out, dirs);
         expect(fatal(!advice.empty())) << out;
         expect(ne(advice.find((root / "appinc").string()), std::string::npos)) << advice;
@@ -2215,6 +2335,10 @@ UTest silent_when_the_header_is_not_the_consumers_or_no_header_is_missing{"Consu
     // A failure that is not a missing header, although cfg7.h is the consumer's.
     expect(mcpp::build::consumer_include_scope_advice(
         "dep.c:3:1: error: unknown type name 'cfg7'\n", dirs).empty());
+    // A source file that cannot be opened is C1083 too, with no line of a file.
+    expect(mcpp::build::consumer_include_scope_advice(
+        "c1xx: fatal error C1083: Cannot open source file: 'cfg7.h': No such file or directory\n",
+        dirs).empty());
     // No root include directories at all (the fast path before any plan wrote
     // the sidecar).
     expect(mcpp::build::consumer_include_scope_advice(

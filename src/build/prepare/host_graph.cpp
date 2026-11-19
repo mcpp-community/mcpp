@@ -43,8 +43,10 @@ import mcpp.build.source_digest;
 import mcpp.build.tool_store;
 import nlohmann.json;
 import mcpp.manifest;
+import mcpp.config;   // resolve_project_index_path
 import mcpp.modgraph.scanner;
 import mcpplibs.os.platform;
+import mcpp.home;
 import mcpp.home.files;
 import mcpp.pm.mangle;
 import mcpp.toolchain.fingerprint;
@@ -250,6 +252,32 @@ std::string standard_of(const PrepareState& state, std::size_t i) {
     return s.empty() ? std::string("c++23") : s;
 }
 
+}  // namespace
+
+fs::path tree_digest_rows(const fs::path& root) {
+    return mcpp::home::root() / "build-cache" / "digests"
+         / (mcpp::toolchain::hash_string(path_text(root)).substr(0, 16) + ".tsv");
+}
+
+std::string tree_content_digest(PrepareState& state, const fs::path& root) {
+    const auto key = path_text(root);
+    if (auto it = state.treeDigests.find(key); it != state.treeDigests.end()) return it->second;
+    auto digest = mcpp::build::source_tree_digest(root, tree_digest_rows(root));
+    state.treeDigests.emplace(key, digest);
+    return digest;
+}
+
+std::string source_identity_suffix(PrepareState& state, std::size_t pkgIdx) {
+    if (pkgIdx == 0 || pkgIdx - 1 >= state.dep_cache_identities.size()) return {};
+    const auto& id = state.dep_cache_identities[pkgIdx - 1];
+    if (id.sourceKind == "git" && !id.sourceRef.empty()) return "+git." + id.sourceRef;
+    if (id.sourceKind != "path") return {};
+    const fs::path root = id.sourceRef.empty() ? state.packages[pkgIdx].root : fs::path(id.sourceRef);
+    return "+path." + tree_content_digest(state, root).substr(0, 16);
+}
+
+namespace {
+
 // The identity of program `i`: what its compile and link read.
 std::string program_identity(PrepareState& state, std::size_t i, const ProgramSource& src,
                              const HostToolchain& tc) {
@@ -267,12 +295,9 @@ std::string program_identity(PrepareState& state, std::size_t i, const ProgramSo
         std::string source = ident ? ident->sourceKind + ":" + ident->sourceRef : "";
         std::string tree;
         // A tree that can change in place: anything but an index package or
-        // a pinned git checkout.
-        if (!ident || (ident->sourceKind != "version" && ident->sourceKind != "git")) {
-            const auto cache = host_root(state) / "digests"
-                             / (mcpp::toolchain::hash_string(path_text(pkg.root)) + ".tsv");
-            tree = mcpp::build::source_tree_digest(pkg.root, cache);
-        }
+        // a pinned git checkout (`source_identity_suffix` names the same).
+        if (!ident || (ident->sourceKind != "version" && ident->sourceKind != "git"))
+            tree = tree_content_digest(state, pkg.root);
         const auto& f = d < state.buildProgramFeaturesByPackage.size()
             ? state.buildProgramFeaturesByPackage[d] : std::vector<std::string>{};
         text += std::format("package {} {} {} [{}] {}\n", qualified(pkg.manifest),
@@ -495,6 +520,8 @@ struct Program {
     std::string   member;
     std::string   identity;
     std::string   group;      // the group directory's name
+    // The versions its own resolution holds (design 2026-11-19 §21 A2).
+    std::map<std::string, std::string> pins;
 };
 
 // The record of the programs a group directory holds.
@@ -519,8 +546,10 @@ void write_if_changed(const fs::path& file, const std::string& text) {
     fs::rename(tmp, file, ec);
 }
 
-// The manifests of one group: the workspace and a member per program.
-std::map<std::string, std::string> resolution_pins(const PrepareState& state);
+// The packages one resolution scope holds by version, at their versions.
+std::map<std::string, std::string> scope_pins(const PrepareState& state, std::string_view scope);
+// The scope of package `i`'s build program (ResolvedKey::scope).
+std::string program_scope_of(const PrepareState& state, std::size_t i);
 
 }  // namespace
 
@@ -563,7 +592,7 @@ namespace {
 
 void write_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& programs,
                  const std::string& standard, const fs::path& enginePackage,
-                 const std::string& toolchainSpec) {
+                 const std::string& toolchainSpec, const std::map<std::string, std::string>& pins) {
     std::string root = std::format(
         "# Written by mcpp {}: the build programs of {} (mcpp#797).\n"
         "# `mcpp build` here reproduces their compile; it is rewritten on every build.\n"
@@ -579,7 +608,13 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
         root += "\n[workspace.indices]\n";
         for (auto const& [name, idx] : state.m->indices) {
             std::vector<std::string> fields;
-            if (idx.is_local()) fields.push_back("path = " + toml_string(path_text(idx.path)));
+            // Where the project's manifest places it: a relative path is
+            // relative to that manifest, and this one is written elsewhere. As
+            // written, the build programs' graph looked for the index beside
+            // itself and found no package of it (measured with mcpp#956).
+            if (idx.is_local())
+                fields.push_back("path = " + toml_string(path_text(
+                    mcpp::config::resolve_project_index_path(*state.root, idx))));
             if (!idx.url.empty()) fields.push_back("url = " + toml_string(idx.url));
             if (!idx.rev.empty()) fields.push_back("rev = " + toml_string(idx.rev));
             if (!idx.tag.empty()) fields.push_back("tag = " + toml_string(idx.tag));
@@ -634,7 +669,7 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
         if (!state.hostPlatformSel.none)
             marker += std::format("platform={}\ntarget={}\n", host_platform_choice(state),
                                   state.hostPlatformTarget);
-        for (auto const& [k, v] : resolution_pins(state)) marker += std::format("pin={}={}\n", k, v);
+        for (auto const& [k, v] : pins) marker += std::format("pin={}={}\n", k, v);
         write_if_changed(dir / ".mcpp-build-programs", marker);
     }
 
@@ -699,11 +734,12 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
 }
 
 // The packages of this build that the build programs' graph shares, at the
-// version this build resolved.
-std::map<std::string, std::string> resolution_pins(const PrepareState& state) {
+// version one resolution scope holds: the target's for the empty scope, a
+// build program's own otherwise (design 2026-11-19 §21 A2).
+std::map<std::string, std::string> scope_pins(const PrepareState& state, std::string_view scope) {
     std::map<std::string, std::string> pins;
     for (auto const& [k, rec] : state.resolved) {
-        if (rec.depIndex >= state.dep_cache_identities.size()) continue;
+        if (k.scope != scope || rec.depIndex >= state.dep_cache_identities.size()) continue;
         auto const& ident = state.dep_cache_identities[rec.depIndex];
         if (ident.sourceKind != "version" || rec.version.empty()) continue;
         pins[k.ns.empty() ? k.shortName : k.ns + "." + k.shortName] = rec.version;
@@ -711,10 +747,48 @@ std::map<std::string, std::string> resolution_pins(const PrepareState& state) {
     return pins;
 }
 
+// The packages two build programs of this build hold at different versions:
+// the programs that disagree on one cannot share a graph, which takes each
+// package at one version. The programs of the build proper are counted among
+// themselves, so each finds the same group under `mcpp test`, whose
+// development dependencies bring programs of their own (§21 A2).
+std::set<std::string> contested_packages(const PrepareState& state, bool withDevelopment) {
+    std::map<std::string, std::set<std::string>> versions;
+    for (auto const& [k, rec] : state.resolved)
+        if (!k.scope.empty() && !rec.version.empty() && rec.source == "version"
+            && (withDevelopment || !rec.devOnly))
+            versions[k.ns.empty() ? k.shortName : k.ns + "." + k.shortName].insert(rec.version);
+    std::set<std::string> out;
+    for (auto const& [name, vs] : versions)
+        if (vs.size() > 1) out.insert(name);
+    return out;
+}
+
+// A program only development dependencies reach: every record of its scope is.
+static bool development_program(const PrepareState& state, std::string_view scope) {
+    bool any = false;
+    for (auto const& [k, rec] : state.resolved) {
+        if (k.scope != scope) continue;
+        if (!rec.devOnly) return false;
+        any = true;
+    }
+    return any;
+}
+
+std::string program_scope_of(const PrepareState& state, std::size_t i) {
+    if (i == 0) return root_program_scope(state);
+    for (auto const& [k, rec] : state.resolved)
+        if (rec.depIndex + 1 == i)
+            return program_scope(std::format("{}{}{}@{}", k.ns, k.ns.empty() ? "" : ".", k.shortName,
+                                             rec.source == "version" ? rec.version : rec.source));
+    return {};
+}
+
 // Build the group's programs `goals`: one sub-build, one ninja.
 std::expected<std::map<std::string, fs::path>, std::string>
 build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& all,
-            const std::vector<const Program*>& goals, const HostToolchain& tc) {
+            const std::vector<const Program*>& goals, const HostToolchain& tc,
+            const std::map<std::string, std::string>& pins) {
     // The graph `mcpp emit build-database` describes, beside the one it builds.
     auto describe = [&](const BuildContext& ctx) {
         if (!state.overrides.describes()) return;
@@ -743,6 +817,8 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
     sub.strict       = state.overrides.strict;
     sub.tool_depth   = state.overrides.tool_depth + 1;
     sub.tool_chain_sources = state.overrides.tool_chain_sources;
+    sub.own_roots    = state.overrides.own_roots;
+    sub.own_roots.push_back(state.workRoot);
     sub.tool_chain   = state.overrides.tool_chain.empty()
         ? std::string("root → build programs")
         : state.overrides.tool_chain + " → build programs";
@@ -750,7 +826,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         std::make_shared<const mcpp::provider::runtime::RuntimeSelection>(state.runtimeSelection);
     sub.inherited_runtime_binding =
         std::make_shared<const mcpp::runtime::RuntimeBinding>(state.runtimeBindingSnapshot);
-    sub.resolution_pins = resolution_pins(state);
+    sub.resolution_pins = pins;
     sub.build_program_graph = true;
     sub.host_programs_root = host_root(state);
     sub.project_index_root = state.projectIndexRoot();
@@ -999,21 +1075,42 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
     auto enginePackage = engine::ensure_package();
     if (!enginePackage) return std::unexpected(enginePackage.error());
 
-    // One group per standard: a BMI is used only by a compile that agrees on it.
-    std::map<std::string, std::vector<Program>> groups;
+    // One group per standard: a BMI is used only by a compile that agrees on
+    // it. Within a standard, one group per set of versions of the packages the
+    // programs disagree on (§21 A2): a graph takes each package at one
+    // version. Named by those versions, a program finds its group again
+    // whichever programs a command builds with it; with no disagreement the
+    // group is the standard's alone, as before programs resolved apart.
+    const auto contestedInBuild = contested_packages(state, /*withDevelopment=*/false);
+    const auto contestedInAll = contested_packages(state, /*withDevelopment=*/true);
+    const auto targetPins = scope_pins(state, "");
+    std::map<std::pair<std::string, std::string>, std::vector<Program>> groups;
     for (auto i : wanted) {
         Program p;
         p.index = i;
         p.source = program_source(state, i);
         p.member = member_name(state, i);
         p.identity = program_identity(state, i, p.source, *tc);
+        const auto scope = program_scope_of(state, i);
+        p.pins = scope_pins(state, scope);
+        const auto& contested = development_program(state, scope) ? contestedInAll : contestedInBuild;
         const auto standard = standard_of(state, i);
+        std::string versions;
+        for (auto const& [name, version] : p.pins)
+            if (contested.contains(name)) versions += std::format("{}={}\n", name, version);
         p.group = mcpp::toolchain::hash_string(
             std::format("{}|{}|{}", tc->identity, standard, mcpp::MCPP_VERSION)).substr(0, 12);
-        groups[standard].push_back(std::move(p));
+        if (!versions.empty()) p.group += "-" + mcpp::toolchain::hash_string(versions).substr(0, 12);
+        groups[{standard, versions}].push_back(std::move(p));
     }
 
-    for (auto& [standard, programs] : groups) {
+    for (auto& [groupKey, programs] : groups) {
+        auto const& standard = groupKey.first;
+        // The versions the group's graph takes: its programs' own, which agree
+        // where they meet, and the target's for a package none of them holds.
+        auto pins = targetPins;
+        for (auto const& p : programs)
+            for (auto const& [name, version] : p.pins) pins[name] = version;
         // A group the build programs' graph needs is its sibling, named by its
         // depth: the group that asked holds its own directory's lock while it
         // builds.
@@ -1068,8 +1165,8 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
             // Described, not built: `mcpp emit build-database` lists the graph
             // of programs that are current too.
             if (state.overrides.describes()) {
-                write_group(state, dir, programs, standard, *enginePackage, tc->spec);
-                if (auto r = build_group(state, dir, programs, {}, *tc); !r)
+                write_group(state, dir, programs, standard, *enginePackage, tc->spec, pins);
+                if (auto r = build_group(state, dir, programs, {}, *tc, pins); !r)
                     mcpp::log::verbose("host-graph", r.error());
             }
             continue;
@@ -1082,12 +1179,12 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 return std::unexpected(r.error());
         }
 
-        write_group(state, dir, programs, standard, *enginePackage, tc->spec);
+        write_group(state, dir, programs, standard, *enginePackage, tc->spec, pins);
         const auto began = std::chrono::steady_clock::now();
         for (auto const* p : stale)
             mcpp::build::progress::program_compiling(qualified(manifest_of(state, p->index)),
                                                      p->index == 0 || state.packages[p->index].selectedMember);
-        auto built = build_group(state, dir, programs, stale, *tc);
+        auto built = build_group(state, dir, programs, stale, *tc, pins);
         if (!built) return std::unexpected(built.error());
         const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - began);

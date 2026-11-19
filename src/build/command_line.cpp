@@ -143,6 +143,45 @@ std::vector<std::string> split(std::string_view text, bool responseFile) {
 std::vector<std::string> shell_words(std::string_view text) { return split(text, false); }
 std::vector<std::string> response_file_words(std::string_view text) { return split(text, true); }
 
+std::vector<std::string> windows_response_file_words(std::string_view text) {
+    std::vector<std::string> words;
+    std::string cur;
+    bool any = false, quoted = false;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const char c = text[i];
+        if (c == '\\') {
+            std::size_t n = 0;
+            while (i + n < text.size() && text[i + n] == '\\') ++n;
+            const bool beforeQuote = i + n < text.size() && text[i + n] == '"';
+            cur.append(beforeQuote ? n / 2 : n, '\\');
+            any = true;
+            i += n;
+            if (beforeQuote && n % 2 == 1) { cur.push_back('"'); ++i; }
+            continue;
+        }
+        if (c == '"') {
+            if (quoted && i + 1 < text.size() && text[i + 1] == '"') { cur.push_back('"'); i += 2; continue; }
+            quoted = !quoted;
+            any = true;
+            ++i;
+            continue;
+        }
+        if (!quoted && (c == ' ' || c == '\t' || c == '\n' || c == '\r')) {
+            if (any) words.push_back(std::move(cur));
+            cur.clear();
+            any = false;
+            ++i;
+            continue;
+        }
+        cur.push_back(c);
+        any = true;
+        ++i;
+    }
+    if (any) words.push_back(std::move(cur));
+    return words;
+}
+
 std::string display(const std::vector<std::string>& argv) {
     std::string out;
     for (auto const& a : argv) {

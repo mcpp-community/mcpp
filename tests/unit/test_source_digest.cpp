@@ -57,7 +57,26 @@ UTest build_output_and_nested_packages_are_not_part_of_it{"SourceDigest/BuildOut
     t.write(".git/HEAD", "ref");
     t.write("member/mcpp.toml", "[package]\n");
     t.write("member/src/m.cppm", "export module m;\n");
-    expect(eq(t.digest(), a));
+    t.write(".mcpp/stamp", "x");
+    t.write("compile_commands.json", "[]");
+    expect(eq(t.digest(), a)) << "build output, .git, .mcpp, the compile database and a nested package";
+}};
+
+// A CONTENT, NOT A TIME (mcpp#974): the tool store and the dependency cache key
+// a `path` package by this digest, so an edit and its reversal return to the
+// first key, and a copy of the same sources elsewhere -- another checkout, a
+// later CI run -- has it as well.
+UTest an_edit_and_its_reversal_return_to_the_first_digest{"SourceDigest/AnEditAndItsReversalReturnToTheFirstDigest", [] {
+    Tree t;
+    t.write("src/gen.cpp", "int main() { return 41; }\n");
+    const auto before = t.digest();
+    t.write("src/gen.cpp", "int main() { return 42; } // edited\n");
+    expect(ne(t.digest(), before));
+    t.write("src/gen.cpp", "int main() { return 41; }\n");
+    expect(eq(t.digest(), before));
+    Tree copy;
+    copy.write("src/gen.cpp", "int main() { return 41; }\n");
+    expect(eq(copy.digest(), before)) << "the same sources in another directory";
 }};
 
 UTest an_added_or_removed_file_changes_it{"SourceDigest/AnAddedOrRemovedFileChangesIt", [] {

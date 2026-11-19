@@ -268,6 +268,31 @@ E2E emscripten{"emscripten", [] {
         }
     };
 
+    "931 a JS library an option names is a link input"_test[s::elf] = [] {
+        // mcpp#931, design 2026-11-19 §6.2 rule A: the file after `=` in `--js-library=<file>` is
+        // read by emcc, not by the linker, and is an input of the link; a changed library relinks
+        // the program, which then answers with the new text.
+        if (!have_emsdk() || !s::on_path("node")) skip("931 -- no emsdk payload or node on this machine");
+        const auto work = s::case_dir();
+        auto library = [&](int value) {
+            s::project{work / "js", {{"val.js", std::format(
+                "mergeInto(LibraryManager.library, {{ js_val: function() {{ return {}; }} }});\n", value)}}};
+        };
+        library(41);
+        s::project app(work / "app", {{"mcpp.toml", std::format(
+            "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
+            "[target.wasm32-emscripten]\nrunner = [\"node\"]\n\n"
+            "[target.wasm32-emscripten.build]\nldflags = [\"--js-library={}\"]\n",
+            (work / "js/val.js").generic_string())},
+            {"src/main.cpp", "import std;\nextern \"C\" int js_val();\nint main() { std::println(\"val {}\", js_val()); }\n"}});
+        auto r = app.mcpp({"run", "--target", "wasm32-emscripten"});
+        expect(fatal(e2e::succeeded(r) && s::has_line(s::text(r), "^val 41$"))) << "the first run\n" << s::text(r);
+        library(42);
+        r = app.mcpp({"run", "--target", "wasm32-emscripten"});
+        expect(fatal(e2e::succeeded(r))) << "the second run\n" << s::text(r);
+        expect(s::has_line(s::text(r), "^val 42$")) << "a changed --js-library file did not relink the program\n" << s::text(r);
+    };
+
     "1079 an emscripten rows longjmp model round trips"_test[s::elf] = [] {
         // `longjmp = "wasm"` makes a non-local exit over two call levels round-trip; on a Linux
         // row it is refused naming that row's os.

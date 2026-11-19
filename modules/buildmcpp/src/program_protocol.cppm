@@ -133,7 +133,14 @@ export namespace mcpp::build::program_protocol {
 // when no program is named. Same cost as v5's: a package calling
 // `mcpp::pack_program()` fails on an older engine at the build.mcpp COMPILE.
 // No directive of v18 changes spelling.
-inline constexpr int kProtocolVersion = 19;
+// v20 (design 2026-11-19 §8): `mcpp::objects_of(name)` and
+// `mcpp::objects_rsp_of(name)` -- the tokens `${mcpp.objects:<name>}` and
+// `${mcpp.objects_rsp:<name>}`, a link unit's object list -- and
+// `mcpp:undeclared-tool=`, which `dep_bin` states for a tool no edge and no
+// feature declares. Same cost as v5's: a package calling `objects_of` fails on
+// an older engine at the build.mcpp COMPILE. No directive of v19 changes
+// spelling.
+inline constexpr int kProtocolVersion = 20;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

@@ -16,7 +16,11 @@ Each word of the vocabulary below, in the engine's sources -- `src/` and
 `modules/*/src/`, without `modules/platform/` and without tests and data --
 in the two forms a branch on a system takes: the word as a string literal
 (`"freebsd"`), and the host predicates of mcpplibs.os (`is_linux`,
-`is_windows`, `is_macos`). Comments are not counted.
+`is_windows`, `is_macos`) and the system predicates of a triple (`is_apple`,
+`is_ios`, `is_android` and their like). Comments are not counted. The triple's
+predicates were not in the vocabulary until a branch on `is_apple()` was found
+standing before the one predicate that decides whether an artifact runs here
+(mcpp#957).
 
 THE RATCHET
 
@@ -39,7 +43,8 @@ BASELINE = pathlib.Path(__file__).with_name("system-names.baseline")
 
 LITERALS = ["linux", "macos", "windows", "freebsd", "android", "emscripten", "ios",
             "darwin", "netbsd", "openbsd", "haiku", "dos", "uefi"]
-PREDICATES = ["is_linux", "is_windows", "is_macos"]
+PREDICATES = ["is_linux", "is_windows", "is_macos",
+              "is_apple", "is_ios", "is_ios_simulator", "is_android", "is_openkal", "is_windows_gnu"]
 
 SOURCE_SUFFIXES = {".cppm", ".cpp", ".mcpp"}
 

@@ -4,6 +4,245 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.19.1] - 2026-11-19
+
+### Added
+
+- `${mcpp.objects:<name>}` and `${mcpp.objects_rsp:<name>}`: a link unit's object list, one
+  absolute path per line in link order or in response-file quoting, for an `artifact` or
+  `check` action; the list and every object in it are inputs of the action (mcpp#959,
+  SPEC-007 R3.16). A rule that walked `obj/` and excluded paths guessed what the engine knows.
+  `mcpp::objects_of` and `mcpp::objects_rsp_of` return the tokens; build-program protocol 20.
+- `${mcpp.self} write --output <file> [--append <file>]... -- <line>...`: writes known text and
+  appended files to one output, only when the bytes differ (mcpp#959). The engine's own
+  commands are bounded by one criterion, stated in SPEC-007 R3.17: one output, decided by the
+  declared inputs and the argv, the same on every run.
+
+### Changed
+
+- A `path` or `git` dependency's build enters the global cache, named by its sources: a `git`
+  dependency by its resolved commit, a `path` dependency by the digest of its tree's content
+  (`<version>+path.<digest>` in `mcpp cache list`). Two projects that reach one library through
+  `path`, a clean build, and a CI run that restores `$MCPP_HOME/build-cache` reuse one entry
+  while the library's sources are the same, wherever the tree is checked out; before, every
+  dependent compiled it again (mcpp#974). The project's own trees -- the root, its workspace
+  members, any package below the project's directory or the directory of the build a build
+  program or host tool serves -- are built in place. A tree is read again before its entry is
+  written, and one that changed while it compiled is not stored, which the build reports as a
+  degradation (`build/cache`); the entry the same tree left under its previous digest is
+  removed as the new one is written. A host tool from a `path` package and the build
+  programs' identity name the tree by the same digest of content, where the tool store used
+  modification times, so a fresh checkout reuses a tool's entry too.
+- `mcpplibs.openkal-platform@0.31.0` is the default platform of the rows openkal serves
+  (0.29.2 in 2026.11.18.1): the openkal 0.26 family, in which a start is bounded by the
+  environment alone and one refused for its size is `E2BIG`, and an observation of a unit
+  answers whether this process space can observe it (mcpp#958, mcpp#952). The runner of an ok
+  image, asked to end, names the openkal call each task of the image waits in before it acts.
+  From 0.30.0 the platform serves `i686-svr4-musl`, programs of UNIX System V Release 4 on i386
+  (`preview`); in 0.31.0 they start other programs.
+- A package instance has a directory of its own: `obj/<package>/<digest>/` and
+  `<bmi dir>/<package>/<digest>/`, the digest covering the package's include directories and
+  flags (its features' defines among them) and the digests of the packages whose modules it
+  imports (mcpp#953). One directory held one instance, so when `mcpp test` or another
+  selection asked a shared package for other features, each switch between the commands
+  compiled it again (measured: 43 such edges between two members of a 31-member workspace).
+  Both instances are now kept, and alternating compiles neither again. `instances.tsv`
+  records when a build last used each instance; `mcpp clean --stale` removes the instances
+  no build used within `[build] keep_days`, keeping those of the plan that wrote the graph,
+  and `mcpp clean --report` lists them. The root package's objects keep their place. A
+  `<package>@<digest>` name was measured and not taken: ninja quotes an output that holds
+  `@`, and a rule writing `"$out.d"` then names a file with quotes in it. The objects of the
+  previous layout are not read again and go with `mcpp clean`. The build cache keys a
+  dependency's BMIs by its instance too, so each is compiled once more after the upgrade and
+  served from the cache from then on.
+- A compile writes its outputs below an attempt of its own, `<build dir>/.mcpp-attempts/<attempt>/`,
+  and the executor publishes them by rename once the compiler has ended, a module's BMI the
+  moment it is complete, where the toolchain's outputs are relocatable: GCC 11 and later, and a
+  clang driver that takes `-dumpdir`, asked of the driver once (LLVM 17 and later; Apple clang 16
+  and emcc 6.0.9 take it under numbers of their own), CodeView targets excepted (design 2026-11-19 §10.6,
+  SPEC-011 §5.1). A compiler that outlives its build writes only its own attempt: the next build
+  continues at once, and the attempts the interrupted build did not publish are discarded without
+  being observed. `compiler-run-occupied` remains for the toolchains that write in place. Measured
+  first: a GCC BMI written where its module map names it and then renamed is read by its importers,
+  and records its imports, not itself; an object's bytes do not depend on its path on ELF, Mach-O
+  and wasm, and do on CodeView, at `-O2` without `-g`. A GCC module unit of the root package is
+  given a map too, which names each module at its name. The files named after the object (`.dwo`,
+  `.gcno`) keep their names through `-dumpdir` and `-dumpbase`; clang's are named
+  `<object stem>.<source stem>.<ext>`.
+- mcpp does not set `VSLANG` for cl.exe: the compiler speaks the language of the user's
+  environment (`VSLANG`, else Visual Studio's), where it spoke English whenever the English
+  resources were installed. `VSLANG=1033` asks for English (mcpp#970).
+- Each build program resolves its own `[build-dependencies]` (mcpp#972, SPEC-004 §12.3,
+  SPEC-007 R10.7). The target is one resolution, and each build program -- a package's
+  `build.mcpp` or the program its rules synthesise, a platform's plugin -- is another: a
+  program loads one version of a package, and two programs do not constrain each other. A
+  project's `build.mcpp` may use `mcpp.plugins` 0.22.1 beside a platform plugin that uses
+  0.26.1, where the two were refused as irreconcilable and the project had to copy the
+  version the platform used inside. A build program keeps the version it holds while its
+  requests admit it, and otherwise takes the newest version the target or another program
+  holds that all its requests admit; the target is resolved first, the layers and
+  capability defaults its platform adds included, and a program before the programs of the
+  packages it holds. A build without a conflict therefore keeps its versions and its build
+  programs' identities. Programs that hold one package at two versions are compiled in two
+  build programs' graphs, `<group>-<digest>`, named by those versions; a development
+  dependency's program does not move the build's programs to another graph under
+  `mcpp test`. `mcpp.lock` records a version only build programs hold as an entry of its
+  own, `<name>+b<digest>`, whose `programs` lists them; a conflict inside one program is
+  refused naming the program and every requester.
+- A platform selected as a series skips a release whose version group a request of the build
+  does not admit: the build is planned again with the series below it, and the report names
+  the release and the request (SPEC-013 §14). With no release of the series left the build is
+  refused (`platform-version-group`), listing each release and the request that refused it. A
+  release written exactly, or recorded in `mcpp.lock`, is taken as written. Before, the
+  series' newest release decided, and a platform release that moved its group stopped every
+  project that selected the series.
+- The launchers `mcpp pack` writes (`bin/<name>.exe`, the single-file launcher) build on
+  `mcpplibs.os` 0.4.6, mcpp's own release (0.4.4 in 2026.11.18.1);
+  `.github/tools/check_version_pins.sh` holds the two equal. A launcher is built over the
+  platform of the rows openkal serves, whose plugin now resolves its build dependencies
+  apart from the launcher (mcpp#972).
+
+### Fixed
+
+- A dependency a merge moves to another version is walked as its first version was: its
+  dependency tables by the row it is built for, with the features its edges forward, and its
+  `[build-dependencies]` as its own build program. The merge's walk read `[dependencies]`
+  alone, so the new version's build program was never resolved, its requests lost their
+  side, and the build program of the version that left stayed in the build and in
+  `mcpp.lock`. The requests the version that left made are withdrawn with it.
+- A capability a package of the target requires (`requires` with `[defaults."<capability>"]`)
+  is answered by the target's graph: a package only a build program holds answered it, and
+  the default the package states was not added to the target (SPEC-002 §3.6).
+- A target row the package index's platform column listed after the local copy of the index
+  was taken was refused as an unknown target until `mcpp index update`: the miss did not reach
+  the refresh policy. A row the local copy does not list, and that is refused without it (one
+  the engine does not know, or a `planned` one), now refreshes the index as a dependency's miss
+  does (`--offline`, `[index] auto_refresh`, the debounce, one sync per command) and is looked
+  up again; the refusal says whether the index was refreshed, and why not (mcpp#967).
+- On a Windows host the `std` module of a base package that supplies libstdc++ (the Hurd and
+  Haiku rows of mcpp-platforms) was precompiled with neither the base's `include_dirs` nor
+  `-nostdinc++`, and stopped at `'bits/stdc++.h' file not found`: the words that close the
+  clang driver's own search and name the C++ layer's headers were written only when the
+  toolchain payload had a driver configuration file to bypass, and the Windows LLVM payload has
+  none. They follow the layers on every host: `-nostdinc++` and the base's directories for a
+  base's C++ layer, `-stdlib=` naming its library, and `-nostdinc++` and `-nostdlibinc` for
+  the layers the graph supplies; only `--no-default-config` follows the file (mcpp#965).
+- A header edit rebuilt nothing on a Visual Studio without English resources: the files a
+  cl.exe compile read came from its `/showIncludes` lines, whose prefix is a string of the
+  installed language (`注意: 包含文件:`), and `VSLANG=1033` cannot make it English (mcpp#970).
+  They come from cl.exe's `/sourceDependencies` record, the same in every language and console
+  code page, whose paths the executor gives ninja as lines of its output (`deps = msvc` with
+  mcpp's prefix `mcpp.inputs:`, SPEC-011 §5.1): ninja's reader of a Make rule ends a name at
+  `'`, `&`, `;`, `^` and a backquote, which a Windows path may hold. A header under the build
+  directory keeps its spelling, letters beyond ASCII included, so a generated header is the
+  node its generator writes. A record that cannot be read fails the compile with the reason.
+- A cl.exe failure on a Chinese console ended mcpp with `internal: unhandled exception:
+  [json.exception.type_error.316] invalid UTF-8 byte`, and its diagnostics were unreadable:
+  cl.exe, link.exe, lib.exe and rc.exe write their text in the code page of the console they run
+  in, and mcpp read it as UTF-8 (mcpp#970). The executor reads their text in that page (with no
+  console, the system's ANSI code page) and writes it on as UTF-8 (SPEC-012 §5), and every
+  document that carries a program's text writes a byte that is not UTF-8 as U+FFFD: the result,
+  the events, the protocol envelopes (`mcpp.build-database` included) and a test run's records.
+  A cl.exe `note` in `result.json` carries the location of its file, and the advice for a header
+  a dependency lost names it in every language (`C1083`, whatever the quote marks and the space
+  around its colon).
+- A response file on a link line under the MSVC dialect is read by link.exe's rules (those of
+  `CommandLineToArgvW`): the files it names by native paths are inputs of the link, where they
+  were read as a GNU driver reads one, a backslash taking the next character (mcpp#931).
+- A build interrupted in another process space -- a container job that reuses the working
+  directory, a rebuilt development container, an agent's sandbox session -- could never be
+  continued, `mcpp clean` included: `previous compiler unit is occupied or unknown` (mcpp#952).
+  An observation now has four answers: a unit is empty, occupied, not yet decidable, or not
+  observable from this process space (openkal 0.26, clause 7.18). An unobservable unit of a
+  generation whose owner and helper locks are free -- locks of the file system, shared by every
+  process space that shares the directory -- is settled as abandoned, its unpublished outputs
+  discarded, and the build reports `degraded` (`compiler-run/unobservable`) once. A refusal for
+  occupied or undecidable units names their number, the state directory and the way out
+  (`[compiler-run-occupied]`). `mcpp clean`, `--stale` and `--older-than` retire a
+  configuration's compiler runs before removing it. The owner's refusal of an admission names its
+  condition; every helper return other than the compiler's status or a cancellation names the
+  step that ended it. Where the system gives nothing to declare a unit from, the build compiles
+  without units and says so once (`compiler-run/no-unit`).
+- A start the system refused for the size of its arguments and environment reported `Cannot
+  allocate memory`, from a bound of 512 elements in the kernel layer: 520 `[build] defines`
+  could not compile (mcpp#958). mcpp builds against mcpplibs.os 0.4.6 and openkal 0.26, which
+  keep no bound of their own, and the refusal reads `cannot start '<program>': the request is
+  larger than the system admits (N arguments, A bytes; M variables, E bytes)
+  [spawn-too-large]`.
+- `mcpp publish` and `mcpp emit xpkg` wrote a descriptor that nothing read: a table of
+  modules, version dependencies and run-time requirements with `manifest = "mcpp.toml"`.
+  `mcpp xpkg parse` refused it for its missing `sources`, a consumer could not depend on
+  it, and `mcpp new --template` refused it as an inline recipe (mcpp#960). A descriptor's
+  `mcpp` field has two forms (SPEC-001 §3.5): the pointer form names the manifest inside
+  the payload, the inline form is the manifest of a payload that carries none. Both
+  commands write the pointer form, `mcpp = "*/mcpp.toml"`; the manifest alone states the
+  modules and the dependencies. The six places that read the field read it through one
+  function (`mcpp::pm::descriptor_manifest`), and a table that names a manifest is refused
+  with the line to write in its place.
+- A build that takes a library through `[build-dependencies]` was refused for a version
+  the resolver itself had chosen: `openkal-macos 0.23.5 is in this build, and the platform
+  ... is a version group that names openkal-macos 0.23.4` (mcpp#956). The group's version
+  was written into the request and went no further: a second request of the package was
+  merged with the ranges as written. The group's constraint is now a constraint of the
+  request and enters the resolution record and every merge, so the requests of a package
+  are answered by one version in whichever order they arrive (SPEC-013 §7.5). A refusal
+  lists every request and its requester.
+- A package reached only through build dependencies is a module of a build program, built
+  for this machine, and its `[target.<selector>.dependencies]` were read by the build's
+  target. They are read by the row the package is built for (SPEC-004 §4.8): crossing to
+  another system no longer resolves the target's implementation of a layer for a build
+  program's library, and `mcpp.lock` records the package the build program links. A
+  package both sides ask for makes each side's requests.
+- The build programs' graph looked for a project's local index beside itself:
+  `[indices] x = { path = "<relative>" }` was copied as written into a manifest in another
+  directory, and a build dependency from that index was `no package found for exact
+  selector`. The path is written as the project's manifest resolves it.
+- A macOS or iOS row on a host that is not macOS was refused by `mcpp run` and `mcpp test`
+  before the predicate that decides whether an artifact runs here, whatever runner was
+  declared for it: `cannot run ... artifacts on this host: macOS runs only on macOS`
+  (mcpp#957). The branch named a system in the engine and is removed; these rows are
+  decided as every row is, by the row's execution system and the runner or execution host
+  stated for it (SPEC-016 §6). The system-names check counts a triple's system predicates
+  (`is_apple`, `is_ios`, `is_android` and their like), so such a branch does not return.
+- `mcpp new --template <package>` refuses a package for the directory it lacks,
+  `templates/` beside its manifest, and names the directory it looked for. It refused an
+  inline descriptor for its form, and found the package root by a rule of its own that
+  ignored the descriptor's pointer.
+- A file a link flag names in an option's value was no input of the link:
+  `--js-library=<file>`, `-Wl,--version-script=<file>` and `-Wl,-force_load,<file>` could
+  change and `mcpp build` reported nothing to do (mcpp#931). A link word's candidates are the
+  whole word, the part after `=`, each `,`-separated segment and, under the MSVC dialect, the
+  value of a `/` option; an absolute path that names a regular file or a file an action
+  declares is an input (SPEC-004 §8.1). Where the linker writes what it read
+  (`--dependency-file`: GNU ld from 2.35, gold, ld.lld), the link edge records it as a
+  compile edge records the compiler's report, so a library found through `-L`/`-l` relinks
+  the program when it changes, and one that is gone links again and is named by the linker. As
+  for a compile, a program changed outside the build is linked again. Whether a linker accepts
+  the option is measured once and kept in the probe cache. A project whose `[build] ldflags`
+  name `--dependency-file` keeps that file, the linker writing only one; mcpp adds no option of
+  its own, and the build reports that the link's record holds only the files its words name
+  (`build/link-report`).
+- Every member of a workspace whose root states `[workspace.target.<selector>.abi]` was
+  warned that it declares `[target.<selector>.abi]`, which only the root decides: a build of
+  about 60 members for wasm32-emscripten printed the warning 262 times (mcpp#954). A
+  conditional row records whether it is the package's own or inherited from a workspace; a
+  row inherited from this build's workspace is the root's statement and is not reported. A
+  member's own table is reported once when it is reached as a dependency, and the warning
+  names the manifest that states it.
+- A plugin's library could not reach its own program: `mcpp::dep_bin` answered the path in
+  the build program of the package whose edge named the plugin, and `""` one package away,
+  through a framework, with nothing said (mcpp#955). A tool a feature declares
+  (`[features.<f>] tools`) reaches every build program that links the package's library with
+  the feature active (SPEC-007 R6.3), so a multi-step action is a program the plugin carries.
+  A tool no edge and no feature declares is reported (`build-program/undeclared-tool`) with
+  the line that declares it.
+- Under clang's two-phase schedule a dependency's cache entry was filled only when the build
+  imported every module of the package: the BMI is compiled on an edge of its own, which the
+  object does not wait for, so a module no unit imported had no BMI, and the fill was refused
+  (`bmi cache populate failed for openkal@0.26.0: expected build output missing:
+  .../openkal.time.pcm` in mcpp's own build). A fill asks for every BMI of its package, under
+  the default goal and under the goals a command names (`mcpp test`, the build programs' graph).
+
 ## [2026.11.18.1] - 2026-11-18
 
 ### Fixed

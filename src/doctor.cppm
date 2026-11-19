@@ -1963,7 +1963,9 @@ export int explain_code(std::string_view code) {
          "The platform's [platform.versions] names one version of each package of its\n"
          "family, whose pins are exact; the graph holds another version of one. Select\n"
          "the platform release of that version, or write the group's version where the\n"
-         "package is requested. `mcpp why` names who requested it."},
+         "package is requested. `mcpp why` names who requested it. A platform selected\n"
+         "as a series skips a release whose group the build does not admit; the build\n"
+         "is refused when no release of the series is left, naming each one."},
         {"platform-phase-directive", "a platform plugin stated what a platform cannot",
          "A platform's build.mcpp runs in the platform phase (mcpp::phase() == \"platform\")\n"
          "and states the platform's build, link and runner fields and the package formats\n"

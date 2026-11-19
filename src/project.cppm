@@ -495,6 +495,7 @@ export void inherit_workspace_layer_rows(mcpp::manifest::Manifest& member,
     std::vector<mcpp::manifest::ConditionalConfig> rows;
     for (auto cc : layer->conditionalConfigs) {
         cc.xlings = {};
+        cc.inheritedFrom = workspace.sourcePath.empty() ? wsRoot / "mcpp.toml" : workspace.sourcePath;
         anchor(cc.inputs.includeDirs);
         anchor(cc.inputs.includeDirsAfter);
         anchor(cc.inputs.privateIncludeDirs);

@@ -88,6 +88,16 @@ std::string posix_launcher(const Launch& l);
 std::string exe_launcher_manifest(std::string_view name, std::string_view version);
 std::string exe_launcher_main(const Launch& l);
 
+// The OS library both launchers build on, one release so a pack is the same at
+// any later time (design 2026-11-07, D20): mcpp's own, which
+// check_version_pins.sh holds equal to mcpp.toml's. A launcher is built over
+// the platform of mcpp's openkal rows, whose plugin resolves its build
+// dependencies apart from the launcher (design 2026-11-19 §21 A6, mcpp#972).
+// When the two shared one resolution, this had to be the release the plugin
+// linked (0.4.5, through mcpp.plugins 0.26.1): 0.4.4 and 0.4.6 were refused as
+// irreconcilable (e2e 988, the canaries' pack cells).
+inline constexpr std::string_view kLauncherOs = "0.4.6";
+
 // ─── mcpp-package.json (SPEC-014 §4.5) ────────────────────────────────────
 
 inline constexpr std::string_view kFileName = "mcpp-package.json";
@@ -1113,9 +1123,9 @@ std::string exe_launcher_manifest(std::string_view name, std::string_view versio
         "[targets.{2}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "# The OS library as one release, the one this mcpp was qualified with, so a\n"
         "# pack is the same at any later time (design 2026-11-07, D20).\n"
-        "[dependencies]\nmcpplibs.os = \"0.4.4\"\n",
+        "[dependencies]\nmcpplibs.os = \"{3}\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version,
-        mcpp::libs::toml::escape_string(name));
+        mcpp::libs::toml::escape_string(name), kLauncherOs);
 }
 
 std::string exe_launcher_main(const Launch& l) {
@@ -1483,9 +1493,9 @@ std::string launcher_manifest(std::string_view name, std::string_view version) {
         "[package]\nname    = \"{0}\"\nversion = \"{1}\"\n\n"
         "[targets.{2}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n"
         "[build]\nsources = [\"src/main.cpp\", \"src/carried.S\"]\n\n"
-        "[dependencies]\nmcpplibs.os         = \"0.4.4\"\nmcpplibs.mwrap.zstd = \"1.5.7\"\n",
+        "[dependencies]\nmcpplibs.os         = \"{3}\"\nmcpplibs.mwrap.zstd = \"1.5.7\"\n",
         name, version.empty() ? std::string_view("0.0.0") : version,
-        mcpp::libs::toml::escape_string(name));
+        mcpp::libs::toml::escape_string(name), kLauncherOs);
 }
 
 std::string_view launcher_main() {

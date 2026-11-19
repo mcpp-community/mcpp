@@ -664,6 +664,10 @@ export struct BuildContext {
     struct CacheTask {
         mcpp::bmi_cache::CacheKey       key;
         mcpp::bmi_cache::DepArtifacts   artifacts;
+        // A `path` dependency's tree, the file of its stat rows and the digest
+        // its key holds (mcpp#974): read again before the entry is written.
+        std::filesystem::path           treeRoot, treeRows;
+        std::string                     treeDigest;
     };
     std::vector<CacheTask>          depsToPopulate;
 
@@ -890,6 +894,11 @@ export struct BuildOverrides {
     // outermost first. A request for one of them is the tool's own build asking
     // for itself, refused at its first repetition (#649 E6).
     std::vector<std::string> tool_chain_sources;
+    // The project trees of the builds above this one (mcpp#974): a package
+    // below one of them is that project's own and is built in place, as one
+    // below this build's root is, rather than shared through the global cache.
+    // Each sub-build is given its parent's, and its parent's root.
+    std::vector<std::filesystem::path> own_roots;
     // The toolchain spec a host-tool sub-build uses, decided by the build that
     // requested the tool and recorded in the tool's store key (#710). Beats
     // every other source, `--toolchain` included, because the requesting build
@@ -1077,6 +1086,12 @@ export struct BuildOverrides {
     // package and the second reads its `[platform]` from here at once
     // (SPEC-013 §7). Set by `prepare_build` itself, never by a caller.
     std::filesystem::path    platform_root;
+    // THE RELEASES OF A PLATFORM SERIES THIS BUILD CANNOT USE (design
+    // 2026-11-19 §21 A5, SPEC-013 §14): each release an earlier pass took and
+    // the platform's version group refused, with the request that refused it.
+    // The series is taken below them. Set by `prepare_build` itself, never by
+    // a caller.
+    std::vector<std::pair<std::string, std::string>> platform_series_skipped;
     // THE PLATFORM THIS PREPARE'S TARGET USES, stated by the caller: the
     // host graph's platform, given to the build programs' sub-build (SPEC-013
     // §6). Read as the flag tier; empty on every other prepare.

@@ -773,14 +773,17 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
                 ctx.requestedSpelling, rows));
         }
         auto sug = triple::did_you_mean(ctx.requestedSpelling);
+        // Whether the index's platform column was looked at again (mcpp#967).
+        const auto column = index_platform_miss_note(ctx.requestedSpelling);
         refusal::record(refusal::Code::UnknownTarget);
         return std::unexpected(std::format(
             "unknown target '{}'{}\n"
             "       known targets: `mcpp toolchain list`; a custom triple needs an\n"
-            "       explicit [target.{}] section in mcpp.toml",
+            "       explicit [target.{}] section in mcpp.toml{}",
             ctx.requestedSpelling,
             sug ? std::format(" — did you mean '{}'?", *sug) : "",
-            ctx.requestedSpelling));
+            ctx.requestedSpelling,
+            column.empty() ? std::string{} : "\n       " + column));
     }
     // A TOOLCHAIN NAMED FOR THE BUILD IS AS EXPLICIT AS ONE THE SECTION NAMES.
     // The refusal says that no toolchain is published for the row; a build that

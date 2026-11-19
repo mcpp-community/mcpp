@@ -53,14 +53,18 @@ inline constexpr std::string_view kObjectsFile = "objects-same.list";
 
 // What an edge asks after compiling an interface: whether the BMI before it
 // stays. Reads the cutoff and records the difference in the current
-// directory.
-bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::path& previous);
+// directory. `recorded`, when given, is the name the record states: an
+// attempt that wrote its BMI at a path of its own compares that file with the
+// published one and records the published name (design 2026-11-19 §10.6).
+bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::path& previous,
+                    const std::filesystem::path& recorded = {});
 
 // What an edge asks after compiling an object: whether the object before it
 // stays. The bytes decide and nothing else does -- an object has no reader and
 // no cutoff, and one that differs in a single byte is linked. Records an
 // object that stays in the current directory.
-bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous);
+bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous,
+                           const std::filesystem::path& recorded = {});
 
 // Before a run of the graph in `dir`: states the cutoff, starts the record of
 // changes, and, where the cutoff is exact, removes every BMI an earlier run
@@ -106,11 +110,12 @@ Difference difference(const std::filesystem::path& a, const std::filesystem::pat
     return same_bytes(a, b) ? Difference::Same : Difference::Changed;
 }
 
-bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous) {
+bool keeps_previous_object(const std::filesystem::path& object, const std::filesystem::path& previous,
+                           const std::filesystem::path& recorded) {
     // The standard build (MCPP_BUILDOPT=off): what the compiler wrote stands.
     if (registry::standard_only()) return false;
     if (!same_bytes(object, previous)) return false;
-    const auto line = object.generic_string() + "\n";
+    const auto line = (recorded.empty() ? object : recorded).generic_string() + "\n";
     std::ofstream out(std::filesystem::path{kObjectsFile}, std::ios::app | std::ios::binary);
     out.write(line.data(), static_cast<std::streamsize>(line.size()));
     return true;
@@ -126,7 +131,8 @@ std::vector<std::string> read_lines(const std::filesystem::path& p) {
 }
 } // namespace
 
-bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::path& previous) {
+bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::path& previous,
+                    const std::filesystem::path& recorded) {
     if (registry::standard_only()) return false;
     const auto found = keep::difference(bmi, previous);
     if (found == Difference::Same) return true;
@@ -136,7 +142,7 @@ bool keeps_previous(const std::filesystem::path& bmi, const std::filesystem::pat
         keep = !cutoff.empty() && cutoff.front() == kIgnoreLocations;
     }
     // One write of one line, appended: the edges of a run do not interleave.
-    const auto line = std::format("{}\t{}\t{}\n", bmi.generic_string(),
+    const auto line = std::format("{}\t{}\t{}\n", (recorded.empty() ? bmi : recorded).generic_string(),
         found == Difference::LocationsOnly ? "locations" : "changed", keep ? "kept" : "replaced");
     std::ofstream out(std::filesystem::path{kChangesFile}, std::ios::app | std::ios::binary);
     out.write(line.data(), static_cast<std::streamsize>(line.size()));

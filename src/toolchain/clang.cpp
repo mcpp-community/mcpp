@@ -139,6 +139,9 @@ void enrich_toolchain(Toolchain& tc, const mcpp::run::Env& env) {
     tc.stdlibVersion = tc.version.empty() ? "unknown" : tc.version;
     tc.linkRuntimeDirs = mcpp::toolchain::discover_link_runtime_dirs(
         tc.binaryPath, tc.targetTriple);
+    // Not asked of a driver for the MSVC ABI, whose objects record their path
+    // and are written in place whatever it takes (`output_relocation`).
+    tc.takesDumpdir = !msvTarget && mcpp::toolchain::driver_takes_dumpdir(tc.binaryPath, env);
 
     if (auto p = find_libcxx_std_module_source(tc.binaryPath, env)) {
         tc.set_std_modules(*p, find_libcxx_std_compat_source(tc.binaryPath, env)

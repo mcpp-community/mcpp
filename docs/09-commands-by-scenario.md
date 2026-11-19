@@ -42,8 +42,13 @@ it uses; `--stale` also removes those no kept configuration names
 (2026.10.31.3+). A configuration's new fingerprint takes over the directory of
 its lineage instead of opening another (docs/04 §2.9), and after a build or a
 test run, at most once a day, `--stale` runs by itself with the window `[build]
-keep_days` (config.toml; default 3 days). `mcpp clean --report` gives the size of each configuration's
-objects, BMIs and products and of each `.build-mcpp` area, and removes nothing:
+keep_days` (config.toml; default 3 days). Within a configuration that is
+kept, `--stale` removes each package instance (`obj/<package>/<digest>/` and
+its BMIs) that no build has used within that window; the instances of the
+plan that wrote the configuration's graph are kept whatever the window
+(2026.11.19.1+). `mcpp clean --report` gives the size of each configuration's
+objects, BMIs and products, of each package instance with the days since a
+build used it, and of each `.build-mcpp` area, and removes nothing:
 
 ```
 $ mcpp clean --stale --dry-run
@@ -96,9 +101,10 @@ cache gc`): an ok image's prepared copies and snapshots for another boot
 After a successful build, at most once a day, every entry -- package, host tool
 or `std` -- that no build has used for `[cache] unused_days` days (config.toml;
 default 30, `0` turns it off) is removed. A hit marks an entry used. A `path`
-host tool's entry is replaced when its tree changes: the entry built from the
-same tree under the previous stamp is removed as the new one is written
-(2026.10.31.3+). Before a build, mcpp warns when the file system it writes to
+host tool's or `path` dependency's entry is replaced when its tree changes: the
+entry built from the same tree under the previous digest of its content is
+removed as the new one is written (host tools 2026.10.31.3+, dependencies and
+the content digest 2026.11.19.1+). Before a build, mcpp warns when the file system it writes to
 has less free space than the larger of 2 GiB and 1.25 times what the
 configuration's last build wrote (recorded in `<output>/.mcpp-written`); the
 warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc

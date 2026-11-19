@@ -345,3 +345,73 @@ UTest a_graph_that_declares_no_absence_leaves_no_sidecar{"CAbiAbsentAdvice/AGrap
     auto [name, back] = mcpp::build::read_c_abi_absent_sidecar(dir.path);
     expect(back.empty());
 }};
+
+UTest every_place_a_word_carries_a_path_is_a_link_input{"LinkWordInputs/EveryPlaceAWordCarriesAPath", [] {
+    // mcpp#931: the whole word, the part after `=`, each `,` segment and the
+    // part after `=` within it, and a response file with what it lists.
+    Tmp dir;
+    const auto a = dir.path / "a.a", m = dir.path / "v.map", js = dir.path / "lib.js",
+               rsp = dir.path / "libs.rsp";
+    touch(a); touch(m); touch(js);
+    // The GNU drivers read a backslash as taking the next character, so a
+    // response file for them names paths with `/` (#261).
+    {
+        std::ofstream out(rsp, std::ios::binary);
+        out << a.generic_string() << "\n";
+        expect(fatal(bool(out.flush()))) << "the response file was not written: " << rsp;
+    }
+    const std::set<std::filesystem::path> none;
+    using mcpp::build::link_word_inputs;
+    // The paths a word gave, for a failure to name (one failed once on a CI
+    // runner and not again with the same seed).
+    auto named = [](const std::vector<std::filesystem::path>& paths) {
+        std::string out;
+        for (const auto& p : paths) out += "\n  " + p.string();
+        return out.empty() ? std::string("\n  (none)") : out;
+    };
+    expect(link_word_inputs(a.string(), false, none) == std::vector{a});
+    expect(link_word_inputs("--js-library=" + js.string(), false, none) == std::vector{js});
+    expect(link_word_inputs("-Wl,--version-script=" + m.string(), false, none) == std::vector{m});
+    expect(link_word_inputs("-Wl,-force_load," + a.string(), false, none) == std::vector{a});
+    const auto viaResponseFile = link_word_inputs("@" + rsp.string(), false, none);
+    expect(viaResponseFile == std::vector{rsp, a}) << "@" << rsp.string() << " gave:" << named(viaResponseFile);
+    // link.exe reads its response file by the rules of CommandLineToArgvW: a
+    // native path, quoted where it has a space, is one word as written.
+    const auto spaced = dir.path / "a b.lib", msvcRsp = dir.path / "link.rsp";
+    touch(spaced);
+    {
+        std::ofstream out(msvcRsp, std::ios::binary);
+        out << a.string() << "\r\n\"" << spaced.string() << "\"\r\n";
+        expect(fatal(bool(out.flush()))) << "the response file was not written: " << msvcRsp;
+    }
+    const auto viaMsvc = link_word_inputs("@" + msvcRsp.string(), true, none);
+    expect(viaMsvc == std::vector{msvcRsp, a, spaced}) << "@" << msvcRsp.string() << " gave:" << named(viaMsvc);
+}};
+
+UTest a_directory_or_a_relative_path_is_no_link_input{"LinkWordInputs/ADirectoryOrARelativePathIsNone", [] {
+    Tmp dir;
+    const std::set<std::filesystem::path> none;
+    using mcpp::build::link_word_inputs;
+    expect(link_word_inputs("-L" + dir.path.string(), false, none).empty());
+    expect(link_word_inputs("-Wl,-rpath," + dir.path.string(), false, none).empty());
+    expect(link_word_inputs("--sysroot=" + dir.path.string(), false, none).empty());
+    expect(link_word_inputs("-Wl,--version-script=v.map", false, none).empty());
+    expect(link_word_inputs(dir.path.string() + "/absent.a", false, none).empty());
+}};
+
+UTest a_file_an_action_declares_is_an_input_before_it_exists{"LinkWordInputs/AnActionsOutputBeforeItExists", [] {
+    Tmp dir;
+    const auto gen = dir.path / "gen" / "exports.map";
+    const std::set<std::filesystem::path> declared { gen };
+    expect(mcpp::build::link_word_inputs("-Wl,--version-script=" + gen.string(), false, declared)
+           == std::vector{gen});
+}};
+
+UTest an_msvc_option_value_is_a_link_input{"LinkWordInputs/AnMsvcOptionValue", [] {
+    // `/DEF:<file>` under the MSVC dialect; the same word is no option elsewhere.
+    Tmp dir;
+    const auto def = dir.path / "x.def";
+    touch(def);
+    const std::set<std::filesystem::path> none;
+    expect(mcpp::build::link_word_inputs("/DEF:" + def.string(), true, none) == std::vector{def});
+}};

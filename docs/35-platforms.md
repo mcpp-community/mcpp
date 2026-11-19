@@ -191,6 +191,23 @@ directory or a repository are not bound by the group. An mcpp before
 2026.11.7.1 checks the group after resolution instead; a family released as one
 index change resolves the same either way.
 
+The group's version is a constraint of the request it binds and takes part in
+every merge of the target *(mcpp 2026.11.19.1+)*. Where no version satisfies
+every request the refusal lists each request and its requester, the group's
+under the platform's name. A build program's request is resolved after the
+target's and takes the version the target holds when it admits it: a build
+program's `>=1.0, <2.0` beside the group's `=1.1.0` gives 1.1.0 to both, in
+whichever order the two are declared. A build program resolves its own build
+dependencies (05 — Dependencies), so a package only build programs use, or a
+version the target's does not admit, is not bound by the group.
+
+**The plugin and the project's `build.mcpp` are two programs *(mcpp
+2026.11.19.1+)*.** Each resolves its own build dependencies: the platform's
+plugin may use `mcpp.plugins` 0.26.1 while the project's `build.mcpp` uses
+0.22.1, and a project no longer copies the versions of the platform's internal
+build tools. `mcpp.lock` records the second version as an entry
+`<name>+b<digest>` with `programs = ["build:<package>@<version>"]`.
+
 ## The built-in platform is one release
 
 The target table selects one openkal-platform release for the two ok-image
@@ -215,6 +232,21 @@ next build takes the recorded release while the series admits it. `mcpp update`
 (or `mcpp update openkal-platform`) drops the record, and the build after it
 takes the newest release again.
 
+A series also skips a release whose version group a request of the build does
+not admit *(mcpp 2026.11.19.1+)*: the build is planned again with the series
+below it, and the report names the release and the request,
+
+```
+    Platform plat v0.2.0 is not usable by this build: its version group names fam 1.2.0, and proj requests '~1.1.0'
+    Platform plat ^0 → v0.1.0 (the newest this build can use)
+```
+
+so a platform release that moves its group does not stop a project that selects
+the series. With no release left the build is refused
+(`platform-version-group`), listing each release and the request that refused
+it. A release written exactly, or recorded in `mcpp.lock`, is taken as written,
+and its group's refusal is the build's.
+
 ## A row the index names (2026.11.17.1+)
 
 A row the built-in table has no platform for — a row the engine does not know,
@@ -238,6 +270,15 @@ locked and updated as above, and the build reports the source as `index`. A
 project's own `[target.<selector>] platform` still comes first, and so do the
 project's own `[indices]` before the shared ones. The list is generated from the
 platform's manifest by the index's tools; engines before 2026.11.17.1 ignore it.
+
+A row the local copy of the index does not list, and that would otherwise be
+refused (a row the engine does not know, or a `planned` one), is an index miss
+like a dependency's *(2026.11.19.1+, mcpp#967)*: the index is refreshed once
+under the same controls (`--offline`, `[index] auto_refresh`, the debounce, at
+most one sync per command, [05](05-dependencies.md)) and the column is read
+again. A refusal that follows says whether the index was refreshed, and why not.
+Before, a row listed after the local copy was taken was refused as an unknown
+target until `mcpp index update`.
 
 ## Writing a platform package
 
@@ -523,7 +564,7 @@ event and in `result.json` ([50](50-machine-output.md)).
 | `platform-not-a-platform` | the selected package has no `[platform]` | select a platform package, or `none` |
 | `platform-target-unserved` | the platform does not serve the triple | build for one of its `targets`, or for the host row it names |
 | `platform-tool-absent` | a program of the link or the seal is neither built nor found | name its package under `[target.'cfg(platform = "…")'.tools]` |
-| `platform-version-group` | another version of a family package is in the graph | select the platform release of that version, or pin the group's version |
+| `platform-version-group` | another version of a family package is in the graph, or no release of a series admits the build's requests | select the platform release of that version, or pin the group's version |
 | `platform-phase-directive` | the plugin stated a directive the platform phase does not take | state it from the package's own build program |
 | `lld-required-absent` | the platform links with `ld.lld` and the toolchain has none | use the platform's toolchain |
 

@@ -256,13 +256,15 @@ fi
 if [ "$VARIANT" = modules ]; then
   # A BMI of another spelling is not read: the dependency is rebuilt once (its
   # cache key carries the spelling), then served from the cache. The spelling
-  # moved in 2026.10.26.2 (the module map's `$root`); a previous release from
-  # then on spells as this one, and its entry is served at once.
+  # moved in 2026.10.26.2 (the module map's `$root`) and in 2026.11.19.1 (a
+  # package instance's directory, mcpp#953); a previous release from the last
+  # move on spells as this one, and its entry is served at once.
+  spelled_since=2026.11.19.1
   old_version=$("$OLD" --version | grep -Eo '[0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-  same_spelling=$(printf '%s\n2026.10.26.2\n' "$old_version" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -1)
+  same_spelling=$(printf '%s\n%s\n' "$old_version" "$spelled_since" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -1)
   modules_project m-new1
   run new-modules1 "$W/m-new1" "$NEW" build -v || fail "the module project does not build over the previous release's cache"
-  if [ "$same_spelling" = 2026.10.26.2 ]; then
+  if [ "$same_spelling" = "$spelled_since" ]; then
     grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
       || fail "a dependency BMI of the same spelling ($old_version) was not served from the cache"
   else

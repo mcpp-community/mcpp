@@ -37,6 +37,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.model;
 import mcpp.modgraph.glob;
 import mcpp.toolchain.dialect;
+import mcpp.build.depfile;          // the prefix of the lines cl.exe's record is given in
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
@@ -883,6 +884,11 @@ bool action_precedes_compilation(const mcpp::manifest::BuildAction& a) {
         || a.role == mcpp::manifest::BuildAction::Role::Prepare;
 }
 
+// The objects and BMIs the build fills the global cache with, by one name an
+// explicit goal set includes (`append_goal_phony`). Not a path, the same
+// contract as `kGoalPhony`.
+constexpr std::string_view kFillsPhony = "mcpp-cache-fills";
+
 // A phony per package. Not a path — ninja resolves it in the build dir, and no
 // rule produces a file by this name (same contract as `kGoalPhony`).
 std::string action_phony_name(std::string_view pkg) {
@@ -1116,6 +1122,38 @@ read_graph_c_library_sidecar(const std::filesystem::path& outputDir) {
 namespace {
 constexpr std::string_view kConsumerIncludeSidecar = ".mcpp-consumer-include-dirs";
 
+// One path as a response file states it for GNU (`ar`, `llvm-ar`, the
+// drivers) and for `lib.exe`: plain when it holds no separator or quote,
+// otherwise in double quotes with `"` and `\` escaped. The paths are generic
+// (`/`), so a Windows path carries no backslash to be read two ways.
+std::string response_file_word(std::string_view path) {
+    if (path.find_first_of(" \t\"'\\") == std::string_view::npos) return std::string(path);
+    std::string out = "\"";
+    for (char c : path) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
+}
+
+// A file whose content the plan decides, written beside itself and renamed,
+// and only when its bytes differ: a consumer that depends on it does not run
+// again for an equal plan.
+void write_text_if_changed(const std::filesystem::path& file, const std::string& text) {
+    if (std::ifstream in(file, std::ios::binary); in) {
+        const std::string was{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        if (was == text) return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    auto tmp = file;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) std::filesystem::remove(tmp, ec);
+}
+
 // The header named by one compiler diagnostic line, or empty. Three spellings,
 // one per driver family; anything else is not a missing-header report.
 std::string missing_header_in(std::string_view line) {
@@ -1126,12 +1164,31 @@ std::string missing_header_in(std::string_view line) {
             return std::string(line.substr(open + 1, at - open - 1));
         return {};
     }
-    constexpr std::string_view kCl = "Cannot open include file: '";
-    if (auto at = line.find(kCl); at != std::string_view::npos) {
-        auto from = at + kCl.size();
-        auto close = line.find('\'', from);
-        if (close != std::string_view::npos)
-            return std::string(line.substr(from, close - from));
+    // cl.exe, in every language: `<file>(<line>): fatal error C1083: <words>
+    // <open><name><close>:<reason>`. The words, the quote marks, the space
+    // around the colon and the reason are the installed language's
+    // (`file: 'x.h': No such`, `文件: “x.h”: No such`, `include : 'x.h' : No
+    // such`, `。'x.h':No such`); the location, the code and the place of the
+    // name are not (design 2026-11-19 §20 T4): it is the quoted name that ends
+    // where the last colon begins the reason, which names no colon.
+    constexpr std::string_view kC1083 = "): fatal error C1083: ";
+    if (auto at = line.find(kC1083); at != std::string_view::npos) {
+        auto quoted = line.substr(at + kC1083.size());
+        const auto reason = quoted.rfind(':');
+        if (reason == std::string_view::npos) return {};
+        quoted = quoted.substr(0, reason);
+        while (!quoted.empty() && quoted.back() == ' ') quoted.remove_suffix(1);
+        // The closing mark and the opening one it pairs with, in UTF-8.
+        constexpr std::array<std::pair<std::string_view, std::string_view>, 6> kMarks{{
+            {"'", "'"}, {"\"", "\""}, {"\xE2\x80\x9D", "\xE2\x80\x9C"}, {"\xE2\x80\x99", "\xE2\x80\x98"},
+            {"\xE3\x80\x8D", "\xE3\x80\x8C"}, {"\xC2\xBB", "\xC2\xAB"}}};
+        for (auto const& [close, open] : kMarks) {
+            if (!quoted.ends_with(close)) continue;
+            const auto inner = quoted.substr(0, quoted.size() - close.size());
+            const auto start = inner.rfind(open);
+            if (start == std::string_view::npos || start + open.size() >= inner.size()) return {};
+            return std::string(inner.substr(start + open.size()));
+        }
         return {};
     }
     constexpr std::string_view kGcc = "fatal error: ";
@@ -1612,6 +1669,34 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const std::string compilerPrefix = plan.scheduleCompilerCap > 0
         ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d -- ")
         : std::string{};
+    // WHAT THE EXECUTOR READS FOR THE COMPILER (design 2026-11-19 §20): the
+    // record of the files a compile read, when the compiler writes one that is
+    // not a Make rule (cl.exe's `/sourceDependencies`, T1), and the encoding of
+    // the text it writes, when that is not UTF-8 (`console`, T2). A GNU
+    // toolchain's commands carry neither and are unchanged.
+    const auto& readingDialect = mcpp::toolchain::dialect_for(plan.toolchain);
+    const std::string recordWord =
+        readingDialect.inputsRecord == std::string_view("source-dependencies")
+            ? std::string(" --source-dependencies $out.json") : std::string{};
+    const std::string textWord = readingDialect.textEncoding == std::string_view("utf-8")
+        ? std::string{} : std::format(" --text {}", readingDialect.textEncoding);
+    // A COMPILE WRITES PATHS OF ITS OWN ATTEMPT where the toolchain's outputs
+    // are relocatable, and the executor publishes them (design 2026-11-19
+    // §10.6): a compiler that outlives its build cannot rewrite a published
+    // output. The C and C++ drivers, their assembler, and the dependency scans;
+    // the NASM and resource compilers write in place, not having been measured.
+    const auto relocation = mcpp::toolchain::output_relocation(plan.toolchain);
+    const std::string relocateWord = relocation.relocatable
+        ? std::format(" --relocate {}", relocation.auxNaming.empty() ? std::string_view("none") : relocation.auxNaming)
+        : std::string{};
+    const std::string driverPrefix = plan.scheduleCompilerCap > 0
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}{}{} -- ",
+                      relocateWord, recordWord, textWord)
+        : std::string{};
+    const std::string scanPrefix = plan.scheduleCompilerCap > 0
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}{} -- ",
+                      relocation.relocatable ? " --relocate none" : "", textWord)
+        : std::string{};
     // The same executor for an edge that writes a BMI: it holds the previous
     // BMI while the compiler runs and puts it back when the new one is
     // equivalent (`mcpp.buildopt.keep`), which is what lets `restat` end the rebuild at
@@ -1626,11 +1711,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     auto bmi_keeping_prefix = [&](std::string_view bmi) {
         return plan.scheduleCompilerCap > 0
             ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{}"
-                          " --bmi \"{}\" -- ", bmi == "$out" ? "" : " --object", bmi)
+                          " --bmi \"{}\"{}{}{} -- ", bmi == "$out" ? "" : " --object", bmi, relocateWord,
+                          recordWord, textWord)
             : std::string{};
     };
     const std::string objectPrefix = plan.scheduleCompilerCap > 0
-        ? std::string("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object -- ")
+        ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d --object{}{}{} -- ",
+                      relocateWord, recordWord, textWord)
         : std::string{};
     // The other split shape. Clang publishes no BMI early — it writes the BMI
     // at the end of the compile — so the GCC trick of releasing the file
@@ -2052,17 +2139,24 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
     // Command spellings come from the toolchain's CommandDialect (gnu vs
     // msvc); the rule *structure* is shared across compilers.
-    // msvc: /showIncludes feeds ninja's deps=msvc header tracking; the
-    // stable-English prefix is guaranteed by VSLANG=1033 in envOverrides.
-    const bool msvcDeps = dial.ninjaDepsMode == std::string_view("msvc");
+    // THE FILES A COMPILE READ COME FROM THE COMPILER'S RECORD FOR PROGRAMS
+    // (mcpp#970, design 2026-11-19 §20 T1). cl.exe writes its JSON record
+    // (`/sourceDependencies $out.json`), which the executor gives ninja as
+    // lines of its own output, `kInputsPrefix` and a path each, read as
+    // `deps = msvc` with that prefix: ninja's reader of a Make rule ends a name
+    // at `'`, `&`, `;`, `^` or a backquote, which a Windows path may hold, and
+    // takes the rest of such a line whole. Until 2026.11.19.1 these edges read
+    // cl.exe's own `/showIncludes` lines: their prefix is a string of the
+    // installed language and their paths text of the console's code page, so a
+    // Visual Studio with only Chinese resources recorded no header at all, and
+    // `VSLANG=1033` could not make it English.
+    const bool msvcDialect = dial.id == std::string_view("msvc");
+    const bool sourceRecord = dial.inputsRecord == std::string_view("source-dependencies");
     const std::string compile_tail = std::format(
         "{}{} $in {}$out",
-        msvcDeps ? "/showIncludes " : "", dial.compileOnly, dial.outputObjPrefix);
-    auto append_deps = [&] {
-        if (msvcDeps) append("  deps = msvc\n");
-    };
+        sourceRecord ? "/sourceDependencies $out.json " : "", dial.compileOnly, dial.outputObjPrefix);
     // mcpp#235: cxx_module/cxx_object had NO depfile at all on non-MSVC —
-    // only the msvcDeps branch tracked header deps (via /showIncludes). So
+    // only cl.exe's edges tracked header deps (then via /showIncludes). So
     // editing a file #include'd inside a module's purview (or a plain
     // header pulled in by a .cpp) never invalidated the compile edge: the
     // P1689 scan already emits a `.dep`/`.d`-shaped list of textual
@@ -2097,7 +2191,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // (see the existing "Windows: skip BMI restat optimization" branch
     // below), so a non-MSVC Windows toolchain keeps the pre-#235
     // behavior (no depfile) rather than depend on an unavailable filter —
-    // msvcDeps (cl.exe) is unaffected either way (deps=msvc, no -MMD).
+    // cl.exe was unaffected either way (it had no -MMD).
     //
     // #257: these are TWO decisions, and 0.0.97 conflated them. Emitting a
     // depfile at all is the minimum correctness contract for textual include
@@ -2116,7 +2210,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     //
     // WHETHER A UNIT EMITS A GNU DEPFILE IS A PROPERTY OF THE COMPILER, NOT
     // OF THE HOST (the 2026-09-28 design, WS2). Until 2026.9.28.2 this read
-    // `!msvcDeps && !is_windows`, so every clang++ build on Windows -- the
+    // `!(cl.exe) && !is_windows`, so every clang++ build on Windows -- the
     // default Windows row since #718 -- got no `-MMD`, and a header edit did
     // not rebuild the objects and BMIs that include it. Every GNU-dialect
     // compiler writes one now, on every host; only HOW GCC's filtered form
@@ -2126,8 +2220,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     //   * Windows: no shell to chain a filter in, so `mcpp depfile-filter`
     //     runs the compile itself and keeps the first record of the raw
     //     depfile (the same rule as the awk program).
-    // cl.exe keeps deps=msvc via /showIncludes, the equivalent mechanism.
-    const bool gnuDepfile = !msvcDeps;
+    // cl.exe's record reaches the same Make rule through the executor (T1).
+    const bool gnuDepfile = dial.inputsRecord == std::string_view("make");
     const bool needsGnuModuleFilter =
         gnuDepfile && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
     const std::string mmd_flag =
@@ -2143,13 +2237,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         (needsGnuModuleFilter && mcpplibs::os::is_windows)
         ? "$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "
         : "";
+    // The GNU driver writes the Make rule `$out.d`; the executor gives
+    // cl.exe's record as lines of its output.
     auto append_cxx_deps = [&] {
-        if (gnuDepfile) {
-            append("  deps = gcc\n");
-            append("  depfile = $out.d\n");
-        } else {
-            append_deps();
+        if (sourceRecord) {
+            append("  deps = msvc\n");
+            append(std::format("  msvc_deps_prefix = {}\n", mcpp::build::depfile::kInputsPrefix));
+            return;
         }
+        append("  deps = gcc\n");
+        append("  depfile = $out.d\n");
     };
     // C and GAS units include headers too, and had no depfile on ANY
     // toolchain — the second half of the same asymmetry #257 reports. They
@@ -2187,7 +2284,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // makes the response-file shape reachable from a non-Windows test host,
     // the same over-approximation the link rules use (`separateLinker ||
     // is_windows`).
-    const bool useCompileRsp = mcpplibs::os::is_windows || msvcDeps;
+    const bool useCompileRsp = mcpplibs::os::is_windows || msvcDialect;
     // THE BYTE ORDER MARK, FOR THE TOOLS THAT NEED ONE TO READ UTF-8 (#693).
     //
     // build.ninja is UTF-8, and Ninja copies `rspfile_content` into the
@@ -2208,7 +2305,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (!useCompileRsp) return;
         append("  rspfile = $out.rsp\n");
         append(std::format("  rspfile_content ={}{}\n",
-                           msvcDeps ? " " + std::string(kUtf8ByteOrderMark) : "", payload));
+                           msvcDialect ? " " + std::string(kUtf8ByteOrderMark) : "", payload));
     };
 
     // Tell the driver, every time, that this TU is a module interface.
@@ -2270,9 +2367,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // rules — the assumption "one flag element == one argv token" has been
         // wrong in this file before.
         append("rule cxx_module_bmi\n");
-        append("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
+        append(std::format("  command = $mcpp bmi-compile --bmi $bmi_out --slot $slot"
                " --self $mcpp --sem $sched_sem --object $obj_out"
-               " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d\n");
+               " --command-file $out.cmd --dep-from $scan_dep --dep-to $out.d{}\n", relocateWord));
         append(std::format(
             "  rspfile = $out.cmd\n"
             "  rspfile_content = $cxx $local_includes $cxxflags $unit_cxxflags{}{} {} $in {}$obj_out\n",
@@ -2407,7 +2504,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         const std::string payload = " $local_includes";
         append("rule asm_object\n");     // .S — preprocessed, tracks #include
         append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}{}\n",
-                           compilerPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
+                           driverPrefix, rsp_ref(payload), c_mmd_flag, compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n");
         append_cxx_deps();
@@ -2415,7 +2512,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
 
         append("rule asm_object_raw\n");  // .s — not preprocessed, no depfile
         append(std::format("  command = {}$cc{} $asmflags $unit_asmflags {}\n",
-                           compilerPrefix, rsp_ref(payload), compile_tail));
+                           driverPrefix, rsp_ref(payload), compile_tail));
         append_rspfile(payload);
         append("  description = AS $out\n\n");
     }
@@ -2442,10 +2539,15 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // script pulls in is declared instead, from a scan of the .rc plus
         // [resources].extra-inputs, and lands on this edge as implicit inputs.
         append("rule rc_object\n");
+        // The cl.exe toolchain's rc.exe writes its text as cl.exe does (T2).
+        const std::string rcPrefix = plan.scheduleCompilerCap > 0
+            ? std::format("$mcpp __compiler-cap --sem .mcpp-sched --output $out --depfile $out.d{} -- ",
+                          plan.rcStyle == "msvc" ? textWord : std::string{})
+            : std::string{};
         if (plan.rcStyle == "msvc")
-            append(std::format("  command = {}$rc /nologo $rcflags /fo $out $in\n", compilerPrefix));
+            append(std::format("  command = {}$rc /nologo $rcflags /fo $out $in\n", rcPrefix));
         else
-            append(std::format("  command = {}$rc -O coff $rcflags -o $out $in\n", compilerPrefix));
+            append(std::format("  command = {}$rc -O coff $rcflags -o $out $in\n", rcPrefix));
         append("  description = RC $out\n\n");
     }
 
@@ -2521,11 +2623,14 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         if (auto const* row = mcpp::toolchain::target::find_row(t->str()))
             for (auto c : row->companions) companions += (companions.empty() ? "" : ",") + std::string(c);
     const std::string companionOption = companions.empty() ? std::string() : " --companions " + companions;
+    // link.exe and lib.exe write their text as cl.exe does: `link-output`
+    // decodes it where it reads it (design 2026-11-19 §20 T2).
     auto publish_link = [&](std::string cmd) {
         if constexpr (mcpplibs::os::is_windows) {
-            return "$mcpp link-output --output $out --aside" + companionOption + " -- " + cmd;
+            return "$mcpp link-output --output $out --aside" + companionOption + textWord + " -- " + cmd;
         } else {
-            if (!companions.empty()) return "$mcpp link-output --output $out" + companionOption + " -- " + cmd;
+            if (!companions.empty() || !textWord.empty())
+                return "$mcpp link-output --output $out" + companionOption + textWord + " -- " + cmd;
             if (inPlaceTarget) return cmd;
             if (cmd.find("-o $out") == std::string::npos) return cmd;
             // Through a temporary name, `<dir>/.<file>` (cmd_link_output): one
@@ -2550,9 +2655,16 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             : std::string{};
         auto link_rule = [&](std::string_view name, std::string cmd,
                              std::string_view desc) {
+            // The linker's report of what it read (SPEC-004 §8.1): a link edge
+            // depends on it as a compile edge depends on the compiler's.
+            const bool reports = desc != "AR" && !separateLinker && !flags.linkReport.empty();
+            if (reports) cmd += flags.linkReport;
             // The permit wraps the publication: the attempt's output is the
             // artifact in place when the command it holds exits.
             if (desc != "AR") cmd = linkPrefix + publish_link(std::move(cmd));
+            // An archive holds no permit; a lib.exe whose text is not UTF-8
+            // still runs through `link-output`, which only decodes it.
+            else if (!textWord.empty()) cmd = "$mcpp link-output --output $out" + textWord + " -- " + cmd;
             append(std::format("rule {}\n", name));
             if (useRsp) {
                 if (auto pos = cmd.find("$in"); pos != std::string::npos)
@@ -2586,6 +2698,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             } else {
                 append(std::format("  command = {}\n", cmd));
             }
+            if (reports) append("  depfile = $out.d\n  deps = gcc\n");
             append(std::format("  description = {} $out\n\n", desc));
         };
         if (separateLinker) {
@@ -2749,12 +2862,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // the same TU (it wraps it), so it carries the same unbounded
         // include payload through the same response file (#261).
         const std::string scanPayload = " $local_includes";
-        if (msvcDeps) {
+        if (msvcDialect) {
             // MSVC: compiler-integrated P1689 via /scanDependencies (scan
             // only — no codegen); /TP because our module units are .cppm.
             append(std::format("  command = {}$cxx_driver{} $cxxflags $unit_cxxflags "
                    "/scanDependencies $out /TP /c $in /Fo:$compile_target\n",
-                   compilerPrefix, rsp_ref(scanPayload)));
+                   scanPrefix, rsp_ref(scanPayload)));
             // No $unit_lang here: /TP above already applies to every input,
             // and cl has no per-suffix recognition problem to fix — a module
             // interface is identified by /interface at COMPILE time, which
@@ -2773,7 +2886,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                    "-fdeps-format=p1689r5 "
                    "-fdeps-file=$out -fdeps-target=$deps_target "
                    "-M -MM -MF $out.dep $unit_lang -E $in -o $out.scan\n",
-                   compilerPrefix, rsp_ref(scanPayload)));
+                   scanPrefix, rsp_ref(scanPayload)));
         } else {
             // Clang path: clang-scan-deps writes the P1689 JSON itself via -o
             // (LLVM 17+), like the GCC and MSVC branches above write theirs
@@ -2786,7 +2899,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
                    "  command = {}$scan_deps -format=p1689 -o $out -- "
                    "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
                    "-o $compile_target\n",
-                   compilerPrefix, rsp_ref(scanPayload)));
+                   scanPrefix, rsp_ref(scanPayload)));
         }
         append_rspfile(scanPayload);
         append("  description = SCAN $out\n\n");
@@ -3594,6 +3707,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // artifact naming — see triple.cppm) AND, unless `-sSINGLE_FILE=1`,
     // `<name>.wasm` beside it in one run: a companion of the row (N33).
 
+    // Each link unit's explicit inputs as its edge spells them, by its
+    // build-dir-relative output: the object lists of design 2026-11-19 §8.2.
+    std::map<std::string, std::vector<std::filesystem::path>> linkInsByOutput;
     // Link units
     for (auto& lu : plan.linkUnits) {
         attribute(lu.package);
@@ -3602,6 +3718,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         const auto& uflags = lu.linkGroup >= 0
             ? groupFlags[static_cast<std::size_t>(lu.linkGroup)] : flags;
         std::string ins;
+        // The explicit inputs as the edge spells them, in link order: what
+        // `${mcpp.objects:<name>}` lists (design 2026-11-19 §8.2).
+        std::vector<std::filesystem::path> linkIns;
+        auto add_in = [&](const std::filesystem::path& p) {
+            ins += " " + escape_ninja_path(p);
+            linkIns.push_back(p);
+        };
         // FIRST, before every other object. Mach-O runs __init_offsets in
         // LINK order and has no priority-ordered init section, so "runs
         // before the user's global constructors" is spelled "is the first
@@ -3616,9 +3739,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // fixture). The predicate is the one the link line itself uses.
         if (need_ios_init_shim && lu.kind != LinkUnit::StaticLibrary
             && unit_needs_cxx_runtime(lu))
-            ins += " " + escape_ninja_path(ios_init_obj);
+            add_in(ios_init_obj);
         for (auto& o : lu.objects) {
-            ins += " " + escape_ninja_path(o);
+            add_in(o);
         }
         // The platform's link inputs, in every executable and shared library
         // this plan links; with seal steps, the artifact is written beneath
@@ -3626,7 +3749,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // what bin/ holds is what was published, and an unsealed file is not.
         const bool platformUnit = pf.active && lu.kind != LinkUnit::StaticLibrary;
         if (platformUnit)
-            for (auto const& in : platformInputs) ins += " " + escape_ninja_path(in);
+            for (auto const& in : platformInputs) add_in(in);
         const bool sealUnit = platformSeal && lu.kind != LinkUnit::StaticLibrary;
         const auto unsealed = link_edge_output(plan, lu);
 
@@ -3647,19 +3770,20 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         switch (lu.kind) {
             case LinkUnit::Binary:
             case LinkUnit::TestBinary:
-                if (takesStd)    ins += " " + escape_ninja_path(std_o_dst);
-                if (takesCompat) ins += " " + escape_ninja_path(compat_o_dst);
+                if (takesStd)    add_in(std_o_dst);
+                if (takesCompat) add_in(compat_o_dst);
                 rule = cxxUnit ? "cxx_link" : "c_link";
                 break;
             case LinkUnit::StaticLibrary:
                 rule = "cxx_archive";   // `ar`: no driver, no runtime
                 break;
             case LinkUnit::SharedLibrary:
-                if (takesStd)    ins += " " + escape_ninja_path(std_o_dst);
-                if (takesCompat) ins += " " + escape_ninja_path(compat_o_dst);
+                if (takesStd)    add_in(std_o_dst);
+                if (takesCompat) add_in(compat_o_dst);
                 rule = cxxUnit ? "cxx_shared" : "c_shared";
                 break;
         }
+        linkInsByOutput[lu.output.generic_string()] = linkIns;
         std::string implicit;
         for (auto& input : lu.implicitInputs) {
             implicit += " " + escape_ninja_path(input);
@@ -4181,6 +4305,27 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         std::string outs, ins;
         for (auto const& o : a.outputs) outs += " " + escape_ninja_path(o);
         for (auto const& in : a.inputs) ins += " " + escape_ninja_path(in);
+        // THE OBJECT LISTS THE ACTION READS (design 2026-11-19 §8.2): written
+        // now, when their content is decided, and only when it differs; each
+        // list and every object in it are inputs of the action, spelled as the
+        // link edge spells them, so a recompiled object runs the action again
+        // and an unchanged build does not.
+        for (auto const& unit : a.objectsOf) {
+            auto it = linkInsByOutput.find(unit);
+            if (it == linkInsByOutput.end()) continue;
+            std::string lines, rsp;
+            for (auto const& o : it->second) {
+                const auto abs = (o.is_absolute() ? o : plan.outputDir / o).lexically_normal();
+                lines += abs.generic_string() + "\n";
+                rsp += response_file_word(abs.generic_string()) + "\n";
+                ins += " " + escape_ninja_path(o);
+            }
+            const auto list = mcpp::build::objects_list_path(plan, unit, ".list");
+            const auto quoted = mcpp::build::objects_list_path(plan, unit, ".rsp");
+            write_text_if_changed(list, lines);
+            write_text_if_changed(quoted, rsp);
+            ins += " " + escape_ninja_path(list) + " " + escape_ninja_path(quoted);
+        }
         append(std::format("build{} : mcpp_action_{}{}\n", outs, i, ins));
         // A check or prepare action reports its start through the wrapper,
         // by its first output (design §6.4); the record gives it its label.
@@ -4227,10 +4372,26 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // (for example a C ABI provider). Once cache fills or build actions emit
     // an explicit `default`, ninja no longer selects the other terminal edges.
     // A cache fill must also finish even when no link or importer asks for it:
-    // the entry is its package's every artifact or nothing.
-    for (auto const& cu : plan.compileUnits)
-        if (plan.linkUnits.empty() || (cu.fillsCache && !cu.servedFromCache))
+    // the entry is its package's every artifact or nothing. A two-phase module
+    // unit writes its BMI on an edge of its own that its object does not wait
+    // for, so the BMI is asked for by name: a module no unit of the build
+    // imports was otherwise never compiled to a BMI, and the fill was refused
+    // for it (`openkal.time` in mcpp's own clang build). A command that names
+    // its goals builds no `default`: the fills are a phony of their own, which
+    // its goal set includes (`mcpp test` on macOS, the build programs' graph,
+    // still refused the fill for `openkal.time` with this rule in place).
+    std::string fills;
+    for (auto const& cu : plan.compileUnits) {
+        const bool fill = cu.fillsCache && !cu.servedFromCache;
+        if (plan.linkUnits.empty() || fill)
             actionDefaults += " " + escape_ninja_path(cu.object);
+        if (!fill) continue;
+        fills += " " + escape_ninja_path(cu.object);
+        if (cu.providesModule.empty()) continue;
+        actionDefaults += " " + unit_bmi(cu);
+        fills += " " + unit_bmi(cu);
+    }
+    if (!fills.empty()) append(std::format("build {} : phony{}\n", kFillsPhony, fills));
 
     if (!plan.linkUnits.empty() || !actionDefaults.empty()) {
         std::string defaults;
@@ -4277,6 +4438,11 @@ std::string append_goal_phony(std::string& manifest,
     for (auto const& g : goals) {
         manifest += ' ';
         manifest += escape_ninja_path(g);
+    }
+    // The entries this build fills are completed whichever goals it names.
+    if (manifest.contains(std::format("\nbuild {} : phony", kFillsPhony))) {
+        manifest += ' ';
+        manifest += kFillsPhony;
     }
     manifest += '\n';
     return std::string(kGoalPhony);
@@ -5006,7 +5172,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     r.compileCommands = cdb ? cdb->commandCount : 0;
     r.ninjaProgram = ninjaProgram;
     if (!plan.toolchain.envOverrides.empty()) {
-        // Toolchain-declared env (MSVC INCLUDE/LIB/PATH/VSLANG). Encode all
+        // Toolchain-declared env (MSVC INCLUDE/LIB/PATH). Encode all
         // pairs (plus any runtime-dirs pair) into the fast-path cache's
         // single env slot: "@env" key + \x1f-separated k=v records — the
         // fast path must re-create this exact environment for ninja.
@@ -5513,6 +5679,11 @@ void write_module_maps(const BuildPlan& plan) {
             write_if_changed(plan.outputDir / scope.argsFile,
                              module_map_arguments(scope.arguments, msvc));
     }
+    // The plan that writes the maps names the instances this configuration
+    // uses now (design 2026-11-19 §11.1); the others age in `instances.tsv`.
+    std::vector<std::string> used;
+    for (auto const& [pkg, dir] : plan.instanceDirs) used.push_back(dir);
+    record_instances(plan.outputDir, used);
 }
 
 void report_failed_drive(const BuildError& error) {

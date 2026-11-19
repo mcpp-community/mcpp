@@ -1089,9 +1089,13 @@ inline void toolchain(const char* key, const char* value) {
 }
 
 // mcpp#355: absolute path to a HOST tool built by a dependency — the binary
-// behind one of its `kind = "bin"` targets. Returns "" unless the consumer
-// declared it:  <dep> = { version = "…", tools = ["protoc"] }
-// The path already carries the platform's executable suffix.
+// behind one of its `kind = "bin"` targets. Declared on an edge,
+//     <dep> = { version = "…", tools = ["protoc"] }
+// or by a feature of the package (`[features.<f>] tools`), which reaches every
+// build program that links the package's library with the feature active.
+// The path already carries the platform's executable suffix. A tool no edge
+// and no feature declares answers "" and is reported by the engine
+// (`build-program/undeclared-tool`, protocol 20) with the line to write.
 inline const char* dep_bin(const char* pkg, const char* tool) {
     char buf[256] = "MCPP_DEP_";
     unsigned long o = 9;
@@ -1106,8 +1110,40 @@ inline const char* dep_bin(const char* pkg, const char* tool) {
     buf[o++] = '_'; buf[o++] = 'B'; buf[o++] = 'I'; buf[o++] = 'N'; buf[o++] = '_';
     put(tool);
     buf[o] = 0;
-    return env_or(buf);
+    const char* path = env_or(buf);
+    if (!*path) std::printf("mcpp:undeclared-tool=%s\t%s\n", pkg, tool);
+    return path;
 }
+
+// ── The objects of a link unit (protocol 20, design 2026-11-19 §8.2) ────────
+//
+// Which objects a program or library is linked from is the engine's fact, and
+// a rule that walks `obj/` afterwards guesses it. `objects_of("app")` is the
+// token `${mcpp.objects:app}`, which the engine replaces in an `artifact` or
+// `check` action with the absolute path of a file listing, one absolute path
+// per line in link order, the objects the unit's link takes (the static
+// dependencies' and the standard module's included, libraries not); the list
+// and every object in it are inputs of the action. `objects_rsp_of` is the
+// same list in response-file quoting, for a tool that reads `@file` (`ar`,
+// `llvm-ar`, `lib.exe`). A build program that calls them fails to compile on
+// an engine that does not replace the tokens, rather than handing a tool the
+// token unreplaced.
+struct token_text {
+    char text[320] = "";
+    const char* c_str() const { return text; }
+    operator const char*() const { return text; }
+};
+inline token_text token_of_(const char* head, const char* name) {
+    token_text t;
+    unsigned long o = 0;
+    for (const char* p = head; *p && o + 2 < sizeof t.text; ++p) t.text[o++] = *p;
+    for (const char* p = name; *p && o + 2 < sizeof t.text; ++p) t.text[o++] = *p;
+    t.text[o++] = '}';
+    t.text[o] = 0;
+    return t;
+}
+inline token_text objects_of(const char* name)     { return token_of_("${mcpp.objects:", name); }
+inline token_text objects_rsp_of(const char* name) { return token_of_("${mcpp.objects_rsp:", name); }
 }
 // ── Protocol announcement ───────────────────────────────────────────────
 // Emitted before main() runs, so a program that uses `import mcpp;` never has

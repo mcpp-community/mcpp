@@ -39,6 +39,7 @@ import nlohmann.json;
 import mcpp.log;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;   // platform-step: a program's output alone
+import mcpplibs.os.stdio;     // link-output: a linker's text, decoded
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.run;
@@ -315,7 +316,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     // One line, as every record of the stream is: a reader splits stdout on
     // newlines and parses each line, the last of which is this envelope.
-    std::println("{}", mcpp::wire::to_json(env).dump());
+    std::println("{}", mcpp::wire::text(mcpp::wire::to_json(env)));
     return rc;
 }
 
@@ -751,12 +752,12 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             return 1;
         }
         take_closing_notes();
-        const auto text = mcpp::wire::to_json(mcpp::wire::Envelope{
+        const auto text = mcpp::wire::text(mcpp::wire::to_json(mcpp::wire::Envelope{
             .kind = "mcpp.build-database",
             .effects = {Effect::ReadProject},
             .data = nullptr,
             .diagnostics = diagnostics,
-        }).dump(2) + "\n";
+        }), 2) + "\n";
         (void)publish(text);
         return 1;
     };
@@ -1064,7 +1065,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     nlohmann::json specJson{{"name", spec}};
     if (spec == "s1")
         specJson["version"] = std::string(mcpp::build::database::kProfileVersion);
-    if (const auto rc = publish(mcpp::wire::to_json(mcpp::wire::Envelope{
+    if (const auto rc = publish(mcpp::wire::text(mcpp::wire::to_json(mcpp::wire::Envelope{
             .kind = "mcpp.build-database",
             .effects = std::move(effects),
             .data = nlohmann::json{
@@ -1074,7 +1075,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 {"inputs-fingerprint", std::move(rendered.inputsFingerprint)},
             },
             .diagnostics = diagnostics,
-        }).dump(2) + "\n"); rc != 0) return rc;
+        }), 2) + "\n"); rc != 0) return rc;
     return hasError ? 1 : 0;
 }
 
@@ -1864,6 +1865,10 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
 // rename replaces a running program there, and a program started meanwhile
 // never meets a partial file. The publication is one command, so an edge that
 // holds a permit for the link holds it until the artifact is in place.
+//
+// `--text console` (design 2026-11-19 §20 T2): link.exe and lib.exe write their
+// text in the console's code page, so the command's two streams are read
+// through one pipe and written on as UTF-8, the text of everything mcpp reads.
 export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
                            std::span<const std::string> command) {
     namespace fs = std::filesystem;
@@ -1872,6 +1877,23 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
         std::println(libc::stderr(), "error: link-output needs --output <artifact> -- <linker command>");
         return 2;
     }
+    const std::string text = parsed.option_or_empty("text").value();
+    if (!text.empty() && text != "console") {
+        std::println(libc::stderr(), "error: link-output: --text takes `console`, not `{}`", text);
+        return 2;
+    }
+    // The linker, on this program's streams or through the decoding pipe.
+    auto run_linker = [&](const std::vector<std::string>& argv) {
+        if (text.empty())
+            return mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                             .streams = mcpp::run::Streams::inherit}).exit_code;
+        return mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
+                                         .streams = mcpp::run::Streams::merged,
+                                         .on_line = [](std::string_view line) {
+                                             (void)mcpplibs::os::stdio::write_output(std::string(line) + "\n");
+                                         },
+                                         .text = mcpplibs::os::text::encoding::console}).exit_code;
+    };
     std::error_code ec;
     // The row's companions (`--companions .wasm`, design 2026-11-15 N33): the
     // files named after the artifact that an earlier link wrote and this one
@@ -1898,11 +1920,9 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
             return 2;
         }
         *std::next(named) = temporary.string();
-        const auto linked = mcpp::run::execute(argv, {.input = mcpp::run::Input::inherit,
-                                                      .streams = mcpp::run::Streams::inherit});
-        if (linked.exit_code != 0) {
+        if (const int linked = run_linker(argv); linked != 0) {
             fs::remove(temporary, ec);
-            return linked.exit_code;
+            return linked;
         }
         fs::rename(temporary, out, ec);
         if (ec) {
@@ -1913,8 +1933,10 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
         }
         return 0;
     }
-    if (!parsed.is_flag_set("aside"))
+    if (!parsed.is_flag_set("aside")) {
+        if (!text.empty()) return run_linker(std::vector<std::string>(command.begin(), command.end()));
         return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
+    }
     const auto dir = out.parent_path().empty() ? fs::path(".") : out.parent_path();
     const auto stem = out.filename().string() + ".old-";
     for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
@@ -1931,6 +1953,7 @@ export int cmd_link_output(const mcpplibs::cmdline::ParsedArgs& parsed,
             break;
         }
     }
+    if (!text.empty()) return run_linker(std::vector<std::string>(command.begin(), command.end()));
     return mcpp::run::run_exec(std::vector<std::string>(command.begin(), command.end()));
 }
 
@@ -2115,7 +2138,7 @@ export int cmd_env_configuration(const mcpplibs::cmdline::ParsedArgs& parsed) {
             env.data = nullptr;
             env.diagnostics.push_back({"MCPP_CONFIGURATION_FAILED", mcpp::wire::Severity::Error,
                                        failure});
-            std::println("{}", mcpp::wire::to_json(env).dump());
+            std::println("{}", mcpp::wire::text(mcpp::wire::to_json(env)));
         } else {
             mcpp::ui::error(failure);
         }
@@ -2256,6 +2279,58 @@ export int cmd_install_configuration(std::string_view target) {
     if (ctx->plan.platform.active)
         mcpp::ui::info("Installed", std::format("{} for {}: {} tool(s) built for this machine",
             ctx->plan.platform.display(), target, ctx->plan.platform.tools.size()));
+    return 0;
+}
+
+// `${mcpp.self} write --output <file> [--append <file>]... -- <line>...`
+// (SPEC-007 R3.8, design 2026-11-19 §8.3). The family of the engine's own
+// commands is bounded by one criterion: one output, whose content the
+// declared inputs and the argv decide, the same on every run. A line is
+// written with `\n` after it; an appended file's bytes follow unchanged. The
+// output is written beside itself and renamed, and only when its bytes differ,
+// so a consumer that depends on it is not run again for an equal result.
+export int cmd_write(const mcpplibs::cmdline::ParsedArgs& parsed,
+                     std::span<const std::string> lines) {
+    namespace fs = std::filesystem;
+    const fs::path out = parsed.option_or_empty("output").value();
+    if (out.empty()) {
+        std::println(libc::stderr(), "error: write needs --output <file> [--append <file>]... -- <line>...");
+        return 2;
+    }
+    std::string text;
+    for (auto const& line : lines) { text += line; text += '\n'; }
+    for (auto const& name : parsed.option_or_empty("append").values) {
+        std::ifstream in(fs::path{name}, std::ios::binary);
+        if (!in) {
+            std::println(libc::stderr(), "error: write: cannot read {}, which --append names", name);
+            return 1;
+        }
+        text.append(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::error_code ec;
+    if (std::ifstream old(out, std::ios::binary); old) {
+        const std::string was{std::istreambuf_iterator<char>(old), std::istreambuf_iterator<char>()};
+        if (was == text) return 0;
+    }
+    if (out.has_parent_path()) fs::create_directories(out.parent_path(), ec);
+    auto tmp = out;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << text;
+        if (!f) {
+            std::println(libc::stderr(), "error: write: cannot write {}", tmp.string());
+            fs::remove(tmp, ec);
+            return 1;
+        }
+    }
+    fs::rename(tmp, out, ec);
+    if (ec) {
+        std::println(libc::stderr(), "error: write: cannot rename {} over {}: {}",
+                     tmp.string(), out.string(), ec.message());
+        fs::remove(tmp, ec);
+        return 1;
+    }
     return 0;
 }
 
@@ -2488,6 +2563,8 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     req.bmi       = file_path("bmi");
     req.object    = file_path("object");
     req.bmiTarget = opt_value(parsed, "bmi");
+    req.objectTarget = opt_value(parsed, "object");
+    req.relocate  = opt_value(parsed, "relocate");
     req.slot      = file_path("slot");
     req.self      = std::filesystem::path{opt_value(parsed, "self")};
     req.semaphore = file_path("sem");
@@ -2530,7 +2607,9 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(libc::stderr(), "error: bmi-supervise needs --slot");
         return 2;
     }
-    return mcpp::build::schedule::detach::supervise(slot, semaphore, cap, object, command);
+    const auto relocation = opt_value(parsed, "relocation");
+    return mcpp::build::schedule::detach::supervise(slot, semaphore, cap, object, command,
+        relocation.empty() ? std::filesystem::path{} : std::filesystem::path{relocation});
 }
 
 // Phase 2: join the detached compiler before anything reads its object.

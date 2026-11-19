@@ -384,6 +384,13 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // below), which is why this suppresses the two blocks rather than
     // returning early.
     const bool trustCfg = !bypassCfg && dm.hasCfg;
+    // WHETHER THIS COMMAND STATES THE CLANG DRIVER'S SEARCH ITSELF: it bypasses
+    // the cfg, or there is no cfg to trust (mcpp#965). Which libraries are the
+    // C and C++ layers is the target's fact, and a cfg beside the driver is a
+    // fact of one installation: the Windows LLVM payload carries none, and the
+    // isolation words below were withheld on every Windows host. GCC is not a
+    // clang driver and keeps its own search, as before.
+    const bool statesSearch = bypassCfg || (lm.clangDriver && !dm.hasCfg);
 
     // AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the compile-side
     // counterpart of the replacement `flags.cppm` makes on the link line.
@@ -441,6 +448,16 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         if (auto target = triple::parse(tc.targetTriple);
             target && target->arch == "aarch64")
             out.emplace_back("--rtlib=compiler-rt");
+    } else if (statesSearch && !bypassCfg && !graphSuppliesTarget && cxxFromPayload
+               && !tc.base.layers.cxx.empty()) {
+        // A BASE'S C++ LAYER UNDER A DRIVER WITH NO CFG (mcpp#965): the same
+        // words as the branch above, less the bypass of a file that is not
+        // there. On a Windows host the std module of a libstdc++ base (the
+        // Hurd and Haiku rows of mcpp-platforms) was precompiled with neither
+        // the base's directories nor `-nostdinc++`, and stopped at
+        // `'bits/stdc++.h' file not found`.
+        for (auto& t : dm.cxx_tokens(esc, opt.clangStdlibSelect))
+            out.push_back(t);
     } else if (bypassCfg) {
         // THE BYPASS IS NOT PART OF THE PAYLOAD'S HEADER SET, AND IT WAS
         // BEING SUPPRESSED WITH IT.
@@ -490,14 +507,13 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // GCC has no equivalent single flag — the shape would be `-nostdinc`
     // plus `-isystem <gcc -print-file-name=include>` and `<…/include-fixed>`,
     // re-adding exactly the two directories GCC's own C-library search
-    // already contributes beside the sysroot. Not implemented: `dm.hasCfg`
-    // is false for GCC (resolve_clang_driver only looks for a `<driver>.cfg`
-    // beside a Clang binary), so `bypassCfg` already withholds this whole
-    // block from that family — GCC stays exactly as it was before #662,
-    // unisolated, on every target row this codebase's own table pairs it
-    // with today (test_hostflags.cpp,
+    // already contributes beside the sysroot. Not implemented: `statesSearch`
+    // holds only for a clang driver (a cfg bypass, or a clang with no cfg),
+    // so this whole block is withheld from that family — GCC stays exactly as
+    // it was before #662, unisolated, on every target row this codebase's own
+    // table pairs it with today (test_hostflags.cpp,
     // GccEmitsNeitherIsolationTokenRegardlessOfGraphOrigin).
-    if (bypassCfg && graphSuppliesTarget) out.push_back("-nostdlibinc");
+    if (statesSearch && graphSuppliesTarget) out.push_back("-nostdlibinc");
 
     // THE CONDITION USED TO BE `!graphSuppliesTarget && !cxxFromPayload`,
     // WHICH IS RIGHT ABOUT `cxxFromPayload` AND WRONG TO ASK ABOUT THE C
@@ -516,7 +532,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // these headers", which is true for both `cxxFromGraph` (a package does)
     // and `appleSdkCxxHeaders` (the SDK does) — the two cases this branch
     // already told apart below by whether `opt.cxxFromGraph` is set.
-    if (bypassCfg && !cxxFromPayload) {
+    if (statesSearch && !cxxFromPayload) {
         // The driver's own C++ search contributes nothing: beside the compiler
         // it finds the payload's libc++, and clang's Darwin driver prefers that
         // copy to the SDK's whenever it exists. What replaces it is either the

@@ -75,6 +75,11 @@ struct CompileFlags {
     // changed archive relinks (design 2026-10-30 part 2 §25.3 C1; it did not,
     // and the clangd probe deleted its image to take a new archive).
     std::vector<std::filesystem::path> ldFileInputs;
+    // The word that asks the linker for the files it read, written on every
+    // link edge with `depfile = $out.d` (SPEC-004 §8.1); empty where the
+    // linker writes no such report, and those links have only the inputs
+    // above.
+    std::string linkReport;
     // `trim_paths` (mcpp#844): the rendered prefix map of each package, by
     // `CompileUnit::packageName`, appended to that package's C and C++ units.
     // Empty on cl.exe, which has no such switch.
@@ -334,10 +339,26 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
 // `mcpp::manifest::host_command_words`: reading the result back yields `arg`.
 std::string shell_quote_arg(std::string_view arg);
 
+// The files one link word names, which are inputs of the link that carries
+// it (SPEC-004 §8.1): absolute paths, in the word, after its `=`, in its
+// `,`-separated segments, after the `:` of an MSVC `/` option, and those a
+// named response file lists; a regular file, or one an action declares.
+std::vector<std::filesystem::path>
+link_word_inputs(std::string_view word, bool msvcDialect,
+                 const std::set<std::filesystem::path>& declaredOutputs);
+
 // One word of a compile-flag list as it is written on a ninja `command =`
 // line: quoted for the host's command-line reader, then `$` doubled so that
 // ninja hands the reader a literal `$`. A plain word comes back unchanged.
 std::string ninja_command_word(std::string_view word);
+
+// The inverse of the two: the words a host receives from a rendered line.
+// Ninja replaces `$ `, `$:` and `$$` while it builds the command line, and
+// only then does the host read the line into words; a word is escaped for
+// ninja before it is quoted for the host, so a quoted path's space arrives as
+// `$ ` inside the quotes, and it is a space again before the reader sees the
+// quotes. The reader is the host's own (#655).
+std::vector<std::string> rendered_words(std::string_view rendered);
 
 // The ninja text of a compile-flag list: every element read into words
 // (`mcpp::manifest::flag_words`), every word written by `ninja_command_word`,
@@ -478,17 +499,93 @@ std::string normalize_ldflag(const std::filesystem::path& root, const std::strin
 
 }  // namespace
 
-// The absolute paths of existing files a response file names.
-std::vector<std::filesystem::path> response_file_paths(const std::filesystem::path& rsp) {
+// The words of a rendered link line that decide which linker its driver runs
+// (`--target`, `-fuse-ld`, `--ld-path`, `-B`, a driver configuration) and
+// `-flavor`, the one a linker reads to decide which linker it is.
+std::vector<std::string> link_selection_words(std::string_view rendered) {
+    constexpr std::array<std::string_view, 9> kSelecting {
+        "--target=", "-target", "-fuse-ld=", "--ld-path=", "-B", "--no-default-config",
+        "--config", "--gcc-toolchain=", "--gcc-install-dir=" };
+    std::vector<std::string> out;
+    const auto words = rendered_words(rendered);
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        const auto& w = words[i];
+        const bool pairs = (w == "-target" || w == "-flavor" || w == "-B" || w == "--config")
+                           && i + 1 < words.size();
+        if (pairs || w == "-flavor") {
+            out.push_back(w);
+            if (pairs) out.push_back(words[++i]);
+            continue;
+        }
+        if (std::ranges::any_of(kSelecting, [&](auto p) { return w.starts_with(p); }))
+            out.push_back(w);
+    }
+    return out;
+}
+
+// The absolute paths of existing files a response file names, its words read
+// by the rules of the tool that reads it: link.exe's under the MSVC dialect,
+// the GNU drivers' otherwise (where a backslash takes the next character).
+std::vector<std::filesystem::path> response_file_paths(const std::filesystem::path& rsp, bool msvcDialect) {
     std::vector<std::filesystem::path> out;
     std::ifstream in(rsp, std::ios::binary);
     if (!in) return out;
     const std::string text { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
-    for (auto const& word : mcpp::build::command_line::response_file_words(text)) {
+    const auto words = msvcDialect ? mcpp::build::command_line::windows_response_file_words(text)
+                                   : mcpp::build::command_line::response_file_words(text);
+    for (auto const& word : words) {
         std::error_code ec;
         if (!word.starts_with('-') && std::filesystem::path(word).is_absolute()
             && std::filesystem::is_regular_file(word, ec))
             out.emplace_back(word);
+    }
+    return out;
+}
+
+// THE FILES A LINK WORD NAMES (SPEC-004 §8.1, mcpp#931). The rule had grown
+// one spelling at a time: a whole word (mcpp#869), then a response file
+// (mcpp#883), and an option's value was still no input -- a changed
+// `--js-library=<file>` or `-Wl,--version-script=<file>` left the program as
+// it was. Every place a word can carry a path is a candidate: the word, the
+// part after `=`, each `,`-separated segment and the part after `=` within
+// it, and under the MSVC dialect the part after the first `:` of a `/`
+// option. A candidate is an input when it is an absolute path that names a
+// regular file now or a file an action of this plan declares. A directory
+// (`-L`, `-rpath`, `--sysroot`) is no regular file; taking a candidate too
+// many costs one link when that file changes, one too few a stale artifact.
+std::vector<std::filesystem::path>
+link_word_inputs(std::string_view word, bool msvcDialect,
+                 const std::set<std::filesystem::path>& declaredOutputs) {
+    std::vector<std::string_view> candidates { word };
+    auto after = [](std::string_view s, char c) {
+        auto pos = s.find(c);
+        return pos == std::string_view::npos ? std::string_view{} : s.substr(pos + 1);
+    };
+    candidates.push_back(after(word, '='));
+    if (word.find(',') != std::string_view::npos)
+        for (auto segment : std::views::split(word, ',')) {
+            const std::string_view s { segment.begin(), segment.end() };
+            candidates.push_back(s);
+            candidates.push_back(after(s, '='));
+        }
+    if (msvcDialect && word.starts_with('/')) candidates.push_back(after(word, ':'));
+
+    std::vector<std::filesystem::path> out;
+    for (auto c : candidates) {
+        const bool responseFile = c.starts_with('@');
+        if (responseFile) c.remove_prefix(1);
+        const std::filesystem::path p { std::string(c) };
+        if (c.empty() || !p.is_absolute()) continue;
+        std::error_code ec;
+        const bool file = std::filesystem::is_regular_file(p, ec);
+        if (!file && !declaredOutputs.contains(p.lexically_normal())) continue;
+        if (std::ranges::find(out, p) == out.end()) out.push_back(p);
+        // A RESPONSE FILE IS AN INPUT, AND SO IS EVERY FILE IT NAMES: a build
+        // program that lists the archives a `prepare` action makes in one
+        // rewrites nothing when the action rebuilds them (clangd's ok image,
+        // 2026-11-02: a stale image after its libraries changed).
+        if (responseFile && file)
+            for (auto& named : response_file_paths(p, msvcDialect)) out.push_back(std::move(named));
     }
     return out;
 }
@@ -575,6 +672,20 @@ std::string ninja_command_word(std::string_view word) {
         out.push_back(c);
     }
     return out;
+}
+
+std::vector<std::string> rendered_words(std::string_view s) {
+    std::string unescaped;
+    unescaped.reserve(s.size());
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '$' && i + 1 < s.size()
+            && (s[i + 1] == ' ' || s[i + 1] == ':' || s[i + 1] == '$')) {
+            unescaped.push_back(s[++i]);
+            continue;
+        }
+        unescaped.push_back(s[i]);
+    }
+    return mcpp::manifest::host_command_words(unescaped, mcpplibs::os::is_windows);
 }
 
 std::string ninja_flag_list(const std::vector<std::string>& elements) {
@@ -1326,6 +1437,12 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // `__cxa_throw` and the personality first, and libc++abi answered the rest
     // (mcpp#838, measured: `catch (const std::exception&)` missed).
     std::string user_ldflags;
+    // A file an action of this plan declares is an input though it does not
+    // exist yet: the first build plans the link before the action has run.
+    std::set<std::filesystem::path> declaredOutputs;
+    for (auto const& a : plan.actions)
+        for (auto const& o : a.outputs)
+            if (std::filesystem::path p { o }; p.is_absolute()) declaredOutputs.insert(p.lexically_normal());
     const auto linkWords = packageLinkFlags
         ? mcpp::manifest::flag_words(plan.manifest.buildConfig.ldflags)
         : std::vector<std::string>{};
@@ -1339,28 +1456,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         }
         user_ldflags += ' ';
         user_ldflags += rendered;
-        // A word that names an existing file by absolute path is a link
-        // input. A relative word is read by the linker against the build
-        // directory, and an option is no file.
-        if (!word.starts_with('-') && !word.starts_with('@')
-            && std::filesystem::path(word).is_absolute()) {
-            std::error_code ec;
-            if (std::filesystem::is_regular_file(word, ec)) f.ldFileInputs.emplace_back(word);
-        }
-        // A RESPONSE FILE IS AN INPUT, AND SO IS EVERY FILE IT NAMES. A build
-        // program that lists the archives a `prepare` action makes in one
-        // (`link_flag("@<file>")`) rewrites nothing when the action rebuilds
-        // them, so the link stayed up to date over new archives (clangd's ok
-        // image, 2026-11-02: a stale image after its libraries changed).
-        if (word.starts_with('@')) {
-            const std::filesystem::path rsp { word.substr(1) };
-            std::error_code ec;
-            if (rsp.is_absolute() && std::filesystem::is_regular_file(rsp, ec)) {
-                f.ldFileInputs.push_back(rsp);
-                for (auto const& named : response_file_paths(rsp))
-                    f.ldFileInputs.push_back(named);
-            }
-        }
+        for (auto& input : link_word_inputs(word, isMsvcDialect, declaredOutputs))
+            f.ldFileInputs.push_back(std::move(input));
     }
 
     // C standard. The file-level `$cflags` carries the engine default, a
@@ -2759,6 +2856,37 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             if (f.ld.find("--ld-path=") == std::string::npos)  f.ld  += opt;
             if (f.ldC.find("--ld-path=") == std::string::npos) f.ldC += opt;
         }
+
+    // THE LINKER'S OWN REPORT (SPEC-004 §8.1, mcpp#931). What the flags name
+    // is known when the graph is written; what the linker finds by searching
+    // (`-l`, a script's `INPUT`) is known only to the linker, which writes it
+    // as a compiler writes its dependency file. Asked of the linker this
+    // line runs, on an ELF target: ld64, wasm-ld, lld-link and link.exe
+    // write no make rules (LLVM 23.1.3).
+    if (!isMsvcDialect && targetObjectFormat == mcpp::build::dist::Format::Elf) {
+        const bool direct = !f.ldDriver.empty();
+        std::vector<std::string> argv { direct ? f.ldDriver.string() : f.cxxBinary.string() };
+        for (auto const& w : link_selection_words(f.ld)) argv.push_back(w);
+        // A link that names a dependency file of its own keeps it: GNU ld and
+        // ld.lld write one file, the last named, and the engine's option would
+        // follow the project's words. The engine then asks for no report, and
+        // the link's record holds only the files its words name.
+        const bool own = std::ranges::any_of(linkWords, [](const std::string& w) {
+            return w.contains("--dependency-file");
+        });
+        if (mcpp::toolchain::linker_reports_inputs(argv, direct,
+                                                   mcpp::toolchain::compiler_env(plan.toolchain))) {
+            if (!own)
+                f.linkReport = direct ? " --dependency-file=$out.d" : " -Wl,--dependency-file=$out.d";
+            else
+                mcpp::diag::degraded("build/link-report",
+                    "[build] ldflags names its own --dependency-file, so the link records no report "
+                    "of what the linker read",
+                    "a library the linker finds by searching (-L, -l) relinks the program only when a "
+                    "word of the link names it",
+                    "remove --dependency-file from [build] ldflags to have mcpp record the link's inputs");
+        }
+    }
 
     return f;
 }

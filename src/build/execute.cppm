@@ -266,7 +266,7 @@ std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy
     }
     {
         std::ofstream out(root / std::string(kManifestName), std::ios::binary | std::ios::trunc);
-        out << to_json(m).dump(2) << '\n';
+        out << mcpp::wire::text(to_json(m), 2) << '\n';
         if (!out) return std::unexpected(std::format("cannot write {}", kManifestName));
     }
     if (archive.has_parent_path()) fs::create_directories(archive.parent_path(), ec);
@@ -1522,19 +1522,16 @@ ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string
 // a way. One predicate for every row, built-in or defined: the row's execution
 // system against this machine's. `--no-runner` states that the triple is
 // native here, and is believed.
-std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
-                                                 std::string_view tripleKey, bool noRunner,
-                                                 bool runnerDeclared = false) {
+export std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
+                                                        std::string_view tripleKey, bool noRunner,
+                                                        bool runnerDeclared = false) {
     if (noRunner || !ctx.runUnder.empty()) return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
-    // An Apple artifact off macOS: no runner reaches it, only an execution host.
-    if (!mcpplibs::os::is_macos && t && t->is_apple())
-        return std::format(
-            "cannot run {} artifacts on this host: {} runs only on macOS.\n"
-            "       Name an execution host: [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"]\n"
-            "       (in mcpp.toml for the team, or ~/.mcpp/config.toml for this machine).",
-            tripleKey, t->is_ios_simulator() ? "the iOS Simulator" : t->is_ios() ? "iOS" : "macOS",
-            tripleKey);
+    // No system is named here (mcpp#957). A branch for Apple's rows stood
+    // before the predicate below and refused them off macOS whether or not a
+    // runner was declared, so a runner a platform states for such a row was
+    // never consulted. The predicate gives those rows the same refusal where
+    // nothing runs them and admits them where a runner does.
     // AN ARTIFACT OF ANOTHER SYSTEM IS NOT STARTED TO SEE WHAT HAPPENS (SPEC-016
     // §6). A row's artifacts run on its execution system -- the `execution` its
     // row states, built-in or defined, else its own -- and that is this
@@ -2582,7 +2579,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
 
     std::vector<std::pair<std::string, std::string>> childEnv;
     if (runtimeEnvKey == "@env") {
-        // Multi-var encoding (MSVC INCLUDE/LIB/PATH/VSLANG + optional runtime
+        // Multi-var encoding (MSVC INCLUDE/LIB/PATH + optional runtime
         // pair): \x1f-separated k=v records in the single value slot.
         std::string_view rest = runtimeEnvValue;
         while (!rest.empty()) {
@@ -2748,6 +2745,8 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     // report attached to one path only appears or not depending on whether
     // build.ninja was up to date.
     mcpp::build::advice::report_and_clear(outputDir);
+    // The build used the instances of the plan that wrote this graph (§11.1).
+    mcpp::build::touch_last_instances(outputDir);
 
     if (elapsedOut) {
         *elapsedOut = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3428,7 +3427,7 @@ bool& launch_stream_flag() {
 export void set_launch_stream(bool on) { launch_stream_flag() = on; }
 
 void emit_launch(const mcpp::wire::Envelope& env) {
-    if (launch_stream_flag()) mcpp::ui::terminal::write_protocol_stdout(mcpp::wire::to_json(env).dump() + "\n");
+    if (launch_stream_flag()) mcpp::ui::terminal::write_protocol_stdout(mcpp::wire::text(mcpp::wire::to_json(env)) + "\n");
     else mcpp::wire::emit(env);
 }
 
@@ -3458,7 +3457,7 @@ void record_launch(const std::filesystem::path& outputDir, const std::filesystem
     const auto staged = std::filesystem::path(path.string() + ".tmp");
     {
         std::ofstream out(staged, std::ios::binary | std::ios::trunc);
-        out << data.dump();
+        out << mcpp::wire::text(data);
         if (!out) return;   // a description without a record: the next one takes the full path
     }
     std::filesystem::rename(staged, path, ec);
@@ -4648,7 +4647,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 u["source"] = "program";
                 p["usage"] = std::move(u);
             }
-            programs << p.dump() << "\n";
+            programs << mcpp::wire::text(p) << "\n";
             if (t.report.cases.empty()) {
                 ++counts[status_of(t)];
                 continue;
@@ -4682,7 +4681,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 }
                 if (!c.bounds.empty()) line["bounds"] = mcpp::build::test_protocol::bounds_json(c.bounds);
                 if (c.checks) line["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
-                cases << line.dump() << "\n";
+                cases << mcpp::wire::text(line) << "\n";
             }
         }
     }
@@ -4695,8 +4694,8 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
              {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", "off"},
              {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
     if (!shard.empty()) run["shard"] = std::string(shard);
-    { std::ofstream(runDir / "run.json", std::ios::binary) << run.dump(2) << "\n"; }
-    std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << run.dump() << "\n";
+    { std::ofstream(runDir / "run.json", std::ios::binary) << mcpp::wire::text(run, 2) << "\n"; }
+    std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << mcpp::wire::text(run) << "\n";
 }
 
 
@@ -4747,7 +4746,7 @@ static void emit_test_json(const std::string& memberName, const TestResult& r) {
     }
     if (!r.guide.empty()) record["guide"] = r.guide;
     if (r.launch) record["launch"] = mcpp::build::result::to_json(*r.launch);
-    std::println("{}", record.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
+    std::println("{}", mcpp::wire::text(record));
     std::fflush(libc::stdout());
 }
 
@@ -5680,8 +5679,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                                 if (it.key() != "id") body[it.key()] = *it;
                         }
                         std::scoped_lock lock(reportMutex);
-                        std::println("{}", nlohmann::ordered_json{{"case", std::move(body)}}.dump(
-                                               -1, ' ', false, nlohmann::ordered_json::error_handler_t::replace));
+                        std::println("{}", mcpp::wire::text(nlohmann::ordered_json{{"case", std::move(body)}}));
                         std::fflush(libc::stdout());
                     }
                 };
@@ -6975,7 +6973,7 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
                       {"jobs", ctx.globalDefaultJobs}, {"group", ctx.workspaceGroup}};
     {
         const auto tmp = ctx.outputDir / std::format("{}.{:x}", kTestPlanFile, std::random_device{}());
-        { std::ofstream(tmp, std::ios::binary) << record.dump(1) << "\n"; }
+        { std::ofstream(tmp, std::ios::binary) << mcpp::wire::text(record, 1) << "\n"; }
         std::error_code ec;
         fs::rename(tmp, ctx.outputDir / kTestPlanFile, ec);
         if (ec) { fs::remove(tmp, ec); return; }
@@ -8041,10 +8039,30 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
 }
 
 // `mcpp clean` driver.
+// The configuration directories below `target/`: `<triple>/<fingerprint>/`.
+std::vector<std::filesystem::path> configuration_dirs(const std::filesystem::path& target) {
+    std::vector<std::filesystem::path> out;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator t(target, ec), end; !ec && t != end; t.increment(ec)) {
+        std::error_code fec;
+        if (t->path().filename().string().starts_with(".") || !t->is_directory(fec)) continue;
+        for (std::filesystem::directory_iterator f(t->path(), fec), fend; !fec && f != fend; f.increment(fec))
+            if (std::error_code dec; f->is_directory(dec)) out.push_back(f->path());
+    }
+    return out;
+}
+
 export int clean_project(bool wipe_bmi) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { std::println(libc::stderr(), "error: not in an mcpp package"); return 2; }
     std::error_code ec;
+    // Each configuration's compiler runs are retired first (§10.3 D); one a
+    // build holds keeps target/ as it is.
+    for (const auto& dir : configuration_dirs(*root / "target"))
+        if (auto retired = mcpp::build::schedule::detach::retire_compiler_runs(dir); !retired) {
+            std::println(libc::stderr(), "error: {}", retired.error());
+            return 1;
+        }
     std::filesystem::remove_all(*root / "target", ec);
     if (ec) {
         std::println(libc::stderr(), "error: cannot remove target/: {}", ec.message());
@@ -8108,6 +8126,23 @@ export int clean_project(bool wipe_bmi) {
 // `target/` before that: none of them is read by a workspace build. A
 // member's `target/.build-mcpp/`, where its build program's outputs are, is
 // kept.
+// The package instances of one configuration directory, each with its
+// objects, BMIs and the days since a plan last used it (design 2026-11-19
+// §11.1), indented below the configuration's line.
+void report_instances(const std::filesystem::path& fpDir) {
+    using mcpp::bmi_cache::dir_size, mcpp::bmi_cache::human_bytes;
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (auto const& [dir, use] : mcpp::build::read_instances(fpDir)) {
+        const auto obj = dir_size(fpDir / "obj" / std::filesystem::path(dir));
+        std::uintmax_t bmi = 0;
+        for (auto const* area : {"gcm.cache", "pcm.cache", "ifc.cache"})
+            bmi += dir_size(fpDir / area / std::filesystem::path(dir));
+        std::println("  {:<42} {:>10} {:>10} {:>10}  used {}d ago{}", "obj/" + dir, human_bytes(obj), "",
+                     human_bytes(bmi), (now - use.when) / 86400, use.last ? ", by the last plan" : "");
+    }
+}
+
 // `mcpp clean --report` (mcpp#874): where target/ holds its bytes. Per
 // configuration directory, its objects, their split debug information, its BMIs
 // and its products; then the
@@ -8152,6 +8187,7 @@ export int clean_report() {
             std::println("{:<44} {:>10} {:>10} {:>10} {:>10} {:>10}",
                          triple + "/" + f->path().filename().string(), human_bytes(obj),
                          human_bytes(debug), human_bytes(bmi), human_bytes(bin), human_bytes(all));
+            report_instances(f->path());
         }
     }
     const auto bm = target / ".build-mcpp";
@@ -8269,6 +8305,54 @@ export void sweep_after_build() {
     }
 }
 
+// THE PACKAGE INSTANCES OF ONE CONFIGURATION (design 2026-11-19 §11.1): an
+// instance a plan has not used within the window -- its objects below
+// `obj/<package>/<digest>/` and its BMIs below the BMI directory -- is
+// removed, and its line leaves `instances.tsv`. The window is the one the
+// configurations are kept by; the last plan's instances are always kept.
+struct InstanceSweep {
+    std::uintmax_t bytes = 0;
+    std::size_t    removed = 0, failed = 0;
+};
+InstanceSweep sweep_instances(const std::filesystem::path& fpDir, const std::string& shown, bool dryRun,
+                              std::int64_t keepWithinSecs,
+                              const std::function<void(const std::string&)>& line) {
+    namespace fs = std::filesystem;
+    InstanceSweep out;
+    auto instances = mcpp::build::read_instances(fpDir);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    // The last plan's instances are kept as the recorded configuration is,
+    // whatever the window.
+    bool changed = false;
+    for (auto it = instances.begin(); it != instances.end();) {
+        if (it->second.last || now - it->second.when < keepWithinSecs) { ++it; continue; }
+        std::uintmax_t size = 0;
+        std::error_code rec;
+        for (auto const* area : {"obj", "gcm.cache", "pcm.cache", "ifc.cache"}) {
+            const auto dir = fpDir / area / fs::path(it->first);
+            size += mcpp::bmi_cache::dir_size(dir);
+            if (!dryRun) fs::remove_all(dir, rec);
+        }
+        if (rec) {
+            std::println(libc::stderr(), "error: cannot remove {}/obj/{}: {}", shown, it->first, rec.message());
+            ++out.failed;
+            ++it;
+            continue;
+        }
+        line(std::format("{} {}/obj/{}  ({}; no build used this instance within the window)",
+                         dryRun ? "would remove" : "removed", shown, it->first,
+                         mcpp::bmi_cache::human_bytes(size)));
+        out.bytes += size;
+        ++out.removed;
+        if (dryRun) { ++it; continue; }
+        it = instances.erase(it);
+        changed = true;
+    }
+    if (changed) mcpp::build::write_instances(fpDir, instances);
+    return out;
+}
+
 export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
     // Quiet: the sweep after a build (design 2026-10-31 §8.3) says one line
     // when it removed something, and nothing about what it kept.
@@ -8333,7 +8417,16 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
             if (!fpIt->is_directory(fec) || fec) continue;
             const fs::path dir = fpIt->path();
             const std::string fp = dir.filename().string();
-            if (recorded->second.contains(fp)) continue;
+            if (recorded->second.contains(fp)) {
+                // A current configuration keeps its directory; its package
+                // instances no plan has used within the window go (§11.1).
+                const auto swept = sweep_instances(dir, std::format("target/{}/{}", triple, fp),
+                                                   dryRun, keepWithinSecs, line);
+                bytes += swept.bytes;
+                removed += swept.removed;
+                failed += swept.failed;
+                continue;
+            }
             const std::string shown = std::format("target/{}/{}", triple, fp);
             // build.ninja is rewritten by every build; the directory's own
             // mtime only moves when an entry is added or removed.
@@ -8352,6 +8445,12 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                 }
             }
             const auto size = mcpp::bmi_cache::dir_size(dir);
+            if (!dryRun)
+                if (auto retired = mcpp::build::schedule::detach::retire_compiler_runs(dir); !retired) {
+                    std::println(libc::stderr(), "error: {}", retired.error());
+                    ++failed;
+                    continue;
+                }
             swept.insert(dir);
             if (dryRun) {
                 line(std::format("would remove {}  ({})", shown, mcpp::bmi_cache::human_bytes(size)));

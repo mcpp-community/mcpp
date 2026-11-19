@@ -196,6 +196,26 @@ refuses a `path` dependency outside the package that is not a workspace member,
 and an inherited include directory outside the member's directory, because the
 archive contains neither.
 
+### The descriptor `mcpp publish` writes *(mcpp 2026.11.19.1+)*
+
+A descriptor's `mcpp` field has two forms (SPEC-001 §3.5). The pointer form,
+`mcpp = "<glob>"`, names the manifest inside the payload; the inline form,
+`mcpp = { sources = ..., ... }`, is the manifest of a payload that carries none.
+`mcpp publish` and `mcpp emit xpkg` write the pointer form:
+
+```lua
+mcpp = "*/mcpp.toml",
+```
+
+The archive is the package's source tree under one top directory, and its
+manifest is in it, so the descriptor states where the manifest is and repeats
+nothing the manifest states: modules, dependencies and run-time requirements
+are read from `mcpp.toml`. `mcpp xpkg parse`, a consumer's build and
+`mcpp new --template` read the field through one function, so a descriptor that
+was written is a descriptor that is read. Before this release the two commands
+wrote a table with `manifest = "mcpp.toml"`, which is neither form; such a
+descriptor is refused with the line to write in its place.
+
 ### Names, the tag and several members *(mcpp 2026.11.17.2+)*
 
 | Item | Rule |

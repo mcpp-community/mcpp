@@ -67,8 +67,8 @@ not deprecated:
 
 ```toml
 [dev-dependencies]
-mcpplibs.mtest         = "0.9.0"
-"mcpplibs.mtest.gtest" = "0.9.0"
+mcpplibs.mtest         = "0.10.0"
+"mcpplibs.mtest.gtest" = "0.10.0"
 ```
 
 ```toml
@@ -265,9 +265,10 @@ mcpplibs.os = { version = "0.4.4", override = true }
   the defaults, and the project may choose another.
 - **When it is needed.** Two version requests that no SemVer merge reconciles
   are refused naming both, and the refusal ends with the line that overrides
-  the package. Two requests from `[build-dependencies]` tables are refused the
-  same way and are never renamed apart: a build dependency is a module of a
-  build program, and one build loads one version of it (2026.11.16.1). A library that pins one release of a package every consumer
+  the package. Two requests of one build program's resolution are refused the
+  same way, naming the program, and are never renamed apart: a build dependency
+  is a module of a build program, and a program loads one version of it
+  (2026.11.16.1; per program since 2026.11.19.1, below). A library that pins one release of a package every consumer
   shares (one that provides a target-side layer or a kernel ABI) is noted to
   the projects that use it, and `mcpp publish` refuses the pin in a library:
   a range leaves the choice to the project.
@@ -464,7 +465,7 @@ Controls, in order of precedence:
 |---|---|
 | `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install, no `git ls-remote`/`clone`. Anything already installed still builds, including git deps whose commit is in `mcpp.lock` and whose clone is cached |
 | `MCPP_OFFLINE=1` | Same, for a whole shell session or CI job |
-| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh an index implicitly: not on a dependency miss, not before installing a package the local index lacks, and not for the first sync of a project's custom index (that build stops and names `mcpp index update`). Downloads still work |
+| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh an index implicitly: not on a dependency miss, not on a target row the index's platform column does not list (2026.11.19.1+), not before installing a package the local index lacks, and not for the first sync of a project's custom index (that build stops and names `mcpp index update`). Downloads still work |
 
 `MCPP_NO_AUTO_INSTALL=1` remains accepted as the older, narrower spelling of
 `--offline` (it gates only toolchain auto-install).
@@ -538,9 +539,46 @@ and the build program is compiled by the same plan (30 — `build.mcpp`).
 
 **One package in both tables.** A package written in `[dependencies]` and in
 `[build-dependencies]` of one manifest has two instances, one compiled for the
-target and one for the build program. Both have the version the lock records.
-Their features are activated separately: a feature requested only by a
-`[build-dependencies]` edge does not reach the target instance.
+target and one for the build program. Both have one version unless the two
+requests admit none in common (below). Their features are activated
+separately: a feature requested only by a `[build-dependencies]` edge does not
+reach the target instance.
+
+**Each build program resolves its own build dependencies *(mcpp
+2026.11.19.1+)*.** A C++ program loads one version of a package; two programs do
+not constrain each other. The target (the selected members, what they reach
+through `[dependencies]` and what the platform adds) is one resolution, and
+each build program is another: a package's `build.mcpp` (or the program its
+rules synthesise) with its `[build-dependencies]` and their closure, and a
+platform's plugin with the platform's.
+
+- Within one resolution, requests merge as before, and two requests no merge
+  reconciles are refused, naming the program (`in the build program of
+  app@0.1.0`) and every requester.
+- A build program keeps the version it holds while its requests admit it, and
+  otherwise takes the newest version the target or another program holds that
+  all its requests admit, and the newest the index holds only when none does.
+  The target is resolved first, the layers and capability defaults its platform
+  adds included, and a program before the programs of the packages it holds. A
+  build without a conflict keeps the versions, and the build programs'
+  identities, it had before.
+- Two versions of one package coexist only between programs: the project's
+  `build.mcpp` may use `mcpp.plugins` 0.22.1 while its platform's plugin uses
+  0.26.1. `mcpp.lock` records the second version as an entry of its own,
+  `<name>+b<digest>`, whose `programs` lists the programs that hold it.
+- The root's `override = true` holds for every resolution.
+
+Before, one table held every resolution of a build, and a project's build
+program could only use the version the platform's plugin used (mcpp#972).
+
+**Which row reads a package's conditional tables *(mcpp 2026.11.19.1+)*.** A
+package's `[target.<selector>.dependencies]` are read by the row the package is
+built for (SPEC-004 §4.8). A package of the target is read by the build's
+target. A package reached only through `[build-dependencies]` is a module of a
+build program and is read by the row of the machine that runs the build: under
+`--target x86_64-macos-musl` on Linux, a library of `build.mcpp` takes its
+`[target.linux.dependencies]`. A package both sides ask for is read once for
+each. `mcpp.lock` records the packages of both sides.
 
 **A reading kept for compatibility.** A `[dependencies]` entry that asks for
 `host-module = true`, or for a feature that declares `rule_module`, is read as a
@@ -564,8 +602,8 @@ A cycle among packages is refused where the graph is resolved, naming its
 edges, under every cache mode; a tool whose own sub-build requests it again is
 refused at that first repetition, naming the chain.
 
-Unlike `[dev-dependencies]`, build dependencies **are** walked transitively and
-resolved with the project, one version per package: a build dependency's own
+Unlike `[dev-dependencies]`, build dependencies **are** walked transitively,
+one version per package in each build program: a build dependency's own
 dependencies are what make it work, and they serve the build program with it.
 
 A feature scopes build-time requests without a second declaration site. A

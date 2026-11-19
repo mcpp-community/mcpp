@@ -255,8 +255,11 @@ struct ClangDriverModel {
     bool hasCfg = false;                       // sibling <driver>.cfg exists
     std::filesystem::path cfgPath;
     std::filesystem::path llvmRoot;            // <bin>/../
-    std::vector<std::filesystem::path> cxxIncludes;  // libc++ header dirs
+    std::vector<std::filesystem::path> cxxIncludes;  // the C++ layer's header dirs
     std::vector<std::filesystem::path> libDirs;      // libc++/compiler-rt libs
+    // The library those headers are, as `-stdlib=` names it: the payload's
+    // libc++, or a base package's library (empty: a name clang has no word for).
+    std::string stdlib = "libc++";
 
     // "--no-default-config" "-nostdinc++" "-isystem<...>" (compile side), as
     // argv tokens. -stdlib=libc++ is deliberately left to callers: compile
@@ -267,8 +270,18 @@ struct ClangDriverModel {
     // the flag would invalidate every user's std BMIs for no behavioural gain.
     std::vector<std::string> compile_tokens(const PathEscape& esc,
                                             bool stdlibSelect = false) const {
-        std::vector<std::string> out{"--no-default-config", "-nostdinc++"};
-        if (stdlibSelect) out.push_back("-stdlib=libc++");
+        std::vector<std::string> out{"--no-default-config"};
+        for (auto& t : cxx_tokens(esc, stdlibSelect)) out.push_back(std::move(t));
+        return out;
+    }
+
+    // The C++ layer's half of the above, without the cfg bypass: what a driver
+    // with no cfg beside it is told when the C++ layer is not its own payload's
+    // (a base package's, mcpp#965). The library selected is the layer's.
+    std::vector<std::string> cxx_tokens(const PathEscape& esc,
+                                        bool stdlibSelect = false) const {
+        std::vector<std::string> out{"-nostdinc++"};
+        if (stdlibSelect && !stdlib.empty()) out.push_back("-stdlib=" + stdlib);
         for (auto& inc : cxxIncludes) out.push_back("-isystem" + esc(inc));
         return out;
     }
@@ -381,21 +394,31 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
         const auto root = tc.binaryPath.parent_path().parent_path();
         dm.hasCfg = std::filesystem::exists(root / "include" / "c++" / "v1", ec);
     }
+    if (dm.hasCfg) dm.llvmRoot = tc.binaryPath.parent_path().parent_path();
+    // A BASE PACKAGE'S C++ HEADERS STAND WHERE THE PAYLOAD'S WOULD (E5), so
+    // every reader of this model -- a unit, the std module, a build program --
+    // compiles against the library the base links.
+    //
+    // WHETHER OR NOT THE PAYLOAD CARRIES A CFG (mcpp#965). Which library is the
+    // C++ layer is the target's fact; a cfg beside the driver is a fact of one
+    // installation. The Windows LLVM payload carries none, and this answer was
+    // taken only after the cfg was found: on a Windows host the std module of a
+    // libstdc++ base (the Hurd and Haiku rows of mcpp-platforms) was
+    // precompiled with neither the base's directories nor `-nostdinc++`, and
+    // stopped at `'bits/stdc++.h' file not found`.
+    if (!tc.base.layers.cxx.empty()) {
+        dm.cxxIncludes = tc.base.layers.cxxIncludes;
+        const auto& layer = tc.base.layers.cxx;
+        dm.stdlib = layer == "libc++" || layer == "libstdc++" ? layer : std::string{};
+        return dm;
+    }
     if (!dm.hasCfg) return dm;
-    dm.llvmRoot = tc.binaryPath.parent_path().parent_path();
     // A TARGET WHOSE C LIBRARY A PLATFORM DESCRIBES TAKES NONE OF THE
     // PAYLOAD'S OWN TARGET SIDE (E1): its libc++ headers and runtime
     // directories are built for the payload's host. Measured on a FreeBSD row
     // a platform defined (2026-11-10): the payload's `include/c++/v1` reached C
     // units (`'__config_site' file not found`), and its `lib/<host triple>`
     // reached the link and the artifact's RPATH.
-    // A BASE PACKAGE'S C++ HEADERS STAND WHERE THE PAYLOAD'S WOULD (E5), so
-    // every reader of this model -- a unit, the std module, a build program --
-    // compiles against the library the base links.
-    if (!tc.base.layers.cxx.empty()) {
-        dm.cxxIncludes = tc.base.layers.cxxIncludes;
-        return dm;
-    }
     if (auto t = mcpp::toolchain::triple::parse(tc.targetTriple); t && t->c_library_by_platform())
         return dm;
     auto libcxxInclude = dm.llvmRoot / "include" / "c++" / "v1";

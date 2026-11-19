@@ -11,6 +11,7 @@ using namespace mcpplibs::mtest;
 
 using words = std::vector<std::string>;
 using mcpp::build::command_line::response_file_words;
+using mcpp::build::command_line::windows_response_file_words;
 using mcpp::build::command_line::shell_words;
 
 UTest a_shell_reads_quotes_and_backslashes{"CommandWords/AShellReadsQuotesAndBackslashes", [] {
@@ -26,6 +27,19 @@ UTest a_shell_reads_quotes_and_backslashes{"CommandWords/AShellReadsQuotesAndBac
 UTest a_response_file_takes_the_character_after_every_backslash{"CommandWords/AResponseFileTakesTheCharacterAfterEveryBackslash", [] {
     expect(eq(response_file_words("/a/lib.a\n\"/b c/lib.a\"\r\n'x\\'y'"), (words{"/a/lib.a", "/b c/lib.a", "x'y"})));
     expect(eq(response_file_words("a\\ b \"c\\\\d\""), (words{"a b", "c\\d"})));
+}};
+
+// link.exe's rules (CommandLineToArgvW): a backslash is a character unless
+// backslashes precede a double quote, and a native path is a word as written.
+UTest a_windows_response_file_keeps_its_backslashes{"CommandWords/AWindowsResponseFileKeepsItsBackslashes", [] {
+    expect(eq(windows_response_file_words("C:\\lib\\a.lib\r\n\"C:\\x y\\b.lib\"\r\n/OUT:c.exe"),
+              (words{"C:\\lib\\a.lib", "C:\\x y\\b.lib", "/OUT:c.exe"})));
+    // 2n backslashes before a quote are n and the quote opens or closes; 2n+1
+    // are n and a quote; two quotes inside quotes are one.
+    expect(eq(windows_response_file_words("a\\\\\"b c\" d\\\"e \"f\"\"g\""),
+              (words{"a\\b c", "d\"e", "f\"g"})));
+    expect(windows_response_file_words(" \t\r\n").empty());
+    expect(eq(windows_response_file_words("\"\""), (words{""}))) << "an empty quoted word is a word";
 }};
 
 UTest a_word_quoted_for_a_shell_reads_back_as_itself{"CommandWords/AWordQuotedForAShellReadsBackAsItself", [] {

@@ -32,6 +32,9 @@ E2E path{"path", [] {
     "09 path dependency"_test[s::elf][s::gcc] = [] {
         // Package B imports modules of package A through `[dependencies.A] path`: the
         // multi-package scanner and link; a path whose manifest names another package is refused.
+        // A is a tree beside B, which the global cache names by its content (mcpp#974): a home
+        // that built the same tree before would stage A's objects, and the plan's compile edges
+        // for A are measured under `--cache local`.
         auto a = s::project::scaffold("mylibA");
         a.write("src/greet.cppm", "export module mylibA.greet;\nimport std;\nexport auto greet(std::string_view who) -> void {\n    std::println(\"Hello {} from mylibA!\", who);\n}\n");
         a.remove("src/main.cpp");
@@ -43,15 +46,16 @@ E2E path{"path", [] {
             return std::format("[package]\nname        = \"myappB\"\nversion     = \"0.1.0\"\n\n[language]\nstandard   = \"c++23\"\nmodules    = true\nimport_std = true\n\n[modules]\nsources = [\"src/**/*.cppm\", \"src/**/*.cpp\"]\n\n[targets.myappB]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n\n[dependencies.mylibA]\npath = \"{}\"\n", path);
         };
         b.write("mcpp.toml", app_manifest("../mylibA"));
-        b.mcpp({"build"});
-        const auto out = s::text(b.mcpp({"run"}));
+        b.mcpp({"build", "--cache", "local"});
+        const auto out = s::text(b.mcpp({"run", "--cache", "local"}));
         expect(e2e::contains(out, "Hello modular C++23 from mylibA")) << "dep module not invoked";
         expect(e2e::contains(out, "path dep build OK")) << "main println missing";
         std::string ninja;
         for (const auto& f : s::find_files(b.at("target"), R"(build\.ninja)"))
             if (!f.generic_string().contains("/.build-mcpp/")) ninja += s::read_file(f);
         expect(s::has_line(ninja, "mylibA.*greet.cppm")) << "ninja missing dep package source";
-        expect(s::has_line(ninja, "gcm.cache/[^ /]*mylibA/mylibA.greet.gcm")) << "ninja missing dep BMI";
+        // Below the package's instance directory (design 2026-11-19 §11.1).
+        expect(s::has_line(ninja, "gcm.cache/[^ /]*mylibA/[0-9a-f]{8}/mylibA.greet.gcm")) << "ninja missing dep BMI";
         // A path whose manifest names another package.
         const auto wrong = s::case_dir() / "elsewhere/wrongname";
         fs::create_directories(wrong.parent_path());

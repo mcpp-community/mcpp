@@ -104,6 +104,31 @@ aggregatedRequest(PrepareState& state, std::size_t depPkgIndex, Instance instanc
             return { std::move(feats), anyEdge ? anyDefault : true };
 }
 
+// An entry the reading below turns into a dependency of a library belongs to
+// each resolution that holds the library (design 2026-11-19 §21 A1), as an
+// entry of `[dependencies]` resolved where its consumer is would: the walk
+// resolved it as the library's own build program's, which has no program.
+static void mirror_into_library_scopes(PrepareState& state, std::size_t p, std::size_t d) {
+    std::optional<std::pair<ResolvedKey, ResolvedRecord>> dependency;
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex + 1 == d) { dependency.emplace(k, r); break; }
+    if (!dependency) return;
+    std::vector<std::string> scopes;
+    if (state.packages[p].selectedMember) scopes.push_back({});
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex + 1 == p) scopes.push_back(k.scope);
+    // The slot's link flags stay with the record that added them: a copy that
+    // carried them withdrew them once more for each copy, and a flag another
+    // package contributed with them (`-lm`) left the link.
+    auto copy = dependency->second;
+    copy.linkFlagsAdded.clear();
+    for (auto const& scope : scopes) {
+        auto key = dependency->first;
+        key.scope = scope;
+        state.resolved.try_emplace(std::move(key), copy);
+    }
+}
+
 // COMPAT(plugin-imports-from-build-dependencies). Before mcpp#797 a build
 // plugin's library was compiled inside its consumer's build program, so a
 // package it listed in its own `[build-dependencies]` with `host-module = true`
@@ -155,6 +180,7 @@ static void step6_compat_library_edges(PrepareState& state) {
         pm.dependencies.emplace(r.key, asDependency);
         if (p - 1 < state.dep_manifests.size() && state.dep_manifests[p - 1])
             state.dep_manifests[p - 1]->dependencies.emplace(r.key, asDependency);
+        mirror_into_library_scopes(state, p, d);
         for (auto const& e : state.dependencyEdges)
             if (e.consumerPackageIndex == p && e.dependencyPackageIndex == d && e.buildTable) {
                 auto copy = e;
@@ -195,6 +221,14 @@ void merge_program_platform(PrepareState& state, mcpp::manifest::platform::State
 }
 
 namespace {
+// Two spellings of one manifest are one file: a workspace root is reached
+// through a member's relative path as well as through its own.
+bool same_file(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    if (std::filesystem::equivalent(a, b, ec)) return true;
+    return a.lexically_normal() == b.lexically_normal();
+}
+
 bool names_layer(const std::vector<std::string>& entries, std::string_view layer) {
     for (auto const& e : entries) {
         std::string_view v = e;
@@ -257,13 +291,29 @@ PackageInstances package_instances(const PrepareState& state) {
         const auto p = stack.back();
         stack.pop_back();
         for (auto const& e : state.dependencyEdges) {
-            if (e.consumerPackageIndex != p) continue;
+            // An edge of the target's reading of the consumer's table is not
+            // the build program's (SPEC-004 §4.8).
+            if (e.consumerPackageIndex != p || e.targetRowOnly) continue;
             const auto d = e.dependencyPackageIndex;
             if (d >= n || host[d]) continue;
             host[d] = true;
             stack.push_back(d);
         }
     }
+    // A slot only build programs' resolutions hold is a module of a build
+    // program and never the target's (design 2026-11-19 §21 A1), whichever
+    // edges reach it.
+    std::vector<bool> targetRecord(n, false), programRecord(n, false);
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex + 1 < n) (k.scope.empty() ? targetRecord : programRecord)[r.depIndex + 1] = true;
+    for (std::size_t i = 1; i < n; ++i)
+        if (programRecord[i] && !targetRecord[i] && !state.packages[i].selectedMember) {
+            target[i] = false;
+            host[i] = true;
+        }
+    // A slot a move left with no resolution is an instance of neither.
+    for (auto const i : state.withdrawnSlots)
+        if (i < n) target[i] = host[i] = false;
     return out;
 }
 
@@ -299,8 +349,9 @@ static void step6_instances(PrepareState& state) {
         state.packages[d].hostInstance = host[d];
         state.packages[d].devOnly = target[d] && !shipped[d];
         // A package no edge mentions is a bookkeeping gap, not a build
-        // dependency: it keeps its target instance.
-        state.packages[d].buildTimeOnly = !target[d] && host[d];
+        // dependency: it keeps its target instance. A slot no resolution
+        // holds is compiled by neither plan.
+        state.packages[d].buildTimeOnly = (!target[d] && host[d]) || state.withdrawnSlots.contains(d);
         auto const& pkg = state.packages[d].manifest.package;
         mcpp::log::info("edges", std::format(
             "{}{}: {}{}", pkg.namespace_.empty() ? "" : pkg.namespace_ + ".", pkg.name,
@@ -510,14 +561,24 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
             // ignored, and points at the key a dependency does have. Covers
             // BOTH members: a dependency that declares only `exceptions` must
             // be reported exactly as one that declares only `threads`.
-            if (pcap != state.m->package.name
-                && (pkg.manifest.buildConfig.abiThreadsDeclared
-                    || pkg.manifest.buildConfig.abiExceptionsDeclared))
+            // A row the package inherits from this build's workspace
+            // (`[workspace.target.<sel>.abi]`) is the root's statement, and is
+            // not reported for each member that receives it (mcpp#954: 262
+            // warnings for one table). Another workspace's row is not this
+            // build's root, and is reported as the package's own is.
+            const auto& abi = pkg.manifest.buildConfig;
+            const auto statedIn = abi.abiDeclaredByPackage ? pkg.manifest.sourcePath : abi.abiInheritedFrom;
+            const bool rootStated = !abi.abiDeclaredByPackage && !abi.abiInheritedFrom.empty()
+                && state.wsManifest && same_file(abi.abiInheritedFrom, state.wsManifest->sourcePath);
+            if (pcap != state.m->package.name && !rootStated
+                && (abi.abiDeclaredByPackage || !abi.abiInheritedFrom.empty()))
                 mcpp::diag::warning("abi/dependency-table", std::format(
-                    "`{}` declares [target.<selector>.abi], which only the root "
-                    "manifest decides; a dependency states what it needs with "
+                    "`{}` declares [target.<selector>.abi], which only the root manifest "
+                    "decides ({}); a dependency states what it needs with "
                     "`requires_abi = {{ threads = true }}` or "
-                    "`requires_abi = {{ exceptions = true }}`", pcap));
+                    "`requires_abi = {{ exceptions = true }}`, and a workspace states the "
+                    "build's abi in [workspace.target.<selector>.abi]", pcap,
+                    statedIn.empty() ? std::string("its manifest") : statedIn.generic_string()));
             // `[targets.*] required_features` on a DEPENDENCY.
             //
             // THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
@@ -1175,6 +1236,36 @@ static std::expected<void, std::string> step6_xlings_workspace_from_graph(Prepar
     return {};
 }
 
+// The tools the active features of `library`'s build-program instance declare.
+static std::vector<std::string> active_feature_tools(const PrepareState& state, std::size_t library) {
+    std::vector<std::string> out;
+    auto const& declared = state.packages[library].manifest.featureTools;
+    for (auto const& f : state.buildProgramFeaturesByPackage[library]) {
+        auto it = declared.find(f);
+        if (it == declared.end()) continue;
+        out.insert(out.end(), it->second.begin(), it->second.end());
+    }
+    return out;
+}
+
+// A FEATURE'S TOOLS REACH EVERY BUILD PROGRAM THAT LINKS THE PACKAGE'S LIBRARY
+// (design 2026-11-19 §8.4, mcpp#955). A plugin's library runs inside the
+// build program of whichever package links it -- a framework's user, reached
+// through the framework -- and asks for its own program with
+// `mcpp::dep_bin`. The edge into the plugin is the framework's, so the
+// visibility above stopped at the framework and the user's program received
+// "". With the feature active for the build-program instance, the program
+// that links the library sees the tool, as the library's author declared.
+static void grant_library_feature_tools(PrepareState& state, std::size_t consumer) {
+    for (const auto library : state.buildProgramLibrariesByConsumer[consumer]) {
+        if (library >= state.packages.size() || library >= state.buildProgramFeaturesByPackage.size())
+            continue;
+        for (auto const& tool : active_feature_tools(state, library))
+            state.provisionGraph.visible[consumer].insert(
+                prov::Provision{prov::Kind::Tool, library, tool});
+    }
+}
+
 static std::expected<std::map<std::size_t, std::set<std::string>>, std::string>
 step6_tool_requests(PrepareState& state) {
         // ── #355: HOST tool provisioning ────────────────────────────────────
@@ -1249,6 +1340,7 @@ step6_tool_requests(PrepareState& state) {
                             work.push_back(e.dependencyPackageIndex);
                 }
                 state.buildProgramLibrariesByConsumer[c].assign(seen.begin(), seen.end());
+                grant_library_feature_tools(state, c);
             }
 
             if (state.overrides.tool_depth >= mcpp::build::tool_store::kMaxDepth
@@ -1418,10 +1510,10 @@ step6_check_tool_self_request(PrepareState& state, HostToolCtx& ctx) {
 
 // The dependency closure a host tool's own build resolves (mcpp#874): its
 // package's `[dependencies]`, transitively, read from the manifests. A path
-// package is its version and its tree's stamp, and is walked into; a git or
-// index package is what the manifest asks for. Dev-dependencies are never in
-// it: the tool's build builds no tests.
-static std::vector<std::string> tool_upstream_keys(const std::filesystem::path& root,
+// package is its version and the digest of its tree's content (mcpp#974), and
+// is walked into; a git or index package is what the manifest asks for.
+// Dev-dependencies are never in it: the tool's build builds no tests.
+static std::vector<std::string> tool_upstream_keys(PrepareState& state, const std::filesystem::path& root,
                                                    const mcpp::manifest::Manifest& manifest) {
     namespace fs = std::filesystem;
     std::vector<std::string> keys;
@@ -1443,7 +1535,7 @@ static std::vector<std::string> tool_upstream_keys(const std::filesystem::path& 
             const auto at = fs::weakly_canonical(dir / spec.path, ec);
             auto dm = mcpp::manifest::load(at / "mcpp.toml", {.insideWorkspace = true});
             keys.push_back(std::format("{}@{}+path.{}", name, dm ? dm->package.version : std::string{},
-                                       mcpp::build::tool_store::tree_stamp(at)));
+                                       tree_content_digest(state, at).substr(0, 16)));
             if (dm && seen.insert(at).second) work.emplace_back(at, std::move(*dm));
         }
     }
@@ -1500,24 +1592,14 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     ctx.key.packageName      = ctx.depName;
     // THE VERSION IDENTIFIES THE SOURCES ONLY FOR AN INDEX
     // PACKAGE. A `git` package is keyed by its commit and a
-    // `path` package by a stamp of its tree, because both
-    // change under an unchanged version and the store then
-    // serves a binary built from sources that no longer exist
-    // (#630, item 6; measured 2026-09-08 with examples/12).
-    // The same rule applies to every upstream below.
+    // `path` package by the digest of its tree's content,
+    // because both change under an unchanged version and the
+    // store then serves a binary built from sources that no
+    // longer exist (#630, item 6; measured 2026-09-08 with
+    // examples/12). The same rule applies to every upstream
+    // below, and is the dependency cache's (mcpp#974).
     auto source_keyed_version = [&](std::size_t pkgIdx) {
-        const auto& man = state.packages[pkgIdx].manifest.package;
-        std::string v = man.version;
-        if (pkgIdx >= 1 && pkgIdx - 1 < state.dep_cache_identities.size()) {
-            const auto& id = state.dep_cache_identities[pkgIdx - 1];
-            if (id.sourceKind == "git" && !id.sourceRef.empty())
-                v += "+git." + id.sourceRef;
-            else if (id.sourceKind == "path")
-                v += "+path." + mcpp::build::tool_store::tree_stamp(
-                    id.sourceRef.empty() ? state.packages[pkgIdx].root
-                                         : std::filesystem::path(id.sourceRef));
-        }
-        return v;
+        return state.packages[pkgIdx].manifest.package.version + source_identity_suffix(state, pkgIdx);
     };
     ctx.key.version          = source_keyed_version(ctx.depIdx);
     ctx.key.targetName       = ctx.toolName;
@@ -1541,7 +1623,7 @@ step6_resolve_tool_key(PrepareState& state, HostToolCtx& ctx) {
     // `mcpp build`), and a root's dev-dependencies are walked while its tests
     // are built. Either way the key changed between commands, the tool's path
     // with it, and every action that ran the tool ran again.
-    ctx.key.upstreamKeys = tool_upstream_keys(state.packages[ctx.depIdx].root,
+    ctx.key.upstreamKeys = tool_upstream_keys(state, state.packages[ctx.depIdx].root,
                                               state.packages[ctx.depIdx].manifest);
     std::ranges::sort(ctx.key.upstreamKeys);
 
@@ -1627,6 +1709,8 @@ step6_build_tool(PrepareState& state, HostToolCtx& ctx) {
     sub.tool_depth    = state.overrides.tool_depth + 1;
     sub.tool_chain_sources = state.overrides.tool_chain_sources;
     sub.tool_chain_sources.push_back(ctx.toolSource);
+    sub.own_roots     = state.overrides.own_roots;
+    sub.own_roots.push_back(state.workRoot);
     // The PRISTINE manifest the resolver produced for this
     // package — `packages[depIdx].manifest` is a copy that
     // feature activation has already mutated, and re-activating
@@ -1916,17 +2000,12 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             bpEnv.requested       = pkg.selectedMember;
             // A registry or git dependency: its tree is the package store's,
             // and its program may not watch files outside it (#766).
-            {
-                auto rn = mcpp::pm::compat::resolve_package_name(
-                    pkg.manifest.package.name, pkg.manifest.package.namespace_);
-                for (auto const& ns : {rn.namespace_, std::string(mcpp::pm::kDefaultNamespace),
-                                       std::string{}})
-                    if (auto it = state.resolved.find(ResolvedKey{ns, rn.shortName});
-                        it != state.resolved.end()) {
-                        bpEnv.sealedPackage = it->second.source != "path";
-                        break;
-                    }
-            }
+            // The record of this slot, whichever resolution holds it (§21 A1).
+            for (auto const& [k, rec] : state.resolved)
+                if (rec.depIndex + 1 == i) {
+                    bpEnv.sealedPackage = rec.source != "path";
+                    break;
+                }
             // THE PLATFORM'S PLUGIN (SPEC-013 §4.2): the platform package's
             // program runs in the `platform` phase, and states only the
             // platform's build, link and runner fields.

@@ -617,6 +617,14 @@ struct BuildPlan {
     // the root package's, and then the BMI directory is flat and no command
     // names a map.
     std::map<std::string, ModuleScope, std::less<>> moduleScopes;
+    // The package instances this plan compiles, as `<package>/<digest>` below
+    // `obj/` and the BMI directory (design 2026-11-19 §11.1). Recorded with the
+    // time a plan last used each (`instances.tsv`), which `mcpp clean --stale`
+    // reads to remove an instance no build has used within its window.
+    // Keyed by the package's qualified name; the value is `<slug>/<digest>`.
+    // A GCC BMI records its imports at their instance paths, so the build
+    // cache keys a package's entry by its instance too (`bmiPathConvention`).
+    std::map<std::string, std::string> instanceDirs;
     std::filesystem::path           stdCompatObjectPath; // absolute path to prebuilt std.compat.o
     std::filesystem::path           scanDepsPath;    // clang-scan-deps binary (Clang only)
     // THE TARGET'S PLATFORM (SPEC-013): the merged statement, its flags for
@@ -893,6 +901,39 @@ struct TargetFileAnswer {
 TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view name,
                                      std::string_view actingMember);
 
+// Where the backend writes the object list of the link unit whose
+// build-dir-relative output is `output` (design 2026-11-19 §8.2):
+// `<out>/objects/<output><suffix>`, `.list` one absolute path per line and
+// `.rsp` in response-file quoting. Absolute and generic, as every path token is.
+std::filesystem::path objects_list_path(const BuildPlan& plan, std::string_view output,
+                                        std::string_view suffix);
+
+// The record of a configuration's package instances (design 2026-11-19 §11.1):
+// `<outputDir>/instances.tsv`, one `<package>/<digest>\t<seconds>\t<last>`
+// line per instance: the time a build last used it, and whether the plan that
+// wrote the build graph uses it. `record_instances` marks a plan's set as the
+// last one and stamps it; `touch_last_instances` restamps that set for a build
+// that runs the graph without planning (the fast path), writing only when a
+// stamp is an hour old. `mcpp clean` keeps the last set whatever the window.
+struct InstanceUse {
+    std::int64_t when = 0;
+    bool         last = false;
+};
+std::map<std::string, InstanceUse> read_instances(const std::filesystem::path& outputDir);
+void write_instances(const std::filesystem::path& outputDir,
+                     const std::map<std::string, InstanceUse>& instances);
+void record_instances(const std::filesystem::path& outputDir, const std::vector<std::string>& used);
+void touch_last_instances(const std::filesystem::path& outputDir);
+
+// Replaces `${mcpp.objects:<name>}` and `${mcpp.objects_rsp:<name>}` in `s`
+// with `objects_list_path` of the unit `resolve_target_file` names, records the
+// unit in `units` once, and a name no unit has, or several members define, in
+// the two sets the refusal reads. True when `s` held either token.
+bool substitute_objects_tokens(const BuildPlan& plan, std::string& s, std::string_view actingMember,
+                               std::vector<std::string>& units,
+                               std::set<std::string>& unresolved,
+                               std::map<std::string, std::vector<std::string>>& ambiguous);
+
 // The references an action's arguments made that the plan cannot answer, as
 // the refusal a user reads: names no link unit has (`unresolvedTargets`), names
 // several members define for a package that acts for none of them
@@ -902,6 +943,17 @@ std::expected<void, std::string> refuse_unresolved_references(
     const BuildPlan& plan, const std::set<std::string>& unresolvedTargets,
     const std::map<std::string, std::vector<std::string>>& ambiguousTargets,
     const std::set<std::string>& unresolvedArtifacts);
+
+// The references an action's arguments made that its role or this run cannot
+// answer: `${mcpp.stage_dir}` where no tree is staged (`stageDirNoPass`; the
+// package several packed members reach is `stageDirShared`, the stage's own
+// reason `stageDirWhy`), and `${mcpp.stage_dir}` or `${mcpp.objects:<name>}`
+// used by a role that runs before what it names. Each set holds action ids.
+struct ActionRoleReferences {
+    std::set<std::string> stageDirNoPass, stageDirWrongRole, objectsWrongRole;
+    std::string stageDirWhy, stageDirShared;
+};
+std::expected<void, std::string> refuse_action_roles(const ActionRoleReferences& r);
 
 // The objects a package contributes to an image that links it whole: its
 // module units, which link unconditionally, then its implementation units, in
@@ -4605,6 +4657,100 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                      && !target.is_freestanding();
     }
 
+    // A PACKAGE INSTANCE'S OBJECTS LIE IN A DIRECTORY ITS CONFIGURATION NAMES
+    // (design 2026-11-19 §11.1, mcpp#953 D5): `obj/<package>/<digest>/`, and its
+    // BMIs in `<bmi dir>/<package>/<digest>/`. A separate directory level and
+    // not `<package>@<digest>`: ninja shell-quotes an output holding a
+    // character outside `A-Za-z0-9_+,-./`, and a rule that writes `"$out.d"`
+    // then names a file with quotes in it (measured). A build directory is named by
+    // the configuration's lineage, which holds no package's features, and one
+    // command unifies a shared package's features over its selection
+    // (docs/07): `mcpp test` adds what the dev-dependencies enable, `-p X` and
+    // `-p Y` request different unions. One object path then stood for two
+    // command lines, and each switch compiled the package again (measured:
+    // 43 such edges between two members of a 31-member workspace; the
+    // fixture of e2e 953 recompiled its shared package at every switch). The
+    // digest covers what decides a unit's command line -- the package's own
+    // include directories and flags, its features' defines among them -- and
+    // the digests of the packages whose modules it imports, whose BMI paths
+    // its command names. It holds no version and no compiler build, so an
+    // upgrade keeps the paths. The root's units keep their place: one plan
+    // has one root, and its command line is the configuration's.
+    const auto rootPackageName = manifest.package.virtualRoot
+        ? std::string{} : qualified_package_name(manifest);
+    std::map<std::string, std::string> instanceDirs;   // package -> `<slug>/<digest>`
+    {
+        std::map<std::string, std::string> own;                    // package -> its units' flags
+        std::map<std::string, std::set<std::string>> importsOf;    // package -> providers
+        // A directory is spelled relative to the store or the project that
+        // holds it: the digest names a directory a cached BMI records, so it
+        // is the same on every machine that shares the entry.
+        auto portable = [&](const std::filesystem::path& d) {
+            for (auto const& store : storeRoots)
+                if (auto rel = d.lexically_relative(store); !rel.empty() && !rel.generic_string().starts_with(".."))
+                    return "<store>/" + rel.generic_string();
+            if (auto rel = d.lexically_relative(projectRoot); !rel.empty() && !rel.generic_string().starts_with(".."))
+                return "<project>/" + rel.generic_string();
+            return d.generic_string();
+        };
+        auto flags_text = [&](const CompileUnit& cu) {
+            std::string t;
+            for (auto const& d : cu.localIncludeDirs) t += "I" + portable(d) + "\n";
+            for (auto const& d : cu.localIncludeDirsAfter) t += "A" + portable(d) + "\n";
+            for (auto const& f : cu.packageCflags) t += "C" + f + "\n";
+            for (auto const& f : cu.packageCxxflags) t += "X" + f + "\n";
+            for (auto const& f : cu.packageAsmflags) t += "S" + f + "\n";
+            return t;
+        };
+        auto providers_of = [&](const CompileUnit& cu) {
+            std::set<std::string> out;
+            for (auto const& imp : cu.imports)
+                if (auto provider = mcpp::modgraph::resolve_provider(graph, cu.packageName, imp))
+                    out.insert(graph.units[*provider].packageName);
+            out.erase(cu.packageName);
+            return out;
+        };
+        for (auto const& cu : plan.compileUnits) {
+            if (cu.packageName.empty() || cu.packageName == rootPackageName || cu.testUnit) continue;
+            own[cu.packageName] += cu.object.generic_string() + "\n" + flags_text(cu);
+            importsOf[cu.packageName].merge(providers_of(cu));
+        }
+        std::map<std::string, std::string> digest;
+        std::set<std::string> visiting;
+        std::function<std::string(const std::string&)> digest_of = [&](const std::string& pkg) {
+            if (auto it = digest.find(pkg); it != digest.end()) return it->second;
+            if (!own.contains(pkg) || !visiting.insert(pkg).second) return std::string{};
+            std::string text = own[pkg];
+            for (auto const& dep : importsOf[pkg]) text += "D" + dep + "=" + digest_of(dep) + "\n";
+            visiting.erase(pkg);
+            return digest[pkg] = mcpp::toolchain::hash_string(text).substr(0, 8);
+        };
+        for (auto const& [pkg, text] : own)
+            instanceDirs[pkg] = sanitize(pkg) + "/" + digest_of(pkg);
+        plan.instanceDirs = instanceDirs;
+    }
+    {
+        std::map<std::filesystem::path, std::filesystem::path> moved;
+        auto instance_object = [&](const CompileUnit& cu) -> std::optional<std::filesystem::path> {
+            auto it = instanceDirs.find(cu.packageName);
+            if (it == instanceDirs.end()) return std::nullopt;
+            auto part = cu.object.begin();
+            if (part == cu.object.end() || *part != "obj" || ++part == cu.object.end()
+                || *part != std::filesystem::path(sanitize(cu.packageName)))
+                return std::nullopt;
+            return std::filesystem::path("obj") / it->second / cu.object.lexically_relative(
+                std::filesystem::path("obj") / sanitize(cu.packageName));
+        };
+        for (auto& cu : plan.compileUnits)
+            if (auto to = instance_object(cu)) {
+                moved.emplace(cu.object, *to);
+                cu.object = *to;
+            }
+        for (auto& lu : plan.linkUnits)
+            for (auto& o : lu.objects)
+                if (auto it = moved.find(o); it != moved.end()) o = it->second;
+    }
+
     // EVERY PACKAGE'S BMIS LIE BELOW ITS OWN DIRECTORY, EXCEPT THE ROOT'S (pack
     // drive and selection design 2026-10-01, B1), as object files have since
     // mcpp#233. A module name identifies one module within one program
@@ -4637,8 +4783,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             return out;
         };
         auto bmi_file = [&](std::string_view provider, std::string_view name) {
-            return provider == rootPackage ? basename(name)
-                                           : std::string(provider) + "/" + basename(name);
+            if (provider == rootPackage) return basename(name);
+            auto it = instanceDirs.find(std::string(provider));
+            return (it == instanceDirs.end() ? std::string(provider) : it->second) + "/" + basename(name);
         };
         auto bmi_path = [&](std::string_view provider, std::string_view name) {
             return std::string(traits.bmiDir) + "/" + bmi_file(provider, name);
@@ -4648,6 +4795,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 cu.bmiFile = bmi_file(cu.packageName, cu.providesModule);
 
         const bool gcc = traits.moduleFileUsePrefix.empty();
+        // A relocated GCC compile names its own BMI through a copy of its map
+        // (design 2026-11-19 §10.6), and GCC's mapper answers only what it
+        // lists: a unit that provides a module is given a map wherever its BMI
+        // lies, the root's included.
+        const bool mapsOwn = gcc && mcpp::toolchain::output_relocation(tc).relocatable;
         std::string_view prefix = traits.moduleFileUsePrefix;
         while (!prefix.empty() && prefix.front() == ' ') prefix.remove_prefix(1);
         const bool separate = !prefix.empty() && prefix.back() == ' ';
@@ -4682,7 +4834,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             const bool importsQualified = std::ranges::any_of(reach, [&](auto const& e) {
                 return !e.second.first.empty() && e.second.first != rootPackage;
             });
-            if (!ownQualified && !importsQualified) continue;   // every BMI at its name
+            if (!ownQualified && !importsQualified && !(mapsOwn && !cu.providesModule.empty()))
+                continue;   // every BMI at its name
 
             std::map<std::string, std::string, std::less<>> entries;   // name -> BMI path
             for (auto const& [name, at] : reach) entries.emplace(name, at.second);
@@ -4803,6 +4956,94 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     return plan;
 }
 
+// The name is resolved as `${mcpp.target_file:}` resolves it; the token becomes
+// the absolute path of the list the backend writes, one object per line
+// (`objects`) or in response-file quoting (`objects_rsp`).
+bool substitute_objects_tokens(const BuildPlan& plan, std::string& s, std::string_view actingMember,
+                               std::vector<std::string>& units,
+                               std::set<std::string>& unresolved,
+                               std::map<std::string, std::vector<std::string>>& ambiguous) {
+    bool used = false;
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 2> kTokens{{
+        {"${mcpp.objects:", ".list"}, {"${mcpp.objects_rsp:", ".rsp"}}};
+    for (auto [head, suffix] : kTokens) {
+        for (std::size_t p; (p = s.find(head)) != std::string::npos; ) {
+            auto close = s.find('}', p);
+            if (close == std::string::npos) break;
+            used = true;
+            auto name = s.substr(p + head.size(), close - p - head.size());
+            auto answer = resolve_target_file(plan, name, actingMember);
+            if (answer.output.empty()) unresolved.insert(name);
+            else if (!answer.members.empty()) ambiguous[name] = answer.members;
+            if (!answer.output.empty() && std::ranges::find(units, answer.output) == units.end())
+                units.push_back(answer.output);
+            s.replace(p, close - p + 1, objects_list_path(plan, answer.output, suffix).generic_string());
+        }
+    }
+    return used;
+}
+
+std::map<std::string, InstanceUse> read_instances(const std::filesystem::path& outputDir) {
+    std::map<std::string, InstanceUse> out;
+    std::ifstream in(outputDir / "instances.tsv", std::ios::binary);
+    for (std::string line; std::getline(in, line);) {
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        const auto tab2 = line.find('\t', tab + 1);
+        InstanceUse use;
+        std::from_chars(line.data() + tab + 1,
+                        line.data() + (tab2 == std::string::npos ? line.size() : tab2), use.when);
+        use.last = tab2 != std::string::npos && line.compare(tab2 + 1, std::string::npos, "1") == 0;
+        out[line.substr(0, tab)] = use;
+    }
+    return out;
+}
+
+void write_instances(const std::filesystem::path& outputDir,
+                     const std::map<std::string, InstanceUse>& instances) {
+    std::string text;
+    for (auto const& [dir, use] : instances)
+        text += std::format("{}\t{}\t{}\n", dir, use.when, use.last ? 1 : 0);
+    std::error_code ec;
+    std::filesystem::create_directories(outputDir, ec);
+    const auto file = outputDir / "instances.tsv";
+    auto tmp = file;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) std::filesystem::remove(tmp, ec);
+}
+
+namespace {
+std::int64_t now_seconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
+void record_instances(const std::filesystem::path& outputDir, const std::vector<std::string>& used) {
+    auto instances = read_instances(outputDir);
+    for (auto& [dir, use] : instances) use.last = false;
+    for (auto const& dir : used) instances[dir] = {now_seconds(), true};
+    if (!instances.empty()) write_instances(outputDir, instances);
+}
+
+void touch_last_instances(const std::filesystem::path& outputDir) {
+    auto instances = read_instances(outputDir);
+    const auto now = now_seconds();
+    bool changed = false;
+    for (auto& [dir, use] : instances)
+        if (use.last && now - use.when >= 3600) { use.when = now; changed = true; }
+    if (changed) write_instances(outputDir, instances);
+}
+
+std::filesystem::path objects_list_path(const BuildPlan& plan, std::string_view output,
+                                        std::string_view suffix) {
+    auto p = plan.outputDir / "objects" / std::filesystem::path(std::string(output));
+    p += std::string(suffix);
+    return p.lexically_normal();
+}
+
 TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view name,
                                      std::string_view actingMember) {
     TargetFileAnswer answer;
@@ -4817,6 +5058,67 @@ TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view nam
     // have: to the one unit, or to the last of the units that share the name.
     if (members.size() > 1) answer.members.assign(members.begin(), members.end());
     return answer;
+}
+
+std::expected<void, std::string> refuse_action_roles(const ActionRoleReferences& r) {
+    if (!r.stageDirNoPass.empty()) {
+        std::string ids;
+        for (auto const& n : r.stageDirNoPass) ids += (ids.empty() ? "" : ", ") + n;
+        if (!r.stageDirShared.empty())
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and {}.\n"
+                "  A staged tree belongs to one member, and one run of this package's "
+                "program serves all of them.\n"
+                "  use: provide the format from each member's own build program, or pack "
+                "the members one at a time", ids, r.stageDirShared));
+        if (!r.stageDirWhy.empty()) {
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and no "
+                "tree could be staged for this target.\n"
+                "  {}\n"
+                "  The format was requested and the provider was reached; what is "
+                "missing is the staged\n"
+                "  closure itself. A member that names a built file with "
+                "${{mcpp.target_file:<name>}} instead\n"
+                "  of reading the tree is unaffected on this target.",
+                ids, r.stageDirWhy));
+        }
+        return std::unexpected(std::format(
+            "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and this "
+            "build is not packaging.\n"
+            "  The staged tree is produced by `mcpp pack` after the link, so "
+            "it does not exist during\n"
+            "  a plain build and there is nothing for the placeholder to name.\n"
+            "  Gate the submission on the format you provide:\n"
+            "      mcpp::provides_pack_format(\"<name>\");            // always\n"
+            "      if (std::string_view(mcpp::pack_format()) == \"<name>\")  "
+            "// then submit\n"
+            "  and reach the tree with `mcpp pack --format <name>`.", ids));
+    }
+    if (!r.stageDirWrongRole.empty()) {
+        std::string ids;
+        for (auto const& n : r.stageDirWrongRole) ids += (ids.empty() ? "" : ", ") + n;
+        return std::unexpected(std::format(
+            "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}} with a role "
+            "other than \"artifact\".\n"
+            "  Only an artifact action runs after the link, and the staged tree "
+            "is a link output's\n"
+            "  successor: a source, object or check action is scheduled before "
+            "there is anything to stage.\n"
+            "  use: role = \"artifact\"", ids));
+    }
+    if (!r.objectsWrongRole.empty()) {
+        std::string ids;
+        for (auto const& n : r.objectsWrongRole) ids += (ids.empty() ? "" : ", ") + n;
+        return std::unexpected(std::format(
+            "build.mcpp action(s) [{}] reference ${{mcpp.objects:<name>}} or "
+            "${{mcpp.objects_rsp:<name>}} with a role other than \"artifact\" or \"check\".\n"
+            "  The list names the objects a link takes; a source, object or prepare action "
+            "runs before\n"
+            "  that link or feeds it, so the list it would read is not yet decided.\n"
+            "  use: role = \"artifact\" (or \"check\")", ids));
+    }
+    return {};
 }
 
 std::expected<void, std::string> refuse_unresolved_references(

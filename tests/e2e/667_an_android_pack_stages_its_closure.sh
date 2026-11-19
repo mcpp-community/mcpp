@@ -10,9 +10,12 @@
 # Every ELF shared library carries a SONAME equal to its file name (A4), which
 # bionic enforces from API level 23.
 #
-# The negative directions: a library the link used and that is gone by the
-# time of the pack makes `dir` and `tar` refuse naming it, and a dispatched
-# format receives `closure = not-walked` with the name as `unresolved`.
+# The negative directions. A library the link used and that is gone is an input
+# of the link that is gone (SPEC-004 §8.1, mcpp#931): the pack's build links
+# again and the link names it. A library the link found through a flag the
+# pack does not read is needed and found in none of the pack's directories:
+# `dir` and `tar` refuse naming it, and a dispatched format receives
+# `closure = not-walked` with the name as `unresolved`.
 set -e
 
 TMP=$(mktemp -d)
@@ -97,18 +100,32 @@ grep -qxF "needs${TAB}libext.so${TAB}lib/libext.so" "$manifest" \
     || fail "the manifest does not state libext.so as staged" "$manifest"
 echo "  ok: a library from [runtime] link_library_dirs is staged"
 
-# The build is up to date, so the pack does not relink; the file is simply gone.
 rm ext/lib/libext.so
+if "$MCPP" pack --target x86_64-linux-android --pkg-format dir > gone.log 2>&1; then
+    fail "the pack succeeded with libext.so gone" gone.log
+fi
+grep -q -- "-lext" gone.log || fail "the link did not name the library that is gone" gone.log
+echo "  ok: a library the link read and that is gone is an input of the link, which names it"
+
+# The same library, found by the link through `-L` in `[build] ldflags`.
+mkdir -p ext/flag
+"$NDKCC" --target=x86_64-linux-android24 -shared -fPIC -Wl,-soname,libext.so \
+    -o ext/flag/libext.so ext/ext.c
+sed -i 's|^link_library_dirs = \["ext/lib"\]$||' mcpp.toml
+cat >> mcpp.toml <<EOF
+[target.'cfg(env = "android")'.build]
+ldflags = ["-L$PWD/ext/flag"]
+EOF
 for fmt in dir tar; do
     if "$MCPP" pack --target x86_64-linux-android --pkg-format "$fmt" > "gone-$fmt.log" 2>&1; then
-        fail "--format $fmt succeeded with libext.so gone" "gone-$fmt.log"
+        fail "--format $fmt succeeded with libext.so outside its directories" "gone-$fmt.log"
     fi
     grep -q "libext.so: found in none of" "gone-$fmt.log" \
         || fail "--format $fmt did not name libext.so" "gone-$fmt.log"
     grep -q "incomplete" "gone-$fmt.log" \
         || fail "--format $fmt did not say the closure is incomplete" "gone-$fmt.log"
 done
-echo "  ok: dir and tar refuse, naming the library that is gone"
+echo "  ok: dir and tar refuse, naming the library none of their directories holds"
 
 # ── 3. a dispatched format receives the incomplete closure ────────────────
 cat > dist.sh <<'EOF'

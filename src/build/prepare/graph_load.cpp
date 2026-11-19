@@ -44,6 +44,7 @@ import mcpp.pm.mangle;
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
+import mcpp.pm.descriptor;
 import mcpp.pm.lock_io;
 import mcpp.pm.patch;
 import mcpp.ui;
@@ -788,32 +789,8 @@ step4a_load_version_dep_locate(PrepareState& state, LoadVersionDepCtx& ctx) {
         auto installedLayoutMatchesIndex = [&](const std::filesystem::path& verRoot) -> bool {
             if (!ctx.luaContent) return false;
 
-            auto field = mcpp::manifest::extract_mcpp_field(*ctx.luaContent);
-            if (field.kind == mcpp::manifest::McppField::StringPath) {
-                return !mcpp::modgraph::expand_glob(verRoot, field.value).empty();
-            }
-            if (field.kind == mcpp::manifest::McppField::TableBody) {
-                auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                    *ctx.luaContent, ctx.shortName, ctx.version, *state.targetPlatform);
-                if (!dm) return false;
-                for (auto const& [generatedPath, _] : dm->buildConfig.generatedFiles) {
-                    if (!generatedPath.empty()) return true;
-                }
-                for (auto const& glob : dm->modules.sources) {
-                    if (!glob.empty() && glob.front() == '!') continue;
-                    if (!mcpp::modgraph::expand_glob(verRoot, glob).empty()) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            for (auto pat : { "mcpp.toml", "*/mcpp.toml" }) {
-                if (!mcpp::modgraph::expand_glob(verRoot, pat).empty()) {
-                    return true;
-                }
-            }
-            return false;
+            return mcpp::pm::descriptor_payload_present(
+                *ctx.luaContent, verRoot, ctx.shortName, ctx.version, *state.targetPlatform);
         };
 
         // THE DESCRIPTOR'S REVISION IS PART OF WHAT IS INSTALLED (#524 A,
@@ -912,8 +889,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
         }
         if (!ctx.installed) {
             if (ctx.luaContent) {
-                auto field = mcpp::manifest::extract_mcpp_field(*ctx.luaContent);
-                if (field.kind == mcpp::manifest::McppField::TableBody) {
+                if (mcpp::pm::descriptor_is_inline(*ctx.luaContent)) {
                     auto depManifest = mcpp::manifest::synthesize_from_xpkg_lua(
                         *ctx.luaContent, shortName, version, *state.targetPlatform);
                     if (!depManifest) {
@@ -1253,8 +1229,6 @@ step4a_load_version_dep_read_manifest(PrepareState& state, LoadVersionDepCtx& ct
         }
         if (!ctx.luaContent) return std::unexpected(with_index_cause(std::format(
             "dependency '{}': index entry not found in local clone", depName)));
-        auto field = mcpp::manifest::extract_mcpp_field(*ctx.luaContent);
-
         // 0.0.6+: read explicit namespace from xpkg lua if present.
         auto luaNs = mcpp::manifest::extract_xpkg_namespace(*ctx.luaContent);
 
@@ -1286,48 +1260,18 @@ step4a_load_version_dep_read_manifest(PrepareState& state, LoadVersionDepCtx& ct
             effRoot  = mcppToml.parent_path();
             return {};
         };
-        if (field.kind == mcpp::manifest::McppField::StringPath) {
-            auto matches = mcpp::modgraph::expand_glob(verRoot, field.value);
-            if (matches.empty()) return std::unexpected(std::format(
-                "dependency '{}': mcpp pointer '{}' did not match any "
-                "file under '{}'", depName, field.value, verRoot.string()));
-            if (matches.size() > 1) return std::unexpected(std::format(
-                "dependency '{}': mcpp pointer '{}' matched {} files "
-                "(expected exactly one)", depName, field.value, matches.size()));
-            if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
-        } else if (field.kind == mcpp::manifest::McppField::TableBody) {
-            auto dm = mcpp::manifest::synthesize_from_xpkg_lua(
-                *ctx.luaContent, shortName, version, *state.targetPlatform);
-            if (!dm) return std::unexpected(std::format(
-                "dependency '{}': {}", depName, dm.error().format()));
-            warn_unknown_xpkg_keys(*dm, depName);
-            manifest = std::move(*dm);
+        // The descriptor's two forms are decided in one place (SPEC-001 §3.5):
+        // a manifest inside the payload, or the table itself.
+        auto stated = mcpp::pm::descriptor_manifest(
+            *ctx.luaContent, verRoot, shortName, version, *state.targetPlatform);
+        if (!stated) return std::unexpected(std::format(
+            "dependency '{}': {}", depName, stated.error()));
+        if (stated->form == mcpp::pm::DescriptorManifest::Form::Inline) {
+            warn_unknown_xpkg_keys(*stated->manifest, depName);
+            manifest = std::move(*stated->manifest);
             // effRoot stays as verRoot
-        } else {
-            std::vector<std::filesystem::path> matches;
-            for (auto pat : { "mcpp.toml", "*/mcpp.toml" }) {
-                matches = mcpp::modgraph::expand_glob(verRoot, pat);
-                if (!matches.empty()) break;
-            }
-            // Name the directory actually searched. `<verdir>` was a literal
-            // placeholder, so the message could not distinguish "the package
-            // is Form B and you forgot the mcpp field" from "the verdir mcpp
-            // resolved is not this package's at all" — the second is what a
-            // cross-namespace install_path hit produces, and it sent this
-            // investigation down the wrong path for a while.
-            if (matches.empty()) return std::unexpected(std::format(
-                "dependency '{}': index entry has no `mcpp = ...` field, "
-                "and no mcpp.toml was found at '{}/mcpp.toml' or "
-                "'{}/*/mcpp.toml' — add an explicit `mcpp = \"<path>\"` "
-                "or `mcpp = {{ ... }}` block to the .lua descriptor. "
-                "(If that directory belongs to a DIFFERENT package, the "
-                "install step resolved the wrong verdir.)",
-                depName, verRoot.string(), verRoot.string()));
-            if (matches.size() > 1) return std::unexpected(std::format(
-                "dependency '{}': default mcpp.toml lookup matched {} "
-                "files; pin one with explicit `mcpp = \"<path>\"`.",
-                depName, matches.size()));
-            if (auto r = loadFrom(matches.front()); !r) return std::unexpected(r.error());
+        } else if (auto r = loadFrom(stated->manifestPath); !r) {
+            return std::unexpected(r.error());
         }
         // Propagate lua-level namespace into the loaded manifest when
         // the manifest itself doesn't carry one (Form A descriptors
@@ -1449,15 +1393,11 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state) {
         std::filesystem::path packageRoot;
         if (!ctx.luaContent) ctx.luaContent = step4a_read_lua_content(state, ctx);
         if (ctx.luaContent) {
-            const auto field = mcpp::manifest::extract_mcpp_field(*ctx.luaContent);
-            std::vector<std::filesystem::path> found;
-            if (field.kind == mcpp::manifest::McppField::StringPath)
-                found = mcpp::modgraph::expand_glob(*ctx.installed, field.value);
-            else if (field.kind != mcpp::manifest::McppField::TableBody)
-                for (auto pat : { "mcpp.toml", "*/mcpp.toml" })
-                    if (found = mcpp::modgraph::expand_glob(*ctx.installed, pat); !found.empty()) break;
-            if (found.size() == 1)
-                packageRoot = std::filesystem::relative(found.front().parent_path(), *ctx.installed);
+            // An inline descriptor's root is the version directory itself.
+            if (!mcpp::pm::descriptor_is_inline(*ctx.luaContent))
+                if (auto stated = mcpp::pm::descriptor_manifest(
+                        *ctx.luaContent, *ctx.installed, shortName, version, *state.targetPlatform))
+                    packageRoot = std::filesystem::relative(stated->packageRoot, *ctx.installed);
         }
         if (packageRoot == ".") packageRoot.clear();
         const auto patchAt = (packageRoot / patchRoot).lexically_normal();

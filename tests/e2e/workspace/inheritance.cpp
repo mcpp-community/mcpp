@@ -280,7 +280,7 @@ int lib_c(void) { return LEVEL; }
         // the original as mcpp.toml.orig, reproducibly; a consumer of the unpacked archive (and
         // a released client, when $MCPP_BOOT names one) builds it; a versioned sibling edge is
         // published as a version edge, a path-only one is refused naming the version to add;
-        // `emit xpkg` reads the effective manifest; a package that needs no normalisation is
+        // `emit xpkg` points at the archived manifest; a package that needs no normalisation is
         // archived as `git archive HEAD`.
         const auto tmp = s::case_dir();
         s::project repo(tmp / "repo", {
@@ -355,7 +355,10 @@ cxxflags = ["-DWS_FLAG=1"]
         expect(fatal(s::lacks(lib_toml, "path"))) << "a path survived";
         r = repo.mcpp_in("lib", {"emit", "xpkg"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "emit xpkg: " << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), R"(["probe.util"] = "0.3.0")"))) << "the descriptor does not list the sibling: " << s::text(r);
+        // mcpp#960: the descriptor points at the archived manifest, which carries the sibling's
+        // version edge (checked above); it states no dependency of its own.
+        expect(fatal(e2e::contains(s::text(r), R"(mcpp = "*/mcpp.toml")"))) << "the descriptor does not point at the manifest: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), R"(["probe.util"])"))) << "the descriptor states a dependency beside its manifest: " << s::text(r);
         r = repo.mcpp_in("edgeless", {"publish", "--dry-run", "--allow-dirty"}, inherited);
         // mcpp#947 (1): a sibling edge that states no version takes the sibling's own.
         expect(fatal(e2e::succeeded(r))) << "a path-only sibling edge was not published under the sibling's version: " << s::text(r);
@@ -596,6 +599,82 @@ main = "src/main.cpp"
         r = ws.mcpp({"build", "-p", "one", "--verbose"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(s::lacks(s::text(r), "shared.cppm") && s::lacks(s::text(r), "mid.cppm")) << "B: back at the first member a package was compiled again: " << s::text(r);
+    };
+    "953 a package compiled under two feature sets keeps both instances"_test[s::gcc][s::elf] = [] {
+        // mcpp#953 D5, design 2026-11-19 §11.1. `mcpp test` enables a feature of a shared package
+        // that `mcpp build` does not. Each instance has its own directory, `obj/<package>/<digest>/`,
+        // so alternating the two commands compiles each instance once (A). `clean --report` lists
+        // the instances (B); `clean --stale --older-than 0` removes the ones the last plan did not
+        // use and keeps the others (C).
+        const auto tmp = s::case_dir();
+        s::project ws(tmp / "ws", {
+            {"mcpp.toml", "[workspace]\nmembers = [\"util\", \"core\", \"app\"]\n"},
+            {"util/mcpp.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n\n[features]\nextra = { defines = [\"UTIL_EXTRA=1\"] }\n\n[targets.util]\nkind = \"lib\"\n"},
+            {"util/src/util.cppm", "export module ws953.util;\nexport int util_value() {\n#ifdef UTIL_EXTRA\n  return 2;\n#else\n  return 1;\n#endif\n}\n"},
+            {"core/mcpp.toml", "[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n[dependencies]\nutil = { path = \"../util\" }\n\n[targets.core]\nkind = \"lib\"\n"},
+            {"core/src/core.cppm", "export module ws953.core;\nimport ws953.util;\nexport int core_value() { return util_value() + 10; }\n"},
+            {"app/mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = { path = \"../core\" }\n\n"
+                              "[dev-dependencies]\nutil = { path = \"../util\", features = [\"extra\"] }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+            {"app/src/main.cpp", "import ws953.core;\nint main() { return core_value() == 11 ? 0 : 1; }\n"},
+            {"app/tests/t.cpp", "import ws953.core;\nint main() { return core_value() == 12 ? 0 : 1; }\n"},
+        });
+        auto stamps = [&] {
+            std::vector<std::pair<std::string, long long>> out;
+            for (auto const& f : s::find_files(ws.at("target"), R"(util\.m\.o)"))
+                out.emplace_back(f.generic_string(), fs::last_write_time(f).time_since_epoch().count());
+            std::ranges::sort(out);
+            return out;
+        };
+        expect(fatal(e2e::succeeded(ws.mcpp({"build", "-p", "app"})))) << "A: the first build failed";
+        auto r = ws.mcpp({"test", "-p", "app"});
+        expect(fatal(e2e::succeeded(r))) << "A: the first test failed (the feature did not reach the test build): " << s::text(r);
+        const auto before = stamps();
+        expect(fatal(before.size() == 2u)) << "A: the shared package does not have two instances: " << before.size();
+        for (int round = 0; round < 2; ++round) {
+            expect(fatal(e2e::succeeded(ws.mcpp({"build", "-p", "app"})))) << "A: a build failed";
+            expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "app"})))) << "A: a test failed";
+        }
+        expect(stamps() == before) << "A: alternating build and test compiled an instance again";
+        r = ws.mcpp({"clean", "--report"});
+        expect(fatal(e2e::succeeded(r))) << "B: clean --report failed: " << s::text(r);
+        expect(s::count_lines(s::text(r), "obj/util/") == 2u) << "B: the report does not list both instances: " << s::text(r);
+        r = ws.mcpp({"clean", "--stale", "--older-than", "0"});
+        expect(fatal(e2e::succeeded(r))) << "C: clean --stale failed: " << s::text(r);
+        expect(stamps().size() == 1u) << "C: the instance the last plan did not use was kept, or the used one removed: " << s::text(r);
+        expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "app"})))) << "C: the build after the sweep failed";
+    };
+
+    "954 the workspace's abi table is the root's statement"_test[s::gcc][s::elf] = [] {
+        // mcpp#954. A workspace whose root is only `[workspace]` states the build's abi once, in
+        // `[workspace.target.<selector>.abi]`; its members inherit the row and no member is told
+        // that it declares a table only the root decides (A). A member whose own manifest has the
+        // table is reported once, by name, when another member depends on it (B).
+        const auto tmp = s::case_dir();
+        const auto lib = [](std::string_view own) {
+            return std::format("[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n{}[targets.core]\nkind = \"lib\"\n", own);
+        };
+        const std::string app = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = { path = \"../core\" }\n\n"
+                                "[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
+        s::project ws(tmp / "ws", {
+            {"mcpp.toml", "[workspace]\nmembers = [\"core\", \"app\"]\n\n[workspace.target.'cfg(os = \"linux\")'.abi]\nthreads = true\n"},
+            {"core/mcpp.toml", lib("")},
+            {"core/src/core.cppm", "export module ws954.core;\nexport int core_value() { return 3; }\n"},
+            {"app/mcpp.toml", app},
+            {"app/src/main.cpp", "import ws954.core;\nint main() { return core_value() == 3 ? 0 : 1; }\n"},
+        });
+        auto r = ws.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build: " << s::text(r);
+        expect(s::lacks(s::text(r), "declares [target.<selector>.abi]")) << "A: an inherited abi row was reported as a member's own table: " << s::text(r);
+        ws.write("core/mcpp.toml", lib("[target.'cfg(os = \"linux\")'.abi]\nthreads = true\n\n"));
+        r = ws.mcpp({"build", "-p", "app"});
+        expect(fatal(e2e::succeeded(r))) << "B: the workspace did not build: " << s::text(r);
+        const auto text = s::text(r);
+        std::size_t n = 0;
+        for (auto pos = text.find("`core` declares [target.<selector>.abi]"); pos != std::string::npos;
+             pos = text.find("`core` declares [target.<selector>.abi]", pos + 1))
+            ++n;
+        expect(n == 1u) << "B: the member's own abi table was reported " << n << " times: " << text;
+        expect(s::lacks(text, "`app` declares")) << "B: the member without a table was reported: " << text;
     };
 }};
 

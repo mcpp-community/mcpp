@@ -271,7 +271,7 @@ E2E members{"members", [] {
             ws.write(m + "/src/" + m + ".cppm", std::format("export module sel852_{0};\nexport int {0}_value() {{ return 1; }}\n", m));
         }
         auto object_edges = [](const fs::path& dir, const std::string& m) {
-            const std::regex re{"(^|/)obj/" + m + "/src/" + m + "\\.m\\.o$"};
+            const std::regex re{"(^|/)obj/" + m + "/[0-9a-f]{8}/src/" + m + "\\.m\\.o$"};
             return std::ranges::count_if(s::ninja_log_outputs(dir), [&](const std::string& o) { return std::regex_search(o, re); });
         };
         auto r = ws.mcpp({"build", "-p", "a", "-p", "nosuch"});

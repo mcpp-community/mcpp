@@ -217,6 +217,10 @@ enum class Slot : std::size_t {
     // table it is in data -- `cmd`, `host`, `hosts`, `requires`, `enabled`,
     // `longlived`, `exclusive` -- in one JSON payload (`mcpp::runner_spec`).
     RunnerSpecs,
+    // Protocol 20 (design 2026-11-19 §8.4): `<package>\t<tool>` for each tool
+    // `mcpp::dep_bin` was asked for that no edge and no feature declares. The
+    // program received "" and goes on; the engine says which line declares it.
+    UndeclaredTools,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -315,7 +319,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 39> kTable{{
+inline constexpr std::array<Def, 40> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -430,6 +434,7 @@ inline constexpr std::array<Def, 39> kTable{{
     // the unknown-tag path and discards the whole record.
     {"warning",             "warning",           Slot::Warnings,         Scope::Advisory,       Transform::Verbatim,      false, "", "", 5},
     {"diagnostic",          "diagnostic",        Slot::Diagnostics,      Scope::Advisory,       Transform::Verbatim,      false, "", "", 14},
+    {"undeclared-tool",     "undeclared-tool",   Slot::UndeclaredTools,  Scope::Advisory,       Transform::Verbatim,      false, "", "", 20},
     {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
     // The probe channel: a rule package measures, the engine compares. See
     // Slot::Facts for the shape of each value.

@@ -553,7 +553,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.29.2` from 2026.11.18.1, `@0.29.1` from 2026.11.17.2, `@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.31.0` from 2026.11.19.1, `@0.29.2` in 2026.11.18.1, `@0.29.1` from 2026.11.17.2, `@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -673,7 +673,7 @@ a program classifying the outcome reads `reason`:
 | `platform-not-a-platform` | the package selected as the target's platform has no `[platform]` section *(2026.10.27.1+)* |
 | `platform-target-unserved` | the selected platform does not serve the target: the triple is not among its `targets`, and a host triple is not among its `[platform.hosted] targets` *(2026.10.27.1+)* |
 | `platform-tool-absent` | a program the platform's link or seal runs (`okld` for an ok image) is neither built by the graph nor found on this machine *(2026.10.27.1+; `image-tool-absent` in 2026.10.26.2)* |
-| `platform-version-group` | a package of the platform's version group is in the graph at another version *(2026.10.27.1+)* |
+| `platform-version-group` | a package of the platform's version group is in the graph at another version *(2026.10.27.1+)*, or no release of a platform series admits the build's requests *(2026.11.19.1+)* |
 | `platform-phase-directive` | a platform's plugin stated a directive its phase does not take *(2026.10.27.1+)* |
 | `other` | a refusal whose branch has not been given a token yet |
 
@@ -685,6 +685,15 @@ coincidentally contain; the mcpp-index compatibility measurement tells "this
 graph does not supply what the member asked for" from "the member did not
 build" on exactly this token, and that distinction decides whether a member
 counts against a compatibility figure.
+
+**Two tokens are printed by a build that fails while it runs** (2026.11.19.1+),
+in brackets, in the failure's own message; they are not refusals of the target
+and do not appear as `reason`:
+
+| token | |
+|---|---|
+| `compiler-run-occupied` | an interrupted build of the configuration left compiler units that are occupied or not yet decidable; the message names their number, the state directory and the way out |
+| `spawn-too-large` | the system refused to start a program for the size of its arguments and environment; the message names both counts and byte sizes |
 
 **Exit 0 whenever the question was answered, including "refused".** "Would
 this build, and if not why" is answered successfully by "no, because the row's
@@ -1019,6 +1028,15 @@ terminal is therefore visible to an IDE that reads the record, and the reverse.
 | `compileDatabase` | the configuration's `compile_commands.json`, or `null` |
 | `artifacts` | `name`, `kind` (`bin`, `test`, `shared`, `static`), `path`, for a runnable product `launch`, and `entry` when the program's beginning or its entry symbol was stated |
 | `diagnostics` | the compilers' diagnostics of a failed build: `severity`, `message`, `path`, `range` |
+
+**Text** *(2026.11.19.1+)*. The record, the event stream and every envelope are
+UTF-8. A compiler's text is decoded where mcpp reads it, in the encoding its
+toolchain states ([SPEC-012](specs/human-output.md) §5: cl.exe, link.exe,
+lib.exe and rc.exe write in the code page of the console they run in), so a
+`message` holds the compiler's words in the language it speaks. A byte a
+program wrote that is not UTF-8 is written as U+FFFD; the terminal and the logs
+keep the program's output as it was written. A cl.exe `note` carries the
+location of its file, as its `error` and `warning` lines do.
 
 `launch` is how `mcpp run` starts the product: `argv`, `cwd`, `env` and
 `via`. `env` holds only the variables mcpp sets or rewrites for the program

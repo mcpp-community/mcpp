@@ -30,6 +30,24 @@ using namespace mcpp::build;
 
 namespace {
 
+// A dependency's objects lie below its instance directory, `obj/<package>/
+// <digest>/` (design 2026-11-19 §11.1); the address inside the package is
+// what these cases are about, so the digest is taken out, after asserting it
+// is there.
+std::string without_instance(const std::filesystem::path& object) {
+    std::vector<std::string> parts;
+    for (auto const& p : object) parts.push_back(p.generic_string());
+    const auto hex = [](const std::string& s) {
+        return s.size() == 8 && std::ranges::all_of(s, [](char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        });
+    };
+    if (parts.size() > 3 && parts[0] == "obj" && hex(parts[2])) parts.erase(parts.begin() + 2);
+    std::string out;
+    for (auto const& p : parts) out += (out.empty() ? "" : "/") + p;
+    return out;
+}
+
 struct Tmp {
     std::filesystem::path path;
     Tmp() {
@@ -173,7 +191,8 @@ UTest dependency_cache_address_is_package_internal{"ObjectAddress/DependencyCach
     // The build path does partition by package — that is what makes the
     // cross-package census unnecessary.
     auto obj = built->object.generic_string();
-    expect(eq(obj, "obj/compat_zlib/zlib-1.3.2/compress.o")) << obj;
+    expect(ne(without_instance(obj), obj)) << "no instance directory: " << obj;
+    expect(eq(without_instance(obj), "obj/compat_zlib/zlib-1.3.2/compress.o")) << obj;
 }};
 
 // `path_is_under_any` decides both whether a package may be cached and where
@@ -300,12 +319,12 @@ std::optional<std::string> addressOfDeclaredDependencySource(
     for (auto& cu : plan->compileUnits) {
         if (cu.source == depRoot / "src" / "own.cpp") {
             // The dependency's own source keeps the mirrored address.
-            if (cu.object.generic_string() != "obj/dep/src/own.o") {
+            if (without_instance(cu.object) != "obj/dep/src/own.o") {
                 if (err) *err = "dependency's own source moved: " + cu.object.generic_string();
                 return std::nullopt;
             }
         }
-        if (cu.source == helper) found = cu.object.generic_string();
+        if (cu.source == helper) found = without_instance(cu.object);
     }
     if (!found && err) *err = "helper compile unit not found";
     return found;
@@ -361,7 +380,7 @@ UTest an_unowned_escaping_source_is_addressed_by_a_hash_of_its_directory{"Object
     std::string rootObj, outsideObj;
     for (auto& cu : plan->compileUnits) {
         if (cu.source == projectRoot / "src" / "gen.cpp") rootObj = cu.object.generic_string();
-        if (cu.source == outside) outsideObj = cu.object.generic_string();
+        if (cu.source == outside) outsideObj = without_instance(cu.object);
     }
     expect(eq(rootObj, "obj/app/src/gen.o"));
     expect(fatal(outsideObj.starts_with("obj/dep/__ext/"))) << outsideObj;
@@ -455,5 +474,5 @@ UTest a_members_source_in_another_members_directory_is_immune_to_the_selection{"
     const auto beside = plan_with(true);
     expect(!alone.empty());
     expect(eq(alone, beside));
-    expect(ne(alone.generic_string().find("obj/app/__ws/lib/src/"), std::string::npos)) << alone;
+    expect(ne(without_instance(alone).find("obj/app/__ws/lib/src/"), std::string::npos)) << alone;
 }};

@@ -400,6 +400,128 @@ int main() { std::println("val {}", val()); }
         expect(fatal(e2e::succeeded(r))) << "the third build\n" << s::text(r);
         expect(s::no_line(s::text(r), R"(^\[[0-9]+/[0-9]+\] .*bin/app)")) << "a build with nothing changed linked the program again\n" << s::text(r);
     };
+    "931 a file an option's value names is a link input"_test[s::gcc][s::unix_shell] = [] {
+        // Design 2026-11-19 §6.2 rule A: a path after `=` and in a `,`-separated segment is a link
+        // input as a whole word is. An archive given inside `-Wl,--whole-archive,<file>` that is
+        // replaced relinks the program, and so does a version script given as
+        // `-Wl,--version-script=<file>`; a build with nothing changed links nothing.
+        const auto work = s::case_dir();
+        s::project val{work / "val", {{"mcpp.toml", R"cpp([package]
+name    = "val"
+version = "0.1.0"
+
+[targets.val]
+kind = "lib"
+)cpp"}}};
+        fs::create_directories(work / "prebuilt");
+        auto make_archive = [&](int value) {
+            val.write("src/val.cpp", std::format("extern \"C\" int val() {{ return {}; }}\n", value));
+            auto b = val.mcpp({"build"});
+            expect(fatal(e2e::succeeded(b))) << "the library did not build\n" << s::text(b);
+            const auto a = s::find_files(val.at("target"), R"(libval.*\.a)");
+            expect(fatal(!a.empty())) << "no archive of the library";
+            fs::copy_file(a.front(), work / "prebuilt/libval.a", fs::copy_options::overwrite_existing);
+        };
+        make_archive(41);
+        s::project{work / "prebuilt", {{"app.map", "{ global: *; };\n"}}};
+        const auto work_s = work.string();
+        s::project app{work / "app", {{"mcpp.toml", std::format(R"cpp([package]
+name    = "app"
+version = "0.1.0"
+
+[build]
+ldflags = ["-Wl,--whole-archive,{0}/prebuilt/libval.a,--no-whole-archive",
+           "-Wl,--version-script={0}/prebuilt/app.map"]
+
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+)cpp", work_s)}, {"src/main.cpp", R"cpp(import std;
+extern "C" int val();
+int main() { std::println("val {}", val()); }
+)cpp"}}};
+        auto r = app.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the first run\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "val 41"))) << "the first run did not print val 41\n" << s::text(r);
+        make_archive(42);
+        r = app.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the second run\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "val 42"))) << "a replaced archive in a ','-separated segment did not relink the program\n" << s::text(r);
+        s::project{work / "prebuilt", {{"app.map", "{ global: *; };\n/* changed */\n"}}};
+        r = app.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "the build after the script changed\n" << s::text(r);
+        expect(s::has_line(s::text(r), R"(^\[[0-9]+/[0-9]+\] .*bin/app)")) << "a changed version script named after '=' did not relink the program\n" << s::text(r);
+        r = app.mcpp({"build", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "the last build\n" << s::text(r);
+        expect(s::no_line(s::text(r), R"(^\[[0-9]+/[0-9]+\] .*bin/app)")) << "a build with nothing changed linked the program again\n" << s::text(r);
+    };
+    "931 a library the linker found by searching is a link input"_test[s::gcc][s::elf] = [] {
+        // Design 2026-11-19 §6.2 rule B: where the linker writes what it read, the link edge
+        // carries that report, and a library found through `-L`/`-l` -- named by no word of the
+        // line -- is an input: replacing it relinks the program.
+        const auto work = s::case_dir();
+        s::project val{work / "val", {{"mcpp.toml", R"cpp([package]
+name    = "val"
+version = "0.1.0"
+
+[targets.val]
+kind = "lib"
+)cpp"}}};
+        fs::create_directories(work / "prebuilt");
+        auto make_archive = [&](int value) {
+            val.write("src/val.cpp", std::format("extern \"C\" int val() {{ return {}; }}\n", value));
+            auto b = val.mcpp({"build"});
+            expect(fatal(e2e::succeeded(b))) << "the library did not build\n" << s::text(b);
+            const auto a = s::find_files(val.at("target"), R"(libval.*\.a)");
+            expect(fatal(!a.empty())) << "no archive of the library";
+            fs::copy_file(a.front(), work / "prebuilt/libval.a", fs::copy_options::overwrite_existing);
+        };
+        make_archive(41);
+        const auto work_s = work.string();
+        s::project app{work / "app", {{"mcpp.toml", std::format(R"cpp([package]
+name    = "app"
+version = "0.1.0"
+
+[build]
+ldflags = ["-L{0}/prebuilt", "-lval"]
+
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+)cpp", work_s)}, {"src/main.cpp", R"cpp(import std;
+extern "C" int val();
+int main() { std::println("val {}", val()); }
+)cpp"}}};
+        auto r = app.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the first run\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "val 41"))) << "the first run did not print val 41\n" << s::text(r);
+        const auto ninja = s::find_files(app.at("target"), R"(build\.ninja)");
+        expect(fatal(!ninja.empty())) << "no build.ninja";
+        expect(fatal(e2e::contains(s::read_file(ninja.front()), "--dependency-file=$out.d")))
+            << "the link rule does not ask the linker what it read\n" << s::read_file(ninja.front());
+        make_archive(42);
+        r = app.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the second run\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "val 42"))) << "a replaced library found through -L/-l did not relink the program\n" << s::text(r);
+        // A link that names its own dependency file keeps it, the linker writing the last one
+        // named, and the build says what its record then lacks.
+        app.write("mcpp.toml", std::format(R"cpp([package]
+name    = "app"
+version = "0.1.0"
+
+[build]
+ldflags = ["-L{0}/prebuilt", "-lval", "-Wl,--dependency-file={0}/own.d"]
+
+[targets.app]
+kind = "bin"
+main = "src/main.cpp"
+)cpp", work_s));
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build with the link's own dependency file\n" << s::text(r);
+        expect(fs::is_regular_file(work / "own.d")) << "the link's own dependency file was not written\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "names its own --dependency-file"))
+            << "the build did not report the link's own dependency file\n" << s::text(r);
+    };
     "1062 link flags on a compiler link are named not dropped"_test[s::elf][s::llvm] = [] {
         // [platform.link] flags a compiler-driven link does not use are named with the remedy
         // ([platform.build] ldflags); an ld.lld link takes them without a word.

@@ -158,11 +158,20 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // not the consumer's own sources.
         bool devTable = false;
         bool wantsLibrary = false;
+        // The edge is of the target's reading of the consumer's table alone
+        // (SPEC-004 §4.8): the consumer's instance in a build program does not
+        // have it. An edge of this machine's reading alone is a `buildTable`
+        // edge, which the target's instance does not have.
+        bool targetRowOnly = false;
         bool reexport = false;
         // `embed = true` and its `exclude` (design 2026-11-02 §14.1): the
         // dependency's sources are compiled into the consumer.
         bool embed = false;
         std::vector<std::string> exclude;
+        // The build program whose resolution first made the edge (§21 A1);
+        // empty once the target's resolution makes it too. A program whose
+        // record moves to another slot moves the edges it alone made.
+        std::string scope;
     };
 
     struct GraphRequest {
@@ -187,6 +196,14 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // a patched library is another library, so two patch sets of one
         // package are two identities, resolved, built and cached apart.
         std::string variant;
+        // THE PROGRAM WHOSE RESOLUTION THIS IS (design 2026-11-19 §21 A1,
+        // mcpp#972): empty for the target's, `build:<package>@<version>` for a
+        // build program's. A C++ program loads one version of a package; two
+        // programs do not constrain each other, so each build program's
+        // `[build-dependencies]` closure is resolved apart from the target's
+        // and from every other program's. Records of one package in several
+        // scopes share its slot while they share its version.
+        std::string scope;
         auto operator<=>(const ResolvedKey&) const = default;
     };
 
@@ -260,6 +277,22 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // The root's override answered this request (T2): its source is the
         // root's, and the platform's version group does not bind it.
         bool                                 overridden = false;
+        // Last, since items are written positionally. `=<version>` where the platform's version group binds this request
+        // (SPEC-013 §7.5). It is a constraint of the request as the written one
+        // is, so it enters the resolution record and every later merge: a
+        // request of the same package that the group does not bind (a build
+        // program's) is then resolved with it, in whichever order the two
+        // arrive (mcpp#956).
+        std::string                          groupConstraint;
+        // The request is of the target's reading of its consumer's table
+        // alone: a `[target.<selector>.dependencies]` entry the row of this
+        // machine does not match (SPEC-004 §4.8). Its edge does not make the
+        // dependency a module of a build program.
+        bool                                 targetRowOnly = false;
+        // The program whose resolution the request belongs to (ResolvedKey::
+        // scope): set where a package's `[build-dependencies]` are seeded, and
+        // inherited by every request below them.
+        std::string                          scope;
     };
 
     struct DeclaringManifest {
@@ -593,6 +626,10 @@ struct PrepareState {
     std::map<std::string, std::string> platformGroup;
     std::string platformGroupFrom;   // `openkal-platform 0.24.1`, for a refusal
     bool platformGroupRead = false;
+    // The release a platform selected as a series took in this pass, when
+    // neither an exact version nor mcpp.lock chose it: a refusal by its version
+    // group moves the series below it (design 2026-11-19 §21 A5).
+    std::string platformSeriesTook;
     std::map<std::string, std::string> packageIdentityLockAnchors;
     // mcpp.lock as this run read it (design 2026-10-26 §4.1): the write at the
     // end compares, so a lock another run wrote meanwhile is not overwritten.
@@ -735,6 +772,9 @@ struct PrepareState {
     std::string bootstrapSpec;
     std::vector<std::unique_ptr<mcpp::manifest::Manifest>> dep_manifests;
     std::vector<DepCacheIdentity> dep_cache_identities;
+    // The content digest of each tree that can change in place, once per
+    // preparation (`tree_content_digest`, mcpp#974).
+    std::map<std::string, std::string> treeDigests;
     std::map<std::string, GitLockIdentity> root_git_lock_identities;
     // Git dependencies reached through another package, by qualified
     // identity; written to mcpp.lock beside the root's and read back as their
@@ -828,13 +868,51 @@ struct PrepareState {
     // (with these helpers as its own captures) and called repeatedly from
     // the worklist loop, well after its defining call returns. ────────────
     std::deque<WorkItem> worklist;
-    // THE REQUESTS OF A VERSION NO LONGER IN THE GRAPH. A merge that replaces
-    // `<ns>.<name>@<old>` takes that version's requests out with it: its
-    // queued items are not walked and its constraints no longer bound a merge.
-    // Kept, they reported a conflict between a version and a request of a
-    // version that had already left (os 0.4.4 and openkal-linux 0.26.0 after
-    // both were merged down, measured).
-    std::set<std::string> supersededRequesters;
+    // THE REQUESTS OF A VERSION A RESOLUTION LEFT, by resolution (its scope)
+    // and requester (`<ns>.<name>@<old>`). A merge that replaces a version, or
+    // a program's record that moves off it, takes the requests that version
+    // made in that resolution out with it: its queued items are not walked and
+    // its constraints no longer bound a merge. Kept, they reported a conflict
+    // between a version and a request of a version that had already left (os
+    // 0.4.4 and openkal-linux 0.26.0 after both were merged down, measured). A
+    // resolution that still holds the version keeps its requests (§21 A1).
+    std::set<std::pair<std::string, std::string>> supersededRequests;
+    // The sides a package's dependency table has been walked for, by dep slot
+    // (SPEC-004 §4.8; mcpp#956): 1 the target's, 2 this machine's. A package is
+    // built once for each side that asks for it, and each side reads the table
+    // by its own row and makes its own requests.
+    std::vector<unsigned char> depSidesWalked;
+    // The build programs a slot's table has been walked for (§21 A1): each
+    // program resolves the package's requests in its own scope.
+    std::set<std::pair<std::size_t, std::string>> scopesWalked;
+    // THE RESOLUTIONS RESOLVE IN WAVES (§21 A1): the target's requests, the
+    // platform's layers and the capability defaults among them; then the
+    // requests of the build programs of the packages the target holds; then
+    // those of the programs of the packages those programs hold. A resolution
+    // makes its choices before a program of a package it holds asks, so the
+    // program takes them where its own requests allow, and a merge that
+    // replaces a version finds that version's program still unwalked
+    // (`withdraw_program`). A program scope's wave is its consumer's plus one
+    // (`open_program_scope`); a scope none opened (the root's program, the
+    // platform's tools) is the first after the target's. Measured before: the
+    // programs resolved in the target's first round, took the newest release
+    // of a layer package the platform added a round later at the group's
+    // version, and two versions of it entered the build.
+    std::map<std::string, int> scopeWaves;
+    std::map<int, std::deque<WorkItem>> laterWaves;
+    int wave = 0;
+    bool programsOpen = false;
+    // A program's record that a merge moved off a slot another program or the
+    // target uses: the slot its edges are moved from, and the requests the
+    // record held (§21 A1).
+    struct ScopeMove {
+        std::size_t oldPackageIndex = 0;
+        std::vector<std::pair<std::string, std::string>> constraintsBy;
+    };
+    std::map<ResolvedKey, ScopeMove> scopeMoves;
+    // The package slots a move left with no resolution holding them (by
+    // package index): no instance of the target's or of a build program's.
+    std::set<std::size_t> withdrawnSlots;
     // THE ROOT'S OVERRIDES (design 2026-11-10 supplement, T2): each
     // `override = true` declaration of the root's tables and of
     // `[workspace.dependencies]`, with the identity it answers for and the
@@ -1053,7 +1131,8 @@ std::size_t packageIndexForConsumer(std::size_t consumerDepIndex);
 void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
-                          const std::string& writtenKey);
+                          const std::string& writtenKey, bool targetRowOnly = false,
+                          const std::string& scope = {});
 // graph_edges.cpp: the package being built stands for itself in its tests'
 // graph -- an edge reached through its `[dev-dependencies]` naming it is its
 // own, recorded here; true when the request is so answered.
@@ -1085,6 +1164,19 @@ void step4b_note_exact_pin(PrepareState& state, const WorkItem& item, const mcpp
 std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(
         PrepareState& state, const std::filesystem::path& packageRoot,
         const mcpp::manifest::Manifest& manifest);
+// THE IDENTITY OF A PACKAGE'S SOURCES (mcpp#974): what names the bytes a
+// package's build reads where its version does not. An index package's version
+// does, its payload being immutable: empty. A `git` package's resolved commit:
+// `+git.<commit>`. A `path` package's tree by the digest of its content:
+// `+path.<digest>`. One answer for the dependency cache, the tool store and the
+// build programs' identity (host_graph.cpp).
+std::string source_identity_suffix(PrepareState& state, std::size_t pkgIdx);
+// The content digest of a tree that can change in place, once per tree in a
+// preparation; the stat rows that spare reading unchanged files are kept under
+// the home, shared by every project that reaches the tree.
+std::string tree_content_digest(PrepareState& state, const std::filesystem::path& root);
+// Where those stat rows are kept for `root`.
+std::filesystem::path tree_digest_rows(const std::filesystem::path& root);
 // Where the build program of package `i` keeps its files: its cache, its
 // graph document, and the program mcpp synthesises for it. The root's and a
 // workspace member's are below their own target/; a dependency's is below the
@@ -1103,6 +1195,11 @@ std::expected<BuildContext, std::string> phase13_finish(PrepareState& state);
 // P13's records half (records.cpp), called by phase13_finish.
 std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildContext& ctx);
 void step13_resolution_json(PrepareState& state, BuildContext& ctx);
+// P13's global dependency cache (dependency_cache.cpp), called by phase13_finish:
+// whether package `i`'s sources are named (an index version, a git commit, a
+// path tree's content digest), and each package's key, hit or fill task.
+bool sources_named(const PrepareState& state, std::size_t i);
+std::expected<void, std::string> step13_dependency_cache(PrepareState& state, BuildContext& ctx);
 
 // ── Helpers the phases share, defined in the files named below ─────────────
 
@@ -1351,7 +1448,12 @@ std::string platform_short_name(std::string_view ref);
 // step 5): the platform package whose index entry lists `triple` among its
 // `platform_rows`, as `<namespace>.<name>@*` (the series of §14), when the
 // built-in table has no answer for it. Empty when no entry claims the row.
-std::string index_platform_for(const PrepareState& state, std::string_view triple);
+// `refreshOnMiss`: the caller refuses the row without an answer, so a miss goes
+// through the index refresh policy as a dependency's does (mcpp#967).
+std::string index_platform_for(const PrepareState& state, std::string_view triple, bool refreshOnMiss = false);
+// What a refusal of `triple` adds about the index after a miss of its column:
+// whether the index was refreshed, and why not. Empty when nothing missed.
+std::string index_platform_miss_note(std::string_view triple);
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
@@ -1360,7 +1462,75 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
 // added to the walk.
 std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
-std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+// graph_requests.cpp: what a request is bound by (the range as written and the
+// platform's version group), the requests a resolution record answers, and
+// the requests each side of the build makes of a package's dependency tables
+// (SPEC-013 §7.5, SPEC-004 §4.8).
+enum : unsigned char { kTargetSide = 1, kHostSide = 2 };
+using DependencyTable = std::map<std::string, mcpp::manifest::DependencySpec>;
+struct SideRequests {
+    DependencyTable dependencies, buildDependencies;
+    std::set<std::string> ofThisMachineAlone, ofTheTargetAlone;
+};
+std::string request_constraint(const WorkItem& item);
+void note_request(const PrepareState& state, ResolvedRecord& r, const WorkItem& item);
+// A record's package as a requester names it: `<ns>.<name>@<version>`, or the
+// source kind for a path or git package.
+std::string record_label(const ResolvedKey& key, const ResolvedRecord& r);
+// Whether a request is one a version made in a resolution that has left it.
+bool request_superseded(const PrepareState& state, std::string_view scope, std::string_view requester);
+// The constraints a record is bound by (the requests still in its resolution),
+// and each with its requester, for a refusal.
+std::string effective_constraint(const PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r);
+std::string requests_of(const PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r);
+// A version a resolution leaves: the requests it made there are withdrawn.
+void supersede_version(PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r);
+// The build program of a version no slot holds any longer: its queued
+// requests leave the walk.
+void withdraw_program(PrepareState& state, const std::string& scope);
+// The wave a scope resolves in, and a program scope opened by a consumer's.
+int scope_wave(const PrepareState& state, std::string_view scope);
+void open_program_scope(PrepareState& state, const std::string& scope, std::string_view consumerScope);
+std::expected<SideRequests, std::string> side_requests(PrepareState& state,
+                                                       const mcpp::manifest::Manifest& dm, bool hostSide);
+WorkItem side_item(const SideRequests& side, const std::string& childName,
+                   mcpp::manifest::DependencySpec childReq, const std::string& label,
+                   std::size_t consumer, const std::filesystem::path& root, const WorkItem& item);
+// The scope of a package's build program (ResolvedKey::scope, design 2026-11-19
+// §21 A1): `build:<label>`, the label naming the package as the resolution does
+// (`<namespace>.<name>@<version>`, or the source kind for a path or git one).
+std::string program_scope(std::string_view label);
+// The root's build program: `build:<qualified name>@<version>`.
+std::string root_program_scope(const PrepareState& state);
+// The program a scope names, for a message: `the build program of <label>`.
+std::string scope_display(std::string_view scope);
+// A record of `identity` whichever resolution holds it: the target's first.
+const ResolvedRecord* any_record_of(const PrepareState& state, const ResolvedKey& identity);
+// The version a program's request takes (§21 A1): the one the program holds
+// when the request admits it, else the newest another resolution holds that
+// the request and the program's other requests of the package admit.
+std::optional<std::string> held_version_for(const PrepareState& state, const WorkItem& item,
+                                            const mcpp::manifest::DependencySpec& spec,
+                                            const std::string& name);
+// Whether a slot serves a resolution other than `key`'s program, and whether
+// another resolution holds `key`'s package at `version`.
+bool slot_held_elsewhere(const PrepareState& state, std::size_t depIndex, const ResolvedKey& key);
+bool version_held_elsewhere(const PrepareState& state, const ResolvedKey& key, std::string_view version);
+// A program's record resolved again after a move: its edges and requests follow.
+void finish_scope_move(PrepareState& state, const ResolvedKey& key, std::size_t newPackageIndex);
+// A program's edges from a package of the target to one only programs hold.
+void step4b_drop_program_edges_from_target(PrepareState& state);
+// graph_stage.cpp: what the multi-version rename (Level 1) writes.
+std::expected<void, std::string> stage_with_rewrite(const std::filesystem::path& srcRoot,
+                                                    const std::filesystem::path& dstRoot,
+                                                    const mcpp::manifest::Manifest& depManifest,
+                                                    const std::map<std::string, std::string>& rename);
+std::expected<std::vector<std::string>, std::string> declared_modules_for(
+    const std::filesystem::path& srcRoot, const mcpp::manifest::Manifest& depManifest);
+// graph_provisioning.cpp: the closures a build program's environment is filled
+// by, and the root package.
+std::expected<void, std::string> step4b_define_provisioning_closures(PrepareState& state);
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, WorkItem& item,
                                                               const std::string& name,
                                                               mcpp::manifest::DependencySpec& spec);
 void step4b_read_platform_group(PrepareState& state, const std::string& resolvedShortName);
@@ -1380,6 +1550,10 @@ std::expected<void, std::string> step2_retarget_for_retargetable_driver(PrepareS
 std::expected<void, std::string> step2_paired_system(PrepareState& state);
 // The platform root a first pass asks the second to read in P1, once.
 std::optional<std::filesystem::path> take_platform_restart();
+// The release of a platform series this pass took and its version group
+// refused, with the request that refused it (design 2026-11-19 §21 A5): the
+// next pass takes the series below it.
+std::optional<std::pair<std::string, std::string>> take_platform_series_restart();
 // The identity a first pass found the C library names (SPEC-016 §5), taken once.
 std::optional<std::string> take_target_restart();
 std::expected<void, std::string> load_host_platform(PrepareState& state);

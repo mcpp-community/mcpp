@@ -290,9 +290,12 @@ int main() {
         // An app with a shared path dependency: lib/ holds the object, libfw.so and
         // libc++_shared.so, the stubs are the platform's (the stage manifest says so); the
         // libraries carry their file names as SONAME; a prebuilt library from [runtime] is
-        // staged, and when it is gone dir and tar refuse naming it; a dispatched format receives
-        // `closure = not-walked`, the unresolved name and the members; two triples stage a
-        // closure each.
+        // staged. A library the link read and that is gone is an input of the link that is gone
+        // (SPEC-004 §8.1, mcpp#931): the pack's build links again, and the link names it. A
+        // library the link found through a flag the pack does not read is needed and found in
+        // none of the pack's directories: dir and tar refuse naming it, and a dispatched format
+        // receives `closure = not-walked`, the unresolved name and the members; two triples
+        // stage a closure each.
         const auto tmp = s::case_dir();
         s::project fw(tmp / "fw", {{"mcpp.toml", "[package]\nnamespace = \"demo\"\nname      = \"fw\"\nversion   = \"0.1.0\"\n\n[targets.fw]\nkind = \"lib\"\n"},
                                    {"src/fw.cppm", "export module fw;\nexport int fw_anchor() { return 41; }\n"}});
@@ -325,9 +328,19 @@ int main() {
         expect(fatal(fs::is_regular_file(tree / "lib/libext.so"))) << "the prebuilt libext.so is not staged";
         expect(fatal(lines_contain(s::read_file(stage_manifest), "needs\tlibext.so\tlib/libext.so"))) << "the manifest does not state libext.so as staged: " << s::read_file(stage_manifest);
         fs::remove(app.at("ext/lib/libext.so"));
+        r = app.mcpp({"pack", "--target", "x86_64-linux-android", "--pkg-format", "dir"});
+        expect(fatal(failed(r))) << "the pack succeeded with libext.so gone";
+        expect(fatal(e2e::contains(s::text(r), "-lext"))) << "the link did not name the library that is gone: " << s::text(r);
+        // The same library, found by the link through `-L` in `[build] ldflags`.
+        fs::create_directories(app.at("ext/flag"));
+        const auto flagged = s::run(cc, {"--target=x86_64-linux-android24", "-shared", "-fPIC", "-Wl,-soname,libext.so", "-o", app.at("ext/flag/libext.so").string(), app.at("ext/ext.c").string()}, app.dir());
+        expect(fatal(e2e::succeeded(flagged))) << "the NDK's clang did not build libext.so: " << s::text(flagged);
+        app.write("mcpp.toml", manifest + std::format("\n[target.'cfg(env = \"android\")'.runtime]\nlibraries = [\"ext\"]\n"
+                                                      "\n[target.'cfg(env = \"android\")'.build]\nldflags = [\"-L{}\"]\n",
+                                                      app.at("ext/flag").generic_string()));
         for (std::string_view fmt : {"dir", "tar"}) {
             r = app.mcpp({"pack", "--target", "x86_64-linux-android", "--pkg-format", std::string(fmt)});
-            expect(fatal(failed(r))) << "--pkg-format " << fmt << " succeeded with libext.so gone";
+            expect(fatal(failed(r))) << "--pkg-format " << fmt << " succeeded with libext.so outside its directories";
             expect(fatal(e2e::contains(s::text(r), "libext.so: found in none of"))) << "--pkg-format " << fmt << " did not name libext.so: " << s::text(r);
             expect(fatal(e2e::contains(s::text(r), "incomplete"))) << "--pkg-format " << fmt << " did not say the closure is incomplete: " << s::text(r);
         }
