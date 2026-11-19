@@ -644,10 +644,16 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
 ```
 
-A word of `[build] ldflags` that names an existing file by absolute path (a
-prebuilt archive, an object) is an input of every link that carries it: a
-changed file relinks (mcpp 2026.10.31.1+). A relative word is read by the
-linker against the build directory and is not tracked.
+A file a word of `[build] ldflags` names by absolute path is an input of every
+link that carries it, whether it is the whole word (a prebuilt archive, an
+object), an option's value (`--js-library=<file>`,
+`-Wl,--version-script=<file>`), a `,`-separated segment
+(`-Wl,-force_load,<file>`) or a response file and what it lists; on an ELF
+target whose linker reports what it read, a library found through `-L`/`-l` is
+one too. A changed input relinks (whole words mcpp 2026.10.31.1+, the rest
+2026.11.19.1+); see [Files a link reads](30-build-mcpp.md#files-a-link-reads).
+A relative word is read by the linker against the build directory and is not
+tracked.
 
 
 #### Compile-flag syntax *(mcpp 2026.9.17.1+)*

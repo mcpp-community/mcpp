@@ -40,6 +40,17 @@ std::expected<std::string, DetectError> run_capture(const std::vector<std::strin
 // An LLVM toolchain is asked by one real link, a GCC by its driver (`-###`);
 // the answer is kept (design 2026-10-31 §4.1).
 bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp::run::Env& env = {});
+// Whether the linker a link runs writes the files it read as make rules
+// (`--dependency-file=<file>`: GNU ld from 2.35, gold, ld.lld). `argv` is the
+// program and the words of the link that decide which linker runs: a compiler
+// driver with its `--target`, `-fuse-ld`, `--ld-path` and `-B` words, or the
+// linker itself (`direct`). A driver is asked by one real link of an empty
+// shared object; a linker by `--version`, which GNU ld 2.42, gold 1.16 and
+// ld.lld 23.1.3 answer only after refusing an option they do not know
+// (measured). The answer is kept under the identity of the files the words
+// name (design 2026-11-19 §6.2).
+bool linker_reports_inputs(const std::vector<std::string>& argv, bool direct,
+                           const mcpp::run::Env& env = {});
 
 std::string extract_version(std::string_view s);
 std::string first_line_of(std::string_view s);
@@ -240,6 +251,51 @@ bool compresses_debug_sections(const std::filesystem::path& compiler, const mcpp
     return r->find("cannot compress debug sections") == std::string::npos
         && r->find("-gz is not supported") == std::string::npos
         && r->find("unsupported option '-gz") == std::string::npos;
+}
+
+bool linker_reports_inputs(const std::vector<std::string>& argv, bool direct,
+                           const mcpp::run::Env& env) {
+    if (argv.empty()) return false;
+    // Asked once per process as well: every package's flags ask it again.
+    static std::mutex mutex;
+    static std::map<std::string, bool> answered;
+    const auto key = probe_cache_key(argv, env, direct);
+    std::lock_guard lock(mutex);
+    if (auto it = answered.find(key); it != answered.end()) return it->second;
+    const auto work = mcpp::home::root() / "cache" / "probe" / "link-report";
+    const auto answer = work / (mcpp::toolchain::hash_string(key) + ".answer");
+    if (std::ifstream in(answer); in) {
+        std::string v;
+        in >> v;
+        if (v == "yes" || v == "no") return answered[key] = (v == "yes");
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(work, ec);
+    const auto depfile = work / std::format("probe-{:x}.d", std::random_device{}());
+    std::vector<std::string> cmd = argv;
+    if (direct) {
+        cmd.push_back("--dependency-file=" + depfile.string());
+        cmd.push_back("--version");
+    } else {
+        const auto src = work / "empty.c";
+        if (!std::filesystem::exists(src, ec)) std::ofstream(src, std::ios::binary).flush();
+        for (auto const& a : {std::string("-shared"), std::string("-nostdlib"), std::string("-x"),
+                              std::string("c"), src.string(), std::string("-o"),
+                              (work / std::format("probe-{:x}.so", std::random_device{}())).string(),
+                              "-Wl,--dependency-file=" + depfile.string()})
+            cmd.push_back(a);
+    }
+    auto r = mcpp::run::execute(cmd, {.env = env, .host_tool = true,
+                                      .streams = mcpp::run::Streams::merged,
+                                      .report_spawn_failure = false});
+    const bool yes = r.exit_code == 0 && (direct || std::filesystem::is_regular_file(depfile, ec));
+    std::filesystem::remove(depfile, ec);
+    if (!direct) std::filesystem::remove(cmd[cmd.size() - 2], ec);
+    mcpp::log::verbose("toolchain", std::format("the linker of '{}' reports what it read: {}{}",
+                       mcpp::build::command_line::display(argv), yes ? "yes" : "no",
+                       yes ? std::string{} : " (" + first_line_of(r.output) + ")"));
+    if (mcpp::effects::writes_global_cache()) std::ofstream(answer) << (yes ? "yes\n" : "no\n");
+    return answered[key] = yes;
 }
 
 std::expected<std::string, DetectError> run_capture(const std::vector<std::string>& argv,

@@ -604,8 +604,11 @@ bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | 
 private_fragment = "unit"         # A private module fragment: unit (built as a unit of its own, default) | as-written (chapter 26)
 ```
 
-`[build] ldflags` 中以绝对路径指向一个已存在文件的词（预构建的归档、目标文件）是带有它的每次链接的输入：文件改变即重新
-链接（mcpp 2026.10.31.1+）。相对路径的词由链接器相对构建目录读取，不跟踪。
+`[build] ldflags` 的词以绝对路径点名的文件是带有它的每次链接的输入：整个词（预构建的归档、目标文件）、选项的值
+（`--js-library=<文件>`、`-Wl,--version-script=<文件>`）、以 `,` 分隔的段（`-Wl,-force_load,<文件>`），以及响应文件
+和它列出的文件；目标为 ELF 且链接器报告它读取的文件时，经 `-L`、`-l` 找到的库也是输入。输入改变即重新链接（整词
+mcpp 2026.10.31.1+，其余 2026.11.19.1+），见[链接读取的文件](30-build-mcpp.md#链接读取的文件)。相对路径的词由链接器
+相对构建目录读取，不跟踪。
 
 
 #### 编译 flag 的写法 *(mcpp 2026.9.17.1+)*

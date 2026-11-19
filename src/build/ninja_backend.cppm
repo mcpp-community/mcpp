@@ -2550,6 +2550,10 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             : std::string{};
         auto link_rule = [&](std::string_view name, std::string cmd,
                              std::string_view desc) {
+            // The linker's report of what it read (SPEC-004 §8.1): a link edge
+            // depends on it as a compile edge depends on the compiler's.
+            const bool reports = desc != "AR" && !separateLinker && !flags.linkReport.empty();
+            if (reports) cmd += flags.linkReport;
             // The permit wraps the publication: the attempt's output is the
             // artifact in place when the command it holds exits.
             if (desc != "AR") cmd = linkPrefix + publish_link(std::move(cmd));
@@ -2586,6 +2590,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
             } else {
                 append(std::format("  command = {}\n", cmd));
             }
+            if (reports) append("  depfile = $out.d\n  deps = gcc\n");
             append(std::format("  description = {} $out\n\n", desc));
         };
         if (separateLinker) {

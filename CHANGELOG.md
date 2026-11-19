@@ -47,6 +47,16 @@
   `templates/` beside its manifest, and names the directory it looked for. It refused an
   inline descriptor for its form, and found the package root by a rule of its own that
   ignored the descriptor's pointer.
+- A file a link flag names in an option's value was no input of the link:
+  `--js-library=<file>`, `-Wl,--version-script=<file>` and `-Wl,-force_load,<file>` could
+  change and `mcpp build` reported nothing to do (mcpp#931). A link word's candidates are the
+  whole word, the part after `=`, each `,`-separated segment and, under the MSVC dialect, the
+  value of a `/` option; an absolute path that names a regular file or a file an action
+  declares is an input (SPEC-004 §8.1). Where the linker writes what it read
+  (`--dependency-file`: GNU ld from 2.35, gold, ld.lld), the link edge records it as a
+  compile edge records the compiler's report, so a library found through `-L`/`-l` relinks
+  the program when it changes. Whether a linker accepts the option is measured once and kept
+  in the probe cache.
 
 ## [2026.11.18.1] - 2026-11-18
 

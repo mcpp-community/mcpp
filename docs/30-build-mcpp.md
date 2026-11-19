@@ -776,12 +776,35 @@ If nothing in the build can receive the outputs (an archive-only package), mcpp
 reports a degradation: the edge is reachable only through a link, so with no
 link the command would never run and the build would say nothing.
 
-> Naming a pre-built object in `[build].ldflags` also reaches the linker, and
-> should not be used for anything the build produces: ldflags is a flat string
-> in the link command, not a file in the graph, so nothing tracks it and editing
-> it reports `ninja: no work to do`. For Windows resources specifically, use
-> [`[resources]`](04-mcpp-toml.md) —
-> `object` is the escape hatch for everything else.
+> A pre-built object named in `[build].ldflags` also reaches the linker, and a
+> file named there is an input of the link (see *Files a link reads* below), but
+> the action's outputs are the files the build produces. For Windows resources
+> specifically, use [`[resources]`](04-mcpp-toml.md) — `object` is the escape
+> hatch for everything else.
+
+#### Files a link reads
+
+A link is run again when a file it reads changes. Its inputs come from two
+sources (SPEC-004 §8.1):
+
+1. **Files a link word names.** For each word of the link line — `[build]
+   ldflags`, `mcpp:link-flag=` and what dependencies propagate — the candidates
+   are the whole word, the part after `=`, each `,`-separated segment and the
+   part after `=` within it, and, under the MSVC link dialect, the part after
+   the first `:` of a word beginning with `/`. A candidate is an input when it
+   is an absolute path naming an existing regular file or a file an action of
+   the build declares. `@<file>` adds the response file and the absolute paths
+   it lists. `--js-library=<file>`, `-Wl,--version-script=<file>`,
+   `-Wl,-force_load,<file>` and `/DEF:<file>` are covered.
+2. **The linker's report.** On an ELF target whose linker accepts
+   `--dependency-file=<file>` (GNU ld from 2.35, gold, ld.lld), the link edge
+   records the files the linker read, as a compile edge records the headers the
+   compiler read: libraries found through `-L`/`-l` and files a linker script
+   pulls in with `INPUT` are covered. Whether the linker accepts the option is
+   measured once per linker and kept in the probe cache.
+
+A relative path and a file that neither exists when the build is planned nor is
+declared by an action are not inputs, unless the linker reports them.
 
 **You must name the output files.** mcpp fixes the source set, the fingerprint
 and the module graph during prepare, so an output whose *name* is unknown

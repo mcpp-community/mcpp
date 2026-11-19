@@ -235,18 +235,7 @@ namespace mcpp::build {
 // `\"` stayed escaped and a quote inside a word stayed in the word, so the
 // database listed arguments the compiler never received.
 std::vector<std::string> split_flags(std::string_view s) {
-    std::string unescaped;
-    unescaped.reserve(s.size());
-    for (std::size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '$' && i + 1 < s.size()
-            && (s[i + 1] == ' ' || s[i + 1] == ':' || s[i + 1] == '$')) {
-            unescaped.push_back(s[++i]);
-            continue;
-        }
-        unescaped.push_back(s[i]);
-    }
-    return mcpp::manifest::host_command_words(unescaped,
-                                              mcpplibs::os::is_windows);
+    return rendered_words(s);
 }
 
 namespace {
