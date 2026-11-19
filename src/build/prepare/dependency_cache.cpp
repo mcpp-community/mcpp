@@ -29,17 +29,24 @@ namespace ck = mcpp::build::cache_key;
 // WHETHER A PACKAGE'S SOURCES ARE NAMED, so that its build is shared through the
 // global cache by that name (mcpp#974): an index package by its version, a git
 // dependency by its resolved commit, a path dependency by the digest of its
-// tree's content. The project's own trees -- the root, a selected member, any
-// package below this build's root or the root of a build above it -- are named
-// by nothing and built in place: they are what is being edited.
+// tree's content. The project's own trees -- the root, a member of its
+// workspace whether selected or not, any package below the project's
+// directory, this build's root or the root of a build above it -- are named by
+// nothing and built in place: they are what is being edited. Whichever members
+// a command selects, and whether it plans or builds, a package is the same one
+// (e2e 872: `emit build-database -p app` writes elsewhere, and a member it
+// reaches through `path` was named where `--workspace` built it in place).
 bool sources_named(const PrepareState& state, std::size_t i) {
     if (i == 0 || i - 1 >= state.dep_cache_identities.size()) return false;
     const auto& id = state.dep_cache_identities[i - 1];
     if (id.sourceKind == "version") return true;
     if (id.sourceKind == "git") return !id.sourceRef.empty();
-    if (id.sourceKind != "path" || state.packages[i].selectedMember) return false;
+    if (id.sourceKind != "path" || state.packages[i].selectedMember
+        || (state.isWorkspaceMemberPackage && state.isWorkspaceMemberPackage(i)))
+        return false;
     std::vector<std::filesystem::path> own = state.overrides.own_roots;
     own.push_back(state.workRoot);
+    if (state.root) own.push_back(*state.root);
     return !mcpp::build::path_is_under_any(state.packages[i].root, own);
 }
 

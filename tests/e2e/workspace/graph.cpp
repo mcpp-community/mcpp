@@ -678,7 +678,10 @@ int main() {
 
     "912 two configuration groups share the build programs graph"_test[s::unix_shell] = [] {
         // Two members in two configurations whose build programs share a build dependency: one
-        // graph of build programs, the library compiled once, each member's value right.
+        // graph of build programs, the library compiled once, each member's value right. The
+        // library is a tree beside the workspace, which the global cache names by its sources
+        // (mcpp#974): the second group would stage the first group's entry over the object it
+        // compiled. The graph's sharing is measured under `--cache local`.
         const auto tmp = s::case_dir();
         s::project(tmp / "shared", {{"mcpp.toml", "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n[targets.shared]\nkind = \"lib\"\n"},
                                     {"src/shared.cppm", "export module shared;\nexport int shared_value() { return 42; }\n"}});
@@ -690,11 +693,11 @@ int main() {
             ws.write(m + "/build.mcpp", "import std;\nimport mcpp;\nimport shared;\nint main() { mcpp::cxxflag(std::format(\"-DV={}\", shared_value()).c_str()); }\n");
         }
         ws.write("a/mcpp.toml", ws.read("a/mcpp.toml") + "[profile.dev]\nopt = 1\n");
-        auto r = ws.mcpp({"build", "--workspace"}, inherited);
+        auto r = ws.mcpp({"build", "--workspace", "--cache", "local"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build: " << s::text(r);
         expect(fatal(graph_dirs(ws.dir()).size() == 2u)) << "A: the members were not two configuration groups";
         for (std::string m : {"a", "b"})
-            expect(fatal(s::last_starting(ws.mcpp({"run", "-p", m}, inherited).out, "V=") == "V=42")) << "A: " << m << "'s value";
+            expect(fatal(s::last_starting(ws.mcpp({"run", "-p", m, "--cache", "local"}, inherited).out, "V=") == "V=42")) << "A: " << m << "'s value";
         std::size_t planned = 0;
         for (const auto& e : fs::directory_iterator(ws.at("target/.build-mcpp/host")))
             if (e.is_directory() && e.path().filename() != "digests") ++planned;
