@@ -1397,6 +1397,18 @@ int run(int argc, char** argv) {
             .option(cl::Option("list").takes_value().value_name("FILE")
                 .help("Place every `<source>\\t<destination>` pair of FILE in one process (#734 E4); several lines naming one destination are its sources"))
             .action(cmd_stage))
+        // Named by a build program's actions through `${mcpp.self}` (SPEC-007
+        // R3.8): one output, its content decided by the lines after `--` and
+        // the files named by `--append`, written only when the bytes differ.
+        .subcommand(cl::App("write")
+            .description("Write the lines after `--`, then each --append file, to --output; write only when the content differs (invoked by ${mcpp.self} actions)")
+            .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
+                .help("Destination path; its parent directory is created"))
+            .option(cl::Option("append").takes_value().multiple().value_name("FILE")
+                .help("A file whose bytes follow the lines, in the order given; declare it as the action's input"))
+            .action([&passthrough](const cl::ParsedArgs& p) {
+                return cmd_write(p, std::span<const std::string>(passthrough));
+            }))
         .subcommand(cl::App("link-output")
             .description("(internal: invoked by ninja) Remove the row's companions, move a linked artifact aside, then run the linker command after `--` (a running program keeps its file)")
             .option(cl::Option("output").takes_value().value_name("PATH").help("the artifact the command links"))
@@ -1903,7 +1915,7 @@ int run(int argc, char** argv) {
                 "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
-                "version", "dyndep", "why", "resolve", "stage", "coff-def",
+                "version", "dyndep", "why", "resolve", "stage", "write", "coff-def",
                 "place-dlls", "link-output", "platform-step",
                 "bmi-compile", "bmi-supervise", "bmi-await",
             });

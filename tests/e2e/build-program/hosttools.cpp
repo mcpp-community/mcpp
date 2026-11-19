@@ -795,6 +795,49 @@ int main() {
         expect(e2e::contains(s::text(b3), "nosuch") && e2e::contains(s::text(b3), "codegen")) << "3: the refusal does not name the entry and the bin targets";
     };
 
+    "955 a feature's tool reaches every build program that links the package's library"_test[s::gcc] = [] {
+        // mcpp#955, design 2026-11-19 §8.4. `plug` has a library and a program `steps`; its
+        // library asks for the program with `mcpp::dep_bin`. Declared by a feature of `plug`, the
+        // tool reaches the build program of a package that names `plug` (A) and of one that reaches
+        // it through a framework (B). Declared nowhere, the program receives "" and the engine
+        // names the declaration (C).
+        const s::options home{.where = s::home::linked};
+        const auto root = s::case_dir();
+        const std::string with_feature = "[package]\nname = \"plug\"\nversion = \"0.1.0\"\n\n[features]\ndefault = [\"steps\"]\n\n"
+                                         "[features.steps]\ntools = [\"steps\"]\n\n[targets.plug]\nkind = \"lib\"\n\n"
+                                         "[targets.steps]\nkind = \"bin\"\nmain = \"tools/steps_main.cpp\"\n";
+        s::project plug{root / "plug", {{"mcpp.toml", with_feature},
+            {"src/plug.cppm", "export module plug;\nimport std;\nimport mcpp;\nexport void plug_declare() {\n"
+                              "    mcpp::warning(std::format(\"steps=[{}]\", mcpp::dep_bin(\"plug\", \"steps\")).c_str());\n}\n"},
+            {"tools/steps_main.cpp", "int main() { return 0; }\n"}}};
+        s::project fw{root / "fw", {{"mcpp.toml", "[package]\nname = \"fw\"\nversion = \"0.1.0\"\n\n[build-dependencies]\n"
+                                                  "plug = { path = \"../plug\", host-module = true }\n\n[targets.fw]\nkind = \"lib\"\n"},
+            {"src/fw.cppm", "export module fw;\nimport mcpp;\nimport plug;\nexport void fw_declare() { plug_declare(); }\n"}}};
+        s::project direct{root / "direct", {{"mcpp.toml", "[package]\nname = \"direct\"\nversion = \"0.1.0\"\n\n[build-dependencies]\n"
+                                                          "plug = { path = \"../plug\", host-module = true }\n\n[targets.direct]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+            {"build.mcpp", "import mcpp;\nimport plug;\nint main() { plug_declare(); return 0; }\n"},
+            {"src/main.cpp", "int main() { return 0; }\n"}}};
+        s::project through{root / "through", {{"mcpp.toml", "[package]\nname = \"through\"\nversion = \"0.1.0\"\n\n[build-dependencies]\n"
+                                                            "fw = { path = \"../fw\" }\n\n[targets.through]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+            {"build.mcpp", "import mcpp;\nimport fw;\nint main() { fw_declare(); return 0; }\n"},
+            {"src/main.cpp", "int main() { return 0; }\n"}}};
+        const std::regex answered{R"(steps=\[[^\]]*steps[^\]]*\])"};
+        auto r = direct.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << "A: build failed: " << s::text(r);
+        expect(std::regex_search(s::text(r), answered)) << "A: the package naming plug did not receive the tool: " << s::text(r);
+        r = through.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << "B: build failed: " << s::text(r);
+        expect(std::regex_search(s::text(r), answered)) << "B: the package reaching plug through fw did not receive the tool: " << s::text(r);
+        plug.write("mcpp.toml", "[package]\nname = \"plug\"\nversion = \"0.1.0\"\n\n[targets.plug]\nkind = \"lib\"\n\n"
+                                "[targets.steps]\nkind = \"bin\"\nmain = \"tools/steps_main.cpp\"\n");
+        through.remove("target");
+        r = through.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << "C: build failed: " << s::text(r);
+        expect(e2e::contains(s::text(r), "steps=[]")) << "C: an undeclared tool was answered: " << s::text(r);
+        expect(e2e::contains(s::text(r), "the tool 'steps' of 'plug', which no dependency edge and no active feature declares"))
+            << "C: an undeclared tool was not reported: " << s::text(r);
+    };
+
     "802 a host build applies its host row"_test[s::gcc][s::elf] = [] {
         // mcpp#704: a build without --target targets the host, and [target.<host-triple>]
         // describes it: without the row a plain build is self-contained (no NEEDED

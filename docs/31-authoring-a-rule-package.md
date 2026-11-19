@@ -27,7 +27,7 @@ them.
 | `mcpp::action` | one edge in the build graph: a command with declared inputs and outputs | a build program, or a rule module it imports |
 | `device_extensions` | an extension the engine classifies as a **device source** instead of refusing it | a feature of a package |
 | `rule_module` | the module a consumer's build program imports to reach the rule | the same feature |
-| `tools = [...]` | a generator or compiler **built from source for the build machine**, reached with `mcpp::dep_bin` | a dependency edge |
+| `tools = [...]` | a generator or compiler **built from source for the build machine**, reached with `mcpp::dep_bin` | a dependency edge, or a feature of the package (`[features.<f>] tools`), which reaches every build program that links the package's library (2026.11.19.1+) |
 | `[xlings]`, `[feature-xlings]` | a prebuilt tool the rule runs, installed on demand | the package, or one of its features |
 
 What the ecosystem has built out of them:

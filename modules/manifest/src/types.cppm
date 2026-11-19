@@ -716,6 +716,12 @@ struct BuildAction {
     // member that check refused. The dispatch asks instead which artifact
     // actions the REQUEST INTRODUCED; see mcpp.pack.pipeline.
     bool                               consumesStageDir = false;
+    // Set by the engine (design 2026-11-19 §8.2): the build-dir-relative
+    // outputs of the link units whose object lists this action's command or
+    // inputs name through `${mcpp.objects:<name>}` or
+    // `${mcpp.objects_rsp:<name>}`. The backend writes each list and makes it,
+    // and every object in it, an implicit input of the action.
+    std::vector<std::string>           objectsOf;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D
     // Object only: which link units receive the outputs. Empty = every LINKED

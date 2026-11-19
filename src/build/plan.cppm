@@ -893,6 +893,22 @@ struct TargetFileAnswer {
 TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view name,
                                      std::string_view actingMember);
 
+// Where the backend writes the object list of the link unit whose
+// build-dir-relative output is `output` (design 2026-11-19 §8.2):
+// `<out>/objects/<output><suffix>`, `.list` one absolute path per line and
+// `.rsp` in response-file quoting. Absolute and generic, as every path token is.
+std::filesystem::path objects_list_path(const BuildPlan& plan, std::string_view output,
+                                        std::string_view suffix);
+
+// Replaces `${mcpp.objects:<name>}` and `${mcpp.objects_rsp:<name>}` in `s`
+// with `objects_list_path` of the unit `resolve_target_file` names, records the
+// unit in `units` once, and a name no unit has, or several members define, in
+// the two sets the refusal reads. True when `s` held either token.
+bool substitute_objects_tokens(const BuildPlan& plan, std::string& s, std::string_view actingMember,
+                               std::vector<std::string>& units,
+                               std::set<std::string>& unresolved,
+                               std::map<std::string, std::vector<std::string>>& ambiguous);
+
 // The references an action's arguments made that the plan cannot answer, as
 // the refusal a user reads: names no link unit has (`unresolvedTargets`), names
 // several members define for a package that acts for none of them
@@ -4801,6 +4817,40 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     for (auto& v : artifactVariants) plan.compileUnits.push_back(std::move(v));
 
     return plan;
+}
+
+// The name is resolved as `${mcpp.target_file:}` resolves it; the token becomes
+// the absolute path of the list the backend writes, one object per line
+// (`objects`) or in response-file quoting (`objects_rsp`).
+bool substitute_objects_tokens(const BuildPlan& plan, std::string& s, std::string_view actingMember,
+                               std::vector<std::string>& units,
+                               std::set<std::string>& unresolved,
+                               std::map<std::string, std::vector<std::string>>& ambiguous) {
+    bool used = false;
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 2> kTokens{{
+        {"${mcpp.objects:", ".list"}, {"${mcpp.objects_rsp:", ".rsp"}}};
+    for (auto [head, suffix] : kTokens) {
+        for (std::size_t p; (p = s.find(head)) != std::string::npos; ) {
+            auto close = s.find('}', p);
+            if (close == std::string::npos) break;
+            used = true;
+            auto name = s.substr(p + head.size(), close - p - head.size());
+            auto answer = resolve_target_file(plan, name, actingMember);
+            if (answer.output.empty()) unresolved.insert(name);
+            else if (!answer.members.empty()) ambiguous[name] = answer.members;
+            if (!answer.output.empty() && std::ranges::find(units, answer.output) == units.end())
+                units.push_back(answer.output);
+            s.replace(p, close - p + 1, objects_list_path(plan, answer.output, suffix).generic_string());
+        }
+    }
+    return used;
+}
+
+std::filesystem::path objects_list_path(const BuildPlan& plan, std::string_view output,
+                                        std::string_view suffix) {
+    auto p = plan.outputDir / "objects" / std::filesystem::path(std::string(output));
+    p += std::string(suffix);
+    return p.lexically_normal();
 }
 
 TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view name,

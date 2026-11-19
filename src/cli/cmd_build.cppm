@@ -2259,6 +2259,58 @@ export int cmd_install_configuration(std::string_view target) {
     return 0;
 }
 
+// `${mcpp.self} write --output <file> [--append <file>]... -- <line>...`
+// (SPEC-007 R3.8, design 2026-11-19 §8.3). The family of the engine's own
+// commands is bounded by one criterion: one output, whose content the
+// declared inputs and the argv decide, the same on every run. A line is
+// written with `\n` after it; an appended file's bytes follow unchanged. The
+// output is written beside itself and renamed, and only when its bytes differ,
+// so a consumer that depends on it is not run again for an equal result.
+export int cmd_write(const mcpplibs::cmdline::ParsedArgs& parsed,
+                     std::span<const std::string> lines) {
+    namespace fs = std::filesystem;
+    const fs::path out = parsed.option_or_empty("output").value();
+    if (out.empty()) {
+        std::println(libc::stderr(), "error: write needs --output <file> [--append <file>]... -- <line>...");
+        return 2;
+    }
+    std::string text;
+    for (auto const& line : lines) { text += line; text += '\n'; }
+    for (auto const& name : parsed.option_or_empty("append").values) {
+        std::ifstream in(fs::path{name}, std::ios::binary);
+        if (!in) {
+            std::println(libc::stderr(), "error: write: cannot read {}, which --append names", name);
+            return 1;
+        }
+        text.append(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    std::error_code ec;
+    if (std::ifstream old(out, std::ios::binary); old) {
+        const std::string was{std::istreambuf_iterator<char>(old), std::istreambuf_iterator<char>()};
+        if (was == text) return 0;
+    }
+    if (out.has_parent_path()) fs::create_directories(out.parent_path(), ec);
+    auto tmp = out;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << text;
+        if (!f) {
+            std::println(libc::stderr(), "error: write: cannot write {}", tmp.string());
+            fs::remove(tmp, ec);
+            return 1;
+        }
+    }
+    fs::rename(tmp, out, ec);
+    if (ec) {
+        std::println(libc::stderr(), "error: write: cannot rename {} over {}: {}",
+                     tmp.string(), out.string(), ec.message());
+        fs::remove(tmp, ec);
+        return 1;
+    }
+    return 0;
+}
+
 export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // `--list FILE` (#734 E4): many placements, one process. Each destination
     // keeps the single-file semantics below -- content comparison, an

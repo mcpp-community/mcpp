@@ -6,6 +6,18 @@
 
 ## [2026.11.19.1] - 2026-11-19
 
+### Added
+
+- `${mcpp.objects:<name>}` and `${mcpp.objects_rsp:<name>}`: a link unit's object list, one
+  absolute path per line in link order or in response-file quoting, for an `artifact` or
+  `check` action; the list and every object in it are inputs of the action (mcpp#959,
+  SPEC-007 R3.16). A rule that walked `obj/` and excluded paths guessed what the engine knows.
+  `mcpp::objects_of` and `mcpp::objects_rsp_of` return the tokens; build-program protocol 20.
+- `${mcpp.self} write --output <file> [--append <file>]... -- <line>...`: writes known text and
+  appended files to one output, only when the bytes differ (mcpp#959). The engine's own
+  commands are bounded by one criterion, stated in SPEC-007 R3.17: one output, decided by the
+  declared inputs and the argv, the same on every run.
+
 ### Fixed
 
 - `mcpp publish` and `mcpp emit xpkg` wrote a descriptor that nothing read: a table of
@@ -64,6 +76,13 @@
   row inherited from this build's workspace is the root's statement and is not reported. A
   member's own table is reported once when it is reached as a dependency, and the warning
   names the manifest that states it.
+- A plugin's library could not reach its own program: `mcpp::dep_bin` answered the path in
+  the build program of the package whose edge named the plugin, and `""` one package away,
+  through a framework, with nothing said (mcpp#955). A tool a feature declares
+  (`[features.<f>] tools`) reaches every build program that links the package's library with
+  the feature active (SPEC-007 R6.3), so a multi-step action is a program the plugin carries.
+  A tool no edge and no feature declares is reported (`build-program/undeclared-tool`) with
+  the line that declares it.
 
 ## [2026.11.18.1] - 2026-11-18
 

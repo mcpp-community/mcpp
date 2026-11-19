@@ -1195,6 +1195,36 @@ static std::expected<void, std::string> step6_xlings_workspace_from_graph(Prepar
     return {};
 }
 
+// The tools the active features of `library`'s build-program instance declare.
+static std::vector<std::string> active_feature_tools(const PrepareState& state, std::size_t library) {
+    std::vector<std::string> out;
+    auto const& declared = state.packages[library].manifest.featureTools;
+    for (auto const& f : state.buildProgramFeaturesByPackage[library]) {
+        auto it = declared.find(f);
+        if (it == declared.end()) continue;
+        out.insert(out.end(), it->second.begin(), it->second.end());
+    }
+    return out;
+}
+
+// A FEATURE'S TOOLS REACH EVERY BUILD PROGRAM THAT LINKS THE PACKAGE'S LIBRARY
+// (design 2026-11-19 §8.4, mcpp#955). A plugin's library runs inside the
+// build program of whichever package links it -- a framework's user, reached
+// through the framework -- and asks for its own program with
+// `mcpp::dep_bin`. The edge into the plugin is the framework's, so the
+// visibility above stopped at the framework and the user's program received
+// "". With the feature active for the build-program instance, the program
+// that links the library sees the tool, as the library's author declared.
+static void grant_library_feature_tools(PrepareState& state, std::size_t consumer) {
+    for (const auto library : state.buildProgramLibrariesByConsumer[consumer]) {
+        if (library >= state.packages.size() || library >= state.buildProgramFeaturesByPackage.size())
+            continue;
+        for (auto const& tool : active_feature_tools(state, library))
+            state.provisionGraph.visible[consumer].insert(
+                prov::Provision{prov::Kind::Tool, library, tool});
+    }
+}
+
 static std::expected<std::map<std::size_t, std::set<std::string>>, std::string>
 step6_tool_requests(PrepareState& state) {
         // ── #355: HOST tool provisioning ────────────────────────────────────
@@ -1269,6 +1299,7 @@ step6_tool_requests(PrepareState& state) {
                             work.push_back(e.dependencyPackageIndex);
                 }
                 state.buildProgramLibrariesByConsumer[c].assign(seen.begin(), seen.end());
+                grant_library_feature_tools(state, c);
             }
 
             if (state.overrides.tool_depth >= mcpp::build::tool_store::kMaxDepth

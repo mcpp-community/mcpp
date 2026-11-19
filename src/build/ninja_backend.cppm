@@ -1116,6 +1116,38 @@ read_graph_c_library_sidecar(const std::filesystem::path& outputDir) {
 namespace {
 constexpr std::string_view kConsumerIncludeSidecar = ".mcpp-consumer-include-dirs";
 
+// One path as a response file states it for GNU (`ar`, `llvm-ar`, the
+// drivers) and for `lib.exe`: plain when it holds no separator or quote,
+// otherwise in double quotes with `"` and `\` escaped. The paths are generic
+// (`/`), so a Windows path carries no backslash to be read two ways.
+std::string response_file_word(std::string_view path) {
+    if (path.find_first_of(" \t\"'\\") == std::string_view::npos) return std::string(path);
+    std::string out = "\"";
+    for (char c : path) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
+}
+
+// A file whose content the plan decides, written beside itself and renamed,
+// and only when its bytes differ: a consumer that depends on it does not run
+// again for an equal plan.
+void write_text_if_changed(const std::filesystem::path& file, const std::string& text) {
+    if (std::ifstream in(file, std::ios::binary); in) {
+        const std::string was{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        if (was == text) return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    auto tmp = file;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) std::filesystem::remove(tmp, ec);
+}
+
 // The header named by one compiler diagnostic line, or empty. Three spellings,
 // one per driver family; anything else is not a missing-header report.
 std::string missing_header_in(std::string_view line) {
@@ -3599,6 +3631,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // artifact naming — see triple.cppm) AND, unless `-sSINGLE_FILE=1`,
     // `<name>.wasm` beside it in one run: a companion of the row (N33).
 
+    // Each link unit's explicit inputs as its edge spells them, by its
+    // build-dir-relative output: the object lists of design 2026-11-19 §8.2.
+    std::map<std::string, std::vector<std::filesystem::path>> linkInsByOutput;
     // Link units
     for (auto& lu : plan.linkUnits) {
         attribute(lu.package);
@@ -3607,6 +3642,13 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         const auto& uflags = lu.linkGroup >= 0
             ? groupFlags[static_cast<std::size_t>(lu.linkGroup)] : flags;
         std::string ins;
+        // The explicit inputs as the edge spells them, in link order: what
+        // `${mcpp.objects:<name>}` lists (design 2026-11-19 §8.2).
+        std::vector<std::filesystem::path> linkIns;
+        auto add_in = [&](const std::filesystem::path& p) {
+            ins += " " + escape_ninja_path(p);
+            linkIns.push_back(p);
+        };
         // FIRST, before every other object. Mach-O runs __init_offsets in
         // LINK order and has no priority-ordered init section, so "runs
         // before the user's global constructors" is spelled "is the first
@@ -3621,9 +3663,9 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // fixture). The predicate is the one the link line itself uses.
         if (need_ios_init_shim && lu.kind != LinkUnit::StaticLibrary
             && unit_needs_cxx_runtime(lu))
-            ins += " " + escape_ninja_path(ios_init_obj);
+            add_in(ios_init_obj);
         for (auto& o : lu.objects) {
-            ins += " " + escape_ninja_path(o);
+            add_in(o);
         }
         // The platform's link inputs, in every executable and shared library
         // this plan links; with seal steps, the artifact is written beneath
@@ -3631,7 +3673,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // what bin/ holds is what was published, and an unsealed file is not.
         const bool platformUnit = pf.active && lu.kind != LinkUnit::StaticLibrary;
         if (platformUnit)
-            for (auto const& in : platformInputs) ins += " " + escape_ninja_path(in);
+            for (auto const& in : platformInputs) add_in(in);
         const bool sealUnit = platformSeal && lu.kind != LinkUnit::StaticLibrary;
         const auto unsealed = link_edge_output(plan, lu);
 
@@ -3652,19 +3694,20 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         switch (lu.kind) {
             case LinkUnit::Binary:
             case LinkUnit::TestBinary:
-                if (takesStd)    ins += " " + escape_ninja_path(std_o_dst);
-                if (takesCompat) ins += " " + escape_ninja_path(compat_o_dst);
+                if (takesStd)    add_in(std_o_dst);
+                if (takesCompat) add_in(compat_o_dst);
                 rule = cxxUnit ? "cxx_link" : "c_link";
                 break;
             case LinkUnit::StaticLibrary:
                 rule = "cxx_archive";   // `ar`: no driver, no runtime
                 break;
             case LinkUnit::SharedLibrary:
-                if (takesStd)    ins += " " + escape_ninja_path(std_o_dst);
-                if (takesCompat) ins += " " + escape_ninja_path(compat_o_dst);
+                if (takesStd)    add_in(std_o_dst);
+                if (takesCompat) add_in(compat_o_dst);
                 rule = cxxUnit ? "cxx_shared" : "c_shared";
                 break;
         }
+        linkInsByOutput[lu.output.generic_string()] = linkIns;
         std::string implicit;
         for (auto& input : lu.implicitInputs) {
             implicit += " " + escape_ninja_path(input);
@@ -4186,6 +4229,27 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         std::string outs, ins;
         for (auto const& o : a.outputs) outs += " " + escape_ninja_path(o);
         for (auto const& in : a.inputs) ins += " " + escape_ninja_path(in);
+        // THE OBJECT LISTS THE ACTION READS (design 2026-11-19 §8.2): written
+        // now, when their content is decided, and only when it differs; each
+        // list and every object in it are inputs of the action, spelled as the
+        // link edge spells them, so a recompiled object runs the action again
+        // and an unchanged build does not.
+        for (auto const& unit : a.objectsOf) {
+            auto it = linkInsByOutput.find(unit);
+            if (it == linkInsByOutput.end()) continue;
+            std::string lines, rsp;
+            for (auto const& o : it->second) {
+                const auto abs = (o.is_absolute() ? o : plan.outputDir / o).lexically_normal();
+                lines += abs.generic_string() + "\n";
+                rsp += response_file_word(abs.generic_string()) + "\n";
+                ins += " " + escape_ninja_path(o);
+            }
+            const auto list = mcpp::build::objects_list_path(plan, unit, ".list");
+            const auto quoted = mcpp::build::objects_list_path(plan, unit, ".rsp");
+            write_text_if_changed(list, lines);
+            write_text_if_changed(quoted, rsp);
+            ins += " " + escape_ninja_path(list) + " " + escape_ninja_path(quoted);
+        }
         append(std::format("build{} : mcpp_action_{}{}\n", outs, i, ins));
         // A check or prepare action reports its start through the wrapper,
         // by its first output (design §6.4); the record gives it its label.

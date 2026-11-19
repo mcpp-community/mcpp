@@ -1172,8 +1172,17 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
 | `${mcpp.contract}` *(2026.10.30.1+)* | path to the configuration's contract, `mcpp-contract.json`, beside its compile database: the compiler of each language with the words every unit is compiled with (target, sysroot, target-side headers, platform and profile flags), and the link driver, its words and the archiver. A foreign build system reads it to compile for the target as the engine does; a package's own include directories are not in it, nor the engine's C++ dialect and module words (`-std=`, `-fmodules`), which are its choice for its own units. Since 2026.11.7.1, link arguments describe the target configuration; the consuming package's link flags and libraries are excluded, since they can name outputs the foreign build has yet to produce |
 | `${mcpp.target_file:<name>}` | the built file of target `<name>` |
+| `${mcpp.objects:<name>}` *(2026.11.19.1+)* | the absolute path of a file listing the files the link of target `<name>` takes as explicit inputs — its objects, the objects of statically linked dependencies and of the standard module, not the libraries named by `-l` — one absolute path per line, in link order. `artifact` and `check` roles only; the list and every file in it are inputs of the action, so a recompiled object runs it again. `mcpp::objects_of("<name>")` returns the token (protocol 20) |
+| `${mcpp.objects_rsp:<name>}` *(2026.11.19.1+)* | the same list in response-file quoting, for a tool that reads `@file` (`ar`, `llvm-ar`, `lib.exe`); a path with a space is quoted. `mcpp::objects_rsp_of("<name>")` returns the token |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --pkg-format <name>` |
-| `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor |
+| `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor. `${mcpp.self} write --output <file> [--append <file>]... -- <line>...` *(2026.11.19.1+)* writes the lines after `--`, each followed by a newline, then the bytes of each `--append` file (declare them as the action's inputs), and writes only when the bytes differ |
+
+The engine's own commands are bounded by one criterion (SPEC-007 R3.17): one
+output, whose content the declared inputs and the argv decide, the same on every
+run. `stage` and `write` meet it. Deleting, creating directories, globbing or
+running several programs in order do not: a multi-step action is a program a
+plugin carries, declared as a tool of one of its features (see *Host tools from a dependency*
+below), not a vocabulary the engine interprets.
 
 Every path a `${mcpp.*}` token expands to is spelled with **forward slashes**.
 A token is spliced into the text the build program wrote, and that text spells
@@ -2029,6 +2038,17 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
 - **Visibility, not execution.** `dep_bin()` returns a path; whether anything
   runs is still the consumer's `build.mcpp`'s decision. Nothing changes about
   who builds the tool or how the tool store is keyed.
+- **A feature's tool reaches every build program that links the package's
+  library** (2026.11.19.1+). A plugin's library runs inside the build program
+  of whichever package links it, a framework's user included; with
+  `[features.<f>] tools = ["<bin>"]` active, each of those programs sees the
+  tool, so a plugin carries its own program. Before that release the path
+  reached only the package whose edge named the plugin, and `dep_bin` answered
+  `""` one package away.
+- **A tool nobody declared is reported** (2026.11.19.1+, protocol 20).
+  `dep_bin` answers `""` for a tool no edge and no active feature declares, and
+  the engine warns (`build-program/undeclared-tool`) naming the package, the
+  tool and the line that declares it.
 - **Unqualified names are resolved by a ladder, not by luck.** Once two
   libraries can re-export, both may offer the tail `protobuf`. The
   fully-qualified `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` is always published; the

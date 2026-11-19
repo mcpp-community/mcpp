@@ -1156,6 +1156,14 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
         // NAMES ids and a collision there costs a duplicate line, not a wrong
         // edge.
         bool thisActionUsesStageDir = false;
+        // `${mcpp.objects:<name>}` / `${mcpp.objects_rsp:<name>}` (design
+        // 2026-11-19 §8.2): the link units whose object lists THIS action
+        // reads, by their build-dir-relative output; the backend writes the
+        // lists and makes them and their objects inputs of the action.
+        std::vector<std::string> thisActionObjects;
+        // The token used by an action whose role runs before or inside the
+        // compile and link the list is drawn from.
+        std::set<std::string> objectsWrongRole;
         // Where the declaring package's binaries land: `bin/`, or in a
         // workspace plan the product directory of the member that declared
         // the action (§15 of the 2026-09-29 workspace design). Set per
@@ -1235,6 +1243,13 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 else if (!answer.members.empty()) ambiguousTargets[name] = answer.members;
                 s.replace(p, close - p + 1, answer.output);
             }
+            // A link unit's objects (design 2026-11-19 §8.2), read only by a
+            // role that runs after the link it is drawn from.
+            if (mcpp::build::substitute_objects_tokens(ctx.plan, s, actingMember, thisActionObjects,
+                                                      unresolvedTargets, ambiguousTargets)
+                && role != mcpp::manifest::BuildAction::Role::Artifact
+                && role != mcpp::manifest::BuildAction::Role::Check)
+                objectsWrongRole.insert(actionId);
             // `${mcpp.artifact:<package>/<target>}` (mcpp#711): a dependency's
             // program that an edge requested with `artifacts = [...]`, spelled
             // like `${mcpp.target_file:}` -- the link unit's build-dir-relative
@@ -1280,6 +1295,7 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 if (!g.linkOnly && g.member == owner) binDir = ctx.plan.outputDir / g.productDir;
             for (auto a : mm.buildConfig.actions) {
                 thisActionUsesStageDir = false;
+                thisActionObjects.clear();
                 const auto sub = [&](std::string v) {
                     return substitute(std::move(v), a.id.c_str(), a.role);
                 };
@@ -1308,6 +1324,7 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                     a.inputs.push_back(
                         mcpp::pack::stage_manifest_path(stage->dir).string());
                 }
+                a.objectsOf = thisActionObjects;
                 a.packageName = owner;
                 ctx.plan.actions.push_back(std::move(a));
             }
@@ -1383,6 +1400,17 @@ static std::expected<void, std::string> step13_build_graph_actions(PrepareState&
                 "  successor: a source, object or check action is scheduled before "
                 "there is anything to stage.\n"
                 "  use: role = \"artifact\"", ids));
+        }
+        if (!objectsWrongRole.empty()) {
+            std::string ids;
+            for (auto const& n : objectsWrongRole) ids += (ids.empty() ? "" : ", ") + n;
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.objects:<name>}} or "
+                "${{mcpp.objects_rsp:<name>}} with a role other than \"artifact\" or \"check\".\n"
+                "  The list names the objects a link takes; a source, object or prepare action "
+                "runs before\n"
+                "  that link or feeds it, so the list it would read is not yet decided.\n"
+                "  use: role = \"artifact\" (or \"check\")", ids));
         }
         if (auto refused = mcpp::build::refuse_unresolved_references(
                 ctx.plan, unresolvedTargets, ambiguousTargets, unresolvedArtifacts);

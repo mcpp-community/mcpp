@@ -58,6 +58,28 @@ void report_stated_diagnostics(std::string_view packageName,
                            sd.impact, sd.hint);
     }
 }
+// Design 2026-11-19 §8.4: a tool `mcpp::dep_bin` was asked for that no edge
+// and no feature declares. The program received "" -- which also reads as a
+// tool the build machine lacks -- so the engine names the declaration.
+void report_undeclared_tools(std::string_view packageName,
+                             const mcpp::build::directives::Directives& d) {
+    namespace dirs = mcpp::build::directives;
+    std::set<std::string> said;
+    for (auto const& raw : d.at(dirs::Slot::UndeclaredTools)) {
+        if (!said.insert(raw).second) continue;
+        const auto tab = raw.find('\t');
+        const auto pkg  = raw.substr(0, tab);
+        const auto tool = tab == std::string::npos ? std::string{} : raw.substr(tab + 1);
+        mcpp::diag::report(mcpp::diag::Severity::Warning, "build-program/undeclared-tool",
+            std::format("{}: the build program asked for the tool '{}' of '{}', which no "
+                        "dependency edge and no active feature declares",
+                        packageName, tool, pkg),
+            "mcpp::dep_bin answered \"\", and the program ran without the tool",
+            std::format("declare it on the edge, `\"{}\" = {{ ..., tools = [\"{}\"] }}` under "
+                        "[build-dependencies], or in the providing package's feature, "
+                        "`[features.<name>] tools = [\"{}\"]`", pkg, tool, tool));
+    }
+}
 } // namespace
 
 export namespace mcpp::build {
@@ -1240,6 +1262,7 @@ std::expected<void, std::string> run_build_program_impl(
         for (auto const& a : dirs::advisories(m.package.name, cache.directives))
             mcpp::ui::warning(a);
         report_stated_diagnostics(m.package.name, cache.directives);
+        report_undeclared_tools(m.package.name, cache.directives);
         mcpp::build::progress::program_finished(
             who, env.requested, mcpp::build::progress::ProgramOutcome::Cached, {}, {});
         return {};
@@ -1524,6 +1547,7 @@ std::expected<void, std::string> run_build_program_impl(
     for (auto const& a : dirs::advisories(m.package.name, d))
         mcpp::ui::warning(a);
     report_stated_diagnostics(m.package.name, d);
+    report_undeclared_tools(m.package.name, d);
     // A run kept although it asked for a payload (`PrepareIntent::Describe`) is never
     // cached: replaying it would keep the build from ever asking again.
     if (cacheThisRun) {
