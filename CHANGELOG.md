@@ -20,6 +20,13 @@
 
 ### Changed
 
+- `mcpplibs.openkal-platform@0.31.0` is the default platform of the rows openkal serves
+  (0.29.2 in 2026.11.18.1): the openkal 0.26 family, in which a start is bounded by the
+  environment alone and one refused for its size is `E2BIG`, and an observation of a unit
+  answers whether this process space can observe it (mcpp#958, mcpp#952). The runner of an ok
+  image, asked to end, names the openkal call each task of the image waits in before it acts.
+  From 0.30.0 the platform serves `i686-svr4-musl`, programs of UNIX System V Release 4 on i386
+  (`preview`); in 0.31.0 they start other programs.
 - A package instance has a directory of its own: `obj/<package>/<digest>/` and
   `<bmi dir>/<package>/<digest>/`, the digest covering the package's include directories and
   flags (its features' defines among them) and the digests of the packages whose modules it

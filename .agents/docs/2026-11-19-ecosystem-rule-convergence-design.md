@@ -769,7 +769,8 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
 | 10.6（N1） | mcpp 检查点 10b；SPEC-011 §5.1 第 8 条 |
 | 11.1（#953 D5） | 检查点 9；SPEC-004 §9 第 17 条 |
 | 11.2（#953） | xim-pkgindex#1196：llvm 23.1.3 修订 4，FreeBSD 基座修订 3 |
-| 12（超时） | mtest 0.10.0（mcpp-community/mtest#25），openkal-image 0.7.0（okrun 的结束请求记录） |
+| 12（超时） | mtest 0.10.0（mcpp-community/mtest#25），openkal-image 0.7.0（okrun 的结束请求记录）；mcpp 的 CI 运行器与开发依赖为 mtest 0.10.0（xim-pkgindex#1199），缺省平台为 openkal-platform 0.31.0（检查点 11） |
+| 级联 | mcpp.plugins 0.26.1（mcpplibs.os 0.4.5）→ openkal-platform 0.31.0（openkal-svr4 0.3.0、ibcs-us 4.3-2）→ mcpp 2026.11.19.1 → mcpp.plugins 0.27.0（`steps`）；xlings 的 Windows 工具链为 llvm 23.1.3（openxlings/xlings#722：MSVC 14.52 的 STL 拒绝 Clang 22 之前的版本） |
 
 ### 19.2 测量
 
@@ -808,6 +809,10 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
 - 11.1 的两种交替、10.6 的 P1 至 P3：见 19.2。
 - 规则 B：ld.lld 经 mcpp 的链接边运行（e2e 931 两例与 emscripten 一例）；mold 未核对。
 - mtest 0.9.0 的超时直接结束程序；0.10.0 先记录进程、请求结束，宽限之后再结束。
+- 复现脚本以本轮的引擎运行（Linux x86_64）：960、956、952、952s（4 次中 0 次被拒）、931、954、958 不再复现。
+  955 的边通道按设计不变：经框架到达的应用中 `dep_bin` 仍回答空串，构建以 `build-program/undeclared-tool` 报告，
+  写出应写的声明。931d 显示工程在 `[build] ldflags` 中写出的 `--dependency-file` 被引擎追加的同名选项覆盖而不报告
+  （链接器只写最后一个）；此后工程写出时引擎不再加入自己的选项，并以 `build/link-report` 报告降级（SPEC-004 §8.1）。
 
 ### 19.4 实施中发现、单列的事项
 
@@ -821,3 +826,7 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
   而 openkal-platform 的构建依赖正是它。发布顺序因此为：mcpp.plugins 0.26.1（仅 mcpplibs.os 0.4.5，引擎下界不变）→
   openkal-platform 0.31.0 → mcpp 2026.11.19.1（缺省平台 0.31.0）→ mcpp.plugins 0.27.0（`steps`，引擎下界为该 mcpp）。
   后者的引擎下界使两者不能合为一次发布。
+- Windows 上执行器以改名发布 BMI 时偶遇 `being used by another process`（CI 中约 350 个 BMI 出现一次，其他进程短暂打开了
+  刚写出的文件）。改名对暂时的拒绝（`again`、`permission`）在 30 s 内重试（`replace_file_within`），其后的拒绝照旧报告。
+- `-dumpdir` 的探测在不写全局缓存的命令（`self env` 等）中创建了冷 home（macOS 的 e2e 测得）：这类命令在临时目录中探测，
+  回答不保存，home 不变（SPEC-011 §6）。

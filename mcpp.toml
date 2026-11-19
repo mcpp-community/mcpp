@@ -180,7 +180,7 @@ members = [
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
-mcpplibs.mtest = "0.9.0"
+mcpplibs.mtest = "0.10.0"
 # The support of the end-to-end cases (tests/support, design 2026-11-12 §5.9).
 mcpp.test-support = { path = "tests/support" }
 
