@@ -86,9 +86,9 @@
   programs' identities. Programs that hold one package at two versions are compiled in two
   build programs' graphs, `<group>-<digest>`, named by those versions; a development
   dependency's program does not move the build's programs to another graph under
-  `mcpp test`. `mcpp.lock` records a version only
-  build programs hold as an entry of its own, `<name>+b<digest>`, whose `programs` lists
-  them; a conflict inside one program is refused naming the program and every requester.
+  `mcpp test`. `mcpp.lock` records a version only build programs hold as an entry of its
+  own, `<name>+b<digest>`, whose `programs` lists them; a conflict inside one program is
+  refused naming the program and every requester.
 - A platform selected as a series skips a release whose version group a request of the build
   does not admit: the build is planned again with the series below it, and the report names
   the release and the request (SPEC-013 §14). With no release of the series left the build is
@@ -149,7 +149,6 @@
 - A response file on a link line under the MSVC dialect is read by link.exe's rules (those of
   `CommandLineToArgvW`): the files it names by native paths are inputs of the link, where they
   were read as a GNU driver reads one, a backslash taking the next character (mcpp#931).
-
 - A build interrupted in another process space -- a container job that reuses the working
   directory, a rebuilt development container, an agent's sandbox session -- could never be
   continued, `mcpp clean` included: `previous compiler unit is occupied or unknown` (mcpp#952).
