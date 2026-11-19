@@ -749,16 +749,30 @@ std::map<std::string, std::string> scope_pins(const PrepareState& state, std::st
 
 // The packages two build programs of this build hold at different versions:
 // the programs that disagree on one cannot share a graph, which takes each
-// package at one version.
-std::set<std::string> contested_packages(const PrepareState& state) {
+// package at one version. The programs of the build proper are counted among
+// themselves, so each finds the same group under `mcpp test`, whose
+// development dependencies bring programs of their own (§21 A2).
+std::set<std::string> contested_packages(const PrepareState& state, bool withDevelopment) {
     std::map<std::string, std::set<std::string>> versions;
     for (auto const& [k, rec] : state.resolved)
-        if (!k.scope.empty() && !rec.version.empty() && rec.source == "version")
+        if (!k.scope.empty() && !rec.version.empty() && rec.source == "version"
+            && (withDevelopment || !rec.devOnly))
             versions[k.ns.empty() ? k.shortName : k.ns + "." + k.shortName].insert(rec.version);
     std::set<std::string> out;
     for (auto const& [name, vs] : versions)
         if (vs.size() > 1) out.insert(name);
     return out;
+}
+
+// A program only development dependencies reach: every record of its scope is.
+static bool development_program(const PrepareState& state, std::string_view scope) {
+    bool any = false;
+    for (auto const& [k, rec] : state.resolved) {
+        if (k.scope != scope) continue;
+        if (!rec.devOnly) return false;
+        any = true;
+    }
+    return any;
 }
 
 std::string program_scope_of(const PrepareState& state, std::size_t i) {
@@ -1067,7 +1081,8 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
     // version. Named by those versions, a program finds its group again
     // whichever programs a command builds with it; with no disagreement the
     // group is the standard's alone, as before programs resolved apart.
-    const auto contested = contested_packages(state);
+    const auto contestedInBuild = contested_packages(state, /*withDevelopment=*/false);
+    const auto contestedInAll = contested_packages(state, /*withDevelopment=*/true);
     const auto targetPins = scope_pins(state, "");
     std::map<std::pair<std::string, std::string>, std::vector<Program>> groups;
     for (auto i : wanted) {
@@ -1076,7 +1091,9 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         p.source = program_source(state, i);
         p.member = member_name(state, i);
         p.identity = program_identity(state, i, p.source, *tc);
-        p.pins = scope_pins(state, program_scope_of(state, i));
+        const auto scope = program_scope_of(state, i);
+        p.pins = scope_pins(state, scope);
+        const auto& contested = development_program(state, scope) ? contestedInAll : contestedInBuild;
         const auto standard = standard_of(state, i);
         std::string versions;
         for (auto const& [name, version] : p.pins)

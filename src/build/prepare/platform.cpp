@@ -1214,6 +1214,12 @@ std::expected<void, std::string> step4b_platform_within_engine(PrepareState& sta
     if (spec.isPath() || spec.isGit() || spec.version.starts_with("=")
         || !mcpp::pm::is_version_constraint(spec.version))
         return {};
+    // The release the build that asked took (its build programs' graph,
+    // mcpp#797) is a pin: the series names no release here, and a refusal
+    // skips none.
+    if (state.overrides.resolution_pins.contains(spec.namespace_.empty() ? spec.shortName
+                                                                         : spec.namespace_ + "." + spec.shortName))
+        return {};
     const auto have = mcpp::xpkg_version::parse(mcpp::MCPP_VERSION);
     if (!have) return {};
     auto cfg = state.get_cfg(true);

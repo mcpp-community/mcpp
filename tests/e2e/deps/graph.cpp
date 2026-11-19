@@ -260,7 +260,8 @@ int main() {
         // records the second version as an entry of its own that names its program. B: a second
         // build compiles neither program again. C: two requests of one program that no merge
         // reconciles are refused naming the program, both requesters and the override line; the
-        // rename was not tried (N29).
+        // rename was not tried (N29). D: a development dependency's program does not move the
+        // project's to another graph.
         const auto tmp = s::case_dir();
         s::project tooling{tmp / "tooling", {{"mcpp.toml", "[package]\nname    = \"tooling\"\nversion = \"0.1.0\"\n[targets.tooling]\nkind = \"lib\"\n[build-dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
                                              {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
@@ -302,6 +303,76 @@ int main() {
         expect(fatal(e2e::contains(s::text(r), "helper") && e2e::contains(s::text(r), "app"))) << "C: the refusal does not name both requesters\n" << s::text(r);
         expect(fatal(s::lacks(s::text(r), "mangl"))) << "C: the rename was tried\n" << s::text(r);
         expect(s::has_line(s::text(r), R"(mcpplibs\.os = \{ version = "[0-9.]*", override = true \})")) << "C: the refusal does not name the override\n" << s::text(r);
+
+        // D: a development dependency's program that disagrees with the project's is a graph
+        // of its own under `mcpp test`, and the project's program stays in the graph `mcpp build`
+        // put it in: it is not compiled again (§21 A2).
+        s::project{tmp / "devtool", {{"mcpp.toml", "[package]\nname    = \"devtool\"\nversion = \"0.1.0\"\n[targets.devtool]\nkind = \"lib\"\n[build-dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
+                                     {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
+                                     {"src/devtool.cppm", "export module devtool;\nexport int devtool_answer() { return 1; }\n"}}};
+        s::project solo{tmp / "solo", {{"mcpp.toml", std::format("[package]\nname    = \"solo\"\nversion = \"0.1.0\"\n[build-dependencies]\nmcpplibs.os = \"^0.4.4\"\n[dev-dependencies]\ndevtool = {{ path = \"{}/devtool\" }}\n", tmp.generic_string())},
+                                       {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
+                                       {"src/main.cpp", "int main() { return 0; }\n"},
+                                       {"tests/test_answer.cpp", "import devtool;\nint main() { return devtool_answer() == 1 ? 0 : 1; }\n"}}};
+        r = solo.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "D: build\n" << s::text(r);
+        const auto built = s::glob(solo.at("target/.build-mcpp/host"), "*/programs.json");
+        expect(fatal(built.size() == 1u)) << "D: " << built.size() << " build programs' graphs for one program\n" << s::text(r);
+        r = solo.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << "D: test\n" << s::text(r);
+        expect(fatal(s::glob(solo.at("target/.build-mcpp/host"), "*/programs.json").size() == 2u)) << "D: the development dependency's program does not have a graph of its own\n" << s::text(r);
+        expect(fatal(s::read_file(built.front()).contains("solo"))) << "D: the project's program left the graph `mcpp build` put it in\n" << s::read_file(built.front());
+        expect(fatal(s::no_line(s::text(r), R"(^ *build\.mcpp solo .* (compiling|compiled))"))) << "D: the project's program was compiled again under `mcpp test`\n" << s::text(r);
+    };
+
+    "972 a version a merge replaces takes its build program with it"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
+        // Design 2026-11-19 §21 A1. acme.gen 1.1.0 and 1.0.0 have build programs that ask for
+        // different releases of acme.fam (=1.2.0 and =1.0.0). The project asks for gen ^1.0.0
+        // (1.1.0), and a library of it for gen =1.0.0: the merge puts 1.0.0 in gen's slot, and
+        // the build program resolved is 1.0.0's, which takes fam 1.0.0. The program of the
+        // version that left resolves nothing: fam 1.2.0 is in no resolution and not in the lock.
+        const auto tmp = s::case_dir();
+        const s::options inherited{.where = s::home::inherited};
+        s::project proj(tmp / "proj", {{"local-index/pkgs/a/acme.gen.lua", R"(package = {
+    spec = "1", namespace = "acme", name = "acme.gen",
+    description = "merged-version fixture", licenses = {"MIT"}, type = "package",
+    mcpp = "mcpp.toml",
+    xpm = {
+        linux  = { ["1.1.0"] = { url = "u", sha256 = "0" }, ["1.0.0"] = { url = "u", sha256 = "0" } },
+        macosx = { ["1.1.0"] = { url = "u", sha256 = "0" }, ["1.0.0"] = { url = "u", sha256 = "0" } },
+    },
+}
+)"},
+                                       {"local-index/pkgs/a/acme.fam.lua", R"(package = {
+    spec = "1", namespace = "acme", name = "acme.fam",
+    description = "merged-version fixture", licenses = {"MIT"}, type = "package",
+    xpm = {
+        linux  = { ["1.2.0"] = { url = "u", sha256 = "0" }, ["1.0.0"] = { url = "u", sha256 = "0" } },
+        macosx = { ["1.2.0"] = { url = "u", sha256 = "0" }, ["1.0.0"] = { url = "u", sha256 = "0" } },
+    },
+    mcpp = { language = "c++23", import_std = false, sources = { "src/fam.cppm" },
+             targets = { ["fam"] = { kind = "lib" } }, deps = {} },
+}
+)"},
+                                       {"src/main.cpp", "import gen;\nint main() { return gen_value() == 100 ? 0 : 1; }\n"},
+                                       {"mcpp.toml", "[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n\n[indices]\nacme = { path = \"local-index\" }\n\n[dependencies.acme]\ngen = \"^1.0.0\"\n\n[dependencies]\nmid = { path = \"../mid\" }\n\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
+        for (auto [version, fam, value] : {std::tuple{"1.0.0", "1.0.0", 100}, std::tuple{"1.1.0", "1.2.0", 110}}) {
+            proj.write(std::format(".mcpp/.xlings/data/xpkgs/acme.gen/{}/mcpp.toml", version),
+                       std::format("[package]\nnamespace = \"acme\"\nname      = \"gen\"\nversion   = \"{}\"\n\n[build]\nsources = [\"src/gen.cppm\"]\n\n[targets.gen]\nkind = \"lib\"\n\n[build-dependencies.acme]\nfam = \"={}\"\n", version, fam));
+            proj.write(std::format(".mcpp/.xlings/data/xpkgs/acme.gen/{}/src/gen.cppm", version),
+                       std::format("export module gen;\nexport int gen_value() {{ return {}; }}\n", value));
+        }
+        for (std::string_view version : {"1.0.0", "1.2.0"})
+            proj.write(std::format(".mcpp/.xlings/data/xpkgs/acme.fam/{}/src/fam.cppm", version),
+                       "export module fam;\nexport int fam_value() { return 0; }\n");
+        s::project(tmp / "mid", {{"mcpp.toml", "[package]\nname = \"mid\"\nversion = \"0.1.0\"\n\n[indices]\nacme = { path = \"../proj/local-index\" }\n\n[dependencies.acme]\ngen = \"=1.0.0\"\n\n[build]\nsources = [\"src/mid.cppm\"]\n\n[targets.mid]\nkind = \"lib\"\n"},
+                                 {"src/mid.cppm", "export module mid;\nexport int mid_value() { return 1; }\n"}});
+        auto r = proj.mcpp({"build", "--configure-only"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Merged +acme\.gen 1\.1\.0 ⨯ 1\.0\.0 → v1\.0\.0)"))) << "the fixture's merge did not happen: " << s::text(r);
+        const auto lock = proj.read("mcpp.lock");
+        expect(fatal(s::has_line(lock, R"re(^\[package\."(acme\.)?fam"\])re") && e2e::contains(lock, "version = \"1.0.0\""))) << "the build program of the version kept was not resolved: " << lock;
+        expect(fatal(!e2e::contains(lock, "version = \"1.2.0\""))) << "the build program of the version that left was resolved: " << lock;
     };
 }};
 

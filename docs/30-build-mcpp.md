@@ -1892,7 +1892,9 @@ Each build program resolves its own `[build-dependencies]` (05 — Dependencies,
 *Each build program resolves its own build dependencies*); programs that hold
 one package at different versions are in different graphs,
 `<group>-<digest>`, named by those versions (mcpp 2026.11.19.1+), and a
-program that holds none of them stays in `<group>`.
+program that holds none of them stays in `<group>`. The programs of the build
+are compared among themselves: under `mcpp test`, a development dependency's
+program does not move them to another graph.
 `mcpp build` in that directory reproduces the compile of the build programs.
 The compiled program is also placed beside its package's run record, as
 `target/.build-mcpp/build.mcpp.bin` (`build.mcpp.exe` on Windows), to be run by

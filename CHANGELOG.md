@@ -78,11 +78,15 @@
   program loads one version of a package, and two programs do not constrain each other. A
   project's `build.mcpp` may use `mcpp.plugins` 0.22.1 beside a platform plugin that uses
   0.26.1, where the two were refused as irreconcilable and the project had to copy the
-  version the platform used inside. A build program's request takes the newest version the
-  target or another program already holds that admits it, the target being resolved first,
-  so a build without a conflict keeps its versions and its build programs' identities.
-  Programs that hold one package at two versions are compiled in two build programs'
-  graphs, `<group>-<digest>`, named by those versions. `mcpp.lock` records a version only
+  version the platform used inside. A build program keeps the version it holds while its
+  requests admit it, and otherwise takes the newest version the target or another program
+  holds that all its requests admit; the target is resolved first, the layers and
+  capability defaults its platform adds included, and a program before the programs of the
+  packages it holds. A build without a conflict therefore keeps its versions and its build
+  programs' identities. Programs that hold one package at two versions are compiled in two
+  build programs' graphs, `<group>-<digest>`, named by those versions; a development
+  dependency's program does not move the build's programs to another graph under
+  `mcpp test`. `mcpp.lock` records a version only
   build programs hold as an entry of its own, `<name>+b<digest>`, whose `programs` lists
   them; a conflict inside one program is refused naming the program and every requester.
 - A platform selected as a series skips a release whose version group a request of the build
@@ -100,6 +104,15 @@
 
 ### Fixed
 
+- A dependency a merge moves to another version is walked as its first version was: its
+  dependency tables by the row it is built for, with the features its edges forward, and its
+  `[build-dependencies]` as its own build program. The merge's walk read `[dependencies]`
+  alone, so the new version's build program was never resolved, its requests lost their
+  side, and the build program of the version that left stayed in the build and in
+  `mcpp.lock`. The requests the version that left made are withdrawn with it.
+- A capability a package of the target requires (`requires` with `[defaults."<capability>"]`)
+  is answered by the target's graph: a package only a build program holds answered it, and
+  the default the package states was not added to the target (SPEC-002 §3.6).
 - A target row the package index's platform column listed after the local copy of the index
   was taken was refused as an unknown target until `mcpp index update`: the miss did not reach
   the refresh policy. A row the local copy does not list, and that is refused without it (one

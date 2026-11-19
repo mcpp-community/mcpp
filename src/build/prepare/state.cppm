@@ -868,13 +868,15 @@ struct PrepareState {
     // (with these helpers as its own captures) and called repeatedly from
     // the worklist loop, well after its defining call returns. ────────────
     std::deque<WorkItem> worklist;
-    // THE REQUESTS OF A VERSION NO LONGER IN THE GRAPH. A merge that replaces
-    // `<ns>.<name>@<old>` takes that version's requests out with it: its
-    // queued items are not walked and its constraints no longer bound a merge.
-    // Kept, they reported a conflict between a version and a request of a
-    // version that had already left (os 0.4.4 and openkal-linux 0.26.0 after
-    // both were merged down, measured).
-    std::set<std::string> supersededRequesters;
+    // THE REQUESTS OF A VERSION A RESOLUTION LEFT, by resolution (its scope)
+    // and requester (`<ns>.<name>@<old>`). A merge that replaces a version, or
+    // a program's record that moves off it, takes the requests that version
+    // made in that resolution out with it: its queued items are not walked and
+    // its constraints no longer bound a merge. Kept, they reported a conflict
+    // between a version and a request of a version that had already left (os
+    // 0.4.4 and openkal-linux 0.26.0 after both were merged down, measured). A
+    // resolution that still holds the version keeps its requests (§21 A1).
+    std::set<std::pair<std::string, std::string>> supersededRequests;
     // The sides a package's dependency table has been walked for, by dep slot
     // (SPEC-004 §4.8; mcpp#956): 1 the target's, 2 this machine's. A package is
     // built once for each side that asks for it, and each side reads the table
@@ -883,10 +885,23 @@ struct PrepareState {
     // The build programs a slot's table has been walked for (§21 A1): each
     // program resolves the package's requests in its own scope.
     std::set<std::pair<std::size_t, std::string>> scopesWalked;
-    // A program's requests wait until the target's are resolved, so that the
-    // target's choices are made by the target's requests alone and a program
-    // takes them where its own requests allow (§21 A1).
-    std::deque<WorkItem> scopedWorklist;
+    // THE RESOLUTIONS RESOLVE IN WAVES (§21 A1): the target's requests, the
+    // platform's layers and the capability defaults among them; then the
+    // requests of the build programs of the packages the target holds; then
+    // those of the programs of the packages those programs hold. A resolution
+    // makes its choices before a program of a package it holds asks, so the
+    // program takes them where its own requests allow, and a merge that
+    // replaces a version finds that version's program still unwalked
+    // (`withdraw_program`). A program scope's wave is its consumer's plus one
+    // (`open_program_scope`); a scope none opened (the root's program, the
+    // platform's tools) is the first after the target's. Measured before: the
+    // programs resolved in the target's first round, took the newest release
+    // of a layer package the platform added a round later at the group's
+    // version, and two versions of it entered the build.
+    std::map<std::string, int> scopeWaves;
+    std::map<int, std::deque<WorkItem>> laterWaves;
+    int wave = 0;
+    bool programsOpen = false;
     // A program's record that a merge moved off a slot another program or the
     // target uses: the slot its edges are moved from, and the requests the
     // record held (§21 A1).
@@ -895,6 +910,9 @@ struct PrepareState {
         std::vector<std::pair<std::string, std::string>> constraintsBy;
     };
     std::map<ResolvedKey, ScopeMove> scopeMoves;
+    // The package slots a move left with no resolution holding them (by
+    // package index): no instance of the target's or of a build program's.
+    std::set<std::size_t> withdrawnSlots;
     // THE ROOT'S OVERRIDES (design 2026-11-10 supplement, T2): each
     // `override = true` declaration of the root's tables and of
     // `[workspace.dependencies]`, with the identity it answers for and the
@@ -1456,7 +1474,23 @@ struct SideRequests {
 };
 std::string request_constraint(const WorkItem& item);
 void note_request(const PrepareState& state, ResolvedRecord& r, const WorkItem& item);
-std::string requests_of(const PrepareState& state, const ResolvedRecord& r);
+// A record's package as a requester names it: `<ns>.<name>@<version>`, or the
+// source kind for a path or git package.
+std::string record_label(const ResolvedKey& key, const ResolvedRecord& r);
+// Whether a request is one a version made in a resolution that has left it.
+bool request_superseded(const PrepareState& state, std::string_view scope, std::string_view requester);
+// The constraints a record is bound by (the requests still in its resolution),
+// and each with its requester, for a refusal.
+std::string effective_constraint(const PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r);
+std::string requests_of(const PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r);
+// A version a resolution leaves: the requests it made there are withdrawn.
+void supersede_version(PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r);
+// The build program of a version no slot holds any longer: its queued
+// requests leave the walk.
+void withdraw_program(PrepareState& state, const std::string& scope);
+// The wave a scope resolves in, and a program scope opened by a consumer's.
+int scope_wave(const PrepareState& state, std::string_view scope);
+void open_program_scope(PrepareState& state, const std::string& scope, std::string_view consumerScope);
 std::expected<SideRequests, std::string> side_requests(PrepareState& state,
                                                        const mcpp::manifest::Manifest& dm, bool hostSide);
 WorkItem side_item(const SideRequests& side, const std::string& childName,
@@ -1472,13 +1506,16 @@ std::string root_program_scope(const PrepareState& state);
 std::string scope_display(std::string_view scope);
 // A record of `identity` whichever resolution holds it: the target's first.
 const ResolvedRecord* any_record_of(const PrepareState& state, const ResolvedKey& identity);
-// The newest version another resolution holds that a program's request
-// admits, when the program holds none of the package yet (§21 A1).
+// The version a program's request takes (§21 A1): the one the program holds
+// when the request admits it, else the newest another resolution holds that
+// the request and the program's other requests of the package admit.
 std::optional<std::string> held_version_for(const PrepareState& state, const WorkItem& item,
                                             const mcpp::manifest::DependencySpec& spec,
                                             const std::string& name);
-// Whether a slot serves a resolution other than `key`'s program.
+// Whether a slot serves a resolution other than `key`'s program, and whether
+// another resolution holds `key`'s package at `version`.
 bool slot_held_elsewhere(const PrepareState& state, std::size_t depIndex, const ResolvedKey& key);
+bool version_held_elsewhere(const PrepareState& state, const ResolvedKey& key, std::string_view version);
 // A program's record resolved again after a move: its edges and requests follow.
 void finish_scope_move(PrepareState& state, const ResolvedKey& key, std::size_t newPackageIndex);
 // A program's edges from a package of the target to one only programs hold.

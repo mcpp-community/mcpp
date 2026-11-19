@@ -42,15 +42,64 @@ void note_request(const PrepareState& state, ResolvedRecord& r, const WorkItem& 
     r.constraintsBy.emplace_back(by, item.groupConstraint);
 }
 
-// Every request of a record still in the graph, for a refusal: who asked and
-// for what, one per line.
-std::string requests_of(const PrepareState& state, const ResolvedRecord& r) {
+std::string record_label(const ResolvedKey& key, const ResolvedRecord& r) {
+    return std::format("{}{}{}@{}", key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                       r.source == "version" ? r.version : r.source);
+}
+
+// A requester is a version's label, or that label and the table it asked from
+// (`<label> (dev-dep)`): either is withdrawn with the version.
+bool request_superseded(const PrepareState& state, std::string_view scope, std::string_view requester) {
+    if (state.supersededRequests.empty()) return false;
+    const auto table = requester.find(" (");
+    const auto version = table == std::string_view::npos ? requester : requester.substr(0, table);
+    return state.supersededRequests.contains({std::string(scope), std::string(version)});
+}
+
+// A record kept before requests were tracked by requester answers with its
+// combined string.
+std::string effective_constraint(const PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r) {
+    if (r.constraintsBy.empty()) return r.constraint;
     std::string out;
     for (auto const& [by, c] : r.constraintsBy) {
-        if (state.supersededRequesters.contains(by)) continue;
+        if (request_superseded(state, key.scope, by)) continue;
+        out += (out.empty() ? "" : ",") + c;
+    }
+    return out.empty() ? std::string("*") : out;
+}
+
+// Every request of a record still in its resolution, for a refusal: who asked
+// and for what, one per line.
+std::string requests_of(const PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r) {
+    std::string out;
+    for (auto const& [by, c] : r.constraintsBy) {
+        if (request_superseded(state, key.scope, by)) continue;
         out += std::format("\n      '{}' by {}", c, by);
     }
     return out;
+}
+
+void supersede_version(PrepareState& state, const ResolvedKey& key, const ResolvedRecord& r) {
+    state.supersededRequests.insert({key.scope, record_label(key, r)});
+}
+
+// Only queued requests: a program resolves in the wave after its consumer's,
+// so the version whose consumer left it was never walked for it.
+void withdraw_program(PrepareState& state, const std::string& scope) {
+    auto of = [&](const WorkItem& w) { return w.scope == scope; };
+    std::erase_if(state.worklist, of);
+    for (auto& [wave, items] : state.laterWaves) std::erase_if(items, of);
+    state.scopeWaves.erase(scope);
+}
+
+int scope_wave(const PrepareState& state, std::string_view scope) {
+    if (scope.empty()) return 0;
+    auto it = state.scopeWaves.find(std::string(scope));
+    return it == state.scopeWaves.end() ? 1 : it->second;
+}
+
+void open_program_scope(PrepareState& state, const std::string& scope, std::string_view consumerScope) {
+    state.scopeWaves.try_emplace(scope, scope_wave(state, consumerScope) + 1);
 }
 
 // A PACKAGE'S DEPENDENCY TABLE IS READ BY THE ROW IT IS BUILT FOR (SPEC-004
@@ -176,12 +225,24 @@ const ResolvedRecord* any_record_of(const PrepareState& state, const ResolvedKey
     return nullptr;
 }
 
-// Whether `version` answers `constraint` as a request does: a constraint by
-// its comparators, a bare version as itself.
+// Whether `version` answers each request joined in `constraint` as a request
+// does: a range by its comparators, a bare version as itself, `*` (a request
+// that names no version) by any.
 static bool request_admits(std::string_view constraint, std::string_view version) {
-    if (constraint.empty() || constraint == "*") return true;
-    if (!mcpp::pm::is_version_constraint(std::string(constraint))) return constraint == version;
-    auto req = mcpp::version_req::parse_req(constraint);
+    std::string ranges;
+    for (auto part : std::views::split(constraint, ',')) {
+        auto piece = std::string_view(part.begin(), part.end());
+        while (!piece.empty() && piece.front() == ' ') piece.remove_prefix(1);
+        while (!piece.empty() && piece.back() == ' ') piece.remove_suffix(1);
+        if (piece.empty() || piece == "*") continue;
+        if (!mcpp::pm::is_version_constraint(std::string(piece))) {
+            if (piece != version) return false;
+            continue;
+        }
+        ranges += (ranges.empty() ? "" : ",") + std::string(piece);
+    }
+    if (ranges.empty()) return true;
+    auto req = mcpp::version_req::parse_req(ranges);
     auto ver = mcpp::version_req::parse_version(version);
     return req && ver && mcpp::version_req::matches(*req, *ver);
 }
@@ -194,8 +255,20 @@ std::optional<std::string> held_version_for(const PrepareState& state, const Wor
                                             const std::string& name) {
     if (!spec.patches.empty()) return std::nullopt;
     const std::string shortName = spec.shortName.empty() ? name : spec.shortName;
-    if (state.resolved.contains(ResolvedKey{spec.namespace_, shortName, {}, item.scope})) return std::nullopt;
-    const auto constraint = request_constraint(item);
+    auto constraint = request_constraint(item);
+    // A PROGRAM KEEPS THE VERSION IT HOLDS WHILE ITS REQUESTS ADMIT IT, and
+    // takes another only as its requests together admit: a second request of
+    // the package, resolved alone, took the index's newest version and the
+    // merge of the program's own ranges kept it, moving the program off the
+    // version the target holds (two build dependencies asking `^1.0.0` of a
+    // package the target held at 1.1.0 left the program at 1.2.0, and its
+    // lock with a `+b` entry).
+    const ResolvedKey own{spec.namespace_, shortName, {}, item.scope};
+    if (auto it = state.resolved.find(own); it != state.resolved.end()) {
+        if (it->second.source != "version" || it->second.version.empty()) return std::nullopt;
+        if (request_admits(constraint, it->second.version)) return it->second.version;
+        constraint = effective_constraint(state, it->first, it->second) + "," + constraint;
+    }
     std::optional<std::string> best;
     std::optional<mcpp::version_req::Version> bestVersion;
     for (auto const& [k, r] : state.resolved) {
@@ -217,6 +290,14 @@ bool slot_held_elsewhere(const PrepareState& state, std::size_t depIndex, const 
         if (r.depIndex == depIndex && k.scope != key.scope) return true;
     return std::ranges::any_of(state.dependencyEdges, [&](const DependencyEdge& e) {
         return e.dependencyPackageIndex == depIndex + 1 && e.scope != key.scope;
+    });
+}
+
+bool version_held_elsewhere(const PrepareState& state, const ResolvedKey& key, std::string_view version) {
+    return std::ranges::any_of(state.resolved, [&](auto const& kv) {
+        auto const& [k, r] = kv;
+        return k.scope != key.scope && k.ns == key.ns && k.shortName == key.shortName
+            && k.variant == key.variant && r.source == "version" && r.version == version;
     });
 }
 

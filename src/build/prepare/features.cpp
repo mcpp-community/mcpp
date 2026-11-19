@@ -117,10 +117,15 @@ static void mirror_into_library_scopes(PrepareState& state, std::size_t p, std::
     if (state.packages[p].selectedMember) scopes.push_back({});
     for (auto const& [k, r] : state.resolved)
         if (r.depIndex + 1 == p) scopes.push_back(k.scope);
+    // The slot's link flags stay with the record that added them: a copy that
+    // carried them withdrew them once more for each copy, and a flag another
+    // package contributed with them (`-lm`) left the link.
+    auto copy = dependency->second;
+    copy.linkFlagsAdded.clear();
     for (auto const& scope : scopes) {
         auto key = dependency->first;
         key.scope = scope;
-        state.resolved.try_emplace(std::move(key), dependency->second);
+        state.resolved.try_emplace(std::move(key), copy);
     }
 }
 
@@ -306,6 +311,9 @@ PackageInstances package_instances(const PrepareState& state) {
             target[i] = false;
             host[i] = true;
         }
+    // A slot a move left with no resolution is an instance of neither.
+    for (auto const i : state.withdrawnSlots)
+        if (i < n) target[i] = host[i] = false;
     return out;
 }
 
@@ -341,8 +349,9 @@ static void step6_instances(PrepareState& state) {
         state.packages[d].hostInstance = host[d];
         state.packages[d].devOnly = target[d] && !shipped[d];
         // A package no edge mentions is a bookkeeping gap, not a build
-        // dependency: it keeps its target instance.
-        state.packages[d].buildTimeOnly = !target[d] && host[d];
+        // dependency: it keeps its target instance. A slot no resolution
+        // holds is compiled by neither plan.
+        state.packages[d].buildTimeOnly = (!target[d] && host[d]) || state.withdrawnSlots.contains(d);
         auto const& pkg = state.packages[d].manifest.package;
         mcpp::log::info("edges", std::format(
             "{}{}: {}{}", pkg.namespace_.empty() ? "" : pkg.namespace_ + ".", pkg.name,

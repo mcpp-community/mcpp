@@ -723,7 +723,8 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
         {
             nlohmann::json graphPackages = nlohmann::json::array();
             for (std::size_t i = 0; i < state.packages.size(); ++i)
-                graphPackages.push_back(state.graph_package_entry(i, /*forBuildProgram=*/false, nullptr));
+                if (!state.withdrawnSlots.contains(i))
+                    graphPackages.push_back(state.graph_package_entry(i, /*forBuildProgram=*/false, nullptr));
             j["graph"] = { {"packages", std::move(graphPackages)} };
         }
 

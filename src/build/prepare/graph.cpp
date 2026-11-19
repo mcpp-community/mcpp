@@ -345,6 +345,8 @@ struct WorklistItemCtx {
     std::optional<mcpp::manifest::Manifest> dep_manifest;
     // The request is by version for an identity the root declared otherwise.
     bool rootHeld = false;
+    // A program's request took the version the build holds (§21 A1).
+    bool held = false;
 };
 
 
@@ -467,12 +469,15 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
         }
         if (auto r = step4b_pin_to_platform_group(state, item, name, spec); !r) return r;
         // A PROGRAM TAKES A VERSION THE BUILD ALREADY HOLDS WHERE ITS OWN
-        // REQUEST ALLOWS (§21 A1): the newest version another program or the
-        // target resolved that the request admits, so a build without a
-        // conflict keeps the versions, and the build programs' identities, it
-        // had when the two shared one resolution.
+        // REQUESTS ALLOW (§21 A1): the one it holds, or the newest another
+        // program or the target resolved that its requests admit, so a build
+        // without a conflict keeps the versions, and the build programs'
+        // identities, it had when the two shared one resolution.
         if (!ctx.rootHeld && !item.scope.empty() && spec.isVersion())
-            if (auto held = held_version_for(state, item, spec, name)) spec.version = *held;
+            if (auto held = held_version_for(state, item, spec, name)) {
+                spec.version = *held;
+                ctx.held = true;
+            }
         // Pin SemVer constraint before dedup/fetch.
         if (!ctx.rootHeld)
             if (auto r = state.resolveSemver(spec, name); !r) {
@@ -547,20 +552,6 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
     return {};
 }
 
-// The constraints a record is bound by: those of the requesters still in the
-// graph. A record kept before requests were tracked by requester answers with
-// its combined string.
-static std::string effective_constraint(const PrepareState& state,
-                                        const ResolvedRecord& r) {
-    if (r.constraintsBy.empty()) return r.constraint;
-    std::string out;
-    for (auto const& [by, c] : r.constraintsBy) {
-        if (state.supersededRequesters.contains(by)) continue;
-        out += (out.empty() ? "" : ",") + c;
-    }
-    return out.empty() ? std::string("*") : out;
-}
-
 // THE PROJECT'S WAY OUT OF AN IRRECONCILABLE PAIR (T3): the line that chooses
 // one version for the whole graph, ready to copy into the root's manifest.
 static std::string override_hint(const ResolvedKey& key, std::string_view a, std::string_view b) {
@@ -568,6 +559,184 @@ static std::string override_hint(const ResolvedKey& key, std::string_view a, std
     return std::format("\n       Or choose one version for the whole graph in the root's mcpp.toml:\n"
                        "           {} = {{ version = \"{}\", override = true }}   # or \"{}\"",
                        name, a, b);
+}
+
+// THE REQUESTS A SLOT'S MANIFEST MAKES OF THE RESOLUTION THAT REACHED IT: its
+// dependencies as that side's row reads them (SPEC-004 §4.8), a selected
+// member's development dependencies, and its build dependencies as the
+// requests of its own build program, which resolves in the next wave (§21 A1).
+// A version a merge puts in the slot is walked here as the first was: the
+// merge's own walk read `[dependencies]` alone, without the row, the forwards
+// or the build program, so the new version's build dependencies were never
+// asked and a program's requests lost their side.
+static std::expected<void, std::string>
+step4b_walk_slot(PrepareState& state, const WorkItem& item, std::size_t selfIdx, const std::string& label,
+                 const std::filesystem::path& root, const std::optional<std::filesystem::path>& selectedMember) {
+    auto& dm = *state.dep_manifests[selfIdx];
+    // #243: this dep's active features are forwarded to ITS children before
+    // they are pushed, from the same closure inputs as mergeActiveFeatureDeps
+    // (the features its edges asked, forwards included), so activation agrees
+    // with resolution.
+    std::vector<std::string> depActive;
+    if (auto requested = state.depFeatureRequests.find(selfIdx); requested != state.depFeatureRequests.end())
+        depActive = feature_closure(dm, requested->second.first, requested->second.second);
+    if (auto fe = validateForwards(state, dm, depActive, dm.package.name); !fe)
+        return std::unexpected(fe.error());
+    // `--features <dependency>/<feature>` for a selected member: a forward
+    // of that member, applied to its edges as the root's are.
+    auto forwarded = [&](const std::string& childKey, mcpp::manifest::DependencySpec childSpec) {
+        injectForwards(dm, depActive, childKey, childSpec);
+        if (!selectedMember) return childSpec;
+        auto fw = state.memberCliForwards.find(*selectedMember);
+        if (fw == state.memberCliForwards.end()) return childSpec;
+        for (auto const& [depKey, depFeat] : fw->second)
+            if (depKey == childKey && std::ranges::find(childSpec.features, depFeat) == childSpec.features.end())
+                childSpec.features.push_back(depFeat);
+        return childSpec;
+    };
+    // The side that reached the package reads its tables by its own row; the
+    // other side's requests are made when that side first asks for the
+    // package (`step4b_walk_other_side`).
+    if (state.depSidesWalked.size() <= selfIdx) state.depSidesWalked.resize(selfIdx + 1, 0);
+    state.depSidesWalked[selfIdx] |= item.buildOnly ? kHostSide : kTargetSide;
+    if (!item.scope.empty()) state.scopesWalked.insert({selfIdx, item.scope});
+    auto side = side_requests(state, dm, item.buildOnly);
+    if (!side) return std::unexpected(side.error());
+    for (auto const& [childName, childSpec] : side->dependencies)
+        state.worklist.push_back(side_item(*side, childName, forwarded(childName, childSpec), label, selfIdx,
+                                           root, item));
+    // A selected member's `[dev-dependencies]` under `mcpp test`, as a root's:
+    // its own, and never walked into its dependencies' tests.
+    if (selectedMember && state.includeDevDeps)
+        for (auto const& [childName, childSpec] : dm.devDependencies) {
+            auto childReq = forwarded(childName, childSpec);
+            state.worklist.push_back({childName, childReq, label + " (dev-dep)", childReq.version, selfIdx,
+                                      root, /*devOnly=*/true, item.buildOnly});
+            state.worklist.back().scope = item.scope;
+        }
+    // A dependency's own `[build-dependencies]` --- the only channel through
+    // which a package speaks about what IT needs at build time; both live
+    // channels (`tools`, `host-module`) are written by the consumer on an edge.
+    // Build-only however the package was reached: a library's build dependency
+    // has no business in its consumer's binary either.
+    const auto program = program_scope(label);
+    open_program_scope(state, program, item.scope);
+    for (auto const& [childName, childSpec] : side->buildDependencies) {
+        auto childReq = forwarded(childName, childSpec);
+        state.worklist.push_back({childName, childReq, label + " (build-dep)", childReq.version, selfIdx, root,
+                                  item.devOnly, /*buildOnly=*/true, /*fromBuildTable=*/true});
+        state.worklist.back().scope = program;
+    }
+    return {};
+}
+
+// A PROGRAM'S RECORD THAT LEAVES ITS SLOT (§21 A1): the slot's link flags stay
+// with a resolution that still holds it; a slot none holds leaves the build,
+// with its flags and the requests of its build program.
+static void leave_slot(PrepareState& state, std::map<ResolvedKey, ResolvedRecord>::iterator it) {
+    const auto depIndex = it->second.depIndex;
+    const auto scope = it->first.scope;
+    const auto program = program_scope(record_label(it->first, it->second));
+    auto flags = std::move(it->second.linkFlagsAdded);
+    state.resolved.erase(it);
+    for (auto& [k, r] : state.resolved)
+        if (r.depIndex == depIndex) {
+            r.linkFlagsAdded.insert(r.linkFlagsAdded.end(), flags.begin(), flags.end());
+            return;
+        }
+    if (std::ranges::any_of(state.dependencyEdges, [&](const DependencyEdge& e) {
+            return e.dependencyPackageIndex == depIndex + 1 && e.scope != scope;
+        }))
+        return;
+    removeLinkFlags(state, flags);
+    state.withdrawnSlots.insert(depIndex + 1);
+    withdraw_program(state, program);
+}
+
+// A RECORD THE MERGE MOVES TO ANOTHER VERSION IN ITS OWN SLOT: the dep is
+// fetched again at the merged version and replaces the earlier slot in
+// dep_manifests / packages, so the build plan sees only one version (old
+// include_dir entries are evicted, the new manifest's appended); the build
+// program of the version that leaves leaves with it, and the new manifest is
+// walked as the first was.
+static std::expected<void, std::string>
+step4b_replace_slot_version(PrepareState& state, WorklistItemCtx& ctx,
+                            std::map<ResolvedKey, ResolvedRecord>::iterator it, const std::string& merged) {
+    auto& item = ctx.item;
+    auto& name = item.name;
+    auto& spec = item.spec;
+    auto& key = ctx.key;
+    mcpp::ui::info("Merged",
+        std::format("{}{}{} {} ⨯ {} → v{}",
+            key.ns, key.ns.empty() ? "" : ".", key.shortName,
+            it->second.version, spec.version, merged));
+    withdraw_program(state, program_scope(record_label(key, it->second)));
+    auto reloaded = state.loadVersionDep(name, key.ns, key.shortName, merged);
+    if (!reloaded) return std::unexpected(reloaded.error());
+    auto& [newRoot, newManifest] = *reloaded;
+
+    // Name match against the re-loaded manifest.
+    {
+        const std::string& expectedShort =
+            spec.shortName.empty() ? name : spec.shortName;
+        // Also accept the fully-qualified form (ns.short) since
+        // synthesize_from_xpkg_lua may set package.name to the
+        // composite name for backward compat.
+        auto expectedComposite = spec.namespace_.empty()
+            ? std::string{}
+            : std::format("{}.{}", spec.namespace_, expectedShort);
+        const bool nameOk =
+            newManifest.package.name == expectedShort
+            || newManifest.package.name == name
+            || (!expectedComposite.empty()
+                && newManifest.package.name == expectedComposite);
+        if (!nameOk) {
+            return std::unexpected(std::format(
+                "dependency '{}' (merged to v{}) resolved to "
+                "package '{}' (mismatch with declared name '{}')",
+                name, merged, newManifest.package.name,
+                expectedShort));
+        }
+    }
+    if (newManifest.package.namespace_.empty()) {
+        newManifest.package.namespace_ = key.ns.empty()
+            ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
+    }
+    newManifest.package.sourceProvenance = std::format(
+        "index+{}@{}", state.cache_index_name(key.ns), merged);
+    // Its feature-deps by the features the slot's edges asked, as
+    // the first version's were merged before its walk.
+    const auto& [slotFeatures, slotSeeded] = state.depFeatureRequests.try_emplace(
+        it->second.depIndex, spec.features, spec.defaultFeatures).first->second;
+    if (auto fm = mergeActiveFeatureDeps(newManifest, slotFeatures, slotSeeded); !fm)
+        return std::unexpected(fm.error());
+
+    removeLinkFlags(state, it->second.linkFlagsAdded);
+    auto linkFlagsAdded = propagateLinkFlags(state, newRoot, newManifest);
+
+    // Replace in dep_manifests + packages. depIndex is the slot
+    // in dep_manifests; packages = [main, dep_0, dep_1, …], so
+    // packages[depIndex+1] is the same dep.
+    *state.dep_manifests[it->second.depIndex] = std::move(newManifest);
+    auto mergedPackage =
+        makePackageRoot(state, newRoot, *state.dep_manifests[it->second.depIndex]);
+    if (!mergedPackage) return std::unexpected(mergedPackage.error());
+    state.packages[it->second.depIndex + 1] = std::move(*mergedPackage);
+    recordDependencyEdge(state, item.consumerDepIndex,
+                         it->second.depIndex + 1,
+                         spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
+
+    it->second.version            = merged;
+    it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
+    if (it->second.depIndex < state.dep_cache_identities.size())
+        state.dep_cache_identities[it->second.depIndex].version = merged;
+
+    // Walk the *new* manifest's tables so their constraints feed
+    // future merges. Already-resolved children dedup via the
+    // resolved map.
+    const auto selfIdx = it->second.depIndex;
+    if (state.isProgramOnlyPackage(*state.dep_manifests[selfIdx]) && spec.artifacts.empty()) return {};
+    return step4b_walk_slot(state, item, selfIdx, record_label(key, it->second), newRoot, std::nullopt);
 }
 
 static std::expected<void, std::string>
@@ -588,11 +757,15 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                 auto cfg = state.get_cfg(true);
                 if (!cfg) return std::unexpected(cfg.error());
 
-                auto merged = mcpp::pm::try_merge_semver(
-                    key.ns, key.shortName,
-                    effective_constraint(state, it->second),
-                    request_constraint(item),
-                    state.index_route(*cfg), *state.targetPlatform);
+                // A program's requests together admit a version another
+                // resolution holds: it is the merge (§21 A1, `held_version_for`).
+                auto merged = ctx.held
+                    ? std::expected<std::string, std::string>(spec.version)
+                    : mcpp::pm::try_merge_semver(
+                          key.ns, key.shortName,
+                          effective_constraint(state, it->first, it->second),
+                          request_constraint(item),
+                          state.index_route(*cfg), *state.targetPlatform);
                 if (!merged) {
                     // Level 1 fallback: multi-version mangling. Two
                     // versions can't be reconciled by SemVer, but they
@@ -635,7 +808,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             "loads one version of it. Align the program's requests on one version{}.",
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
                             scope_display(key.scope),
-                            it->second.version, requests_of(state, it->second),
+                            it->second.version, requests_of(state, it->first, it->second),
                             spec.version, request_constraint(item), item.requestedBy,
                             merged.error(),
                             state.platform.active
@@ -654,7 +827,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                             "involves the main package directly. Pin one version "
                             "explicitly in your mcpp.toml.",
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                            it->second.version, requests_of(state, it->second),
+                            it->second.version, requests_of(state, it->first, it->second),
                             spec.version, request_constraint(item), item.requestedBy,
                             merged.error())
                         + override_hint(key, it->second.version, spec.version));
@@ -853,101 +1026,29 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     return {};
                 }
 
-                // A PROGRAM'S RECORD THAT MOVES LEAVES A SLOT OTHERS HOLD (§21
-                // A1): the target or another program keeps the version it has,
-                // and this program takes the merged one in a slot of its own;
-                // the request is resolved again at that version, and the edges
-                // the program alone made are moved there (finish_scope_move).
-                if (!key.scope.empty() && slot_held_elsewhere(state, it->second.depIndex, key)) {
+                // The version this resolution leaves takes the requests it made
+                // here with it (§21 A1).
+                supersede_version(state, key, it->second);
+                // A PROGRAM'S RECORD THAT MOVES LEAVES A SLOT OTHERS HOLD, OR
+                // TAKES ONE ANOTHER RESOLUTION HOLDS (§21 A1): the target or
+                // another program keeps the version it has, and this program
+                // takes the merged one, in the slot that holds it or in one of
+                // its own; the request is resolved again at that version, and
+                // the edges the program made follow it (finish_scope_move). Two
+                // slots of one version (an in-place merge onto a version held
+                // elsewhere) would build that version's program twice.
+                if (!key.scope.empty() && (slot_held_elsewhere(state, it->second.depIndex, key)
+                                           || version_held_elsewhere(state, key, *merged))) {
                     PrepareState::ScopeMove move{it->second.depIndex + 1, it->second.constraintsBy};
                     state.scopeMoves[key] = std::move(move);
-                    state.resolved.erase(it);
+                    leave_slot(state, it);
                     WorkItem again = item;
                     again.spec.version = *merged;
                     again.originalConstraint = "=" + *merged;
                     state.worklist.push_front(std::move(again));
                     return {};
                 }
-                // Merged version differs from the previously-pinned one.
-                // Re-fetch the dep at the merged version and replace the
-                // earlier slot in dep_manifests / packages so the build plan
-                // sees only one version. Old include_dir entries are evicted
-                // and the new manifest's entries are appended.
-                mcpp::ui::info("Merged",
-                    std::format("{}{}{} {} ⨯ {} → v{}",
-                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                        it->second.version, spec.version, *merged));
-                state.supersededRequesters.insert(std::format("{}{}{}@{}",
-                    key.ns, key.ns.empty() ? "" : ".", key.shortName, it->second.version));
-                auto reloaded = state.loadVersionDep(name, key.ns, key.shortName, *merged);
-                if (!reloaded) return std::unexpected(reloaded.error());
-                auto& [newRoot, newManifest] = *reloaded;
-
-                // Name match against the re-loaded manifest.
-                {
-                    const std::string& expectedShort =
-                        spec.shortName.empty() ? name : spec.shortName;
-                    // Also accept the fully-qualified form (ns.short) since
-                    // synthesize_from_xpkg_lua may set package.name to the
-                    // composite name for backward compat.
-                    auto expectedComposite = spec.namespace_.empty()
-                        ? std::string{}
-                        : std::format("{}.{}", spec.namespace_, expectedShort);
-                    const bool nameOk =
-                        newManifest.package.name == expectedShort
-                        || newManifest.package.name == name
-                        || (!expectedComposite.empty()
-                            && newManifest.package.name == expectedComposite);
-                    if (!nameOk) {
-                        return std::unexpected(std::format(
-                            "dependency '{}' (merged to v{}) resolved to "
-                            "package '{}' (mismatch with declared name '{}')",
-                            name, *merged, newManifest.package.name,
-                            expectedShort));
-                    }
-                }
-                if (newManifest.package.namespace_.empty()) {
-                    newManifest.package.namespace_ = key.ns.empty()
-                        ? std::string(mcpp::pm::kDefaultNamespace) : key.ns;
-                }
-                newManifest.package.sourceProvenance = std::format(
-                    "index+{}@{}", state.cache_index_name(key.ns), *merged);
-
-                removeLinkFlags(state, it->second.linkFlagsAdded);
-                auto linkFlagsAdded = propagateLinkFlags(state, newRoot, newManifest);
-
-                // Replace in dep_manifests + packages. depIndex is the slot
-                // in dep_manifests; packages = [main, dep_0, dep_1, …], so
-                // packages[depIndex+1] is the same dep.
-                *state.dep_manifests[it->second.depIndex] = std::move(newManifest);
-                auto mergedPackage =
-                    makePackageRoot(state, newRoot, *state.dep_manifests[it->second.depIndex]);
-                if (!mergedPackage) return std::unexpected(mergedPackage.error());
-                state.packages[it->second.depIndex + 1] = std::move(*mergedPackage);
-                recordDependencyEdge(state, item.consumerDepIndex,
-                                     it->second.depIndex + 1,
-                                     spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
-
-                it->second.version            = *merged;
-                it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
-                if (it->second.depIndex < state.dep_cache_identities.size())
-                    state.dep_cache_identities[it->second.depIndex].version = *merged;
-
-                // Walk the *new* manifest's deps so their constraints feed
-                // future merges. Already-resolved children dedup via the
-                // resolved map.
-                const std::string newLabel = std::format("{}{}{}@{}",
-                    key.ns, key.ns.empty() ? "" : ".",
-                    key.shortName, *merged);
-                for (auto& [child_name, child_spec] :
-                        state.dep_manifests[it->second.depIndex]->dependencies) {
-                    state.worklist.push_back({child_name, child_spec, newLabel,
-                                        child_spec.version,
-                                        it->second.depIndex, {}, item.devOnly});
-                    state.worklist.back().scope = item.scope;
-                }
-                return {};
-    return {};
+                return step4b_replace_slot_version(state, ctx, it, *merged);
 }
 
 // The sides of a package's dependency table and the requests each makes are
@@ -970,37 +1071,15 @@ step4b_walk_other_side(PrepareState& state, std::size_t depIndex, const WorkItem
     if (item.scope.empty() ? (state.depSidesWalked[depIndex] & side) != 0
                            : state.scopesWalked.contains({depIndex, item.scope}))
         return {};
-    state.depSidesWalked[depIndex] |= side;
-    if (!item.scope.empty()) state.scopesWalked.insert({depIndex, item.scope});
-    auto const& dm = *state.dep_manifests[depIndex];
-    auto requests = side_requests(state, dm, item.buildOnly);
-    if (!requests) return std::unexpected(requests.error());
-    std::vector<std::string> active;
-    if (auto requested = state.depFeatureRequests.find(depIndex); requested != state.depFeatureRequests.end())
-        active = feature_closure(dm, requested->second.first, requested->second.second);
-    std::string label = dm.package.name;
+    std::string label = state.dep_manifests[depIndex]->package.name;
     for (auto const& [k, r] : state.resolved)
         if (r.depIndex == depIndex) {
-            label = std::format("{}{}{}@{}", k.ns, k.ns.empty() ? "" : ".", k.shortName,
-                                r.source == "version" ? r.version : r.source);
+            label = record_label(k, r);
             break;
         }
     const auto root = depIndex + 1 < state.packages.size() ? state.packages[depIndex + 1].root
                                                           : std::filesystem::path{};
-    for (auto const& [childName, childSpec] : requests->dependencies) {
-        auto childReq = childSpec;
-        injectForwards(dm, active, childName, childReq);
-        state.worklist.push_back(side_item(*requests, childName, childReq, label, depIndex, root, item));
-    }
-    for (auto const& [childName, childSpec] : requests->buildDependencies) {
-        auto childReq = childSpec;
-        injectForwards(dm, active, childName, childReq);
-        state.worklist.push_back({childName, childReq, label + " (build-dep)", childReq.version,
-                                  depIndex, root, item.devOnly, /*buildOnly=*/true,
-                                  /*fromBuildTable=*/true});
-        state.worklist.back().scope = program_scope(label);
-    }
-    return {};
+    return step4b_walk_slot(state, item, depIndex, label, root, std::nullopt);
 }
 
 // A LATER EDGE THAT ASKS MORE FEATURES OF A RESOLVED PACKAGE (mcpp#897). The
@@ -1938,87 +2017,10 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
         // private to the dep's test runs, not part of its public ABI.
         // A package of programs is not walked at all; see `depProgramOnly`.
         if (depProgramOnly) return {};
-        const std::string thisDepLabel = std::format(
-            "{}{}{}@{}",
-            key.ns,
-            key.ns.empty() ? "" : ".",
-            key.shortName,
-            sourceKind == "version" ? spec.version : sourceKind);
         const std::size_t selfIdx = state.dep_manifests.size() - 1;
         state.depFeatureRequests[selfIdx] = {spec.features, spec.defaultFeatures};
-        // #243: forward this dep's active features to ITS children before they
-        // are pushed (transitive dep->dep forwarding rides the BFS forward
-        // edge). Uses the SAME closure inputs as mergeActiveFeatureDeps above
-        // (this edge's spec.features, already carrying any forward injected by
-        // this dep's own consumer, + defaultFeatures), so activation agrees
-        // with resolution.
-        auto depActive = feature_closure(*state.dep_manifests.back(), spec.features,
-                                         spec.defaultFeatures);
-        if (auto fe = validateForwards(state, *state.dep_manifests.back(), depActive,
-                                       state.dep_manifests.back()->package.name); !fe)
-            return std::unexpected(fe.error());
-        // `--features <dependency>/<feature>` for a selected member: a forward
-        // of that member, applied to its edges as the root's are.
-        auto injectMemberCliForwards = [&](const std::string& childKey,
-                                           mcpp::manifest::DependencySpec& childSpec) {
-            if (!selectedMember) return;
-            auto fw = state.memberCliForwards.find(*selectedMember);
-            if (fw == state.memberCliForwards.end()) return;
-            for (auto const& [depKey, depFeat] : fw->second)
-                if (depKey == childKey
-                    && std::ranges::find(childSpec.features, depFeat) == childSpec.features.end())
-                    childSpec.features.push_back(depFeat);
-        };
-        // The side that reached the package reads its tables by its own row
-        // (SPEC-004 §4.8); the other side's requests are made when that side
-        // first asks for the package (`step4b_walk_other_side`).
-        if (state.depSidesWalked.size() <= selfIdx) state.depSidesWalked.resize(selfIdx + 1, 0);
-        state.depSidesWalked[selfIdx] |= item.buildOnly ? kHostSide : kTargetSide;
-        if (!item.scope.empty()) state.scopesWalked.insert({selfIdx, item.scope});
-        auto side = side_requests(state, *state.dep_manifests.back(), item.buildOnly);
-        if (!side) return std::unexpected(side.error());
-        for (auto& [child_name, child_spec] : side->dependencies) {
-            auto childReq = child_spec;
-            injectForwards(*state.dep_manifests.back(), depActive, child_name, childReq);
-            injectMemberCliForwards(child_name, childReq);
-            state.worklist.push_back(side_item(*side, child_name, childReq, thisDepLabel, selfIdx,
-                                               ctx.dep_root, item));
-        }
-        // A selected member's `[dev-dependencies]` under `mcpp test`, as a
-        // root's: its own, and never walked into its dependencies' tests.
-        if (selectedMember && state.includeDevDeps) {
-            for (auto& [child_name, child_spec] : state.dep_manifests.back()->devDependencies) {
-                auto childReq = child_spec;
-                injectForwards(*state.dep_manifests.back(), depActive, child_name, childReq);
-                injectMemberCliForwards(child_name, childReq);
-                state.worklist.push_back({child_name, childReq, thisDepLabel + " (dev-dep)",
-                                    childReq.version, selfIdx, ctx.dep_root,
-                                    /*devOnly=*/true, item.buildOnly});
-                state.worklist.back().scope = item.scope;
-            }
-        }
-        // A dependency's own `[build-dependencies]` — the only channel through
-        // which a package can speak about what IT needs at build time. Both
-        // live channels (`tools`, `host-module`) are written by the CONSUMER
-        // on an edge, so before this a build rule could not request anything
-        // on its own behalf. That, and not a design decision, is why a rule
-        // was a leaf.
-        //
-        // These are build-only regardless of how this package was reached: a
-        // library's build dependency has no business in its consumer's binary
-        // either.
-        for (auto& [child_name, child_spec] : side->buildDependencies) {
-            auto childReq = child_spec;
-            injectForwards(*state.dep_manifests.back(), depActive, child_name, childReq);
-            injectMemberCliForwards(child_name, childReq);
-            state.worklist.push_back({child_name, childReq,
-                                thisDepLabel + " (build-dep)",
-                                childReq.version, selfIdx, ctx.dep_root,
-                                item.devOnly, /*buildOnly=*/true,
-                                /*fromBuildTable=*/true});
-            state.worklist.back().scope = program_scope(thisDepLabel);
-        }
-    return {};
+        return step4b_walk_slot(state, item, selfIdx, record_label(key, state.resolved.at(key)),
+                                ctx.dep_root, selectedMember);
 }
 
 
@@ -2198,24 +2200,28 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     }
 
 
+    // ONE WAVE AT A TIME (§21 A1): an item of a later wave waits until every
+    // item of the waves before it is walked. The target's wave is drained
+    // alone until the platform has completed it; the build programs' waves
+    // follow, each after its consumers'.
     auto drain = [&]() -> std::expected<void, std::string> {
-        while (!state.worklist.empty() || !state.scopedWorklist.empty()) {
-            // A PROGRAM'S REQUESTS WAIT FOR THE TARGET'S (§21 A1): the target's
-            // versions are chosen by the target's requests alone, and a program
-            // takes them where its own requests allow.
+        for (;;) {
             if (state.worklist.empty()) {
-                for (auto& w : state.scopedWorklist) state.worklist.push_back(std::move(w));
-                state.scopedWorklist.clear();
+                if (!state.programsOpen || state.laterWaves.empty()) return {};
+                auto next = state.laterWaves.begin();
+                state.wave = next->first;
+                state.worklist = std::move(next->second);
+                state.laterWaves.erase(next);
+                continue;
             }
             WorklistItemCtx ctx;
             ctx.item = std::move(state.worklist.front());
             state.worklist.pop_front();
-            if (!ctx.item.scope.empty()
-                && std::ranges::any_of(state.worklist, [](const WorkItem& w) { return w.scope.empty(); })) {
-                state.scopedWorklist.push_back(std::move(ctx.item));
+            if (const int wave = scope_wave(state, ctx.item.scope); wave > state.wave) {
+                state.laterWaves[wave].push_back(std::move(ctx.item));
                 continue;
             }
-            if (state.supersededRequesters.contains(ctx.item.requestedBy)) {
+            if (request_superseded(state, ctx.item.scope, ctx.item.requestedBy)) {
                 mcpp::log::verbose("resolve", std::format(
                     "{} is not walked: {}, which asked for it, was replaced by a merge",
                     ctx.item.name, ctx.item.requestedBy));
@@ -2277,6 +2283,12 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     }
     if (auto r = step4b_check_platform_versions(state); !r) return r;
     step4b_platform_member_edges(state);
+    // THE BUILD PROGRAMS RESOLVE AFTER THE TARGET IS COMPLETE (§21 A1): its
+    // layers and capability defaults included, which the platform adds in the
+    // rounds above. The host row's layers and defaults are the build
+    // programs' own graph's to choose, when it is prepared.
+    state.programsOpen = true;
+    if (auto r = drain(); !r) return r;
     step4b_drop_program_edges_from_target(state);
 
     if (auto r = step4b_cycle_check(state); !r) return std::unexpected(r.error());

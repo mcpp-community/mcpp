@@ -316,7 +316,9 @@ A provider in the graph -- the consumer's dependency, or the package the
 platform adds for its layer -- is used instead; otherwise the default whose
 selector matches the target joins the graph as the package's dependency, and
 the build reports it (`Default ... for ... of ...`). A selector that names the
-target wins over `*`.
+target wins over `*`. The graph is the target's: a package only a build program
+holds provides nothing to it, and the build programs' own graph chooses its
+defaults when it is prepared (mcpp 2026.11.19.1+).
 
 The same statement is the recipe for a package whose install hook compiles a
 static library from source. The library is compiled against one C++ standard

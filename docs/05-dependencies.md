@@ -555,10 +555,13 @@ platform's plugin with the platform's.
 - Within one resolution, requests merge as before, and two requests no merge
   reconciles are refused, naming the program (`in the build program of
   app@0.1.0`) and every requester.
-- A build program's request takes the newest version the target or another
-  program already holds that the request admits, and the newest the index holds
-  only when none does; the target is resolved first. A build without a conflict
-  keeps the versions, and the build programs' identities, it had before.
+- A build program keeps the version it holds while its requests admit it, and
+  otherwise takes the newest version the target or another program holds that
+  all its requests admit, and the newest the index holds only when none does.
+  The target is resolved first, the layers and capability defaults its platform
+  adds included, and a program before the programs of the packages it holds. A
+  build without a conflict keeps the versions, and the build programs'
+  identities, it had before.
 - Two versions of one package coexist only between programs: the project's
   `build.mcpp` may use `mcpp.plugins` 0.22.1 while its platform's plugin uses
   0.26.1. `mcpp.lock` records the second version as an entry of its own,

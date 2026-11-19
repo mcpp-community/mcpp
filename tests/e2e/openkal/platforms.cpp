@@ -200,7 +200,9 @@ int main() {
         // the version the target holds where it admits it (design 2026-11-19 §21 A1), in
         // whichever order the two are declared. A the target's request first; B the build
         // program's first (nothing is merged or replaced, and the lock has one version); C a
-        // package only a build program uses is not bound.
+        // package only a build program uses is not bound; D the program asks twice, from two
+        // of its libraries, and keeps the target's version (each request alone admits the
+        // index's newest, which a merge of the program's own ranges took).
         const auto tmp = s::case_dir();
         s::project(tmp / "plat", {{"mcpp.toml", "[package]\nname    = \"group-platform\"\nversion = \"0.1.0\"\n\n[platform]\ntargets = [\"x86_64-linux-gnu\", \"aarch64-linux-gnu\", \"aarch64-macos\", \"x86_64-macos\"]\n\n[platform.versions]\nfam = \"1.1.0\"\n"}});
         const auto library = [&](std::string_view name, std::string_view dependencies) {
@@ -209,6 +211,7 @@ int main() {
         };
         const std::string fam = "[indices]\nacme = { path = \"../proj/local-index\" }\n\n[dependencies.acme]\nfam = \"^1.0.0\"\n";
         library("tool", fam);       // a build program's library
+        library("tool2", fam);      // and another, asking the same
         library("inner", fam);      // reached by the target two edges down
         library("mid", "[dependencies]\ninner = { path = \"../inner\" }\n");
         const std::string_view unit = "export module fam;\nexport int fam_value() { return 0; }\n";
@@ -227,8 +230,8 @@ int main() {
                                        {".mcpp/.xlings/data/xpkgs/acme.fam/1.2.0/src/fam.cppm", std::string(unit)},
                                        {"build.mcpp", "import std;\nimport mcpp;\nint main() { return 0; }\n"},
                                        {"src/main.cpp", "int main() { return 0; }\n"}});
-        const auto use = [&](std::string_view dependencies) {
-            proj.write("mcpp.toml", std::format("[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"local-index\" }}\n\n[target.'cfg(any(linux, macos))']\nplatform = {{ path = \"../plat\" }}\n\n{}\n[build-dependencies]\ntool = {{ path = \"../tool\" }}\n\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", dependencies));
+        const auto use = [&](std::string_view dependencies, std::string_view tools = "tool = { path = \"../tool\" }\n") {
+            proj.write("mcpp.toml", std::format("[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"local-index\" }}\n\n[target.'cfg(any(linux, macos))']\nplatform = {{ path = \"../plat\" }}\n\n{}\n[build-dependencies]\n{}\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", dependencies, tools));
             fs::remove(proj.at("mcpp.lock"));
             return proj.mcpp({"build", "--configure-only"}, inherited);
         };
@@ -247,6 +250,11 @@ int main() {
         r = use("");
         expect(fatal(e2e::succeeded(r))) << "C: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "fam ^1.0.0 → v1.2.0"))) << "C: a package of a build program alone was bound by the group: " << s::text(r);
+        // D: two libraries of the program ask; the second keeps the version the first took.
+        r = use("[dependencies.acme]\nfam = \"^1.0.0\"\n", "tool = { path = \"../tool\" }\ntool2 = { path = \"../tool2\" }\n");
+        expect(fatal(e2e::succeeded(r))) << "D: " << s::text(r);
+        expect(fatal(!e2e::contains(proj.read("mcpp.lock"), "version = \"1.2.0\""))) << "D: the program's second request moved it off the target's version: " << proj.read("mcpp.lock");
+        expect(fatal(s::no_line(proj.read("mcpp.lock"), R"(fam\+b[0-9a-f]{12})"))) << "D: the lock records a second version for the program: " << proj.read("mcpp.lock");
     };
 
     "972 a project's program and its platform's plugin take two versions of one library"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
@@ -285,6 +293,44 @@ int main() {
         const auto lock = proj.read("mcpp.lock");
         expect(fatal(e2e::contains(lock, "version = \"1.0.0\"") && e2e::contains(lock, "version = \"1.2.0\""))) << "the lock does not record both versions: " << lock;
         expect(fatal(s::has_line(lock, R"re(^\[package\."(acme\.)?fam\+b[0-9a-f]{12}"\])re") && s::has_line(lock, R"re(^programs = \["build:[^"]+"\])re"))) << "the second version is not an entry naming its program: " << lock;
+    };
+
+    "972 the target resolves before its build programs, a package's default provider included"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
+        // Design 2026-11-19 §21 A1, SPEC-002 §3.6. The target's library requires a capability
+        // whose default provider is acme.fam, which the platform's version group pins at 1.1.0;
+        // the project's build program asks for acme.fam itself. The default joins the target in
+        // the platform's round, after the target's first walk: the program resolves after it,
+        // takes the target's 1.1.0 (the program exits 0 only on 1.1.0's value), and its fam is no
+        // provider of the target's capability. The lock holds one version.
+        const auto tmp = s::case_dir();
+        s::project(tmp / "plat", {{"mcpp.toml", "[package]\nname    = \"group-platform\"\nversion = \"0.1.0\"\n\n[platform]\ntargets = [\"x86_64-linux-gnu\", \"aarch64-linux-gnu\", \"aarch64-macos\", \"x86_64-macos\"]\n\n[platform.versions]\nfam = \"1.1.0\"\n"}});
+        s::project(tmp / "lib", {{"mcpp.toml", "[package]\nname     = \"lib\"\nversion  = \"0.1.0\"\nrequires = [\"acme-clock\"]\n\n[indices]\nacme = { path = \"../proj/local-index\" }\n\n[defaults.\"acme-clock\"]\n\"*\" = \"acme.fam@^1.0.0\"\n\n[build]\nsources = [\"src/lib.cppm\"]\n\n[targets.lib]\nkind = \"lib\"\n"},
+                                 {"src/lib.cppm", "export module lib;\nexport int lib_value() { return 1; }\n"}});
+        s::project proj(tmp / "proj", {{"local-index/pkgs/a/acme.fam.lua", R"(package = {
+    spec = "1", namespace = "acme", name = "acme.fam",
+    description = "default-provider fixture", licenses = {"MIT"}, type = "package",
+    mcpp = "mcpp.toml",
+    xpm = {
+        linux  = { ["1.2.0"] = { url = "u", sha256 = "0" }, ["1.1.0"] = { url = "u", sha256 = "0" } },
+        macosx = { ["1.2.0"] = { url = "u", sha256 = "0" }, ["1.1.0"] = { url = "u", sha256 = "0" } },
+    },
+}
+)"},
+                                       {"build.mcpp", "import mcpp;\nimport fam;\nint main() { return fam_value() == 110 ? 0 : 1; }\n"},
+                                       {"src/main.cpp", "import lib;\nint main() { return lib_value() == 1 ? 0 : 1; }\n"},
+                                       {"mcpp.toml", "[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n\n[indices]\nacme = { path = \"local-index\" }\n\n[target.'cfg(any(linux, macos))']\nplatform = { path = \"../plat\" }\n\n[dependencies]\nlib = { path = \"../lib\" }\n\n[build-dependencies.acme]\nfam = \"^1.0.0\"\n\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}});
+        for (auto [version, value] : {std::pair{"1.1.0", 110}, std::pair{"1.2.0", 120}}) {
+            proj.write(std::format(".mcpp/.xlings/data/xpkgs/acme.fam/{}/mcpp.toml", version),
+                       std::format("[package]\nnamespace = \"acme\"\nname      = \"fam\"\nversion   = \"{}\"\nprovides  = [\"acme-clock\"]\n\n[build]\nsources = [\"src/fam.cppm\"]\n\n[targets.fam]\nkind = \"lib\"\n", version));
+            proj.write(std::format(".mcpp/.xlings/data/xpkgs/acme.fam/{}/src/fam.cppm", version),
+                       std::format("export module fam;\nexport int fam_value() {{ return {}; }}\n", value));
+        }
+        auto r = proj.mcpp({"build"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "the build program did not take the target's version: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "for acme-clock of lib"))) << "the target's capability was answered by the build program's package: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(^ *build\.mcpp proj .* ran )"))) << "the project's program did not run: " << s::text(r);
+        const auto lock = proj.read("mcpp.lock");
+        expect(fatal(e2e::contains(lock, "version = \"1.1.0\"") && !e2e::contains(lock, "version = \"1.2.0\""))) << "the lock does not hold the one version: " << lock;
     };
 
     "956 a build program's library reads its tables by this machine's row"_test[s::musl][s::elf][s::fresh_sandbox] = [] {

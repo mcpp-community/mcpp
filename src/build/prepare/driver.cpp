@@ -91,9 +91,29 @@ prepare_build(bool print_fingerprint,
     // A run that plans writes the global cache (its declared effects say so),
     // including the answers a compiler probe and the provider's handshake keep.
     mcpp::effects::note_writes_global_cache();
-    if (!overrides.toolchain_statement.empty())
-        return prepare_build_pass(print_fingerprint, includeDevDeps,
-                                  std::move(extraTargets), std::move(overrides));
+    // A restart a pass asks is answered by this call or by none: one left for
+    // a later call (a refused pass that stated the toolchain, a sub-build's)
+    // read as that call's own skipped a release its build never took.
+    struct Unanswered {
+        ~Unanswered() {
+            (void)take_toolchain_restart();
+            (void)take_platform_restart();
+            (void)take_platform_series_restart();
+            (void)take_target_restart();
+        }
+    } unanswered;
+    // The pass that states the toolchain takes a platform series below a
+    // release its version group refused, as the first pass does; the other
+    // restarts are the first pass's to ask.
+    if (!overrides.toolchain_statement.empty()) {
+        auto pass = prepare_build_pass(print_fingerprint, includeDevDeps, extraTargets, overrides);
+        auto skip = take_platform_series_restart();
+        if (pass || !skip || overrides.platform_series_skipped.size() >= kMaxSeriesSkips) return pass;
+        overrides.platform_series_skipped.push_back(std::move(*skip));
+        overrides.platform_root.clear();
+        return prepare_build(print_fingerprint, includeDevDeps, std::move(extraTargets),
+                             std::move(overrides));
+    }
     auto first = prepare_build_pass(print_fingerprint, includeDevDeps, extraTargets, overrides);
     if (first) {
         (void)take_toolchain_restart();
@@ -129,8 +149,7 @@ prepare_build(bool print_fingerprint,
     if (!restart) return first;
     overrides.toolchain_statement = std::move(restart->first);
     overrides.bootstrap_spec      = std::move(restart->second);
-    return prepare_build_pass(print_fingerprint, includeDevDeps,
-                              std::move(extraTargets), std::move(overrides));
+    return prepare_build(print_fingerprint, includeDevDeps, std::move(extraTargets), std::move(overrides));
 }
 
 namespace {
@@ -260,6 +279,9 @@ prepare_build_pass(bool print_fingerprint,
 std::expected<std::vector<mcpp::modgraph::PackageRoot>, std::string>
 resolve_graph(bool includeDevDeps, BuildOverrides overrides) {
     read_build_programs_marker(overrides);
+    // The overrides as asked: the phases below fill some in (the target row,
+    // a workspace's `--features`), and a pass taken again starts from these.
+    const auto requested = overrides;
     auto statePtr = std::make_unique<PrepareState>(/*print_fingerprint=*/false, includeDevDeps,
                                                    std::vector<mcpp::manifest::Target>{}, std::move(overrides));
     PrepareState& state = *statePtr;
@@ -283,11 +305,11 @@ resolve_graph(bool includeDevDeps, BuildOverrides overrides) {
         // The graph a build would plan: a platform series below the releases
         // the build cannot use (§21 A5), as `prepare_build` takes it.
         if (auto skip = take_platform_series_restart();
-            skip && state.overrides.platform_series_skipped.size() < kMaxSeriesSkips) {
-            auto overrides = state.overrides;
-            overrides.platform_series_skipped.push_back(std::move(*skip));
-            overrides.platform_root.clear();
-            return resolve_graph(includeDevDeps, std::move(overrides));
+            skip && requested.platform_series_skipped.size() < kMaxSeriesSkips) {
+            auto again = requested;
+            again.platform_series_skipped.push_back(std::move(*skip));
+            again.platform_root.clear();
+            return resolve_graph(includeDevDeps, std::move(again));
         }
         return std::unexpected(r.error());
     }
