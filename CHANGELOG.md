@@ -82,6 +82,14 @@
 
 ### Fixed
 
+- On a Windows host the `std` module of a base package that supplies libstdc++ (the Hurd and
+  Haiku rows of mcpp-platforms) was precompiled with neither the base's `include_dirs` nor
+  `-nostdinc++`, and stopped at `'bits/stdc++.h' file not found`: the words that close the
+  clang driver's own search and name the C++ layer's headers were written only when the
+  toolchain payload had a driver configuration file to bypass, and the Windows LLVM payload has
+  none. They follow the layers on every host: `-nostdinc++` and the base's directories for a
+  base's C++ layer, `-stdlib=` naming its library, and `-nostdinc++` and `-nostdlibinc` for
+  the layers the graph supplies; only `--no-default-config` follows the file (mcpp#965).
 - A header edit rebuilt nothing on a Visual Studio without English resources: the files a
   cl.exe compile read came from its `/showIncludes` lines, whose prefix is a string of the
   installed language (`注意: 包含文件:`), and `VSLANG=1033` cannot make it English (mcpp#970).

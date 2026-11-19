@@ -992,7 +992,8 @@ layer's host locations.** `mcpp.toolchain.hostflags` reads each layer's origin
 and closes the corresponding driver search: a graph-supplied `c-abi` drops the
 compiler's own C-library search path (`-nostdlibinc`), and a graph-supplied
 `c++-abi` drops its C++ search path (`-nostdinc++`) — both independently of
-whether the *other* layer is also the graph's. Before this, a package that
+whether the *other* layer is also the graph's, and of whether the toolchain
+payload has a driver configuration file beside it *(2026.11.19.1+, mcpp#965)*. Before this, a package that
 happened to compile only because a host header filled a gap the graph did not
 would build on one machine and fail, differently, on another; the two
 determined outcomes now are "found in the graph" and "not found", never "found
@@ -1321,7 +1322,12 @@ platform's or a provider's `sysroot`), the base answers the layers it states:
 - the report shows them as `prebuilt`, with the base's `<name>@<version>`;
 - the C++ headers, the `std` module and the C++ libraries of the link are the base's; the
   toolchain payload's C++ runtime and its archives, built for the payload's own host, take no
-  part. A base that states no `std-module` leaves the build without `import std`;
+  part. A base that states no `std-module` leaves the build without `import std`. Under clang
+  every unit and the `std` module's precompile carry `-nostdinc++` and the base's
+  `include_dirs`, with `-stdlib=` naming the layer's library, on every host: whether the
+  payload has a driver configuration file beside it (the Windows LLVM payload has none)
+  decides only whether `--no-default-config` is written *(2026.11.19.1+; before, a Windows
+  host gave a libstdc++ base's `std` module neither, mcpp#965)*;
 - a package that supplies the `c++-abi` layer instead (a dependency's `provides`, a platform's
   or a provider's `layers`) takes the base's place for that layer alone: the base's C++ headers
   leave the compile and its `ldflags` leave the link, so an image has one C++ runtime, while
