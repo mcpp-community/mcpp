@@ -62,6 +62,9 @@
 - A build program that pins `mcpp.plugins` below 0.26 shares no host graph with
   `openkal-platform@0.31.0`, whose build program links `mcpp.plugins` 0.26.1: such a pin is
   refused as irreconcilable on the rows openkal serves, and moves to 0.26.1.
+- The launchers `mcpp pack` writes (`bin/<name>.exe`, the single-file launcher) build on
+  `mcpplibs.os` 0.4.6, the release mcpp builds on, whose openkal is the one the platform of
+  mcpp's openkal rows names; `.github/tools/check_version_pins.sh` holds the two equal.
 
 ### Fixed
 

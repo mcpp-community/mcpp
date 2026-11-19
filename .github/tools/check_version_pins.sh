@@ -2,7 +2,7 @@
 #
 # Version / pin drift guard.
 #
-# Two invariants that used to live only in a comment:
+# Three invariants that used to live only in a comment:
 #
 #   1. Every xlings version pinned anywhere in .github/ equals
 #      `pinned::kXlingsVersion` in src/provider/xlings/xlings.cppm — which is the version
@@ -10,6 +10,8 @@
 #      tarball as <install>/registry/bin/xlings.
 #
 #   2. mcpp's own version is identical in all four places that carry it.
+#
+#   3. The pack launchers build on the mcpplibs.os release mcpp builds on.
 #
 # Why this exists: src/provider/xlings/xlings.cppm used to say "keep in lock-step with the
 # XLINGS_VERSION pins in release.yml / cross-build-test.yml / ci-linux-e2e.yml"
@@ -173,7 +175,23 @@ if [ -n "$v_xl" ] && [ -n "$v_toml" ] && [ "$v_xl" != "$v_toml" ]; then
     || bad "bootstrap pin '$v_xl' is NEWER than the version being built ('$v_toml') — CI would try to install an unreleased mcpp"
 fi
 
+# ── 3. the OS library of the pack launchers ───────────────────────────────
+#
+# The launchers `mcpp pack` writes build on the mcpplibs.os release mcpp builds
+# on itself (design 2026-11-07, D20). The launcher's copy sat on 0.4.4 when mcpp
+# and its default platform moved to openkal 0.26, and every Windows launcher was
+# refused for its openkal (e2e 988, 2026.11.19.1's CI).
+
+os_toml=$(awk -F '"' '/^mcpplibs\.os[[:space:]]*=/{print $2; exit}' mcpp.toml)
+os_launcher=$(grep -oE 'kLauncherOs[[:space:]]*=[[:space:]]*"[^"]+"' src/pack/distribution.cppm \
+              | grep -oE '"[^"]+"' | tr -d '"' | head -1)
+note "mcpplibs.os: mcpp builds on $os_toml, the pack launchers on $os_launcher"
+[ -n "$os_toml" ] && [ -n "$os_launcher" ] \
+  || bad "could not read mcpplibs.os from mcpp.toml or kLauncherOs from src/pack/distribution.cppm"
+[ "$os_toml" = "$os_launcher" ] \
+  || bad "src/pack/distribution.cppm builds the launchers on mcpplibs.os '$os_launcher' but mcpp.toml builds mcpp on '$os_toml'"
+
 if [ "$fail" = 0 ]; then
-  echo "OK: xlings pins all at $XLINGS_EXPECTED; building mcpp $v_toml, bootstrapping from $v_xl" >&2
+  echo "OK: xlings pins all at $XLINGS_EXPECTED; building mcpp $v_toml, bootstrapping from $v_xl; mcpplibs.os $os_toml" >&2
 fi
 exit "$fail"
