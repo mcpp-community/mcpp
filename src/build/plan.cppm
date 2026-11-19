@@ -617,6 +617,14 @@ struct BuildPlan {
     // the root package's, and then the BMI directory is flat and no command
     // names a map.
     std::map<std::string, ModuleScope, std::less<>> moduleScopes;
+    // The package instances this plan compiles, as `<package>/<digest>` below
+    // `obj/` and the BMI directory (design 2026-11-19 §11.1). Recorded with the
+    // time a plan last used each (`instances.tsv`), which `mcpp clean --stale`
+    // reads to remove an instance no build has used within its window.
+    // Keyed by the package's qualified name; the value is `<slug>/<digest>`.
+    // A GCC BMI records its imports at their instance paths, so the build
+    // cache keys a package's entry by its instance too (`bmiPathConvention`).
+    std::map<std::string, std::string> instanceDirs;
     std::filesystem::path           stdCompatObjectPath; // absolute path to prebuilt std.compat.o
     std::filesystem::path           scanDepsPath;    // clang-scan-deps binary (Clang only)
     // THE TARGET'S PLATFORM (SPEC-013): the merged statement, its flags for
@@ -899,6 +907,23 @@ TargetFileAnswer resolve_target_file(const BuildPlan& plan, std::string_view nam
 // `.rsp` in response-file quoting. Absolute and generic, as every path token is.
 std::filesystem::path objects_list_path(const BuildPlan& plan, std::string_view output,
                                         std::string_view suffix);
+
+// The record of a configuration's package instances (design 2026-11-19 §11.1):
+// `<outputDir>/instances.tsv`, one `<package>/<digest>\t<seconds>\t<last>`
+// line per instance: the time a build last used it, and whether the plan that
+// wrote the build graph uses it. `record_instances` marks a plan's set as the
+// last one and stamps it; `touch_last_instances` restamps that set for a build
+// that runs the graph without planning (the fast path), writing only when a
+// stamp is an hour old. `mcpp clean` keeps the last set whatever the window.
+struct InstanceUse {
+    std::int64_t when = 0;
+    bool         last = false;
+};
+std::map<std::string, InstanceUse> read_instances(const std::filesystem::path& outputDir);
+void write_instances(const std::filesystem::path& outputDir,
+                     const std::map<std::string, InstanceUse>& instances);
+void record_instances(const std::filesystem::path& outputDir, const std::vector<std::string>& used);
+void touch_last_instances(const std::filesystem::path& outputDir);
 
 // Replaces `${mcpp.objects:<name>}` and `${mcpp.objects_rsp:<name>}` in `s`
 // with `objects_list_path` of the unit `resolve_target_file` names, records the
@@ -4621,6 +4646,100 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                      && !target.is_freestanding();
     }
 
+    // A PACKAGE INSTANCE'S OBJECTS LIE IN A DIRECTORY ITS CONFIGURATION NAMES
+    // (design 2026-11-19 §11.1, mcpp#953 D5): `obj/<package>/<digest>/`, and its
+    // BMIs in `<bmi dir>/<package>/<digest>/`. A separate directory level and
+    // not `<package>@<digest>`: ninja shell-quotes an output holding a
+    // character outside `A-Za-z0-9_+,-./`, and a rule that writes `"$out.d"`
+    // then names a file with quotes in it (measured). A build directory is named by
+    // the configuration's lineage, which holds no package's features, and one
+    // command unifies a shared package's features over its selection
+    // (docs/07): `mcpp test` adds what the dev-dependencies enable, `-p X` and
+    // `-p Y` request different unions. One object path then stood for two
+    // command lines, and each switch compiled the package again (measured:
+    // 43 such edges between two members of a 31-member workspace; the
+    // fixture of e2e 953 recompiled its shared package at every switch). The
+    // digest covers what decides a unit's command line -- the package's own
+    // include directories and flags, its features' defines among them -- and
+    // the digests of the packages whose modules it imports, whose BMI paths
+    // its command names. It holds no version and no compiler build, so an
+    // upgrade keeps the paths. The root's units keep their place: one plan
+    // has one root, and its command line is the configuration's.
+    const auto rootPackageName = manifest.package.virtualRoot
+        ? std::string{} : qualified_package_name(manifest);
+    std::map<std::string, std::string> instanceDirs;   // package -> `<slug>/<digest>`
+    {
+        std::map<std::string, std::string> own;                    // package -> its units' flags
+        std::map<std::string, std::set<std::string>> importsOf;    // package -> providers
+        // A directory is spelled relative to the store or the project that
+        // holds it: the digest names a directory a cached BMI records, so it
+        // is the same on every machine that shares the entry.
+        auto portable = [&](const std::filesystem::path& d) {
+            for (auto const& store : storeRoots)
+                if (auto rel = d.lexically_relative(store); !rel.empty() && !rel.generic_string().starts_with(".."))
+                    return "<store>/" + rel.generic_string();
+            if (auto rel = d.lexically_relative(projectRoot); !rel.empty() && !rel.generic_string().starts_with(".."))
+                return "<project>/" + rel.generic_string();
+            return d.generic_string();
+        };
+        auto flags_text = [&](const CompileUnit& cu) {
+            std::string t;
+            for (auto const& d : cu.localIncludeDirs) t += "I" + portable(d) + "\n";
+            for (auto const& d : cu.localIncludeDirsAfter) t += "A" + portable(d) + "\n";
+            for (auto const& f : cu.packageCflags) t += "C" + f + "\n";
+            for (auto const& f : cu.packageCxxflags) t += "X" + f + "\n";
+            for (auto const& f : cu.packageAsmflags) t += "S" + f + "\n";
+            return t;
+        };
+        auto providers_of = [&](const CompileUnit& cu) {
+            std::set<std::string> out;
+            for (auto const& imp : cu.imports)
+                if (auto provider = mcpp::modgraph::resolve_provider(graph, cu.packageName, imp))
+                    out.insert(graph.units[*provider].packageName);
+            out.erase(cu.packageName);
+            return out;
+        };
+        for (auto const& cu : plan.compileUnits) {
+            if (cu.packageName.empty() || cu.packageName == rootPackageName || cu.testUnit) continue;
+            own[cu.packageName] += cu.object.generic_string() + "\n" + flags_text(cu);
+            importsOf[cu.packageName].merge(providers_of(cu));
+        }
+        std::map<std::string, std::string> digest;
+        std::set<std::string> visiting;
+        std::function<std::string(const std::string&)> digest_of = [&](const std::string& pkg) {
+            if (auto it = digest.find(pkg); it != digest.end()) return it->second;
+            if (!own.contains(pkg) || !visiting.insert(pkg).second) return std::string{};
+            std::string text = own[pkg];
+            for (auto const& dep : importsOf[pkg]) text += "D" + dep + "=" + digest_of(dep) + "\n";
+            visiting.erase(pkg);
+            return digest[pkg] = mcpp::toolchain::hash_string(text).substr(0, 8);
+        };
+        for (auto const& [pkg, text] : own)
+            instanceDirs[pkg] = sanitize(pkg) + "/" + digest_of(pkg);
+        plan.instanceDirs = instanceDirs;
+    }
+    {
+        std::map<std::filesystem::path, std::filesystem::path> moved;
+        auto instance_object = [&](const CompileUnit& cu) -> std::optional<std::filesystem::path> {
+            auto it = instanceDirs.find(cu.packageName);
+            if (it == instanceDirs.end()) return std::nullopt;
+            auto part = cu.object.begin();
+            if (part == cu.object.end() || *part != "obj" || ++part == cu.object.end()
+                || *part != std::filesystem::path(sanitize(cu.packageName)))
+                return std::nullopt;
+            return std::filesystem::path("obj") / it->second / cu.object.lexically_relative(
+                std::filesystem::path("obj") / sanitize(cu.packageName));
+        };
+        for (auto& cu : plan.compileUnits)
+            if (auto to = instance_object(cu)) {
+                moved.emplace(cu.object, *to);
+                cu.object = *to;
+            }
+        for (auto& lu : plan.linkUnits)
+            for (auto& o : lu.objects)
+                if (auto it = moved.find(o); it != moved.end()) o = it->second;
+    }
+
     // EVERY PACKAGE'S BMIS LIE BELOW ITS OWN DIRECTORY, EXCEPT THE ROOT'S (pack
     // drive and selection design 2026-10-01, B1), as object files have since
     // mcpp#233. A module name identifies one module within one program
@@ -4653,8 +4772,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             return out;
         };
         auto bmi_file = [&](std::string_view provider, std::string_view name) {
-            return provider == rootPackage ? basename(name)
-                                           : std::string(provider) + "/" + basename(name);
+            if (provider == rootPackage) return basename(name);
+            auto it = instanceDirs.find(std::string(provider));
+            return (it == instanceDirs.end() ? std::string(provider) : it->second) + "/" + basename(name);
         };
         auto bmi_path = [&](std::string_view provider, std::string_view name) {
             return std::string(traits.bmiDir) + "/" + bmi_file(provider, name);
@@ -4844,6 +4964,60 @@ bool substitute_objects_tokens(const BuildPlan& plan, std::string& s, std::strin
         }
     }
     return used;
+}
+
+std::map<std::string, InstanceUse> read_instances(const std::filesystem::path& outputDir) {
+    std::map<std::string, InstanceUse> out;
+    std::ifstream in(outputDir / "instances.tsv", std::ios::binary);
+    for (std::string line; std::getline(in, line);) {
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        const auto tab2 = line.find('\t', tab + 1);
+        InstanceUse use;
+        std::from_chars(line.data() + tab + 1,
+                        line.data() + (tab2 == std::string::npos ? line.size() : tab2), use.when);
+        use.last = tab2 != std::string::npos && line.compare(tab2 + 1, std::string::npos, "1") == 0;
+        out[line.substr(0, tab)] = use;
+    }
+    return out;
+}
+
+void write_instances(const std::filesystem::path& outputDir,
+                     const std::map<std::string, InstanceUse>& instances) {
+    std::string text;
+    for (auto const& [dir, use] : instances)
+        text += std::format("{}\t{}\t{}\n", dir, use.when, use.last ? 1 : 0);
+    std::error_code ec;
+    std::filesystem::create_directories(outputDir, ec);
+    const auto file = outputDir / "instances.tsv";
+    auto tmp = file;
+    tmp += std::format(".{:x}.tmp", std::random_device{}());
+    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) std::filesystem::remove(tmp, ec);
+}
+
+namespace {
+std::int64_t now_seconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
+void record_instances(const std::filesystem::path& outputDir, const std::vector<std::string>& used) {
+    auto instances = read_instances(outputDir);
+    for (auto& [dir, use] : instances) use.last = false;
+    for (auto const& dir : used) instances[dir] = {now_seconds(), true};
+    if (!instances.empty()) write_instances(outputDir, instances);
+}
+
+void touch_last_instances(const std::filesystem::path& outputDir) {
+    auto instances = read_instances(outputDir);
+    const auto now = now_seconds();
+    bool changed = false;
+    for (auto& [dir, use] : instances)
+        if (use.last && now - use.when >= 3600) { use.when = now; changed = true; }
+    if (changed) write_instances(outputDir, instances);
 }
 
 std::filesystem::path objects_list_path(const BuildPlan& plan, std::string_view output,

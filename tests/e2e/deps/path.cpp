@@ -51,7 +51,8 @@ E2E path{"path", [] {
         for (const auto& f : s::find_files(b.at("target"), R"(build\.ninja)"))
             if (!f.generic_string().contains("/.build-mcpp/")) ninja += s::read_file(f);
         expect(s::has_line(ninja, "mylibA.*greet.cppm")) << "ninja missing dep package source";
-        expect(s::has_line(ninja, "gcm.cache/[^ /]*mylibA/mylibA.greet.gcm")) << "ninja missing dep BMI";
+        // Below the package's instance directory (design 2026-11-19 §11.1).
+        expect(s::has_line(ninja, "gcm.cache/[^ /]*mylibA/[0-9a-f]{8}/mylibA.greet.gcm")) << "ninja missing dep BMI";
         // A path whose manifest names another package.
         const auto wrong = s::case_dir() / "elsewhere/wrongname";
         fs::create_directories(wrong.parent_path());

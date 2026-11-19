@@ -600,6 +600,50 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(s::lacks(s::text(r), "shared.cppm") && s::lacks(s::text(r), "mid.cppm")) << "B: back at the first member a package was compiled again: " << s::text(r);
     };
+    "953 a package compiled under two feature sets keeps both instances"_test[s::gcc][s::elf] = [] {
+        // mcpp#953 D5, design 2026-11-19 §11.1. `mcpp test` enables a feature of a shared package
+        // that `mcpp build` does not. Each instance has its own directory, `obj/<package>/<digest>/`,
+        // so alternating the two commands compiles each instance once (A). `clean --report` lists
+        // the instances (B); `clean --stale --older-than 0` removes the ones the last plan did not
+        // use and keeps the others (C).
+        const auto tmp = s::case_dir();
+        s::project ws(tmp / "ws", {
+            {"mcpp.toml", "[workspace]\nmembers = [\"util\", \"core\", \"app\"]\n"},
+            {"util/mcpp.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n\n[features]\nextra = { defines = [\"UTIL_EXTRA=1\"] }\n\n[targets.util]\nkind = \"lib\"\n"},
+            {"util/src/util.cppm", "export module ws953.util;\nexport int util_value() {\n#ifdef UTIL_EXTRA\n  return 2;\n#else\n  return 1;\n#endif\n}\n"},
+            {"core/mcpp.toml", "[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n[dependencies]\nutil = { path = \"../util\" }\n\n[targets.core]\nkind = \"lib\"\n"},
+            {"core/src/core.cppm", "export module ws953.core;\nimport ws953.util;\nexport int core_value() { return util_value() + 10; }\n"},
+            {"app/mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = { path = \"../core\" }\n\n"
+                              "[dev-dependencies]\nutil = { path = \"../util\", features = [\"extra\"] }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+            {"app/src/main.cpp", "import ws953.core;\nint main() { return core_value() == 11 ? 0 : 1; }\n"},
+            {"app/tests/t.cpp", "import ws953.core;\nint main() { return core_value() == 12 ? 0 : 1; }\n"},
+        });
+        auto stamps = [&] {
+            std::vector<std::pair<std::string, long long>> out;
+            for (auto const& f : s::find_files(ws.at("target"), R"(util\.m\.o)"))
+                out.emplace_back(f.generic_string(), fs::last_write_time(f).time_since_epoch().count());
+            std::ranges::sort(out);
+            return out;
+        };
+        expect(fatal(e2e::succeeded(ws.mcpp({"build", "-p", "app"})))) << "A: the first build failed";
+        auto r = ws.mcpp({"test", "-p", "app"});
+        expect(fatal(e2e::succeeded(r))) << "A: the first test failed (the feature did not reach the test build): " << s::text(r);
+        const auto before = stamps();
+        expect(fatal(before.size() == 2u)) << "A: the shared package does not have two instances: " << before.size();
+        for (int round = 0; round < 2; ++round) {
+            expect(fatal(e2e::succeeded(ws.mcpp({"build", "-p", "app"})))) << "A: a build failed";
+            expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "app"})))) << "A: a test failed";
+        }
+        expect(stamps() == before) << "A: alternating build and test compiled an instance again";
+        r = ws.mcpp({"clean", "--report"});
+        expect(fatal(e2e::succeeded(r))) << "B: clean --report failed: " << s::text(r);
+        expect(s::count_lines(s::text(r), "obj/util/") == 2u) << "B: the report does not list both instances: " << s::text(r);
+        r = ws.mcpp({"clean", "--stale", "--older-than", "0"});
+        expect(fatal(e2e::succeeded(r))) << "C: clean --stale failed: " << s::text(r);
+        expect(stamps().size() == 1u) << "C: the instance the last plan did not use was kept, or the used one removed: " << s::text(r);
+        expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "app"})))) << "C: the build after the sweep failed";
+    };
+
     "954 the workspace's abi table is the root's statement"_test[s::gcc][s::elf] = [] {
         // mcpp#954. A workspace whose root is only `[workspace]` states the build's abi once, in
         // `[workspace.target.<selector>.abi]`; its members inherit the row and no member is told

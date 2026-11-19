@@ -623,7 +623,14 @@ member that several members use is compiled once.
   declares it, and is refused when no selected member declares it. A package
   that several members of one configuration use is compiled once, with the
   union of the features they ask for; a package that members of two
-  configurations use is compiled once in each.
+  configurations use is compiled once in each. Each package instance has a
+  directory of its own, `obj/<package>/<digest>/`, the digest covering its
+  include directories and flags (its features' defines among them) and the
+  digests of the packages whose modules it imports: when `mcpp test` or
+  another selection asks a package for other features, that instance is
+  compiled beside the first, and alternating the commands compiles neither
+  again (2026.11.19.1+; before that release one directory held one instance,
+  and each switch recompiled it, mcpp#953).
 - **The root's declarations.** Each selected member declares as the root did
   when it was planned alone: its `path` or `git` override of a dependency wins
   over another package's declaration, `linkage` on its dependency edges is
@@ -736,8 +743,9 @@ myproject/
 ├── mcpp.lock                               # one lock for the workspace
 └── target/<triple>/<configuration>/       # named by the configuration's lineage (§5.5)
     ├── build.ninja, compile_commands.json  # one graph and one database per configuration
-    ├── obj/<package>/                      # intermediate objects of every package
-    ├── gcm.cache/<package>/                # each package's BMIs (pcm.cache with clang)
+    ├── obj/<package>/<digest>/             # intermediate objects of each package instance
+    ├── gcm.cache/<package>/<digest>/       # each instance's BMIs (pcm.cache with clang)
+    ├── instances.tsv                       # when a build last used each instance
     ├── modmap/                             # the module maps of the units that import them
     └── bin/
         ├── server/                         # a member's products: bin/<package name>/

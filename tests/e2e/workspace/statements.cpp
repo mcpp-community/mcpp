@@ -71,15 +71,20 @@ E2E statements{"statements", [] {
         const auto tmp = s::case_dir();
         auto profile = [](std::string_view mark) { return std::format("[profile.release]\ncxxflags = [\"-DMARK_PROFILE_{}\"]\n", mark); };
         // The variables of the graph and the build statement of `object` with its indented lines.
+        // A member's objects lie below its instance directory, `obj/<member>/<digest>/`
+        // (design 2026-11-19 §11.1): `object` names the path without it.
         auto edge = [](const fs::path& root, std::string_view object) {
             const auto g = graphs(root);
             expect(fatal(!g.empty())) << "no build.ninja";
             std::string vars, stmt;
             bool in = false;
+            const auto slash = object.find('/', object.find('/') + 1);
+            const std::regex named{"^build " + std::string(object.substr(0, slash + 1)) + "([0-9a-f]{8}/)?"
+                                   + std::string(object.substr(slash + 1))};
             std::istringstream text(s::read_file(g.front()));
             for (std::string l; std::getline(text, l);) {
                 if (std::regex_search(l, std::regex{"^(cxxflags|cflags) *="})) vars += l + "\n";
-                if (l.starts_with("build " + std::string(object))) { in = true; stmt += l + "\n"; continue; }
+                if (std::regex_search(l, named)) { in = true; stmt += l + "\n"; continue; }
                 if (in && l.starts_with("  ")) { stmt += l + "\n"; continue; }
                 in = false;
             }

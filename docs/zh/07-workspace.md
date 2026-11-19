@@ -542,7 +542,10 @@ mcpp test --workspace --workspace-timeout 1800   # whole fan-out (default 0 = no
   修改它们会重新编译该成员以及导入它的单元，构建目录保持不变。
 - **Feature。** `--features f` 在每个声明了 `f` 的被选成员中启用它；没有被选成员声明它时，
   命令被拒绝。同一配置中被多个成员使用的包只编译一次，feature 取它们请求的并集；被两个
-  配置的成员使用的包在每个配置中各编译一次。
+  配置的成员使用的包在每个配置中各编译一次。每个包实例有自己的目录 `obj/<包>/<摘要>/`，摘要覆盖
+  它的 include 目录与编译参数（含 feature 的宏）以及它所导入模块的各包的摘要：`mcpp test` 或另一
+  种选择为某个包请求其他 feature 时，该实例在原实例旁编译，交替执行这些命令时两者都不再重新编译
+  （2026.11.19.1+；此前一个目录只容纳一个实例，每次切换都重新编译，mcpp#953）。
 - **根的声明。** 每个被选成员都像单独规划时的根那样声明依赖：它对某个依赖的 `path` 或
   `git` 覆盖胜过其他包的声明，它依赖边上的 `linkage` 被采纳，它的注册表依赖参与索引刷新
   的判断（2026.9.30.2+）。两个被选成员对同一依赖的 checkout（种类或引用）或链接形态意见不一
@@ -618,8 +621,9 @@ myproject/
 ├── mcpp.lock                               # 整个工作空间一份锁文件
 └── target/<triple>/<configuration>/       # 以配置的谱系命名（§5.5）
     ├── build.ninja, compile_commands.json  # 每个配置一张图、一份数据库
-    ├── obj/<package>/                      # 各包的中间产物
-    ├── gcm.cache/<package>/                # 各包的 BMI（clang 为 pcm.cache）
+    ├── obj/<package>/<digest>/             # 各包实例的中间产物
+    ├── gcm.cache/<package>/<digest>/       # 各实例的 BMI（clang 为 pcm.cache）
+    ├── instances.tsv                       # 构建最近一次使用各实例的时间
     ├── modmap/                             # 导入它们的编译单元所读的模块映射
     └── bin/
         ├── server/                         # 成员的产物：bin/<包名>/

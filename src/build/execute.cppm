@@ -2745,6 +2745,8 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     // report attached to one path only appears or not depending on whether
     // build.ninja was up to date.
     mcpp::build::advice::report_and_clear(outputDir);
+    // The build used the instances of the plan that wrote this graph (§11.1).
+    mcpp::build::touch_last_instances(outputDir);
 
     if (elapsedOut) {
         *elapsedOut = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -8105,6 +8107,23 @@ export int clean_project(bool wipe_bmi) {
 // `target/` before that: none of them is read by a workspace build. A
 // member's `target/.build-mcpp/`, where its build program's outputs are, is
 // kept.
+// The package instances of one configuration directory, each with its
+// objects, BMIs and the days since a plan last used it (design 2026-11-19
+// §11.1), indented below the configuration's line.
+void report_instances(const std::filesystem::path& fpDir) {
+    using mcpp::bmi_cache::dir_size, mcpp::bmi_cache::human_bytes;
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (auto const& [dir, use] : mcpp::build::read_instances(fpDir)) {
+        const auto obj = dir_size(fpDir / "obj" / std::filesystem::path(dir));
+        std::uintmax_t bmi = 0;
+        for (auto const* area : {"gcm.cache", "pcm.cache", "ifc.cache"})
+            bmi += dir_size(fpDir / area / std::filesystem::path(dir));
+        std::println("  {:<42} {:>10} {:>10} {:>10}  used {}d ago{}", "obj/" + dir, human_bytes(obj), "",
+                     human_bytes(bmi), (now - use.when) / 86400, use.last ? ", by the last plan" : "");
+    }
+}
+
 // `mcpp clean --report` (mcpp#874): where target/ holds its bytes. Per
 // configuration directory, its objects, their split debug information, its BMIs
 // and its products; then the
@@ -8149,6 +8168,7 @@ export int clean_report() {
             std::println("{:<44} {:>10} {:>10} {:>10} {:>10} {:>10}",
                          triple + "/" + f->path().filename().string(), human_bytes(obj),
                          human_bytes(debug), human_bytes(bmi), human_bytes(bin), human_bytes(all));
+            report_instances(f->path());
         }
     }
     const auto bm = target / ".build-mcpp";
@@ -8266,6 +8286,54 @@ export void sweep_after_build() {
     }
 }
 
+// THE PACKAGE INSTANCES OF ONE CONFIGURATION (design 2026-11-19 §11.1): an
+// instance a plan has not used within the window -- its objects below
+// `obj/<package>/<digest>/` and its BMIs below the BMI directory -- is
+// removed, and its line leaves `instances.tsv`. The window is the one the
+// configurations are kept by; the last plan's instances are always kept.
+struct InstanceSweep {
+    std::uintmax_t bytes = 0;
+    std::size_t    removed = 0, failed = 0;
+};
+InstanceSweep sweep_instances(const std::filesystem::path& fpDir, const std::string& shown, bool dryRun,
+                              std::int64_t keepWithinSecs,
+                              const std::function<void(const std::string&)>& line) {
+    namespace fs = std::filesystem;
+    InstanceSweep out;
+    auto instances = mcpp::build::read_instances(fpDir);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    // The last plan's instances are kept as the recorded configuration is,
+    // whatever the window.
+    bool changed = false;
+    for (auto it = instances.begin(); it != instances.end();) {
+        if (it->second.last || now - it->second.when < keepWithinSecs) { ++it; continue; }
+        std::uintmax_t size = 0;
+        std::error_code rec;
+        for (auto const* area : {"obj", "gcm.cache", "pcm.cache", "ifc.cache"}) {
+            const auto dir = fpDir / area / fs::path(it->first);
+            size += mcpp::bmi_cache::dir_size(dir);
+            if (!dryRun) fs::remove_all(dir, rec);
+        }
+        if (rec) {
+            std::println(libc::stderr(), "error: cannot remove {}/obj/{}: {}", shown, it->first, rec.message());
+            ++out.failed;
+            ++it;
+            continue;
+        }
+        line(std::format("{} {}/obj/{}  ({}; no build used this instance within the window)",
+                         dryRun ? "would remove" : "removed", shown, it->first,
+                         mcpp::bmi_cache::human_bytes(size)));
+        out.bytes += size;
+        ++out.removed;
+        if (dryRun) { ++it; continue; }
+        it = instances.erase(it);
+        changed = true;
+    }
+    if (changed) mcpp::build::write_instances(fpDir, instances);
+    return out;
+}
+
 export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
     // Quiet: the sweep after a build (design 2026-10-31 §8.3) says one line
     // when it removed something, and nothing about what it kept.
@@ -8330,7 +8398,16 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
             if (!fpIt->is_directory(fec) || fec) continue;
             const fs::path dir = fpIt->path();
             const std::string fp = dir.filename().string();
-            if (recorded->second.contains(fp)) continue;
+            if (recorded->second.contains(fp)) {
+                // A current configuration keeps its directory; its package
+                // instances no plan has used within the window go (§11.1).
+                const auto swept = sweep_instances(dir, std::format("target/{}/{}", triple, fp),
+                                                   dryRun, keepWithinSecs, line);
+                bytes += swept.bytes;
+                removed += swept.removed;
+                failed += swept.failed;
+                continue;
+            }
             const std::string shown = std::format("target/{}/{}", triple, fp);
             // build.ninja is rewritten by every build; the directory's own
             // mtime only moves when an entry is added or removed.

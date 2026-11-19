@@ -18,6 +18,22 @@
   commands are bounded by one criterion, stated in SPEC-007 R3.17: one output, decided by the
   declared inputs and the argv, the same on every run.
 
+### Changed
+
+- A package instance has a directory of its own: `obj/<package>/<digest>/` and
+  `<bmi dir>/<package>/<digest>/`, the digest covering the package's include directories and
+  flags (its features' defines among them) and the digests of the packages whose modules it
+  imports (mcpp#953). One directory held one instance, so when `mcpp test` or another
+  selection asked a shared package for other features, each switch between the commands
+  compiled it again (measured: 43 such edges between two members of a 31-member workspace).
+  Both instances are now kept, and alternating compiles neither again. `instances.tsv`
+  records when a build last used each instance; `mcpp clean --stale` removes the instances
+  no build used within `[build] keep_days`, keeping those of the plan that wrote the graph,
+  and `mcpp clean --report` lists them. The root package's objects keep their place. A
+  `<package>@<digest>` name was measured and not taken: ninja quotes an output that holds
+  `@`, and a rule writing `"$out.d"` then names a file with quotes in it. The objects of the
+  previous layout are not read again and go with `mcpp clean`.
+
 ### Fixed
 
 - `mcpp publish` and `mcpp emit xpkg` wrote a descriptor that nothing read: a table of

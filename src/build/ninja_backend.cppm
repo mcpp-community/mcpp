@@ -5582,6 +5582,11 @@ void write_module_maps(const BuildPlan& plan) {
             write_if_changed(plan.outputDir / scope.argsFile,
                              module_map_arguments(scope.arguments, msvc));
     }
+    // The plan that writes the maps names the instances this configuration
+    // uses now (design 2026-11-19 §11.1); the others age in `instances.tsv`.
+    std::vector<std::string> used;
+    for (auto const& [pkg, dir] : plan.instanceDirs) used.push_back(dir);
+    record_instances(plan.outputDir, used);
 }
 
 void report_failed_drive(const BuildError& error) {

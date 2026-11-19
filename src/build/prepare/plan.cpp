@@ -1830,15 +1830,19 @@ static std::expected<void, std::string> step13_dependency_cache(PrepareState& st
                                     state.storeRoots.empty() ? std::filesystem::path{}
                                                        : state.storeRoots.front());
             pa.sources = pkgSources[idx];
+            const auto qname = mcpp::build::qualified_package_name(state.packages[idx].manifest);
             // A GCC BMI records its imports' paths as the module map spells
-            // them, and the map names the BMI directory as its repository
-            // (`plan.cppm`, the module scopes). See `bmiPathConvention`.
-            if (pkgProvidesModule[idx] && state.tc->compiler == mcpp::toolchain::CompilerId::GCC)
+            // them: the BMI directory and the package's instance, whose digest
+            // folds in its imports' (`plan.cppm`). See `bmiPathConvention`.
+            if (pkgProvidesModule[idx] && state.tc->compiler == mcpp::toolchain::CompilerId::GCC) {
+                auto inst = ctx.plan.instanceDirs.find(qname);
                 pa.bmiPathConvention = "$root=bmi-dir";
+                if (inst != ctx.plan.instanceDirs.end())
+                    pa.bmiPathConvention += ";instance=" + inst->second;
+            }
             // What `scope_lto` appended to this package's units is part of
             // their command, so it is part of the entry's identity.
-            if (state.ltoWithheld.contains(
-                    mcpp::build::qualified_package_name(state.packages[idx].manifest))) {
+            if (state.ltoWithheld.contains(qname)) {
                 pa.cflags.push_back(state.ltoOffWord);
                 pa.cxxflags.push_back(state.ltoOffWord);
             }

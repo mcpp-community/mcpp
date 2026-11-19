@@ -42,8 +42,13 @@ it uses; `--stale` also removes those no kept configuration names
 (2026.10.31.3+). A configuration's new fingerprint takes over the directory of
 its lineage instead of opening another (docs/04 §2.9), and after a build or a
 test run, at most once a day, `--stale` runs by itself with the window `[build]
-keep_days` (config.toml; default 3 days). `mcpp clean --report` gives the size of each configuration's
-objects, BMIs and products and of each `.build-mcpp` area, and removes nothing:
+keep_days` (config.toml; default 3 days). Within a configuration that is
+kept, `--stale` removes each package instance (`obj/<package>/<digest>/` and
+its BMIs) that no build has used within that window; the instances of the
+plan that wrote the configuration's graph are kept whatever the window
+(2026.11.19.1+). `mcpp clean --report` gives the size of each configuration's
+objects, BMIs and products, of each package instance with the days since a
+build used it, and of each `.build-mcpp` area, and removes nothing:
 
 ```
 $ mcpp clean --stale --dry-run

@@ -150,7 +150,7 @@ kind = "lib"
         };
         auto core_edges = [&](const fs::path& dir) {
             return std::ranges::count_if(s::ninja_log_outputs(dir), [](const std::string& o) {
-                return std::regex_search(o, std::regex(R"((^|/)obj/core/src/core\.m\.o$)"));
+                return std::regex_search(o, std::regex(R"((^|/)obj/core/[0-9a-f]{8}/src/core\.m\.o$)"));
             });
         };
         auto reset = [&] { for (auto d : {"target", "core/target", "a/target", "b/target"}) ws.remove(d); };

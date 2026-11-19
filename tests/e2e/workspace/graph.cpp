@@ -102,8 +102,17 @@ std::map<std::pair<std::string, std::string>, std::vector<std::string>> units(st
     return out;
 }
 
+// A word with the package instance it names (`obj/<package>/<digest>/`, and the module map whose
+// name hashes the instances it lists) replaced: what remains when only the instance differs.
+std::string without_instance(const std::string& word) {
+    static const std::regex instance{R"(/[0-9a-f]{8}/)"}, map{R"((modmap/[^/ ]+)-[0-9a-f]{8}\.)"};
+    return std::regex_replace(std::regex_replace(word, instance, "/<instance>/"), map, "$1-<map>.");
+}
+
 // 872's comparison: the units both databases hold, `member`'s among them, have the same arguments,
-// except for words that all contain `allowed`. What differs, or "" when nothing does.
+// except for words that all contain `allowed`. A package's instance follows its features (mcpp#953),
+// so where a difference is allowed, words that differ only by the instance are part of it. What
+// differs, or "" when nothing does.
 std::string differences(std::string_view a, std::string_view b, std::string_view member, std::string_view allowed = "") {
     const auto ua = units(a), ub = units(b);
     bool any = false;
@@ -115,7 +124,13 @@ std::string differences(std::string_view a, std::string_view b, std::string_view
         if (args == other->second) continue;
         std::set<std::string> sa(args.begin(), args.end()), sb(other->second.begin(), other->second.end()), diff;
         std::ranges::set_symmetric_difference(sa, sb, std::inserter(diff, diff.end()));
-        if (!allowed.empty() && !diff.empty() && std::ranges::all_of(diff, [&](const std::string& t) { return t.contains(allowed); })) continue;
+        if (!allowed.empty() && !diff.empty()) {
+            std::set<std::string> na, nb, rest;
+            for (const auto& t : sa) na.insert(without_instance(t));
+            for (const auto& t : sb) nb.insert(without_instance(t));
+            std::ranges::set_symmetric_difference(na, nb, std::inserter(rest, rest.end()));
+            if (std::ranges::all_of(rest, [&](const std::string& t) { return t.contains(allowed); })) continue;
+        }
         out += k.second + " (" + k.first + ") differs:";
         for (const auto& t : diff) out += " " + t;
         out += "\n";
@@ -335,7 +350,7 @@ export int consumer_flag_v() {
             in >> v >> x >> f;
             return std::tuple{v, x, f};
         };
-        const std::regex lib_object{R"((^|/)lib/src/lib\.m\.o$)"};
+        const std::regex lib_object{R"((^|/)lib/[0-9a-f]{8}/src/lib\.m\.o$)"};
         auto r = ws.mcpp({"build", "--workspace"});
         expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build: " << s::text(r);
         const auto dirs = graph_dirs(ws.dir());

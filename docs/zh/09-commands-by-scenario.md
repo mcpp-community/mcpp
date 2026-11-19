@@ -35,8 +35,10 @@
 写明它使用的生成源码目录（`.build-mcpp/out/<hash>`）与构建程序组
 （`.build-mcpp/host/<group>`）；`--stale` 同时删除保留的配置都未写明的这两类目录
 （2026.10.31.3+）。一个配置的新指纹接管其谱系的目录，不另开目录（docs/04 §2.9）；构建或测试成功后，每天至多
-一次，`--stale` 以 `[build] keep_days`（config.toml；默认 3 天）为窗口自动执行。`mcpp clean --report` 给出每个配置的对象、BMI 与产物以及
-`.build-mcpp` 各区的大小，不删除任何东西：
+一次，`--stale` 以 `[build] keep_days`（config.toml；默认 3 天）为窗口自动执行。在保留的配置中，`--stale` 删除该窗口内没有构建
+使用过的包实例（`obj/<包>/<摘要>/` 及其 BMI）；写出该配置构建图的那次规划所用的实例无论窗口都保留（2026.11.19.1+）。
+`mcpp clean --report` 给出每个配置的对象、BMI 与产物、每个包实例的大小及距上次使用的天数，以及 `.build-mcpp` 各区的大小，
+不删除任何东西：
 
 ```
 $ mcpp clean --stale --dry-run
