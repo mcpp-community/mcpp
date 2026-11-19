@@ -6,6 +6,8 @@
 //   $MCPP_HOME/build-cache/v1/std/<identity>/std-module.json
 //   $MCPP_HOME/build-cache/v1/tool/<index>/<pkg>@<ver>/<key>/entry.json
 //     (a host tool, mcpp.build.tool_store; last use = the record's time)
+//   $MCPP_HOME/cache/{build-database,pack-formats,publish-plan}/<key>/.mcpp-plan
+//     (the work directory of a plan that describes; last use = the record's time)
 //
 // Two things this file did wrong before the layout change and that the new
 // entry.json fixes:
@@ -23,6 +25,7 @@ export module mcpp.bmi_cache.maintenance;
 
 import std;
 import mcpp.home;
+import mcpp.home.files;   // mark_used
 import nlohmann.json;
 import mcpp.libs.toml;
 import mcpp.ui;
@@ -92,6 +95,58 @@ export std::optional<std::uintmax_t> parse_size(std::string_view v) {
     if (suffix == "t" || suffix == "tib" || suffix == "tb")
         return n * 1024ull * 1024 * 1024 * 1024;
     return std::nullopt;
+}
+
+// THE WORK DIRECTORIES OF PLANS THAT DESCRIBE (mcpp#969). `mcpp emit
+// build-database`, `mcpp pack --list-formats` and the pin check of `mcpp
+// publish` plan a project without writing into it (PrepareIntent::Describe),
+// each in a directory of the home, `cache/<area>/<key>`, one per project.
+// Nothing removed one: a home measured on 2026-11-19 held 626 of them, 3.4 GB,
+// most of them for projects that no longer existed. A plan states its use on
+// the directory's record, and `cache list`, `gc`, `prune` and the collection
+// after a build treat each directory as an entry. Removing one costs nothing
+// but the next plan's writing it again (SPEC-005 R2.1).
+export enum class PlanArea { BuildDatabase, PackFormats, PublishPlan };
+
+namespace {
+
+struct PlanAreaInfo {
+    PlanArea         area;
+    std::string_view dir;       // under `<home>/cache/`
+    std::string_view command;   // what plans there, as `cache list` names it
+};
+
+constexpr std::array<PlanAreaInfo, 3> kPlanAreas{{
+    {PlanArea::BuildDatabase, "build-database", "emit build-database"},
+    {PlanArea::PackFormats,   "pack-formats",   "pack --list-formats"},
+    {PlanArea::PublishPlan,   "publish-plan",   "publish"},
+}};
+
+// The record whose time is the directory's last use (mcpp::home::mark_used);
+// its one line is the project root the directory plans.
+constexpr std::string_view kPlanRecord = ".mcpp-plan";
+
+std::filesystem::path plan_area_root(const PlanAreaInfo& area) {
+    return mcpp::home::root() / "cache" / area.dir;
+}
+
+} // namespace
+
+// The work directory of a plan of `area` named `key`, created, with its use
+// stated: the record is written when the directory is new and its time set to
+// now otherwise. `project` is what `cache list` names the directory by.
+export std::filesystem::path plan_work_dir(PlanArea area, std::string_view key,
+                                           const std::filesystem::path& project) {
+    const auto& info = *std::ranges::find(kPlanAreas, area, &PlanAreaInfo::area);
+    const auto dir = plan_area_root(info) / std::string(key);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const auto record = dir / kPlanRecord;
+    if (std::filesystem::exists(record, ec))
+        mcpp::home::mark_used(record);
+    else
+        std::ofstream(record, std::ios::binary) << mcpplibs::os::fs::generic_utf8(project) << '\n';
+    return dir;
 }
 
 namespace {
@@ -353,10 +408,46 @@ std::vector<Entry> walk_variant_entries() {
     return out;
 }
 
+// The work directories of plans that describe (plan_work_dir): one per
+// project and area, each last used when a plan last ran in it. Collected as
+// the cache's entries are, and emptied by `cache clean --work`.
+std::vector<Entry> walk_plan_entries() {
+    std::vector<Entry> out;
+    for (const auto& area : kPlanAreas) {
+        std::error_code ec;
+        const auto root = plan_area_root(area);
+        for (auto& d : std::filesystem::directory_iterator(root, ec)) {
+            if (!d.is_directory()) continue;
+            Entry e;
+            e.dir  = d.path();
+            e.kind = "work";
+            e.key  = mcpplibs::os::fs::generic_utf8(d.path().filename());
+            const auto record = e.dir / kPlanRecord;
+            std::string project;
+            std::error_code fe;
+            if (std::filesystem::is_regular_file(record, fe)) {
+                e.accessed = dir_mtime_seconds(record);
+                if (std::ifstream is(record, std::ios::binary); is) std::getline(is, project);
+            } else {
+                // Written by an mcpp before the record: the directory's time is
+                // the last plan that wrote or removed a file directly in it.
+                e.accessed = dir_mtime_seconds(e.dir);
+            }
+            e.label = project.empty()
+                ? std::format("{} (work directory)", area.command)
+                : std::format("{} (work directory of {})", area.command, project);
+            measure(e);
+            out.push_back(std::move(e));
+        }
+    }
+    return out;
+}
+
 std::vector<Entry> walk_collectable() {
     auto out = walk_pkg_entries();
     for (auto& e : walk_tool_entries()) out.push_back(std::move(e));
     for (auto& e : walk_variant_entries()) out.push_back(std::move(e));
+    for (auto& e : walk_plan_entries()) out.push_back(std::move(e));
     return out;
 }
 
@@ -674,10 +765,10 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
     return 0;
 }
 
-// `mcpp cache clean [--deps] [--std] [--all] [--legacy]`.
-export int cache_clean(bool deps, bool stds, bool tools, bool all, bool legacy) {
-    if (all) { deps = true; stds = true; tools = true; }
-    if (!deps && !stds && !tools && !legacy) deps = true;   // bare `clean` = dep entries
+// `mcpp cache clean [--deps] [--std] [--tools] [--work] [--all] [--legacy]`.
+export int cache_clean(bool deps, bool stds, bool tools, bool work, bool all, bool legacy) {
+    if (all) { deps = true; stds = true; tools = true; work = true; }
+    if (!deps && !stds && !tools && !work && !legacy) deps = true;   // bare `clean` = dep entries
 
     std::error_code ec;
     if (deps) {
@@ -694,6 +785,14 @@ export int cache_clean(bool deps, bool stds, bool tools, bool all, bool legacy) 
         auto n = dir_size(tool_root());
         std::filesystem::remove_all(tool_root(), ec);
         std::println("Cleaned host tool entries ({})", human_bytes(n));
+    }
+    if (work) {
+        std::uintmax_t n = 0;
+        for (const auto& area : kPlanAreas) {
+            n += dir_size(plan_area_root(area));
+            std::filesystem::remove_all(plan_area_root(area), ec);
+        }
+        std::println("Cleaned work directories of plans ({})", human_bytes(n));
     }
     if (legacy) {
         auto legacyRoot = mcpp::home::legacy_bmi_root();

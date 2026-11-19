@@ -22,7 +22,7 @@ import mcpp.manifest;
 import mcpp.publish.pipeline;
 import mcpp.ui;
 import mcpp.wire;
-import mcpp.home;                 // --list-formats plans outside the project
+import mcpp.bmi_cache.maintenance;  // plan_work_dir: --list-formats and the pin check plan outside the project
 import mcpp.pack.stage_tree;       // the built-in formats
 import mcpp.toolchain.fingerprint;  // hash_string
 import mcpp.toolchain.platform;     // host_arch: the static row of `--linkage static`
@@ -107,8 +107,9 @@ static int refuse_shared_exact_pins() {
     if (!library) return 0;
     mcpp::build::BuildOverrides ov;
     ov.intent = mcpp::build::PrepareIntent::Describe;
-    ov.work_dir = mcpp::home::root() / "cache" / "publish-plan"
-                / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
+    ov.work_dir = mcpp::bmi_cache::plan_work_dir(
+        mcpp::bmi_cache::PlanArea::PublishPlan,
+        mcpp::toolchain::hash_string(root->lexically_normal().generic_string()), *root);
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
     {
         mcpp::ui::terminal::StdoutToStderr narration;
@@ -370,8 +371,9 @@ int cmd_pack_list_formats(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto o = parsed.option("target"); o && !o->get().values.empty())
         ov.target_triple = o->get().values.back();
     ov.intent = mcpp::build::PrepareIntent::Describe;
-    ov.work_dir = mcpp::home::root() / "cache" / "pack-formats"
-                / mcpp::toolchain::hash_string(root->lexically_normal().generic_string());
+    ov.work_dir = mcpp::bmi_cache::plan_work_dir(
+        mcpp::bmi_cache::PlanArea::PackFormats,
+        mcpp::toolchain::hash_string(root->lexically_normal().generic_string()), *root);
     std::expected<mcpp::build::BuildContext, std::string> ctx = std::unexpected(std::string{});
     {
         mcpp::ui::terminal::StdoutToStderr narration;

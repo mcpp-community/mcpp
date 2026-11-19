@@ -29,6 +29,7 @@
 |---|---|---|---|
 | `target/<三元组>/<指纹>/`、`target/.build-mcpp/{out,host}/` | 单个工程 | 一个配置指纹变化，开出一个新目录；构建程序的输出与构建程序按配置保存 | `mcpp clean`、`mcpp clean --stale` |
 | 构建缓存（`mcpp cache dir`） | 整台机器 | 任何工程编译一个依赖、一个 `std` 模块，或构建一个 host 工具，或编译其构建程序 import 的 `mcpp` 模块 | 构建后回收 `[cache] unused_days` 内未使用的条目；`mcpp cache gc`、`mcpp cache prune`、`mcpp cache clean` |
+| 规划的工作目录（`<home>/cache/{build-database,pack-formats,publish-plan}/`） | 整台机器，每个工程一个 | `mcpp emit build-database`、`mcpp pack --list-formats` 或 `mcpp publish` 规划一个工程 | 与构建缓存的条目一同回收；`mcpp cache clean --work` |
 
 `mcpp clean` 整个删掉 `target/`，下次构建重编一切。`mcpp clean --stale`
 只删已无构建记录使用的指纹目录，在用的配置保留。每个配置目录在 `uses.list` 中
@@ -89,6 +90,14 @@ host 工具条目。一份 `std` BMI 被机器上每个工程共享，实现以"
 （记录在 `<输出目录>/.mcpp-written`），mcpp 给出警告并说明两者（2026.11.8.1+）。`mcpp cache prune`
 与 `mcpp cache gc --older-than` 也按年龄收集 `std` 模块条目；`gc --max-size` 只对包与宿主工具做
 预算（2026.11.8.1+）。
+
+`mcpp emit build-database`、`mcpp pack --list-formats` 与 `mcpp publish` 对库的版本钉的检查规划工程而不写入工程，
+各自在 home 的一个工作目录中进行，每个工程一个：`<home>/cache/build-database/`、`cache/pack-formats/`
+与 `cache/publish-plan/`。规划把一次使用记在目录的 `.mcpp-plan` 上，该文件只有一行，即工程根。
+`mcpp cache list` 把每个目录列为 `work` 类条目，以命令与该工程命名；构建后的回收、`mcpp cache prune`、
+`mcpp cache gc --older-than` 与 `gc --max-size` 按最后使用时间回收它，与回收包条目相同；
+`mcpp cache clean --work`（或 `--all`）清空这三处。早于该记录写出的目录以目录自身的时间计。
+移除一个目录，该工程的下一次规划只需重新写出它（mcpp#969）。
 
 ## 一个包已发布的版本
 

@@ -1920,7 +1920,7 @@ mcpp cache info <pkg>@<ver>         # one entry, including the key inputs it was
 mcpp cache verify                   # every entry's file list against the disk
 mcpp cache gc --max-size 5GiB       # LRU-collect package and host tool entries to a budget
 mcpp cache gc --older-than 30d      # ...or by how long since they were last used
-mcpp cache clean [--deps|--std|--tools|--all|--legacy]
+mcpp cache clean [--deps|--std|--tools|--work|--all|--legacy]
 ```
 
 The on-disk entry layout is versioned. An mcpp release that changes it retires
