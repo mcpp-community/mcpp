@@ -600,6 +600,38 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(s::lacks(s::text(r), "shared.cppm") && s::lacks(s::text(r), "mid.cppm")) << "B: back at the first member a package was compiled again: " << s::text(r);
     };
+    "954 the workspace's abi table is the root's statement"_test[s::gcc][s::elf] = [] {
+        // mcpp#954. A workspace whose root is only `[workspace]` states the build's abi once, in
+        // `[workspace.target.<selector>.abi]`; its members inherit the row and no member is told
+        // that it declares a table only the root decides (A). A member whose own manifest has the
+        // table is reported once, by name, when another member depends on it (B).
+        const auto tmp = s::case_dir();
+        const auto lib = [](std::string_view own) {
+            return std::format("[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n{}[targets.core]\nkind = \"lib\"\n", own);
+        };
+        const std::string app = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = { path = \"../core\" }\n\n"
+                                "[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
+        s::project ws(tmp / "ws", {
+            {"mcpp.toml", "[workspace]\nmembers = [\"core\", \"app\"]\n\n[workspace.target.'cfg(os = \"linux\")'.abi]\nthreads = true\n"},
+            {"core/mcpp.toml", lib("")},
+            {"core/src/core.cppm", "export module ws954.core;\nexport int core_value() { return 3; }\n"},
+            {"app/mcpp.toml", app},
+            {"app/src/main.cpp", "import ws954.core;\nint main() { return core_value() == 3 ? 0 : 1; }\n"},
+        });
+        auto r = ws.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build: " << s::text(r);
+        expect(s::lacks(s::text(r), "declares [target.<selector>.abi]")) << "A: an inherited abi row was reported as a member's own table: " << s::text(r);
+        ws.write("core/mcpp.toml", lib("[target.'cfg(os = \"linux\")'.abi]\nthreads = true\n\n"));
+        r = ws.mcpp({"build", "-p", "app"});
+        expect(fatal(e2e::succeeded(r))) << "B: the workspace did not build: " << s::text(r);
+        const auto text = s::text(r);
+        std::size_t n = 0;
+        for (auto pos = text.find("`core` declares [target.<selector>.abi]"); pos != std::string::npos;
+             pos = text.find("`core` declares [target.<selector>.abi]", pos + 1))
+            ++n;
+        expect(n == 1u) << "B: the member's own abi table was reported " << n << " times: " << text;
+        expect(s::lacks(text, "`app` declares")) << "B: the member without a table was reported: " << text;
+    };
 }};
 
 }  // namespace

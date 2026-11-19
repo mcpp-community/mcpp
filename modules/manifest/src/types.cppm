@@ -1208,6 +1208,14 @@ struct BuildConfig : BuildInputs {
     // statement only, rendered into every translation unit and the link, like
     // `threads`; the model reaches every cache key through those flags.
     bool                               abiLongjmpDeclared = false;
+    // Whether one of the abi members above was stated by a row of the
+    // package's own manifest, not by a `[workspace.target.<sel>.abi]` row the
+    // package inherits (mcpp#954): a dependency's own table is reported, the
+    // workspace's is the root's decision.
+    bool                               abiDeclaredByPackage = false;
+    // The workspace manifest whose inherited row stated one of them, when
+    // one did: the root's statement only when it is this build's workspace.
+    std::filesystem::path              abiInheritedFrom;
     std::string                        abiLongjmpModel;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
@@ -1758,6 +1766,11 @@ struct TargetEntry {
 // buildConfig. See .agents/docs/2026-06-29-manifest-environment-and-platform-design.md.
 struct ConditionalConfig {
     std::string                         predicate;     // the [target.<predicate>] key
+    // Where the row was stated (mcpp#954): empty for the package's own
+    // manifest, the workspace manifest for a `[workspace.target.<sel>]` row
+    // a member inherits. A decision that depends on who stated a row reads
+    // this, not the package the row reached.
+    std::filesystem::path               inheritedFrom;
     // Everything `[target.<pred>.build]` may contribute, and nothing else.
     //
     // Previously four hand-listed vectors, which is why per-glob `flags` was

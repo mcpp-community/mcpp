@@ -244,6 +244,13 @@ A conditional row counts as it evaluates for the target being built: a
 from the others (§5.4), and one that holds is applied when the member is built
 under the workspace's root.
 
+A workspace whose root is only `[workspace]` states the build's abi in
+`[workspace.target.<selector>.abi]`. Each member inherits the row, and the row
+is the root's statement: no member is reported for it. A member whose own
+manifest has `[target.<selector>.abi]` is reported when it is reached as a
+dependency, as any dependency's table is (mcpp 2026.11.19.1+; before that
+release every member that inherited the workspace's row was reported, mcpp#954).
+
 A build without `--target` targets the host, and `[target.<host-triple>]`
 applies to it as `--target <host-triple>` would.
 

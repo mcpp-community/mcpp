@@ -346,6 +346,10 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.buildConfig.abiLongjmpModel = cc.abiLongjmpModel;
             m.buildConfig.abiLongjmpDeclared = true;
         }
+        if (cc.abiThreadsDeclared || cc.abiExceptionsDeclared || cc.abiLongjmpDeclared) {
+            if (cc.inheritedFrom.empty()) m.buildConfig.abiDeclaredByPackage = true;
+            else m.buildConfig.abiInheritedFrom = cc.inheritedFrom;
+        }
         // `[target.<sel>.build] dialect_cxxflags` (#717): recorded for every
         // package, like the abi switches above, but APPENDED rather than
         // replaced -- there is no "last matching section wins" here, because

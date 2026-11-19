@@ -195,6 +195,14 @@ void merge_program_platform(PrepareState& state, mcpp::manifest::platform::State
 }
 
 namespace {
+// Two spellings of one manifest are one file: a workspace root is reached
+// through a member's relative path as well as through its own.
+bool same_file(const std::filesystem::path& a, const std::filesystem::path& b) {
+    std::error_code ec;
+    if (std::filesystem::equivalent(a, b, ec)) return true;
+    return a.lexically_normal() == b.lexically_normal();
+}
+
 bool names_layer(const std::vector<std::string>& entries, std::string_view layer) {
     for (auto const& e : entries) {
         std::string_view v = e;
@@ -512,14 +520,24 @@ static std::expected<void, std::string> step6_activate_features(PrepareState& st
             // ignored, and points at the key a dependency does have. Covers
             // BOTH members: a dependency that declares only `exceptions` must
             // be reported exactly as one that declares only `threads`.
-            if (pcap != state.m->package.name
-                && (pkg.manifest.buildConfig.abiThreadsDeclared
-                    || pkg.manifest.buildConfig.abiExceptionsDeclared))
+            // A row the package inherits from this build's workspace
+            // (`[workspace.target.<sel>.abi]`) is the root's statement, and is
+            // not reported for each member that receives it (mcpp#954: 262
+            // warnings for one table). Another workspace's row is not this
+            // build's root, and is reported as the package's own is.
+            const auto& abi = pkg.manifest.buildConfig;
+            const auto statedIn = abi.abiDeclaredByPackage ? pkg.manifest.sourcePath : abi.abiInheritedFrom;
+            const bool rootStated = !abi.abiDeclaredByPackage && !abi.abiInheritedFrom.empty()
+                && state.wsManifest && same_file(abi.abiInheritedFrom, state.wsManifest->sourcePath);
+            if (pcap != state.m->package.name && !rootStated
+                && (abi.abiDeclaredByPackage || !abi.abiInheritedFrom.empty()))
                 mcpp::diag::warning("abi/dependency-table", std::format(
-                    "`{}` declares [target.<selector>.abi], which only the root "
-                    "manifest decides; a dependency states what it needs with "
+                    "`{}` declares [target.<selector>.abi], which only the root manifest "
+                    "decides ({}); a dependency states what it needs with "
                     "`requires_abi = {{ threads = true }}` or "
-                    "`requires_abi = {{ exceptions = true }}`", pcap));
+                    "`requires_abi = {{ exceptions = true }}`, and a workspace states the "
+                    "build's abi in [workspace.target.<selector>.abi]", pcap,
+                    statedIn.empty() ? std::string("its manifest") : statedIn.generic_string()));
             // `[targets.*] required_features` on a DEPENDENCY.
             //
             // THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are

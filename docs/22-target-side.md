@@ -1437,7 +1437,9 @@ keeps the key it had.
 **Only the root manifest decides.** The switch belongs to the artefact, and the
 root is the only package that builds one. A dependency that writes
 `[target.<selector>.abi]` is reported (`abi/dependency-table`) and changes
-nothing. A dependency states what it needs instead:
+nothing; a row a workspace member inherits from its build's
+`[workspace.target.<selector>.abi]` is the root's and is not reported
+([workspace](07-workspace.md)). A dependency states what it needs instead:
 
 ```toml
 [package]

@@ -57,6 +57,13 @@
   compile edge records the compiler's report, so a library found through `-L`/`-l` relinks
   the program when it changes. Whether a linker accepts the option is measured once and kept
   in the probe cache.
+- Every member of a workspace whose root states `[workspace.target.<selector>.abi]` was
+  warned that it declares `[target.<selector>.abi]`, which only the root decides: a build of
+  about 60 members for wasm32-emscripten printed the warning 262 times (mcpp#954). A
+  conditional row records whether it is the package's own or inherited from a workspace; a
+  row inherited from this build's workspace is the root's statement and is not reported. A
+  member's own table is reported once when it is reached as a dependency, and the warning
+  names the manifest that states it.
 
 ## [2026.11.18.1] - 2026-11-18
 

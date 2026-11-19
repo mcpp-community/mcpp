@@ -1195,7 +1195,9 @@ enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or
 
 **只有根 manifest 能做决定。** 这个开关属于产物，而根包是唯一构建产物的
 包。依赖写下的 `[target.<selector>.abi]` 会被报告
-（`abi/dependency-table`），且不改变任何东西。依赖改为声明自己的需求：
+（`abi/dependency-table`），且不改变任何东西；工作空间成员从所在构建的
+`[workspace.target.<selector>.abi]` 继承的行属于根，不被报告（[工作空间](07-workspace.md)）。
+依赖改为声明自己的需求：
 
 ```toml
 [package]
