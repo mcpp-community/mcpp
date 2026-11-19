@@ -266,7 +266,7 @@ std::expected<void, std::string> write(const Manifest& m, const std::vector<Copy
     }
     {
         std::ofstream out(root / std::string(kManifestName), std::ios::binary | std::ios::trunc);
-        out << to_json(m).dump(2) << '\n';
+        out << mcpp::wire::text(to_json(m), 2) << '\n';
         if (!out) return std::unexpected(std::format("cannot write {}", kManifestName));
     }
     if (archive.has_parent_path()) fs::create_directories(archive.parent_path(), ec);
@@ -3457,7 +3457,7 @@ void record_launch(const std::filesystem::path& outputDir, const std::filesystem
     const auto staged = std::filesystem::path(path.string() + ".tmp");
     {
         std::ofstream out(staged, std::ios::binary | std::ios::trunc);
-        out << data.dump();
+        out << mcpp::wire::text(data);
         if (!out) return;   // a description without a record: the next one takes the full path
     }
     std::filesystem::rename(staged, path, ec);
@@ -4647,7 +4647,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 u["source"] = "program";
                 p["usage"] = std::move(u);
             }
-            programs << p.dump() << "\n";
+            programs << mcpp::wire::text(p) << "\n";
             if (t.report.cases.empty()) {
                 ++counts[status_of(t)];
                 continue;
@@ -4681,7 +4681,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 }
                 if (!c.bounds.empty()) line["bounds"] = mcpp::build::test_protocol::bounds_json(c.bounds);
                 if (c.checks) line["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
-                cases << line.dump() << "\n";
+                cases << mcpp::wire::text(line) << "\n";
             }
         }
     }
@@ -4694,8 +4694,8 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
              {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", "off"},
              {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
     if (!shard.empty()) run["shard"] = std::string(shard);
-    { std::ofstream(runDir / "run.json", std::ios::binary) << run.dump(2) << "\n"; }
-    std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << run.dump() << "\n";
+    { std::ofstream(runDir / "run.json", std::ios::binary) << mcpp::wire::text(run, 2) << "\n"; }
+    std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << mcpp::wire::text(run) << "\n";
 }
 
 
@@ -6973,7 +6973,7 @@ void write_test_plan(const TestBuild& tb, std::string_view targetOverride) {
                       {"jobs", ctx.globalDefaultJobs}, {"group", ctx.workspaceGroup}};
     {
         const auto tmp = ctx.outputDir / std::format("{}.{:x}", kTestPlanFile, std::random_device{}());
-        { std::ofstream(tmp, std::ios::binary) << record.dump(1) << "\n"; }
+        { std::ofstream(tmp, std::ios::binary) << mcpp::wire::text(record, 1) << "\n"; }
         std::error_code ec;
         fs::rename(tmp, ctx.outputDir / kTestPlanFile, ec);
         if (ec) { fs::remove(tmp, ec); return; }

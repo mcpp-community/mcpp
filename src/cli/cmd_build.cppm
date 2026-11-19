@@ -752,12 +752,12 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             return 1;
         }
         take_closing_notes();
-        const auto text = mcpp::wire::to_json(mcpp::wire::Envelope{
+        const auto text = mcpp::wire::text(mcpp::wire::to_json(mcpp::wire::Envelope{
             .kind = "mcpp.build-database",
             .effects = {Effect::ReadProject},
             .data = nullptr,
             .diagnostics = diagnostics,
-        }).dump(2) + "\n";
+        }), 2) + "\n";
         (void)publish(text);
         return 1;
     };
@@ -1065,7 +1065,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     nlohmann::json specJson{{"name", spec}};
     if (spec == "s1")
         specJson["version"] = std::string(mcpp::build::database::kProfileVersion);
-    if (const auto rc = publish(mcpp::wire::to_json(mcpp::wire::Envelope{
+    if (const auto rc = publish(mcpp::wire::text(mcpp::wire::to_json(mcpp::wire::Envelope{
             .kind = "mcpp.build-database",
             .effects = std::move(effects),
             .data = nlohmann::json{
@@ -1075,7 +1075,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                 {"inputs-fingerprint", std::move(rendered.inputsFingerprint)},
             },
             .diagnostics = diagnostics,
-        }).dump(2) + "\n"); rc != 0) return rc;
+        }), 2) + "\n"); rc != 0) return rc;
     return hasError ? 1 : 0;
 }
 

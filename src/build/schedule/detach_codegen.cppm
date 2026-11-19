@@ -202,10 +202,10 @@ int await_unit(const std::filesystem::path& slot, const std::filesystem::path& o
 //
 // `reading` is what the executor reads for the compiler (design 2026-11-19
 // §20): the record of the files the compile read when the compiler writes one
-// that is not the Make rule `depfile` (cl.exe's `/sourceDependencies`, written
-// as `depfile` once the compile succeeds), and the encoding of the compiler's
-// text when it is not UTF-8, in which case its two streams are read through
-// one pipe and written on as UTF-8.
+// that is not the Make rule `depfile` (cl.exe's `/sourceDependencies`, given to
+// ninja as lines of this executor's output once the compile succeeds), and the
+// encoding of the compiler's text when it is not UTF-8, in which case its two
+// streams are read through one pipe and written on as UTF-8.
 struct Reading {
     std::filesystem::path         sourceDependencies;
     mcpplibs::os::text::encoding  text = mcpplibs::os::text::encoding::utf8;
@@ -1378,12 +1378,11 @@ std::string on_disk_name(const std::string& dir, const std::string& name) {
     return name;
 }
 
-// The compiler's record of the files it read, written as the Make rule ninja
-// reads (§20 T1), and then removed. A failed compile leaves no rule: ninja
+// The compiler's record of the files it read, given to ninja as lines of this
+// executor's output (§20 T1: `kInputsPrefix` and a path, which the edge reads
+// as `deps = msvc`), and then removed. A failed compile gives none: ninja
 // reads none for a failed edge.
-std::expected<void, std::string> write_inputs_rule(const std::filesystem::path& record,
-                                                   const std::filesystem::path& depfile,
-                                                   const std::filesystem::path& output, bool compiled) {
+std::expected<void, std::string> write_inputs(const std::filesystem::path& record, bool compiled) {
     std::error_code ec;
     if (!compiled) {
         std::filesystem::remove(record, ec);
@@ -1394,9 +1393,7 @@ std::expected<void, std::string> write_inputs_rule(const std::filesystem::path& 
                                                 mcpp::home::spelling(record)));
     const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     in.close();
-    // The rule names the edge's output as the edge does: the text ninja gave.
-    const std::string target = mcpplibs::os::fs::generic_utf8(output);
-    mcpp::build::depfile::SourceRecord source{.record = text, .target = target};
+    mcpp::build::depfile::SourceRecord source{.record = text};
     source.buildDir = mcpplibs::os::fs::generic_utf8(std::filesystem::current_path(ec));
     for (const char* variable : {"INCLUDE", "EXTERNAL_INCLUDE"})
         if (auto value = mcpp::invocation::get(variable))
@@ -1404,14 +1401,17 @@ std::expected<void, std::string> write_inputs_rule(const std::filesystem::path& 
                 source.toolchainDirs.push_back(mcpplibs::os::fs::generic_utf8(dir));
     source.foldCase = mcpplibs::os::conventions().case_insensitive_names;
     source.spelled = on_disk_name;
-    auto rule = mcpp::build::depfile::rule_from_source_dependencies(source);
-    if (!rule) return std::unexpected(std::format("{}: {}", mcpp::home::spelling(record), rule.error()));
-    {
-        std::ofstream out(depfile, std::ios::binary | std::ios::trunc);
-        out << *rule;
-        out.close();
-        if (!out) return std::unexpected(std::format("{} cannot be written", mcpp::home::spelling(depfile)));
+    auto inputs = mcpp::build::depfile::inputs_from_source_dependencies(source);
+    if (!inputs) return std::unexpected(std::format("{}: {}", mcpp::home::spelling(record), inputs.error()));
+    std::string lines;
+    for (auto const& path : *inputs) {
+        lines += mcpp::build::depfile::kInputsPrefix;
+        lines += ' ';
+        lines += path;
+        lines += '\n';
     }
+    if (!lines.empty() && !mcpplibs::os::stdio::write_output(lines))
+        return std::unexpected(std::string("the files it read cannot be written to ninja"));
     std::filesystem::remove(record, ec);
     return {};
 }
@@ -1439,15 +1439,13 @@ int run_capped(const std::vector<std::string>& argv,
     // failed build with no cause (Termux, 2026-11-18).
     const auto out_name=output.empty() ? std::string("a compile") : mcpp::home::spelling(output);
     const bool decoding = reading.text != mcpplibs::os::text::encoding::utf8;
-    // The compiler's record of the files it read, as the rule ninja reads
-    // (§20 T1); the status the edge ends with.
+    // The compiler's record of the files it read, given to ninja (§20 T1);
+    // the status the edge ends with.
     auto read_inputs = [&](int compiled) {
         if (reading.sourceDependencies.empty()) return compiled;
-        auto ruled = write_inputs_rule(reading.sourceDependencies, depfile, output,
-                                       compiled == 0 && actor->owner.active());
-        if (ruled) return compiled;
-        std::println(std::cerr, "mcpp: writing the files the compile read as its dependency file for {}: {}",
-                     out_name, ruled.error());
+        auto given = write_inputs(reading.sourceDependencies, compiled == 0 && actor->owner.active());
+        if (given) return compiled;
+        std::println(std::cerr, "mcpp: giving ninja the files the compile of {} read: {}", out_name, given.error());
         return 1;
     };
     auto ended=[&](int status,std::string_view step,std::string_view why) {
@@ -1508,8 +1506,8 @@ int run_capped(const std::vector<std::string>& argv,
             .should_stop=[&] {return !actor->owner.active();},.declared_unit=unit.get(),.text=reading.text});
         if(auto retired=retire_owned(*unit,actor->owner);!retired)
             return ended(1,"retiring the compiler unit",retired.error());
-        // A compile whose record cannot be written as its rule failed: a rule
-        // that is not there would leave the files it read untracked.
+        // A compile whose record cannot be given to ninja failed: files it
+        // read that ninja does not know of would leave the edge untracked.
         const int status=read_inputs(result.exit_code);
         if(auto settled=settle(status==0&&actor->owner.active());!settled)
             return ended(1,"publishing the compile's outputs",settled.error());

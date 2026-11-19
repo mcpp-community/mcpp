@@ -100,6 +100,14 @@ std::vector<std::string> shell_words(std::string_view text);
 // as it is, and a backslash taking the next character, inside quotes or not.
 std::vector<std::string> response_file_words(std::string_view text);
 
+// The words of a response file as link.exe and lld-link read one, by the rules
+// of CommandLineToArgvW: separated by white space outside double quotes, a
+// backslash a character of the word unless backslashes precede a double quote
+// (2n of them are n and the quote opens or closes; 2n+1 are n and a quote),
+// and two double quotes inside quotes one of them. A native Windows path is a
+// word as written (mcpp#931: the files a link's response file names).
+std::vector<std::string> windows_response_file_words(std::string_view text);
+
 // Silent redirect — stdout + stderr → /dev/null (or NUL on Windows), and the
 // error stream alone, for a command a shell reads.
 constexpr std::string_view silent_redirect = mcpplibs::os::is_windows ? ">nul 2>&1" : ">/dev/null 2>&1";

@@ -142,8 +142,8 @@ UTest bitcode_export_tools_come_from_the_selected_llvm_and_are_quoted_as_words{"
 }};
 
 // mcpp#970 (design 2026-11-19 §20): cl.exe's compile writes its
-// /sourceDependencies record, which the executor writes as the Make rule
-// every compile edge reads; no compile reads the /showIncludes text. The
+// /sourceDependencies record, which the executor gives ninja as lines with
+// mcpp's prefix (`deps = msvc`); no compile reads the /showIncludes text. The
 // executor, link-output and the archive edge read the text of the cl.exe
 // toolchain's programs in the console's code page. A GNU toolchain's commands
 // carry neither word.
@@ -170,9 +170,9 @@ UTest msvc_compiles_read_the_record_and_its_tools_text_is_decoded{"NinjaBackend/
     const auto object = rule("cxx_object");
     expect(ne(object.find("/sourceDependencies $out.json"), std::string::npos)) << object;
     expect(ne(object.find("--source-dependencies $out.json --text console -- "), std::string::npos)) << object;
-    expect(ne(object.find("deps = gcc\n  depfile = $out.d"), std::string::npos)) << object;
+    expect(ne(object.find("deps = msvc\n  msvc_deps_prefix = mcpp.inputs:\n"), std::string::npos)) << object;
+    expect(eq(object.find("depfile = $out.d"), std::string::npos)) << object;
     expect(eq(text.find("/showIncludes"), std::string::npos));
-    expect(eq(text.find("deps = msvc"), std::string::npos));
     const auto archive = rule("cxx_archive");
     expect(ne(archive.find("$mcpp link-output --output $out --text console -- $ar"), std::string::npos)) << archive;
     expect(ne(rule("cxx_link").find(" --text console -- $ld"), std::string::npos)) << rule("cxx_link");
@@ -2298,7 +2298,18 @@ UTest names_the_consumer_directory_for_each_driver_spelling{"ConsumerIncludeScop
         "dep.cpp(1): fatal error C1083: \xE6\x97\xA0\xE6\xB3\x95\xE6\x89\x93\xE5\xBC\x80"
         "\xE5\x8C\x85\xE6\x8B\xAC\xE6\x96\x87\xE4\xBB\xB6: \xE2\x80\x9C" "cfg/nested.h\xE2\x80\x9D: "
         "No such file or directory\n";
-    for (auto const& out : {gcc, clang, cl, clChinese}) {
+    // The shapes the words may take in other languages: a space before the
+    // colon, none after it, and the name after a sentence with one colon.
+    const std::string clSpaced =
+        "dep.cpp(1): fatal error C1083: impossible d'ouvrir le fichier include : 'cfg7.h' : "
+        "No such file or directory\n";
+    const std::string clTight =
+        "dep.cpp(1): fatal error C1083: include \xE3\x83\x95\xE3\x82\xA1\xE3\x82\xA4\xE3\x83\xAB\xE3\x80\x82"
+        "'cfg7.h':No such file or directory\n";
+    const std::string clSentence =
+        "dep.cpp(1): fatal error C1083: \xED\x8F\xAC\xED\x95\xA8 \xED\x8C\x8C\xEC\x9D\xBC. 'cfg/nested.h': "
+        "No such file or directory\n";
+    for (auto const& out : {gcc, clang, cl, clChinese, clSpaced, clTight, clSentence}) {
         auto advice = mcpp::build::consumer_include_scope_advice(out, dirs);
         expect(fatal(!advice.empty())) << out;
         expect(ne(advice.find((root / "appinc").string()), std::string::npos)) << advice;

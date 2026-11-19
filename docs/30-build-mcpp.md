@@ -794,7 +794,10 @@ sources (SPEC-004 §8.1):
    the first `:` of a word beginning with `/`. A candidate is an input when it
    is an absolute path naming an existing regular file or a file an action of
    the build declares. `@<file>` adds the response file and the absolute paths
-   it lists. `--js-library=<file>`, `-Wl,--version-script=<file>`,
+   it lists, split into words by the rules of the tool that reads it: those of
+   `CommandLineToArgvW` under the MSVC link dialect, where a backslash escapes
+   only a quote, and a GNU driver's otherwise *(2026.11.19.1+)*.
+   `--js-library=<file>`, `-Wl,--version-script=<file>`,
    `-Wl,-force_load,<file>` and `/DEF:<file>` are covered.
 2. **The linker's report.** On an ELF target whose linker accepts
    `--dependency-file=<file>` (GNU ld from 2.35, gold, ld.lld), the link edge

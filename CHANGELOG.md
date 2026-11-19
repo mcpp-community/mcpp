@@ -63,8 +63,9 @@
   `openkal-platform@0.31.0`, whose build program links `mcpp.plugins` 0.26.1: such a pin is
   refused as irreconcilable on the rows openkal serves, and moves to 0.26.1.
 - The launchers `mcpp pack` writes (`bin/<name>.exe`, the single-file launcher) build on
-  `mcpplibs.os` 0.4.6, the release mcpp builds on, whose openkal is the one the platform of
-  mcpp's openkal rows names; `.github/tools/check_version_pins.sh` holds the two equal.
+  `mcpplibs.os` 0.4.5, the release the build program of openkal-platform 0.31 links through
+  `mcpp.plugins` 0.26.1: a launcher is built over that platform, and the platform's build
+  dependencies are resolved with the launcher's own (mcpp#972).
 
 ### Fixed
 
@@ -72,17 +73,24 @@
   cl.exe compile read came from its `/showIncludes` lines, whose prefix is a string of the
   installed language (`注意: 包含文件:`), and `VSLANG=1033` cannot make it English (mcpp#970).
   They come from cl.exe's `/sourceDependencies` record, the same in every language and console
-  code page, which the executor writes as the compile's dependency file (SPEC-011 §5.1); a
-  header under the build directory keeps its spelling, so a generated header is the node its
-  generator writes. A record that cannot be read fails the compile with the reason.
+  code page, whose paths the executor gives ninja as lines of its output (`deps = msvc` with
+  mcpp's prefix `mcpp.inputs:`, SPEC-011 §5.1): ninja's reader of a Make rule ends a name at
+  `'`, `&`, `;`, `^` and a backquote, which a Windows path may hold. A header under the build
+  directory keeps its spelling, letters beyond ASCII included, so a generated header is the
+  node its generator writes. A record that cannot be read fails the compile with the reason.
 - A cl.exe failure on a Chinese console ended mcpp with `internal: unhandled exception:
   [json.exception.type_error.316] invalid UTF-8 byte`, and its diagnostics were unreadable:
   cl.exe, link.exe, lib.exe and rc.exe write their text in the code page of the console they run
   in, and mcpp read it as UTF-8 (mcpp#970). The executor reads their text in that page (with no
   console, the system's ANSI code page) and writes it on as UTF-8 (SPEC-012 §5), and every
-  document that carries a program's text writes a byte that is not UTF-8 as U+FFFD. A cl.exe
-  `note` in `result.json` carries the location of its file, and the advice for a header a
-  dependency lost names it in every language (`C1083`).
+  document that carries a program's text writes a byte that is not UTF-8 as U+FFFD: the result,
+  the events, the protocol envelopes (`mcpp.build-database` included) and a test run's records.
+  A cl.exe `note` in `result.json` carries the location of its file, and the advice for a header
+  a dependency lost names it in every language (`C1083`, whatever the quote marks and the space
+  around its colon).
+- A response file on a link line under the MSVC dialect is read by link.exe's rules (those of
+  `CommandLineToArgvW`): the files it names by native paths are inputs of the link, where they
+  were read as a GNU driver reads one, a backslash taking the next character (mcpp#931).
 
 - A build interrupted in another process space -- a container job that reuses the working
   directory, a rebuilt development container, an agent's sandbox session -- could never be

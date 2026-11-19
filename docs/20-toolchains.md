@@ -707,7 +707,7 @@ environment from the VC tools + Windows SDK (no `vcvarsall` involved), stages
 
 **The headers a compile read, and the compiler's text, in any language**
 *(2026.11.19.1+)*. Each compile writes cl.exe's `/sourceDependencies` record,
-which mcpp writes as the compile's dependency file, so an edit of a header
+whose paths mcpp gives ninja as the compile's dependencies, so an edit of a header
 rebuilds the units that include it whatever language the installed Visual
 Studio speaks and whatever code page the console uses. cl.exe, link.exe,
 lib.exe and rc.exe write their text in the code page of the console they run

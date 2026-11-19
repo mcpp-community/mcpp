@@ -37,6 +37,7 @@ import mcpp.toolchain.detect;
 import mcpp.toolchain.model;
 import mcpp.modgraph.glob;
 import mcpp.toolchain.dialect;
+import mcpp.build.depfile;          // the prefix of the lines cl.exe's record is given in
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
@@ -1158,26 +1159,32 @@ std::string missing_header_in(std::string_view line) {
             return std::string(line.substr(open + 1, at - open - 1));
         return {};
     }
-    // cl.exe, in every language: `<file>(<line>): fatal error C1083: <words>:
-    // <quote><name><quote>: <reason>`. The words, the quote marks and the
-    // reason are the installed language's (`'x.h'`, `“x.h”`); the location,
-    // the code and the place of the name are not (design 2026-11-19 §20 T4).
-    // A missing source file is C1083 too, reported with no line of a file.
+    // cl.exe, in every language: `<file>(<line>): fatal error C1083: <words>
+    // <open><name><close>:<reason>`. The words, the quote marks, the space
+    // around the colon and the reason are the installed language's
+    // (`file: 'x.h': No such`, `文件: “x.h”: No such`, `include : 'x.h' : No
+    // such`, `。'x.h':No such`); the location, the code and the place of the
+    // name are not (design 2026-11-19 §20 T4): it is the quoted name that ends
+    // where the last colon begins the reason, which names no colon.
     constexpr std::string_view kC1083 = "): fatal error C1083: ";
     if (auto at = line.find(kC1083); at != std::string_view::npos) {
-        const auto rest = line.substr(at + kC1083.size());
-        const auto first = rest.find(": ");
-        const auto last = rest.rfind(": ");
-        if (first == std::string_view::npos || last <= first + 2) return {};
-        auto quoted = rest.substr(first + 2, last - first - 2);
-        // One mark at each end, a character of UTF-8 each.
-        std::size_t lead = 1;
-        if (static_cast<unsigned char>(quoted[0]) >= 0x80)
-            while (lead < quoted.size() && (static_cast<unsigned char>(quoted[lead]) & 0xC0) == 0x80) ++lead;
-        std::size_t tail = quoted.size() - 1;
-        while (tail > lead && (static_cast<unsigned char>(quoted[tail]) & 0xC0) == 0x80) --tail;
-        if (tail <= lead) return {};
-        return std::string(quoted.substr(lead, tail - lead));
+        auto quoted = line.substr(at + kC1083.size());
+        const auto reason = quoted.rfind(':');
+        if (reason == std::string_view::npos) return {};
+        quoted = quoted.substr(0, reason);
+        while (!quoted.empty() && quoted.back() == ' ') quoted.remove_suffix(1);
+        // The closing mark and the opening one it pairs with, in UTF-8.
+        constexpr std::array<std::pair<std::string_view, std::string_view>, 6> kMarks{{
+            {"'", "'"}, {"\"", "\""}, {"\xE2\x80\x9D", "\xE2\x80\x9C"}, {"\xE2\x80\x99", "\xE2\x80\x98"},
+            {"\xE3\x80\x8D", "\xE3\x80\x8C"}, {"\xC2\xBB", "\xC2\xAB"}}};
+        for (auto const& [close, open] : kMarks) {
+            if (!quoted.ends_with(close)) continue;
+            const auto inner = quoted.substr(0, quoted.size() - close.size());
+            const auto start = inner.rfind(open);
+            if (start == std::string_view::npos || start + open.size() >= inner.size()) return {};
+            return std::string(inner.substr(start + open.size()));
+        }
+        return {};
     }
     constexpr std::string_view kGcc = "fatal error: ";
     constexpr std::string_view kEnoent = ": No such file or directory";
@@ -2129,12 +2136,15 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // msvc); the rule *structure* is shared across compilers.
     // THE FILES A COMPILE READ COME FROM THE COMPILER'S RECORD FOR PROGRAMS
     // (mcpp#970, design 2026-11-19 §20 T1). cl.exe writes its JSON record
-    // (`/sourceDependencies $out.json`), which the executor writes as the Make
-    // rule every compile edge reads. Until 2026.11.19.1 these edges read the
-    // `/showIncludes` lines through ninja's `deps = msvc`: their prefix is a
-    // string of the installed language and their paths text of the console's
-    // code page, so a Visual Studio with only Chinese resources recorded no
-    // header at all, and `VSLANG=1033` could not make it English.
+    // (`/sourceDependencies $out.json`), which the executor gives ninja as
+    // lines of its own output, `kInputsPrefix` and a path each, read as
+    // `deps = msvc` with that prefix: ninja's reader of a Make rule ends a name
+    // at `'`, `&`, `;`, `^` or a backquote, which a Windows path may hold, and
+    // takes the rest of such a line whole. Until 2026.11.19.1 these edges read
+    // cl.exe's own `/showIncludes` lines: their prefix is a string of the
+    // installed language and their paths text of the console's code page, so a
+    // Visual Studio with only Chinese resources recorded no header at all, and
+    // `VSLANG=1033` could not make it English.
     const bool msvcDialect = dial.id == std::string_view("msvc");
     const bool sourceRecord = dial.inputsRecord == std::string_view("source-dependencies");
     const std::string compile_tail = std::format(
@@ -2222,9 +2232,14 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         (needsGnuModuleFilter && mcpplibs::os::is_windows)
         ? "$mcpp depfile-filter --raw $out.d.raw --out $out.d -- "
         : "";
-    // Both records arrive as the Make rule `$out.d`: the GNU driver writes it,
-    // and the executor writes cl.exe's.
+    // The GNU driver writes the Make rule `$out.d`; the executor gives
+    // cl.exe's record as lines of its output.
     auto append_cxx_deps = [&] {
+        if (sourceRecord) {
+            append("  deps = msvc\n");
+            append(std::format("  msvc_deps_prefix = {}\n", mcpp::build::depfile::kInputsPrefix));
+            return;
+        }
         append("  deps = gcc\n");
         append("  depfile = $out.d\n");
     };

@@ -353,9 +353,11 @@ UTest every_place_a_word_carries_a_path_is_a_link_input{"LinkWordInputs/EveryPla
     const auto a = dir.path / "a.a", m = dir.path / "v.map", js = dir.path / "lib.js",
                rsp = dir.path / "libs.rsp";
     touch(a); touch(m); touch(js);
+    // The GNU drivers read a backslash as taking the next character, so a
+    // response file for them names paths with `/` (#261).
     {
         std::ofstream out(rsp, std::ios::binary);
-        out << a.string() << "\n";
+        out << a.generic_string() << "\n";
         expect(fatal(bool(out.flush()))) << "the response file was not written: " << rsp;
     }
     const std::set<std::filesystem::path> none;
@@ -373,6 +375,17 @@ UTest every_place_a_word_carries_a_path_is_a_link_input{"LinkWordInputs/EveryPla
     expect(link_word_inputs("-Wl,-force_load," + a.string(), false, none) == std::vector{a});
     const auto viaResponseFile = link_word_inputs("@" + rsp.string(), false, none);
     expect(viaResponseFile == std::vector{rsp, a}) << "@" << rsp.string() << " gave:" << named(viaResponseFile);
+    // link.exe reads its response file by the rules of CommandLineToArgvW: a
+    // native path, quoted where it has a space, is one word as written.
+    const auto spaced = dir.path / "a b.lib", msvcRsp = dir.path / "link.rsp";
+    touch(spaced);
+    {
+        std::ofstream out(msvcRsp, std::ios::binary);
+        out << a.string() << "\r\n\"" << spaced.string() << "\"\r\n";
+        expect(fatal(bool(out.flush()))) << "the response file was not written: " << msvcRsp;
+    }
+    const auto viaMsvc = link_word_inputs("@" + msvcRsp.string(), true, none);
+    expect(viaMsvc == std::vector{msvcRsp, a, spaced}) << "@" << msvcRsp.string() << " gave:" << named(viaMsvc);
 }};
 
 UTest a_directory_or_a_relative_path_is_no_link_input{"LinkWordInputs/ADirectoryOrARelativePathIsNone", [] {

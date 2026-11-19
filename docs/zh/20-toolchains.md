@@ -626,7 +626,7 @@ staging 成 `.ifc` BMI，用 `/interface /TP /ifcOutput` 编译 `.cppm` 模块
 `link.exe`/`lib.exe` 完成链接。
 
 **一次编译读取的头文件与编译器的文本，与语言无关** *（2026.11.19.1+）*。每次编译写出 cl.exe 的
-`/sourceDependencies` 记录，mcpp 把它写为该编译的依赖文件，所以无论安装的 Visual Studio 是哪种语言、
+`/sourceDependencies` 记录，mcpp 把其中的路径作为该编译的依赖交给 ninja，所以无论安装的 Visual Studio 是哪种语言、
 控制台用哪个代码页，修改头文件都会重新编译包含它的单元。cl.exe、link.exe、lib.exe 与 rc.exe 按它们运行
 所在控制台的代码页写出文本（没有控制台时为系统的 ANSI 代码页），mcpp 按此读取，所以它们的诊断原样到达终端
 与 `result.json`。mcpp 不设置 `VSLANG`：编译器使用用户环境的语言（`VSLANG`，否则为 Visual Studio 的界面语言），

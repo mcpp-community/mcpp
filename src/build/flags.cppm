@@ -523,13 +523,17 @@ std::vector<std::string> link_selection_words(std::string_view rendered) {
     return out;
 }
 
-// The absolute paths of existing files a response file names.
-std::vector<std::filesystem::path> response_file_paths(const std::filesystem::path& rsp) {
+// The absolute paths of existing files a response file names, its words read
+// by the rules of the tool that reads it: link.exe's under the MSVC dialect,
+// the GNU drivers' otherwise (where a backslash takes the next character).
+std::vector<std::filesystem::path> response_file_paths(const std::filesystem::path& rsp, bool msvcDialect) {
     std::vector<std::filesystem::path> out;
     std::ifstream in(rsp, std::ios::binary);
     if (!in) return out;
     const std::string text { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
-    for (auto const& word : mcpp::build::command_line::response_file_words(text)) {
+    const auto words = msvcDialect ? mcpp::build::command_line::windows_response_file_words(text)
+                                   : mcpp::build::command_line::response_file_words(text);
+    for (auto const& word : words) {
         std::error_code ec;
         if (!word.starts_with('-') && std::filesystem::path(word).is_absolute()
             && std::filesystem::is_regular_file(word, ec))
@@ -581,7 +585,7 @@ link_word_inputs(std::string_view word, bool msvcDialect,
         // rewrites nothing when the action rebuilds them (clangd's ok image,
         // 2026-11-02: a stale image after its libraries changed).
         if (responseFile && file)
-            for (auto& named : response_file_paths(p)) out.push_back(std::move(named));
+            for (auto& named : response_file_paths(p, msvcDialect)) out.push_back(std::move(named));
     }
     return out;
 }

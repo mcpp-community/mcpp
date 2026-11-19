@@ -492,8 +492,8 @@ int main() { f(); }
         expect(fatal(e2e::succeeded(r))) << "the project did not build: " << s::text(r);
         const auto graph = s::read_file(ninja_of(p.dir()));
         expect(fatal(e2e::contains(graph, "/sourceDependencies"))) << "cl.exe's compile writes no record";
-        expect(fatal(!e2e::contains(graph, "/showIncludes") && !e2e::contains(graph, "deps = msvc")))
-            << "a compile still reads the /showIncludes text";
+        expect(fatal(!e2e::contains(graph, "/showIncludes") && e2e::contains(graph, "msvc_deps_prefix = mcpp.inputs:")))
+            << "a compile reads the /showIncludes text, or not the lines the executor gives from the record";
         // The header the compile read is its input: an edit rebuilds, and fails where it should.
         std::this_thread::sleep_for(std::chrono::seconds(1));
         p.write("inc dir/hdr.h", "#pragma once\nstatic_assert(false, \"edited\");\ninline int value() { return 0; }\n");
