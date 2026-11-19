@@ -1590,6 +1590,14 @@ UTest a_cache_fill_asks_for_every_bmi_of_its_package{"NinjaBackend/ACacheFillAsk
     auto defaults = ninja.substr(at, ninja.find('\n', at + 1) - at);
     expect(ne(defaults.find(" obj/dep/0011aabb/src/time.m.o"), std::string::npos)) << defaults;
     expect(ne(defaults.find(" pcm.cache/dep/0011aabb/dep.time.pcm"), std::string::npos)) << defaults;
+    // A command that names its goals builds no `default`; the fills have a name
+    // of their own that its goal set takes (`mcpp test`, the build programs' graph).
+    auto fills = ninja.find("\nbuild mcpp-cache-fills : phony");
+    expect(fatal(ne(fills, std::string::npos))) << ninja;
+    auto line = ninja.substr(fills + 1, ninja.find('\n', fills + 1) - fills - 1);
+    expect(ne(line.find(" obj/dep/0011aabb/src/time.m.o"), std::string::npos)) << line;
+    expect(ne(line.find(" pcm.cache/dep/0011aabb/dep.time.pcm"), std::string::npos)) << line;
+    expect(eq(line.find(" obj/main.o"), std::string::npos)) << "a unit that fills nothing is in the fills: " << line;
 }};
 
 // A cached unit whose cachedObject was never filled in is a bug upstream, not a

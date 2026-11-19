@@ -884,6 +884,11 @@ bool action_precedes_compilation(const mcpp::manifest::BuildAction& a) {
         || a.role == mcpp::manifest::BuildAction::Role::Prepare;
 }
 
+// The objects and BMIs the build fills the global cache with, by one name an
+// explicit goal set includes (`append_goal_phony`). Not a path, the same
+// contract as `kGoalPhony`.
+constexpr std::string_view kFillsPhony = "mcpp-cache-fills";
+
 // A phony per package. Not a path — ninja resolves it in the build dir, and no
 // rule produces a file by this name (same contract as `kGoalPhony`).
 std::string action_phony_name(std::string_view pkg) {
@@ -4371,14 +4376,22 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // unit writes its BMI on an edge of its own that its object does not wait
     // for, so the BMI is asked for by name: a module no unit of the build
     // imports was otherwise never compiled to a BMI, and the fill was refused
-    // for it (`openkal.time` in mcpp's own clang build).
+    // for it (`openkal.time` in mcpp's own clang build). A command that names
+    // its goals builds no `default`: the fills are a phony of their own, which
+    // its goal set includes (`mcpp test` on macOS, the build programs' graph,
+    // still refused the fill for `openkal.time` with this rule in place).
+    std::string fills;
     for (auto const& cu : plan.compileUnits) {
-        const bool fills = cu.fillsCache && !cu.servedFromCache;
-        if (plan.linkUnits.empty() || fills)
+        const bool fill = cu.fillsCache && !cu.servedFromCache;
+        if (plan.linkUnits.empty() || fill)
             actionDefaults += " " + escape_ninja_path(cu.object);
-        if (fills && !cu.providesModule.empty())
-            actionDefaults += " " + unit_bmi(cu);
+        if (!fill) continue;
+        fills += " " + escape_ninja_path(cu.object);
+        if (cu.providesModule.empty()) continue;
+        actionDefaults += " " + unit_bmi(cu);
+        fills += " " + unit_bmi(cu);
     }
+    if (!fills.empty()) append(std::format("build {} : phony{}\n", kFillsPhony, fills));
 
     if (!plan.linkUnits.empty() || !actionDefaults.empty()) {
         std::string defaults;
@@ -4425,6 +4438,11 @@ std::string append_goal_phony(std::string& manifest,
     for (auto const& g : goals) {
         manifest += ' ';
         manifest += escape_ninja_path(g);
+    }
+    // The entries this build fills are completed whichever goals it names.
+    if (manifest.contains(std::format("\nbuild {} : phony", kFillsPhony))) {
+        manifest += ' ';
+        manifest += kFillsPhony;
     }
     manifest += '\n';
     return std::string(kGoalPhony);

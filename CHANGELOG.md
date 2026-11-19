@@ -228,7 +228,8 @@
   imported every module of the package: the BMI is compiled on an edge of its own, which the
   object does not wait for, so a module no unit imported had no BMI, and the fill was refused
   (`bmi cache populate failed for openkal@0.26.0: expected build output missing:
-  .../openkal.time.pcm` in mcpp's own build). A fill asks for every BMI of its package.
+  .../openkal.time.pcm` in mcpp's own build). A fill asks for every BMI of its package, under
+  the default goal and under the goals a command names (`mcpp test`, the build programs' graph).
 
 ## [2026.11.18.1] - 2026-11-18
 

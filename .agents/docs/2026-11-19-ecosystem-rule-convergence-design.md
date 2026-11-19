@@ -829,6 +829,8 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
 - mcpp#969：`emit build-database` 的工作目录从不回收（一个 home 中 3.4 GB）。
 - clang 的两阶段调度下，依赖的缓存条目只在构建导入了包的每个模块时才被填充：BMI 由独立的边编译，目标文件不等它，
   无人导入的模块没有 BMI，填充被拒（mcpp 自身的 clang 构建，`openkal.time`）。填充改为按名字请求包的每个 BMI，并入检查点 10b。
+  写出目标的命令（`mcpp test` 的 A 阶段、构建程序图的子构建）不构建 `default`，macOS 上 `mcpp test` 仍报 `openkal.time`
+  的填充被拒：填充另以一个名字（`mcpp-cache-fills`）写出，目标集合包含它。
 - 包实例（11.1）改变了 BMI 的拼写，缓存键随之改变：升级通道（`upgrade_lane.sh modules`）的“拼写未变时由缓存提供”
   以 2026.11.19.1 为最后一次拼写变化。
 - mcpp.plugins 0.22.1 以精确版本依赖 mcpplibs.os 0.4.4（openkal 0.24 至 0.25），与 openkal 0.26 一族不能共存于一个构建，
