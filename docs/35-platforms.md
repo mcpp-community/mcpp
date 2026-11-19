@@ -191,6 +191,15 @@ directory or a repository are not bound by the group. An mcpp before
 2026.11.7.1 checks the group after resolution instead; a family released as one
 index change resolves the same either way.
 
+The group's version is a constraint of the request it binds and takes part in
+every merge *(mcpp 2026.11.19.1+)*. A package that a build program and the target
+both ask for has one version: a build program's `>=1.0, <2.0` and the group's
+`=1.1.0` give 1.1.0, in whichever order the two requests arrive, and a request
+that had already taken a newer version is replaced (`Merged <package> 1.2.0 ⨯
+1.1.0 → v1.1.0`). Where no version satisfies every request the refusal lists
+each request and its requester, the group's under the platform's name. A
+package only a build program uses is still not bound.
+
 ## The built-in platform is one release
 
 The target table selects one openkal-platform release for the two ok-image

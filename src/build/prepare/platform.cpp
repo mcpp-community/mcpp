@@ -1020,7 +1020,17 @@ std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state)
 // request admits it, and is refused naming both when it does not. A package
 // built for this machine only, and a development tree (a path or a
 // repository), are not bound by it, as the check after the walk leaves them.
-std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+//
+// THE CONSTRAINT ENTERS THE MERGE (mcpp#956). The request was rewritten to the
+// group's version and the rewriting stopped there: a second request of the
+// same package was merged with the constraints as written, which the group's
+// version was not among. A build program's request, which the group does not
+// bind, took the newest version its range admits; the platform's layer then
+// arrived, the merge found the kept version within both written ranges, and
+// the check after the walk refused a version the resolver itself had chosen.
+// One version of a package serves every request of it, and the group's
+// constraint is one of those requests.
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, WorkItem& item,
                                                               const std::string& name,
                                                               mcpp::manifest::DependencySpec& spec) {
     if (!state.platformGroup.empty() && !spec.isPath() && !spec.isGit() && !item.buildOnly) {
@@ -1045,7 +1055,13 @@ std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& stat
                     shortName, asked, item.requestedBy, state.platformGroupFrom, shortName,
                     g->second, state.platformPackageShortName, g->second, shortName, g->second));
             }
-            if (group) spec.version = "=" + g->second;
+            if (group) {
+                spec.version = "=" + g->second;
+                // The group's choice is this request's constraint from here on:
+                // the record of the package keeps it, and a later request the
+                // group does not bind is merged with it.
+                item.groupConstraint = spec.version;
+            }
         }
     }
     return {};

@@ -158,6 +158,11 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // not the consumer's own sources.
         bool devTable = false;
         bool wantsLibrary = false;
+        // The edge is of the target's reading of the consumer's table alone
+        // (SPEC-004 §4.8): the consumer's instance in a build program does not
+        // have it. An edge of this machine's reading alone is a `buildTable`
+        // edge, which the target's instance does not have.
+        bool targetRowOnly = false;
         bool reexport = false;
         // `embed = true` and its `exclude` (design 2026-11-02 §14.1): the
         // dependency's sources are compiled into the consumer.
@@ -260,6 +265,18 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
         // The root's override answered this request (T2): its source is the
         // root's, and the platform's version group does not bind it.
         bool                                 overridden = false;
+        // Last, since items are written positionally. `=<version>` where the platform's version group binds this request
+        // (SPEC-013 §7.5). It is a constraint of the request as the written one
+        // is, so it enters the resolution record and every later merge: a
+        // request of the same package that the group does not bind (a build
+        // program's) is then resolved with it, in whichever order the two
+        // arrive (mcpp#956).
+        std::string                          groupConstraint;
+        // The request is of the target's reading of its consumer's table
+        // alone: a `[target.<selector>.dependencies]` entry the row of this
+        // machine does not match (SPEC-004 §4.8). Its edge does not make the
+        // dependency a module of a build program.
+        bool                                 targetRowOnly = false;
     };
 
     struct DeclaringManifest {
@@ -835,6 +852,11 @@ struct PrepareState {
     // version that had already left (os 0.4.4 and openkal-linux 0.26.0 after
     // both were merged down, measured).
     std::set<std::string> supersededRequesters;
+    // The sides a package's dependency table has been walked for, by dep slot
+    // (SPEC-004 §4.8; mcpp#956): 1 the target's, 2 this machine's. A package is
+    // built once for each side that asks for it, and each side reads the table
+    // by its own row and makes its own requests.
+    std::vector<unsigned char> depSidesWalked;
     // THE ROOT'S OVERRIDES (design 2026-11-10 supplement, T2): each
     // `override = true` declaration of the root's tables and of
     // `[workspace.dependencies]`, with the identity it answers for and the
@@ -1053,7 +1075,7 @@ std::size_t packageIndexForConsumer(std::size_t consumerDepIndex);
 void recordDependencyEdge(PrepareState& state, std::size_t consumerDepIndex,
                           std::size_t dependencyPackageIndex,
                           const mcpp::manifest::DependencySpec& spec, bool buildTable,
-                          const std::string& writtenKey);
+                          const std::string& writtenKey, bool targetRowOnly = false);
 // graph_edges.cpp: the package being built stands for itself in its tests'
 // graph -- an edge reached through its `[dev-dependencies]` naming it is its
 // own, recorded here; true when the request is so answered.
@@ -1360,7 +1382,25 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
 // added to the walk.
 std::expected<bool, std::string> step4b_capability_defaults(PrepareState& state);
 std::expected<void, std::string> step4b_check_platform_versions(PrepareState& state);
-std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, const WorkItem& item,
+// graph_requests.cpp: what a request is bound by (the range as written and the
+// platform's version group), the requests a resolution record answers, and
+// the requests each side of the build makes of a package's dependency tables
+// (SPEC-013 §7.5, SPEC-004 §4.8).
+enum : unsigned char { kTargetSide = 1, kHostSide = 2 };
+using DependencyTable = std::map<std::string, mcpp::manifest::DependencySpec>;
+struct SideRequests {
+    DependencyTable dependencies, buildDependencies;
+    std::set<std::string> ofThisMachineAlone, ofTheTargetAlone;
+};
+std::string request_constraint(const WorkItem& item);
+void note_request(const PrepareState& state, ResolvedRecord& r, const WorkItem& item);
+std::string requests_of(const PrepareState& state, const ResolvedRecord& r);
+std::expected<SideRequests, std::string> side_requests(PrepareState& state,
+                                                       const mcpp::manifest::Manifest& dm, bool hostSide);
+WorkItem side_item(const SideRequests& side, const std::string& childName,
+                   mcpp::manifest::DependencySpec childReq, const std::string& label,
+                   std::size_t consumer, const std::filesystem::path& root, const WorkItem& item);
+std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& state, WorkItem& item,
                                                               const std::string& name,
                                                               mcpp::manifest::DependencySpec& spec);
 void step4b_read_platform_group(PrepareState& state, const std::string& resolvedShortName);

@@ -542,6 +542,15 @@ target and one for the build program. Both have the version the lock records.
 Their features are activated separately: a feature requested only by a
 `[build-dependencies]` edge does not reach the target instance.
 
+**Which row reads a package's conditional tables *(mcpp 2026.11.19.1+)*.** A
+package's `[target.<selector>.dependencies]` are read by the row the package is
+built for (SPEC-004 §4.8). A package of the target is read by the build's
+target. A package reached only through `[build-dependencies]` is a module of a
+build program and is read by the row of the machine that runs the build: under
+`--target x86_64-macos-musl` on Linux, a library of `build.mcpp` takes its
+`[target.linux.dependencies]`. A package both sides ask for is read once for
+each. `mcpp.lock` records the packages of both sides.
+
 **A reading kept for compatibility.** A `[dependencies]` entry that asks for
 `host-module = true`, or for a feature that declares `rule_module`, is read as a
 `[build-dependencies]` entry: the package serves the build program and not the

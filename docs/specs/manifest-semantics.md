@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.19 |
-| **最后修改** | 2026-10-28 |
+| **版本** | 1.21 |
+| **最后修改** | 2026-11-19 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`<br>`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md`(§24) |
@@ -362,6 +362,25 @@ feature-deps          feature-xlings         ← 限定词是门
 - 请求一个没有任何 manifest 如此声明的包**必须**被拒绝。
 
 **状态:已实现**(mcpp 2026.10.1.3,mcpp#755)。
+
+### 4.8 包的依赖表由构建它的那一行读取
+
+一个包为哪一行构建,它的 `[target.<selector>.dependencies]` 与 `[target.<selector>.build-dependencies]` 就**必须**由
+哪一行选择。目标图中的包由构建的目标读取;只经 `[build-dependencies]` 到达的包是构建程序的模块,为本机构建
+(SPEC-013 §4 的宿主图),由本机的行读取,宿主图选用平台时由该平台在本机上服务的目标读取。
+
+- 两侧都请求的包为每一侧各构建一次,每一侧按自己的行读取它的表,并各自发出请求。先到达的一侧发出它的请求;
+  另一侧第一次请求该包时再发出另一侧的请求,因此结果与请求到达的先后无关。
+- 只出现在本机一行的读取中的条目,是该包在构建程序中的实例的请求,它的边按 `[build-dependencies]` 的边记录,
+  目标图不经它到达该依赖。只出现在目标一行的读取中的条目,构建程序不经它到达该依赖。
+- `mcpp.lock` 记录两侧解析出的包:交叉构建时,构建程序链接的包在锁中,目标的行为一个只属于构建程序的包点名的
+  包不在锁中。
+- 点名层的 selector(`cfg(c-abi = ...)` 等)在主解析中仍按目标的层读取:本机一行的层在宿主图自身准备时选定,
+  由宿主图读取。
+
+**状态:已实现**(mcpp 2026.11.19.1,mcpp#956)。此前只属于构建程序的包的表也由目标读取:交叉到 macOS 时,构建程序的库
+请求了 macOS 的内核层实现,而它实际链接的 Linux 实现在主解析之外解析,不在锁中。e2e
+`openkal::platforms/956 a build program's library reads its tables by this machine's row`。
 
 ## 5. 命名规约
 
@@ -816,3 +835,4 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.18 | 2026-10-27 | mcpp 2026.10.26.2(mcpp#845):新增 §14 程序起点与镜像入口(`kind = "entry"`、`main = { from }`、`start`、`[test] main` 与 `start`、`mcpp:link-start`);§3.1.1 的按行形式可陈述起点。 |
 | 1.19 | 2026-10-28 | mcpp 2026.10.27.1(mcpp#847):§2 增加平台平面(`[platform]`、`[host]`),平台键可出现在工程与机器默认中;§4.2 增加 `[target.<selector>]` 的平台键与 `[host] platform`(SPEC-013)。 |
 | 1.20 | 2026-11-17 | mcpp 2026.11.17.1(设计 2026-11-16 §4):新增 §15 运行时文件与发布文件:`deploy` 的条目语法(字符串、通配符、`name`)、固定目录规则与过期副本的移除;`license_files` 与其缺省值。 |
+| 1.21 | 2026-11-19 | mcpp 2026.11.19.1(mcpp#956):新增 §4.8 包的依赖表由构建它的那一行读取;两侧各自发出请求,锁记录两侧。 |

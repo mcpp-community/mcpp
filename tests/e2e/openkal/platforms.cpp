@@ -192,6 +192,96 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "C: a development tree was bound by the group: " << s::text(r);
     };
 
+    "956 the version group binds one version for every request of a package"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
+        // mcpp#956, SPEC-013 §7.5. The group's version is a constraint of the request it binds,
+        // and it enters the merge: a build program's request of the same package, which the
+        // group does not bind, is resolved with it in whichever order the two arrive. A the
+        // target's request first; B the build program's first (the kept version is replaced and
+        // a `Merged` line says so); C a package only a build program uses is not bound.
+        const auto tmp = s::case_dir();
+        s::project(tmp / "plat", {{"mcpp.toml", "[package]\nname    = \"group-platform\"\nversion = \"0.1.0\"\n\n[platform]\ntargets = [\"x86_64-linux-gnu\", \"aarch64-linux-gnu\", \"aarch64-macos\", \"x86_64-macos\"]\n\n[platform.versions]\nfam = \"1.1.0\"\n"}});
+        const auto library = [&](std::string_view name, std::string_view dependencies) {
+            s::project(tmp / name, {{"mcpp.toml", std::format("[package]\nname = \"{0}\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/{0}.cppm\"]\n\n[targets.{0}]\nkind = \"lib\"\n\n{1}", name, dependencies)},
+                                    {std::format("src/{}.cppm", name), std::format("export module {};\nexport int {}_value() {{ return 1; }}\n", name, name)}});
+        };
+        const std::string fam = "[indices]\nacme = { path = \"../proj/local-index\" }\n\n[dependencies.acme]\nfam = \"^1.0.0\"\n";
+        library("tool", fam);       // a build program's library
+        library("inner", fam);      // reached by the target two edges down
+        library("mid", "[dependencies]\ninner = { path = \"../inner\" }\n");
+        const std::string_view unit = "export module fam;\nexport int fam_value() { return 0; }\n";
+        s::project proj(tmp / "proj", {{"local-index/pkgs/a/acme.fam.lua", R"(package = {
+    spec = "1", namespace = "acme", name = "acme.fam",
+    description = "version-group fixture", licenses = {"MIT"}, type = "package",
+    xpm = {
+        linux  = { ["1.2.0"] = { url = "u", sha256 = "0" }, ["1.1.0"] = { url = "u", sha256 = "0" }, ["1.0.0"] = { url = "u", sha256 = "0" } },
+        macosx = { ["1.2.0"] = { url = "u", sha256 = "0" }, ["1.1.0"] = { url = "u", sha256 = "0" }, ["1.0.0"] = { url = "u", sha256 = "0" } },
+    },
+    mcpp = { language = "c++23", import_std = false, sources = { "src/fam.cppm" },
+             targets = { ["fam"] = { kind = "lib" } }, deps = {} },
+}
+)"},
+                                       {".mcpp/.xlings/data/xpkgs/acme.fam/1.1.0/src/fam.cppm", std::string(unit)},
+                                       {".mcpp/.xlings/data/xpkgs/acme.fam/1.2.0/src/fam.cppm", std::string(unit)},
+                                       {"build.mcpp", "import std;\nimport mcpp;\nint main() { return 0; }\n"},
+                                       {"src/main.cpp", "int main() { return 0; }\n"}});
+        const auto use = [&](std::string_view dependencies) {
+            proj.write("mcpp.toml", std::format("[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"local-index\" }}\n\n[target.'cfg(any(linux, macos))']\nplatform = {{ path = \"../plat\" }}\n\n{}\n[build-dependencies]\ntool = {{ path = \"../tool\" }}\n\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", dependencies));
+            fs::remove(proj.at("mcpp.lock"));
+            return proj.mcpp({"build", "--configure-only"}, inherited);
+        };
+        // A: the target's request is walked first, the build program's finds the group's version kept.
+        auto r = use("[dependencies.acme]\nfam = \"^1.0.0\"\n");
+        expect(fatal(e2e::succeeded(r))) << "A: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "fam =1.1.0 → v1.1.0"))) << "A: the group's version was not taken: " << s::text(r);
+        expect(fatal(e2e::contains(proj.read("mcpp.lock"), "version = \"1.1.0\""))) << "A: the lock does not record the group's version: " << proj.read("mcpp.lock");
+        // B: the build program's request is walked first and takes the newest; the target's replaces it.
+        r = use("[dependencies]\nmid = { path = \"../mid\" }\n");
+        expect(fatal(e2e::succeeded(r))) << "B: a version the resolver chose was refused: " << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(Merged acme\.fam 1\.2\.0 ⨯ 1\.1\.0 → v1\.1\.0)"))) << "B: the two requests were not merged: " << s::text(r);
+        expect(fatal(!e2e::contains(proj.read("mcpp.lock"), "version = \"1.2.0\""))) << "B: the lock records the replaced version: " << proj.read("mcpp.lock");
+        // C: only the build program uses the package, and the group does not bind it.
+        r = use("");
+        expect(fatal(e2e::succeeded(r))) << "C: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "fam ^1.0.0 → v1.2.0"))) << "C: a package of a build program alone was bound by the group: " << s::text(r);
+    };
+
+    "956 a build program's library reads its tables by this machine's row"_test[s::musl][s::elf][s::fresh_sandbox] = [] {
+        // mcpp#956, SPEC-004 §4.8. A package reached only through build dependencies is a
+        // module of a build program, built for this machine: under `--target x86_64-linux-musl`
+        // its `[target.<selector>.dependencies]` are read by the row of this machine, the
+        // package the target's row would have named is not resolved, and the lock records the
+        // one the build program links.
+        const auto musl_version = s::musl_gcc_version();
+        if (!fs::exists(s::payload_root("xim-x-musl-gcc", musl_version) / "bin/x86_64-linux-musl-g++"))
+            skip("no musl-gcc payload in this home: not crossing to *-linux-musl");
+        const auto tmp = s::case_dir();
+        const auto descriptor = [](std::string_view name) {
+            return std::format(R"(package = {{
+    spec = "1", namespace = "acme", name = "acme.{0}",
+    description = "row fixture", licenses = {{"MIT"}}, type = "package",
+    xpm = {{ linux = {{ ["1.0.0"] = {{ url = "u", sha256 = "0" }} }} }},
+    mcpp = {{ language = "c++23", import_std = false, sources = {{ "src/{0}.cppm" }},
+             targets = {{ ["{0}"] = {{ kind = "lib" }} }}, deps = {{}} }},
+}}
+)", name);
+        };
+        s::project(tmp / "tool", {{"mcpp.toml", "[package]\nname = \"tool\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/tool.cppm\"]\n\n[targets.tool]\nkind = \"lib\"\n\n[indices]\nacme = { path = \"../proj/local-index\" }\n\n[target.'cfg(env = \"gnu\")'.dependencies.acme]\nongnu = \"1.0.0\"\n\n[target.'cfg(env = \"musl\")'.dependencies.acme]\nonmusl = \"1.0.0\"\n"},
+                                  {"src/tool.cppm", "export module tool;\nexport int tool_value() { return 1; }\n"}});
+        s::project proj(tmp / "proj", {
+            {"local-index/pkgs/a/acme.ongnu.lua", descriptor("ongnu")},
+            {"local-index/pkgs/a/acme.onmusl.lua", descriptor("onmusl")},
+            {".mcpp/.xlings/data/xpkgs/acme.ongnu/1.0.0/src/ongnu.cppm", "export module ongnu;\nexport int ongnu_value() { return 0; }\n"},
+            {".mcpp/.xlings/data/xpkgs/acme.onmusl/1.0.0/src/onmusl.cppm", "export module onmusl;\nexport int onmusl_value() { return 0; }\n"},
+            {"build.mcpp", "import std;\nimport mcpp;\nint main() { return 0; }\n"},
+            {"src/main.cpp", "int main() { return 0; }\n"},
+            {"mcpp.toml", std::format("[package]\nname    = \"proj\"\nversion = \"0.1.0\"\n\n[indices]\nacme = {{ path = \"local-index\" }}\n\n[target.x86_64-linux-musl]\ntoolchain = \"gcc@{}-musl\"\nlinkage   = \"static\"\n\n[build-dependencies]\ntool = {{ path = \"../tool\" }}\n\n[targets.proj]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", musl_version)}});
+        auto r = proj.mcpp({"build", "--target", "x86_64-linux-musl", "--configure-only"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        const auto lock = proj.read("mcpp.lock");
+        expect(fatal(e2e::contains(lock, "acme.ongnu"))) << "the row of this machine was not read, or the lock does not record what the build program links: " << lock;
+        expect(fatal(!e2e::contains(lock, "acme.onmusl"))) << "the target's row was read for a build program's library: " << lock;
+    };
+
     "1021 a platform series is locked and skips newer engines"_test[s::unix_shell][s::gcc][s::fresh_sandbox] = [] {
         // A platform selected as a series (`acme.plat@^0`): A it takes its newest release whose
         // `[package] mcpp` floor this mcpp meets, naming the one it skips, and the lock records

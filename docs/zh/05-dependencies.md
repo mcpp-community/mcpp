@@ -463,6 +463,12 @@ protobuf     = { version = "35.1", tools = ["protoc"] }   # 构建期间运行�
 锁文件记录的版本。它们的特性分别激活：只由 `[build-dependencies]` 边请求的特性
 不进入目标实例。
 
+**包的条件表由哪一行读取 *（mcpp 2026.11.19.1+）*。** 一个包的 `[target.<selector>.dependencies]`
+由构建它的那一行读取（SPEC-004 §4.8）。目标的包由构建的目标读取。只经 `[build-dependencies]`
+到达的包是构建程序的模块，由执行构建的机器的行读取：在 Linux 上以 `--target x86_64-macos-musl`
+构建时，`build.mcpp` 的库取它的 `[target.linux.dependencies]`。两侧都请求的包为每一侧各读取一次。
+`mcpp.lock` 记录两侧的包。
+
 **为兼容保留的读法。** `[dependencies]` 中请求 `host-module = true`、或请求声明了
 `rule_module` 的特性的条目，按 `[build-dependencies]` 的条目读取：这个包服务构建程序
 而不进入目标，与 mcpp 2026.10.11.1 之前相同。该读法自 mcpp 2026.10.11.1 弃用，

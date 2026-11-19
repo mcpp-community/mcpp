@@ -33,7 +33,8 @@ void recordDependencyEdge(
         std::size_t dependencyPackageIndex,
         const mcpp::manifest::DependencySpec& spec,
         bool buildTable,
-        const std::string& writtenKey)
+        const std::string& writtenKey,
+        bool targetRowOnly)
 {
         const auto consumerPackageIndex = packageIndexForConsumer(consumerDepIndex);
         if (consumerPackageIndex >= state.packages.size()
@@ -114,6 +115,8 @@ void recordDependencyEdge(
                     it->requestedFeatures.push_back(f);
             it->defaultFeatures = it->defaultFeatures || spec.defaultFeatures;
             it->wantsLibrary = it->wantsLibrary || wantsLibrary;
+            // Of the target's reading alone only while every declaration is.
+            it->targetRowOnly = it->targetRowOnly && targetRowOnly;
             it->reexport = it->reexport || spec.reexport;
             it->embed = it->embed || spec.embed;
             for (auto const& x : spec.exclude)
@@ -135,6 +138,7 @@ void recordDependencyEdge(
             .embed = spec.embed,
             .exclude = spec.exclude,
         });
+        state.dependencyEdges.back().targetRowOnly = targetRowOnly;
 }
 
 // THE PACKAGE BEING BUILT STANDS FOR ITSELF IN ITS TESTS' GRAPH. A dependency

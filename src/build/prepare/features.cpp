@@ -257,7 +257,9 @@ PackageInstances package_instances(const PrepareState& state) {
         const auto p = stack.back();
         stack.pop_back();
         for (auto const& e : state.dependencyEdges) {
-            if (e.consumerPackageIndex != p) continue;
+            // An edge of the target's reading of the consumer's table is not
+            // the build program's (SPEC-004 §4.8).
+            if (e.consumerPackageIndex != p || e.targetRowOnly) continue;
             const auto d = e.dependencyPackageIndex;
             if (d >= n || host[d]) continue;
             host[d] = true;

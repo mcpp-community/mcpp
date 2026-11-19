@@ -714,7 +714,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                 auto merged = mcpp::pm::try_merge_semver(
                     key.ns, key.shortName,
                     effective_constraint(state, it->second),
-                    item.originalConstraint,
+                    request_constraint(item),
                     state.index_route(*cfg), *state.targetPlatform);
                 if (!merged) {
                     // Level 1 fallback: multi-version mangling. Two
@@ -747,14 +747,14 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     if (item.fromBuildTable) {
                         return std::unexpected(std::format(
                             "build dependency '{}{}{}' has irreconcilable versions:\n"
-                            "  '{}' (constraint '{}') requested by '{}'\n"
+                            "  '{}', resolved for these requests:{}\n"
                             "  '{}' (constraint '{}') requested by '{}'\n"
                             "SemVer merge: {}\n"
                             "A build dependency is a module of a build program, and a build "
                             "loads one version of it. Align the requests on one version{}.",
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                            it->second.version, effective_constraint(state, it->second), it->second.requestedBy,
-                            spec.version, item.originalConstraint, item.requestedBy,
+                            it->second.version, requests_of(state, it->second),
+                            spec.version, request_constraint(item), item.requestedBy,
                             merged.error(),
                             state.platform.active
                                 ? std::format(", or select the release of {} that carries the "
@@ -765,15 +765,15 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     if (item.consumerDepIndex == kMainConsumer) {
                         return std::unexpected(std::format(
                             "dependency '{}{}{}' has irreconcilable versions:\n"
-                            "  '{}' (constraint '{}') requested by '{}'\n"
+                            "  '{}', resolved for these requests:{}\n"
                             "  '{}' (constraint '{}') requested by '{}'\n"
                             "SemVer merge: {}\n"
                             "Multi-version mangling can't help here — the conflict "
                             "involves the main package directly. Pin one version "
                             "explicitly in your mcpp.toml.",
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                            it->second.version, it->second.constraint, it->second.requestedBy,
-                            spec.version, item.originalConstraint, item.requestedBy,
+                            it->second.version, requests_of(state, it->second),
+                            spec.version, request_constraint(item), item.requestedBy,
                             merged.error())
                         + override_hint(key, it->second.version, spec.version));
                     }
@@ -930,7 +930,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     if (!secPackage) return std::unexpected(secPackage.error());
                     state.packages.push_back(std::move(*secPackage));
                     recordDependencyEdge(state, item.consumerDepIndex, depPackageIndex,
-                                         spec, item.fromBuildTable, name);
+                                         spec, item.fromBuildTable, name, item.targetRowOnly);
                     auto linkFlagsAdded = propagateLinkFlags(state, secStage, *state.dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangledPackage};
@@ -958,23 +958,16 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     return {};
                 }
 
-                // Combine the constraint strings so future merges AND with
-                // both. Empty originalConstraint means "any" — use "*".
-                const std::string& addCstr =
-                    item.originalConstraint.empty() ? std::string("*")
-                                                    : item.originalConstraint;
-                if (it->second.constraint.empty())
-                    it->second.constraint = addCstr;
-                else
-                    it->second.constraint += "," + addCstr;
-                it->second.constraintsBy.emplace_back(item.requestedBy, addCstr);
+                // The request joins the record, so future merges AND with it
+                // as well; the group's constraint goes with it.
+                note_request(state, it->second, item);
 
                 if (*merged == it->second.version) {
                     // The existing pin already satisfies the new constraint —
                     // no re-fetch needed; just record this consumer edge.
                     recordDependencyEdge(state, item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.fromBuildTable, name);
+                                         spec, item.fromBuildTable, name, item.targetRowOnly);
                     return {};
                 }
 
@@ -1036,7 +1029,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                 state.packages[it->second.depIndex + 1] = std::move(*mergedPackage);
                 recordDependencyEdge(state, item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.fromBuildTable, name);
+                                     spec, item.fromBuildTable, name, item.targetRowOnly);
 
                 it->second.version            = *merged;
                 it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
@@ -1056,6 +1049,52 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                                         it->second.depIndex, {}, item.devOnly});
                 }
                 return {};
+    return {};
+}
+
+// The sides of a package's dependency table and the requests each makes are
+// in graph_requests.cpp (SPEC-004 §4.8).
+// A side's requests of a package it has not yet asked. The first walk of a
+// package made the requests of the side that reached it; a request from the
+// other side makes that side's here, so a package first reached by a build
+// program and then by the target has its dependencies asked for the target as
+// well, where the platform's version group binds them.
+static std::expected<void, std::string>
+step4b_walk_other_side(PrepareState& state, std::size_t depIndex, const WorkItem& item) {
+    if (depIndex >= state.dep_manifests.size() || !state.dep_manifests[depIndex]) return {};
+    if (state.depSidesWalked.size() <= depIndex) state.depSidesWalked.resize(depIndex + 1, 0);
+    const unsigned char side = item.buildOnly ? kHostSide : kTargetSide;
+    // A slot no walk has marked is one of the paths that walk no children
+    // (a package of programs, a mangled secondary): it stays unwalked.
+    if (state.depSidesWalked[depIndex] == 0 || (state.depSidesWalked[depIndex] & side)) return {};
+    state.depSidesWalked[depIndex] |= side;
+    auto const& dm = *state.dep_manifests[depIndex];
+    auto requests = side_requests(state, dm, item.buildOnly);
+    if (!requests) return std::unexpected(requests.error());
+    std::vector<std::string> active;
+    if (auto requested = state.depFeatureRequests.find(depIndex); requested != state.depFeatureRequests.end())
+        active = feature_closure(dm, requested->second.first, requested->second.second);
+    std::string label = dm.package.name;
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex == depIndex) {
+            label = std::format("{}{}{}@{}", k.ns, k.ns.empty() ? "" : ".", k.shortName,
+                                r.source == "version" ? r.version : r.source);
+            break;
+        }
+    const auto root = depIndex + 1 < state.packages.size() ? state.packages[depIndex + 1].root
+                                                          : std::filesystem::path{};
+    for (auto const& [childName, childSpec] : requests->dependencies) {
+        auto childReq = childSpec;
+        injectForwards(dm, active, childName, childReq);
+        state.worklist.push_back(side_item(*requests, childName, childReq, label, depIndex, root, item));
+    }
+    for (auto const& [childName, childSpec] : requests->buildDependencies) {
+        auto childReq = childSpec;
+        injectForwards(dm, active, childName, childReq);
+        state.worklist.push_back({childName, childReq, label + " (build-dep)", childReq.version,
+                                  depIndex, root, item.devOnly, /*buildOnly=*/true,
+                                  /*fromBuildTable=*/true});
+    }
     return {};
 }
 
@@ -1126,6 +1165,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
             if (sourceKind == "version" && it->second.depIndex < state.dep_manifests.size()
                 && state.dep_manifests[it->second.depIndex])
                 step4b_note_exact_pin(state, item, *state.dep_manifests[it->second.depIndex]);
+            if (auto r = step4b_walk_other_side(state, it->second.depIndex, item); !r) return r;
             // A package is dev-only until some non-dev consumer wants it. Order
             // of arrival must not decide, so this is an AND over every request.
             it->second.devOnly = it->second.devOnly && item.devOnly;
@@ -1232,7 +1272,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
                 if (it->second.depIndex + 1 < state.packages.size()) {
                     recordDependencyEdge(state, item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.fromBuildTable, name);
+                                         spec, item.fromBuildTable, name, item.targetRowOnly);
                 }
                 return step4b_widen_features(state, it->second.depIndex, item, spec);
             }
@@ -1308,7 +1348,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
             if (it->second.depIndex + 1 < state.packages.size()) {
                 recordDependencyEdge(state, item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.fromBuildTable, name);
+                                     spec, item.fromBuildTable, name, item.targetRowOnly);
             }
             return step4b_widen_features(state, it->second.depIndex, item, spec);
     return {};
@@ -1900,7 +1940,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
         }
         state.packages.push_back(std::move(*depPackage));
         recordDependencyEdge(state, item.consumerDepIndex, depPackageIndex, spec,
-                             item.fromBuildTable, name);
+                             item.fromBuildTable, name, item.targetRowOnly);
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
@@ -1926,11 +1966,11 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             .depIndex          = state.dep_manifests.size() - 1,
             .linkFlagsAdded    = std::move(linkFlagsAdded),
             .patches           = spec.patches,
-            .constraintsBy     = sourceKind == "version"
-                ? std::vector<std::pair<std::string, std::string>>{{item.requestedBy,
-                      item.originalConstraint.empty() ? std::string("*") : item.originalConstraint}}
-                : std::vector<std::pair<std::string, std::string>>{},
         };
+        if (sourceKind == "version") {
+            state.resolved[key].constraint.clear();
+            note_request(state, state.resolved[key], item);
+        }
 
         if (sourceKind == "version" && !state.dep_manifests.empty() && state.dep_manifests.back())
             step4b_note_exact_pin(state, item, *state.dep_manifests.back());
@@ -1971,13 +2011,19 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                     && std::ranges::find(childSpec.features, depFeat) == childSpec.features.end())
                     childSpec.features.push_back(depFeat);
         };
-        for (auto& [child_name, child_spec] : state.dep_manifests.back()->dependencies) {
+        // The side that reached the package reads its tables by its own row
+        // (SPEC-004 §4.8); the other side's requests are made when that side
+        // first asks for the package (`step4b_walk_other_side`).
+        if (state.depSidesWalked.size() <= selfIdx) state.depSidesWalked.resize(selfIdx + 1, 0);
+        state.depSidesWalked[selfIdx] |= item.buildOnly ? kHostSide : kTargetSide;
+        auto side = side_requests(state, *state.dep_manifests.back(), item.buildOnly);
+        if (!side) return std::unexpected(side.error());
+        for (auto& [child_name, child_spec] : side->dependencies) {
             auto childReq = child_spec;
             injectForwards(*state.dep_manifests.back(), depActive, child_name, childReq);
             injectMemberCliForwards(child_name, childReq);
-            state.worklist.push_back({child_name, childReq, thisDepLabel,
-                                childReq.version, selfIdx, ctx.dep_root,
-                                item.devOnly, item.buildOnly});
+            state.worklist.push_back(side_item(*side, child_name, childReq, thisDepLabel, selfIdx,
+                                               ctx.dep_root, item));
         }
         // A selected member's `[dev-dependencies]` under `mcpp test`, as a
         // root's: its own, and never walked into its dependencies' tests.
@@ -2001,8 +2047,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
         // These are build-only regardless of how this package was reached: a
         // library's build dependency has no business in its consumer's binary
         // either.
-        for (auto& [child_name, child_spec] :
-                 state.dep_manifests.back()->buildDependencies) {
+        for (auto& [child_name, child_spec] : side->buildDependencies) {
             auto childReq = child_spec;
             injectForwards(*state.dep_manifests.back(), depActive, child_name, childReq);
             injectMemberCliForwards(child_name, childReq);

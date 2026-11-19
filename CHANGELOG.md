@@ -18,6 +18,24 @@
   modules and the dependencies. The six places that read the field read it through one
   function (`mcpp::pm::descriptor_manifest`), and a table that names a manifest is refused
   with the line to write in its place.
+- A build that takes a library through `[build-dependencies]` was refused for a version
+  the resolver itself had chosen: `openkal-macos 0.23.5 is in this build, and the platform
+  ... is a version group that names openkal-macos 0.23.4` (mcpp#956). The group's version
+  was written into the request and went no further: a second request of the package was
+  merged with the ranges as written. The group's constraint is now a constraint of the
+  request and enters the resolution record and every merge, so the requests of a package
+  are answered by one version in whichever order they arrive (SPEC-013 §7.5). A refusal
+  lists every request and its requester.
+- A package reached only through build dependencies is a module of a build program, built
+  for this machine, and its `[target.<selector>.dependencies]` were read by the build's
+  target. They are read by the row the package is built for (SPEC-004 §4.8): crossing to
+  another system no longer resolves the target's implementation of a layer for a build
+  program's library, and `mcpp.lock` records the package the build program links. A
+  package both sides ask for makes each side's requests.
+- The build programs' graph looked for a project's local index beside itself:
+  `[indices] x = { path = "<relative>" }` was copied as written into a manifest in another
+  directory, and a build dependency from that index was `no package found for exact
+  selector`. The path is written as the project's manifest resolves it.
 - `mcpp new --template <package>` refuses a package for the directory it lacks,
   `templates/` beside its manifest, and names the directory it looked for. It refused an
   inline descriptor for its form, and found the package root by a rule of its own that

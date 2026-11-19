@@ -43,6 +43,7 @@ import mcpp.build.source_digest;
 import mcpp.build.tool_store;
 import nlohmann.json;
 import mcpp.manifest;
+import mcpp.config;   // resolve_project_index_path
 import mcpp.modgraph.scanner;
 import mcpplibs.os.platform;
 import mcpp.home.files;
@@ -579,7 +580,13 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
         root += "\n[workspace.indices]\n";
         for (auto const& [name, idx] : state.m->indices) {
             std::vector<std::string> fields;
-            if (idx.is_local()) fields.push_back("path = " + toml_string(path_text(idx.path)));
+            // Where the project's manifest places it: a relative path is
+            // relative to that manifest, and this one is written elsewhere. As
+            // written, the build programs' graph looked for the index beside
+            // itself and found no package of it (measured with mcpp#956).
+            if (idx.is_local())
+                fields.push_back("path = " + toml_string(path_text(
+                    mcpp::config::resolve_project_index_path(*state.root, idx))));
             if (!idx.url.empty()) fields.push_back("url = " + toml_string(idx.url));
             if (!idx.rev.empty()) fields.push_back("rev = " + toml_string(idx.rev));
             if (!idx.tag.empty()) fields.push_back("tag = " + toml_string(idx.tag));
