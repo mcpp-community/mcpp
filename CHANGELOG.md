@@ -36,6 +36,13 @@
   `[indices] x = { path = "<relative>" }` was copied as written into a manifest in another
   directory, and a build dependency from that index was `no package found for exact
   selector`. The path is written as the project's manifest resolves it.
+- A macOS or iOS row on a host that is not macOS was refused by `mcpp run` and `mcpp test`
+  before the predicate that decides whether an artifact runs here, whatever runner was
+  declared for it: `cannot run ... artifacts on this host: macOS runs only on macOS`
+  (mcpp#957). The branch named a system in the engine and is removed; these rows are
+  decided as every row is, by the row's execution system and the runner or execution host
+  stated for it (SPEC-016 §6). The system-names check counts a triple's system predicates
+  (`is_apple`, `is_ios`, `is_android` and their like), so such a branch does not return.
 - `mcpp new --template <package>` refuses a package for the directory it lacks,
   `templates/` beside its manifest, and names the directory it looked for. It refused an
   inline descriptor for its form, and found the package root by a rule of its own that

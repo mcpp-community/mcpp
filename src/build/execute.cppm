@@ -1522,19 +1522,16 @@ ExecutionHost locate_run_under(const mcpp::build::BuildContext& ctx, std::string
 // a way. One predicate for every row, built-in or defined: the row's execution
 // system against this machine's. `--no-runner` states that the triple is
 // native here, and is believed.
-std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
-                                                 std::string_view tripleKey, bool noRunner,
-                                                 bool runnerDeclared = false) {
+export std::optional<std::string> unreachable_execution(const mcpp::build::BuildContext& ctx,
+                                                        std::string_view tripleKey, bool noRunner,
+                                                        bool runnerDeclared = false) {
     if (noRunner || !ctx.runUnder.empty()) return std::nullopt;
     auto t = mcpp::toolchain::triple::parse(tripleKey);
-    // An Apple artifact off macOS: no runner reaches it, only an execution host.
-    if (!mcpplibs::os::is_macos && t && t->is_apple())
-        return std::format(
-            "cannot run {} artifacts on this host: {} runs only on macOS.\n"
-            "       Name an execution host: [target.{}] run_under = [\"remote-run\", \"<host>\", \"--\"]\n"
-            "       (in mcpp.toml for the team, or ~/.mcpp/config.toml for this machine).",
-            tripleKey, t->is_ios_simulator() ? "the iOS Simulator" : t->is_ios() ? "iOS" : "macOS",
-            tripleKey);
+    // No system is named here (mcpp#957). A branch for Apple's rows stood
+    // before the predicate below and refused them off macOS whether or not a
+    // runner was declared, so a runner a platform states for such a row was
+    // never consulted. The predicate gives those rows the same refusal where
+    // nothing runs them and admits them where a runner does.
     // AN ARTIFACT OF ANOTHER SYSTEM IS NOT STARTED TO SEE WHAT HAPPENS (SPEC-016
     // §6). A row's artifacts run on its execution system -- the `execution` its
     // row states, built-in or defined, else its own -- and that is this

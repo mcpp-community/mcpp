@@ -1424,8 +1424,12 @@ runner 与 `run_under`。
 经此到达的运行器收到 `MCPP_RUN_TRIPLE`、`MCPP_RUN_KIND`(`exe` / `bundle`)、`MCPP_RUN_MODE`
 (`run` / `test`)、`MCPP_RUN_ID`、`MCPP_RUN_CLOSURE`(一份带版本的 JSON,列出产物、它随带的文件、本次运行的文件
 (`run_files`,schema 2,2026.11.17.1+)与基座),
-以及陈述了基座时的 `MCPP_SYSROOT`;其退出码即程序的退出码。非 macOS 宿主上的 Apple 产物在没有
-`run_under` 时于执行前被拒绝,拒绝信息点名本键。
+以及陈述了基座时的 `MCPP_SYSROOT`;其退出码即程序的退出码。
+
+产物是否由本机运行,对每一行是同一个问题(SPEC-016 §6):它的执行系统是本机的系统,或者为它陈述了运行器或执行主机。
+两者都没有的另一系统的产物在启动任何进程之前被拒绝,拒绝信息点名 `runner` 与 `run_under`。非 macOS 宿主上的 macOS 或
+iOS 产物就是这样的产物,没有别的规则:运行器的 `hosts` 含本机时,它经该运行器运行*(mcpp 2026.11.19.1+;此前这样的行不论
+声明了什么运行器都被拒绝)*。
 
 #### 2.7.3.3 平台键（2026.10.27.1+）
 

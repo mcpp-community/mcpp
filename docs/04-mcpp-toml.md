@@ -1555,9 +1555,15 @@ A runner reached this way receives `MCPP_RUN_TRIPLE`, `MCPP_RUN_KIND` (`exe` /
 `bundle`), `MCPP_RUN_MODE` (`run` / `test`), `MCPP_RUN_ID`, `MCPP_RUN_CLOSURE`
 (a versioned JSON naming the artifact, the files it carries, the run's files
 (`run_files`, schema 2, 2026.11.17.1+) and the base) and,
-when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's. An
-Apple artifact on a host that is not macOS, with no `run_under`, is refused
-before anything is spawned, naming this key.
+when a base is stated, `MCPP_SYSROOT`. Its exit status is the program's.
+
+Whether an artifact runs on this machine is one question for every row
+(SPEC-016 §6): its execution system is this machine's, or a runner or an
+execution host is stated for it. An artifact of another system with neither is
+refused before anything is spawned, naming `runner` and `run_under`. A macOS or
+iOS artifact on a host that is not macOS is such an artifact and no more: with a
+runner whose `hosts` include this machine it runs through that runner
+*(mcpp 2026.11.19.1+; before, such a row was refused whatever runner was declared)*.
 
 #### 2.7.3.3 The platform keys (2026.10.27.1+)
 
