@@ -165,7 +165,7 @@
   without units and says so once (`compiler-run/no-unit`).
 - A start the system refused for the size of its arguments and environment reported `Cannot
   allocate memory`, from a bound of 512 elements in the kernel layer: 520 `[build] defines`
-  could not compile (mcpp#958). mcpp builds against mcpplibs.os 0.4.5 and openkal 0.26, which
+  could not compile (mcpp#958). mcpp builds against mcpplibs.os 0.4.6 and openkal 0.26, which
   keep no bound of their own, and the refusal reads `cannot start '<program>': the request is
   larger than the system admits (N arguments, A bytes; M variables, E bytes)
   [spawn-too-large]`.
