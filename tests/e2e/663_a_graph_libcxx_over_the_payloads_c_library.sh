@@ -74,8 +74,15 @@ grep -q -- 'xim-x-llvm[^ ]*libc++\(abi\)\?\.a' "$ninja" \
 # names the glibc payload. Before this assertion the command carried only
 # `--no-default-config -nostdinc++` and the runner's /usr/include stood in,
 # a host dependency no report showed.
-stdjson=$(grep -l 'llvm.libcxx\|libcxx' "$MCPP_HOME"/build-cache/v1/std/*/std-module.json 2>/dev/null | xargs -r ls -t | head -1)
-[ -n "$stdjson" ] || fail "no std-module.json records the package's module under $MCPP_HOME/build-cache/v1/std"
+# The record is the one this build's plan names. The cache is the home's, which
+# the programs running beside this one share: the newest record that mentions
+# libcxx was an x86_64-openkal one (openkal-llvm-runtime's llvm/libcxx/modules)
+# in a shard of mcpp#966's Linux e2e, the same race toolchain::layers 663 reads
+# around.
+stdkey=$(grep -oE 'build-cache/v1/std/[0-9a-f]+' "$ninja" | head -1)
+stdjson="$MCPP_HOME/$stdkey/std-module.json"
+[ -n "$stdkey" ] && [ -f "$stdjson" ] \
+    || fail "no std-module.json records the package's module under $MCPP_HOME/build-cache/v1/std" "$ninja"
 grep -q 'xim-x-glibc' "$stdjson" \
     || fail "the package std module's command does not name the payload's glibc" "$stdjson"
 bin=$(ls target/*/*/bin/app | head -1)
