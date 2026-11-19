@@ -51,6 +51,12 @@ struct LockedPackage {
     // 2026-11-10 supplement T2): the version is the root's, not the one the
     // requests would have merged to. False in a lock written before the field.
     bool                     overridden = false;
+    // The build programs whose resolution holds this version and no other
+    // resolution does (design 2026-11-19 §21 A3), by scope
+    // (`build:<package>@<version>`, sorted). Such an entry is named
+    // `<name>+b<digest>`; empty for the version the target, or the first
+    // program, holds, and in a lock written before the field.
+    std::vector<std::string> programs;
 };
 
 // Parsed form of a git source string as written to mcpp.lock.
@@ -190,6 +196,9 @@ std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
             if (auto it = tt.find("patches"); it != tt.end() && it->second.is_array())
                 for (auto const& e : it->second.as_array())
                     if (e.is_string()) lp.patches.push_back(e.as_string());
+            if (auto it = tt.find("programs"); it != tt.end() && it->second.is_array())
+                for (auto const& e : it->second.as_array())
+                    if (e.is_string()) lp.programs.push_back(e.as_string());
 
             // v1 → v2 migration: default namespace to "mcpplibs".
             if (fileVersion < 2 && lp.namespace_.empty()) {
@@ -259,6 +268,11 @@ std::string serialize(const Lockfile& lock) {
             std::string list;
             for (auto const& e : p.patches) list += (list.empty() ? "" : ", ") + t::escape_string(e);
             out += std::format("patches = [{}]\n", list);
+        }
+        if (!p.programs.empty()) {
+            std::string list;
+            for (auto const& e : p.programs) list += (list.empty() ? "" : ", ") + t::escape_string(e);
+            out += std::format("programs = [{}]\n", list);
         }
         out += "\n";
     }

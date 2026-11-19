@@ -601,7 +601,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `platform-not-a-platform` | 被选为该目标平台的包没有 `[platform]` 段 *(2026.10.27.1+)* |
 | `platform-target-unserved` | 所选平台不服务该目标：三元组不在其 `targets` 中，宿主三元组也不在其 `[platform.hosted] targets` 中 *(2026.10.27.1+)* |
 | `platform-tool-absent` | 平台的链接或封装要运行的程序（ok 映像的 `okld`）既不由图构建，也不在本机 *(2026.10.27.1+；2026.10.26.2 中为 `image-tool-absent`)* |
-| `platform-version-group` | 平台版本组中的一个包以另一个版本出现在图中 *(2026.10.27.1+)* |
+| `platform-version-group` | 平台版本组中的一个包以另一个版本出现在图中 *(2026.10.27.1+)*,或平台系列中没有版本容许本次构建的请求 *(2026.11.19.1+)* |
 | `platform-phase-directive` | 平台插件陈述了其阶段不接受的指令 *(2026.10.27.1+)* |
 | `other` | 一个尚未被赋予记号的拒绝分支 |
 

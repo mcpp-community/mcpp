@@ -673,7 +673,7 @@ a program classifying the outcome reads `reason`:
 | `platform-not-a-platform` | the package selected as the target's platform has no `[platform]` section *(2026.10.27.1+)* |
 | `platform-target-unserved` | the selected platform does not serve the target: the triple is not among its `targets`, and a host triple is not among its `[platform.hosted] targets` *(2026.10.27.1+)* |
 | `platform-tool-absent` | a program the platform's link or seal runs (`okld` for an ok image) is neither built by the graph nor found on this machine *(2026.10.27.1+; `image-tool-absent` in 2026.10.26.2)* |
-| `platform-version-group` | a package of the platform's version group is in the graph at another version *(2026.10.27.1+)* |
+| `platform-version-group` | a package of the platform's version group is in the graph at another version *(2026.10.27.1+)*, or no release of a platform series admits the build's requests *(2026.11.19.1+)* |
 | `platform-phase-directive` | a platform's plugin stated a directive its phase does not take *(2026.10.27.1+)* |
 | `other` | a refusal whose branch has not been given a token yet |
 

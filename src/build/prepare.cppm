@@ -1086,6 +1086,12 @@ export struct BuildOverrides {
     // package and the second reads its `[platform]` from here at once
     // (SPEC-013 §7). Set by `prepare_build` itself, never by a caller.
     std::filesystem::path    platform_root;
+    // THE RELEASES OF A PLATFORM SERIES THIS BUILD CANNOT USE (design
+    // 2026-11-19 §21 A5, SPEC-013 §14): each release an earlier pass took and
+    // the platform's version group refused, with the request that refused it.
+    // The series is taken below them. Set by `prepare_build` itself, never by
+    // a caller.
+    std::vector<std::pair<std::string, std::string>> platform_series_skipped;
     // THE PLATFORM THIS PREPARE'S TARGET USES, stated by the caller: the
     // host graph's platform, given to the build programs' sub-build (SPEC-013
     // §6). Read as the flag tier; empty on every other prepare.

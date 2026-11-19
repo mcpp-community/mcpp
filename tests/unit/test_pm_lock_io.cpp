@@ -272,3 +272,26 @@ UTest a_requests_identity_round_trips{"PmLockIo/ARequestsIdentityRoundTrips", []
     expect(eq(w->provider, "openkal"));
     expect(eq(back->packages.size(), 1u));
 }};
+
+// A VERSION ONLY BUILD PROGRAMS HOLD IS AN ENTRY OF ITS OWN (design 2026-11-19
+// §21 A3): `programs` names their resolutions and reads back as written; a lock
+// written before the field reads with none.
+UTest a_build_programs_version_names_its_programs{"PmLockIo/ABuildProgramsVersionNamesItsPrograms", [] {
+    LockDirectory t;
+    mcpp::pm::Lockfile lock;
+    mcpp::pm::LockedPackage first{"os", "mcpplibs", "0.4.6", "index+mcpplibs@0.4.6", "fnv1a:0"};
+    mcpp::pm::LockedPackage second{"os+b0123456789ab", "mcpplibs", "0.4.1", "index+mcpplibs@0.4.1", "fnv1a:1"};
+    second.programs = { "build:mcpplibs.platform@0.31.0", "build:tooling@0.1.0" };
+    lock.packages = { first, second };
+    const auto text = mcpp::pm::serialize(lock);
+    expect(ne(text.find("[package.\"os+b0123456789ab\"]"), std::string::npos)) << text;
+    expect(ne(text.find("programs = [\"build:mcpplibs.platform@0.31.0\", \"build:tooling@0.1.0\"]"),
+              std::string::npos)) << text;
+    expect(fatal(bool(mcpp::pm::write(lock, t.root / "mcpp.lock"))));
+    auto back = mcpp::pm::load(t.root / "mcpp.lock");
+    expect(fatal(bool(back)));
+    expect(fatal(eq(back->packages.size(), 2u)));
+    expect(back->packages[0].programs.empty());
+    expect(eq(back->packages[1].programs, second.programs));
+    expect(eq(back->packages[1].version, "0.4.1"));
+}};

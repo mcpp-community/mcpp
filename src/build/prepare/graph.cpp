@@ -98,141 +98,6 @@ void withdraw_link_flags(PrepareState& state, std::size_t p) {
             if (rec.depIndex + 1 == p) removeLinkFlags(state, rec.linkFlagsAdded);
 }
 
-static std::expected<std::set<std::filesystem::path>, std::string> package_source_files(
-        const std::filesystem::path& srcRoot,
-        const mcpp::manifest::Manifest& depManifest)
-{
-        // Resolve the source globs against the original root, falling
-        // back to the convention default if the manifest didn't set any.
-        std::vector<std::string> globs = depManifest.modules.sources;
-        if (globs.empty()) {
-            // Was a fourth hand-written copy of the convention default, and it
-            // had already drifted: all three assembly extensions were missing,
-            // so staging a dependency with .S/.s/.asm silently dropped them.
-            globs = mcpp::default_source_globs(
-                mcpp::extension_table_for(depManifest.buildConfig.moduleExtensions,
-                                          depManifest.buildConfig.deviceExtensions));
-        }
-        // As the scanner selects (`select_sources`).
-        auto sourceFiles = mcpp::modgraph::select_sources(srcRoot, globs);
-        if (sourceFiles.empty()) {
-            return std::unexpected(std::format(
-                "stage: no source files found under '{}' (globs={})",
-                srcRoot.string(), globs.size()));
-        }
-        return sourceFiles;
-}
-
-    // Stage a dep's source files into a fresh directory, rewriting their
-    // module / import declarations against `rename`. Used by the multi-
-    // version mangling fallback (Level 1) so two cross-major copies of
-    // the same package can coexist with distinct module names.
-    //
-    // Headers reached through `[build].include_dirs` are NOT staged — those
-    // keep pointing at the original install dir via absolutized include paths.
-    //
-    // HEADERS BESIDE A SOURCE ARE A DIFFERENT CASE, AND THEY ARE STAGED.
-    //
-    // `#include "detail.h"` is resolved relative to the directory of the file
-    // holding the directive, so moving the source moves the search. No
-    // `include_dirs` entry is involved and absolutizing one cannot help: the
-    // package never declared a path because it never needed one. Measured
-    // before this, on a package whose `src/time.cpp` includes `src/sbi.h`:
-    //
-    //     target/.mangled/openkal-opensbi/__self__/src/time.cpp:44:10:
-    //         fatal error: 'sbi.h' file not found
-    //
-    // THE DIAGNOSIS THIS PRODUCES POINTS AT THE WRONG THING. The path in it
-    // is a staging directory the author never wrote, for a header sitting
-    // exactly where the source expects it, and the build that triggered it
-    // asked for nothing unusual — two majors of one dependency is a supported
-    // arrangement, and this is its most ordinary consequence.
-    //
-    // What is copied is every file in a directory that contains a staged
-    // source and is not itself staged, verbatim: rewriting applies to module
-    // declarations, and a header has none. Directories with no staged source
-    // are not visited, so this stays proportional to what is being staged.
-static std::expected<void, std::string> stage_with_rewrite(
-        const std::filesystem::path& srcRoot,
-        const std::filesystem::path& dstRoot,
-        const mcpp::manifest::Manifest& depManifest,
-        const std::map<std::string, std::string>& rename)
-{
-        std::error_code ec;
-        std::filesystem::create_directories(dstRoot, ec);
-        if (ec) return std::unexpected(std::format(
-            "stage: cannot create '{}': {}", dstRoot.string(), ec.message()));
-
-        auto sources = package_source_files(srcRoot, depManifest);
-        if (!sources) return std::unexpected(sources.error());
-
-        for (auto const& f : *sources) {
-            auto rel = std::filesystem::relative(f, srcRoot, ec);
-            if (ec) return std::unexpected(std::format(
-                "stage: cannot relativize '{}': {}", f.string(), ec.message()));
-            auto dst = dstRoot / rel;
-            std::filesystem::create_directories(dst.parent_path(), ec);
-
-            std::ifstream is(f);
-            if (!is) return std::unexpected(std::format(
-                "stage: cannot read '{}'", f.string()));
-            std::stringstream buf; buf << is.rdbuf();
-            std::string content = buf.str();
-
-            std::string out = mcpp::pm::rewrite_module_decls(content, rename);
-            std::ofstream os(dst);
-            if (!os) return std::unexpected(std::format(
-                "stage: cannot write '{}'", dst.string()));
-            os << out;
-        }
-
-        // The files beside those sources, carried across unchanged so a quoted
-        // include still finds what it named.
-        std::set<std::filesystem::path> sourceDirs;
-        for (auto const& f : *sources) sourceDirs.insert(f.parent_path());
-        for (auto const& dir : sourceDirs) {
-            for (auto const& entry : std::filesystem::directory_iterator(dir, ec)) {
-                if (ec) break;
-                if (!entry.is_regular_file()) continue;
-                if (sources->contains(entry.path())) continue;
-                auto rel = std::filesystem::relative(entry.path(), srcRoot, ec);
-                if (ec) continue;
-                auto dst = dstRoot / rel;
-                std::filesystem::create_directories(dst.parent_path(), ec);
-                std::filesystem::copy_file(
-                    entry.path(), dst,
-                    std::filesystem::copy_options::overwrite_existing, ec);
-                if (ec) return std::unexpected(std::format(
-                    "stage: cannot copy '{}': {}",
-                    entry.path().string(), ec.message()));
-            }
-            ec.clear();
-        }
-        return {};
-}
-
-static std::expected<std::vector<std::string>, std::string> declared_modules_for(
-        const std::filesystem::path& srcRoot,
-        const mcpp::manifest::Manifest& depManifest)
-{
-        auto sources = package_source_files(srcRoot, depManifest);
-        if (!sources) return std::unexpected(sources.error());
-        std::vector<std::string> modules;
-        for (auto const& file : *sources) {
-            std::ifstream is(file);
-            if (!is) return std::unexpected(std::format(
-                "mangle: cannot read '{}'", file.string()));
-            std::stringstream buf; buf << is.rdbuf();
-            for (auto& name : mcpp::pm::declared_module_roots(buf.str())) {
-                if (std::ranges::find(modules, name) == modules.end())
-                    modules.push_back(std::move(name));
-            }
-        }
-        if (modules.empty()) return std::unexpected(std::format(
-            "mangle: package '{}' declares no named C++ module to rewrite",
-            depManifest.package.name));
-        return modules;
-}
 
     // Stage 2a — feature-activated optional dependencies. Static file-scope
     // functions (mcpp#722 / T6 split), not local lambdas as originally
@@ -482,6 +347,7 @@ struct WorklistItemCtx {
     bool rootHeld = false;
 };
 
+
 // The identity a root declaration already holds for a dependency's request
 // by version, under the request's namespace, or the default namespace and none
 // for a bare name; nothing when the root declares no such package, or the
@@ -600,6 +466,13 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
                 spec.version = "=" + pin->second;
         }
         if (auto r = step4b_pin_to_platform_group(state, item, name, spec); !r) return r;
+        // A PROGRAM TAKES A VERSION THE BUILD ALREADY HOLDS WHERE ITS OWN
+        // REQUEST ALLOWS (§21 A1): the newest version another program or the
+        // target resolved that the request admits, so a build without a
+        // conflict keeps the versions, and the build programs' identities, it
+        // had when the two shared one resolution.
+        if (!ctx.rootHeld && !item.scope.empty() && spec.isVersion())
+            if (auto held = held_version_for(state, item, spec, name)) spec.version = *held;
         // Pin SemVer constraint before dedup/fetch.
         if (!ctx.rootHeld)
             if (auto r = state.resolveSemver(spec, name); !r) {
@@ -627,6 +500,7 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
             spec.patchesDigest = *digest;
             key.variant = *digest;
         }
+        key.scope = item.scope;
         auto& sourceKind = ctx.sourceKind;
         sourceKind =
             spec.isPath()    ? "path"
@@ -644,10 +518,12 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
                 if (auto clone = state.gitCloneBySource.find(source);
                     clone != state.gitCloneBySource.end())
                     namesMember = state.gitMemberDeclaring(clone->second.root, key).has_value();
+            auto unscoped = key;
+            unscoped.scope.clear();
             if (auto bySource = state.identityBySource.find(source);
                 !namesMember && bySource != state.identityBySource.end()
-                && !(bySource->second == key)) {
-                const auto& existing = state.resolved.at(bySource->second);
+                && !(bySource->second == unscoped)) {
+                const auto& existing = *any_record_of(state, bySource->second);
                 const auto& declaring = state.declaringManifest.at(bySource->second);
                 if (!declaring.namespaceDeclared) {
                     return std::unexpected(std::format(
@@ -663,6 +539,7 @@ step4b_resolve_identity(PrepareState& state, WorklistItemCtx& ctx) {
                 }
                 state.reportAdoption(item, key, bySource->second);
                 key = bySource->second;
+                key.scope = item.scope;
                 state.stateAdoptedIdentity(item, key);
             }
         }
@@ -744,15 +621,20 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     // with a message about the package rather than about the
                     // two requests (a project asking for mcpp:plugins 0.21.0
                     // over a platform that asks for 0.20.0).
-                    if (item.fromBuildTable) {
+                    // ONE PROGRAM, ONE VERSION (§21 A4): the requests of one
+                    // build program's resolution disagree, and the message names
+                    // the program. Two programs never reach here; each resolves
+                    // its own `[build-dependencies]` closure.
+                    if (item.fromBuildTable || !key.scope.empty()) {
                         return std::unexpected(std::format(
-                            "build dependency '{}{}{}' has irreconcilable versions:\n"
+                            "build dependency '{}{}{}' has irreconcilable versions in {}:\n"
                             "  '{}', resolved for these requests:{}\n"
                             "  '{}' (constraint '{}') requested by '{}'\n"
                             "SemVer merge: {}\n"
-                            "A build dependency is a module of a build program, and a build "
-                            "loads one version of it. Align the requests on one version{}.",
+                            "A build dependency is a module of a build program, and a program "
+                            "loads one version of it. Align the program's requests on one version{}.",
                             key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                            scope_display(key.scope),
                             it->second.version, requests_of(state, it->second),
                             spec.version, request_constraint(item), item.requestedBy,
                             merged.error(),
@@ -930,7 +812,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     if (!secPackage) return std::unexpected(secPackage.error());
                     state.packages.push_back(std::move(*secPackage));
                     recordDependencyEdge(state, item.consumerDepIndex, depPackageIndex,
-                                         spec, item.fromBuildTable, name, item.targetRowOnly);
+                                         spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
                     auto linkFlagsAdded = propagateLinkFlags(state, secStage, *state.dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangledPackage};
@@ -967,10 +849,25 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     // no re-fetch needed; just record this consumer edge.
                     recordDependencyEdge(state, item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.fromBuildTable, name, item.targetRowOnly);
+                                         spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
                     return {};
                 }
 
+                // A PROGRAM'S RECORD THAT MOVES LEAVES A SLOT OTHERS HOLD (§21
+                // A1): the target or another program keeps the version it has,
+                // and this program takes the merged one in a slot of its own;
+                // the request is resolved again at that version, and the edges
+                // the program alone made are moved there (finish_scope_move).
+                if (!key.scope.empty() && slot_held_elsewhere(state, it->second.depIndex, key)) {
+                    PrepareState::ScopeMove move{it->second.depIndex + 1, it->second.constraintsBy};
+                    state.scopeMoves[key] = std::move(move);
+                    state.resolved.erase(it);
+                    WorkItem again = item;
+                    again.spec.version = *merged;
+                    again.originalConstraint = "=" + *merged;
+                    state.worklist.push_front(std::move(again));
+                    return {};
+                }
                 // Merged version differs from the previously-pinned one.
                 // Re-fetch the dep at the merged version and replace the
                 // earlier slot in dep_manifests / packages so the build plan
@@ -1029,7 +926,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                 state.packages[it->second.depIndex + 1] = std::move(*mergedPackage);
                 recordDependencyEdge(state, item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.fromBuildTable, name, item.targetRowOnly);
+                                     spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
 
                 it->second.version            = *merged;
                 it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
@@ -1047,6 +944,7 @@ step4b_identity_version_merge(PrepareState& state, WorklistItemCtx& ctx,
                     state.worklist.push_back({child_name, child_spec, newLabel,
                                         child_spec.version,
                                         it->second.depIndex, {}, item.devOnly});
+                    state.worklist.back().scope = item.scope;
                 }
                 return {};
     return {};
@@ -1066,8 +964,14 @@ step4b_walk_other_side(PrepareState& state, std::size_t depIndex, const WorkItem
     const unsigned char side = item.buildOnly ? kHostSide : kTargetSide;
     // A slot no walk has marked is one of the paths that walk no children
     // (a package of programs, a mangled secondary): it stays unwalked.
-    if (state.depSidesWalked[depIndex] == 0 || (state.depSidesWalked[depIndex] & side)) return {};
+    if (state.depSidesWalked[depIndex] == 0) return {};
+    // The target walks a table once; each build program walks it once for its
+    // own resolution (§21 A1).
+    if (item.scope.empty() ? (state.depSidesWalked[depIndex] & side) != 0
+                           : state.scopesWalked.contains({depIndex, item.scope}))
+        return {};
     state.depSidesWalked[depIndex] |= side;
+    if (!item.scope.empty()) state.scopesWalked.insert({depIndex, item.scope});
     auto const& dm = *state.dep_manifests[depIndex];
     auto requests = side_requests(state, dm, item.buildOnly);
     if (!requests) return std::unexpected(requests.error());
@@ -1094,6 +998,7 @@ step4b_walk_other_side(PrepareState& state, std::size_t depIndex, const WorkItem
         state.worklist.push_back({childName, childReq, label + " (build-dep)", childReq.version,
                                   depIndex, root, item.devOnly, /*buildOnly=*/true,
                                   /*fromBuildTable=*/true});
+        state.worklist.back().scope = program_scope(label);
     }
     return {};
 }
@@ -1149,6 +1054,7 @@ step4b_widen_features(PrepareState& state, std::size_t depIndex, const WorkItem&
             continue;
         state.worklist.push_back({childName, now, label, now.version, depIndex, root,
                                   item.devOnly, item.buildOnly});
+        state.worklist.back().scope = item.scope;
     }
     return {};
 }
@@ -1272,7 +1178,7 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
                 if (it->second.depIndex + 1 < state.packages.size()) {
                     recordDependencyEdge(state, item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.fromBuildTable, name, item.targetRowOnly);
+                                         spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
                 }
                 return step4b_widen_features(state, it->second.depIndex, item, spec);
             }
@@ -1348,10 +1254,58 @@ step4b_handle_already_resolved(PrepareState& state, WorklistItemCtx& ctx,
             if (it->second.depIndex + 1 < state.packages.size()) {
                 recordDependencyEdge(state, item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.fromBuildTable, name, item.targetRowOnly);
+                                     spec, item.fromBuildTable, name, item.targetRowOnly, item.scope);
             }
             return step4b_widen_features(state, it->second.depIndex, item, spec);
     return {};
+}
+
+// ONE SLOT PER PACKAGE AND VERSION, ONE RECORD PER RESOLUTION (§21 A1). A
+// request of a resolution that holds no record of the package, answered by the
+// version or the source another resolution already holds, takes that slot: the
+// target's request a program resolved first, or a program's request the target
+// or another program answered. Nothing is fetched again, and the slot's table
+// is walked once for this resolution. Returns whether it did.
+static std::expected<bool, std::string>
+step4b_adopt_slot(PrepareState& state, WorklistItemCtx& ctx) {
+    auto& item = ctx.item;
+    const auto& key = ctx.key;
+    const auto& spec = item.spec;
+    const std::string source = ctx.sourceKind == "version" ? std::string{}
+        : sourceRefOf(state, ctx.sourceKind, spec, item.resolveRoot, item.originalConstraint);
+    const ResolvedRecord* held = nullptr;
+    for (auto const& [k, r] : state.resolved) {
+        if (k.scope == key.scope || k.ns != key.ns || k.shortName != key.shortName
+            || k.variant != key.variant || r.source != ctx.sourceKind)
+            continue;
+        if (ctx.sourceKind == "version" ? r.version != spec.version : r.sourceRef != source) continue;
+        held = &r;
+        break;
+    }
+    if (!held) return false;
+    const std::size_t depIndex = held->depIndex;
+    ResolvedRecord rec;
+    rec.version = held->version;
+    rec.requestedBy = item.requestedBy;
+    rec.source = held->source;
+    rec.sourceRef = held->sourceRef;
+    rec.fromRoot = state.declaredByRoot(item.consumerDepIndex);
+    rec.fromSelectedMember = item.consumerDepIndex != kMainConsumer && rec.fromRoot;
+    rec.overridden = rec.fromRoot && spec.override_;
+    rec.devOnly = item.devOnly;
+    rec.depIndex = depIndex;
+    rec.patches = held->patches;
+    if (ctx.sourceKind == "version") note_request(state, rec, item);
+    state.resolved[key] = std::move(rec);
+    if (depIndex + 1 < state.packages.size())
+        recordDependencyEdge(state, item.consumerDepIndex, depIndex + 1, spec, item.fromBuildTable,
+                             item.name, item.targetRowOnly, item.scope);
+    finish_scope_move(state, key, depIndex + 1);
+    if (ctx.sourceKind == "version" && depIndex < state.dep_manifests.size() && state.dep_manifests[depIndex])
+        step4b_note_exact_pin(state, item, *state.dep_manifests[depIndex]);
+    if (auto r = step4b_walk_other_side(state, depIndex, item); !r) return std::unexpected(r.error());
+    if (auto r = step4b_widen_features(state, depIndex, item, spec); !r) return std::unexpected(r.error());
+    return true;
 }
 
 static std::expected<void, std::string>
@@ -1793,7 +1747,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             auto declaredName = mcpp::pm::compat::resolve_package_name(
                 ctx.dep_manifest->package.name, ctx.dep_manifest->package.namespace_);
             ResolvedKey declared{ ctx.dep_manifest->package.namespace_,
-                                  declaredName.shortName };
+                                  declaredName.shortName, {}, key.scope };
             if (!(declared == key)) {
                 state.reportAdoption(item, key, declared);
                 state.stateAdoptedIdentity(item, declared);
@@ -1940,16 +1894,19 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
         }
         state.packages.push_back(std::move(*depPackage));
         recordDependencyEdge(state, item.consumerDepIndex, depPackageIndex, spec,
-                             item.fromBuildTable, name, item.targetRowOnly);
+                             item.fromBuildTable, name, item.targetRowOnly, item.scope);
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
         if (sourceKind != "version") {
+            // The identity a source names, whichever program resolved it.
+            auto identity = key;
+            identity.scope.clear();
             state.identityBySource.emplace(
                 sourceRefOf(state, sourceKind, spec, item.resolveRoot, item.originalConstraint)
                     + (gitMember.empty() ? std::string{} : "#member=" + gitMember),
-                key);
-            state.declaringManifest[key] = DeclaringManifest{ manifestPath, namespaceDeclared };
+                identity);
+            state.declaringManifest[identity] = DeclaringManifest{ manifestPath, namespaceDeclared };
         }
         state.resolved[key] = ResolvedRecord{
             .version           = sourceKind == "version" ? spec.version : "",
@@ -1971,6 +1928,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
             state.resolved[key].constraint.clear();
             note_request(state, state.resolved[key], item);
         }
+        finish_scope_move(state, key, depPackageIndex);
 
         if (sourceKind == "version" && !state.dep_manifests.empty() && state.dep_manifests.back())
             step4b_note_exact_pin(state, item, *state.dep_manifests.back());
@@ -2016,6 +1974,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
         // first asks for the package (`step4b_walk_other_side`).
         if (state.depSidesWalked.size() <= selfIdx) state.depSidesWalked.resize(selfIdx + 1, 0);
         state.depSidesWalked[selfIdx] |= item.buildOnly ? kHostSide : kTargetSide;
+        if (!item.scope.empty()) state.scopesWalked.insert({selfIdx, item.scope});
         auto side = side_requests(state, *state.dep_manifests.back(), item.buildOnly);
         if (!side) return std::unexpected(side.error());
         for (auto& [child_name, child_spec] : side->dependencies) {
@@ -2035,6 +1994,7 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                 state.worklist.push_back({child_name, childReq, thisDepLabel + " (dev-dep)",
                                     childReq.version, selfIdx, ctx.dep_root,
                                     /*devOnly=*/true, item.buildOnly});
+                state.worklist.back().scope = item.scope;
             }
         }
         // A dependency's own `[build-dependencies]` — the only channel through
@@ -2056,9 +2016,11 @@ step4b_finalize_dependency(PrepareState& state, WorklistItemCtx& ctx) {
                                 childReq.version, selfIdx, ctx.dep_root,
                                 item.devOnly, /*buildOnly=*/true,
                                 /*fromBuildTable=*/true});
+            state.worklist.back().scope = program_scope(thisDepLabel);
         }
     return {};
 }
+
 
 static std::expected<void, std::string> step4b_cycle_check(PrepareState& state) {
     // ONE PLACE DETECTS A CYCLE OF PACKAGES, AND IT IS HERE, WHERE THE GRAPH
@@ -2097,173 +2059,6 @@ static std::expected<void, std::string> step4b_cycle_check(PrepareState& state) 
     return {};
 }
 
-static std::expected<void, std::string>
-step4b_define_provisioning_closures(PrepareState& state) {
-    // Which dependency supplied the runner, for the exactly-one-provider
-    // error below. A name rather than a bool: the message has to name both.
-    // ONE PROVIDER PER RUNNER NAME. `runner` has had this rule since #544;
-    // a NAMED runner inherits it per name, because a board may legitimately
-    // supply `flash` while a different package supplies `monitor`.
-
-    // The payload facts a build program receives: where each declared payload
-    // is, and where it came from (mcpp#755). One definition, in sources.cpp,
-    // beside the override and on-request rules it reads.
-    state.fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
-                            const mcpp::manifest::Manifest& owner,
-                            std::size_t consumer) {
-        fill_xpkg_env(state, e, owner, consumer);
-    };
-
-    // `linkForms` (#642 E2): when given, each dependency that has a resolved
-    // library form is also offered under exactly the names its directory is,
-    // so `dep_linkage(n)` answers for every `n` that `dep_dir(n)` answers for.
-    // Only the root's program passes it; see the root call site for why.
-    state.fillDepDirs = [&](mcpp::build::BuildProgramEnv& e, std::size_t consumer,
-                           const std::map<std::size_t, std::string>* linkForms = nullptr) {
-        if (consumer >= state.provisionGraph.visible.size()) return;
-        auto bind = state.bareBindingsFor(consumer);
-        for (auto const& [tail, b] : bind) {
-            if (auto note = prov::contest_note(tail, b); !note.empty())
-                mcpp::diag::warning("provisions/ambiguous", note);
-        }
-        // Every spelling of `publishedNamesFor`: the manifest's name, the
-        // qualified name a manifest writing `namespace = "ns"` and
-        // `name = "fw"` is addressed by (#642: the framework's rule asks
-        // `dep_linkage("huxerui.huxerui")`), and the bound tail. A spelling two
-        // providers share (#852: `openmui.rules` and `gongfu.rules` are both
-        // `rules` by their manifests' names) is no package's: it is published
-        // as ambiguous, with the qualified names that do work.
-        std::map<std::string, std::vector<std::size_t>> byName;
-        for (auto const& pr : state.provisionGraph.visible[consumer]) {
-            if (pr.kind != prov::Kind::DepDir || pr.provider >= state.packages.size()) continue;
-            for (auto const& n : state.publishedNamesFor(pr.provider, bind)) {
-                auto& who = byName[n];
-                if (std::ranges::find(who, pr.provider) == who.end()) who.push_back(pr.provider);
-            }
-        }
-        for (auto const& [n, who] : byName) {
-            if (who.size() > 1) {
-                std::string which;
-                for (auto p : who) {
-                    auto const& pk = state.packages[p].manifest.package;
-                    const bool qualified = pk.namespace_.empty() || pk.name.starts_with(pk.namespace_ + ".");
-                    which += (which.empty() ? "" : ",")
-                        + (qualified ? pk.name : pk.namespace_ + "." + pk.name);
-                }
-                e.depAmbiguous.emplace_back(n, std::move(which));
-                continue;
-            }
-            const auto provider = who.front();
-            e.depDirs.emplace_back(n, state.packages[provider].root);
-            if (linkForms)
-                if (auto f = linkForms->find(provider); f != linkForms->end())
-                    e.depLinkages.emplace_back(n, f->second);
-        }
-    };
-
-    // A declared build-graph node's Source outputs must be visible to the
-    // scan, so they are materialized as placeholders and joined to the source
-    // set here — the same two lists `generated=` feeds, for the same reason
-    // (the scanner walks the legacy modules.sources mirror). ninja overwrites
-    // the placeholder before the compile edge runs, because that compile
-    // depends on the action's output.
-    state.programOutDir = [&state](const std::filesystem::path& base,
-                                    const mcpp::manifest::Manifest& pm,
-                                    const std::vector<std::string>& features) {
-        // What changes the program's environment and is known before it runs.
-        std::string id = std::format("target={}\nprofile={}\naccel={}\n",
-            state.resolvedTargetCanonical, state.effectiveProfile, state.resolvedAccel());
-        if (state.tc)
-            id += std::format("toolchain={}@{}\n", state.tc->binaryPath.generic_string(),
-                              state.tc->version);
-        auto sorted = features;
-        std::ranges::sort(sorted);
-        for (auto const& f : sorted) id += "feature=" + f + "\n";
-        std::string name = pm.package.namespace_.empty()
-            ? pm.package.name : pm.package.namespace_ + "." + pm.package.name;
-        for (auto& c : name)
-            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '_') c = '_';
-        return base / "target" / ".build-mcpp" / "out"    // named in `uses.list` (mcpp#874)
-             / *state.usedProgramOut.insert(mcpp::toolchain::hash_string(id)).first / (name.empty() ? std::string("root") : name);
-    };
-
-    state.adoptActionOutputs = [](mcpp::manifest::Manifest& mm,
-                                 const std::filesystem::path& pkgRoot,
-                                 std::size_t firstNewAction) {
-        if (firstNewAction >= mm.buildConfig.actions.size()) return;
-        std::vector<mcpp::manifest::BuildAction> fresh(
-            mm.buildConfig.actions.begin()
-                + static_cast<std::ptrdiff_t>(firstNewAction),
-            mm.buildConfig.actions.end());
-        // The package that DECLARED the outputs classifies them: a dependency
-        // generating a `.ixx` asks its own manifest, not the root project's.
-        // Built once per package, not once per output.
-        const auto pkgExtTable =
-            mcpp::extension_table_for(mm.buildConfig.moduleExtensions,
-                                      mm.buildConfig.deviceExtensions);
-        mcpp::build::directives::prepare_actions(fresh, pkgRoot);
-        std::copy(fresh.begin(), fresh.end(),
-                  mm.buildConfig.actions.begin()
-                      + static_cast<std::ptrdiff_t>(firstNewAction));
-        for (auto const& a : fresh) {
-            if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
-            for (auto const& o : a.outputs) {
-                if (o.find("${mcpp.") != std::string::npos) continue;
-                // Companion outputs (protoc's .pb.h next to its .pb.cc) are
-                // produced by the edge but are NOT translation units.
-                if (!mcpp::build::directives::is_compilable_output(o, pkgExtTable))
-                    continue;
-                mm.buildConfig.sources.push_back(o);
-                mm.modules.sources.push_back(o);
-                // A declared unit: the scan takes what the action says the
-                // file provides and imports, and reads nothing (D6). A unit
-                // that declares no `provides` asserts nothing; the build's own
-                // scan finds its imports, as it did with the empty placeholder.
-                mm.modules.declaredUnits[o] = mcpp::manifest::ScanOverride{a.provides, a.imports};
-                // D26: a generated module interface must say which module it
-                // is. Without `.provides()` nothing writes its BMI, and the
-                // first importer fails far from the action.
-                if (a.provides.empty()
-                    && mcpp::classify(o, pkgExtTable) == mcpp::SourceKind::ModuleInterface)
-                    mcpp::diag::degraded("build-program/provides", std::format(
-                        "action '{}' generates the module-interface file '{}' and declares no "
-                        "`.provides(...)`", a.id, o),
-                        "the module it defines has no BMI in this build, so an import of it fails",
-                        "declare the module the generated file defines: "
-                        "mcpp::action(...).provides(\"<module>\")");
-            }
-        }
-    };
-
-
-    state.appendUniqueFlags =
-        [](std::vector<std::string>& flags,
-           const std::vector<std::string>& additions) -> bool
-    {
-        bool changed = false;
-        for (auto const& f : additions) {
-            if (std::find(flags.begin(), flags.end(), f) != flags.end()) continue;
-            flags.push_back(f);
-            changed = true;
-        }
-        return changed;
-    };
-
-
-
-
-
-    {
-        auto rootPackage = makePackageRoot(state, *state.root, *state.m);
-        if (!rootPackage) return std::unexpected(rootPackage.error());
-        state.packages[0] = std::move(*rootPackage);
-    }
-
-
-    define_usage_requirements(state);
-
-    return {};
-}
 
 std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
 
@@ -2399,14 +2194,27 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
         state.worklist.push_back({n, req, mainPkgLabel + " (build-dep)",
                             req.version, kMainConsumer, {}, /*devOnly=*/false,
                             /*buildOnly=*/true, /*fromBuildTable=*/true});
+        state.worklist.back().scope = root_program_scope(state);
     }
 
 
     auto drain = [&]() -> std::expected<void, std::string> {
-        while (!state.worklist.empty()) {
+        while (!state.worklist.empty() || !state.scopedWorklist.empty()) {
+            // A PROGRAM'S REQUESTS WAIT FOR THE TARGET'S (§21 A1): the target's
+            // versions are chosen by the target's requests alone, and a program
+            // takes them where its own requests allow.
+            if (state.worklist.empty()) {
+                for (auto& w : state.scopedWorklist) state.worklist.push_back(std::move(w));
+                state.scopedWorklist.clear();
+            }
             WorklistItemCtx ctx;
             ctx.item = std::move(state.worklist.front());
             state.worklist.pop_front();
+            if (!ctx.item.scope.empty()
+                && std::ranges::any_of(state.worklist, [](const WorkItem& w) { return w.scope.empty(); })) {
+                state.scopedWorklist.push_back(std::move(ctx.item));
+                continue;
+            }
             if (state.supersededRequesters.contains(ctx.item.requestedBy)) {
                 mcpp::log::verbose("resolve", std::format(
                     "{} is not walked: {}, which asked for it, was replaced by a merge",
@@ -2423,6 +2231,21 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
                     return std::unexpected(r.error());
                 continue;
             }
+            // A program's request of a package the root holds by path or git
+            // takes the root's checkout, as the target's does (T2, §21 A1).
+            if (ctx.rootHeld && !ctx.key.scope.empty()) {
+                auto target = ctx.key;
+                target.scope.clear();
+                if (auto it = state.resolved.find(target); it != state.resolved.end()) {
+                    if (auto r = step4b_handle_already_resolved(state, ctx, it); !r)
+                        return std::unexpected(r.error());
+                    continue;
+                }
+            }
+            if (auto adopted = step4b_adopt_slot(state, ctx); !adopted)
+                return std::unexpected(adopted.error());
+            else if (*adopted)
+                continue;
 
             if (auto r = step4b_acquire_dependency_source(state, ctx); !r)
                 return std::unexpected(r.error());
@@ -2454,6 +2277,7 @@ std::expected<void, std::string> phase4b_graph_worklist(PrepareState& state) {
     }
     if (auto r = step4b_check_platform_versions(state); !r) return r;
     step4b_platform_member_edges(state);
+    step4b_drop_program_edges_from_target(state);
 
     if (auto r = step4b_cycle_check(state); !r) return std::unexpected(r.error());
 

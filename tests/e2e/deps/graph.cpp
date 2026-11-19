@@ -253,24 +253,55 @@ int main() {
         expect(e2e::contains(s::text(d), "`override` on 'mcpplibs.os' is ignored")) << "D: a library's override is not reported";
     };
 
-    "1088 two build dependencies that disagree are refused by their requesters"_test = [] {
-        // Two [build-dependencies] requests of one package that no merge reconciles are refused
-        // as such, naming both requesters and the override line: a build dependency is a module
-        // of a build program, which no rename separates (design 2026-11-15 N29). The rename was
-        // tried and failed on the requester's sources.
+    "1088 two build programs take their own versions of one package"_test[s::gcc] = [] {
+        // A build dependency is a library of a build program, and two programs are two links
+        // (design 2026-11-19 §21, mcpp#972). A: the project's program and its dependency's program
+        // take the two versions they request, in two build programs' graphs, and both run; the lock
+        // records the second version as an entry of its own that names its program. B: a second
+        // build compiles neither program again. C: two requests of one program that no merge
+        // reconciles are refused naming the program, both requesters and the override line; the
+        // rename was not tried (N29).
         const auto tmp = s::case_dir();
         s::project tooling{tmp / "tooling", {{"mcpp.toml", "[package]\nname    = \"tooling\"\nversion = \"0.1.0\"\n[targets.tooling]\nkind = \"lib\"\n[build-dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
                                              {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
                                              {"src/tooling.cppm", "export module tooling;\nexport int tooling_answer() { return 1; }\n"}}};
-        s::project app{tmp / "app", {{"mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[build-dependencies]\nmcpplibs.os = \"^0.4.4\"\n[dependencies]\ntooling = {{ path = \"{}/tooling\" }}\n", tmp.generic_string())},
+        const auto app_manifest = [&](std::string_view extra) {
+            return std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n[build-dependencies]\nmcpplibs.os = \"^0.4.4\"\n{}[dependencies]\ntooling = {{ path = \"{}/tooling\" }}\n", extra, tmp.generic_string());
+        };
+        s::project app{tmp / "app", {{"mcpp.toml", app_manifest("")},
                                      {"build.mcpp", "import mcpp;\nint main() { return 0; }\n"},
                                      {"src/main.cpp", "import tooling;\nint main() { return tooling_answer() == 1 ? 0 : 1; }\n"}}};
-        auto r = app.mcpp({"build", "--configure-only"});
-        expect(fatal(failed(r))) << "two build dependencies no merge reconciles were accepted\n" << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "build dependency 'mcpplibs.os' has irreconcilable versions"))) << "the refusal does not name the conflict\n" << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "tooling") && e2e::contains(s::text(r), "app"))) << "the refusal does not name both requesters\n" << s::text(r);
-        expect(fatal(s::lacks(s::text(r), "mangl"))) << "the rename was tried\n" << s::text(r);
-        expect(s::has_line(s::text(r), R"(mcpplibs\.os = \{ version = "[0-9.]*", override = true \})")) << "the refusal does not name the override\n" << s::text(r);
+        auto r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "A: two programs that request two versions were refused\n" << s::text(r);
+        for (std::string_view p : {"app", "tooling"})
+            expect(fatal(s::has_line(s::text(r), std::format(R"(^ *build\.mcpp ([a-z]+\.)?{} .* ran )", p)))) << "A: the program of " << p << " did not run\n" << s::text(r);
+        const auto graphs = s::glob(app.at("target/.build-mcpp/host"), "*/programs.json");
+        expect(fatal(graphs.size() == 2u)) << "A: " << graphs.size() << " build programs' graphs for two programs that disagree (want 2)\n" << s::text(r);
+        std::set<std::string> pinned;
+        for (const auto& g : graphs) {
+            std::smatch v;
+            const auto marker = s::read_file(g.parent_path() / ".mcpp-build-programs");
+            if (std::regex_search(marker, v, std::regex{R"(pin=mcpplibs\.os=([0-9.]+))"})) pinned.insert(v[1].str());
+        }
+        expect(fatal(pinned == std::set<std::string>{"0.4.1", "0.4.6"})) << "A: the graphs do not take one version each\n" << s::text(r);
+        const auto lock = app.read("mcpp.lock");
+        expect(fatal(s::has_line(lock, R"re(^\[package\."(mcpplibs\.)?os"\])re"))) << "A: the lock has no entry for the first version\n" << lock;
+        expect(fatal(s::has_line(lock, R"re(^\[package\."(mcpplibs\.)?os\+b[0-9a-f]{12}"\])re"))) << "A: the lock has no entry for the second version\n" << lock;
+        expect(fatal(s::has_line(lock, R"re(^programs = \["build:[^"]*tooling@[^"]*"\])re"))) << "A: the second version's entry does not name its program\n" << lock;
+
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "B: the second build failed\n" << s::text(r);
+        expect(fatal(s::no_line(s::text(r), R"(^ *build\.mcpp .* (compiling|compiled))"))) << "B: a program was compiled again\n" << s::text(r);
+
+        s::project{tmp / "helper", {{"mcpp.toml", "[package]\nname    = \"helper\"\nversion = \"0.1.0\"\n[targets.helper]\nkind = \"lib\"\n[dependencies]\nmcpplibs.os = \"0.4.1\"\n"},
+                                    {"src/helper.cppm", "export module helper;\nexport int helper_answer() { return 1; }\n"}}};
+        app.write("mcpp.toml", app_manifest(std::format("helper = {{ path = \"{}/helper\" }}\n", tmp.generic_string())));
+        r = app.mcpp({"build", "--configure-only"});
+        expect(fatal(failed(r))) << "C: two requests of one program that no merge reconciles were accepted\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "build dependency 'mcpplibs.os' has irreconcilable versions in the build program of app@0.1.0"))) << "C: the refusal does not name the program\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "helper") && e2e::contains(s::text(r), "app"))) << "C: the refusal does not name both requesters\n" << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "mangl"))) << "C: the rename was tried\n" << s::text(r);
+        expect(s::has_line(s::text(r), R"(mcpplibs\.os = \{ version = "[0-9.]*", override = true \})")) << "C: the refusal does not name the override\n" << s::text(r);
     };
 }};
 

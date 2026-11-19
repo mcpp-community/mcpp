@@ -66,6 +66,10 @@ prepare_build_pass(bool print_fingerprint,
                    bool includeDevDeps,
                    std::vector<mcpp::manifest::Target> extraTargets,
                    BuildOverrides overrides);
+
+// A series is a handful of releases; a bound keeps a pass that refuses every
+// release it is given from restarting without end.
+constexpr std::size_t kMaxSeriesSkips = 32;
 } // namespace
 
 // TWO PASSES WHEN THE BUILD PROGRAM STATES THE TOOLCHAIN (mcpp#755).
@@ -94,8 +98,19 @@ prepare_build(bool print_fingerprint,
     if (first) {
         (void)take_toolchain_restart();
         (void)take_platform_restart();
+        (void)take_platform_series_restart();
         (void)take_target_restart();
         return first;
+    }
+    // A RELEASE OF A PLATFORM SERIES WHOSE VERSION GROUP THE BUILD DOES NOT
+    // ADMIT (design 2026-11-19 §21 A5): the series is taken below it. The
+    // package a pass fetched for it is not the platform the next one reads.
+    if (auto skip = take_platform_series_restart();
+        skip && overrides.platform_series_skipped.size() < kMaxSeriesSkips) {
+        overrides.platform_series_skipped.push_back(std::move(*skip));
+        overrides.platform_root.clear();
+        return prepare_build(print_fingerprint, includeDevDeps, std::move(extraTargets),
+                             std::move(overrides));
     }
     if (auto identity = take_target_restart(); identity && !overrides.target_request) {
         overrides.target_request = overrides.target_triple;
@@ -251,7 +266,12 @@ resolve_graph(bool includeDevDeps, BuildOverrides overrides) {
     // A restart a phase asks of `prepare_build` (a toolchain, platform or
     // target statement) belongs to a build; the graph is read as it stands.
     struct NoRestart {
-        ~NoRestart() { (void)take_toolchain_restart(); (void)take_platform_restart(); (void)take_target_restart(); }
+        ~NoRestart() {
+            (void)take_toolchain_restart();
+            (void)take_platform_restart();
+            (void)take_platform_series_restart();
+            (void)take_target_restart();
+        }
     } noRestart;
     if (auto r = phase0_manifest_and_workspace(state); !r) return std::unexpected(r.error());
     if (auto r = check_engine_floors(state, /*rootOnly=*/true); !r) return std::unexpected(r.error());
@@ -259,7 +279,18 @@ resolve_graph(bool includeDevDeps, BuildOverrides overrides) {
     if (auto r = phase2_define_toolchain_resolver(state); !r) return std::unexpected(r.error());
     if (auto r = phase3_xlings_before_graph(state); !r) return std::unexpected(r.error());
     if (auto r = phase4a_graph_load(state); !r) return std::unexpected(r.error());
-    if (auto r = phase4b_graph_worklist(state); !r) return std::unexpected(r.error());
+    if (auto r = phase4b_graph_worklist(state); !r) {
+        // The graph a build would plan: a platform series below the releases
+        // the build cannot use (§21 A5), as `prepare_build` takes it.
+        if (auto skip = take_platform_series_restart();
+            skip && state.overrides.platform_series_skipped.size() < kMaxSeriesSkips) {
+            auto overrides = state.overrides;
+            overrides.platform_series_skipped.push_back(std::move(*skip));
+            overrides.platform_root.clear();
+            return resolve_graph(includeDevDeps, std::move(overrides));
+        }
+        return std::unexpected(r.error());
+    }
     if (auto r = check_engine_floors(state, /*rootOnly=*/false); !r) return std::unexpected(r.error());
     return std::move(state.packages);
 }

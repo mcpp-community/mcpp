@@ -104,6 +104,26 @@ aggregatedRequest(PrepareState& state, std::size_t depPkgIndex, Instance instanc
             return { std::move(feats), anyEdge ? anyDefault : true };
 }
 
+// An entry the reading below turns into a dependency of a library belongs to
+// each resolution that holds the library (design 2026-11-19 §21 A1), as an
+// entry of `[dependencies]` resolved where its consumer is would: the walk
+// resolved it as the library's own build program's, which has no program.
+static void mirror_into_library_scopes(PrepareState& state, std::size_t p, std::size_t d) {
+    std::optional<std::pair<ResolvedKey, ResolvedRecord>> dependency;
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex + 1 == d) { dependency.emplace(k, r); break; }
+    if (!dependency) return;
+    std::vector<std::string> scopes;
+    if (state.packages[p].selectedMember) scopes.push_back({});
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex + 1 == p) scopes.push_back(k.scope);
+    for (auto const& scope : scopes) {
+        auto key = dependency->first;
+        key.scope = scope;
+        state.resolved.try_emplace(std::move(key), dependency->second);
+    }
+}
+
 // COMPAT(plugin-imports-from-build-dependencies). Before mcpp#797 a build
 // plugin's library was compiled inside its consumer's build program, so a
 // package it listed in its own `[build-dependencies]` with `host-module = true`
@@ -155,6 +175,7 @@ static void step6_compat_library_edges(PrepareState& state) {
         pm.dependencies.emplace(r.key, asDependency);
         if (p - 1 < state.dep_manifests.size() && state.dep_manifests[p - 1])
             state.dep_manifests[p - 1]->dependencies.emplace(r.key, asDependency);
+        mirror_into_library_scopes(state, p, d);
         for (auto const& e : state.dependencyEdges)
             if (e.consumerPackageIndex == p && e.dependencyPackageIndex == d && e.buildTable) {
                 auto copy = e;
@@ -274,6 +295,17 @@ PackageInstances package_instances(const PrepareState& state) {
             stack.push_back(d);
         }
     }
+    // A slot only build programs' resolutions hold is a module of a build
+    // program and never the target's (design 2026-11-19 §21 A1), whichever
+    // edges reach it.
+    std::vector<bool> targetRecord(n, false), programRecord(n, false);
+    for (auto const& [k, r] : state.resolved)
+        if (r.depIndex + 1 < n) (k.scope.empty() ? targetRecord : programRecord)[r.depIndex + 1] = true;
+    for (std::size_t i = 1; i < n; ++i)
+        if (programRecord[i] && !targetRecord[i] && !state.packages[i].selectedMember) {
+            target[i] = false;
+            host[i] = true;
+        }
     return out;
 }
 
@@ -1959,17 +1991,12 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             bpEnv.requested       = pkg.selectedMember;
             // A registry or git dependency: its tree is the package store's,
             // and its program may not watch files outside it (#766).
-            {
-                auto rn = mcpp::pm::compat::resolve_package_name(
-                    pkg.manifest.package.name, pkg.manifest.package.namespace_);
-                for (auto const& ns : {rn.namespace_, std::string(mcpp::pm::kDefaultNamespace),
-                                       std::string{}})
-                    if (auto it = state.resolved.find(ResolvedKey{ns, rn.shortName});
-                        it != state.resolved.end()) {
-                        bpEnv.sealedPackage = it->second.source != "path";
-                        break;
-                    }
-            }
+            // The record of this slot, whichever resolution holds it (§21 A1).
+            for (auto const& [k, rec] : state.resolved)
+                if (rec.depIndex + 1 == i) {
+                    bpEnv.sealedPackage = rec.source != "path";
+                    break;
+                }
             // THE PLATFORM'S PLUGIN (SPEC-013 §4.2): the platform package's
             // program runs in the `platform` phase, and states only the
             // platform's build, link and runner fields.

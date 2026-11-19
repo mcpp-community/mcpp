@@ -89,14 +89,14 @@ std::string exe_launcher_manifest(std::string_view name, std::string_view versio
 std::string exe_launcher_main(const Launch& l);
 
 // The OS library both launchers build on, one release so a pack is the same at
-// any later time (design 2026-11-07, D20). It is the release the build program
-// of the platform of mcpp's openkal rows links: a launcher is built over that
-// platform, and the platform's build dependencies are resolved with the
-// launcher's own, one version of each package (mcpp#972). openkal-platform
-// 0.31's build program links mcpp.plugins 0.26.1, whose mcpplibs.os is 0.4.5;
-// 0.4.4 (that of 0.29's) and 0.4.6 were each refused as irreconcilable (e2e
-// 988, the canaries' pack cells). The canaries and e2e 988 hold the two equal.
-inline constexpr std::string_view kLauncherOs = "0.4.5";
+// any later time (design 2026-11-07, D20): mcpp's own, which
+// check_version_pins.sh holds equal to mcpp.toml's. A launcher is built over
+// the platform of mcpp's openkal rows, whose plugin resolves its build
+// dependencies apart from the launcher (design 2026-11-19 §21 A6, mcpp#972).
+// When the two shared one resolution, this had to be the release the plugin
+// linked (0.4.5, through mcpp.plugins 0.26.1): 0.4.4 and 0.4.6 were refused as
+// irreconcilable (e2e 988, the canaries' pack cells).
+inline constexpr std::string_view kLauncherOs = "0.4.6";
 
 // ─── mcpp-package.json (SPEC-014 §4.5) ────────────────────────────────────
 

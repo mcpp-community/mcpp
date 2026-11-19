@@ -265,9 +265,10 @@ mcpplibs.os = { version = "0.4.4", override = true }
   the defaults, and the project may choose another.
 - **When it is needed.** Two version requests that no SemVer merge reconciles
   are refused naming both, and the refusal ends with the line that overrides
-  the package. Two requests from `[build-dependencies]` tables are refused the
-  same way and are never renamed apart: a build dependency is a module of a
-  build program, and one build loads one version of it (2026.11.16.1). A library that pins one release of a package every consumer
+  the package. Two requests of one build program's resolution are refused the
+  same way, naming the program, and are never renamed apart: a build dependency
+  is a module of a build program, and a program loads one version of it
+  (2026.11.16.1; per program since 2026.11.19.1, below). A library that pins one release of a package every consumer
   shares (one that provides a target-side layer or a kernel ABI) is noted to
   the projects that use it, and `mcpp publish` refuses the pin in a library:
   a range leaves the choice to the project.
@@ -538,9 +539,34 @@ and the build program is compiled by the same plan (30 — `build.mcpp`).
 
 **One package in both tables.** A package written in `[dependencies]` and in
 `[build-dependencies]` of one manifest has two instances, one compiled for the
-target and one for the build program. Both have the version the lock records.
-Their features are activated separately: a feature requested only by a
-`[build-dependencies]` edge does not reach the target instance.
+target and one for the build program. Both have one version unless the two
+requests admit none in common (below). Their features are activated
+separately: a feature requested only by a `[build-dependencies]` edge does not
+reach the target instance.
+
+**Each build program resolves its own build dependencies *(mcpp
+2026.11.19.1+)*.** A C++ program loads one version of a package; two programs do
+not constrain each other. The target (the selected members, what they reach
+through `[dependencies]` and what the platform adds) is one resolution, and
+each build program is another: a package's `build.mcpp` (or the program its
+rules synthesise) with its `[build-dependencies]` and their closure, and a
+platform's plugin with the platform's.
+
+- Within one resolution, requests merge as before, and two requests no merge
+  reconciles are refused, naming the program (`in the build program of
+  app@0.1.0`) and every requester.
+- A build program's request takes the newest version the target or another
+  program already holds that the request admits, and the newest the index holds
+  only when none does; the target is resolved first. A build without a conflict
+  keeps the versions, and the build programs' identities, it had before.
+- Two versions of one package coexist only between programs: the project's
+  `build.mcpp` may use `mcpp.plugins` 0.22.1 while its platform's plugin uses
+  0.26.1. `mcpp.lock` records the second version as an entry of its own,
+  `<name>+b<digest>`, whose `programs` lists the programs that hold it.
+- The root's `override = true` holds for every resolution.
+
+Before, one table held every resolution of a build, and a project's build
+program could only use the version the platform's plugin used (mcpp#972).
 
 **Which row reads a package's conditional tables *(mcpp 2026.11.19.1+)*.** A
 package's `[target.<selector>.dependencies]` are read by the row the package is
@@ -573,8 +599,8 @@ A cycle among packages is refused where the graph is resolved, naming its
 edges, under every cache mode; a tool whose own sub-build requests it again is
 refused at that first repetition, naming the chain.
 
-Unlike `[dev-dependencies]`, build dependencies **are** walked transitively and
-resolved with the project, one version per package: a build dependency's own
+Unlike `[dev-dependencies]`, build dependencies **are** walked transitively,
+one version per package in each build program: a build dependency's own
 dependencies are what make it work, and they serve the build program with it.
 
 A feature scopes build-time requests without a second declaration site. A

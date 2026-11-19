@@ -808,11 +808,27 @@ void step4b_seed_platform(PrepareState& state) {
 
 namespace {
 thread_local std::optional<fs::path> g_platformRestart;
+thread_local std::optional<std::pair<std::string, std::string>> g_platformSeriesRestart;
+
+// A REFUSAL BY THE VERSION GROUP OF A RELEASE A SERIES TOOK IS NOT THE BUILD'S
+// LAST WORD (design 2026-11-19 §21 A5): the series' newest release is not the
+// newest one this build can use, and `prepare_build` takes the series below
+// it. `why` names the request that refused it.
+void refuse_series_release(const PrepareState& state, std::string why) {
+    if (!state.platformSeriesTook.empty())
+        g_platformSeriesRestart = std::pair{state.platformSeriesTook, std::move(why)};
+}
 } // namespace
 
 std::optional<fs::path> take_platform_restart() {
     auto r = std::move(g_platformRestart);
     g_platformRestart.reset();
+    return r;
+}
+
+std::optional<std::pair<std::string, std::string>> take_platform_series_restart() {
+    auto r = std::move(g_platformSeriesRestart);
+    g_platformSeriesRestart.reset();
     return r;
 }
 
@@ -1019,6 +1035,7 @@ std::expected<bool, std::string> step4b_apply_platform(PrepareState& state) {
         item.consumerDepIndex = kMainConsumer;
         item.buildOnly = true;
         item.fromBuildTable = true;
+        item.scope = root_program_scope(state);
         // The root asks for them as it would for a declared build dependency,
         // so the tool provisioning pass builds them for this machine.
         state.m->buildDependencies[key] = item.spec;
@@ -1127,6 +1144,8 @@ std::expected<void, std::string> step4b_pin_to_platform_group(PrepareState& stat
             if (auto req = mcpp::version_req::parse_req(asked);
                 req && group && !mcpp::version_req::matches(*req, *group)) {
                 refusal::record(refusal::Code::PlatformVersionGroup);
+                refuse_series_release(state, std::format("its version group names {} {}, and {} requests '{}'",
+                                                         shortName, g->second, item.requestedBy, asked));
                 return std::unexpected(std::format(
                     "{} is requested as '{}' by {}, and the platform {} is a version group\n"
                     "       that names {} {}.\n"
@@ -1180,12 +1199,14 @@ void step4b_read_platform_group(PrepareState& state, const std::string& resolved
         mcpp::ui::add_failure_notice("platform-newer", *tip);
 }
 
-// A SERIES TAKES ITS NEWEST RELEASE THIS ENGINE READS (SPEC-013 §14). A
-// platform selected as a range (`^0.24`, the target table's default) skips a
-// release whose `[package] mcpp` floor is above this mcpp, so an older engine
-// keeps building with the newest platform it can read instead of being
-// refused by a release made for a newer one. A pin (`=`) and a lock anchor are
-// taken as they are.
+// A SERIES TAKES ITS NEWEST RELEASE THIS ENGINE READS AND THIS BUILD CAN USE
+// (SPEC-013 §14). A platform selected as a range (`^0.24`) skips a release
+// whose `[package] mcpp` floor is above this mcpp, so an older engine keeps
+// building with the newest platform it can read instead of being refused by a
+// release made for a newer one; and a release whose version group a request
+// of the build does not admit, which an earlier pass took and was refused for
+// (design 2026-11-19 §21 A5). A pin (`=`) and a lock anchor are taken as they
+// are.
 std::expected<void, std::string> step4b_platform_within_engine(PrepareState& state) {
     if (state.platform.selection.none || state.worklist.empty()) return {};
     auto& item = state.worklist.front();
@@ -1198,20 +1219,40 @@ std::expected<void, std::string> step4b_platform_within_engine(PrepareState& sta
     auto cfg = state.get_cfg(true);
     if (!cfg) return std::unexpected(cfg.error());
     std::string constraint = spec.version;
+    auto const& skipped = state.overrides.platform_series_skipped;
+    for (auto const& [version, why] : skipped) constraint += ", <" + version;
+    // Said once: each earlier pass said the releases it skipped before.
+    if (!skipped.empty())
+        mcpp::ui::info("Platform", std::format("{} v{} is not usable by this build: {}",
+                                               spec.shortName, skipped.back().first, skipped.back().second));
     for (int attempt = 0; attempt < 16; ++attempt) {
         auto found = mcpp::pm::resolve_semver(spec.namespace_, spec.shortName, constraint,
                                               state.index_route(*cfg), *state.targetPlatform);
-        if (!found) return {};   // the walk reports it, with the request that made it
+        if (!found) {
+            if (skipped.empty()) return {};   // the walk reports it, with the request that made it
+            refusal::record(refusal::Code::PlatformVersionGroup);
+            std::string each;
+            for (auto const& [version, why] : skipped) each += std::format("\n         v{}: {}", version, why);
+            return std::unexpected(std::format(
+                "no release of the platform {} {} can be used by this build:{}\n"
+                "       Each release's version group names a package version a request of the\n"
+                "       build does not admit. Admit the group's version where it is requested,\n"
+                "       or select a release outside the series ([target.<selector>] platform =\n"
+                "       \"{}@<version>\").",
+                spec.shortName, spec.version, each, spec.shortName));
+        }
         auto loaded = state.loadVersionDep(item.name, spec.namespace_, spec.shortName, *found);
         if (!loaded) return {};
         auto const& floor = loaded->second.package.mcppFloor;
         const auto need = mcpp::xpkg_version::parse(floor);
         if (floor.empty() || !need || mcpp::xpkg_version::compare(*have, *need) >= 0) {
-            if (attempt > 0) {
-                mcpp::ui::info("Platform", std::format("{} {} → v{} (the newest this mcpp reads)",
-                    spec.shortName, spec.version, *found));
+            if (attempt > 0 || !skipped.empty()) {
+                mcpp::ui::info("Platform", std::format("{} {} → v{} (the newest {})",
+                    spec.shortName, spec.version, *found,
+                    skipped.empty() ? "this mcpp reads" : "this build can use"));
                 spec.version = "=" + *found;
             }
+            state.platformSeriesTook = *found;
             return {};
         }
         mcpp::ui::info("Platform", std::format("{} v{} needs mcpp >= {}; this is mcpp {}",
@@ -1245,6 +1286,9 @@ std::expected<void, std::string> step4b_check_platform_versions(PrepareState& st
         if (auto r = state.resolved.find({n.namespace_, n.shortName}); r != state.resolved.end())
             by = r->second.requestedBy;
         refusal::record(refusal::Code::PlatformVersionGroup);
+        refuse_series_release(state, std::format("its version group names {} {}, and {} {} is in this build (requested by {})",
+                                                 n.shortName, it->second, n.shortName, pm.package.version,
+                                                 by.empty() ? std::string("the graph") : by));
         return std::unexpected(std::format(
             "{} {} is in this build, and the platform {} is a version group that names {} {}.\n"
             "       requested by: {}\n"

@@ -72,13 +72,31 @@
 - mcpp does not set `VSLANG` for cl.exe: the compiler speaks the language of the user's
   environment (`VSLANG`, else Visual Studio's), where it spoke English whenever the English
   resources were installed. `VSLANG=1033` asks for English (mcpp#970).
-- A build program that pins `mcpp.plugins` below 0.26 shares no host graph with
-  `openkal-platform@0.31.0`, whose build program links `mcpp.plugins` 0.26.1: such a pin is
-  refused as irreconcilable on the rows openkal serves, and moves to 0.26.1.
+- Each build program resolves its own `[build-dependencies]` (mcpp#972, SPEC-004 §12.3,
+  SPEC-007 R10.7). The target is one resolution, and each build program -- a package's
+  `build.mcpp` or the program its rules synthesise, a platform's plugin -- is another: a
+  program loads one version of a package, and two programs do not constrain each other. A
+  project's `build.mcpp` may use `mcpp.plugins` 0.22.1 beside a platform plugin that uses
+  0.26.1, where the two were refused as irreconcilable and the project had to copy the
+  version the platform used inside. A build program's request takes the newest version the
+  target or another program already holds that admits it, the target being resolved first,
+  so a build without a conflict keeps its versions and its build programs' identities.
+  Programs that hold one package at two versions are compiled in two build programs'
+  graphs, `<group>-<digest>`, named by those versions. `mcpp.lock` records a version only
+  build programs hold as an entry of its own, `<name>+b<digest>`, whose `programs` lists
+  them; a conflict inside one program is refused naming the program and every requester.
+- A platform selected as a series skips a release whose version group a request of the build
+  does not admit: the build is planned again with the series below it, and the report names
+  the release and the request (SPEC-013 §14). With no release of the series left the build is
+  refused (`platform-version-group`), listing each release and the request that refused it. A
+  release written exactly, or recorded in `mcpp.lock`, is taken as written. Before, the
+  series' newest release decided, and a platform release that moved its group stopped every
+  project that selected the series.
 - The launchers `mcpp pack` writes (`bin/<name>.exe`, the single-file launcher) build on
-  `mcpplibs.os` 0.4.5, the release the build program of openkal-platform 0.31 links through
-  `mcpp.plugins` 0.26.1: a launcher is built over that platform, and the platform's build
-  dependencies are resolved with the launcher's own (mcpp#972).
+  `mcpplibs.os` 0.4.6, mcpp's own release (0.4.4 in 2026.11.18.1);
+  `.github/tools/check_version_pins.sh` holds the two equal. A launcher is built over the
+  platform of the rows openkal serves, whose plugin now resolves its build dependencies
+  apart from the launcher (mcpp#972).
 
 ### Fixed
 

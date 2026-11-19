@@ -1888,6 +1888,11 @@ dependencies and its implementation units — and `build.mcpp` is compiled by
 the same plan, so a BMI and the program importing it agree on standard,
 dialect and compiler by construction. A library several programs use is
 compiled once for them, and a program of another standard is in another graph.
+Each build program resolves its own `[build-dependencies]` (05 — Dependencies,
+*Each build program resolves its own build dependencies*); programs that hold
+one package at different versions are in different graphs,
+`<group>-<digest>`, named by those versions (mcpp 2026.11.19.1+), and a
+program that holds none of them stays in `<group>`.
 `mcpp build` in that directory reproduces the compile of the build programs.
 The compiled program is also placed beside its package's run record, as
 `target/.build-mcpp/build.mcpp.bin` (`build.mcpp.exe` on Windows), to be run by
