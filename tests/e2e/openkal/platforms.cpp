@@ -591,7 +591,8 @@ flags  = ["-e", "_start"]
         // F so does the row no built-in provider serves; G the host's row, which the table
         // answers, is not taken from the index; B a statement of the project stands over the
         // index; C two descriptors of one index listing the row are named, and the first is
-        // taken; D without the column the row is unknown and the planned row is refused.
+        // taken; D without the column, offline, the row is unknown and the planned row is
+        // refused, and the refusal says the index was not refreshed (mcpp#967).
         const auto platform = [](std::string_view name) {
             return std::format(R"([package]
 namespace = "acme"
@@ -685,12 +686,16 @@ main = "src/main.c"
         expect(fatal(e2e::succeeded(r))) << "C: the build with two claims failed: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "lists acme.toy, acme.toy2 for x86_64-toyos"))) << "C: the two claims are not named: " << s::text(r);
         expect(fatal(s::has_line(s::text(r), R"(Platform +toy 0\.1\.0)"))) << "C: the first claim was not taken: " << s::text(r);
-        // D
+        // D, offline: a miss of the column is an index miss (mcpp#967), and a refresh would bring
+        // the shared index, whose openkal-platform lists the planned row.
         app.write("local-index/pkgs/t/toy.lua", descriptor("toy", ""));
         app.write("local-index/pkgs/t/toy2.lua", descriptor("toy2", ""));
-        r = app.mcpp({"build", "--target", "x86_64-toyos"}, inherited);
+        s::options offline = inherited;
+        offline.env.emplace_back("MCPP_OFFLINE", "1");
+        r = app.mcpp({"build", "--target", "x86_64-toyos"}, offline);
         expect(fatal(e2e::contains(s::text(r), "unknown target 'x86_64-toyos'"))) << "D: without the column the row was known: " << s::text(r);
-        r = app.mcpp({"build", "--target", "i686-linux-musl"}, inherited);
+        expect(fatal(e2e::contains(s::text(r), "lists no platform for it, and was not refreshed (offline mode)"))) << "D: the refusal does not say the index was not refreshed: " << s::text(r);
+        r = app.mcpp({"build", "--target", "i686-linux-musl"}, offline);
         expect(fatal(e2e::contains(s::text(r), "registered but not yet supported (planned)"))) << "D: without the column the planned row was built: " << s::text(r);
     };
 }};

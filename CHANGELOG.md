@@ -82,6 +82,12 @@
 
 ### Fixed
 
+- A target row the package index's platform column listed after the local copy of the index
+  was taken was refused as an unknown target until `mcpp index update`: the miss did not reach
+  the refresh policy. A row the local copy does not list, and that is refused without it (one
+  the engine does not know, or a `planned` one), now refreshes the index as a dependency's miss
+  does (`--offline`, `[index] auto_refresh`, the debounce, one sync per command) and is looked
+  up again; the refusal says whether the index was refreshed, and why not (mcpp#967).
 - On a Windows host the `std` module of a base package that supplies libstdc++ (the Hurd and
   Haiku rows of mcpp-platforms) was precompiled with neither the base's `include_dirs` nor
   `-nostdinc++`, and stopped at `'bits/stdc++.h' file not found`: the words that close the

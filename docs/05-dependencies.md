@@ -464,7 +464,7 @@ Controls, in order of precedence:
 |---|---|
 | `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install, no `git ls-remote`/`clone`. Anything already installed still builds, including git deps whose commit is in `mcpp.lock` and whose clone is cached |
 | `MCPP_OFFLINE=1` | Same, for a whole shell session or CI job |
-| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh an index implicitly: not on a dependency miss, not before installing a package the local index lacks, and not for the first sync of a project's custom index (that build stops and names `mcpp index update`). Downloads still work |
+| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh an index implicitly: not on a dependency miss, not on a target row the index's platform column does not list (2026.11.19.1+), not before installing a package the local index lacks, and not for the first sync of a project's custom index (that build stops and names `mcpp index update`). Downloads still work |
 
 `MCPP_NO_AUTO_INSTALL=1` remains accepted as the older, narrower spelling of
 `--offline` (it gates only toolchain auto-install).

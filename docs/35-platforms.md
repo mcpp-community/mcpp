@@ -248,6 +248,15 @@ project's own `[target.<selector>] platform` still comes first, and so do the
 project's own `[indices]` before the shared ones. The list is generated from the
 platform's manifest by the index's tools; engines before 2026.11.17.1 ignore it.
 
+A row the local copy of the index does not list, and that would otherwise be
+refused (a row the engine does not know, or a `planned` one), is an index miss
+like a dependency's *(2026.11.19.1+, mcpp#967)*: the index is refreshed once
+under the same controls (`--offline`, `[index] auto_refresh`, the debounce, at
+most one sync per command, [05](05-dependencies.md)) and the column is read
+again. A refusal that follows says whether the index was refreshed, and why not.
+Before, a row listed after the local copy was taken was refused as an unknown
+target until `mcpp index update`.
+
 ## Writing a platform package
 
 A platform package is a package with a `[platform]` section. openkal-platform,

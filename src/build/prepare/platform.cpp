@@ -26,6 +26,7 @@ import mcpp.invocation;
 import mcpp.manifest;
 import mcpp.platform;
 import mcpp.provider;          // the synced index's roots (the platform column, design 2026-11-16 §6.2)
+import mcpp.pm.refresh_policy; // a miss of the platform column refreshes as a dependency's does (mcpp#967)
 import mcpp.pm.compat;
 import mcpp.project;
 import mcpp.targetside;
@@ -351,7 +352,7 @@ void define_early_platform(PrepareState& state) {
                    || mcpp::toolchain::triple::find_known_target(*parsed)))
         return;
     if (!chosen && chosenText.empty())
-        if (auto column = index_platform_for(state, raw); !column.empty())
+        if (auto column = index_platform_for(state, raw, true); !column.empty())
             if (auto ref = mp::parse_ref_text(column)) chosen = *ref;
     if (!chosen) return;
     std::vector<std::string> seg;
@@ -376,23 +377,85 @@ void define_early_platform(PrepareState& state) {
     state.provisionalTarget = true;
 }
 
-std::string index_platform_for(const PrepareState& state, std::string_view triple) {
-    // One scan of a set of index roots per process: the column is consulted
-    // only for a row the built-in table does not answer, and the answer does
-    // not change while one command runs. The project's own indices ([indices]
-    // of mcpp.toml) rank before the shared ones; one rank's claims are
-    // compared. The roots are found and the scan runs with no lock held: the
-    // configuration and the provider may wait on the home's lock, which a
-    // leg prepared beside this one may hold while it reaches this function.
-    struct Claim {
-        int rank;
-        std::string package;
-    };
-    using Claims = std::map<std::string, std::vector<Claim>>;
-    auto cfg = state.get_cfg(false);
-    if (!cfg) return {};
-    // (root, rank, the namespace of a descriptor that names none)
-    std::vector<std::tuple<fs::path, int, std::string>> roots;
+namespace {
+
+// One claim of the platform column: the package whose index entry lists a row.
+struct ColumnClaim {
+    int rank;
+    std::string package;
+};
+using ColumnClaims = std::map<std::string, std::vector<ColumnClaim>>;
+// (root, rank, the namespace of a descriptor that names none)
+using ColumnRoot = std::tuple<fs::path, int, std::string>;
+
+// `<key> = ` at the start of a line or after `{` or `,`: the first such key is
+// the package table's own (its keys precede its nested tables).
+std::size_t lua_field(std::string_view lua, std::string_view key) {
+    for (std::size_t pos = 0; (pos = lua.find(key, pos)) != std::string_view::npos; pos += key.size()) {
+        std::size_t b = pos;
+        while (b > 0 && (lua[b - 1] == ' ' || lua[b - 1] == '\t')) --b;
+        std::size_t e = pos + key.size();
+        while (e < lua.size() && (lua[e] == ' ' || lua[e] == '\t')) ++e;
+        if ((b == 0 || lua[b - 1] == '\n' || lua[b - 1] == ',' || lua[b - 1] == '{') && e < lua.size()
+            && lua[e] == '=' && (e + 1 >= lua.size() || lua[e + 1] != '='))
+            return e + 1;
+    }
+    return std::string_view::npos;
+}
+
+std::string lua_quoted(std::string_view lua, std::size_t at) {
+    std::string out;
+    const auto q1 = lua.find('"', at), nl = lua.find('\n', at);
+    if (q1 == std::string_view::npos || (nl != std::string_view::npos && q1 > nl)) return out;
+    const auto q2 = lua.find('"', q1 + 1);
+    if (q2 != std::string_view::npos) out = std::string(lua.substr(q1 + 1, q2 - q1 - 1));
+    return out;
+}
+
+// The rows one descriptor's `platform_rows` lists, claimed for its package.
+void claim_rows(std::string_view lua, int rank, const std::string& defaultNs, ColumnClaims& out) {
+    const auto rows = lua_field(lua, "platform_rows");
+    if (rows == std::string_view::npos) return;
+    const auto open = lua.find('{', rows), close = lua.find('}', rows);
+    if (open == std::string::npos || close == std::string::npos || close < open) return;
+    const auto nameAt = lua_field(lua, "name"), nsAt = lua_field(lua, "namespace");
+    if (nameAt == std::string_view::npos) return;
+    const auto ns = nsAt == std::string_view::npos ? defaultNs : lua_quoted(lua, nsAt);
+    auto name = lua_quoted(lua, nameAt);
+    // A descriptor may spell its name qualified (`acme.plat`).
+    if (name.starts_with(ns + ".")) name.erase(0, ns.size() + 1);
+    if (ns.empty() || name.empty()) return;
+    const auto pkg = ns + "." + name;
+    for (std::size_t p = open; p < close; ++p) {
+        if (lua[p] != '"') continue;
+        const auto q = lua.find('"', p + 1);
+        if (q == std::string::npos || q > close) break;
+        auto& who = out[std::string(lua.substr(p + 1, q - p - 1))];
+        if (std::ranges::none_of(who, [&](auto const& c) { return c.package == pkg; }))
+            who.push_back({rank, pkg});
+        p = q;
+    }
+}
+
+ColumnClaims scan_column(const std::vector<ColumnRoot>& roots) {
+    ColumnClaims built;
+    for (auto const& [root, rank, defaultNs] : roots) {
+        std::error_code ec;
+        const auto pkgs = root / "pkgs";
+        if (!fs::is_directory(pkgs, ec)) continue;
+        for (auto it = fs::recursive_directory_iterator(pkgs, ec);
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->path().extension() != ".lua") continue;
+            std::ifstream is(it->path(), std::ios::binary);
+            claim_rows(std::string{std::istreambuf_iterator<char>(is), {}}, rank, defaultNs, built);
+        }
+    }
+    return built;
+}
+
+// The project's own indices ([indices] of mcpp.toml) rank before the shared ones.
+std::vector<ColumnRoot> column_roots(const PrepareState& state, const mcpp::config::GlobalConfig& cfg) {
+    std::vector<ColumnRoot> roots;
     const auto add = [&](fs::path dir, int rank, std::string ns) {
         if (std::ranges::none_of(roots, [&](auto const& r) { return std::get<0>(r) == dir; }))
             roots.emplace_back(std::move(dir), rank, std::move(ns));
@@ -407,79 +470,89 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
             for (auto const& dir : mcpp::provider::layout().index_roots_of(data.parent_path()))
                 add(dir, 0, dir.filename().string());
     }
-    for (auto const& dir : mcpp::provider::open(mcpp::config::make_xlings_env(**cfg))->index_roots())
+    for (auto const& dir : mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->index_roots())
         add(dir, 1, std::string(mcpp::pm::kDefaultNamespace));
-    std::string rootsKey;
-    for (auto const& [root, rank, defaultNs] : roots) rootsKey += std::format("{}\t{}\t{}\n", root.string(), rank, defaultNs);
-    static std::mutex lock;
-    static std::map<std::string, std::shared_ptr<const Claims>> scanned;
-    std::shared_ptr<const Claims> claims;
+    return roots;
+}
+
+std::mutex g_columnLock;
+std::map<std::string, std::shared_ptr<const ColumnClaims>> g_columnScans;
+// A row the column missed, with what its refusal adds about the index.
+std::map<std::string, std::string> g_columnMisses;
+
+std::shared_ptr<const ColumnClaims> column_claims(const PrepareState& state, const mcpp::config::GlobalConfig& cfg) {
+    // The roots are found and the scan runs with no lock held: the
+    // configuration and the provider may wait on the home's lock, which a leg
+    // prepared beside this one may hold while it reaches this function.
+    const auto roots = column_roots(state, cfg);
+    std::string key;
+    for (auto const& [root, rank, defaultNs] : roots) key += std::format("{}\t{}\t{}\n", root.string(), rank, defaultNs);
     {
-        std::scoped_lock guard(lock);
-        if (auto found = scanned.find(rootsKey); found != scanned.end()) claims = found->second;
+        std::scoped_lock guard(g_columnLock);
+        if (auto found = g_columnScans.find(key); found != g_columnScans.end()) return found->second;
     }
-    if (!claims) {
-        // `<key> = ` at the start of a line or after `{` or `,`: the first such
-        // key is the package table's own (its keys precede its nested tables).
-        auto field = [](std::string_view lua, std::string_view key) -> std::size_t {
-            for (std::size_t pos = 0; (pos = lua.find(key, pos)) != std::string_view::npos; pos += key.size()) {
-                std::size_t b = pos;
-                while (b > 0 && (lua[b - 1] == ' ' || lua[b - 1] == '\t')) --b;
-                std::size_t e = pos + key.size();
-                while (e < lua.size() && (lua[e] == ' ' || lua[e] == '\t')) ++e;
-                if ((b == 0 || lua[b - 1] == '\n' || lua[b - 1] == ',' || lua[b - 1] == '{') && e < lua.size()
-                    && lua[e] == '=' && (e + 1 >= lua.size() || lua[e + 1] != '='))
-                    return e + 1;
-            }
-            return std::string_view::npos;
-        };
-        auto quoted = [](std::string_view lua, std::size_t at) {
-            std::string out;
-            const auto q1 = lua.find('"', at), nl = lua.find('\n', at);
-            if (q1 == std::string_view::npos || (nl != std::string_view::npos && q1 > nl)) return out;
-            const auto q2 = lua.find('"', q1 + 1);
-            if (q2 != std::string_view::npos) out = std::string(lua.substr(q1 + 1, q2 - q1 - 1));
-            return out;
-        };
-        auto built = std::make_shared<Claims>();
-        for (auto const& [root, rank, defaultNs] : roots) {
-            std::error_code ec;
-            const auto pkgs = root / "pkgs";
-            if (!fs::is_directory(pkgs, ec)) continue;
-            for (auto it = fs::recursive_directory_iterator(pkgs, ec);
-                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-                if (it->path().extension() != ".lua") continue;
-                std::ifstream is(it->path(), std::ios::binary);
-                const std::string lua{std::istreambuf_iterator<char>(is), {}};
-                const auto rows = field(lua, "platform_rows");
-                if (rows == std::string_view::npos) continue;
-                const auto open = lua.find('{', rows), close = lua.find('}', rows);
-                if (open == std::string::npos || close == std::string::npos || close < open) continue;
-                const auto nameAt = field(lua, "name"), nsAt = field(lua, "namespace");
-                if (nameAt == std::string_view::npos) continue;
-                const auto ns = nsAt == std::string_view::npos ? defaultNs : quoted(lua, nsAt);
-                auto name = quoted(lua, nameAt);
-                // A descriptor may spell its name qualified (`acme.plat`).
-                if (name.starts_with(ns + ".")) name.erase(0, ns.size() + 1);
-                if (ns.empty() || name.empty()) continue;
-                const auto pkg = ns + "." + name;
-                for (std::size_t p = open; p < close; ++p) {
-                    if (lua[p] != '"') continue;
-                    const auto q = lua.find('"', p + 1);
-                    if (q == std::string::npos || q > close) break;
-                    auto& who = (*built)[lua.substr(p + 1, q - p - 1)];
-                    if (std::ranges::none_of(who, [&](auto const& c) { return c.package == pkg; }))
-                        who.push_back({rank, pkg});
-                    p = q;
-                }
-            }
-        }
-        std::scoped_lock guard(lock);
-        claims = scanned.try_emplace(rootsKey, std::move(built)).first->second;
-    }
+    auto built = std::make_shared<const ColumnClaims>(scan_column(roots));
+    std::scoped_lock guard(g_columnLock);
+    return g_columnScans.try_emplace(key, std::move(built)).first->second;
+}
+
+} // namespace
+
+std::string index_platform_miss_note(std::string_view triple) {
+    std::scoped_lock guard(g_columnLock);
+    auto it = g_columnMisses.find(std::string(triple));
+    return it == g_columnMisses.end() ? std::string{} : it->second;
+}
+
+std::string index_platform_for(const PrepareState& state, std::string_view triple, bool refreshOnMiss) {
+    // One scan of a set of index roots per process: the column is consulted
+    // only for a row the built-in table does not answer, and the answer does
+    // not change while one command runs -- unless a miss refreshes the index.
+    // One rank's claims are compared.
+    auto cfg = state.get_cfg(false);
+    if (!cfg) return {};
+    auto claims = column_claims(state, **cfg);
     auto it = claims->find(std::string(triple));
-    if (it == claims->end() || it->second.empty()) return {};
-    const int first = std::ranges::min(it->second, {}, &Claim::rank).rank;
+    // A ROW THE LOCAL COPY DOES NOT LIST IS A MISS LIKE A DEPENDENCY'S
+    // (mcpp#967): the refresh policy decides (`--offline`, `[index]
+    // auto_refresh`, the debounce, one sync per run), and a refreshed index is
+    // scanned again. Before, a row the index listed after the local copy was
+    // taken was refused as unknown until `mcpp index update`. Decided once per
+    // row per process; what was decided is what the refusal says. A caller for
+    // which a miss is not a refusal (a row the table holds and serves without a
+    // platform) asks without it.
+    if (it == claims->end() || it->second.empty()) {
+        if (!refreshOnMiss) return {};
+        {
+            std::scoped_lock guard(g_columnLock);
+            if (!g_columnMisses.try_emplace(std::string(triple)).second) return {};
+        }
+        const auto env = mcpp::config::make_xlings_env(**cfg);
+        const auto decision = mcpp::pm::decide_for_miss(
+            mcpp::pm::policy_for(**cfg), env, std::format("the platform column for {}", triple));
+        std::string note;
+        if (auto applied = mcpp::pm::apply(decision, env); !applied) {
+            note = std::format("the package index lists no platform for it, and its refresh failed: {}",
+                               applied.error());
+        } else if (!decision.shouldRefresh) {
+            note = std::format("the package index lists no platform for it, and was not refreshed ({})",
+                               mcpp::pm::reason_text(decision.reason));
+        } else {
+            {
+                std::scoped_lock guard(g_columnLock);
+                g_columnScans.clear();
+            }
+            claims = column_claims(state, **cfg);
+            it = claims->find(std::string(triple));
+            note = "the package index, refreshed by this command, lists no platform for it";
+        }
+        const bool found = it != claims->end() && !it->second.empty();
+        std::scoped_lock guard(g_columnLock);
+        if (found) g_columnMisses.erase(std::string(triple));
+        else g_columnMisses[std::string(triple)] = note;
+        if (!found) return {};
+    }
+    const int first = std::ranges::min(it->second, {}, &ColumnClaim::rank).rank;
     std::vector<std::string> who;
     for (auto const& c : it->second)
         if (c.rank == first) who.push_back(c.package);
@@ -496,6 +569,14 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
 std::string platform_short_name(std::string_view ref) {
     auto r = mp::parse_ref_text(ref);
     return r ? known_short_name(*r) : std::string{};
+}
+
+// A row the built-in table holds as `planned`: nothing of the engine serves it,
+// so a miss of the index's column for it ends in a refusal, and refreshes
+// (mcpp#967).
+static bool planned_row(const mcpp::toolchain::triple::Triple& t) {
+    const auto* known = mcpp::toolchain::triple::find_known_target(t);
+    return known && known->tier == "planned";
 }
 
 // WHETHER THE BUILT-IN TABLE ANSWERS THE PLATFORM COLUMN FOR A ROW (design
@@ -545,7 +626,7 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
         // a choice of the project would. A row nothing defines is answered by
         // `define_early_platform`.
             if (!mcpp::toolchain::triple::find_known_target(t) || table_answers(state, t)) return {};
-        const auto column = index_platform_for(state, t.str());
+        const auto column = index_platform_for(state, t.str(), planned_row(t));
         if (column.empty()) return {};
         const auto ref = mp::parse_ref_text(column);
         if (!ref) return {};
@@ -621,7 +702,7 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     {
         const bool tableAnswers = table_answers(state, t);
         if (!tableAnswers)
-            if (auto indexed = index_platform_for(state, t.str()); !indexed.empty()) {
+            if (auto indexed = index_platform_for(state, t.str(), planned_row(t)); !indexed.empty()) {
                 column = std::move(indexed);
                 fromIndex = true;
             }
@@ -635,11 +716,12 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     state.platform = mcpp::platform::Resolved{};
     state.platform.selection = std::move(*sel);
     if (state.platform.selection.none && !state.plannedRow.empty()) {
+        const auto column = index_platform_miss_note(t.str());
         refusal::record(refusal::Code::TierPlanned);
         return std::unexpected(std::format(
             "target '{}' is registered but not yet supported (planned) — no toolchain is published for it yet.\n"
-            "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.",
-            state.plannedRow, state.plannedRow));
+            "       A toolchain named for the build opts in early: [target.{}] toolchain, or --toolchain.{}",
+            state.plannedRow, state.plannedRow, column.empty() ? std::string{} : "\n       " + column));
     }
     if (!state.platform.selection.none) {
         auto const& ref = state.platform.selection.ref;

@@ -1,8 +1,8 @@
 // When an index is refreshed and what a failed resolution says: refresh by local resolvability,
 // an index's floor, a bare compat name, the bounded and owned refresh, the envelope's network
 // record, auto_refresh, the offline codes, a recorded payload that is gone, a floor as a closing
-// tip, and a version the index lacks (formerly tests/e2e/173, 185, 730, 732, 733, 734, 735, 803,
-// 812, 949).
+// tip, a version the index lacks, and a row the platform column misses (formerly tests/e2e/173, 185,
+// 730, 732, 733, 734, 735, 803, 812, 949; 967).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -438,6 +438,39 @@ exit 0
         expect(fatal(s::has_line(b, R"(skip refresh for mcpplibs:laterpkg@1\.0\.1: \[index\] auto_refresh = false)"))) << "B: auto_refresh = false did not decide the refused install: " << b;
         expect(fatal(s::no_line(a, "Downloading +compat") && s::no_line(b, "Downloading +compat"))) << "C: another namespace was shown as downloading: " << a << b;
         expect(fatal(s::has_line(a, "wire address tried: mcpplibs:laterpkg@1.0.1$"))) << "C: the refusal does not name the one address asked for: " << a;
+    };
+
+    "967 a row the platform column misses is an index miss"_test[s::fresh_sandbox] = [] {
+        // A target row the local index's platform column does not list, and that is refused
+        // without it, reaches the refresh policy as a dependency's miss does (mcpp#967): inside
+        // the debounce window, with auto_refresh = false and offline, nothing is synced and the
+        // refusal says why. Before, the row was refused as unknown with no refresh in between.
+        const auto home = s::case_home(s::home::inherited);
+        const auto index = home / "indices/mcpplibs";
+        // A present index (it has `pkgs/`) that lists no platform for the row, just synced.
+        s::project(index, {{".xlings-index-version", "abc1234\n"}, {"pkgs/.keep", ""}, {".mcpp-index-updated", ""}});
+        s::project app(s::case_dir() / "app", {{"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                                               {"src/main.cpp", "int main() { return 0; }\n"}});
+        const auto refused = [&](std::string_view why, const s::options& o) {
+            auto r = app.mcpp({"build", "--target", "x86_64-toyos"}, o);
+            const auto out = s::text(r);
+            expect(fatal(r.started && r.status != 0)) << why << ": a row nothing lists was built: " << out;
+            expect(fatal(s::has_line(out, "unknown target 'x86_64-toyos'"))) << why << ": not refused as unknown: " << out;
+            expect(fatal(s::has_line(out, std::format(R"(skip refresh for the platform column for x86_64-toyos: {})", why))))
+                << why << ": the miss did not reach the refresh policy: " << out;
+            expect(fatal(s::has_line(out, std::format(R"(lists no platform for it, and was not refreshed \({}\))", why))))
+                << why << ": the refusal does not say why the index was not refreshed: " << out;
+            expect(fatal(s::no_line(out, "Refreshing +package index|Updating +package index"))) << why << ": a sync: " << out;
+        };
+        s::options o = inherited;
+        o.env.emplace_back("MCPP_VERBOSE", "1");
+        refused("index was just refreshed", o);
+        age(index / ".mcpp-index-updated", std::chrono::hours{24 * 30});
+        s::options off = o;
+        off.env.emplace_back("MCPP_OFFLINE", "1");
+        refused("offline mode", off);
+        s::project(home, {{"config.toml", s::read_file(home / "config.toml") + "\n[index]\nauto_refresh = false\n"}});
+        refused(R"(\[index\] auto_refresh = false)", o);
     };
 }};
 

@@ -389,7 +389,7 @@ mcpp index status     # local state: state, age and revision
 |---|---|
 | `--offline`（任意命令） | 完全不碰网络 —— 不刷索引、不下载、不自动安装工具链，也不发出 `git ls-remote`/`clone`。已安装的东西照常构建，包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖 |
 | `MCPP_OFFLINE=1` | 同上，作用于整个 shell 会话或一次 CI job |
-| `~/.mcpp/config.toml` 中的 `[index] auto_refresh = false` | 永不隐式刷新索引：依赖未命中时不刷新，安装本地索引没有的包之前不刷新，工程自定义索引的首次同步也不做（该次构建停止，并指出 `mcpp index update`）。下载仍然可用 |
+| `~/.mcpp/config.toml` 中的 `[index] auto_refresh = false` | 永不隐式刷新索引：依赖未命中时不刷新，索引的平台列未列出目标行时不刷新（2026.11.19.1 起），安装本地索引没有的包之前不刷新，工程自定义索引的首次同步也不做（该次构建停止，并指出 `mcpp index update`）。下载仍然可用 |
 
 `MCPP_NO_AUTO_INSTALL=1` 作为 `--offline` 更早、更窄的拼法，仍然被接受
 （它只约束工具链的自动安装）。

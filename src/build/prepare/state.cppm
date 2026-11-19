@@ -1389,7 +1389,12 @@ std::string platform_short_name(std::string_view ref);
 // step 5): the platform package whose index entry lists `triple` among its
 // `platform_rows`, as `<namespace>.<name>@*` (the series of §14), when the
 // built-in table has no answer for it. Empty when no entry claims the row.
-std::string index_platform_for(const PrepareState& state, std::string_view triple);
+// `refreshOnMiss`: the caller refuses the row without an answer, so a miss goes
+// through the index refresh policy as a dependency's does (mcpp#967).
+std::string index_platform_for(const PrepareState& state, std::string_view triple, bool refreshOnMiss = false);
+// What a refusal of `triple` adds about the index after a miss of its column:
+// whether the index was refreshed, and why not. Empty when nothing missed.
+std::string index_platform_miss_note(std::string_view triple);
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
