@@ -36,6 +36,26 @@
 
 ### Fixed
 
+- A build interrupted in another process space -- a container job that reuses the working
+  directory, a rebuilt development container, an agent's sandbox session -- could never be
+  continued, `mcpp clean` included: `previous compiler unit is occupied or unknown` (mcpp#952).
+  An observation now has four answers: a unit is empty, occupied, not yet decidable, or not
+  observable from this process space (openkal 0.26, clause 7.18). An unobservable unit of a
+  generation whose owner and helper locks are free -- locks of the file system, shared by every
+  process space that shares the directory -- is settled as abandoned, its unpublished outputs
+  discarded, and the build reports `degraded` (`compiler-run/unobservable`) once. A refusal for
+  occupied or undecidable units names their number, the state directory and the way out
+  (`[compiler-run-occupied]`). `mcpp clean`, `--stale` and `--older-than` retire a
+  configuration's compiler runs before removing it. The owner's refusal of an admission names its
+  condition; every helper return other than the compiler's status or a cancellation names the
+  step that ended it. Where the system gives nothing to declare a unit from, the build compiles
+  without units and says so once (`compiler-run/no-unit`).
+- A start the system refused for the size of its arguments and environment reported `Cannot
+  allocate memory`, from a bound of 512 elements in the kernel layer: 520 `[build] defines`
+  could not compile (mcpp#958). mcpp builds against mcpplibs.os 0.4.5 and openkal 0.26, which
+  keep no bound of their own, and the refusal reads `cannot start '<program>': the request is
+  larger than the system admits (N arguments, A bytes; M variables, E bytes)
+  [spawn-too-large]`.
 - `mcpp publish` and `mcpp emit xpkg` wrote a descriptor that nothing read: a table of
   modules, version dependencies and run-time requirements with `manifest = "mcpp.toml"`.
   `mcpp xpkg parse` refused it for its missing `sources`, a consumer could not depend on

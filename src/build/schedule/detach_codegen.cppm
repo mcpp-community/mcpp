@@ -76,6 +76,7 @@ import mcpp.run;
 import mcpp.build.stage;
 import mcpp.buildopt.keep;
 import mcpp.build.schedule.compiler_transaction;
+import mcpp.diag;
 import mcpp.home;
 import mcpp.home.files;
 import mcpp.invocation;
@@ -93,6 +94,14 @@ inline constexpr std::string_view kCapEnv = "MCPP_COMPILER_CAP";
 // The generation carries the compiler cap: build.ninja names no number of
 // compilers, so the graph is the same whatever the job count (e2e 861), and
 // every executor of the generation reads the cap from its owner record.
+// `mcpp clean` (design 2026-11-19 §10.3 D): before a configuration's output
+// directory is removed, its compiler-run generations are retired under the
+// gate a build takes. Its outputs are being removed, so there is nothing an
+// old generation's recovery would protect and nothing is observed. A
+// generation whose owner or actor lock is held belongs to a running build:
+// the error names it, and the configuration is not cleaned.
+std::expected<void, std::string> retire_compiler_runs(const std::filesystem::path& outputDir);
+
 class RunScope {
 public:
     static std::expected<RunScope, std::string> begin(const std::filesystem::path& outputDir, int compilerCap);
@@ -617,6 +626,12 @@ std::expected<void,std::string> retire_owned(mcpplibs::os::process::owned_unit& 
 }  // namespace
 
 struct RunScope::State {
+    // False where this program cannot declare a compiler unit (§10.3 H): the
+    // build then compiles as an unmanaged helper does, and there is no
+    // generation to recover, export or retire; the helpers read the cap from
+    // `kCapEnv`, as an executor outside a generation does.
+    bool managed = true;
+    int cap = 0;
     std::filesystem::path root, generation;
     std::optional<mcpp::home::FileLock> gate;
     std::optional<mcpplibs::os::fs::lock> owner;
@@ -653,27 +668,71 @@ RunScope::RunScope(RunScope&&) noexcept = default;
 RunScope& RunScope::operator=(RunScope&&) noexcept = default;
 RunScope::~RunScope() = default;
 
+namespace {
+// Where a configuration's compiler-run state lies:
+// `<work>/.mcpp/compiler-runs/<hash of the canonical output directory>/`.
+struct RunsLocation { std::filesystem::path canonical, work, root; };
+std::expected<RunsLocation, std::string> locate_runs(const std::filesystem::path& outputDir) {
+    std::error_code ec;
+    const auto spelled = std::filesystem::absolute(outputDir, ec).lexically_normal();
+    if (ec) return std::unexpected("cannot identify the compiler-run output directory");
+    RunsLocation at;
+    at.canonical = std::filesystem::weakly_canonical(spelled, ec);
+    if (ec) return std::unexpected("cannot identify the compiler-run output directory");
+    // Locate work BEFORE resolving output symlinks: target/<triple> may point
+    // at a disposable cache. Locks remain beside target/, independently of
+    // clean and MCPP_HOME; the canonical output still identifies the slots.
+    const auto target = spelled.parent_path().parent_path();
+    at.work = std::filesystem::weakly_canonical(
+        target.filename() == "target" ? target.parent_path() : spelled.parent_path(), ec);
+    if (ec) return std::unexpected("cannot identify the compiler-run work directory");
+    at.root = at.work / ".mcpp" / "compiler-runs" / mcpp::toolchain::hash_string(mcpp::home::spelling(at.canonical));
+    return at;
+}
+}  // namespace
+
+std::expected<void, std::string> retire_compiler_runs(const std::filesystem::path& outputDir) {
+    auto located = locate_runs(outputDir);
+    if (!located) return std::unexpected(located.error());
+    std::error_code ec;
+    if (!std::filesystem::is_directory(located->root, ec)) return {};
+    auto gate = mcpp::home::FileLock::acquire(located->root, "gate.lock", "",
+        std::chrono::milliseconds(300), {});
+    if (!gate) return std::unexpected(std::format(
+        "an mcpp is building {}: it holds the compiler-run gate of {}; it was not cleaned",
+        mcpp::home::spelling(outputDir), mcpp::home::spelling(located->root)));
+    std::filesystem::directory_iterator runs(located->root, ec);
+    if (ec) return std::unexpected("cannot inspect the compiler runs of " + mcpp::home::spelling(outputDir));
+    for (const auto& entry : runs) {
+        if (!entry.path().filename().native().starts_with(std::filesystem::path("run-").native())) continue;
+        {
+            // Released before the directory goes: a lock held on a file of
+            // it keeps it on Windows.
+            auto owner = mcpplibs::os::fs::lock::acquire(entry.path() / "owner.lock",
+                mcpplibs::os::fs::lock::kind::exclusive, false);
+            if (!owner || !actors_idle(entry.path())) return std::unexpected(std::format(
+                "an mcpp is building {}: the helpers of {} hold its locks; it was not cleaned",
+                mcpp::home::spelling(outputDir), mcpp::home::spelling(entry.path())));
+        }
+        std::filesystem::remove_all(entry.path(), ec);
+        if (ec) return std::unexpected(std::format("cannot retire {}: {}",
+            mcpp::home::spelling(entry.path()), ec.message()));
+    }
+    return {};
+}
+
 std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path& outputDir, int compilerCap) {
     if (compilerCap <= 0) return std::unexpected("a compiler-run generation needs a compiler cap");
     const auto self = mcpplibs::os::process::self();
     if (!self || self->id == 0 || self->started_ns == 0)
         return std::unexpected("cannot identify the compiler-run owner and its birth time");
     std::error_code ec;
-    const auto spelled = std::filesystem::absolute(outputDir, ec).lexically_normal();
-    if (ec) return std::unexpected("cannot identify the compiler-run output directory");
-    const auto canonical = std::filesystem::weakly_canonical(spelled, ec);
-    if (ec) return std::unexpected("cannot identify the compiler-run output directory");
+    auto located = locate_runs(outputDir);
+    if (!located) return std::unexpected(located.error());
+    const auto canonical = located->canonical;
     auto state = std::make_unique<State>();
-    // Locate work BEFORE resolving output symlinks: target/<triple> may point
-    // at a disposable cache. Locks remain beside target/, independently of
-    // clean and MCPP_HOME; the canonical output still identifies the slots.
-    const auto target = spelled.parent_path().parent_path();
-    const auto work = std::filesystem::weakly_canonical(
-        target.filename() == "target" ? target.parent_path() : spelled.parent_path(), ec);
-    if (ec) return std::unexpected("cannot identify the compiler-run work directory");
-    mcpp::home::mark_project_state(work / ".mcpp");
-    state->root = work / ".mcpp" / "compiler-runs"
-        / mcpp::toolchain::hash_string(mcpp::home::spelling(canonical));
+    mcpp::home::mark_project_state(located->work / ".mcpp");
+    state->root = located->root;
     std::filesystem::create_directories(state->root, ec);
     if (ec) return std::unexpected("cannot create compiler-run runtime state: " + ec.message());
     state->gate = mcpp::home::FileLock::acquire(state->root, "gate.lock", "",
@@ -691,8 +750,21 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
             if (oldOwner && actors_idle(entry.path())) { free = true; break; }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } while (std::chrono::steady_clock::now() < limit);
-        if (!free) return std::unexpected("previous compiler helpers are still active; their state was retained");
-        if(auto recovered=transactions::recover_generation(entry.path());!recovered)return std::unexpected(recovered.error());
+        if (!free) return std::unexpected(std::format(
+            "an mcpp is building this configuration: the helpers of {} hold its locks, from this "
+            "process space or another that shares the directory; its state was retained\n"
+            "       When that build has ended, build again.", mcpp::home::spelling(entry.path())));
+        // The owner lock and every actor lock are free: what cannot be observed
+        // from here is settled as abandoned (§10.3 C).
+        auto recovered=transactions::recover_generation(entry.path(),nullptr,true);
+        if(!recovered)return std::unexpected(recovered.error());
+        if(recovered->unobservable>0)
+            mcpp::diag::degraded("compiler-run/unobservable", std::format(
+                "{} compiler unit{} of an interrupted build cannot be observed from this process space "
+                "(state: {}); their unpublished outputs were discarded",
+                recovered->unobservable, recovered->unobservable==1?"":"s", mcpp::home::spelling(entry.path())),
+                "a compiler that outlived its controller in that process space is not found; a late "
+                "write is caught by the next build, which compiles that unit again");
         std::filesystem::remove_all(entry.path(), ec);
         if (ec) return std::unexpected("cannot retire previous compiler-run state");
     }
@@ -700,6 +772,22 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
     // no Ninja reader from this generation has started yet.
     if(auto admitted=transactions::admit_cached_outputs(canonical);!admitted)
         return std::unexpected(admitted.error());
+    // WHETHER A UNIT CAN BE DECLARED HERE IS A PROPERTY OF THE ENVIRONMENT
+    // (§10.3 H), asked once for the build. Where it cannot, every compile of
+    // the build runs as an unmanaged helper does -- bounded by the slots, not
+    // declared as a unit -- and this is said once, rather than each compile
+    // failing without a word (an Android app sandbox, 2026-11-18).
+    if (!mcpplibs::os::process::units_observable()) {
+        mcpp::diag::degraded("compiler-run/no-unit",
+            "this environment gives a program nothing to declare a compiler unit from; "
+            "the compilers of this build are not declared as units",
+            "an interrupted build's compilers are not found by the next build, and a compiler "
+            "that outlives its controller may write an output after it");
+        state->managed = false;
+        state->cap = compilerCap;
+        state->gate.reset();
+        return RunScope(std::move(state));
+    }
     static std::atomic<unsigned long long> sequence{0};
     state->generation = state->root / std::format("run-{}-{}-{}", self->id, self->started_ns, sequence++);
     std::filesystem::create_directories(state->generation, ec);
@@ -719,6 +807,11 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
 
 void RunScope::environment(std::vector<std::pair<std::string, std::string>>& env) const {
     std::erase_if(env, [](const auto& entry) { return entry.first == kRunEnv; });
+    if (!state_->managed) {
+        std::erase_if(env, [](const auto& entry) { return entry.first == kCapEnv; });
+        env.emplace_back(kCapEnv, std::to_string(state_->cap));
+        return;
+    }
     env.emplace_back(kRunEnv, mcpp::home::spelling(state_->generation));
 }
 std::expected<void, std::string> RunScope::finish() { return state_->close(); }
@@ -1159,7 +1252,7 @@ int run_capped(const std::vector<std::string>& argv,
                const std::filesystem::path& semaphore, int maxCompilers,
                const std::filesystem::path& output, const std::filesystem::path& depfile,
                const std::filesystem::path& bmi, bool object) {
-    if (argv.empty()) return 2;
+    if (argv.empty()) { std::println(std::cerr, "mcpp: __compiler-cap: no compiler command was given"); return 2; }
     auto actor = std::make_shared<Actor>();
     if (!actor->ready) return 130;
     Previous previousBmi{Previous::Kind::Bmi, bmi};
@@ -1168,30 +1261,43 @@ int run_capped(const std::vector<std::string>& argv,
     // certificate names the output as it stands.
     auto settle = [&](bool compiled) { previousBmi.settle(compiled); previousObject.settle(compiled); };
     if(actor->owner.managed) {
+        // EVERY RETURN BUT THE COMPILER'S OWN STATUS AND A CANCELLATION SAYS
+        // WHICH STEP ENDED IT AND WHY (§10.3 G): ninja shows the line, and a
+        // helper that ended with 1 or 2 and nothing on its error stream left a
+        // failed build with no cause (Termux, 2026-11-18).
+        const auto out_name=output.empty() ? std::string("a compile") : mcpp::home::spelling(output);
+        auto ended=[&](int status,std::string_view step,std::string_view why) {
+            std::println(std::cerr,"mcpp: {} for {}: {}",step,out_name,why);return status;
+        };
         auto prepared=transactions::Attempt::prepare(actor->owner.generation,true,{},output,{},depfile);
-        if(!prepared) {std::println(std::cerr,"mcpp: {}",prepared.error());return 1;}
+        if(!prepared)return ended(1,"preparing the compiler transaction",prepared.error());
         auto attempt=std::move(*prepared);
         const auto who=mcpplibs::os::process::self();
-        if(!who||!who->id||!who->started_ns
-            ||!transactions::publish(attempt.directory/"controller","mcpp-controller-v1",{
-                std::to_string(who->id),std::to_string(who->started_ns),transactions::spelling(actor->path)}))return 1;
+        if(!who||!who->id||!who->started_ns)
+            return ended(1,"identifying the compiler controller","this process's identifier or birth cannot be read");
+        if(!transactions::publish(attempt.directory/"controller","mcpp-controller-v1",{
+                std::to_string(who->id),std::to_string(who->started_ns),transactions::spelling(actor->path)}))
+            return ended(1,"recording the compiler controller","its record cannot be written");
         auto permit=acquire_permit(*actor,semaphore,maxCompilers);if(!permit)return permit.error();
         auto created=mcpplibs::os::process::owned_unit::create();
-        if(!created)return 2;
+        if(!created)return ended(2,"declaring the compiler unit",created.error().message());
         auto unit=std::make_shared<mcpplibs::os::process::owned_unit>(std::move(*created));
         InterruptCleanup cleanup{mcpp::run::add_cleanup([actor,unit] {unit->terminate();})};
-        if(auto registered=attempt.register_unit(*unit,actor->path,permit->reservation);!registered) {
-            std::println(std::cerr,"mcpp: {}",registered.error());return 2;
-        }
+        if(auto registered=attempt.register_unit(*unit,actor->path,permit->reservation);!registered)
+            return ended(2,"registering the compiler unit",registered.error());
         if(!actor->owner.active())return 130;
-        if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{}))return 2;
+        if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{}))
+            return ended(2,"recording the compiler's admission","its record cannot be written");
         const auto result=mcpp::run::execute(argv,{
             .input=mcpp::run::Input::inherit,.streams=mcpp::run::Streams::inherit,
             .should_stop=[&] {return !actor->owner.active();},.declared_unit=unit.get()});
-        if(auto retired=retire_owned(*unit,actor->owner);!retired) {std::println(std::cerr,"mcpp: {}",retired.error());return 1;}
+        if(auto retired=retire_owned(*unit,actor->owner);!retired)
+            return ended(1,"retiring the compiler unit",retired.error());
         settle(result.exit_code==0&&actor->owner.active());
-        if(!attempt.retired(result.exit_code)||!attempt.result(result.exit_code))return 1;
-        if(!transactions::release_reservation(permit->reservation,attempt.directory))return 1;
+        if(!attempt.retired(result.exit_code)||!attempt.result(result.exit_code))
+            return ended(1,"certifying the compiler's result","its record cannot be written");
+        if(!transactions::release_reservation(permit->reservation,attempt.directory))
+            return ended(1,"releasing the compiler slot","its reservation cannot be released");
         return result.exit_code;
     }
     InterruptCleanup cleanup{mcpp::run::add_cleanup([actor, output] {

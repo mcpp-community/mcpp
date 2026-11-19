@@ -686,6 +686,15 @@ graph does not supply what the member asked for" from "the member did not
 build" on exactly this token, and that distinction decides whether a member
 counts against a compatibility figure.
 
+**Two tokens are printed by a build that fails while it runs** (2026.11.19.1+),
+in brackets, in the failure's own message; they are not refusals of the target
+and do not appear as `reason`:
+
+| token | |
+|---|---|
+| `compiler-run-occupied` | an interrupted build of the configuration left compiler units that are occupied or not yet decidable; the message names their number, the state directory and the way out |
+| `spawn-too-large` | the system refused to start a program for the size of its arguments and environment; the message names both counts and byte sizes |
+
 **Exit 0 whenever the question was answered, including "refused".** "Would
 this build, and if not why" is answered successfully by "no, because the row's
 pin is a capability". A non-zero exit means the query itself could not run.

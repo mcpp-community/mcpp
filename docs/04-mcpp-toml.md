@@ -1109,8 +1109,29 @@ following build waits for their cleanup before starting another compiler;
 partial outputs are rebuilt. A missing object from a completed module is
 recreated by that build. An unchanged build still performs no compilation.
 If a forcibly ended build leaves a compiler unit whose completion cannot be
-verified, the next build reports an occupied or unknown unit and retains its
-outputs; it does not start a replacement compiler in that slot.
+verified, the next build waits for it within a bound (2026.11.19.1+):
+
+- a unit that is empty is recovered, as before;
+- a unit that is occupied, or not yet decidable, makes the build refuse with
+  the number of such units, the state directory and the way out
+  (`[compiler-run-occupied]`): when no compiler of the configuration is
+  running, `mcpp clean`, then build again;
+- a unit that cannot be observed from this process space at all (the build
+  was interrupted in another container or sandbox session, or the system did
+  not keep the unit's identity) is settled as abandoned when the old build's
+  owner and helper locks are free, which holds across process spaces that
+  share the directory; its unpublished outputs are discarded and the build
+  reports `degraded` (`compiler-run/unobservable`) once.
+
+`mcpp clean`, `--stale` and `--older-than` retire a configuration's compiler
+runs before removing its directory, and leave a configuration whose run a
+build holds, naming it. An admission the build's owner refuses names its
+condition (`outside-generation`, `record-unreadable`, `actor-outside`,
+`actor-not-held`, `controller-ended`, `unit-unobservable`, `owner-stopping`),
+and every helper that ends a compile for any reason but the compiler's status
+or a cancellation says which step ended it. Where the system gives a program
+nothing to declare a compiler unit from, the build compiles without declaring
+units and reports `degraded` (`compiler-run/no-unit`) once.
 
 | value | |
 |---|---|

@@ -8040,10 +8040,30 @@ export void run_workspace_tests(std::span<const std::string> passthrough,
 }
 
 // `mcpp clean` driver.
+// The configuration directories below `target/`: `<triple>/<fingerprint>/`.
+std::vector<std::filesystem::path> configuration_dirs(const std::filesystem::path& target) {
+    std::vector<std::filesystem::path> out;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator t(target, ec), end; !ec && t != end; t.increment(ec)) {
+        std::error_code fec;
+        if (t->path().filename().string().starts_with(".") || !t->is_directory(fec)) continue;
+        for (std::filesystem::directory_iterator f(t->path(), fec), fend; !fec && f != fend; f.increment(fec))
+            if (std::error_code dec; f->is_directory(dec)) out.push_back(f->path());
+    }
+    return out;
+}
+
 export int clean_project(bool wipe_bmi) {
     auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
     if (!root) { std::println(libc::stderr(), "error: not in an mcpp package"); return 2; }
     std::error_code ec;
+    // Each configuration's compiler runs are retired first (§10.3 D); one a
+    // build holds keeps target/ as it is.
+    for (const auto& dir : configuration_dirs(*root / "target"))
+        if (auto retired = mcpp::build::schedule::detach::retire_compiler_runs(dir); !retired) {
+            std::println(libc::stderr(), "error: {}", retired.error());
+            return 1;
+        }
     std::filesystem::remove_all(*root / "target", ec);
     if (ec) {
         std::println(libc::stderr(), "error: cannot remove target/: {}", ec.message());
@@ -8426,6 +8446,12 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs, bool quiet) {
                 }
             }
             const auto size = mcpp::bmi_cache::dir_size(dir);
+            if (!dryRun)
+                if (auto retired = mcpp::build::schedule::detach::retire_compiler_runs(dir); !retired) {
+                    std::println(libc::stderr(), "error: {}", retired.error());
+                    ++failed;
+                    continue;
+                }
             swept.insert(dir);
             if (dryRun) {
                 line(std::format("would remove {}  ({})", shown, mcpp::bmi_cache::human_bytes(size)));

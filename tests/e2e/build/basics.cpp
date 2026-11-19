@@ -896,6 +896,53 @@ a = { path = "../a" }
         expect(fatal(e2e::contains(s::text(r), "reaches two variants of 'compat.zlib'"))) << "the refusal does not name the package\n" << s::text(r);
         expect(s::count_lines(s::text(r), "compat.zlib+p") >= 2u) << "the refusal does not name both variants\n" << s::text(r);
     };
+    "952 a build interrupted in another process space continues"_test[s::gcc][s::elf] = [] {
+        // mcpp#952, design 2026-11-19 §10.3 C and D. A build killed inside a pid namespace of its
+        // own leaves admitted compiler units this process space can never observe. The next build
+        // continues, settles them as abandoned and says so once (`compiler-run/unobservable`, whose
+        // text names the process space);
+        // `mcpp clean` then leaves no generation of the configuration behind.
+        const auto unshare = s::on_path("unshare");
+        const auto timeout = s::on_path("timeout");
+        if (!unshare || !timeout || !e2e::succeeded(s::run(*unshare, {"-Urpf", "--mount-proc", "true"})))
+            skip("952 -- no new pid namespace on this machine");
+        const auto root = s::case_dir();
+        std::vector<std::pair<std::string, std::string>> seed{
+            {"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}};
+        std::string main_cpp = "import std;\n", body = "int main() { int s = 0;";
+        for (int i = 0; i < 24; ++i) {
+            seed.emplace_back(std::format("src/u{}.cpp", i), std::format(
+                "import std;\nint f{0}(int x) {{ std::vector<std::string> v; for (int i = 0; i < x; ++i) "
+                "v.push_back(std::format(\"{{}}\", i)); std::ranges::sort(v); return (int)v.size(); }}\n", i));
+            main_cpp += std::format("int f{}(int);\n", i);
+            body += std::format(" s += f{}(3);", i);
+        }
+        seed.emplace_back("src/main.cpp", main_cpp + body + " std::println(\"{}\", s); }\n");
+        auto pending = [](const fs::path& dir) {
+            std::size_t n = 0;
+            for (auto const& a : s::find_files(dir / ".mcpp", "admitted"))
+                if (!fs::exists(a.parent_path() / "retired")) ++n;
+            return n;
+        };
+        std::optional<s::project> hit;
+        for (auto const* t : {"0.8", "1.0", "1.4", "1.8", "2.2", "2.6", "3.2"}) {
+            s::project p(root / t, {});
+            for (auto const& [name, text] : seed) p.write(name, text);
+            e2e::command killed{.argv = {unshare->string(), "-Urpf", "--mount-proc", timeout->string(), "-s", "KILL", t,
+                                         s::mcpp_path(), "build"},
+                                .cwd = p.dir(), .env = {{"MCPP_JOBS", "8"}}, .timeout = std::chrono::minutes{2}};
+            (void)e2e::run(killed);
+            if (pending(p.dir()) > 0) { hit.emplace(std::move(p)); break; }
+        }
+        if (!hit) skip("952 -- no kill landed while a compiler was admitted");
+        auto r = hit->mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build after the interrupted one was refused: " << s::text(r);
+        expect(s::count_lines(s::text(r), "cannot be observed from this process space") == 1u)
+            << "the abandoned units were not reported once: " << s::text(r);
+        r = hit->mcpp({"clean"});
+        expect(fatal(e2e::succeeded(r))) << "mcpp clean failed: " << s::text(r);
+        expect(s::find_files(hit->dir() / ".mcpp", "owner").empty()) << "a compiler-run generation survived mcpp clean";
+    };
 }};
 
 }  // namespace

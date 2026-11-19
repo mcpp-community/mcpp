@@ -302,19 +302,30 @@ std::expected<bool,std::string> certified_quiet(const Attempt& attempt) {
     if(*admitted && !(**admitted).empty())return std::unexpected("invalid compiler admission record");
     return !*admitted; // publication/ACK precede admission; no compiler otherwise
 }
-std::expected<os::process::unit_state,std::string> observed(const Attempt& attempt,ObserverMap* held=nullptr) {
+// WHAT AN OBSERVATION OF AN ATTEMPT'S UNIT ANSWERS (design 2026-11-19 §10.2).
+// Three facts and a fourth that may pass: the unit is empty, it is occupied,
+// it cannot be observed from this process space at all (openkal 0.26 clause
+// 7.18: another space, or a native identity not kept), or it cannot be
+// decided now. Waiting changes the last only; `unobservable' was folded into
+// `unknown', and a build interrupted in another process space was refused for
+// ever, `mcpp clean' included.
+enum class Observation { empty, occupied, unknown, unobservable };
+std::expected<Observation,std::string> observed(const Attempt& attempt,ObserverMap* held=nullptr) {
     const auto quiet=certified_quiet(attempt);if(!quiet)return std::unexpected(quiet.error());
-    if(*quiet)return os::process::unit_state::empty;
+    if(*quiet)return Observation::empty;
     auto unit=read(attempt.directory/"unit","mcpp-unit-v1");if(!unit)return std::unexpected(unit.error());
     if(!*unit||(**unit).size()!=4)return std::unexpected("missing admitted compiler unit reference");
+    auto answer=[](const os::result<os::process::unit_state>& value) {
+        if(!value)return Observation::unknown;
+        return *value==os::process::unit_state::empty ? Observation::empty
+             : *value==os::process::unit_state::occupied ? Observation::occupied : Observation::unknown;
+    };
     const auto key=spelling(attempt.directory);
-    if(held)if(const auto found=held->find(key);found!=held->end()) {
-        auto value=found->second.observe();
-        return value ? *value : os::process::unit_state::unknown;
-    }
+    if(held)if(const auto found=held->find(key);found!=held->end())return answer(found->second.observe());
     auto observer=os::process::unit_observer::open((**unit)[0]);
-    if(!observer)return os::process::unit_state::unknown;
-    auto value=observer->observe();return value ? *value : os::process::unit_state::unknown;
+    if(!observer)return observer.error().code==os::errc::not_supported ? Observation::unobservable
+                                                                       : Observation::unknown;
+    return answer(observer->observe());
 }
 std::expected<bool,std::string> reservation_available(const fs::path& reservation) {
     auto previous=read(reservation,"mcpp-reservation-v1");if(!previous)return std::unexpected(previous.error());
@@ -322,7 +333,7 @@ std::expected<bool,std::string> reservation_available(const fs::path& reservatio
     if((**previous).size()!=1)return std::unexpected("invalid compiler reservation");
     auto attempt=Attempt::load(named((**previous)[0]));if(!attempt)return std::unexpected(attempt.error());
     const auto state=observed(*attempt);if(!state)return std::unexpected(state.error());
-    return *state==os::process::unit_state::empty;
+    return *state==Observation::empty;
 }
 bool release_reservation(const fs::path& reservation,const fs::path& attempt) {
     auto current=read(reservation,"mcpp-reservation-v1");
@@ -402,7 +413,16 @@ std::expected<void,std::string> Attempt::register_unit(os::process::owned_unit& 
         if(!connection||!send(*connection,spelling(directory)))return std::unexpected("cannot register the compiler unit");
         auto ack=receive(*connection,std::chrono::seconds(2));
         if(ack&&*ack=="ACK")return {};
-        if(ack)return std::unexpected("compiler-run owner refused unit admission");
+        // THE OWNER SAYS WHY (§10.3 F): `REFUSED <condition>`. A record it
+        // could not yet read is retried within the startup grace, as an
+        // unanswered registration is; every other condition is final.
+        if(ack) {
+            const auto condition=ack->starts_with("REFUSED ") ? ack->substr(8) : std::string("unstated");
+            if(condition!="record-unreadable"||std::chrono::steady_clock::now()>=deadline)
+                return std::unexpected("compiler-run owner refused unit admission: "+condition
+                    +" (state: "+spelling(directory)+")");
+            continue;
+        }
         if(std::chrono::steady_clock::now()>=deadline)return std::unexpected(ack.error());
     }
 }
@@ -494,29 +514,48 @@ private:
             auto request=receive(connection,std::chrono::milliseconds(500));
             if(!request||stopping_.load())continue;
             const auto attempt=named(*request);
-            if(attempt.parent_path()!=generation_/"attempts") {send(connection,"REFUSED");continue;}
+            auto refuse=[&](std::string_view condition) {send(connection,"REFUSED "+std::string(condition));};
+            if(attempt.parent_path()!=generation_/"attempts") {refuse("outside-generation");continue;}
             auto prepared=Attempt::load(attempt);
             auto unit=read(attempt/"unit","mcpp-unit-v1");
-            if(!prepared||!unit||!*unit||(**unit).size()!=4) {send(connection,"REFUSED");continue;}
+            if(!prepared||!unit||!*unit||(**unit).size()!=4) {refuse("record-unreadable");continue;}
             const auto actor=named((**unit)[3]);
-            if(actor.parent_path()!=generation_/"actors") {send(connection,"REFUSED");continue;}
+            if(actor.parent_path()!=generation_/"actors") {refuse("actor-outside");continue;}
             auto lease=os::fs::lock::acquire(actor,os::fs::lock::kind::exclusive,false);
             // The actor's lock is held, so its controller is running; a record
             // still settling does not refuse the registration.
-            if(lease||lease.error().code!=os::errc::again||controller_state(*prepared)==Controller::ended) {send(connection,"REFUSED");continue;}
+            if(lease||lease.error().code!=os::errc::again) {refuse("actor-not-held");continue;}
+            if(controller_state(*prepared)==Controller::ended) {refuse("controller-ended");continue;}
             auto retained=os::process::unit_observer::open((**unit)[0]);
-            if(!retained) {send(connection,"REFUSED");continue;}
+            if(!retained) {refuse("unit-unobservable");continue;}
             std::lock_guard guard(admission_);
-            if(stopping_.load()||failed_.load()) {send(connection,"REFUSED");continue;}
+            if(stopping_.load()||failed_.load()) {refuse("owner-stopping");continue;}
             held_.insert_or_assign(*request,std::move(*retained));
             send(connection,"ACK");
         }
     }
 };
 
-std::expected<bool,std::string> recover(const Attempt& attempt,ObserverMap* held=nullptr) {
+// What the recovery of one generation met (§10.3 C, E): attempts it could not
+// settle, by their observation, and attempts it settled as abandoned because
+// their units cannot be observed from here.
+struct Recovery {
+    std::size_t occupied = 0, unknown = 0, unobservable = 0;
+    std::size_t pending() const {return occupied+unknown;}
+};
+// `abandonUnobservable': the caller holds the generation's owner lock and has
+// found every actor lock idle. Those are locks of the file system, not of a
+// process space, so the generation's controllers, helpers and writers have
+// ended in every space that shares this directory, and an attempt whose unit
+// cannot be observed is settled as an abandoned one.
+std::expected<bool,std::string> recover(const Attempt& attempt,ObserverMap* held=nullptr,
+                                        Recovery* met=nullptr,bool abandonUnobservable=false) {
     const auto state=observed(attempt,held);if(!state)return std::unexpected(state.error());
-    if(*state!=os::process::unit_state::empty)return false;
+    if(*state==Observation::unobservable&&abandonUnobservable) {if(met)++met->unobservable;}
+    else if(*state!=Observation::empty) {
+        if(met)++(*state==Observation::occupied ? met->occupied : met->unknown);
+        return false;
+    }
     auto retired=read(attempt.directory/"retired","mcpp-retired-v1");
     auto result=attempt.ordinary ? read(attempt.directory/"result","mcpp-result-v1") : Record{std::optional<Fields>{}};
     auto published=read(attempt.directory/"published","mcpp-publication-v1");
@@ -620,12 +659,14 @@ std::expected<std::optional<int>,std::string> cached_result(const fs::path& slot
     return std::optional<int>{1};
 }
 
-std::expected<void,std::string> recover_generation(const fs::path& generation,ObserverMap* held=nullptr) {
+std::expected<Recovery,std::string> recover_generation(const fs::path& generation,ObserverMap* held=nullptr,
+                                                      bool abandonUnobservable=false) {
     const auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(5);
     for(;;) {
         bool pending=false;std::error_code ec;
+        Recovery met;
         const auto directory=generation/"attempts";
-        if(!fs::exists(directory,ec))return ec ? std::unexpected("cannot inspect compiler transactions") : std::expected<void,std::string>{};
+        if(!fs::exists(directory,ec))return ec ? std::unexpected("cannot inspect compiler transactions") : std::expected<Recovery,std::string>{met};
         fs::directory_iterator entries(directory,ec);if(ec)return std::unexpected("cannot enumerate compiler transactions");
         for(const auto& entry:entries) {
             auto prepared=read(entry.path()/"prepared","mcpp-attempt-v1");
@@ -637,11 +678,17 @@ std::expected<void,std::string> recover_generation(const fs::path& generation,Ob
                 continue;
             }
             auto attempt=Attempt::load(entry.path());if(!attempt)return std::unexpected(attempt.error());
-            const auto done=recover(*attempt,held);if(!done)return std::unexpected(done.error());
+            const auto done=recover(*attempt,held,&met,abandonUnobservable);if(!done)return std::unexpected(done.error());
             if(!*done)pending=true;
         }
-        if(!pending)return {};
-        if(std::chrono::steady_clock::now()>=limit)return std::unexpected("previous compiler unit is occupied or unknown; reservation and outputs were retained");
+        if(!pending)return met;
+        // THE REFUSAL NAMES THE STATE AND THE WAY OUT (§10.3 E).
+        if(std::chrono::steady_clock::now()>=limit)return std::unexpected(std::format(
+            "{} compiler unit{} of an interrupted build of this configuration may still be running "
+            "({} occupied, {} unknown) [compiler-run-occupied]\n"
+            "       state: {}\n"
+            "       When no compiler of this configuration is running: mcpp clean, then build again.",
+            met.pending(),met.pending()==1?"":"s",met.occupied,met.unknown,spelling(generation)));
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }

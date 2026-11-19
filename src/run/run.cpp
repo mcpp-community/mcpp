@@ -158,6 +158,9 @@ int errno_of(os::errc c) {
         case os::errc::not_directory: return static_cast<int>(std::errc::not_a_directory);
         case os::errc::not_supported: return static_cast<int>(std::errc::not_supported);
         case os::errc::too_large:     return static_cast<int>(std::errc::argument_list_too_long);
+        // At a start, the system refused it for the size of what it was given
+        // (openkal 0.26, clause 7.6).
+        case os::errc::no_space:      return static_cast<int>(std::errc::argument_list_too_long);
         default:                      return static_cast<int>(std::errc::io_error);
     }
 }
@@ -172,6 +175,32 @@ std::string detail_of(const os::error& e) {
 std::string spawn_failure(std::string_view program, int error, std::string_view detail = {}) {
     return std::format("cannot start '{}' (error {}): {}{}{}\n", program, error,
                        std::generic_category().message(error), detail.empty() ? "" : "; ", detail);
+}
+
+// A START REFUSED FOR ITS SIZE (design 2026-11-19 §9.2): the two vectors'
+// counts and bytes, which is what a caller acts upon, and the reason token.
+// Before openkal 0.26 this read "Cannot allocate memory" at 512 elements, a
+// bound of the kernel layer and not of the system (520 `[build] defines`).
+std::string too_large_failure(std::string_view program, std::span<const std::string> args,
+                              const std::vector<std::pair<std::string, std::optional<std::string>>>& changes) {
+    std::size_t argumentBytes = program.size() + 1;
+    for (auto const& a : args) argumentBytes += a.size() + 1;
+    std::map<std::string, std::string> environment;
+    for (auto const& entry : os::env::variables()) {
+        const auto eq = entry.find('=');
+        environment[entry.substr(0, eq)] = eq == std::string::npos ? std::string{} : entry.substr(eq + 1);
+    }
+    for (auto const& [k, v] : changes) {
+        if (v) environment[k] = *v;
+        else environment.erase(k);
+    }
+    std::size_t variableBytes = 0;
+    for (auto const& [k, v] : environment) variableBytes += k.size() + v.size() + 2;
+    return std::format("cannot start '{}': the request is larger than the system admits ({} arguments, "
+                       "{} bytes; {} variables, {} bytes) [spawn-too-large]\n"
+                       "  Give the program fewer or shorter arguments (a response file, `@file`), or "
+                       "a smaller environment.\n",
+                       program, args.size() + 1, argumentBytes, environment.size(), variableBytes);
 }
 
 // The environment a started program receives: this invocation's statements,
@@ -286,7 +315,9 @@ Outcome launch(const Spec& s) {
     if (!p) {
         out.spawn_error = errno_of(p.error().code);
         out.spawn_detail = detail_of(p.error());
-        out.spawn_message = spawn_failure(s.argv.front(), out.spawn_error, out.spawn_detail);
+        out.spawn_message = p.error().code == os::errc::no_space
+            ? too_large_failure(s.argv.front(), o.args, o.env)
+            : spawn_failure(s.argv.front(), out.spawn_error, out.spawn_detail);
         return out;
     }
     Registered guard(&*p);
@@ -526,6 +557,10 @@ int run_foreground(const std::vector<std::string>& argv, const Env& extraEnv, in
         auto r = os::process::exec(o);   // returns only when the program could not be started
         error = r ? static_cast<int>(std::errc::io_error) : errno_of(r.error().code);
         if (!r) detail = detail_of(r.error());
+        if (!r && r.error().code == os::errc::no_space && !spawn_error) {
+            std::fputs(too_large_failure(argv.front(), o.args, o.env).c_str(), libc::stderr());
+            return 127;
+        }
     }
     if (spawn_error) *spawn_error = error;
     else std::fputs(spawn_failure(argv.front(), error, detail).c_str(), libc::stderr());
