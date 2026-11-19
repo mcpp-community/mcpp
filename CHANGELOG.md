@@ -4,6 +4,25 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.19.1] - 2026-11-19
+
+### Fixed
+
+- `mcpp publish` and `mcpp emit xpkg` wrote a descriptor that nothing read: a table of
+  modules, version dependencies and run-time requirements with `manifest = "mcpp.toml"`.
+  `mcpp xpkg parse` refused it for its missing `sources`, a consumer could not depend on
+  it, and `mcpp new --template` refused it as an inline recipe (mcpp#960). A descriptor's
+  `mcpp` field has two forms (SPEC-001 §3.5): the pointer form names the manifest inside
+  the payload, the inline form is the manifest of a payload that carries none. Both
+  commands write the pointer form, `mcpp = "*/mcpp.toml"`; the manifest alone states the
+  modules and the dependencies. The six places that read the field read it through one
+  function (`mcpp::pm::descriptor_manifest`), and a table that names a manifest is refused
+  with the line to write in its place.
+- `mcpp new --template <package>` refuses a package for the directory it lacks,
+  `templates/` beside its manifest, and names the directory it looked for. It refused an
+  inline descriptor for its form, and found the package root by a rule of its own that
+  ignored the descriptor's pointer.
+
 ## [2026.11.18.1] - 2026-11-18
 
 ### Fixed

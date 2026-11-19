@@ -10,6 +10,7 @@ import mcpp.fetcher.progress;
 import mcpp.manifest;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
+import mcpp.pm.descriptor;
 import mcpp.pm.index_route;
 import mcpp.toolchain.platform;
 import mcpp.pm.resolver;
@@ -84,16 +85,6 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
     }
     auto lua = std::move(found.hit->lua);
 
-    // Form B packages are inline build recipes with no source tree, hence no
-    // physical templates directory. Report the provider error rather than
-    // pretending that a different namespace might satisfy the selector.
-    auto field = mcpp::manifest::extract_mcpp_field(lua);
-    if (field.kind == mcpp::manifest::McppField::TableBody) {
-        return std::unexpected(std::format(
-            "template package '{}' is an inline build recipe and ships no "
-            "source template payload", selector));
-    }
-
     const std::string& ns = coordinate.namespace_;
     const std::string& shortName = coordinate.shortName;
     const auto constraint = spec.version
@@ -144,23 +135,15 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
             "package '{}@{}' install path missing after fetch", fq, version));
     }
 
-    // Package root = the directory holding mcpp.toml (tarballs usually wrap
-    // everything in a single top-level directory).
-    std::filesystem::path root = *installed;
-    if (!std::filesystem::exists(root / "mcpp.toml")) {
-        std::error_code ec;
-        for (auto& e : std::filesystem::directory_iterator(root, ec)) {
-            if (e.is_directory()
-                && std::filesystem::exists(e.path() / "mcpp.toml")) {
-                root = e.path();
-                break;
-            }
-        }
-    }
-    if (!std::filesystem::exists(root / "mcpp.toml")) {
-        return std::unexpected(std::format(
-            "package '{}@{}' has no mcpp.toml", selector, version));
-    }
+    // The package's root is where its descriptor says its manifest is
+    // (SPEC-001 §3.5), and its templates are the directory `templates/` there.
+    // A package is refused for the directory it lacks (`list_templates`),
+    // which is what a template needs, and not for the form of its descriptor.
+    auto stated = mcpp::pm::descriptor_manifest(
+        lua, *installed, shortName, version, mcpp::toolchain::platform::HostPlatform::current());
+    if (!stated) return std::unexpected(std::format(
+        "template package '{}@{}': {}", selector, version, stated.error()));
+    std::filesystem::path root = stated->packageRoot;
     return FetchedTemplatePackage{
         .root = std::move(root),
         .id = coordinate,

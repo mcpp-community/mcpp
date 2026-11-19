@@ -2563,6 +2563,18 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
 
     // Validate minimum
     if (m.modules.sources.empty()) {
+        // A TABLE THAT NAMES A MANIFEST IS NEITHER FORM (SPEC-001 §3.5;
+        // mcpp#960). `mcpp publish` wrote one until 2026.11.19.1: a summary
+        // and `manifest = "mcpp.toml"`. What is missing is not `sources` ---
+        // the payload has a manifest --- so the refusal names the form such a
+        // payload takes.
+        if (std::ranges::find(m.xpkgUnknownKeys, std::string("manifest")) != m.xpkgUnknownKeys.end())
+            return std::unexpected(ManifestError{
+                "the `mcpp` table names a manifest (`manifest = ...`) and states no `sources`: a table is "
+                "the inline form, which is the manifest itself. A payload that carries its manifest is "
+                "named by the pointer form, `mcpp = \"*/mcpp.toml\"` (`mcpp publish` writes it from "
+                "2026.11.19.1; regenerate the descriptor, or replace the table with that line)",
+                m.sourcePath, 0, 0});
         return std::unexpected(ManifestError{
             "synthesised manifest missing sources (mcpp segment must declare `sources = { ... }`)",
             m.sourcePath, 0, 0});

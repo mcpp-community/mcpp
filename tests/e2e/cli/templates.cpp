@@ -24,7 +24,11 @@ void configure_mirror(const fs::path& dir, const s::options& o) {
     (void)s::mcpp({"self", "config", "--mirror", s::env("MCPP_E2E_TOOLCHAIN_MIRROR").value_or("GLOBAL")}, dir, o);
 }
 
-std::string descriptor(std::string_view ns, std::string_view shortname, std::string_view ver, std::string_view mcpp_value = "\"mcpp.toml\"") {
+// The pointer is the one `mcpp publish` writes: the manifest under the archive's top directory,
+// which is where every payload below is laid out. `mcpp new` reads it as a build does
+// (SPEC-001 §3.5); a pointer that named no file was accepted here while it found the package's
+// root by a rule of its own.
+std::string descriptor(std::string_view ns, std::string_view shortname, std::string_view ver, std::string_view mcpp_value = "\"*/mcpp.toml\"") {
     return std::format(R"(package = {{
     spec = "1", namespace = "{0}", name = "{1}",
     description = "exact template fixture {0}.{1}",
@@ -84,9 +88,11 @@ E2E templates{"templates", [] {
             ["1.0.0"] = { url = "https://example.invalid/x.tar.gz", sha256 = "0" },
         },
     },
-    mcpp = "src/*.cppm",
+    mcpp = "*/mcpp.toml",
 }
 )");
+        // The descriptor is in the form `mcpp publish` writes (SPEC-001 §3.5): a pointer to the
+        // manifest under the archive's top directory, which is where the templates are found.
         const auto xpkgs = home / "registry/data/xpkgs";
         for (auto [ver, marker] : {std::pair{"1.0.0", "old"}, {"1.2.0", "new"}, {"2.0.0-rc.1", "rc"}}) {
             const auto root = xpkgs / "mcpplibs-x-tpl-demo" / ver / std::format("tpl-demo-{}", ver);
@@ -197,8 +203,11 @@ self = {{ features = ["alpha", "beta"] }}
         expect(fatal(failed(r))) << "L7: bare selector crossed into compat\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "(mcpplibs, tpl-repro)"))) << "L7: bare miss did not name exact identity\n" << s::text(r);
         r = run({"new", "app7", "--template", "compat.tpl-repro"}, o);
-        expect(fatal(failed(r))) << "L7: Form B template must fail\n" << s::text(r);
-        expect(fatal(s::contains_nocase(s::text(r), "inline build recipe"))) << "L7: wrong provider error for Form B\n" << s::text(r);
+        // An inline descriptor is refused for what a template needs and it lacks, the directory
+        // `templates/` of its payload, and not for its form (mcpp#960).
+        expect(fatal(failed(r))) << "L7: a package without templates must fail\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "ships no templates") && e2e::contains(s::text(r), "templates'")))
+            << "L7: the refusal does not name the directory it looked for\n" << s::text(r);
 
         // 8. A foreign namespace with the same short name.
         r = run({"new", "app-acme", "--template", "acme.tpl-demo"}, o);
@@ -304,7 +313,7 @@ self = {{ features = ["alpha", "beta"] }}
         macosx  = {{ ["{2}"] = {{ url = "https://example.invalid/{1}.tar.gz", sha256 = "{0}-digest" }} }},
         windows = {{ ["{2}"] = {{ url = "https://example.invalid/{1}.zip", sha256 = "{0}-digest" }} }},
     }},
-    mcpp = "mcpp.toml",
+    mcpp = "*/mcpp.toml",
 }}
 )", ns, shortname, version));
             const auto root = home / "registry/data/xpkgs" / store / version / std::format("{}-{}", shortname, version);

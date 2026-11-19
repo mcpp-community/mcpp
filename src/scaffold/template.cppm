@@ -242,7 +242,8 @@ std::expected<std::vector<TemplateEntry>, std::string>
 list_templates(const std::filesystem::path& packageRoot) {
     auto dir = packageRoot / "templates";
     if (!std::filesystem::exists(dir)) {
-        return std::unexpected("package ships no templates/ directory");
+        return std::unexpected(std::format(
+            "package ships no templates: there is no directory '{}'", dir.string()));
     }
     std::vector<TemplateEntry> out;
     std::error_code ec;

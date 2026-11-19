@@ -77,7 +77,7 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
     }
 
     auto release = mcpp::publish::placeholder_release(version);
-    auto lua = mcpp::publish::emit_xpkg(*m, scan.graph, release);
+    auto lua = mcpp::publish::emit_xpkg(*m, release);
 
     if (output.empty()) {
         std::print("{}", lua);
@@ -200,7 +200,7 @@ std::expected<Published, int> publish_one(const std::filesystem::path& root,
 
     // 4. Build release info + emit xpkg.lua.
     auto release = mcpp::publish::make_release_info(pkg.version, url, out.sha);
-    out.lua = mcpp::publish::emit_xpkg(*m, scan.graph, release);
+    out.lua = mcpp::publish::emit_xpkg(*m, release);
     {
         std::ofstream os(out.descriptor);
         os << out.lua;

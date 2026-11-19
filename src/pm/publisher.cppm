@@ -7,10 +7,8 @@ module;
 export module mcpp.pm.publisher;
 
 import std;
-import mcpp.pack.host_requirements;  // J: one derivation, two projections
 import mcpp.manifest;
 import mcpp.diag;
-import mcpp.modgraph.graph;
 import mcpp.run;
 // `cfgpred::os_only_platforms` (#630 item 7) — the standalone half of
 // `mcpp.build.prepare`, carrying no dependency on the rest of it (see that
@@ -34,7 +32,6 @@ struct ReleaseInfo {
 
 // Generate the xpkg Lua content for a package.
 std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
-                      const mcpp::modgraph::Graph&      graph,
                       const ReleaseInfo&                release);
 
 // Convenience: synthesize a placeholder ReleaseInfo for `mcpp emit xpkg --version V`
@@ -203,7 +200,6 @@ std::string platform_deps_block(
 } // namespace
 
 std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
-                      const mcpp::modgraph::Graph&      graph,
                       const ReleaseInfo&                release)
 {
     std::string out;
@@ -319,57 +315,17 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
          + platform_block(release.version, release.windows) + "        },\n";
     out += "    },\n\n";
 
-    out += "    mcpp = {\n";
-    out += "        schema = \"0.1\",\n";
-    out += std::format("        language = {},\n", lua_escape(manifest.language.standard));
-    out += std::format("        import_std = {},\n", manifest.language.importStd ? "true" : "false");
-
-    // Module list (from scanner)
-    out += "        modules = {\n";
-    for (auto& u : graph.units) {
-        if (!u.provides) continue;
-        // Skip partition-only units: their logical name contains ':'
-        if (u.provides->logicalName.find(':') != std::string::npos) continue;
-        out += std::format("            {},\n", lua_escape(u.provides->logicalName));
-    }
-    out += "        },\n";
-
-    // Dependencies (excluding dev-dependencies). Path-based deps are
-    // local-only and intentionally not exposed in the published xpkg
-    // descriptor; only version-based deps are emitted.
-    out += "        deps = {\n";
-    for (auto& [k, v] : manifest.dependencies) {
-        if (v.isPath() || v.version.empty()) continue;
-        out += std::format("            [{}] = {},\n", lua_escape(k), lua_escape(v.version));
-    }
-    out += "        },\n";
-
-    // What the TARGET machine must provide.
-    //
-    // THE SAME DERIVATION `mcpp pack` USES. A tarball can only DESCRIBE these
-    // (its HOST-REQUIREMENTS file); a descriptor can have them RESOLVED, by
-    // the xlings on the machine that installs the package. Two projections of
-    // one fact — so they come from one function. Deriving them separately is
-    // how they drift, and a drifted list is undetectable: each side looks
-    // reasonable on its own.
-    if (auto hostReqs = mcpp::pack::host_requirements_of(manifest.runtimeConfig);
-        !hostReqs.empty()) {
-        out += "        runtime = {\n";
-        out += "            requirements = {\n";
-        for (auto const& req : hostReqs) {
-            out += std::format(
-                "                {{ kind = \"capability\", value = {}, "
-                "phase = \"run\", required = {}, discovery = {} }},\n",
-                lua_escape(req.capability),
-                req.required ? "true" : "false",
-                lua_escape(req.discovery));
-        }
-        out += "            },\n";
-        out += "        },\n";
-    }
-
-    out += "        manifest = \"mcpp.toml\",\n";
-    out += "    },\n";
+    // THE POINTER FORM (SPEC-001 §3.5). The archive is the package's source
+    // tree under one top-level directory, and its manifest is in it, so the
+    // descriptor says where the manifest is and states nothing the manifest
+    // states. Until 2026.11.19.1 this wrote a table --- the modules, the
+    // version dependencies, the run-time requirements, and `manifest =
+    // "mcpp.toml"` --- which no reader took for either form: `xpkg parse`, a
+    // consumer and `mcpp new --template` each refused what `mcpp publish` had
+    // just written (mcpp#960). The table could not have been a faithful
+    // summary either: its `deps` has no target axis, so a package whose
+    // dependencies are conditional published an empty list.
+    out += "    mcpp = \"*/mcpp.toml\",\n";
     out += "}\n";
     return out;
 }

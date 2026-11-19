@@ -5,12 +5,12 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.7 |
-| **最后修改** | 2026-11-09 |
+| **版本** | 1.9 |
+| **最后修改** | 2026-11-19 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
-| **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
+| **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[mcpp#960](https://github.com/mcpp-community/mcpp/issues/960) —— 发布写出的描述符形式(§3.5)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
 
 ## 规范用语
 
@@ -144,6 +144,29 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 | `(mcpplibs, cmdline)` | `cmdline.lua`, `mcpplibs.cmdline.lua`, `compat.cmdline.lua` |
 | `(compat, zlib)` | `compat.zlib.lua`, `zlib.lua` |
 | `(∅, imgui)` | `imgui.lua`, `compat.imgui.lua` |
+
+### 3.5 描述符的 `mcpp` 字段
+
+> **`mcpp` 字段陈述清单在何处,有且只有两种形式。**
+
+| 形式 | 写法 | 含义 |
+|---|---|---|
+| 指针形式(Form A) | `mcpp = "<glob>"` | 载荷带有清单。glob 相对版本目录,**必须**恰好匹配一个 `mcpp.toml`;该文件所在的目录是包根 |
+| 内联形式(Form B) | `mcpp = { ... }` | 载荷不带清单,该表即清单。键的集合是封闭的(`kKnownXpkgKeys`),`sources` **必须**给出;包根是版本目录 |
+
+- 字段缺省时按指针形式处理,依次尝试 `mcpp.toml` 与 `*/mcpp.toml`。
+- 表中指向载荷内清单的写法**不是**第三种形式:`manifest` 键不存在。带 `manifest` 而没有 `sources` 的表被拒绝,
+  消息写出指针形式的写法。
+- 读取方**必须**经同一个函数(`mcpp::pm::descriptor_manifest`)取得清单与包根。构建的布局核对、安装前的子依赖、
+  读清单、补丁根,`mcpp new --template` 与 `mcpp xpkg parse` 都经由它;包根之下的 `templates/` 是模板的位置,
+  一个包因缺少该目录被拒绝,不因其描述符的形式被拒绝。
+- `mcpp publish` 与 `mcpp emit xpkg` **必须**写出读取方读取的形式。发布的归档是包的源码树,顶层目录内有清单,
+  因此写出 `mcpp = "*/mcpp.toml"`;模块、依赖与运行期要求只由清单陈述,不写入描述符。
+
+**已实现**(mcpp 2026.11.19.1)。此前 `mcpp publish` 写出带 `modules`、`deps`、`runtime` 与 `manifest = "mcpp.toml"` 的表,
+六处读取方各自按字段的种类分支,没有一处读取它(mcpp#960)。单元测试 `XpkgEmit/WhatIsWrittenIsRead`
+把写出方的输出交回读取函数;e2e `index::listing/06 emit xpkg` 与 `index::published/…` 断言发布的描述符可解析、
+可作为依赖、可作为模板包。
 
 ---
 
@@ -552,6 +575,7 @@ mcpp 侧的使用:
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.9 | 2026-11-19 | 新增 §3.5:描述符 `mcpp` 字段的两种形式、一个读取函数、发布写出指针形式(mcpp 2026.11.19.1,mcpp#960) |
 | 1.8 | 2026-11-09 | 新增 §5.5:git 引用至多一个 ref、缺省分支、命令行的字符串形式(mcpp 2026.11.9.1) |
 | 1.5 | 2026-09-27 | 新增 §10.1:版本位的回答与 xlings 一致(安装记录优先,其次按 xlings 版本文法选择;已记录而缺失的载荷不算已安装),mcpp#712、#716;新增 §10.2:打包修订 `revision` 的含义与 mcpp 侧的三处使用(mcpp 2026.9.27.1,xlings 2026.9.27.1) |
 | 1.7 | 2026-10-17 | §10.2:新增 `floor`,区分可用与当前;工具链、运行时与宿主工具按使用/供给两种意图解析,使用命令不因修订号替换可用载荷;工具链载荷的修订号进入驱动身份;替换失败的语义。§10.3 第 3 条把修订号一致移出完整性(mcpp 2026.10.17.1,xlings 2026.10.17.1,libxpkg 0.0.65) |
