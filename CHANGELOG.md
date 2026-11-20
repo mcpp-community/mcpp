@@ -4,6 +4,21 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.20.1] - 2026-11-20
+
+### Fixed
+
+- A package below the tree of a `path` dependency keeps its own objects (mcpp#979). Since
+  2026.11.19.1 a `path` dependency is kept in the global cache under the digest of its tree,
+  and its entry took every compile unit below its root. A workspace below a repository whose
+  package its members' build programs import (mcpp-plugins' `tests/ws`) put both members'
+  `src/main.cpp` at the one address `obj/src/main.o` of the dependency's entry, and a build
+  from a clean target directory linked one member's object into the other. An entry now holds
+  the units its key lists, each filed under the longest package root that holds it (SPEC-001
+  §10.4 item 6). The key of a package named by its commit or its tree changes once, so that no
+  entry 2026.11.19.1 wrote for a `git` or `path` dependency is read again; the keys of index
+  packages are unchanged.
+
 ## [2026.11.19.1] - 2026-11-19
 
 ### Added

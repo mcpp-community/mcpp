@@ -221,6 +221,14 @@ struct PackageAxes {
     std::string indexName;
     std::string packageName;
     std::string version;
+    // THE ENTRY HOLDS THE PACKAGE'S OWN UNITS (mcpp#979). Set by the caller for
+    // a package named by its commit or its tree (`+git.`, `+path.`). The entry
+    // of such a package written by 2026.11.19.1 held every unit below the
+    // package's root, a package nested in its tree among them, and the key did
+    // not describe those units: the key of the corrected filing differs from
+    // it, so no such entry is read. An index package's payload holds no other
+    // package of a build, so its key is unchanged.
+    bool ownUnits = false;
     // E
     // Filled by the caller: the union of features requested of this package
     // over every incoming dependency edge, sorted. Their EFFECTS are already
@@ -371,6 +379,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"name", p.packageName},
         {"version", p.version},
     };
+    if (p.ownUnits) j["package"]["units"] = "own";
     j["config"] = {
         {"features", p.features},
         {"cflags", p.cflags},
@@ -430,6 +439,8 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "index",    p.indexName);
     put(s, "pkg",      p.packageName);
     put(s, "ver",      p.version);
+    // Only when set, so the key of an index package is unchanged.
+    if (p.ownUnits) put(s, "units", "own");
     // E
     put_list(s, "features",  p.features);
     put_list(s, "cflags",    p.cflags);

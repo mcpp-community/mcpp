@@ -738,3 +738,22 @@ UTest the_bmi_path_convention_moves_only_the_packages_that_have_one{"CacheKey/Th
     expect(eq(j["language"]["bmi_path_convention"], "$root=bmi-dir"));
     expect(!(ck::to_json(axes(), pkg())["language"].contains("bmi_path_convention")));
 }};
+
+// A PACKAGE NAMED BY ITS COMMIT OR TREE HOLDS ITS OWN UNITS (mcpp#979). The
+// entry of a `git` or `path` package written by 2026.11.19.1 held every unit
+// below the package's root, a nested package's among them, under a key that
+// did not describe them. The key of the corrected filing differs from the one
+// such an entry was written under, and an index package's key, whose entries
+// the change cannot have touched, is the one it had.
+UTest a_package_named_by_its_tree_has_the_key_of_its_own_units{"CacheKey/APackageNamedByItsTreeHasTheKeyOfItsOwnUnits", [] {
+    auto tree = pkg();
+    tree.version = "1.3.2+path.0123456789abcdef";
+    auto own = tree;
+    own.ownUnits = true;
+    expect(ne(ck::key_hex(axes(), tree), ck::key_hex(axes(), own)));
+
+    const auto j = ck::to_json(axes(), own);
+    expect(fatal(j["package"].contains("units")));
+    expect(eq(j["package"]["units"], "own"));
+    expect(!(ck::to_json(axes(), pkg())["package"].contains("units")));
+}};

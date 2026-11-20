@@ -1896,7 +1896,12 @@ library's sources are the same, wherever its tree is checked out; an edit is a
 new key, and the entry built from the same tree under the previous digest is
 removed as the new one is written. A `path` dependency's tree is read again
 before its entry is written, and a tree that changed while it compiled is not
-stored.
+stored. An entry holds its own package's units *(2026.11.20.1+)*: a unit below
+a package nested in the dependency's tree belongs to that package -- a
+workspace below a repository whose package its members' build programs import
+keeps its members' units, which are built in place. Under 2026.11.19.1 the
+dependency's entry took them, and a build from a clean target directory linked
+one member's object into another (mcpp#979).
 
 What is **not** cached: the project's own trees, which are what is being edited
 -- the root package, its workspace members, and any package below the project's
