@@ -45,15 +45,21 @@ jobs:
       tests: e2e/windows
 
   measure:
-    name: trees ${{ matrix.cond }} ${{ matrix.rep }}
+    name: trees ${{ matrix.cond }} ${{ matrix.id }}
     needs: [build-linux, unit-linux-archive]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        cond: [alone, shard]
-        rep: [1, 2]
+        # The first round measured shard 2/4 twice: with main's history the trees
+        # suite is assigned to another shard, so this round measures the other three.
+        include:
+          - { cond: alone, id: '1' }
+          - { cond: alone, id: '2' }
+          - { cond: shard, id: s1, shard: 1/4 }
+          - { cond: shard, id: s3, shard: 3/4 }
+          - { cond: shard, id: s4, shard: 4/4 }
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +104,9 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          "$MCPP" test --cases --archive "$RUNNER_TEMP/unit/unit.tar.gz" e2e/openkal/trees 2>&1 | tail -20
+          # `--cases` from an archive lists nothing and ends "no test ... ran" (exit 1):
+          # recorded, not fatal.
+          "$MCPP" test --cases --archive "$RUNNER_TEMP/unit/unit.tar.gz" e2e/openkal/trees 2>&1 | tail -40 || true
           for phase in cold warm; do
             echo "$phase" > "$PROBE_DIR/phase"
             echo "== $phase $(date -u +%T)"
@@ -106,19 +114,19 @@ jobs:
               || echo "::warning::the $phase pass ended with $?"
           done
 
-      - name: "shard: the CI's shard 2/4"
+      - name: "shard: one of the CI's four shards"
         if: matrix.cond == 'shard'
         continue-on-error: true
         uses: ./.github/actions/mcpp-unit
         with:
-          name: probe-${{ matrix.rep }}
+          name: probe-${{ matrix.id }}
           archive: ${{ runner.temp }}/unit/unit.tar.gz
-          shard: 2/4
+          shard: ${{ matrix.shard }}
 
       - name: The analysis
         if: always()
         shell: bash
-        run: python3 -I .github/probe/analyze_trees.py "$PROBE_DIR" "${{ matrix.cond }} ${{ matrix.rep }}" | tee -a "$GITHUB_STEP_SUMMARY"
+        run: python3 -I .github/probe/analyze_trees.py "$PROBE_DIR" "${{ matrix.cond }} ${{ matrix.id }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: ./.github/actions/mtest
         if: always()
@@ -149,7 +157,7 @@ jobs:
         run: |
           set -euo pipefail
           pkill vmstat || true
-          a="$RUNNER_TEMP/trees-${{ matrix.cond }}-${{ matrix.rep }}.tar.gz"
+          a="$RUNNER_TEMP/trees-${{ matrix.cond }}-${{ matrix.id }}.tar.gz"
           tar -czf "$a" -C "$PROBE_DIR" .
           ls -la "$a"
           gh release view probe-data -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
