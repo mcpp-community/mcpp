@@ -6,6 +6,17 @@
 
 ## [2026.11.20.1] - 2026-11-20
 
+### Changed
+
+- `mcpplibs.openkal-platform@0.31.2` is the default platform of the rows openkal serves (0.31.0
+  in 2026.11.19.1). The runner of an ok image (openkal-image 0.7.2) ends a program with the
+  image's tasks alone, so a debugger continued to the end sees the program end as the image
+  ended it; it enters an image file an image starts through its own loader, held to its
+  signature requirements; and a copy of the program, which a library's `fork` makes, ends as
+  the copy ends itself (mcpplibs/openkal-image#42 to #45). On macOS a request to end that a
+  context other than the program's first acts on ends the program as the request
+  (openkal-macos 0.24.1).
+
 ### Fixed
 
 - A package below the tree of a `path` dependency keeps its own objects (mcpp#979). Since

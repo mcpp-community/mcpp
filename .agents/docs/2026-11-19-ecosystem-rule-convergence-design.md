@@ -777,9 +777,9 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
 | 10.6（N1） | mcpp 检查点 10b；SPEC-011 §5.1 第 8 条 |
 | 11.1（#953 D5） | 检查点 9；SPEC-004 §9 第 17 条 |
 | 11.2（#953） | xim-pkgindex#1196：llvm 23.1.3 修订 4，FreeBSD 基座修订 3 |
-| 12（超时） | mtest 0.10.0（mcpp-community/mtest#25），openkal-image 0.7.0（okrun 的结束请求记录）；mcpp 的 CI 运行器与开发依赖为 mtest 0.10.0（xim-pkgindex#1199），缺省平台为 openkal-platform 0.31.0（检查点 11） |
+| 12（超时） | mtest 0.10.0（mcpp-community/mtest#25），openkal-image 0.7.0（okrun 的结束请求记录）、0.7.1（runner 的任务在程序结束前返回，映像启动的映像文件经 runner 的加载器进入，mcpplibs/openkal-image#42、#43）与 0.7.2（程序的副本按副本自己结束它的方式结束，mcpplibs/openkal-image#44、#45），openkal-macos 0.24.1（另一上下文处理的结束请求仍以请求结束程序）；mcpp 的 CI 运行器与开发依赖为 mtest 0.10.0（xim-pkgindex#1199）；缺省平台在 2026.11.19.1 为 openkal-platform 0.31.0（检查点 11），在 2026.11.20.1 为 0.31.2 |
 | 20（#970） | mcpplibs.os 0.4.6（`mcpplibs.os.text`），mcpp 检查点 11b；SPEC-011 §5.1 第 11、12 条，SPEC-012 §2，docs/50 §9，docs/20 |
-| 级联 | mcpp.plugins 0.26.1（mcpplibs.os 0.4.5）→ openkal-platform 0.31.0（openkal-svr4 0.3.0、ibcs-us 4.3-2）→ mcpp 2026.11.19.1 → mcpp.plugins 0.27.0（`steps`）；xlings 的 Windows 工具链为 llvm 23.1.3（openxlings/xlings#722：MSVC 14.52 的 STL 拒绝 Clang 22 之前的版本） |
+| 级联 | mcpp.plugins 0.26.1（mcpplibs.os 0.4.5）→ openkal-platform 0.31.0（openkal-svr4 0.3.0、ibcs-us 4.3-2）→ mcpp 2026.11.19.1 → mcpp.plugins 0.27.0（`steps`）→ openkal-macos 0.24.1、openkal-image 0.7.1 → openkal-platform 0.31.1 → openkal-image 0.7.2 → openkal-platform 0.31.2 → mcpp 2026.11.20.1（缺省平台 0.31.2，mcpp#979）；xlings 的 Windows 工具链为 llvm 23.1.3（openxlings/xlings#722：MSVC 14.52 的 STL 拒绝 Clang 22 之前的版本） |
 
 ### 19.2 测量
 
@@ -837,6 +837,17 @@ xim-pkgindex 中 mcpp 自身的条目由发布流程的自动拉取请求产生�
   而 openkal-platform 的构建依赖正是它。发布顺序因此为：mcpp.plugins 0.26.1（仅 mcpplibs.os 0.4.5，引擎下界不变）→
   openkal-platform 0.31.0 → mcpp 2026.11.19.1（缺省平台 0.31.0）→ mcpp.plugins 0.27.0（`steps`，引擎下界为该 mcpp）。
   后者的引擎下界使两者不能合为一次发布。
+- okrun 0.7.0 在镜像入口启动一个等待结束请求的任务，程序结束时该任务仍在。GDB 15 自停点继续时逐个恢复任务；先被恢复的
+  主任务已结束程序，GDB 再取 runner 任务的寄存器即报 `Couldn't get registers: No such process`，而不报程序的结束（release
+  工作流的探针 12 次中 10 次如此）。openkal-image 0.7.1 在结束程序之前令该任务返回并 join，程序以镜像自己的任务结束：探针
+  12/12。同一 runner 任务在 macOS 上代程序处理结束请求：openkal-macos 0.24.0 向进程重发信号后立即以 128+信号 退出，而 XNU
+  把信号交给第一个未屏蔽它的上下文，起动者看到 143 而非 SIGTERM；0.24.1 如 openkal-linux 等待至多 0.1 s 的投递（二十个副本
+  均以 SIGTERM 结束，0.24.0 上 20 个中 9 个，mcpplibs/openkal-macos#54）。
+- okrun 0.7.1 下，库以在地址空间副本中启动上下文（openkal.space）组成的 `fork` 之后，副本的 `kal_exit` 等待 runner 的任务
+  返回；副本持有 runner 的内存而不持有该任务，等待不终止，映像以 fork 加 exec 启动的程序不结束（Sunrisepeak/cmd#5 的 CI
+  测得，mcpplibs/openkal-image#44）。0.7.2 比较 runner 所在的程序与其任务所属的程序（`KAL_PINFO_ID`），在副本中不等待；
+  `examples/forks` 以 `kal_exit(7)` 结束副本，CI 期望 7。xim 的 okrun `latest` 在 0.7.2 发布之前保持 0.6.4（xim-pkgindex#1205）。
+  2026.11.19.1 发布时 0.31.1 尚未发布，缺省平台为 0.31.0；2026.11.20.1 的缺省平台为含三者的 0.31.2。
 - Windows 上执行器以改名发布 BMI 时偶遇 `being used by another process`（CI 中约 350 个 BMI 出现一次，其他进程短暂打开了
   刚写出的文件）。改名对暂时的拒绝（`again`、`permission`）在 30 s 内重试（`replace_file_within`），其后的拒绝照旧报告。
 - `mcpp pack` 生成的启动器（`bin/<name>.exe`、单文件启动器）在 mcpp 的 openkal 行的平台上构建，平台构建程序的依赖与启动器
