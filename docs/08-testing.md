@@ -693,6 +693,23 @@ Builds the one test the pattern names and prints how `mcpp test` would start it
 (the `mcpp.launch` envelope, mcpp 2026.10.31.2+), for a debugger to start: the
 runner, the environment the run adds and the arguments after `--` are in it.
 
+### In a GitHub Actions job (@NEXT@+)
+
+```yaml
+- uses: actions/checkout@v4
+- uses: mcpp-community/mcpp/.github/actions/project-test@main
+  with:
+    args: --workspace        # the words of `mcpp test`
+```
+
+The action installs the mcpp the project's `.xlings.json` names (else the input
+`mcpp`, else the newest release), restores the home by the system, that version
+and the project's manifests and lock (`home-key` replaces the last), runs
+`mcpp test`, keeps the run's store (`target/mtest`) as an artifact and writes the
+run's result, its ten slowest cases and the ten slowest edges of its builds to
+the job's summary. A pull request reads the home; a push to the default branch
+saves it.
+
 ## Current limitations
 
 - A test is one `.cpp` producing one program. The cases inside it are the

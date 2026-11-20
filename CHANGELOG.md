@@ -52,6 +52,9 @@
   flags of the command line's definition, the manifest's keys and the refusals' reason tokens.
   `MCPP_SURFACE_RECORD=<file>` makes each process of an invocation append the items it used.
 - `wire` features `test-steps`, `test-budget`, `test-jitter` and `test-fixtures` (docs/50).
+- `mcpp-community/mcpp/.github/actions/project-test`, a downstream repository's test job: the mcpp
+  the project pins, its home restored by the project's identity, `mcpp test`, the run's store as
+  an artifact and its slowest cases and edges in the summary (docs/08).
 
 ### Changed
 

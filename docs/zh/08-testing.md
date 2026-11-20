@@ -516,6 +516,19 @@ mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
 构建该模式指定的一个测试，并打印 `mcpp test` 启动它的方式（`mcpp.launch` 信封，mcpp 2026.10.31.2+），
 供调试器启动：其中包括运行器、运行所加的环境与 `--` 之后的参数。
 
+### 在 GitHub Actions 的作业中（@NEXT@+）
+
+```yaml
+- uses: actions/checkout@v4
+- uses: mcpp-community/mcpp/.github/actions/project-test@main
+  with:
+    args: --workspace        # `mcpp test` 的参数
+```
+
+该动作安装工程的 `.xlings.json` 所写的 mcpp（否则为输入 `mcpp`，再否则为最新的发布），按系统、该版本与工程的清单和锁文件
+（`home-key` 取代后两者）恢复 home，运行 `mcpp test`，把运行的存储（`target/mtest`）保留为 artifact，并把运行的结果、最慢的
+十个用例与其构建中最慢的十条边写入作业的摘要。拉取请求只读取 home；向缺省分支的推送保存它。
+
 ## 当前边界
 
 - 一个测试是一个 `.cpp` 产出一个程序。其中的用例属于程序：mcpp 只对实现测试协议的程序列出并选择用例；
