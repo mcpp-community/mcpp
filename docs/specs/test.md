@@ -173,7 +173,7 @@
 | `index.ndjson` | 每次运行一行：去掉程序与用例的运行记录 |
 | `runs/<id>/run.json` | 运行记录：`schema`（`mtest.run/1`）、`id`、`started`、`finished`、`status`、`system`、`arch`、`machine`、`commit`、`set`、`selection`、`group`、`monitor`、`ms`、`jobs`、`counts`；`processors`、`memory`、`budget`、`jitter`（@NEXT@） |
 | `runs/<id>/programs.ndjson` | 每个程序进程一行：`name`、`argv`、`status`、`exit`、`ms`、`started_ms`、`worker`、`select`、`resources`、`fixtures`，运行器构建它时的 `build_started_ms` 与 `build_ms`，`usage`（带 `source`：`program` 或 `engine`） |
-| `runs/<id>/cases.ndjson` | 每个用例一行：`program`、`id`、`kind`、`status`、`ms`、`started_ms`、`reason`、`failures`、`metrics`、`bounds`、`tags`、`clauses`；`cpu_ms`、`steps`（`step` 事件的字段，`id` 除外）、`exercised`（@NEXT@） |
+| `runs/<id>/cases.ndjson` | 每个用例一行：`program`、`id`、`kind`、`status`、`ms`、`started_ms`、`reason`、`failures`、`metrics`、`bounds`、`tags`、`clauses`；`cpu_ms`、`steps`（`step` 事件的字段，`id` 除外）、`exercised`、`limit_ms`（用例所受的时限，O5；未知时省略）（@NEXT@） |
 | `runs/<id>/builds.ndjson` | 运行器为这次运行所做的构建（@NEXT@）：每条运行过的边一行，`build`（构建记录的标识）、`output`、`package`、`program`（该边所服务的测试程序，可为空）、`started_ms`、`ms`、`cpu_ms`、`peak_bytes`；由缓存提供的包一行，`build`、`package`、`cached`（`true`）、`units` |
 | `runs/<id>/fixtures.ndjson` | 每个运行夹具一行：`name`、`program`、`started_ms`、`ready_ms`、`ended_ms`、`status` |
 
@@ -278,7 +278,7 @@
 - **P10.2** 程度不为 `off` 的程序在 `done` 之前写一个 `usage` 事件。
 - **P10.3** 在 `trace` 下，程序每 `MTEST_MONITOR_SAMPLE` 毫秒（缺省 50）采样一次，每个序列报告为一个指标，`samples` 为序列，`value` 为其最大样本，精度为 `sampled`。
 - **P10.4** 运行器可以从其自己的进程测量不写 `usage` 的程序，并把结果记作引擎的。
-- **mcpp 的实现（mcpp >= 2026.11.10.1）。** `usage` 属于程序，进入程序记录，并以 `source = "program"` 进入 B4。
+- **mcpp 的实现（mcpp >= 2026.11.10.1）。** `usage` 属于程序，进入程序记录，并以 `source = "program"` 进入 B4。mcpp >= @NEXT@ 以 `basic` 陈述程度，调用者的环境陈述 `MTEST_MONITOR` 时取其值；B4 的 `monitor` 为所陈述的程度。mcpp 不实现 P10.4：它的各个工作线程在同一进程中运行测试程序，系统对子进程的计量只按进程汇总，一个程序的用量无法从中分离。
 
 ### O8. 输出归属（mcpp >= 2026.11.10.1）
 

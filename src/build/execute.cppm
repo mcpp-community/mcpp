@@ -39,6 +39,7 @@ import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
 import mcpplibs.os.fs;           // the budget's slot locks (SPEC-017 O11)
+import mcpplibs.os.machine;      // the machine a run records (SPEC-017 P12.4)
 import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
 import mcpp.wire;              // the mcpp.launch envelope
 import mcpp.build.cxx_runtime; // the island, verified after the link (design 2026-10-26 §6.3)
@@ -4603,6 +4604,10 @@ struct TestResult {
     int                                 worker = -1;
     std::vector<std::string>            select;
     bool                                alone = false;   // it held the machine (P7.1)
+    // The limit its process ran within (0: none), and each listed case's own
+    // (seconds): a case's `limit_ms` in the store (B4).
+    double                              limitSecs = 0;
+    std::map<std::string, double>       caseSecs;
     // The program and the files it is compiled from, for a test built and not
     // run (`--no-run`): what a runner that selects by change reads (docs/50).
     std::string                         program;
@@ -4613,6 +4618,27 @@ struct TestResult {
     // mcpp test spec B5): what a launcher other than this command runs.
     std::optional<mcpp::build::result::Launch> launch;
 };
+
+// THE MACHINE'S CLASS (SPEC-017 P12.4): its processor's model, else its
+// architecture and logical processors. A runner on a hosted pool lands on
+// processors 1.6 times apart in speed (design 2026-11-20 §3.1); estimates
+// compared within a class tell that from a regression.
+static std::string machine_class() {
+    if (auto model = mcpplibs::os::machine::processor_model(); model && !model->empty()) return *model;
+    return std::format("{}/{}", mcpplibs::os::machine::arch(), mcpplibs::os::machine::processors().logical);
+}
+
+// The limit a case ran within, in seconds (0: none): what it or the listed
+// case it is under states, else its process's when the process ran it alone.
+static double case_limit(const TestResult& t, std::string_view id) {
+    for (std::string_view at = id;;) {
+        if (auto it = t.caseSecs.find(std::string(at)); it != t.caseSecs.end()) return it->second;
+        const auto slash = at.rfind('/');
+        if (slash == std::string_view::npos) break;
+        at = at.substr(0, slash);
+    }
+    return t.report.cases.size() == 1 ? t.limitSecs : 0;
+}
 
 // THE RUN IN THE MTEST STORE (mtest spec P12; design 2026-11-09 §17.3): the
 // run's record, a line per process of a program and a line per case, so that
@@ -4700,6 +4726,11 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 }
                 if (!c.bounds.empty()) line["bounds"] = mcpp::build::test_protocol::bounds_json(c.bounds);
                 if (c.checks) line["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
+                // P5.6 and the case's processor time and limit (SPEC-017 B4, 2.5).
+                if (c.cpuMs) line["cpu_ms"] = *c.cpuMs;
+                if (!c.steps.empty()) line["steps"] = mcpp::build::test_protocol::steps_json(c.steps);
+                if (!c.exercised.empty()) line["exercised"] = c.exercised;
+                if (const auto limit = case_limit(t, c.id); limit > 0) line["limit_ms"] = limit * 1000;
                 cases << mcpp::wire::text(line) << "\n";
             }
         }
@@ -4707,12 +4738,17 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
     json run{{"schema", "mtest.run/1"}, {"id", id}, {"started", iso(started)}, {"finished", iso(finished)},
              {"status", failed ? "fail" : "pass"},
              {"system", std::string(mcpplibs::os::name(mcpplibs::os::PLATFORM))},
-             {"arch", std::string(mcpplibs::os::name(mcpplibs::os::ARCH))}, {"machine", ""},
+             {"arch", std::string(mcpplibs::os::name(mcpplibs::os::ARCH))}, {"machine", machine_class()},
+             {"processors", mcpplibs::os::machine::processors().logical},
+             {"memory", mcpplibs::os::machine::memory().value_or(0)}, {"budget", jobs},
              {"commit", mcpp::invocation::get("GITHUB_SHA").value_or("")},
              {"set", "mcpp test"}, {"selection", std::string(selection)},
-             {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", "off"},
+             {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", mcpp::build::test_protocol::monitor_level()},
              {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
     if (!shard.empty()) run["shard"] = std::string(shard);
+    if (const auto jitter = mcpp::invocation::get("MTEST_JITTER"); jitter && !jitter->empty())
+        run["jitter"] = {{"max_ms", std::atoi(jitter->c_str())},
+                         {"seed", std::strtoull(mcpp::invocation::get("MTEST_JITTER_SEED").value_or("0").c_str(), nullptr, 10)}};
     { std::ofstream(runDir / "run.json", std::ios::binary) << mcpp::wire::text(run, 2) << "\n"; }
     std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << mcpp::wire::text(run) << "\n";
 }
@@ -5012,6 +5048,10 @@ struct TestRunnable {
     // `--timeout`, so that a test that states its length is not ended at the
     // limit the rest are held to (P-limit, docs/08).
     double declaredSecs = 0;
+    // The time each listed case states it may run, by its identifier: the
+    // limit a case is held to in the store (B4 `limit_ms`), for the report's
+    // margin (design 2026-11-20 §5.8).
+    std::map<std::string, double> caseSecs;
 };
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
@@ -5489,7 +5529,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         ? mcpp::build::test_schedule::History{}
         : mcpp::build::test_schedule::read_history(
               storeDir, 30, testOpts.shard ? std::optional(mcpp::invocation::get("GITHUB_RUN_ID").value_or(""))
-                                           : std::nullopt);
+                                           : std::nullopt,
+              testOpts.shard ? std::nullopt : std::optional(machine_class()));
 
     using Runnable = TestRunnable;
     std::vector<Runnable> runnable;
@@ -5666,6 +5707,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     t.partOf = r.partOf;
                     t.divides = r.divides;
                     t.alone = r.alone;
+                    t.limitSecs = limit_of(r);
+                    t.caseSecs = r.caseSecs;
                     if (r.select) {
                         std::ifstream in(*r.select);
                         for (std::string line; std::getline(in, line);)
@@ -6320,6 +6363,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             }
             for (const auto& [_, secs] : selectedSecs) r.declaredSecs += secs;
             selectedSecs.clear();
+            for (const auto& c : report.listed)
+                if (c.timeout > 0) r.caseSecs[c.id] = c.timeout;
             if (lines.empty()) { ++notSelected; continue; }
             r.select = r.protocolDir / "select.txt";
             std::ofstream(*r.select, std::ios::binary) << lines;
@@ -6409,6 +6454,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     continue;
                 }
                 const auto& report = *listings[at];
+                for (const auto& c : report.listed)
+                    if (c.timeout > 0) r.caseSecs[c.id] = c.timeout;
                 // THE MACHINE, HELD ALONE (P7.1). A case that holds `machine`
                 // states a property that holds only while nothing beside it
                 // changes the machine (the shared home, its caches, the default

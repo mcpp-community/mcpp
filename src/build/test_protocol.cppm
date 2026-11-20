@@ -10,6 +10,7 @@ export module mcpp.build.test_protocol;
 
 import std;
 import nlohmann.json;
+import mcpp.invocation;   // MTEST_MONITOR, stated to the run (P10.1)
 
 export namespace mcpp::build::test_protocol {
 
@@ -23,10 +24,15 @@ inline constexpr std::string_view kMtestRepo    = "https://github.com/mcpp-commu
 
 // The protocol's variables, removed from the environment a program inherits
 // so that an outer runner's do not reach a program mcpp starts (P2.2).
-inline constexpr std::array<std::string_view, 7> kVariables = {
+inline constexpr std::array<std::string_view, 8> kVariables = {
     "MTEST_PROTOCOL", "MTEST_MODE", "MTEST_REPORT", "MTEST_SELECT",
-    "MTEST_ISOLATION", "MTEST_TMPDIR", "MTEST_SEED",
+    "MTEST_ISOLATION", "MTEST_TMPDIR", "MTEST_SEED", "MTEST_MONITOR",
 };
+
+// The level of monitoring a run states (P10.1): `basic` -- each case's
+// processor time, which the store and the budget gate compare (design
+// 2026-11-20 §5.9) -- unless the environment of `mcpp test` states another.
+std::string monitor_level();
 
 // The version the marker in a program's file states (P2.3): the bytes
 // `mtest-protocol=` and a version followed by a byte that is not a digit; 0
@@ -73,6 +79,17 @@ struct Case {
     double                   timeout = 0; // seconds the case states it may run; 0: none stated
 };
 
+// A step of a case (P5.6): a command an end-to-end case ran, as the program
+// states it when the step ends.
+struct Step {
+    std::string                name;
+    double                     t = 0;      // milliseconds after the program started
+    double                     ms = 0;
+    std::optional<double>      cpuMs;
+    std::optional<int>         status;     // the exit status of the program the step ran
+    std::string                build;      // the build record's identifier when it was a build
+};
+
 // A failure an expectation of a case reported (P5.2).
 struct Failure {
     std::string file;
@@ -111,6 +128,13 @@ struct CaseResult {
     // for a program that ran this case alone, all that the program wrote.
     std::string              output;
     bool                     outputStated = false;   // an `output` event came
+    // P5.6: its steps in the order they ended, and the items of the product's
+    // surface it used, sorted and each once.
+    std::vector<Step>        steps;
+    std::vector<std::string> exercised;
+    // Its processor time: the sum of its `cpu.user` and `cpu.sys` metrics
+    // (P6.6, B4 `cpu_ms`); unset when it reported neither.
+    std::optional<double>    cpuMs;
 };
 
 // What one program's report says.
@@ -197,6 +221,8 @@ nlohmann::json bounds_json(const std::vector<Bound>& b);
 nlohmann::json metric_json(const Metric& m);
 nlohmann::json usage_json(const Usage& u);
 nlohmann::json listing_json(const Report& r);
+// A case's steps as B4 and the records write them (P5.6).
+nlohmann::json steps_json(const std::vector<Step>& steps);
 
 }  // namespace mcpp::build::test_protocol
 
@@ -357,7 +383,28 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
             if (auto v = k->find("failed"); v != k->end() && v->is_number_integer()) n.failed = v->get<long long>();
             c.checks = n;
         }
+        double cpu = 0;
+        bool told = false;
+        for (const auto& m : c.metrics)
+            if (m.name == "cpu.user" || m.name == "cpu.sys") {
+                cpu += m.value;
+                told = true;
+            }
+        if (told) c.cpuMs = cpu;
         return ReportReader::Change{i, true};
+    } else if (kind == "step") {
+        Step st{text(e, "name")};
+        if (auto v = e.find("t"); v != e.end() && v->is_number()) st.t = v->get<double>();
+        if (auto v = e.find("ms"); v != e.end() && v->is_number()) st.ms = v->get<double>();
+        if (auto v = e.find("cpu_ms"); v != e.end() && v->is_number()) st.cpuMs = v->get<double>();
+        if (auto v = e.find("status"); v != e.end() && v->is_number_integer()) st.status = v->get<int>();
+        st.build = text(e, "build");
+        r.cases[case_of(r, open, id)].steps.push_back(std::move(st));
+    } else if (kind == "exercise") {
+        auto& c = r.cases[case_of(r, open, id)];
+        for (auto& item : strings(e, "items"))
+            if (auto at = std::ranges::lower_bound(c.exercised, item); at == c.exercised.end() || *at != item)
+                c.exercised.insert(at, std::move(item));
     } else if (kind == "missing") {
         r.missing.push_back(id);
     } else if (kind == "done") {
@@ -398,6 +445,16 @@ Report ReportReader::finish(int exitStatus) {
     return std::move(r_);
 }
 
+std::string monitor_level() {
+    static const std::string level = [] {
+        const auto stated = mcpp::invocation::get("MTEST_MONITOR").value_or("");
+        for (std::string_view known : {"off", "basic", "detailed", "trace"})
+            if (stated == known) return stated;
+        return std::string("basic");
+    }();
+    return level;
+}
+
 Report read_report(const std::filesystem::path& file, int exitStatus) {
     ReportReader reader;
     reader.poll(file);
@@ -414,6 +471,7 @@ variables(std::string_view mode, const std::filesystem::path& report,
         {"MTEST_REPORT", report.string()},
         {"MTEST_TMPDIR", tmpdir.string()},
     };
+    if (mode == "run") env.emplace_back("MTEST_MONITOR", monitor_level());
     if (select) env.emplace_back("MTEST_SELECT", select->string());
     if (seed) env.emplace_back("MTEST_SEED", std::to_string(*seed));
     return env;
@@ -528,7 +586,22 @@ nlohmann::json case_json(const CaseResult& c) {
     if (!c.bounds.empty()) one["bounds"] = bounds_json(c.bounds);
     if (c.checks) one["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
     if (!c.output.empty()) one["output"] = c.output;
+    if (c.cpuMs) one["cpu_ms"] = *c.cpuMs;
+    if (!c.steps.empty()) one["steps"] = steps_json(c.steps);
+    if (!c.exercised.empty()) one["exercised"] = c.exercised;
     return one;
+}
+
+nlohmann::json steps_json(const std::vector<Step>& steps) {
+    nlohmann::json all = nlohmann::json::array();
+    for (const auto& st : steps) {
+        nlohmann::json one = {{"name", st.name}, {"t", st.t}, {"ms", st.ms}};
+        if (st.cpuMs) one["cpu_ms"] = *st.cpuMs;
+        if (st.status) one["status"] = *st.status;
+        if (!st.build.empty()) one["build"] = st.build;
+        all.push_back(std::move(one));
+    }
+    return all;
 }
 
 nlohmann::json cases_json(const Report& r) {

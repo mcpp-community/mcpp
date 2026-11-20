@@ -33,8 +33,14 @@ struct History {
 // the runs of a shard of that group (the CI run, or none) are left out: the
 // shards of one run, run one after another on one store, read the store as
 // the first of them read it.
+//
+// With `machine`, the runs on that class of machine (SPEC-017 P12.4) when the
+// store has one, else all: the processors of one hosted pool are 1.6 times
+// apart (design 2026-11-20 §3.1). The shards of a run do not pass it: each
+// shard lands on its own machine and must compute the one plan the others do.
 History read_history(const std::filesystem::path& store, std::size_t maxRuns = 30,
-                     std::optional<std::string> shardsOf = std::nullopt);
+                     std::optional<std::string> shardsOf = std::nullopt,
+                     std::optional<std::string> machine = std::nullopt);
 
 // The key of a case in `History::cases`: its program (the program a part is of)
 // and its id.
@@ -137,12 +143,16 @@ bool failed_case(std::string_view status) { return status == "fail" || status ==
 }  // namespace
 
 History read_history(const std::filesystem::path& store, std::size_t maxRuns,
-                     std::optional<std::string> shardsOf) {
+                     std::optional<std::string> shardsOf, std::optional<std::string> machine) {
     History h;
     std::error_code ec;
     if (!std::filesystem::exists(store / "index.ndjson", ec)) return h;
-    for (const auto& run : runs_newest_first(store)) {
+    const auto runs = runs_newest_first(store);
+    if (machine && std::ranges::none_of(runs, [&](const json& r) { return text(r, "machine") == *machine; }))
+        machine.reset();
+    for (const auto& run : runs) {
         if (h.runs == maxRuns) break;
+        if (machine && text(run, "machine") != *machine) continue;
         if (shardsOf && !text(run, "shard").empty() && text(run, "group") == *shardsOf) continue;
         const auto dir = store / "runs" / text(run, "id");
         if (!std::filesystem::is_directory(dir, ec)) continue;

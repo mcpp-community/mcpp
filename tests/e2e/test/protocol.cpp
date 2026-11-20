@@ -294,6 +294,15 @@ bool cases(std::ofstream& r, bool list, const std::set<std::string>& selected) {
     if (on("plain")) {
         std::println("written by plain");
         r << R"({"e":"begin","id":"plain","t":0})" << "\n";
+        r << R"({"e":"step","id":"plain","name":"mcpp build","t":1,"ms":5,"cpu_ms":4,"status":0,"build":"b1"})" << "\n";
+        r << R"({"e":"exercise","id":"plain","items":["flag build --target","command build"]})" << "\n";
+        r << R"({"e":"exercise","id":"plain","items":["command build"]})" << "\n";
+        // The level the run stated (P10.1): its processor time where it is `basic`.
+        const char* level = std::getenv("MTEST_MONITOR");
+        if (level && std::string_view(level) == "basic") {
+            r << R"({"e":"metric","id":"plain","name":"cpu.user","value":3,"unit":"ms"})" << "\n";
+            r << R"({"e":"metric","id":"plain","name":"cpu.sys","value":1,"unit":"ms"})" << "\n";
+        }
         r << R"({"e":"end","id":"plain","status":"pass","ms":0})" << "\n";
     }
     return on("stated");
@@ -340,12 +349,24 @@ bool cases(std::ofstream& r, bool list, const std::set<std::string>& selected) {
         expect(rec["cases"][0].value("output", "") == "said by the case\n" || rec["cases"][0].value("output", "") == "said by the case")
             << "the case's stated output: " << rec["cases"][0].dump();
         expect(!rec["cases"][1].contains("output")) << "the output of a program of two cases was divided";
+        // P5.6 (SPEC-017 2.5): the steps in order, the items once each and sorted, and the case's
+        // processor time from the metrics of the `basic` level the run stated (P10.1).
+        const auto& plain = rec["cases"][1];
+        expect(plain["steps"] == json::parse(R"([{"name":"mcpp build","t":1.0,"ms":5.0,"cpu_ms":4.0,"status":0,"build":"b1"}])"))
+            << plain.dump();
+        expect(plain["exercised"] == json::parse(R"(["command build","flag build --target"])")) << plain.dump();
+        expect(plain.value("cpu_ms", 0.0) == 4.0) << "the case's processor time: " << plain.dump();
         bool kept = false;
         for (const auto& f : s::glob(t.at("app/target/mtest/runs"), "*/cases.ndjson")) {
             const auto c = s::read_file(f);
             kept = kept || c.contains(R"("checks":{"failed":1,"held":4})") || c.contains(R"("checks":{"held":4,"failed":1})");
         }
         expect(kept) << "the kept run has no checks";
+        // P12.4: the machine the run was on, and the level it stated.
+        const auto index = s::json_lines(s::read_file(t.at("app/target/mtest/index.ndjson")));
+        expect(fatal(!index.empty()));
+        expect(!index.back().value("machine", "").empty() && index.back().value("processors", 0) > 0
+               && index.back().value("monitor", "") == "basic") << index.back().dump();
         // O8: one case run alone.
         auto one = app({"test", "--case", "plain", "--message-format", "json"});
         expect(fatal(e2e::succeeded(one)));
