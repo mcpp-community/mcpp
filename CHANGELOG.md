@@ -4,6 +4,19 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [Unreleased]
+
+### Fixed
+
+- A program's resource script is compiled with its package's `include_dirs` expanded, as the
+  compile steps expand them: a relative entry is a glob, and `*/include` names the directories it
+  matches. It reached `llvm-windres` as written, and LLVM's tools on Windows expand wildcards in
+  their own command line against files, so the preprocessor saw several inputs and refused
+  ("cannot specify -o when generating multiple output files"); on other hosts the literal `*`
+  found nothing. Every program of a package whose `include_dirs` name an archive's wrap layer
+  failed so on Windows, among them compat.protobuf's `protoc` host tool, which gRPC's code
+  generation builds.
+
 ## [2026.11.20.1] - 2026-11-20
 
 ### Added

@@ -15,6 +15,7 @@ import mcpp.home;
 import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
+import mcpp.modgraph.scanner;
 import mcpp.source_kind;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
@@ -386,9 +387,25 @@ std::expected<void, std::string> step13_windows_resources(PrepareState& state, B
                 // Where the resource compiler looks for a script's includes and
                 // files: the package's directory, then its include_dirs. The
                 // scan resolves them the same way.
+                //
+                // A relative entry is a glob, expanded as the compile steps
+                // expand it (package_root.cpp): `*/include` names the
+                // directories it matches. Passed as written, the `*` reached
+                // llvm-windres, and LLVM's tools on Windows expand wildcards
+                // in their own command line -- against FILES -- so the
+                // preprocessor saw several inputs and refused ("cannot specify
+                // -o when generating multiple output files"). Every program of
+                // an index package with a wrap-layer `*/` include failed so
+                // (compat.protobuf's protoc host tool).
                 std::vector<std::filesystem::path> rcIncludes{S.dir};
-                for (auto const& d : M.buildConfig.includeDirs)
-                    rcIncludes.push_back(d.is_absolute() ? d : (S.dir / d));
+                for (auto const& d : M.buildConfig.includeDirs) {
+                    if (d.is_absolute()) {
+                        rcIncludes.push_back(d);
+                        continue;
+                    }
+                    for (auto& dir : mcpp::modgraph::expand_dir_glob(S.dir, d.generic_string()))
+                        rcIncludes.push_back(dir);
+                }
                 std::error_code mkEc;
                 std::filesystem::create_directories(resDir, mkEc);
 
