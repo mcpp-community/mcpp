@@ -48,7 +48,9 @@ install a version that did not exist yet.
 tag from `mcpp.toml`) does all of this:
 
 ```
-build ×4 at once (linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64)
+find: the tag's commit and tree, and the ci.yml run that verified the tree
+  → promote that run's four archives (checksums and version checked)
+    or, without such a run, build ×4 at once (linux x86_64 / linux aarch64 / macOS ARM64 / Windows x64)
   [canaries beside them, when started by hand with `canaries`]
   → create-release: GitHub Release v<version> with every archive + .sha256 sidecars
   → recompute every payload hash and publish immutable mcpp-release.json
@@ -68,6 +70,20 @@ merges the index PR after that (§3):
 ```bash
 GITCODE_TOKEN=... MIRROR_HOSTS=gtc bash .github/tools/mirror_res.sh mcpp <version>   # gtc on PATH
 ```
+
+**Promoted or built (@NEXT@+).** The four builds are
+`release-build.yml`, which `ci.yml` also runs in its `full` tier; there its
+Linux unit and C++ e2e shards test the program of the Linux archive. A `full`
+run that passes leaves the artifact `verified-<tree>`. `find` reads the tag's
+tree: when a run verified it and still keeps its four `release-*` archives
+(seven days), `promote` takes them, checks each `.sha256` sidecar and the
+version the Linux program reports, and the release ships the archives that run
+tested. Otherwise the four builds run. The run's summary states which it did.
+
+A push to main whose tree a run verified runs no test: its `register` job names
+that run as main's (`.github/tools/main_run.sh`). The release pull request
+therefore passes a `ci:full` run before it is merged, and nothing moves main
+between that run and the merge; main's run is not cancelled.
 
 The four builds start together and keep their archives as artifacts;
 `create-release` creates the release with all of them once every build has
@@ -319,9 +335,11 @@ would again let the index guard and the installed version drift apart.
 [ ] version bumped in mcpp.toml + fingerprint.cppm (one commit)
 [ ] CHANGELOG entry, in English (it is the release notes; commits and pull requests are English too)
 [ ] `bash .github/tools/check_version_pins.sh` passes (verifies `mcpp.toml` = `MCPP_VERSION`, and `.xlings.json` is not newer)
-[ ] merge to main, CI green
+[ ] the release pull request passes a `ci:full` run, its last commit included (it leaves `verified-<tree>`)
+[ ] merge to main with no later change; main's run registers the verified run
 [ ] gh workflow run release.yml --ref main
-[ ] release.yml green (4 builds + immutable manifest + publish-ecosystem)
+[ ] release.yml green; its summary says "Promoted" (else it built, and says why)
+[ ] release.yml green (4 archives + immutable manifest + publish-ecosystem)
 [ ] downloaded mcpp-release.json regenerates byte-identically from public assets
 [ ] GitCode mirrored (release started with `gitcode`, or MIRROR_HOSTS=gtc locally)
 [ ] mirrors serve all four platforms on BOTH hosts, sha256 recomputed

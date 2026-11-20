@@ -128,6 +128,9 @@ jobs:
   # be the same suite, toolchain and binary as `build-test`.
   toolchain-gcc:
     name: "toolchain: gcc (cold self-host)"
+    # Another toolchain's build of mcpp, or another project's: a checkpoint's (`full`), not each
+    # push's (design 2026-11-20 §7.2).
+    if: inputs.set == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -150,6 +153,9 @@ jobs:
   # builder: a runner apiece would cost more in setup than it saves.
   toolchain-cross:
     name: "toolchain: musl + llvm"
+    # Another toolchain's build of mcpp, or another project's: a checkpoint's (`full`), not each
+    # push's (design 2026-11-20 §7.2).
+    if: inputs.set == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -197,6 +203,9 @@ jobs:
   # resolves deps through.
   integration-xlings:
     name: "integration: mcpp builds & runs xlings"
+    # Another toolchain's build of mcpp, or another project's: a checkpoint's (`full`), not each
+    # push's (design 2026-11-20 §7.2).
+    if: inputs.set == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:

@@ -1,17 +1,37 @@
 #!/usr/bin/env bash
 # The body of the use-built-mcpp action; see action.yml for what it provides.
 #
-# Usage: use.sh <host> <mirror>
+# Usage: use.sh <host> <mirror> [host|release]
 set -euo pipefail
 
 host="$1"
 mirror="$2"
+form="${3:-host}"
 
 dir="$RUNNER_TEMP/mcpp-built"
 case "$host" in
     windows-*) exe=mcpp.exe; dir="$(cygpath -u "$dir")" ;;
     *)         exe=mcpp ;;
 esac
+
+# The release form: the program of the host's versioned archive, as install.sh
+# unpacks it, placed where the built binary would be.
+if [ "$form" = release ]; then
+    rel="$RUNNER_TEMP/mcpp-release"
+    [ "${host#windows-}" != "$host" ] && rel="$(cygpath -u "$rel")"
+    archive=$(find "$rel" -maxdepth 1 -type f \( -name 'mcpp-*-*.tar.gz' -o -name 'mcpp-*-*.zip' \) \
+                | grep -E '/mcpp-[0-9][^/]*-[a-z]' | head -1 || true)
+    [ -n "$archive" ] || { echo "::error::the release archive of $host is not in the artifact"; ls -la "$rel" || true; exit 1; }
+    unpacked="$RUNNER_TEMP/mcpp-release-root"
+    mkdir -p "$unpacked" "$dir"
+    case "$archive" in
+        *.zip) (cd "$unpacked" && unzip -q "$archive") ;;
+        *)     tar -xzf "$archive" -C "$unpacked" ;;
+    esac
+    wrapper="$(basename "$archive")"; wrapper="${wrapper%.tar.gz}"; wrapper="${wrapper%.zip}"
+    cp "$unpacked/$wrapper/bin/$exe" "$dir/$exe"
+    echo "the program under test is the release form: $(basename "$archive")"
+fi
 bin="$dir/$exe"
 if [ ! -f "$bin" ]; then
     echo "::error::the artifact mcpp-built-$host holds no $exe"

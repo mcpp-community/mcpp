@@ -108,6 +108,11 @@ gh pr create --title "chore: bump version to $NEW_VERSION" --body "..."
 然后推送（标签在 push 启动运行时读取）。这样 PR 自己的运行就是全集，结果在 PR 的检查中可见。不要以
 `gh workflow run ci.yml --ref <分支>` 另开一次运行，也不要取消 PR 的运行（见 mcpp-contributing 第 5 节）。
 
+全集运行通过时留下 `verified-<tree>`（设计 2026-11-20 §5.22），它的 `release-form` 作业留下四个发布归档。
+版本号的两处、CHANGELOG 与文档中 `@NEXT@` 的替换都在这次运行之前提交：之后的任何改动都改变树，标记随之失效。
+合入（squash）之后 main 的树与被验证的树相同，main 的运行只登记、保存缓存，不再运行测试，**不取消它**。
+合入与打 tag 之间 main 移动过时，发布照常构建，摘要写明原因。
+
 ### 3. 创建并推送 tag
 
 ```bash
@@ -115,21 +120,26 @@ git tag "v$NEW_VERSION"
 git push origin "v$NEW_VERSION"
 ```
 
-Tag push 会自动触发 `release.yml` workflow。
+Tag push 会自动触发 `release.yml` workflow。它的 `find` 作业由 tag 得到树：有运行验证过这棵树、且仍保留
+四个 `release-*` 归档（七天）时，`promote` 提升它们（核对 `.sha256` 与 Linux 程序报告的版本），不再构建；
+否则运行 `release-build.yml` 的四个构建。运行摘要写明 "Promoted" 或 "Built" 及原因。
 
 ### 4. 监控 Release CI
 
-Release workflow 的四个平台构建**同时开始**，各自把归档留作 artifact；`create-release`
-在四个构建都通过后一次创建带全部归档的 GitHub release（设计 2026-11-14）：
+Release workflow 先由 `find` 决定提升还是构建。构建时四个平台构建（`release-build.yml`）**同时开始**，
+各自把归档留作 artifact；`create-release` 在四个构建或 `promote` 通过后一次创建带全部归档的 GitHub
+release（设计 2026-11-14、2026-11-20 §5.22）：
 
 | Job | 平台 | 产物 | 依赖 |
 |-----|------|------|------|
 | `canaries` | — | 生态项目（xlings、mcppls）用候选版本构建 | 仅手动发布且勾选 `canaries` 时运行 |
-| `build-release` | Linux x86_64 | `mcpp-X.Y.Z-linux-x86_64.tar.gz`、源码包、`mcpp.lua`、`install.sh` | 无 |
-| `build-linux-aarch64` | Linux aarch64（交叉） | `mcpp-X.Y.Z-linux-aarch64.tar.gz` | 无 |
-| `build-macos` | macOS ARM64 | `mcpp-X.Y.Z-macosx-arm64.tar.gz` | 无 |
-| `build-windows` | Windows x86_64 | `mcpp-X.Y.Z-windows-x86_64.zip` | 无 |
-| `create-release` | — | GitHub release、覆盖全部归档的 `SHA256SUMS` | 四个构建（及运行时的 canaries） |
+| `find` | — | tag、提交、树与验证它的运行 | 无 |
+| `promote` | — | 被验证运行的四个归档，作为 `release-promoted` | `find` 找到运行时 |
+| `build-release` | Linux x86_64 | `mcpp-X.Y.Z-linux-x86_64.tar.gz`、源码包、`mcpp.lua`、`install.sh` | `find` 未找到运行时（`build`） |
+| `build-linux-aarch64` | Linux aarch64（交叉） | `mcpp-X.Y.Z-linux-aarch64.tar.gz` | `find` 未找到运行时（`build`） |
+| `build-macos` | macOS ARM64 | `mcpp-X.Y.Z-macosx-arm64.tar.gz` | `find` 未找到运行时（`build`） |
+| `build-windows` | Windows x86_64 | `mcpp-X.Y.Z-windows-x86_64.zip` | `find` 未找到运行时（`build`） |
+| `create-release` | — | GitHub release、覆盖全部归档的 `SHA256SUMS` | 四个构建或 `promote`（及运行时的 canaries） |
 | `release-manifest` | — | `mcpp-release.json` | `create-release` |
 | `publish-ecosystem` | — | 镜像到 xlings-res 双端 + 开索引 bump PR | `release-manifest` |
 

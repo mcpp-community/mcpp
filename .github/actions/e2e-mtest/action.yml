@@ -41,8 +41,7 @@ runs:
         HOST: ${{ inputs.host }}
       run: |
         set -euo pipefail
-        run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 \
-                --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        run=$(bash .github/tools/main_run.sh)  # main's, or the run it registered (design 2026-11-20 §5.22)
         if [ -z "$run" ]; then echo "no successful run of main: the suite is divided by count"; exit 0; fi
         rm -rf "$RUNNER_TEMP/e2e-stores"
         if ! gh run download "$run" -R "$GITHUB_REPOSITORY" -p "e2e-store-$HOST-*" -D "$RUNNER_TEMP/e2e-stores" 2>/dev/null; then
