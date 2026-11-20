@@ -30,4 +30,4 @@ mcpplibs.os = "0.4.7"
 # state its contract in isolation; the root `tests/unit/` states the facts two
 # layers must agree on.
 [dev-dependencies]
-mcpplibs.mtest = "0.10.0"
+mcpplibs.mtest = "0.11.0"
