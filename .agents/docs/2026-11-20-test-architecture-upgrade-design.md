@@ -5,7 +5,7 @@ status: active
 
 # 生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）
 
-**日期：** 2026-11-20 · **版本：** v4（未实施。负责人 2026-11-20 确认 N1 至 N6，N7 不发出，确定本文为生态级的测试与 CI 方案（1.1），确认评审中补充的 5.16 至 5.22；2026-11-21 确认 N8 至 N10，5.19 不每夜运行，5.22 按树认定而不以合并队列为前提，mcpp 的拉取请求复用 #984） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）、mtest 0.10.0、
+**日期：** 2026-11-20 · **版本：** v5（实施于 mcpp #984 等六个仓库，记录在第 14 节。负责人 2026-11-20 确认 N1 至 N6，N7 不发出，确定本文为生态级的测试与 CI 方案（1.1），确认评审中补充的 5.16 至 5.22；2026-11-21 确认 N8 至 N10，5.19 不每夜运行，5.22 按树认定而不以合并队列为前提，mcpp 的拉取请求复用 #984） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）、mtest 0.10.0、
 compat.doctest 2.4.12、mcpplibs/boost-m 拉取请求 5（`e7cc105c`） · **前文：**
 [CI 与发布的时间成本](2026-11-14-ci-and-release-time-cost-design.md)、
 [生态规则收敛方案](2026-11-19-ecosystem-rule-convergence-design.md)（第 11 节，包的实例）、
@@ -810,3 +810,52 @@ doctest 适配器（5.14）、依赖的调试信息（5.15）。boost-m 自己�
 
 仍未核对、列为实施中的前提的各项：5.5 的槽位协议与现有 generation 的衔接（只读了注释）；5.3 的 BMI 在 Clang 与 MSVC 上
 是否逐字节可复现；5.22 的两项前提；5.15 中工具链运行时库的调试信息的份额；mtest 库不由缓存提供的成因。
+
+## 14. 实施记录
+
+### 14.1 各仓库
+
+| 仓库 | 内容 | 状态 |
+|---|---|---|
+| mcpplibs/os | O1：`machine::processor_model()`；0.4.7 | 已发布 |
+| mcpp-community/mtest | T1 至 T11；0.11.0。0.11.1 增加 `time_left()`：`e2e::run` 让一条命令在用例余下的时间之内结束，扣除结束它与报告所需的时间（K1 的「命令的时限取用例的余量」） | 已发布 |
+| mcpplibs/cmdline | 0.0.5 导出 `snapshot(app)`：M12 由命令行的定义取得命令与选项 | 已发布 |
+| mcpplibs/mcpp-index | #865（cmdline 0.0.5）、#866（mtest 0.11.1） | 已合入 |
+| openxlings/xim-pkgindex | #1210（xim:mtest 0.11.0）；#1211：链接条目（14.3 第 5 项）与 xim:mtest 0.11.1 | #1211 待合入 |
+| mcpp-community/mcpp | #984：S1、S2、M0 至 M14、K1 至 K9、CI1 至 CI9 | 本拉取请求 |
+
+### 14.2 测量
+
+| 项 | 之前 | 之后 | 条件 |
+|---|---|---|---|
+| 新检出的 mcpp 在已填充的单元缓存上构建（5.3） | 164 s | 4.1 s，288 个编译全部由缓存放置 | 同一 home，第二个检出 |
+| 依赖的调试信息（5.15）：只依赖 mtest 的工程的测试程序 | 43.7 MB，构建 15.9 s | 8.3 MB，构建 7.2 s | `dev`，`dependency_debug` 缺省（`"lines"`） |
+| mtest 库：一个文件的首个用例与期望（T4） | 1.1 s | 265 ms | GCC；目标 150 ms，未达到 |
+
+### 14.3 与第 5 至 12 节的差别
+
+1. **M6、M7、M9 的位置。** 预算的客户在 `src/build/schedule/detach_codegen.cppm` 与 `src/home/files.*`，运行器的记录与
+   夹具在 `src/build/execute.cppm` 与新的 `src/build/test_fixture.cppm`，没有成为 `modules/budget`、`modules/test-run`：
+   它们接入运行器的工作循环及其类型（`TestRunnable`、分片、`TestResult`），这些类型位于 `execute.cppm`；运行器移出
+   `src/` 是一次单独的移动。新包为 `modules/build-record`、`modules/unit-cache`、`modules/surface`。
+2. **K1 的用到的项来自 mcpp 自身。** kit 不解析命令行：解析器知道一个选项属于哪个命令，kit 重新实现它会与之分歧。
+   `MCPP_SURFACE_RECORD` 命名一个文件，调用的每个进程追加它用到的命令、选项、键与原因（每项每进程一次）；kit 读取后
+   写出 `exercise`。
+3. **M13 的记录来自构建目录。** 头文件的读者取自 ninja 的依赖日志（格式 4）与扫描的 `.ddi.dep`，而不是单元缓存的清单：
+   清单只存在于缓存保留的编译（cl.exe 的编译与没有缓存的 mcpp 没有），构建目录记录它构建的每个单元。工程的某个单元
+   没有记录时，头文件影响全部测试，并说明原因。
+4. **K5 以报告的策略声明。** 诊断行按 `warning:`、`error:` 两个模式以 `report` 策略声明，运行给出各用例的数目，不逐个用例
+   声明。
+5. **K2 与上游的链接条目。** 继承的 home 以 `[xlings] upstream` 指向共享 home 与用户的 `~/.xlings`，不再链接载荷、不复制
+   subos。实施中发现：上游的版本目录在下游是指向所有者载荷的链接，配方的 `config()` 钩子经由它写入了所有者的文件——
+   用户 home 中 GCC 的 specs 与 binutils 的 `ld` 包装被写入了临时 home 的路径（#293 的机制）。已就地修复，并在配方中
+   修正：链接条目走借用的分支，`ld` 包装跳过链接条目（xim-pkgindex #1211）。此后 914 检查共享 home 在一次构建后没有
+   文件被写入。
+6. **CI6。** home 夹具的恢复即 `bootstrap-mcpp` 的沙箱缓存，其键（`mcpp.toml`、`.xlings.json`）就是夹具的身份；不另设
+   缓存。
+7. **CI2 的档位。** 发布形态只在 `full` 档构建（`release-build.yml`，与 `release.yml` 同一组作业），Linux 的单元与 C++ e2e
+   分片测试 Linux 归档中的程序；`pr` 档测试宿主构建。发布形态是又一次自举构建，`pr` 档的目的是时间。macOS、Windows
+   与 aarch64 的归档由各自的冒烟步骤核对，与发布相同。
+8. **P10.4。** 不实现：工作线程在同一进程中运行测试程序，系统对子进程的计量按进程汇总，一个程序的用量无法分离
+   （SPEC-017 写明）。
+9. **CI10。** 按 7.3，在固定版本移动到含 5.3 的版本之后。
