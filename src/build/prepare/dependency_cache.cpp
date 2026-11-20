@@ -249,9 +249,7 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
         // dirs are relativized against it so a key survives a different
         // MCPP_HOME; a project-local payload falls back to the `<pkg>`
         // prefix inside fill_package_config and is equally stable.
-        ck::fill_package_config(pa, state.packages[idx],
-                                state.storeRoots.empty() ? std::filesystem::path{}
-                                                   : state.storeRoots.front());
+        ck::fill_package_config(pa, state.packages[idx], state.storeRoots, mcpp::build::program_out_root());
         pa.sources = pkgSources[idx];
         const auto qname = mcpp::build::qualified_package_name(state.packages[idx].manifest);
         // A GCC BMI records its imports' paths as the module map spells

@@ -1828,9 +1828,12 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
             // A member's program keeps its cache in the project (step 9).
             const bool member = state.m->package.virtualRoot && i != 0
                              && state.isWorkspaceMemberPackage(i);
-            entry["outDir"] = state.programOutDir(member ? *state.root : state.workRoot, pm,
-                                                  i < state.activeFeaturesByPackage.size()
-                                                      ? state.activeFeaturesByPackage[i] : none)
+            const auto home = state.programOutDirs.find(i);
+            entry["outDir"] = (home != state.programOutDirs.end()
+                                   ? home->second
+                                   : state.programOutDir(member ? *state.root : state.workRoot, pm,
+                                                         i < state.activeFeaturesByPackage.size()
+                                                             ? state.activeFeaturesByPackage[i] : none))
                                   .generic_string();
             return entry;
         }

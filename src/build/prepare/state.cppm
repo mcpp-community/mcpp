@@ -810,6 +810,9 @@ struct PrepareState {
     std::function<std::filesystem::path(const std::filesystem::path&,
                                         const mcpp::manifest::Manifest&,
                                         const std::vector<std::string>&)> programOutDir;
+    // The OUT_DIR of each package whose program ran in the home (design
+    // 2026-11-20 §5.2), by its index: what the graph document states for it.
+    std::map<std::size_t, std::filesystem::path> programOutDirs;
     // What this configuration uses outside its own directory, written into it
     // as `uses.list` so that `mcpp clean --stale` keeps these and collects the
     // rest (mcpp#874): the `.build-mcpp/out/<hash>` of each program it ran and

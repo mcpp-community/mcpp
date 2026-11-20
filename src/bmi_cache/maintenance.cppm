@@ -353,10 +353,39 @@ std::vector<Entry> walk_variant_entries() {
     return out;
 }
 
+// THE OUTPUTS OF BUILD PROGRAMS IN THE HOME (design 2026-11-20 §5.2): one per
+// package, version and contract under `build-cache/v1/out`, each last used when
+// a build last ran or replayed the program (its `.mcpp-used` is touched then).
+// A directory a build still names is made again by the program's next run.
+std::vector<Entry> walk_program_out_entries() {
+    std::vector<Entry> out;
+    std::error_code ec;
+    const auto root = mcpp::home::cache_root() / "out";
+    if (!std::filesystem::exists(root, ec)) return out;
+    for (auto& pkg : std::filesystem::directory_iterator(root, ec)) {
+        if (!pkg.is_directory()) continue;
+        for (auto& v : std::filesystem::directory_iterator(pkg.path(), ec)) {
+            if (!v.is_directory()) continue;
+            Entry e;
+            e.dir   = v.path();
+            e.kind  = "program-out";
+            e.key   = v.path().filename().string();
+            e.label = std::format("{} (build program's output, {})", pkg.path().filename().string(), e.key);
+            std::error_code fe;
+            e.accessed = std::filesystem::is_regular_file(e.dir / ".mcpp-used", fe)
+                ? dir_mtime_seconds(e.dir / ".mcpp-used") : dir_mtime_seconds(e.dir);
+            measure(e);
+            out.push_back(std::move(e));
+        }
+    }
+    return out;
+}
+
 std::vector<Entry> walk_collectable() {
     auto out = walk_pkg_entries();
     for (auto& e : walk_tool_entries()) out.push_back(std::move(e));
     for (auto& e : walk_variant_entries()) out.push_back(std::move(e));
+    for (auto& e : walk_program_out_entries()) out.push_back(std::move(e));
     return out;
 }
 

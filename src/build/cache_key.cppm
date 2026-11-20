@@ -307,6 +307,16 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
 void fill_package_config(PackageAxes&                         out,
                          const mcpp::modgraph::PackageRoot&   pkg,
                          const std::filesystem::path&         storeRoot);
+// THE PATHS OF A KEY BY THEIR ROLE (design 2026-11-20 §5.2): a directory under
+// any of `storeRoots` is `<store>/...`, under `outRoot` (the home's build-program
+// outputs, `<home>/build-cache/v1/out`) `<out>/...`, under the package's root
+// `<pkg>/...`. Only the first store root was replaced before, so a dependency's
+// include directory from a second store (nlohmann.json's for mcpplibs.mtest)
+// kept the user's home in the key.
+void fill_package_config(PackageAxes&                              out,
+                         const mcpp::modgraph::PackageRoot&        pkg,
+                         const std::vector<std::filesystem::path>& storeRoots,
+                         const std::filesystem::path&              outRoot);
 
 } // namespace mcpp::build::cache_key
 
@@ -611,6 +621,16 @@ void fill_package_config(PackageAxes&                        out,
                          const mcpp::modgraph::PackageRoot&  pkg,
                          const std::filesystem::path&        storeRoot)
 {
+    std::vector<std::filesystem::path> roots;
+    if (!storeRoot.empty()) roots.push_back(storeRoot);
+    fill_package_config(out, pkg, roots, {});
+}
+
+void fill_package_config(PackageAxes&                              out,
+                         const mcpp::modgraph::PackageRoot&        pkg,
+                         const std::vector<std::filesystem::path>& storeRoots,
+                         const std::filesystem::path&              outRoot)
+{
     const auto& bc = pkg.manifest.buildConfig;
 
     out.cflags      = bc.cflags;
@@ -679,14 +699,17 @@ void fill_package_config(PackageAxes&                        out,
 
     // Include dirs are absolute payload paths under the xpkgs store; make them
     // store-relative so the key does not encode this machine's MCPP_HOME.
-    auto storeStr = storeRoot.generic_string();
     auto relativize = [&](const std::filesystem::path& p) {
         auto s = p.generic_string();
-        if (!storeStr.empty() && s.starts_with(storeStr))
-            return "<store>" + s.substr(storeStr.size());
-        auto pkgStr = pkg.root.generic_string();
-        if (!pkgStr.empty() && s.starts_with(pkgStr))
-            return "<pkg>" + s.substr(pkgStr.size());
+        auto under = [&](const std::filesystem::path& root) {
+            const auto r = root.generic_string();
+            return !r.empty() && s.starts_with(r) && (s.size() == r.size() || s[r.size()] == '/')
+                ? std::optional<std::string>(s.substr(r.size())) : std::nullopt;
+        };
+        if (auto rest = under(outRoot)) return "<out>" + *rest;
+        for (auto const& store : storeRoots)
+            if (auto rest = under(store)) return "<store>" + *rest;
+        if (auto rest = under(pkg.root)) return "<pkg>" + *rest;
         return s;
     };
     auto add_dirs = [&](const std::vector<std::filesystem::path>& dirs,

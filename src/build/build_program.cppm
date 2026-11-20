@@ -552,6 +552,18 @@ install_hook_env(const BuildProgramEnv& env);
 // `compile()`. Written by the build programs' graph (mcpp#797).
 std::string synthesised_rule_program(const std::vector<std::string>& modules);
 
+// THE OUTPUTS OF A PACKAGE WHOSE SOURCES ARE NAMED, IN THE HOME (design
+// 2026-11-20 §5.2). A program's OUT_DIR reaches its package's cache key through
+// the include directories it states; under each project's `target/` it gave
+// every project its own key for openkal-musl and openkal-windows, and the
+// runtime above them was compiled again in each (478 s of a 7 s step, §3.1).
+// `<program_out_root()>/<package>@<version>/<digest>/` holds `out/` (OUT_DIR)
+// and `run/` (the program's run record), the digest being the contract's with
+// OUT_DIR aside: one contract, one directory, so a second project replays the
+// directives the first recorded and nothing writes the files another reads.
+std::filesystem::path program_out_root();
+std::string program_contract_digest(const std::filesystem::path& root, const BuildProgramEnv& env);
+
 // Runs the build program of the package at `root` -- `env.programBinary`, as
 // the build programs' graph compiled it -- or replays its cached directives
 // when nothing it depends on changed, and applies them to `m`.
@@ -1559,6 +1571,15 @@ std::expected<void, std::string> run_build_program_impl(
 
 std::string synthesised_rule_program(const std::vector<std::string>& modules) {
     return synthesised_rule_program_impl(modules);
+}
+
+fs::path program_out_root() { return mcpp::home::cache_root() / "out"; }
+
+std::string program_contract_digest(const fs::path& root, const BuildProgramEnv& env) {
+    auto e = contract_env(root, "<out>", env, /*warn=*/false);
+    e.emplace_back("(program)", env.programIdentity);
+    e.emplace_back("(graph document)", env.graphDigest);
+    return contract_hash(e).substr(0, 16);
 }
 
 std::expected<void, std::string> run_build_program(

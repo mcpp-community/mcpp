@@ -2045,6 +2045,32 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             } else {
                 bpEnv.programError = program.error();
             }
+            // A PACKAGE WHOSE SOURCES ARE NAMED RUNS ITS PROGRAM IN THE HOME
+            // (design 2026-11-20 §5.2): its OUT_DIR and run record are keyed by
+            // its contract, so every project that builds it in one
+            // configuration states the same include directories and shares
+            // its cache entry. Held while the program runs: a second project
+            // waits, then replays the directives the first recorded.
+            std::optional<mcpp::home::FileLock> outLock;
+            if (program && sources_named(state, i) && !state.overrides.describes()) {
+                auto label = std::format("{}@{}", pkg.manifest.package.name, pkg.manifest.package.version);
+                for (auto& c : label)
+                    if (c == '/' || c == '\\' || c == ':') c = '_';
+                const auto dir = mcpp::build::program_out_root() / label
+                               / mcpp::build::program_contract_digest(pkg.root, bpEnv);
+                bpEnv.outDir = dir / "out";
+                bpEnv.genBase = bpEnv.outDir;
+                bpEnv.artifactsDir = dir / "run";
+                outLock = mcpp::home::FileLock::acquire(
+                    dir, "run.lock", std::format("{}'s build program", label), std::chrono::seconds{2},
+                    [&](std::string_view holder) {
+                        mcpp::ui::info("note", std::format("waiting for {} ({})", holder.empty() ? label : holder,
+                                                           mcpp::home::spelling(dir)));
+                    });
+                // Its last use, which `mcpp cache gc` collects by.
+                std::ofstream(dir / ".mcpp-used", std::ios::binary | std::ios::trunc);
+                state.programOutDirs[i] = bpEnv.outDir;
+            }
             auto& bcDep = pkg.manifest.buildConfig;
             const auto cxxN = bcDep.cxxflags.size();
             const auto cN = bcDep.cflags.size();
