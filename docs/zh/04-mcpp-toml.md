@@ -1101,7 +1101,7 @@ CI 上都跑通过。
 一半的文件。MSVC 被留在一边不动——`/ifcOnly` 的开销与 `.ifc` 的
 原子性都未经测量，两者任何一个猜错都是无声的。
 
-### 可用内存（`memory_threshold`）*（@NEXT@+）*
+### 可用内存（`memory_threshold`）*（2026.11.21.1+）*
 
 ```toml
 [build]
@@ -1654,7 +1654,7 @@ ldflags  = []
 - 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
   （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
   覆盖一个内置定义。
-- **`dependency_debug`（@NEXT@+）** 陈述来自包存储与 git 的依赖的调试信息：`true`（与 profile 的 `debug` 相同）、
+- **`dependency_debug`（2026.11.21.1+）** 陈述来自包存储与 git 的依赖的调试信息：`true`（与 profile 的 `debug` 相同）、
   `false`（不带）、`"lines"`（只带行表：GCC 的 `-g1`、Clang 的 `-gline-tables-only`，由工具链行给出）。省略时，`dev`
   与 `debug` 在其 `debug` 打开时取 `"lines"`，其余 profile 取其 `debug`。工作空间的成员与路径依赖保持 profile 的
   `debug`。经由依赖的回溯仍给出文件与行号；在只依赖 mtest 的工程上实测，测试程序由 43.7 MB 降为 8.3 MB，构建由

@@ -86,7 +86,7 @@ The note is given when the rebuild started at a module of one file with at least
 importing units, once a build directory. Beside it, a build that replaced or kept BMIs
 states which ([04](04-mcpp-toml.md), `bmi_cutoff`).
 
-## What the home's cache places (@NEXT@+)
+## What the home's cache places (2026.11.21.1+)
 
 Beside the entries, the home's build cache (`build-cache/v1/`, [25](25-home-indices-and-store.md))
 keeps what one build made for the next, in any project of the home, whenever `[build] cache`
@@ -109,7 +109,7 @@ is the home's (the default):
 
 Entries no build used within `[cache] unused_days` are removed as other entries are.
 
-## The record of a build (@NEXT@+)
+## The record of a build (2026.11.21.1+)
 
 A build records each edge it ran: its package, its time, and, for a compile, the compiler's
 processor time and largest resident set and whether the unit cache placed it; and the units

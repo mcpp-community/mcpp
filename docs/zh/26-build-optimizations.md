@@ -75,7 +75,7 @@ note  hub.cppm is the whole of module hub, which 46 units import: its function b
 重编译的起点是一个只有一个文件的模块、且导入它的单元不少于 5 个时给出这条说明,每个构建目录一次。
 此外,替换或保留了 BMI 的构建说明是哪些([04](04-mcpp-toml.md),`bmi_cutoff`)。
 
-## home 的缓存放置的内容（@NEXT@+）
+## home 的缓存放置的内容（2026.11.21.1+）
 
 在各条目之外，`[build] cache` 为 home 的（缺省）时，home 的构建缓存（`build-cache/v1/`，[25](25-home-indices-and-store.md)）
 为 home 中任何工程的下一次构建保存一次构建的产物：
@@ -91,7 +91,7 @@ note  hub.cppm is the whole of module hub, which 46 units import: its function b
 
 在 `[cache] unused_days` 之内没有构建使用过的条目与其他条目一样被移除。
 
-## 构建的记录（@NEXT@+）
+## 构建的记录（2026.11.21.1+）
 
 构建记录它运行的每条边：所属的包、用时，编译另有编译器的处理器时间与最大驻留集，以及是否由单元缓存放置；
 以及缓存为每个包提供的单元数。`MCPP_BUILD_RECORD=<文件>` 把该次调用每次构建的记录追加到该文件，每条边一行

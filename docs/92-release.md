@@ -71,7 +71,7 @@ merges the index PR after that (§3):
 GITCODE_TOKEN=... MIRROR_HOSTS=gtc bash .github/tools/mirror_res.sh mcpp <version>   # gtc on PATH
 ```
 
-**Promoted or built (@NEXT@+).** The four builds are
+**Promoted or built (2026.11.21.1+).** The four builds are
 `release-build.yml`, which `ci.yml` also runs in its `full` tier; there its
 Linux unit and C++ e2e shards test the program of the Linux archive. A `full`
 run that passes leaves the artifact `verified-<tree>`. `find` reads the tag's

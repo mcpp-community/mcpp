@@ -254,10 +254,10 @@ envelope says when either has changed since.
 | `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` names each framework's `capabilities` and `session` (SPEC-017 B6) | an IDE choosing between a session and processes |
 | `test-checks` | 2026.11.10.1 | with `test-protocol`: a failure's `source` and `fatal`, and a case's `checks` (`held`, `failed`), as the program reported them (SPEC-017 O3) | an IDE's list of checks |
 | `test-output` | 2026.11.10.1 | with `test-case-stream`: a case's own output, `output`: the program's `output` events, or all the output of a program that ran that case alone, in its program's `cases` and, from events, in its `end` record (SPEC-017 O8) | an IDE's output of one case |
-| `test-steps` | @NEXT@ | with `test-protocol`: a case's `steps` and the surface items it used (`exercised`), its `cpu_ms` and `limit_ms`, and the run's `builds.ndjson` (SPEC-017 P5.6, B4) | a run's report |
-| `test-budget` | @NEXT@ | `mcpp test` states one budget of slots (`MTEST_BUDGET`) its programs' compilers take, and uses a budget its environment states (SPEC-017 O11) | `mtest run`, a runner that runs `mcpp test` |
-| `test-jitter` | @NEXT@ | the jitter a run states (`MTEST_JITTER`, `MTEST_JITTER_SEED`) reaches its programs and its record (SPEC-017 O12) | the jitter workflow |
-| `test-fixtures` | @NEXT@ | run fixtures are served for the programs whose cases use them (`MTEST_SERVE`, `MTEST_FIXTURE_<NAME>`), and a run's `fixtures.ndjson` states them (SPEC-017 O6) | a framework's shared fixtures |
+| `test-steps` | 2026.11.21.1 | with `test-protocol`: a case's `steps` and the surface items it used (`exercised`), its `cpu_ms` and `limit_ms`, and the run's `builds.ndjson` (SPEC-017 P5.6, B4) | a run's report |
+| `test-budget` | 2026.11.21.1 | `mcpp test` states one budget of slots (`MTEST_BUDGET`) its programs' compilers take, and uses a budget its environment states (SPEC-017 O11) | `mtest run`, a runner that runs `mcpp test` |
+| `test-jitter` | 2026.11.21.1 | the jitter a run states (`MTEST_JITTER`, `MTEST_JITTER_SEED`) reaches its programs and its record (SPEC-017 O12) | the jitter workflow |
+| `test-fixtures` | 2026.11.21.1 | run fixtures are served for the programs whose cases use them (`MTEST_SERVE`, `MTEST_FIXTURE_<NAME>`), and a run's `fixtures.ndjson` states them (SPEC-017 O6) | a framework's shared fixtures |
 
 ### How a tool runs mcpp for a project
 
@@ -975,7 +975,7 @@ or `null`, `guide` or `null`, `repo`), `commands` (`list`, `one`, `records`,
 `debug`), `docs`, and `suggest` (the dev-dependency line and repository of mtest)
 when the package has no framework.
 
-### `mcpp emit surface` and the records an invocation appends *(mcpp @NEXT@+)*
+### `mcpp emit surface` and the records an invocation appends *(mcpp 2026.11.21.1+)*
 
 `mcpp emit surface [-o FILE]` writes mcpp's surface, one item per line, `<kind> <name>`, in
 the order `command`, `flag`, `key`, `reason`, each sorted by name:

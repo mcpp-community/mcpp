@@ -1225,7 +1225,7 @@ its final path with `O_TRUNC` and a reader could observe a half-written file.
 MSVC is left alone — neither `/ifcOnly`'s cost nor `.ifc` atomicity has been
 measured, and guessing either wrong is silent.
 
-### Available memory (`memory_threshold`) *(@NEXT@+)*
+### Available memory (`memory_threshold`) *(2026.11.21.1+)*
 
 ```toml
 [build]
@@ -1848,7 +1848,7 @@ anything compiles.
   into the program (`__builtin_LINE()`, `std::source_location::current()` in a
   template's body) and a graph compiled with `-fcontracts` are compared exactly
   under either value. Clang's BMI has no such part and the key has no effect on it.
-- **`dependency_debug` (@NEXT@+)** states the debug information of the dependencies
+- **`dependency_debug` (2026.11.21.1+)** states the debug information of the dependencies
   that come from the package store and from git: `true` (the profile's `debug`),
   `false` (none), `"lines"` (the line tables alone: `-g1` on GCC,
   `-gline-tables-only` on Clang, from the toolchain's row). Omitted, `dev` and `debug`
