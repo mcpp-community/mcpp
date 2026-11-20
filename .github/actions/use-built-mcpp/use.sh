@@ -94,6 +94,14 @@ if [ -n "${XLINGS_BIN:-}" ]; then
 fi
 MCPP_VENDORED_XLINGS="${XLINGS_BIN:-}" "$bin" self config --mirror "$mirror"
 
+# THE RECIPES OF THE CURRENT INDEX. A restored sandbox keeps the index it was
+# saved with, and the tests' homes read this home's index and name this home an
+# upstream (tests/support, tests/e2e/_inherit_toolchain.sh). A recipe older than
+# xim-pkgindex c0023dd wrote its `config()` hook through an upstream's link
+# entry: measured, gcc's specs and binutils' ld wrapper of this home named a
+# case's deleted home after one case, and every later link through them failed.
+MCPP_VENDORED_XLINGS="${XLINGS_BIN:-}" "$bin" index update
+
 # THE TOOLCHAIN THE BUILD USED IS INSTALLED, AS IT WAS WHEN EVERY JOB BUILT.
 # A job that built mcpp itself installed this toolchain as a side effect, and
 # the steps after the build relied on it without saying so: measured on the
