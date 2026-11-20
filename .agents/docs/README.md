@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-367 records.
+368 records.
 
 ## By subject
 
@@ -173,6 +173,10 @@ Records that declare one. Everything else is listed by date below.
 - [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
 - [Where a platform's knowledge belongs: iOS, Android and Web across the engine, the index and the plugins](2026-09-11-platform-targets-design-review.md) — active
 
+### test
+
+- [生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）](2026-11-20-test-architecture-upgrade-design.md) — active
+
 ### toolchain
 
 - [目标基座与执行宿主：sysroot 的通用模型、运行器契约、自备输入，以及同批的发布产物路径（#832）](2026-10-23-target-base-and-execution-host-design.md) — landed
@@ -206,6 +210,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）](2026-11-20-test-architecture-upgrade-design.md) — active
 - [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — landed
 - [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
