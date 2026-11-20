@@ -154,6 +154,7 @@ mcpp.manifest        = { path = "modules/manifest" }
 mcpp.toolchain-model = { path = "modules/toolchain-model" }
 mcpp.buildmcpp       = { path = "modules/buildmcpp" }
 mcpp.build-record    = { path = "modules/build-record" }
+mcpp.unit-cache      = { path = "modules/unit-cache" }
 
 [target.linux.build]
 sources = ["!src/native/windows/**"]
@@ -178,6 +179,7 @@ members = [
     "modules/toolchain-model",
     "modules/buildmcpp",
     "modules/build-record",
+    "modules/unit-cache",
 ]
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.

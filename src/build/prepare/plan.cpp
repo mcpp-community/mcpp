@@ -1067,6 +1067,10 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
         machineMemoryThreshold = (*c)->memoryThreshold;
     }
     ctx.globalDefaultJobs = globalDefaultJobs;
+    if (ctx.cacheMode == CacheMode::Global) {
+        ctx.plan.unitCacheDir = mcpp::home::cache_root() / "unit";
+        ctx.plan.immutableRoots = state.storeRoots;
+    }
     ctx.plan.memoryThreshold = mcpp::build::schedule::resolve_memory_threshold(
         ctx.manifest, machineMemoryThreshold, [](std::string_view bad) {
             mcpp::ui::warning(std::format(

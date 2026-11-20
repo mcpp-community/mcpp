@@ -79,6 +79,40 @@ void age(const fs::path& root, std::chrono::hours ago) {
 }  // namespace
 
 E2E entries{"entries", [] {
+    "927 a fresh checkout's units are placed from the unit cache, and a changed header compiles its includers"_test[s::gcc] = [] {
+        // Design 2026-11-20 §5.3. A unit whose command and read files hold the contents an earlier
+        // compile's did is placed by the compiler executor, and no compiler runs: after `target/`
+        // is removed (a fresh checkout), every object edge of the build record is `served` (A). A
+        // header changed in content compiles the units that read it, and only those (B).
+        s::project p{{"mcpp.toml", "[package]\nname = \"uc\"\nversion = \"0.1.0\"\n\n[targets.uc]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                     {"src/main.cpp", "#include \"value.h\"\nimport uc.a;\nint main() { return a() + VALUE == 3 ? 0 : 1; }\n"},
+                     {"src/value.h", "#define VALUE 2\n"},
+                     {"src/a.cppm", "export module uc.a;\nexport int a() { return 1; }\n"}};
+        const auto record = [&](std::string_view name) { return s::case_dir() / std::format("{}.ndjson", name); };
+        auto objects = [&](std::string_view name) {
+            std::map<std::string, bool> served;   // object -> placed
+            for (const auto& l : s::json_lines(s::read_file(record(name))))
+                if (const auto out = l.value("output", ""); out.ends_with(".o")) served[out] = l.value("served", false);
+            return served;
+        };
+        auto build = [&](std::string_view name) {
+            auto r = p.mcpp({"build"}, {.env = {{"MCPP_BUILD_RECORD", record(name).string()}}});
+            expect(fatal(e2e::succeeded(r))) << name << ": " << s::text(r);
+        };
+        build("first");
+        p.remove("target");
+        build("fresh");
+        const auto fresh = objects("fresh");
+        expect(fatal(fresh.size() >= 2u)) << "A: the record names no object edges\n" << s::read_file(record("fresh"));
+        for (const auto& [object, placed] : fresh) expect(placed) << "A: " << object << " was compiled again";
+        expect(e2e::succeeded(p.mcpp({"run"}))) << "A: the program linked from placed objects";
+        p.write("src/value.h", "#define VALUE 5\n");
+        p.remove("target");
+        build("changed");
+        for (const auto& [object, placed] : objects("changed"))
+            expect(placed == !object.contains("main")) << "B: " << object << (placed ? " was placed" : " was compiled");
+    };
+
     "172 build cache cross project"_test[s::gcc][s::fresh_sandbox] = [] {
         // The global build cache saves work across projects: a dependency's key carries no
         // consumer identity, and the second project has zero compile edges for it (read from

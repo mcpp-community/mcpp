@@ -2623,6 +2623,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         compilerRun->environment(childEnv);
         childEnv.emplace_back("MCPP_MEMORY_THRESHOLD",
                               std::to_string(mcpp::build::read_memory_threshold_sidecar(outputDir)));
+        for (auto& kv : mcpp::build::read_unit_cache_sidecar(outputDir)) childEnv.push_back(std::move(kv));
     }
 
     // The build's record, as the full path keeps it (design 2026-11-20 §5.6).

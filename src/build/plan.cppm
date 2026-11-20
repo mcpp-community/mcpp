@@ -588,6 +588,11 @@ struct BuildPlan {
     // The memory a compiler may start below (design 2026-11-20 §5.5), in bytes:
     // the compiler executor waits below it (MCPP_MEMORY_THRESHOLD in its env).
     std::uint64_t                   memoryThreshold = 0;
+    // The unit cache (design 2026-11-20 §5.3): its directory, empty when the
+    // build uses no global cache, and the roots whose files never change in
+    // place, which the compiler executor reads a path of as its identity.
+    std::filesystem::path              unitCacheDir;
+    std::vector<std::filesystem::path> immutableRoots;
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.

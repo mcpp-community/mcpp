@@ -381,11 +381,41 @@ std::vector<Entry> walk_program_out_entries() {
     return out;
 }
 
+// THE UNITS (design 2026-11-20 §5.3): one per compile key and manifest under
+// `build-cache/v1/unit/<k>/<key>/<manifest>`, last used when a build last
+// placed it (its `manifest.tsv` is touched then).
+std::vector<Entry> walk_unit_entries() {
+    std::vector<Entry> out;
+    std::error_code ec;
+    const auto root = mcpp::home::cache_root() / "unit";
+    if (!std::filesystem::exists(root, ec)) return out;
+    // One walk, its third level the entries: `<shard>/<key>/<manifest>`.
+    std::filesystem::recursive_directory_iterator it(root, ec), end;
+    for (; it != end; it.increment(ec)) {
+        if (ec) break;
+        if (it.depth() < 2 || !it->is_directory()) continue;
+        it.disable_recursion_pending();
+        Entry e;
+        e.dir   = it->path();
+        e.kind  = "unit";
+        e.key   = e.dir.parent_path().filename().string() + "/" + e.dir.filename().string();
+        e.label = std::format("unit {}", e.key);
+        std::error_code fe;
+        e.complete = std::filesystem::is_regular_file(e.dir / "manifest.tsv", fe);
+        if (!e.complete) e.problem = "no manifest.tsv (an interrupted publication)";
+        e.accessed = dir_mtime_seconds(e.complete ? e.dir / "manifest.tsv" : e.dir);
+        measure(e);
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
 std::vector<Entry> walk_collectable() {
     auto out = walk_pkg_entries();
     for (auto& e : walk_tool_entries()) out.push_back(std::move(e));
     for (auto& e : walk_variant_entries()) out.push_back(std::move(e));
     for (auto& e : walk_program_out_entries()) out.push_back(std::move(e));
+    for (auto& e : walk_unit_entries()) out.push_back(std::move(e));
     return out;
 }
 

@@ -174,7 +174,7 @@
 | `runs/<id>/run.json` | 运行记录：`schema`（`mtest.run/1`）、`id`、`started`、`finished`、`status`、`system`、`arch`、`machine`、`commit`、`set`、`selection`、`group`、`monitor`、`ms`、`jobs`、`counts`；`processors`、`memory`、`budget`、`jitter`（@NEXT@） |
 | `runs/<id>/programs.ndjson` | 每个程序进程一行：`name`、`argv`、`status`、`exit`、`ms`、`started_ms`、`worker`、`select`、`resources`、`fixtures`，运行器构建它时的 `build_started_ms` 与 `build_ms`，`usage`（带 `source`：`program` 或 `engine`） |
 | `runs/<id>/cases.ndjson` | 每个用例一行：`program`、`id`、`kind`、`status`、`ms`、`started_ms`、`reason`、`failures`、`metrics`、`bounds`、`tags`、`clauses`；`cpu_ms`、`steps`（`step` 事件的字段，`id` 除外）、`exercised`、`limit_ms`（用例所受的时限，O5；未知时省略）（@NEXT@） |
-| `runs/<id>/builds.ndjson` | 运行器为这次运行所做的构建（@NEXT@）：每条运行过的边一行，`build`（构建记录的标识）、`output`、`package`、`program`（该边所服务的测试程序，可为空）、`started_ms`、`ms`、`cpu_ms`、`peak_bytes`；由缓存提供的包一行，`build`、`package`、`cached`（`true`）、`units` |
+| `runs/<id>/builds.ndjson` | 运行器为这次运行所做的构建（@NEXT@）：每条运行过的边一行，`build`（构建记录的标识）、`output`、`package`、`program`（该边所服务的测试程序，可为空）、`started_ms`、`ms`、`cpu_ms`、`peak_bytes`，单元缓存放置的边另有 `served`（`true`，没有编译器运行）；由缓存提供的包一行，`build`、`package`、`cached`（`true`）、`units` |
 | `runs/<id>/fixtures.ndjson` | 每个运行夹具一行：`name`、`program`、`started_ms`、`ready_ms`、`ended_ms`、`status` |
 
 - **P12.4 机器（@NEXT@）。** `machine` 是机器的类别：处理器的型号，系统不给出型号时为 `<arch>/<逻辑处理器数>`；`processors` 为逻辑处理器数，`memory` 为物理内存的字节数。比较不同运行的用时（O10 的估计、界限、趋势）时，读者**应当**按 `machine` 分组；没有同类的历史时取全部。处理器时间（`cpu_ms`）在同类机器之间可比，墙钟只在同一次运行之内可比。

@@ -27,6 +27,7 @@ struct Usage {
     long long                    endedUnixMs = 0;
     std::optional<double>        cpuMs;
     std::optional<std::uint64_t> peakBytes;
+    bool                         served = false;   // the unit cache placed its outputs; no compiler ran
 };
 // One line, `\n` ended, written in one append so that concurrent compiles do not interleave.
 std::string usage_line(const Usage& u);
@@ -42,6 +43,7 @@ struct Edge {
     double                       ms = 0;
     std::optional<double>        cpuMs;
     std::optional<std::uint64_t> peakBytes;
+    bool                         served = false;   // placed by the unit cache (design 2026-11-20 §5.3)
 };
 // A package the cache served, with the units it placed.
 struct Cached {
@@ -117,6 +119,7 @@ std::string usage_line(const Usage& u) {
     json j = {{"output", u.output}, {"started", u.startedUnixMs}, {"ended", u.endedUnixMs}};
     if (u.cpuMs) j["cpu_ms"] = *u.cpuMs;
     if (u.peakBytes) j["peak_bytes"] = *u.peakBytes;
+    if (u.served) j["served"] = true;
     return j.dump(-1, ' ', false, json::error_handler_t::replace) + "\n";
 }
 
@@ -129,6 +132,7 @@ std::vector<Usage> parse_usage(std::string_view text) {
         u.endedUnixMs = static_cast<long long>(number_of(j, "ended").value_or(0));
         u.cpuMs = number_of(j, "cpu_ms");
         u.peakBytes = bytes_of(j, "peak_bytes");
+        if (auto s = j.find("served"); s != j.end() && s->is_boolean()) u.served = s->get<bool>();
         out.push_back(std::move(u));
     }
     return out;
@@ -146,6 +150,7 @@ void attach(Record& r, const std::vector<Usage>& usage) {
         if (auto it = byOutput.find(e.output); it != byOutput.end()) {
             e.cpuMs = it->second->cpuMs;
             e.peakBytes = it->second->peakBytes;
+            e.served = it->second->served;
         }
 }
 
@@ -156,6 +161,7 @@ std::string to_ndjson(const Record& r) {
                   {"program", e.program}, {"started_ms", e.startedMs}, {"ms", e.ms}};
         if (e.cpuMs) j["cpu_ms"] = *e.cpuMs;
         if (e.peakBytes) j["peak_bytes"] = *e.peakBytes;
+        if (e.served) j["served"] = true;
         out += j.dump(-1, ' ', false, json::error_handler_t::replace) + "\n";
     }
     for (const auto& c : r.cached)
@@ -177,7 +183,8 @@ std::vector<Record> from_ndjson(std::string_view text) {
         }
         at->edges.push_back({text_of(j, "output"), text_of(j, "package"), text_of(j, "program"),
                              number_of(j, "started_ms").value_or(0), number_of(j, "ms").value_or(0),
-                             number_of(j, "cpu_ms"), bytes_of(j, "peak_bytes")});
+                             number_of(j, "cpu_ms"), bytes_of(j, "peak_bytes"),
+                             j.value("served", false)});
     }
     return out;
 }

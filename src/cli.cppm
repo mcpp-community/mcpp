@@ -33,6 +33,7 @@ import mcpplibs.os.platform;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;   // the compiler's use, measured by the executor
 import mcpp.build.record;     // the line the executor appends (design 2026-11-20 §5.6)
+import mcpp.build.unit_cache; // a compile placed by the contents it read (design 2026-11-20 §5.3)
 import mcpplibs.os.text;
 import mcpp.invocation;
 import mcpp.effects;
@@ -332,8 +333,28 @@ int run(int argc, char** argv) {
                        std::chrono::system_clock::now().time_since_epoch()).count();
         };
         const auto started = unixMs();
+        // THE UNIT CACHE (design 2026-11-20 §5.3): a compile whose command and
+        // read files hold the contents an earlier one's did is placed, not run.
+        std::optional<mcpp::build::unit_cache::Cache> units;
+        mcpp::build::unit_cache::Unit unit{command, std::filesystem::current_path(), object ? output : std::filesystem::path{}, bmi};
+        if (const auto dir = mcpp::invocation::get(mcpp::build::unit_cache::kDirEnv); dir && !dir->empty() && object) {
+            std::vector<std::filesystem::path> roots;
+            std::istringstream in(mcpp::invocation::get(mcpp::build::unit_cache::kRootsEnv).value_or(""));
+            for (std::string line; std::getline(in, line);)
+                if (!line.empty()) roots.push_back(mcpp::home::from_utf8(line));
+            units.emplace(mcpp::home::from_utf8(*dir), std::move(roots), unit.cwd);
+            if (units->serve(unit)) {
+                if (const auto file = mcpp::invocation::get(mcpp::build::record::kUsageEnv); file && !file->empty()) {
+                    mcpp::build::record::Usage u{output.generic_string(), started, unixMs()};
+                    u.served = true;
+                    (void)mcpplibs::os::fs::append(mcpp::home::from_utf8(*file), mcpp::build::record::usage_line(u));
+                }
+                return 0;
+            }
+        }
         const int status = mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi,
                                                                      object, relocate, reading);
+        if (status == 0 && units) units->keep(unit);
         if (const auto file = mcpp::invocation::get(mcpp::build::record::kUsageEnv); file && !file->empty()) {
             mcpp::build::record::Usage u{output.generic_string(), started, unixMs()};
             if (const auto used = mcpplibs::os::process::resources(mcpplibs::os::process::of::children)) {

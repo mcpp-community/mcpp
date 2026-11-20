@@ -53,6 +53,7 @@ import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
 import mcpp.build.record;     // what a build ran, edge by edge (design 2026-11-20 §5.6)
+import mcpp.build.unit_cache; // the variables of the unit cache (design 2026-11-20 §5.3)
 import mcpplibs.os.fs;          // the usage file's spelling for the executor
 import mcpp.runtime.launch_env;
 import mcpp.build.command_line;
@@ -354,6 +355,12 @@ int read_compiler_cap_sidecar(const std::filesystem::path& outputDir);
 // executors as the full path does.
 void write_memory_threshold_sidecar(const std::filesystem::path& outputDir, std::uint64_t bytes);
 std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputDir);
+// The unit cache the plan states (design 2026-11-20 §5.3), as the variables the
+// compiler executor reads: nothing when the build uses no global cache. Kept
+// beside build.ninja for the fast path, which has no plan.
+void write_unit_cache_sidecar(const std::filesystem::path& outputDir, const std::filesystem::path& cacheDir,
+                              const std::vector<std::filesystem::path>& roots);
+std::vector<std::pair<std::string, std::string>> read_unit_cache_sidecar(const std::filesystem::path& outputDir);
 
 // #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
 //
@@ -1299,6 +1306,27 @@ std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputD
     std::ifstream f(outputDir / kMemoryThresholdSidecar, std::ios::binary);
     std::uint64_t bytes = 0;
     return f >> bytes ? bytes : 0;
+}
+
+constexpr std::string_view kUnitCacheSidecar = ".mcpp-unit-cache";
+
+void write_unit_cache_sidecar(const std::filesystem::path& outputDir, const std::filesystem::path& cacheDir,
+                              const std::vector<std::filesystem::path>& roots) {
+    std::string text;
+    if (!cacheDir.empty()) {
+        text = mcpplibs::os::fs::utf8(cacheDir) + "\n";
+        for (const auto& r : roots) text += mcpplibs::os::fs::utf8(r) + "\n";
+    }
+    std::ofstream(outputDir / kUnitCacheSidecar, std::ios::binary | std::ios::trunc) << text;
+}
+
+std::vector<std::pair<std::string, std::string>> read_unit_cache_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kUnitCacheSidecar, std::ios::binary);
+    std::string dir, roots;
+    if (!std::getline(f, dir) || dir.empty()) return {};
+    for (std::string line; std::getline(f, line);) roots += line + "\n";
+    return {{std::string(mcpp::build::unit_cache::kDirEnv), dir},
+            {std::string(mcpp::build::unit_cache::kRootsEnv), roots}};
 }
 
 std::vector<std::filesystem::path>
@@ -4921,6 +4949,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
     write_compiler_cap_sidecar(plan.outputDir, plan.scheduleCompilerCap);
     write_memory_threshold_sidecar(plan.outputDir, plan.memoryThreshold);
+    write_unit_cache_sidecar(plan.outputDir, plan.unitCacheDir, plan.immutableRoots);
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
@@ -5273,6 +5302,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
     nenv.emplace_back("MCPP_MEMORY_THRESHOLD", std::to_string(plan.memoryThreshold));
+    for (auto& kv : read_unit_cache_sidecar(plan.outputDir)) nenv.push_back(std::move(kv));
     // THE BUILD'S RECORD (design 2026-11-20 §5.6): where ninja's log ends now,
     // and the file each compile's executor appends its measurement to.
     const auto logMark = mcpp::build::progress::mark_log(plan.outputDir);
