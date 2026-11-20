@@ -379,6 +379,10 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
             to.dependencyLinkage = from.dependencyLinkage;
             to.dependencyLinkageDeclared = true;
         }
+        if (!to.dependencyDebugDeclared && from.dependencyDebugDeclared) {
+            to.dependencyDebug = from.dependencyDebug;
+            to.dependencyDebugDeclared = true;
+        }
         to.cflags.insert(to.cflags.begin(), from.cflags.begin(), from.cflags.end());
         to.cxxflags.insert(to.cxxflags.begin(), from.cxxflags.begin(), from.cxxflags.end());
         to.ldflags.insert(to.ldflags.begin(), from.ldflags.begin(), from.ldflags.end());
@@ -1149,6 +1153,7 @@ export std::string root_position_key(
         field("profile." + name, std::format("{}/{}/{}/{}/{}", pr.optLevel,
               pr.debug ? (pr.debugLines ? "lines" : "1") : "0", pr.lto ? 1 : 0, pr.strip ? 1 : 0,
               pr.dependencyLinkageDeclared ? pr.dependencyLinkage : std::string("-")));
+        if (pr.dependencyDebugDeclared) field("profile." + name + ".dependency_debug", pr.dependencyDebug);
         list("profile." + name + ".cflags", pr.cflags);
         list("profile." + name + ".cxxflags", pr.cxxflags);
         list("profile." + name + ".ldflags", pr.ldflags);

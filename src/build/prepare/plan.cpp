@@ -436,7 +436,52 @@ static std::expected<void, std::string> step13_link_forms(PrepareState& state, B
     return {};
 }
 
+// THE DEPENDENCIES' DEBUG INFORMATION (design 2026-11-20 §5.15, SPEC-004 §9
+// item 18): the packages from the store and git compile with the level the
+// profile's `dependency_debug` resolves to, its flag after the graph's. It is
+// one of each package's own flags, so it is part of the package's
+// configuration: its instance digest and its cache key change with it.
+static void step13_dependency_debug(PrepareState& state) {
+    const auto& level = state.m->buildConfig.dependencyDebug;
+    if (level.empty() || !state.tc) return;
+    const auto& d = mcpp::toolchain::dialect_for(*state.tc);
+    const std::string_view flag = level == "lines" ? d.lineDebugFlags : level == "true" ? d.debugFlags : d.noDebugFlags;
+    if (flag.empty()) {
+        if (level == "false")
+            mcpp::diag::degraded("profile/dependency-debug",
+                                 "dependency_debug = false: this compiler has no flag that takes back the debug "
+                                 "information the profile asks for, so the dependencies keep it",
+                                 "the dependencies' objects carry their debug information");
+        return;
+    }
+    const auto element = mcpp::manifest::flag_element(std::string(flag));
+    std::set<std::string> named;
+    // The resolution's record of each package, as the report names its source.
+    auto kind_of = [&](std::size_t i) -> std::string {
+        for (auto const& [key, r] : state.resolved)
+            if (r.depIndex + 1 == i) return r.source;
+        return i - 1 < state.dep_cache_identities.size() ? state.dep_cache_identities[i - 1].sourceKind : std::string{};
+    };
+    for (std::size_t i = 1; i < state.packages.size(); ++i) {
+        const auto kind = kind_of(i);
+        if ((kind != "version" && kind != "git") || state.packages[i].selectedMember) continue;
+        auto& pkg = state.packages[i];
+        for (auto* flags : {&pkg.privateBuild.cflags, &pkg.privateBuild.cxxflags, &pkg.manifest.buildConfig.cflags,
+                            &pkg.manifest.buildConfig.cxxflags})
+            flags->push_back(element);
+        named.insert(mcpp::build::qualified_package_name(pkg.manifest));
+    }
+    // The scan copied each unit's flags from its package before this step.
+    for (auto& u : state.scan.graph.units)
+        if (named.contains(u.packageName)) {
+            u.packageCflags.push_back(element);
+            u.packageCxxflags.push_back(element);
+        }
+    mcpp::log::verbose("profile", std::format("dependency_debug = {}: {} on {} package(s)", level, flag, named.size()));
+}
+
 static std::expected<void, std::string> step13_make_plan(PrepareState& state, BuildContext& ctx) {
+    step13_dependency_debug(state);
     // An image that is not the root's links with its owner's closure's own
     // flags (workspace design 2026-09-29 §15; for a dependency's shared
     // library in every plan since 2026.10.5.2): each package's link flags,

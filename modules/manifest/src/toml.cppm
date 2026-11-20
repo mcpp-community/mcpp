@@ -1347,6 +1347,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 pr.dependencyLinkage = it->second.as_string();
                 pr.dependencyLinkageDeclared = true;
             }
+            if (auto it = tt.find("dependency_debug"); it != tt.end() && it->second.is_bool()) {
+                pr.dependencyDebug = it->second.as_bool() ? "true" : "false";
+                pr.dependencyDebugDeclared = true;
+            } else if (it != tt.end() && it->second.is_string()) {
+                pr.dependencyDebug = it->second.as_string();
+                pr.dependencyDebugDeclared = true;
+            }
             read_list("cflags",   pr.cflags);
             read_list("cxxflags", pr.cxxflags);
             read_list("ldflags",  pr.ldflags);

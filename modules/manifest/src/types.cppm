@@ -1294,6 +1294,10 @@ struct BuildConfig : BuildInputs {
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
     bool                                debugLines = false; // -g1: the line tables alone
+    // The debug information of the dependencies from the store and git, as
+    // the profile's `dependency_debug` resolves it (design 2026-11-20 §5.15):
+    // "true", "false" or "lines"; empty when it is the graph's own.
+    std::string                         dependencyDebug;
     bool                                lto      = false; // -flto, /GL + /LTCG on cl.exe
     // LTO was requested and some objects of the plan are compiled without it:
     // those that feed a PE shared library whose exports are discovered, or a
@@ -2323,6 +2327,12 @@ struct Profile {
     // about the member that caused it.
     std::string dependencyLinkage;
     bool        dependencyLinkageDeclared = false;
+    // `dependency_debug` (design 2026-11-20 §5.15): the debug information of
+    // the dependencies from the store and git, `true`, `false` or `"lines"`,
+    // as written ("true"/"false" for a boolean). Not written: "lines" for
+    // `dev` and `debug`, else the profile's `debug`.
+    std::string dependencyDebug;
+    bool        dependencyDebugDeclared = false;
     // Passthrough escape hatch (fixed keys, open values — I6 completeness):
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;

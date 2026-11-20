@@ -35,6 +35,10 @@ struct CommandDialect {
     // GCC's minimal level and clang's `-gline-tables-only`; cl.exe has no
     // level below /Z7.
     std::string_view lineDebugFlags;   // "-g1"    | "/Z7"
+    // No debug information, after a flag that asked for it: a dependency
+    // whose profile states `dependency_debug = false` (design 2026-11-20
+    // §5.15). cl.exe has no flag that takes /Z7 back: empty.
+    std::string_view noDebugFlags;     // "-g0"    | ""
     std::string_view alwaysFlags;      // ""       | "/nologo /EHsc /utf-8"
     // Same rationale as forceCxxLangArgv: the argv consumer gets tokens, not
     // a string it has to split. Both spans point at static arrays below.
@@ -272,6 +276,7 @@ constexpr CommandDialect kGnuDialect{
     .optPrefix       = "-O",
     .debugFlags      = "-g",
     .lineDebugFlags  = "-g1",
+    .noDebugFlags    = "-g0",
     .alwaysFlags     = "",
     .alwaysFlagsArgv = {},
     .libFlag         = "-l{}",
@@ -313,6 +318,7 @@ constexpr CommandDialect kMsvcDialect{
     // own, which the object cache and a taken-over build directory assume.
     .debugFlags      = "/Z7",
     .lineDebugFlags  = "/Z7",
+    .noDebugFlags    = "",
     .alwaysFlags     = "/nologo /EHsc /utf-8",
     .alwaysFlagsArgv = kMsvcAlwaysArgv,
     .libFlag         = "{}.lib",
