@@ -312,6 +312,17 @@ std::string text(const e2e::outcome& r) { return r.out + r.err; }
 
 fs::path shared_home() { return home_dir(); }
 
+std::vector<std::string> through_wine(const fs::path& wine, const fs::path& program,
+                                      const std::vector<std::string>& args) {
+    const auto server = wine.parent_path() / "wineserver";
+    std::vector<std::string> argv = {"sh", "-c",
+                                     std::format("'{}' \"$@\"; status=$?; '{}' -w; exit $status", wine.string(),
+                                                 fs::exists(server) ? server.string() : std::string("wineserver")),
+                                     "wine", program.string()};
+    argv.insert(argv.end(), args.begin(), args.end());
+    return argv;
+}
+
 namespace {
 void link_or_copy(const fs::path& from, const fs::path& to) {
     std::error_code ec;

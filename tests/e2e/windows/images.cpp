@@ -57,7 +57,12 @@ void subsystems(const s::project& p, std::vector<std::string> build_args, std::o
     }
     if (!runner && !s::on_windows()) return;  // criterion 3 is not measured on a host that cannot execute a PE image
     const auto run = [&](const fs::path& exe) {
-        if (runner) return s::run(*runner, {exe.string()}, p.dir(), {{"WINEDEBUG", "-all"}});
+        if (runner) {
+            auto argv = s::through_wine(*runner, exe);
+            const fs::path shell = s::on_path("sh").value_or("/bin/sh");
+            argv.erase(argv.begin());
+            return s::run(shell, argv, p.dir(), {{"WINEDEBUG", "-all"}});
+        }
         return s::run(exe, {}, p.dir());
     };
     p.remove("order.txt");

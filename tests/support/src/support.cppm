@@ -159,6 +159,13 @@ fs::path another_home(home kind = home::fresh);
 // The shared home: `MCPP_HOME`, else `~/.mcpp`.
 fs::path shared_home();
 
+// The command that runs `program` with `args` through `wine` and returns when every process wine
+// started has ended (`wineserver -w`), with the program's status. Wine starts its services with
+// the program's streams; they outlive the program by seconds, and the case's end check fails a
+// run whose output a process still holds (mtest 0.11.0, design 2026-11-20 §5.18).
+std::vector<std::string> through_wine(const fs::path& wine, const fs::path& program,
+                                      const std::vector<std::string>& args = {});
+
 struct options {
     home where = home::shared;
     // Set (a value) or removed (nothing) for the run, after the home.

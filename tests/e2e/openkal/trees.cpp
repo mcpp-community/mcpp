@@ -627,7 +627,7 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         expect(fatal(e2e::contains(s::text(r), "is a polyglot file"))) << "G: emit xpkg does not name the polyglot file: " << s::text(r);
         // H
         if (const auto wine = s::on_path("wine"); wine && os == "linux") {
-            auto w = e2e::run({.argv = {wine->string(), f.string(), "onwine"}, .env = {{"WINEDEBUG", "-all"}, {"XDG_CACHE_HOME", std::nullopt}}, .timeout = std::chrono::seconds{300}});
+            auto w = e2e::run({.argv = s::through_wine(*wine, f, {"onwine"}), .env = {{"WINEDEBUG", "-all"}, {"XDG_CACHE_HOME", std::nullopt}}, .timeout = std::chrono::seconds{300}});
             expect(fatal(e2e::succeeded(w))) << "H: wine: " << s::text(w);
             expect(fatal(e2e::contains(s::text(w), "first [onwine]"))) << "H: the Windows program's output: " << s::text(w);
         }

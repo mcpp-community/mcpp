@@ -38,7 +38,7 @@ int main() {
         expect(fatal(exe.has_value())) << "no PE artifact produced";
         // Under wine, when the machine has it, the loop is whole.
         if (s::wine) {
-            auto w = e2e::run({.argv = {"wine", exe->string()}, .env = {{"WINEDEBUG", "-all"}}});
+            auto w = e2e::run({.argv = s::through_wine(*s::on_path("wine"), *exe), .env = {{"WINEDEBUG", "-all"}}});
             auto out = s::last_line(w.out);
             if (out.ends_with('\r')) out.pop_back();
             expect(eq(out, std::string("bp target = x86_64-windows-gnu"))) << "unexpected wine output";
