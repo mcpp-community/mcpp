@@ -254,6 +254,10 @@ envelope says when either has changed since.
 | `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` names each framework's `capabilities` and `session` (SPEC-017 B6) | an IDE choosing between a session and processes |
 | `test-checks` | 2026.11.10.1 | with `test-protocol`: a failure's `source` and `fatal`, and a case's `checks` (`held`, `failed`), as the program reported them (SPEC-017 O3) | an IDE's list of checks |
 | `test-output` | 2026.11.10.1 | with `test-case-stream`: a case's own output, `output`: the program's `output` events, or all the output of a program that ran that case alone, in its program's `cases` and, from events, in its `end` record (SPEC-017 O8) | an IDE's output of one case |
+| `test-steps` | @NEXT@ | with `test-protocol`: a case's `steps` and the surface items it used (`exercised`), its `cpu_ms` and `limit_ms`, and the run's `builds.ndjson` (SPEC-017 P5.6, B4) | a run's report |
+| `test-budget` | @NEXT@ | `mcpp test` states one budget of slots (`MTEST_BUDGET`) its programs' compilers take, and uses a budget its environment states (SPEC-017 O11) | `mtest run`, a runner that runs `mcpp test` |
+| `test-jitter` | @NEXT@ | the jitter a run states (`MTEST_JITTER`, `MTEST_JITTER_SEED`) reaches its programs and its record (SPEC-017 O12) | the jitter workflow |
+| `test-fixtures` | @NEXT@ | run fixtures are served for the programs whose cases use them (`MTEST_SERVE`, `MTEST_FIXTURE_<NAME>`), and a run's `fixtures.ndjson` states them (SPEC-017 O6) | a framework's shared fixtures |
 
 ### How a tool runs mcpp for a project
 
@@ -970,6 +974,36 @@ the files under `lib/`.
 or `null`, `guide` or `null`, `repo`), `commands` (`list`, `one`, `records`,
 `debug`), `docs`, and `suggest` (the dev-dependency line and repository of mtest)
 when the package has no framework.
+
+### `mcpp emit surface` and the records an invocation appends *(mcpp @NEXT@+)*
+
+`mcpp emit surface [-o FILE]` writes mcpp's surface, one item per line, `<kind> <name>`, in
+the order `command`, `flag`, `key`, `reason`, each sorted by name:
+
+```
+command emit surface
+flag build --target
+flag --quiet
+key build.cflags
+key toolchain
+reason unknown-target
+```
+
+The commands and flags are those of the definition the command line is parsed with (a global
+flag is named without a command); the keys are the manifest's key registry (a whole table by
+its name); the reasons are the tokens of the refusals' table (`mcpp.why.toolchain`, above). `--help` and `--version`, which the parser
+adds, are not items.
+
+Two variables name a file an invocation appends to; each process of the invocation appends,
+so a build's own sub-builds and the compilers it starts through mcpp add to the same file:
+
+| variable | each line |
+|---|---|
+| `MCPP_SURFACE_RECORD` | an item of the surface the process used, once per process: the command and flags it was given, the registry keys its manifests state, the reasons it recorded |
+| `MCPP_BUILD_RECORD` | an edge a build ran (`build`, `output`, `package`, `program`, `started_ms`, `ms`, and for a compile `cpu_ms`, `peak_bytes` and `served`), or a package the cache served (`build`, `package`, `cached`, `units`): SPEC-017 B4's `builds.ndjson` |
+
+A test kit turns the first into a case's `exercise` events (SPEC-017 P5.6), and the surface's
+ledger compares the two.
 
 ## 9. The build stream and the result record *(mcpp 2026.10.26.1+)*
 

@@ -217,6 +217,10 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` 写出每个框架的 `capabilities` 与 `session`（SPEC-017 B6） | 在会话与进程之间选择的 IDE |
 | `test-checks` | 2026.11.10.1 | 在 `test-protocol` 之上：失败的 `source` 与 `fatal`，用例的 `checks`（`held`、`failed`），按程序的报告（SPEC-017 O3） | IDE 的检查点列表 |
 | `test-output` | 2026.11.10.1 | 在 `test-case-stream` 之上：用例自己的输出 `output`：程序的 `output` 事件，或只运行该用例的程序的全部输出；出现在程序的 `cases` 中，来自事件时也出现在其 `end` 记录中（SPEC-017 O8） | IDE 中单个用例的输出 |
+| `test-steps` | @NEXT@ | 在 `test-protocol` 之上：用例的 `steps` 与其用到的面的项（`exercised`）、其 `cpu_ms` 与 `limit_ms`，以及运行的 `builds.ndjson`（SPEC-017 P5.6、B4） | 运行的报告 |
+| `test-budget` | @NEXT@ | `mcpp test` 陈述一份槽位的预算（`MTEST_BUDGET`），其程序的编译器从中取槽位；环境陈述了预算时使用那一份（SPEC-017 O11） | `mtest run`，运行 `mcpp test` 的运行器 |
+| `test-jitter` | @NEXT@ | 运行陈述的抖动（`MTEST_JITTER`、`MTEST_JITTER_SEED`）到达其程序与记录（SPEC-017 O12） | 抖动的工作流 |
+| `test-fixtures` | @NEXT@ | 为用例使用运行夹具的程序服务夹具（`MTEST_SERVE`、`MTEST_FIXTURE_<NAME>`），运行的 `fixtures.ndjson` 写出它们（SPEC-017 O6） | 框架共享的夹具 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -861,6 +865,32 @@ mcpp test [pattern] [--workspace] --message-format json
 `mcpp test --guide --message-format json` *（2026.11.8.1+）* 输出一个对象 `{"guide": {...}}`：`frameworks`
 （每项 `package`、`version`、`entry`、`protocol` 或 `null`、`guide` 或 `null`、`repo`）、`commands`（`list`、
 `one`、`records`、`debug`）、`docs`，以及包没有框架时的 `suggest`（mtest 的 dev-dependency 写法与仓库）。
+
+### `mcpp emit surface` 与一次调用追加的记录 *（mcpp @NEXT@+）*
+
+`mcpp emit surface [-o FILE]` 写出 mcpp 的面，每行一项 `<种类> <名字>`，按 `command`、`flag`、`key`、`reason` 的次序，
+各自按名字排序：
+
+```
+command emit surface
+flag build --target
+flag --quiet
+key build.cflags
+key toolchain
+reason unknown-target
+```
+
+命令与选项取自解析命令行所用的定义（全局选项不带命令）；键取自清单的键登记表（整张表以其名字）；原因取自拒绝的原因标记表（上文 `mcpp.why.toolchain`）中的
+标记。解析器自己加入的 `--help` 与 `--version` 不是项。
+
+两个变量各指明一个调用追加的文件；调用的每个进程都追加，因此构建自己的子构建与它经由 mcpp 启动的编译器写入同一文件：
+
+| 变量 | 每行 |
+|---|---|
+| `MCPP_SURFACE_RECORD` | 进程用到的面的一项，每进程一次：所给的命令与选项、其清单陈述的登记表中的键、它记录的原因 |
+| `MCPP_BUILD_RECORD` | 构建运行的一条边（`build`、`output`、`package`、`program`、`started_ms`、`ms`，编译另有 `cpu_ms`、`peak_bytes` 与 `served`），或缓存提供的一个包（`build`、`package`、`cached`、`units`）：SPEC-017 B4 的 `builds.ndjson` |
+
+测试 kit 把前者转为用例的 `exercise` 事件（SPEC-017 P5.6），面的账本比较二者。
 
 ## 9. 构建事件流与结果记录 *（mcpp 2026.10.26.1+）*
 

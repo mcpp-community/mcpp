@@ -159,6 +159,29 @@ the slowest cases, the critical path and the schedule). In CI, `commit` and
 `group` are `GITHUB_SHA` and `GITHUB_RUN_ID`. `[test] store = "<dir>"` names
 another directory, relative to the project; `"none"` keeps nothing.
 
+**What a run records** (@NEXT@+, [SPEC-017](specs/test.md) B4, P5.6, P12.4). A run's
+`run.json` and its line in `index.ndjson` name the machine's class (`machine`:
+the processor's model), its `processors` and `memory`, the monitoring level the
+run stated (`MTEST_MONITOR`, `basic` unless the environment states another: each
+case's processor time) and the jitter, when one was stated. A case's line adds
+its processor time (`cpu_ms`), its steps (each command an end-to-end case ran,
+with its time and status), the items of the product's surface it used
+(`exercised`) and the limit it ran within (`limit_ms`). `builds.ndjson` holds the
+builds of the run: a line per edge that ran, with its package, its time, the
+processor time and the largest resident set of the compiler, and whether the unit
+cache placed it (`served`), and a line per package the cache served. The
+estimates of the order prefer the runs of the same class of machine.
+
+**One budget for the machine** (@NEXT@+, SPEC-017 O11). `mcpp test` makes a
+directory of one slot file per job and states it to its programs
+(`MTEST_BUDGET`, and `MTEST_BUDGET_HELD`, the slot a worker holds); a compiler a
+test starts through mcpp holds a slot of it before it starts, so a test that
+builds a project takes from the run's jobs rather than adding its own. A run
+inside another runner's budget uses that one.
+
+**A case's time is the one its scopes state** (@NEXT@+). A case selected with
+`--case` runs within the `timeout` its listed case states, not the run's.
+
 A suite compiled from several sources of its own is also a package: a workspace
 member whose `[build] sources` carries the suite and whose one test program
 drives it, selected with `mcpp test -p <member>`.
@@ -335,8 +358,13 @@ the tests a change affects, read from the plan before anything is built:
 - a test is affected by a change of a file it is built from: its own files, the
   module units it imports and the units those import in turn, and every unit
   of its link that belongs to no module;
-- a change of a manifest, a lock, a build program, a header, or a source the
-  plan does not hold affects every test;
+- a change of a manifest, a lock, a build program, or a source the plan does
+  not hold affects every test;
+- a header (@NEXT@+) affects the tests built from a unit that read it when
+  the build directory last built it, as ninja's deps log and the scans'
+  depfiles record it, and the tests that run a program of the package when
+  such a unit is not a test's own; while a unit of the project has no such
+  record (a build directory that never built it), a header affects every test;
 - a test that runs a program of the package (a file it is built from names
   `MCPP_BIN_`) is affected by a change of any source of the package that is
   not a test's own (2026.11.13.1+): an end-to-end test runs the program it
@@ -611,6 +639,22 @@ mcpp test --seed 42             # the seed of anything random in the cases
 The records of `--message-format json` carry the protocol, the cases and their
 failures ([50](50-machine-output.md)); `--print-launch` states the protocol
 for a debugger that starts the program.
+
+**Run fixtures** (@NEXT@+, SPEC-017 O6). A program may declare a run fixture --
+one object the whole run shares: a sandboxed home, a server, an index -- and its
+cases may name it in `uses` (mtest's `run_fixture` and `uses{}`). `mcpp test`
+reads both from the programs' listings. Before the first program whose selected
+cases use a fixture starts, it starts a program that declares it with
+`MTEST_SERVE` naming it and its input a pipe, and waits, at most `--timeout`, for
+its line `mtest-ready <endpoint>`; each user receives the endpoint as
+`MTEST_FIXTURE_<NAME>`. After the last user ends, its input is closed, and it is
+ended after the same time if it has not ended. `fixtures.ndjson` in the run's
+store states each fixture's start, readiness and end, so its preparation is not
+counted in the first case that used it; `programs.ndjson` names the fixtures each
+program used. A fixture that does not become ready is the machine's failure: the
+programs that use it do not run, their records say `infra`, and the run exits
+with 2 as for a test that was not run. A program run behind a runner is not
+listed and receives no fixture.
 
 ## Writing a test
 

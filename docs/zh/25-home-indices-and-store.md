@@ -94,7 +94,7 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 
 | 键 | 默认 | 移除的内容 |
 |---|---|---|
-| `[cache] unused_days` | 30 | 构建后每天至多一次：该天数内没有构建使用过的缓存条目（包、`std` 模块、host 工具） |
+| `[cache] unused_days` | 30 | 构建后每天至多一次：该天数内没有构建使用过的缓存条目（包、`std` 模块、host 工具、单元、构建程序的输出） |
 | `[build] keep_days` | 3 | `mcpp build` 或 `mcpp test` 后，每个工程每天至多一次：该天数内没有配置使用过的构建目录 |
 | `[build] target_budget` | 无 | 每次 `mcpp build` 或 `mcpp test` 后，`target/` 超过该大小（`"20GiB"`、`"512MiB"`）时：没有任何配置记录为当前的构建目录，不论其年龄（2026.11.8.1+） |
 

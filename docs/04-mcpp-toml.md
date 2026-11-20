@@ -1225,6 +1225,24 @@ its final path with `O_TRUNC` and a reader could observe a half-written file.
 MSVC is left alone — neither `/ifcOnly`'s cost nor `.ifc` atomicity has been
 measured, and guessing either wrong is silent.
 
+### Available memory (`memory_threshold`) *(@NEXT@+)*
+
+```toml
+[build]
+memory_threshold = "2GiB"   # a size ("512MiB", "1.5GB") or bytes; "0" waits for nothing
+```
+
+The compiler executor reads the system's available memory after it holds its
+slot and before it starts a compiler. Below this value it waits for a compiler
+already running to end; it ends none. The engine's value is 1 GiB, since one
+module interface compile peaks at 0.5–1.0 GB (above). The value is taken from
+`MCPP_MEMORY_THRESHOLD`, this key, `[build] memory_threshold` in
+`~/.mcpp/config.toml`, and the engine, in that order; a value that is not a size
+is reported and the next one holds. After a minute below it the executor says so
+on standard error and starts the compiler: memory that no compiler of this machine
+holds would be waited for forever ([SPEC-004 §9](specs/manifest-semantics.md)
+item 19).
+
 ### Module interface extensions (`module_extensions`)
 
 mcpp treats `.cppm` as a module interface unit. The C++ ecosystem has not
@@ -1786,6 +1804,7 @@ ndebug     = true         # -DNDEBUG for every unit of the graph (default: on fo
 trim_paths = true         # -ffile-prefix-map per unit (default: on for release/dist)
 split_debuginfo = "off"   # "unpacked": debug information beside the objects (default: dev/debug)
 bmi_cutoff = "exact"      # "ignore-locations" (default): a GCC BMI whose line maps alone moved is kept
+dependency_debug = "lines" # the store's and git's dependencies: true | false | "lines" (default under dev/debug)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1829,6 +1848,17 @@ anything compiles.
   into the program (`__builtin_LINE()`, `std::source_location::current()` in a
   template's body) and a graph compiled with `-fcontracts` are compared exactly
   under either value. Clang's BMI has no such part and the key has no effect on it.
+- **`dependency_debug` (@NEXT@+)** states the debug information of the dependencies
+  that come from the package store and from git: `true` (the profile's `debug`),
+  `false` (none), `"lines"` (the line tables alone: `-g1` on GCC,
+  `-gline-tables-only` on Clang, from the toolchain's row). Omitted, `dev` and `debug`
+  take `"lines"` while their `debug` is on, and every other profile takes its
+  `debug`. The members of the workspace and path dependencies keep the profile's
+  `debug`. A backtrace through a dependency still names its files and lines;
+  measured on a project whose only dependency is mtest, its test program fell from
+  43.7 MB to 8.3 MB and its build from 15.9 s to 7.2 s. The flag enters the
+  dependency's configuration, so each value has its own entry in the cache
+  ([SPEC-004 §9](specs/manifest-semantics.md) item 20).
 - **`ndebug` and `trim_paths` (2026.10.24.1+)** follow the industry's convention: on
   for `release` and `dist`, off for `dev`, `debug` and a custom profile that does not
   state them. `ndebug` defines `NDEBUG` for every unit, so `assert` compiles out, as in

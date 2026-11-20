@@ -150,6 +150,19 @@ E2E 并不保证完全离线：部分脚本需要工具链、索引或 capabilit
 按 CI 等价方式设置 `MCPP_HOME`、镜像和其他 capability 后再运行；不要让缓存命中
 或空 workspace 选择冒充行为覆盖。
 
+C++ 端到端用例的写法（`tests/support`，设计 2026-11-20）：
+
+- 等待被测程序给出的事件（一行输出、一个文件、退出），不等待时间；`sleep_for` 与 shell `sleep <n>` 的次数只减不增
+  （`.github/tools/check_waits.sh`、`waits.baseline`）。只为改变修改时间的等待改用 `s::touch(file)`。
+- 断言只在其 home 不被别人改写时成立的用例（回放的构建、快速路径）调用 `s::own_home()`，在自己的 home 中运行 mcpp，
+  而不持有 `machine`；改写 home 配置的用例写自己 home 的 `config.toml`，不写共享 home 的。
+- 继承的 home（`home::inherited`、`_inherit_toolchain.sh`）以用户的 home 为 upstream，不链接其载荷，不复制 subos。
+- 每个 E2E 组带 `s::home_fixture`：共享的 home 是运行夹具，其填充记在夹具上。
+- 形式本身是契约的输出（`--protocol-version`、`emit surface`）以 golden 文件整段比较；改变它的拉取请求以
+  `MTEST_GOLDEN=update` 更新文件，审阅读取更新给出的改动。
+- 程序写出的 `warning:` 与 `error:` 行由用例以 `e2e::expect_diagnostic` 声明；kit 以 `report` 方式统计未声明的行。
+- 不变量（无改动的重建、第二个工程）以构建记录（`MCPP_BUILD_RECORD`）计数，以指标与界限陈述。
+
 ### 4. 提交 PR
 
 **提交信息前缀**：`feat:` / `fix:` / `refactor:` / `test:` / `docs:` / `chore:`

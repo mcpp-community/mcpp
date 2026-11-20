@@ -119,7 +119,7 @@ a project's `target/` is its own. Each has a retention, in config.toml:
 
 | key | default | removed |
 |---|---|---|
-| `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools) no build used for that many days |
+| `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools, units, build programs' outputs) no build used for that many days |
 | `[build] keep_days` | 3 | after `mcpp build` or `mcpp test`, at most once a day per project: build directories no configuration used for that many days |
 | `[build] target_budget` | none | after every `mcpp build` or `mcpp test` whose `target/` holds more than this size (`"20GiB"`, `"512MiB"`): every build directory no configuration records as current, whatever its age (2026.11.8.1+) |
 

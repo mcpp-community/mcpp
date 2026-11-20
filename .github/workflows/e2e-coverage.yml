@@ -64,6 +64,15 @@ jobs:
           "$MCPP" self config
           bash tests/e2e/run_all.sh || true
           (cd tests/e2e && "$E2E_MTEST" coverage)
+      # SELECTION BY FUNCTION IS DECIDED BY MEASUREMENT (design 2026-11-20 §5.11, K8): how widely the
+      # cases share each file and each function they executed. Below a median share of one half, a
+      # selection by function selects fewer cases than one by file; the figures go to the summary
+      # and the design record.
+      - name: How widely the cases share files and functions
+        run: |
+          set -euo pipefail
+          (cd tests/e2e && "$E2E_MTEST" coverage spread) | tee spread.txt
+          { echo '## How widely the e2e cases share what they executed'; echo '```'; cat spread.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: e2e-coverage-linux
