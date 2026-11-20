@@ -437,7 +437,7 @@ E2E entries{"entries", [] {
         const auto seed = [&](const fs::path& d, int days, bool record) {
             fs::create_directories(d / "target");
             std::ofstream(d / "target" / "build.ninja") << "# planned\n";
-            if (record) std::ofstream(d / ".mcpp-plan") << "/projects/" << d.filename().generic_string() << "\n";
+            if (record) std::ofstream(d / ".mcpp-plan", std::ios::binary) << "/projects/" << d.filename().generic_string() << "\n";
             age(d, std::chrono::hours{24 * days});
         };
         const auto seed_all = [&] {
