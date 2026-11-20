@@ -224,6 +224,13 @@ E2E sets{"sets", [] {
         expect(fatal(e2e::succeeded(first))) << "first emit: " << first.err;
         const auto locks = s::glob(home, "cache/build-database/*/target/.build-mcpp/host/*/mcpp.lock");
         expect(fatal(!locks.empty())) << "host fixture must produce a nonempty lock";
+        // mcpp#969: the work directory states the project it plans, which `cache list` names it by.
+        const auto records = s::glob(home, "cache/build-database/*/.mcpp-plan");
+        expect(fatal(std::ranges::any_of(records, [&](const fs::path& f) {
+            auto line = s::read_file(f);
+            line.erase(std::min(line.find('\n'), line.size()));
+            return fs::weakly_canonical(fs::path(line)) == fs::weakly_canonical(app.dir());
+        }))) << "no work directory records the project " << app.dir().generic_string();
         std::map<fs::path, std::pair<fs::file_time_type, std::string>> snapshot;
         // os.utime(ns=10**18): a time far from now, which a rewrite would replace.
         const auto stamp = std::chrono::time_point_cast<fs::file_time_type::duration>(
