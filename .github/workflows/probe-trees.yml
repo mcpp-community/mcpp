@@ -1,0 +1,159 @@
+# THE PROBE (temporary; this branch is never merged). How long the commands of the
+# trees suite (tests/e2e/openkal/trees.cpp) take on the runner the CI uses, and where
+# the time goes: trees/955 alone, cold and then warm, and the CI's shard 2/4 as it
+# runs there, each twice. Every mcpp command the e2e kit runs is recorded by
+# .github/probe/mcpp-timed.sh (wall time, the CPU of its process tree, the ninja logs
+# of its builds); the machine's load is sampled every 5 s; mtest's own report of the
+# run is kept. The kit's per-command limit is 60 minutes on this branch, so a
+# command's whole duration is measured. The data goes to the draft release
+# `probe-data`, one asset per job.
+name: probe-trees
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: probe-trees-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/build.yml
+    with:
+      host: linux-x86_64
+      runs-on: ubuntu-24.04
+      prewarm: gcc 16.1.0-musl; llvm 23.1.3; mingw-cross 16.1.0
+
+  unit-linux-archive:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/ci-unit.yml
+    with:
+      stage: archive
+      host: linux-x86_64
+      name: linux
+      runs-on: ubuntu-24.04
+      tests: e2e/windows
+
+  measure:
+    name: trees ${{ matrix.cond }} ${{ matrix.rep }}
+    needs: [build-linux, unit-linux-archive]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        cond: [alone, shard]
+        rep: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - uses: ./.github/actions/use-built-mcpp
+        with:
+          host: linux-x86_64
+
+      - name: The tests of this run
+        uses: actions/download-artifact@v4
+        with:
+          name: mcpp-unit-linux-x86_64
+          path: ${{ runner.temp }}/unit
+
+      - name: The program under test and the probe's recorder
+        shell: bash
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/probe"
+          mkdir -p "$P/bin"
+          sed -e "s|@REAL@|$MCPP|" -e "s|@DIR@|$P|" .github/probe/mcpp-timed.sh > "$P/bin/mcpp"
+          chmod +x "$P/bin/mcpp"
+          {
+            echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN"
+            echo "MCPP_BIN_MCPP=$MCPP"
+            echo "PROBE_DIR=$P"
+            echo "MCPP_E2E_MCPP=$P/bin/mcpp"
+          } >> "$GITHUB_ENV"
+          { nproc; lscpu; free -m; df -h /; } > "$P/machine.txt" 2>&1
+          cat "$P/machine.txt"
+          nohup vmstat -t 5 > "$P/vmstat.txt" 2>&1 &
+
+      - name: The history the shards share
+        shell: bash
+        run: |
+          rm -rf -- "$GITHUB_WORKSPACE/target/mtest"
+          python3 .github/tools/test_history.py take target/mtest "$RUNNER_TEMP/unit/history"
+
+      - name: "alone: trees/955, cold and then warm"
+        if: matrix.cond == 'alone'
+        shell: bash
+        run: |
+          set -uo pipefail
+          "$MCPP" test --cases --archive "$RUNNER_TEMP/unit/unit.tar.gz" e2e/openkal/trees 2>&1 | tail -20
+          for phase in cold warm; do
+            echo "$phase" > "$PROBE_DIR/phase"
+            echo "== $phase $(date -u +%T)"
+            "$MCPP" test --timeout 0 --archive "$RUNNER_TEMP/unit/unit.tar.gz" e2e/openkal/trees --case 'trees/955*' \
+              || echo "::warning::the $phase pass ended with $?"
+          done
+
+      - name: "shard: the CI's shard 2/4"
+        if: matrix.cond == 'shard'
+        continue-on-error: true
+        uses: ./.github/actions/mcpp-unit
+        with:
+          name: probe-${{ matrix.rep }}
+          archive: ${{ runner.temp }}/unit/unit.tar.gz
+          shard: 2/4
+
+      - name: The analysis
+        if: always()
+        shell: bash
+        run: python3 -I .github/probe/analyze_trees.py "$PROBE_DIR" "${{ matrix.cond }} ${{ matrix.rep }}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: ./.github/actions/mtest
+        if: always()
+
+      - name: mtest's own account of the run
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          job="$RUNNER_TEMP/mtest-job"
+          mkdir -p "$job"
+          (cd "$job" && "$MTEST" store import --from "$GITHUB_WORKSPACE/target/mtest")
+          (cd "$job" && "$MTEST" report --format md --sections summary,slowest,resources,path,gantt) > "$PROBE_DIR/mtest-report.md" 2>&1
+          (cd "$job" && "$MTEST" analyze durations) > "$PROBE_DIR/mtest-durations.txt" 2>&1
+          (cd "$job" && "$MTEST" analyze path) > "$PROBE_DIR/mtest-path.txt" 2>&1
+          cat "$PROBE_DIR/mtest-report.md" >> "$GITHUB_STEP_SUMMARY"
+          head -80 "$PROBE_DIR/mtest-durations.txt"
+          head -80 "$PROBE_DIR/mtest-path.txt"
+          cp "${MCPP_HOME:-$HOME/.mcpp}/log/mcpp.log" "$PROBE_DIR/mcpp.log" 2>/dev/null
+          cp -r "$job/.mtest" "$PROBE_DIR/mtest-store" 2>/dev/null
+          exit 0
+
+      - name: The data, to the probe's draft release
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pkill vmstat || true
+          a="$RUNNER_TEMP/trees-${{ matrix.cond }}-${{ matrix.rep }}.tar.gz"
+          tar -czf "$a" -C "$PROBE_DIR" .
+          ls -la "$a"
+          gh release view probe-data -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
+            || gh release create probe-data -R "$GITHUB_REPOSITORY" --draft --title "probe data" \
+                 --notes "Data that temporary probe pull requests upload for local analysis; each upload replaces its asset." \
+            || true
+          gh release upload probe-data "$a" -R "$GITHUB_REPOSITORY" --clobber

@@ -164,7 +164,9 @@ struct options {
     // Set (a value) or removed (nothing) for the run, after the home.
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     std::string input;
-    std::chrono::milliseconds timeout{std::chrono::minutes{10}};
+    // THE PROBE (temporary; never merged): 60 minutes in place of 10, so that a
+    // command's whole duration is measured rather than cut at the limit.
+    std::chrono::milliseconds timeout{std::chrono::minutes{60}};
 };
 
 // mcpp with `args`, in `cwd`.
