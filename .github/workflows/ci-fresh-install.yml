@@ -147,12 +147,27 @@ jobs:
         if: ${{ github.event_name != 'workflow_run' }}
         run: echo "not a post-release run; skipping index wait"
 
+  # One leg per toolchain, each from a fresh machine. The four self-builds of
+  # mcpp ran in one job until 2026.11.19.1, whose builds took 17.9, 18.0, 15.8
+  # and more than 6.6 min (run 44634649039; 9.9 to 12.8 min each for
+  # 2026.11.18.1) and outlasted its 60 min.
   linux-fresh:
     needs: [wait-index]
-    name: Linux fresh install
+    name: Linux fresh install (${{ matrix.toolchain }})
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: default
+          - toolchain: gcc@16.1.0-musl
+            install: gcc 16.1.0-musl
+          - toolchain: gcc@16.1.0
+            install: gcc 16.1.0
+          - toolchain: llvm@23.1.3
+            install: llvm 23.1.3
     env:
       # The one derived value (see the header comment): every install job names
       # the SAME version the index guard waited for, so the two cannot disagree.
@@ -184,17 +199,24 @@ jobs:
           which mcpp
           cat $HOME/.xlings/.xlings.json
 
-      - name: "Default: mcpp new → run"
+      - name: "The leg's toolchain: ${{ matrix.toolchain }}"
+        if: matrix.install
+        run: |
+          mcpp toolchain install ${{ matrix.install }}
+          mcpp toolchain default ${{ matrix.toolchain }}
+
+      - name: "mcpp new → run"
         run: |
           cd "$(mktemp -d)"
-          mcpp new hello_gcc
-          cd hello_gcc
+          mcpp new hello
+          cd hello
           mcpp run
 
       # Template packages exercise the sha256-pinned mcpp-index fetch
       # path (user report: `mcpp new ... --template imgui` failed with
       # fetch 'imgui@0.0.6' exit 1 on hosts without a sha256sum binary).
       - name: "Template: exact mcpplibs.imgui selector (fetch path)"
+        if: matrix.toolchain == 'default'
         run: |
           # The template fetch's own status is the first assertion; without
           # pipefail `tee` would report success for it (WS7, #729).
@@ -204,53 +226,8 @@ jobs:
           test -f abc1/mcpp.toml
           grep -F 'namespace=mcpplibs name=imgui' template.log
 
-      - name: "Default: build mcpp"
+      - name: "Build mcpp"
         run: |
-          mcpp clean
-          mcpp run
-
-      - name: "musl-gcc: mcpp new → run"
-        run: |
-          mcpp toolchain install gcc 16.1.0-musl
-          mcpp toolchain default gcc@16.1.0-musl
-          cd "$(mktemp -d)"
-          mcpp new hello_musl
-          cd hello_musl
-          mcpp run
-
-      - name: "musl-gcc: build mcpp"
-        run: |
-          mcpp toolchain default gcc@16.1.0-musl
-          mcpp clean
-          mcpp run
-
-      - name: "gcc 16: mcpp new → run"
-        run: |
-          mcpp toolchain install gcc 16.1.0
-          mcpp toolchain default gcc@16.1.0
-          cd "$(mktemp -d)"
-          mcpp new hello_gcc16
-          cd hello_gcc16
-          mcpp run
-
-      - name: "gcc 16: build mcpp"
-        run: |
-          mcpp toolchain default gcc@16.1.0
-          mcpp clean
-          mcpp run
-
-      - name: "LLVM: mcpp new → run"
-        run: |
-          mcpp toolchain install llvm 23.1.3
-          mcpp toolchain default llvm@23.1.3
-          cd "$(mktemp -d)"
-          mcpp new hello_llvm
-          cd hello_llvm
-          mcpp run
-
-      - name: "LLVM: build mcpp"
-        run: |
-          mcpp toolchain default llvm@23.1.3
           mcpp clean
           mcpp run
 
