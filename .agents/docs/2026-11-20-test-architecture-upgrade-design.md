@@ -850,7 +850,8 @@ doctest 适配器（5.14）、依赖的调试信息（5.15）。boost-m 自己�
    subos。实施中发现：上游的版本目录在下游是指向所有者载荷的链接，配方的 `config()` 钩子经由它写入了所有者的文件——
    用户 home 中 GCC 的 specs 与 binutils 的 `ld` 包装被写入了临时 home 的路径（#293 的机制）。已就地修复，并在配方中
    修正：链接条目走借用的分支，`ld` 包装跳过链接条目（xim-pkgindex #1211）。此后 914 检查共享 home 在一次构建后没有
-   文件被写入。
+   文件被写入。修正只在索引含有它时生效：用例的 home 链接用户 home 的索引，本地的索引停在 #1211 之前时再次写穿；
+   CI 恢复的沙箱同样带着保存时的索引，因此使用本提交 mcpp 的每个作业先运行 `mcpp index update`（`use-built-mcpp`）。
 6. **CI6。** home 夹具的恢复即 `bootstrap-mcpp` 的沙箱缓存，其键（`mcpp.toml`、`.xlings.json`）就是夹具的身份；不另设
    缓存。
 7. **CI2 的档位。** 发布形态只在 `full` 档构建（`release-build.yml`，与 `release.yml` 同一组作业），Linux 的单元与 C++ e2e
@@ -863,3 +864,7 @@ doctest 适配器（5.14）、依赖的调试信息（5.15）。boost-m 自己�
     `check_e2e_coverage.py` 判定，没有迁入 `[ci.coverage]`：它的 `job`（工作流按名字运行一个测试并自行断言其结果）与
     `unaffected`（`pr` 集合按变更略去的测试）两种判定在 `mtest ci coverage` 中没有对应，迁入会使这两类测试成为未覆盖。
     新的账本是面的账本（`[ledger.surface]`）。
+11. **构建记录的 `staged`。** 1122 在实施中失败：缓存提供的包的单元由 `stage_file` 边复制，构建记录把这些边与编译
+    一同列出，第二个工程看起来编译了 mtest 的 13 个输出。记录为这类边增加 `staged`（SPEC-017 B4），它与单元缓存的
+    `served` 一样不是编译。余下的一个编译是 mtest 的入口单元：包的入口单元随链接它的映像编译，不取自缓存中包的条目，
+    1122 的界限为 1。
