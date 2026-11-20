@@ -136,6 +136,33 @@ UTest g{"g", [] {
         expect(e2e::succeeded(f2));
         expect(s::has_line(s::text(f2), R"(test_smoke \.\.\. ok \(.*3 cases\))")) << "a pattern below the listed case does not run it whole";
     };
+
+    "1120 a header affects the tests built from the units that read it"_test[s::gcc] = [] {
+        // Design 2026-11-20 §5.11: the build directory's records (ninja's deps log, the scans'
+        // depfiles) name the units that read a header; while a unit of the project has none,
+        // every test is affected.
+        auto p = s::project::scaffold("hdr");
+        p.write("src/util.h", "inline int twice(int x) { return 2 * x; }\n");
+        p.write("src/unused.h", "inline int never() { return 0; }\n");
+        p.write("tests/reads.cpp", "#include \"../src/util.h\"\nint main() { return twice(2) == 4 ? 0 : 1; }\n");
+        p.write("tests/other.cpp", "int main() { return 0; }\n");
+        auto changed = [&](std::string_view path) {
+            auto r = p.mcpp({"test", "--changed", std::string(path)});
+            expect(e2e::succeeded(r)) << s::text(r);
+            return s::text(r);
+        };
+        const auto before = changed("src/util.h");
+        expect(e2e::contains(before, "Affected 3 of 3 tests")) << before;
+        expect(e2e::contains(before, "has no record of what some unit read")) << before;
+        expect(fatal(e2e::succeeded(p.mcpp({"test"}))));
+        const auto after = changed("src/util.h");
+        expect(e2e::contains(after, "Affected 1 of 3 tests")) << after;
+        expect(e2e::contains(after, "reads ... ok")) << after;
+        expect(s::lacks(after, "other ...")) << "a test that read no changed header ran";
+        expect(e2e::contains(after, "src/util.h: read by 1 unit, 1 test")) << after;
+        const auto unused = changed("src/unused.h");
+        expect(e2e::contains(unused, "Affected 0 of 3 tests")) << unused;
+    };
 }};
 
 }  // namespace
