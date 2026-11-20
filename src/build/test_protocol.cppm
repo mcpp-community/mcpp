@@ -77,6 +77,7 @@ struct Case {
     std::vector<Bound>       bounds;    // P6.5
     std::vector<std::string> resources; // P7.1: `machine` holds the machine alone
     double                   timeout = 0; // seconds the case states it may run; 0: none stated
+    std::vector<std::string> uses;      // P11.2: the run fixtures it uses
 };
 
 // A step of a case (P5.6): a command an end-to-end case ran, as the program
@@ -151,6 +152,7 @@ struct Report {
     bool                       selectsWithin = false;
     bool                       done = false;   // the `done` event came
     std::vector<Case>          listed;         // `case` events (list mode)
+    std::vector<std::string>   fixtures;       // P11.1: the run fixtures it serves (`component` events)
     std::vector<CaseResult>    cases;          // in the order they began
     std::vector<std::string>   missing;        // P4.1
     Usage                      usage;          // the `usage` event (P10.2)
@@ -332,7 +334,10 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
         r.listed.push_back({id, text(e, "name"), text(e, "file"), number(e, "line"),
                             text(e, "kind"), strings(e, "tags"), text(e, "expect"), bounds_of(e),
                             strings(e, "resources"),
-                            e.contains("timeout") && e["timeout"].is_number() ? e["timeout"].get<double>() : 0.0});
+                            e.contains("timeout") && e["timeout"].is_number() ? e["timeout"].get<double>() : 0.0,
+                            strings(e, "uses")});
+    } else if (kind == "component") {
+        if (auto f = text(e, "fixture"); !f.empty()) r.fixtures.push_back(f);
     } else if (kind == "begin") {
         open[id] = r.cases.size();
         r.cases.push_back({id, "", 0, "", {}});

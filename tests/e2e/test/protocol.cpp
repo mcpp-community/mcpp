@@ -372,6 +372,86 @@ bool cases(std::ofstream& r, bool list, const std::set<std::string>& selected) {
         expect(fatal(e2e::succeeded(one)));
         expect(e2e::contains(record(one.out, "t")["cases"][0].value("output", ""), "written by plain"));
     };
+
+    "293 a run fixture is served once, before its first user and until its last"_test[s::gcc] = [] {
+        // SPEC-017 P11 (design 2026-11-20 §5.10): the program that declares the fixture serves it
+        // under MTEST_SERVE; both programs whose cases use it receive its endpoint; it ends after
+        // them; its preparation is its own row. A fixture that is not ready is the machine's
+        // failure: its users do not run, and the store says `infra` (P11.4).
+        const auto root = s::case_dir() / "t";
+        s::project t(root, {{"fw/mcpp.toml", R"([package]
+name    = "fw"
+version = "0.1.0"
+
+[targets.main]
+kind          = "entry"
+main          = "src/main.cpp"
+test-protocol = 1
+test-main     = true
+)"},
+                            {"fw/src/main.cpp", std::format(R"CPP(import std;
+extern std::string case_id();
+int main() {{
+    const std::filesystem::path root{{"{}"}};
+    if (const char* serve = std::getenv("MTEST_SERVE")) {{
+        if (std::getenv("MTEST_PROTOCOL") || std::getenv("MTEST_REPORT")) return 5;
+        std::ofstream(root / "served.txt", std::ios::app) << serve << "\n";
+        if (std::filesystem::exists(root / "not-ready")) return 3;
+        std::filesystem::create_directories(root / "home");
+        std::cout << "mtest-ready " << (root / "home").generic_string() << std::endl;
+        for (std::string line; std::getline(std::cin, line);) {{}}
+        std::ofstream(root / "ended.txt") << "ended\n";
+        return 0;
+    }}
+    const char* path = std::getenv("MTEST_REPORT");
+    if (!path) return 4;
+    std::ofstream r(path, std::ios::app);
+    const auto id = case_id();
+    r << R"({{"e":"program","protocol":1,"level":1,"framework":"fw","version":"0.1.0"}})" << "\n";
+    if (std::string_view(std::getenv("MTEST_MODE")) == "list") {{
+        r << R"({{"e":"component","fixture":"home","scope":"run"}})" << "\n";
+        r << std::format(R"({{{{"e":"case","id":"{{}}","name":"{{}}","file":"{{}}.cpp","line":1,"uses":["home"]}}}})", id, id, id) << "\n";
+    }} else {{
+        r << std::format(R"({{{{"e":"begin","id":"{{}}","t":0}}}})", id) << "\n";
+        const char* home = std::getenv("MTEST_FIXTURE_HOME");
+        const bool ok = home && std::filesystem::path(home) == root / "home"
+                     && !std::filesystem::exists(root / "ended.txt");
+        if (ok) std::ofstream(root / "home" / "users.txt", std::ios::app) << id << "\n";
+        r << std::format(R"({{{{"e":"end","id":"{{}}","status":"{{}}","ms":0}}}})", id, ok ? "pass" : "fail") << "\n";
+    }}
+    r << R"({{"e":"done","status":"pass","counts":{{}}}})" << "\n";
+    return 0;
+}}
+)CPP", generic(root))},
+                            {"app/tests/a.cpp", "import std;\nstd::string case_id() { return \"a\"; }\n"},
+                            {"app/tests/b.cpp", "import std;\nstd::string case_id() { return \"b\"; }\n"}});
+        t.write("app/mcpp.toml", std::format("[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\nfw = {{ path = \"{}\" }}\n",
+                                              generic(t.at("fw"))));
+        auto r = t.mcpp_in("app", {"test", "--message-format", "json"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(eq(s::read_file(root / "served.txt"), std::string("home\n"))) << "the fixture is served once";
+        expect(fs::exists(root / "ended.txt")) << "the fixture ended after its last user";
+        const auto users = s::read_file(root / "home" / "users.txt");
+        expect(users.contains("a\n") && users.contains("b\n")) << users;
+        const auto fixtures = s::glob(t.at("app/target/mtest/runs"), "*/fixtures.ndjson");
+        expect(fatal(eq(fixtures.size(), std::size_t{1})));
+        const auto rows = s::json_lines(s::read_file(fixtures.front()));
+        expect(fatal(eq(rows.size(), std::size_t{1})));
+        expect(rows[0]["name"] == "home" && rows[0]["status"] == "ready"
+               && rows[0]["ready_ms"].get<long long>() >= rows[0]["started_ms"].get<long long>()
+               && rows[0]["ended_ms"].get<long long>() >= rows[0]["ready_ms"].get<long long>()) << rows[0].dump();
+        // P11.4
+        std::ofstream(root / "not-ready").put('\n');
+        fs::remove(root / "ended.txt");
+        auto nr = t.mcpp_in("app", {"test"});
+        expect(nr.started && nr.status != 0) << "a run whose fixture was not ready passed";
+        expect(e2e::contains(s::text(nr), "the run fixture home ended before it was ready")) << s::text(nr);
+        bool infra = false;
+        for (const auto& f : s::glob(t.at("app/target/mtest/runs"), "*/programs.ndjson"))
+            for (const auto& p : s::json_lines(s::read_file(f)))
+                infra = infra || (p.value("status", "") == "infra" && p["fixtures"] == json::parse(R"(["home"])"));
+        expect(infra) << "no program's record says infra";
+    };
 }};
 
 }  // namespace

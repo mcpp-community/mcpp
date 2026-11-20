@@ -16,6 +16,7 @@ import mcpp.pack.compress;         // the test archive's tar (SPEC-015 §4)
 import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
 import mcpp.build.test_protocol;   // the runner's side of the test protocol (docs/08 "Cases")
+import mcpp.build.test_fixture;    // the run fixtures it serves (SPEC-017 P11)
 import mcpp.build.test_impact;     // the tests a change affects (docs/08)
 import mcpp.build.test_schedule;   // the order, division and shards of a run (docs/08)
 import mcpp.diag;
@@ -4619,6 +4620,10 @@ struct TestResult {
     // (seconds): a case's `limit_ms` in the store (B4).
     double                              limitSecs = 0;
     std::map<std::string, double>       caseSecs;
+    // The run fixtures it used (P11.2), and whether one it uses was not ready: the machine's
+    // failure, `infra` in the store (P11.4).
+    std::vector<std::string>            fixtures;
+    bool                                infra = false;
     // The program and the files it is compiled from, for a test built and not
     // run (`--no-run`): what a runner that selects by change reads (docs/50).
     std::string                         program;
@@ -4656,6 +4661,7 @@ static double case_limit(const TestResult& t, std::string_view id) {
 // `mtest report|analyze|graph --store <dir>` read `mcpp test`'s runs as the
 // engine's own. Written whole into `runs/<id>/` and then appended to the index.
 void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestResult>& results,
+                       const std::vector<mcpp::build::test_fixture::Run>& fixtures,
                        std::chrono::system_clock::time_point started, long long ms, int jobs,
                        std::string_view selection, std::string_view shard = {}) {
     namespace fs = std::filesystem;
@@ -4676,7 +4682,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
             case TestResult::St::Pass:        return "pass";
             case TestResult::St::RunFail:     return "fail";
             case TestResult::St::CompileFail: return "build-fail";
-            case TestResult::St::NotRun:      return "not-run";
+            case TestResult::St::NotRun:      return t.infra ? "infra" : "not-run";
             case TestResult::St::Built:       return "built";
         }
         return "fail";
@@ -4686,12 +4692,20 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
     {
         std::ofstream programs(runDir / "programs.ndjson", std::ios::binary);
         std::ofstream cases(runDir / "cases.ndjson", std::ios::binary);
+        // B4 `fixtures.ndjson`: a fixture's preparation is its own, not its first user's.
+        if (!fixtures.empty()) {
+            std::ofstream rows(runDir / "fixtures.ndjson", std::ios::binary);
+            for (auto const& f : fixtures)
+                rows << json{{"name", f.name}, {"program", f.program}, {"started_ms", std::llround(f.startedMs)},
+                             {"ready_ms", std::llround(f.readyMs)}, {"ended_ms", std::llround(f.endedMs)},
+                             {"status", f.status}}.dump() << "\n";
+        }
         for (auto const& t : results) {
             failed |= t.status == TestResult::St::RunFail || t.status == TestResult::St::CompileFail;
             json p{{"name", t.name}, {"argv", json::array({t.program.empty() ? t.name : t.program})},
                    {"status", status_of(t)}, {"exit", t.exitCode}, {"ms", t.durationMs},
                    {"started_ms", t.startedMs}, {"worker", t.worker}, {"select", t.select},
-                   {"resources", t.alone ? json::array({"machine"}) : json::array()}, {"fixtures", json::array()}};
+                   {"resources", t.alone ? json::array({"machine"}) : json::array()}, {"fixtures", t.fixtures}};
             if (t.buildMs > 0) p["build_ms"] = t.buildMs;
             // The program a part is of: what `--failed` builds again.
             if (!t.partOf.empty()) p["part_of"] = t.partOf;
@@ -5071,7 +5085,29 @@ struct TestRunnable {
     // limit a case is held to in the store (B4 `limit_ms`), for the report's
     // margin (design 2026-11-20 §5.8).
     std::map<std::string, double> caseSecs;
+    // P11: the run fixtures each listed case uses, and those the program serves.
+    std::map<std::string, std::vector<std::string>> caseUses;
+    std::vector<std::string> serves;
 };
+
+// The run fixtures the cases a program selects use (P11.2): a listed case is selected by a line
+// naming it or a case under it, plain or `?`; a `!` line selects nothing.
+static std::vector<std::string> fixtures_used(const TestRunnable& r) {
+    std::vector<std::string> lines;
+    if (r.select) {
+        std::ifstream in(*r.select);
+        for (std::string line; std::getline(in, line);)
+            if (!line.empty() && !line.starts_with('!')) lines.push_back(line.starts_with('?') ? line.substr(1) : line);
+    }
+    std::set<std::string> out;
+    for (auto const& [id, uses] : r.caseUses) {
+        const bool selected = !r.select || std::ranges::any_of(lines, [&](std::string_view l) {
+            return l == id || (l.size() > id.size() && l.starts_with(id) && l[id.size()] == '/');
+        });
+        if (selected) out.insert(uses.begin(), uses.end());
+    }
+    return {out.begin(), out.end()};
+}
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
 // the marker its file carries. A test that keeps what it reaches may have lost
@@ -5587,8 +5623,16 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     const bool exclusiveDevice = (ctx->manifest.buildConfig.runExclusive
                                   || ctx->plan.platform.fields.runner.exclusive)
                               && !runnerChoice.tmpl.empty();
+    std::vector<mcpp::build::test_fixture::Run> fixtureRuns;
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
+        // THE RUN FIXTURES (SPEC-017 P11, design 2026-11-20 §5.10): the program that serves each,
+        // taken before the shard keeps its own, since a shard's users need not include it.
+        namespace tf = mcpp::build::test_fixture;
+        std::map<std::string, tf::Provider> providers;
+        for (auto const& r : list)
+            for (auto const& f : r.serves)
+                providers.try_emplace(f, tf::Provider{r.partOf.empty() ? r.name : r.partOf, r.argv, r.env, r.cwd});
         // Each test's measured duration: of the cases it selects, or of the
         // program whole.
         namespace ts = mcpp::build::test_schedule;
@@ -5623,6 +5667,18 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         }
         // The longest first, so that the longest work does not start last.
         std::ranges::stable_sort(list, std::greater{}, &Runnable::estimateMs);
+        // Each fixture starts before its first user and ends after its last; a run whose cases
+        // use none starts nothing.
+        std::vector<std::vector<std::string>> usesOf(list.size());
+        std::map<std::string, int> users;
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            usesOf[i] = fixtures_used(list[i]);
+            for (auto const& f : usesOf[i]) ++users[f];
+        }
+        std::optional<tf::Server> fixtures;
+        if (!users.empty())
+            fixtures.emplace(std::move(providers), std::move(users), tLoop,
+                             std::chrono::seconds(testOpts.timeoutSecs > 0 ? testOpts.timeoutSecs : 3600));
         const bool capture = json || list.size() > 1;
         // The limit of one test's process: `--timeout`, or what its cases
         // state when that is longer; `--timeout 0` disables both.
@@ -5784,6 +5840,29 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 } else {
                     for (auto v : mcpp::build::test_protocol::kVariables) runOpts.unset.emplace_back(v);
                 }
+                // A fixture that is not ready is the machine's failure: the program does not run
+                // and its record says `infra` (P11.4).
+                std::string notReady;
+                for (auto const& f : usesOf[i]) {
+                    auto endpoint = fixtures->acquire(f);
+                    if (!endpoint) { notReady = endpoint.error(); break; }
+                    runOpts.env.emplace_back(tf::variable(f), *endpoint);
+                }
+                const auto release_fixtures = [&] {
+                    for (auto const& f : usesOf[i]) fixtures->release(f);
+                };
+                if (!notReady.empty()) {
+                    release_fixtures();
+                    std::scoped_lock lock(reportMutex);
+                    if (!json) mcpp::ui::plain(std::format("{} ... not run ({})", r.name, notReady));
+                    results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, 0, false, notReady, r.buildMs});
+                    results.back().infra = true;
+                    results.back().fixtures = usesOf[i];
+                    stamp_schedule();
+                    std::fflush(libc::stdout());
+                    emit_json(results.back());
+                    continue;
+                }
                 if (!capture) mcpp::ui::status("Running", std::format("bin/{}", r.name));
                 // THE CASES AS THEY HAPPEN (feature `test-case-stream`): the
                 // report is NDJSON the program appends event by event (P5.1),
@@ -5828,6 +5907,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                         });
                     auto rr = mcpp::run::execute(r.argv, runOpts);
                     if (watcher.joinable()) { watcher.request_stop(); watcher.join(); }
+                    release_fixtures();
                     exitCode = rr.exit_code;
                     timedOut = rr.timed_out;
                     spawnErr = rr.spawn_error;
@@ -5917,6 +5997,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 results.back().protocol = spoken;
                 results.back().report = std::move(report);
+                results.back().fixtures = usesOf[i];
                 stamp_schedule();
                 results.back().guide = r.guide;
                 // The captured output belongs directly under its own line, or
@@ -5938,6 +6019,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             for (int w = 0; w < workers; ++w) pool.emplace_back(worker, w);
             for (auto& t : pool) t.join();
         }
+        if (fixtures) std::ranges::move(fixtures->finish(), std::back_inserter(fixtureRuns));
         // WALL time of the phase, not the sum of the per-test durations: with
         // N running at once that sum exceeds the elapsed time and the summary
         // would report a run phase longer than the whole command.
@@ -6382,8 +6464,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             }
             for (const auto& [_, secs] : selectedSecs) r.declaredSecs += secs;
             selectedSecs.clear();
-            for (const auto& c : report.listed)
+            for (const auto& c : report.listed) {
                 if (c.timeout > 0) r.caseSecs[c.id] = c.timeout;
+                if (!c.uses.empty()) r.caseUses[c.id] = c.uses;
+            }
+            r.serves = report.fixtures;
             if (lines.empty()) { ++notSelected; continue; }
             r.select = r.protocolDir / "select.txt";
             std::ofstream(*r.select, std::ios::binary) << lines;
@@ -6473,8 +6558,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     continue;
                 }
                 const auto& report = *listings[at];
-                for (const auto& c : report.listed)
+                for (const auto& c : report.listed) {
                     if (c.timeout > 0) r.caseSecs[c.id] = c.timeout;
+                    if (!c.uses.empty()) r.caseUses[c.id] = c.uses;
+                }
+                r.serves = report.fixtures;
                 // THE MACHINE, HELD ALONE (P7.1). A case that holds `machine`
                 // states a property that holds only while nothing beside it
                 // changes the machine (the shared home, its caches, the default
@@ -6607,7 +6695,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // program, and not a listing.
     if (const auto& st = ctx->manifest.testStore; st != "none" && !testOpts.listCases
         && std::ranges::any_of(results, [](const TestResult& r) { return r.status != TestResult::St::Built; }))
-        write_mtest_store(storeDir, results,
+        write_mtest_store(storeDir, results, fixtureRuns,
                           testStartedWall,
                           std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - tLoop).count(),
