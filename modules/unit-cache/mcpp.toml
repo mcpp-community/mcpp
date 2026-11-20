@@ -18,4 +18,4 @@ license     = "Apache-2.0"
 mcpp.toolchain-model = { path = "../toolchain-model" }
 
 [dev-dependencies]
-mcpplibs.mtest = "0.11.0"
+mcpplibs.mtest = "0.11.1"

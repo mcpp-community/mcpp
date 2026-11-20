@@ -6,6 +6,67 @@
 
 ## [Unreleased]
 
+### Added
+
+- **The home's unit cache** (mcpp#927, docs/26). Before it starts a compiler, the compiler
+  executor looks up the compile by its command, its compiler and its source's content; when the
+  files an earlier compile of that key read still hold their contents, its object and BMI are
+  placed and no compiler starts. A BMI is named by the key of the compile that made it. A fresh
+  checkout of mcpp on a filled cache built in 4.1 s instead of 164 s, its 288 compiles placed.
+  The split schedule places its units from the cache too. cl.exe's compiles are not cached.
+- **A cacheable package's build program runs in the home** (mcpp#986, mcpp#927, SPEC-004 §9
+  item 18). A package whose source is named -- an index's version, a git commit, a path
+  dependency's content digest -- runs its build program into
+  `build-cache/v1/out/<package>@<version>/<key>/out`, keyed by its configuration, and a second
+  project takes the outputs. A path enters a cache key by its role (`<store>`, `<pkg>`,
+  `<out>`), never as written.
+- **`[profile.<name>] dependency_debug`** (mcpp#927, SPEC-004 §9 item 20): the debug information
+  of the dependencies from the package store and git, `true`, `false` or `"lines"`. Omitted,
+  `dev` and `debug` take `"lines"` while their `debug` is on. A test program whose only
+  dependency is mtest fell from 43.7 MB to 8.3 MB and its build from 15.9 s to 7.2 s.
+- **`[build] memory_threshold`** (mcpp#802, SPEC-004 §9 item 19): the available memory below
+  which the compiler executor waits for a running compiler to end before it starts another; the
+  engine's value is 1 GiB, `MCPP_MEMORY_THRESHOLD` overrides it, and after a minute below it the
+  compiler starts and standard error says so.
+- **One budget of slots for the machine** (mcpp#976, SPEC-017 O11). `mcpp test` states a
+  directory of one slot file per job (`MTEST_BUDGET`); a compiler a test starts through mcpp
+  holds a slot of it, so a test that builds a project takes from the run's jobs. A run inside
+  another runner's budget uses that one.
+- **The record of a build and of a run** (mcpp#927, SPEC-017 B4, P5.6, P12.4).
+  `MCPP_BUILD_RECORD=<file>` appends a line per edge a build ran: its package, its time, the
+  compiler's processor time and largest resident set, and whether the unit cache placed it.
+  `mcpp test` keeps a run's builds in `builds.ndjson`; a run names its machine's class, its
+  processors and memory, and a case its processor time, its steps, the surface items it used and
+  the limit it ran within. Estimates prefer the runs of the same class of machine. An edge that
+  runs a minute is named on a `Running` line; `--verbose` names the five slowest.
+- **Run fixtures** (mcpp#293, SPEC-017 O6, P11). A program declares a fixture the run shares and
+  its cases name it in `uses`; `mcpp test` starts it once, with `MTEST_SERVE`, before the first
+  program that uses it, gives its endpoint as `MTEST_FIXTURE_<NAME>`, and ends it after the
+  last. A fixture that does not become ready is the machine's failure: its users record `infra`.
+  `fixtures.ndjson` states each fixture's start, readiness and end.
+- **A header selects the tests that read it.** `mcpp test --changed`/`--since` takes the units
+  that read a changed header from the build directory's records (ninja's deps log, the scans'
+  depfiles) and runs the tests built from them; while a unit of the project has no record, a
+  header affects every test.
+- **`mcpp emit surface`** writes mcpp's surface, one `<kind> <name>` per line: the commands and
+  flags of the command line's definition, the manifest's keys and the refusals' reason tokens.
+  `MCPP_SURFACE_RECORD=<file>` makes each process of an invocation append the items it used.
+- `wire` features `test-steps`, `test-budget`, `test-jitter` and `test-fixtures` (docs/50).
+
+### Changed
+
+- **A package's instance is a function of its configuration, not of its units** (mcpp#986): a
+  test build after `mcpp build` no longer compiles the package again, and each refusal of the
+  cache names its reason.
+- **A case's time is the one its scopes state**: a case selected with `--case` runs within the
+  `timeout` its listed case states, not the run's.
+- mcpplibs.mtest 0.11.1 and mcpplibs.os 0.4.7 throughout, the new project's skeleton included.
+- **CI verifies a tree once** (design 2026-11-20 §5.22). A pull request's push runs the `pr` tier;
+  a `ci:full` run that passes leaves `verified-<tree>`, a push to main of that tree registers
+  the run instead of testing again, and `release.yml` promotes the four archives that run built
+  and tested (`release-build.yml`) instead of building them. The release pull request passes
+  `ci:full` before it is merged, and main's run is not cancelled (docs/92).
+
 ### Fixed
 
 - A program's resource script is compiled with its package's `include_dirs` expanded, as the
