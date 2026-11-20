@@ -37,7 +37,8 @@ UTest a_command_states_its_source_and_depfile{"UnitCache/ACommandStatesItsSource
     expect(eq(s->responses.size(), std::size_t{1}));
     expect(eq(s->systemDirs.front(), fs::path("/store/inc")));
     expect(s->splitDebug);
-    expect(!uc::shape_of({"/store/g++", "-c", "a.cpp", "-o", "a.o"})) << "no depfile";
+    expect(uc::shape_of({"/store/g++", "-c", "a.cpp", "-o", "a.o"})->depfile.empty()) << "no depfile";
+    expect(!uc::shape_of({"/store/g++", "-o", "a.o"})) << "no source";
     expect(!uc::shape_of({"/store/g++", "-fmodule-mapper=|mapper", "-MF", "d", "-c", "a.cpp"})) << "a mapper program";
 }};
 
@@ -76,4 +77,53 @@ UTest a_compile_is_served_while_what_it_read_holds{"UnitCache/ACompileIsServedWh
     // A compiler outside the stores is refused.
     const uc::Unit host{{"/usr/bin/g++", "-MF", "d", "-c", "a.cpp", "-o", "a.o"}, build, "a.o", {}};
     expect(ne(cache.refusal(host), std::string{}));
+}};
+
+UTest an_importer_names_a_bmi_by_its_producer{"UnitCache/AnImporterNamesABmiByItsProducer", [] {
+    // A GCC BMI is not the same bytes from one compile to the next: the importer's manifest names
+    // it by the key of the compile that wrote it, so a BMI written again from the same inputs
+    // serves the importer.
+    Tmp t;
+    const auto store = t.dir / "store", build = t.dir / "build";
+    write(store / "bin/g++", "compiler");
+    write(t.dir / "src/m.cppm", "export module m;");
+    write(t.dir / "src/user.cpp", "import m;");
+    uc::Cache cache(t.dir / "cache", {store}, build);
+    const uc::Unit module{{(store / "bin/g++").string(), "-MF", "obj/m.o.d", "-c", (t.dir / "src/m.cppm").string(), "-o", "obj/m.o"},
+                          build, "obj/m.o", "gcm.cache/m.gcm"};
+    write(build / "obj/m.o", "M");
+    write(build / "gcm.cache/m.gcm", "BMI-1");
+    write(build / "obj/m.o.d", std::format("obj/m.o gcm.cache/m.gcm: {}\n", (t.dir / "src/m.cppm").generic_string()));
+    cache.keep(module);
+    expect(fatal(fs::exists(build / "gcm.cache/m.gcm.mcpp-unit"))) << "the BMI has no producer key";
+    const uc::Unit user{{(store / "bin/g++").string(), "-MF", "obj/user.o.d", "-c", (t.dir / "src/user.cpp").string(), "-o", "obj/user.o"},
+                        build, "obj/user.o", {}};
+    write(build / "obj/user.o", "U");
+    write(build / "obj/user.o.d", std::format("obj/user.o: {} gcm.cache/m.gcm\n", (t.dir / "src/user.cpp").generic_string()));
+    cache.keep(user);
+    // The module compiled again from the same inputs: other bytes, the same producer.
+    write(build / "gcm.cache/m.gcm", "BMI-2");
+    fs::remove(build / "obj/user.o");
+    uc::Cache again(t.dir / "cache", {store}, build);
+    expect(again.serve(user)) << "a BMI written again from the same inputs did not serve its importer";
+    // A BMI whose producer is not the cache's is named by its bytes.
+    uc::Cache::forget(module);
+    uc::Cache third(t.dir / "cache", {store}, build);
+    expect(!third.serve(user)) << "a BMI without its producer's key served by name";
+}};
+
+UTest a_unit_travels_as_a_record_and_its_imports_are_read_from_the_scan{"UnitCache/AUnitTravelsAsARecord", [] {
+    uc::Unit u{uc::split_command(R"(/store/g++ -x c++ "-DNAME=a b" -c /w/a.cppm -o obj/a.o)"), "/build", "obj/a.o", "gcm.cache/a.gcm"};
+    expect(eq(u.argv[3], std::string("-DNAME=a b")));
+    u.reads = std::vector<fs::path>{"/w/a.cppm", "gcm.cache/b.gcm"};
+    u.placeBmi = ".mcpp-attempts/1/out/gcm.cache/a.gcm";
+    const auto back = uc::from_record(uc::to_record(u));
+    expect(fatal(back.has_value()));
+    expect(eq(back->argv, u.argv));
+    expect(eq(back->placeBmi, u.placeBmi));
+    expect(fatal(back->reads.has_value()));
+    expect(eq(back->reads->size(), std::size_t{2}));
+    const auto bmis = uc::imported_bmis(R"({"rules":[{"provides":[{"logical-name":"a"}],"requires":[{"logical-name":"b"},{"logical-name":"std"}]}]})",
+                                        "$root gcm.cache\nb b.gcm\nstd std.gcm\na a.gcm\n", "/build");
+    expect(eq(bmis, std::vector<fs::path>{"/build/gcm.cache/b.gcm", "/build/gcm.cache/std.gcm"}));
 }};

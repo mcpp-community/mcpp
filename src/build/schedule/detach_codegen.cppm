@@ -76,6 +76,8 @@ import mcpplibs.os.platform;
 import mcpplibs.os.stdio;
 import mcpplibs.os.text;
 import mcpplibs.os.machine;
+import mcpp.build.unit_cache;   // a compile placed by the contents it read (design 2026-11-20 §5.3)
+import mcpp.build.record;       // the compile's measurement (design 2026-11-20 §5.6)
 import mcpp.build.depfile;
 import mcpp.build.command_line;
 import mcpp.run;
@@ -936,6 +938,88 @@ std::expected<void, std::string> RunScope::finish() { return state_->close(); }
 const std::filesystem::path& RunScope::directory() const { return state_->generation; }
 bool RunScope::failed() const {return state_->witnesses&&state_->witnesses->failed();}
 
+namespace {
+// THE UNIT, FOR THE SUPERVISOR TO PLACE OR KEEP (design 2026-11-20 §5.3): its
+// key is the command as the rule wrote it (an attempt's own paths are new each
+// time), its outputs the paths it is published at, the places a hit writes
+// where the compiler would have, and the files it reads -- the scan's depfile
+// (what the compiler's own is equivalent to, above) and the BMIs the scan says
+// it imports, by the module mapper. Nothing when the build states no cache.
+void record_unit(const CompileRequest& req, const CompileRequest& actual, const std::filesystem::path& watched) {
+    namespace uc = mcpp::build::unit_cache;
+    std::error_code ec;
+    const auto file = suffixed(actual.slot, ".unit");
+    std::filesystem::remove(file, ec);
+    const auto dir = mcpp::invocation::get(uc::kDirEnv);
+    if (!dir || dir->empty() || req.depFrom.empty()) return;
+    auto read = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(in), {}};
+    };
+    uc::Unit u{uc::split_command(req.command), std::filesystem::current_path(), req.object, req.bmi};
+    const auto shape = uc::shape_of(u.argv);
+    if (!shape) return;
+    std::vector<std::filesystem::path> reads;
+    for (const auto& p : uc::depfile_prerequisites(read(req.depFrom))) reads.emplace_back(p);
+    if (auto ddi = req.depFrom; ddi.extension() == ".dep") {
+        ddi.replace_extension();
+        const auto mapper = shape->mapper.empty() ? std::string{} : read(shape->mapper);
+        for (auto& b : uc::imported_bmis(read(ddi), mapper, u.cwd)) reads.push_back(std::move(b));
+    }
+    u.reads = std::move(reads);
+    const auto words = uc::split_command(actual.command);
+    for (std::size_t i = 0; i + 1 < words.size(); ++i)
+        if (words[i] == "-o") u.placeObject = words[i + 1];
+    u.placeBmi = watched;
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << uc::to_record(u);
+    // Before the BMI is published, its producer's key: an importer starts then.
+    std::vector<std::filesystem::path> roots;
+    std::istringstream lines(mcpp::invocation::get(uc::kRootsEnv).value_or(""));
+    for (std::string line; std::getline(lines, line);)
+        if (!line.empty()) roots.push_back(mcpp::home::from_utf8(line));
+    uc::Cache(mcpp::home::from_utf8(*dir), std::move(roots), u.cwd).announce(u);
+}
+
+// The cache the build states, for the unit phase 1 recorded beside `slot`.
+std::optional<std::pair<mcpp::build::unit_cache::Cache, mcpp::build::unit_cache::Unit>>
+recorded_unit(const std::filesystem::path& slot) {
+    namespace uc = mcpp::build::unit_cache;
+    const auto dir = mcpp::invocation::get(uc::kDirEnv);
+    if (!dir || dir->empty()) return std::nullopt;
+    std::ifstream in(suffixed(slot, ".unit"), std::ios::binary);
+    if (!in) return std::nullopt;
+    auto u = uc::from_record(std::string{std::istreambuf_iterator<char>(in), {}});
+    if (!u) return std::nullopt;
+    std::vector<std::filesystem::path> roots;
+    std::istringstream lines(mcpp::invocation::get(uc::kRootsEnv).value_or(""));
+    for (std::string line; std::getline(lines, line);)
+        if (!line.empty()) roots.push_back(mcpp::home::from_utf8(line));
+    return std::pair{uc::Cache(mcpp::home::from_utf8(*dir), std::move(roots), u->cwd), std::move(*u)};
+}
+
+long long unix_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// The compile's line in the build record (design 2026-11-20 §5.6): its object,
+// and the compiler's processor time and largest resident set -- the supervisor
+// starts no other program -- or that the unit cache placed it.
+void record_usage(const std::filesystem::path& object, long long started, bool served) {
+    namespace rec = mcpp::build::record;
+    const auto file = mcpp::invocation::get(rec::kUsageEnv);
+    if (!file || file->empty() || object.empty()) return;
+    rec::Usage u{object.generic_string(), started, unix_ms()};
+    u.served = served;
+    if (!served)
+        if (const auto used = mcpplibs::os::process::resources(mcpplibs::os::process::of::children)) {
+            u.cpuMs = std::chrono::duration<double, std::milli>(used->user + used->system).count();
+            u.peakBytes = used->peak_memory;
+        }
+    (void)mcpplibs::os::fs::append(mcpp::home::from_utf8(*file), rec::usage_line(u));
+}
+}  // namespace
+
 int compile_release_at_bmi(const CompileRequest& req) {
     if (req.command.empty() || req.self.empty()) return 2;
     Actor actor;
@@ -996,6 +1080,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
     // A relocated attempt watches its own BMI, which did not exist before it.
     const auto watched = plan.relocated() ? relocation::written_bmi(plan) : actual.bmi;
     const BmiIdentity before = plan.relocated() ? BmiIdentity{} : bmi_identity(actual.bmi);
+    record_unit(req, actual, watched);
     if (!attempt && !plan.relocated() && !actual.bmi.empty()) {
         const auto backup = suffixed(actual.bmi, ".bak");
         std::filesystem::remove(backup, ec);
@@ -1208,11 +1293,19 @@ int supervise(const std::filesystem::path& slot,
         if(!transactions::publish(attempt.directory/"admitted","mcpp-admitted-v1",{})) {
             (void)write_rc(slot,2);return 2;
         }
-        const int ran=run_to_completion(command,suffixed(slot,".log"),actor->owner,unit.get());
+        auto cached=recorded_unit(slot);
+        const auto started=unix_ms();
+        const bool served=cached&&cached->first.serve(cached->second);
+        const int ran=served?0:run_to_completion(command,suffixed(slot,".log"),actor->owner,unit.get());
         if(auto retired=retire_owned(*unit,actor->owner);!retired) {
             record_supervisor_error(slot,retired.error());return 1;
         }
         const int rc=publish_outputs(ran);
+        if(cached&&!served) {
+            if(rc==0)cached->first.keep(cached->second);
+            else mcpp::build::unit_cache::Cache::forget(cached->second);
+        }
+        if(rc==0)record_usage(cached?cached->second.object:object,started,served);
         if(!attempt.retired(rc)) {record_supervisor_error(slot,"cannot publish compiler retirement certificate");return 1;}
         std::string status_failure;
         if(!write_rc(slot,rc,&status_failure)) {
@@ -1256,7 +1349,15 @@ int supervise(const std::filesystem::path& slot,
     // Acquire in the supervisor: no lock-handle handoff, and no interval in
     // which an early-returning phase 1 could release the compiler's permit.
     if (!actor->owner.active()) return 130;
-    const int rc = publish_outputs(run_to_completion(command, suffixed(slot, ".log"), actor->owner));
+    auto cached = recorded_unit(slot);
+    const auto started = unix_ms();
+    const bool served = cached && cached->first.serve(cached->second);
+    const int rc = publish_outputs(served ? 0 : run_to_completion(command, suffixed(slot, ".log"), actor->owner));
+    if (cached && !served) {
+        if (rc == 0) cached->first.keep(cached->second);
+        else mcpp::build::unit_cache::Cache::forget(cached->second);
+    }
+    if (rc == 0) record_usage(cached ? cached->second.object : object, started, served);
     settle(mcpp::run::ending() ? 130 : rc);
     return 0;   // the supervisor's own status is not the compiler's
 }

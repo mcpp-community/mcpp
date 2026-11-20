@@ -32,6 +32,11 @@ inline constexpr std::string_view kRootsEnv = "MCPP_IMMUTABLE_ROOTS";
 // A build directory's memory of file digests, by path, size and modification time: a header is
 // read once per build, not once per unit that includes it.
 inline constexpr std::string_view kDigestsFile = ".mcpp-digests";
+// Beside a BMI the cache kept or placed: the key of the compile that wrote it. A GCC BMI is not
+// the same bytes from one compile of a module to the next (measured on mcpp's own modules:
+// mcpp.build.prepare and mcpp.toolchain.triple), so an importer names the BMI it read by its
+// producer's key, which equal inputs give equal, and its bytes only where no key is beside it.
+inline constexpr std::string_view kProducerSuffix = ".mcpp-unit";
 
 // One compile, as the executor runs it: the compiler's command, the directory it runs in, and the
 // outputs the executor publishes.
@@ -40,7 +45,27 @@ struct Unit {
     std::filesystem::path    cwd;
     std::filesystem::path    object;
     std::filesystem::path    bmi;   // empty: the unit provides no module
+    // The files the compile reads, where the executor knows them before the compiler runs (the
+    // split schedule: the scan's depfile and the BMIs its imports name); unset: the command's
+    // depfile states them once it ran.
+    std::optional<std::vector<std::filesystem::path>> reads;
+    // Where a hit places the object and the BMI when the compiler would have written them
+    // elsewhere than where they are published (a relocated attempt); empty: `object`, `bmi`.
+    std::filesystem::path placeObject, placeBmi;
 };
+
+// A unit as one text and back, for the executor that decides to the one that compiles.
+std::string to_record(const Unit& u);
+std::optional<Unit> from_record(std::string_view text);
+
+// The words of a command written as one line, quotes and backslashes read as a POSIX shell reads
+// them (a rule's command file).
+std::vector<std::string> split_command(std::string_view line);
+
+// The BMIs a scan's P1689 record says the unit imports, by the module mapper's lines
+// (`$root <dir>`, then `<module> <path>`), relative to `cwd`.
+std::vector<std::filesystem::path> imported_bmis(std::string_view p1689, std::string_view mapper,
+                                                 const std::filesystem::path& cwd);
 
 // What the command names, read from its words: the source (`-c <file>`), the depfile (`-MF`), the
 // module mapper (`-fmodule-mapper=`), the response files (`@file`), the directories searched as
@@ -65,10 +90,20 @@ public:
     bool serve(const Unit& u);
     // Records what a compile that succeeded read, and keeps its outputs.
     void keep(const Unit& u);
+    // A compile the cache did not keep: its BMI has no producer key.
+    static void forget(const Unit& u);
+    // Before a compile whose reads are known: its BMI's producer key, beside the published BMI, so
+    // that an importer that starts once the BMI is published reads it (the split schedule
+    // publishes a BMI while its object is still being compiled).
+    void announce(const Unit& u);
 
 private:
     std::string first_key(const Unit& u, const Shape& s);
+    // The manifest of what `u` read, its lines sorted; nullopt when a file it read is gone.
+    std::optional<std::string> manifest_of(const Unit& u, const std::vector<std::string>& read);
     std::string digest(const std::filesystem::path& file);
+    // What a manifest records of a file it read: its producer's key, else its digest.
+    std::string identity(const std::filesystem::path& file);
     bool immutable(const std::filesystem::path& file) const;
     std::filesystem::path                                    dir_;
     std::vector<std::filesystem::path>                       roots_;
@@ -123,7 +158,7 @@ std::optional<Shape> shape_of(const std::vector<std::string>& argv) {
             s.systemDirs.emplace_back(w.starts_with("-isystem") ? w.substr(8) : w.substr(10));
         else if (w == "-gsplit-dwarf") s.splitDebug = true;
     }
-    if (s.source.empty() || s.depfile.empty()) return std::nullopt;
+    if (s.source.empty()) return std::nullopt;
     // A module mapper that is a program, or a server, answers what a file cannot record.
     if (!s.mapper.empty() && (s.mapper.native().find('|') != fs::path::string_type::npos
                               || s.mapper.native().find('=') != fs::path::string_type::npos
@@ -163,6 +198,119 @@ std::vector<std::string> depfile_prerequisites(std::string_view text) {
         word += c;
     }
     end_word();
+    return out;
+}
+
+std::string to_record(const Unit& u) {
+    std::string out;
+    auto line = [&](std::string_view key, std::string_view value) {
+        out += key;
+        out += '\t';
+        out += value;
+        out += '\n';
+    };
+    line("cwd", u.cwd.generic_string());
+    line("object", u.object.generic_string());
+    line("bmi", u.bmi.generic_string());
+    line("place_object", u.placeObject.generic_string());
+    line("place_bmi", u.placeBmi.generic_string());
+    for (const auto& w : u.argv) line("argv", w);
+    if (u.reads) {
+        line("reads", "");
+        for (const auto& r : *u.reads) line("read", r.generic_string());
+    }
+    return out;
+}
+
+std::optional<Unit> from_record(std::string_view text) {
+    Unit u;
+    while (!text.empty()) {
+        const auto nl = text.find('\n');
+        const auto line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        const auto tab = line.find('\t');
+        if (tab == std::string_view::npos) continue;
+        const auto key = line.substr(0, tab);
+        const std::string value(line.substr(tab + 1));
+        if (key == "cwd") u.cwd = value;
+        else if (key == "object") u.object = value;
+        else if (key == "bmi") u.bmi = value;
+        else if (key == "place_object") u.placeObject = value;
+        else if (key == "place_bmi") u.placeBmi = value;
+        else if (key == "argv") u.argv.push_back(value);
+        else if (key == "reads") u.reads.emplace();
+        else if (key == "read" && u.reads) u.reads->emplace_back(value);
+    }
+    if (u.argv.empty() || u.cwd.empty()) return std::nullopt;
+    return u;
+}
+
+std::vector<std::string> split_command(std::string_view line) {
+    std::vector<std::string> out;
+    std::string word;
+    bool inWord = false;
+    char quote = 0;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (quote == '\'') {
+            if (c == '\'') quote = 0;
+            else word += c;
+            continue;
+        }
+        if (c == '\\' && i + 1 < line.size() && quote != '\'') {
+            word += line[++i];
+            inWord = true;
+            continue;
+        }
+        if (quote == '"') {
+            if (c == '"') quote = 0;
+            else word += c;
+            continue;
+        }
+        if (c == '\'' || c == '"') {
+            quote = c;
+            inWord = true;
+            continue;
+        }
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (inWord) out.push_back(std::move(word));
+            word.clear();
+            inWord = false;
+            continue;
+        }
+        word += c;
+        inWord = true;
+    }
+    if (inWord) out.push_back(std::move(word));
+    return out;
+}
+
+std::vector<fs::path> imported_bmis(std::string_view p1689, std::string_view mapper, const fs::path& cwd) {
+    std::map<std::string, fs::path, std::less<>> path_of;
+    fs::path root;
+    std::istringstream in{std::string(mapper)};
+    for (std::string line; std::getline(in, line);) {
+        const auto sp = line.find(' ');
+        if (sp == std::string::npos) continue;
+        const auto name = line.substr(0, sp);
+        const auto where = line.substr(sp + 1);
+        if (name == "$root") root = where;
+        else path_of.emplace(name, where);
+    }
+    std::vector<fs::path> out;
+    const auto requires_at = p1689.find("\"requires\"");
+    if (requires_at == std::string_view::npos) return out;
+    constexpr std::string_view kName = "\"logical-name\"";
+    for (auto at = p1689.find(kName, requires_at); at != std::string_view::npos; at = p1689.find(kName, at + 1)) {
+        const auto open = p1689.find('"', at + kName.size());
+        const auto close = open == std::string_view::npos ? open : p1689.find('"', open + 1);
+        if (close == std::string_view::npos) break;
+        const auto name = p1689.substr(open + 1, close - open - 1);
+        if (auto it = path_of.find(name); it != path_of.end()) {
+            const auto p = it->second.is_absolute() ? it->second : root / it->second;
+            out.push_back(p.is_absolute() ? p : (cwd / p).lexically_normal());
+        }
+    }
     return out;
 }
 
@@ -208,10 +356,37 @@ std::string Cache::digest(const fs::path& file) {
     return d;
 }
 
+std::string Cache::identity(const fs::path& file) {
+    auto producer = file;
+    producer += kProducerSuffix;
+    std::error_code ec;
+    if (fs::is_regular_file(producer, ec))
+        if (auto key = read_all(producer); !key.empty()) return "unit:" + key;
+    return digest(file);
+}
+
+namespace {
+void write_producer(const fs::path& bmi, std::string_view key) {
+    if (bmi.empty()) return;
+    auto producer = bmi;
+    producer += kProducerSuffix;
+    std::ofstream(producer, std::ios::binary | std::ios::trunc) << key;
+}
+}  // namespace
+
+void Cache::forget(const Unit& u) {
+    if (u.bmi.empty()) return;
+    auto producer = u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi;
+    producer += kProducerSuffix;
+    std::error_code ec;
+    fs::remove(producer, ec);
+}
+
 std::string Cache::refusal(const Unit& u) const {
     if (u.argv.empty()) return "no command";
     const auto shape = shape_of(u.argv);
-    if (!shape) return "the command names no source and depfile";
+    if (!shape) return "the command names no source";
+    if (shape->depfile.empty() && !u.reads) return "nothing states the files the compile reads";
     if (!immutable(fs::path(u.argv.front())))
         return "the compiler is not in a store whose files never change";
     for (const auto& d : shape->systemDirs)
@@ -252,24 +427,30 @@ bool Cache::serve(const Unit& u) {
             const fs::path file = line.substr(0, tab);
             const auto want = line.substr(tab + 1);
             if (want == "=") continue;   // immutable: its path is its identity
-            holds = digest(file) == want;
+            holds = identity(file) == want;
         }
         if (!holds || !any) continue;
         const auto out = m.path();
         // Each output, unless it already holds the bytes (so ninja's restat sees no change).
-        auto put = [&](const fs::path& from, const fs::path& to) {
+        // A place the compiler would have written is written whatever it holds: the executor
+        // watches it for the compile's outputs.
+        auto put = [&](const fs::path& from, const fs::path& to, bool always) {
             if (to.empty() || !fs::exists(from, ec)) return true;
             const auto target = to.is_absolute() ? to : u.cwd / to;
-            if (fs::exists(target, ec) && mcpp::toolchain::hash_file(target) == mcpp::toolchain::hash_file(from))
+            if (!always && fs::exists(target, ec)
+                && mcpp::toolchain::hash_file(target) == mcpp::toolchain::hash_file(from))
                 return true;
             return place(from, target);
         };
-        if (!put(out / "object", u.object) || !put(out / "bmi", u.bmi) || !put(out / "depfile", shape->depfile))
+        if (!put(out / "object", u.placeObject.empty() ? u.object : u.placeObject, !u.placeObject.empty())
+            || !put(out / "bmi", u.placeBmi.empty() ? u.bmi : u.placeBmi, !u.placeBmi.empty())
+            || (!shape->depfile.empty() && !put(out / "depfile", shape->depfile, false)))
             return false;
         if (shape->splitDebug) {
-            auto dwo = u.object;
-            if (!put(out / "dwo", dwo.replace_extension(".dwo"))) return false;
+            auto dwo = u.placeObject.empty() ? u.object : u.placeObject;
+            if (!put(out / "dwo", dwo.replace_extension(".dwo"), !u.placeObject.empty())) return false;
         }
+        if (!u.bmi.empty()) write_producer(u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi, key + "/" + out.filename().string());
         // Its last use, which `mcpp cache gc` collects by.
         fs::last_write_time(out / "manifest.tsv", fs::file_time_type::clock::now(), ec);
         return true;
@@ -277,33 +458,67 @@ bool Cache::serve(const Unit& u) {
     return false;
 }
 
-void Cache::keep(const Unit& u) {
-    if (!refusal(u).empty()) return;
-    const auto shape = shape_of(u.argv);
-    const auto depfile = shape->depfile.is_absolute() ? shape->depfile : u.cwd / shape->depfile;
-    const auto text = read_all(depfile);
-    if (text.empty()) return;
-    const auto object = u.object.is_absolute() ? u.object : u.cwd / u.object;
-    const auto bmi = u.bmi.empty() ? fs::path{} : (u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi);
-    std::string manifest;
-    for (const auto& p : depfile_prerequisites(text)) {
+std::optional<std::string> Cache::manifest_of(const Unit& u, const std::vector<std::string>& read) {
+    const auto object = (u.object.is_absolute() ? u.object : u.cwd / u.object).lexically_normal();
+    const auto bmi = u.bmi.empty() ? fs::path{} : (u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi).lexically_normal();
+    // One line per file, sorted: the same files read in another order are the same manifest.
+    std::set<std::string> lines;
+    for (const auto& p : read) {
         // GCC names a module a unit imports or provides (`x.c++-module`) beside the files.
         if (p.ends_with(".c++-module")) continue;
         const auto file = fs::path(normal(u.cwd, p));
-        if (file == object.lexically_normal() || (!bmi.empty() && file == bmi.lexically_normal())) continue;
+        if (file == object || (!bmi.empty() && file == bmi)) continue;
         if (immutable(file)) {
-            manifest += file.generic_string() + "\t=\n";
+            lines.insert(file.generic_string() + "\t=\n");
             continue;
         }
-        const auto d = digest(file);
-        if (d.empty()) return;   // a file it read is gone: nothing to record
-        manifest += file.generic_string() + "\t" + d + "\n";
+        const auto d = identity(file);
+        if (d.empty()) return std::nullopt;   // a file it read is gone: nothing to record
+        lines.insert(file.generic_string() + "\t" + d + "\n");
     }
-    if (manifest.empty()) return;
+    std::string manifest;
+    for (const auto& l : lines) manifest += l;
+    return manifest;
+}
+
+void Cache::announce(const Unit& u) {
+    if (u.bmi.empty() || !u.reads || !refusal(u).empty()) return;
+    std::vector<std::string> read;
+    for (const auto& r : *u.reads) read.push_back(r.generic_string());
+    const auto manifest = manifest_of(u, read);
+    if (!manifest || manifest->empty()) return forget(u);
+    const auto shape = shape_of(u.argv);
+    write_producer(u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi,
+                   first_key(u, *shape) + "/" + mcpp::toolchain::hash_string(*manifest));
+}
+
+void Cache::keep(const Unit& u) {
+    if (!refusal(u).empty()) return forget(u);
+    const auto shape = shape_of(u.argv);
+    const auto depfile = shape->depfile.empty() ? fs::path{}
+                       : shape->depfile.is_absolute() ? shape->depfile : u.cwd / shape->depfile;
+    std::vector<std::string> read;
+    if (u.reads) {
+        for (const auto& r : *u.reads) read.push_back(r.generic_string());
+    } else {
+        const auto text = read_all(depfile);
+        if (text.empty()) return forget(u);
+        read = depfile_prerequisites(text);
+    }
+    const auto object = u.object.is_absolute() ? u.object : u.cwd / u.object;
+    const auto bmi = u.bmi.empty() ? fs::path{} : (u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi);
+    // A BMI the unit provides: where it is published, else where the compiler wrote it (phase 1
+    // of the split schedule may not have published it yet). Neither: not kept, a hit would place none.
+    const auto written = u.placeBmi.empty() ? fs::path{} : (u.placeBmi.is_absolute() ? u.placeBmi : u.cwd / u.placeBmi);
+    const auto bmiBytes = bmi.empty() ? fs::path{} : fs::exists(bmi) ? bmi : (!written.empty() && fs::exists(written)) ? written : fs::path{};
+    if (!bmi.empty() && bmiBytes.empty()) return forget(u);
+    const auto manifest = manifest_of(u, read).value_or("");
+    if (manifest.empty()) return forget(u);
     const auto key = first_key(u, *shape);
     const auto entry = dir_ / key.substr(0, 2) / key;
     const auto name = mcpp::toolchain::hash_string(manifest);
     std::error_code ec;
+    write_producer(bmi, key + "/" + name);
     if (fs::is_directory(entry / name, ec)) return;
     const auto staging = entry / std::format(".staging-{:x}", std::random_device{}());
     fs::create_directories(staging, ec);
@@ -311,8 +526,8 @@ void Cache::keep(const Unit& u) {
     bool ok = static_cast<bool>(std::ofstream(staging / "manifest.tsv", std::ios::binary) << manifest);
     ok = ok && fs::exists(object, ec);
     if (ok) fs::copy_file(object, staging / "object", ec), ok = !ec;
-    if (ok && !bmi.empty() && fs::exists(bmi, ec)) fs::copy_file(bmi, staging / "bmi", ec), ok = !ec;
-    if (ok) fs::copy_file(depfile, staging / "depfile", ec), ok = !ec;
+    if (ok && !bmiBytes.empty()) fs::copy_file(bmiBytes, staging / "bmi", ec), ok = !ec;
+    if (ok && !depfile.empty()) fs::copy_file(depfile, staging / "depfile", ec), ok = !ec;
     if (ok && shape->splitDebug) {
         auto dwo = object;
         dwo.replace_extension(".dwo");
@@ -321,6 +536,7 @@ void Cache::keep(const Unit& u) {
     // Published whole by one rename; a compile of the same key that got there first wins.
     if (ok) fs::rename(staging, entry / name, ec);
     if (!ok || ec) fs::remove_all(staging, ec);
+    if (!ok) forget(u);
 }
 
 }  // namespace mcpp::build::unit_cache
