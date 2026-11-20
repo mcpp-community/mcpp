@@ -190,6 +190,22 @@ UTest every_statement_is_recorded_with_its_owner{"ProgressRecord/EveryStatementI
     expect(eq(back.actions, r.actions));
 }};
 
+UTest a_staging_step_is_recorded_as_staged{"ProgressRecord/AStagingStepIsRecordedAsStaged", [] {
+    // A unit of a package the cache served is copied by a `stage_file` step: the build record
+    // states it as staged, not as a compile.
+    Attribution a;
+    a.owner("dep");
+    a.statement("build obj/dep/s.o : stage_file /home/cache/s.o\n  verify = --verify size\n");
+    a.statement("build gcm.cache/dep.gcm : stage_file /home/cache/dep.gcm\n");
+    a.owner("app");
+    a.statement("build obj/main.o : cxx_obj src/main.cpp\n");
+    const auto r = a.record({{"app", true, "app", 0, 0}});
+    expect(r.staged.contains("obj/dep/s.o"));
+    expect(r.staged.contains("gcm.cache/dep.gcm"));
+    expect(!r.staged.contains("obj/main.o"));
+    expect(eq(parse_record(format_record(r)).staged, r.staged));
+}};
+
 UTest a_version_one_record_is_read{"ProgressRecord/AVersionOneRecordIsRead", [] {
     // 2026.9.29.5 wrote version 1: six fields to a package line, the subject
     // carrying the origin. The fast path of a newer mcpp reads it as it is.

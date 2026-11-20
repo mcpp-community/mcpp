@@ -68,6 +68,9 @@ struct Record {
     // first input, relative to the package root that holds it. `Finished`
     // names the longest step by it (build output design revision 3, §7.3).
     std::unordered_map<std::size_t, std::string> sources;
+    // The outputs of the steps that place a unit of a package the cache served
+    // (`stage_file`): a copy, not a compile (the build record's `staged`).
+    std::unordered_set<std::string> staged;
     std::size_t steps = 0;         // every step of the graph
     // The profile as `Finished` describes it. The fast path, which has no
     // plan, reads it from the header line alone (`read_descriptor`).
@@ -366,8 +369,9 @@ long long to_ll(std::string_view s) {
 } // namespace
 
 // Format: a header, then `P` lines (packages, in order), `A` lines (actions),
-// `S` lines (a step's identity and its source) and `O` lines (an output, its
-// package's index and its step's identity). Version 2 adds the profile's
+// `S` lines (a step's identity and its source), `O` lines (an output, its
+// package's index and its step's identity) and `T` lines (an output a staging
+// step writes; a reader that predates them skips them). Version 2 adds the profile's
 // descriptor to the header, a package's detail and source to its `P` line,
 // and the `S` lines; a version 1 record (mcpp 2026.9.29.5) is read with all
 // of them empty, and its subject then carries what version 1 wrote there.
@@ -392,6 +396,9 @@ std::string format_record(const Record& r) {
         out += std::format("O\t{}\t{}\t{}\n", index,
                            st == r.step.end() ? std::size_t{0} : st->second, field(path));
     }
+    std::vector<std::string> staged(r.staged.begin(), r.staged.end());
+    std::ranges::sort(staged);
+    for (auto const& path : staged) out += std::format("T\t{}\n", field(path));
     return out;
 }
 
@@ -418,6 +425,8 @@ Record parse_record(std::string_view text) {
             r.actions.emplace(std::string(f[1]), std::string(f[2]));
         } else if (f[0] == "S" && f.size() >= 3) {
             r.sources.emplace(to_size(f[1]), std::string(f[2]));
+        } else if (f[0] == "T" && f.size() >= 2) {
+            r.staged.emplace(std::string(f[1]));
         } else if (f[0] == "O" && f.size() >= 4) {
             const auto index = to_size(f[1]);
             if (index < r.packages.size()) {
@@ -571,6 +580,7 @@ Record Attribution::record(const std::vector<PackageInfo>& declared,
         for (auto const& o : s.outputs) {
             r.owner.emplace(o, it->second);
             r.step.emplace(o, id);
+            if (s.rule == "stage_file") r.staged.emplace(o);
         }
         if (auto src = source_in(s.input, roots); !src.empty()) r.sources.emplace(id, std::move(src));
     }
@@ -1830,6 +1840,7 @@ mcpp::build::record::Record ran_since(const std::filesystem::path& buildDir, con
         const auto& first = st.outputs.front();
         if (!kept && !measured.contains(first)) continue;
         rec::Edge e{first};
+        e.staged = stepRecord && stepRecord->staged.contains(first);
         if (stepRecord)
             for (const auto& o : st.outputs)
                 if (auto it = stepRecord->owner.find(o); it != stepRecord->owner.end()) {

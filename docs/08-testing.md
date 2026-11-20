@@ -169,7 +169,8 @@ with its time and status), the items of the product's surface it used
 (`exercised`) and the limit it ran within (`limit_ms`). `builds.ndjson` holds the
 builds of the run: a line per edge that ran, with its package, its time, the
 processor time and the largest resident set of the compiler, and whether the unit
-cache placed it (`served`), and a line per package the cache served. The
+cache placed it (`served`) or it copied a unit of a package the cache served
+(`staged`), and a line per package the cache served. The
 estimates of the order prefer the runs of the same class of machine.
 
 **One budget for the machine** (@NEXT@+, SPEC-017 O11). `mcpp test` makes a

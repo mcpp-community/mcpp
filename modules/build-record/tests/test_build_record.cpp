@@ -52,6 +52,22 @@ UTest a_record_reads_back_from_its_lines{"BuildRecord/ARecordReadsBackFromItsLin
     expect(eq(top[0].output, std::string("obj/c.o")));
 }};
 
+UTest placement_and_staging_read_back{"BuildRecord/PlacementAndStagingReadBack", [] {
+    // A unit the unit cache placed, one copied for a package the cache served, and a compile: a
+    // reader that counts compiles tells the three apart.
+    rec::Edge placed{"obj/p.o", "app"};
+    placed.served = true;
+    rec::Edge copied{"obj/dep/s.o", "dep"};
+    copied.staged = true;
+    const rec::Record r{"b", {placed, copied, {"obj/c.o", "app"}}, {{"dep", 1}}};
+    const auto back = rec::from_ndjson(rec::to_ndjson(r));
+    expect(fatal(eq(back.size(), std::size_t{1})));
+    expect(fatal(eq(back[0].edges.size(), std::size_t{3})));
+    expect(back[0].edges[0].served && !back[0].edges[0].staged);
+    expect(back[0].edges[1].staged && !back[0].edges[1].served);
+    expect(!back[0].edges[2].served && !back[0].edges[2].staged);
+}};
+
 UTest identifiers_differ{"BuildRecord/IdentifiersDiffer", [] {
     std::set<std::string> ids;
     for (int i = 0; i < 64; ++i) ids.insert(rec::new_id());

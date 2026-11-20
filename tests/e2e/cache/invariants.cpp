@@ -21,6 +21,7 @@ struct Built {
     std::size_t compiled = 0;
     std::map<std::string, std::size_t> cached;
     std::set<std::string> compiledPackages;
+    std::vector<std::string> compiledOutputs;  // `<package> <output>`, for the failure's message
 };
 
 bool compiles(std::string_view output) {
@@ -36,9 +37,12 @@ Built read_record(const fs::path& file) {
             b.cached[line.value("package", "")] += line.value("units", std::size_t{0});
             continue;
         }
-        if (compiles(line.value("output", "")) && !line.value("served", false)) {
+        // A unit the unit cache placed (`served`) or copied for a package the cache served
+        // (`staged`) ran no compiler.
+        if (compiles(line.value("output", "")) && !line.value("served", false) && !line.value("staged", false)) {
             ++b.compiled;
             b.compiledPackages.insert(line.value("package", ""));
+            b.compiledOutputs.push_back(line.value("package", "") + " " + line.value("output", ""));
         }
     }
     return b;
@@ -65,9 +69,10 @@ E2E invariants{"invariants", s::home_fixture, [] {
         metric("edges.compiled", static_cast<double>(rebuilt.compiled), "edges");
     };
 
-    "1122 a dev-dependency is served from the cache to a second project"_test[s::gcc][at_most{"edges.compiled.dependency", 0}] = [] {
+    "1122 a dev-dependency is served from the cache to a second project"_test[s::gcc][at_most{"edges.compiled.dependency", 1}] = [] {
         // 5.4: mcpplibs.mtest, a dev-dependency of every test, is compiled once per home, not once
-        // per project.
+        // per project. Its entry unit (`main`) is the one compile left: a package's entry unit is
+        // compiled with the image that links it, never taken from the package's entry in the cache.
         s::own_home();
         auto one = s::project::scaffold("one");
         auto [first, built] = recorded(one, {"test"}, "one");
@@ -76,9 +81,11 @@ E2E invariants{"invariants", s::home_fixture, [] {
         auto [second, rebuilt] = recorded(two, {"test"}, "two");
         expect(fatal(e2e::succeeded(second))) << s::text(second);
         std::size_t dependency = 0;
-        for (const auto& pkg : rebuilt.compiledPackages)
-            if (pkg.contains("mtest")) ++dependency;
-        expect(eq(dependency, std::size_t{0})) << "the second project compiled the dev-dependency";
+        std::string compiled;
+        for (const auto& edge : rebuilt.compiledOutputs)
+            if (edge.contains("mtest")) { ++dependency; compiled += "\n  " + edge; }
+        expect(le(dependency, std::size_t{1})) << "the second project compiled the dev-dependency:" << compiled << "\n"
+                                               << s::text(second);
         bool served = false;
         for (const auto& [pkg, units] : rebuilt.cached) served = served || (pkg.contains("mtest") && units > 0);
         expect(served) << "the record names no unit of mcpplibs.mtest served from the cache";

@@ -1000,7 +1000,7 @@ so a build's own sub-builds and the compilers it starts through mcpp add to the 
 | variable | each line |
 |---|---|
 | `MCPP_SURFACE_RECORD` | an item of the surface the process used, once per process: the command and flags it was given, the registry keys its manifests state, the reasons it recorded |
-| `MCPP_BUILD_RECORD` | an edge a build ran (`build`, `output`, `package`, `program`, `started_ms`, `ms`, and for a compile `cpu_ms`, `peak_bytes` and `served`), or a package the cache served (`build`, `package`, `cached`, `units`): SPEC-017 B4's `builds.ndjson` |
+| `MCPP_BUILD_RECORD` | an edge a build ran (`build`, `output`, `package`, `program`, `started_ms`, `ms`, and for a compile `cpu_ms`, `peak_bytes` and `served`; `staged` for a copy of a unit of a package the cache served), or a package the cache served (`build`, `package`, `cached`, `units`): SPEC-017 B4's `builds.ndjson` |
 
 A test kit turns the first into a case's `exercise` events (SPEC-017 P5.6), and the surface's
 ledger compares the two.

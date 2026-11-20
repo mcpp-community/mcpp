@@ -888,7 +888,7 @@ reason unknown-target
 | 变量 | 每行 |
 |---|---|
 | `MCPP_SURFACE_RECORD` | 进程用到的面的一项，每进程一次：所给的命令与选项、其清单陈述的登记表中的键、它记录的原因 |
-| `MCPP_BUILD_RECORD` | 构建运行的一条边（`build`、`output`、`package`、`program`、`started_ms`、`ms`，编译另有 `cpu_ms`、`peak_bytes` 与 `served`），或缓存提供的一个包（`build`、`package`、`cached`、`units`）：SPEC-017 B4 的 `builds.ndjson` |
+| `MCPP_BUILD_RECORD` | 构建运行的一条边（`build`、`output`、`package`、`program`、`started_ms`、`ms`，编译另有 `cpu_ms`、`peak_bytes` 与 `served`；为缓存提供的包复制单元的边另有 `staged`），或缓存提供的一个包（`build`、`package`、`cached`、`units`）：SPEC-017 B4 的 `builds.ndjson` |
 
 测试 kit 把前者转为用例的 `exercise` 事件（SPEC-017 P5.6），面的账本比较二者。
 

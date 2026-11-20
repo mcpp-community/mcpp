@@ -44,6 +44,7 @@ struct Edge {
     std::optional<double>        cpuMs;
     std::optional<std::uint64_t> peakBytes;
     bool                         served = false;   // placed by the unit cache (design 2026-11-20 §5.3)
+    bool                         staged = false;   // placed a unit of a package the cache served: a copy
 };
 // A package the cache served, with the units it placed.
 struct Cached {
@@ -162,6 +163,7 @@ std::string to_ndjson(const Record& r) {
         if (e.cpuMs) j["cpu_ms"] = *e.cpuMs;
         if (e.peakBytes) j["peak_bytes"] = *e.peakBytes;
         if (e.served) j["served"] = true;
+        if (e.staged) j["staged"] = true;
         out += j.dump(-1, ' ', false, json::error_handler_t::replace) + "\n";
     }
     for (const auto& c : r.cached)
@@ -184,7 +186,7 @@ std::vector<Record> from_ndjson(std::string_view text) {
         at->edges.push_back({text_of(j, "output"), text_of(j, "package"), text_of(j, "program"),
                              number_of(j, "started_ms").value_or(0), number_of(j, "ms").value_or(0),
                              number_of(j, "cpu_ms"), bytes_of(j, "peak_bytes"),
-                             j.value("served", false)});
+                             j.value("served", false), j.value("staged", false)});
     }
     return out;
 }
