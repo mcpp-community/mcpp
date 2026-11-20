@@ -86,7 +86,7 @@ constexpr std::string_view print_struct = R"(void print_struct(auto &&value) {
 struct Point { double x{}; double y{}; };
 )";
 
-E2E standard{"standard", [] {
+E2E standard{"standard", s::home_fixture, [] {
     "59 cpp standard config"_test[s::gcc] = [] {
         // `[package].standard` drives the build flags, the compile database and the std BMI's
         // metadata, through the P1689 scanner too.

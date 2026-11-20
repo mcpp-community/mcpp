@@ -80,7 +80,7 @@ std::string captured(const e2e::outcome& r) {
     return t;
 }
 
-E2E packages{"packages", [] {
+E2E packages{"packages", s::home_fixture, [] {
     "55 dependency shared artifact"_test[s::elf] = [] {
         // A dependency's shared library is built as its own artifact and linked by the consumer,
         // not flattened into it as objects.

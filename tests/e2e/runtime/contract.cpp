@@ -78,7 +78,7 @@ bool defines(const fs::path& f, std::string_view sym) {
     return std::ranges::any_of(dynsyms(f), [&](const auto& e) { return e.defined && e.name == sym; });
 }
 
-E2E contract{"contract", [] {
+E2E contract{"contract", s::home_fixture, [] {
     "183 cxx runtime contract"_test = [] {
         // A global object touching std::cout during static initialisation runs, as a program
         // and as a test; `host-coupled` (and `static_stdlib = false`) reaches both roles; an

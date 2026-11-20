@@ -61,7 +61,7 @@ std::string trimmed(std::string s) {
     return s;
 }
 
-E2E formats{"formats", [] {
+E2E formats{"formats", s::home_fixture, [] {
     "638 pack format dispatch"_test[s::gcc] = [] {
         // `--pkg-format <name>` dispatches to a format the resolved graph provides; a plain
         // build's graph is dist=none and makes no distributable; an unknown format is refused

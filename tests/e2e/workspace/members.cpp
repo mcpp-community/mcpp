@@ -59,7 +59,7 @@ std::size_t graphs(const fs::path& root) {
     return n;
 }
 
-E2E members{"members", [] {
+E2E members{"members", s::home_fixture, [] {
     "35 workspace"_test = [] {
         // A virtual workspace of two libraries and a program: the root's build builds every
         // member, path edges between members hold, and the program is bin/hello/hello in the

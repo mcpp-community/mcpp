@@ -42,7 +42,7 @@ s::project app_with_tests() {
     return p;
 }
 
-E2E launch{"launch", [] {
+E2E launch{"launch", s::home_fixture, [] {
     "993 a test describes its launch"_test = [] {
         auto p = app_with_tests();
         // A: the envelope names the test, its program, env and cwd, ends its argv with the arguments

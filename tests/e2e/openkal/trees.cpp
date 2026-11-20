@@ -102,7 +102,7 @@ constexpr std::string_view caught_main = "import std;\nint main(int argc, char**
 
 // The openkal set built for every architecture: about 20 minutes beside three other programs on a
 // Linux runner, measured 2026-11-14; stated, so the run's limit is not raised for every test.
-E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
+E2E trees{"trees", s::home_fixture, timeout{std::chrono::minutes{40}}, [] {
     "955 the openkal set is one tree of every architecture"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `pack --target openkal` writes <name>-<version>-openkal/ with both images, the
         // launchers and metadata naming legs, runner and entries; B the launcher runs this

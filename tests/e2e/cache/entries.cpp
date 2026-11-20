@@ -78,7 +78,7 @@ void age(const fs::path& root, std::chrono::hours ago) {
 
 }  // namespace
 
-E2E entries{"entries", [] {
+E2E entries{"entries", s::home_fixture, [] {
     "927 a fresh checkout's units are placed from the unit cache, and a changed header compiles its includers"_test[s::gcc] = [] {
         // Design 2026-11-20 §5.3. A unit whose command and read files hold the contents an earlier
         // compile's did is placed by the compiler executor, and no compiler runs: after `target/`

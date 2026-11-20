@@ -48,7 +48,7 @@ s::project scaffold(std::string_view name) {
     return p;
 }
 
-E2E devices{"devices", [] {
+E2E devices{"devices", s::home_fixture, [] {
     "606 constrained source globs narrow to the build"_test[s::gcc] = [] {
         // A `[build] sources` entry may carry the accel it is for: covered, its C++ compiles and
         // its device sources reach the build program; under --no-accel it is left out; outside

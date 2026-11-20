@@ -10,7 +10,7 @@ using nlohmann::json;
 
 namespace {
 
-E2E affected{"affected", [] {
+E2E affected{"affected", s::home_fixture, [] {
 
     "1038 test programs of a directory and the tests a change affects"_test[s::gcc] = [] {
         auto p = s::project::scaffold("app");

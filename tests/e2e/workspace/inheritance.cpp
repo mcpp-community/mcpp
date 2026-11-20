@@ -73,7 +73,7 @@ std::string archived(const fs::path& archive, std::string_view member) {
     return s::read_file(into / member);
 }
 
-E2E inheritance{"inheritance", [] {
+E2E inheritance{"inheritance", s::home_fixture, [] {
     "321 workspace inheritance"_test[s::gcc] = [] {
         // [workspace.package] and [workspace.build] (#527), asserted on the compile command: a
         // member that declares nothing inherits the standard and the flags; a member that pins

@@ -35,7 +35,7 @@ void configure_e2e_mirror(const s::options& o) {
     expect(fatal(e2e::succeeded(r))) << "failed to configure e2e mirror: " << s::text(r);
 }
 
-E2E management{"management", [] {
+E2E management{"management", s::home_fixture, [] {
     "13 toolchain pin"_test = [] {
         // A project's `[toolchain]` pin resolves to the payload's absolute path in mcpp's home.
         const auto gcc = s::gcc_version();

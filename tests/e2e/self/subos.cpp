@@ -27,7 +27,7 @@ void rewrite(const fs::path& file, const std::string& pattern) {
     dir.write(name, std::regex_replace(dir.read(name), std::regex{pattern}, "\n"));
 }
 
-E2E subos{"subos", [] {
+E2E subos{"subos", s::home_fixture, [] {
     "221 subos without info still builds"_test = [] {
         // A project SubOS that does not describe itself costs at most hermeticity (never "cannot
         // provide a RuntimeBinding"), builds with allow_host_libs and reports the degradation; a

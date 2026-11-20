@@ -56,7 +56,7 @@ std::string recorded(const s::project& p, std::string_view key) {
     return line.empty() ? std::string() : line.substr(key.size() + 1);
 }
 
-E2E emscripten{"emscripten", [] {
+E2E emscripten{"emscripten", s::home_fixture, [] {
     "650 wasm row names its launcher"_test[s::elf] = [] {
         // `kind = "shared"` is refused on the row before a toolchain is resolved, and an ordinary
         // bin is not; a program is bin/<name>.js with <name>.wasm, runs, is staged with both,

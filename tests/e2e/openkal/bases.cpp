@@ -89,7 +89,7 @@ std::optional<fs::path> artifact(const s::project& p) {
 
 const s::options plain{.env = {{"NO_COLOR", "1"}}};
 
-E2E bases{"bases", [] {
+E2E bases{"bases", s::home_fixture, [] {
     "925 a stated sysroot is the c library"_test[s::gcc][s::elf][s::unix_shell][s::python3] = [] {
         // S2: a sysroot named by a relative path is the base the artifact is built against and
         // runs on (PT_INTERP and RUNPATH the sysroot's, not the SubOS farm), in a directory of

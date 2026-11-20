@@ -34,7 +34,7 @@ fs::path llvm_tree(const fs::path& at) {
     return root;
 }
 
-E2E custom{"custom", [] {
+E2E custom{"custom", s::home_fixture, [] {
     "875 toolchain by path"_test[s::llvm][s::unix_shell][s::symlink] = [] {
         // `[toolchain] default = { path = ... }` (mcpp#755): a toolchain tree named by path builds
         // with its launcher and its stated linker, is reported as custom, writes nothing into the

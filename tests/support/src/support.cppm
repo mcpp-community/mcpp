@@ -57,6 +57,9 @@ using mcpplibs::mtest::platform;
 const only elf{platform::linux};                         // a host whose programs are ELF
 const only unix_shell{platform::linux, platform::macos};  // a POSIX shell and its tools
 const only fresh_sandbox{platform::linux, platform::macos};
+// The shared home, served once per run before its first user (SPEC-017 P11): each group of cases
+// states it, and the time that fills the home is the fixture's, not its first case's.
+const mcpplibs::mtest::uses home_fixture{"home"};
 const only symlink{platform::linux, platform::macos};
 const only macos{platform::macos};
 const only windows{platform::windows};
@@ -156,6 +159,12 @@ fs::path case_home(home kind = home::fresh);
 // that exported MCPP_HOME again did); removed with the case's other homes. mcpp runs in it with
 // `options::env` setting MCPP_HOME.
 fs::path another_home(home kind = home::fresh);
+// THE CASE RUNS MCPP IN A HOME OF ITS OWN instead of the shared one (design 2026-11-20 §5.10): each
+// later `mcpp` of the case that names no home uses `case_home(kind)`. A case whose assertion holds
+// only while nothing else writes its home -- a replayed build, which plans again when an install
+// beside it rewrote the runtime environment's description -- states this instead of holding the
+// machine; `inherited` reads the user's payloads as upstreams.
+void own_home(home kind = home::inherited);
 // The shared home: `MCPP_HOME`, else `~/.mcpp`.
 fs::path shared_home();
 

@@ -287,7 +287,7 @@ void dependency_images(std::vector<std::string> target) {
     expect(fatal(e2e::contains(s::text(r), "owner.manifest"))) << "the missing resource was not attributed: " << s::text(r);
 }
 
-E2E resources{"resources", [] {
+E2E resources{"resources", s::home_fixture, [] {
     "197 windows resources"_test[s::windows] = [] {
         // mcpp#365 on a Windows host: see resources_reach_the_image.
         resources_reach_the_image({});

@@ -75,7 +75,7 @@ void subsystems(const s::project& p, std::vector<std::string> build_args, std::o
     expect(fatal(e2e::succeeded(ran))) << "wide.exe did not exit 0: " << s::text(ran);
 }
 
-E2E images{"images", [] {
+E2E images{"images", s::home_fixture, [] {
     "84 runtime dll deploy"_test = [] {
         // A dependency's [runtime] library_dirs: each *.dll is placed beside the program, byte
         // for byte, and nothing else of that directory is.

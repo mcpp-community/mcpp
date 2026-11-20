@@ -24,7 +24,7 @@ std::map<std::string, std::optional<std::string>> snapshot(const fs::path& root)
     return out;
 }
 
-E2E homes{"homes", [] {
+E2E homes{"homes", s::home_fixture, [] {
     "687 the vendored xlings probe is an argument vector"_test = [] {
         // A: the vendored xlings's version probe runs without a shell. B: a vendored binary
         // answering an older version (ninja stands in) is replaced from MCPP_VENDORED_XLINGS.

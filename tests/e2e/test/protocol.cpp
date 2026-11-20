@@ -28,7 +28,7 @@ std::vector<std::string> ids(const json& rec) {
 
 std::string generic(const fs::path& p) { return p.generic_string(); }
 
-E2E protocol{"protocol", [] {
+E2E protocol{"protocol", s::home_fixture, [] {
     "1035 a test program reports its cases"_test[s::gcc] = [] {
         // mcpp runs the runner's side of the mtest protocol, version 1; every other program is one
         // case judged by its exit status and is told none of the variables.

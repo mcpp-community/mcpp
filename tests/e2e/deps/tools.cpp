@@ -66,7 +66,7 @@ graph make_graph(std::string_view dep_extra, std::string_view dep_dependency, st
     return g;
 }
 
-E2E tools{"tools", [] {
+E2E tools{"tools", s::home_fixture, [] {
     "627 one package one version"_test[s::gcc] = [] {
         // A project and one of its dependencies both name `xim:zoxide`, at different versions:
         // one package, so one version is installed (the declaration nearer the artifact), the

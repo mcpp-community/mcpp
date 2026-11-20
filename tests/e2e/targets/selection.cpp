@@ -91,7 +91,7 @@ void targets_in(const nlohmann::json& j, std::vector<std::string>& out) {
     }
 }
 
-E2E selection{"selection", [] {
+E2E selection{"selection", s::home_fixture, [] {
     "296 what the report names is what the link line uses"_test[s::gcc][s::unix_shell][s::jq] = [] {
         // Every toolchain the list names round-trips through --toolchain; the C library the query
         // names is on the link line (or, when it names none, the link line reaches nothing

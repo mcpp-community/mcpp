@@ -68,7 +68,7 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
     return std::nullopt;
 }
 
-E2E sources{"sources", [] {
+E2E sources{"sources", s::home_fixture, [] {
     "104 asm sources gas"_test[s::gcc] = [] {
         // GAS sources (.S) are globbed by default, routed to asm_object (no -std), preprocessed,
         // linked, rebuilt when touched, and covered on the test path too (x86_64 only).

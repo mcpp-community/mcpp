@@ -13,7 +13,7 @@ namespace {
 
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
-E2E graph{"graph", [] {
+E2E graph{"graph", s::home_fixture, [] {
     "945 a miss anywhere in the graph asks for a refresh"_test[s::gcc][s::fresh_sandbox] = [] {
         // A request by version the local index cannot answer asks for a refresh wherever it is
         // in the graph, not only in the root's [dependencies]: declined offline, declined inside

@@ -43,7 +43,7 @@ std::vector<fs::path> compiled(const fs::path& root, const fs::path& prune = {})
     return out;
 }
 
-E2E emit{"emit", [] {
+E2E emit{"emit", s::home_fixture, [] {
     "688 emit build database"_test[s::python3] = [] {
         const auto tmp = s::case_dir() / "measured";
         const auto out = s::case_dir() / "out";

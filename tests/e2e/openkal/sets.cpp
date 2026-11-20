@@ -74,7 +74,7 @@ constexpr std::string_view smoke_test = "import std;\nint main() { std::vector<i
 
 // Every member of a target set built: about 17 minutes on a Linux runner beside three other
 // programs, measured 2026-11-14.
-E2E sets{"sets", timeout{std::chrono::minutes{30}}, [] {
+E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{30}}, [] {
     "963 a target set builds every member and runs where it is reached"_test[s::llvm][s::python3] = [] {
         // `--target openkal`: A builds both legs under target/<triple>/ with one Finished; B the
         // JSON envelope is the first leg's record with both legs, each artifact event naming its

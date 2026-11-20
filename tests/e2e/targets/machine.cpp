@@ -11,7 +11,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-E2E machine{"machine", resource{"machine"}, [] {
+E2E machine{"machine", s::home_fixture, resource{"machine"}, [] {
     "28 target static"_test[s::musl][s::elf] = [] {
         // The musl toolchain is the one this home has, whichever release that is.
         const auto musl_version = s::musl_gcc_version();

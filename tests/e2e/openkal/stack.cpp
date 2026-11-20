@@ -37,7 +37,7 @@ bool packages_unreachable(std::string_view out) {
     return out.contains("not found in the synced index") || out.contains("install_packages failed");
 }
 
-E2E stack{"stack", [] {
+E2E stack{"stack", s::home_fixture, [] {
     "269 openkal llvm spelling still resolves"_test[s::import_std_libcxx] = [] {
         // `openkal-llvm@<v>` resolves to the driver `llvm@<v>` does, and decides nothing of the
         // target side: with an empty graph every layer is the payload's.

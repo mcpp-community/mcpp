@@ -51,7 +51,7 @@ void no_stage(const fs::path& parent) {
     expect(fatal(left.empty())) << "transaction staging directory survived" << left;
 }
 
-E2E templates{"templates", [] {
+E2E templates{"templates", s::home_fixture, [] {
     "69 package templates"_test = [] {
         // A package's templates by exact identity ([ns.]pkg, pkg:tmpl, pkg@ver:tmpl), {{var}}
         // rendering, injected features, --list-templates, a sole template as the default, the

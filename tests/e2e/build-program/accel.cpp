@@ -21,7 +21,7 @@ s::project scaffold_plain(std::string_view name, const std::string& manifest) {
     return p;
 }
 
-E2E accel{"accel", [] {
+E2E accel{"accel", s::home_fixture, [] {
     "600 accel variant selection"_test[s::elf] = [] {
         // gpuonly publishes one artifact, for sm_90f: an sm_86 build is refused naming the
         // dimension. gpukit publishes a CPU-only artifact first: the same build takes it (the

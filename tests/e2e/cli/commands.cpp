@@ -42,7 +42,7 @@ std::string graph_text(const s::project& p) {
     return s::read_file(*g);
 }
 
-E2E commands{"commands", [] {
+E2E commands{"commands", s::home_fixture, [] {
     "01 help and version"_test = [] {
         // --version is `mcpp <the manifest's version>`; --help names the commands; an unknown
         // command exits 127.

@@ -13,7 +13,7 @@ namespace {
 
 constexpr std::string_view ran_again = R"(^ *build\.mcpp .* ran [0-9])";
 
-E2E protocol{"protocol", [] {
+E2E protocol{"protocol", s::home_fixture, [] {
     "89 build mcpp"_test[s::gcc] = [] {
         // mcpp compiles build.mcpp with the host toolchain and runs it before the build; its
         // directives add a define and a generated source; a declared-input cache runs it again
@@ -842,7 +842,7 @@ int main() {
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E protocol_machine{"protocol-machine", resource{"machine"}, [] {
+E2E protocol_machine{"protocol-machine", s::home_fixture, resource{"machine"}, [] {
     "139 build program advisory"_test[s::unix_shell] = [] {
         // A program that succeeds and still says something (`mcpp:warning=`). The second build is
         // the test: the program's result is cached, and an advisory printed only where the

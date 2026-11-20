@@ -31,7 +31,7 @@ std::optional<fs::path> program(const s::project& p, std::string_view name) {
     return std::nullopt;
 }
 
-E2E scanner{"scanner", [] {
+E2E scanner{"scanner", s::home_fixture, [] {
     "113 scanner mcpp dir prune"_test[s::gcc] = [] {
         // `.mcpp` is pruned from a glob walk: a file reachable only through its index link is not
         // compiled; a file whose name has no narrow spelling does not abort the build.

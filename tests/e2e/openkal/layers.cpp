@@ -27,7 +27,7 @@ std::vector<std::string> words_of(const nlohmann::json& entry) {
     return out;
 }
 
-E2E layers{"layers", [] {
+E2E layers{"layers", s::home_fixture, [] {
     "305 built from is not published"_test[s::unix_shell][s::jq] = [] {
         // `private_include_dirs` (a subset of `include_dirs`, globs expanded before the filter)
         // build the provider and do not reach the consumer: the provider's units carry its

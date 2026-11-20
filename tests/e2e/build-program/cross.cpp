@@ -10,7 +10,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-E2E cross{"cross", [] {
+E2E cross{"cross", s::home_fixture, [] {
     "112 build mcpp cross"_test[s::gcc][s::mingw_cross] = [] {
         // Under `--target x86_64-windows-gnu` build.mcpp compiles and runs on the host and sees
         // MCPP_TARGET = the cross triple.

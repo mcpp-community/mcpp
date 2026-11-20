@@ -21,7 +21,7 @@ std::string following(std::string_view text, std::string_view anchor, std::size_
     return out;
 }
 
-E2E skeleton{"skeleton", [] {
+E2E skeleton{"skeleton", s::home_fixture, [] {
 
     "1037 a skeleton tests with mtest and a test needs no main"_test[s::gcc] = [] {
         // `mcpp new` scaffolds a program or a library whose test is mtest's, and a test file with no

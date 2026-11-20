@@ -80,7 +80,7 @@ std::optional<std::string> std_tokens_in(const nlohmann::json& j, std::string_vi
     return std::nullopt;
 }
 
-E2E layers{"layers", [] {
+E2E layers{"layers", s::home_fixture, [] {
     "201 gcc no specs pollution"_test[s::gcc][s::elf] = [] {
         // A gcc artifact carries only the RUNPATH the build asked for (no other home's temporary
         // directory, no dead entry), names the payload's glibc as its interpreter, and loads

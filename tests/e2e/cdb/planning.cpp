@@ -17,7 +17,7 @@ std::vector<std::string> set_names(const nlohmann::json& envelope) {
     return out;
 }
 
-E2E planning{"planning", [] {
+E2E planning{"planning", s::home_fixture, [] {
     "787 emit plans every member on its own"_test[s::python3] = [] {
         // A member whose plan fails leaves the others described (exit 1, one diagnostic naming
         // its manifest, both members watched); the bare document likewise, the reason on standard

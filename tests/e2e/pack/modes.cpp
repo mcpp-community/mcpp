@@ -79,7 +79,7 @@ bool has_exact_line(const fs::path& f, std::string_view line) { return std::rang
 // A program's standard output and error, run with no injected environment.
 std::string output_of(const fs::path& program) { return s::text(s::run(program)); }
 
-E2E modes{"modes", [] {
+E2E modes{"modes", s::home_fixture, [] {
     "30 pack modes"_test[s::pack][s::patchelf][s::elf] = [] {
         // `mcpp pack` in each mode, read from the extracted archive: the default (vendored)
         // repoints PT_INTERP and bundles nothing for a dependency-free program; static (where

@@ -69,7 +69,7 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
     return std::nullopt;
 }
 
-E2E basics{"basics", [] {
+E2E basics{"basics", s::home_fixture, [] {
     "02 new build run"_test[s::fresh_sandbox] = [] {
         // `mcpp new` writes a project that builds into target/ and runs, passing its arguments.
         auto p = s::project::scaffold("hello");

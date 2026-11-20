@@ -49,7 +49,7 @@ bool places(const fs::path& dir, std::string_view obj, std::string_view entry) {
     return static_cast<bool>(s::has_line(host_graph(dir), std::format(R"(^build obj/[^ ]*/{} : stage_file [^ ]*/build-cache/v1/pkg/{})", obj, entry)));
 }
 
-E2E programs{"programs", [] {
+E2E programs{"programs", s::home_fixture, [] {
     "807 a lib root imports its own package"_test[s::gcc] = [] {
         // A host-module dependency whose lib root, explicit or by convention, imports a unit of
         // its own package builds, and the build program runs.

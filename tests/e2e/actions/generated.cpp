@@ -26,7 +26,7 @@ std::optional<fs::path> ninja_file(const fs::path& target) {
     return std::nullopt;
 }
 
-E2E generated{"generated", [] {
+E2E generated{"generated", s::home_fixture, [] {
     "51 package generated files"_test[s::gcc][s::fresh_sandbox] = [] {
         // A package descriptor's generated_files are materialized in the package before it is
         // scanned and compiled.

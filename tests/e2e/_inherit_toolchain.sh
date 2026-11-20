@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests that override $MCPP_HOME for isolation (fresh BMI cache / git cache /
-# etc.) but still need a working toolchain should source this. It links the
-# user's installed toolchain payloads and copies the config so the default
-# toolchain pin resolves.
+# etc.) but still need a working toolchain should source this. It names the
+# user's homes as upstreams, links the indices and copies the config so the
+# default toolchain pin resolves.
 #
 # Usage:    source "$(dirname "$0")/_inherit_toolchain.sh"
 #           # ($MCPP_HOME must be set before sourcing)
@@ -19,56 +19,31 @@ if [[ ! -d "$USER_MCPP" && -n "${USERPROFILE:-}" ]]; then
     USER_MCPP="$USERPROFILE/.mcpp"
 fi
 
-# Links the developer's payloads into the test's home ONE VERSION AT A TIME.
-#
-# The package directory (`xpkgs/xim-x-glibc`) is created as a real directory in
-# the test's home and only its version directories are links. Linking the
-# package directory itself made every version a test INSTALLED land in the
-# developer's registry: the install wrote `xim-x-glibc/2.44.3` through the link,
-# with linker scripts naming the test's temporary home, which was deleted when
-# the test ended. Measured 2026-09-25: `31_transitive_deps.sh` recreated
-# `~/.mcpp/registry/data/xpkgs/xim-x-glibc/2.44.3/lib/libc.so` pointing at
-# `/tmp/tmp.*/mcpp-home/...` (mcpp#293, second shape). A version that exists in
-# the developer's registry is still shared by link, so an in-place rewrite of an
-# existing payload remains the first shape of #293.
-link_xpkg_payloads() {
-    local source_dir="$1"
-    # The provider's store by default; the store of mcpp's own indices when
-    # named (docs/25 §1).
-    local target_dir="${2:-$MCPP_HOME/registry/data/xpkgs}"
-    [[ -d "$source_dir" ]] || return 0
-    mkdir -p "$target_dir"
-
-    local entry base version vbase
-    shopt -s nullglob
-    for entry in "$source_dir"/*; do
-        base="$(basename "$entry")"
-        if [[ -d "$entry" && ! -L "$target_dir/$base" ]]; then
-            mkdir -p "$target_dir/$base"
-            for version in "$entry"/*; do
-                vbase="$(basename "$version")"
-                [[ -e "$target_dir/$base/$vbase" ]] && continue
-                ln -sf "$version" "$target_dir/$base/$vbase" 2>/dev/null \
-                    || cp -r "$version" "$target_dir/$base/$vbase"
-            done
-            continue
-        fi
-        [[ -e "$target_dir/$base" ]] && continue
-        ln -sf "$entry" "$target_dir/$base" 2>/dev/null \
-            || cp -r "$entry" "$target_dir/$base"
+# THE DEVELOPER'S HOMES ARE UPSTREAMS OF THE TEST'S HOME, NEVER LINKS INTO IT
+# (mcpp#293, design 2026-11-20 §5.10). Each payload linked into the test's home
+# made the developer's store part of it: a hook the test's home ran again (gcc's
+# specs, an ELF patch) wrote through the link into the developer's toolchain,
+# with paths of the test's temporary home, and an install landed in the
+# developer's registry. An upstream is read by link at install and never written
+# (docs/25 §3); the test's home installs what it needs from it, and registers
+# the programs in its own subos, so no subos is copied either.
+name_upstreams() {
+    local ups=() u list="" config="$MCPP_HOME/config.toml"
+    for u in "$USER_MCPP" "$HOME/.xlings" ${USERPROFILE:+"$USERPROFILE/.xlings"}; do
+        [[ -d "$u" ]] && ups+=("\"$(cd "$u" && pwd -P)\"")
     done
-    shopt -u nullglob
+    [[ ${#ups[@]} -gt 0 ]] || return 0
+    list="upstream = [$(IFS=,; echo "${ups[*]}" | sed 's/,/, /g')]"
+    touch "$config"
+    # The line goes into the [xlings] table, replacing an upstream it had.
+    awk -v line="$list" '
+        /^\[/ { if (inx && !done) { print line; done = 1 } inx = ($0 ~ /^\[xlings\]/) }
+        inx && /^upstream[ \t]*=/ { next }
+        { print }
+        END { if (inx && !done) { print line; done = 1 } if (!done) { print ""; print "[xlings]"; print line } }
+    ' "$config" > "$config.tmp" && mv "$config.tmp" "$config"
 }
 
-if [[ -d "$USER_MCPP/registry/data/xpkgs" || -d "$HOME/.xlings/data/xpkgs" || ( -n "${USERPROFILE:-}" && -d "$USERPROFILE/.xlings/data/xpkgs" ) ]]; then
-    mkdir -p "$MCPP_HOME/registry/data"
-    link_xpkg_payloads "$USER_MCPP/registry/data/xpkgs"
-    link_xpkg_payloads "$USER_MCPP/xpkgs" "$MCPP_HOME/xpkgs"
-    link_xpkg_payloads "$HOME/.xlings/data/xpkgs"
-    if [[ -n "${USERPROFILE:-}" ]]; then
-        link_xpkg_payloads "$USERPROFILE/.xlings/data/xpkgs"
-    fi
-fi
 if [[ -d "$USER_MCPP/registry/data/xim-pkgindex" ]]; then
     mkdir -p "$MCPP_HOME/registry/data"
     [[ -e "$MCPP_HOME/registry/data/xim-pkgindex" ]] \
@@ -81,17 +56,10 @@ if [[ -d "$USER_MCPP/registry/data/xim-index-repos" ]]; then
         || ln -sf "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos" 2>/dev/null \
         || cp -r "$USER_MCPP/registry/data/xim-index-repos" "$MCPP_HOME/registry/data/xim-index-repos"
 fi
-# The subos is the test's own copy, its links kept as links (`cp -a`): linked
-# whole, this test's installs wrote into the developer's subos, and an install
-# in the developer's home by a test beside this one appeared in this test's.
-if [[ "${MCPP_INHERIT_SUBOS:-1}" != "0" && -d "$USER_MCPP/registry/subos" ]]; then
-    mkdir -p "$MCPP_HOME/registry"
-    [[ -e "$MCPP_HOME/registry/subos" ]] \
-        || cp -a "$USER_MCPP/registry/subos" "$MCPP_HOME/registry/subos"
-fi
 if [[ "${MCPP_INHERIT_CONFIG:-1}" != "0" && -f "$USER_MCPP/config.toml" ]]; then
     cp -f "$USER_MCPP/config.toml" "$MCPP_HOME/config.toml" 2>/dev/null || true
 fi
+name_upstreams
 if [[ -d "$USER_MCPP/bin" ]]; then
     mkdir -p "$MCPP_HOME"
     [[ -e "$MCPP_HOME/bin" ]] \

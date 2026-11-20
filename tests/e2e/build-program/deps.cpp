@@ -32,7 +32,7 @@ std::string library(std::string_view name) {
     return std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n\n[targets.{0}]\nkind = \"lib\"\n", name);
 }
 
-E2E deps{"deps", [] {
+E2E deps{"deps", s::home_fixture, [] {
     "111 dep build mcpp"_test[s::gcc] = [] {
         // A dependency's build.mcpp runs with Cargo's scope: its define reaches only the
         // dependency's own units, its generated source (in MCPP_OUT_DIR) compiles into it, and

@@ -56,7 +56,7 @@ std::set<std::string> ms_versions(const fs::path& ninja) {
     return words;
 }
 
-E2E msvc{"msvc", [] {
+E2E msvc{"msvc", s::home_fixture, [] {
     "95 msvc system toolchain"_test[s::msvc] = [] {
         // `toolchain default msvc` locates and identifies the machine's MSVC and persists
         // msvc@system; `toolchain list` shows it under System, starred; a versioned spec is a

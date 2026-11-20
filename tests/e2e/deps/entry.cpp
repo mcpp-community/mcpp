@@ -55,7 +55,7 @@ int main() {
 }
 )cpp";
 
-E2E entry{"entry", [] {
+E2E entry{"entry", s::home_fixture, [] {
     "946 a program begins in a dependency entry"_test[s::gcc][s::elf] = [] {
         // A framework supplies `main` as an entry target; the application writes only the
         // callback. The entry is in no image that does not select it; required features gate

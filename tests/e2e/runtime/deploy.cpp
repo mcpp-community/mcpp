@@ -34,7 +34,7 @@ std::vector<std::string> matching(std::string_view text, std::string_view patter
     return out;
 }
 
-E2E deploy{"deploy", [] {
+E2E deploy{"deploy", s::home_fixture, [] {
     "646 runtime deploy places files in a directory"_test = [] {
         // The root's entries land at bin/<to>/<file> (`.` beside the executable), a dependency's
         // `from` is its own, a test binary finds the layout, two different sources for one

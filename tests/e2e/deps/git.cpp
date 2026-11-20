@@ -40,7 +40,7 @@ void library_repository(const fs::path& dir, std::string_view name, std::string_
 
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
-E2E git_deps{"git", [] {
+E2E git_deps{"git", s::home_fixture, [] {
     "24 git dependency"_test[s::fresh_sandbox] = [] {
         // A git dependency is cloned to $MCPP_HOME/git/<hash>/ and treated as a path dependency;
         // a rebuild does not clone again; a branch is locked (`git+...branch=main`), replayed

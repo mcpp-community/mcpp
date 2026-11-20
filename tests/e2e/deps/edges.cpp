@@ -49,7 +49,7 @@ std::string reported_root(std::string_view why) {
     return {};
 }
 
-E2E edges{"edges", [] {
+E2E edges{"edges", s::home_fixture, [] {
     "1001 a dependency carries its patches"_test[s::gcc] = [] {
         // A patched library is another library: the verified source is copied to the variant's
         // own tree under the mcpp home and patched there; the lock names the variant and each

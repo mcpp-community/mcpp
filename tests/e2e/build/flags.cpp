@@ -69,7 +69,7 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
     return std::nullopt;
 }
 
-E2E flags{"flags", [] {
+E2E flags{"flags", s::home_fixture, [] {
     "50 package owned build flags"_test[s::gcc] = [] {
         // A dependency's own cflags and cxxflags compile its C and C++ sources; the consumer
         // declares neither, and the graph carries both.

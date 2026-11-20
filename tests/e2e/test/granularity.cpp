@@ -24,7 +24,7 @@ std::string unit(std::string_view id) {
                        "UTest case_{}{{\"{}\", [] {{ expect(eq(1 + 1, 2)); }}}};\n", id, id);
 }
 
-E2E granularity{"granularity", [] {
+E2E granularity{"granularity", s::home_fixture, [] {
     "1081 a package's tests are one program"_test[s::gcc] = [] {
         auto p = s::project::scaffold("app");
         p.write("tests/b.cpp", unit("top"));

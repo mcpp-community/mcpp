@@ -153,7 +153,7 @@ int hide_dual_dll(const fs::path& root, const fs::path& hidden, std::string_view
     return n;
 }
 
-E2E graph{"graph", [] {
+E2E graph{"graph", s::home_fixture, [] {
     "833 a workspace is one graph per configuration"_test[s::unix_shell] = [] {
         // G1 a shared member compiled once; G2 a selection replays the workspace's graph; G3 a
         // member's flag edit rebuilds that member alone; G4 one build directory per

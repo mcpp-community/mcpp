@@ -72,7 +72,7 @@ std::string c_lib_segment(std::string_view source, std::string_view target) {
     }},)", source, target);
 }
 
-E2E local{"local", [] {
+E2E local{"local", s::home_fixture, [] {
     "52 local path namespaced index"_test[s::gcc][s::fresh_sandbox] = [] {
         // A local path index finds pkgs/c/compat.cfg.lua; the project builds and runs. A clean
         // project installs it through the NDJSON interface with the qualified name

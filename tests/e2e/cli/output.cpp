@@ -90,7 +90,7 @@ std::string slow_program(std::string_view prefix, std::string_view id, int secon
     return out;
 }
 
-E2E output{"output", [] {
+E2E output{"output", s::home_fixture, [] {
     "48 build error output"_test = [] {
         // A failed build shows the compiler's diagnostic once, after the package's status line,
         // without ninja's progress or a private environment prefix; the graph holds no such
@@ -349,7 +349,7 @@ int main() {
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E output_machine{"output-machine", resource{"machine"}, [] {
+E2E output_machine{"output-machine", s::home_fixture, resource{"machine"}, [] {
     "1085 a replayed build reports its artifacts"_test = [] {
         // The second `mcpp build --message-format json` of an unchanged tree replays the recorded
         // build; its stream and envelope name the program as the first build's did. A of a

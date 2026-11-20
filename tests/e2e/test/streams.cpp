@@ -13,7 +13,7 @@ namespace {
 constexpr std::string_view hang_cpp =
     "#include <chrono>\n#include <thread>\nint main() { std::this_thread::sleep_for(std::chrono::seconds(30)); return 0; }\n";
 
-E2E streams{"streams", [] {
+E2E streams{"streams", s::home_fixture, [] {
     "865 mcpp test reports its steps on stderr and its results on stdout"_test[s::unix_shell] = [] {
         s::project p{{"mcpp.toml", R"([package]
 name    = "p"

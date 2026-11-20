@@ -26,7 +26,7 @@ e2e::outcome run_app(const s::project& p) {
     return s::run(*bin);
 }
 
-E2E activation{"activation", [] {
+E2E activation{"activation", s::home_fixture, [] {
     "67 features strict"_test = [] {
         // Feature activation, `backend=` sugar, and the --strict schema gate: an unknown feature
         // or platform warns, and --strict refuses; the six platform names are known.

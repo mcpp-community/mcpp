@@ -42,7 +42,7 @@ extra = {{ sources = ["src/extra/*.cppm"] }}
 {1})", name, test);
 }
 
-E2E selection{"selection", [] {
+E2E selection{"selection", s::home_fixture, [] {
     "152 test subdir names"_test = [] {
         // The same stem in two directories of tests/ coexists; a test is named by its path.
         s::project p{{"mcpp.toml", manifest("subdirs")},
