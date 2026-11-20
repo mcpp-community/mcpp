@@ -347,6 +347,11 @@ read_consumer_include_sidecar(const std::filesystem::path& outputDir);
 // graph runs no compiler through the capped executor; 0 when absent.
 void write_compiler_cap_sidecar(const std::filesystem::path& outputDir, int cap);
 int read_compiler_cap_sidecar(const std::filesystem::path& outputDir);
+// The memory threshold the plan resolved (design 2026-11-20 §5.5), beside the
+// cap: the fast path replays the graph without a plan and states it to the
+// executors as the full path does.
+void write_memory_threshold_sidecar(const std::filesystem::path& outputDir, std::uint64_t bytes);
+std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputDir);
 
 // #693 (M4): whether a Ninja reads build.ninja in the encoding mcpp writes it.
 //
@@ -1280,6 +1285,18 @@ int read_compiler_cap_sidecar(const std::filesystem::path& outputDir) {
     std::ifstream f(outputDir / kCompilerCapSidecar, std::ios::binary);
     int cap = 0;
     return f >> cap && cap > 0 ? cap : 0;
+}
+
+constexpr std::string_view kMemoryThresholdSidecar = ".mcpp-memory-threshold";
+
+void write_memory_threshold_sidecar(const std::filesystem::path& outputDir, std::uint64_t bytes) {
+    std::ofstream(outputDir / kMemoryThresholdSidecar, std::ios::binary | std::ios::trunc) << bytes << '\n';
+}
+
+std::uint64_t read_memory_threshold_sidecar(const std::filesystem::path& outputDir) {
+    std::ifstream f(outputDir / kMemoryThresholdSidecar, std::ios::binary);
+    std::uint64_t bytes = 0;
+    return f >> bytes ? bytes : 0;
 }
 
 std::vector<std::filesystem::path>
@@ -4901,6 +4918,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                  : std::vector<mcpp::targetside::CAbiAbsentEntry>{});
     write_consumer_include_sidecar(plan.outputDir, root_include_dirs_of(plan));
     write_compiler_cap_sidecar(plan.outputDir, plan.scheduleCompilerCap);
+    write_memory_threshold_sidecar(plan.outputDir, plan.memoryThreshold);
     write_graph_c_library_sidecar(plan.outputDir, plan.targetSide.cAbi);
     std::string placements;
     mcpp::build::progress::Attribution attribution;
@@ -5252,6 +5270,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     for (auto& ev : plan.toolchain.envOverrides)
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
+    nenv.emplace_back("MCPP_MEMORY_THRESHOLD", std::to_string(plan.memoryThreshold));
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     // The directory's BMI cutoff for this run (mcpp.buildopt.keep). A graph
     // compiled with contracts is compared exactly: a contract's violation

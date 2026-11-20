@@ -1016,9 +1016,18 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     // `requireBootstrap=false` because nothing here needs the bootstrap
     // toolchain.
     int globalDefaultJobs = 0;
-    if (auto c = state.get_cfg(/*requireBootstrap=*/false))
+    std::string machineMemoryThreshold;
+    if (auto c = state.get_cfg(/*requireBootstrap=*/false)) {
         globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
+        machineMemoryThreshold = (*c)->memoryThreshold;
+    }
     ctx.globalDefaultJobs = globalDefaultJobs;
+    ctx.plan.memoryThreshold = mcpp::build::schedule::resolve_memory_threshold(
+        ctx.manifest, machineMemoryThreshold, [](std::string_view bad) {
+            mcpp::ui::warning(std::format(
+                "ignoring invalid memory threshold '{}' (expected a size such as \"2GiB\" or bytes); "
+                "the engine's 1 GiB holds", bad));
+        });
     ctx.intent = state.overrides.intent;
 
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and

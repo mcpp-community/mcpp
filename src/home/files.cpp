@@ -4,8 +4,33 @@ module mcpp.home.files;
 
 import std;
 import mcpplibs.os.fs;
+import mcpplibs.os.env;
 
 namespace mcpp::home {
+
+void contention_point() {
+    struct jitter {
+        int max_ms = 0;
+        std::mt19937_64 random;
+        std::mutex lock;
+        jitter() {
+            const auto max = mcpplibs::os::env::get("MTEST_JITTER").value_or("");
+            std::from_chars(max.data(), max.data() + max.size(), max_ms);
+            std::uint64_t seed = 0;
+            const auto given = mcpplibs::os::env::get("MTEST_JITTER_SEED").value_or("");
+            std::from_chars(given.data(), given.data() + given.size(), seed);
+            random.seed(seed);
+        }
+    };
+    static jitter j;
+    if (j.max_ms <= 0) return;
+    int wait = 0;
+    {
+        std::lock_guard g(j.lock);
+        wait = std::uniform_int_distribution<int>(0, j.max_ms)(j.random);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{wait});
+}
 
 std::optional<FileLock> FileLock::try_acquire(const std::filesystem::path& dir, std::string_view name) {
     std::error_code ec;
@@ -34,6 +59,7 @@ std::optional<FileLock> FileLock::acquire(
     const std::function<void(std::string_view holder)>& waiting, bool* waited) {
     namespace fs = std::filesystem;
     if (waited) *waited = false;
+    contention_point();
     const auto start = std::chrono::steady_clock::now();
     auto pause = std::chrono::milliseconds(20);
     bool told = false;

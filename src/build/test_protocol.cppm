@@ -18,7 +18,7 @@ inline constexpr int kVersion = 1;
 
 // The framework mcpp scaffolds tests with and suggests where a package has
 // none (docs/01, docs/08): mtest, by this release, from its repository.
-inline constexpr std::string_view kMtestRelease = "0.9.0";
+inline constexpr std::string_view kMtestRelease = "0.10.0";
 inline constexpr std::string_view kMtestRepo    = "https://github.com/mcpp-community/mtest";
 
 // The protocol's variables, removed from the environment a program inherits
@@ -173,13 +173,19 @@ variables(std::string_view mode, const std::filesystem::path& report,
 // it equals or the identifiers it is a `/`-prefix of (`fs` matches `fs/read`).
 bool matches(std::string_view id, std::string_view pattern);
 
-// The identifiers `mcpp test --case` passes a program (P4.1), from its listing:
+// The lines `mcpp test --case` passes a program (P4.1), from its listing:
 // each listed case a pattern matches; for a pattern under a listed case -- a
 // case that case declares, which the program reports when it runs and need not
-// list (P3.4) -- the pattern itself when it names one case, else the listed
-// case, all of whose cases then run.
+// list (P3.4) -- the pattern itself when it names one case. A glob under a
+// listed case selects the declared cases it matches that a run of the store
+// measured (`declared`), each as an optional line `?<id>` where the program
+// selects within (P4.3), so `--case 'trees/955*'` runs case 955 and not the
+// whole of `trees` (design 2026-11-20 §5.14); with neither, the listed case,
+// all of whose cases then run.
 std::vector<std::string> selection(const std::vector<Case>& listed,
-                                   const std::vector<std::string>& patterns);
+                                   const std::vector<std::string>& patterns,
+                                   const std::vector<std::string>& declared = {},
+                                   bool selectsWithin = false);
 
 // The JSON of a report in a `mcpp test --message-format json` record
 // (docs/50): `cases` and `missing`.
@@ -444,7 +450,9 @@ bool matches(std::string_view id, std::string_view pattern) {
 }
 
 std::vector<std::string> selection(const std::vector<Case>& listed,
-                                   const std::vector<std::string>& patterns) {
+                                   const std::vector<std::string>& patterns,
+                                   const std::vector<std::string>& declared,
+                                   bool selectsWithin) {
     std::vector<std::string> out;
     auto add = [&](const std::string& id) {
         if (std::ranges::find(out, id) == out.end()) out.push_back(id);
@@ -458,7 +466,12 @@ std::vector<std::string> selection(const std::vector<Case>& listed,
             return p.size() > c.id.size() && p.starts_with(c.id) && p[c.id.size()] == '/';
         });
         if (under == listed.end()) continue;
-        add(p.find_first_of("*?") == std::string::npos ? p : under->id);
+        if (p.find_first_of("*?") == std::string::npos) { add(p); continue; }
+        bool known = false;
+        if (selectsWithin)
+            for (const auto& id : declared)
+                if (id.starts_with(under->id + "/") && matches(id, p)) { add("?" + id); known = true; }
+        if (!known) add(under->id);
     }
     return out;
 }

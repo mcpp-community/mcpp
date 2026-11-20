@@ -585,6 +585,9 @@ struct BuildPlan {
     // frontier starves — see the hazard note in schedule/detach_codegen.
     int                             scheduleNinjaJobs = 0;
     int                             scheduleCompilerCap = 0;
+    // The memory a compiler may start below (design 2026-11-20 §5.5), in bytes:
+    // the compiler executor waits below it (MCPP_MEMORY_THRESHOLD in its env).
+    std::uint64_t                   memoryThreshold = 0;
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.

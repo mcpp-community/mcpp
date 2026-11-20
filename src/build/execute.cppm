@@ -38,6 +38,7 @@ import mcpp.buildopt.keep;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
+import mcpplibs.os.fs;           // the budget's slot locks (SPEC-017 O11)
 import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
 import mcpp.wire;              // the mcpp.launch envelope
 import mcpp.build.cxx_runtime; // the island, verified after the link (design 2026-10-26 §6.3)
@@ -2617,6 +2618,8 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (!opened) { mcpp::ui::error(opened.error()); return 1; }
         compilerRun.emplace(std::move(*opened));
         compilerRun->environment(childEnv);
+        childEnv.emplace_back("MCPP_MEMORY_THRESHOLD",
+                              std::to_string(mcpp::build::read_memory_threshold_sidecar(outputDir)));
     }
 
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
@@ -5600,7 +5603,53 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::atomic<std::size_t> next{0};
         std::mutex reportMutex;
 
+        // ONE BUDGET FOR THE MACHINE (SPEC-017 O11, design 2026-11-20 §5.5): a
+        // directory of a slot file per job of the run; each worker holds one
+        // while it runs tests and states it to them (MTEST_BUDGET,
+        // MTEST_BUDGET_HELD), so a build a test starts runs its first compiler
+        // on that slot and takes the others from the slots no worker holds.
+        // Four shards' tests each building in parallel queued 7 to 9 processes
+        // on 4 processors, and a step took 2.3 times its time alone (§3.1).
+        // Inside another runner's budget (a test that runs `mcpp test`) that
+        // one is used: the first worker has the slot held for this process.
+        const auto outerBudget = mcpp::invocation::get("MTEST_BUDGET");
+        const bool nestedBudget = outerBudget && !outerBudget->empty();
+        const auto outerHeld = mcpp::invocation::get("MTEST_BUDGET_HELD").value_or("");
+        std::filesystem::path budgetDir;
+        if (nestedBudget) {
+            budgetDir = mcpp::home::from_utf8(*outerBudget);
+        } else {
+            std::error_code ec;
+            budgetDir = std::filesystem::temp_directory_path(ec)
+                / std::format("mcpp-budget-{}-{}", mcpplibs::os::process::self() ? mcpplibs::os::process::self()->id : 0,
+                              std::chrono::steady_clock::now().time_since_epoch().count());
+            std::filesystem::create_directories(budgetDir, ec);
+            for (int i = 0; i < std::max(1, runJobsHere); ++i)
+                std::ofstream(budgetDir / std::format("slot-{}", i), std::ios::binary);
+        }
+        struct OwnedBudget {
+            std::filesystem::path dir;
+            ~OwnedBudget() { std::error_code ec; if (!dir.empty()) std::filesystem::remove_all(dir, ec); }
+        } ownedBudget{nestedBudget ? std::filesystem::path{} : budgetDir};
+        auto take_slot = [&](int workerId) -> std::pair<std::string, std::optional<mcpplibs::os::fs::lock>> {
+            if (nestedBudget && workerId == 0 && !outerHeld.empty()) return {outerHeld, std::nullopt};
+            std::vector<std::filesystem::path> slots;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(budgetDir, ec))
+                if (e.path().filename().string().starts_with("slot-") && mcpp::home::spelling(e.path()) != outerHeld)
+                    slots.push_back(e.path());
+            std::ranges::sort(slots);
+            for (;;) {
+                for (const auto& f : slots)
+                    if (auto l = mcpplibs::os::fs::lock::acquire(f, mcpplibs::os::fs::lock::kind::exclusive, false))
+                        return {mcpp::home::spelling(f), std::move(*l)};
+                if (slots.empty()) return {{}, std::nullopt};
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        };
+
         auto worker = [&](int workerId) {
+            auto [slotFile, slotLock] = take_slot(workerId);
             for (;;) {
                 std::size_t i = next.fetch_add(1);
                 if (i >= list.size()) return;
@@ -5659,6 +5708,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // it, stated for this run, and no other program (P1.2, P2.2).
                 mcpp::run::Options runOpts;
                 runOpts.env = r.env;
+                if (!slotFile.empty()) {
+                    runOpts.env.emplace_back("MTEST_BUDGET", mcpp::home::spelling(budgetDir));
+                    runOpts.env.emplace_back("MTEST_BUDGET_HELD", slotFile);
+                }
                 runOpts.cwd = r.cwd.string();
                 runOpts.input = mcpp::run::Input::inherit;
                 runOpts.streams = capture ? mcpp::run::Streams::merged : mcpp::run::Streams::inherit;
@@ -6240,12 +6293,33 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 continue;
             }
             std::string lines;
-            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases)) {
+            // The cases a run of the store measured under this program: what a glob under a
+            // listed case names (P4.3).
+            std::map<std::string, double> selectedSecs;   // listed case -> its declared time
+            std::vector<std::string> declared;
+            {
+                const auto prefix = mcpp::build::test_schedule::case_key(r.name, "");
+                for (auto it = history.cases.lower_bound(prefix);
+                     it != history.cases.end() && it->first.starts_with(prefix); ++it)
+                    declared.push_back(it->first.substr(prefix.size()));
+            }
+            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases,
+                                                                         declared, report.selectsWithin)) {
                 lines += id + "\n";
                 // A selected case that holds the machine (P7.1) runs the program alone.
                 for (const auto& c : report.listed)
                     if (c.id == id && std::ranges::find(c.resources, "machine") != c.resources.end()) r.alone = true;
+                // THE TIME LIMIT IS THE ONE ITS SCOPE STATES (SPEC-017 O5, design 2026-11-20 §5.8): a
+                // case selected under a listed case runs within that case's `timeout`, as the whole
+                // case does; `--case 'sets/*'` ran within the run's 300 s (mcpp#976).
+                const std::string_view bare = id.starts_with('?') ? std::string_view(id).substr(1) : std::string_view(id);
+                for (const auto& c : report.listed)
+                    if (c.timeout > 0 && (bare == c.id || (bare.size() > c.id.size() && bare.starts_with(c.id)
+                                                           && bare[c.id.size()] == '/')))
+                        selectedSecs.emplace(c.id, c.timeout);
             }
+            for (const auto& [_, secs] : selectedSecs) r.declaredSecs += secs;
+            selectedSecs.clear();
             if (lines.empty()) { ++notSelected; continue; }
             r.select = r.protocolDir / "select.txt";
             std::ofstream(*r.select, std::ios::binary) << lines;
@@ -6819,7 +6893,13 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
         // workers, the store (SPEC-015 §4; docs/08).
         std::vector<TestRunnable> runs;
         for (auto const& t : leg.tests) {
-            if (!selected_by(testOpts.filters, t.name)) continue;
+            // As a build's run selects: the program, or a part of it (`e2e/openkal/trees`), whose
+            // parts the run divides and selects after listing; an archive does not carry the
+            // files a part is named by (design 2026-11-20 §5.14).
+            const bool names_part = std::ranges::any_of(testOpts.filters, [&](const std::string& f) {
+                return f.starts_with(t.name + "/");
+            });
+            if (!names_part && !selected_by(testOpts.filters, t.name)) continue;
             TestRunnable r;
             r.name = t.name;
             r.program = (opened->root / t.program).lexically_normal();
@@ -6877,6 +6957,9 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
                      "\"not_reached\":{}}}}}", passed, failed, notRun, notReached);
         std::fflush(libc::stdout());
     }
+    // `--cases` lists the archive's cases and runs none: a listing is its answer (design 2026-11-20
+    // §5.14; through 2026.11.20.1 it ended "no test ran").
+    if (testOpts.listCases) return notRun ? 2 : 0;
     if (passed + failed == 0) {
         std::string why;
         for (auto const& r : reasons) why += "\n    " + r;

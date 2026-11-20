@@ -4,16 +4,16 @@
 |---|---|
 | 规范编号 | SPEC-017 |
 | 标题 | mcpp 测试规范：测试程序、测试协议、记录、存储、启动描述与框架声明；基础能力与可选能力 |
-| 状态 | 评审中 v2.2 |
-| 版本 | 2.2 |
-| 最后修改 | 2026-11-14 |
-| 对应实现 | 逐条标注。B1–B4 与 O1、O2、O4–O7 mcpp >= 2026.11.8.1 至 2026.11.10.1（逐条）；B5、B6、O3 的运行器一侧、O8 mcpp >= 2026.11.10.1；O9 由框架的工具实现（mtest >= 0.6.0）；O10 mcpp >= 2026.11.13.1 |
+| 状态 | 评审中 v2.5 |
+| 版本 | 2.5 |
+| 最后修改 | 2026-11-21 |
+| 对应实现 | 逐条标注。B1–B4 与 O1、O2、O4–O7 mcpp >= 2026.11.8.1 至 2026.11.10.1（逐条）；B5、B6、O3 的运行器一侧、O8 mcpp >= 2026.11.10.1；O9 由框架的工具实现（mtest >= 0.6.0）；O10 mcpp >= 2026.11.13.1；P5 的 `step` 与 `exercise`、B4 的 `builds.ndjson` 与机器的字段、O5 在选择之下的时限、O11、O12 mcpp >= @NEXT@，mtest >= 0.11.0 |
 | 取代 | SPEC-017 v1.0（`test-runner.md`）；mtest 测试协议版本 1（mtest `spec/protocol.md`）的规范正文；SPEC-004 中 `[test]` 的键 |
 | 相关规范 | [SPEC-004](manifest-semantics.md)（清单的平面与命名）、[SPEC-006](build-database.md)（构建数据库） |
 | 相关 issue | mcpp#914、mcpp#915、mcpp#917 |
 | 使用文档 | [08 —— 测试](../zh/08-testing.md)、[50 —— 机器可读输出](../zh/50-machine-output.md) §8 |
 
-用语按 RFC 2119：**必须 / 禁止**为强制，**应当**为建议，**可以**为可选。条款编号有三类：B1–B6 为基础能力，O1–O10 为可选能力，P1–P12 为协议条款（编号与 mtest 协议版本 1 相同，原有引用不变）。
+用语按 RFC 2119：**必须 / 禁止**为强制，**应当**为建议，**可以**为可选。条款编号有三类：B1–B6 为基础能力，O1–O12 为可选能力，P1–P12 为协议条款（编号与 mtest 协议版本 1 相同，原有引用不变）。
 
 ## 0. 范围与分层
 
@@ -132,10 +132,13 @@
 | `usage` | `user_ms`、`sys_ms`，可选 `peak_bytes`、`read_bytes`、`written_bytes`（O7） | 程序结束时 |
 | `artifact` | `id`、`path`、`kind` | 用例产生的文件 |
 | `fixture` | `id`、`name`、`ms` | 用例促成为共享它的用例而构造的对象，及构造耗时 |
+| `step` | `id`、`name`、`t`（自程序启动起的毫秒）、`ms`，可选 `cpu_ms`、`status`（步骤运行的程序的退出状态）、`build`（该步骤是一次构建时，构建记录的标识） | 用例的一个步骤结束（mtest >= 0.11.0） |
+| `exercise` | `id`、`items`：用例用到的产品面的项（字符串的列表，形式由产品给出，例如 `command build`、`flag build --target`、`key build.sources`、`reason build/cache`） | 用例运行期间，可多次（mtest >= 0.11.0） |
 | `end` | `id`、`status`、`ms`，可选 `reason`、`checks`（O3） | 用例结束 |
 | `missing` | `id` | P4.1 |
 | `done` | `status`、`counts`（状态到数目的对象） | 末个 |
 
+- **P5.6 步骤与用到的面（mtest >= 0.11.0；mcpp >= @NEXT@）。** 一个用例由若干步骤组成时（端到端用例运行的每条命令），程序**可以**为每个步骤写一个 `step` 事件；运行器把它们按到达顺序归入用例。`exercise` 列出用例用到的产品面的项；运行器把一个用例的各次 `exercise` 合并为一个集合。二者都不影响用例的结论。
 - **P5.3** 用例的 `status` 为以下之一：`pass`、`fail`、`skip`（带 `reason`）、`xfail`（如预期地失败）、`xpass`（预期失败却通过；运行失败）、`invalid`（无法判定的测量；P6.3）。
 - **P5.4** 运行器**必须**忽略未知字段与未知事件种类。运行器**必须**接受没有 `done` 的报告（程序崩溃）：有 `begin` 而无 `end` 的用例失败，以程序的退出状态为原因。
 - **P5.5** 程序的退出状态为零，当且仅当没有用例失败或意外通过，且没有被选用例缺失。
@@ -168,11 +171,13 @@
 | 路径 | 内容 |
 |---|---|
 | `index.ndjson` | 每次运行一行：去掉程序与用例的运行记录 |
-| `runs/<id>/run.json` | 运行记录：`schema`（`mtest.run/1`）、`id`、`started`、`finished`、`status`、`system`、`arch`、`machine`、`commit`、`set`、`selection`、`group`、`monitor`、`ms`、`jobs`、`counts` |
+| `runs/<id>/run.json` | 运行记录：`schema`（`mtest.run/1`）、`id`、`started`、`finished`、`status`、`system`、`arch`、`machine`、`commit`、`set`、`selection`、`group`、`monitor`、`ms`、`jobs`、`counts`；`processors`、`memory`、`budget`、`jitter`（@NEXT@） |
 | `runs/<id>/programs.ndjson` | 每个程序进程一行：`name`、`argv`、`status`、`exit`、`ms`、`started_ms`、`worker`、`select`、`resources`、`fixtures`，运行器构建它时的 `build_started_ms` 与 `build_ms`，`usage`（带 `source`：`program` 或 `engine`） |
-| `runs/<id>/cases.ndjson` | 每个用例一行：`program`、`id`、`kind`、`status`、`ms`、`started_ms`、`reason`、`failures`、`metrics`、`bounds`、`tags`、`clauses` |
+| `runs/<id>/cases.ndjson` | 每个用例一行：`program`、`id`、`kind`、`status`、`ms`、`started_ms`、`reason`、`failures`、`metrics`、`bounds`、`tags`、`clauses`；`cpu_ms`、`steps`（`step` 事件的字段，`id` 除外）、`exercised`（@NEXT@） |
+| `runs/<id>/builds.ndjson` | 运行器为这次运行所做的构建（@NEXT@）：每条运行过的边一行，`build`（构建记录的标识）、`output`、`package`、`program`（该边所服务的测试程序，可为空）、`started_ms`、`ms`、`cpu_ms`、`peak_bytes`；由缓存提供的包一行，`build`、`package`、`cached`（`true`）、`units` |
 | `runs/<id>/fixtures.ndjson` | 每个运行夹具一行：`name`、`program`、`started_ms`、`ready_ms`、`ended_ms`、`status` |
 
+- **P12.4 机器（@NEXT@）。** `machine` 是机器的类别：处理器的型号，系统不给出型号时为 `<arch>/<逻辑处理器数>`；`processors` 为逻辑处理器数，`memory` 为物理内存的字节数。比较不同运行的用时（O10 的估计、界限、趋势）时，读者**应当**按 `machine` 分组；没有同类的历史时取全部。处理器时间（`cpu_ms`）在同类机器之间可比，墙钟只在同一次运行之内可比。
 - **P12.2** 运行标识按时间排序。同一 `group` 的运行（一次 CI 运行的各作业）是一个整体的各部分，读者合并报告。
 - **P12.3** 一次运行中程序、用例、构建与夹具的时间构成其工作的有向无环图；读者的关键路径是按实测时间加权的最长路径。
 - **mcpp 的实现。** 存储位于 `[test] store`（缺省 `target/mtest`；`"none"` 不保存）。`run.json` 的 `commit` 与 `group` 在 CI 中取 `GITHUB_SHA` 与 `GITHUB_RUN_ID`；分片运行（O10）另写 `shard`（`I/N`）。程序进程一行在其为一部分时写 `part_of`（mcpp >= 2026.11.13.1）。mcpp 在一次构建中构建全部测试程序，不写逐个程序的 `build_started_ms`。
@@ -218,6 +223,8 @@
 | O8 | `output` | 每个用例的输出归属 | 框架写出 `output` 事件；mcpp 归属与转交 | 程序的输出整体显示 |
 | O9 | `session` | 测试会话：运行、加入、取消、状态 | 框架的工具 | 客户端以多个并发的 `mcpp test` 进程运行 |
 | O10 | `measured-schedule` | 按存储测得的用时排序、划分与分片，重跑失败部分 | mcpp | 按列出顺序运行，不分片 |
+| O11 | `budget` | 一台机器一份处理器预算：运行器与被运行的程序启动的并行工作从同一份槽位中取得 | 运行器建立；任何程序遵守 | 每个程序按自己的并行度运行 |
+| O12 | `jitter` | 在竞争点等待随机的时间，使未被固定的次序显现 | 运行器陈述；框架与被测程序遵守 | 不等待 |
 
 ### O1. 各部分 已实现（mcpp >= 2026.11.10.1）
 
@@ -256,6 +263,7 @@
 - **P7.2** `artifacts` 写出用例所读之物：`target:<名>`、`file:<路径>`、`program:<名>`；运行器据此按变更选择用例。
 - **P7.3** 资源**可以**有容量：组件带来的池陈述同时持有它的用例数；运行器**禁止**超过容量。
 - 为每个用例启动进程的运行器在用例的 `timeout` 时结束该进程；整体运行程序的运行器（`mcpp test`）运行其中每个用例，按报告判定。
+- **时限只陈述一次（@NEXT@）。** 用例的时限是它与其所属各级作用域声明的 `timeout` 中最小者。运行器选择一个用例或其下声明的用例（P3.4、P4）时，**必须**取这些声明，而不是运行的缺省；没有任何声明时取运行的缺省。
 
 ### O6. 组件与运行夹具（P11）
 
@@ -318,6 +326,20 @@
 4. **分片。** `--shard I/N` 把每个测试按估计从长到短（相同时按名字）分配给已分配估计之和最小的分片（相同时取编号最小者），只运行第 I 个分片的测试。分配**必须**只取决于存储与本次运行的测试列表。分片**禁止**把本组（`GITHUB_RUN_ID`，无则为空）的分片运行读作历史，使同一存储上先后启动的各分片读到相同的历史。
 5. **失败重跑。** `--failed` 读取存储中最近的一次运行：状态为 `fail` 或 `build-fail` 的程序记录与状态为 `fail` 或 `xpass` 的用例。所选程序为这些记录的 `part_of`（无则为其名字）；每个失败的程序都有失败用例时，只运行这些用例（与 `--case` 相同）；否则整体运行这些程序。最近一次运行没有失败时，运行器不运行任何测试，退出码为 0。
 
+### O11. 预算（@NEXT@；mtest >= 0.11.0）
+
+1. **形式。** 预算是一个目录，其中有与槽位数相同的文件 `slot-<i>`（`i` 自 0 起）。持有一个文件的独占锁即持有一个槽位；进程结束时锁随之释放，因此崩溃不会遗失槽位。
+2. **陈述。** 建立预算的运行器在它启动的程序的环境中陈述 `MTEST_BUDGET`（目录）与 `MTEST_BUDGET_HELD`（运行器为该程序持有的槽位文件）。程序以持有的槽位运行它的第一份并行工作；其余每一份并行工作（一个编译器、一个子进程）在开始前锁住一个空闲的槽位文件，结束后释放。没有空闲的槽位时等待。
+3. **传递。** 程序把这两个变量原样交给它启动的程序：被启动的程序可以使用预算，但**禁止**使用父程序持有的槽位，除非父程序在此期间不使用它（例如等待一个它启动的构建）。
+4. **不认识它的程序不受影响。** 预算只约束遵守它的程序；运行器以槽位数作为它自己的并行度。
+5. **mcpp 的实现。** `mcpp test` 与 `mtest run` 建立预算，槽位数为其并行度；mcpp 的编译执行器在环境陈述了预算时，启动编译器之前先取预算的槽位，再取本次构建的槽位，并在取得之后、启动之前读取可用内存：低于 `[build] memory_threshold`（SPEC-004）时等待已运行的编译器结束，不结束它们。
+
+### O12. 抖动（@NEXT@；mtest >= 0.11.0）
+
+1. 运行器**可以**陈述 `MTEST_JITTER`（毫秒，上限）与 `MTEST_JITTER_SEED`（十进制）。程序在其声明的竞争点等待一段 [0, 上限] 内的随机时间，随机数由种子与竞争点的序号决定，同一种子给出同一序列。
+2. 框架的竞争点：用例开始之前、共享对象构造之前；被测程序的竞争点由其自身声明（mcpp：取目录锁与发布产物之前）。
+3. 运行记录写出 `jitter`：`{max_ms, seed}`。抖动下的运行**禁止**作为合入或发布的验证，其结论只用于定位次序缺陷。
+
 ## 4. 宣告
 
 mcpp 以 feature（docs/50 §4）宣告它实现的条款；客户端按需门控。
@@ -333,6 +355,9 @@ mcpp 以 feature（docs/50 §4）宣告它实现的条款；客户端按需门�
 | `test-frameworks` | B6 的 `capabilities` 与 `session` | 2026.11.10.1 |
 | `test-checks` | O3 的运行器一侧 | 2026.11.10.1 |
 | `test-output` | O8 | 2026.11.10.1 |
+| `test-steps` | P5.6 的运行器一侧；B4 的 `steps`、`exercised` 与 `builds.ndjson` | @NEXT@ |
+| `test-budget` | O11 | @NEXT@ |
+| `test-jitter` | O12 的运行器一侧 | @NEXT@ |
 
 框架实现的可选能力由 B6 宣告，不由 mcpp 的 feature 宣告。
 
@@ -358,4 +383,5 @@ mcpp 以 feature（docs/50 §4）宣告它实现的条款；客户端按需门�
 | 2.1 | 2026-11-14 | P3.3 的位置与能力（`only`、`except`、`capabilities`、列为跳过时的 `reason`；mtest 0.8.0），及 mcpp 的实现 |
 | 2.2 | 2026-11-14 | O10 按测量调度（顺序、`split = "auto"`、`--shard`、`--failed`）；B4 的 `shard` 与 `part_of` |
 | 2.4 | 2026-11-17 | B1 第 6 条 `[test] files`；B5 的 `cwd` 为已备好的工作目录（mcpp 2026.11.17.1，设计 2026-11-16 §5） |
+| 2.5 | 2026-11-21 | P5.6 的 `step` 与 `exercise`；B4 的 `builds.ndjson`、`cpu_ms`、`steps`、`exercised` 与机器的字段（P12.4）；O5 的时限只陈述一次；O11 预算；O12 抖动（设计 2026-11-20 §5.5 至 §5.9、§5.16、§5.19） |
 | 2.3 | 2026-11-15 | P4.3 排除与按声明选择（mtest 0.9.0）；O10 按声明的用例划分并以测量判定是否保留（`divides`），用例的用时按程序与标识记取 |

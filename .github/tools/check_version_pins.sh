@@ -13,6 +13,8 @@
 #
 #   3. The launchers a pack builds use mcpp's own mcpplibs.os release.
 #
+#   4. The test skeleton of `mcpp new` uses mcpp's own mcpplibs.mtest release.
+#
 # Why this exists: src/provider/xlings/xlings.cppm used to say "keep in lock-step with the
 # XLINGS_VERSION pins in release.yml / cross-build-test.yml / ci-linux-e2e.yml"
 # and that list was ALREADY incomplete — it omitted both composite actions,
@@ -191,7 +193,21 @@ elif [ "$os_toml" != "$os_launcher" ]; then
   bad "src/pack/distribution.cppm builds the launchers on mcpplibs.os '$os_launcher', mcpp.toml builds mcpp on '$os_toml'"
 fi
 
+# ── 4. A new project's tests use mcpp's own mtest ─────────────────────────
+#
+# `mcpp new` writes `mcpplibs.mtest = "<kMtestRelease>"` (src/build/test_protocol.cppm), and mcpp's
+# own tests use the mtest of mcpp.toml. A skeleton on an older release than mcpp tests itself with
+# is a framework nobody here runs: 2026.11.20.1 scaffolded 0.9.0 while mcpp used 0.10.0 (mcpp#976).
+mtest_toml=$(awk -F '"' '/^mcpplibs\.mtest[[:space:]]*=/{print $2; exit}' mcpp.toml)
+mtest_skeleton=$(grep -oE 'kMtestRelease[[:space:]]*=[[:space:]]*"[^"]+"' src/build/test_protocol.cppm \
+                 | grep -oE '"[^"]+"' | tr -d '"' | head -1)
+if [ -z "$mtest_toml" ] || [ -z "$mtest_skeleton" ]; then
+  bad "could not read mcpplibs.mtest from mcpp.toml ('$mtest_toml') or kMtestRelease from src/build/test_protocol.cppm ('$mtest_skeleton')"
+elif [ "$mtest_toml" != "$mtest_skeleton" ]; then
+  bad "src/build/test_protocol.cppm scaffolds mcpplibs.mtest '$mtest_skeleton', mcpp.toml tests mcpp with '$mtest_toml'"
+fi
+
 if [ "$fail" = 0 ]; then
-  echo "OK: xlings pins all at $XLINGS_EXPECTED; building mcpp $v_toml, bootstrapping from $v_xl; launchers on mcpplibs.os $os_launcher" >&2
+  echo "OK: xlings pins all at $XLINGS_EXPECTED; building mcpp $v_toml, bootstrapping from $v_xl; launchers on mcpplibs.os $os_launcher; skeleton on mcpplibs.mtest $mtest_skeleton" >&2
 fi
 exit "$fail"

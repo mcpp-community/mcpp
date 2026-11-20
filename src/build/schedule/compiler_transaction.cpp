@@ -1,5 +1,6 @@
 module mcpp.build.schedule.compiler_transaction;
 import std;
+import mcpp.home.files;   // contention_point (SPEC-017 O12)
 
 namespace mcpp::build::schedule::transaction {
 
@@ -46,6 +47,7 @@ bool replace_record(const fs::path& path,std::string_view bytes,std::string* dia
     std::error_code ec;fs::remove(temporary,ec);return false;
 }
 bool publish(const fs::path& path,std::string_view tag,const Fields& fields) {
+    mcpp::home::contention_point();
     return replace_record(path,pack(tag,fields));
 }
 namespace {

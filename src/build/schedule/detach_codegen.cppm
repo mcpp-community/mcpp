@@ -75,6 +75,7 @@ import mcpplibs.os.env;
 import mcpplibs.os.platform;
 import mcpplibs.os.stdio;
 import mcpplibs.os.text;
+import mcpplibs.os.machine;
 import mcpp.build.depfile;
 import mcpp.build.command_line;
 import mcpp.run;
@@ -386,7 +387,77 @@ bool write_rc(const std::filesystem::path& slot, int rc,std::string* diagnostic=
 struct Permit {
     std::optional<mcpplibs::os::fs::lock> lock;
     std::filesystem::path reservation;
+    // The machine's budget slot (SPEC-017 O11), held for the compile, taken
+    // before the generation's slot; empty when the slot is the one the runner
+    // holds for this process, or no budget is stated.
+    std::optional<mcpplibs::os::fs::lock> budget;
+    std::optional<mcpplibs::os::fs::lock> heldClaim;
 };
+
+// ONE BUDGET FOR THE MACHINE (SPEC-017 O11, design 2026-11-20 §5.5). A runner
+// that states MTEST_BUDGET holds a slot file of that directory for the process
+// it started (MTEST_BUDGET_HELD); the first compiler of this build runs on it,
+// and every other compiler locks a free slot file before it starts. Four test
+// processes each starting a parallel build put 7 to 9 processes in the run
+// queue of 4 processors (measured, design §3.1): the work of a slot that is
+// not free waits instead.
+std::expected<void, int> take_budget_slot(Permit& permit, const std::filesystem::path& permits) {
+    const auto budget = mcpp::invocation::get("MTEST_BUDGET");
+    if (!budget || budget->empty()) return {};
+    const auto held = mcpp::invocation::get("MTEST_BUDGET_HELD").value_or("");
+    const std::filesystem::path dir = mcpp::home::from_utf8(*budget);
+    // The held slot is claimed by one compiler of the build at a time.
+    if (!held.empty()) {
+        auto claim = mcpplibs::os::fs::lock::acquire(permits / "budget-held.lock",
+                                                     mcpplibs::os::fs::lock::kind::exclusive, false);
+        if (claim) { permit.heldClaim.emplace(std::move(*claim)); return {}; }
+    }
+    std::vector<std::filesystem::path> slots;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+        if (e.path().filename().string().starts_with("slot-")
+            && mcpp::home::spelling(e.path()) != held)
+            slots.push_back(e.path());
+    if (slots.empty()) return {};   // a budget of one slot: the held one, claimed by another compiler
+    std::ranges::sort(slots);
+    for (;;) {
+        for (const auto& f : slots) {
+            auto slot = mcpplibs::os::fs::lock::acquire(f, mcpplibs::os::fs::lock::kind::exclusive, false);
+            if (slot) { permit.budget.emplace(std::move(*slot)); return {}; }
+        }
+        // The held slot may have been released by the compiler that claimed it.
+        if (!held.empty()) {
+            auto claim = mcpplibs::os::fs::lock::acquire(permits / "budget-held.lock",
+                                                         mcpplibs::os::fs::lock::kind::exclusive, false);
+            if (claim) { permit.heldClaim.emplace(std::move(*claim)); return {}; }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+// THE MEMORY A COMPILER MAY START BELOW (design 2026-11-20 §5.5, mcpp#802): read
+// after the slots are held, before the compiler starts. Below the threshold the
+// compiler waits for memory a running compiler gives back; none is ended. A
+// minute without enough is said and the compiler starts: waiting for memory no
+// compiler of this machine holds would wait forever.
+void await_memory() {
+    std::uint64_t threshold = 0;
+    if (const auto v = mcpp::invocation::get("MCPP_MEMORY_THRESHOLD"))
+        std::from_chars(v->data(), v->data() + v->size(), threshold);
+    if (threshold == 0) return;
+    const auto started = std::chrono::steady_clock::now();
+    for (;;) {
+        const auto available = mcpplibs::os::machine::memory_available();
+        if (!available || *available >= threshold) return;
+        if (std::chrono::steady_clock::now() - started > std::chrono::minutes(1)) {
+            std::println(std::cerr, "mcpp: {} MiB available, under the memory threshold of {} MiB for a "
+                                    "minute; the compiler starts ([build] memory_threshold)",
+                         *available >> 20, threshold >> 20);
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
 std::expected<Permit, int>
 acquire_permit(const Actor& actor, const std::filesystem::path& requested, int requestedCap) {
     const auto dir = actor.owner.permits(requested);
@@ -401,7 +472,9 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
     if (!actor.ready) return std::unexpected(130);
     if (dir.empty() || cap <= 0) {
         if (actor.owner.managed) return std::unexpected(2);
-        return Permit{};
+        Permit free;
+        await_memory();
+        return free;
     }
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -409,6 +482,8 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
         std::println(std::cerr, "mcpp: cannot create compiler semaphore {}: {}", dir.string(), ec.message());
         return std::unexpected(1);
     }
+    Permit budgeted;
+    if (auto took = take_budget_slot(budgeted, dir); !took) return std::unexpected(took.error());
     const auto started = std::chrono::steady_clock::now();
     constexpr auto kLimit = std::chrono::hours(2);
     std::optional<std::chrono::steady_clock::time_point> unexplainedSince;
@@ -425,7 +500,10 @@ acquire_permit(const Actor& actor, const std::filesystem::path& requested, int r
                     if (!available) { std::println(std::cerr,"mcpp: {}",available.error()); return std::unexpected(1); }
                     if (!*available) { orphan = true; continue; }
                 }
-                return Permit{std::optional<mcpplibs::os::fs::lock>{std::move(*permit)},reservation};
+                budgeted.lock.emplace(std::move(*permit));
+                budgeted.reservation = reservation;
+                await_memory();
+                return budgeted;
             }
             // On macOS a slot another compiler holds is now and then reported
             // "not found" from inside this executor, though the directory and

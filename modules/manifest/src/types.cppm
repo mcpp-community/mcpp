@@ -1029,6 +1029,12 @@ struct BuildConfig : BuildInputs {
     // compiler doing the build, and resolving it at parse time would freeze one
     // machine's answer into a manifest that travels.
     std::string bmiSchedule;
+    // `[build] memory_threshold` -- the memory the system must have available
+    // before a compiler starts ("2GiB", "512MiB", or bytes; design 2026-11-20
+    // §5.5, mcpp#802). Below it the compiler waits for one already running to
+    // end; none is ended. Text, resolved with MCPP_MEMORY_THRESHOLD, the
+    // machine's config.toml and the engine's default (1 GiB) where it is used.
+    std::string memoryThreshold;
     // `[build] private_fragment` -- how a private module fragment is built
     // (SPEC-019): "unit" (the default: the fragment is a unit of its own, so an
     // edit of it reaches no importer) or "as-written". Text, validated where it

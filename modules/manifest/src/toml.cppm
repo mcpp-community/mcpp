@@ -3219,6 +3219,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     // the whole manifest unloadable. (A published package carrying an unknown
     // key must never break an older mcpp — same rule the dependency keys follow.)
     if (auto v = doc->get_string("build.bmi_schedule")) m.buildConfig.bmiSchedule = *v;
+    if (auto v = doc->get_string("build.memory_threshold")) m.buildConfig.memoryThreshold = *v;
+    else if (auto n = doc->get_int("build.memory_threshold")) m.buildConfig.memoryThreshold = std::to_string(*n);
     if (auto v = doc->get_string("build.private_fragment")) m.buildConfig.privateFragment = *v;
     if (auto v = doc->get_string("build.jobs")) m.buildConfig.jobs = *v;
     else if (auto n = doc->get_int("build.jobs")) m.buildConfig.jobs = std::to_string(*n);

@@ -142,6 +142,8 @@ struct GlobalConfig {
 
     // From config.toml [build]
     std::int64_t                    defaultJobs = 0;
+    // `[build] memory_threshold`: this machine's (design 2026-11-20 §5.5); empty: the engine's.
+    std::string                     memoryThreshold;
     // `[build] compile_commands`: the default for a project that does not say
     // where its compile database goes (design 2026-10-26 D14). Empty: none.
     std::string                     compileCommands;
@@ -482,6 +484,10 @@ unused_days = 30
 
 [build]
 default_jobs    = 0
+# A compiler starts only while the system has this much memory available; below
+# it, it waits for one already running to end ("2GiB", "512MiB", or bytes).
+# Unset: the project's [build] memory_threshold, else 1 GiB.
+# memory_threshold = "2GiB"
 # After a build, at most once a day, the build directories of this project that
 # no configuration used for this many days are removed. 0 keeps all.
 keep_days       = 3
@@ -1010,6 +1016,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.cacheUnusedDays  = doc->get_int("cache.unused_days").value_or(30);
     cfg.buildKeepDays    = doc->get_int("build.keep_days").value_or(3);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
+    if (auto v = doc->get_string("build.memory_threshold")) cfg.memoryThreshold = *v;
+    else if (auto n = doc->get_int("build.memory_threshold")) cfg.memoryThreshold = std::to_string(*n);
     cfg.compileCommands = doc->get_string("build.compile_commands").value_or("");
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
     cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");

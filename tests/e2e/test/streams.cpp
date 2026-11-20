@@ -6,6 +6,7 @@ import mcpp.test.support;
 
 using namespace mcpplibs::mtest;
 namespace s = mcpp::test::support;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -65,6 +66,27 @@ main = "src/main.cpp"
         expect(s::lacks(d.err, "workspace result")) << "the workspace result line is on standard error";
     };
 
+    "976 a test is told the machine's budget, and a build within a budget of one slot completes"_test[s::gcc] = [] {
+        // SPEC-017 O11, design 2026-11-20 §5.5. `mcpp test` holds a slot of its budget for each test
+        // and states it (A). A build under a runner's budget runs its first compiler on the slot held
+        // for it and takes the others from the budget's free slots: with one slot, the held one, the
+        // compilers run one at a time and the build completes (B).
+        s::project p{{"mcpp.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[targets.p]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                     {"src/main.cpp", "import p.a;\nimport p.b;\nint main() { return a() + b() == 3 ? 0 : 1; }\n"},
+                     {"src/a.cppm", "export module p.a;\nexport int a() { return 1; }\n"},
+                     {"src/b.cppm", "export module p.b;\nexport int b() { return 2; }\n"},
+                     {"tests/t_budget.cpp", "#include <cstdio>\n#include <cstdlib>\n#include <sys/stat.h>\n"
+                                            "int main() { const char* d = std::getenv(\"MTEST_BUDGET\"); const char* h = std::getenv(\"MTEST_BUDGET_HELD\");\n"
+                                            "  struct stat st{}; if (!d || !h || stat(h, &st) != 0) { std::puts(\"no budget\"); return 1; }\n"
+                                            "  std::puts(\"budget stated\"); return 0; }\n"}};
+        auto a = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(a))) << "A: a test was not told the budget: " << s::text(a);
+        const auto budget = s::case_dir() / "budget";
+        fs::create_directories(budget);
+        std::ofstream(budget / "slot-0");
+        auto b = p.mcpp({"build"}, {.env = {{"MTEST_BUDGET", budget.string()}, {"MTEST_BUDGET_HELD", (budget / "slot-0").string()}}});
+        expect(e2e::succeeded(b)) << "B: a build within a budget of one slot: " << s::text(b);
+    };
     "178 test observability"_test[s::unix_shell] = [] {
         // `mcpp test` is streamed, timed and bounded. POSIX only: the deadline runner has no
         // kill-by-handle path on Windows, so --timeout and --build-timeout are documented POSIX-only.
