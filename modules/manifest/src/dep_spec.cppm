@@ -175,7 +175,7 @@ struct DependencySpec {
     // bare-name fallback: `mcpplibs.gtest` states an identity and must miss.
     bool                        namespaceOmitted = false;
     // The table that declared this edge, spelled as its TOML header:
-    // `[dependencies]`, `[target.'cfg(os = "android")'.dependencies]`,
+    // `[dependencies]`, `[target.'cfg(env = "android")'.dependencies]`,
     // `[feature-deps.gpu]`. A conditional declaration replaces an
     // unconditional one on the rows its selector matches, so which table a
     // resolved edge came from is a fact the resolution record states rather

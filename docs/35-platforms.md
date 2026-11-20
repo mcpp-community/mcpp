@@ -411,7 +411,10 @@ before each link, staged when the link wrote one, and not an error when it did n
 programs: a name template (`artifact_name("exe", "{name}")`, `link.exe`) decides
 what precedes the suffix, and the name ends in it once. The built-in
 `wasm32-emscripten` row states it, so a program named `{name}` is still `app.js`
-beside `app.wasm`. A machine
+beside `app.wasm`. `link-without-main` (2026.11.20.1+) gives the link words of an
+executable with no program start (`main = false`, see 04 — `main = false`); a
+row that states none refuses `main = false` for its executables. The built-in
+`wasm32-emscripten` row states `["--no-entry"]`. A machine
 runs another architecture's programs only where the execution table states it
 (`[[platform.executes]]`, SPEC-016 §2.4); there a `same-arch` runner is built for
 the artifact's architecture and started on this machine.

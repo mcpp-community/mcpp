@@ -5,12 +5,12 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.10 |
-| **最后修改** | 2026-11-19 |
+| **版本** | 1.11 |
+| **最后修改** | 2026-11-20 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
-| **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[mcpp#960](https://github.com/mcpp-community/mcpp/issues/960) —— 发布写出的描述符形式(§3.5)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
+| **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[mcpp#960](https://github.com/mcpp-community/mcpp/issues/960) —— 发布写出的描述符形式(§3.5)<br>[mcpp#979](https://github.com/mcpp-community/mcpp/issues/979) —— 条目只含包自己的单元(§10.4 第 6 条)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
 
 ## 规范用语
 
@@ -583,8 +583,13 @@ mcpp 侧的使用:
 4. `path` 依赖的条目在写入之前重新计算摘要,与键中的不同时**禁止**写入,并**必须**作为降级报告(`build/cache`,
    写出该包与它的树);同一棵树在另一个摘要下的条目在写入新条目时移除。
 5. 一个不以名字识别的包使依赖它的包也不进入全局缓存。
+6. 一个包的条目只含该包自己的编译单元:源文件位于该包根目录之下、且不在本次构建中嵌套于其下的另一个包的根目录
+   之下的单元,与键所列的源文件是同一个归属。依赖的树可以包含构建它的工程(成员的构建程序导入仓库自身包的
+   workspace):成员的单元属于成员,在原处构建,**禁止**进入依赖的条目。
 
-**已实现**(mcpp 2026.11.19.1)。此前全局依赖缓存只收索引包,宿主工具的缓存以修改时间命名 `path` 包的树。
+**已实现**(第 1 至 5 条 mcpp 2026.11.19.1,第 6 条 mcpp 2026.11.20.1)。此前全局依赖缓存只收索引包,宿主工具的
+缓存以修改时间命名 `path` 包的树。2026.11.19.1 的条目收入根目录之下的每个单元,两个成员的 `src/main.cpp` 落在同一个
+地址 `obj/src/main.o`,自干净的 target 目录构建时一个成员链接了另一个成员的目标文件(mcpp#979)。
 
 ---
 
@@ -592,6 +597,7 @@ mcpp 侧的使用:
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.11 | 2026-11-20 | §10.4 新增第 6 条:条目只含包自己的单元,嵌套于依赖树中的包(如成员的构建程序导入仓库自身包的 workspace)的单元属于该包,在原处构建(mcpp 2026.11.20.1,mcpp#979) |
 | 1.10 | 2026-11-19 | 新增 §10.4:源码的名字——索引包的版本、git 依赖的提交、path 依赖的内容摘要;全局依赖缓存、宿主工具的缓存与构建程序的身份共用;工程自己的树在原处构建(mcpp 2026.11.19.1,mcpp#974) |
 | 1.9 | 2026-11-19 | 新增 §3.5:描述符 `mcpp` 字段的两种形式、一个读取函数、发布写出指针形式(mcpp 2026.11.19.1,mcpp#960) |
 | 1.8 | 2026-11-09 | 新增 §5.5:git 引用至多一个 ref、缺省分支、命令行的字符串形式(mcpp 2026.11.9.1) |

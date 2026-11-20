@@ -46,11 +46,14 @@ struct Launch {
 // Where a program begins and where its image is entered (design 2026-10-26
 // §24.4 item 10): `from` is `<package>/<entry>` when a dependency's entry
 // target is the beginning, `start` the stated entry symbol and `startFrom`
-// the statement that named it. Absent from the record when all are empty.
+// the statement that named it; `none` that the image has no program start
+// (`main = false`, mcpp#981), written `"main": false`. Absent from the record
+// when all are empty.
 struct Entry {
     std::string from;
     std::string start;
     std::string startFrom;
+    bool        none = false;
 };
 
 struct Artifact {
@@ -179,6 +182,7 @@ nlohmann::json to_json(const Record& r) {
                 e["start"] = a.entry->start;
                 e["start_from"] = a.entry->startFrom;
             }
+            if (a.entry->none) e["main"] = false;
             j["entry"] = std::move(e);
         }
         artifacts.push_back(std::move(j));
@@ -247,7 +251,8 @@ std::optional<Record> read(const std::filesystem::path& outputDir) {
                          std::nullopt, std::nullopt};
             if (a.contains("entry") && a["entry"].is_object()) {
                 const auto& e = a["entry"];
-                art.entry = Entry{e.value("from", ""), e.value("start", ""), e.value("start_from", "")};
+                art.entry = Entry{e.value("from", ""), e.value("start", ""), e.value("start_from", ""),
+                                  e.contains("main") && e["main"].is_boolean() && !e["main"].get<bool>()};
             }
             if (a.contains("launch") && a["launch"].is_object()) {
                 const auto& l = a["launch"];

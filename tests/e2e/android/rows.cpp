@@ -1,6 +1,6 @@
 // The Android rows: the vocabulary (the rows name their payload and are not planned, the simulator
 // is a row, an effective triple parses back, `min_api_level`), an application is a shared library,
-// a universal tree is two legs in one, a pack stages its closure, test programs carry their C++
+// one with no program start is its library (981), a universal tree is two legs in one, a pack stages its closure, test programs carry their C++
 // run-time, and a dependency's floor on the API level (formerly tests/e2e/641, 652b, 664, 667,
 // 675, 680).
 import std;
@@ -248,6 +248,35 @@ int main() {
         const auto host_file = s::newest_file(p.at("target/.build-mcpp/out"), "minplat.txt");
         expect(fatal(host_file.has_value() && *host_file != *android_file)) << "5: the host build wrote into the Android configuration's out_dir";
         expect(fatal(s::read_file(*host_file).empty())) << "5: MCPP_TARGET_MIN_PLATFORM_VERSION was '" << s::read_file(*host_file) << "', not empty, on the host";
+    };
+
+    "981 an android application with no program start is its library"_test[s::elf][s::gcc][s::android_ndk] = [] {
+        // mcpp#981: an application whose desktop rows begin in a file states `main = false` on the
+        // Android row. 1 the row links lib<name>.so from the package's sources, and the desktop
+        // file is no source of it (it fails to compile under __ANDROID__); 2 the exported name the
+        // Java process calls is in the library; 3 the host build still begins in the file; 4 a
+        // `bin`, whose Android form is an executable, is refused naming the C runtime.
+        const std::string t = "x86_64-linux-android";
+        const std::string manifest = "[package]\nname    = \"myapp\"\nversion = \"0.1.0\"\n\n[targets.myapp]\nkind = \"app\"\nmain = \"platform/desktop/main.cpp\"\n\n"
+                                     "[target.'cfg(env = \"android\")'.targets.myapp]\nmain = false\n";
+        s::project p{{"mcpp.toml", manifest},
+                     {"platform/desktop/main.cpp", "extern \"C\" int myapp_value();\nint main() { return myapp_value() == 7 ? 0 : 1; }\n"
+                                                   "#ifdef __ANDROID__\n#error the desktop beginning reached the Android image\n#endif\n"},
+                     {"src/jni.cpp", "extern \"C\" __attribute__((visibility(\"default\"))) int myapp_value() { return 7; }\n"}};
+        auto r = p.mcpp({"build", "--target", t});
+        expect(fatal(e2e::succeeded(r))) << "1: the Android build failed: " << s::text(r);
+        const auto ninja = s::newest_file(p.at("target") / t, "build.ninja");
+        expect(fatal(ninja.has_value())) << "no build.ninja under target/" << t;
+        const auto lib = ninja->parent_path() / "bin/libmyapp.so";
+        expect(fatal(shared_object(lib))) << "1: bin/libmyapp.so was not linked as a shared object: " << s::text(r);
+        expect(fatal(s::read_file(lib).contains("myapp_value"))) << "2: the exported name is not in the library";
+        r = p.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "3: the host program did not begin in its file: " << s::text(r);
+        p.write("mcpp.toml", manifest + "\n[targets.tool]\nkind = \"bin\"\nmain = \"src/tool.cpp\"\n\n[target.'cfg(env = \"android\")'.targets.tool]\nmain = false\n");
+        p.write("src/tool.cpp", "int main() { return 0; }\n");
+        r = p.mcpp({"build", "--target", t});
+        expect(fatal(failed(r))) << "4: a bin with no program start on Android was accepted: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "an executable image is entered by the C runtime"))) << "4: the refusal does not name the C runtime: " << s::text(r);
     };
 
     "664 a universal apk is two legs in one tree"_test[s::elf][s::gcc][s::android_ndk] = [] {

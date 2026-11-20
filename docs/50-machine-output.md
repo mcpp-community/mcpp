@@ -553,7 +553,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.31.0` from 2026.11.19.1, `@0.29.2` in 2026.11.18.1, `@0.29.1` from 2026.11.17.2, `@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.31.2` from 2026.11.20.1, `@0.31.0` in 2026.11.19.1, `@0.29.2` in 2026.11.18.1, `@0.29.1` from 2026.11.17.2, `@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -1049,7 +1049,9 @@ starts the program from `launch` starts it as `mcpp run` would.
 `entry` says where the program begins and where its image is entered (docs/04,
 `kind = "entry"` and `start`): `from` is the `"<dependency>/<entry>"` a
 `main = { from }` named, `start` the stated entry symbol and `start_from` the
-statement that named it. Each key is present only when stated.
+statement that named it. `"main": false` *(2026.11.20.1+)* says that the image
+has no program start: its host enters it through the names it exports, and
+`launch` is absent. Each key is present only when stated.
 
 A run ended by SIGINT, SIGTERM or SIGHUP leaves `cancelled` in both files
 ([exit codes](specs/exit-codes.md) §3.7). A record still `running` whose

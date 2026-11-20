@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.6 |
-| 版本 | 1.6 |
-| 最后修改 | 2026-11-19 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1 |
+| 状态 | 评审中 v1.7 |
+| 版本 | 1.7 |
+| 最后修改 | 2026-11-20 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1 |
 | 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
@@ -37,7 +37,7 @@
 
 行的字段：`triple`（`<arch>-<os>[-<env>]`）、`tier`（verified、preview、planned）、`standard`、`exact`、`march`、`mabi`、
 `code-model`、`multilib`、`flags`、`link-emulation`、`clang-triple`、`object-format`、`family`、`data-model`、`exe-suffix`、
-`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`、`exe-suffix-fixed`。
+`shared-suffix`、`loader`、`execution`、`descriptor-keys`、`companions`、`exceptions`、`exe-suffix-fixed`、`link-without-main`。
 
 - 一个系统可能用到两种以上 C 库时，身份**必须**含 env；env 即 C 库。业界原生标识无 env 段的系统，其原生身份为两段
   （`aarch64-macos`），其余 C 库以 env 区分（`aarch64-macos-musl`）。
@@ -58,6 +58,9 @@
 - `exe-suffix-fixed` 陈述行的可执行文件后缀是加载其程序的一部分（缺省为假）。为真时，名字模板（构建程序的
   `artifact_name`、`link.exe`）只决定后缀之前的部分，后缀总在名字末尾出现一次：模板的结果已以该后缀结尾时不重复。
   内置的 `wasm32-emscripten` 行为真（`.js` 使启动文件与模块成对）。引擎不按系统名判断（v1.4）。
+- `link-without-main` 是该行链接没有程序起点的可执行映像（`main = false`，SPEC-004 §14 第 6 条）时加入的链接词。
+  未写时该行的可执行映像有程序起点，`main = false` 被拒绝。内置的 `wasm32-emscripten` 行为 `["--no-entry"]`：
+  页面调用模块导出的函数，运行时不调用 `main`。程序形态为共享对象的行（Android 行上的 `app`）不读它（v1.7）。
 - `object-format`、`exe-suffix`、`shared-suffix` 按三级读取，先陈述者生效：行，行的系统（§2.3），对象格式的约定（v1.5）。
   内置行与平台定义的行同一读法；引擎不按系统名判断，宿主的命名不为任何行作答。
 
@@ -265,3 +268,4 @@
 | 1.4 | 2026-11-17 | mcpp 2026.11.17.1（设计 2026-11-16 N48）：行的 `exe-suffix-fixed` |
 | 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 G7、N16、N23、N26、N33、R1、R2、X1）：执行关系表（§2.4）；系统表的 `resources` 与 `command-scripts`（§2.3）；提供者运行器的 `host`、`enabled` 与 `exclusive`（§6）；Android 行的运行器（G7）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |
 | 1.6 | 2026-11-19 | mcpp 2026.11.19.1（mcpp#957）：§6 执行可达性的谓词之前没有按系统的分支；Apple 的行由同一个谓词判定；系统名检查的词表含三元组的系统谓词 |
+| 1.7 | 2026-11-20 | mcpp 2026.11.20.1（mcpp#981）：行的 `link-without-main`，没有程序起点的可执行映像的链接词；内置 `wasm32-emscripten` 行为 `--no-entry` |

@@ -1,7 +1,7 @@
 // The Web row (wasm32-emscripten): the executable named `<name>.js` beside its `.wasm`, staged and
 // run, and `kind = "shared"` refused; a build program compiled by the host's compiler, also from a
-// fresh home; the profile's level at the link and the wasm exception model; the longjmp model
-// (formerly tests/e2e/650, 657, 981, 1079). Each case needs an emsdk payload and skips without one.
+// fresh home; the profile's level at the link and the wasm exception model; the longjmp model; a
+// module with no program start (formerly tests/e2e/650, 657, 981, 1079; 981b is mcpp#981). Each case needs an emsdk payload and skips without one.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -246,6 +246,54 @@ E2E emscripten{"emscripten", [] {
         r = app.mcpp({"pack", "--target", "wasm32-emscripten", "--pkg-format", "dir"});
         expect(fatal(e2e::succeeded(r))) << "a single-file web link did not pack: " << s::text(r);
         expect(fatal(!s::find_file(app.at("target/dist"), "app.wasm").has_value())) << "a module was packed";
+    };
+
+    "981b a web module with no program start links without main"_test[s::elf] = [] {
+        // mcpp#981: a program whose page calls its exported functions states `main = false` on the
+        // Web row. 1 the link takes the row's `link-without-main` (`--no-entry`) and writes the
+        // launcher and the module, with no beginning from the desktop file (it fails to compile
+        // under __EMSCRIPTEN__); 2 the module exports the function and no `main`; 3 `mcpp run`
+        // refuses it, naming the file the build writes; 4 the build record's artifact has
+        // `"main": false` and no `launch`.
+        if (!have_emsdk() || !s::on_path("node")) skip("981b -- no emsdk payload or node on this machine");
+        s::project app(s::case_dir() / "app", {
+            {"mcpp.toml", "[package]\nname    = \"app\"\nversion = \"0.1.0\"\n\n[targets.app]\nkind = \"app\"\nmain = \"platform/desktop/main.cpp\"\n\n"
+                          "[target.'cfg(os = \"emscripten\")'.targets.app]\nmain = false\n"},
+            {"platform/desktop/main.cpp", "extern \"C\" int app_value();\nint main() { return app_value() == 7 ? 0 : 1; }\n"
+                                          "#ifdef __EMSCRIPTEN__\n#error the desktop beginning reached the Web module\n#endif\n"},
+            {"src/exports.cpp", "#ifdef __EMSCRIPTEN__\n#include <emscripten/emscripten.h>\n#define APP_EXPORT EMSCRIPTEN_KEEPALIVE\n#else\n#define APP_EXPORT\n#endif\n"
+                                "extern \"C\" APP_EXPORT int app_value() { return 7; }\n"}});
+        auto r = app.mcpp({"build", "--target", "wasm32-emscripten"});
+        expect(fatal(e2e::succeeded(r))) << "1: the Web build failed: " << s::text(r);
+        const auto launcher = s::find_file(app.at("target/wasm32-emscripten"), "app.js");
+        expect(fatal(launcher.has_value())) << "1: no app.js";
+        const auto module = launcher->parent_path() / "app.wasm";
+        expect(fatal(fs::exists(module))) << "1: no app.wasm beside app.js";
+        const auto graph = s::newest_file(app.at("target/wasm32-emscripten"), "build.ninja");
+        expect(fatal(graph.has_value() && e2e::contains(s::read_file(*graph), "--no-entry"))) << "1: the link does not take --no-entry";
+        const auto js = std::format("const fs=require('fs');WebAssembly.compile(fs.readFileSync('{}')).then(m=>"
+                                    "console.log('exports:'+WebAssembly.Module.exports(m).map(e=>e.name).join(',')))",
+                                    module.generic_string());
+        const auto exports = s::last_starting(s::text(s::run(*s::on_path("node"), {"-e", js})), "exports:");
+        // Each name between commas, so that a name is matched whole and never as a part of a
+        // longer export's name.
+        const std::string names = "," + (exports.starts_with("exports:") ? exports.substr(8) : std::string{}) + ",";
+        expect(fatal(e2e::contains(names, ",app_value,"))) << "2: the module does not export app_value: " << exports;
+        expect(fatal(!e2e::contains(names, ",main,") && !e2e::contains(names, ",__main_argc_argv,")
+                     && !e2e::contains(names, ",_start,")))
+            << "2: the module has a program start: " << exports;
+        r = app.mcpp({"run", "--target", "wasm32-emscripten"});
+        expect(fatal(r.started && r.status != 0)) << "3: mcpp run started a module with no program start: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "has no program start on wasm32-emscripten"))) << "3: the refusal: " << s::text(r);
+        const auto record = s::json_file(launcher->parent_path().parent_path() / "result.json")["data"];
+        bool seen = false;
+        for (const auto& a : record["artifacts"]) {
+            if (a.value("name", "") != "app") continue;
+            seen = true;
+            expect(fatal(a.contains("entry") && a["entry"].contains("main") && a["entry"]["main"] == false)) << "4: " << a.dump();
+            expect(fatal(!a.contains("launch"))) << "4: a module with no program start has a launch: " << a.dump();
+        }
+        expect(fatal(seen)) << "4: the record has no artifact 'app': " << record.dump();
     };
 
     "1101 a stated name keeps the web row's launcher suffix"_test[s::elf] = [] {

@@ -1,4 +1,5 @@
-// BMIs and their cache: a path dependency outside the project is cached by its tree's digest, a
+// BMIs and their cache: a path dependency outside the project is cached by its tree's digest and
+// its entry holds none of the units of a package below its tree (979), a
 // custom index's nested objects are cached and staged, purview and header edits rebuild, staging
 // neither cascades nor rewrites an equal destination, the split schedule end to end, a staged BMI
 // that waits for a module compiled here, and the std module compiled once by two builds that find it missing
@@ -154,6 +155,39 @@ E2E bmi{"bmi", [] {
         r = app.mcpp({"run"}, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "hi 99"))) << "edit to a transitive path dep did not reach the binary\n" << s::text(r);
+    };
+
+    "979 a package below a path dependency's tree keeps its own objects"_test = [] {
+        // A workspace below the tree of the path dependency its members' build programs import
+        // (mcpp-plugins' `tests/ws`): each member's units are its own and built in place, and the
+        // dependency's entry holds none of them. Under 2026.11.19.1 the entry took every unit below
+        // the dependency's root, both members' `src/main.cpp` at the one address `obj/src/main.o`,
+        // and the build from a clean target directory linked one member's object into the other
+        // (mcpp#979).
+        const s::options home{.where = s::home::inherited};
+        const auto pkg = s::case_home(s::home::inherited) / "build-cache/v1/pkg";
+        s::project tool(s::case_dir() / "tool", {{"mcpp.toml", "[package]\nname = \"tool979\"\nversion = \"0.1.0\"\n[targets.tool979]\nkind = \"lib\"\n"},
+                                                 {"src/tool.cppm", "export module tool979;\nexport int tool_value() { return 1; }\n"}});
+        s::project ws(tool.at("tests/ws"), {{"mcpp.toml", "[workspace]\nmembers = [\"app-a\", \"app-b\"]\n"}});
+        for (std::string m : {"app-a", "app-b"}) {
+            ws.write(m + "/mcpp.toml", std::format("[package]\nname = \"{0}\"\nversion = \"0.1.0\"\n[build-dependencies]\ntool979 = {{ path = \"../../..\" }}\n"
+                                                   "[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", m));
+            ws.write(m + "/src/main.cpp", std::format("import std;\nint main() {{ std::println(\"member {}\"); }}\n", m));
+            ws.write(m + "/build.mcpp", "import tool979;\nint main() { return tool_value() == 1 ? 0 : 1; }\n");
+        }
+        for (std::string pass : {"a first build", "a build from a clean target directory"}) {
+            if (pass != "a first build") ws.remove("target");
+            auto r = ws.mcpp({"build", "--workspace"}, home);
+            expect(fatal(e2e::succeeded(r))) << pass << ": " << s::text(r);
+            for (std::string m : {"app-a", "app-b"}) {
+                const auto run = ws.mcpp({"run", "-p", m}, home);
+                expect(fatal(s::last_starting(run.out, "member ").starts_with("member " + m)))
+                    << pass << ": " << m << " did not print its own name\n" << s::text(run);
+            }
+        }
+        for (const auto& entry : entries_of(pkg, "tool979@0.1.0+path."))
+            for (const auto& f : s::find_files(entry, R"(main\.(o|obj))"))
+                expect(fatal(false)) << "the dependency's entry holds a member's object: " << f.generic_string();
     };
 
     "49 bmi cache nested custom index"_test[s::gcc][s::fresh_sandbox] = [] {

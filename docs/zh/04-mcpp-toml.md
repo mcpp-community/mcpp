@@ -265,7 +265,7 @@ main = "src/main.cpp"
 `app` 是一个可执行文件时，那个入口就是 `main` 本身。在 `*-linux-android`
 上，这个文件被编译为共享库的一个翻译单元，平台自己的入口
 （`ANativeActivity_onCreate`，或它声明的 JNI 导出）是平台自己的契约，
-不是 mcpp 分配的名字。`exports`（见上）对 `app` 目标的适用方式与对
+不是 mcpp 分配的名字。映像在某一行上没有程序起点时，该行陈述 `main = false`（见下）。`exports`（见上）对 `app` 目标的适用方式与对
 `shared` 目标完全相同，`windows_subsystem` / `windows_entry`（见下）
 接受 `app` 的方式也与接受 `bin` 完全相同。
 
@@ -290,7 +290,7 @@ targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
 kind = "entry"
 main = "src/entry/player.cpp"
 
-[target.'cfg(os = "android")'.targets.player]
+[target.'cfg(env = "android")'.targets.player]
 main = "src/entry/player_android.cpp"   # Android 上的起点是另一个文件
 
 # 应用（使用方）
@@ -318,6 +318,39 @@ main = { from = "openmui/player" }     # "<依赖>/<入口>"
 - 入口目标不是所在包的产物：只声明入口目标的包仍按源文件推断库或程序目标。
 
 测试程序在 `[test]` 中使用同一写法（§2.17）。
+
+#### `main = false` —— 没有程序起点的映像（mcpp 2026.11.20.1+）
+
+启动者只经映像导出的名字进入它的程序没有程序起点，以 `main = false` 陈述：
+
+```toml
+[targets.app]
+kind = "app"
+main = "platform/linux/main.cpp"      # 桌面各行从这里开始
+
+[target.'cfg(env = "android")'.targets.app]
+main = false                          # Java 进程加载 libapp.so
+
+[target.'cfg(os = "emscripten")'.targets.app]
+main = false                          # 页面调用模块导出的函数
+```
+
+| 行 | `main = false` | 链接 |
+|---|---|---|
+| `*-linux-android`，`kind = "app"` | 接受 | `libapp.so`，与写文件时相同 |
+| `wasm32-emscripten`，`bin` 与 `app` | 接受 | 加 `--no-entry`，即该行的 `link-without-main` |
+| 其余各行，以及 Android 上的 `kind = "bin"` | 拒绝，并说明该行由谁进入映像 | — |
+
+- 行表的 `main = false` 替换目标在该行的起点。目标所写的文件仍是其他各行的起点，不作为该行映像的源文件；
+  目标的 `cflags`、`cxxflags`、`defines`、`start` 与 `windows_entry` 在该行不适用。
+- 同一张表中 `main = false` 与 `start`、`windows_entry`、`cflags`、`cxxflags` 或 `defines` 并存被拒绝，
+  `main = true` 也被拒绝。入口目标与 `[test]` 不接受 `main = false`。
+- 不写 `main` 仍被拒绝：只有这一陈述表示映像没有起点。
+- 宿主调用的名字由程序定义并导出：Android 库的 `JNI_OnLoad`、`Java_*` 函数或 `ANativeActivity_onCreate`，
+  Web 模块导出的函数（`EMSCRIPTEN_KEEPALIVE`；`ldflags` 中的 `-sEXPORTED_FUNCTIONS` 与 `-sMODULARIZE`）。
+  在一个翻译单元中定义它们的框架，也可以把该单元作为入口目标提供，由 `main = { from }` 选择（见上）。
+- `mcpp run` 拒绝这样的程序，并写出 `mcpp build` 产出的文件。构建记录中该产物的条目为
+  `"entry": {"main": false}`，且没有 `launch`（[50 —— 机器输出](50-machine-output.md)）。
 
 #### `start` —— 镜像的入口符号（mcpp 2026.10.26.2+）
 
@@ -1689,7 +1722,10 @@ cache = "global"   # "global" (default) | "local" | "off"
 每个文件的相对路径与内容，不含 `target/`、`.git/`、`.mcpp/`、`compile_commands.json` 与含自己 `mcpp.toml`
 的子目录。两个经 `path` 使用同一个库的工程、一次 clean 之后的构建、以及恢复 `$MCPP_HOME/build-cache` 的
 CI 运行，只要库的源码相同就复用同一个条目，与源码树检出在哪里无关；一次修改是一个新键，同一棵树在先前摘要下
-的条目在写入新条目时移除。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。
+的条目在写入新条目时移除。`path` 依赖的条目在写入前重新读取源码树，编译期间改变了的树不写入。条目只含它的包
+自己的单元 *(2026.11.20.1+)*：位于依赖树中嵌套的另一个包之下的单元属于那个包——位于仓库之下、成员的构建程序
+导入仓库自身包的 workspace，其成员的单元仍属于成员，在原处构建。2026.11.19.1 下依赖的条目收入了这些单元，
+自干净的 target 目录构建时把一个成员的目标文件链接进了另一个成员（mcpp#979）。
 
 **不会**被缓存的：工程自己的树，即正在编辑的那些——根包、workspace 成员，以及位于工程目录之下（或构建程序、
 宿主工具所服务的那次构建的目录之下）的任何包。2026.11.19.1 之前，`path` 与 `git` 依赖不论层级多深都不缓存

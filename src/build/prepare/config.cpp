@@ -428,11 +428,16 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
                 // 2026-10-26 §24.3): a file replaces `{ from }` and the reverse,
                 // and `start` replaces the statement it follows.
                 if (!row.statesForm) {
-                    if ((row.main || row.mainFrom) && !t.main.empty())
+                    // `main = false` (mcpp#981) replaces the beginning as a file
+                    // or `{ from }` does; the file it replaces stays a
+                    // beginning of the other rows, never a source of this image.
+                    const bool replaces = row.main || row.mainFrom || row.mainNone;
+                    if (replaces && !t.main.empty())
                         t.otherMains.push_back(t.main);
-                    if (row.main) { t.main = *row.main; t.mainFrom.clear(); }
-                    if (row.mainFrom) { t.mainFrom = *row.mainFrom; t.main.clear(); }
-                    if (row.main || row.mainFrom)
+                    if (row.main) { t.main = *row.main; t.mainFrom.clear(); t.mainNone = false; }
+                    if (row.mainFrom) { t.mainFrom = *row.mainFrom; t.main.clear(); t.mainNone = false; }
+                    if (row.mainNone) { t.main.clear(); t.mainFrom.clear(); t.mainNone = true; }
+                    if (replaces)
                         t.mainDeclaredBy = row.beginningStatement + " main";
                     if (row.start) {
                         t.start = *row.start;

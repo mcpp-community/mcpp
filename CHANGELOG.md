@@ -4,6 +4,48 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [2026.11.20.1] - 2026-11-20
+
+### Added
+
+- `main = false` states that a program's image has no program start: its host enters it only
+  through the names it exports (mcpp#981, SPEC-004 §14 items 6 to 8). An application on
+  `*-linux-android`, which the Java process loads as a shared library, and a program on
+  `wasm32-emscripten`, whose page calls the module's exported functions, state it on their row;
+  the Web row links it with `--no-entry`, its new `link-without-main` (SPEC-016 §2.1). Every
+  other row refuses it, naming what enters the image there and the remedy. A row's
+  `main = false` replaces the target's file on that row, which stays the beginning of the other
+  rows and is no source of that image. Beside it in one table, `start`, `windows_entry` and the
+  entry's `cflags`, `cxxflags` and `defines` are refused, as are `main = true` and the value on
+  an entry target or in `[test]`; leaving `main` out is still refused. `mcpp run` refuses such a
+  program, and the build record's artifact has `"entry": {"main": false}` and no `launch`. A
+  framework no longer ships a translation unit that defines nothing for its applications to
+  select on these rows.
+
+### Changed
+
+- `mcpplibs.openkal-platform@0.31.2` is the default platform of the rows openkal serves (0.31.0
+  in 2026.11.19.1). The runner of an ok image (openkal-image 0.7.2) ends a program with the
+  image's tasks alone, so a debugger continued to the end sees the program end as the image
+  ended it; it enters an image file an image starts through its own loader, held to its
+  signature requirements; and a copy of the program, which a library's `fork` makes, ends as
+  the copy ends itself (mcpplibs/openkal-image#42 to #45). On macOS a request to end that a
+  context other than the program's first acts on ends the program as the request
+  (openkal-macos 0.24.1).
+
+### Fixed
+
+- A package below the tree of a `path` dependency keeps its own objects (mcpp#979). Since
+  2026.11.19.1 a `path` dependency is kept in the global cache under the digest of its tree,
+  and its entry took every compile unit below its root. A workspace below a repository whose
+  package its members' build programs import (mcpp-plugins' `tests/ws`) put both members'
+  `src/main.cpp` at the one address `obj/src/main.o` of the dependency's entry, and a build
+  from a clean target directory linked one member's object into the other. An entry now holds
+  the units its key lists, each filed under the longest package root that holds it (SPEC-001
+  §10.4 item 6). The key of a package named by its commit or its tree changes once, so that no
+  entry 2026.11.19.1 wrote for a `git` or `path` dependency is read again; the keys of index
+  packages are unchanged.
+
 ## [2026.11.19.1] - 2026-11-19
 
 ### Added

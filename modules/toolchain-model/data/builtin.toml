@@ -484,6 +484,10 @@ exceptions = "wasm"
 # The module Emscripten writes beside the launcher (`app.wasm` beside `app.js`),
 # none under `-sSINGLE_FILE=1` (N33).
 companions = [".wasm"]
+# A program with no program start (`main = false`, mcpp#981): a module whose
+# page calls its exported functions, linked without the `main` the runtime would
+# otherwise call.
+link-without-main = ["--no-entry"]
 # `.js` pairs the launcher with its module: a name template decides what
 # precedes it, and the name ends in `.js` (N48).
 exe-suffix       = ".js"
@@ -684,7 +688,7 @@ hosts     = ["*"]
 toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 linkage   = "static"
-platform  = "mcpplibs.openkal-platform@0.31.0"
+platform  = "mcpplibs.openkal-platform@0.31.2"
 
 [[platform.provider]]
 name      = "openkal"
@@ -694,7 +698,7 @@ hosts     = ["*"]
 toolchain = "llvm@23.1.3"
 pairs     = ["llvm"]
 linkage   = "static"
-platform  = "mcpplibs.openkal-platform@0.31.0"
+platform  = "mcpplibs.openkal-platform@0.31.2"
 
 # The same arrangement on Windows, whose own interfaces a resource script
 # compiles against: their headers are the MinGW-w64 base's, which states them
@@ -707,7 +711,7 @@ hosts          = ["*"]
 toolchain      = "llvm@23.1.3"
 pairs          = ["llvm"]
 linkage        = "static"
-platform       = "mcpplibs.openkal-platform@0.31.0"
+platform       = "mcpplibs.openkal-platform@0.31.2"
 system-headers = "xim:mingw-w64-sysroot@20261104-2"
 
 # ── Systems ──────────────────────────────────────────────────────────────────

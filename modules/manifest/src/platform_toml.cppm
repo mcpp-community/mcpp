@@ -629,7 +629,8 @@ std::expected<RowSpec, std::string> Reader::define(const toml::Table& t, std::st
              {"code-model", &r.codeModel}, {"multilib", &r.multilib}, {"link-emulation", &r.linkEmulation}})
         if (auto e = text(key, *to); !e) return std::unexpected(e.error());
     for (auto [key, to] : std::initializer_list<std::pair<std::string_view, std::vector<std::string>*>>{
-             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions}})
+             {"flags", &r.flags}, {"descriptor-keys", &r.descriptorKeys}, {"companions", &r.companions},
+             {"link-without-main", &r.linkWithoutMain}})
         if (auto it = t.find(key); it != t.end()) {
             auto w = strings(it->second, std::format("{}.{}", where, key));
             if (!w) return std::unexpected(w.error());

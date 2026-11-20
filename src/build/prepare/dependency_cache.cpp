@@ -82,12 +82,15 @@ static mcpp::graph::AdjacencyList key_graph(const PrepareState& state,
 
 namespace {
 
-// Each package's key and its inputs, and whether its upstream holds a package
-// whose sources are not named.
+// Each package's key and its inputs, whether its upstream holds a package
+// whose sources are not named, and the package each compile unit is filed
+// under (`state.packages.size()` for none): the key lists the sources of the
+// units filed under its package, and the entry holds those units and no others.
 struct PackageKeys {
     std::vector<std::string>    keys;
     std::vector<nlohmann::json> inputs;
     std::vector<char>           localTaint;
+    std::vector<std::size_t>    unitPackage;
 };
 
 } // namespace
@@ -133,12 +136,15 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
     std::map<std::string, std::size_t> moduleProvider;
     for (auto& cu : ctx.plan.compileUnits) {
         // Longest matching root wins. Package roots can nest — a workspace
-        // member lives under the workspace root — and taking the first match
-        // would file the member's sources under the outer package, putting
-        // them in the wrong key. (Index payloads live in the xpkgs store and
-        // cannot be shadowed this way, so no cached entry is affected today;
-        // resolving it by specificity rather than by iteration order is what
-        // keeps that true if roots ever move.)
+        // member lives under the workspace root, and a path dependency's tree
+        // can hold the workspace that builds it (mcpp-plugins' `tests/ws`,
+        // whose members' build programs import the repository's package) —
+        // and taking the first match would file the member's sources under
+        // the outer package, putting them in the wrong key. The entry reads
+        // this filing and no other (`serve_or_fill`): under 2026.11.19.1 it
+        // took every unit below the package's root, both members'
+        // `src/main.cpp` at the one address `obj/src/main.o`, and a build
+        // from the cache linked one member's object into the other (mcpp#979).
         std::size_t best = state.packages.size();
         std::size_t bestLen = 0;
         std::string bestRel;
@@ -182,7 +188,8 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
 
     PackageKeys out{std::vector<std::string>(state.packages.size()),
                     std::vector<nlohmann::json>(state.packages.size(), nlohmann::json::object()),
-                    std::vector<char>(state.packages.size(), 0)};
+                    std::vector<char>(state.packages.size(), 0),
+                    std::move(unitPackage)};
     auto& pkgKeys = out.keys;
     auto& pkgInputs = out.inputs;
     // Does this package's own transitive upstream contain anything that is
@@ -221,7 +228,11 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
             pa.version     = state.dep_cache_identities[idx - 1].version;
             // A git or path dependency's sources by their own name (mcpp#974),
             // so its key, and every key that folds it in, moves with them.
-            if (sources_named(state, idx)) pa.version += source_identity_suffix(state, idx);
+            if (sources_named(state, idx)) {
+                const auto suffix = source_identity_suffix(state, idx);
+                pa.version += suffix;
+                pa.ownUnits = !suffix.empty();
+            }
         }
         if (pa.packageName.empty()) {
             // The root package, or a package with no resolution identity.
@@ -374,12 +385,10 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     std::vector<std::size_t> unitIdx;
     bool addressable = true;
     for (std::size_t u = 0; u < ctx.plan.compileUnits.size(); ++u) {
+        // The units the key files under this package (mcpp#979): a unit
+        // below a package nested in this one's tree is that package's.
+        if (keys.unitPackage[u] != i) continue;
         auto& cu = ctx.plan.compileUnits[u];
-        std::error_code ec;
-        auto rel = std::filesystem::relative(cu.source, pkgRoot.root, ec);
-        if (ec || rel.empty()) continue;
-        auto rels = rel.string();
-        if (rels.starts_with("..")) continue;       // not under depRoot
 
         // ALL OR NOTHING. A unit plan.cppm could not give a
         // machine-independent entry address to takes its whole package
