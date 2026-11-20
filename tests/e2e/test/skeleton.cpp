@@ -47,6 +47,11 @@ E2E skeleton{"skeleton", [] {
         auto bt = in("prog", {"test"});
         expect(e2e::succeeded(bt));
         expect(s::has_line(s::text(bt), R"(test_smoke \.\.\. ok \(.*1 case\))"));
+        // The second project's test takes the framework from the global cache: its entry `main`
+        // compiles with the test, and its other units are the entry the first project filled
+        // (design 2026-11-20 §5.4; the entry without a cache address kept the package out).
+        expect(s::has_line(s::text(bt), R"(Cached mcpplibs\.mtest v[0-9.]+ \([0-9]+ units?\))"))
+            << "B: the second project compiled mtest again: " << s::text(bt);
         // C: a framework whose entry offers to begin tests.
         t.write("fw/mcpp.toml", R"([package]
 name    = "fw"

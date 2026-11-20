@@ -10,6 +10,7 @@ import :state;
 import std;
 import mcpp.diag;
 import mcpp.home;
+import mcpp.log;
 import mcpp.build.source_digest;
 import nlohmann.json;
 import mcpp.manifest;
@@ -296,6 +297,16 @@ static std::expected<PackageKeys, std::string> package_keys(PrepareState& state,
     return out;
 }
 
+// Why a package was not served, said once (design 2026-11-20 §5.4): kept for
+// the build record and printed under --verbose.
+static void not_served(BuildContext& ctx, const mcpp::modgraph::PackageRoot& pkg,
+                       std::string_view reason, std::string_view why) {
+    const auto name = mcpp::build::qualified_package_name(pkg.manifest);
+    ctx.cacheDecisions.push_back({name, pkg.manifest.package.version, std::string(reason)});
+    mcpp::log::verbose("cache", std::format("{} {} not served [{}]: {}", name,
+                                            pkg.manifest.package.version, reason, why));
+}
+
 // One package's entry: its units are served from the cache when the entry holds
 // what this build asks for; otherwise a task fills it after the build.
 static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i, const PackageKeys& keys) {
@@ -325,9 +336,14 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     // resolved commit, or the digest of its tree's content, is in its
     // key (`sources_named`), so a change to the sources is a change of
     // key. The project's own trees are not named and stay out.
-    if (!depIdent || !sources_named(state, i)) return;
+    if (!depIdent)
+        return not_served(ctx, pkgRoot, "no-identity", "the resolution recorded no identity for it");
+    if (!sources_named(state, i))
+        return not_served(ctx, pkgRoot, "unnamed-sources",
+                          "its sources are the project's, or have no version, commit or content digest");
     // ...and neither may anything it was built against be unnamed.
-    if (keys.localTaint[i]) return;
+    if (keys.localTaint[i])
+        return not_served(ctx, pkgRoot, "unnamed-upstream", "a package it is built against has unnamed sources");
     // ...and the package's sources must ACTUALLY be in the immutable
     // store, not merely labelled as coming from it.
     //
@@ -358,7 +374,8 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     // statement about the path, not about the inode.
     const bool fromStore = depIdent->sourceKind == "version";
     if (fromStore && !mcpp::build::path_is_under_any(pkgRoot.root, state.storeRoots))
-        return;
+        return not_served(ctx, pkgRoot, "outside-store",
+                          std::format("its root {} is not below a store", pkgRoot.root.generic_string()));
 
     const auto& depName = depIdent->packageName;
     const auto depVer  = (depIdent->version.empty()
@@ -389,6 +406,7 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
         // below a package nested in this one's tree is that package's.
         if (keys.unitPackage[u] != i) continue;
         auto& cu = ctx.plan.compileUnits[u];
+        if (cu.entryUnit) continue;   // compiled with the image that links it
 
         // ALL OR NOTHING. A unit plan.cppm could not give a
         // machine-independent entry address to takes its whole package
@@ -415,7 +433,8 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
                                  cu.object});
         unitIdx.push_back(u);
     }
-    if (!addressable) return;
+    if (!addressable)
+        return not_served(ctx, pkgRoot, "unaddressable-unit", "a unit has no machine-independent address");
 
     // Validate the entry against THIS build's artifact list, not
     // against the entry's own (mcpp#344). Anything short of a full
@@ -468,6 +487,7 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
             arts.bmiFiles.size() + arts.objFiles.size(),
             probe.layoutMismatch.front()));
     }
+    not_served(ctx, pkgRoot, "miss", std::format("no entry under key {} yet; it is filled after the build", key.keyHex));
     for (auto u : unitIdx) ctx.plan.compileUnits[u].fillsCache = true;
     BuildContext::CacheTask task{ std::move(key), std::move(arts) };
     // The tree is read again before its entry is written: a source

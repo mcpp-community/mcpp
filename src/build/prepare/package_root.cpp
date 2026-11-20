@@ -10,81 +10,56 @@ import mcpp.build.prepare_inputs;
 
 import std;
 import mcpp.diag;
+import mcpp.build.plan;
 import mcpp.manifest;
-import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
 
 namespace mcpp::build {
+
+// A package's include directories, each entry expanded as the root manifest's
+// are (plan.cppm's expand_manifest_include_entry): an absolute entry in its
+// native spelling (a TOML `C:/SDL2/include` stays mixed on MSVC and leaks into
+// the CDB's -I otherwise, mcpp#230), a glob as the directories it matches, and
+// a literal directory that does not exist yet as written, since a build step
+// may create it (#390). One expansion serves `include_dirs`,
+// `include_dirs_after` (#249: the -idirafter channel) and
+// `private_include_dirs`, the resource compiler's search list and the root's
+// compile steps, so a package's configuration has one set of directories
+// whichever consumer reads it.
+static std::vector<std::filesystem::path> expandEntries(
+        PrepareState& state,
+        const std::filesystem::path& packageRoot,
+        const std::vector<std::filesystem::path>& entries)
+{
+        std::vector<std::filesystem::path> dirs;
+        for (auto const& inc : entries)
+            for (auto& dir : expand_manifest_include_entry(packageRoot, inc))
+                state.appendUniquePath(dirs, std::move(dir));
+        return dirs;
+}
 
 static std::vector<std::filesystem::path> expandIncludeDirs(
         PrepareState& state,
         const std::filesystem::path& packageRoot,
         const mcpp::manifest::Manifest& manifest)
 {
-        std::vector<std::filesystem::path> dirs;
-        for (auto const& inc : manifest.buildConfig.includeDirs) {
-            if (inc.is_absolute()) {
-                // Native spelling: a TOML `C:/SDL2/include` stays mixed on
-                // MSVC and leaks into the CDB's -I otherwise. Direct
-                // make_preferred — no generic_string round trip, which can
-                // throw for names the ANSI codepage cannot spell (mcpp#230).
-                auto n = inc;
-                n.make_preferred();
-                state.appendUniquePath(dirs, std::move(n));
-                continue;
-            }
-            for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, inc.generic_string())) {
-                state.appendUniquePath(dirs, dir);
-            }
-        }
-        return dirs;
+        return expandEntries(state, packageRoot, manifest.buildConfig.includeDirs);
 }
 
-    // #249: same glob expansion for `include_dirs_after` (the -idirafter
-    // channel — searched after the toolchain's system dirs).
 static std::vector<std::filesystem::path> expandIncludeDirsAfter(
         PrepareState& state,
         const std::filesystem::path& packageRoot,
         const mcpp::manifest::Manifest& manifest)
 {
-        std::vector<std::filesystem::path> dirs;
-        for (auto const& inc : manifest.buildConfig.includeDirsAfter) {
-            if (inc.is_absolute()) {
-                auto n = inc;
-                n.make_preferred();
-                state.appendUniquePath(dirs, std::move(n));
-                continue;
-            }
-            for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, inc.generic_string())) {
-                state.appendUniquePath(dirs, dir);
-            }
-        }
-        return dirs;
+        return expandEntries(state, packageRoot, manifest.buildConfig.includeDirsAfter);
 }
 
-    // The same expansion for `private_include_dirs`, so a private entry may be
-    // a glob and still name exactly the directories it expands to.
 static std::vector<std::filesystem::path> expandPrivateIncludeDirs(
         PrepareState& state,
         const std::filesystem::path& packageRoot,
         const mcpp::manifest::Manifest& manifest)
 {
-        std::vector<std::filesystem::path> dirs;
-        for (auto const& inc : manifest.buildConfig.privateIncludeDirs) {
-            if (inc.is_absolute()) {
-                auto n = inc;
-                n.make_preferred();
-                state.appendUniquePath(dirs, std::move(n));
-                continue;
-            }
-            for (auto& dir : mcpp::modgraph::expand_dir_glob(
-                     packageRoot, inc.generic_string())) {
-                state.appendUniquePath(dirs, dir);
-            }
-        }
-        return dirs;
+        return expandEntries(state, packageRoot, manifest.buildConfig.privateIncludeDirs);
 }
 
 std::expected<mcpp::modgraph::PackageRoot, std::string> makePackageRoot(

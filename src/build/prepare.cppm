@@ -680,6 +680,18 @@ export struct BuildContext {
         std::size_t units = 0;
     };
     std::vector<CachedDep>          cachedDeps;
+    // Each package the global cache did not serve, and why, as a token
+    // (design 2026-11-20 §5.4): `no-identity`, `unnamed-sources`,
+    // `unnamed-upstream`, `outside-store`, `unaddressable-unit`, or `miss`
+    // when the entry is filled after the build. `--verbose` prints them and
+    // the build record keeps them; a refusal that says nothing cannot be
+    // told from a cache that does not work.
+    struct CacheDecision {
+        std::string name;
+        std::string version;
+        std::string reason;
+    };
+    std::vector<CacheDecision>      cacheDecisions;
 
     // What the dependency walk actually RESOLVED, keyed by the root manifest's
     // dependency map key. The "Compiling <dep> v<version>" banner used to read
