@@ -271,12 +271,10 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
                 "[profile.{}] debug = \"{}\": expected true, false or \"lines\"", pname, pr.debugWritten));
         state.m->buildConfig.debug    = pr.debug;
         state.m->buildConfig.debugLines = pr.debugLines;
-        // THE DEPENDENCIES' DEBUG INFORMATION (design 2026-11-20 §5.15): the
-        // packages from the store and git get the line tables under the
-        // profiles a developer debugs, unless the profile states otherwise.
-        // Their debug information made 8.5 of a test program's 11.5 MB, and
-        // 15.4 of a workspace's 22 GB of test programs (mcpp#927); a backtrace
-        // through them keeps its files and lines.
+        // THE DEPENDENCIES' DEBUG INFORMATION (design 2026-11-20 §5.15): the packages from the
+        // store and git get the line tables under the profiles a developer debugs, unless the
+        // profile states otherwise. Their debug information made 8.5 of a test program's 11.5 MB
+        // and 15.4 of a workspace's 22 GB (mcpp#927); a backtrace through them keeps its lines.
         {
             if (pr.dependencyDebugDeclared && pr.dependencyDebug != "true" && pr.dependencyDebug != "false"
                 && pr.dependencyDebug != "lines")
