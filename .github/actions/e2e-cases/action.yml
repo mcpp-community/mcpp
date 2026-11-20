@@ -88,4 +88,13 @@ runs:
         for c in "${cases[@]}"; do
           tr -d '\r' < "$log" | grep -qxF "  ok   $c" || { echo "::error::$c did not pass (a skip or a failure; its line above)"; status=1; }
         done
+        # A program can fail beside cases that passed (its exit status, a fixture, a case it did
+        # not report): the run's records say which, and the job keeps no store.
+        if [ "$status" != 0 ]; then
+          run=$(ls -t target/mtest/runs 2>/dev/null | head -1)
+          for f in programs cases fixtures; do
+            [ -n "$run" ] && [ -f "target/mtest/runs/$run/$f.ndjson" ] || continue
+            echo "::group::the run's $f.ndjson"; cat "target/mtest/runs/$run/$f.ndjson"; echo "::endgroup::"
+          done
+        fi
         exit "$status"
