@@ -1075,7 +1075,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
         ctx.manifest, machineMemoryThreshold, [](std::string_view bad) {
             mcpp::ui::warning(std::format(
                 "ignoring invalid memory threshold '{}' (expected a size such as \"2GiB\" or bytes); "
-                "the engine's 1 GiB holds", bad));
+                "the next of the environment, the manifest, the machine and the engine's 1 GiB holds", bad));
         });
     ctx.intent = state.overrides.intent;
 

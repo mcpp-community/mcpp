@@ -7,7 +7,7 @@
 | 状态 | 评审中 v2.5 |
 | 版本 | 2.5 |
 | 最后修改 | 2026-11-21 |
-| 对应实现 | 逐条标注。B1–B4 与 O1、O2、O4–O7 mcpp >= 2026.11.8.1 至 2026.11.10.1（逐条）；B5、B6、O3 的运行器一侧、O8 mcpp >= 2026.11.10.1；O9 由框架的工具实现（mtest >= 0.6.0）；O10 mcpp >= 2026.11.13.1；P5 的 `step` 与 `exercise`、B4 的 `builds.ndjson` 与机器的字段、O5 在选择之下的时限、O11、O12 mcpp >= @NEXT@，mtest >= 0.11.0 |
+| 对应实现 | 逐条标注。B1–B4 与 O1、O2、O4–O7 mcpp >= 2026.11.8.1 至 2026.11.10.1（逐条）；B5、B6、O3 的运行器一侧、O8 mcpp >= 2026.11.10.1；O9 由框架的工具实现（mtest >= 0.6.0）；O10 mcpp >= 2026.11.13.1；P5 的 `step` 与 `exercise`、B4 的 `builds.ndjson` 与机器的字段、O5 在选择之下的时限、O6 的运行器一侧、O11、O12 mcpp >= @NEXT@，mtest >= 0.11.0 |
 | 取代 | SPEC-017 v1.0（`test-runner.md`）；mtest 测试协议版本 1（mtest `spec/protocol.md`）的规范正文；SPEC-004 中 `[test]` 的键 |
 | 相关规范 | [SPEC-004](manifest-semantics.md)（清单的平面与命名）、[SPEC-006](build-database.md)（构建数据库） |
 | 相关 issue | mcpp#914、mcpp#915、mcpp#917 |
@@ -133,12 +133,13 @@
 | `artifact` | `id`、`path`、`kind` | 用例产生的文件 |
 | `fixture` | `id`、`name`、`ms` | 用例促成为共享它的用例而构造的对象，及构造耗时 |
 | `step` | `id`、`name`、`t`（自程序启动起的毫秒）、`ms`，可选 `cpu_ms`、`status`（步骤运行的程序的退出状态）、`build`（该步骤是一次构建时，构建记录的标识） | 用例的一个步骤结束（mtest >= 0.11.0） |
-| `exercise` | `id`、`items`：用例用到的产品面的项（字符串的列表，形式由产品给出，例如 `command build`、`flag build --target`、`key build.sources`、`reason build/cache`） | 用例运行期间，可多次（mtest >= 0.11.0） |
+| `exercise` | `id`、`items`：用例用到的产品面的项（字符串的列表，形式由产品给出，例如 `command build`、`flag build --target`、`key build.sources`、`reason unknown-target`） | 用例运行期间，可多次（mtest >= 0.11.0） |
 | `end` | `id`、`status`、`ms`，可选 `reason`、`checks`（O3） | 用例结束 |
 | `missing` | `id` | P4.1 |
 | `done` | `status`、`counts`（状态到数目的对象） | 末个 |
 
 - **P5.6 步骤与用到的面（mtest >= 0.11.0；mcpp >= @NEXT@）。** 一个用例由若干步骤组成时（端到端用例运行的每条命令），程序**可以**为每个步骤写一个 `step` 事件；运行器把它们按到达顺序归入用例。`exercise` 列出用例用到的产品面的项；运行器把一个用例的各次 `exercise` 合并为一个集合。二者都不影响用例的结论。
+- **mcpp 的面（mcpp >= @NEXT@）。** `mcpp emit surface` 每行写出一项 `<种类> <名字>`：命令（`command emit surface`）、选项（`flag build --target`，全局选项为 `flag --quiet`）取自命令行的定义，键（`key build.cflags`，整张表为 `key toolchain`）取自清单的键登记表，原因（`reason unknown-target`）取自拒绝的原因标记；解析器自己加入的 `--help` 与 `--version` 不是项。环境变量 `MCPP_SURFACE_RECORD` 指明一个文件时，mcpp 的每个进程把它用到的项追加到该文件，每项每进程一次：所给的命令与选项、它读取的清单所陈述的登记表中的键、它记录的原因。测试 kit 把该文件转为用例的 `exercise` 事件。
 - **P5.3** 用例的 `status` 为以下之一：`pass`、`fail`、`skip`（带 `reason`）、`xfail`（如预期地失败）、`xpass`（预期失败却通过；运行失败）、`invalid`（无法判定的测量；P6.3）。
 - **P5.4** 运行器**必须**忽略未知字段与未知事件种类。运行器**必须**接受没有 `done` 的报告（程序崩溃）：有 `begin` 而无 `end` 的用例失败，以程序的退出状态为原因。
 - **P5.5** 程序的退出状态为零，当且仅当没有用例失败或意外通过，且没有被选用例缺失。
@@ -271,6 +272,7 @@
 - **P11.2** 运行夹具是整次运行的一个对象。用例在 `uses` 中写出它使用的夹具；运行器在第一个使用者开始前服务它，在最后一个结束后结束它，并以 `MTEST_FIXTURE_<NAME>` 把端点交给使用者的程序。
 - **P11.3** 运行器以 `MTEST_SERVE` 启动列出该夹具的程序来服务它，输入为管道，不带 `MTEST_PROTOCOL`。程序不运行用例：准备夹具，向输出写一行 `mtest-ready <端点>`，在输入结束时结束夹具。
 - **P11.4** 未就绪的运行夹具是机器的失败：使用它的用例以状态 `infra` 结束，不运行。
+- **mcpp 的实现（已实现，mcpp >= @NEXT@）。** `mcpp test` 从程序的列出（`list` 模式）取得夹具与用例的 `uses`；所选用例使用夹具的程序在启动前取得端点，第一个取得者启动列出该夹具的程序（缺省等待就绪的时间为 `--timeout`），最后一个使用者结束后关闭其输入，等待同样长的时间后结束其进程单元。运行存储的 `fixtures.ndjson` 每个夹具一行，`programs.ndjson` 的 `fixtures` 写出程序用到的夹具；夹具未就绪时，使用它的程序不运行，记录的状态为 `infra`，`mcpp test` 以不运行的测试结束（退出码 2）。不经列出而运行的程序（运行器之后的程序）不取得夹具。
 
 ### O7. 资源用量（P10）
 
@@ -358,6 +360,7 @@ mcpp 以 feature（docs/50 §4）宣告它实现的条款；客户端按需门�
 | `test-steps` | P5.6 的运行器一侧；B4 的 `steps`、`exercised` 与 `builds.ndjson` | @NEXT@ |
 | `test-budget` | O11 | @NEXT@ |
 | `test-jitter` | O12 的运行器一侧 | @NEXT@ |
+| `test-fixtures` | O6 的运行器一侧；B4 的 `fixtures.ndjson` | @NEXT@ |
 
 框架实现的可选能力由 B6 宣告，不由 mcpp 的 feature 宣告。
 
