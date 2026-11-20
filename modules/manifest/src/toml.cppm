@@ -774,8 +774,8 @@ bool is_array_of_tables(const t::Value& v) {
 // A key as a TOML header has to spell it: bare when every character is one a
 // bare key admits, quoted otherwise. Messages name a conditional section with
 // it, so that the name a reader sees can be pasted back into a manifest:
-// `[target.'cfg(os = "android")'.dependencies]`, not
-// `[target.cfg(os = "android").dependencies]`, which does not parse.
+// `[target.'cfg(env = "android")'.dependencies]`, not
+// `[target.cfg(env = "android").dependencies]`, which does not parse.
 std::string toml_header_key(std::string_view key) {
     const bool bare = !key.empty() && std::ranges::all_of(key, [](char c) {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-';
@@ -2949,7 +2949,7 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
     //
     // TWO NAMES, BECAUSE THEY ANSWER TWO QUESTIONS. `section` is the table's
     // name as a reader writes it, used in every message and recorded on each
-    // edge (`DependencySpec::declaredIn`): `target.'cfg(os = "android")'.
+    // edge (`DependencySpec::declaredIn`): `target.'cfg(env = "android")'.
     // dependencies` for a conditional table. `lookup` is the path the
     // explicit-namespace-table test builds (`is_namespace_table`), which a
     // conditional table has always resolved against `dependencies`; empty

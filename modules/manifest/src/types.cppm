@@ -347,7 +347,7 @@ struct Target {
     std::optional<bool>         windowsLongPaths;
     // Where `kind` was stated, as the manifest line that states it:
     // `[targets.fw] kind = "shared"`, or, when a row states it,
-    // `[target.'cfg(os = "android")'.targets.fw] kind = "shared"`. Read by
+    // `[target.'cfg(env = "android")'.targets.fw] kind = "shared"`. Read by
     // the link-form resolution, whose refusal names the statement that
     // constrains a package instead of saying that a form "is not available".
     std::string                 kindDeclaredBy;

@@ -290,7 +290,7 @@ targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
 kind = "entry"
 main = "src/entry/player.cpp"
 
-[target.'cfg(os = "android")'.targets.player]
+[target.'cfg(env = "android")'.targets.player]
 main = "src/entry/player_android.cpp"   # Android 上的起点是另一个文件
 
 # 应用（使用方）

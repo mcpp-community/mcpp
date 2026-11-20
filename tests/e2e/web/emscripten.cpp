@@ -275,8 +275,12 @@ E2E emscripten{"emscripten", [] {
                                     "console.log('exports:'+WebAssembly.Module.exports(m).map(e=>e.name).join(',')))",
                                     module.generic_string());
         const auto exports = s::last_starting(s::text(s::run(*s::on_path("node"), {"-e", js})), "exports:");
-        expect(fatal(e2e::contains(exports, "app_value"))) << "2: the module does not export app_value: " << exports;
-        expect(fatal(!e2e::contains(exports, ",main,") && !exports.ends_with(",main") && !e2e::contains(exports, "_start")))
+        // Each name between commas, so that a name is matched whole and never as a part of a
+        // longer export's name.
+        const std::string names = "," + (exports.starts_with("exports:") ? exports.substr(8) : std::string{}) + ",";
+        expect(fatal(e2e::contains(names, ",app_value,"))) << "2: the module does not export app_value: " << exports;
+        expect(fatal(!e2e::contains(names, ",main,") && !e2e::contains(names, ",__main_argc_argv,")
+                     && !e2e::contains(names, ",_start,")))
             << "2: the module has a program start: " << exports;
         r = app.mcpp({"run", "--target", "wasm32-emscripten"});
         expect(fatal(r.started && r.status != 0)) << "3: mcpp run started a module with no program start: " << s::text(r);

@@ -296,7 +296,7 @@ A framework that supplies a program's `main` declares the translation unit as an
 kind = "entry"
 main = "src/entry/player.cpp"
 
-[target.'cfg(os = "android")'.targets.player]
+[target.'cfg(env = "android")'.targets.player]
 main = "src/entry/player_android.cpp"   # the Android beginning is another file
 
 # the application (consumer)
