@@ -15,7 +15,6 @@ import mcpp.home;
 import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
-import mcpp.modgraph.scanner;
 import mcpp.source_kind;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
@@ -245,26 +244,23 @@ static bool target_takes_code_page(const mcpp::manifest::Target& t)
 }
 
 // Where the resource compiler looks for a script's includes and files: the
-// package's directory, then its include_dirs. A relative entry is a glob,
-// expanded as the compile steps expand it (package_root.cpp): `*/include`
-// names the directories it matches. Passed as written, the `*` reached
-// llvm-windres, and LLVM's tools on Windows expand wildcards in their own
-// command line -- against FILES -- so the preprocessor saw several inputs and
-// refused ("cannot specify -o when generating multiple output files"). Every
-// program of an index package with a wrap-layer `*/` include failed so
-// (compat.protobuf's protoc host tool).
+// package's directory, then its include_dirs, each expanded as the root
+// manifest's compile steps expand it (plan.cppm's
+// expand_manifest_include_entry): a glob names the directories it matches,
+// and a literal directory that does not exist yet is kept, since a build step
+// may create it before the script compiles (#390). Passed as written, the `*`
+// of `*/include` reached llvm-windres, and LLVM's tools on Windows expand
+// wildcards in their own command line -- against FILES -- so the preprocessor
+// saw several inputs and refused ("cannot specify -o when generating multiple
+// output files"). Every program of an index package with a wrap-layer `*/`
+// include failed so (compat.protobuf's protoc host tool).
 static std::vector<std::filesystem::path>
 resource_include_dirs(const std::filesystem::path& packageDir,
                       const std::vector<std::filesystem::path>& includeDirs) {
     std::vector<std::filesystem::path> dirs{packageDir};
-    for (auto const& d : includeDirs) {
-        if (d.is_absolute()) {
-            dirs.push_back(d);
-            continue;
-        }
-        for (auto& dir : mcpp::modgraph::expand_dir_glob(packageDir, d.generic_string()))
-            dirs.push_back(dir);
-    }
+    for (auto const& d : includeDirs)
+        for (auto& dir : mcpp::build::expand_manifest_include_entry(packageDir, d))
+            dirs.push_back(std::move(dir));
     return dirs;
 }
 
