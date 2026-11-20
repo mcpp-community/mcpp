@@ -1090,6 +1090,9 @@ compute_run_targets(const mcpp::build::BuildPlan& plan) {
         // A dependency's program shipped with this one (mcpp#711) is not a
         // program of this package, and `mcpp run` does not choose it.
         if (!lu.artifactOf.empty()) continue;
+        // An image with no program start (mcpp#981) is started by its host,
+        // and the full path refuses to run it, naming why.
+        if (lu.noProgramStart) continue;
         out.emplace_back(lu.targetName, lu.output.generic_string());
     }
     return out;
@@ -1975,9 +1978,11 @@ std::vector<mcpp::build::result::Artifact> result_artifacts(const BuildContext& 
             default: continue;
         }
         res::Artifact a{lu.targetName, kind, ctx.outputDir / lu.output, std::nullopt, std::nullopt};
-        if (!lu.entryFrom.empty() || !lu.start.empty())
-            a.entry = res::Entry{lu.entryFrom, lu.start, lu.startFrom};
-        if (lu.kind == LinkUnit::Binary && lu.artifactOf.empty()) {
+        if (!lu.entryFrom.empty() || !lu.start.empty() || lu.noProgramStart)
+            a.entry = res::Entry{lu.entryFrom, lu.start, lu.startFrom, lu.noProgramStart};
+        // An image with no program start (mcpp#981) has no launch: its host
+        // enters it through its exports.
+        if (lu.kind == LinkUnit::Binary && lu.artifactOf.empty() && !lu.noProgramStart) {
             res::Launch l;
             l.cwd = ctx.projectRoot.generic_string();
             if (!ctx.runUnder.empty()) l.via = "run_under";
@@ -4367,6 +4372,17 @@ export int build_run_target(const std::optional<std::string>& targetName,
         return 2;
     }
 
+    // `main = false` (mcpp#981): the image's host calls the names it exports,
+    // and there is no program start for a run to begin at.
+    if (chosen->noProgramStart) {
+        std::println(libc::stderr(),
+            "error: '{}' has no program start on {} (`main = false`): the host that "
+            "loads it calls the names it exports, and `mcpp run` starts a program. "
+            "Load it from its host; `mcpp build` writes {}",
+            chosen->targetName, ctx->tc.targetTriple,
+            (ctx->outputDir / chosen->output).generic_string());
+        return 2;
+    }
     auto exe = ctx->outputDir / chosen->output;
     return run_artifact_via_runner(*ctx, exe, passthrough, no_runner, runner_name);
 }

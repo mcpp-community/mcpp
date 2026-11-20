@@ -267,7 +267,8 @@ defines the entry point. Where `app` is an executable, that entry is `main`
 itself. On `*-linux-android` the file is compiled as a translation unit of
 the shared library instead, and the platform's own entry
 (`ANativeActivity_onCreate`, or the JNI exports it declares) is the
-platform's contract, not a name mcpp assigns. `exports` (above) applies to an
+platform's contract, not a name mcpp assigns. A row on which the image has
+no program start states `main = false` (below). `exports` (above) applies to an
 `app` target exactly as it does to a `shared` one, and `windows_subsystem` /
 `windows_entry` (below) accept `app` exactly as they accept `bin`.
 
@@ -333,6 +334,48 @@ main = { from = "openmui/player" }     # "<dependency>/<entry>"
   only entries still has the library or program its sources infer.
 
 Test programs take the same statement in `[test]` (§2.17).
+
+#### `main = false` — an image with no program start (mcpp 2026.11.20.1+)
+
+A program whose starter enters it only through the names it exports has no
+program start, and states so with `main = false`:
+
+```toml
+[targets.app]
+kind = "app"
+main = "platform/linux/main.cpp"      # the desktop rows begin here
+
+[target.'cfg(env = "android")'.targets.app]
+main = false                          # the Java process loads libapp.so
+
+[target.'cfg(os = "emscripten")'.targets.app]
+main = false                          # the page calls the module's exports
+```
+
+| Row | `main = false` | Link |
+|---|---|---|
+| `*-linux-android`, `kind = "app"` | accepted | `libapp.so`, as with a file |
+| `wasm32-emscripten`, `bin` and `app` | accepted | with `--no-entry`, the row's `link-without-main` |
+| every other row, and `kind = "bin"` on Android | refused, naming what enters the image there | — |
+
+- A row's `main = false` replaces the target's beginning on that row. The file
+  the target names stays the beginning of the other rows and is no source of
+  this row's image; the target's `cflags`, `cxxflags`, `defines`, `start` and
+  `windows_entry` do not apply on that row.
+- In one table `main = false` with `start`, `windows_entry`, `cflags`,
+  `cxxflags` or `defines` is refused, and so is `main = true`. An entry target
+  and `[test]` do not accept `main = false`.
+- Leaving `main` out is still refused: only the statement says that an image
+  has no start.
+- The names the host calls are the program's to define and export: an Android
+  library's `JNI_OnLoad`, `Java_*` functions or `ANativeActivity_onCreate`, a
+  Web module's exported functions (`EMSCRIPTEN_KEEPALIVE`;
+  `-sEXPORTED_FUNCTIONS` and `-sMODULARIZE` in `ldflags`). A framework that
+  defines them in one translation unit can supply it as an entry target
+  instead, selected with `main = { from }` (above).
+- `mcpp run` refuses such a program and names the file `mcpp build` writes. The
+  build record's artifact has `"entry": {"main": false}` and no `launch`
+  ([50 — Machine output](50-machine-output.md)).
 
 #### `start` — the symbol an image is entered at (mcpp 2026.10.26.2+)
 

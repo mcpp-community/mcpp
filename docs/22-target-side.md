@@ -1514,9 +1514,8 @@ to protect an unconditional threads build must therefore state its own engine
 floor (`[build-dependencies.mcpp] version = ">= 2026.9.12.3"`), rather than
 relying on an older client to notice the gap.
 
-`--no-entry` (Emscripten's flag for a module with no `main`) is not a switch
-mcpp interprets; it is an ordinary `[target.'cfg(os = "emscripten")'.build]
-ldflags` entry, and `main` keeps naming a translation unit regardless — see
+A Web module with no `main` states `main = false` on the Web row, and mcpp
+links it with `--no-entry` (2026.11.20.1+); see
 [21 — The Target Triple](21-the-target-triple.md#the-wasm-artifact-contract).
 
 ### `targets.<name> kind` — a library's form on one row (mcpp 2026.9.14.2+)

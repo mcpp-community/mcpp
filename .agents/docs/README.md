@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-366 records.
+367 records.
 
 ## By subject
 
@@ -59,6 +59,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
 - [2026.10.5.3 发布方案：32 位 x86 的架构词汇、资源编译器的识别与增量（#776 后续）](2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md) — active
@@ -205,6 +206,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — landed
 - [第二部分之后的补充方案：带修正的 ninja、模块重编译的级联、工作区发布与本轮遗留项](2026-11-17-ninja-cascade-publish-supplement-design.md) — active
 - [生态缺口补充方案（第二部分）：文件的角色、运行文件、清单书写与第一部分的遗留项](2026-11-16-ecosystem-gap-supplement-part2-design.md) — active

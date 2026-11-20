@@ -214,6 +214,14 @@ struct Target {
     // manifest's dependency tables, or this package's own name), compiled in
     // that package's context and linked into this program.
     std::string                 mainFrom;
+    // `main = false` (mcpp#981, SPEC-004 §14 item 6): the image has no program
+    // start. Its starter enters it only through the names it exports: the
+    // Java process an Android application's library is loaded into, the page
+    // that calls a Web module's exported functions. Admitted on a row where
+    // the program's form has no start (a shared object) or where the row's data
+    // states how a program without one is linked (`link-without-main`); `main`
+    // and `mainFrom` are empty when it is set.
+    bool                        mainNone = false;
     // `start = "<symbol>"` (§24.4 item 7): the symbol the image is entered at
     // (ELF `e_entry`), stated only for an image with no C runtime -- a
     // freestanding target. Empty = the linker script's `ENTRY()` or the
@@ -355,6 +363,20 @@ struct Target {
     std::string                 linkageDeclaredBy;
 };
 
+// The first key of `t` that describes a program start, or an empty string
+// (mcpp#981): the entry symbol, the PE entry function, and the flags scoped to
+// the target's own entry translation unit (design 2026-10-26 §24.4 item 4).
+// `main = false` refuses each, since with no program start it would apply to
+// nothing.
+inline std::string_view beginning_key_of(const Target& t) {
+    if (!t.start.empty()) return "start";
+    if (!t.windowsEntry.empty()) return "windows_entry";
+    if (!t.cflags.empty()) return "cflags";
+    if (!t.cxxflags.empty()) return "cxxflags";
+    if (!t.defines.empty()) return "defines";
+    return {};
+}
+
 // One `[target.<sel>.targets.<name>]` statement: the form a row gives a
 // library target, and the manifest line that gives it, which the link-form
 // resolution names when it has to refuse a request against it. A row states
@@ -370,6 +392,8 @@ struct RowTargetKind {
     bool         statesForm = false;
     std::optional<std::string> main;
     std::optional<std::string> mainFrom;
+    // `main = false` on this row: the image has no program start (mcpp#981).
+    bool         mainNone = false;
     std::optional<std::string> start;
     std::string  beginningStatement;   // the row's header, for diagnostics
 };

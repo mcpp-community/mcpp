@@ -132,12 +132,14 @@ spec sets `exe_suffix: ".js"`.
 | `lib` | `lib/lib<name>.a` | — |
 | `shared` | refused, naming `-sSIDE_MODULE` | a wasm side module needs a link contract mcpp does not render |
 
-`--no-entry` is not a switch mcpp interprets. It is an ordinary
-`[target.'cfg(os = "emscripten")'.build] ldflags` entry, and `main` keeps
-naming a translation unit as it does on every other row — so a modularised
-Web program whose page calls an exported factory is a `bin` target whose
-`main` file defines no `main()`, linked with `--no-entry` on its own `ldflags`
-line.
+A modularised Web program whose page calls an exported factory has no
+program start: it states `main = false` on the Web row (2026.11.20.1+), and
+mcpp links it with `--no-entry`, the row's `link-without-main`
+([04 — `main = false`](04-mcpp-toml.md)). `-sMODULARIZE`,
+`-sEXPORT_NAME` and `-sEXPORTED_FUNCTIONS` stay ordinary
+`[target.'cfg(os = "emscripten")'.build] ldflags` entries; mcpp does not
+interpret `ldflags`, so a `main` file that defines no `main()` linked with
+`--no-entry` on its own `ldflags` line builds the same module.
 
 The runner that executes `bin/<name>.js` comes from the payload descriptor
 (`.mcpp-toolchain.json`), the project's `[target.<triple>] runner`, or a

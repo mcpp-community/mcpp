@@ -215,6 +215,7 @@ void define_platform(const mp::Statement& s, std::string_view shortName, std::st
         r.loader = set.keep(d.loader);
         r.descriptorKeys = set.keep(d.descriptorKeys);
         r.companions = set.keep(d.companions);
+        r.linkWithoutMain = set.keep(d.linkWithoutMain);
         r.exceptions = set.keep(d.exceptions);
         r.exeSuffixFixed = d.exeSuffixFixed;
         r.execution = set.keep(d.execution.empty() ? seg[1] : d.execution);

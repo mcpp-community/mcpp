@@ -1049,7 +1049,9 @@ starts the program from `launch` starts it as `mcpp run` would.
 `entry` says where the program begins and where its image is entered (docs/04,
 `kind = "entry"` and `start`): `from` is the `"<dependency>/<entry>"` a
 `main = { from }` named, `start` the stated entry symbol and `start_from` the
-statement that named it. Each key is present only when stated.
+statement that named it. `"main": false` *(2026.11.20.1+)* says that the image
+has no program start: its host enters it through the names it exports, and
+`launch` is absent. Each key is present only when stated.
 
 A run ended by SIGINT, SIGTERM or SIGHUP leaves `cancelled` in both files
 ([exit codes](specs/exit-codes.md) §3.7). A record still `running` whose

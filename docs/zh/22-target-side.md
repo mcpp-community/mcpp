@@ -1265,11 +1265,8 @@ schema 清扫会跳过每一个取值为表的键，理由是它假定表就是�
 （`[build-dependencies.mcpp] version = ">= 2026.9.12.3"`），而不能指望
 旧客户端自己发现这个缺口。
 
-`--no-entry`（Emscripten 里没有 `main` 的模块用的 flag）不是 mcpp
-解释的开关；它是一条普通的
-`[target.'cfg(os = "emscripten")'.build] ldflags` 条目，`main` 照样只是
-指出一个翻译单元——见
-[21 —— 目标三元组](21-the-target-triple.md#wasm-产物契约)。
+没有 `main` 的 Web 模块在 Web 行上陈述 `main = false`，mcpp 以 `--no-entry` 链接它
+（2026.11.20.1+）；见 [21 —— 目标三元组](21-the-target-triple.md#wasm-产物契约)。
 
 ### `targets.<name> kind` —— 一个库在某一行上的形态（mcpp 2026.9.14.2+）
 

@@ -930,7 +930,8 @@ CI 按 `launch` 启动程序，与 `mcpp run` 的启动一致。
 
 `entry` 说明程序从哪里开始、镜像从哪里进入（docs/04，`kind = "entry"` 与 `start`）：
 `from` 是 `main = { from }` 指名的 `"<依赖>/<入口>"`，`start` 是陈述的入口符号，
-`start_from` 是指名它的陈述。各键只在有陈述时出现。
+`start_from` 是指名它的陈述。`"main": false` *(2026.11.20.1+)* 表示映像没有程序起点：其宿主经映像
+导出的名字进入它，`launch` 不出现。各键只在有陈述时出现。
 
 被 SIGINT、SIGTERM 或 SIGHUP 结束的运行在两个文件中都留下 `cancelled`
 （[退出码](../specs/exit-codes.md) §3.7）。`status` 仍为 `running`、而 `pid` 已不存在

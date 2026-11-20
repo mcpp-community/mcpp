@@ -7069,6 +7069,74 @@ UTest refuses_what_an_entry_or_a_beginning_cannot_state{"Manifest/RefusesWhatAnE
     refused("[test]\nstart = \"9\"\n", "[test] start");
 }};
 
+// mcpp#981: `main = false` states that the image has no program start, in a
+// target's table and on a row. The row keeps the statement for the plan, which
+// decides whether the row admits it; the target's file stays its beginning.
+UTest parses_main_false_for_an_image_with_no_program_start{"Manifest/ParsesMainFalseForAnImageWithNoProgramStart", [] {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "p"
+version = "0.1.0"
+
+[targets.web]
+kind = "app"
+main = false
+
+[targets.app]
+kind = "app"
+main = "platform/linux/main.cpp"
+
+[target.'cfg(env = "android")'.targets.app]
+main = false
+)");
+    if (auto&& failed = expect(fatal(m.has_value())); !failed) failed << m.error().format();
+    auto const* web = &m->targets[0];
+    auto const* app = &m->targets[1];
+    if (web->name != "web") std::swap(web, app);
+    expect(web->mainNone);
+    expect(eq(web->main, ""));
+    expect(eq(web->mainFrom, ""));
+    expect(eq(web->mainDeclaredBy, "[targets.web] main"));
+    expect(!app->mainNone);
+    expect(eq(app->main, "platform/linux/main.cpp"));
+    expect(fatal(eq(m->conditionalConfigs.size(), 1u)));
+    auto const& row = m->conditionalConfigs[0].targetKinds.at("app");
+    expect(row.mainNone);
+    expect(!row.main.has_value());
+    expect(!row.mainFrom.has_value());
+    expect(!row.statesForm);
+    expect(m->schemaWarnings.empty());
+}};
+
+// mcpp#981: with no program start, the keys that describe one apply to
+// nothing; `true` states nothing, and an entry target and `[test]` begin in a
+// translation unit.
+UTest refuses_main_false_beside_what_describes_a_start{"Manifest/RefusesMainFalseBesideWhatDescribesAStart", [] {
+    auto refused = [](std::string_view body, std::string_view needle) {
+        auto m = mcpp::manifest::parse_string(
+            std::format("[package]\nname = \"p\"\nversion = \"0.1.0\"\n{}", body));
+        expect(fatal(!m.has_value())) << body;
+        if (auto&& failed = expect(ne(m.error().format().find(needle), std::string::npos)); !failed) failed << body << "\n" << m.error().format();
+    };
+    refused("[targets.a]\nkind = \"app\"\nmain = true\n", "states nothing");
+    refused("[targets.a]\nkind = \"app\"\nmain = false\ncflags = [\"-DX\"]\n",
+            "targets.a.cflags describes the program start");
+    refused("[targets.a]\nkind = \"bin\"\nmain = false\nwindows_entry = \"WinMain\"\n",
+            "targets.a.windows_entry describes the program start");
+    refused("[targets.a]\nkind = \"bin\"\nmain = false\nstart = \"_start\"\n",
+            "targets.a.start describes the program start");
+    refused("[targets.e]\nkind = \"entry\"\nmain = false\n",
+            "requires 'main', the file that is the translation unit");
+    refused("[test]\nmain = false\n", "[test] main is `{ from");
+    refused("[targets.a]\nkind = \"app\"\nmain = \"a.cpp\"\n"
+            "[target.'cfg(env = \"android\")'.targets.a]\nmain = true\n",
+            "or `false` for an image with no program start");
+    refused("[targets.a]\nkind = \"app\"\nmain = \"a.cpp\"\n"
+            "[target.'cfg(env = \"android\")'.targets.a]\nmain = false\nstart = \"_start\"\n",
+            "`start` names the symbol one is entered at");
+    refused("[targets.a]\nkind = \"app\"\n", "or `false` where the image has no program start");
+}};
+
 UTest parses_test_main_from_and_start{"Manifest/ParsesTestMainFromAndStart", [] {
     auto m = mcpp::manifest::parse_string(R"(
 [package]

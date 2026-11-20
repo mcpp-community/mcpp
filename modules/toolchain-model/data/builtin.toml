@@ -484,6 +484,10 @@ exceptions = "wasm"
 # The module Emscripten writes beside the launcher (`app.wasm` beside `app.js`),
 # none under `-sSINGLE_FILE=1` (N33).
 companions = [".wasm"]
+# A program with no program start (`main = false`, mcpp#981): a module whose
+# page calls its exported functions, linked without the `main` the runtime would
+# otherwise call.
+link-without-main = ["--no-entry"]
 # `.js` pairs the launcher with its module: a name template decides what
 # precedes it, and the name ends in `.js` (N48).
 exe-suffix       = ".js"

@@ -2093,14 +2093,26 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     return std::unexpected(error(origin, std::format(
                         "targets.{}.main: {}", tname, msg)));
                 t.mainFrom = fit->second.as_string();
+            } else if (mit != tt.end() && mit->second.is_bool() && t.kind != Target::Entry) {
+                // `main = false` (mcpp#981): the image has no program start.
+                // Whether the row being built admits that is the plan's to
+                // decide; `true` states nothing a file does not.
+                if (mit->second.as_bool())
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.main = true states nothing: `main` is a file, "
+                        "`{{ from = \"<dependency>/<entry>\" }}`, or `false` for an image "
+                        "with no program start", tname)));
+                t.mainNone = true;
             } else if (t.kind == Target::Entry) {
                 return std::unexpected(error(origin, std::format(
                     "targets.{} (kind=entry) requires 'main', the file that is the "
                     "translation unit; `from` names another package's entry and an "
                     "entry is not one", tname)));
             } else {
-                return std::unexpected(error(origin,
-                    std::format("targets.{} (kind={}) requires 'main' field", tname, kind_s)));
+                return std::unexpected(error(origin, std::format(
+                    "targets.{} (kind={}) requires 'main' field: the file the program begins "
+                    "in, `{{ from = \"<dependency>/<entry>\" }}`, or `false` where the image "
+                    "has no program start", tname, kind_s)));
             }
             t.mainDeclaredBy = std::format("[targets.{}] main", tname);
         }
@@ -2372,6 +2384,15 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 "in [build] for the code that is this package's",
                 tname, !t.cflags.empty() ? "cflags" : !t.cxxflags.empty() ? "cxxflags" : "defines",
                 t.mainFrom)));
+        // `main = false` (mcpp#981): with no program start, the keys that
+        // describe one -- its entry symbol, its PE entry function, the flags of
+        // its translation unit -- would apply to nothing.
+        if (t.mainNone) {
+            if (auto key = beginning_key_of(t); !key.empty())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.{} describes the program start, and `main = false` states "
+                    "that the image has none", tname, key)));
+        }
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
         for (auto const& flag : t.cxxflags) {
@@ -4663,10 +4684,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 return std::unexpected(error(origin, std::format(
                                     "{} main: {}", header, msg)));
                             rowTarget.mainFrom = from;
+                        } else if (mit->second.is_bool() && !mit->second.as_bool()) {
+                            // mcpp#981: on this row the image has no program
+                            // start; the plan decides whether the row admits it.
+                            rowTarget.mainNone = true;
                         } else {
                             return std::unexpected(error(origin, std::format(
-                                "{} main is a file, or `{{ from = \"<dependency>/<entry>\" }}`",
-                                header)));
+                                "{} main is a file, `{{ from = \"<dependency>/<entry>\" }}`, or "
+                                "`false` for an image with no program start", header)));
                         }
                     }
                     if (auto sit = row.find("start"); sit != row.end()) {
@@ -4679,6 +4704,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 "{} start: {}", header, msg)));
                         rowTarget.start = sit->second.as_string();
                     }
+                    // mcpp#981: a row with no program start replaces the
+                    // target's beginning on that row, and with it what
+                    // [targets.<n>] states about that beginning; in the row
+                    // itself, `start` contradicts it.
+                    if (rowTarget.mainNone && rowTarget.start)
+                        return std::unexpected(error(origin, std::format(
+                            "{}: `main = false` states that the image has no program start, "
+                            "and `start` names the symbol one is entered at", header)));
                     rowTarget.beginningStatement = header;
                     auto kit = row.find("kind");
                     auto lit = row.find("linkage");
@@ -4725,13 +4758,14 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                                 "forms only, `lib` and `shared`", header, kindText)));
                         rowTarget.statesForm = true;
                         rowTarget.statement = std::format("{} kind = \"{}\"", header, kindText);
-                    } else if (!rowTarget.main && !rowTarget.mainFrom && !rowTarget.start) {
+                    } else if (!rowTarget.main && !rowTarget.mainFrom && !rowTarget.mainNone && !rowTarget.start) {
                         return std::unexpected(error(origin, std::format(
                             "{} must set `kind = \"lib\" | \"shared\"` or "
                             "`linkage = \"static\" | \"shared\"` for a library, or "
                             "`main` or `start` for a program or an entry", header)));
                     }
-                    if (rowTarget.statesForm && (rowTarget.main || rowTarget.mainFrom || rowTarget.start))
+                    if (rowTarget.statesForm && (rowTarget.main || rowTarget.mainFrom || rowTarget.mainNone
+                                                  || rowTarget.start))
                         return std::unexpected(error(origin, std::format(
                             "{} states a library's form and a program's beginning; a "
                             "target is one or the other", header)));
@@ -5863,7 +5897,7 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
                         "{}: '{}' is a library target, and `main` and `start` describe "
                         "the beginning of a program or an entry",
                         row.beginningStatement, name), path, 0, 0});
-                if (row.mainFrom && target->kind == Target::Entry)
+                if ((row.mainFrom || row.mainNone) && target->kind == Target::Entry)
                     return std::unexpected(ManifestError{std::format(
                         "{}: '{}' is an entry target, which is itself the translation "
                         "unit; its `main` names a file", row.beginningStatement, name),

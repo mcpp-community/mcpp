@@ -229,6 +229,10 @@ struct LinkUnit {
     std::string                     entryFrom;
     std::string                     start;
     std::string                     startFrom;
+    // `main = false` (mcpp#981): the image has no program start, and its starter
+    // enters it only through the names it exports. Such a unit is no program
+    // `mcpp run` starts.
+    bool                            noProgramStart = false;
     // The test protocol the selected entry states it implements
     // (`test-protocol`, docs/08); 0 when none does. `mcpp test` also reads a
     // program's marker for it (mtest spec/protocol.md P2.3).
@@ -3798,6 +3802,35 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return {};
     };
 
+    // AN IMAGE WITH NO PROGRAM START (mcpp#981, SPEC-004 §14 item 6). The row's
+    // data states how an executable without one is linked (`link-without-main`:
+    // `--no-entry` on wasm32-emscripten); a row that states nothing starts its
+    // executables through a program start, and `main = false` is refused there,
+    // naming what enters the image.
+    const std::vector<std::string> linkWithoutMain = [&] {
+        std::vector<std::string> words;
+        if (auto const* row = targetTriple.empty() ? nullptr
+                            : mcpp::toolchain::target::find_row(targetTriple.str()))
+            for (auto w : row->linkWithoutMain) words.emplace_back(w);
+        return words;
+    }();
+    auto no_program_start_refused = [&](const mcpp::manifest::Target& t) {
+        const std::string starter = targetTriple.is_freestanding()
+                ? std::string("at the symbol its link names (`start`, or the linker script's "
+                              "`ENTRY()`), which a translation unit of the program defines")
+            : targetTriple.loader_supplies_os()
+                ? std::string("by its loader, at the entry its platform states, which calls `main`")
+                : std::string("by the C runtime (`_start`, `mainCRTStartup`), which initialises "
+                              "the program and calls `main`");
+        return std::format(
+            "{} = false: on {} an executable image is entered {}. Name the file the program "
+            "begins in, or select an entry with `main = {{ from = \"<dependency>/<entry>\" }}`; "
+            "`main = false` applies where the image has no program start (an application on "
+            "Android, a module on the Web)",
+            t.mainDeclaredBy.empty() ? std::format("[targets.{}] main", t.name) : t.mainDeclaredBy,
+            targetTriple.str(), starter);
+    };
+
     // The test frameworks of the graph: each package's entry that states its
     // guide, its protocol or that it begins a test (docs/08).
     for (std::size_t i = 0; i < std::max<std::size_t>(packages.size(), 1); ++i)
@@ -3859,6 +3892,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.exportPatterns = t.exportPatterns;
             lu.runtimeAliases = runtime_aliases_for_target(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
+            // A shared object has no program start of its own: the Java
+            // process enters it through the names it exports (mcpp#981).
+            lu.noProgramStart = t.mainNone;
         } else {
             // `Binary`, or an `Application` whose row form is `Executable`
             // (every row this record verifies except Android) -- identical
@@ -3868,6 +3904,15 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
             lu.windowsSubsystem = t.windowsSubsystem;
             lu.windowsEntry     = t.windowsEntry;
+            // An executable with no program start exists only where the row's
+            // data states how one is linked (mcpp#981); elsewhere the image's
+            // starter calls `main`, and the statement is refused naming it.
+            if (t.mainNone) {
+                if (linkWithoutMain.empty())
+                    return std::unexpected(no_program_start_refused(t));
+                lu.linkFlags.insert(lu.linkFlags.end(), linkWithoutMain.begin(), linkWithoutMain.end());
+                lu.noProgramStart = true;
+            }
         }
         lu.loaderTagFlag = loader_tag_flag(lu.kind);
 

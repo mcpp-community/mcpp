@@ -121,11 +121,12 @@ target spec 设置 `exe_suffix: ".js"`。
 | `lib` | `lib/lib<name>.a` | — |
 | `shared` | 被拒绝，点名 `-sSIDE_MODULE` | wasm 的 side module 需要一种 mcpp 不渲染的链接契约 |
 
-`--no-entry` 不是 mcpp 解释的开关，它是一条普通的
-`[target.'cfg(os = "emscripten")'.build] ldflags` 条目，`main` 仍然像
-在每一行上一样只是指名一个翻译单元 —— 因此一个模块化的 Web 程序，如果
-它的页面调用一个导出的工厂函数，就是一个 `main` 文件不定义 `main()` 的
-`bin` 目标，在自己的 `ldflags` 行上带 `--no-entry` 链接。
+页面调用导出的工厂函数的模块化 Web 程序没有程序起点：它在 Web 行上陈述 `main = false`
+（2026.11.20.1+），mcpp 以该行的 `link-without-main`，即 `--no-entry` 链接它
+（[04 —— `main = false`](04-mcpp-toml.md)）。`-sMODULARIZE`、`-sEXPORT_NAME` 与
+`-sEXPORTED_FUNCTIONS` 仍是普通的 `[target.'cfg(os = "emscripten")'.build] ldflags` 条目；
+mcpp 不解释 `ldflags`，因此 `main` 文件不定义 `main()`、在自己的 `ldflags` 行上带 `--no-entry`
+链接的写法得到同一个模块。
 
 执行 `bin/<name>.js` 的 runner 来自 payload 描述符
 （`.mcpp-toolchain.json`）、工程的 `[target.<triple>] runner`，或者

@@ -18,6 +18,7 @@ constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
     "link-emulation", "clang-triple", "gcc-triple", "family", "object-format", "data-model", "exe-suffix",
     "shared-suffix", "loader", "execution", "companions", "exceptions", "exe-suffix-fixed",
+    "link-without-main",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
@@ -132,7 +133,8 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         ".exact = {}, .march = {}, .mabi = {}, "
         ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, "
         ".gccTriple = {}, .objectFormat = {}, .family = {}, .dataModel = {}, .exeSuffix = {}, .sharedSuffix = {}, "
-        ".loader = {}, .execution = {}, .companions = {}, .exceptions = {}, .exeSuffixFixed = {} }},\n",
+        ".loader = {}, .execution = {}, .companions = {}, .linkWithoutMain = {}, .exceptions = {}, "
+        ".exeSuffixFixed = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
@@ -142,6 +144,7 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         lit(text(t, "data-model", where)), lit(text(t, "exe-suffix", where)),
         lit(text(t, "shared-suffix", where)), lit(text(t, "loader", where)),
         lit(text(t, "execution", where)), arrays.add(words(t, "companions", where)),
+        arrays.add(words(t, "link-without-main", where)),
         lit(text(t, "exceptions", where)), suffixFixed ? "true" : "false");
 }
 

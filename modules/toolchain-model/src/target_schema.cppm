@@ -55,6 +55,12 @@ struct Row {
     // `app.js`). Removed before each link and staged when the link wrote one;
     // their absence is not an error (`-sSINGLE_FILE=1` writes none).
     std::span<const std::string_view> companions;
+    // HOW A PROGRAM WITH NO PROGRAM START IS LINKED (`main = false`, mcpp#981):
+    // the link words that make an executable image whose starter enters it
+    // through its exports alone (`--no-entry` on wasm32-emscripten, where the
+    // page calls the module's exported functions). Empty: on this row an
+    // executable image has a program start, and `main = false` is refused.
+    std::span<const std::string_view> linkWithoutMain;
     // THE EXCEPTION MODEL OF THE ROW'S BUILDS when the project states none
     // (`[target.<sel>.abi] exceptions`; design 2026-11-15 N26): `wasm` on
     // wasm32-emscripten. Empty: the toolchain's default.
