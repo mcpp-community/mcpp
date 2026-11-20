@@ -40,6 +40,7 @@ import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
 import mcpplibs.os.fs;           // the budget's slot locks (SPEC-017 O11)
 import mcpplibs.os.machine;      // the machine a run records (SPEC-017 P12.4)
+import mcpp.build.record;        // the run's builds (SPEC-017 B4 `builds.ndjson`)
 import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
 import mcpp.wire;              // the mcpp.launch envelope
 import mcpp.build.cxx_runtime; // the island, verified after the link (design 2026-10-26 §6.3)
@@ -2544,6 +2545,7 @@ export bool dep_sources_newer_than(const std::vector<DepSourceRoot>& depSourceRo
     return false;
 }
 
+
 // mcpp#225: run ninja quietly against an already-verified-fresh build.ninja.
 // Shared by try_fast_build (which just reports "Finished" on success) and
 // try_fast_run (which goes on to locate + exec a binary). Returns nullopt
@@ -2623,6 +2625,11 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
                               std::to_string(mcpp::build::read_memory_threshold_sidecar(outputDir)));
     }
 
+    // The build's record, as the full path keeps it (design 2026-11-20 §5.6).
+    const auto logMark = mcpp::build::progress::mark_log(outputDir);
+    const auto usageFile = outputDir / mcpp::build::record::kUsageFile;
+    std::ofstream(usageFile, std::ios::binary | std::ios::trunc);
+    childEnv.emplace_back(std::string(mcpp::build::record::kUsageEnv), mcpplibs::os::fs::utf8(usageFile));
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),
@@ -2668,8 +2675,10 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         reported = run.reported;
         // A stale graph is not this build's outcome: the full path plans
         // again and builds, and reports the packages then.
-        if (status == 0 || reported || !is_stale_ninja_failure(out))
+        if (status == 0 || reported || !is_stale_ninja_failure(out)) {
+            mcpp::build::progress::keep_ran(outputDir, logMark, usageFile, &report);
             report.finish(status == 0);
+        }
     } else {
         // Nobody reads this ninja's progress: it reports no action start
         // (build progress design 2026-09-29, §6.4).
@@ -2679,6 +2688,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (r.exit_code == 0) r = mcpp::run::execute(argv,{.env=childEnv,.should_stop=compilerStopped});
         out = std::move(r.output);
         status = r.exit_code;
+        if (status == 0 || !is_stale_ninja_failure(out)) mcpp::build::progress::keep_ran(outputDir, logMark, usageFile, nullptr);
     }
     const auto bmiRun = mcpp::buildopt::keep::run_end(outputDir);
     for (auto const& line : mcpp::buildopt::keep::summary(bmiRun))
@@ -4746,6 +4756,14 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
              {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", mcpp::build::test_protocol::monitor_level()},
              {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
     if (!shard.empty()) run["shard"] = std::string(shard);
+    // THE BUILDS OF THE RUN (SPEC-017 B4, design 2026-11-20 §5.6): every edge
+    // this command ran, with its package, time, processor time and memory,
+    // and a line per package the cache served.
+    {
+        std::string builds;
+        for (const auto& b : mcpp::build::record::kept()) builds += mcpp::build::record::to_ndjson(b);
+        if (!builds.empty()) std::ofstream(runDir / "builds.ndjson", std::ios::binary) << builds;
+    }
     if (const auto jitter = mcpp::invocation::get("MTEST_JITTER"); jitter && !jitter->empty())
         run["jitter"] = {{"max_ms", std::atoi(jitter->c_str())},
                          {"seed", std::strtoull(mcpp::invocation::get("MTEST_JITTER_SEED").value_or("0").c_str(), nullptr, 10)}};

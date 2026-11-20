@@ -31,6 +31,8 @@ import mcpp.wire;
 import mcpp.cli.cmd_sbom;
 import mcpplibs.os.platform;
 import mcpplibs.os.fs;
+import mcpplibs.os.process;   // the compiler's use, measured by the executor
+import mcpp.build.record;     // the line the executor appends (design 2026-11-20 §5.6)
 import mcpplibs.os.text;
 import mcpp.invocation;
 import mcpp.effects;
@@ -320,8 +322,27 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object, relocate,
-                                                         reading);
+        // THE EDGE, MEASURED (design 2026-11-20 §5.6): its start, for the
+        // progress line of a long compile, and, once the compiler is reaped,
+        // its processor time and largest resident set -- this process starts
+        // no other program, so its children's use is the compiler's.
+        mcpp::build::progress::record_action_start(output.generic_string());
+        const auto unixMs = [] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch()).count();
+        };
+        const auto started = unixMs();
+        const int status = mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi,
+                                                                     object, relocate, reading);
+        if (const auto file = mcpp::invocation::get(mcpp::build::record::kUsageEnv); file && !file->empty()) {
+            mcpp::build::record::Usage u{output.generic_string(), started, unixMs()};
+            if (const auto used = mcpplibs::os::process::resources(mcpplibs::os::process::of::children)) {
+                u.cpuMs = std::chrono::duration<double, std::milli>(used->user + used->system).count();
+                u.peakBytes = used->peak_memory;
+            }
+            (void)mcpplibs::os::fs::append(mcpp::home::from_utf8(*file), mcpp::build::record::usage_line(u));
+        }
+        return status;
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;

@@ -87,6 +87,37 @@ main = "src/main.cpp"
         auto b = p.mcpp({"build"}, {.env = {{"MTEST_BUDGET", budget.string()}, {"MTEST_BUDGET_HELD", (budget / "slot-0").string()}}});
         expect(e2e::succeeded(b)) << "B: a build within a budget of one slot: " << s::text(b);
     };
+    "927 a build records each edge it ran, and a test run keeps the builds it ran"_test[s::gcc] = [] {
+        // Design 2026-11-20 §5.6, SPEC-017 B4. A build appends its record to the file
+        // MCPP_BUILD_RECORD names: each edge that ran, with its package, its time and, from the
+        // compiler executor, its processor time and largest resident set (A). `--verbose` names the
+        // slowest edges (A). `mcpp test` keeps the builds it ran in its run as `builds.ndjson` (B).
+        s::project p{{"mcpp.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[targets.p]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                     {"src/main.cpp", "import p.a;\nint main() { return a() == 1 ? 0 : 1; }\n"},
+                     {"src/a.cppm", "export module p.a;\nexport int a() { return 1; }\n"},
+                     {"tests/t.cpp", "int main() { return 0; }\n"}};
+        const auto file = s::case_dir() / "record.ndjson";
+        auto a = p.mcpp({"build", "--verbose"}, {.env = {{"MCPP_BUILD_RECORD", file.string()}}});
+        expect(fatal(e2e::succeeded(a))) << s::text(a);
+        expect(e2e::contains(s::text(a), "Slowest")) << "A: --verbose names no slowest edge";
+        const auto lines = s::json_lines(s::read_file(file));
+        expect(fatal(!lines.empty())) << "A: the build appended no record";
+        bool compiled = false;
+        for (const auto& l : lines) {
+            expect(!l.value("build", "").empty()) << l.dump();
+            // The interface unit's object (`obj/a.m.o`), not its scan.
+            const auto out = l.value("output", "");
+            if (out.contains("/a.") && out.ends_with(".o"))
+                compiled = l.value("package", "") == "p" && l.value("ms", -1.0) >= 0 && l.value("cpu_ms", 0.0) > 0;
+        }
+        expect(compiled) << "A: the compile of a.cppm, its package and its processor time: " << s::read_file(file);
+        auto b = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(b))) << s::text(b);
+        const auto runs = s::json_lines(p.read("target/mtest/index.ndjson"));
+        expect(fatal(!runs.empty()));
+        const auto builds = s::json_lines(s::read_file(p.at("target/mtest/runs") / runs.back()["id"].get<std::string>() / "builds.ndjson"));
+        expect(!builds.empty()) << "B: the run kept no build";
+    };
     "178 test observability"_test[s::unix_shell] = [] {
         // `mcpp test` is streamed, timed and bounded. POSIX only: the deadline runner has no
         // kill-by-handle path on Windows, so --timeout and --build-timeout are documented POSIX-only.

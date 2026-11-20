@@ -5,6 +5,7 @@ import mcpplibs.os.stdio;
 import mcpp.ui;
 import mcpp.build.progress;
 import mcpp.build.action_progress;
+import mcpp.build.record;
 
 using namespace mcpplibs::mtest;
 
@@ -238,6 +239,43 @@ UTest a_compile_is_named_by_its_source_and_the_header_carries_the_descriptor{"Pr
     write_record(t.path, r);
     expect(eq(read_descriptor(t.path), "unoptimized + debuginfo"));
     expect(eq(read_descriptor(t.path / "absent"), ""));
+}};
+
+UTest the_edges_after_the_mark_are_the_builds{"ProgressRecord/TheEdgesAfterTheMarkAreTheBuilds", [] {
+    // Design 2026-11-20 §5.6: the entries ninja appended after the mark, each
+    // by its package, with what the executor measured; a cached package is a
+    // line of its own. A recompacted log has no mark: the edges are those the
+    // executor measured.
+    Tmp t;
+    Attribution a;
+    a.owner("app");
+    a.statement("build obj/a.o: cxx_obj a.cpp\n");
+    a.statement("build obj/a.cpp.ddi.dd: dd obj/a.cpp.ddi\n");
+    auto r = a.record({{"app", true, "app", 0, 0}, {"dep", false, "dep", 7, 0}});
+    write_record(t.path, r);
+    const auto log = t.path / ".ninja_log";
+    append(log, "# ninja log v6\n0\t5\t1\tobj/old.o\tff\n");
+    const auto mark = mark_log(t.path);
+    append(log, "0\t2\t1\tobj/a.cpp.ddi.dd\taa\n10\t310\t1\tobj/a.o\tbb\n");
+    const auto usage = t.path / "usage";
+    append(usage, mcpp::build::record::usage_line({"obj/a.o", 5000, 5300, 290.0, 1u << 20}));
+    auto ran = ran_since(t.path, mark, usage);
+    expect(fatal(eq(ran.edges.size(), std::size_t{2})));
+    expect(eq(ran.edges[0].output, std::string("obj/a.cpp.ddi.dd")));
+    expect(eq(ran.edges[1].output, std::string("obj/a.o")));
+    expect(eq(ran.edges[1].package, std::string("app")));
+    expect(eq(ran.edges[1].ms, 300.0));
+    expect(ran.edges[1].cpuMs == std::optional<double>(290.0));
+    expect(fatal(eq(ran.cached.size(), std::size_t{1})));
+    expect(eq(ran.cached[0].package, std::string("dep")));
+    expect(eq(ran.cached[0].units, std::size_t{7}));
+    // Recompacted: shorter than at the mark.
+    std::ofstream(log, std::ios::binary | std::ios::trunc) << "# ninja log v6\n0\t2\t1\tobj/a.cpp.ddi.dd\taa\n10\t310\t1\tobj/a.o\tbb\n";
+    auto big = mark;
+    big.size = 4096;
+    ran = ran_since(t.path, big, usage);
+    expect(fatal(eq(ran.edges.size(), std::size_t{1})));
+    expect(eq(ran.edges[0].output, std::string("obj/a.o")));
 }};
 
 UTest paths_are_compared_normalised{"ProgressRecord/PathsAreComparedNormalised", [] {

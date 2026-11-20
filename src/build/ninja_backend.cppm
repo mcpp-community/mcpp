@@ -52,6 +52,8 @@ import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
+import mcpp.build.record;     // what a build ran, edge by edge (design 2026-11-20 §5.6)
+import mcpplibs.os.fs;          // the usage file's spelling for the executor
 import mcpp.runtime.launch_env;
 import mcpp.build.command_line;
 import mcpp.run;
@@ -5271,6 +5273,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         nenv.emplace_back(ev.key, ev.value);
     if (compilerRun) compilerRun->environment(nenv);
     nenv.emplace_back("MCPP_MEMORY_THRESHOLD", std::to_string(plan.memoryThreshold));
+    // THE BUILD'S RECORD (design 2026-11-20 §5.6): where ninja's log ends now,
+    // and the file each compile's executor appends its measurement to.
+    const auto logMark = mcpp::build::progress::mark_log(plan.outputDir);
+    const auto usageFile = plan.outputDir / mcpp::build::record::kUsageFile;
+    std::ofstream(usageFile, std::ios::binary | std::ios::trunc);
+    nenv.emplace_back(std::string(mcpp::build::record::kUsageEnv), mcpplibs::os::fs::utf8(usageFile));
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     // The directory's BMI cutoff for this run (mcpp.buildopt.keep). A graph
     // compiled with contracts is compared exactly: a contract's violation
@@ -5427,6 +5435,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         for (auto const& c : advice::single_file_cascades(units, bmiRun.changed))
             if (advice::first_time(plan.outputDir, c.module)) mcpp::ui::info("note", advice::line(c));
     }
+    // The edges this build ran, kept for the command (`mcpp test` writes them
+    // into its run) and appended to MCPP_BUILD_RECORD's file.
+    mcpp::build::progress::keep_ran(plan.outputDir, logMark, usageFile, report);
     // Every package gets its final line before what the build has to say
     // after ninja: validations, advice, `Finished`.
     if (report) {
