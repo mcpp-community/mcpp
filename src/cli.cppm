@@ -355,6 +355,7 @@ int run(int argc, char** argv) {
         const int status = mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi,
                                                                      object, relocate, reading);
         if (status == 0 && units) units->keep(unit);
+        else if (object) mcpp::build::unit_cache::Cache::forget(unit);
         if (const auto file = mcpp::invocation::get(mcpp::build::record::kUsageEnv); file && !file->empty()) {
             mcpp::build::record::Usage u{output.generic_string(), started, unixMs()};
             if (const auto used = mcpplibs::os::process::resources(mcpplibs::os::process::of::children)) {
