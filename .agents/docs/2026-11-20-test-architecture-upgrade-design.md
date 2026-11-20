@@ -859,3 +859,7 @@ doctest 适配器（5.14）、依赖的调试信息（5.15）。boost-m 自己�
 8. **P10.4。** 不实现：工作线程在同一进程中运行测试程序，系统对子进程的计量按进程汇总，一个程序的用量无法分离
    （SPEC-017 写明）。
 9. **CI10。** 按 7.3，在固定版本移动到含 5.3 的版本之后。
+10. **K7 的两份表。** `coverage-exceptions.tsv`、`coverage-debt.tsv` 与 `host-requirements.tsv` 仍由
+    `check_e2e_coverage.py` 判定，没有迁入 `[ci.coverage]`：它的 `job`（工作流按名字运行一个测试并自行断言其结果）与
+    `unaffected`（`pr` 集合按变更略去的测试）两种判定在 `mtest ci coverage` 中没有对应，迁入会使这两类测试成为未覆盖。
+    新的账本是面的账本（`[ledger.surface]`）。
