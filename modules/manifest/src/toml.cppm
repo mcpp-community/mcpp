@@ -12,6 +12,7 @@ import mcpp.targetside;
 import std;
 import mcpp.invocation;
 import mcpp.source_kind;
+import mcpp.surface;
 import mcpp.libs.toml;
 import mcpp.toolchain.triple;
 import mcpp.pm.dep_spec;
@@ -1045,6 +1046,38 @@ namespace {
 std::expected<Manifest, ManifestError> parse_document(const t::Document& document,
                                                       const std::filesystem::path& origin,
                                                       LoadContext ctx);
+
+// Whether `at` holds `key` of the registry table `table` ("" for the table itself); a segment
+// `<sel>` or `<name>` matches each child table.
+bool declares(const t::Table& at, std::string_view table, std::string_view key) {
+    if (table.empty()) return key.empty() || at.find(key) != at.end();
+    const auto dot  = table.find('.');
+    const auto seg  = table.substr(0, dot);
+    const auto rest = dot == std::string_view::npos ? std::string_view{} : table.substr(dot + 1);
+    if (seg.starts_with('<')) {
+        for (auto const& [_, v] : at)
+            if (v.is_table() && declares(v.as_table(), rest, key)) return true;
+        return false;
+    }
+    auto it = at.find(seg);
+    return it != at.end() && it->second.is_table() && declares(it->second.as_table(), rest, key);
+}
+
+// The registry's keys a manifest states are the keys this invocation used: each is recorded
+// for the test run that asked (SPEC-017 P5.6 `exercise`, design 2026-11-20 §5.16). A key is
+// one item wherever it is written: under `[target.<sel>.build]` when it is conditional, under
+// `[workspace.<table>]` when it is shared.
+void record_declared_keys(const t::Document& doc) {
+    for (auto const& row : kKeyRegistry) {
+        const bool here = declares(doc.root(), row.table, row.key)
+            || (row.conditional && row.table == "build"
+                && declares(doc.root(), "target.<sel>.build", row.key))
+            || (row.shared && declares(doc.root(), std::format("workspace.{}", row.table), row.key));
+        if (here)
+            mcpp::surface::exercised(mcpp::surface::kKey, row.key.empty()
+                ? std::string(row.table) : std::format("{}.{}", row.table, row.key));
+    }
+}
 }
 
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
@@ -1056,6 +1089,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
     auto m = parse_document(*doc, origin, ctx);
     if (!m && m.error().line == 0) locate_named_key(m.error(), *doc);
+    if (m) record_declared_keys(*doc);
     return m;
 }
 

@@ -33,6 +33,7 @@ export module mcpp.build.refusal;
 
 import std;
 import mcpp.effects;
+import mcpp.surface;
 
 export namespace mcpp::build::refusal {
 
@@ -280,6 +281,10 @@ constexpr std::string_view name(Code c) {
 void record(Code c);
 Code take();
 
+// Every code a refusal site can record, `other` included and `none` not: the reasons of
+// `mcpp emit surface` (design 2026-11-20 §5.16).
+std::vector<Code> codes();
+
 } // namespace mcpp::build::refusal
 
 // ── implementation ──────────────────────────────────────────────────────────
@@ -296,6 +301,7 @@ thread_local Code g_last = Code::None;
 
 void record(Code c) {
     g_last = c;
+    mcpp::surface::exercised(mcpp::surface::kReason, name(c));
     // Needing a download offline is the run stopping before a denied effect:
     // `--offline` is `--deny network`, and the process exits 5 (design
     // 2026-10-26 D23).
@@ -304,5 +310,12 @@ void record(Code c) {
 }
 
 Code take() { Code c = g_last; g_last = Code::None; return c; }
+
+std::vector<Code> codes() {
+    std::vector<Code> out;
+    for (int i = static_cast<int>(Code::None) + 1; i <= static_cast<int>(Code::Other); ++i)
+        out.push_back(static_cast<Code>(i));
+    return out;
+}
 
 } // namespace mcpp::build::refusal

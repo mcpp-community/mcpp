@@ -29,6 +29,7 @@ import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
 import mcpp.cli.cmd_sbom;
+import mcpp.cli.cmd_surface;
 import mcpplibs.os.platform;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;   // the compiler's use, measured by the executor
@@ -664,6 +665,8 @@ int run(int argc, char** argv) {
     char**   trimmed_argp = trimmed_argv.empty() ? nullptr : trimmed_argv.data();
 
     // ─── Build the top-level App ────────────────────────────────────────
+    // `emit surface` lists the definition it is part of; it is set once the definition exists.
+    const cl::App* self = nullptr;
     auto app = cl::App("mcpp")
         .version(std::string{mcpp::toolchain::MCPP_VERSION})
         .description("modern C++ build tool")
@@ -1135,7 +1138,7 @@ int run(int argc, char** argv) {
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────
         .subcommand(cl::App("emit")
-            .description("Generate a document describing this project (xpkg, sbom, build-database)")
+            .description("Generate a document describing this project (xpkg, sbom, build-database) or mcpp (surface)")
             .subcommand(cl::App("xpkg")
                 .description("Generate xpkg Lua entry")
                 .option(cl::Option("version").short_name('V').takes_value().value_name("VER")
@@ -1203,7 +1206,14 @@ int run(int argc, char** argv) {
                     .help("Describe all workspace members in one document"))
                 .option(cl::Option("exclude").takes_value().multiple().value_name("NAME")
                     .help("With --workspace (or at a virtual workspace root), leave the named member out; repeatable, refused with -p"))
-                .action(mcpp::cli::cmd_emit_build_database)))
+                .action(mcpp::cli::cmd_emit_build_database))
+            // The surface is the product's, not a project's; it is a document mcpp writes about
+            // itself, and `emit` already means "write a document" (design 2026-11-20 §5.16).
+            .subcommand(cl::App("surface")
+                .description("List mcpp's commands, flags, manifest keys and reason tokens, one per line")
+                .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
+                    .help("Write to file instead of stdout"))
+                .action([&self](const cl::ParsedArgs& p) { return mcpp::cli::cmd_emit_surface(*self, p); })))
 
         // ─── xpkg (descriptor tooling: parse) ──────────────────────────
         .subcommand(cl::App("xpkg")
@@ -1532,6 +1542,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("object").takes_value().value_name("PATH"))
             .action(cmd_bmi_await))
     ;
+    self = &app;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
     // canonical help screen.
@@ -2011,6 +2022,7 @@ int run(int argc, char** argv) {
         mcpp::ui::error(parsed.error().message);
         return 2;
     }
+    mcpp::cli::record_invocation(app, *parsed);
     const int action_rc = app.run(*parsed);
     // The run's closing notices come last, after everything the command
     // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
