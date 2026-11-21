@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-368 records.
+369 records.
 
 ## By subject
 
@@ -36,6 +36,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### build-program
 
+- [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active
 - [构建依赖的一条管线：配置与产物两轴、包的实例、库接口、兼容系统与工作空间收尾（#797）](2026-10-11-build-dependencies-one-pipeline-design.md) — active
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
 
@@ -210,6 +211,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active
 - [生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）](2026-11-20-test-architecture-upgrade-design.md) — active
 - [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — landed
