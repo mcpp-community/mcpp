@@ -208,6 +208,11 @@ enum class Code {
     // A platform's build program stated a directive outside its phase's
     // vocabulary (build, link, runner, runners).
     PlatformPhaseDirective,
+    // `mcpp publish`: the package's build program read a file its archive does
+    // not carry -- one outside the package's directory, or one HEAD does not
+    // track -- so the consumer's copy of `build.mcpp` cannot be compiled
+    // (design 2026-11-21, build programs' inputs §3.4).
+    BuildProgramUnpublishedInput,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -270,6 +275,8 @@ constexpr std::string_view name(Code c) {
         case Code::PlatformVersionGroup: return "platform-version-group";
         case Code::PlatformPhaseDirective:
                                          return "platform-phase-directive";
+        case Code::BuildProgramUnpublishedInput:
+                                         return "build-program-unpublished-input";
         case Code::Other:                return "other";
     }
     return "other";

@@ -310,11 +310,16 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
 // cache keys on -- and how long the compile took when this build made it.
 struct BuildProgramBinary {
     std::filesystem::path     path;
+    // What its compile read: the prediction and the files observed (design
+    // 2026-11-21, build programs' inputs §3.2). The run cache is keyed on it.
     std::string               identity;
     std::chrono::milliseconds compile{0};
     // The argv that runs it, `{}` the program, when the host graph has a
     // platform (an ok image run by okrun, SPEC-013 §6); empty: run directly.
     std::vector<std::string>  runner;
+    // The files its compile read that no package identity covers: below its
+    // own package, or outside every package and the store.
+    std::vector<std::filesystem::path> reads;
 };
 
 // PrepareState carries prepare_build's working state across the phases it
@@ -989,8 +994,7 @@ struct PrepareState {
     // slot) and whether its default set is seeded: the union of its edges, as
     // its feature-deps and forwards were walked (mcpp#897).
     std::map<std::size_t, std::pair<std::vector<std::string>, bool>> depFeatureRequests;
-    std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
-        toolEnvByConsumer;
+    std::map<std::size_t, std::vector<mcpp::build::ContractAnswer>> toolEnvByConsumer;
     // The programs the graph built for this machine at the ROOT's request
     // (`tools = [...]`), by program name. A runner's program and an ok image's
     // `okld` are looked up here first.

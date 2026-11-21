@@ -534,6 +534,10 @@ export struct BuildContext {
     // The root's exact pins of packages every consumer shares (T3): what
     // `mcpp publish` refuses in a library, one line each.
     std::vector<std::string>        sharedExactPins;
+    // The files the root's build program's compile read that no package
+    // identity covers (design 2026-11-21, build programs' inputs §3.2): what
+    // `mcpp publish` compares with what the package's archive carries.
+    std::vector<std::filesystem::path> rootProgramReads;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the

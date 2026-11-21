@@ -1398,7 +1398,12 @@ static void step6_record_tool_provision(PrepareState& state, HostToolCtx& ctx,
             auto var = mcpp::build::tool_store::env_var_name(n, ctx.toolName);
             if (std::ranges::find(vars, var) != vars.end()) continue;
             vars.push_back(var);
-            v.emplace_back(std::move(var), p.string());
+            // The owner is the providing package: two packages building one
+            // tool name under one variable are two owners (§3.7).
+            v.push_back({std::move(var), p.string(),
+                         std::format("dep_bin(\"{}\", \"{}\")", n, ctx.toolName),
+                         state.packages[ctx.depIdx].root.string(),
+                         mcpp::build::tool_store::ambiguous_env_var_name(n, ctx.toolName)});
         }
     }
 }

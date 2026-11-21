@@ -80,6 +80,36 @@ std::optional<Shape> shape_of(const std::vector<std::string>& argv);
 // The prerequisites of every rule of a Makefile-syntax depfile, each once, unescaped.
 std::vector<std::string> depfile_prerequisites(std::string_view text);
 
+// WHAT A RECORD KEEPS OF A FILE IT READ, and the one rule by which it is compared: by size and
+// modification time while both agree, by content otherwise. The digest memory of a build
+// directory (`Cache`), the files a build program's compile read and the files it declares
+// (`rerun_if_changed`) are all compared by this rule.
+//
+// A FILE WRITTEN IN THE LAST TWO SECONDS keeps no time (`mtime == 0`): a second write of the same
+// size within one tick of the file system's clock keeps the time, and a comparison by time would
+// then hold the first content (git's "racily clean" entries). Such a stamp is compared by content.
+struct Stamp {
+    std::uintmax_t size = 0;
+    std::int64_t   mtime = 0;
+    std::string    digest;
+};
+
+// Whether `file` was written too recently for its time to identify its content.
+bool racily_new(const std::filesystem::path& file);
+
+// The stamp of `file` now, its digest computed; nullopt when it cannot be read.
+std::optional<Stamp> stamp_of(const std::filesystem::path& file);
+
+// Whether `file` holds the content `was` recorded. When it does and its size or time moved,
+// `refreshed` (if given) receives the stamp now, for the record to keep.
+bool unchanged(const std::filesystem::path& file, const Stamp& was,
+               std::optional<Stamp>* refreshed = nullptr);
+
+// Whether `file` has the size and time `was` recorded, reading no content: false when either
+// differs or the stamp keeps no time. A reader that cannot refresh the record (the build's fast
+// path) asks this, and a false answer sends the build to `unchanged`.
+bool same_by_stat(const std::filesystem::path& file, const Stamp& was);
+
 class Cache {
 public:
     Cache(std::filesystem::path dir, std::vector<std::filesystem::path> immutableRoots,
@@ -165,6 +195,47 @@ std::optional<Shape> shape_of(const std::vector<std::string>& argv) {
                               || s.mapper.native().find(':') == 0))
         return std::nullopt;
     return s;
+}
+
+bool racily_new(const fs::path& file) {
+    std::error_code ec;
+    const auto t = fs::last_write_time(file, ec);
+    return ec || fs::file_time_type::clock::now() - t < std::chrono::seconds{2};
+}
+
+namespace {
+// Size and time of `file`, the time 0 while it is racily new; nullopt when it cannot be stat'ed.
+std::optional<std::pair<std::uintmax_t, std::int64_t>> stat_of(const fs::path& file) {
+    std::error_code ec;
+    const auto size = fs::file_size(file, ec);
+    if (ec) return std::nullopt;
+    const auto t = fs::last_write_time(file, ec);
+    if (ec) return std::nullopt;
+    return std::pair{size, racily_new(file) ? std::int64_t{0}
+                                            : static_cast<std::int64_t>(t.time_since_epoch().count())};
+}
+}  // namespace
+
+std::optional<Stamp> stamp_of(const fs::path& file) {
+    const auto st = stat_of(file);
+    if (!st) return std::nullopt;
+    auto digest = mcpp::toolchain::hash_file(file);
+    if (digest.empty()) return std::nullopt;
+    return Stamp{st->first, st->second, std::move(digest)};
+}
+
+bool same_by_stat(const fs::path& file, const Stamp& was) {
+    if (was.mtime == 0) return false;
+    const auto st = stat_of(file);
+    return st && st->first == was.size && st->second == was.mtime;
+}
+
+bool unchanged(const fs::path& file, const Stamp& was, std::optional<Stamp>* refreshed) {
+    if (same_by_stat(file, was)) return true;
+    auto now = stamp_of(file);
+    if (!now || now->digest != was.digest) return false;
+    if (refreshed && (now->size != was.size || now->mtime != was.mtime)) *refreshed = std::move(now);
+    return true;
 }
 
 std::vector<std::string> depfile_prerequisites(std::string_view text) {
@@ -347,10 +418,8 @@ std::string Cache::digest(const fs::path& file) {
     if (auto it = memo_.find(key); it != memo_.end()) return it->second;
     auto d = mcpp::toolchain::hash_file(file);
     memo_.emplace(key, d);
-    // A FILE WRITTEN IN THE LAST TWO SECONDS IS NOT REMEMBERED for other compiles: a second write
-    // of the same size within one tick of the file system's clock keeps the time, and the memory
-    // would then hold the first content's digest (git's "racily clean" entries).
-    if (fs::file_time_type::clock::now() - fs::last_write_time(file, ec) < std::chrono::seconds{2} || ec) return d;
+    // Not remembered for other compiles while its time cannot identify its content (`Stamp`).
+    if (racily_new(file)) return d;
     // One line, one append: the units of a build write it concurrently.
     std::ofstream(buildDir_ / kDigestsFile, std::ios::binary | std::ios::app) << key + "\t" + d + "\n";
     return d;

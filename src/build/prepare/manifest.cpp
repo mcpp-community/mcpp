@@ -630,9 +630,10 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     // instead (BuildOverrides::work_dir).
     state.workRoot =
         state.overrides.work_dir.empty() ? *state.root : state.overrides.work_dir;
-    // The project whose record `once` notices consult; a tool-provisioning pass, which writes into
-    // the tool store, is not a project.
-    if (state.overrides.work_dir.empty()) mcpp::diag::set_project_target(state.workRoot / "target");
+    // The project whose record `once` notices consult: the project's own `target/`, whatever
+    // directory this plan writes into (the build database plans in one of its own). A nested
+    // prepare -- the build programs' sub-build, a tool's provisioning -- is not a project.
+    if (state.overrides.tool_depth == 0) mcpp::diag::set_project_target(*state.root / "target");
     {
         std::error_code wdEc;
         std::filesystem::create_directories(state.workRoot, wdEc);

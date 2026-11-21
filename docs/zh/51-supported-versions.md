@@ -71,6 +71,7 @@ schema，那是 [50 —— 机器可读输出](50-machine-output.md)。
 | `platform-universal`：平台的 `[platform] universal`，被忽略；打包的目标即其腿 | 2026.10.30.1 | 2027.1 | 平台中不写；由打包命名目标（`--target openkal`） |
 | `no-universal-flag`：`mcpp pack --no-universal`，单目标打包不再需要它（与目标集合同用时拒绝） | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>`（一条腿） |
 | `quoted-dotted-dependency-key`：带点的加引号依赖键（`"mcpplibs.cmdline" = "0.0.2"`），即一个 TOML 键，按其中的点所拼写的选择器读取；它是一个包与其父包或子包并列时的唯一写法时除外（docs/05） | 2026.11.8.1 | 2027.2 | 不加引号的选择器 `mcpplibs.cmdline = "0.0.2"` |
+| `ambiguous-contract-name`：构建程序以一个名字提问（`dep_dir`、`dep_linkage`、`dep_bin`、`xpkg_dir`），该名字的契约变量由多个依赖或载荷回答，回答为其中的第一个 | 2026.11.21.1 | 2027.2 | 精确的拼写：限定名，或 `xpkg_dir("<ns>", "<name>")`；没有可区分的拼写时，改名其中一个包 |
 
 ## 复现一次构建
 

@@ -1036,6 +1036,8 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     // the fingerprint covers neither input. Stamping it on the plan is what
     // lets the graph say so about itself.
     ctx.sharedExactPins = state.sharedExactPins;
+    if (auto it = state.buildProgramBinaries.find(0); it != state.buildProgramBinaries.end())
+        ctx.rootProgramReads = it->second.reads;
     ctx.plan.graphShape = (state.includeDevDeps || !state.extraTargets.empty()
                            || !state.memberTargets.empty())
         ? mcpp::build::GraphShape::WithTests

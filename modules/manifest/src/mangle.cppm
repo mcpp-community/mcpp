@@ -52,6 +52,11 @@ std::vector<std::string> declared_module_roots(std::string_view source);
 // nothing when the name matches none.
 std::vector<std::string> imported_module_names(std::string_view source);
 
+// The headers a source includes, as written with their delimiters (`<cstdio>`, `"emit.hpp"`), in
+// order of appearance, deduplicated. The same line-based matcher: `#include` must open a logical
+// line, so one behind `//` is not read; `#include MACRO` names nothing and yields nothing.
+std::vector<std::string> included_headers(std::string_view source);
+
 // Rewrite a single .cppm file's module / import declarations:
 //   * `(export )?module N;`     → `(export )?module rename[N];`
 //   * `(export )?module N:P;`   → `(export )?module rename[N]:P;`
@@ -180,6 +185,32 @@ std::vector<std::string> imported_module_names(std::string_view source) {
         lineStart = eol + 1;
     }
     return names;
+}
+
+std::vector<std::string> included_headers(std::string_view source) {
+    std::vector<std::string> out;
+    std::size_t lineStart = 0;
+    while (lineStart < source.size()) {
+        auto eol = source.find('\n', lineStart);
+        if (eol == std::string_view::npos) eol = source.size();
+        auto line = source.substr(lineStart, eol - lineStart);
+        auto cur = skip_ws(line, 0);
+        if (cur < line.size() && line[cur] == '#') {
+            cur = skip_ws(line, cur + 1);
+            if (auto p = consume_keyword(line, cur, "include"); p != std::string::npos) {
+                cur = skip_ws(line, p);
+                const char close = cur < line.size() ? (line[cur] == '<' ? '>' : line[cur] == '"' ? '"' : 0) : 0;
+                if (const auto end = close ? line.find(close, cur + 1) : std::string_view::npos;
+                    end != std::string_view::npos && end > cur + 1) {
+                    std::string h(line.substr(cur, end - cur + 1));
+                    if (std::ranges::find(out, h) == out.end()) out.push_back(std::move(h));
+                }
+            }
+        }
+        if (eol == source.size()) break;
+        lineStart = eol + 1;
+    }
+    return out;
 }
 
 std::string rewrite_module_decls(

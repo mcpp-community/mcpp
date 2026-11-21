@@ -221,6 +221,12 @@ enum class Slot : std::size_t {
     // `mcpp::dep_bin` was asked for that no edge and no feature declares. The
     // program received "" and goes on; the engine says which line declares it.
     UndeclaredTools,
+    // Protocol 21 (design 2026-11-21, build programs' inputs §3.7):
+    // `<id>\t<question>\t<spellings>` for each deprecated reading a typed
+    // reader applied -- a name whose variable several dependencies answer,
+    // answered by the first (`ambiguous-contract-name`). The engine warns by
+    // the registry's row, on a replay too.
+    DeprecatedReadings,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -319,7 +325,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 40> kTable{{
+inline constexpr std::array<Def, 41> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -435,6 +441,7 @@ inline constexpr std::array<Def, 40> kTable{{
     {"warning",             "warning",           Slot::Warnings,         Scope::Advisory,       Transform::Verbatim,      false, "", "", 5},
     {"diagnostic",          "diagnostic",        Slot::Diagnostics,      Scope::Advisory,       Transform::Verbatim,      false, "", "", 14},
     {"undeclared-tool",     "undeclared-tool",   Slot::UndeclaredTools,  Scope::Advisory,       Transform::Verbatim,      false, "", "", 20},
+    {"deprecated",          "deprecated",        Slot::DeprecatedReadings, Scope::Advisory,     Transform::Verbatim,      false, "", "", 21},
     {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
     // The probe channel: a rule package measures, the engine compares. See
     // Slot::Facts for the shape of each value.

@@ -629,6 +629,14 @@ export struct BuildCacheEntry {
     // must decline once rather than read as "none".
     std::string rootCompileDb;
     bool        rootCompileDbRecorded = false;
+    // THE RECORDS OF THE BUILD PROGRAMS THE GRAPH WAS PLANNED WITH (design
+    // 2026-11-21, build programs' inputs §3.2): a program's run cache and a
+    // group's record of what its compiles read. The fast path compares what
+    // they state; one that is gone states nothing, and its program would never
+    // be asked again. Measured: after `rm -rf target/.build-mcpp`, a header the
+    // program includes was edited and the build replayed the old directives.
+    std::vector<std::string> programRecords;
+    bool                     programRecordsRecorded = false;
 };
 
 // One list of extensions as a line of the record carries it: joined by a unit
@@ -855,6 +863,16 @@ export std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path
                 e.engine = EngineIdentity{line.substr(7, tab - 7), line.substr(tab + 1)};
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Count-prefixed, as `xlingsPayloads=` is: absent means the entry
+        // predates the field and the fast paths decline it once.
+        if (haveNextLine && line.starts_with("programRecords=")) {
+            std::size_t n = 0;
+            try { n = std::stoul(line.substr(15)); } catch (...) { n = 0; }
+            for (std::size_t i = 0; i < n && std::getline(f, line); ++i)
+                e.programRecords.push_back(line);
+            e.programRecordsRecorded = e.programRecords.size() == n;
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -954,6 +972,12 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     // happen in this process, after the graph was emitted.
     newEntry.engine = running_engine();
     newEntry.lockDigest = lock_digest(projectRoot);
+    // A path that holds a line break cannot be a line of the record, and is
+    // left out: its program is then asked by the walk alone.
+    for (auto const& r : mcpp::build::program_records(projectRoot))
+        if (auto text = mcpplibs::os::fs::utf8(r); text.find_first_of("\r\n") == std::string::npos)
+            newEntry.programRecords.push_back(std::move(text));
+    newEntry.programRecordsRecorded = true;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -1033,6 +1057,10 @@ void write_build_cache_entries(const std::filesystem::path& path,
         if (!e.lockDigest.empty()) f << "lock=" << e.lockDigest << '\n';
         if (e.engine)
             f << "engine=" << e.engine->version << '\t' << e.engine->exe << '\n';
+        if (e.programRecordsRecorded) {
+            f << "programRecords=" << e.programRecords.size() << '\n';
+            for (auto& r : e.programRecords) f << r << '\n';
+        }
     }
 }
 
@@ -3127,6 +3155,11 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
         return std::unexpected("the recorded build predates the lock it was planned under");
     if (e.lockDigest != lock_digest(ask.manifest.parent_path()))
         return std::unexpected("mcpp.lock is not the one the recorded build was planned under");
+    if (!e.programRecordsRecorded)
+        return std::unexpected("the recorded build predates the list of its build programs' records");
+    for (auto const& r : e.programRecords)
+        if (!std::filesystem::exists(mcpplibs::os::fs::from_utf8(r), ec))
+            return std::unexpected("a record of the build programs the graph was planned with is gone");
 
     // mcpp#225: bounded + vcs/build-dir-excluded walk (see sources_newer_than)
     // instead of a hand-rolled recursive_directory_iterator over src/.

@@ -379,12 +379,18 @@ void fill_xpkg_env(PrepareState& state, mcpp::build::BuildProgramEnv& e,
     if (!cfg) return;
     auto xlEnv = mcpp::config::make_xlings_env(**cfg);
     std::set<std::string> answered;
-    // Namespaced first -- it is the exact spelling, and the bare form must not
-    // shadow it (the receiver keeps the first value it is given for a name).
+    // Namespaced first -- it is the exact spelling, and the bare one answers
+    // the first declared only while that reading is deprecated (§3.7). The
+    // owner is the payload: two namespaces declaring a name are two owners.
     auto put = [&](const mcpp::provider::PackageRef& ref, std::string_view suffix,
                    const std::string& value) {
-        e.xpkgDirs.emplace_back(mcpp::build::xpkg_env_var(ref.ns, ref.name, suffix), value);
-        e.xpkgDirs.emplace_back(mcpp::build::xpkg_env_var("", ref.name, suffix), value);
+        const auto owner = ref.ns + ":" + ref.name;
+        e.xpkgDirs.push_back({mcpp::build::xpkg_env_var(ref.ns, ref.name, suffix), value,
+                              std::format("xpkg_dir(\"{}\", \"{}\")", ref.ns, ref.name), owner,
+                              mcpp::build::xpkg_ambiguous_var(ref.ns, ref.name)});
+        e.xpkgDirs.push_back({mcpp::build::xpkg_env_var("", ref.name, suffix), value,
+                              std::format("xpkg_dir(\"{}\")", ref.name), owner,
+                              mcpp::build::xpkg_ambiguous_var("", ref.name)});
     };
     for (auto const& raw : declared) {
         // THE VERSION THIS BUILD INSTALLED, NOT THE ONE THIS MANIFEST WROTE.
@@ -472,7 +478,7 @@ answer_payload_requests(PrepareState& state, mcpp::manifest::Manifest& m,
         }
     }
     // The program runs again with the directories it asked for.
-    std::erase_if(e.xpkgDirs, [](const auto& kv) { return kv.first.starts_with("MCPP_XPKG_"); });
+    std::erase_if(e.xpkgDirs, [](const auto& a) { return a.var.starts_with("MCPP_XPKG_"); });
     fill_xpkg_env(state, e, m, consumer);
     return true;
 }

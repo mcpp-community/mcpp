@@ -92,6 +92,16 @@ void set_project_target(const std::filesystem::path& targetDir);
 void notice(Severity severity, std::string_view domain, std::string_view subject,
             std::string_view what, std::string_view hint = {});
 
+// One notice about several subjects (the packages of a workspace, the files a program read): a
+// `once` domain names only the subjects the project has not been told of, each marked told, and
+// `what` composes the text from their phrase (`a, b and c`, mcpp.notice). Told of all of them,
+// nothing is printed and the record is kept for the envelope. `scope` is part of each subject's
+// key and not of the text: the package whose program read a file, the usage a package has.
+void notice(Severity severity, std::string_view domain, std::string_view scope,
+            std::span<const std::string> subjects,
+            const std::function<std::string(std::string_view phrase)>& what,
+            std::string_view hint = {});
+
 // A fact the project's notices compare against (the default toolchain it last built with), and
 // the value to keep for the next run. Without a project there is no fact to read or keep.
 std::optional<std::string> project_fact(std::string_view name);
@@ -155,34 +165,44 @@ std::string dedup_key(const Record& r) {
                        r.impact, r.hint);
 }
 
+// The subjects of a `once` domain this project has not been told of, marked told when `mark`;
+// every subject for another domain, or without a project: there is nothing to have been told.
+std::vector<std::string> untold(std::string_view domain, std::string_view scope,
+                                std::span<const std::string> subjects, bool mark) {
+    auto key = [&](const std::string& s) {
+        return mcpp::notice::key(domain, scope.empty() ? s : std::format("{}\x1f{}", scope, s));
+    };
+    std::vector<std::string> out(subjects.begin(), subjects.end());
+    if (mcpp::notice::policy_of(domain) != mcpp::notice::Policy::Once) return out;
+    std::lock_guard lock(g_projectLock);
+    if (g_projectTarget.empty()) return out;
+    if (!g_project)
+        g_project = mcpp::notice::Record::load(g_projectTarget / mcpp::notice::kRecordFile);
+    std::erase_if(out, [&](const std::string& s) { return g_project->shown(key(s)); });
+    if (mark && !out.empty()) {
+        for (auto const& s : out) g_project->mark(key(s));
+        (void)g_project->save();
+    }
+    return out;
+}
+
 // Records render as they are pushed, not at flush(): the CLI interleaves
 // warnings with `ui::status` progress lines, and deferring them would both
 // reorder that stream and lose everything reported before an early return.
-// Deduplication happens here, so a repeated report renders once.
-// Whether a `once` notice about `r.subject` was said to this project before; marks it said
-// otherwise. False without a project: there is nothing to have been told.
-bool said_before(const Record& r) {
-    if (r.subject.empty() || mcpp::notice::policy_of(r.domain) != mcpp::notice::Policy::Once)
-        return false;
-    std::lock_guard lock(g_projectLock);
-    if (g_projectTarget.empty()) return false;
-    if (!g_project)
-        g_project = mcpp::notice::Record::load(g_projectTarget / mcpp::notice::kRecordFile);
-    const auto k = mcpp::notice::key(r.domain, r.subject);
-    if (g_project->shown(k)) return true;
-    g_project->mark(k);
-    (void)g_project->save();
-    return false;
-}
-
-void push(Record r) {
+// Deduplication happens here, so a repeated report renders once. `toldBefore`:
+// the project was told of every subject already (decided by the caller, which
+// composed the text from the subjects it was not told of); unset, it is decided
+// here from `r.subject`.
+void push(Record r, std::optional<bool> toldBefore = std::nullopt) {
     auto key = dedup_key(r);
     for (auto const& existing : g_records)
         if (dedup_key(existing) == key) return;
     if (g_printed.insert(key).second) {
         // A note --quiet hides is not marked: the project has not been told it.
         const bool quietNote = r.severity == Severity::Note && mcpp::ui::is_quiet();
-        const bool before = !quietNote && said_before(r);
+        const bool before = toldBefore ? *toldBefore
+            : !quietNote && !r.subject.empty()
+              && untold(r.domain, {}, std::span(&r.subject, 1), /*mark=*/true).empty();
         r.shown = !before && !quietNote;
         if (before && mcpp::log::is_verbose()) {
             mcpp::ui::note(r.format() + " (noted before)");
@@ -267,6 +287,19 @@ void notice(Severity severity, std::string_view domain, std::string_view subject
     Record r{severity, std::string(domain), std::string(what), std::string{}, std::string(hint)};
     r.subject = std::string(subject);
     push(std::move(r));
+}
+
+void notice(Severity severity, std::string_view domain, std::string_view scope,
+            std::span<const std::string> subjects,
+            const std::function<std::string(std::string_view phrase)>& what, std::string_view hint) {
+    if (subjects.empty()) return;
+    const bool quietNote = severity == Severity::Note && mcpp::ui::is_quiet();
+    const auto fresh = untold(domain, scope, subjects, /*mark=*/!quietNote);
+    const std::span<const std::string> named = fresh.empty() ? subjects : std::span(fresh);
+    Record r{severity, std::string(domain), what(mcpp::notice::subjects(named)), std::string{},
+             std::string(hint)};
+    r.subject = mcpp::notice::subjects(subjects, subjects.size());
+    push(std::move(r), /*toldBefore=*/fresh.empty());
 }
 
 std::optional<std::string> project_fact(std::string_view name) {

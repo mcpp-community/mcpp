@@ -132,3 +132,23 @@ UTest a_domain_without_a_policy_is_said_every_run{"DiagNotices/AlwaysIsSaidEvery
     dg::reset();
     std::filesystem::remove_all(target.parent_path());
 }};
+
+UTest a_notice_of_several_subjects_names_the_new_ones{"DiagNotices/SeveralSubjectsNameTheNewOnes", [] {
+    const auto target = scratch_target("several");
+    mcpp::ui::disable_color();
+    auto run = [&](std::vector<std::string> files) {
+        dg::reset();
+        dg::set_project_target(target);
+        return stderr_of([&] {
+            dg::notice(dg::Severity::Warning, "build-program/reads-outside", "pkg", files,
+                       [](std::string_view phrase) { return std::format("reads {}", phrase); });
+        });
+    };
+    expect(run({"/x/a.hpp", "/x/b.hpp"}).contains("reads /x/a.hpp and /x/b.hpp"));
+    expect(run({"/x/a.hpp", "/x/b.hpp"}).empty()) << "told of both";
+    const auto third = run({"/x/a.hpp", "/x/c.hpp"});
+    expect(third.contains("reads /x/c.hpp")) << third;
+    expect(!third.contains("a.hpp")) << "only the subject not told of";
+    dg::reset();
+    std::filesystem::remove_all(target.parent_path());
+}};

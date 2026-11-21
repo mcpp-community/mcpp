@@ -127,3 +127,46 @@ UTest a_unit_travels_as_a_record_and_its_imports_are_read_from_the_scan{"UnitCac
                                         "$root gcm.cache\nb b.gcm\nstd std.gcm\na a.gcm\n", "/build");
     expect(eq(bmis, std::vector<fs::path>{"/build/gcm.cache/b.gcm", "/build/gcm.cache/std.gcm"}));
 }};
+
+UTest a_stamp_is_compared_by_time_then_content{"UnitCache/AStampIsComparedByTimeThenContent", [] {
+    Tmp t;
+    const auto f = t.dir / "emit.hpp";
+    write(f, "one");
+    // A file older than the racy window: its time identifies its content.
+    const auto old = fs::file_time_type::clock::now() - std::chrono::hours{1};
+    fs::last_write_time(f, old);
+    auto s = uc::stamp_of(f);
+    expect(fatal(s.has_value()));
+    expect(s->mtime != 0);
+    expect(uc::same_by_stat(f, *s));
+    expect(uc::unchanged(f, *s));
+
+    // Touched, same content: unchanged, and the stamp to keep is handed back.
+    fs::last_write_time(f, old + std::chrono::minutes{1});
+    std::optional<uc::Stamp> refreshed;
+    expect(!uc::same_by_stat(f, *s));
+    expect(uc::unchanged(f, *s, &refreshed));
+    expect(fatal(refreshed.has_value()));
+    expect(uc::same_by_stat(f, *refreshed));
+
+    // Same size and the same time, other content: a stamp that keeps a time trusts it, which is
+    // why a racily new file keeps none.
+    write(f, "two");
+    expect(eq(uc::stamp_of(f)->mtime, std::int64_t{0})) << "a file written now keeps no time";
+    expect(!uc::unchanged(f, *refreshed));
+    fs::remove(f);
+    expect(!uc::unchanged(f, *refreshed)) << "a file that is gone is changed";
+}};
+
+UTest a_racily_new_stamp_is_compared_by_content{"UnitCache/ARacilyNewStampIsComparedByContent", [] {
+    Tmp t;
+    const auto f = t.dir / "a.txt";
+    write(f, "abc");
+    const auto s = uc::stamp_of(f);
+    expect(fatal(s.has_value()));
+    expect(eq(s->mtime, std::int64_t{0}));
+    expect(!uc::same_by_stat(f, *s)) << "no time, so the fast reader cannot tell";
+    expect(uc::unchanged(f, *s));
+    write(f, "abd");
+    expect(!uc::unchanged(f, *s));
+}};
