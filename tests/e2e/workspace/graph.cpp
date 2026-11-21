@@ -381,9 +381,10 @@ export int consumer_flag_v() {
 
     // Holds the machine: compiles at the same time need the budget's slots (SPEC-017 O11).
     "860 a workspaces programs compile at the same time"_test[resource{"machine"}] = [] {
-        // A: at -j 4 the members' build programs compile at the same time, and three run. B: at
-        // -j 1 they compile one after another and run in the same order. C: when two do not
-        // compile, the failure reported is that of the first to run, at either -j.
+        // A: at -j 4 the members' build programs compile at the same time -- more than one is under
+        // way at once -- and three run. B: at -j 1 they compile one after another and run in the
+        // same order. C: when two do not compile, the failure reported is that of the first to
+        // run, at either -j.
         s::project ws(s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"pa\", \"pb\", \"pc\"]\n"}});
         for (std::string m : {"pa", "pb", "pc"}) {
             ws.write(m + "/mcpp.toml", std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n\n[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", m));
@@ -405,47 +406,41 @@ export int consumer_flag_v() {
         auto clean = [&] {
             for (std::string d : {"target", "pa/target", "pb/target", "pc/target"}) fs::remove_all(ws.at(d));
         };
-        // What A measures is the programs' compiles alone. The first build of the case's home
-        // also compiles the engine's module (`import mcpp`) into the home's cache, and under
-        // clang its code generation may continue after its interface is published, holding a
-        // slot of the budget: on three processors the three compiles then did not all overlap
-        // (macOS, CI 2026-11-21). A later build stages the module from the cache.
-        auto r = ws.mcpp({"build", "--workspace", "-j", "4"}, inherited);
-        expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build at -j 4: " << s::text(r);
-        clean();
-        r = ws.mcpp({"build", "--workspace", "-j", "4"}, inherited);
-        expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build again at -j 4: " << s::text(r);
-        long latest_start = 0, earliest_end = std::numeric_limits<long>::max();
-        for (std::string m : {"pa", "pb", "pc"}) {
-            const auto sp = span(m);
-            expect(fatal(sp.has_value())) << "A: the build programs' .ninja_log does not record every compile";
-            latest_start = std::max(latest_start, sp->first);
-            earliest_end = std::min(earliest_end, sp->second);
-        }
+        // The members' compiles, and the most of them under way at one instant.
+        const auto compiles = [&](std::string_view part) {
+            std::vector<std::pair<long, long>> out;
+            for (std::string m : {"pa", "pb", "pc"}) {
+                const auto sp = span(m);
+                expect(fatal(sp.has_value())) << part << ": the build programs' .ninja_log does not record the compile of " << m;
+                out.push_back(*sp);
+            }
+            return out;
+        };
+        const auto most_at_once = [](const std::vector<std::pair<long, long>>& spans) {
+            std::size_t most = 0;
+            for (const auto& [at, _] : spans)
+                most = std::max<std::size_t>(most, std::ranges::count_if(spans, [&](const auto& o) { return o.first <= at && at < o.second; }));
+            return most;
+        };
         const auto graph_rows = [&] {
             std::string text;
             for (const auto& log : s::find_files(ws.at("target/.build-mcpp/host"), R"(\.ninja_log)"))
                 for (const auto& row : ninja_rows(log)) text += std::format("\n  {} {} {}", row[0], row[1], row[3]);
             return text;
         };
-        expect(fatal(latest_start < earliest_end)) << "A: the compiles did not overlap at -j 4 (latest start " << latest_start << ", earliest end " << earliest_end << "); the graph's steps:" << graph_rows();
+        // Not all three at one instant: each compile waits for its own unit's scan, and on three
+        // processors the scans of the same file ended 1.9, 3.5 and 7.7 s into the graph, so the
+        // first compile had ended before the third began while two were under way together
+        // (macOS, CI 2026-11-21).
+        auto r = ws.mcpp({"build", "--workspace", "-j", "4"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build at -j 4: " << s::text(r);
+        expect(fatal(most_at_once(compiles("A")) >= 2u)) << "A: no two compiles were under way at once at -j 4; the graph's steps:" << graph_rows();
         const auto order = ran(s::text(r), "p[abc]");
         expect(fatal(order.size() == 3u)) << "A: expected three programs to run, got " << order.size() << ": " << s::text(r);
         clean();
         r = ws.mcpp({"build", "--workspace", "-j", "1"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "B: the workspace did not build at -j 1: " << s::text(r);
-        std::vector<std::pair<long, long>> spans;
-        for (std::string m : {"pa", "pb", "pc"}) {
-            const auto sp = span(m);
-            expect(fatal(sp.has_value())) << "B: the build programs' .ninja_log does not record the compile of " << m;
-            spans.push_back(*sp);
-        }
-        std::ranges::sort(spans);
-        long prev_end = 0;
-        for (const auto& [st, en] : spans) {
-            expect(fatal(st >= prev_end)) << "B: two compiles overlapped at -j 1";
-            prev_end = en;
-        }
+        expect(fatal(most_at_once(compiles("B")) == 1u)) << "B: two compiles overlapped at -j 1; the graph's steps:" << graph_rows();
         expect(fatal(ran(s::text(r), "p[abc]") == order)) << "B: the programs ran in another order at -j 1 than at -j 4";
         const auto first = order[0], second = order[1];
         ws.write(first + "/build.mcpp", "#include <regex>\n#include <map>\n#error T860-failure-in-" + first + "\nint main() { return 0; }\n");

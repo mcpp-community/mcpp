@@ -40,7 +40,11 @@ void self_contained(const std::string& imports, std::string_view what) {
         expect(fatal(!s::contains_nocase(imports, dll))) << what << " imports a toolchain DLL (" << dll << "): " << imports;
 }
 
-E2E mingw{"mingw", s::home_fixture, [] {
+// The time the suite states is the runner's limit for a case selected in it (SPEC-017 O5). Case
+// 182 installs the GNU row's toolchain in a home of its own (an archive of 276 MB): 54 s on a
+// runner whose caches were warm, beyond five minutes on one whose caches were cold (CI, 2026-11-20
+// and 2026-11-21).
+E2E mingw{"mingw", s::home_fixture, timeout{std::chrono::minutes{15}}, [] {
     "97 mingw toolchain"_test[s::windows] = [] {
         // `toolchain install mingw 16.1.0` installs the payload; `toolchain default mingw@16.1.0`
         // persists gcc@16.1.0 and x86_64-windows-gnu, both starred by `list`; a project with a named
@@ -80,10 +84,7 @@ E2E mingw{"mingw", s::home_fixture, [] {
         expect(fatal(e2e::succeeded(alone))) << "the build.mcpp helper does not run without the toolchain on PATH: " << s::text(alone);
     };
 
-    // A home of its own installs the GNU row's toolchain (an archive of 276 MB): 54 s on a runner
-    // whose caches were warm, beyond five minutes on one whose caches were cold (CI, 2026-11-20
-    // and 2026-11-21).
-    "182 windows no msvc fallback"_test[s::windows][s::no_msvc][timeout{std::chrono::minutes{15}}] = [] {
+    "182 windows no msvc fallback"_test[s::windows][s::no_msvc] = [] {
         // A Windows machine without Visual Studio (the CI job masks it) builds on first use: the
         // default becomes the GNU-ABI row, the build says so, `list` stars gcc and
         // x86_64-windows-gnu, a second build is silent, the program runs alone, and a project that
