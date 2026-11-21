@@ -173,7 +173,8 @@ main = "src/main.cpp"
         // A partial version (`gcc 16.1`, `gcc@16.1`) has one answer in `toolchain install`,
         // `toolchain default` and a build (SPEC-006 §2.6, §2.7); a project that states one records the
         // answer in mcpp.lock and `mcpp update` drops it; a first run in a home with no default
-        // picks the glibc gcc@16.1.0, prints the First-run banner once, and persists it. The
+        // picks the host's first-run toolchain (`self env`'s `defaultToolchain`, the built-in
+        // table's), prints the First-run banner once, and persists it. The
         // request is `16.1` rather than `16`: what `16` answers moves with the index, and the case
         // asserts the agreement, not a release.
         const auto h1 = s::case_home(s::home::payloads);
@@ -216,11 +217,15 @@ main = "src/main.cpp"
         configure_e2e_mirror(o2);
         auto p = made(s::case_dir() / "proj", "hello", o2);
         expect(fatal(s::no_line(p.read("mcpp.toml"), R"(^\[toolchain\])"))) << "scaffolding regression: mcpp new now adds [toolchain]; update this test";
+        r = p.mcpp({"self", "env", "--format", "json"}, o2);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        const auto firstRun = s::json(r.out)["data"].value("defaultToolchain", std::string{});
+        expect(fatal(firstRun.starts_with("gcc@"))) << "the host's first run is not a glibc gcc: " << r.out;
         r = p.mcpp({"build"}, o2);
         const auto first = s::text(r);
         expect(fatal(e2e::succeeded(r))) << "first-run build failed: " << first;
         expect(fatal(e2e::contains(first, "First run"))) << "missing First-run banner: " << first;
-        expect(fatal(e2e::contains(first, "gcc@16.1.0"))) << "first run didn't pick glibc gcc@16.1.0 as default: " << first;
+        expect(fatal(e2e::contains(first, "installing " + firstRun + " "))) << "first run didn't pick " << firstRun << " as default: " << first;
         expect(fatal(e2e::contains(first, "Finished"))) << "build did not finish: " << first;
         const auto binary = s::find_file(p.at("target"), "hello");
         expect(fatal(binary.has_value() && (fs::status(*binary).permissions() & fs::perms::owner_exec) != fs::perms::none)) << "no hello binary produced";
