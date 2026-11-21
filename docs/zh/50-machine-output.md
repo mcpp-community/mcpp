@@ -65,9 +65,14 @@ CI 脚本，以及任何解析 mcpp 输出的程序，都可以依赖本章陈�
   "message": "unknown key 'standrad'",
   "path": "mcpp.toml",                       // omitted when there is none
   "range": { "start": {"line": 3, "column": 1},
-             "end":   {"line": 3, "column": 9} }   // omitted when there is none
+             "end":   {"line": 3, "column": 9} },  // omitted when there is none
+  "shown": false                             // omitted when the terminal showed it
 }
 ```
+
+`shown` 为 `false` 表示终端没有显示这条诊断：工程已被告知过、一个工程只说一次的提示，以及
+`--quiet` 下的说明（2026.11.21.1+）。信封携带每一条诊断，终端是否显示都携带；读取者不受终端的
+显示策略影响。
 
 位置从 1 开始计数。`column` 数的是 **UTF-8 字节**，因此索引的正是 mcpp 实际
 读到的那份文件。
@@ -586,6 +591,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `accel-backend-undeclared` | 一条 `[build] sources` 条目命名的后端，未出现在该包自己的 `[package] accelerators` 中 |
 | `device-source-unconsumed` | 一个设备类源文件没有到达任何 action，因此没有任何东西编译它 |
 | `host-module-missing` | `build.mcpp` 导入的模块，没有任何依赖以 host module 的形式提供 |
+| `build-program-unpublished-input` | `mcpp publish`：包的构建程序读到了包的归档不含的文件——包目录之外的文件，或 HEAD 未跟踪的文件（2026.11.21.1+） |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的两个版本上 |
 | `shared-library-cxx-runtime` | 图所在的构建中，C++ 运行时是一个包，而某个依赖的 C++ 共享库没有声明私有副本 |
 | `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引 *(2026.9.16.1+)* |
@@ -695,6 +701,9 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 | `MCPP_BUILD_DATABASE_PAYLOAD_DEFERRED` | 说明 | 构建程序请求了一个声明 `provision = "on-request"` 的载荷；规划不安装任何东西，点名该程序与这些包，并在没有它们的情况下描述计划（2026.10.1.3+） |
 | `MCPP_BUILD_DATABASE_PROGRAM_FAILED` | 错误 | 构建程序失败；它所属的包被描述为不含它产生的指令 |
 | `MCPP_INDEX_REQUIRES_NEWER_MCPP` | 说明 | 本次运行刷新的某个索引要求更新的 mcpp；先前的副本被保留或恢复，或者没有可用的副本（2026.9.28.1+；终端运行以结尾的 `tip:` 行打印同一条说明） |
+| `MCPP_BUILD_PROGRAM_INCLUDES_HEADER` | 说明 | 工程的某个构建程序包含了标准库、系统或包的头文件；推荐的写法是导入（docs/30「头文件或模块」）；一个工程只说一次（2026.11.21.1+） |
+| `MCPP_BUILD_PROGRAM_READS_OUTSIDE` | 警告 | 构建程序的编译读到了它的包、store 与它的 `[build-dependencies]` 之外的文件；按包与文件各说一次（2026.11.21.1+） |
+| `MCPP_BUILD_PROGRAM_DEPRECATED` | 警告 | 构建程序按弃用的读法得到了回答（`ambiguous-contract-name`，docs/51）（2026.11.21.1+） |
 
 `--protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、
 `network`、`write-global-cache` 与 `exec-build-script`，从不声明

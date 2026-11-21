@@ -74,9 +74,15 @@ its `diagnostics` state why; `mcpp.build-database` is such a kind (§8).
   "message": "unknown key 'standrad'",
   "path": "mcpp.toml",                       // omitted when there is none
   "range": { "start": {"line": 3, "column": 1},
-             "end":   {"line": 3, "column": 9} }   // omitted when there is none
+             "end":   {"line": 3, "column": 9} },  // omitted when there is none
+  "shown": false                             // omitted when the terminal showed it
 }
 ```
+
+`shown` is `false` for a diagnostic the terminal did not show: a notice said
+once per project that this project was already told of, and a note under
+`--quiet` (2026.11.21.1+). The envelope carries every diagnostic whether or not
+the terminal showed it; a reader is not subject to the terminal's policy.
 
 Positions are 1-based. `column` counts UTF-8 **bytes**, so it indexes the same
 file mcpp read.
@@ -658,6 +664,7 @@ a program classifying the outcome reads `reason`:
 | `accel-backend-undeclared` | a `[build] sources` entry names a backend its own package does not list in `[package] accelerators` |
 | `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
+| `build-program-unpublished-input` | `mcpp publish`: the package's build program reads a file its archive does not carry -- one outside the package's directory, or one HEAD does not track (2026.11.21.1+) |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
 | `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index *(2026.9.16.1+)* |
@@ -782,6 +789,9 @@ fails there still fails the build.
 | `MCPP_BUILD_DATABASE_PAYLOAD_DEFERRED` | note | a build program asked for a payload declared `provision = "on-request"`; planning installs nothing, names the program and the packages, and describes the plan without them (2026.10.1.3+) |
 | `MCPP_BUILD_DATABASE_PROGRAM_FAILED` | error | a build program failed; its package is described without its directives |
 | `MCPP_INDEX_REQUIRES_NEWER_MCPP` | note | an index refreshed by this run requires a newer mcpp; the previous copy was kept or restored, or none is usable (2026.9.28.1+; the same notice a terminal run prints as its closing `tip:` line) |
+| `MCPP_BUILD_PROGRAM_INCLUDES_HEADER` | note | a build program of the project includes a standard, system or package header; the recommended form imports it (docs/30, "Headers or modules"); said once per project (2026.11.21.1+) |
+| `MCPP_BUILD_PROGRAM_READS_OUTSIDE` | warning | a build program's compile read a file outside its package, the store and its `[build-dependencies]`; said once per package and file (2026.11.21.1+) |
+| `MCPP_BUILD_PROGRAM_DEPRECATED` | warning | a build program received an answer under a deprecated reading (`ambiguous-contract-name`, docs/51) (2026.11.21.1+) |
 
 `--protocol-version` declares `init-mcpp-home`, `read-project`, `network`,
 `write-global-cache` and `exec-build-script` for the command, and never

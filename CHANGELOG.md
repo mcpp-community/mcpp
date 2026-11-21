@@ -58,6 +58,21 @@
   the project pins, its home restored by the project's identity, `mcpp test`, the run's store as
   an artifact and its slowest cases and edges in the summary (docs/08).
 
+- **A project is told a notice once** (design 2026-11-21, build programs' inputs §3.6). Every
+  warning, note and closing tip goes through one sink; a notice whose kind is registered `once`
+  (mcpp.notice) is said once per project and subject, recorded in `target/.mcpp-notices`, and said
+  again after `mcpp clean`. `--verbose` shows a suppressed one marked `(noted before)`; `--quiet`
+  hides notes. The build database's diagnostics carry every notice, with `shown: false` for one the
+  terminal did not show (docs/50). `.github/tools/check_diag_sink.sh` keeps notices in the sink.
+- **A build program's headers are told once**: a program of the project that includes a standard,
+  system or package header receives one note per form, with the form that imports it
+  (`MCPP_BUILD_PROGRAM_INCLUDES_HEADER`, docs/30 "Headers or modules"); a file its compile reads
+  outside its package, its build dependencies and the store is warned once per file
+  (`MCPP_BUILD_PROGRAM_READS_OUTSIDE`), and `mcpp publish` refuses one its archive does not carry
+  (`build-program-unpublished-input`).
+- Directive protocol 21: `mcpp:deprecated=`, stated by a typed reader that answers by a deprecated
+  reading.
+
 ### Changed
 
 - **A package's instance is a function of its configuration, not of its units** (mcpp#986): a
@@ -72,8 +87,25 @@
   and tested (`release-build.yml`) instead of building them. The release pull request passes
   `ci:full` before it is merged, and main's run is not cancelled (docs/92).
 
+### Deprecated
+
+- `ambiguous-contract-name` (until 2027.2): a name whose variable several dependencies answer,
+  which a build program's typed reader answered by the first. It still answers so, and every build
+  whose program asks warns; `--strict` refuses it (docs/51).
+
 ### Fixed
 
+- **An edit of a header a build program includes compiles and runs the program again** (mcpp#991).
+  The program's identity was predicted at three places -- the fast path, the group record and the
+  home run cache -- and a header is no package's, so the old program ran with the old directives,
+  also after `target/.build-mcpp` was deleted. The files the program's compile read are observed,
+  from the sub-build's dependency records, recorded with the program and compared by size and time,
+  then content; a declared input (`rerun_if_changed`) is compared the same way.
+- **A name in a build program's contract is judged by its variable** (mcpp#852): `foo-bar`,
+  `foo_bar` and `foo.bar` publish one variable, and a variable several dependencies, tools or
+  payloads answer belongs to none of them. `MCPP_DEP_AMBIGUOUS_<KEY>` (`MCPP_XPKG_AMBIGUOUS_<KEY>`)
+  lists the spellings that name one, and `dep_dir`, `dep_linkage`, `dep_bin` and `xpkg_dir` asked
+  by the name end the program naming them. The per-build `collides on` warnings are removed.
 - `mcpp index list` names the registries `mcpp index add` added. It read the provider's list of
   registries in an older form, found none in the current one, and showed the configuration's
   alone; the text form now marks the default as the JSON form does.

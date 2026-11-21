@@ -23,10 +23,6 @@ struct Kind {
 inline constexpr Kind kKinds[] = {
     {"build-program/includes-header", Policy::Once, "docs/30-build-mcpp.md, \"Headers or modules\""},
     {"build-program/reads-outside",   Policy::Once, "docs/30-build-mcpp.md, \"Headers or modules\""},
-    {"host-input",                    Policy::Once, "docs/25-home-indices-and-store.md, \"Host inputs\""},
-    {"host-input/changed",            Policy::Once, "docs/25-home-indices-and-store.md, \"Host inputs\""},
-    {"toolchain/default-changed",     Policy::Once, "docs/20-toolchains.md, \"The default toolchain\""},
-    {"manifest/machine-path",         Policy::Once, "docs/25-home-indices-and-store.md, \"Host inputs\""},
 };
 
 // The row of `domain`, or none.

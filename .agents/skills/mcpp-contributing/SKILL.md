@@ -370,6 +370,15 @@ UTF-8 ACP（65001），这类用例会静默变成永远绿的装饰品。参见
   「只有它自己和它声明的依赖」这个配置里——那是根构建从不产生的配置，也是唯一
   能抓到「悄悄依赖了未声明之物」的地方。
   ⚠️ `mcpp test -p <x>` 对没有测试的成员**退 0**
+- **用户可见的提示只有一个汇点 `mcpp.diag`**：`warning`、`degraded`、`note`、`notice`
+  与收尾的 `closing`/`on_failure`。`mcpp::ui::warning`、`note`、`tip` 只由 `mcpp.diag`
+  渲染使用，其他地方直接调用或向 stderr 写 `warning:`/`note:`/`tip:` 都由
+  `.github/tools/check_diag_sink.sh` 在 CI 中拒绝。领域即代码：`build-program/reads-outside`
+  在机器输出中是 `MCPP_BUILD_PROGRAM_READS_OUTSIDE`
+- **策略不是缺省（每次都说）的提示先登记**：`modules/notice` 的 `kKinds` 一行陈述领域、
+  策略（`once`：一个工程每个对象只说一次，记在 `target/.mcpp-notices`）与文档位置，调用
+  `mcpp::diag::notice(..., subject, ...)`；多个对象合并为一条时用带 `scope` 与对象列表的形式。
+  改变这次构建结果的事实（降级、弃用的读法、未知的键）不登记为 `once`
 - E2E 测试应声明所需 capability，并使用隔离的 `MCPP_HOME`；需要网络/索引的脚本
   不得被描述为完全离线
 - 不确定方向时先在 Issue 讨论再动手

@@ -35,6 +35,7 @@ export module mcpp.diag;
 import std;
 import mcpp.log;
 import mcpp.notice;
+import mcpp.surface;   // a registered notice is an item of the surface
 import mcpp.ui;
 
 export namespace mcpp::diag {
@@ -194,6 +195,7 @@ std::vector<std::string> untold(std::string_view domain, std::string_view scope,
 // composed the text from the subjects it was not told of); unset, it is decided
 // here from `r.subject`.
 void push(Record r, std::optional<bool> toldBefore = std::nullopt) {
+    if (mcpp::notice::find(r.domain)) mcpp::surface::exercised(mcpp::surface::kNotice, r.domain);
     auto key = dedup_key(r);
     for (auto const& existing : g_records)
         if (dedup_key(existing) == key) return;
@@ -205,7 +207,10 @@ void push(Record r, std::optional<bool> toldBefore = std::nullopt) {
               && untold(r.domain, {}, std::span(&r.subject, 1), /*mark=*/true).empty();
         r.shown = !before && !quietNote;
         if (before && mcpp::log::is_verbose()) {
-            mcpp::ui::note(r.format() + " (noted before)");
+            // Marked on its first line, the statement; a `help:` line follows it.
+            auto text = r.format();
+            text.insert(std::min(text.find('\n'), text.size()), " (noted before)");
+            mcpp::ui::note(text);
         } else if (r.shown) {
             if (r.severity == Severity::Note) mcpp::ui::note(r.format());
             else                              mcpp::ui::warning(r.format());

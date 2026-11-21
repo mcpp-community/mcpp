@@ -678,6 +678,11 @@ declared_program_inputs(const std::filesystem::path& workRoot);
 // (design 2026-11-21, build programs' inputs §3.2).
 std::vector<std::filesystem::path> program_records(const std::filesystem::path& projectRoot);
 
+// THE VARIABLES ONE CHANNEL OF THE CONTRACT PUBLISHES, appended to `e` (design
+// 2026-11-21, build programs' inputs §3.7). See the definition.
+void publish_by_variable(std::vector<std::pair<std::string, std::string>>& e,
+                         const std::vector<ContractAnswer>& answers);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
@@ -745,57 +750,6 @@ std::string sanitize_feature_env(std::string f) {
         c = std::isalnum(static_cast<unsigned char>(c))
           ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : '_';
     return f;
-}
-
-// THE VARIABLES ONE CHANNEL OF THE CONTRACT PUBLISHES (design 2026-11-21, build
-// programs' inputs §3.7). A variable one owner answers is published with its
-// value. One several owners answer is no spelling's: its `ambiguous` variable
-// is published with the spellings that do name one owner (a spelling whose own
-// variable has one), comma-separated, and empty when none does -- the names then
-// differ only in characters a variable cannot hold. Each variable once, by
-// construction: the child would otherwise take whichever came last.
-//
-// COMPAT(ambiguous-contract-name): until the row's floor, an ambiguous variable
-// that answered before this rule -- by the first value it was given -- still
-// does, and the typed reader that sees both warns (`mcpp:deprecated=`). A
-// spelling two owners share answered nothing before (#862) and is not in
-// `answers` (BuildProgramEnv::depAmbiguous).
-void publish_by_variable(std::vector<std::pair<std::string, std::string>>& e,
-                         const std::vector<ContractAnswer>& answers) {
-    std::vector<std::string> order;
-    std::map<std::string, std::vector<const ContractAnswer*>> byVar;
-    for (auto const& a : answers) {
-        auto& at = byVar[a.var];
-        if (at.empty()) order.push_back(a.var);
-        at.push_back(&a);
-    }
-    auto owners = [&](const std::string& var) {
-        std::set<std::string> out;
-        for (auto const* a : byVar[var]) out.insert(a->owner);
-        return out;
-    };
-    std::vector<std::string> ambiguousOrder;
-    std::map<std::string, std::vector<std::string>> usable;   // ambiguous variable -> spellings
-    for (auto const& var : order) {
-        e.emplace_back(var, byVar[var].front()->value);
-        const auto who = owners(var);
-        if (who.size() < 2) continue;
-        const auto& amb = byVar[var].front()->ambiguous;
-        auto [it, fresh] = usable.try_emplace(amb);
-        if (fresh) ambiguousOrder.push_back(amb);
-        for (auto const& a : answers)
-            if (who.contains(a.owner) && owners(a.var).size() == 1
-                && std::ranges::find(it->second, a.spelling) == it->second.end())
-                it->second.push_back(a.spelling);
-    }
-    for (auto const& amb : ambiguousOrder) {
-        std::string which;
-        for (auto const& sp : usable[amb]) which += (which.empty() ? "" : ",") + sp;
-        if (auto it = std::ranges::find(e, amb, &std::pair<std::string, std::string>::first); it != e.end())
-            it->second += (it->second.empty() || which.empty() ? "" : ",") + which;
-        else
-            e.emplace_back(amb, std::move(which));
-    }
 }
 
 // The injected contract values, as (NAME, value) pairs for the child process.
@@ -1804,7 +1758,9 @@ bool program_reads_moved(const fs::path& record) {
     const auto doc = nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/false);
     if (!doc.is_object()) return false;   // no record: no program the fast path could replay
     for (auto row = doc.begin(); row != doc.end(); ++row) {
-        if (!row->is_object() || !row->contains("reads")) continue;
+        // A row without `reads` was written by an earlier engine: its program
+        // is compiled again, which prepare decides.
+        if (!row->is_object() || !row->contains("reads")) return true;
         const auto& reads = (*row)["reads"];
         if (!reads.is_array()) return true;
         for (auto const& r : reads)
@@ -1839,5 +1795,57 @@ bool program_inputs_stale(const fs::path& projectRoot) {
     }
     return false;
 }
+
+// THE VARIABLES ONE CHANNEL OF THE CONTRACT PUBLISHES (design 2026-11-21, build
+// programs' inputs §3.7). A variable one owner answers is published with its
+// value. One several owners answer is no spelling's: its `ambiguous` variable
+// is published with the spellings that do name one owner (a spelling whose own
+// variable has one), comma-separated, and empty when none does -- the names then
+// differ only in characters a variable cannot hold. Each variable once, by
+// construction: the child would otherwise take whichever came last.
+//
+// COMPAT(ambiguous-contract-name): until the row's floor, an ambiguous variable
+// that answered before this rule -- by the first value it was given -- still
+// does, and the typed reader that sees both warns (`mcpp:deprecated=`). A
+// spelling two owners share answered nothing before (#862) and is not in
+// `answers` (BuildProgramEnv::depAmbiguous).
+void publish_by_variable(std::vector<std::pair<std::string, std::string>>& e,
+                         const std::vector<ContractAnswer>& answers) {
+    std::vector<std::string> order;
+    std::map<std::string, std::vector<const ContractAnswer*>> byVar;
+    for (auto const& a : answers) {
+        auto& at = byVar[a.var];
+        if (at.empty()) order.push_back(a.var);
+        at.push_back(&a);
+    }
+    auto owners = [&](const std::string& var) {
+        std::set<std::string> out;
+        for (auto const* a : byVar[var]) out.insert(a->owner);
+        return out;
+    };
+    std::vector<std::string> ambiguousOrder;
+    std::map<std::string, std::vector<std::string>> usable;   // ambiguous variable -> spellings
+    for (auto const& var : order) {
+        e.emplace_back(var, byVar[var].front()->value);
+        const auto who = owners(var);
+        if (who.size() < 2) continue;
+        const auto& amb = byVar[var].front()->ambiguous;
+        auto [it, fresh] = usable.try_emplace(amb);
+        if (fresh) ambiguousOrder.push_back(amb);
+        for (auto const& a : answers)
+            if (who.contains(a.owner) && owners(a.var).size() == 1
+                && std::ranges::find(it->second, a.spelling) == it->second.end())
+                it->second.push_back(a.spelling);
+    }
+    for (auto const& amb : ambiguousOrder) {
+        std::string which;
+        for (auto const& sp : usable[amb]) which += (which.empty() ? "" : ",") + sp;
+        if (auto it = std::ranges::find(e, amb, &std::pair<std::string, std::string>::first); it != e.end())
+            it->second += (it->second.empty() || which.empty() ? "" : ",") + which;
+        else
+            e.emplace_back(amb, std::move(which));
+    }
+}
+
 
 } // namespace mcpp::build

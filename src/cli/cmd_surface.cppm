@@ -15,6 +15,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.manifest.key_registry;
 import mcpp.build.refusal;
+import mcpp.notice;           // the notices whose policy is registered
 import mcpp.surface;
 import mcpp.ui;
 
@@ -88,7 +89,9 @@ std::vector<sf::Item> surface_items(const cl::App& app) {
             ? std::string(row.table) : std::format("{}.{}", row.table, row.key)});
     for (auto c : mcpp::build::refusal::codes())
         out.push_back({std::string(sf::kReason), std::string(mcpp::build::refusal::name(c))});
-    constexpr std::array kOrder{sf::kCommand, sf::kFlag, sf::kKey, sf::kReason};
+    for (auto const& k : mcpp::notice::kKinds)
+        out.push_back({std::string(sf::kNotice), std::string(k.domain)});
+    constexpr std::array kOrder{sf::kCommand, sf::kFlag, sf::kKey, sf::kReason, sf::kNotice};
     auto rank = [&](const sf::Item& i) { return std::ranges::find(kOrder, i.kind) - kOrder.begin(); };
     std::ranges::sort(out, [&](auto const& a, auto const& b) {
         return std::pair(rank(a), std::string_view(a.name)) < std::pair(rank(b), std::string_view(b.name));

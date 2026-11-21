@@ -87,7 +87,7 @@ UTest a_once_notice_is_said_once_per_project{"DiagNotices/OnceIsSaidOncePerProje
         dg::reset();
         dg::set_project_target(target);
         return stderr_of([] {
-            dg::notice(dg::Severity::Note, "host-input", "ninja", "ninja is taken from the host");
+            dg::notice(dg::Severity::Note, "build-program/includes-header", "ninja", "ninja is taken from the host");
         });
     };
     expect(run().contains("ninja is taken from the host"));
@@ -108,12 +108,12 @@ UTest a_note_hidden_by_quiet_is_not_marked_as_told{"DiagNotices/QuietNoteIsNotMa
     dg::reset();
     dg::set_project_target(target);
     mcpp::ui::set_quiet(true);
-    (void)stderr_of([] { dg::notice(dg::Severity::Note, "host-input", "cmake", "cmake from the host"); });
+    (void)stderr_of([] { dg::notice(dg::Severity::Note, "build-program/includes-header", "cmake", "cmake from the host"); });
     mcpp::ui::set_quiet(false);
     dg::reset();
     dg::set_project_target(target);
     expect(stderr_of([] {
-        dg::notice(dg::Severity::Note, "host-input", "cmake", "cmake from the host");
+        dg::notice(dg::Severity::Note, "build-program/includes-header", "cmake", "cmake from the host");
     }).contains("cmake from the host"));
     dg::reset();
     std::filesystem::remove_all(target.parent_path());

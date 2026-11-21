@@ -1287,6 +1287,10 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         auto record = read_record(dir / "programs.json");
         bool recordChanged = false;
         std::vector<const Program*> stale;
+        // What the project is told of its programs (§3.3, §3.4), judged on every
+        // plan: a `once` notice says nothing again, and `--verbose` shows it.
+        HeaderUsage headers;
+        for (auto const& p : programs) collect_header_usage(state, p.index, p.source, headers);
         for (auto const& p : programs) {
             auto it = record.find(p.member);
             bool current = it != record.end() && it->is_object()
@@ -1317,6 +1321,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                 }
                 std::vector<fs::path> paths;
                 for (auto const& r : *reads) paths.push_back(r.path);
+                notice_outside_reads(state, p.index, paths);
                 state.buildProgramBinaries[p.index] = {fs::path(it->value("binary", std::string{})),
                                                        observed_identity(p.identity, *reads), {},
                                                        std::move(runner), std::move(paths)};
@@ -1335,6 +1340,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         }
         if (recordChanged && stale.empty()) write_if_changed(dir / "programs.json", record.dump(2) + "\n");
         if (stale.empty()) {
+            notice_header_usage(headers);
             // Described, not built: `mcpp emit build-database` lists the graph
             // of programs that are current too.
             if (state.overrides.describes()) {
@@ -1344,9 +1350,7 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
             }
             continue;
         }
-        HeaderUsage headers;
         for (auto const* p : stale) {
-            collect_header_usage(state, p->index, p->source, headers);
             warn_reserved_prefixes(state, p->index);
             if (auto r = check_module_collisions(state, p->index); !r)
                 return std::unexpected(r.error());

@@ -458,8 +458,11 @@ const char* same    = mcpp::xpkg_dir("picolibc-riscv");          // bare name
 
 The namespaced form answers only for a package declared under that namespace
 and is the one to prefer; the bare form is a convenience for the common single
-declaration, and when two namespaces claim one name it answers for the first
-**declared**. Both return `""` when the package was not declared or is not
+declaration. When two namespaces claim one name, the bare form is judged as a
+name two dependencies answer to (see "A name two dependencies answer to is no
+package's"): until 2027.2 it answers for the first **declared** and the build
+warns of the deprecated reading `ambiguous-contract-name`; from 2027.2 it ends
+the program naming the namespaced forms. Both return `""` when the package was not declared or is not
 installed — a program that needs it should say so itself, because only it knows
 whether the absence is fatal.
 
@@ -1415,8 +1418,35 @@ nothing, the artifact is already there. A cross build (`--target …`) pays for
 one extra std module, because `build.mcpp` compiles and runs on the *host*
 while the project targets something else.
 
-`#include` still works and stays the right choice for a program that only
-needs `std::fopen`; there is no requirement to modularize a build script.
+`#include` works; "Headers or modules" below states what it costs and the form
+that replaces it.
+
+### Headers or modules (2026.11.21.1+)
+
+The recommended `build.mcpp` imports what it uses: the standard library as
+`import std;`, the engine interface as `import mcpp;`, and its own shared code as
+a module of a path package listed in `[build-dependencies]`. Two forms work and
+are not recommended:
+
+| Form | Instead | Reason |
+|---|---|---|
+| a standard or system header, `#include <cstdio>` | `import std;` | the header is parsed again by every compile of the program; the `std` module is built once per toolchain and standard and is shared with the main build |
+| a header of the package or of a dependency, `#include "support/emit.hpp"` | a module of a path package in `[build-dependencies]`, imported | the package has an identity, can be shared by several programs and packages, and its BMI is built once |
+
+The first build of a project says each form once, as a `note` of two lines
+(`MCPP_BUILD_PROGRAM_INCLUDES_HEADER`), naming every package whose program uses
+it; later builds do not repeat it until `mcpp clean` removes `target/`. A program
+of an index package or a git dependency is not the project's to change and is
+not reported. The form is read from the program's text; the note changes nothing
+the build does.
+
+A file the program's compile reads outside its package -- an absolute path,
+`../shared/x.hpp` -- makes the build depend on this machine, and the package's
+archive does not carry it. A build warns once per package and file
+(`MCPP_BUILD_PROGRAM_READS_OUTSIDE`), and `mcpp publish` refuses such a file, and
+a file of the package that HEAD does not track, with the reason
+`build-program-unpublished-input`. A program's reads are limited to its package,
+its `[build-dependencies]` and the store.
 
 Every toolchain mcpp can build a host program with can build a `build.mcpp`,
 including native MSVC — the module handling reads the same tables the main
@@ -1710,13 +1740,29 @@ A generated **module interface** is fine here: `.cppm` goes through the same
 scan as any other source, so a generated file declaring `export module …` can
 be imported by the package's own TUs.
 
-## Incremental: declared inputs (no needless re-runs)
+## Incremental: observed and declared inputs (no needless re-runs)
 
 mcpp does **not** re-run `build.mcpp` on every build. It caches the program's
-directives and re-runs only when something it depends on changed:
+directives and re-runs only when something it depends on changed. Its inputs are
+of two kinds.
 
-- the `build.mcpp` source itself,
-- the toolchain,
+**What the program's compile reads is observed** (2026.11.21.1+). The files the
+compile of `build.mcpp` read -- a header it includes, a file it embeds -- are
+taken from the compile's dependency record (a GNU depfile; cl.exe's
+`/sourceDependencies`), as the main build takes them. A file of the store (the
+toolchain, an index package) or of a `[build-dependencies]` package is named by
+that package's identity already and is not recorded. An edit of a recorded file
+compiles the program again and runs it again, on the fast path too and after
+`target/.build-mcpp` is deleted. A file is compared by its size and modification
+time, and by its content when either moved. The record follows the compiler:
+a header found at a new place on the include path, and a change below a system
+include directory (`gcc@system` reading `/usr/include`), are not observed, as for
+the main build.
+
+**What the program reads when it runs is declared**:
+
+- the `build.mcpp` source itself and the toolchain are inputs without a
+  declaration,
 - any file declared with `rerun-if-changed`,
 - any env var declared with `rerun-if-env-changed`,
 - (or a `generated` output / `source=` selection went missing),
@@ -1724,10 +1770,12 @@ directives and re-runs only when something it depends on changed:
   — the entry carries a format **epoch**, and a foreign one re-runs the program
   once instead of replaying values under the wrong meaning).
 
-So **declare the inputs**: if the program reads `config.h` or the `USE_FAST`
-variable, emit `mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`.
-This replaces the old "process exited 0, so assume it's fine" guesswork with an
-explicit input/output contract — incremental builds stay correct.
+So **declare what the program reads at run time**: if the program opens
+`config.h` or reads the `USE_FAST` variable, emit
+`mcpp:rerun-if-changed=config.h` / `mcpp:rerun-if-env-changed=USE_FAST`. No
+host offers a portable way to observe what a process opens, so this stays a
+contract: the program's input/output is explicit, and incremental builds stay
+correct. A declared file is compared as an observed one is.
 
 A program that runs or fails has one line, written when it finishes
 (2026.9.30.1+): `build.mcpp <package>  ran <time>` when it was compiled or run
@@ -2079,12 +2127,23 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   `dep_bin("spike.installer", ...)` as well as `dep_bin("installer", ...)`
   (mcpp 2026.9.16.1+; before that release its tool was published under
   `installer` alone).
-- **A name two dependencies answer to is no package's** (2026.10.30.1+). Two
-  packages whose manifests both say `rules` (`openmui.rules`, `gongfu.rules`)
-  are each addressed by their qualified name; `rules` itself is published for
-  neither, and `MCPP_DEP_AMBIGUOUS_RULES` lists the qualified names.
-  `dep_dir("rules")` ends the program with a message naming them. Before
-  2026.10.30.1 the name went to one of the two and every build warned.
+- **A name two dependencies answer to is no package's** (2026.10.30.1+; judged
+  by variable 2026.11.21.1+). A name is published as a variable: letters are
+  upper-cased and every other character becomes `_`, so `foo-bar`, `foo_bar` and
+  `foo.bar` are one variable. A variable two dependencies answer belongs to
+  neither: `MCPP_DEP_AMBIGUOUS_<NAME>` lists the spellings that name one of them
+  (for `openmui.rules` and `gongfu.rules`, both `rules` by their manifests,
+  the two qualified names), and `dep_dir`, `dep_linkage`, `dep_bin` and
+  `xpkg_dir` asked by that name end the program naming them. Where no spelling
+  differs in a character a variable keeps (`foo-bar` and `foo_bar`), the list is
+  empty and the message says that one of the packages has to be renamed. A
+  variable that answered before 2026.11.21.1 (for the first of the two) still
+  does until 2027.2, under the deprecated reading `ambiguous-contract-name`:
+  every build whose program asks it warns, `mcpp why compat` lists it and
+  `--strict` refuses it (docs/51). The build does not warn of a name no program
+  asks for. A program that reads the variables directly, without the typed
+  interface, receives the same values and no warning; from 2027.2 the first
+  answer is not published.
 
 #### Older mcpp reading a manifest that uses this
 

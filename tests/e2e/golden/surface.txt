@@ -386,6 +386,7 @@ reason accel-backend-undeclared
 reason accel-mismatch
 reason ambiguous-request
 reason apple-sdk-absent
+reason build-program-unpublished-input
 reason c-env-unrealisable
 reason c-env-verification-mismatch
 reason capability-pin
@@ -427,3 +428,5 @@ reason tier-planned
 reason tool-version-conflict
 reason unknown-target
 reason version-floor-unmet
+notice build-program/includes-header
+notice build-program/reads-outside

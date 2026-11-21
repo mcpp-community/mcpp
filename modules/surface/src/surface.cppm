@@ -10,6 +10,8 @@ inline constexpr std::string_view kCommand = "command";
 inline constexpr std::string_view kFlag    = "flag";
 inline constexpr std::string_view kKey     = "key";
 inline constexpr std::string_view kReason  = "reason";
+// A notice whose policy is registered (mcpp.notice), by its diagnostic domain.
+inline constexpr std::string_view kNotice  = "notice";
 
 // The file an invocation appends the items it used to (SPEC-017 P5.6). Unset, nothing is written.
 inline constexpr std::string_view kRecordEnv = "MCPP_SURFACE_RECORD";
