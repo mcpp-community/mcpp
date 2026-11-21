@@ -465,6 +465,9 @@ step2_system_toolchain_refusal(PrepareState& state) {
         // `msvc@system` is a different spelling and stays supported: it names a
         // FAMILY whose installation mcpp locates and identifies, on the one
         // platform where the compiler cannot be redistributed.
+        // What to write instead is this host's first run (one answer, as the
+        // offline refusal below names it).
+        const auto use = state.native_first_run_spec();
         return std::unexpected(std::format(
             "[toolchain] {} = \"system\" is not supported: mcpp builds only "
             "with toolchains it manages.\n"
@@ -475,15 +478,15 @@ step2_system_toolchain_refusal(PrepareState& state) {
             "       Name one instead — mcpp installs it on first use:\n"
             "\n"
             "         [toolchain]\n"
-            "         {} = \"gcc@16.1.0\"\n"
+            "         {} = \"{}\"\n"
             "\n"
             "       or set a machine default with `mcpp toolchain default "
-            "gcc@16.1.0`, and see `mcpp toolchain list` for what is available.\n"
+            "{}`, and see `mcpp toolchain list` for what is available.\n"
             "       (On Windows, `msvc@system` is different and remains "
             "supported: it names a family whose installation mcpp locates.)\n"
             "       Host LIBRARIES are a separate question and are not refused "
             "— a project may link them and owns the result.",
-            kCurrentPlatform, kCurrentPlatform));
+            kCurrentPlatform, kCurrentPlatform, use, use));
 }
 
 static std::expected<void, std::string>

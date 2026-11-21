@@ -72,11 +72,11 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 ## 手动安装
 
 ```bash
-mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
+mcpp toolchain install gcc 16.2.0           # host target (GNU libc on Linux)
 mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
-                                            # target's convention pin (gcc@16.1.0)
+                                            # target's convention pin (gcc@16.2.0)
 ```
 
 显式安装主要用于 CI 缓存预热与离线准备——`mcpp build --target <triple>` 会

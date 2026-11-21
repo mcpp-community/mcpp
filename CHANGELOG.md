@@ -203,6 +203,18 @@
   payloads answer belongs to none of them. `MCPP_DEP_AMBIGUOUS_<KEY>` (`MCPP_XPKG_AMBIGUOUS_<KEY>`)
   lists the spellings that name one, and `dep_dir`, `dep_linkage`, `dep_bin` and `xpkg_dir` asked
   by the name end the program naming them. The per-build `collides on` warnings are removed.
+- `mcpp why <topic> <subject> --format json` reports a refusal whose branch has no token as
+  `other`, as `mcpp why toolchain` does; it reported `none` beside `refused`. Both take the reason
+  from one function of the refusal record.
+- A message that names a toolchain to write or to install names this host's first run, read from
+  the built-in table: the refusal of `[toolchain] = "system"`, the examples of `mcpp toolchain`'s
+  argument errors, `mcpp toolchain list` and `mcpp self config` with nothing installed, and
+  `mcpp self doctor`'s hints for the optional cross toolchains, which name
+  `mcpp toolchain install --target <triple>`. They named gcc 16.1.0 as written in the code.
+- A compiler whose baked sysroot is the building home's `subos/current` links against this home's
+  C library, as one whose baked sysroot is `subos/default` does. gcc 16.2.0 revision 1 names
+  `subos/current`; the remap recognised `subos/default` alone, and the link of a program whose
+  environment no package describes found no C library.
 - `mcpp index list` names the registries `mcpp index add` added. It read the provider's list of
   registries in an older form, found none in the current one, and showed the configuration's
   alone; the text form now marks the default as the JSON form does.

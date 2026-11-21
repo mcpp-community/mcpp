@@ -584,8 +584,9 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     };
 
     if (payloads.empty()) {
-        std::println("(no toolchains installed — run `mcpp toolchain install gcc 16.1.0` "
-                     "or just `mcpp build` to auto-install the default)");
+        std::println("(no toolchains installed — run `mcpp toolchain install {}` "
+                     "or just `mcpp build` to auto-install the default)",
+                     mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc));
     } else {
         if (!json) std::println("Toolchains:");
         for (auto& f : famvers) {
@@ -1030,8 +1031,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // bootstrap, and an invalid spec should not report a bootstrap error)
         std::string pos0Eff = pos0;
         if (pos0Eff.empty() && !targetArg.empty()) {
-            // Family omitted: take the target's convention pin (gcc@16.1.0
-            // for musl / windows-gnu targets).
+            // Family omitted: take the target's convention pin (the row's
+            // provider's toolchain for musl / windows-gnu targets).
             if (auto t = mcpp::toolchain::triple::parse(targetArg)) {
                 if (auto* info = mcpp::toolchain::triple::find_known_target(*t);
                     info && !info->pin.empty())
@@ -1042,7 +1043,8 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             pos0Eff, pos1);
         if (!spec) {
             mcpp::ui::error(std::format(
-                "{}; e.g. `mcpp toolchain install gcc 16.1.0`", spec.error()));
+                "{}; e.g. `mcpp toolchain install {}`", spec.error(),
+                mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc)));
             return 2;
         }
         mcpp::toolchain::print_compat_hint(*spec);
@@ -1223,7 +1225,8 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
             pos0, pos1);
         if (!spec) {
             mcpp::ui::error(std::format(
-                "{}; e.g. `mcpp toolchain default gcc@16.1.0`", spec.error()));
+                "{}; e.g. `mcpp toolchain default {}`", spec.error(),
+                mcpp::toolchain::triple::pins::kFirstRunNoMsvc));
             return 2;
         }
         mcpp::toolchain::print_compat_hint(*spec);
@@ -1353,7 +1356,8 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
         auto parsedSpec = mcpp::toolchain::parse_toolchain_spec(pos0, pos1);
         if (!parsedSpec) {
             mcpp::ui::error(std::format(
-                "{}; e.g. `mcpp toolchain remove gcc 16.1.0`", parsedSpec.error()));
+                "{}; e.g. `mcpp toolchain remove {}`", parsedSpec.error(),
+                mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc)));
             return 2;
         }
         if (mcpp::toolchain::is_system_toolchain(*parsedSpec)) {

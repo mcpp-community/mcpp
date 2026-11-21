@@ -35,6 +35,7 @@ import mcpp.effects;
 import mcpp.home.files;
 import mcpp.log;
 import mcpp.diag;
+import mcpp.toolchain.triple;   // pins: the host's first run, named in a hint
 import mcpp.fallback.xlings_binary;
 import mcpp.fallback.config_migration;
 
@@ -1412,7 +1413,8 @@ void print_env(const GlobalConfig& cfg) {
     if (!cfg.defaultToolchain.empty())
         std::println("default toolchain   = {}", cfg.defaultToolchain);
     else
-        std::println("default toolchain   = (none — run `mcpp toolchain install gcc 16.1.0`)");
+        std::println("default toolchain   = (none — run `mcpp toolchain install {}`)",
+                     mcpp::toolchain::triple::pins::install_words(mcpp::toolchain::triple::pins::kFirstRunNoMsvc));
     std::println("");
     std::println("Index repos:");
     for (auto& r : cfg.indexRepos) {

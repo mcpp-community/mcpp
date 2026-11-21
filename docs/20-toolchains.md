@@ -77,11 +77,11 @@ this model with a one-line `note:` hint.
 ## Manual Installation
 
 ```bash
-mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
+mcpp toolchain install gcc 16.2.0           # host target (GNU libc on Linux)
 mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
-                                            # target's convention pin (gcc@16.1.0)
+                                            # target's convention pin (gcc@16.2.0)
 ```
 
 Explicit installation is mostly for CI cache warm-up and offline prep —

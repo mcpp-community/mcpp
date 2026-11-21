@@ -445,7 +445,7 @@ export int doctor_report() {
                 }
             }
             if (!any)
-                ok("mingw not installed (optional — `mcpp toolchain install mingw 16.1.0`)");
+                ok("mingw not installed (optional — `mcpp toolchain install --target x86_64-windows-gnu`)");
         }
 
         // The other direction: a windows-hosted cross toolchain that produces
@@ -469,7 +469,7 @@ export int doctor_report() {
             }
             if (!any)
                 ok(std::format("{} not installed (optional — "
-                               "`mcpp toolchain install gcc 16.1.0 --target {}`)",
+                               "`mcpp toolchain install --target {}`)",
                                triple, triple));
         }
     }
@@ -1239,7 +1239,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
                                           /*includeDevDeps=*/false, {}, ov);
     std::vector<mcpp::wire::Diagnostic> diags;
     if (!ctx) {
-        // `take()` AFTER the call and only here: a site that recorded a code
+        // Taken AFTER the call and only here: a site that recorded a code
         // and then did not refuse would otherwise leak it into the next query.
         // `None` MEANS "NOTHING RECORDED", AND HERE THAT IS NOT "no reason"
         // — the build demonstrably refused. Reporting `none` beside
@@ -1251,9 +1251,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
         //
         // `other` is a visible admission: a refusal exists and its branch
         // has not been named yet.
-        auto code = mcpp::build::refusal::take();
-        if (code == mcpp::build::refusal::Code::None)
-            code = mcpp::build::refusal::Code::Other;
+        const auto code = mcpp::build::refusal::take_refused();
         data["status"] = "refused";
         data["reason"] = std::string(mcpp::build::refusal::name(code));
         diags.push_back({
@@ -1451,7 +1449,7 @@ export int why_sources_json(std::string_view topic, std::string_view subject,
     data["topic"] = std::string(topic);
     data["subject"] = std::string(subject);
     if (!ctx) {
-        const auto code = mcpp::build::refusal::take();
+        const auto code = mcpp::build::refusal::take_refused();
         data["status"] = "refused";
         data["reason"] = std::string(mcpp::build::refusal::name(code));
         data["sources"] = nlohmann::json::array();

@@ -305,6 +305,10 @@ constexpr std::string_view name(Code c) {
 // so a later successful run cannot inherit an earlier run's reason.
 void record(Code c);
 Code take();
+// The reason of a refusal that happened: the code its site recorded, else `other`, a refusal
+// whose branch has no token yet -- never `none` beside a refusal. Taken as `take` is, and
+// `other` is recorded as used, as a site's own code is.
+Code take_refused();
 
 // Every code a refusal site can record, `other` included and `none` not: the reasons of
 // `mcpp emit surface` (design 2026-11-20 §5.16).
@@ -335,6 +339,12 @@ void record(Code c) {
 }
 
 Code take() { Code c = g_last; g_last = Code::None; return c; }
+
+Code take_refused() {
+    if (const Code c = take(); c != Code::None) return c;
+    mcpp::surface::exercised(mcpp::surface::kReason, name(Code::Other));
+    return Code::Other;
+}
 
 std::vector<Code> codes() {
     std::vector<Code> out;

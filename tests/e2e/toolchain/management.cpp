@@ -249,9 +249,13 @@ main = "src/main.cpp"
         auto manifest = [&](std::string_view extra) {
             p.write("mcpp.toml", std::format("[package]\nname = \"systc\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n{}", extra));
         };
-        auto expect_refusal = [](const std::string& out, std::string_view what) {
+        // What to write instead is the host's first run, the one answer `self env` reports.
+        manifest("");
+        const auto firstRun = s::json(p.mcpp({"self", "env", "--format", "json"}).out)["data"].value("defaultToolchain", std::string{});
+        expect(fatal(!firstRun.empty())) << "self env reports no default toolchain";
+        auto expect_refusal = [&](const std::string& out, std::string_view what) {
             expect(fatal(e2e::contains(out, "toolchains it manages"))) << "FAIL: " << what << " was not refused on the toolchain policy's own terms: " << out;
-            expect(fatal(e2e::contains(out, "gcc@16.1.0"))) << "FAIL: the refusal does not show what to write instead: " << out;
+            expect(fatal(e2e::contains(out, std::format("= \"{}\"", firstRun)))) << "FAIL: the refusal does not show what to write instead (" << firstRun << "): " << out;
             expect(fatal(e2e::contains(out, "mcpp toolchain"))) << "FAIL: the refusal does not name the command that lists the choices: " << out;
             expect(fatal(e2e::contains(out, "msvc@system"))) << "FAIL: the refusal does not name the one supported exception: " << out;
             expect(fatal(s::contains_nocase(out, "librar"))) << "FAIL: the refusal does not distinguish the library axis: " << out;
@@ -261,6 +265,11 @@ main = "src/main.cpp"
         auto r = p.mcpp({"build"});
         expect(fatal(!r)) << "FAIL: [toolchain] system built; mcpp builds only with managed toolchains";
         expect_refusal(s::text(r), "a plain project");
+        // The refusal's branch has no token of its own: the machine's answer is `other`, never
+        // `none` beside a refusal (docs/50).
+        const auto why = s::json(p.mcpp({"why", "toolchain", "--format", "json"}).out);
+        expect(fatal(why["data"].value("status", std::string{}) == "refused" && why["data"].value("reason", std::string{}) == "other"))
+            << "FAIL: the refusal's reason is not `other`: " << why.dump();
         p.write("build.mcpp", "#include <cstdio>\nint main(){ return 0; }\n");
         p.remove("target");
         r = p.mcpp({"build"});
@@ -413,6 +422,32 @@ main = "src/main.cpp"
         none.env.emplace_back("MCPP_ALLOW_HOST_TOOLS", "none");
         out = build(none);
         expect(fatal(!fs::exists(tmp / "ran"))) << "MCPP_ALLOW_HOST_TOOLS=none still ran the host ninja: " << out;
+    };
+
+    "1138 a binutils stated beside a gcc older than its payload declares is refused"_test[s::gcc][s::elf] = [] {
+        // SPEC-006 §2.9: `companions = { binutils = ... }` in the project's [toolchain] replaces
+        // the binutils the gcc payload declares. GCC chose its assembler features by that one,
+        // so an older binutils is refused, naming the version the payload declares; the declared
+        // version builds, reported as the companion.
+        const auto gcc = std::format("gcc@{}", s::gcc_version());
+        s::project p({{"src/main.cpp", "int main() { return 0; }\n"}});
+        const auto with = [&](std::string_view binutils) {
+            p.write("mcpp.toml", std::format("[package]\nname = \"comp\"\nversion = \"0.1.0\"\n\n[toolchain]\n"
+                                             "default = {{ package = \"{}\", companions = {{ binutils = \"xim:binutils@{}\" }} }}\n",
+                                             gcc, binutils));
+            return p.mcpp({"build"});
+        };
+        auto r = with("2.42");
+        expect(fatal(r.started && r.status != 0)) << "a binutils older than the payload declares was taken\n" << s::text(r);
+        std::smatch m;
+        const auto out = s::text(r);
+        expect(fatal(std::regex_search(out, m, std::regex{R"(companions\.binutils = "xim:binutils@2\.42" is older than the binutils .*'s payload declares \(([0-9.]+)\))"})))
+            << "the refusal does not name the declared version\n" << out;
+        const auto declared = m[1].str();
+        r = with(declared);
+        expect(fatal(e2e::succeeded(r))) << "the declared binutils stated as the companion did not build\n" << s::text(r);
+        expect(fatal(s::has_line(s::text(r), "Companion +binutils " + std::regex_replace(declared, std::regex{R"(\.)"}, R"(\.)"))))
+            << "the companion is not reported\n" << s::text(r);
     };
 }};
 
