@@ -5,7 +5,7 @@ status: active
 
 # 离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）
 
-**日期：** 2026-11-21 · **版本：** v2（负责人 2026-11-21 确认第 9 节，取各项的推荐；增加 3.9 命令行中 `@` 的文法与 mcpp-index 中 `compat.slint` 的声明） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支，
+**日期：** 2026-11-21 · **版本：** v2（2026-11-21 确定第 9 节，取各项的推荐；增加 3.9 命令行中 `@` 的文法与 mcpp-index 中 `compat.slint` 的声明） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支，
 xlings 2026.11.17.2，xim-pkgindex `c0023dd` · **规范：** SPEC-004 §2（四层取值）、SPEC-006（工具链管理）、SPEC-002（目标侧五层）、
 SPEC-013（平台与层）、home 的初始化（`docs/specs/home-initialization.md`） · **所属：**
 [生态的测试与 CI 方案](2026-11-20-test-architecture-upgrade-design.md) 第 15 节；与
@@ -20,6 +20,19 @@ SPEC-013（平台与层）、home 的初始化（`docs/specs/home-initialization
 2. **默认密闭。** 工具链、基础层与引导工具取自索引中的包；宿主只在数据声明或用户显式开启时使用（AGENTS.md §2）。
 3. **每个缺省是数据，且有显式的覆盖**，取值按四层：命令行与环境、工程（`mcpp.toml`）、机器（`config.toml`）、引擎（SPEC-004 §2）。
 4. **做得更少从不沉默，正常的路径保持安静。** 提示经由 `mcpp.diag` 的汇点，按子方案一 3.6 的 `always` 与 `once` 两种策略。
+5. **一种机制只实现一次。** 新的功能扩展已有的机制，不在另一处再写一份：
+
+   | 功能 | 复用的机制 |
+   |---|---|
+   | 提示与拒绝 | `mcpp.diag` 的汇点与 `modules/notice` 的登记表（子方案一 3.6）；原因标记的登记（`refusal.cppm`、`check_reason_tokens.sh`） |
+   | 旧回答的弃用 | 弃用登记表（`modules/manifest/src/compat/registry.cppm`） |
+   | 归档的取得 | xlings 的下载器；本地目录是它的一种来源，不是 mcpp 的第二个下载器 |
+   | 离线的项目闭包 | 构建自身的解析与目标闭包；`fetch` 调用同一个函数 |
+   | 部分版本与 `@` | `mcpp.xpkg_version`（寻址文法）与 `mcpp.version_req`（要求文法），各一份 |
+   | 工具链的解析 | `resolve_version_match` 之上的一个解析函数，三处调用 |
+   | 配套载荷与 kernel-abi 的覆盖 | xlings 的依赖记录；SPEC-013 的 `layers` 词汇 |
+   | 以 `dlopen` 加载的库 | `runtime.dlopen_libs` 与其运行期的检查（docs/33） |
+   | 宿主输入的身份 | 缓存键与 `mcpp.lock` 的现有写入路径 |
 
 ## 2. 现状
 
@@ -28,7 +41,7 @@ SPEC-013（平台与层）、home 的初始化（`docs/specs/home-initialization
 | 离线 | 只有 `--offline`、`MCPP_OFFLINE` 与旧的 `MCPP_NO_AUTO_INSTALL`；`[index] auto_refresh = false` 只停止隐式刷新，下载照常 | 没有工程与机器两层（违反原则 3）；没有「联网时取齐、离线时构建」的操作，只能联网完整构建一次 |
 | 没有网络的机器 | xlings 的下载器在目标文件已存在且 sha256 相符时不下载；索引可以是本地目录（mcpp 的 `path = "…"`、xlings 的 `file://`）；home 可以整体复制或作为 upstream | 可行的做法都要求用户了解内部布局：归档须放在 xlings 的下载目录并按 URL 推出的文件名命名（GitHub 的标签归档同名为 `v<版本>.tar.gz`）；复制 home 只在相同的绝对路径下可用 |
 | 引导工具 | `check_base_init` 无条件要求 home store 中固定版本的 patchelf 与 ninja | 没有覆盖（违反原则 3）；以宿主的工具链与 `glibc@system` 构建时并不需要 patchelf，仍被拒绝 |
-| 配套载荷 | 编译器旁的 binutils 与 linux-headers 由 `find_sibling_binary` 与 `find_package_in_xpkgs` 取目录遍历遇到的**第一个**版本 | 选择取决于文件系统的顺序，而非工具链载荷声明的依赖。本机同时有 binutils 2.42 与 2.42.1，构建使用 2.42，gcc 的 recipe 声明的是 2.42.1，而 2.42 没有能看到 subos 库的 `ld` 包装 |
+| 配套载荷 | 编译器旁的 binutils 与 linux-headers 由 `find_sibling_binary` 与 `find_package_in_xpkgs` 取目录遍历遇到的**第一个**版本 | 选择取决于文件系统的顺序，而非工具链载荷声明的依赖。一个同时装有 binutils 2.42 与 2.42.1 的 store 中，构建取到 2.42（目录遍历先遇到它），gcc 的 recipe 声明的是 2.42.1，而 2.42 没有能看到 subos 库的 `ld` 包装 |
 | 配套载荷的版本 | 由 gcc 的 recipe 的依赖固定，mcpp 中没有覆盖 | 违反原则 3 |
 | 部分版本 | `gcc@16`：`toolchain install` 取索引最新，`toolchain default` 取已安装的最新，构建取已安装的版本 | 一个请求三个回答；docs/20 陈述的「取最新发布」只对第一处成立 |
 | 编译器的版本 | gcc 的版本取横幅中最后一段数字 | Fedora 的 `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` 被读作 `3`（#989） |
@@ -273,7 +286,7 @@ xlings 与 xlings-res 的工作可以并行；xim-pkgindex 在载荷发布之后
 - **测试覆盖。** 第 6 节在 xlings 与 mcpp 两侧覆盖每一项机制，离线的断言在无网络的命名空间中成立；面的账本覆盖新的代码。
 - **代价。** 3.7 的刷新需要构建多个工具链载荷（gcc 的三个家族、llvm 的四个宿主），是本方案中耗时最长的部分。
 
-## 9. 已确认（负责人 2026-11-21，取各项的推荐）
+## 9. 已确定（2026-11-21，取各项的推荐）
 
 9.1 **范围。** xlings 的 PR 与发版、xlings-res 的载荷、xim-pkgindex 的 PR 与 mcpp 的改动都属于本轮（第 4 节）。
 
