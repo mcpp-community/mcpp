@@ -158,8 +158,10 @@ jobs:
           mkdir dist
           for dir in promoted/release-*/; do cp "$dir"* dist/; done
           cd dist
+          # One archive per platform, `.tar.gz` or `.zip`: each name is tested, since `ls` of
+          # both fails for the one that is absent and pipefail ended the step (v2026.11.21.1).
           for platform in linux-x86_64 linux-aarch64 macosx-arm64 windows-x86_64; do
-            ls "mcpp-$VERSION-$platform".tar.gz "mcpp-$VERSION-$platform".zip 2>/dev/null | grep -q . || {
+            [ -f "mcpp-$VERSION-$platform.tar.gz" ] || [ -f "mcpp-$VERSION-$platform.zip" ] || {
               echo "::error::run $RUN holds no archive of $VERSION for $platform"; ls -la; exit 1; }
           done
           for sum in *.sha256; do sha256sum -c "$sum"; done
