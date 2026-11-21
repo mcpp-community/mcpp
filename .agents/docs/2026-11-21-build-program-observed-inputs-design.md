@@ -5,7 +5,7 @@ status: active
 
 # 构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）
 
-**日期：** 2026-11-21 · **版本：** v3（v2 增加 3.6 提示的统一机制；v3 增加 3.7 契约中名字的歧义（#852）。负责人 2026-11-21 确定 3.6 的四点：策略只有 `always` 与 `once`，直接的调用全部迁移且检查没有例外，弃用与未知键保持 `always`，#852 本轮按根因修复；此前确定：本方案并入
+**日期：** 2026-11-21 · **版本：** v4（v2 增加 3.6 提示的统一机制；v3 增加 3.7 契约中名字的歧义（#852）；v4：旧的回答经过弃用期，被询问时警告。负责人 2026-11-21 确定 3.6 的四点：策略只有 `always` 与 `once`，直接的调用全部迁移且检查没有例外，弃用与未知键保持 `always`，#852 本轮按根因修复；此前确定：本方案并入
 [生态的测试与 CI 方案](2026-11-20-test-architecture-upgrade-design.md) 的本轮，见其 5.23，不另立拉取请求；包外读取在本地构建
 中警告、在 `mcpp publish` 中拒绝；标准库头文件与本包头文件两种用法在文档中标为不推荐，首次构建给出一次提示） ·
 **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支 · **规范：** SPEC-007 R10（`docs/specs/build-plugins.md`）
@@ -215,8 +215,26 @@ warning: build.mcpp: dependency name collides on MCPP_DEP_MCPPLIBS_FOO_BAR_DIR (
 - **单射的变换**（例如以 `__` 表示 `.`）：改变已发布的变量名，违反 AGENTS.md §3「已发布的键不改名」。
 - **另一个按精确拼写索引的文件通道**：同一事实的第二个通道，类型化接口与直接读取环境变量的程序会得到不同的回答。
 
-**兼容。** 原来唯一的变量不变。只有发生冲突的变量从「保留第一个」变为有歧义；不带命名空间的载荷名被两个命名空间
-声明时，从「回答先声明的」变为拒绝。docs/30 的这句话随之修改，CHANGELOG 记在 Changed。
+**旧的回答经过弃用期，不立即拒绝。** 今天回答了的名字（变换后冲突的依赖名回答保留下来的第一个；不带命名空间的载荷名
+被两个命名空间声明时回答先声明的）在一个弃用期内照旧回答，并在被询问时警告，指出统一规则下的写法；弃用期结束后按上面的
+规则拒绝。今天已经拒绝的（#862 的共有末段）不变。
+
+- **登记。** 弃用登记表（`modules/manifest/src/compat/registry.cppm`）增加一行 `ambiguous-contract-name`：`since` 为
+  2026.11.21.1，`floor` 按 docs/51 的规则取，`canonical` 为「以精确拼写询问（`xpkg_dir("<ns>", "<name>")`、限定名），
+  没有可区分的拼写时改名其中一个包」。警告的文字、`mcpp why compat` 的记录、docs/51 的表与 `--strict` 的拒绝都由这一行导出，
+  与其余的弃用读法相同。
+- **只在被询问时警告。** 弃用期内引擎照旧发布旧的变量，并同时发布 `*_AMBIGUOUS_<KEY>`。读取者（`dep_dir`、`dep_linkage`、
+  `dep_bin`、`xpkg_dir`）见到二者时返回旧的回答，并写出指令 `mcpp:deprecated=ambiguous-contract-name<TAB><名字><TAB><可用的拼写>`；
+  引擎把它记为该包构建程序的一次弃用读法（`record_use`），以弃用的警告显示。没有询问这个名字的程序不受影响，构建时也不再有
+  每次重复的 `collides on`。指令随引擎接口的协议版本加一。
+- **策略。** 弃用的警告是 `always`（3.6）：它改变这次构建的结果（回答的是两个提供者中的一个），并在 `floor` 变为错误。
+- **直接读取环境变量的程序。** 不经类型化接口的程序得不到警告；弃用期内它读到的值与今天相同，弃用期结束后变量不再发布。
+  docs/30 写明这一点，并建议使用类型化接口。
+- **`floor` 之后。** 旧的变量不再发布，读取者按本节的规则拒绝；登记表的行按 docs/51 删除，单元测试 `test_pm_compat` 在
+  `MCPP_VERSION` 到达 `floor` 时指出它。
+
+**兼容。** 原来唯一的变量不变。发生冲突的变量与不带命名空间的载荷名在弃用期内回答不变，被询问时警告；docs/30 的两处陈述
+改为弃用期内的行为与之后的规则，CHANGELOG 记在 Deprecated。
 
 ## 4. 宿主、跨平台、依赖与升级
 
@@ -242,7 +260,7 @@ warning: build.mcpp: dependency name collides on MCPP_DEP_MCPPLIBS_FOO_BAR_DIR (
 - **docs/30** 的「A name two dependencies answer to is no package's」改为按变量陈述，并写明只能改名的情形；`xpkg_dir` 一节中
   「回答先声明的」改为拒绝。
 - **CHANGELOG** 2026.11.21.1 的 Fixed（#991；#852 的按变量判定）、Added（提示的机制、用法的提示、包外读取的警告与发布的拒绝）
-  与 Changed（不带命名空间的载荷名被两个命名空间声明时被拒绝）。
+  与 Deprecated（`ambiguous-contract-name`：冲突的依赖名与不带命名空间的载荷名的旧回答，被询问时警告）。
 
 ## 6. 测试
 
@@ -259,7 +277,7 @@ warning: build.mcpp: dependency name collides on MCPP_DEP_MCPPLIBS_FOO_BAR_DIR (
 | U1 | 编译读取的分类：store、build-dependency 的树、本包、包外；Windows 的大小写与前缀 | `tests/unit/` |
 | U2 | 提示的策略：`always` 与 `once` 的判定，键的合并写入（两个写者），合并的格式（五个以上的对象），`--quiet`、`--verbose` | `modules/notice/tests/` |
 | T9 | 提示的机器输出：被抑制的提示在 `--format json` 中 `shown` 为假；`check_diag_sink.sh` 在本仓库通过 | `tests/e2e/cli/` 与 CI 的门 |
-| T10 | 名字的歧义（3.7）：依赖 `foo-bar` 与 `foo_bar` 构建时没有 `collides on`；`dep_dir("foo_bar")` 结束程序并说明只能改名；用例 980 的断言保持；工具（`dep_bin`）的冲突同样被拒绝 | `tests/e2e/deps/graph.cpp` |
+| T10 | 名字的歧义（3.7）：依赖 `foo-bar` 与 `foo_bar` 构建时没有 `collides on`；弃用期内 `dep_dir("foo_bar")` 返回旧的回答并给出弃用的警告，`mcpp why compat` 列出它，`--strict` 拒绝；用例 980 的断言保持；`dep_bin` 与 `xpkg_dir` 的同一情形 | `tests/e2e/deps/graph.cpp` |
 | U3 | 分组函数：按变量分组、精确拼写的列表、四个通道的变量形式；载荷的不带命名空间的拼写被两个命名空间声明 | `tests/unit/` |
 
 面的账本（测试方案 5.16）中新的诊断代码与原因标记由 T4、T5 覆盖。迁移到汇点的约 100 处提示保留原有的文字，已有的 e2e 断言
