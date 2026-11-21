@@ -301,8 +301,13 @@ scan_cell() {
         # macOS 那格只留下 `precompiled file '/private/var/…/target/` 就没了,
         # 而要看的正是后半截。判据的单位是一整行输出。`mcpp:` 行是编译器
         # 监督自身的陈述(哪一次观察判定了失败),它不带 `error:`,却是原因。
+        # 一条错误之后缩进的续行属于它(指名索引、做过什么、提示):一格的
+        # 「索引里没有该版本」只有一行时,看不出索引是哪一份、刷新过没有。
         echo "scan: $t × $tc 构建失败:" >&2
-        grep -m4 -iE '^error|error:|^mcpp: ' b.out | sed 's/^/    /' >&2
+        awk '{ l = tolower($0) }
+             l ~ /^error|error:|^mcpp: / { if (++n > 4) exit; on = 1; c = 0; print; next }
+             on && /^[ \t]/ && c < 8 { c++; print; next }
+             { on = 0 }' b.out | sed 's/^/    /' >&2
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              mismatch build-failed
     fi
