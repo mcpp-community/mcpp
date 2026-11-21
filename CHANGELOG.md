@@ -74,6 +74,9 @@
 
 ### Fixed
 
+- `mcpp index list` names the registries `mcpp index add` added. It read the provider's list of
+  registries in an older form, found none in the current one, and showed the configuration's
+  alone; the text form now marks the default as the JSON form does.
 - A program's resource script is compiled with its package's `include_dirs` expanded, as the
   compile steps expand them: a relative entry is a glob, and `*/include` names the directories it
   matches. It reached `llvm-windres` as written, and LLVM's tools on Windows expand wildcards in

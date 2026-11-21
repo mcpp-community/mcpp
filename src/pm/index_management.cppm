@@ -157,9 +157,8 @@ export int index_list(bool json = false) {
                          r.name, r.url, isDefault ? "  (default)" : "");
         }
     } else {
-        for (auto& r : *repos) {
-            std::println("  {:<15}  {}", r.name, r.url);
-        }
+        for (auto& r : *repos)
+            std::println("  {:<15}  {}{}", r.name, r.url, r.name == cfg->defaultIndex ? "  (default)" : "");
     }
 
     // Show project-level custom indices from mcpp.toml [indices].

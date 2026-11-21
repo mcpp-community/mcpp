@@ -656,7 +656,19 @@ Fetcher::list_repos() {
 
     std::vector<RepoInfo> repos;
     for (auto& d : r->dataEvents) {
-        // payload format varies; styled_list with [name, url] pairs is common.
+        // THE INTERFACE'S OWN RECORD (`repo_list`: `repos`, each with its name and url), which
+        // the xlings mcpp pins writes. Read as the older `styled_list` pairs below, it named no
+        // repository, and `mcpp index list` showed the configuration's alone: a registry
+        // `mcpp index add` had added was missing from it.
+        if (d.dataKind == "repo_list") {
+            const auto payload = nlohmann::json::parse(d.payloadJson, nullptr, false);
+            const auto list = payload.is_object() ? payload.value("repos", nlohmann::json::array()) : nlohmann::json::array();
+            for (auto const& repo : list)
+                if (repo.is_object() && repo.contains("name") && repo["name"].is_string())
+                    repos.push_back({repo["name"].get<std::string>(), repo.value("url", std::string{}), false});
+            continue;
+        }
+        // An older xlings: a styled_list of [name, url] pairs.
         auto items = extract_object(d.payloadJson, "items");
         // Walk pairs as in search().
         std::size_t p = 0;
