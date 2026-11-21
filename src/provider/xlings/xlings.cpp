@@ -16,10 +16,15 @@ import mcpp.runtime.launch_env;
 import mcpp.home.files;
 import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
+import mcpp.diag;
 import mcpp.home;
 import mcpp.xpkg_version;
+import mcpp.version_req;
+import mcpp.manifest.xpkg;      // the runtime deps a payload's descriptor declares
+import mcpp.toolchain.platform; // ...for this host
 import nlohmann.json;
 import mcpplibs.os.fs;
+import mcpplibs.os.env;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -596,30 +601,31 @@ subos_dir_of(const std::filesystem::path& compilerBin) {
     return home / "subos" / "default";
 }
 
+namespace {
+std::optional<std::filesystem::path>
+companion_dir(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+              std::string_view packageName, std::string_view requiredRelPath, bool anyPrefix);
+std::optional<std::string>
+declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+                     std::string_view packageName);
+} // namespace
+
 std::optional<std::filesystem::path>
 find_sibling_tool(const std::filesystem::path& compilerBin,
                   std::string_view tool) {
     auto xpkgs = xpkgs_from_compiler(compilerBin);
     if (!xpkgs) return std::nullopt;
 
-    auto root = *xpkgs / std::format("xim-x-{}", tool);
-    std::error_code ec;
-    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+    return companion_dir(*xpkgs, compilerBin, tool, {}, /*anyPrefix=*/false);
+}
 
-    // The first version dir readdir yields. ORDER IS UNDEFINED -- this does
-    // NOT return the highest, and the comment that said so was wrong for as
-    // long as it stood. With two versions installed the answer varies by
-    // filesystem, so a caller that needs a SPECIFIC version must name it;
-    // see probe.cppm, where the version comes from the resolved runtime
-    // binding rather than from this scan.
-    //
-    // A test asserting the old "highest" claim was attempted and removed: it
-    // passed or failed by directory order, which makes both outcomes
-    // uninformative.
-    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        if (v.is_directory(ec)) return v.path();
-    }
-    return std::nullopt;
+std::optional<std::string>
+declared_dependency(const std::filesystem::path& compilerBin, std::string_view packageName) {
+    auto xpkgs = xpkgs_from_compiler(compilerBin);
+    if (!xpkgs) return std::nullopt;
+    auto r = declared_requirement(*xpkgs, compilerBin, packageName);
+    if (r && r->empty()) return std::nullopt;
+    return r;
 }
 
 std::optional<std::filesystem::path> active_home_xpkgs() {
@@ -668,25 +674,108 @@ bool payload_dir_qualifies(const std::filesystem::path& versionDir,
     return true;
 }
 
-// Scan an xpkgs root across index prefixes (xim-x-, scode-x-, compat-x-, …)
-// for the first qualifying version dir of `packageName`.
-std::optional<std::filesystem::path>
-find_package_in_xpkgs(const std::filesystem::path& xpkgs,
-                      std::string_view packageName,
-                      std::string_view requiredRelPath) {
+// The qualifying version directories of `packageName` in `xpkgs`: under
+// `xim-x-` alone, or under every index prefix (`xim-x-`, `scode-x-`, …).
+std::vector<std::filesystem::path>
+payload_versions(const std::filesystem::path& xpkgs, std::string_view packageName,
+                 std::string_view requiredRelPath, bool anyPrefix) {
+    std::vector<std::filesystem::path> out;
     std::error_code ec;
-    std::string suffix = std::format("-x-{}", packageName);
+    const std::string suffix = std::format("-x-{}", packageName);
     for (auto& entry : std::filesystem::directory_iterator(xpkgs, ec)) {
-        if (!entry.is_directory(ec)) continue;
-        auto name = entry.path().filename().string();
-        if (!name.ends_with(suffix)) continue;
-        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
-            if (!v.is_directory(ec)) continue;
-            if (payload_dir_qualifies(v.path(), requiredRelPath))
-                return v.path();
+        const auto name = entry.path().filename().string();
+        if (!entry.is_directory(ec) || !name.ends_with(suffix)) continue;
+        if (!anyPrefix && name != "xim" + suffix) continue;
+        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec))
+            if (v.is_directory(ec) && payload_dir_qualifies(v.path(), requiredRelPath))
+                out.push_back(v.path());
+    }
+    return out;
+}
+
+// What the payload `compilerBin` belongs to declares for `packageName` on this
+// host: the requirement of its descriptor's runtime dependency
+// (`xim:binutils@2.42.1` gives `2.42.1`), none when it declares none.
+std::optional<std::string>
+declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+                     std::string_view packageName) {
+    if (compilerBin.empty()) return std::nullopt;
+    const auto rel = compilerBin.lexically_relative(xpkgs);
+    if (rel.empty() || *rel.begin() == "..") return std::nullopt;
+    const auto dirName = rel.begin()->string();
+    const auto dash = dirName.find("-x-");
+    if (dash == std::string::npos) return std::nullopt;
+    const auto owner = dirName.substr(dash + 3);
+    for (const auto& file : descriptor_candidates(xpkgs.parent_path(), owner)) {
+        std::ifstream in(file);
+        if (!in) continue;
+        const std::string body((std::istreambuf_iterator<char>(in)), {});
+        for (const auto& dep : mcpp::manifest::xpkg_runtime_deps(
+                 body, mcpp::toolchain::platform::HostPlatform::current())) {
+            std::string_view d = dep;
+            if (auto colon = d.find(':'); colon != std::string_view::npos) d.remove_prefix(colon + 1);
+            const auto at = d.find('@');
+            if (d.substr(0, at) != packageName) continue;
+            return at == std::string_view::npos ? std::string{} : std::string(d.substr(at + 1));
         }
+        return std::nullopt;
     }
     return std::nullopt;
+}
+
+// THE ONE CHOICE AMONG A STORE'S VERSIONS OF A COMPANION (design 2026-11-21,
+// offline and toolchain defaults §3.5). The version the compiler's payload
+// declares: its exact key, or the newest that satisfies a requirement
+// (`>=2.39`). Without a declaration (no compiler, or a payload that names no
+// such dependency), the newest. Every picker of this file took the first
+// directory the walk returned: with binutils 2.42 and 2.42.1 in one store the
+// build took 2.42, which GCC's recipe does not declare and whose `ld` does not
+// see the subos's libraries, or 2.42.1, by the filesystem's order. A declared
+// version the store does not hold is reported: the build would otherwise take
+// another and say nothing.
+std::optional<std::filesystem::path>
+companion_dir(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+              std::string_view packageName, std::string_view requiredRelPath, bool anyPrefix) {
+    namespace vr = mcpp::version_req;
+    const auto dirs = payload_versions(xpkgs, packageName, requiredRelPath, anyPrefix);
+    const auto declared = declared_requirement(xpkgs, compilerBin, packageName);
+    std::optional<vr::Requirement> req;
+    if (declared && !declared->empty()) {
+        for (const auto& d : dirs)
+            if (d.filename() == *declared) return d;
+        if (vr::is_constraint(*declared))
+            if (auto r = vr::parse_req(*declared)) req = *r;
+        if (!req) {
+            mcpp::diag::degraded("toolchain/companion", std::format(
+                "the toolchain at {} declares {}@{}, which this store does not hold",
+                compilerBin.string(), packageName, *declared),
+                std::format("{} is not used: the build may assemble, link or include with another or with none",
+                            packageName),
+                "install the toolchain again (`mcpp toolchain install`), which installs what it declares");
+            return std::nullopt;
+        }
+    }
+    std::optional<std::filesystem::path> best;
+    std::optional<vr::Version> bestVersion;
+    for (const auto& d : dirs) {
+        auto v = vr::parse_version(d.filename().string());
+        if (!v || (req && !vr::matches(*req, *v))) continue;
+        if (!bestVersion || *bestVersion < *v) { best = d; bestVersion = *v; }
+    }
+    if (req && !best) {
+        mcpp::diag::degraded("toolchain/companion", std::format(
+            "the toolchain at {} declares {}@{}, and no version this store holds satisfies it",
+            compilerBin.string(), packageName, *declared),
+            std::format("{} is not used: the build may assemble, link or include with another or with none",
+                        packageName),
+            "install the toolchain again (`mcpp toolchain install`), which installs what it declares");
+        return std::nullopt;
+    }
+    if (best) return best;
+    // No key parses as a version: the newest by name, still not the walk's order.
+    for (const auto& d : dirs)
+        if (!best || best->filename() < d.filename()) best = d;
+    return best;
 }
 
 } // namespace
@@ -695,7 +784,7 @@ std::optional<std::filesystem::path>
 find_home_tool(std::string_view tool, std::string_view requiredRelPath) {
     auto xpkgs = active_home_xpkgs();
     if (!xpkgs) return std::nullopt;
-    return find_package_in_xpkgs(*xpkgs, tool, requiredRelPath);
+    return companion_dir(*xpkgs, {}, tool, requiredRelPath, /*anyPrefix=*/true);
 }
 
 std::optional<std::filesystem::path>
@@ -705,16 +794,9 @@ find_sibling_binary(const std::filesystem::path& compilerBin,
     auto xpkgs = xpkgs_from_compiler(compilerBin);
     if (!xpkgs) return std::nullopt;
 
-    auto root = *xpkgs / std::format("xim-x-{}", tool);
-    std::error_code ec;
-    if (!std::filesystem::exists(root, ec)) return std::nullopt;
-
-    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        auto candidate = v.path() / std::string(binaryRelPath);
-        if (std::filesystem::exists(candidate, ec))
-            return candidate;
-    }
-    return std::nullopt;
+    auto dir = companion_dir(*xpkgs, compilerBin, tool, binaryRelPath, /*anyPrefix=*/false);
+    if (!dir) return std::nullopt;
+    return *dir / std::string(binaryRelPath);
 }
 
 std::optional<std::filesystem::path>
@@ -725,7 +807,7 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     if (!xpkgs) return std::nullopt;
 
     // Search across index prefixes: xim-x-, scode-x-, compat-x-, etc.
-    if (auto found = find_package_in_xpkgs(*xpkgs, packageName, requiredRelPath))
+    if (auto found = companion_dir(*xpkgs, compilerBin, packageName, requiredRelPath, /*anyPrefix=*/true))
         return found;
 
     // THE `~/.xlings` FALLBACK IS GONE, AND ITS REMOVAL IS THE POINT.
@@ -755,6 +837,22 @@ find_sibling_package(const std::filesystem::path& compilerBin,
 
 std::filesystem::path index_data(const Env& env) {
     return env.home / "data";
+}
+
+std::vector<std::filesystem::path>
+descriptor_candidates(const std::filesystem::path& data, std::string_view name) {
+    std::vector<std::filesystem::path> out;
+    if (name.empty()) return out;
+    const std::string subdir(1, name[0]), fname = std::string(name) + ".lua";
+    out.push_back(data / "xim-pkgindex" / "pkgs" / subdir / fname);
+    std::error_code ec;
+    std::vector<std::filesystem::path> repos;
+    for (auto it = std::filesystem::directory_iterator(data / "xim-index-repos", ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec))
+        if (it->is_directory(ec)) repos.push_back(it->path());
+    std::ranges::sort(repos);
+    for (const auto& r : repos) out.push_back(r / "pkgs" / subdir / fname);
+    return out;
 }
 
 namespace {
@@ -920,7 +1018,7 @@ std::vector<InvocationVar> invocation_env(const Env& env) {
         }
         return std::to_string(limit);
     };
-    return {
+    std::vector<InvocationVar> vars{
         {"XLINGS_HOME", env.home.string(), true},
         {"XLINGS_PROJECT_DIR", env.projectDir.string(), !env.projectDir.empty()},
         {"XLINGS_ACTIVE_SUBOS", "", false},
@@ -928,6 +1026,19 @@ std::vector<InvocationVar> invocation_env(const Env& env) {
         {"XLINGS_DOWNLOAD_IDLE_TIMEOUT", cap("XLINGS_DOWNLOAD_IDLE_TIMEOUT", static_cast<int>(kSourceIdleTimeout.count())), true},
         {"XLINGS_DOWNLOAD_LOW_SPEED", mcpp::invocation::get("XLINGS_DOWNLOAD_LOW_SPEED").value_or("off"), true},
     };
+    // THE SOURCES OF THIS RUN (design 2026-11-21 §3.2; xlings 2026.11.21.1):
+    // the archive directories before the caller's own, and offline, the
+    // statement that the network is not one -- xlings then takes an archive
+    // from its download cache and the directories, and names together those
+    // no source holds. Not offline, a caller's XLINGS_NET_UNREACHABLE stays.
+    if (auto dirs = mcpp::effects::archive_dirs(); !dirs.empty()) {
+        if (auto own = mcpp::invocation::get("XLINGS_ARCHIVES"); own && !own->empty())
+            for (auto& d : mcpplibs::os::env::split_list(*own)) dirs.push_back(std::move(d));
+        vars.push_back({"XLINGS_ARCHIVES", mcpplibs::os::env::join_list(dirs), true});
+    }
+    if (mcpp::effects::offline_mode())
+        vars.push_back({"XLINGS_NET_UNREACHABLE", "mcpp runs offline", true});
+    return vars;
 }
 
 Invocation invocation(const Env& env, std::vector<std::string> args) {
@@ -1624,6 +1735,62 @@ int install_direct(const Env& env, std::string_view target, bool quiet) {
     return rc;
 }
 
+namespace {
+int run_shown(Invocation inv) {
+    inv.options.streams = mcpp::run::Streams::output_error_shown;
+    inv.options.on_line = [](std::string_view line) { std::println(libc::stderr(), "{}", line); };
+    inv.options.total = std::chrono::duration_cast<std::chrono::milliseconds>(kDirectInstallTimeout);
+    const auto ran = mcpp::run::execute(inv.argv, inv.options);
+    if (ran.timed_out)
+        mcpp::log::warn("xlings", std::format("`xlings {}` did not finish within {} hours and was stopped",
+                                              inv.argv.size() > 1 ? inv.argv[1] : std::string{},
+                                              kDirectInstallTimeout.count() / 3600));
+    return ran.exit_code;
+}
+}
+
+int download_to(const Env& env, std::span<const std::string> refs, const std::filesystem::path& dir) {
+    std::vector<std::string> args{"download"};
+    args.insert(args.end(), refs.begin(), refs.end());
+    args.insert(args.end(), {"--to", dir.string(), "--with-index"});
+    if (!mcpp::effects::offline_mode()) mcpp::effects::note_network_access();
+    return run_shown(invocation(env, std::move(args)));
+}
+
+int install_from(const Env& env, const std::filesystem::path& dir, std::span<const std::string> refs) {
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, std::format("installing from {}", dir.string()));
+    std::vector<std::string> args{"install", "--from", dir.string()};
+    args.insert(args.end(), refs.begin(), refs.end());
+    args.push_back("-y");
+    return run_shown(invocation(env, std::move(args)));
+}
+
+std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot) {
+    namespace fs = std::filesystem;
+    fs::path dir;
+    if (name == "xim") dir = official_index_dir(env);
+    else
+        for (auto const& d : paths::declared_indices(env))
+            if (d.name == name) dir = d.dir;
+    if (dir.empty()) return "unknown";
+    std::error_code ec;
+    const bool ours = fs::exists(dir / kBundleSnapshotMarker, ec) || fs::exists(dir / ".xlings-index-version", ec);
+    if (fs::exists(dir, ec) && (fs::exists(dir / ".git", ec) || !ours)) return "kept";
+    // Copied beside it and exchanged, as a refresh is, so no reader sees half
+    // an index.
+    auto staged = dir;
+    staged += std::format(".staging-{:x}", std::random_device{}());
+    fs::create_directories(staged.parent_path(), ec);
+    fs::copy(snapshot, staged, fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+    if (ec) { fs::remove_all(staged, ec); return "kept"; }
+    write_file(staged / kBundleSnapshotMarker, std::format("{}\n", snapshot.generic_string()));
+    const bool present = fs::exists(dir, ec);
+    auto swapped = present ? mcpplibs::os::fs::exchange(staged, dir) : mcpplibs::os::fs::place(staged, dir);
+    fs::remove_all(staged, ec);
+    return swapped ? "placed" : "kept";
+}
+
 // ─── Sandbox lifecycle ──────────────────────────────────────────────
 
 void seed_xlings_json(const Env& env,
@@ -1916,15 +2083,13 @@ std::optional<std::filesystem::path> find_usable_nasm(const Env& env) {
 // sandbox's. Asked by the caller so that a host tool reaching a build is
 // NAMED there; a host tool that reaches a build silently is the defect, not
 // the host tool.
+//
+// Judged LEXICALLY, as the build cache judges a store: a payload installed by
+// link from an upstream home is this home's, and resolving the link names the
+// upstream's directory, which read as the host's.
 bool nasm_is_from_host(const Env& env, const std::filesystem::path& bin) {
-    auto root = paths::xim_tool_root(env, "nasm");
-    std::error_code ec;
-    auto canonRoot = std::filesystem::weakly_canonical(root, ec);
-    auto canonBin  = std::filesystem::weakly_canonical(bin, ec);
-    if (canonRoot.empty() || canonBin.empty()) return true;
-    auto r = canonRoot.string();
-    auto b = canonBin.string();
-    return b.rfind(r, 0) != 0;
+    const auto rel = bin.lexically_normal().lexically_relative(paths::xim_tool_root(env, "nasm").lexically_normal());
+    return rel.empty() || *rel.begin() == "..";
 }
 
 // ─── Index freshness ────────────────────────────────────────────────
@@ -2092,11 +2257,11 @@ int update_index_unguarded(const Env& env, bool quiet) {
             it == staged.requiredMcpp.end() ? std::string_view{} : std::string_view{it->second});
     };
     for (auto& dir : staged.kept)
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
+        mcpp::diag::closing("index/requires-newer-mcpp", std::format(
             "the refreshed package index `{}` requires a newer mcpp; this run "
             "used the previous index. {}", dir.filename().string(), advice(dir)));
     for (auto& dir : staged.unusable)
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
+        mcpp::diag::closing("index/requires-newer-mcpp", std::format(
             "the package index `{}` requires a newer mcpp and no earlier copy is "
             "usable; packages it serves cannot be resolved. {}", dir.filename().string(), advice(dir)));
 

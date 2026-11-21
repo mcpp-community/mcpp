@@ -10,6 +10,7 @@ import mcpp.scaffold;
 import mcpp.scaffold.create;
 import mcpp.scaffold.project_name;
 import mcpp.ui;
+import mcpp.diag;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -29,7 +30,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
             return 2;
         }
         if (spec->legacyList) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("new", std::format(
                 "trailing ':' list syntax is deprecated; use "
                 "`mcpp new --list-templates {}`",
                 lt->substr(0, lt->size() - 1)));
@@ -58,7 +59,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string tmpl = "bin";
     if (auto t = parsed.value("template")) tmpl = *t;
     if (tmpl == "gui") {
-        mcpp::ui::warning(
+        mcpp::diag::warning("new", 
             "--template gui is deprecated; use `--template imgui` "
             "(the template then ships with — and version-tracks — the library)");
     }
@@ -70,7 +71,7 @@ export int cmd_new(const mcpplibs::cmdline::ParsedArgs& parsed) {
             return 2;
         }
         if (spec->legacyList) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("new", std::format(
                 "trailing ':' list syntax is deprecated; use "
                 "`mcpp new --list-templates {}`",
                 tmpl.substr(0, tmpl.size() - 1)));

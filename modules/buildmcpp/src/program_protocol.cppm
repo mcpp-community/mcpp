@@ -140,7 +140,12 @@ export namespace mcpp::build::program_protocol {
 // feature declares. Same cost as v5's: a package calling `objects_of` fails on
 // an older engine at the build.mcpp COMPILE. No directive of v19 changes
 // spelling.
-inline constexpr int kProtocolVersion = 20;
+// v21 (design 2026-11-21, build programs' inputs §3.7): `mcpp:deprecated=`,
+// which a typed reader (`dep_dir`, `dep_linkage`, `dep_bin`, `xpkg_dir`) states
+// when it answers a name several dependencies answer by the first. An older
+// engine ignores the line with an unknown-directive warning; no directive of
+// v20 changes spelling.
+inline constexpr int kProtocolVersion = 21;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

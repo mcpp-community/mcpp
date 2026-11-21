@@ -153,7 +153,7 @@ int hide_dual_dll(const fs::path& root, const fs::path& hidden, std::string_view
     return n;
 }
 
-E2E graph{"graph", [] {
+E2E graph{"graph", s::home_fixture, [] {
     "833 a workspace is one graph per configuration"_test[s::unix_shell] = [] {
         // G1 a shared member compiled once; G2 a selection replays the workspace's graph; G3 a
         // member's flag edit rebuilds that member alone; G4 one build directory per
@@ -379,7 +379,8 @@ export int consumer_flag_v() {
         expect(fatal(graph_dirs(ws.dir()).size() == 2u)) << "C: -p made a third build directory";
     };
 
-    "860 a workspaces programs compile at the same time"_test = [] {
+    // Holds the machine: compiles at the same time need the budget's slots (SPEC-017 O11).
+    "860 a workspaces programs compile at the same time"_test[resource{"machine"}] = [] {
         // A: at -j 4 the members' build programs compile at the same time, and three run. B: at
         // -j 1 they compile one after another and run in the same order. C: when two do not
         // compile, the failure reported is that of the first to run, at either -j.

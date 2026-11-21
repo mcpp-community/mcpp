@@ -78,7 +78,41 @@ void age(const fs::path& root, std::chrono::hours ago) {
 
 }  // namespace
 
-E2E entries{"entries", [] {
+E2E entries{"entries", s::home_fixture, [] {
+    "927 a fresh checkout's units are placed from the unit cache, and a changed header compiles its includers"_test[s::gcc] = [] {
+        // Design 2026-11-20 §5.3. A unit whose command and read files hold the contents an earlier
+        // compile's did is placed by the compiler executor, and no compiler runs: after `target/`
+        // is removed (a fresh checkout), every object edge of the build record is `served` (A). A
+        // header changed in content compiles the units that read it, and only those (B).
+        s::project p{{"mcpp.toml", "[package]\nname = \"uc\"\nversion = \"0.1.0\"\n\n[targets.uc]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                     {"src/main.cpp", "#include \"value.h\"\nimport uc.a;\nint main() { return a() + VALUE == 3 ? 0 : 1; }\n"},
+                     {"src/value.h", "#define VALUE 2\n"},
+                     {"src/a.cppm", "export module uc.a;\nexport int a() { return 1; }\n"}};
+        const auto record = [&](std::string_view name) { return s::case_dir() / std::format("{}.ndjson", name); };
+        auto objects = [&](std::string_view name) {
+            std::map<std::string, bool> served;   // object -> placed
+            for (const auto& l : s::json_lines(s::read_file(record(name))))
+                if (const auto out = l.value("output", ""); out.ends_with(".o")) served[out] = l.value("served", false);
+            return served;
+        };
+        auto build = [&](std::string_view name) {
+            auto r = p.mcpp({"build"}, {.env = {{"MCPP_BUILD_RECORD", record(name).string()}}});
+            expect(fatal(e2e::succeeded(r))) << name << ": " << s::text(r);
+        };
+        build("first");
+        p.remove("target");
+        build("fresh");
+        const auto fresh = objects("fresh");
+        expect(fatal(fresh.size() >= 2u)) << "A: the record names no object edges\n" << s::read_file(record("fresh"));
+        for (const auto& [object, placed] : fresh) expect(placed) << "A: " << object << " was compiled again";
+        expect(e2e::succeeded(p.mcpp({"run"}))) << "A: the program linked from placed objects";
+        p.write("src/value.h", "#define VALUE 5\n");
+        p.remove("target");
+        build("changed");
+        for (const auto& [object, placed] : objects("changed"))
+            expect(placed == !object.contains("main")) << "B: " << object << (placed ? " was placed" : " was compiled");
+    };
+
     "172 build cache cross project"_test[s::gcc][s::fresh_sandbox] = [] {
         // The global build cache saves work across projects: a dependency's key carries no
         // consumer identity, and the second project has zero compile edges for it (read from
@@ -390,6 +424,40 @@ E2E entries{"entries", [] {
         expect(fatal(s::lacks(s::text(r), "CRC mismatch"))) << "B: ex.lib compiled against ex.api 0.1.0 was served";
         const auto keyed = s::glob(pkg, "*/ex.lib@0.1.0/*");
         expect(fatal(std::ranges::count_if(keyed, [](const fs::path& p) { return fs::is_directory(p); }) == 2)) << "B: ex.lib has not one entry per interface it imported\n" << s::text(r);
+    };
+
+    "1133 an entry is served only against the interfaces it was compiled with"_test[s::gcc] = [] {
+        // SPEC-001 §10.4 item 7: a path dependency `upper` imports `lower`; once `lower`'s entry is
+        // gone (as `mcpp cache gc` removes the least used) and the same trees are built at another
+        // path, `lower` is compiled again and `upper`, whose entry holds a BMI compiled against the
+        // first `lower`, is compiled with it rather than served ("module 'lower' CRC mismatch").
+        s::own_home(s::home::inherited);
+        const auto pkg = s::case_home(s::home::inherited) / "build-cache/v1/pkg";
+        const auto trees = [](const fs::path& at) {
+            s::project(at / "lower", {{"mcpp.toml", "[package]\nname = \"lower\"\nversion = \"0.1.0\"\n\n[targets.lower]\nkind = \"lib\"\n"},
+                                     {"src/lower.cppm", "export module lower;\nexport int lower_v() { return 4; }\n"}});
+            s::project(at / "upper", {{"mcpp.toml", "[package]\nname = \"upper\"\nversion = \"0.1.0\"\n\n[targets.upper]\nkind = \"lib\"\n\n[dependencies]\nlower = { path = \"../lower\" }\n"},
+                                    {"src/upper.cppm", "export module upper;\nimport lower;\nexport int upper_v() { return 2 * lower_v(); }\n"}});
+            return s::project(at / "app", {{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nupper = { path = \"../upper\" }\n"},
+                                           {"src/main.cpp", "import upper;\nint main() { return upper_v() == 8 ? 0 : 1; }\n"}});
+        };
+        auto first = trees(s::case_dir() / "first");
+        auto r = first.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the first tree\n" << s::text(r);
+        const auto lowerEntries = s::glob(pkg, "*/*lower@0.1.0+path.*");
+        expect(fatal(!lowerEntries.empty() && !s::glob(pkg, "*/*upper@0.1.0+path.*").empty())) << "the path dependencies were not cached\n" << s::text(r);
+        for (auto const& e : lowerEntries) fs::remove_all(e);
+
+        auto second = trees(s::case_dir() / "second");
+        r = second.mcpp({"run", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "the same trees at another path after lower's entry was removed\n" << s::text(r);
+        expect(s::lacks(s::text(r), "CRC mismatch")) << s::text(r);
+        expect(s::has_line(s::text(r), R"(cache: \S*upper 0\.1\.0 not served \[upstream-filled\])")) << "upper was not compiled with the lower it imports\n" << s::text(r);
+
+        auto third = trees(s::case_dir() / "third");
+        r = third.mcpp({"run", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "a third tree over both entries\n" << s::text(r);
+        expect(s::no_line(s::text(r), R"(cache: \S*(upper|lower) 0\.1\.0 not served)")) << "an entry filled against its interfaces was not served\n" << s::text(r);
     };
 
     "1029 an unused std module is collected by age"_test = [] {

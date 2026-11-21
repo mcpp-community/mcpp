@@ -89,7 +89,7 @@ std::size_t longest_line(const fs::path& f) {
     return longest;
 }
 
-E2E link{"link", [] {
+E2E link{"link", s::home_fixture, [] {
     "190 link rspfile newlines"_test = [] {
         // Link rules write their response file one input per line ($in_newline), and a relink
         // kept with -d keeprsp holds the objects one per line.

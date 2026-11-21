@@ -29,3 +29,17 @@ hosts      = ["linux", "macos", "windows"]
 shard      = "12m"
 max_shards = 8
 unknown    = "30s"
+
+# THE PROCESSOR TIME A CASE MAY TAKE (design 2026-11-20 §5.17, mtest 0.11.0): `mtest gate` fails a
+# case whose `cpu_ms` passes it, unless a waiver names it with a reason; a waiver that excuses
+# nothing fails the gate too, so the list only shrinks. Compared within one class of machine.
+[budget]
+case_cpu = "10m"
+
+# THE SURFACE'S LEDGER (design 2026-11-20 §5.16): every item `mcpp emit surface` lists is used by a
+# passing case (its `exercise` events, which the kit writes from MCPP_SURFACE_RECORD), or a waiver
+# names it with a reason. A waiver of an item a case uses fails the gate. The items are the golden
+# surface, which the case `golden/1124` holds equal to what the binary under test emits.
+[ledger.surface]
+file     = "golden/surface.txt"
+evidence = "exercised"

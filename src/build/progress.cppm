@@ -39,6 +39,7 @@ import mcpp.log;
 import mcpp.invocation;
 import mcpplibs.os.fs;
 import mcpp.ui.terminal;
+import mcpp.build.record;   // what a build did, edge by edge (design 2026-11-20 §5.6)
 
 export namespace mcpp::build::progress {
 
@@ -67,6 +68,9 @@ struct Record {
     // first input, relative to the package root that holds it. `Finished`
     // names the longest step by it (build output design revision 3, §7.3).
     std::unordered_map<std::size_t, std::string> sources;
+    // The outputs of the steps that place a unit of a package the cache served
+    // (`stage_file`): a copy, not a compile (the build record's `staged`).
+    std::unordered_set<std::string> staged;
     std::size_t steps = 0;         // every step of the graph
     // The profile as `Finished` describes it. The fast path, which has no
     // plan, reads it from the header line alone (`read_descriptor`).
@@ -281,6 +285,10 @@ public:
     // for a later failure.
     std::optional<std::string> failed(std::string_view outputs);
     void pass_end();
+    // Under --verbose, the five edges of `ran` that took longest, each by its
+    // package and source as the lines name it, with its processor time and
+    // largest resident set (design 2026-11-20 §5.6).
+    void slowest(const mcpp::build::record::Record& ran);
     // The build ended. Under --verbose, the packages with nothing to do are
     // named, and each package that did work states its steps and span.
     void finish(bool success);
@@ -288,6 +296,26 @@ public:
 private:
     std::shared_ptr<Impl> impl_;
 };
+
+// THE EDGES A BUILD RAN (design 2026-11-20 §5.6). `mark_log` notes where
+// ninja's log of `buildDir` ends before the build; `ran_since` reads the
+// entries after it, attributes each to its package by the step record, takes
+// what the compiler executor measured from its usage file and adds a line per
+// package the cache served. A log ninja recompacted in between has no mark to
+// read from: the edges are then those the executor measured, which leaves
+// out the steps it does not run (dyndep collation, actions).
+struct LogMark {
+    std::uintmax_t size = 0;
+    std::string    tail;   // the last bytes before the mark
+};
+LogMark mark_log(const std::filesystem::path& buildDir);
+mcpp::build::record::Record ran_since(const std::filesystem::path& buildDir, const LogMark& mark,
+                                      const std::filesystem::path& usageFile);
+// The edges a build ran (`ran_since`), when any ran: kept for the command
+// (`mcpp test` writes them into its run, SPEC-017 B4), appended to the file
+// MCPP_BUILD_RECORD names, and, with a report, its slowest named.
+void keep_ran(const std::filesystem::path& buildDir, const LogMark& mark,
+              const std::filesystem::path& usageFile, Build* report);
 
 } // namespace mcpp::build::progress
 
@@ -341,8 +369,9 @@ long long to_ll(std::string_view s) {
 } // namespace
 
 // Format: a header, then `P` lines (packages, in order), `A` lines (actions),
-// `S` lines (a step's identity and its source) and `O` lines (an output, its
-// package's index and its step's identity). Version 2 adds the profile's
+// `S` lines (a step's identity and its source), `O` lines (an output, its
+// package's index and its step's identity) and `T` lines (an output a staging
+// step writes; a reader that predates them skips them). Version 2 adds the profile's
 // descriptor to the header, a package's detail and source to its `P` line,
 // and the `S` lines; a version 1 record (mcpp 2026.9.29.5) is read with all
 // of them empty, and its subject then carries what version 1 wrote there.
@@ -367,6 +396,9 @@ std::string format_record(const Record& r) {
         out += std::format("O\t{}\t{}\t{}\n", index,
                            st == r.step.end() ? std::size_t{0} : st->second, field(path));
     }
+    std::vector<std::string> staged(r.staged.begin(), r.staged.end());
+    std::ranges::sort(staged);
+    for (auto const& path : staged) out += std::format("T\t{}\n", field(path));
     return out;
 }
 
@@ -393,6 +425,8 @@ Record parse_record(std::string_view text) {
             r.actions.emplace(std::string(f[1]), std::string(f[2]));
         } else if (f[0] == "S" && f.size() >= 3) {
             r.sources.emplace(to_size(f[1]), std::string(f[2]));
+        } else if (f[0] == "T" && f.size() >= 2) {
+            r.staged.emplace(std::string(f[1]));
         } else if (f[0] == "O" && f.size() >= 4) {
             const auto index = to_size(f[1]);
             if (index < r.packages.size()) {
@@ -546,6 +580,7 @@ Record Attribution::record(const std::vector<PackageInfo>& declared,
         for (auto const& o : s.outputs) {
             r.owner.emplace(o, it->second);
             r.step.emplace(o, id);
+            if (s.rule == "stage_file") r.staged.emplace(o);
         }
         if (auto src = source_in(s.input, roots); !src.empty()) r.sources.emplace(id, std::move(src));
     }
@@ -694,6 +729,7 @@ struct Running {
     std::string stamp;
     long long   since = 0;   // ms since command start
     std::optional<action_progress::Snapshot> snapshot;
+    bool        told = false;   // its line as a long step was written
 };
 
 struct Build::Impl {
@@ -1023,11 +1059,30 @@ void read_starts(Report& r, Build::Impl& b, std::vector<std::string>& out) {
     for (auto const& a : starts) {
         auto owner = b.record->owner.find(a.stamp);
         if (owner == b.record->owner.end()) continue;
-        auto label = b.record->actions.find(a.stamp);
-        b.running.push_back({owner->second,
-                             label != b.record->actions.end() ? label->second : a.stamp,
-                             a.stamp, now_ms() - std::max<long long>(0, nowUnix - a.unixMs)});
+        // An action by its label, a compile by its source file (the executor
+        // writes a compile's start, design 2026-11-20 §5.6).
+        std::string label = a.stamp;
+        if (auto it = b.record->actions.find(a.stamp); it != b.record->actions.end()) label = it->second;
+        else if (auto sid = b.record->step.find(a.stamp); sid != b.record->step.end())
+            if (auto src = b.record->sources.find(sid->second); src != b.record->sources.end()) label = src->second;
+        b.running.push_back({owner->second, std::move(label), a.stamp,
+                             now_ms() - std::max<long long>(0, nowUnix - a.unixMs)});
         announce(r, b, owner->second, out);
+    }
+}
+
+// A STEP THAT RUNS A MINUTE IS NAMED (design 2026-11-20 §5.6): once, with the
+// time it has run. A test build's long tail (boost-m, §3.3) showed nothing for
+// many minutes on a log that is not a terminal, where the status row is not
+// drawn; model lock held.
+void tell_long_steps(Report& r, Build::Impl& b, std::vector<std::string>& out) {
+    if (!b.record) return;
+    for (auto& a : b.running) {
+        if (a.told || now_ms() - a.since < 60'000) continue;
+        a.told = true;
+        out.push_back(mcpp::ui::step_line(
+            "Running", std::format("{}: {} for {}", subject_of(r, b, b.record->packages[a.package]), a.label,
+                                   mcpp::ui::format_clock(ms(now_ms() - a.since))), 0, ""));
     }
 }
 
@@ -1195,6 +1250,7 @@ void poll() {
             read_starts(r, *b, out);
             read_log(r, *b, out);
             progressChanged |= read_action_progress(*b);
+            tell_long_steps(r, *b, out);
         }
     }
     write_lines(out);
@@ -1694,6 +1750,114 @@ void Build::pass_end() {
         b.running.clear();
     }
     write_lines(out);
+}
+
+void Build::slowest(const mcpp::build::record::Record& ran) {
+    auto& r = report();
+    std::vector<std::string> out;
+    {
+        std::lock_guard lock(r.m);
+        auto& b = *impl_;
+        ensure_record(b);
+        if (!r.verbose || ran.edges.empty()) return;
+        for (const auto& e : mcpp::build::record::slowest(ran, 5)) {
+            // A compile by its source file, any other edge by its output.
+            std::string label = e.output;
+            if (b.record)
+                if (auto sid = b.record->step.find(normalise(e.output)); sid != b.record->step.end())
+                    if (auto src = b.record->sources.find(sid->second); src != b.record->sources.end())
+                        label = src->second;
+            if (!e.package.empty()) label = std::format("{}: {}", e.package, label);
+            std::string used = mcpp::ui::format_duration(ms(static_cast<long long>(e.ms)));
+            if (e.cpuMs) used += " · processor " + mcpp::ui::format_duration(ms(static_cast<long long>(*e.cpuMs)));
+            if (e.peakBytes) used += std::format(" · {} MiB", *e.peakBytes >> 20);
+            out.push_back(mcpp::ui::step_line("Slowest", std::format("{} · {}", label, used), 0, ""));
+        }
+    }
+    write_lines(out);
+}
+
+void keep_ran(const std::filesystem::path& buildDir, const LogMark& mark,
+              const std::filesystem::path& usageFile, Build* report) {
+    namespace rec = mcpp::build::record;
+    auto ran = ran_since(buildDir, mark, usageFile);
+    if (ran.edges.empty()) return;
+    if (const auto file = mcpp::invocation::get(rec::kRecordEnv); file && !file->empty())
+        (void)mcpplibs::os::fs::append(mcpplibs::os::fs::from_utf8(*file), rec::to_ndjson(ran));
+    if (report) report->slowest(ran);
+    rec::keep(std::move(ran));
+}
+
+LogMark mark_log(const std::filesystem::path& buildDir) {
+    LogMark m;
+    const auto log = buildDir / ".ninja_log";
+    std::error_code ec;
+    m.size = std::filesystem::exists(log, ec) ? std::filesystem::file_size(log, ec) : 0;
+    if (ec) m.size = 0;
+    if (m.size > 0) {
+        std::ifstream f(log, std::ios::binary);
+        const auto n = std::min<std::uintmax_t>(m.size, 256);
+        f.seekg(static_cast<std::streamoff>(m.size - n));
+        m.tail.resize(static_cast<std::size_t>(n));
+        f.read(m.tail.data(), static_cast<std::streamsize>(n));
+        if (!f) m.tail.clear();
+    }
+    return m;
+}
+
+mcpp::build::record::Record ran_since(const std::filesystem::path& buildDir, const LogMark& mark,
+                                      const std::filesystem::path& usageFile) {
+    namespace rec = mcpp::build::record;
+    rec::Record out{rec::new_id()};
+    std::vector<rec::Usage> usage;
+    if (auto text = mcpplibs::os::fs::read(usageFile)) usage = rec::parse_usage(*text);
+    for (auto& u : usage) u.output = normalise(u.output);   // as the log spells it
+    const auto stepRecord = read_record(buildDir);
+    std::string text;
+    if (auto all = mcpplibs::os::fs::read(buildDir / ".ninja_log")) text = std::move(*all);
+    // The log as it was at the mark is a prefix of it now, unless ninja
+    // recompacted it.
+    const bool kept = text.size() >= mark.size
+        && std::string_view(text).substr(static_cast<std::size_t>(mark.size - mark.tail.size()), mark.tail.size())
+               == mark.tail;
+    std::set<std::string> measured;
+    for (const auto& u : usage) measured.insert(normalise(u.output));
+    std::size_t consumed = 0;
+    auto steps = parse_log(kept ? std::string_view(text).substr(static_cast<std::size_t>(mark.size))
+                                : std::string_view(text), &consumed);
+    // The log's times are after each ninja run began, and a build runs ninja
+    // up to three times (placement, scan, work). An edge's start after the
+    // build began is the executor's where it measured the edge; another edge
+    // is placed by the nearest measured edge before it in the log, whose run
+    // it shares.
+    const long long began = usage.empty() ? 0
+        : std::ranges::min(usage, {}, &rec::Usage::startedUnixMs).startedUnixMs;
+    std::unordered_map<std::string, const rec::Usage*> byOutput;
+    for (const auto& u : usage) byOutput[u.output] = &u;
+    long long offset = 0;   // the build's time minus the log's, from the last measured edge
+    for (const auto& st : steps) {
+        if (st.outputs.empty()) continue;
+        const auto& first = st.outputs.front();
+        if (!kept && !measured.contains(first)) continue;
+        rec::Edge e{first};
+        e.staged = stepRecord && stepRecord->staged.contains(first);
+        if (stepRecord)
+            for (const auto& o : st.outputs)
+                if (auto it = stepRecord->owner.find(o); it != stepRecord->owner.end()) {
+                    e.package = stepRecord->packages[it->second].name;
+                    break;
+                }
+        e.ms = static_cast<double>(st.end - st.start);
+        if (auto u = byOutput.find(first); u != byOutput.end())
+            offset = u->second->startedUnixMs - began - st.start;
+        e.startedMs = static_cast<double>(std::max(0LL, st.start + offset));
+        out.edges.push_back(std::move(e));
+    }
+    rec::attach(out, usage);
+    if (stepRecord)
+        for (const auto& p : stepRecord->packages)
+            if (p.cachedUnits > 0) out.cached.push_back({p.name, p.cachedUnits});
+    return out;
 }
 
 void Build::finish(bool success) {

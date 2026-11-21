@@ -23,7 +23,7 @@ std::string field11(std::string_view out) {
     return last;
 }
 
-E2E machine{"machine", resource{"machine"}, [] {
+E2E machine{"machine", s::home_fixture, resource{"machine"}, [] {
     "205 root local subos"_test[s::elf][s::gcc] = [] {
         // The default SubOS's binding ignores XLINGS_ACTIVE_SUBOS, and an explicit "default" is
         // not its absence; a workspace root owns the members' SubOS (materialised at the root

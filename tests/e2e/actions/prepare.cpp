@@ -13,7 +13,7 @@ bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 constexpr std::string_view prep_manifest = "[package]\nname    = \"prep\"\nversion = \"0.1.0\"\n\n[toolchain]\nlinux = \"gcc@16.1.0\"\n\n[targets.prep]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
 
-E2E prepare{"prepare", [] {
+E2E prepare{"prepare", s::home_fixture, [] {
     "790 a prepare action populates an unknown directory"_test[s::gcc] = [] {
         // A `prepare` action declares only the directory a command fills; the build reads it by
         // directory. It runs on the first build, not on an unchanged one (nor does the compile),

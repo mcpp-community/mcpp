@@ -20,7 +20,7 @@ std::optional<fs::path> test_graph(const s::project& p) {
     return std::nullopt;
 }
 
-E2E graph{"graph", [] {
+E2E graph{"graph", s::home_fixture, [] {
     "18 devdeps isolation"_test = [] {
         // dev-dependencies are not resolved by `mcpp build` and are by `mcpp test`.
         auto p = s::project::scaffold("myapp");

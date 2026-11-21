@@ -44,6 +44,11 @@ std::optional<std::filesystem::path> beside_binary(const std::filesystem::path& 
                                                    std::string_view binaryRel) {
     return detail::some(layout().beside_binary(path, name, binaryRel));
 }
+std::optional<std::string> declared_dependency(const std::filesystem::path& path, std::string_view name) {
+    auto v = layout().declared_dependency(path, name);
+    if (v.empty()) return std::nullopt;
+    return v;
+}
 std::optional<std::filesystem::path> environment_of(const std::filesystem::path& compiler) {
     return detail::some(layout().environment_of(compiler));
 }

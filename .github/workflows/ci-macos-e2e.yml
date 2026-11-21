@@ -41,7 +41,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [macos-15, xcode-27]
+        # The newest image is a checkpoint's (`full`), not each push's (design 2026-11-20 §7.2).
+        image: ${{ fromJSON(inputs.set == 'full' && '["macos-15", "xcode-27"]' || '["macos-15"]') }}
         shard: ${{ fromJSON(inputs.shards) }}
     runs-on: ${{ matrix.image }}
     timeout-minutes: 60

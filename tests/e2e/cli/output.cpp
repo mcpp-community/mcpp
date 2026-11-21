@@ -90,7 +90,7 @@ std::string slow_program(std::string_view prefix, std::string_view id, int secon
     return out;
 }
 
-E2E output{"output", [] {
+E2E output{"output", s::home_fixture, [] {
     "48 build error output"_test = [] {
         // A failed build shows the compiler's diagnostic once, after the package's status line,
         // without ninja's progress or a private environment prefix; the graph holds no such
@@ -139,6 +139,9 @@ E2E output{"output", [] {
         // nothing redrawn; R2 a build program ran, then cached (--verbose); R3 an edit names its
         // package alone; R4 an edited dependency, then its dependant, --verbose's steps; R5 a
         // failed step is reported while another package's prepare action still runs.
+        // A path dependency's units are kept by content in the home's cache (2026.11.19.1): in the
+        // shared home an earlier run's util is Cached, not Compiling, so the case has a home of its own.
+        s::own_home();
         s::project root({{"ws/mcpp.toml", "[workspace]\nmembers = [\"core\", \"cli\"]\n"},
                          {"ws/core/mcpp.toml", "[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n[targets.core]\nkind = \"lib\"\n"},
                          {"ws/core/src/core.cppm", "export module rp_core;\nexport int core_v() { return 1; }\n"},
@@ -163,10 +166,10 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << "the first build failed\n" << b1;
         for (std::string_view line : {"core v0.1.0 (core)", "cli v0.1.0 (cli)", "util v0.2.0 (../util)"})
             expect(fatal(count_exact(b1, std::format("   Compiling {}", line)) == 1u)) << "R1: '" << line << "' is not named exactly once\n" << b1;
+        // In no particular order: a package is named when ninja reports its first step, which
+        // ninja through a pipe does when the step ends (design 2026-09-29 §3), and the scans of
+        // independent packages end in any order -- under the run's budget, as their slots come.
         const auto l1 = lines_of(b1);
-        const auto core_at = first_line(l1, "Compiling core v0\\.1\\.0");
-        const auto cli_at = first_line(l1, "Compiling cli v0\\.1\\.0");
-        expect(fatal(core_at && cli_at && *core_at < *cli_at)) << "R1: cli is named before core, which it imports\n" << b1;
         expect(fatal(s::no_line(b1, R"(Compiling [0-9]+ dependenc|done [0-9]|mcpplibs\.util)"))) << "R1: a fold, an outcome or a namespace nobody wrote";
         const auto fin = first_line(l1, "^ +Finished ");
         expect(fatal(fin && *fin > 0 && l1[*fin - 1].empty())) << "R1: no blank line precedes Finished\n" << b1;
@@ -349,7 +352,7 @@ int main() {
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E output_machine{"output-machine", resource{"machine"}, [] {
+E2E output_machine{"output-machine", s::home_fixture, resource{"machine"}, [] {
     "1085 a replayed build reports its artifacts"_test = [] {
         // The second `mcpp build --message-format json` of an unchanged tree replays the recorded
         // build; its stream and envelope name the program as the first build's did. A of a

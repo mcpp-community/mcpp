@@ -64,7 +64,7 @@ std::string widget_descriptor(std::string_view name) {
 )cpp", name);
 }
 
-E2E lock{"lock", [] {
+E2E lock{"lock", s::home_fixture, [] {
     "196 version identity and lock"_test[s::gcc][s::fresh_sandbox] = [] {
         // mcpp#363: a resolved version is an index key (an address re-rendered from parsed
         // numbers did not exist), and mcpp.lock records what was resolved, stably, whatever the

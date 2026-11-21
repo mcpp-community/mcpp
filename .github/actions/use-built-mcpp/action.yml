@@ -29,16 +29,33 @@ inputs:
     description: The mirror xlings and mcpp use in this job.
     required: false
     default: GLOBAL
+  form:
+    description: >
+      `host`: the binary of build.yml (`mcpp-built-<host>`). `release`: the
+      program of the archive release-build.yml kept for the host
+      (`release-<platform>`), as a release ships it -- ci.yml's `full` tier
+      tests it, so that a release promotes what a run tested (design
+      2026-11-20 §5.22).
+    required: false
+    default: host
 
 runs:
   using: composite
   steps:
     - name: Download this commit's mcpp (${{ inputs.host }})
+      if: ${{ inputs.form != 'release' }}
       uses: actions/download-artifact@v4
       with:
         name: mcpp-built-${{ inputs.host }}
         path: ${{ runner.temp }}/mcpp-built
 
+    - name: Download this commit's release archive (${{ inputs.host }})
+      if: ${{ inputs.form == 'release' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: release-${{ inputs.host == 'macos-arm64' && 'macosx-arm64' || inputs.host }}
+        path: ${{ runner.temp }}/mcpp-release
+
     - name: Use this commit's mcpp
       shell: bash
-      run: bash "$GITHUB_ACTION_PATH/use.sh" "${{ inputs.host }}" "${{ inputs.mirror }}"
+      run: bash "$GITHUB_ACTION_PATH/use.sh" "${{ inputs.host }}" "${{ inputs.mirror }}" "${{ inputs.form }}"

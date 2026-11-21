@@ -288,6 +288,10 @@ struct Toolchain {
     std::vector<ToolOverride> toolOverrides;
     // The driver-and-tool prefix of a cross toolchain (`aarch64-none-linux-gnu-`).
     std::string                         toolPrefix;
+    // The `bin` directory of the binutils the project states beside a managed
+    // GCC (`companions = { binutils = … }`, SPEC-006 §2.9); empty: the
+    // binutils its payload declares.
+    std::filesystem::path               binutilsDir;
 
     const std::filesystem::path* tool_override(std::string_view role) const {
         for (auto const& [r, p] : toolOverrides) if (r == role) return &p;
@@ -434,6 +438,12 @@ struct BmiTraits {
     std::string_view moduleFileUsePrefix;   // "" | " -fmodule-file=" | " /reference "
     std::string_view moduleOutputPrefix;    // "" | " -fmodule-output=" | " /ifcOutput "
     std::string_view bmiSearchPrefix;       // "" | " -fprebuilt-module-path=" | " /ifcSearchDir "
+    // Makes the compile's depfile name the BMIs it read beside its headers. Clang finds an
+    // imported BMI through the search path, and its depfile names none without it: the home's
+    // unit cache recorded no import, and placed an object compiled against an earlier BMI
+    // (measured: an inline function of an edited module kept its old value). GCC's mapper names
+    // the imports; cl.exe's compiles are not cached.
+    std::string_view moduleFileDepsFlag;    // "" | " -fmodule-file-deps" | ""
     // How this compiler is TOLD that a translation unit is a module interface.
     // Emitted UNCONDITIONALLY on every module compile — mcpp never asks
     // "does this driver recognize this extension?".
@@ -733,6 +743,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .moduleFileUsePrefix = " -fmodule-file=",
             .moduleOutputPrefix = " -fmodule-output=",
             .bmiSearchPrefix = " -fprebuilt-module-path=",
+            .moduleFileDepsFlag = " -fmodule-file-deps",
             .moduleInterfaceLangFlag = " -x c++-module",
             .moduleImplLangFlag = " -x c++",
             .moduleImplPartitionLangFlag = " -x c++-module",

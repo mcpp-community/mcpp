@@ -1,0 +1,17 @@
+# mcpp.surface -- the items of mcpp's surface and the record of those one invocation used
+# (SPEC-017 P5.6 `exercise`; design 2026-11-20 §5.16).
+#
+# A leaf: an item is a kind and a name (`command build`, `flag build --target`, `key build.cache`,
+# `reason unknown-target`), one per line. The command line, the manifest reader and the refusal
+# sites hand it the items they used; when MCPP_SURFACE_RECORD names a file, each item is appended
+# to it once per process. It knows nothing of where the items come from.
+
+[package]
+name        = "surface"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The items of mcpp's surface and the record of those an invocation used"
+license     = "Apache-2.0"
+
+[dev-dependencies]
+mcpplibs.mtest = "0.11.2"

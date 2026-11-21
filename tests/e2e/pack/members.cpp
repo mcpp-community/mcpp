@@ -84,7 +84,7 @@ bool compiled_nothing(const fs::path& dir) {
     return true;
 }
 
-E2E members{"members", [] {
+E2E members{"members", s::home_fixture, [] {
     "249 pack workspace root unchanged"_test = [] {
         // `mcpp pack` in a virtual workspace root still packs the member's program.
         s::project ws{s::files{{"mcpp.toml", R"cpp([workspace]

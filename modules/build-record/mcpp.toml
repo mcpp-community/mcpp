@@ -1,0 +1,20 @@
+# mcpp.build-record -- what a build did, edge by edge (SPEC-017 B4 `builds.ndjson`; design
+# 2026-11-20 §5.6).
+#
+# A leaf: a line format the compiler executor appends to (each compile's start, end, processor
+# time and largest resident set), the record the build writes from it and ninja's log (each edge
+# that ran, its package, and a line per package the cache served), and the slowest edges. It knows
+# nothing of ninja's files, the plan or the screen: the build's reader hands it what they say.
+
+[package]
+name        = "build-record"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The record of a build: each edge that ran, its time, processor time and memory"
+license     = "Apache-2.0"
+
+[dependencies]
+nlohmann.json = "3.12.0"
+
+[dev-dependencies]
+mcpplibs.mtest = "0.11.2"

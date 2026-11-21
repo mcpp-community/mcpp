@@ -84,6 +84,7 @@ the rows of this table (mcpp 2026.10.11.1+).
 | `platform-universal`: a platform's `[platform] universal`, ignored; a pack's targets are its legs | 2026.10.30.1 | 2027.1 | nothing in the platform; the pack names its targets (`--target openkal`) |
 | `no-universal-flag`: `mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a target set) | 2026.10.30.1 | 2027.1 | `--target <arch>-<os>` (one leg) |
 | `quoted-dotted-dependency-key`: a quoted dependency key with dots (`"mcpplibs.cmdline" = "0.0.2"`), one TOML key read as the selector its dots spell; not where it is the only spelling of a package beside its parent or child (docs/05) | 2026.11.8.1 | 2027.2 | the selector unquoted, `mcpplibs.cmdline = "0.0.2"` |
+| `ambiguous-contract-name`: a build program's question (`dep_dir`, `dep_linkage`, `dep_bin`, `xpkg_dir`) by a name whose contract variable several dependencies or payloads answer, answered by the first | 2026.11.21.1 | 2027.2 | the exact spelling: a qualified name, or `xpkg_dir("<ns>", "<name>")`; where no spelling tells them apart, one of the packages renamed |
 
 ## Reproducing a build
 
@@ -116,11 +117,40 @@ a different graph from the one that was built is worse than no document. A
 component whose licence mcpp does not know is emitted as `NOASSERTION` rather
 than omitted: an absent field reads as "not examined".
 
+## Default versions (2026.11.21.1+)
+
+A default — the toolchain a first run installs, the bootstrap tools (ninja,
+patchelf) — is the newest release of its upstream when mcpp is released,
+verified by mcpp's CI and canaries. A newer or an experimental version is
+stated by the user (`[toolchain]`, an xlings package); mcpp does not default to
+one. The defaults are the `[[default]]` entries of the built-in table
+(`modules/toolchain-model/data/builtin.toml`), and a release lists each against
+the index (`.github/tools/check_defaults.sh`). A package's defaults name
+the newest release published for every host they serve: llvm-project's 23.1.6
+release publishes no macOS binary, and the llvm defaults include macOS, so they
+stay 23.1.3. A row of the built-in table names the newest release every host it
+serves can install: the musl rows, whose cross payloads (from x86_64, and the
+Canadian cross on Windows) are published for 16.1.0 only, stay 16.1.0. A toolchain's companions
+(binutils, Linux headers) are the versions its payload declares (20 —
+Toolchains, "Companions").
+
+A package's version in xim-pkgindex is its upstream's; a repackaging of one
+upstream version is a `revision` of the same key, and an mcpp correction of an
+upstream release is `<upstream>-mcpp.<n>` (`ninja@1.13.2-mcpp.1`). A published
+key is not renamed: `binutils@2.42.1` names binutils 2.42.
+
+A default that moves is said once per project that built with the earlier one
+(20 — Toolchains, "Resolution and the lock"); a project that states its
+toolchain keeps it.
+
 ## Offline and air-gapped use
 
-`--offline` (or `MCPP_OFFLINE=1`) prevents every network access: index refresh,
-package download and toolchain installation. A build that would need one of
-those fails naming what it needed, rather than reaching out.
+`--offline` (or `MCPP_OFFLINE=1`, or `[build] offline = true`) prevents every
+network access: index refresh, package download and toolchain installation. A
+payload the home lacks is taken from a named archive directory; a build that
+would need the network otherwise fails naming what it needed, rather than
+reaching out. `mcpp fetch --to` and `--from` carry a project's inputs to a
+machine without a network (05 — Dependencies, "Offline builds and mcpp fetch").
 
 ## Reporting a problem
 

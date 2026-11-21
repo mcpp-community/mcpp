@@ -46,7 +46,7 @@ s::project libraries(const fs::path& dir, std::string_view tag, std::initializer
     return ws;
 }
 
-E2E workspace{"workspace", [] {
+E2E workspace{"workspace", s::home_fixture, [] {
     "90 workspace test"_test = [] {
         // `-p <member>`, `--workspace` and a bare `mcpp test` at a virtual root; discovery is scoped
         // to a member, so two members may each have tests/main.cpp. (The script's `requires: gcc`

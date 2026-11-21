@@ -24,7 +24,7 @@ std::optional<fs::path> ending(const fs::path& root, std::string_view name, std:
     return std::nullopt;
 }
 
-E2E outputs{"outputs", [] {
+E2E outputs{"outputs", s::home_fixture, [] {
     "827 many placements run as one process"_test[s::unix_shell] = [] {
         // The files a program's runtime needs beside it are placed by one `stage_list` edge, not
         // one per file; the edge does not run when no placement changed; a changed source

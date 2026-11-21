@@ -20,7 +20,7 @@ std::optional<fs::path> newest_graph(const fs::path& target, std::string_view na
     return best;
 }
 
-E2E sources{"sources", [] {
+E2E sources{"sources", s::home_fixture, [] {
     "100 feature sources test mode"_test = [] {
         // A dependency's feature-gated `sources` are compiled under `mcpp test` as under
         // `mcpp build`, and not without the feature.

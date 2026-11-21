@@ -8,7 +8,8 @@
 #   A. The isolated home builds and runs a program; its C runtime payload is a
 #      link into the upstream's store, and the program's loader is the path in
 #      the isolated home's own store.
-#   B. The upstream's store is the same before and after (names, link targets).
+#   B. The upstream's store is the same before and after (names, link targets),
+#      and no file its entries reach was written.
 #   C. `mcpp self doctor` names the upstream; `mcpp self store dedupe` finds
 #      nothing to link that is not linked already.
 #   D. An upstream another user could change is refused when the configuration
@@ -27,8 +28,15 @@ UP="$TMP/upstream"
 export MCPP_HOME="$UP"
 source "$(dirname "$0")/_inherit_toolchain.sh"
 "$MCPP" self init > "$TMP/up.env" 2>&1 || fail "the upstream home does not initialise" "$TMP/up.env"
+# The upstream holds the toolchain and the C runtime a build installs: it reads the developer's
+# homes as upstreams itself (_inherit_toolchain.sh), so a build in it installs them by link.
+(mkdir -p "$TMP/up-fill" && cd "$TMP/up-fill" && "$MCPP" new fill > new.log 2>&1 && cd fill \
+    && "$MCPP" build > build.log 2>&1) || fail "the upstream home does not build" "$TMP/up-fill/fill/build.log"
 snapshot() { (cd "$UP/registry/data/xpkgs" && find . -maxdepth 2 -printf '%p %l\n' | sort); }
 snapshot > "$TMP/up.before"
+# Nothing the upstream's entries reach is written: a link entry's payload is its owner's, and a
+# hook that rewrote it wrote this home's paths into the owner's toolchain (mcpp#293).
+touch "$TMP/up.mark"
 
 # The home under test: nothing installed, the upstream named.
 export MCPP_HOME="$TMP/home"
@@ -56,6 +64,8 @@ echo "ok: A. built against the upstream's runtime, by link"
 # ── B ─────────────────────────────────────────────────────────────────────────
 snapshot > "$TMP/up.after"
 cmp -s "$TMP/up.before" "$TMP/up.after" || { diff "$TMP/up.before" "$TMP/up.after"; fail "B: the upstream changed"; }
+find -L "$UP/registry/data/xpkgs" -type f -newer "$TMP/up.mark" 2>/dev/null > "$TMP/up.written"
+[ ! -s "$TMP/up.written" ] || fail "B: files the upstream's entries reach were written" "$TMP/up.written"
 echo "ok: B. the upstream is unchanged"
 
 # ── C ─────────────────────────────────────────────────────────────────────────

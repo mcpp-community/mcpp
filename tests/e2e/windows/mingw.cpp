@@ -40,7 +40,7 @@ void self_contained(const std::string& imports, std::string_view what) {
         expect(fatal(!s::contains_nocase(imports, dll))) << what << " imports a toolchain DLL (" << dll << "): " << imports;
 }
 
-E2E mingw{"mingw", [] {
+E2E mingw{"mingw", s::home_fixture, [] {
     "97 mingw toolchain"_test[s::windows] = [] {
         // `toolchain install mingw 16.1.0` installs the payload; `toolchain default mingw@16.1.0`
         // persists gcc@16.1.0 and x86_64-windows-gnu, both starred by `list`; a project with a named

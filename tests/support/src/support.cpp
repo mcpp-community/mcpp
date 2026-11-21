@@ -284,17 +284,89 @@ e2e::outcome as_text(e2e::outcome r) {
     return r;
 }
 
-e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o) {
-    return as_text(e2e::run(mcpp_command(std::move(args), cwd, o)));
+namespace {
+// THE SURFACE A COMMAND USED (design 2026-11-20 §5.16, SPEC-017 P5.6). mcpp appends the items it
+// used -- the command and flags it was given, the manifest keys it read, the reasons it recorded --
+// to the file MCPP_SURFACE_RECORD names; the case states them as its `exercise`, which the ledger
+// of the surface reads. Placed first, so that a case that names its own record keeps it.
+fs::path surface_record() {
+    static std::atomic<unsigned> n{0};
+    return case_dir() / std::format(".surface-{}", n++);
 }
+void report_surface(const fs::path& record) {
+    std::error_code ec;
+    if (!fs::exists(record, ec)) return;
+    std::set<std::string> items;
+    for (auto part : std::views::split(read_file(record), '\n')) {
+        std::string line(part.begin(), part.end());
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.find(' ') != std::string::npos) items.insert(std::move(line));
+    }
+    fs::remove(record, ec);
+    if (!items.empty()) mcpplibs::mtest::exercise({items.begin(), items.end()});
+}
+}  // namespace
+
+// THE SHARED HOME IS A RUN FIXTURE (SPEC-017 P11, design 2026-11-20 §5.10). Its contents -- the
+// index, the default toolchain, the standard library's modules -- were filled by whichever case ran
+// first, and that case's time held them. Served once per run, the filling is the fixture's own
+// (`fixtures.ndjson`): a project made and built in the home. A filling that fails is printed and
+// the home is served as it is, since a case that needs no toolchain still runs in it.
+mcpplibs::mtest::run_fixture shared_home_fixture{"home", [](mcpplibs::mtest::serving& serve) {
+    const auto home = home_dir();
+    const auto scratch = fs::temp_directory_path() / std::format("mcpp-e2e-home-{:08x}", std::random_device{}());
+    std::error_code ec;
+    fs::create_directories(scratch, ec);
+    std::vector<std::pair<std::string, std::optional<std::string>>> env{{"MCPP_HOME", home.string()},
+                                                                        {"MCPP_VERBOSE", std::nullopt}};
+    auto made = e2e::run({.argv = {mcpp_path(), "new", "filling"}, .cwd = scratch, .env = env,
+                          .timeout = std::chrono::minutes{10}});
+    auto built = made ? e2e::run({.argv = {mcpp_path(), "build"}, .cwd = scratch / "filling", .env = env,
+                                  .timeout = std::chrono::minutes{30}})
+                      : made;
+    if (!built)
+        std::println(std::cerr, "the shared home {} was not filled (status {}):\n{}{}", home.string(),
+                     built.status, built.out, built.err);
+    fs::remove_all(scratch, ec);
+    serve.ready(home.string());
+    serve.stopped();
+}};
+
+// THE DIAGNOSTIC LINES (design 2026-11-20 §5.18, mtest 0.11.0): a line mcpp writes as a warning or
+// an error -- a degradation is written as a warning -- in the output of a program a case ran is the
+// case's to declare (`e2e::expect_diagnostic`). Under `report`, the policy the cases migrate under,
+// an undeclared line is printed and counted as the case's metric `diagnostics.undeclared`, and the
+// case is not failed for it. Declared at the first command, after mtest's own state exists.
+void declare_diagnostics() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        e2e::diagnostics({"^(\\x1b\\[[0-9;]*m)*warning:", "^(\\x1b\\[[0-9;]*m)*error:"});
+        e2e::diagnostics_policy(e2e::diagnostic_policy::report);
+    });
+}
+
+e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o) {
+    auto c = mcpp_command(std::move(args), cwd, o);
+    declare_diagnostics();
+    const auto record = surface_record();
+    c.env.insert(c.env.begin(), {"MCPP_SURFACE_RECORD", record.string()});
+    auto r = as_text(e2e::run(std::move(c)));
+    report_surface(record);
+    return r;
+}
+
+std::optional<home> own_home_of_case();  // below, with the case's directories
 
 e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, const options& o) {
     e2e::command c;
     c.argv.push_back(mcpp_path());
     for (auto& a : args) c.argv.push_back(std::move(a));
     c.cwd = cwd;
-    if (o.where != home::shared) {
-        c.env.emplace_back("MCPP_HOME", case_home(o.where).string());
+    const auto where = o.where == home::shared ? own_home_of_case().value_or(home::shared) : o.where;
+    if (where != home::shared) {
+        c.env.emplace_back("MCPP_HOME", case_home(where).string());
+    } else if (const auto served = mcpplibs::mtest::fixture_endpoint("home"); !served.empty()) {
+        c.env.emplace_back("MCPP_HOME", served);
     } else if (!env("MCPP_HOME")) {
         if (auto u = env(on_windows() ? "USERPROFILE" : "HOME"))
             c.env.emplace_back("MCPP_HOME", (fs::path(*u) / ".mcpp").string());
@@ -312,6 +384,17 @@ std::string text(const e2e::outcome& r) { return r.out + r.err; }
 
 fs::path shared_home() { return home_dir(); }
 
+std::vector<std::string> through_wine(const fs::path& wine, const fs::path& program,
+                                      const std::vector<std::string>& args) {
+    const auto server = wine.parent_path() / "wineserver";
+    std::vector<std::string> argv = {"sh", "-c",
+                                     std::format("'{}' \"$@\"; status=$?; '{}' -w; exit $status", wine.string(),
+                                                 fs::exists(server) ? server.string() : std::string("wineserver")),
+                                     "wine", program.string()};
+    argv.insert(argv.end(), args.begin(), args.end());
+    return argv;
+}
+
 namespace {
 void link_or_copy(const fs::path& from, const fs::path& to) {
     std::error_code ec;
@@ -321,50 +404,67 @@ void link_or_copy(const fs::path& from, const fs::path& to) {
     if (ec)
         fs::copy(from, to, fs::copy_options::recursive, ec);
 }
-// _inherit_toolchain.sh's link_xpkg_payloads: each package directory of `from` is a directory of
-// `to` whose versions are links; anything else is linked whole.
-void link_payloads(const fs::path& from, const fs::path& to) {
+// THE USER'S PAYLOADS ARE UPSTREAMS OF THE CASE'S HOME, NEVER LINKS INTO IT (mcpp#293, design
+// 2026-11-20 §5.10). A link to each payload made the user's store part of the case's: a hook the
+// case's home ran again (gcc's specs, an ELF patch) wrote through the link into the user's
+// toolchain, with paths of the case's temporary home. An upstream is read by link at install and
+// never written (docs/25 §3): the case's home installs what it needs from the user's homes.
+void name_upstreams(const fs::path& h) {
+    std::vector<std::string> ups;
     std::error_code ec;
-    if (!fs::is_directory(from, ec))
-        return;
-    fs::create_directories(to);
-    for (const auto& e : fs::directory_iterator(from, ec)) {
-        const auto there = to / e.path().filename();
-        if (!e.is_directory(ec) || fs::is_symlink(fs::symlink_status(there, ec))) {
-            link_or_copy(e.path(), there);
-            continue;
+    for (const auto& u : {home_dir(), user_dir() / ".xlings"})
+        if (fs::is_directory(u, ec)) ups.push_back(std::format("\"{}\"", u.generic_string()));
+    if (ups.empty()) return;
+    std::string line = "upstream = [";
+    for (std::size_t i = 0; i < ups.size(); ++i) line += (i ? ", " : "") + ups[i];
+    line += "]";
+    std::string text = fs::exists(h / "config.toml", ec) ? read_file(h / "config.toml") : std::string{};
+    std::string out;
+    bool inXlings = false, placed = false;
+    for (auto part : std::views::split(text, '\n')) {
+        std::string l(part.begin(), part.end());
+        if (l.starts_with('[')) {
+            if (inXlings && !placed) { out += line + "\n"; placed = true; }
+            inXlings = l.starts_with("[xlings]");
         }
-        fs::create_directories(there);
-        for (const auto& v : fs::directory_iterator(e.path(), ec))
-            link_or_copy(v.path(), there / v.path().filename());
+        if (inXlings && l.starts_with("upstream")) continue;
+        out += l + "\n";
     }
+    while (out.ends_with("\n\n")) out.pop_back();
+    if (inXlings && !placed) { out += line + "\n"; placed = true; }
+    if (!placed) out += "\n[xlings]\n" + line + "\n";
+    std::ofstream(h / "config.toml", std::ios::binary) << out;
 }
+
 void inherit(const fs::path& h, bool whole) {
     const auto user = home_dir();
-    const auto xlings = user_dir() / ".xlings/data/xpkgs";
-    link_payloads(user / "registry/data/xpkgs", h / "registry/data/xpkgs");
-    link_payloads(user / "xpkgs", h / "xpkgs");
-    link_payloads(xlings, h / "registry/data/xpkgs");
     std::error_code ec;
     for (auto name : {"xim-pkgindex", "xim-index-repos"})
         if (fs::is_directory(user / "registry/data" / name, ec)) {
             fs::create_directories(h / "registry/data");
             link_or_copy(user / "registry/data" / name, h / "registry/data" / name);
         }
-    // THE SUBOS IS THE CASE'S OWN COPY, ITS LINKS KEPT AS LINKS. A link to the user's subos made
-    // it shared state: an install by the case wrote into the user's subos, and an install in the
-    // user's home by a case beside it appeared in this one's. The subos is a farm of links (about
-    // 1600 on a developer's home), so the copy costs what the link did.
-    if (whole && env("MCPP_INHERIT_SUBOS").value_or("1") != "0" && fs::is_directory(user / "registry/subos", ec)
-        && !fs::exists(fs::symlink_status(h / "registry/subos", ec))) {
-        fs::create_directories(h / "registry");
-        fs::copy(user / "registry/subos", h / "registry/subos",
-                 fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
-    }
+    // NO SUBOS IS COPIED: an install by link registers its programs in the case's own subos, and
+    // a copy of the user's, whose links already name them, made that registration fail (measured:
+    // `[glibc] failed: declared programs were not registered`).
     if (whole && env("MCPP_INHERIT_CONFIG").value_or("1") != "0" && fs::is_regular_file(user / "config.toml", ec))
         fs::copy_file(user / "config.toml", h / "config.toml", fs::copy_options::overwrite_existing, ec);
+    name_upstreams(h);
     if (fs::is_directory(user / "bin", ec))
         link_or_copy(user / "bin", h / "bin");
+    // THE SANDBOX, ONCE, WITH THE REAL XLINGS: its runtime contract and the tools every build reads
+    // (patchelf, ninja), installed from the upstreams by link. A copy of the user's subos and links
+    // to the payloads gave the home these before; without them a case that runs offline, or that
+    // puts a stand-in xlings in place, found an uninitialized provider and could install nothing.
+    // Measured: under a second, and the user's homes unwritten.
+    std::vector<std::pair<std::string, std::optional<std::string>>> env{{"MCPP_HOME", h.string()},
+                                                                        {"MCPP_VERBOSE", std::nullopt},
+                                                                        {"MCPP_OFFLINE", std::nullopt}};
+    const auto init = e2e::run({.argv = {mcpp_path(), "self", "init"}, .cwd = h, .env = env,
+                                .timeout = std::chrono::minutes{5}});
+    if (!init)
+        std::println(std::cerr, "the case's home {} was not initialized (status {}):\n{}{}", h.string(), init.status,
+                     init.out, init.err);
 }
 }  // namespace
 
@@ -383,6 +483,7 @@ struct case_dirs {
     std::vector<std::pair<fs::path, fs::path>> made;  // (the case's runner directory, the directory)
     std::map<fs::path, fs::path> own;                 // the case's own directory, by its runner directory
     std::map<fs::path, fs::path> home;                // the case's home, by its runner directory
+    std::map<fs::path, support::home> instead;        // the home a case runs mcpp in instead of the shared one
     ~case_dirs() {
         std::error_code ec;
         for (const auto& [_, d] : made) fs::remove_all(d, ec);
@@ -395,6 +496,7 @@ struct case_dirs {
             fs::remove_all(e.second, ec);
             own.erase(e.first);
             home.erase(e.first);
+            instead.erase(e.first);
             return true;
         });
     }
@@ -448,6 +550,21 @@ fs::path case_home(home kind) {
     all.home[key] = h;
     populate_home(h, kind);
     return h;
+}
+
+void own_home(home kind) {
+    auto& all = registry_of_cases();
+    const auto key = mcpplibs::mtest::temp_dir();
+    std::scoped_lock lock(all.m);
+    all.sweep();
+    all.instead[key] = kind;
+}
+
+std::optional<home> own_home_of_case() {
+    auto& all = registry_of_cases();
+    std::scoped_lock lock(all.m);
+    if (auto it = all.instead.find(mcpplibs::mtest::temp_dir()); it != all.instead.end()) return it->second;
+    return std::nullopt;
 }
 
 fs::path another_home(home kind) {

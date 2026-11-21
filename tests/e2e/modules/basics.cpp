@@ -61,7 +61,7 @@ kind = "bin"
 main = "src/main.cpp"
 )";
 
-E2E basics{"basics", [] {
+E2E basics{"basics", s::home_fixture, [] {
     "03 multi module"_test[s::elf][s::gcc] = [] {
         // A package's module and main build and run; the graph names its BMI and the std BMI.
         auto p = s::project::scaffold("multi");

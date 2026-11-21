@@ -96,7 +96,7 @@ std::string exe_launcher_main(const Launch& l);
 // When the two shared one resolution, this had to be the release the plugin
 // linked (0.4.5, through mcpp.plugins 0.26.1): 0.4.4 and 0.4.6 were refused as
 // irreconcilable (e2e 988, the canaries' pack cells).
-inline constexpr std::string_view kLauncherOs = "0.4.6";
+inline constexpr std::string_view kLauncherOs = "0.4.7";
 
 // ─── mcpp-package.json (SPEC-014 §4.5) ────────────────────────────────────
 

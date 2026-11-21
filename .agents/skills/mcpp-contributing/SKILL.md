@@ -150,6 +150,19 @@ E2E 并不保证完全离线：部分脚本需要工具链、索引或 capabilit
 按 CI 等价方式设置 `MCPP_HOME`、镜像和其他 capability 后再运行；不要让缓存命中
 或空 workspace 选择冒充行为覆盖。
 
+C++ 端到端用例的写法（`tests/support`，设计 2026-11-20）：
+
+- 等待被测程序给出的事件（一行输出、一个文件、退出），不等待时间；`sleep_for` 与 shell `sleep <n>` 的次数只减不增
+  （`.github/tools/check_waits.sh`、`waits.baseline`）。只为改变修改时间的等待改用 `s::touch(file)`。
+- 断言只在其 home 不被别人改写时成立的用例（回放的构建、快速路径）调用 `s::own_home()`，在自己的 home 中运行 mcpp，
+  而不持有 `machine`；改写 home 配置的用例写自己 home 的 `config.toml`，不写共享 home 的。
+- 继承的 home（`home::inherited`、`_inherit_toolchain.sh`）以用户的 home 为 upstream，不链接其载荷，不复制 subos。
+- 每个 E2E 组带 `s::home_fixture`：共享的 home 是运行夹具，其填充记在夹具上。
+- 形式本身是契约的输出（`--protocol-version`、`emit surface`）以 golden 文件整段比较；改变它的拉取请求以
+  `MTEST_GOLDEN=update` 更新文件，审阅读取更新给出的改动。
+- 程序写出的 `warning:` 与 `error:` 行由用例以 `e2e::expect_diagnostic` 声明；kit 以 `report` 方式统计未声明的行。
+- 不变量（无改动的重建、第二个工程）以构建记录（`MCPP_BUILD_RECORD`）计数，以指标与界限陈述。
+
 ### 4. 提交 PR
 
 **提交信息前缀**：`feat:` / `fix:` / `refactor:` / `test:` / `docs:` / `chore:`
@@ -357,6 +370,15 @@ UTF-8 ACP（65001），这类用例会静默变成永远绿的装饰品。参见
   「只有它自己和它声明的依赖」这个配置里——那是根构建从不产生的配置，也是唯一
   能抓到「悄悄依赖了未声明之物」的地方。
   ⚠️ `mcpp test -p <x>` 对没有测试的成员**退 0**
+- **用户可见的提示只有一个汇点 `mcpp.diag`**：`warning`、`degraded`、`note`、`notice`
+  与收尾的 `closing`/`on_failure`。`mcpp::ui::warning`、`note`、`tip` 只由 `mcpp.diag`
+  渲染使用，其他地方直接调用或向 stderr 写 `warning:`/`note:`/`tip:` 都由
+  `.github/tools/check_diag_sink.sh` 在 CI 中拒绝。领域即代码：`build-program/reads-outside`
+  在机器输出中是 `MCPP_BUILD_PROGRAM_READS_OUTSIDE`
+- **策略不是缺省（每次都说）的提示先登记**：`modules/notice` 的 `kKinds` 一行陈述领域、
+  策略（`once`：一个工程每个对象只说一次，记在 `target/.mcpp-notices`）与文档位置，调用
+  `mcpp::diag::notice(..., subject, ...)`；多个对象合并为一条时用带 `scope` 与对象列表的形式。
+  改变这次构建结果的事实（降级、弃用的读法、未知的键）不登记为 `once`
 - E2E 测试应声明所需 capability，并使用隔离的 `MCPP_HOME`；需要网络/索引的脚本
   不得被描述为完全离线
 - 不确定方向时先在 Issue 讨论再动手

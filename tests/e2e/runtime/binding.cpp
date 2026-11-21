@@ -55,7 +55,7 @@ std::string with_following(std::string_view text, std::string_view pattern, std:
     return out;
 }
 
-E2E binding{"binding", [] {
+E2E binding{"binding", s::home_fixture, [] {
     "206 runtime binding physics"_test[s::elf][s::gcc] = [] {
         // A host library linked under `allow_host_libs` builds and its verdict is what the
         // artifact's own search path decides; a hot no-op neither relinks nor re-probes; the
@@ -382,12 +382,14 @@ int main() {
     };
 }};
 
-// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
-// other test beside it. Each states that a build is replayed, and a build is planned again when
-// the runtime environment description changed: another program installing into the shared home
-// beside it rewrote that description (measured on Linux CI, 2026-11-14).
-E2E binding_machine{"binding-machine", resource{"machine"}, [] {
+// The cases whose assertion holds only while nothing else writes their home (design 2026-11-20
+// §5.10): each states that a build is replayed, and a build is planned again when the runtime
+// environment description changed -- another program installing into the shared home beside it
+// rewrote that description (measured on Linux CI, 2026-11-14). Each runs mcpp in a home of its own
+// whose payloads are the user's, as upstreams (`own_home`), instead of holding the machine.
+E2E binding_own_home{"binding-own-home", s::home_fixture, [] {
     "200 subos env reaches program"_test[s::elf] = [] {
+        s::own_home();
         // One selected RuntimeBinding reaches the full-path and the cached `run`; the legacy
         // MCPP_SUBOS_DIR is ignored; a changed contract, an aged cache and no selection are
         // each taken as they are; a SubOS that cannot answer the contract is refused.

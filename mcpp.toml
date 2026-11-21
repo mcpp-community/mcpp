@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version     = "2026.11.20.1"
+version     = "2026.11.21.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -106,11 +106,11 @@ linkage = "static"
 
 # Eat our own dog food: mcpp uses mcpplibs.cmdline for argument parsing.
 # TOML-native namespaced form: `mcpplibs.cmdline` is the dotted subtable
-# `[dependencies.mcpplibs] cmdline = "0.0.4"` ⇒ identity (mcpplibs, cmdline).
+# `[dependencies.mcpplibs] cmdline = "0.0.5"` ⇒ identity (mcpplibs, cmdline).
 # The bootstrap mcpp used by the self-host build (xlings install mcpp, well
 # past 0.0.6) understands this, so the legacy quoted form is no longer needed.
 [dependencies]
-mcpplibs.cmdline = "0.0.4"
+mcpplibs.cmdline = "0.0.5"
 # JSON for Modern C++, as the index's module package (no copied header).
 nlohmann.json = "3.12.0"
 # The C library's macros (`stdout`, `stderr`, `EOF`, `errno` …) as C++ names:
@@ -125,7 +125,7 @@ mcpplibs.mwrap.xz   = "5.8.3.1"
 
 # The operating system is mcpplibs.os's (design 2026-10-26 §25): mcpp keeps no
 # layer of its own.
-mcpplibs.os = "0.4.6"
+mcpplibs.os = "0.4.7"
 
 # `modules/` holds what gets linked into this binary; `src/` is what has not
 # been separated yet, and shrinking it is the direction. Each entry is an
@@ -153,6 +153,10 @@ mcpp.buildopt        = { path = "modules/buildopt" }
 mcpp.manifest        = { path = "modules/manifest" }
 mcpp.toolchain-model = { path = "modules/toolchain-model" }
 mcpp.buildmcpp       = { path = "modules/buildmcpp" }
+mcpp.build-record    = { path = "modules/build-record" }
+mcpp.unit-cache      = { path = "modules/unit-cache" }
+mcpp.surface         = { path = "modules/surface" }
+mcpp.notice          = { path = "modules/notice" }
 
 [target.linux.build]
 sources = ["!src/native/windows/**"]
@@ -176,11 +180,15 @@ members = [
     "modules/manifest",
     "modules/toolchain-model",
     "modules/buildmcpp",
+    "modules/build-record",
+    "modules/unit-cache",
+    "modules/surface",
+    "modules/notice",
 ]
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 [dev-dependencies]
-mcpplibs.mtest = "0.10.0"
+mcpplibs.mtest = "0.11.2"
 # The support of the end-to-end cases (tests/support, design 2026-11-12 §5.9).
 mcpp.test-support = { path = "tests/support" }
 

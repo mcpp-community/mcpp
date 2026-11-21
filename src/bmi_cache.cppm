@@ -61,6 +61,7 @@ export module mcpp.bmi_cache;
 import std;
 import nlohmann.json;
 import mcpp.home.files;
+import mcpp.toolchain.fingerprint;   // hash_file, hash_string: an entry's interfaces by content
 
 export namespace mcpp::bmi_cache {
 
@@ -83,6 +84,15 @@ struct CacheKey {
     // The full key inputs, recorded in entry.json and compared field by field
     // on a hit. Never trust equal hashes alone.
     nlohmann::json inputs;
+    // THE INTERFACES THE ENTRY WAS COMPILED AGAINST (SPEC-001 §10.4 item 7):
+    // each upstream entry's key and the digest of its module interfaces
+    // (`bmi_digest`) as this entry's compile read them. Recorded beside the
+    // key, not in it: the digest of an upstream compiled in the same build is
+    // known only after that build. A compiler records an imported interface
+    // by its content (GCC's CRC), and an interface compiled again from the
+    // same sources at another path is another content, so an entry compiled
+    // against one is unusable with the other.
+    nlohmann::json imports = nlohmann::json::object();
     std::string bmiDirName   = "gcm.cache"; // consumer-side directory name
     std::string manifestTag  = "gcm";       // "gcm" | "pcm"
     // When set, the entry lives exactly here rather than below the package
@@ -159,6 +169,11 @@ struct CacheProbe {
     // all — the same failure mode as the fake `Cached` that went unnoticed for
     // three months.
     std::vector<std::string> layoutMismatch;
+    // The entry's own interfaces by content, and what it was compiled against
+    // (`CacheKey::imports`); read whenever the entry validated. An entry an
+    // earlier mcpp wrote states neither: empty, and `{}`.
+    std::string    bmiDigest;
+    nlohmann::json imports = nlohmann::json::object();
 };
 
 // Validate an entry AGAINST WHAT THIS BUILD WILL ACTUALLY READ.
@@ -178,6 +193,10 @@ CacheProbe probe_cached(const CacheKey& key, const DepArtifacts& requested);
 
 // probe_cached(...).ok
 bool is_cached(const CacheKey& key, const DepArtifacts& requested);
+
+// The digest of an entry's module interfaces as entry.json records it; empty
+// when there is no entry or an earlier mcpp wrote it.
+std::string entry_bmi_digest(const CacheKey& key);
 
 // The artifact list of a validated entry. Does NOT copy anything: the ninja
 // backend stages cached files through its own `stage_file` edges, so that a
@@ -345,6 +364,8 @@ CacheProbe probe_cached(const CacheKey& key, const DepArtifacts& requested) {
     if (j->value("key", std::string{}) != key.keyHex) return probe;
     auto it = j->find("inputs");
     if (it == j->end() || !inputs_match(*it, key.inputs)) return probe;
+    probe.bmiDigest = j->value("bmi_digest", std::string{});
+    if (auto im = j->find("imports"); im != j->end() && im->is_object()) probe.imports = *im;
 
     // The entry itself is valid. From here on, every remaining check is about
     // whether it holds what THIS build is going to read.
@@ -370,6 +391,11 @@ CacheProbe probe_cached(const CacheKey& key, const DepArtifacts& requested) {
 
 bool is_cached(const CacheKey& key, const DepArtifacts& requested) {
     return probe_cached(key, requested).ok;
+}
+
+std::string entry_bmi_digest(const CacheKey& key) {
+    auto j = read_entry(key.entryFile());
+    return j ? j->value("bmi_digest", std::string{}) : std::string{};
 }
 
 std::expected<DepArtifacts, std::string> resolve_cached(const CacheKey& key) {
@@ -452,6 +478,16 @@ populate_from(const CacheKey& key,
     j["tag"]      = key.manifestTag;
     j["inputs"]   = key.inputs;
     j["bmi"]      = arts.bmiFiles;
+    // The interfaces by content (SPEC-001 §10.4 item 7): what a dependent's
+    // entry records it was compiled against.
+    {
+        auto names = arts.bmiFiles;
+        std::ranges::sort(names);
+        std::string text;
+        for (auto const& g : names) text += g + '\0' + mcpp::toolchain::hash_file(cacheBmi / g) + '\0';
+        j["bmi_digest"] = names.empty() ? std::string{} : mcpp::toolchain::hash_string(text);
+    }
+    j["imports"]  = key.imports;
     // Only the entry-internal addresses. Recording the consumer's build path
     // here is mcpp#344 in one line.
     {

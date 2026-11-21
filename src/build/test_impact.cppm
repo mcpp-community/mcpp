@@ -5,14 +5,18 @@
 // module unit -- and by a change of what decides how everything is built
 // (a manifest, a lock, a build program, a header). A test that runs a program
 // of the package (a file it is built from names `MCPP_BIN_`) is affected by a
-// change of any source of the package that is not a test's own. Another file
-// affects the tests whose own files name it. Selection by change narrows; it never adds
-// a test that a pattern or `-p` left out.
+// change of any source of the package that is not a test's own. A header affects
+// the tests built from a unit that read it when the build directory last built it
+// (ninja's deps log and the scans' depfiles, design 2026-11-20 §5.11), and every
+// test when the directory holds no such record. Another file affects the tests
+// whose own files name it. Selection by change narrows; it never adds a test that
+// a pattern or `-p` left out.
 export module mcpp.build.test_impact;
 
 import std;
 import mcpp.build.plan;
 import mcpp.modgraph.graph;
+import mcpp.build.unit_reads;
 import mcpplibs.os;
 
 export namespace mcpp::build::test_impact {
@@ -110,6 +114,29 @@ std::set<std::filesystem::path> closure_of(const BuildPlan& plan, const LinkUnit
     return files;
 }
 
+// The units that read each file, from the build directory's records: an object's inputs in the
+// deps log, a scan's depfile (`<object dir>/<source name>.ddi.dep`). `complete` when every unit
+// of a file under the project's root has a record: only then does a header no record names
+// affect no test.
+struct Readers {
+    std::map<std::filesystem::path, std::vector<const CompileUnit*>> of;
+    bool complete = true;
+};
+Readers readers_of(const BuildPlan& plan) {
+    Readers out;
+    const auto deps = mcpp::build::unit_reads::ninja_deps(plan.outputDir / ".ninja_deps");
+    const auto root = plan.projectRoot.lexically_normal().generic_string() + "/";
+    for (auto const& cu : plan.compileUnits) {
+        const auto reads = mcpp::build::unit_reads::reads_of(plan.outputDir, cu.object, cu.source, deps);
+        if (!reads) {
+            if (cu.source.lexically_normal().generic_string().starts_with(root)) out.complete = false;
+            continue;
+        }
+        for (auto const& file : *reads) out.of[file].push_back(&cu);
+    }
+    return out;
+}
+
 // The test's own file that names `rel` (or its file name), if one does.
 std::optional<std::filesystem::path> naming_file(const LinkUnit& lu, const std::string& rel, const std::string& name) {
     for (auto const& own : lu.ownSources) {
@@ -147,6 +174,8 @@ Affected affected_tests(const BuildPlan& plan, const std::vector<std::string>& c
         if (fresh) it->second = read_text(f).find("MCPP_BIN_") != std::string::npos;
         return it->second;
     };
+    // Read once, and only when a header changed.
+    std::optional<Readers> readers;
     std::vector<const LinkUnit*> runners;
     std::set<std::filesystem::path> testsOwn;
     for (auto const& [lu, files] : tests) {
@@ -155,16 +184,43 @@ Affected affected_tests(const BuildPlan& plan, const std::vector<std::string>& c
     }
     for (auto const& rel : changed) {
         const auto path = (plan.projectRoot / mcpplibs::os::fs::from_utf8(rel)).lexically_normal();
-        if (decides_the_build(path) || is_header(path)
+        if (is_header(path) && !readers) readers = readers_of(plan);
+        const bool unknownHeader = is_header(path) && !readers->complete;
+        if (decides_the_build(path) || unknownHeader
             || (is_source(path) && !bySource.contains(path))) {
             out.everything = std::format("{} {}", rel,
                 decides_the_build(path) ? "decides how the tests are built"
-                : is_header(path)       ? "is a header, and which units include it is not known"
+                : unknownHeader         ? "is a header, and the build directory has no record of what some unit read"
                                         : "is a source this build does not plan");
             out.notes.push_back(*out.everything);
             break;
         }
         std::size_t hits = 0;
+        if (is_header(path)) {
+            const auto it = readers->of.find(path);
+            const std::size_t units = it == readers->of.end() ? 0 : it->second.size();
+            for (auto const& [lu, files] : tests) {
+                const bool reads = it != readers->of.end() && std::ranges::any_of(it->second, [&](const CompileUnit* cu) {
+                    return files.contains(cu->source.lexically_normal());
+                });
+                if (reads) {
+                    affect(lu->targetName, std::format("it is built from a unit that read {}", rel));
+                    ++hits;
+                }
+            }
+            // A unit of the package that is no test's own: the tests that run its programs.
+            const bool programReads = it != readers->of.end() && std::ranges::any_of(it->second, [&](const CompileUnit* cu) {
+                return !testsOwn.contains(cu->source.lexically_normal());
+            });
+            for (const auto* lu : runners)
+                if (programReads && !out.tests.contains(lu->targetName)) {
+                    affect(lu->targetName, std::format("it runs a program of the package, which read {}", rel));
+                    ++hits;
+                }
+            out.notes.push_back(std::format("{}: read by {} unit{}, {} test{}", rel, units, units == 1 ? "" : "s",
+                                            hits, hits == 1 ? "" : "s"));
+            continue;
+        }
         for (auto const& [lu, files] : tests)
             if (files.contains(path)) {
                 affect(lu->targetName, std::format("it is built from {}", rel));

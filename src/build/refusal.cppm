@@ -33,6 +33,7 @@ export module mcpp.build.refusal;
 
 import std;
 import mcpp.effects;
+import mcpp.surface;
 
 export namespace mcpp::build::refusal {
 
@@ -207,6 +208,25 @@ enum class Code {
     // A platform's build program stated a directive outside its phase's
     // vocabulary (build, link, runner, runners).
     PlatformPhaseDirective,
+    // `mcpp publish`: the package's build program read a file its archive does
+    // not carry -- one outside the package's directory, or one HEAD does not
+    // track -- so the consumer's copy of `build.mcpp` cannot be compiled
+    // (design 2026-11-21, build programs' inputs §3.4).
+    BuildProgramUnpublishedInput,
+    // A companion the project states beside its toolchain (`companions =
+    // { binutils = … }`) is older than the one the toolchain's payload
+    // declares (SPEC-006 §2.9).
+    CompanionTooOld,
+    // Offline, a payload the home lacks is in none of the local sources --
+    // the download cache, the archive directories (`[xlings] archives`).
+    // Distinct from OfflineDownloadRequired, where the run has no local source
+    // to ask: here it asked them, and the remedy is a bundle with the archive
+    // (`mcpp fetch --to` on a machine with a network).
+    ArtifactUnavailableOffline,
+    // A bundle given to `mcpp fetch --from` was written before the project's
+    // mcpp.lock: the lock records versions its index snapshots and archives
+    // do not hold.
+    BundleOlderThanLock,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -269,6 +289,12 @@ constexpr std::string_view name(Code c) {
         case Code::PlatformVersionGroup: return "platform-version-group";
         case Code::PlatformPhaseDirective:
                                          return "platform-phase-directive";
+        case Code::BuildProgramUnpublishedInput:
+                                         return "build-program-unpublished-input";
+        case Code::CompanionTooOld:      return "companion-too-old";
+        case Code::ArtifactUnavailableOffline:
+                                         return "artifact-unavailable-offline";
+        case Code::BundleOlderThanLock:  return "bundle-older-than-lock";
         case Code::Other:                return "other";
     }
     return "other";
@@ -279,6 +305,10 @@ constexpr std::string_view name(Code c) {
 // so a later successful run cannot inherit an earlier run's reason.
 void record(Code c);
 Code take();
+
+// Every code a refusal site can record, `other` included and `none` not: the reasons of
+// `mcpp emit surface` (design 2026-11-20 §5.16).
+std::vector<Code> codes();
 
 } // namespace mcpp::build::refusal
 
@@ -296,13 +326,21 @@ thread_local Code g_last = Code::None;
 
 void record(Code c) {
     g_last = c;
+    mcpp::surface::exercised(mcpp::surface::kReason, name(c));
     // Needing a download offline is the run stopping before a denied effect:
     // `--offline` is `--deny network`, and the process exits 5 (design
     // 2026-10-26 D23).
-    if (c == Code::OfflineDownloadRequired)
+    if (c == Code::OfflineDownloadRequired || c == Code::ArtifactUnavailableOffline)
         mcpp::effects::note_effect_refused("network", "a download is required");
 }
 
 Code take() { Code c = g_last; g_last = Code::None; return c; }
+
+std::vector<Code> codes() {
+    std::vector<Code> out;
+    for (int i = static_cast<int>(Code::None) + 1; i <= static_cast<int>(Code::Other); ++i)
+        out.push_back(static_cast<Code>(i));
+    return out;
+}
 
 } // namespace mcpp::build::refusal

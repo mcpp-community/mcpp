@@ -43,8 +43,12 @@ VENDORED="$MCPP_HOME/registry/bin/xlings$EXE"
     || fail "setup: the vendored binary does not answer as xlings" setup.err
 
 NINJA=""
+# The test's home reads the developer's homes as upstreams (_inherit_toolchain.sh): the
+# ninja payload is in one of them, and is not installed here before a build asks for it.
 for cand in "$MCPP_HOME"/registry/data/xpkgs/xim-x-ninja/*/ninja$EXE \
-            "$MCPP_HOME"/registry/data/xpkgs/xim-x-ninja/*/bin/ninja$EXE; do
+            "$MCPP_HOME"/registry/data/xpkgs/xim-x-ninja/*/bin/ninja$EXE \
+            "$USER_MCPP"/registry/data/xpkgs/xim-x-ninja/*/ninja$EXE \
+            "$USER_MCPP"/registry/data/xpkgs/xim-x-ninja/*/bin/ninja$EXE; do
     if [ -f "$cand" ]; then NINJA="$cand"; break; fi
 done
 [ -n "$NINJA" ] || fail "setup: no ninja binary to stand in for an older xlings"

@@ -209,9 +209,9 @@ std::expected<void, std::string> apply(const RefreshDecision& d,
 
 std::expected<void, std::string> force_refresh(const mcpp::provider::Location& env) {
     if (mcpp::effects::offline_mode())
-        return std::unexpected(
-            "offline mode is on — cannot refresh the package index "
-            "(unset MCPP_OFFLINE or drop --offline)");
+        return std::unexpected(std::format(
+            "offline mode is on — cannot refresh the package index ({})",
+            mcpp::effects::offline_remedy()));
     g_refreshed_this_process = true;
     return run_sync(env, "package index (requested)");
 }

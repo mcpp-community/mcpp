@@ -11,7 +11,7 @@ name: cross-build-test
 #   target                | toolchain                        | host→target   | run
 #   ----------------------|----------------------------------|---------------|-----
 #   aarch64-linux-musl    | aarch64-linux-musl-gcc@16.1.0    | x86_64→arm64  | qemu
-#   x86_64-w64-mingw32    | mingw-cross-gcc@16.1.0 (MSVCRT)  | linux→windows | wine
+#   x86_64-w64-mingw32    | mingw-cross-gcc@16.2.0 (MSVCRT)  | linux→windows | wine
 #   x86_64-linux-musl     | x86_64-linux-musl-gcc@16.1.0     | windows→linux | linux job
 #
 # The mingw row is OS-cross (same arch, different OS/ABI: ELF→PE), so it lives
@@ -132,7 +132,7 @@ jobs:
           # release assets were uploaded in a broken state (records present,
           # blobs missing → 404 on GET); re-uploaded clean. The stale-INDEX
           # half is handled by the marker-clear below.
-          XLINGS_VERSION: '2026.11.17.2'
+          XLINGS_VERSION: '2026.11.21.1'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
@@ -322,7 +322,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          XLINGS_VERSION: '2026.11.17.2'
+          XLINGS_VERSION: '2026.11.21.1'
         run: |
           tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz"
           bash "$GITHUB_WORKSPACE/.github/tools/fetch_release.sh" \
@@ -353,7 +353,7 @@ jobs:
       - name: Install mingw-cross toolchain
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          "$MCPP" toolchain install mingw-cross 16.1.0
+          "$MCPP" toolchain install mingw-cross 16.2.0
           "$MCPP" toolchain install llvm 23.1.3
           echo "MCPP_VENDORED_XLINGS=$XLINGS_BIN" >> "$GITHUB_ENV"
 

@@ -390,6 +390,46 @@ UTest required_rel_path_rejects_contentful_but_wrong_candidate{"XlingsSiblingPac
     std::filesystem::remove_all(tmp);
 }};
 
+// THE COMPANION IS THE VERSION THE PAYLOAD DECLARES (design 2026-11-21, offline and toolchain
+// defaults §3.5): with several in the store, the one the compiler's descriptor lists in its
+// runtime deps, whatever order the directory walk returns them in; without a declaration, the
+// newest; a declared version the store does not hold answers none.
+UTest a_companion_is_the_declared_version{"XlingsSiblingPackage/ACompanionIsTheDeclaredVersion", [] {
+    auto tmp = make_tempdir("mcpp-companion");
+    auto xpkgs = tmp / "data" / "xpkgs";
+    auto gccBin = xpkgs / "xim-x-gcc" / "16.1.0" / "bin" / "g++";
+    touch(gccBin);
+    for (auto v : {"2.40", "2.42", "2.42.1", "2.47"}) touch(xpkgs / "xim-x-binutils" / v / "bin" / "as");
+    auto descriptor = [&](std::string_view dep) {
+        touch(tmp / "data" / "xim-pkgindex" / "pkgs" / "g" / "gcc.lua", std::format(R"(
+package = {{
+    name = "gcc",
+    xpm = {{
+        linux = {{ deps = {{ runtime = {{ "xim:glibc@>=2.39", "{}" }} }}, ["16.1.0"] = {{}} }},
+        macosx = {{ deps = {{ "{}" }}, ["16.1.0"] = {{}} }},
+        windows = {{ deps = {{ "{}" }}, ["16.1.0"] = {{}} }},
+    }},
+}}
+)", dep, dep, dep));
+    };
+    namespace xp = mcpp::provider::xlings::paths;
+    descriptor("xim:binutils@2.42");
+    expect(eq(xp::find_sibling_binary(gccBin, "binutils", "bin/as").value_or(""),
+              xpkgs / "xim-x-binutils" / "2.42" / "bin" / "as"));
+    expect(eq(xp::declared_dependency(gccBin, "binutils").value_or(""), std::string("2.42")));
+    descriptor("xim:binutils@>=2.41, <2.45");
+    expect(eq(xp::find_sibling_binary(gccBin, "binutils", "bin/as").value_or(""),
+              xpkgs / "xim-x-binutils" / "2.42.1" / "bin" / "as")) << "a requirement takes its newest match";
+    descriptor("xim:zlib@1.3.1");
+    expect(eq(xp::find_sibling_binary(gccBin, "binutils", "bin/as").value_or(""),
+              xpkgs / "xim-x-binutils" / "2.47" / "bin" / "as")) << "undeclared, the newest";
+    expect(!xp::declared_dependency(gccBin, "binutils").has_value());
+    descriptor("xim:binutils@2.39");
+    expect(!xp::find_sibling_binary(gccBin, "binutils", "bin/as").has_value())
+        << "a declared version the store does not hold was replaced by another";
+    std::filesystem::remove_all(tmp);
+}};
+
 UTest finds_payload_under_non_xim_prefix{"XlingsHomeTool/FindsPayloadUnderNonXimPrefix", [] {
     auto tmp = make_tempdir("mcpp-husk-home");
     auto xpkgs = tmp / "registry" / "data" / "xpkgs";

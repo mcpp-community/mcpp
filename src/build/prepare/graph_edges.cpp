@@ -11,6 +11,7 @@ import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.pm.dep_spec;
 import mcpp.ui;
+import mcpp.diag;
 
 namespace mcpp::build {
 
@@ -162,7 +163,7 @@ bool names_the_root(PrepareState& state, const WorkItem& item, const ResolvedKey
                          /*targetRowOnly=*/false, item.scope);
     if (!item.originalConstraint.empty() && item.originalConstraint != root.version
         && item.originalConstraint != "*")
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("build", std::format(
             "{} asks for {} {}; it is the package being built, {}, which stands for itself",
             item.requestedBy, state.qualifiedKey(key), item.originalConstraint, root.version));
     return true;

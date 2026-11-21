@@ -14,7 +14,7 @@ bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
 
-E2E layers{"layers", [] {
+E2E layers{"layers", s::home_fixture, [] {
     "328 layer predicates apply and unknown ones say so"_test = [] {
         // `cfg(c-abi = ...)` applies when the resolved c-abi matches and not otherwise, once
         // beside a triple leg, in a dependency too; an unknown cfg key is named with the

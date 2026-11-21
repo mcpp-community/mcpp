@@ -13,7 +13,7 @@
 //                       decides WHEN a compiler token is really a triple
 //   3. persisted-state migration: old config/manifest spec strings normalize
 //                       on the read path via the same normalize_spec
-//   4. the one-line canonical hint text (printed at most once per process)
+//   4. the one-line canonical hint text (a note through mcpp.diag, once per process per text)
 //
 // NOT compat: xim package names (mingw-cross-gcc, musl-gcc, …). Those are
 // the distribution layer's CURRENT identity — "cross" is legitimate there
@@ -55,10 +55,6 @@ struct NormalizedSpec {
 std::optional<NormalizedSpec> normalize_spec(std::string_view compiler,
                                              std::string_view version);
 
-// Print a normalization hint at most once per process (quiet by design:
-// note-level, aliases are permanently supported — this is a pointer to the
-// canonical spelling, not a deprecation warning).
-void print_hint_once(std::string_view hint);
 
 } // namespace mcpp::toolchain::compat
 
@@ -170,14 +166,6 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     }
 
     return std::nullopt;
-}
-
-void print_hint_once(std::string_view hint) {
-    if (hint.empty()) return;
-    static bool printed = false;
-    if (printed) return;
-    printed = true;
-    std::println(libc::stderr(), "note: {}", hint);
 }
 
 } // namespace mcpp::toolchain::compat

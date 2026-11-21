@@ -36,7 +36,7 @@ bool any_word_contains(const nlohmann::json& entry, std::string_view needle) {
     return std::ranges::any_of(words_of(entry), [&](const std::string& w) { return w.contains(needle); });
 }
 
-E2E side{"side", [] {
+E2E side{"side", s::home_fixture, [] {
     "268 target side resolution"_test[s::unix_shell] = [] {
         // A layer a dependency declares is reported with its interface, its supplier and its
         // origin; a package that declares nothing fills nothing; a misspelt name in the mcpp:

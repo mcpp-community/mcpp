@@ -30,7 +30,7 @@ std::size_t ninjas_under(const fs::path& dir) {
 
 void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds{ms}); }
 
-E2E signals{"signals", [] {
+E2E signals{"signals", s::home_fixture, [] {
     "340 no orphan survives a killed mcpp"_test[s::gcc][s::unix_shell] = [] {
         // A serial build is running ninja when mcpp alone is sent SIGTERM; ten seconds later no
         // ninja of the project is alive.

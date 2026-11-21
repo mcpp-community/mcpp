@@ -287,7 +287,7 @@ void dependency_images(std::vector<std::string> target) {
     expect(fatal(e2e::contains(s::text(r), "owner.manifest"))) << "the missing resource was not attributed: " << s::text(r);
 }
 
-E2E resources{"resources", [] {
+E2E resources{"resources", s::home_fixture, [] {
     "197 windows resources"_test[s::windows] = [] {
         // mcpp#365 on a Windows host: see resources_reach_the_image.
         resources_reach_the_image({});
@@ -339,14 +339,18 @@ E2E resources{"resources", [] {
     "837 a members resources reach its image"_test[s::mingw_cross] = [] {
         // R1 each member's program carries its own icon and not the other's; R2 the synthesised
         // script of a member is under res/<member>/ with that member's version and metadata; R3 a
-        // member's script compiles with that member's include_dirs.
+        // member's script compiles with that member's include_dirs; R4 a glob among them (an
+        // archive's wrap layer, `*/inc`) reaches the resource compiler expanded, never as `*`;
+        // R5 a literal directory that does not exist when the build is planned (one a build step
+        // creates, #390) still reaches it, as it reaches the compile steps.
         s::project ws{{"mcpp.toml", "[workspace]\nmembers = [\"cli\", \"gui\"]\n"},
                       {"cli/assets/app.ico", icon(icon_a)}, {"cli/src/main.cpp", "int main() { return 0; }\n"},
                       {"cli/mcpp.toml", "[package]\nname    = \"cli\"\nversion = \"1.2.3\"\nauthors = [\"Cli Corp\"]\n\n[resources]\nicon = \"assets/app.ico\"\n\n[targets.cli]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
                       {"gui/assets/app.ico", icon(icon_b)}, {"gui/src/main.cpp", "int main() { return 0; }\n"},
                       {"gui/include/gui_ids.h", "#define GUI_ICON 101\n"},
-                      {"gui/gui.rc", "#include \"gui_ids.h\"\nGUI_ICON ICON \"assets/app.ico\"\n"},
-                      {"gui/mcpp.toml", "[package]\nname    = \"gui\"\nversion = \"4.5.6\"\n\n[build]\ninclude_dirs = [\"include\"]\n\n[resources]\nfiles = [\"gui.rc\"]\nextra-inputs = [\"assets/app.ico\"]\n\n[targets.gui]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}};
+                      {"gui/vendor-1.0/inc/vendor_ids.h", "#define VENDOR_ICON 102\n"},
+                      {"gui/gui.rc", "#include \"gui_ids.h\"\n#include \"vendor_ids.h\"\nGUI_ICON ICON \"assets/app.ico\"\nVENDOR_ICON ICON \"assets/app.ico\"\n"},
+                      {"gui/mcpp.toml", "[package]\nname    = \"gui\"\nversion = \"4.5.6\"\n\n[build]\ninclude_dirs = [\"include\", \"*/inc\", \"generated/inc\"]\n\n[resources]\nfiles = [\"gui.rc\"]\nextra-inputs = [\"assets/app.ico\"]\n\n[targets.gui]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"}};
         auto r = ws.mcpp({"build", "--workspace", "--target", "x86_64-windows-gnu"});
         expect(fatal(e2e::succeeded(r))) << "workspace build: " << s::text(r);
         const auto cli = s::glob(ws.at("target"), "*/*/bin/cli/cli.exe");
@@ -366,6 +370,20 @@ E2E resources{"resources", [] {
             if (std::regex_search(lines[i], std::regex(R"(rc_object .*gui\.rc)")))
                 for (std::size_t j = i; j < lines.size() && j <= i + 2; ++j) with_includes = with_includes || lines[j].contains("gui/include");
         expect(fatal(with_includes)) << "R3 gui.rc is not compiled with gui's include_dirs";
+        bool expanded = false, literal = false;
+        for (std::size_t i = 0; i < lines.size(); ++i)
+            if (std::regex_search(lines[i], std::regex(R"(rc_object .*gui\.rc)")))
+                for (std::size_t j = i; j < lines.size() && j <= i + 2; ++j) {
+                    expanded = expanded || lines[j].contains("vendor-1.0/inc") || lines[j].contains("vendor-1.0\\inc");
+                    literal = literal || lines[j].contains("*/inc") || lines[j].contains("*\\inc");
+                }
+        expect(fatal(expanded && !literal)) << "R4 gui's `*/inc` does not reach the resource compiler expanded";
+        bool later = false;
+        for (std::size_t i = 0; i < lines.size(); ++i)
+            if (std::regex_search(lines[i], std::regex(R"(rc_object .*gui\.rc)")))
+                for (std::size_t j = i; j < lines.size() && j <= i + 2; ++j)
+                    later = later || lines[j].contains("generated/inc") || lines[j].contains("generated\\inc");
+        expect(fatal(later)) << "R5 gui's `generated/inc`, created after planning, is not on the resource compile";
     };
 
     "922 dependency images keep their resources"_test[s::windows][s::python3] = [] {

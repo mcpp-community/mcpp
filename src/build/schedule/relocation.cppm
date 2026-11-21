@@ -424,11 +424,14 @@ std::expected<void, std::string> publish(const Plan& plan, bool withBmi) {
     // was given (clang's `-ftime-trace` beside the object): its counterpart.
     std::error_code ec;
     if (!fs::is_directory(plan.root, ec)) return {};
+    // Compared absolute: the supervisor loads the plan by an absolute directory, and the outputs
+    // were named below the relative one phase 1 made; a BMI the walk did not recognise was moved
+    // before phase 1 published it (a compile the unit cache placed, design 2026-11-20 §5.3).
     std::set<fs::path> named;
-    for (const auto& o : plan.outputs) named.insert(o.written.lexically_normal());
+    for (const auto& o : plan.outputs) named.insert(fs::absolute(o.written, ec).lexically_normal());
     for (fs::recursive_directory_iterator it(plan.root, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code fec;
-        if (!it->is_regular_file(fec) || named.contains(it->path().lexically_normal())) continue;
+        if (!it->is_regular_file(fec) || named.contains(fs::absolute(it->path(), fec).lexically_normal())) continue;
         const auto rel = it->path().lexically_relative(plan.root);
         if (auto done = replace(it->path(), rel); !done) return done;
     }

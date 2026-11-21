@@ -102,7 +102,7 @@ constexpr std::string_view caught_main = "import std;\nint main(int argc, char**
 
 // The openkal set built for every architecture: about 20 minutes beside three other programs on a
 // Linux runner, measured 2026-11-14; stated, so the run's limit is not raised for every test.
-E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
+E2E trees{"trees", s::home_fixture, timeout{std::chrono::minutes{40}}, [] {
     "955 the openkal set is one tree of every architecture"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `pack --target openkal` writes <name>-<version>-openkal/ with both images, the
         // launchers and metadata naming legs, runner and entries; B the launcher runs this
@@ -627,7 +627,7 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         expect(fatal(e2e::contains(s::text(r), "is a polyglot file"))) << "G: emit xpkg does not name the polyglot file: " << s::text(r);
         // H
         if (const auto wine = s::on_path("wine"); wine && os == "linux") {
-            auto w = e2e::run({.argv = {wine->string(), f.string(), "onwine"}, .env = {{"WINEDEBUG", "-all"}, {"XDG_CACHE_HOME", std::nullopt}}, .timeout = std::chrono::seconds{300}});
+            auto w = e2e::run({.argv = s::through_wine(*wine, f, {"onwine"}), .env = {{"WINEDEBUG", "-all"}, {"XDG_CACHE_HOME", std::nullopt}}, .timeout = std::chrono::seconds{300}});
             expect(fatal(e2e::succeeded(w))) << "H: wine: " << s::text(w);
             expect(fatal(e2e::contains(s::text(w), "first [onwine]"))) << "H: the Windows program's output: " << s::text(w);
         }

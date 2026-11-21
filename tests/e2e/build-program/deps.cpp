@@ -32,7 +32,7 @@ std::string library(std::string_view name) {
     return std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n\n[targets.{0}]\nkind = \"lib\"\n", name);
 }
 
-E2E deps{"deps", [] {
+E2E deps{"deps", s::home_fixture, [] {
     "111 dep build mcpp"_test[s::gcc] = [] {
         // A dependency's build.mcpp runs with Cargo's scope: its define reaches only the
         // dependency's own units, its generated source (in MCPP_OUT_DIR) compiles into it, and
@@ -75,11 +75,12 @@ int main() {
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "build failed";
         expect(eq(s::last_line(app.mcpp({"run"}).out), std::string("dep = 77")));
         expect(eq(s::listing(dep.dir()), before)) << "dependency root was written to";
-        // The program lives in .build-mcpp/deps, its output in this configuration's directory.
+        // A path dependency outside the project is named by its content (#974): its program's
+        // output is in the home, by package and contract (design 2026-11-20 §5.2).
         bool found = false;
-        for (const auto& f : s::find_files(app.at("target/.build-mcpp/out"), R"(gen_dep\.cpp)"))
-            found = found || f.generic_string().ends_with("deplib/gen_dep.cpp");
-        expect(found) << "dep OUT_DIR generated file not in project tree";
+        for (const auto& f : s::find_files(s::shared_home() / "build-cache/v1/out", R"(gen_dep\.cpp)"))
+            found = found || f.generic_string().contains("/deplib@0.1.0/");
+        expect(found) << "dep OUT_DIR generated file not in the home's build-program outputs";
     };
 
     "125 build mcpp dep dir"_test[s::elf][s::gcc] = [] {
@@ -791,8 +792,10 @@ int main() {
         // runs: they are installed first (library deps belong in mcpp.deps; only hook-time tools
         // are xpm deps). A fake xlings records the order of the installs.
         const auto home = s::case_home(s::home::inherited);
-        const auto seed = home / "registry/subos/default/.xlings.json";
-        expect(fatal(fs::is_regular_file(seed))) << "inherited toolchain has no default SubOS runtime contract";
+        // A real runtime contract for the fake xlings to report: the user's, which the case's home
+        // names as an upstream; the case's own subos holds one only after an install.
+        const auto seed = s::shared_home() / "registry/subos/default/.xlings.json";
+        expect(fatal(fs::is_regular_file(seed))) << "the shared home has no default SubOS runtime contract";
         const auto tmp = s::case_dir();
         auto package = [](std::string_view name, std::string_view description, std::string_view source,
                           std::string_view target, std::string_view deps) {

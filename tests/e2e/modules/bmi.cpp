@@ -100,7 +100,7 @@ std::string lua_xpm(std::string_view name) {
     return out;
 }
 
-E2E bmi{"bmi", [] {
+E2E bmi{"bmi", s::home_fixture, [] {
     "19 bmi cache reuse"_test = [] {
         // A path dependency outside the project, direct or transitive, is kept in the build
         // cache under the digest of its tree (mcpp#974): a clean build takes it from there, an
@@ -396,7 +396,7 @@ int main() {
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E bmi_machine{"bmi-machine", resource{"machine"}, [] {
+E2E bmi_machine{"bmi-machine", s::home_fixture, resource{"machine"}, [] {
     "170 bmi staging no cascade"_test = [] {
         // The std BMI is staged from the home's cache; a re-staged, unchanged BMI does not
         // recompile its importer, and a settled staging edge stays clean.

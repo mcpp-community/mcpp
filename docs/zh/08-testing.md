@@ -106,13 +106,27 @@ note，说明有多少文件仍各自是一个程序；它不形成任何组时�
 `[test] link = "objects"` 保留每个目标文件的全部内容。
 
 一次运行以 mtest 存储的形式保存（2026.11.9.1+）：`target/mtest/` 中有 `runs/<id>/run.json`，
-`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例，程序报告时还有 `usage`），`cases.ndjson`
+`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例，程序报告时还有 `usage`，以及程序在用例之外（如套件的主体中）写出的步骤、用到的项与度量，2026.11.21.1+），`cases.ndjson`
 每个用例一行（其 kind、tags、相对运行开始的开始时刻、带期望值与实际值的失败、指标与界限，2026.11.10.1+），
 `index.ndjson` 列出各次运行。`Bench` 用例的测量因此留在存储中，`mtest analyze trend` 把它们与其界限一起按
 `mcpp test` 保存的各次运行展示。`mtest store import --from target/mtest` 把它们取入 mtest 的存储，
 `[project] store` 为 `target/mtest` 的 `mtest.toml` 则就地读取；`mtest report`、`analyze` 与 `graph` 随之像读取
 mtest 自身的运行一样读取它们（Markdown 报告、最慢的用例、关键路径与调度）。在 CI 中 `commit` 与 `group` 取
 `GITHUB_SHA` 与 `GITHUB_RUN_ID`。`[test] store = "<dir>"` 另指一个目录，相对项目；`"none"` 不保存。
+
+**运行记录的内容**（2026.11.21.1+，[SPEC-017](../specs/test.md) B4、P5.6、P12.4）。运行的 `run.json` 及其在 `index.ndjson`
+中的一行写出机器的类别（`machine`：处理器的型号）、`processors` 与 `memory`、运行陈述的监测程度（`MTEST_MONITOR`，
+环境未陈述时为 `basic`：每个用例的处理器时间）与陈述了的抖动。用例的一行另有其处理器时间（`cpu_ms`）、步骤（端到端
+用例运行的每条命令及其用时与状态）、它用到的产品面的项（`exercised`）与它所受的时限（`limit_ms`）。`builds.ndjson`
+保存运行中的构建：每条运行的边一行，带包、用时、编译器的处理器时间与最大驻留集，以及是否由单元缓存放置
+（`served`）或为缓存提供的包复制（`staged`）；缓存提供的每个包一行。调度的估计优先取同类机器的运行。
+
+**机器的一份预算**（2026.11.21.1+，SPEC-017 O11）。`mcpp test` 建立每个作业一个槽位文件的目录，并告知其程序
+（`MTEST_BUDGET`，以及工作者持有的槽位 `MTEST_BUDGET_HELD`）；测试经由 mcpp 启动的编译器在启动前持有其中一个槽位，
+因此构建工程的测试占用本次运行的作业数，而不另加自己的。运行在另一个运行器的预算之内时使用那一份。
+
+**用例的时限是其作用域陈述的时限**（2026.11.21.1+）。以 `--case` 选出的用例在其列出用例陈述的 `timeout` 之内运行，
+而不是运行的缺省时限。
 
 由自身多个源文件编译而成的测试套件也可以是一个包：一个工作区成员，它的
 `[build] sources` 承载整套套件，其唯一的测试程序驱动套件，用
@@ -252,7 +266,10 @@ test result ok. 7 passed; 0 failed; finished in 7.77s (plan 2.10s · programs 1.
 
 - 测试受其构建所用文件的变更影响：它自己的文件、它导入的模块单元及这些单元再导入的
   单元，以及链接中不属于任何模块的单元；
-- 清单、锁文件、构建程序、头文件或计划中没有的源文件的变更影响所有测试；
+- 清单、锁文件、构建程序或计划中没有的源文件的变更影响所有测试；
+- 头文件（2026.11.21.1+）影响由构建目录上次构建时读取它的单元构建的测试（ninja 的依赖日志与扫描的依赖文件所记录），
+  这样的单元不属于测试自身时还影响运行本包程序的测试；工程的某个单元尚无此记录时（构建目录从未构建过它），
+  头文件影响所有测试；
 - 运行本包程序的测试（其构建所用的某个文件写出 `MCPP_BIN_`）受本包中任何不属于测试自身的源文件的
   变更影响（2026.11.13.1+）：端到端测试运行它所测的程序，却不由该程序的任何源文件构建；
 - 其他文件只影响自己的文件中写出该文件的测试（测试数据），不影响其他测试。
@@ -460,6 +477,14 @@ mcpp test --seed 42             # 用例中随机性的种子
 `--message-format json` 的记录带有协议、用例及其失败（[50](50-machine-output.md)）；`--print-launch`
 为启动程序的调试器给出协议。
 
+**运行夹具**（2026.11.21.1+，SPEC-017 O6）。程序可以声明运行夹具——整次运行共享的一个对象：沙箱化的 home、服务器、
+索引——其用例在 `uses` 中写出它（mtest 的 `run_fixture` 与 `uses{}`）。`mcpp test` 从程序的列出中读取二者。在所选
+用例使用某个夹具的第一个程序启动之前，它以 `MTEST_SERVE` 指明该夹具、以管道为输入启动一个声明它的程序，并至多等待
+`--timeout` 读到 `mtest-ready <端点>` 一行；每个使用者以 `MTEST_FIXTURE_<NAME>` 收到端点。最后一个使用者结束后关闭
+其输入，同样的时间之后仍未结束则结束它。运行存储的 `fixtures.ndjson` 写出每个夹具的启动、就绪与结束，夹具的准备
+因此不计入第一个使用它的用例；`programs.ndjson` 写出每个程序用到的夹具。未就绪的夹具是机器的失败：使用它的程序
+不运行，其记录为 `infra`，运行如同有测试未运行一样以 2 结束。运行器之后运行的程序不被列出，不取得夹具。
+
 ## 编写测试
 
 ```bash
@@ -490,6 +515,19 @@ mcpp test unit/math --print-launch -- --gtest_filter=Math.Adds
 
 构建该模式指定的一个测试，并打印 `mcpp test` 启动它的方式（`mcpp.launch` 信封，mcpp 2026.10.31.2+），
 供调试器启动：其中包括运行器、运行所加的环境与 `--` 之后的参数。
+
+### 在 GitHub Actions 的作业中（2026.11.21.1+）
+
+```yaml
+- uses: actions/checkout@v4
+- uses: mcpp-community/mcpp/.github/actions/project-test@main
+  with:
+    args: --workspace        # `mcpp test` 的参数
+```
+
+该动作安装工程的 `.xlings.json` 所写的 mcpp（否则为输入 `mcpp`，再否则为最新的发布），按系统、该版本与工程的清单和锁文件
+（`home-key` 取代后两者）恢复 home，运行 `mcpp test`，把运行的存储（`target/mtest`）保留为 artifact，并把运行的结果、最慢的
+十个用例与其构建中最慢的十条边写入作业的摘要。拉取请求只读取 home；向缺省分支的推送保存它。
 
 ## 当前边界
 

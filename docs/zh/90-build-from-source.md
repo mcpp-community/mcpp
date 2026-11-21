@@ -44,6 +44,20 @@ mcpp build --target x86_64-linux-musl
 # → target/x86_64-linux-musl/.../bin/mcpp is a fully static ELF
 ```
 
+### 在没有网络的机器上构建（2026.11.21.1 起）
+
+带有 `mcpp fetch` 的 mcpp 在联网的机器上把仓库构建所需之物写入一个目录，在没有网络的
+机器上从该目录构建：
+
+```bash
+mcpp fetch --to ../mcpp-bundle                          # 联网
+mcpp fetch --from ../mcpp-bundle && mcpp build --offline # 不联网
+```
+
+该目录携带工具链及其声明的载荷、包索引的快照、按 `mcpp.lock` 的依赖，以及构建用到的
+git 克隆（[05 —— 依赖](05-dependencies.md)，「离线构建与 mcpp fetch」）。CI 验证这一点：
+一个干净的 home 先取齐，构建在自己的网络命名空间中运行。
+
 ## 源码结构
 
 mcpp 是一个**工作空间**。`modules/` 下是引擎 import 的十个包；`src/` 是

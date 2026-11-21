@@ -38,6 +38,7 @@ import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.index_route;
 import mcpp.version_req;
+import mcpp.xpkg_version;   // the command line's `@`: the written prefix
 
 export namespace mcpp::pm {
 
@@ -63,6 +64,19 @@ resolve_semver(std::string_view ns, std::string_view shortName,
                std::string_view constraint,
                const mcpp::pm::IndexRoute& route,
                const mcpp::toolchain::platform::PlatformKey& platform);
+
+// THE COMMAND LINE'S `<package>@<version>` (design 2026-11-21, offline and
+// toolchain defaults §3.9), as xlings and a toolchain spec read it: the written
+// prefix -- the segments written are equal, finer ones any, the highest of the
+// keys that match (`@1.19.0` selects 1.19.0.2, `@16` the newest 16.x);
+// `@=<version>` one key exactly; `@<operator>...` (`^`, `~`, `>=`, ...) the
+// manifest's requirement grammar. A manifest's version string is not this:
+// resolve_semver reads it.
+std::expected<std::string, std::string>
+resolve_cli_selection(std::string_view ns, std::string_view shortName,
+                      std::string_view written,
+                      const mcpp::pm::IndexRoute& route,
+                      const mcpp::toolchain::platform::PlatformKey& platform);
 
 // Try to AND-merge two version constraints and resolve to a single
 // concrete version satisfying both. Uses structured (ns, shortName).
@@ -251,6 +265,64 @@ resolve_semver(std::string_view ns, std::string_view shortName,
             qname, constraint, tied.size(), join(tied), qname, tied.front()));
     }
     return literals[best.front()];
+}
+
+std::expected<std::string, std::string>
+resolve_cli_selection(std::string_view ns, std::string_view shortName,
+                      std::string_view written,
+                      const mcpp::pm::IndexRoute& route,
+                      const mcpp::toolchain::platform::PlatformKey& platform)
+{
+    namespace xv = mcpp::xpkg_version;
+    auto qname = mcpp::pm::compat::qualified_name(ns, shortName);
+    const bool exact = written.starts_with('=');
+    const bool requirement = !exact
+        && (written.empty() || std::string_view("^~<>*").find(written.front()) != std::string_view::npos
+            || written.find_first_of(" ,") != std::string_view::npos);
+    if (requirement) return resolve_semver(ns, shortName, written, route, platform);
+
+    auto lua = route.read(mcpp::pm::DependencyCoordinate{
+        .namespace_ = std::string(ns), .shortName = std::string(shortName) });
+    if (!lua) return resolve_semver(ns, shortName, exact ? written : std::format("={}", written),
+                                    route, platform);   // its message names the missing entry
+    std::vector<std::string> keys, names;   // ordered versions; every key, aliases included
+    for (auto const& e : mcpp::manifest::list_xpkg_version_entries(*lua, platform)) {
+        names.push_back(e.version);
+        if (!e.alias) keys.push_back(e.version);
+    }
+    // A name that is no version (`latest`) has no prefix: it addresses its key.
+    if (!exact && !xv::parse(written))
+        if (std::ranges::find(names, written) != names.end()) return std::string(written);
+    auto join = [](const std::vector<std::string>& v) {
+        std::string out;
+        for (auto const& x : v) out += (out.empty() ? "" : ", ") + x;
+        return out;
+    };
+    // The keys a written version names by prefix, highest first.
+    auto finer = [&](std::string_view prefix) {
+        std::vector<std::string> out;
+        auto range = xv::parse_range(prefix);
+        for (auto const& k : keys)
+            if (auto v = xv::parse(k); v && range && xv::satisfies(*v, *range)) out.push_back(k);
+        std::ranges::sort(out, [](const std::string& a, const std::string& b) {
+            auto va = xv::parse(a), vb = xv::parse(b);
+            return va && vb && xv::compare(*va, *vb) == std::strong_ordering::greater;
+        });
+        return out;
+    };
+    if (exact) {
+        auto key = written.substr(1);
+        if (std::ranges::find(keys, key) != keys.end()) return std::string(key);
+        if (auto f = finer(key); !f.empty())
+            return std::unexpected(std::format(
+                "'{}@={}': {} is published as {}: @{} selects {}, @={} pins one",
+                qname, key, key, join(f), key, f.front(), f.back()));
+        return std::unexpected(std::format("dependency '{}': '@={}' matches none of: [{}]", qname, key, join(keys)));
+    }
+    if (auto f = finer(written); !f.empty()) return f.front();
+    return std::unexpected(std::format("dependency '{}': '@{}' matches none of: [{}] (a written "
+                                       "version selects the keys it is a prefix of)",
+                                       qname, written, join(keys)));
 }
 
 // ─── Namespace-aware try_merge_semver (canonical, 0.0.10+) ───────────

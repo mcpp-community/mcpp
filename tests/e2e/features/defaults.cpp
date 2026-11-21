@@ -15,7 +15,7 @@ bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
 const s::options cdb{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
 
-E2E defaults{"defaults", [] {
+E2E defaults{"defaults", s::home_fixture, [] {
     "126 default features opt out"_test = [] {
         // `default-features = false` keeps a dependency's default feature (and its define) off;
         // the default is on otherwise; an explicit request activates it beside the opt-out.

@@ -37,7 +37,7 @@ bool unreachable(std::string_view out) {
     return out.contains("not found in the synced index") || out.contains("install_packages failed");
 }
 
-E2E graph{"graph", [] {
+E2E graph{"graph", s::home_fixture, [] {
     "291 dynamic linkage is refused only when the c library is the graphs"_test[s::gcc][s::llvm][s::elf][s::unix_shell] = [] {
         // `linkage = "dynamic"` is honoured without a word when the C library is the payload's
         // (the artifact has DT_NEEDED entries), and reported as having no effect when the graph

@@ -30,6 +30,9 @@ public:
                                         std::string_view binaryRel) const override {
         return paths::find_sibling_binary(path, name, binaryRel).value_or(std::filesystem::path{});
     }
+    std::string declared_dependency(const std::filesystem::path& path, std::string_view name) const override {
+        return paths::declared_dependency(path, name).value_or(std::string{});
+    }
     std::filesystem::path environment_of(const std::filesystem::path& compiler) const override {
         return paths::subos_dir_of(compiler).value_or(std::filesystem::path{});
     }
@@ -151,19 +154,7 @@ public:
     }
     std::vector<std::filesystem::path> descriptor_candidates(const std::filesystem::path& data,
                                                              std::string_view name) const override {
-        std::vector<std::filesystem::path> out;
-        if (name.empty()) return out;
-        const std::string subdir(1, name[0]), fname = std::string(name) + ".lua";
-        // xim-pkgindex first, then each sub-index.
-        out.push_back(data / "xim-pkgindex" / "pkgs" / subdir / fname);
-        std::error_code ec;
-        std::vector<std::filesystem::path> repos;
-        for (auto it = std::filesystem::directory_iterator(data / "xim-index-repos", ec);
-             !ec && it != std::filesystem::directory_iterator{}; it.increment(ec))
-            if (it->is_directory(ec)) repos.push_back(it->path());
-        std::ranges::sort(repos);
-        for (const auto& r : repos) out.push_back(r / "pkgs" / subdir / fname);
-        return out;
+        return paths::descriptor_candidates(data, name);
     }
     mcpp::provider::runtime_info::Info runtime_info(const std::filesystem::path& environment) const override {
         return subos::read(environment);
@@ -314,6 +305,15 @@ public:
     }
     int install_direct(std::string_view target, bool quiet) const override {
         return xlings::install_direct(env_, target, quiet);
+    }
+    int download_to(std::span<const std::string> refs, const std::filesystem::path& dir) const override {
+        return xlings::download_to(env_, refs, dir);
+    }
+    int install_from(const std::filesystem::path& dir, std::span<const std::string> refs) const override {
+        return xlings::install_from(env_, dir, refs);
+    }
+    std::string adopt_index_snapshot(std::string_view name, const std::filesystem::path& snapshot) const override {
+        return xlings::adopt_index_snapshot(env_, name, snapshot);
     }
     std::string command_prefix() const override { return build_command_prefix(env_); }
     std::string operation_command(std::string_view operation, std::string_view argsJson) const override {

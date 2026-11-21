@@ -49,7 +49,7 @@ bool places(const fs::path& dir, std::string_view obj, std::string_view entry) {
     return static_cast<bool>(s::has_line(host_graph(dir), std::format(R"(^build obj/[^ ]*/{} : stage_file [^ ]*/build-cache/v1/pkg/{})", obj, entry)));
 }
 
-E2E programs{"programs", [] {
+E2E programs{"programs", s::home_fixture, [] {
     "807 a lib root imports its own package"_test[s::gcc] = [] {
         // A host-module dependency whose lib root, explicit or by convention, imports a unit of
         // its own package builds, and the build program runs.
@@ -101,7 +101,8 @@ main = "main.cpp"
         expect(fatal(output_of(*app) == "1")) << "A: the app does not print its own module's value";
         expect(fatal(output_of(*upd) == "2")) << "A: the updater does not print its own module's value";
         std::size_t nq = 0, nf = 0;
-        for (const auto& f : s::find_files(a.at("app/target"), R"(boost\..*)")) {
+        // The BMIs alone: a BMI's producer key beside it (`<bmi>.mcpp-unit`, the unit cache) is not one.
+        for (const auto& f : s::find_files(a.at("app/target"), R"(boost\.(gcm|pcm|ifc)$)")) {
             const auto g = f.generic_string();
             if (std::regex_search(g, std::regex{R"(\.cache/.*updater/[0-9a-f]{8}/boost\.)"})) ++nq;
             if (std::regex_search(g, std::regex{R"(\.cache/boost\.)"})) ++nf;
@@ -256,7 +257,8 @@ main = "main.cpp"
         std::this_thread::sleep_for(std::chrono::seconds{2});
         r = s::mcpp({"cache", "gc", "--older-than", "1s"}, nowhere, quiet_home);
         expect(fatal(e2e::succeeded(r))) << "C: mcpp cache gc failed\n" << s::text(r);
-        expect(fatal(e2e::contains(s::text(r), "Collected 1 entries"))) << "C: gc did not collect the entry of the bundled module\n" << s::text(r);
+        // The entry of the bundled module, beside the units the cache kept of the two builds.
+        expect(fatal(s::has_line(s::text(r), R"(Collected _engine/mcpp-build-module@)"))) << "C: gc did not collect the entry of the bundled module\n" << s::text(r);
         fs::last_write_time(alpha.at("build.mcpp"), fs::file_time_type::clock::now());
         alpha.write("build.mcpp", alpha.read("build.mcpp") + "// edited\n");
         r = alpha.mcpp({"build"}, home);

@@ -10,7 +10,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-E2E advice{"advice", [] {
+E2E advice{"advice", s::home_fixture, [] {
     "821 an edge states its advice on both paths"_test[s::unix_shell] = [] {
         // An edge that has something to say on success writes its advice file, and mcpp reports
         // it once after a successful build, by one function the full build path and the fast

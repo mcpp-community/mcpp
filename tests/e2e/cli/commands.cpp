@@ -42,7 +42,7 @@ std::string graph_text(const s::project& p) {
     return s::read_file(*g);
 }
 
-E2E commands{"commands", [] {
+E2E commands{"commands", s::home_fixture, [] {
     "01 help and version"_test = [] {
         // --version is `mcpp <the manifest's version>`; --help names the commands; an unknown
         // command exits 127.
@@ -298,6 +298,54 @@ xpm = { linux = { ["1.0.0"] = { url = "https://example.invalid/w.tar.gz", sha256
         expect(fatal(failed(r))) << "an unknown toolchain from --toolchain was accepted";
         expect(fatal(s::has_line(s::text(r), "^error: --toolchain = 'nosuch@1\\.0'"))) << "the refusal does not name --toolchain as where the value was written\n" << s::text(r);
         expect(fatal(s::lacks(s::text(r), "[toolchain]."))) << "the refusal credits a manifest key with a command-line value";
+    };
+
+    "1119 the surface is listed from the product and an invocation records what it used"_test = [] {
+        // Design 2026-11-20 §5.16, SPEC-017 P5.6: `mcpp emit surface` lists each command and flag of
+        // the command line's definition, each key of the manifest's registry, each reason token and
+        // each notice kind, one `<kind> <name>` per line; an invocation run with MCPP_SURFACE_RECORD appends the items
+        // it used, each of them an item of the surface.
+        s::project p{{"mcpp.toml", "[package]\nname    = \"p\"\nversion = \"0.1.0\"\n\n[build]\ncflags = [\"-O1\"]\n"},
+                     {"src/main.cpp", "int main() { return 0; }\n"}};
+        auto r = p.mcpp({"emit", "surface"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        std::set<std::string> surface;
+        std::vector<std::string> kinds;
+        for (auto part : std::views::split(std::string_view(r.out), '\n')) {
+            const std::string line(part.begin(), part.end());
+            if (line.empty()) continue;
+            expect(line.find(' ') != std::string::npos) << "a line without a kind and a name: " << line;
+            surface.insert(line);
+            const auto kind = line.substr(0, line.find(' '));
+            if (kinds.empty() || kinds.back() != kind) kinds.push_back(kind);
+        }
+        expect(kinds == std::vector<std::string>{"command", "flag", "key", "reason", "notice"}) << "the kinds in order, each once";
+        for (auto item : {"command build", "command emit surface", "flag build --target", "flag --quiet",
+                          "key build.cflags", "key toolchain", "reason unknown-target", "reason other",
+                          "notice host-input"})
+            expect(surface.contains(item)) << "the surface lacks " << item;
+        for (auto item : {"flag --help", "flag build --help", "flag --version", "reason none"})
+            expect(!surface.contains(item)) << "the surface lists " << item << ", which is not mcpp's";
+
+        const auto record = s::case_dir() / "surface-record.txt";
+        auto b = p.mcpp({"build", "--target", "nosuch-unknown-triple"},
+                        {.env = {{"MCPP_SURFACE_RECORD", record.string()}}});
+        expect(fatal(failed(b))) << "an unknown target was built";
+        const auto used = s::read_file(record);
+        for (auto item : {"command build", "flag build --target", "key package", "key build.cflags",
+                          "reason unknown-target"})
+            expect(used.contains(std::string(item) + "\n")) << "the record lacks " << item << "\n" << used;
+        for (auto part : std::views::split(std::string_view(used), '\n')) {
+            const std::string line(part.begin(), part.end());
+            if (!line.empty()) expect(surface.contains(line)) << "a recorded item is not on the surface: " << line;
+        }
+        // The flags read before the parser sees the command line are recorded too: `--no-color` is
+        // taken out of it, `--protocol-version` answers before it.
+        const auto early = s::case_dir() / "early-record.txt";
+        expect(fatal(e2e::succeeded(p.mcpp({"--no-color", "--protocol-version"}, {.env = {{"MCPP_SURFACE_RECORD", early.string()}}}))));
+        const auto flags = s::read_file(early);
+        for (auto item : {"flag --no-color", "flag --protocol-version"})
+            expect(flags.contains(std::string(item) + "\n")) << "the record lacks " << item << "\n" << flags;
     };
 }};
 

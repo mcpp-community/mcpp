@@ -63,7 +63,7 @@ std::string paths_in(const fs::path& file, std::string_view name) {
     return out;
 }
 
-E2E records{"records", [] {
+E2E records{"records", s::home_fixture, [] {
     "66 runtime provides"_test = [] {
         // Only an explicit `provides` owns a capability; requiring it never makes the requester
         // its provider, and an override cannot promote it.

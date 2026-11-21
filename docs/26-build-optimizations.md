@@ -86,6 +86,41 @@ The note is given when the rebuild started at a module of one file with at least
 importing units, once a build directory. Beside it, a build that replaced or kept BMIs
 states which ([04](04-mcpp-toml.md), `bmi_cutoff`).
 
+## What the home's cache places (2026.11.21.1+)
+
+Beside the entries, the home's build cache (`build-cache/v1/`, [25](25-home-indices-and-store.md))
+keeps what one build made for the next, in any project of the home, whenever `[build] cache`
+is the home's (the default):
+
+- **Units.** Before it starts a compiler, the compiler executor looks up the compile by its
+  command, its compiler and the content of its source. An entry names the files an earlier
+  compile of that key read (its depfile, or the scan's depfile and the BMIs it imported) with
+  their contents; when they all still hold those contents, its object and BMI are placed and
+  the compiler does not start. After a compile it keeps the outputs and the files read. A BMI
+  is named by the key of the compile that made it, since GCC writes a different BMI on each
+  compile of the same source; a file of a package store is named by its path, since the store
+  does not change. A fresh checkout of mcpp on a filled cache built in 4.1 s instead of 164 s,
+  its 288 compiles all placed. cl.exe's compiles are not cached.
+- **The outputs of build programs.** A package whose source is named -- an index's version, a
+  git commit, a path dependency's content digest -- runs its build program into
+  `build-cache/v1/out/<package>@<version>/<key>/out` (`MCPP_OUT_DIR`), the key being its
+  configuration without that directory: a second project takes the outputs, and runs nothing
+  ([SPEC-004 §9](specs/manifest-semantics.md) item 18). A program run by `mcpp pack
+  --pkg-format` runs in the project: what it writes depends on the pack's request and the
+  member's staged tree.
+
+Entries no build used within `[cache] unused_days` are removed as other entries are.
+
+## The record of a build (2026.11.21.1+)
+
+A build records each edge it ran: its package, its time, and, for a compile, the compiler's
+processor time and largest resident set and whether the unit cache placed it; and the units
+the cache served each package. `MCPP_BUILD_RECORD=<file>` appends the record of every build of
+the invocation to the file, a line per edge ([SPEC-017](specs/test.md) B4, `builds.ndjson`);
+`mcpp test` keeps the builds of a run in its store. Under `--verbose` a build names its five
+slowest edges, each on a `Slowest` line with its processor time and memory. An edge that has
+run for a minute is named once on a `Running` line, with the package and source it compiles.
+
 ## Stating an entry otherwise
 
 ```toml

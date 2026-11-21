@@ -26,7 +26,7 @@ std::string folded(std::string p) {
     return p;
 }
 
-E2E configure{"configure", [] {
+E2E configure{"configure", s::home_fixture, [] {
     "211 configure only cdb"_test = [] {
         const auto tmp = s::case_dir();
         s::project(tmp / "devkit", {{"mcpp.toml", "[package]\nname = \"devkit\"\nversion = \"0.1.0\"\n\n[build]\ninclude_dirs = [\"include\"]\n"},

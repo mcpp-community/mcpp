@@ -55,6 +55,7 @@ import mcpp.modgraph.scanner;  // license_files globs (design 2026-11-16 §4.3)
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.invocation;
+import mcpp.effects;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.provider;
@@ -68,6 +69,7 @@ import mcpp.toolchain.target_schema;
 import mcpp.toolchain.target_rows;   // the rows of a system a platform defines (G10)
 import mcpp.toolchain.base;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.runtime.elf;
 import mcpp.platform;
 
@@ -1072,6 +1074,9 @@ ldd_parse(const std::filesystem::path& binary)
 // bootstrap step left it uninstalled.
 std::filesystem::path
 sandbox_patchelf(const mcpp::config::GlobalConfig& cfg) {
+    // The machine's, when the run allows it (`[build] allow_host_tools`).
+    if (mcpp::effects::host_tool_allowed("patchelf"))
+        if (auto host = mcpp::invocation::which("patchelf")) return *host;
     auto env = mcpp::config::make_xlings_env(cfg);
     auto bin = mcpp::provider::open(env)->pinned("patchelf", mcpp::provider::kPatchelfVersion) / "bin" / "patchelf";
     if (std::filesystem::exists(bin)) return bin;
@@ -1692,7 +1697,7 @@ std::expected<void, Error> stage_licenses(const Plan& plan) {
         const auto files = license_files_of(src.root, src.patterns);
         if (files.empty()) {
             if (src.declared)
-                mcpp::ui::warning(std::format("{}: license_files selects no file under {}", src.package,
+                mcpp::diag::warning("pack", std::format("{}: license_files selects no file under {}", src.package,
                                               src.root.generic_string()));
             else
                 silent.push_back(src.package);
@@ -2886,7 +2891,7 @@ run_loaded(const Plan& plan)
                     // target, `x86_64-macos`) carries no runner: said, and
                     // the package's metadata lists the systems it carries.
                     if (auto why = unbuilt_carrier(plan.platform, system, leg.arch, false)) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("pack", std::format(
                             "no runner for {}-{} in the package: {}; the launcher there looks for "
                             "`{}` on PATH", system, leg.arch, *why, launch.loader));
                         continue;
@@ -2937,7 +2942,7 @@ run_loaded(const Plan& plan)
             if (!row.platform.empty()) row.platform = std::string(launcher_platform());
             if (!row_is_built(row)) {
                 if (&launch == &launches.front())
-                    mcpp::ui::warning(std::format(
+                    mcpp::diag::warning("pack", std::format(
                         "no Windows launcher in the package: this mcpp builds no program for {}; the package "
                         "does not run on Windows", row.triple));
             } else {

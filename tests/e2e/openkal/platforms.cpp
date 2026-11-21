@@ -52,7 +52,7 @@ std::string tail_bytes(const fs::path& f, std::size_t n) {
     return b.size() <= n ? b : b.substr(b.size() - n);
 }
 
-E2E platforms{"platforms", [] {
+E2E platforms{"platforms", s::home_fixture, [] {
     "952 a platform package states a class of targets"_test[s::unix_shell][s::python3] = [] {
         // A local platform for this machine's triples: A its flag, program name, seal step and
         // runner reach the program; B the report names it and its source; C an override under

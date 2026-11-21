@@ -1104,14 +1104,25 @@ UTest deploy_row_is_protocol_eleven_with_link_global_scope_and_a_tag{"BuildDirec
     expect(eq(def->scope, dirs::Scope::LinkGlobal));
     expect(eq(def->sinceProtocol, 11));
     expect(!(def->tag.empty()));
-    expect(eq(dirs::kProtocolVersion, 20));
+    expect(eq(dirs::kProtocolVersion, 21));
 }};
 
-UTest protocol_twenty_is_accepted_and_twenty_one_is_not{"BuildDirectives/ProtocolTwentyIsAcceptedAndTwentyOneIsNot", [] {
-    auto ok = parse("mcpp:protocol=20\n");
+UTest protocol_twenty_one_is_accepted_and_twenty_two_is_not{"BuildDirectives/ProtocolTwentyOneIsAcceptedAndTwentyTwoIsNot", [] {
+    auto ok = parse("mcpp:protocol=21\n");
     expect(!(dirs::protocol_error(ok).has_value()));
-    auto no = parse("mcpp:protocol=21\n");
+    auto no = parse("mcpp:protocol=22\n");
     expect(dirs::protocol_error(no).has_value());
+}};
+
+// Design 2026-11-21 §3.7: a deprecated reading a typed reader applied is an
+// advisory of protocol 21, kept with the program's record so a replay warns too.
+UTest deprecated_reading_is_a_protocol_twenty_one_advisory{"BuildDirectives/DeprecatedReadingIsAProtocolTwentyOneAdvisory", [] {
+    auto def = dirs::find_by_wire("deprecated");
+    expect(fatal(ne(def, nullptr)));
+    expect(eq(def->scope, dirs::Scope::Advisory));
+    expect(eq(def->sinceProtocol, 21));
+    auto d = parse("mcpp:protocol=21\nmcpp:deprecated=ambiguous-contract-name\tdep_dir(\"foo_bar\")\tfoo-bar\n");
+    expect(eq(d.at(dirs::Slot::DeprecatedReadings).size(), std::size_t{1}));
 }};
 
 // Design 2026-11-19 §8.4: a tool `dep_bin` was asked for and no edge or feature

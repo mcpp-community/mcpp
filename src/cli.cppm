@@ -29,8 +29,12 @@ import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
 import mcpp.cli.cmd_sbom;
+import mcpp.cli.cmd_surface;
 import mcpplibs.os.platform;
 import mcpplibs.os.fs;
+import mcpplibs.os.process;   // the compiler's use, measured by the executor
+import mcpp.build.record;     // the line the executor appends (design 2026-11-20 §5.6)
+import mcpp.build.unit_cache; // a compile placed by the contents it read (design 2026-11-20 §5.3)
 import mcpplibs.os.text;
 import mcpp.invocation;
 import mcpp.effects;
@@ -71,6 +75,7 @@ void print_usage() {
     std::println("Project commands:");
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
+    std::println("  mcpp fetch [--to DIR | --from DIR]   Put what the build needs in the home; to or from a directory");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
     std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --shard, --failed, --timeout, --build-timeout, --message-format json, --no-runner)");
     std::println("  mcpp clean [--stale] [--bmi-cache]   Remove target/ (or, with --stale, only its non-current fingerprint dirs)");
@@ -320,8 +325,48 @@ int run(int argc, char** argv) {
         if (semaphore.empty() || cap < 0 || i + 1 >= argc) return 2;
         std::vector<std::string> command;
         for (++i; i < argc; ++i) command.emplace_back(argv[i]);
-        return mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi, object, relocate,
-                                                         reading);
+        // THE EDGE, MEASURED (design 2026-11-20 §5.6): its start, for the
+        // progress line of a long compile, and, once the compiler is reaped,
+        // its processor time and largest resident set -- this process starts
+        // no other program, so its children's use is the compiler's.
+        mcpp::build::progress::record_action_start(output.generic_string());
+        const auto unixMs = [] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch()).count();
+        };
+        const auto started = unixMs();
+        // THE UNIT CACHE (design 2026-11-20 §5.3): a compile whose command and
+        // read files hold the contents an earlier one's did is placed, not run.
+        std::optional<mcpp::build::unit_cache::Cache> units;
+        mcpp::build::unit_cache::Unit unit{command, std::filesystem::current_path(), object ? output : std::filesystem::path{}, bmi};
+        if (const auto dir = mcpp::invocation::get(mcpp::build::unit_cache::kDirEnv); dir && !dir->empty() && object) {
+            std::vector<std::filesystem::path> roots;
+            std::istringstream in(mcpp::invocation::get(mcpp::build::unit_cache::kRootsEnv).value_or(""));
+            for (std::string line; std::getline(in, line);)
+                if (!line.empty()) roots.push_back(mcpp::home::from_utf8(line));
+            units.emplace(mcpp::home::from_utf8(*dir), std::move(roots), unit.cwd);
+            if (units->serve(unit)) {
+                if (const auto file = mcpp::invocation::get(mcpp::build::record::kUsageEnv); file && !file->empty()) {
+                    mcpp::build::record::Usage u{output.generic_string(), started, unixMs()};
+                    u.served = true;
+                    (void)mcpplibs::os::fs::append(mcpp::home::from_utf8(*file), mcpp::build::record::usage_line(u));
+                }
+                return 0;
+            }
+        }
+        const int status = mcpp::build::schedule::detach::run_capped(command, semaphore, cap, output, depfile, bmi,
+                                                                     object, relocate, reading);
+        if (status == 0 && units) units->keep(unit);
+        else if (object) mcpp::build::unit_cache::Cache::forget(unit);
+        if (const auto file = mcpp::invocation::get(mcpp::build::record::kUsageEnv); file && !file->empty()) {
+            mcpp::build::record::Usage u{output.generic_string(), started, unixMs()};
+            if (const auto used = mcpplibs::os::process::resources(mcpplibs::os::process::of::children)) {
+                u.cpuMs = std::chrono::duration<double, std::milli>(used->user + used->system).count();
+                u.peakBytes = used->peak_memory;
+            }
+            (void)mcpplibs::os::fs::append(mcpp::home::from_utf8(*file), mcpp::build::record::usage_line(u));
+        }
+        return status;
     }
 
     ReportUnnarrowablePaths reportUnnarrowable_;
@@ -621,6 +666,8 @@ int run(int argc, char** argv) {
     char**   trimmed_argp = trimmed_argv.empty() ? nullptr : trimmed_argv.data();
 
     // ─── Build the top-level App ────────────────────────────────────────
+    // `emit surface` lists the definition it is part of; it is set once the definition exists.
+    const cl::App* self = nullptr;
     auto app = cl::App("mcpp")
         .version(std::string{mcpp::toolchain::MCPP_VERSION})
         .description("modern C++ build tool")
@@ -725,6 +772,31 @@ int run(int argc, char** argv) {
                 if (rc == 0) mcpp::build::sweep_after_build();
                 return rc;
             }))
+        .subcommand(cl::App("fetch")
+            .description("Put what the package's build needs in the home; write it to a directory, or take it from one")
+            .option(cl::Option("to").takes_value().value_name("DIR")
+                .help("Then write what the build uses (payloads, index snapshots, git clones) into DIR"))
+            .option(cl::Option("from").takes_value().value_name("DIR")
+                .help("First take a directory `mcpp fetch --to` wrote into the home"))
+            .option(cl::Option("target").takes_value().multiple().help(
+                "Fetch for <triple>, or for a target set; repeatable: one leg per target"))
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Fetch for this toolchain, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT)"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM)"))
+            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+                .help("Fetch for the named workspace member; repeat for several"))
+            .option(cl::Option("workspace")
+                .help("Fetch for all workspace members"))
+            .option(cl::Option("exclude").takes_value().multiple().value_name("NAME")
+                .help("With --workspace, leave the named member out; repeatable"))
+            .option(cl::Option("profile").takes_value().value_name("NAME")
+                .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate root-package features, and a dependency's as <dependency>/<feature>"))
+            .action(cmd_fetch))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
             // Named `bin`, NOT `target`, and the rename is load-bearing.
@@ -937,7 +1009,7 @@ int run(int argc, char** argv) {
             .action(cmd_clean))
         .subcommand(cl::App("why")
             .description("Explain how the target / toolchain / runtime / deps / runners / sources / flags were resolved")
-            .arg(cl::Arg("topic").help("target | toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat | flags | platform (default: all but flags and platform)"))
+            .arg(cl::Arg("topic").help("target | toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat | flags | platform | features (default: all but flags, platform and features)"))
             .arg(cl::Arg("subject").help("for `tool` and `payload`: the name to look up; for `flags`: the unit, by the end of its path"))
             // `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build
@@ -1092,7 +1164,7 @@ int run(int argc, char** argv) {
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────
         .subcommand(cl::App("emit")
-            .description("Generate a document describing this project (xpkg, sbom, build-database)")
+            .description("Generate a document describing this project (xpkg, sbom, build-database) or mcpp (surface)")
             .subcommand(cl::App("xpkg")
                 .description("Generate xpkg Lua entry")
                 .option(cl::Option("version").short_name('V').takes_value().value_name("VER")
@@ -1160,7 +1232,14 @@ int run(int argc, char** argv) {
                     .help("Describe all workspace members in one document"))
                 .option(cl::Option("exclude").takes_value().multiple().value_name("NAME")
                     .help("With --workspace (or at a virtual workspace root), leave the named member out; repeatable, refused with -p"))
-                .action(mcpp::cli::cmd_emit_build_database)))
+                .action(mcpp::cli::cmd_emit_build_database))
+            // The surface is the product's, not a project's; it is a document mcpp writes about
+            // itself, and `emit` already means "write a document" (design 2026-11-20 §5.16).
+            .subcommand(cl::App("surface")
+                .description("List mcpp's commands, flags, manifest keys and reason tokens, one per line")
+                .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
+                    .help("Write to file instead of stdout"))
+                .action([&self](const cl::ParsedArgs& p) { return mcpp::cli::cmd_emit_surface(*self, p); })))
 
         // ─── xpkg (descriptor tooling: parse) ──────────────────────────
         .subcommand(cl::App("xpkg")
@@ -1489,6 +1568,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("object").takes_value().value_name("PATH"))
             .action(cmd_bmi_await))
     ;
+    self = &app;
 
     // The bareword `mcpp help` and `mcpp` (no args) both print the
     // canonical help screen.
@@ -1905,6 +1985,7 @@ int run(int argc, char** argv) {
         };
     };
 
+    mcpp::cli::record_global_flags(app, argc, argv);
     // `--protocol-version` is answered before anything else parses, and
     // before any command can decide it needs a project. A client asks this
     // first, in a directory that may not be one.
@@ -1928,7 +2009,7 @@ int run(int argc, char** argv) {
             // command" into "add a command AND remember to bump a number",
             // and the compiler only catches the direction that overflows.
             static constexpr std::array known = std::to_array<std::string_view>({
-                "new", "build", "run", "test", "clean", "add", "remove",
+                "new", "build", "fetch", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "write", "coff-def",
@@ -1968,16 +2049,17 @@ int run(int argc, char** argv) {
         mcpp::ui::error(parsed.error().message);
         return 2;
     }
+    mcpp::cli::record_invocation(app, *parsed);
     const int action_rc = app.run(*parsed);
     // The run's closing notices come last, after everything the command
-    // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
-    mcpp::ui::print_closing_notices(action_rc != 0);
+    // printed, whatever its exit status (see mcpp::diag::closing).
+    mcpp::diag::print_closing(action_rc != 0);
     // A run that stopped before an effect its caller denied exits 5
     // (SPEC-003, design 2026-10-26 D23): the caller's constraint, not a
     // failure of the project, and a script tells the two apart by the status.
     if (action_rc != 0)
         if (auto refused = mcpp::effects::effect_refused()) {
-            mcpp::ui::note(std::format("stopped before a denied effect ({}); exit status 5", *refused));
+            mcpp::diag::note("cli", std::format("stopped before a denied effect ({}); exit status 5", *refused));
             return 5;
         }
     return action_rc;
