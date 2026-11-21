@@ -5,7 +5,7 @@ status: active
 
 # 离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）
 
-**日期：** 2026-11-21 · **版本：** v2（2026-11-21 确定第 9 节，取各项的推荐；增加 3.9 命令行中 `@` 的文法与 mcpp-index 中 `compat.slint` 的声明） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支，
+**日期：** 2026-11-21 · **版本：** v3（v3 增加 3.10：`dlopen` 的可达性按发起加载的对象判定。2026-11-21 确定第 9 节，取各项的推荐；增加 3.9 命令行中 `@` 的文法与 mcpp-index 中 `compat.slint` 的声明） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支，
 xlings 2026.11.17.2，xim-pkgindex `c0023dd` · **规范：** SPEC-004 §2（四层取值）、SPEC-006（工具链管理）、SPEC-002（目标侧五层）、
 SPEC-013（平台与层）、home 的初始化（`docs/specs/home-initialization.md`） · **所属：**
 [生态的测试与 CI 方案](2026-11-20-test-architecture-upgrade-design.md) 第 15 节；与
@@ -31,7 +31,7 @@ SPEC-013（平台与层）、home 的初始化（`docs/specs/home-initialization
    | 部分版本与 `@` | `mcpp.xpkg_version`（寻址文法）与 `mcpp.version_req`（要求文法），各一份 |
    | 工具链的解析 | `resolve_version_match` 之上的一个解析函数，三处调用 |
    | 配套载荷与 kernel-abi 的覆盖 | xlings 的依赖记录；SPEC-013 的 `layers` 词汇 |
-   | 以 `dlopen` 加载的库 | `runtime.dlopen_libs` 与其运行期的检查（docs/33） |
+   | 以 `dlopen` 加载的库 | `runtime.dlopen_libs` 与其运行期的检查（docs/33）；可达性的判定为一个函数，链接后的校验与 `self doctor` 共用（3.10） |
    | 宿主输入的身份 | 缓存键与 `mcpp.lock` 的现有写入路径 |
 
 ## 2. 现状
@@ -200,6 +200,31 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
   mcpp-index 的贡献说明陈述这两种用法，修订只递增、不复用。
 - SPEC-001 §4.4 的模板表与第 350 行的命令行引用改为本节的表述。
 
+### 3.10 以 `dlopen` 加载的库：按发起加载的对象判定可达
+
+**加载器的规则。** glibc 为一个对象的依赖与它发起的 `dlopen` 查找库时：该对象有 `DT_RUNPATH` 时，只搜索 `LD_LIBRARY_PATH`、
+它自己的 `DT_RUNPATH` 与系统目录，**不搜索任何 `DT_RPATH`**，包括可执行文件的；没有 `DT_RUNPATH` 时，依次搜索它自己与其加载链上各对象
+（直到可执行文件）的 `DT_RPATH`。以两个最小的对象验证：库带 `DT_RUNPATH` 时，可执行文件 `DT_RPATH` 中的目录对该库的 `dlopen` 不可见；
+库不带时可见。
+
+**现状的缺陷。** mcpp 把运行期的搜索闭包写入可执行文件的 `DT_RPATH`，subos 的库目录在最后（`flags.cppm` 的 `ldRuntimeFallback`），
+并以此为每个对象都可达的前提；`resolution.json` 的校验与 `mcpp self doctor` 的 `dlopen` 检查按全部目录的并集判断。xlings 安装的预构建
+载荷以其 recipe 声明的运行依赖写出 `DT_RUNPATH`，因此一个载荷中的库以 `dlopen` 加载、而其 recipe 未声明的库，在任何 mcpp 构建的程序中都
+找不到，校验却报告通过。`xim:slint` 的 `libslint_cpp.so` 即此情形：它以 `dlopen` 加载 X11、Wayland、xkbcommon 与 GL，`DT_RUNPATH`
+只有 slint、fontconfig 与 ABI 的目录；程序在有显示的机器上启动时失败。
+
+**决定。**
+- **可达性按对象判定。** 运行期的校验对每一个要求（`runtime.dlopen_libs` 的 soname、`DT_NEEDED`）从提出它的对象出发，按上面的规则计算
+  它可见的目录：对象有 `DT_RUNPATH` 时取其 `DT_RUNPATH` 与系统目录，否则取加载链上的 `DT_RPATH`。一个 `dlopen` 要求归属于声明它的包，
+  从该包的库出发判定。`resolution.json` 的 `search` 记录每个对象可见的目录；`mcpp self doctor` 与链接后的校验使用同一个函数，
+  替换两处各自按并集的判断（原则 5）。
+- **不可达即报告。** 一个必需的 soname 从提出它的对象不可达时，以 `degraded` 报告，代码 `dlopen-unreachable`：写出对象、soname、
+  该对象可见的目录，以及办法——提供该库的包须是声明这个对象的载荷的运行依赖（xlings 据此写入 `DT_RUNPATH`）。不改写载荷，
+  不设置 `LD_LIBRARY_PATH`（它被宿主的子进程继承，已测得使 `xdg-open` 等程序退出）。
+- **包的声明。** `compat.slint` 声明 `runtime.dlopen_libs`（第 4 节 mcpp-index 一行所列的 soname）与运行的能力；`xim:slint` 的 recipe 把提供它们的包
+  列为运行依赖。两者分别属于 mcpp-index 与 xim-pkgindex（第 4 节）。
+- **文档。** docs/91 的「the farm is reachable per object (DT_RPATH)」改为本节的规则；docs/33 陈述 `dlopen` 的要求按发起加载的对象判定。
+
 ### 3.8 提示与拒绝
 
 | 情形 | 级别、策略 | 代码或原因标记 |
@@ -214,6 +239,7 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
 | 机器的路径写在 `mcpp.toml` 中（`archives`、宿主输入） | `note`，`once` | `machine-path-in-manifest` |
 | 离线且本地索引不可用，部分版本取已安装的最新 | `degraded`，`always` | — |
 | 本地工具链的三元组无法解析 | `degraded`，`always` | — |
+| 必需的 `dlopen` soname 从提出它的对象不可达（3.10） | `degraded`，`always` | `dlopen-unreachable` |
 | 覆盖的 binutils 低于 GCC 载荷构建时所用 | 错误 | `companion-too-old` |
 | `fetch --to`、`--from` 完成 | 一行汇总：包的数目、大小、目标 | — |
 
@@ -258,6 +284,7 @@ xlings 与 xlings-res 的工作可以并行；xim-pkgindex 在载荷发布之后
 | C2 | binutils 与 kernel-abi 的覆盖生效；过旧的 binutils 被拒绝 | mcpp e2e |
 | V1 | `-dumpfullversion` 的版本；Fedora 横幅的回归；vendor 段为任意词的三元组 | mcpp 单元测试（`modules/toolchain-model/tests`） |
 | D1 | 缺省取自 `builtin.toml`；发版规程的核对脚本列出落后于上游的缺省 | mcpp 单元测试与工具的测试 |
+| L1 | 带 `DT_RUNPATH` 的库以 `dlopen` 加载一个只在可执行文件 `DT_RPATH` 中可见的库：校验报告 `dlopen-unreachable`；不带 `DT_RUNPATH` 时可达；`mcpp self doctor` 与链接后的校验给出同一结论 | mcpp e2e 与单元测试 |
 | A1 | `@1.19.0` 选 1.19.0.2，`@=1.19.0.1` 选 1.19.0.1，`@16` 选 16.x 的最新；精确落空时的错误写出更细的键 | mcpp 单元测试与 e2e（`mcpp new --template`） |
 | P1 | 新的代码与原因标记由面的账本覆盖（测试方案 5.16） | 面的账本 |
 
