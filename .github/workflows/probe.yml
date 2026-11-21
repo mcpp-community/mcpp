@@ -1,0 +1,15 @@
+name: probe
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  macos-memory:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-15, xcode-27]
+    runs-on: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/probe/macos-memory.sh 2>&1 | tee probe.txt
+      - run: '{ echo "### ${{ matrix.image }}"; echo "\`\`\`"; cat probe.txt; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"'
