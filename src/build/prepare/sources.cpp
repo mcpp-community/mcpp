@@ -99,7 +99,28 @@ std::string source_tag(const SourceDecision& d, const fs::path& relativeTo) {
     return std::format("{} · {}", cls, place);
 }
 
+// A HOST INPUT IS SAID ONCE PER PROJECT AND IDENTITY (design 2026-11-21,
+// offline and toolchain defaults §3.3): a source found on this machine (PATH,
+// `glibc@system`) or a toolchain named by its directory. The note names it,
+// says another machine may build differently, and, when mcpp.toml states it,
+// that the statement is a machine's. Its value and detail are part of the
+// key, so the machine's input changing is said again.
+void notice_host_input(const SourceDecision& d) {
+    const bool host = d.cls == SourceClass::Host
+        || (d.cls == SourceClass::Custom && d.subject.starts_with("toolchain."));
+    if (!host || d.value.empty()) return;
+    const auto what = d.detail.empty() ? d.value : std::format("{} {}", d.detail, d.value);
+    std::string hint = "another machine may build differently; docs/25, \"Host inputs\"";
+    if (d.originKind == "manifest")
+        hint = "mcpp.toml states it, so it holds only on machines like this one, and a machine's "
+               "input belongs in config.toml; " + hint;
+    mcpp::diag::notice(mcpp::diag::Severity::Note, "host-input",
+        std::format("{}\x1f{}", d.subject, what),
+        std::format("{} is this machine's ({}), not the store's", subject_shown(d), what), hint);
+}
+
 void record_source(PrepareState& state, SourceDecision d) {
+    if (state.overrides.tool_depth == 0) notice_host_input(d);
     const bool announce = d.announce && !source_class_is_default(d.cls)
         && state.announcedSources.insert(d.subject + "\x1f" + d.value).second;
     if (announce) {

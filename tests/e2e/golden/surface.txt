@@ -317,6 +317,7 @@ flag xpkg parse --json
 key build-dependencies
 key build.accel
 key build.allow_host_libs
+key build.allow_host_tools
 key build.bmi_schedule
 key build.build_program_timeout
 key build.c_standard
@@ -431,4 +432,5 @@ reason unknown-target
 reason version-floor-unmet
 notice build-program/includes-header
 notice build-program/reads-outside
+notice host-input
 notice toolchain/default-changed

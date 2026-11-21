@@ -87,6 +87,30 @@ Windows 首次显式 `self init` 时，若 D 是可写的本地固定磁盘，�
 从 2026.11.7.1 起，下载停滞诊断会标明文件、停滞时长与来源尝试次数；provider 准备阶段与进程超时单独报告。
 镜像选择使用 `mcpp self config --mirror auto`、`CN` 或 `GLOBAL`。
 
+### 宿主输入（2026.11.21.1+）
+
+构建的工具链、基础层与引导工具取自 store，只在有陈述时取自机器：
+
+| 输入 | 开启 |
+|---|---|
+| 机器的工具链 | `[toolchain] default = { path = … }`、`msvc@system` |
+| 机器的 C 库 | `sysroot = "glibc@system"` |
+| 机器的库 | `[build] allow_host_libs = true`、`MCPP_ALLOW_HOST_LIBS` |
+| 依赖的工具 | `[xlings.overrides]`、`MCPP_XLINGS_OVERRIDE_<NS>_<NAME>` |
+| 引导工具 | `[build] allow_host_tools = ["ninja", "patchelf"]` |
+
+`allow_host_tools` 取 `MCPP_ALLOW_HOST_TOOLS`（逗号分隔，`none` 为不取），否则取工程的 `[build]`，否则取 `config.toml` 的 `[build]`。
+它指名的工具在 `PATH` 中找到时取自 `PATH`，否则取自 store。patchelf 只在 mcpp 打包时由 mcpp 运行，构建不要求它存在。
+
+每个输入在一个工程中提示一次，其路径或版本改变时再提示一次：
+
+```
+note: ninja (bootstrap) is this machine's (1.11.1 /usr/bin/ninja), not the store's
+  help: another machine may build differently; docs/25, "Host inputs"
+```
+
+输入由 `mcpp.toml` 陈述时，提示另说明这一陈述只在这类机器上成立，机器的输入应写在 `config.toml` 中。
+
 ### 构建产物的保留期（2026.10.31.3+）
 
 `build-cache/v1/` 下的构建缓存由 home 中所有工程共享；工程的 `target/` 属于工程自身。两者各有保留期，

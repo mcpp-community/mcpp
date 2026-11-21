@@ -49,6 +49,8 @@ inline constexpr KeyClass kKeyRegistry[] = {
     // [build]
     {"build", "accel",                   KeyScope::Configuration, KeyMerge::Scalar,  false, false},
     {"build", "allow_host_libs",         KeyScope::Package,       KeyMerge::Scalar,  false, false},
+    // The bootstrap tools taken from PATH (design 2026-11-21 §3.3).
+    {"build", "allow_host_tools",        KeyScope::Configuration, KeyMerge::Scalar,  false, false},
     {"build", "bmi_schedule",            KeyScope::Configuration, KeyMerge::Scalar,  false, false},
     // The memory a compiler may start below (SPEC-004 §9, design 2026-11-20 §5.5, mcpp#802).
     {"build", "memory_threshold",        KeyScope::Configuration, KeyMerge::Scalar,  false, false},

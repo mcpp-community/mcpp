@@ -52,6 +52,7 @@ import mcpp.modgraph.graph;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
 import mcpp.invocation;
+import mcpp.effects;
 import mcpp.build.record;     // what a build ran, edge by edge (design 2026-11-20 §5.6)
 import mcpp.build.unit_cache; // the variables of the unit cache (design 2026-11-20 §5.3)
 import mcpplibs.os.fs;          // the usage file's spelling for the executor
@@ -5682,6 +5683,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
 // program sees, is this function's answer too.
 std::string ninja_program_for(const mcpp::toolchain::Toolchain& tc) {
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
+    // The machine's, when the run allows it (`[build] allow_host_tools`,
+    // design 2026-11-21 §3.3); the build has said so once.
+    if (mcpp::effects::host_tool_allowed("ninja"))
+        if (auto host = mcpp::invocation::which(ninja_name)) return host->string();
     // A store that holds several versions answers with the pinned one
     // (mcpp#945): a scan of the versions answers in directory order, and the
     // pin is the version that carries the correction of ninja-build/ninja#2662.

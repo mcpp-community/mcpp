@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.24 |
-| **最后修改** | 2026-11-20 |
+| **版本** | 1.25 |
+| **最后修改** | 2026-11-21 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`<br>`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md`(§24) |
@@ -703,13 +703,18 @@ mcpp 2026.9.26.2,#703)。**
     `debug` 打开时取 `"lines"`,其余 profile 取 `debug` 的值。它只作用于这两类依赖,工作空间的
     成员与路径依赖保持 profile 的 `debug`。选出的标志进入依赖的配置,因此依赖在缓存中另有条目。
     其他取值被拒绝。
+21. **`[build] allow_host_tools`。** 构建取自机器 `PATH` 而不取自 home 的 store 的引导工具,`"ninja"` 与
+    `"patchelf"`;其他名字被拒绝。取值按 §2 的四层:`MCPP_ALLOW_HOST_TOOLS`(逗号分隔,`none` 为不取)、清单的
+    `[build] allow_host_tools`、机器的 `config.toml` 的同名键、引擎的空列表。它是配置键(作用域 C)。
+    被开启的工具在 `PATH` 中找到时使用,并作为宿主输入在一个工程中提示一次(键含路径与版本);找不到时取 store 的。
+    patchelf 只在 mcpp 打包时由 mcpp 运行,构建不要求它存在。
 
 **状态:已实现(第 1 至 7 条 mcpp 2026.9.25.1;第 8 至 10 条 mcpp 2026.9.27.1,mcpp#713、
 #714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717;第 1 条的根包、第 10 条的
 `[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771;第 7、8、10 条的工作空间层与第 12、13 条为
 mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 mcpp 2026.10.11.1,#797;
-第 17 条为 mcpp 2026.11.19.1,#953,其摘要为配置的函数与第 18 至 20 条为 2026.11.21.1,mcpp#986、
-#802、#927)。**
+第 17 条为 mcpp 2026.11.19.1,#953,其摘要为配置的函数与第 18 至 21 条为 2026.11.21.1,mcpp#986、
+#802、#927、#988)。**
 
 ## 10. 依赖的程序
 

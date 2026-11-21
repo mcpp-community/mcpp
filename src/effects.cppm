@@ -21,6 +21,13 @@ export namespace mcpp::effects {
 // MCPP_OFFLINE. "0" and the empty string mean off, matching MCPP_VERBOSE.
 bool offline_mode();
 
+// THE BOOTSTRAP TOOLS THIS RUN TAKES FROM THE MACHINE'S PATH (`[build]
+// allow_host_tools`, design 2026-11-21, offline and toolchain defaults §3.3):
+// MCPP_ALLOW_HOST_TOOLS, a comma list (`ninja,patchelf`; `none` takes none).
+// A build states the project's or the machine's list there when the variable
+// is not set, so every reader of the run answers from one value.
+bool host_tool_allowed(std::string_view tool);
+
 // THE EFFECTS THIS RUN MAY NOT HAVE (design 2026-10-26 §5.5, D8).
 //
 // `--deny <effect,…>` and MCPP_DENY_EFFECTS name effects of docs/50 §4 the

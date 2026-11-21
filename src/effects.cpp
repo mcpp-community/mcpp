@@ -13,6 +13,18 @@ bool offline_mode() {
     return (v && *v != "0") || effect_denied("network");
 }
 
+bool host_tool_allowed(std::string_view tool) {
+    const auto v = mcpp::invocation::get("MCPP_ALLOW_HOST_TOOLS");
+    if (!v) return false;
+    for (auto part : std::views::split(std::string_view(*v), ',')) {
+        std::string_view name(part.begin(), part.end());
+        while (!name.empty() && name.front() == ' ') name.remove_prefix(1);
+        while (!name.empty() && name.back() == ' ') name.remove_suffix(1);
+        if (name == tool) return true;
+    }
+    return false;
+}
+
 const std::vector<std::string_view>& deniable_effects() {
     static const std::vector<std::string_view> names{
         "init-mcpp-home", "write-project", "write-global-cache", "network", "exec-build-script"};

@@ -302,8 +302,8 @@ xpm = { linux = { ["1.0.0"] = { url = "https://example.invalid/w.tar.gz", sha256
 
     "1119 the surface is listed from the product and an invocation records what it used"_test = [] {
         // Design 2026-11-20 §5.16, SPEC-017 P5.6: `mcpp emit surface` lists each command and flag of
-        // the command line's definition, each key of the manifest's registry and each reason token,
-        // one `<kind> <name>` per line; an invocation run with MCPP_SURFACE_RECORD appends the items
+        // the command line's definition, each key of the manifest's registry, each reason token and
+        // each notice kind, one `<kind> <name>` per line; an invocation run with MCPP_SURFACE_RECORD appends the items
         // it used, each of them an item of the surface.
         s::project p{{"mcpp.toml", "[package]\nname    = \"p\"\nversion = \"0.1.0\"\n\n[build]\ncflags = [\"-O1\"]\n"},
                      {"src/main.cpp", "int main() { return 0; }\n"}};
@@ -319,9 +319,10 @@ xpm = { linux = { ["1.0.0"] = { url = "https://example.invalid/w.tar.gz", sha256
             const auto kind = line.substr(0, line.find(' '));
             if (kinds.empty() || kinds.back() != kind) kinds.push_back(kind);
         }
-        expect(kinds == std::vector<std::string>{"command", "flag", "key", "reason"}) << "the kinds in order, each once";
+        expect(kinds == std::vector<std::string>{"command", "flag", "key", "reason", "notice"}) << "the kinds in order, each once";
         for (auto item : {"command build", "command emit surface", "flag build --target", "flag --quiet",
-                          "key build.cflags", "key toolchain", "reason unknown-target", "reason other"})
+                          "key build.cflags", "key toolchain", "reason unknown-target", "reason other",
+                          "notice host-input"})
             expect(surface.contains(item)) << "the surface lacks " << item;
         for (auto item : {"flag --help", "flag build --help", "flag --version", "reason none"})
             expect(!surface.contains(item)) << "the surface lists " << item << ", which is not mcpp's";

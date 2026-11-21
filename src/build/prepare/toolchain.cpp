@@ -62,8 +62,11 @@ import mcpp.fetcher.progress;
 import mcpp.ui;
 import mcpp.invocation;
 import mcpp.version_req;
+import mcpp.run;
 
 namespace mcpp::build {
+
+static void resolve_host_tools(PrepareState& state, const mcpp::config::GlobalConfig& cfg);
 
 // D11's sentence: which spec, replacing what, declared where. The key is the
 // platform entry `for_platform` answered with (`[toolchain].linux`, else
@@ -147,6 +150,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // installing tools it will not execute.
         if (requireBootstrap && !state.overrides.describes() && !state.bootstrap_checked) {
             state.bootstrap_checked = true;
+            resolve_host_tools(state, *state.cfg_opt);
             auto problem = mcpp::config::check_base_init(*state.cfg_opt);
             if (!problem.empty()) {
                 return std::unexpected(std::format(
@@ -1772,6 +1776,50 @@ static void step2_resolve_request_version(PrepareState& state, const mcpp::confi
             "the lock as it is (a build without --locked records it)", request, version));
     else
         state.toolchainLocked = mcpp::pm::LockedToolchain{ request, version };
+}
+
+// THE BOOTSTRAP TOOLS FROM THE MACHINE'S PATH, RESOLVED ONCE (`[build]
+// allow_host_tools`, design 2026-11-21, offline and toolchain defaults §3.3;
+// SPEC-004 §2): MCPP_ALLOW_HOST_TOOLS, else the project's statement, else the
+// machine's, else none. The answer is stated as the variable, so every reader
+// of this run and the programs it starts (`effects::host_tool_allowed`) read
+// one value; each tool taken is a host input, said once.
+static void resolve_host_tools(PrepareState& state, const mcpp::config::GlobalConfig& cfg) {
+    std::string origin = "env", originFile;
+    if (!mcpp::invocation::get("MCPP_ALLOW_HOST_TOOLS")) {
+        const std::vector<std::string>* list = nullptr;
+        if (state.m && state.m->buildConfig.allowHostToolsStated) {
+            list = &state.m->buildConfig.allowHostTools;
+            origin = "manifest";
+            originFile = state.m->sourcePath.string();
+        } else if (cfg.allowHostToolsStated) {
+            list = &cfg.allowHostTools;
+            origin = "config";
+            originFile = cfg.configFile.string();
+        }
+        if (!list) return;
+        std::string joined;
+        for (auto const& t : *list) joined += (joined.empty() ? "" : ",") + t;
+        mcpp::invocation::set("MCPP_ALLOW_HOST_TOOLS", joined.empty() ? "none" : joined);
+    }
+    for (std::string_view tool : {"ninja", "patchelf"}) {
+        if (!mcpp::effects::host_tool_allowed(tool)) continue;
+        const auto name = std::string(tool) + std::string(mcpplibs::os::exe_suffix);
+        const auto path = mcpp::invocation::which(name);
+        if (!path) continue;
+        auto out = mcpp::run::capture_stdout({path->string(), "--version"});
+        std::string version = out.exit_code == 0 ? out.output.substr(0, out.output.find('\n')) : std::string{};
+        if (auto sp = version.rfind(' '); sp != std::string::npos) version = version.substr(sp + 1);
+        SourceDecision d;
+        d.subject = std::format("tool:bootstrap:{}", tool);
+        d.value = path->string();
+        d.detail = version;
+        d.cls = SourceClass::Host;
+        d.originKind = origin;
+        d.originFile = originFile;
+        d.originKey = origin == "env" ? "MCPP_ALLOW_HOST_TOOLS" : "[build] allow_host_tools";
+        record_source(state, std::move(d));
+    }
 }
 
 static std::expected<void, std::string>

@@ -3224,6 +3224,17 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         }
     }
     if (auto v = doc->get_bool("build.allow_host_libs")) m.buildConfig.allowHostLibs = *v;
+    if (doc->contains("build.allow_host_tools")) {
+        auto v = doc->get_string_array("build.allow_host_tools");
+        if (!v) return std::unexpected(error(origin,
+            "[build].allow_host_tools must be a list of tool names, e.g. [\"ninja\", \"patchelf\"]"));
+        for (auto const& t : *v)
+            if (t != "ninja" && t != "patchelf")
+                return std::unexpected(error(origin, std::format(
+                    "[build].allow_host_tools: '{}' is not a bootstrap tool; the tools are ninja and patchelf", t)));
+        m.buildConfig.allowHostTools = *v;
+        m.buildConfig.allowHostToolsStated = true;
+    }
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.defines"))  m.buildConfig.defines  = *v;

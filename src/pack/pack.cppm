@@ -55,6 +55,7 @@ import mcpp.modgraph.scanner;  // license_files globs (design 2026-11-16 §4.3)
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.invocation;
+import mcpp.effects;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.provider;
@@ -1073,6 +1074,9 @@ ldd_parse(const std::filesystem::path& binary)
 // bootstrap step left it uninstalled.
 std::filesystem::path
 sandbox_patchelf(const mcpp::config::GlobalConfig& cfg) {
+    // The machine's, when the run allows it (`[build] allow_host_tools`).
+    if (mcpp::effects::host_tool_allowed("patchelf"))
+        if (auto host = mcpp::invocation::which("patchelf")) return *host;
     auto env = mcpp::config::make_xlings_env(cfg);
     auto bin = mcpp::provider::open(env)->pinned("patchelf", mcpp::provider::kPatchelfVersion) / "bin" / "patchelf";
     if (std::filesystem::exists(bin)) return bin;

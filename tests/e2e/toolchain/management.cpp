@@ -3,7 +3,8 @@
 // isolated home, partial versions resolve, the system toolchain is refused, a toolchain declared for
 // a target this host cannot serve is still installed, and `--toolchain` replacing a declared one
 // says so (formerly tests/e2e/13, 14, 26, 29, 325, 890, 899); a partial request has one answer
-// and a stated one is recorded in mcpp.lock; a moved default is said once.
+// and a stated one is recorded in mcpp.lock; a moved default is said once; a host bootstrap tool is
+// said once.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -368,6 +369,45 @@ main = "src/main.cpp"
         expect(fatal(p.exists("mcpp.lock") && e2e::contains(p.read("mcpp.lock"), "[toolchain.\"xim:gcc@16.1\"]"))) << "a build without --locked did not record it: " << out;
         out = build({"--locked"});
         expect(fatal(s::lacks(out, "has no record"))) << "the record was not read back: " << out;
+    };
+
+    "1132 a host bootstrap tool is said once"_test[s::unix_shell] = [] {
+        // `[build] allow_host_tools = ["ninja"]` builds with the ninja on PATH and says so once per
+        // project and identity, naming mcpp.toml's statement as a machine's (design 2026-11-21,
+        // offline and toolchain defaults §3.3); a later build does not say it again, `mcpp clean`
+        // forgets it, and MCPP_ALLOW_HOST_TOOLS=none takes the store's.
+        const auto tmp = s::case_dir();
+        const auto stores = s::glob(s::shared_home() / "registry/data/xpkgs/xim-x-ninja", "*");
+        fs::path storeNinja;
+        for (auto const& v : stores)
+            if (fs::is_regular_file(v / "ninja")) storeNinja = v / "ninja";
+        if (storeNinja.empty()) skip("the home's store holds no ninja");
+        s::project bin(tmp / "hostbin", {{"ninja", std::format("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 9.9.9; exit 0; fi\n"
+                                                              "echo ran >> {}\nexec {} \"$@\"\n", (tmp / "ran").string(), storeNinja.string())}});
+        fs::permissions(tmp / "hostbin/ninja", fs::perms::owner_all, fs::perm_options::add);
+        const s::options o{.env = {{"PATH", (tmp / "hostbin").string() + ":" + s::env("PATH").value_or("")}}};
+        s::project p(tmp / "app", {{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[build]\nallow_host_tools = [\"ninja\"]\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                                   {"src/main.cpp", "int main() { return 0; }\n"}});
+        auto build = [&](const s::options& with) {
+            p.write("src/main.cpp", p.read("src/main.cpp") + "\n");
+            auto r = p.mcpp({"build"}, with);
+            expect(fatal(e2e::succeeded(r))) << s::text(r);
+            return s::text(r);
+        };
+        auto out = build(o);
+        expect(fatal(e2e::contains(out, "ninja (bootstrap) is this machine's (9.9.9 "))) << "the host ninja was not said: " << out;
+        expect(fatal(e2e::contains(out, "a machine's input belongs in config.toml"))) << "mcpp.toml's statement was not named a machine's: " << out;
+        expect(fatal(fs::exists(tmp / "ran"))) << "the build did not run the host ninja";
+        out = build(o);
+        expect(fatal(s::lacks(out, "is this machine's"))) << "the host ninja was said twice: " << out;
+        expect(fatal(e2e::succeeded(p.mcpp({"clean"}, o))));
+        out = build(o);
+        expect(fatal(e2e::contains(out, "ninja (bootstrap) is this machine's"))) << "mcpp clean did not forget the note: " << out;
+        fs::remove(tmp / "ran");
+        auto none = o;
+        none.env.emplace_back("MCPP_ALLOW_HOST_TOOLS", "none");
+        out = build(none);
+        expect(fatal(!fs::exists(tmp / "ran"))) << "MCPP_ALLOW_HOST_TOOLS=none still ran the host ninja: " << out;
     };
 }};
 

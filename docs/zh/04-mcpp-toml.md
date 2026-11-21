@@ -998,6 +998,7 @@ compile_commands = "compile_commands.json"   # 相对工程根目录的路径
 | 键 | 章节 |
 |---|---|
 | `allow_host_libs` | [20 —— 工具链](20-toolchains.md)、[22 —— 目标侧](22-target-side.md) |
+| `allow_host_tools` | [25 —— home、索引与 store](25-home-indices-and-store.md) |
 | `ios_deployment_target` | [20 —— 工具链](20-toolchains.md) |
 | `platform-dependencies` | [22 —— 目标侧](22-target-side.md) |
 | `std-module`、`std-compat-module` | [22 —— 目标侧](22-target-side.md) |

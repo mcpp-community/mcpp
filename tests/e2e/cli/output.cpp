@@ -139,6 +139,9 @@ E2E output{"output", s::home_fixture, [] {
         // nothing redrawn; R2 a build program ran, then cached (--verbose); R3 an edit names its
         // package alone; R4 an edited dependency, then its dependant, --verbose's steps; R5 a
         // failed step is reported while another package's prepare action still runs.
+        // A path dependency's units are kept by content in the home's cache (2026.11.19.1): in the
+        // shared home an earlier run's util is Cached, not Compiling, so the case has a home of its own.
+        s::own_home();
         s::project root({{"ws/mcpp.toml", "[workspace]\nmembers = [\"core\", \"cli\"]\n"},
                          {"ws/core/mcpp.toml", "[package]\nname = \"core\"\nversion = \"0.1.0\"\n\n[targets.core]\nkind = \"lib\"\n"},
                          {"ws/core/src/core.cppm", "export module rp_core;\nexport int core_v() { return 1; }\n"},

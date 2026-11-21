@@ -1277,6 +1277,13 @@ struct BuildConfig : BuildInputs {
     // set true to deliberately link against host libraries.
     // MCPP_ALLOW_HOST_LIBS=1 is the per-invocation equivalent.
     bool                                allowHostLibs = false;
+    // `[build] allow_host_tools` (design 2026-11-21, offline and toolchain
+    // defaults §3.3): the bootstrap tools taken from the machine's PATH instead
+    // of the home's store, `ninja` and `patchelf`. `allowHostToolsStated`
+    // tells a stated empty list, which takes none, from no statement, which
+    // leaves the machine's.
+    std::vector<std::string>            allowHostTools;
+    bool                                allowHostToolsStated = false;
     // macOS minimum supported OS version for produced binaries
     // (LC_BUILD_VERSION minos), e.g. "14.0". Mirrors the ecosystem
     // conventions around deployment targets (the MACOSX_DEPLOYMENT_TARGET

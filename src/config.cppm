@@ -144,6 +144,10 @@ struct GlobalConfig {
     std::int64_t                    defaultJobs = 0;
     // `[build] memory_threshold`: this machine's (design 2026-11-20 §5.5); empty: the engine's.
     std::string                     memoryThreshold;
+    // `[build] allow_host_tools`: this machine's bootstrap tools from PATH
+    // (design 2026-11-21 §3.3); `allowHostToolsStated` false: not stated.
+    std::vector<std::string>        allowHostTools;
+    bool                            allowHostToolsStated = false;
     // `[build] compile_commands`: the default for a project that does not say
     // where its compile database goes (design 2026-10-26 D14). Empty: none.
     std::string                     compileCommands;
@@ -262,7 +266,6 @@ std::string check_base_init(const GlobalConfig& cfg) {
     auto xlEnv = make_xlings_env(cfg);
     struct Check { std::string_view name; std::filesystem::path path; };
 
-    auto patchelfBin = mcpp::provider::open(xlEnv)->pinned("patchelf", mcpp::provider::kPatchelfVersion) / "bin" / "patchelf";
     auto ninjaRoot = mcpp::provider::open(xlEnv)->versions("ninja");
     auto ninja_name = std::string("ninja") + std::string(mcpplibs::os::exe_suffix);
 
@@ -274,13 +277,14 @@ std::string check_base_init(const GlobalConfig& cfg) {
     if (!mcpp::provider::open(xlEnv)->initialized())
         return "the provider's environment is not initialized";
 
-    // Check patchelf (Linux only)
-    if constexpr (!mcpplibs::os::is_macos && !mcpplibs::os::is_windows) {
-        if (!std::filesystem::exists(patchelfBin))
-            return std::format("patchelf missing: {}", patchelfBin.string());
-    }
+    // PATCHELF IS NOT ASKED FOR HERE (design 2026-11-21, offline and toolchain
+    // defaults §3.3). A payload's install declares it as a build dependency and
+    // the provider installs it then; mcpp itself runs it only when it packs
+    // (`sandbox_patchelf`), which asks for it there. Requiring it of every
+    // build refused one with the machine's toolchain and `glibc@system`, which
+    // relocates nothing.
 
-    // Check ninja
+    // Ninja: the store's, or the machine's when the run allows it.
     bool ninjaOk = false;
     if (std::filesystem::exists(ninjaRoot)) {
         std::error_code ec;
@@ -288,8 +292,12 @@ std::string check_base_init(const GlobalConfig& cfg) {
             if (std::filesystem::exists(v.path() / ninja_name)) { ninjaOk = true; break; }
         }
     }
+    if (!ninjaOk && mcpp::effects::host_tool_allowed("ninja") && mcpp::invocation::which(ninja_name))
+        ninjaOk = true;
     if (!ninjaOk)
-        return "ninja missing from sandbox";
+        return mcpp::effects::host_tool_allowed("ninja")
+            ? std::string("ninja missing from sandbox and from PATH ([build] allow_host_tools names it)")
+            : std::string("ninja missing from sandbox");
 
     return {};  // all ok
 }
@@ -488,6 +496,9 @@ default_jobs    = 0
 # it, it waits for one already running to end ("2GiB", "512MiB", or bytes).
 # Unset: the project's [build] memory_threshold, else 1 GiB.
 # memory_threshold = "2GiB"
+# Bootstrap tools taken from PATH instead of the home's store ("ninja",
+# "patchelf"). Unset: the project's [build] allow_host_tools, else none.
+# allow_host_tools = ["ninja"]
 # After a build, at most once a day, the build directories of this project that
 # no configuration used for this many days are removed. 0 keeps all.
 keep_days       = 3
@@ -1013,6 +1024,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.cacheUnusedDays  = doc->get_int("cache.unused_days").value_or(30);
     cfg.buildKeepDays    = doc->get_int("build.keep_days").value_or(3);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
+    if (auto v = doc->get_string_array("build.allow_host_tools")) {
+        cfg.allowHostTools = *v;
+        cfg.allowHostToolsStated = true;
+    }
     if (auto v = doc->get_string("build.memory_threshold")) cfg.memoryThreshold = *v;
     else if (auto n = doc->get_int("build.memory_threshold")) cfg.memoryThreshold = std::to_string(*n);
     cfg.compileCommands = doc->get_string("build.compile_commands").value_or("");

@@ -72,6 +72,11 @@
   (`build-program-unpublished-input`).
 - Directive protocol 21: `mcpp:deprecated=`, stated by a typed reader that answers by a deprecated
   reading.
+- **`[build] allow_host_tools`** (mcpp#988, SPEC-004 §9 item 21, docs/25): the bootstrap tools a
+  build takes from `PATH` instead of the store, `ninja` and `patchelf`, from
+  `MCPP_ALLOW_HOST_TOOLS`, the project, then `config.toml`. Every host input -- a bootstrap tool,
+  a toolchain named by path, `glibc@system`, a tool found on `PATH` -- is a note once per project
+  and identity (`host-input`).
 
 ### Changed
 
@@ -101,6 +106,9 @@
   vendor field is any word, as GNU config.sub reads it (`x86_64-redhat-linux` is
   `x86_64-linux-gnu`); a toolchain whose target mcpp cannot read is reported as a degradation
   instead of applying none of the target's settings in silence.
+- **A build no longer requires patchelf** (mcpp#988): a payload's install declares it and the
+  provider installs it then, and mcpp runs it only when it packs. A build with the machine's
+  toolchain and `glibc@system` was refused in a home without it.
 - **A toolchain request has one answer** (mcpp#988, SPEC-006 §2.6 to §2.8, docs/20). A partial
   version (`gcc@16`) is the newest release of the local index whose version it is a prefix of, in
   `mcpp toolchain install`, `mcpp toolchain default` and a build alike; `toolchain default` took the
