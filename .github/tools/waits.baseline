@@ -27,7 +27,7 @@ tests/e2e/run/environment.cpp 1
 tests/e2e/run/program.cpp 1
 tests/e2e/runtime/binding.cpp 2
 tests/e2e/self/homes.cpp 2
-tests/e2e/test/fast.cpp 3
+tests/e2e/test/fast.cpp 5
 tests/e2e/test/report.cpp 1
 tests/e2e/test/streams.cpp 1
 tests/e2e/toolchain/llvm.cpp 1

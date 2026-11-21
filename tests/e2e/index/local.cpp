@@ -79,8 +79,10 @@ E2E local{"local", s::home_fixture, [] {
         // compat:compat.cfg@1.0.0, refreshing no builtin index and writing no xim index.
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
-        const auto seed = home / "registry/subos/default/.xlings.json";
-        expect(fatal(fs::is_regular_file(seed))) << "inherited toolchain has no default SubOS runtime contract";
+        // A real runtime contract for the fake xlings to report: the user's, which the case's home
+        // names as an upstream; the case's own subos holds one only after an install.
+        const auto seed = s::shared_home() / "registry/subos/default/.xlings.json";
+        expect(fatal(fs::is_regular_file(seed))) << "the shared home has no default SubOS runtime contract";
         s::project index(tmp / "local-index", {{"pkgs/c/compat.cfg.lua", lua_package("compat.cfg", "1.0.0", "Namespaced local path index package", c_lib_segment("src/*.c", "cfg"))}});
         const auto indices = std::format("[indices]\ncompat = {{ path = \"{}\" }}\n\n[dependencies.compat]\ncfg = \"1.0.0\"\n", index.dir().generic_string());
         s::project app(tmp / "project/app", {
@@ -280,6 +282,10 @@ if [[ "${1:-}" == "install" ]]; then
 fi
 exit 0
 )SH");
+        // The sandbox's tools before the fake xlings stands in: the case's home installs them from
+        // its upstreams on its first build, which the fake cannot do.
+        auto primer = s::project::scaffold("primer");
+        expect(fatal(e2e::succeeded(primer.mcpp({"build"}, inherited())))) << "the case's home did not bootstrap";
         fake_xlings_config(home, tmp / "fake-bin/xlings", home / "registry");
         const std::string payload = ".mcpp/.xlings/data/xpkgs/compat-x-compat.stale/1.0.0";
         s::project app(tmp / "project/app", {

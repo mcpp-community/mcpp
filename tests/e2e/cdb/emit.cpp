@@ -204,6 +204,10 @@ E2E emit{"emit", s::home_fixture, [] {
         expect(fatal(!s::find_files(work, R"(resolution\.json)").empty())) << "L: no resolution record under the work directory " << work;
         expect(fatal(compiled(work).empty())) << "L: the planning pass wrote compile or link outputs: " << compiled(work).front();
         const auto cold = s::case_home(s::home::inherited);
+        // The toolchain is the home's before it goes offline: it installs it from its upstreams by
+        // link, and an install is a download to an offline home. Its std cache stays cold.
+        expect(fatal(e2e::succeeded(s::mcpp({"toolchain", "install", "gcc", s::gcc_version()}, cold, {.where = s::home::inherited}))))
+            << "L: the cold home did not install its toolchain";
         const s::options cold_home{.where = s::home::inherited, .env = {{"MCPP_OFFLINE", "1"}, {"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
         const auto ce = hello.mcpp({"emit", "build-database", "--format", "json"}, cold_home);
         expect(fatal(e2e::succeeded(ce))) << "L: emit in a home with a cold std cache: " << ce.err;
@@ -414,6 +418,9 @@ int main() {
         const auto tmp = s::case_dir() / "measured";
         const auto out = s::case_dir() / "out";
         const auto home = s::case_home(s::home::inherited);
+        // The toolchain, installed by the real xlings from the upstreams before the stub stands in.
+        expect(fatal(e2e::succeeded(s::mcpp({"toolchain", "install", "gcc", s::gcc_version()}, s::case_dir(), {.where = s::home::inherited}))))
+            << "the case's home did not install its toolchain";
         s::write_executable(out / "bin/xlings", R"(#!/usr/bin/env bash
 [[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; }
 echo "$*" >> "${STUB_LOG:?}"

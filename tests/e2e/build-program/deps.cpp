@@ -792,8 +792,10 @@ int main() {
         // runs: they are installed first (library deps belong in mcpp.deps; only hook-time tools
         // are xpm deps). A fake xlings records the order of the installs.
         const auto home = s::case_home(s::home::inherited);
-        const auto seed = home / "registry/subos/default/.xlings.json";
-        expect(fatal(fs::is_regular_file(seed))) << "inherited toolchain has no default SubOS runtime contract";
+        // A real runtime contract for the fake xlings to report: the user's, which the case's home
+        // names as an upstream; the case's own subos holds one only after an install.
+        const auto seed = s::shared_home() / "registry/subos/default/.xlings.json";
+        expect(fatal(fs::is_regular_file(seed))) << "the shared home has no default SubOS runtime contract";
         const auto tmp = s::case_dir();
         auto package = [](std::string_view name, std::string_view description, std::string_view source,
                           std::string_view target, std::string_view deps) {

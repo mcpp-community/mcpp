@@ -138,9 +138,10 @@ std::string mcpp_path();
 
 // shared: the machine's home. fresh: an empty home of the case. linked: a home of the case whose
 // `registry` is a link to the shared home's (its toolchains, not its build cache or state).
-// inherited: tests/e2e/_inherit_toolchain.sh's home, a home of the case holding links to each
-// payload of the user's homes, their indices, `subos` and `bin`, and a copy of `config.toml`.
-// payloads: inherited without config.toml and subos (MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0).
+// inherited: tests/e2e/_inherit_toolchain.sh's home, a home of the case whose `[xlings] upstream`
+// names the user's homes, with links to their indices and `bin` and a copy of `config.toml`; it
+// installs what it needs from the upstreams by link, into its own subos, and writes nothing there.
+// payloads: inherited without the copy of config.toml (MCPP_INHERIT_CONFIG=0).
 // registry: a home of the case whose `[xlings] home` is the shared home's registry (its toolchains,
 // indices and sandbox) and whose config.toml is its own. A case that sets the default toolchain
 // (`mcpp toolchain default`) runs here: the cases that read the machine's default run beside it

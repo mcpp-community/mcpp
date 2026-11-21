@@ -212,7 +212,9 @@ int main() {{
         for (auto& w : split(inputs_text, ' '))
             if (!w.empty()) inputs.push_back(std::move(w));
         expect(fatal(inputs.size() == 2u)) << "expected exactly two inputs on the stage_file edge, got: " << inputs_text;
-        static const std::regex dep_src{R"(\.build-mcpp/out/[0-9a-f]*/[a-z.]*dep/gen/shared\.bin$)"};
+        // A dependency whose source is named runs its build program into the home's output
+        // directory (SPEC-004 §9 item 18); one built in the project, into the project's.
+        static const std::regex dep_src{R"((\.build-mcpp/out/[0-9a-f]*/[a-z.]*dep|build-cache/v1/out/[a-z.]*dep@[^/]+/[0-9a-f]+/out)/gen/shared\.bin$)"};
         static const std::regex app_src{R"(\.build-mcpp/out/[0-9a-f]*/app/gen/shared\.bin$)"};
         expect(fatal(std::ranges::any_of(inputs, [](const auto& w) { return std::regex_search(w, dep_src); }))) << "the edge does not list the dependency's source: " << inputs_text;
         expect(fatal(std::ranges::any_of(inputs, [](const auto& w) { return std::regex_search(w, app_src); }))) << "the edge does not also list the app's own source: " << inputs_text;
@@ -225,7 +227,7 @@ int main() {{
         const auto log = s::text(r);
         expect(fatal(!r)) << "different bytes for one destination were accepted: " << log;
         expect(fatal(e2e::contains(log, "disagree"))) << "the refusal does not say the sources disagree: " << log;
-        expect(fatal(s::has_line(log, R"(\.build-mcpp/out/[0-9a-f]*/[a-z.]*dep/gen/shared\.bin)"))) << "the refusal does not name the dependency's source: " << log;
+        expect(fatal(s::has_line(log, R"((\.build-mcpp/out/[0-9a-f]*/[a-z.]*dep|build-cache/v1/out/[a-z.]*dep@[^/]+/[0-9a-f]+/out)/gen/shared\.bin)"))) << "the refusal does not name the dependency's source: " << log;
         expect(fatal(s::has_line(log, R"(\.build-mcpp/out/[0-9a-f]*/app/gen/shared\.bin)"))) << "the refusal does not name the app's own source: " << log;
         expect(fatal(e2e::contains(log, "shared.bin"))) << "the refusal does not name the destination: " << log;
     };

@@ -219,8 +219,10 @@ UTest actual_gcc_mixed_capacity_uses_owned_units{"DetachLifetime/ActualGccMixedC
     expect(fatal(fs::is_regular_file(engine)));
     Slot temporary;
     const auto helper=fs::current_path()/"tests/e2e/helpers/check_shared_compiler_cap.py";
+    // The cap is what is measured, not the run's budget (SPEC-017 O11): inside a runner's budget
+    // the builds' compilers share the slots of the other workers, and the peak is what is free.
     const auto result=mcpp::run::execute({"python3",helper.string(),engine,(temporary.dir/"managed-gcc").string(),
         "--owner-driver",mcpp::invocation::self_exe_path().string()},
-        {.total=std::chrono::seconds(120)});
+        {.unset={"MTEST_BUDGET","MTEST_BUDGET_HELD"},.total=std::chrono::seconds(120)});
     expect(eq(result.exit_code, 0))<<result.output;
 }};

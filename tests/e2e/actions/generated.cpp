@@ -189,7 +189,10 @@ int main() {
                                      {"src/main.cpp", "#include <cstdio>\nimport proto;\nint main() { std::printf(\"ANSWER=%d\\n\", proto_answer()); }\n"}}};
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "a dependency whose action generates its only header did not build";
         expect(eq(s::last_line(app.mcpp({"run"}).out), std::string{"ANSWER=42"})) << "expected ANSWER=42 from the generated header";
-        const auto hdr = s::find_file(tmp, "proto_generated.h");
+        // A path dependency's build program runs into the home's output directory (SPEC-004 §9
+        // item 18), else into the project's.
+        auto hdr = s::find_file(s::shared_home() / "build-cache/v1/out/proto@0.1.0", "proto_generated.h");
+        if (!hdr) hdr = s::find_file(tmp, "proto_generated.h");
         expect(fatal(hdr.has_value())) << "no proto_generated.h anywhere";
         expect(fatal(fs::file_size(*hdr) > 0)) << hdr->string() << " is empty — the placeholder, not the generator's output";
         expect(e2e::contains(s::read_file(*hdr), "PROTO_ANSWER")) << hdr->string() << " is not what gen.sh writes";

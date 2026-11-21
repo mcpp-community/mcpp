@@ -129,8 +129,11 @@ UTest two{{"two", [] {{ expect(eq(2, {})); }}}};
         expect(s::lacks(s::text(one), "Resolved mcpplibs.")) << "a selection was planned again";
         expect(e2e::contains(s::text(one), "cases: 1 passed, 0 failed"));
         // An edited test is built, and its result is the edit's.
+        // A second of the file system's clock, not a time moved forward: the edit must be newer
+        // than the last build's test.ninja and older than the next one's, which the record is
+        // compared with (a time two seconds ahead kept the next, unchanged run planning again).
+        std::this_thread::sleep_for(1s);
         write_cases(3);
-        s::touch(p.at("tests/cases.cpp"));
         auto edited = p.mcpp({"test"});
         expect(edited.started && edited.status != 0) << "the edited test passed";
         expect(e2e::contains(s::text(edited), "cases: 1 passed, 1 failed"));
@@ -139,8 +142,11 @@ UTest two{{"two", [] {{ expect(eq(2, {})); }}}};
         expect(s::lacks(s::text(again), "Resolved mcpplibs.")) << "an unchanged failing project was planned again";
         expect(e2e::contains(s::text(again), "cases: 1 passed, 1 failed")) << "the record's run lost the failure";
         // A test added is planned and run; one removed is no longer run.
+        // As above, not a time moved forward: the edit must be newer
+        // than the last build's test.ninja and older than the next one's, which the record is
+        // compared with (a time two seconds ahead kept the next, unchanged run planning again).
+        std::this_thread::sleep_for(1s);
         write_cases(2);
-        s::touch(p.at("tests/cases.cpp"));
         p.write("tests/extra.cpp", "int main() { return 0; }\n");
         auto added = p.mcpp({"test"});
         expect(fatal(e2e::succeeded(added)));

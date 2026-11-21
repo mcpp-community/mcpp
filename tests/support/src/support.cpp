@@ -452,6 +452,19 @@ void inherit(const fs::path& h, bool whole) {
     name_upstreams(h);
     if (fs::is_directory(user / "bin", ec))
         link_or_copy(user / "bin", h / "bin");
+    // THE SANDBOX, ONCE, WITH THE REAL XLINGS: its runtime contract and the tools every build reads
+    // (patchelf, ninja), installed from the upstreams by link. A copy of the user's subos and links
+    // to the payloads gave the home these before; without them a case that runs offline, or that
+    // puts a stand-in xlings in place, found an uninitialized provider and could install nothing.
+    // Measured: under a second, and the user's homes unwritten.
+    std::vector<std::pair<std::string, std::optional<std::string>>> env{{"MCPP_HOME", h.string()},
+                                                                        {"MCPP_VERBOSE", std::nullopt},
+                                                                        {"MCPP_OFFLINE", std::nullopt}};
+    const auto init = e2e::run({.argv = {mcpp_path(), "self", "init"}, .cwd = h, .env = env,
+                                .timeout = std::chrono::minutes{5}});
+    if (!init)
+        std::println(std::cerr, "the case's home {} was not initialized (status {}):\n{}{}", h.string(), init.status,
+                     init.out, init.err);
 }
 }  // namespace
 

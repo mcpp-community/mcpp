@@ -177,6 +177,10 @@ main = "src/main.cpp"
         auto r = s::mcpp({"toolchain", "list"}, s::case_dir(), o1);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(in_order(s::text(r), "gcc", "16.1.0"))) << "gcc 16.1.0 missing from list: " << s::text(r);
+        // The list reads the upstreams; a default names a toolchain of this home, which installs it
+        // from them by link.
+        r = s::mcpp({"toolchain", "install", "gcc", "16.1.0"}, s::case_dir(), o1);
+        expect(fatal(e2e::succeeded(r))) << "install 'gcc 16.1.0' from the upstream failed: " << s::text(r);
         r = s::mcpp({"toolchain", "default", "gcc", "16"}, s::case_dir(), o1);
         expect(fatal(e2e::succeeded(r))) << "default 'gcc 16' failed: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "gcc@16.1.0"))) << "default 'gcc 16' didn't resolve to 16.1.0: " << s::text(r);

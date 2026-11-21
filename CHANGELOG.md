@@ -13,13 +13,15 @@
   files an earlier compile of that key read still hold their contents, its object and BMI are
   placed and no compiler starts. A BMI is named by the key of the compile that made it. A fresh
   checkout of mcpp on a filled cache built in 4.1 s instead of 164 s, its 288 compiles placed.
-  The split schedule places its units from the cache too. cl.exe's compiles are not cached.
+  The split schedule places its units from the cache too. cl.exe's compiles are not cached. A
+  Clang compile is given `-fmodule-file-deps`, so its depfile names the BMIs it imports beside
+  its headers, and ninja and the cache read them from it.
 - **A cacheable package's build program runs in the home** (mcpp#986, mcpp#927, SPEC-004 §9
   item 18). A package whose source is named -- an index's version, a git commit, a path
   dependency's content digest -- runs its build program into
   `build-cache/v1/out/<package>@<version>/<key>/out`, keyed by its configuration, and a second
-  project takes the outputs. A path enters a cache key by its role (`<store>`, `<pkg>`,
-  `<out>`), never as written.
+  project takes the outputs; a program run by `mcpp pack --pkg-format` runs in the project. A
+  path enters a cache key by its role (`<store>`, `<pkg>`, `<out>`), never as written.
 - **`[profile.<name>] dependency_debug`** (mcpp#927, SPEC-004 §9 item 20): the debug information
   of the dependencies from the package store and git, `true`, `false` or `"lines"`. Omitted,
   `dev` and `debug` take `"lines"` while their `debug` is on. A test program whose only
