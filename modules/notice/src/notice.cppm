@@ -25,6 +25,8 @@ inline constexpr Kind kKinds[] = {
     {"build-program/reads-outside",   Policy::Once, "docs/30-build-mcpp.md, \"Headers or modules\""},
     {"toolchain/default-changed",     Policy::Once, "docs/20-toolchains.md, \"Resolution and the lock\""},
     {"host-input",                    Policy::Once, "docs/25-home-indices-and-store.md, \"Host inputs\""},
+    {"machine-path-in-manifest",      Policy::Once, "docs/25-home-indices-and-store.md, \"Archive directories\""},
+    {"bundle-lacks-target",           Policy::Always, "docs/05-dependencies.md, \"Offline builds and mcpp fetch\""},
 };
 
 // The row of `domain`, or none.

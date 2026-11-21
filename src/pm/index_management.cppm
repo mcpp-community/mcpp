@@ -241,8 +241,8 @@ export int index_update(const std::string& filterName) {
     // this layer because update_index() itself is a silent skip by design (it
     // is called from paths where proceeding locally is the right answer).
     if (mcpp::effects::offline_mode()) {
-        mcpp::ui::error("offline mode is on — cannot update the package index "
-                        "(unset MCPP_OFFLINE or drop --offline)");
+        mcpp::ui::error(std::format("offline mode is on — cannot update the package index ({})",
+                                    mcpp::effects::offline_remedy()));
         return 1;
     }
 

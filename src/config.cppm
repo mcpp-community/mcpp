@@ -29,6 +29,7 @@ import mcpp.provider;
 import mcpp.provider.select;
 import mcpplibs.os.platform;
 import mcpplibs.os.windows;
+import mcpplibs.os.env;
 import mcpp.invocation;
 import mcpp.effects;
 import mcpp.home.files;
@@ -148,6 +149,12 @@ struct GlobalConfig {
     // (design 2026-11-21 §3.3); `allowHostToolsStated` false: not stated.
     std::vector<std::string>        allowHostTools;
     bool                            allowHostToolsStated = false;
+    // `[build] offline`: this machine's (design 2026-11-21 §3.2); none: not stated.
+    std::optional<bool>             offline;
+    // `[xlings] archives`: this machine's archive directories (design
+    // 2026-11-21 §3.2), absolute; `archivesStated` false: not stated.
+    std::vector<std::filesystem::path> archives;
+    bool                            archivesStated = false;
     // `[build] compile_commands`: the default for a project that does not say
     // where its compile database goes (design 2026-10-26 D14). Empty: none.
     std::string                     compileCommands;
@@ -464,6 +471,10 @@ std::string_view default_config_toml() {
 binary = "bundled"
 # home:   empty = use $MCPP_HOME/registry; can override
 home   = ""
+# archives: directories of archives (a `mcpp fetch --to` directory, a mirror
+# on a shared volume), taken by sha256 before the network and in its place
+# offline. Unset: the project's [xlings] archives, else none.
+# archives = ["/srv/mcpp-archives"]
 
 [index]
 default = "mcpplibs"
@@ -499,6 +510,10 @@ default_jobs    = 0
 # Bootstrap tools taken from PATH instead of the home's store ("ninja",
 # "patchelf"). Unset: the project's [build] allow_host_tools, else none.
 # allow_host_tools = ["ninja"]
+# Never use the network: payloads come from the home, the download cache and
+# the [xlings] archives directories. Unset: the project's [build] offline,
+# else online.
+# offline = true
 # After a build, at most once a day, the build directories of this project that
 # no configuration used for this many days are removed. 0 keeps all.
 keep_days       = 3
@@ -701,6 +716,25 @@ void reconcile_index_repos(const std::filesystem::path& xjson,
 // `xlings self init --copy-self-bin` API that does init + binary placement
 // + patchelf in one shot, this function and ensure_sandbox_xlings_binary +
 // ensure_sandbox_patchelf below can collapse into a single call.
+// The machine's statements of the keys that hold for a whole run (SPEC-004
+// §2, `mcpp::effects::state_key`): `[build] offline`, `[build]
+// allow_host_tools`, `[xlings] archives`.
+void state_machine_keys(const GlobalConfig& cfg) {
+    using mcpp::effects::Tier;
+    if (cfg.offline)
+        mcpp::effects::state_key("MCPP_OFFLINE", Tier::Machine, *cfg.offline ? "1" : "0",
+                                 "config.toml [build] offline");
+    if (cfg.allowHostToolsStated) {
+        std::string joined;
+        for (auto const& t : cfg.allowHostTools) joined += (joined.empty() ? "" : ",") + t;
+        mcpp::effects::state_key("MCPP_ALLOW_HOST_TOOLS", Tier::Machine, joined.empty() ? "none" : joined,
+                                 "config.toml [build] allow_host_tools");
+    }
+    if (cfg.archivesStated)
+        mcpp::effects::state_key("MCPP_ARCHIVES", Tier::Machine, mcpplibs::os::env::join_list(cfg.archives),
+                                 "config.toml [xlings] archives");
+}
+
 void ensure_sandbox_init(const GlobalConfig& cfg, bool quiet) noexcept {
     mcpp::provider::open(make_xlings_env(cfg))->ensure_initialized(quiet);
 }
@@ -1028,6 +1062,14 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         cfg.allowHostTools = *v;
         cfg.allowHostToolsStated = true;
     }
+    if (auto v = doc->get_bool("build.offline")) cfg.offline = *v;
+    if (auto v = doc->get_string_array("xlings.archives")) {
+        for (auto const& d : *v) {
+            const std::filesystem::path p = d;
+            cfg.archives.push_back(p.is_absolute() ? p : (cfg.configFile.parent_path() / p).lexically_normal());
+        }
+        cfg.archivesStated = true;
+    }
     if (auto v = doc->get_string("build.memory_threshold")) cfg.memoryThreshold = *v;
     else if (auto n = doc->get_int("build.memory_threshold")) cfg.memoryThreshold = std::to_string(*n);
     cfg.compileCommands = doc->get_string("build.compile_commands").value_or("");
@@ -1217,6 +1259,11 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
                 "enable long paths (LongPathsEnabled = 1, `mcpp self doctor` shows it) or use a shorter MCPP_HOME");
     }
 
+    // THE MACHINE'S TIER OF THE KEYS OF THE WHOLE RUN (SPEC-004 §2), stated
+    // before anything reads them, whatever the initialization: the bootstrap
+    // below is the first reader. A project's statement takes precedence.
+    state_machine_keys(cfg);
+
     if (initialization == Initialization::ReadOnly) {
         if (cfg.xlingsBinaryMode == "system") {
             if (auto binary = mcpp::invocation::which(
@@ -1317,7 +1364,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    artefact exists, and the completion markers below are still written
     //    from what is on disk. A fresh home stays un-bootstrapped, and the
     //    commands that need the tools say so through check_base_init().
-    const bool bootstrapAllowed = !mcpp::effects::offline_mode();
+    const bool bootstrapAllowed = mcpp::effects::install_sources() != mcpp::effects::InstallSources::None;
     ensure_sandbox_xlings_binary(cfg, quiet);
     if (bootstrapAllowed) {
         if (!check_base_init(cfg).empty()) report_network(cfg, quiet);
@@ -1328,8 +1375,9 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         static bool announced = false;
         if (!announced && !mcpp::provider::open(make_xlings_env(cfg))->initialized()) {
             announced = true;
-            print_status("Skipping",
-                "sandbox bootstrap (offline mode; run without --offline to bootstrap)");
+            print_status("Skipping", std::format(
+                "sandbox bootstrap (offline, no archive directory; {} to bootstrap)",
+                mcpp::effects::offline_remedy()));
         }
     }
     {

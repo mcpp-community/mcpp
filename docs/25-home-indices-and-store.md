@@ -141,6 +141,32 @@ note: ninja (bootstrap) is this machine's (1.11.1 /usr/bin/ninja), not the store
 When `mcpp.toml` states the input, the note adds that the statement holds only
 on machines like this one, and that a machine's input belongs in `config.toml`.
 
+### Archive directories (2026.11.21.1+)
+
+An archive directory holds the archives payloads are installed from, found by
+their sha256 whatever their file name: a directory `mcpp fetch --to` wrote, a
+mirror on a shared volume.
+
+```toml
+# ~/.mcpp/config.toml
+[xlings]
+archives = ["/srv/mcpp-archives"]
+```
+
+The list is read from `MCPP_ARCHIVES` (separated as `PATH` is), else the
+project's `[xlings] archives` (relative to `mcpp.toml`), else `config.toml`'s
+(relative to it), and is passed to xlings, which asks its download cache, then
+these directories, then the network. Offline (`--offline`, `[build] offline`),
+the network is not asked: a payload the home lacks is installed from the cache
+or a directory, and one no source holds is refused
+(`artifact-unavailable-offline`, 05 — Dependencies, "Offline builds and mcpp
+fetch"). A directory outside the project named in `mcpp.toml` is a note once:
+another machine lacks it, and a machine's directory belongs in `config.toml`.
+
+An upstream (§3) and an archive directory are sources of different things, and
+both hold: an upstream's installed payloads are published by link; an archive
+is verified and installed.
+
 ### Retention of build outputs (2026.10.31.3+)
 
 The build cache under `build-cache/v1/` is shared by every project of the home;

@@ -20,6 +20,7 @@ command emit sbom
 command emit surface
 command emit xpkg
 command explain
+command fetch
 command index
 command index add
 command index list
@@ -171,6 +172,17 @@ flag emit xpkg --output
 flag emit xpkg --package
 flag emit xpkg --url
 flag emit xpkg --version
+flag fetch --exclude
+flag fetch --features
+flag fetch --from
+flag fetch --package
+flag fetch --platform
+flag fetch --profile
+flag fetch --sysroot
+flag fetch --target
+flag fetch --to
+flag fetch --toolchain
+flag fetch --workspace
 flag index list --format
 flag link-output --aside
 flag link-output --companions
@@ -340,6 +352,7 @@ key build.ldflags
 key build.macos_deployment_target
 key build.memory_threshold
 key build.module_extensions
+key build.offline
 key build.platform-dependencies
 key build.private_fragment
 key build.private_include_dirs
@@ -387,7 +400,9 @@ reason accel-backend-undeclared
 reason accel-mismatch
 reason ambiguous-request
 reason apple-sdk-absent
+reason artifact-unavailable-offline
 reason build-program-unpublished-input
+reason bundle-older-than-lock
 reason c-env-unrealisable
 reason c-env-verification-mismatch
 reason capability-pin
@@ -432,5 +447,7 @@ reason unknown-target
 reason version-floor-unmet
 notice build-program/includes-header
 notice build-program/reads-outside
+notice bundle-lacks-target
 notice host-input
+notice machine-path-in-manifest
 notice toolchain/default-changed

@@ -324,6 +324,18 @@ format_install_failure_diagnostic(std::string_view target,
                                   std::span<const std::string> indexRepos,
                                   std::string_view childError = {});
 
+// THE TWO WAYS AN OFFLINE RUN LACKS A PAYLOAD (design 2026-11-21 §3.2), each
+// a refusal with its code, for every install path to say alike. `what` is the
+// payload (`gcc@16.1.0`, `dependency 'fmt' v11.1.4`).
+//   offline_without_sources: no archive directory, so nothing was asked
+//                            (offline-download-required);
+//   offline_unavailable:     the download cache and the archive directories
+//                            were asked and none holds it; `providerReport`
+//                            is the provider's list of what it lacked
+//                            (artifact-unavailable-offline).
+std::string offline_without_sources(std::string_view what);
+std::string offline_unavailable(std::string_view what, std::string_view providerReport);
+
 } // namespace mcpp::pm
 
 namespace mcpp::pm {
@@ -1232,7 +1244,9 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         p.sourceDir = (subs.size() == 1) ? subs.front() : p.root;
     };
 
+    // Each payload handed out is one this run used (`mcpp fetch --to`).
     auto make_payload = [&](const std::filesystem::path& verdir) -> XpkgPayload {
+        mcpp::effects::note_package_used(mcpp::provider::to_string(ref));
         XpkgPayload payload;
         payload.root = payload_root(verdir);
         fill_payload(payload);
@@ -1287,16 +1301,11 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     }
 
     // Offline is checked HERE, after the "already usable" fast path above: a
-    // build whose packages are all usable stays functional offline. Only an
-    // actual download is refused, naming the package.
-    if (mcpp::effects::offline_mode()) {
-        mcpp::build::refusal::record(
-            mcpp::build::refusal::Code::OfflineDownloadRequired);
-        return std::unexpected(CallError{ std::format(
-            "offline mode: `{}` is not installed and cannot be downloaded\n"
-            "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
-            label) });
-    }
+    // build whose packages are all usable stays functional offline. Without
+    // an archive directory nothing is asked; with one, the install below asks
+    // the local sources alone (XLINGS_NET_UNREACHABLE).
+    if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None)
+        return std::unexpected(CallError{offline_without_sources(label)});
 
     // A replacement says why, once, before it starts (D3): the user sees a
     // download in a command that only builds, so the reason is part of it.
@@ -1370,6 +1379,10 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             if (auto dir = satisfied()) return make_payload(*dir);
     }
 
+    if (mcpp::effects::offline_mode())
+        return std::unexpected(CallError{offline_unavailable(label,
+            inst->error ? inst->error->message : std::string{})});
+
     std::string installError = std::format("install of '{}' failed (interface exit {}{})", targets[0],
         inst->exitCode, policy.retry ? std::format(", direct exit {}", directRc) : std::string{});
     if (inst->error)
@@ -1390,6 +1403,32 @@ Fetcher::resolve_xpkg_path(std::string_view target,
     return std::unexpected(CallError{std::format(
         "{}\n  help: {}", installError,
         install_failure_hint(inst->error, cfg_.xlingsHome()))});
+}
+
+namespace {
+std::string offline_bring_help() {
+    return std::format("{}; or bring it: `mcpp fetch --to <dir>` on a machine with a network, "
+                       "then `mcpp fetch --from <dir>` here (docs/05, \"Offline builds and mcpp fetch\")",
+                       mcpp::effects::offline_remedy());
+}
+}
+
+std::string offline_without_sources(std::string_view what) {
+    mcpp::build::refusal::record(mcpp::build::refusal::Code::OfflineDownloadRequired);
+    return std::format("offline: {} is not installed, and no archive directory is named to take it from\n"
+                       "  help: {}", what, offline_bring_help());
+}
+
+std::string offline_unavailable(std::string_view what, std::string_view providerReport) {
+    mcpp::build::refusal::record(mcpp::build::refusal::Code::ArtifactUnavailableOffline);
+    std::string dirs;
+    for (auto const& d : mcpp::effects::archive_dirs())
+        dirs += (dirs.empty() ? "" : ", ") + d.string();
+    return std::format("offline: {} is not installed, and neither the download cache nor an archive "
+                       "directory ({}) holds its archive{}\n  help: {}",
+                       what, dirs.empty() ? std::string("none named") : dirs,
+                       providerReport.empty() ? std::string{} : std::format("\n  provider: {}", providerReport),
+                       offline_bring_help());
 }
 
 PayloadAction payload_action(PayloadIntent intent, bool present, bool usable, bool current) {

@@ -306,6 +306,15 @@ public:
     int install_direct(std::string_view target, bool quiet) const override {
         return xlings::install_direct(env_, target, quiet);
     }
+    int download_to(std::span<const std::string> refs, const std::filesystem::path& dir) const override {
+        return xlings::download_to(env_, refs, dir);
+    }
+    int install_from(const std::filesystem::path& dir, std::span<const std::string> refs) const override {
+        return xlings::install_from(env_, dir, refs);
+    }
+    std::string adopt_index_snapshot(std::string_view name, const std::filesystem::path& snapshot) const override {
+        return xlings::adopt_index_snapshot(env_, name, snapshot);
+    }
     std::string command_prefix() const override { return build_command_prefix(env_); }
     std::string operation_command(std::string_view operation, std::string_view argsJson) const override {
         return build_interface_command(env_, operation, argsJson);

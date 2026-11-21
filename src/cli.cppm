@@ -75,6 +75,7 @@ void print_usage() {
     std::println("Project commands:");
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
+    std::println("  mcpp fetch [--to DIR | --from DIR]   Put what the build needs in the home; to or from a directory");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
     std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --no-run, --shard, --failed, --timeout, --build-timeout, --message-format json, --no-runner)");
     std::println("  mcpp clean [--stale] [--bmi-cache]   Remove target/ (or, with --stale, only its non-current fingerprint dirs)");
@@ -771,6 +772,31 @@ int run(int argc, char** argv) {
                 if (rc == 0) mcpp::build::sweep_after_build();
                 return rc;
             }))
+        .subcommand(cl::App("fetch")
+            .description("Put what the package's build needs in the home; write it to a directory, or take it from one")
+            .option(cl::Option("to").takes_value().value_name("DIR")
+                .help("Then write what the build uses (payloads, index snapshots, git clones) into DIR"))
+            .option(cl::Option("from").takes_value().value_name("DIR")
+                .help("First take a directory `mcpp fetch --to` wrote into the home"))
+            .option(cl::Option("target").takes_value().multiple().help(
+                "Fetch for <triple>, or for a target set; repeatable: one leg per target"))
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Fetch for this toolchain, e.g. llvm@22.1.8"))
+            .option(cl::Option("sysroot").takes_value().value_name("SYSROOT")
+                .help("The target's base for this invocation (= MCPP_SYSROOT)"))
+            .option(cl::Option("platform").takes_value().value_name("SPEC")
+                .help("The target's platform for this invocation (= MCPP_PLATFORM)"))
+            .option(cl::Option("package").short_name('p').takes_value().multiple().value_name("NAME")
+                .help("Fetch for the named workspace member; repeat for several"))
+            .option(cl::Option("workspace")
+                .help("Fetch for all workspace members"))
+            .option(cl::Option("exclude").takes_value().multiple().value_name("NAME")
+                .help("With --workspace, leave the named member out; repeatable"))
+            .option(cl::Option("profile").takes_value().value_name("NAME")
+                .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate root-package features, and a dependency's as <dependency>/<feature>"))
+            .action(cmd_fetch))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
             // Named `bin`, NOT `target`, and the rename is load-bearing.
@@ -1983,7 +2009,7 @@ int run(int argc, char** argv) {
             // command" into "add a command AND remember to bump a number",
             // and the compiler only catches the direction that overflows.
             static constexpr std::array known = std::to_array<std::string_view>({
-                "new", "build", "run", "test", "clean", "add", "remove",
+                "new", "build", "fetch", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "write", "coff-def",

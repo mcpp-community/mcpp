@@ -1434,8 +1434,8 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 return std::unexpected(std::format(
                     "offline mode: git dependency '{}' needs {} of '{}'\n"
                     "       {}\n"
-                    "       run without --offline (or unset MCPP_OFFLINE) to {} it",
-                    name, need, spec.git, why, verb));
+                    "       {} to {} it, or bring the clone with `mcpp fetch --to <dir>` and `mcpp fetch --from <dir>`",
+                    name, need, spec.git, why, mcpp::effects::offline_remedy(), verb));
             };
             const bool offline =
                 !remoteIsLocal && mcpp::effects::offline_mode();
@@ -1642,6 +1642,8 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             }
             sourceCommit = resolvedGitRev;
             dep_root = gitRoot;
+            // A clone this run used (`mcpp fetch --to` carries it).
+            mcpp::effects::note_git_used({spec.git, resolvedGitRev, gitRoot});
             state.gitCloneBySource.try_emplace(
                 sourceRefOf(state, "git", spec, item.resolveRoot, item.originalConstraint),
                 GitClone{ gitRoot, spec.git, spec.gitRefKind, spec.gitRev });

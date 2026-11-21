@@ -290,8 +290,13 @@ that stops it. `mcpp self doctor` lists every index whose floor the running mcpp
 does not meet. Earlier versions printed the E0006 text as `error:` at the start
 of any run that read such an index, including runs that then succeeded.
 
-`--offline` (or `MCPP_OFFLINE=1`) forbids the network for one invocation and
-fails rather than fetch. `--locked` fails when resolution differs from
+`--offline` (or `MCPP_OFFLINE=1`, or `[build] offline = true` in `mcpp.toml` or
+`config.toml`) forbids the network and fails rather than fetch; a payload the
+home lacks comes from a named archive directory, if any. `mcpp fetch` puts
+what a build needs in the home beforehand, `mcpp fetch --to <dir>` writes it
+into a directory and `mcpp fetch --from <dir>` takes that directory into
+another machine's home (2026.11.21.1+; 05 — Dependencies, "Offline builds and
+mcpp fetch"). `--locked` fails when resolution differs from
 `mcpp.lock` instead of rewriting it, which is the shape a CI job wants.
 `mcpp index pin <name> <rev>` records a commit for a custom index in
 `mcpp.toml`; `mcpp index unpin` removes it. Both edit an `[indices]` entry

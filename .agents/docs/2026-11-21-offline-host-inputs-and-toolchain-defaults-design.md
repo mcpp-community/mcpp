@@ -97,6 +97,26 @@ mcpp 把它传给 xlings。它是机器的事实：写在 `mcpp.toml` 中时可�
 **与 upstream 的关系。** `[xlings] upstream` 是已安装载荷的来源（按链接发布，不复制）；`archives` 与 bundle 是归档的来源（校验后安装）。
 两者并列，各自不变。
 
+**实施修订（3.2）。**
+
+- **一次运行的键，一个机制。** `[build] offline`、`[build] allow_host_tools`、`[xlings] archives` 作用于整个运行及其
+  启动的程序，各自在开始时陈述为一个变量（`MCPP_OFFLINE`、`MCPP_ALLOW_HOST_TOOLS`、`MCPP_ARCHIVES`）：调用者给出的变量为
+  覆盖层，其次工程（prepare 在加载配置之前陈述），再次机器（配置加载时、引导之前陈述）。`mcpp::effects::state_key`
+  只在没有更高层陈述时写入，并记下哪一层回答；拒绝的补救由此说明如何回到联网（`offline_remedy`）。
+- **离线的安装来源。** 写明了归档目录时，离线运行把 home 缺少的载荷交给 xlings（`XLINGS_NET_UNREACHABLE`），只询问下载缓存与
+  这些目录；没有写明时不询问任何来源，与离线一向的含义相同。后者使规划性的运行（`mcpp self doctor` 以离线描述一次构建）
+  不因下载缓存中恰好有归档而安装；doctor 另以空的 `MCPP_ARCHIVES` 运行。两种拒绝由同一对函数给出
+  （`offline_without_sources`、`offline_unavailable`），每条安装路径——载荷、依赖、`[xlings]` 声明、首次运行的工具链——共用。
+- **用到的输入。** 载荷在交出时记录（`Fetcher::resolve_xpkg_path`、依赖的读取、`[xlings]` 声明），git 克隆在作为依赖根时记录；
+  `--to` 写出这些与构建工具，闭包由 xlings 补全（Linux 上含 patchelf）。
+- **`bundle.toml` 中 mcpp 的表。** `[mcpp]`：`format`、`created_by`、`host`、`targets`、`packages`；`[[git]]`：`url`、
+  `commit`、`clone`（`~/.mcpp/git` 下的目录名，其键与宿主无关）、`file`。mcpp 改写时整体替换自己的表，保留其余。
+- **`--from` 的顺序。** 读取并判断（格式、宿主与目标的警告、锁）→ 以不引导的方式加载配置 → 放置索引快照 → 以该目录为归档目录
+  完成 home 的引导（引导工具由快照解析）→ `xlings install --from` → 导入克隆 → 规划。快照放在 home 没有该索引之处，或该处是
+  先前的快照或制品的树；git 工作树与其他目录是 home 自己的，保持不变。已拥有的索引（mcpplibs）此后的刷新照常暂存并交换。
+- **锁的比较。** 锁中来自索引的包与工具链条目，各自须在 bundle 的 `packages` 中有同名同版本的一项，否则为
+  `bundle-older-than-lock`，在安装任何东西之前拒绝。
+
 ### 3.3 宿主输入：声明、身份与提示
 
 **宿主输入的类别。** 每一类都是显式的开启，开启的方式在四层中：

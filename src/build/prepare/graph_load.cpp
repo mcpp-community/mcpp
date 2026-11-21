@@ -34,6 +34,7 @@ import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
 import mcpp.home.files;   // the home's install turn
 import mcpp.fetcher;
+import mcpp.pm.package_fetcher;   // the offline refusals every install path says alike
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
@@ -696,8 +697,9 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                 if (mcpp::effects::offline_mode() && !servedByProjectIndex) {
                     if (auto cfgO = state.get_cfg(true);
                         cfgO && !mcpp::provider::open(mcpp::config::make_xlings_env(**cfgO))->default_index_status(0).present) {
-                        hint += "\n  offline: the package index has never been fetched; "
-                                "run `mcpp index update` without --offline";
+                        hint += std::format("\n  offline: the package index has never been fetched; "
+                                            "{} and run `mcpp index update`, or bring one with `mcpp fetch --from <dir>`",
+                                            mcpp::effects::offline_remedy());
                         refusal::record(refusal::Code::OfflineDownloadRequired);
                     }
                 }
@@ -872,7 +874,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
         }
 
         std::optional<mcpp::home::Turn> turn;
-        if (!ctx.installed && !mcpp::effects::offline_mode()) {
+        if (!ctx.installed && mcpp::effects::install_sources() != mcpp::effects::InstallSources::None) {
             bool waited = false;
             const auto provider = mcpp::provider::open(ctx.useProjectEnv
                 ? mcpp::config::make_project_xlings_env(**cfg, state.projectIndexRoot())
@@ -974,14 +976,9 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             // package rather than surfacing a socket error from three layers
             // down. (The toolchain payload path has its own gate; this is the
             // dependency path, which does not go through resolve_xpkg_path.)
-            if (mcpp::effects::offline_mode()) {
-                refusal::record(refusal::Code::OfflineDownloadRequired);
-                return std::unexpected(std::format(
-                    "offline mode: dependency '{}' v{} is not installed and "
-                    "cannot be downloaded\n"
-                    "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
-                    displayName, version));
-            }
+            if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None)
+                return std::unexpected(mcpp::pm::offline_without_sources(
+                    std::format("dependency '{}' v{}", displayName, version)));
             mcpp::ui::info("Downloading", std::format("{} v{}", displayName, version));
 
             // #238: retain whatever error/warn text the child DID emit so we
@@ -1137,6 +1134,10 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             }
             if (!r) return std::unexpected(std::format(
                 "fetch '{}@{}': {}", depName, version, r.error().message));
+            if (r->exitCode != 0 && mcpp::effects::offline_mode())
+                return std::unexpected(mcpp::pm::offline_unavailable(
+                    std::format("dependency '{}' v{}", displayName, version),
+                    r->error ? r->error->message : capturedChildError));
             if (r->exitCode != 0) {
                 // #238: the opaque `fetch failed (exit 1)` hid the actionable
                 // context mcpp actually has. Reconstruct it: the target, the
@@ -1229,6 +1230,10 @@ step4a_load_version_dep_read_manifest(PrepareState& state, LoadVersionDepCtx& ct
         }
         if (!ctx.luaContent) return std::unexpected(with_index_cause(std::format(
             "dependency '{}': index entry not found in local clone", depName)));
+        // A dependency this run used, under the address its provider installs
+        // it by (`mcpp fetch --to`).
+        mcpp::effects::note_package_used(std::format("{}@{}",
+            mcpp::manifest::xpkg_wire_address(*ctx.luaContent, ctx.ns, shortName).target, version));
         // 0.0.6+: read explicit namespace from xpkg lua if present.
         auto luaNs = mcpp::manifest::extract_xpkg_namespace(*ctx.luaContent);
 

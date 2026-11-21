@@ -217,6 +217,16 @@ enum class Code {
     // { binutils = … }`) is older than the one the toolchain's payload
     // declares (SPEC-006 §2.9).
     CompanionTooOld,
+    // Offline, a payload the home lacks is in none of the local sources --
+    // the download cache, the archive directories (`[xlings] archives`).
+    // Distinct from OfflineDownloadRequired, where the run has no local source
+    // to ask: here it asked them, and the remedy is a bundle with the archive
+    // (`mcpp fetch --to` on a machine with a network).
+    ArtifactUnavailableOffline,
+    // A bundle given to `mcpp fetch --from` was written before the project's
+    // mcpp.lock: the lock records versions its index snapshots and archives
+    // do not hold.
+    BundleOlderThanLock,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -282,6 +292,9 @@ constexpr std::string_view name(Code c) {
         case Code::BuildProgramUnpublishedInput:
                                          return "build-program-unpublished-input";
         case Code::CompanionTooOld:      return "companion-too-old";
+        case Code::ArtifactUnavailableOffline:
+                                         return "artifact-unavailable-offline";
+        case Code::BundleOlderThanLock:  return "bundle-older-than-lock";
         case Code::Other:                return "other";
     }
     return "other";
@@ -317,7 +330,7 @@ void record(Code c) {
     // Needing a download offline is the run stopping before a denied effect:
     // `--offline` is `--deny network`, and the process exits 5 (design
     // 2026-10-26 D23).
-    if (c == Code::OfflineDownloadRequired)
+    if (c == Code::OfflineDownloadRequired || c == Code::ArtifactUnavailableOffline)
         mcpp::effects::note_effect_refused("network", "a download is required");
 }
 

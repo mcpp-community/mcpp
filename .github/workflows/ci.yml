@@ -497,6 +497,11 @@ jobs:
     if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
     uses: ./.github/workflows/ci-upgrade.yml
 
+  offline:
+    needs: [build-linux, changes]
+    if: ${{ needs.changes.outputs.verified != 'true' && needs.changes.outputs.set == 'full' }}
+    uses: ./.github/workflows/ci-offline.yml
+
   # Pull requests and dispatch only, as when it was a workflow of its own.
   openkal:
     needs: [build-linux, build-linux-arm, build-macos, build-windows, changes]
@@ -622,7 +627,7 @@ jobs:
     name: verdict
     needs: [changes, docs, build-linux, build-linux-arm, build-macos, build-windows, bootstrap,
             unit-linux-archive, unit-linux, linux, linux-e2e, macos, macos-e2e, macos-ios, windows,
-            windows-e2e, windows-msvc-xlings, cross, target-matrix, upgrade, openkal, e2e-coverage,
+            windows-e2e, windows-msvc-xlings, cross, target-matrix, upgrade, offline, openkal, e2e-coverage,
             test-report, release-form, register]
     if: ${{ always() }}
     runs-on: ubuntu-24.04

@@ -595,7 +595,9 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `companion-too-old` | 工具链旁写明的配套载荷（`companions = { binutils = … }`）低于工具链载荷声明的版本（SPEC-006 §2.9） |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的两个版本上 |
 | `shared-library-cxx-runtime` | 图所在的构建中，C++ 运行时是一个包，而某个依赖的 C++ 共享库没有声明私有副本 |
-| `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引 *(2026.9.16.1+)* |
+| `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引；2026.11.21.1 起，限于未写明归档目录时 *(2026.9.16.1+)* |
+| `artifact-unavailable-offline` | 本次运行离线且写明了归档目录，而这些目录与下载缓存都没有规划所需的归档；消息附提供者列出的缺少项 *(2026.11.21.1+)* |
+| `bundle-older-than-lock` | `mcpp fetch --from`：bundle 缺少 `mcpp.lock` 所记的版本 *(2026.11.21.1+)* |
 | `package-cycle` | 依赖图中存在一个包的环；消息列出环上的边 *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | 一个声明了自含 C++ 运行时的程序或测试，加载了本次构建中耦合到共享运行时的 C++ 共享库 *(2026.9.16.1+)* |
 | `static-package-in-two-images` | 一个静态包被本次构建的多个映像到达，而在该目标上一个映像不能使用另一个映像里的副本 *(2026.9.16.1+)* |
@@ -670,8 +672,9 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 连累它的兄弟成员。不在项目中，或者被选中的成员全部规划失败时，信封省略
 `data` 并以 1 退出，每个失败的成员各带一条诊断：不在项目中是
 `MCPP_BUILD_DATABASE_NO_PROJECT`；离线规划（`--offline`、`MCPP_OFFLINE`、
-`MCPP_NO_AUTO_INSTALL`）需要下载某样东西（工具链、包、git 修订，或包索引，
-消息会指出第一个）时是 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`；因其他原因规划失败
+`[build] offline`、`MCPP_NO_AUTO_INSTALL`）需要下载某样东西（工具链、包、git 修订，
+或包索引，消息会指出第一个）时，无论是未写明归档目录还是归档目录中没有，都是
+`MCPP_OFFLINE_DOWNLOAD_REQUIRED`；因其他原因规划失败
 时是 `MCPP_BUILD_DATABASE_PLAN_FAILED`。离线这一种不是项目的缺陷：不带
 `--offline` 再运行一次即可消除它。每个成员的诊断都带 `path`，即该成员的
 `mcpp.toml`，相对工作区根目录。

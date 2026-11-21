@@ -44,6 +44,10 @@ import mcpp.invocation;
 import mcpp.effects;
 import mcpp.run;
 import mcpp.home.files;
+import mcpp.config;
+import mcpp.fetcher.progress;   // bootstrap progress for load_or_init
+import mcpp.pm.bundle;          // `mcpp fetch --to`, `--from`
+import mcpplibs.os.env;
 import mcpp.ui.terminal;
 import mcpp.project;
 import mcpp.manifest;
@@ -217,7 +221,11 @@ target_legs(const mcpplibs::cmdline::ParsedArgs& parsed, const mcpp::build::Buil
 }
 } // namespace
 
-int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed);
+// What the body does with each configuration it plans: builds it, writes its
+// compile database (`--configure-only`), or stops once it is planned and
+// everything it needs is in the home (`mcpp fetch`).
+enum class BodyMode { Build, Configure, Fetch };
+int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed, BodyMode mode = BodyMode::Build);
 
 namespace {
 // The build's events on standard output (design 2026-10-26 §5.1): `waiting` while
@@ -238,6 +246,84 @@ void stream_build_events() {
     });
 }
 } // namespace
+
+// `mcpp fetch [--to <dir> | --from <dir>] [--target <t>]...` (design
+// 2026-11-21, offline and toolchain defaults §3.2; docs/05): the step of a
+// build that obtains what it needs, as a command. It resolves and plans each
+// configuration as `mcpp build --configure-only` does -- the dependencies by
+// the lock, the toolchain and its companions, the targets' bases, the build
+// programs' dependencies, the tests' -- so everything is in the home, and
+// compiles nothing.
+//
+// `--to <dir>` then writes what this run used into a self-describing
+// directory (mcpp.pm.bundle); `--from <dir>` first takes such a directory into
+// the home -- its index snapshots before the home's bootstrap, whose tools
+// resolve with them, then its packages and clones -- and the plan that
+// follows uses what it installed.
+export int cmd_fetch(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    const auto to = parsed.value("to");
+    const auto from = parsed.value("from");
+    if (to && from) {
+        mcpp::ui::error("--to and --from exclude each other: the one writes a bundle, the other reads one");
+        return 2;
+    }
+    std::error_code ec;
+    const auto root = mcpp::project::find_manifest_root(std::filesystem::current_path(ec));
+    if (!root) { mcpp::ui::error("no mcpp.toml found in current directory or any parent"); return 2; }
+    mcpp::build::BuildOverrides ov = overrides_from_selectors(parsed);
+    auto legs = target_legs(parsed, ov);
+    if (!legs) { mcpp::ui::error(legs.error()); return 2; }
+    std::vector<std::string> targets;
+    for (auto const& l : *legs) targets.push_back(l.triple);
+
+    if (from) {
+        auto bundle = mcpp::pm::bundle::open(*from, *root, targets);
+        if (!bundle) { mcpp::ui::error(bundle.error()); return 2; }
+        // The bundle is an archive directory of this run: the home's
+        // bootstrap below takes its tools from it.
+        auto dirs = mcpp::effects::archive_dirs();
+        dirs.insert(dirs.begin(), bundle->dir);
+        mcpp::invocation::set("MCPP_ARCHIVES", mcpplibs::os::env::join_list(dirs));
+        auto local = mcpp::config::load_or_init(false, {}, {}, mcpp::config::Initialization::Local);
+        if (!local) { mcpp::ui::error(local.error().message); return 4; }
+        const auto placed = mcpp::pm::bundle::adopt_indices(*bundle, *local, *root);
+        auto cfg = mcpp::config::load_or_init(false, mcpp::fetcher::make_bootstrap_progress_callback());
+        if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
+        auto imported = mcpp::pm::bundle::install(*bundle, *cfg, *root);
+        if (!imported) { mcpp::ui::error(imported.error()); return 2; }
+        std::string indices;
+        for (auto const& n : placed) indices += (indices.empty() ? "" : ", ") + n;
+        mcpp::ui::status("Imported", std::format("{} package{}, {} git clone{}{} from {}",
+            imported->packages, imported->packages == 1 ? "" : "s",
+            imported->clones, imported->clones == 1 ? "" : "s",
+            indices.empty() ? std::string{} : std::format(", the index{} {}", placed.size() == 1 ? "" : "es", indices),
+            bundle->dir.string()));
+    }
+
+    if (int rc = cmd_build_body(parsed, BodyMode::Fetch); rc != 0) return rc;
+
+    std::string which;
+    for (auto const& t : targets) which += (which.empty() ? "" : ", ") + t;
+    if (which.empty()) which = mcpp::pm::bundle::this_host();
+    if (!to) {
+        const auto packages = mcpp::effects::packages_used().size();
+        const auto clones = mcpp::effects::git_used().size();
+        mcpp::ui::status("Fetched", std::format("{} package{}, {} git clone{} for {}, in the home",
+            packages, packages == 1 ? "" : "s", clones, clones == 1 ? "" : "s", which));
+        return 0;
+    }
+    {
+        auto cfg = mcpp::config::load_or_init(true);
+        if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
+        auto written = mcpp::pm::bundle::write(*to, *cfg, *root, targets);
+        if (!written) { mcpp::ui::error(written.error()); return 2; }
+        mcpp::ui::status("Fetched", std::format("{} package{}, {} git clone{} ({}) for {} → {}",
+            written->packages, written->packages == 1 ? "" : "s",
+            written->clones, written->clones == 1 ? "" : "s",
+            mcpp::bmi_cache::human_bytes(written->bytes), which, *to));
+    }
+    return 0;
+}
 
 // `mcpp build --message-format json` (design 2026-10-26 §5.1).
 //
@@ -330,7 +416,8 @@ namespace {
 int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
                        const mcpp::build::BuildOverrides& ov,
                        const std::vector<mcpp::toolchain::target_set::Leg>& legs,
-                       bool verbose, bool print_fp, bool no_cache, bool configure_only) {
+                       bool verbose, bool print_fp, bool no_cache, bool configure_only,
+                       bool fetch_only) {
     namespace L = mcpp::build::legs;
     auto selection = mcpp::cli::select_members(member_request(parsed));
     if (!selection) { mcpp::ui::error(std::format("{}", selection.error())); return 2; }
@@ -394,6 +481,7 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
     const std::string rootDb = contexts.front()->plan.rootCompileDb;
 
     int rc = 0;
+    if (fetch_only) return 0;
     if (configure_only) {
         for (auto* c : contexts) {
             c->plan.publishRootCompileDb = false;
@@ -417,11 +505,14 @@ int build_several_legs(const mcpplibs::cmdline::ParsedArgs& parsed,
 }
 } // namespace
 
-int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
+int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed, BodyMode mode) {
     bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
     bool print_fp = parsed.is_flag_set("print-fingerprint");
     bool no_cache = parsed.is_flag_set("no-cache");
-    bool configure_only = parsed.is_flag_set("configure-only");
+    // A fetch plans as a configuration does -- with the tests and the
+    // dev-dependencies, the inputs of every command -- and stops there.
+    const bool fetch_only = mode == BodyMode::Fetch;
+    bool configure_only = mode != BodyMode::Build || parsed.is_flag_set("configure-only");
     // The build's report: its steps, its status line, `Finished` (build
     // progress design 2026-09-29).
     mcpp::build::progress::open(verbose);
@@ -440,7 +531,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!legs) { mcpp::ui::error(legs.error()); return 2; }
     if (legs->size() == 1) ov.target_triple = legs->front().triple;
     if (legs->size() > 1)
-        return build_several_legs(parsed, ov, *legs, verbose, print_fp, no_cache, configure_only);
+        return build_several_legs(parsed, ov, *legs, verbose, print_fp, no_cache, configure_only, fetch_only);
 
     // Fan-out prefixes every diagnostic with the member it came from; the
     // single-package path has nothing to disambiguate and passes "".
@@ -481,6 +572,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
             where(ctx.error());
             return 2;
         }
+        if (fetch_only) return 0;
         if (configured) {
             ctx->plan.publishRootCompileDb = false;
             rootCompileDb = ctx->plan.rootCompileDb;
@@ -540,6 +632,7 @@ int cmd_build_body(const mcpplibs::cmdline::ParsedArgs& parsed) {
                                                       /*extraTargets=*/{}, mo);
                 if (!ctx && g.size() > 1) { configure_one_by_one(); continue; }
                 if (!ctx) { mcpp::ui::error(std::format("{}: {}", g.front(), ctx.error())); rc = 2; continue; }
+                if (fetch_only) continue;
                 ctx->plan.publishRootCompileDb = false;
                 rootCompileDb = ctx->plan.rootCompileDb;
                 if (int r = mcpp::build::run_configure_plan(*ctx, verbose); r != 0) rc = r;
@@ -825,8 +918,9 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     auto plan_failure_code = [&] {
         const bool offline = mcpp::effects::offline_mode()
                           || mcpp::effects::no_auto_install();
-        const bool wasOfflineDownload = mcpp::build::refusal::take()
-            == mcpp::build::refusal::Code::OfflineDownloadRequired;
+        const auto code = mcpp::build::refusal::take();
+        const bool wasOfflineDownload = code == mcpp::build::refusal::Code::OfflineDownloadRequired
+            || code == mcpp::build::refusal::Code::ArtifactUnavailableOffline;
         return std::string(wasOfflineDownload && offline
             ? "MCPP_OFFLINE_DOWNLOAD_REQUIRED" : "MCPP_BUILD_DATABASE_PLAN_FAILED");
     };

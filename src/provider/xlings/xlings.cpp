@@ -24,6 +24,7 @@ import mcpp.manifest.xpkg;      // the runtime deps a payload's descriptor decla
 import mcpp.toolchain.platform; // ...for this host
 import nlohmann.json;
 import mcpplibs.os.fs;
+import mcpplibs.os.env;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -1017,7 +1018,7 @@ std::vector<InvocationVar> invocation_env(const Env& env) {
         }
         return std::to_string(limit);
     };
-    return {
+    std::vector<InvocationVar> vars{
         {"XLINGS_HOME", env.home.string(), true},
         {"XLINGS_PROJECT_DIR", env.projectDir.string(), !env.projectDir.empty()},
         {"XLINGS_ACTIVE_SUBOS", "", false},
@@ -1025,6 +1026,19 @@ std::vector<InvocationVar> invocation_env(const Env& env) {
         {"XLINGS_DOWNLOAD_IDLE_TIMEOUT", cap("XLINGS_DOWNLOAD_IDLE_TIMEOUT", static_cast<int>(kSourceIdleTimeout.count())), true},
         {"XLINGS_DOWNLOAD_LOW_SPEED", mcpp::invocation::get("XLINGS_DOWNLOAD_LOW_SPEED").value_or("off"), true},
     };
+    // THE SOURCES OF THIS RUN (design 2026-11-21 §3.2; xlings 2026.11.21.1):
+    // the archive directories before the caller's own, and offline, the
+    // statement that the network is not one -- xlings then takes an archive
+    // from its download cache and the directories, and names together those
+    // no source holds. Not offline, a caller's XLINGS_NET_UNREACHABLE stays.
+    if (auto dirs = mcpp::effects::archive_dirs(); !dirs.empty()) {
+        if (auto own = mcpp::invocation::get("XLINGS_ARCHIVES"); own && !own->empty())
+            for (auto& d : mcpplibs::os::env::split_list(*own)) dirs.push_back(std::move(d));
+        vars.push_back({"XLINGS_ARCHIVES", mcpplibs::os::env::join_list(dirs), true});
+    }
+    if (mcpp::effects::offline_mode())
+        vars.push_back({"XLINGS_NET_UNREACHABLE", "mcpp runs offline", true});
+    return vars;
 }
 
 Invocation invocation(const Env& env, std::vector<std::string> args) {
@@ -1719,6 +1733,62 @@ int install_direct(const Env& env, std::string_view target, bool quiet) {
             "`xlings install {}` did not finish within {} hours and was stopped",
             target, kDirectInstallTimeout.count() / 3600));
     return rc;
+}
+
+namespace {
+int run_shown(Invocation inv) {
+    inv.options.streams = mcpp::run::Streams::output_error_shown;
+    inv.options.on_line = [](std::string_view line) { std::println(libc::stderr(), "{}", line); };
+    inv.options.total = std::chrono::duration_cast<std::chrono::milliseconds>(kDirectInstallTimeout);
+    const auto ran = mcpp::run::execute(inv.argv, inv.options);
+    if (ran.timed_out)
+        mcpp::log::warn("xlings", std::format("`xlings {}` did not finish within {} hours and was stopped",
+                                              inv.argv.size() > 1 ? inv.argv[1] : std::string{},
+                                              kDirectInstallTimeout.count() / 3600));
+    return ran.exit_code;
+}
+}
+
+int download_to(const Env& env, std::span<const std::string> refs, const std::filesystem::path& dir) {
+    std::vector<std::string> args{"download"};
+    args.insert(args.end(), refs.begin(), refs.end());
+    args.insert(args.end(), {"--to", dir.string(), "--with-index"});
+    if (!mcpp::effects::offline_mode()) mcpp::effects::note_network_access();
+    return run_shown(invocation(env, std::move(args)));
+}
+
+int install_from(const Env& env, const std::filesystem::path& dir, std::span<const std::string> refs) {
+    std::optional<mcpp::home::Turn> turn;
+    hold_state_turn(turn, env, std::format("installing from {}", dir.string()));
+    std::vector<std::string> args{"install", "--from", dir.string()};
+    args.insert(args.end(), refs.begin(), refs.end());
+    args.push_back("-y");
+    return run_shown(invocation(env, std::move(args)));
+}
+
+std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot) {
+    namespace fs = std::filesystem;
+    fs::path dir;
+    if (name == "xim") dir = official_index_dir(env);
+    else
+        for (auto const& d : paths::declared_indices(env))
+            if (d.name == name) dir = d.dir;
+    if (dir.empty()) return "unknown";
+    std::error_code ec;
+    const bool ours = fs::exists(dir / kBundleSnapshotMarker, ec) || fs::exists(dir / ".xlings-index-version", ec);
+    if (fs::exists(dir, ec) && (fs::exists(dir / ".git", ec) || !ours)) return "kept";
+    // Copied beside it and exchanged, as a refresh is, so no reader sees half
+    // an index.
+    auto staged = dir;
+    staged += std::format(".staging-{:x}", std::random_device{}());
+    fs::create_directories(staged.parent_path(), ec);
+    fs::copy(snapshot, staged, fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+    if (ec) { fs::remove_all(staged, ec); return "kept"; }
+    write_file(staged / kBundleSnapshotMarker, std::format("{}\n", snapshot.generic_string()));
+    const bool present = fs::exists(dir, ec);
+    auto swapped = present ? mcpplibs::os::fs::exchange(staged, dir) : mcpplibs::os::fs::place(staged, dir);
+    fs::remove_all(staged, ec);
+    return swapped ? "placed" : "kept";
 }
 
 // ─── Sandbox lifecycle ──────────────────────────────────────────────

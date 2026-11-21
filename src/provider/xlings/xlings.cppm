@@ -191,7 +191,15 @@ namespace pinned {
     // clang's interpreter naming the link, and no compiler of the shared home
     // started once the link was removed (measured in this repository's CI on
     // a runner with no cache, mcpp#949).
-    inline constexpr std::string_view kXlingsVersion   = "2026.11.17.2";
+    //
+    // Seventeenth, at 2026.11.21.1 (openxlings/xlings#723). Archives are taken
+    // by content from the download cache, the directories of XLINGS_ARCHIVES
+    // and `archives`, then the network, which a process that states
+    // XLINGS_NET_UNREACHABLE does not ask; `xlings download --to <dir>
+    // --with-index` writes a bundle and `xlings install --from <dir>` installs
+    // from one. `mcpp fetch` and `[build] offline` stand on these (design
+    // 2026-11-21, offline and toolchain defaults §3.1, §3.2).
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.21.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -609,6 +617,15 @@ int install_with_progress(const Env& env, std::string_view target,
 // Run direct `xlings install <target> -y`.
 // Used as a fallback when the NDJSON interface install path fails.
 int install_direct(const Env& env, std::string_view target, bool quiet = false);
+// `xlings download <refs> --to <dir> --with-index` and `xlings install --from
+// <dir> <refs>` (xlings 2026.11.21.1), their lines shown as install_direct's.
+int download_to(const Env& env, std::span<const std::string> refs, const std::filesystem::path& dir);
+int install_from(const Env& env, const std::filesystem::path& dir, std::span<const std::string> refs);
+std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot);
+// The marker of an index tree a bundle placed, which a later bundle may
+// replace. A refresh replaces it as it replaces any copy: an index mcpp owns
+// is staged and exchanged (refresh_owned), the official one is an artifact's.
+inline constexpr std::string_view kBundleSnapshotMarker = ".mcpp-bundle-snapshot";
 
 // ─── Sandbox lifecycle ──────────────────────────────────────────────
 

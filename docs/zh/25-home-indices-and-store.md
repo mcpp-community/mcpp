@@ -111,6 +111,28 @@ note: ninja (bootstrap) is this machine's (1.11.1 /usr/bin/ninja), not the store
 
 输入由 `mcpp.toml` 陈述时，提示另说明这一陈述只在这类机器上成立，机器的输入应写在 `config.toml` 中。
 
+### 归档目录（2026.11.21.1+）
+
+归档目录保存安装载荷所用的归档，按 sha256 查找，与文件名无关：`mcpp fetch --to`
+写出的目录，共享卷上的镜像。
+
+```toml
+# ~/.mcpp/config.toml
+[xlings]
+archives = ["/srv/mcpp-archives"]
+```
+
+该列表取自 `MCPP_ARCHIVES`（分隔方式与 `PATH` 相同），否则取工程的
+`[xlings] archives`（相对于 `mcpp.toml`），否则取 `config.toml` 的（相对于它），
+并传给 xlings；xlings 依次询问下载缓存、这些目录、网络。离线时（`--offline`、
+`[build] offline`）不询问网络：home 缺少的载荷从缓存或目录安装，所有来源都没有的
+被拒绝（`artifact-unavailable-offline`，05 —— 依赖，「离线构建与 mcpp fetch」）。
+`mcpp.toml` 写明的工程之外的目录提示一次：别的机器没有它，机器的目录应写在
+`config.toml` 中。
+
+upstream（§3）与归档目录是不同事物的来源，两者并存：upstream 中已安装的载荷按链接
+发布；归档经校验后安装。
+
 ### 构建产物的保留期（2026.10.31.3+）
 
 `build-cache/v1/` 下的构建缓存由 home 中所有工程共享；工程的 `target/` 属于工程自身。两者各有保留期，

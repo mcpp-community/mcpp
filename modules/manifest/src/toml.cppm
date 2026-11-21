@@ -3235,6 +3235,11 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
         m.buildConfig.allowHostTools = *v;
         m.buildConfig.allowHostToolsStated = true;
     }
+    if (doc->contains("build.offline")) {
+        auto v = doc->get_bool("build.offline");
+        if (!v) return std::unexpected(error(origin, "[build].offline must be true or false"));
+        m.buildConfig.offline = *v;
+    }
     if (auto v = doc->get_string_array("build.cflags"))   m.buildConfig.cflags   = *v;
     if (auto v = doc->get_string_array("build.cxxflags")) m.buildConfig.cxxflags = *v;
     if (auto v = doc->get_string_array("build.defines"))  m.buildConfig.defines  = *v;
@@ -3472,6 +3477,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "write it once", o->first, prev->second.key, k)));
             m.xlings.overrides.emplace(std::move(o->first), std::move(o->second));
         }
+    }
+    if (doc->contains("xlings.archives")) {
+        auto v = doc->get_string_array("xlings.archives");
+        if (!v) return std::unexpected(error(origin,
+            "[xlings].archives must be a list of directories, e.g. [\"vendor/archives\"]"));
+        m.xlings.archives = *v;
+        m.xlings.archivesStated = true;
     }
     if (doc->get("xlings.subos")) {
         m.xlings.subosDeclared = true;

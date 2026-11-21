@@ -13,6 +13,7 @@ import mcpp.diag;
 import mcpp.build.refusal;
 import mcpp.build.version_floor;
 import mcpplibs.os.platform;
+import mcpplibs.os.env;
 import mcpp.toolchain.platform;
 import mcpp.toolchain.apple_sdk;
 import mcpp.effects;
@@ -66,7 +67,8 @@ import mcpp.run;
 
 namespace mcpp::build {
 
-static void resolve_host_tools(PrepareState& state, const mcpp::config::GlobalConfig& cfg);
+static void resolve_host_tools(PrepareState& state);
+static void state_project_keys(PrepareState& state);
 
 // D11's sentence: which spec, replacing what, declared where. The key is the
 // platform entry `for_platform` answered with (`[toolchain].linux`, else
@@ -136,6 +138,8 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
     // the MSVC ABI on a machine with no usable MSVC is switched to MinGW-w64
     // — but only when `tc_origin_is_user_explicit` says mcpp chose it itself.
     state.bootstrap_checked = false;
+    // Before the configuration's bootstrap, the first reader of them.
+    state_project_keys(state);
     state.get_cfg = [&](bool requireBootstrap = true) -> std::expected<mcpp::config::GlobalConfig*, std::string> {
         if (!state.cfg_opt) {
             auto c = mcpp::config::load_or_init(/*quiet=*/false,
@@ -150,7 +154,7 @@ static std::expected<void, std::string> step1_define_early_toolchain_closures(Pr
         // installing tools it will not execute.
         if (requireBootstrap && !state.overrides.describes() && !state.bootstrap_checked) {
             state.bootstrap_checked = true;
-            resolve_host_tools(state, *state.cfg_opt);
+            resolve_host_tools(state);
             auto problem = mcpp::config::check_base_init(*state.cfg_opt);
             if (!problem.empty()) {
                 return std::unexpected(std::format(
@@ -1778,30 +1782,50 @@ static void step2_resolve_request_version(PrepareState& state, const mcpp::confi
         state.toolchainLocked = mcpp::pm::LockedToolchain{ request, version };
 }
 
-// THE BOOTSTRAP TOOLS FROM THE MACHINE'S PATH, RESOLVED ONCE (`[build]
-// allow_host_tools`, design 2026-11-21, offline and toolchain defaults §3.3;
-// SPEC-004 §2): MCPP_ALLOW_HOST_TOOLS, else the project's statement, else the
-// machine's, else none. The answer is stated as the variable, so every reader
-// of this run and the programs it starts (`effects::host_tool_allowed`) read
-// one value; each tool taken is a host input, said once.
-static void resolve_host_tools(PrepareState& state, const mcpp::config::GlobalConfig& cfg) {
-    std::string origin = "env", originFile;
-    if (!mcpp::invocation::get("MCPP_ALLOW_HOST_TOOLS")) {
-        const std::vector<std::string>* list = nullptr;
-        if (state.m && state.m->buildConfig.allowHostToolsStated) {
-            list = &state.m->buildConfig.allowHostTools;
-            origin = "manifest";
-            originFile = state.m->sourcePath.string();
-        } else if (cfg.allowHostToolsStated) {
-            list = &cfg.allowHostTools;
-            origin = "config";
-            originFile = cfg.configFile.string();
-        }
-        if (!list) return;
+// THE PROJECT'S TIER OF THE KEYS OF THE WHOLE RUN (SPEC-004 §2): `[build]
+// offline`, `[build] allow_host_tools` and `[xlings] archives` of the build's
+// root, stated as their variables unless the caller set them
+// (`mcpp::effects::state_key`); the machine's tier is stated as the
+// configuration loads, below this one. An archive directory outside the
+// project is this machine's, and a manifest that names one says so once.
+static void state_project_keys(PrepareState& state) {
+    if (!state.m || state.overrides.tool_depth > 0) return;
+    using mcpp::effects::Tier;
+    const auto& b = state.m->buildConfig;
+    if (b.offline)
+        mcpp::effects::state_key("MCPP_OFFLINE", Tier::Project, *b.offline ? "1" : "0",
+                                 "mcpp.toml [build] offline");
+    if (b.allowHostToolsStated) {
         std::string joined;
-        for (auto const& t : *list) joined += (joined.empty() ? "" : ",") + t;
-        mcpp::invocation::set("MCPP_ALLOW_HOST_TOOLS", joined.empty() ? "none" : joined);
+        for (auto const& t : b.allowHostTools) joined += (joined.empty() ? "" : ",") + t;
+        mcpp::effects::state_key("MCPP_ALLOW_HOST_TOOLS", Tier::Project, joined.empty() ? "none" : joined,
+                                 "mcpp.toml [build] allow_host_tools");
     }
+    if (!state.m->xlings.archivesStated) return;
+    const auto base = state.m->sourcePath.parent_path();
+    std::vector<std::filesystem::path> dirs;
+    for (auto const& d : state.m->xlings.archives) {
+        const std::filesystem::path p = d;
+        dirs.push_back(p.is_absolute() ? p.lexically_normal() : (base / p).lexically_normal());
+        const auto rel = dirs.back().lexically_relative(state.root ? *state.root : base);
+        if (rel.empty() || *rel.begin() == "..")
+            mcpp::diag::notice(mcpp::diag::Severity::Note, "machine-path-in-manifest",
+                std::format("[xlings] archives\x1f{}", dirs.back().generic_string()),
+                std::format("mcpp.toml [xlings] archives names {}, a directory of this machine", d),
+                "another machine lacks it; a machine's directory belongs in config.toml [xlings] archives");
+    }
+    mcpp::effects::state_key("MCPP_ARCHIVES", Tier::Project, mcpplibs::os::env::join_list(dirs),
+                             "mcpp.toml [xlings] archives");
+}
+
+// THE BOOTSTRAP TOOLS FROM THE MACHINE'S PATH (`[build] allow_host_tools`,
+// design 2026-11-21, offline and toolchain defaults §3.3; SPEC-004 §2): the
+// variable the tiers stated (`state_project_keys`, the configuration's
+// machine tier) answers every reader of this run and the programs it starts
+// (`effects::host_tool_allowed`); each tool taken is a host input, said once.
+static void resolve_host_tools(PrepareState& state) {
+    const auto origin = mcpp::effects::key_origin("MCPP_ALLOW_HOST_TOOLS");
+    if (origin.tier == mcpp::effects::Tier::None) return;
     for (std::string_view tool : {"ninja", "patchelf"}) {
         if (!mcpp::effects::host_tool_allowed(tool)) continue;
         const auto name = std::string(tool) + std::string(mcpplibs::os::exe_suffix);
@@ -1815,9 +1839,21 @@ static void resolve_host_tools(PrepareState& state, const mcpp::config::GlobalCo
         d.value = path->string();
         d.detail = version;
         d.cls = SourceClass::Host;
-        d.originKind = origin;
-        d.originFile = originFile;
-        d.originKey = origin == "env" ? "MCPP_ALLOW_HOST_TOOLS" : "[build] allow_host_tools";
+        switch (origin.tier) {
+            case mcpp::effects::Tier::Project:
+                d.originKind = "manifest";
+                d.originFile = state.m ? state.m->sourcePath.string() : std::string{};
+                d.originKey = "[build] allow_host_tools";
+                break;
+            case mcpp::effects::Tier::Machine:
+                d.originKind = "config";
+                d.originFile = state.cfg_opt ? state.cfg_opt->configFile.string() : std::string{};
+                d.originKey = "[build] allow_host_tools";
+                break;
+            default:
+                d.originKind = "env";
+                d.originKey = "MCPP_ALLOW_HOST_TOOLS";
+        }
         record_source(state, std::move(d));
     }
 }
@@ -2110,9 +2146,9 @@ step2_offline_refusal(PrepareState& state) {
         // Name the knob that actually fired, not a fixed one: telling a user
         // who passed `--offline` to unset MCPP_NO_AUTO_INSTALL sends them
         // looking for a variable they never set.
-        std::string_view release = mcpp::effects::offline_mode()
-            ? "or drop --offline / unset MCPP_OFFLINE to let mcpp auto-install."
-            : "or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.";
+        const std::string release = mcpp::effects::no_auto_install()
+            ? std::string("or unset MCPP_NO_AUTO_INSTALL to let mcpp auto-install.")
+            : std::format("or {} to let mcpp auto-install.", mcpp::effects::offline_remedy());
         // Windows without a usable MSVC must not be told to install llvm:
         // that default resolves to clang targeting the MSVC ABI, which is
         // exactly what this machine cannot build. Name the toolchain that
@@ -2604,7 +2640,7 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
         if (auto r = step2_resolve_explicit_spec(state, ctx); !r) return std::unexpected(r.error());
       } else if (state.tcSpec.has_value() && *state.tcSpec == "system") {
         if (auto r = step2_system_toolchain_refusal(state); !r) return std::unexpected(r.error());
-      } else if (mcpp::effects::offline_mode()
+      } else if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None
                || mcpp::effects::no_auto_install()) {
         if (auto r = step2_offline_refusal(state); !r) return std::unexpected(r.error());
       } else {

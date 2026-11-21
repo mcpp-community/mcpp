@@ -1098,6 +1098,7 @@ longer updated; the first build that finds it says so once, naming this key.
 | `allow_host_libs` | [20 — Toolchains](20-toolchains.md), [22 — Target Side](22-target-side.md) |
 | `allow_host_tools` | [25 — Home, Indices and Store](25-home-indices-and-store.md) |
 | `ios_deployment_target` | [20 — Toolchains](20-toolchains.md) |
+| `offline` | [05 — Dependencies](05-dependencies.md), "Offline builds and mcpp fetch" |
 | `platform-dependencies` | [22 — Target Side](22-target-side.md) |
 | `std-module`, `std-compat-module` | [22 — Target Side](22-target-side.md) |
 

@@ -668,7 +668,9 @@ a program classifying the outcome reads `reason`:
 | `companion-too-old` | a companion stated beside the toolchain (`companions = { binutils = … }`) is older than the one the toolchain's payload declares (SPEC-006 §2.9) |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
-| `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index *(2026.9.16.1+)* |
+| `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index; from 2026.11.21.1, with no archive directory named *(2026.9.16.1+)* |
+| `artifact-unavailable-offline` | the run is offline, archive directories are named, and neither they nor the download cache hold an archive the plan needs; the message carries the provider's list *(2026.11.21.1+)* |
+| `bundle-older-than-lock` | `mcpp fetch --from`: the bundle lacks a version `mcpp.lock` records *(2026.11.21.1+)* |
 | `package-cycle` | the dependency graph contains a cycle of packages; the message names its edges *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | a program or test that states a self-contained C++ runtime loads a C++ shared library of the build that couples to a shared one *(2026.9.16.1+)* |
 | `static-package-in-two-images` | a static package several images of the build reach, on a target where an image cannot use another image's copy *(2026.9.16.1+)* |
@@ -751,9 +753,10 @@ planning failure does not cost its siblings'. Outside a project, or when
 every selected member fails to plan, the envelope omits `data` and exits 1,
 with one diagnostic per failed member: `MCPP_BUILD_DATABASE_NO_PROJECT`
 outside a project; `MCPP_OFFLINE_DOWNLOAD_REQUIRED` when an offline plan
-(`--offline`, `MCPP_OFFLINE`, `MCPP_NO_AUTO_INSTALL`) needs something that has
-to be downloaded (a toolchain, a package, a git revision or the package
-index; the message names the first one); or `MCPP_BUILD_DATABASE_PLAN_FAILED`
+(`--offline`, `MCPP_OFFLINE`, `[build] offline`, `MCPP_NO_AUTO_INSTALL`) needs
+something that has to be downloaded (a toolchain, a package, a git revision or
+the package index; the message names the first one), whether no archive
+directory was named or none held it; or `MCPP_BUILD_DATABASE_PLAN_FAILED`
 when planning fails for any other reason. The offline code is not a defect
 of the project: one run without `--offline` removes it. Each member's
 diagnostic carries `path`, that member's `mcpp.toml` relative to the

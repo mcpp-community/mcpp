@@ -245,7 +245,11 @@ tip: the refreshed package index `mcpplibs` requires a newer mcpp; this run used
 的每一个索引。更早的版本在读到这样的索引时，把 E0006 的文字作为 `error:`
 打印在运行开头，其后成功的运行也是如此。
 
-`--offline`（或 `MCPP_OFFLINE=1`）在单次调用中禁止网络，宁可失败也不拉取。
+`--offline`（或 `MCPP_OFFLINE=1`，或 `mcpp.toml`、`config.toml` 中的
+`[build] offline = true`）禁止网络，宁可失败也不拉取；home 缺少的载荷在写明了归档目录时
+取自归档目录。`mcpp fetch` 预先把构建所需之物装入 home，`mcpp fetch --to <dir>` 把它写入
+一个目录，`mcpp fetch --from <dir>` 把该目录装入另一台机器的 home（2026.11.21.1 起；
+05 —— 依赖，「离线构建与 mcpp fetch」）。
 `--locked` 在解析结果与 `mcpp.lock` 不一致时失败，而不是改写它，这正是 CI
 作业需要的形状。`mcpp index pin <name> <rev>` 把一个自定义索引的某个
 commit 记进 `mcpp.toml`;`mcpp index unpin` 移除它。二者编辑写在一行之内的

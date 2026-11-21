@@ -3,6 +3,7 @@ module mcpp.effects;
 
 import std;
 import mcpp.invocation;
+import mcpplibs.os.env;
 
 namespace mcpp::effects {
 
@@ -71,6 +72,78 @@ void note_writes_global_cache() { g_writesGlobalCache.store(true); }
 
 bool writes_global_cache() {
     return g_writesGlobalCache.load() && !effect_denied("write-global-cache");
+}
+
+namespace {
+struct Statement { Tier tier; std::string value; std::string where; };
+std::mutex g_keysMutex;
+std::map<std::string, Statement, std::less<>> g_keys;
+}
+
+void state_key(std::string_view var, Tier tier, std::string value, std::string where) {
+    if (tier <= key_origin(var).tier) return;
+    std::lock_guard lock(g_keysMutex);
+    mcpp::invocation::set(std::string(var), value);
+    g_keys.insert_or_assign(std::string(var), Statement{tier, std::move(value), std::move(where)});
+}
+
+KeyOrigin key_origin(std::string_view var) {
+    const auto v = mcpp::invocation::get(var);
+    if (!v) return {};
+    std::lock_guard lock(g_keysMutex);
+    // A statement holds while the variable keeps its value: one the caller
+    // set again, or a nested run's, is the caller's.
+    if (auto it = g_keys.find(var); it != g_keys.end() && it->second.value == *v)
+        return {it->second.tier, it->second.where};
+    return {Tier::Override, std::string(var)};
+}
+
+std::string offline_remedy() {
+    if (effect_denied("network") && !mcpp::invocation::get("MCPP_OFFLINE"))
+        return "drop `network` from --deny (MCPP_DENY_EFFECTS)";
+    const auto origin = key_origin("MCPP_OFFLINE");
+    switch (origin.tier) {
+        case Tier::Project: return "set `offline = false` in mcpp.toml [build], or run with MCPP_OFFLINE=0";
+        case Tier::Machine: return "set `offline = false` in config.toml [build], or run with MCPP_OFFLINE=0";
+        default:            return "run without --offline (or unset MCPP_OFFLINE)";
+    }
+}
+
+std::vector<std::filesystem::path> archive_dirs() {
+    const auto v = mcpp::invocation::get("MCPP_ARCHIVES");
+    return v ? mcpplibs::os::env::split_list(*v) : std::vector<std::filesystem::path>{};
+}
+
+InstallSources install_sources() {
+    if (!offline_mode()) return InstallSources::Network;
+    return archive_dirs().empty() ? InstallSources::None : InstallSources::Local;
+}
+
+namespace {
+std::mutex g_inputsMutex;
+std::vector<std::string> g_packagesUsed;
+std::vector<GitInput> g_gitUsed;
+}
+
+void note_package_used(std::string ref) {
+    std::lock_guard lock(g_inputsMutex);
+    if (std::ranges::find(g_packagesUsed, ref) == g_packagesUsed.end()) g_packagesUsed.push_back(std::move(ref));
+}
+
+void note_git_used(GitInput input) {
+    std::lock_guard lock(g_inputsMutex);
+    if (std::ranges::none_of(g_gitUsed, [&](const GitInput& g) { return g.clone == input.clone; }))
+        g_gitUsed.push_back(std::move(input));
+}
+
+std::vector<std::string> packages_used() {
+    std::lock_guard lock(g_inputsMutex);
+    return g_packagesUsed;
+}
+
+std::vector<GitInput> git_used() {
+    std::lock_guard lock(g_inputsMutex);
+    return g_gitUsed;
 }
 
 bool no_auto_install() {

@@ -243,6 +243,9 @@ export int doctor_report() {
     auto pctx = [&]() -> decltype(mcpp::build::prepare_build(false)) {
         if (!inPackage) return std::unexpected(std::string("not inside a package"));
         mcpp::invocation::ScopedEnv offline("MCPP_OFFLINE", "1");
+        // No archive directory either: offline with one, a run installs from
+        // it, and the doctor installs nothing.
+        mcpp::invocation::ScopedEnv archives("MCPP_ARCHIVES", "");
         const bool wasQuiet = mcpp::ui::is_quiet();
         mcpp::ui::set_quiet(true);
         (void)mcpp::build::refusal::take();

@@ -72,11 +72,28 @@
   (`build-program-unpublished-input`).
 - Directive protocol 21: `mcpp:deprecated=`, stated by a typed reader that answers by a deprecated
   reading.
-- **`[build] allow_host_tools`** (mcpp#988, SPEC-004 §9 item 21, docs/25): the bootstrap tools a
+- **`[build] allow_host_tools`** (mcpp#990, SPEC-004 §9 item 21, docs/25): the bootstrap tools a
   build takes from `PATH` instead of the store, `ninja` and `patchelf`, from
   `MCPP_ALLOW_HOST_TOOLS`, the project, then `config.toml`. Every host input -- a bootstrap tool,
   a toolchain named by path, `glibc@system`, a tool found on `PATH` -- is a note once per project
   and identity (`host-input`).
+- **`mcpp fetch`** (mcpp#990, docs/05 "Offline builds and mcpp fetch"): the step of a build that
+  obtains what it needs, as a command; it plans as `--configure-only` does and compiles nothing.
+  `mcpp fetch --to <dir>` writes the payloads the build used with their closures, the index
+  snapshots and a `git bundle` of each git clone into a directory described by `bundle.toml`;
+  `mcpp fetch --from <dir>` takes such a directory into a home, a fresh one included, after
+  which the directory may be removed. A bundle that lacks a version `mcpp.lock` records is
+  refused (`bundle-older-than-lock`); one written on another host or for none of the selected
+  targets is warned (`bundle-lacks-target`).
+- **`[build] offline`** in `mcpp.toml` and `config.toml` (SPEC-004 §9 item 22), below `--offline`
+  and `MCPP_OFFLINE` (`0` turns it off for a run). A refusal of an offline run names the tier
+  that made it offline.
+- **`[xlings] archives`** in `config.toml` and `mcpp.toml`, and `MCPP_ARCHIVES` (SPEC-004 §9
+  item 23, docs/25 "Archive directories"): directories of archives taken by sha256 before the
+  network, and in its place offline, where a payload the home lacks is installed from the
+  download cache or a directory; one none holds is refused (`artifact-unavailable-offline`).
+  A directory outside the project named in `mcpp.toml` is a note once
+  (`machine-path-in-manifest`).
 
 ### Changed
 
@@ -86,6 +103,8 @@
 - **A case's time is the one its scopes state**: a case selected with `--case` runs within the
   `timeout` its listed case states, not the run's.
 - mcpplibs.mtest 0.11.1 and mcpplibs.os 0.4.7 throughout, the new project's skeleton included.
+- xlings 2026.11.21.1 is the pinned provider: archives by content, `xlings download --to` and
+  `xlings install --from`.
 - **CI verifies a tree once** (design 2026-11-20 §5.22). A pull request's push runs the `pr` tier;
   a `ci:full` run that passes leaves `verified-<tree>`, a push to main of that tree registers
   the run instead of testing again, and `release.yml` promotes the four archives that run built
@@ -106,7 +125,7 @@
   vendor field is any word, as GNU config.sub reads it (`x86_64-redhat-linux` is
   `x86_64-linux-gnu`); a toolchain whose target mcpp cannot read is reported as a degradation
   instead of applying none of the target's settings in silence.
-- **A build no longer requires patchelf** (mcpp#988): a payload's install declares it and the
+- **A build no longer requires patchelf** (mcpp#990): a payload's install declares it and the
   provider installs it then, and mcpp runs it only when it packs. A build with the machine's
   toolchain and `glibc@system` was refused in a home without it.
 - **A toolchain request has one answer** (mcpp#988, SPEC-006 §2.6 to §2.8, docs/20). A partial

@@ -1284,6 +1284,10 @@ struct BuildConfig : BuildInputs {
     // leaves the machine's.
     std::vector<std::string>            allowHostTools;
     bool                                allowHostToolsStated = false;
+    // `[build] offline` (design 2026-11-21 §3.2): the network is not used;
+    // a payload comes from the home, the download cache or an archive
+    // directory. Absent: the machine's, else online.
+    std::optional<bool>                 offline;
     // macOS minimum supported OS version for produced binaries
     // (LC_BUILD_VERSION minos), e.g. "14.0". Mirrors the ecosystem
     // conventions around deployment targets (the MACOSX_DEPLOYMENT_TARGET
@@ -1692,6 +1696,11 @@ struct XlingsConfig {
     // `[xlings.overrides]`, keyed by package identity (`<ns>:<name>`, the
     // namespace defaulted to `xim`). Read only from the ROOT of a build.
     std::map<std::string, XlingsOverride> overrides;
+    // `[xlings] archives` (design 2026-11-21 §3.2): directories of archives,
+    // as written (relative to the manifest's directory); empty and not
+    // stated: the machine's. Read only from the ROOT of a build.
+    std::vector<std::string>           archives;
+    bool                               archivesStated = false;
 
     ToolWhen when_of(std::string_view address) const {
         auto it = depWhen.find(std::string(address));
