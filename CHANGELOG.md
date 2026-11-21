@@ -212,6 +212,11 @@
   argument errors, `mcpp toolchain list` and `mcpp self config` with nothing installed, and
   `mcpp self doctor`'s hints for the optional cross toolchains, which name
   `mcpp toolchain install --target <triple>`. They named gcc 16.1.0 as written in the code.
+- A GCC named by path whose project states `tools = { as = ... }` (or `ld`) compiles and links with
+  that binutils, as its `std` module's compile already did (mcpp#755). The compile and link lines
+  took their `-B` from the archive tool's directory; such a GCC has no archive tool beside its
+  driver, so they had none, and the driver ran the host's assembler from PATH, which cannot read
+  gcc 16.2.0's `.base64` directive (binutils 2.42). Both take the directory from one function now.
 - A compiler whose baked sysroot is the building home's `subos/current` links against this home's
   C library, as one whose baked sysroot is `subos/default` does. gcc 16.2.0 revision 1 names
   `subos/current`; the remap recognised `subos/default` alone, and the link of a program whose

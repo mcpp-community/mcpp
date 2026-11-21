@@ -28,6 +28,7 @@ import mcpp.toolchain.apple_sdk;
 import mcpp.runtime.search;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.gcc;          // binutils_prefix_dir: the one -B
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.hostflags;
@@ -1303,15 +1304,15 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // than something the reader has to re-derive from the return paths.
     f.ldRuntimeFallback = farm_ld;
 
-    std::filesystem::path binutilsBin;
-    // A self-contained cross payload finds its own assembler and linker under
-    // its prefix: musl, MinGW, and a payload a row names by its GCC target.
-    if (!isMuslTc && !isMingwTc && caps.stdlib_id == "libstdc++"
-        && !mcpp::toolchain::row_states_gcc_target(plan.toolchain)) {
-        auto ar = mcpp::toolchain::archive_tool(plan.toolchain);
-        if (!ar.empty())
-            binutilsBin = ar.parent_path();
-    }
+    // THE BINUTILS GCC IS POINTED AT (`-B`) IS ONE ANSWER, the std module's
+    // compile's too: `gcc::binutils_prefix_dir`. A self-contained payload --
+    // musl, MinGW, a row's GCC target, clang -- carries its own; a GCC named
+    // by path is pointed at the `as` or `ld` its project states, else at none
+    // (mcpp#755). Derived here from the archive tool, such a GCC with only
+    // `tools.as` stated had no archive tool beside its driver, so no `-B`, and
+    // its driver ran the host's `as` from PATH, which cannot read gcc 16.2.0's
+    // `.base64` (bases 925).
+    const auto binutilsBin = mcpp::toolchain::gcc::binutils_prefix_dir(plan.toolchain);
     std::string b_flag;
     if (!binutilsBin.empty()) {
         b_flag = " -B" + escape_path(binutilsBin);
