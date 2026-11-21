@@ -389,7 +389,14 @@ e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, co
     c.env.emplace_back("MCPP_VERBOSE", std::nullopt);
     for (const auto& kv : o.env) c.env.push_back(kv);
     c.input = o.input;
-    c.timeout = o.timeout;
+    // A COMMAND HAS THE TIME ITS CASE HAS LEFT (design 2026-11-20 §5.8, K1). The kit also held each
+    // command to ten minutes, below the time a suite states: a pack of every system in `sets/985`
+    // ran past ten minutes beside three other openkal programs on a four-processor runner, its
+    // suite well within the 45 minutes it states, and failed as a hang (CI, 2026-11-21). A time limit
+    // bounds a hang; how long work takes is a measure of the run's records, not a verdict. Where no
+    // scope states a time, ten minutes bounds a command, since the runner's limit would end the
+    // program without the case's report of it.
+    c.timeout = o.timeout.value_or(mcpplibs::mtest::time_left().value_or(std::chrono::minutes{10}));
     return c;
 }
 

@@ -186,7 +186,9 @@ struct options {
     // Set (a value) or removed (nothing) for the run, after the home.
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     std::string input;
-    std::chrono::milliseconds timeout{std::chrono::minutes{10}};
+    // Nothing: what the case has left of the time its scopes state, or ten minutes where none
+    // states one (mcpp_command).
+    std::optional<std::chrono::milliseconds> timeout;
     // A program and its arguments mcpp runs under (`unshare -rn`, a network namespace of its own),
     // so that a command run so is the case's like any other: its use of the surface is recorded.
     std::vector<std::string> wrap;
