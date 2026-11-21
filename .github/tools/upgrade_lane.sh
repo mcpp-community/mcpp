@@ -26,7 +26,7 @@
 #             mismatch").
 #
 # Asserted, every variant: the first `mcpp new && mcpp run` of the new mcpp
-# succeeds and downloads nothing but the ninja this commit pins; a second run
+# succeeds and downloads nothing but the bootstrap tools this commit pins; a second run
 # downloads nothing at all; `mcpp self doctor`
 # in the project installs nothing and names the toolchain the build uses.
 # snapshot: `mcpp index update` names the newer packagings, the run after it
@@ -117,15 +117,20 @@ run() {
   echo "::endgroup::"
   return $rc
 }
-# The one download an upgraded home makes: the ninja this commit pins, when the
-# previous release pinned another (mcpp#945: the pin carries a correction, so a
-# home takes it with the upgrade, beside the ninja it has). It is taken once --
-# `any_download` holds the runs after the first to nothing at all.
-# The pin is data: the `[[default]]` of ninja in the built-in table.
-PIN=$(sed -n 's/^use *= *"ninja@\([^"]*\)".*/\1/p' "$(dirname "$0")/../../modules/toolchain-model/data/builtin.toml" | head -1)
-[ -n "$PIN" ] || { echo "::error::upgrade lane: the pinned ninja is not read from builtin.toml"; exit 1; }
+# The downloads an upgraded home makes: the bootstrap tools this commit pins
+# (ninja, patchelf), when the previous release pinned others (mcpp#945: a pin
+# carries a correction or a newer release, so a home takes it with the upgrade,
+# beside the one it has). They are taken once -- `any_download` holds the runs
+# after the first to nothing at all. The pins are data: the `[[default]]`
+# entries of the built-in table that are not a toolchain.
+TOOLS=$(awk '
+    /^\[\[default\]\]/ { of = "" }
+    /^of *=/  { gsub(/"/, "", $3); of = $3 }
+    /^use *=/ { gsub(/"/, "", $3); if (of != "toolchain") print "Downloading xim:" $3 }
+' "$(dirname "$0")/../../modules/toolchain-model/data/builtin.toml")
+echo "$TOOLS" | grep -q "xim:ninja@" || { echo "::error::upgrade lane: the pinned ninja is not read from builtin.toml"; exit 1; }
 any_download() { grep -o "Downloading [^ ]*" "$W/$1.log" | sort -u | tr '\n' ' '; }
-downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | grep -vxF "Downloading xim:ninja@$PIN" | sort -u | tr '\n' ' '; }
+downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | grep -vxF -f <(echo "$TOOLS") | sort -u | tr '\n' ' '; }
 new_project() {  # <dir> <bin>
   (cd "$W" && "$2" new "$1" > /dev/null 2>&1) || mkdir -p "$W/$1"
   printf '\n[toolchain]\ndefault = "%s"\n' "$TC" >> "$W/$1/mcpp.toml"
