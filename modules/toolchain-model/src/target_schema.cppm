@@ -136,6 +136,21 @@ struct Offer {
     std::span<const std::string_view> hosts;
 };
 
+// A DEFAULT (design 2026-11-21, offline and toolchain defaults §3.7): what a
+// build that states nothing takes on a host -- the first run's toolchain, or a
+// bootstrap tool. `of` names it (`toolchain`, `ninja`, `patchelf`), `use` is
+// `<package>@<version>`; `when` narrows a Windows toolchain to a machine with
+// (`msvc`) or without (`no-msvc`) a usable MSVC; `target` is the target the
+// toolchain builds for when it is not the host's. The last entry whose hosts
+// match stands, so a general entry precedes the narrower ones.
+struct Default {
+    std::string_view of;
+    std::string_view use;
+    std::span<const std::string_view> hosts;
+    std::string_view when;
+    std::string_view target;
+};
+
 // A SYSTEM (SPEC-016 §2.3): the facts of an operating system that no single
 // row states. `uname` is the word `uname -s` answers there, which a file that
 // carries one program per system selects by; a system without it joins no
@@ -220,6 +235,34 @@ constexpr bool hosts_allow(std::span<const std::string_view> patterns, std::stri
         if (host_matches(exclude ? p.substr(1) : p, host, targetArch)) allowed = !exclude;
     }
     return allowed;
+}
+
+// THE DEFAULT OF `of` ON THE HOST `os`-`arch`: the last entry whose hosts
+// match and whose `when` is empty or `when`; none when no entry matches.
+constexpr const Default* default_of(std::span<const Default> defaults, std::string_view of,
+                                    std::string_view os, std::string_view arch, std::string_view when = {}) {
+    auto matches = [&](std::string_view p) {
+        if (p == "*") return true;
+        const auto dash = p.find('-');
+        if (dash == std::string_view::npos) return false;
+        const auto po = p.substr(0, dash), pa = p.substr(dash + 1);
+        return (po == "*" || po == os) && (pa == "*" || pa == arch);
+    };
+    const Default* found = nullptr;
+    for (auto const& d : defaults) {
+        if (d.of != of || (!d.when.empty() && d.when != when)) continue;
+        bool allowed = false;
+        for (auto p : d.hosts)
+            if (matches(p.starts_with('!') ? p.substr(1) : p)) allowed = !p.starts_with('!');
+        if (allowed) found = &d;
+    }
+    return found;
+}
+
+// The version of `<package>@<version>`.
+constexpr std::string_view version_of(std::string_view use) {
+    const auto at = use.rfind('@');
+    return at == std::string_view::npos ? std::string_view{} : use.substr(at + 1);
 }
 
 constexpr bool available_on(const Provider& p, std::string_view host, std::string_view targetArch) {

@@ -121,8 +121,9 @@ run() {
 # previous release pinned another (mcpp#945: the pin carries a correction, so a
 # home takes it with the upgrade, beside the ninja it has). It is taken once --
 # `any_download` holds the runs after the first to nothing at all.
-PIN=$(sed -n 's/.*kNinjaVersion *= *"\([^"]*\)".*/\1/p' "$(dirname "$0")/../../src/provider/xlings/xlings.cppm" | head -1)
-[ -n "$PIN" ] || { echo "::error::upgrade lane: the pinned ninja is not read from xlings.cppm"; exit 1; }
+# The pin is data: the `[[default]]` of ninja in the built-in table.
+PIN=$(sed -n 's/^use *= *"ninja@\([^"]*\)".*/\1/p' "$(dirname "$0")/../../modules/toolchain-model/data/builtin.toml" | head -1)
+[ -n "$PIN" ] || { echo "::error::upgrade lane: the pinned ninja is not read from builtin.toml"; exit 1; }
 any_download() { grep -o "Downloading [^ ]*" "$W/$1.log" | sort -u | tr '\n' ' '; }
 downloads() { grep -o "Downloading [^ ]*" "$W/$1.log" | grep -vxF "Downloading xim:ninja@$PIN" | sort -u | tr '\n' ' '; }
 new_project() {  # <dir> <bin>

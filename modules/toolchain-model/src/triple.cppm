@@ -752,48 +752,45 @@ inline bool Triple::loads_on_host() const {
 // Changing a pin: update this block, then sync docs/20-toolchains.md and the
 // README platform table (drawn from kKnownTargets above).
 namespace pins {
-    // First-run auto-install defaults (prepare.cppm), per host platform/arch.
-    //
-    // macOS and Windows shared ONE pin until 2026.8.2.1. They must not:
-    // Apple ships no GCC, so upstream LLVM with bundled libc++ is the only
-    // self-contained choice there — but on Windows clang targets the MSVC
-    // ABI (host triple env=msvc) and therefore uses the MSVC STL, which only
-    // arrives with Visual Studio's "Desktop development with C++" workload.
-    // A bare Windows box got a default it could never build with, and no
-    // diagnostic. The Windows pin is now chosen by detection, not by
-    // sharing macOS's answer.
-    // The llvm pin moves with the LLVM line (SPEC-009 §10). 23.1.3 is the
-    // first point release carrying the macOS 27 SDK's arm64e.x1 linker fix
-    // (mcpp#669; landed on release/23.x as ee66426) — every earlier release
-    // fails to link against that SDK with a malformed-TAPI error.
-    inline constexpr std::string_view kFirstRunMac          = "llvm@23.1.3";
-    // Windows WITH a usable MSVC (STL + SDK, see msvc::has_usable_msvc()):
-    // unchanged behavior. The MSVC ABI is what lets a project link vcpkg /
-    // third-party .lib artifacts, so it stays the answer when it can work.
-    inline constexpr std::string_view kFirstRunWinMsvc      = "llvm@23.1.3";
-    // Windows WITHOUT one: winlibs GCC targeting PE/GNU. Fully self-contained
-    // (static libstdc++/libgcc, its own UCRT), zero Visual Studio dependency,
-    // `import std` works. Must stay equal to the x86_64-windows-gnu row's
-    // `pin` in kKnownTargets above — test_windows_defaults.cpp enforces it.
-    inline constexpr std::string_view kFirstRunWinGnu       = "gcc@16.1.0";
-    inline constexpr std::string_view kFirstRunWinGnuTarget = "x86_64-windows-gnu";
-    // Linux x86_64 keeps the gcc family as its host default (SPEC-009
-    // §4.1 reason, recorded 2026.10 with the LLVM 23.1.3 line move): native
-    // glibc ABI, so X11/OpenGL and other system libraries link directly.
-    // This is the platform's answer, not a lag behind the llvm line — no
-    // exit condition.
-    inline constexpr std::string_view kFirstRunLinuxX86_64  = "gcc@16.1.0";
-    // Native Linux ARM64 uses the managed LLVM payload and glibc ABI.
-    inline constexpr std::string_view kFirstRunLinuxAarch64 = "llvm@23.1.3";
-    // Other Linux hosts have no managed glibc gcc payload, so the
-    // default is the fully static musl one: the only self-contained choice
-    // on this axis (SPEC-009 §4.1 reason; re-evaluate if a managed glibc
-    // gcc for these hosts ships).
-    inline constexpr std::string_view kFirstRunLinuxOther   = "gcc@15.1.0-musl";
-    // Suggested install spellings used by help / MCPP_NO_AUTO_INSTALL errors.
-    inline constexpr std::string_view kSuggestLlvm          = "llvm 23.1.3";
-    inline constexpr std::string_view kSuggestGccMusl       = "gcc 15.1.0-musl";
-    inline constexpr std::string_view kSuggestGccMingw      = "gcc 16.1.0";
+    // THE DEFAULTS ARE DATA: `[[default]]` of data/builtin.toml (design
+    // 2026-11-21, offline and toolchain defaults §3.7), read here at compile
+    // time. The names below are the hosts' answers that messages and the
+    // first run name; each is a lookup, so no version is written in code.
+    // Why each host has its answer is stated beside its entry in the data.
+    consteval std::string_view first_run(std::string_view os, std::string_view arch, std::string_view when = {}) {
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults,
+                                                            "toolchain", os, arch, when);
+        return d ? d->use : std::string_view{};
+    }
+    consteval std::string_view first_run_target(std::string_view os, std::string_view arch, std::string_view when) {
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults,
+                                                            "toolchain", os, arch, when);
+        return d ? d->target : std::string_view{};
+    }
+    inline constexpr std::string_view kFirstRunMac          = first_run("macos", "aarch64");
+    inline constexpr std::string_view kFirstRunWinMsvc      = first_run("windows", "x86_64", "msvc");
+    inline constexpr std::string_view kFirstRunWinGnu       = first_run("windows", "x86_64", "no-msvc");
+    inline constexpr std::string_view kFirstRunWinGnuTarget = first_run_target("windows", "x86_64", "no-msvc");
+    inline constexpr std::string_view kFirstRunLinuxX86_64  = first_run("linux", "x86_64");
+    inline constexpr std::string_view kFirstRunLinuxAarch64 = first_run("linux", "aarch64");
+    // A Linux host with no entry of its own (riscv64, loongarch64, ...).
+    inline constexpr std::string_view kFirstRunLinuxOther   = first_run("linux", "other");
+
+    // `mcpp toolchain install`'s words for a default: `llvm@23.1.3` is
+    // `llvm 23.1.3`.
+    inline std::string install_words(std::string_view spec) {
+        std::string out(spec);
+        if (auto at = out.find('@'); at != std::string::npos) out[at] = ' ';
+        return out;
+    }
+
+    // A bootstrap tool's version on this machine.
+    consteval std::string_view tool_version(std::string_view tool) {
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults, tool,
+                                                            mcpp::toolchain::platform::name,
+                                                            mcpp::toolchain::platform::host_arch);
+        return d ? mcpp::toolchain::target::version_of(d->use) : std::string_view{};
+    }
 
     // THE DEFAULT TOOLCHAIN OF THIS HOST, ANSWERED ONCE (the 2026-09-28
     // design, WS8): what a build with nothing configured resolves. The first
@@ -803,9 +800,9 @@ namespace pins {
     // cannot know -- whether a usable MSVC (STL and SDK, from Visual Studio or
     // a managed toolset) is on this machine, which decides the Windows row.
     inline std::string_view linux_default_toolchain(std::string_view arch) {
-        if (arch == "x86_64") return kFirstRunLinuxX86_64;
-        if (arch == "aarch64") return kFirstRunLinuxAarch64;
-        return kFirstRunLinuxOther;
+        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults, "toolchain",
+                                                            "linux", arch);
+        return d ? d->use : kFirstRunLinuxOther;
     }
 
     inline std::string_view host_default_toolchain(bool msvcUsable) {

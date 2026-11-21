@@ -101,10 +101,28 @@ mcpp emit sbom -o sbom.json
 文档，比没有文档更糟。许可证 mcpp 无法识别的组件会被写成 `NOASSERTION` 而不是
 省略：缺失的字段读起来像「未检查」。
 
+## 缺省版本（2026.11.21.1 起）
+
+缺省 —— 首次运行安装的工具链、引导工具（ninja、patchelf）—— 取 mcpp 发布时其上游
+最新的正式发布，经 mcpp 的 CI 与 canary 验证。更新的版本与实验版本由用户陈述
+（`[toolchain]`、xlings 的包）；mcpp 不以它们为缺省。缺省是内置表
+（`modules/toolchain-model/data/builtin.toml`）的 `[[default]]` 条目，发版时逐条与索引
+比对（`.github/tools/check_defaults.sh`）。工具链的配套载荷（binutils、Linux 头文件）
+取其载荷声明的版本（20 —— 工具链，「配套载荷」）。
+
+xim-pkgindex 中一个包的版本是其上游的版本；同一上游版本的重新打包是同一个键的
+`revision`，mcpp 对某个上游正式发布的修正写作 `<上游>-mcpp.<n>`（`ninja@1.12.1-mcpp.1`）。
+已发布的键不改名：`binutils@2.42.1` 指 binutils 2.42。
+
+缺省改变时，以先前缺省构建过的工程各提示一次（20 —— 工具链，「解析与锁」）；陈述了
+工具链的工程保持不变。
+
 ## 离线与隔网使用
 
-`--offline`（或 `MCPP_OFFLINE=1`）会阻止一切网络访问：索引刷新、包下载与
-工具链安装。需要其中之一的构建会点名自己所需要的东西并失败，而不是尝试联网。
+`--offline`（或 `MCPP_OFFLINE=1`，或 `[build] offline = true`）会阻止一切网络访问：
+索引刷新、包下载与工具链安装。home 缺少的载荷取自写明的归档目录；否则需要网络的构建
+会点名自己所需要的东西并失败，而不是尝试联网。`mcpp fetch --to` 与 `--from` 把工程的
+输入带到没有网络的机器上（05 —— 依赖，「离线构建与 mcpp fetch」）。
 
 ## 报告问题
 

@@ -72,6 +72,14 @@ git checkout main && git pull origin main
 gh run list --branch main --limit 3
 ```
 
+缺省版本与索引比对（docs/51「缺省版本」）：每个 `[[default]]` 应为上游最新的正式发布。
+`behind` 的一项在发版前移动（载荷先进入 xim-pkgindex），或在 CHANGELOG 中陈述保留的原因；
+上游的发布页另行核对，索引可能落后于上游。
+
+```bash
+bash .github/tools/check_defaults.sh <xim-pkgindex checkout>
+```
+
 以分支保护和 `gh pr checks <pr-number>` 显示的 actual required checks 为准。
 在 main 上监控当前运行时，检查 `ci` 这一个工作流的运行（它包含各平台、e2e 分片、
 交叉构建与 `e2e-coverage`）；known-red 的腿（名字里带 issue 号）允许失败。跳过或

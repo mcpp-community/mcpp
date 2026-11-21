@@ -50,6 +50,20 @@ UTest first_run_pins_parse{"WindowsDefaults/FirstRunPinsParse", [] {
     }
 }};
 
+// THE DEFAULTS ARE DATA (design 2026-11-21 §3.7): every host the engine names
+// has a toolchain, the bootstrap tools have a version on every host, and an
+// mcpp revision of ninja names the upstream version it corrects.
+UTest defaults_answer_every_host{"WindowsDefaults/DefaultsAnswerEveryHost", [] {
+    namespace pins = mcpp::toolchain::triple::pins;
+    for (auto spec : { pins::kFirstRunMac, pins::kFirstRunWinMsvc, pins::kFirstRunWinGnu,
+                       pins::kFirstRunLinuxX86_64, pins::kFirstRunLinuxAarch64, pins::kFirstRunLinuxOther })
+        expect(spec.contains('@')) << "a host without a toolchain default: " << spec;
+    expect(eq(pins::kFirstRunWinGnuTarget, std::string_view("x86_64-windows-gnu")));
+    expect(!pins::tool_version("ninja").empty());
+    expect(!pins::tool_version("patchelf").empty());
+    expect(eq(pins::install_words("llvm@23.1.3"), std::string("llvm 23.1.3")));
+}};
+
 // The GNU fallback must land on a target mcpp is willing to build for, and
 // the toolchain it names must equal that target's vocabulary pin — otherwise
 // the same decision is derived in two places and they will drift.

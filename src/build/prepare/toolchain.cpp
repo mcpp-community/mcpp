@@ -2163,7 +2163,7 @@ step2_offline_refusal(PrepareState& state) {
                 "         mcpp toolchain default {} --target {}\n"
                 "       {}",
                 mcpp::toolchain::msvc::describe_msvc_probe(mcpp::toolchain::msvc::probe_msvc()),
-                pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget,
+                pins::install_words(pins::kFirstRunWinGnu), pins::kFirstRunWinGnuTarget,
                 pins::kFirstRunWinGnu,  pins::kFirstRunWinGnuTarget, release));
         }
         if constexpr (mcpplibs::os::is_macos || mcpplibs::os::is_windows) {
@@ -2174,7 +2174,7 @@ step2_offline_refusal(PrepareState& state) {
                 "         mcpp toolchain install {}\n"
                 "         mcpp toolchain default {}\n"
                 "       {}",
-                pins::kSuggestLlvm, pins::kFirstRunMac, release));
+                pins::install_words(pins::kFirstRunMac), pins::kFirstRunMac, release));
         } else {
             refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
@@ -2183,7 +2183,7 @@ step2_offline_refusal(PrepareState& state) {
                 "         mcpp toolchain install {}\n"
                 "         mcpp toolchain default {}\n"
                 "       {}",
-                pins::kSuggestGccMusl, pins::kFirstRunLinuxOther, release));
+                pins::install_words(pins::kFirstRunLinuxOther), pins::kFirstRunLinuxOther, release));
         }
 }
 
@@ -2520,7 +2520,7 @@ step2_msvc_abi_without_msvc_repair(PrepareState& state) {
                   "       install it manually with:\n"
                   "         mcpp toolchain install {} --target {}",
                   pins::kFirstRunWinGnu, payloadR.error().message,
-                  pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
+                  pins::install_words(pins::kFirstRunWinGnu), pins::kFirstRunWinGnuTarget));
           }
           auto gnuFrontendR =
               mcpp::toolchain::payload_frontend(payloadR->root, gnuPkg);

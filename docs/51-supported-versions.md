@@ -117,11 +117,35 @@ a different graph from the one that was built is worse than no document. A
 component whose licence mcpp does not know is emitted as `NOASSERTION` rather
 than omitted: an absent field reads as "not examined".
 
+## Default versions (2026.11.21.1+)
+
+A default — the toolchain a first run installs, the bootstrap tools (ninja,
+patchelf) — is the newest release of its upstream when mcpp is released,
+verified by mcpp's CI and canaries. A newer or an experimental version is
+stated by the user (`[toolchain]`, an xlings package); mcpp does not default to
+one. The defaults are the `[[default]]` entries of the built-in table
+(`modules/toolchain-model/data/builtin.toml`), and a release lists each against
+the index (`.github/tools/check_defaults.sh`). A toolchain's companions
+(binutils, Linux headers) are the versions its payload declares (20 —
+Toolchains, "Companions").
+
+A package's version in xim-pkgindex is its upstream's; a repackaging of one
+upstream version is a `revision` of the same key, and an mcpp correction of an
+upstream release is `<upstream>-mcpp.<n>` (`ninja@1.12.1-mcpp.1`). A published
+key is not renamed: `binutils@2.42.1` names binutils 2.42.
+
+A default that moves is said once per project that built with the earlier one
+(20 — Toolchains, "Resolution and the lock"); a project that states its
+toolchain keeps it.
+
 ## Offline and air-gapped use
 
-`--offline` (or `MCPP_OFFLINE=1`) prevents every network access: index refresh,
-package download and toolchain installation. A build that would need one of
-those fails naming what it needed, rather than reaching out.
+`--offline` (or `MCPP_OFFLINE=1`, or `[build] offline = true`) prevents every
+network access: index refresh, package download and toolchain installation. A
+payload the home lacks is taken from a named archive directory; a build that
+would need the network otherwise fails naming what it needed, rather than
+reaching out. `mcpp fetch --to` and `--from` carry a project's inputs to a
+machine without a network (05 — Dependencies, "Offline builds and mcpp fetch").
 
 ## Reporting a problem
 
