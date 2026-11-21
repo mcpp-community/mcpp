@@ -27,7 +27,7 @@ std::vector<fs::path> ninjas(const s::project& p) {
 // The text of a file, or nothing when it does not exist (`grep file` then reads no line).
 std::string text_of(const fs::path& f) { return fs::exists(f) ? s::read_file(f) : std::string{}; }
 
-E2E conditional{"conditional", [] {
+E2E conditional{"conditional", s::home_fixture, [] {
     "85 target cfg build flags"_test = [] {
         // `[target.'cfg(...)'.build]` applies exactly the host's os/arch predicates.
         s::project app{s::files{{"mcpp.toml", R"cpp([package]

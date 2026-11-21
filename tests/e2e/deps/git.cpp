@@ -40,7 +40,7 @@ void library_repository(const fs::path& dir, std::string_view name, std::string_
 
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
-E2E git_deps{"git", [] {
+E2E git_deps{"git", s::home_fixture, [] {
     "24 git dependency"_test[s::fresh_sandbox] = [] {
         // A git dependency is cloned to $MCPP_HOME/git/<hash>/ and treated as a path dependency;
         // a rebuild does not clone again; a branch is locked (`git+...branch=main`), replayed
@@ -304,6 +304,42 @@ int main() {
         expect(s::has_line(s::text(b), "Fetching " + escaped + ".* done")) << "A: no finish line for the fetch";
         expect(s::lacks(s::text(b), "\r")) << "B: the log carries a carriage return";
         expect(s::lacks(s::text(b), "\x1b")) << "B: the log carries an ESC byte";
+    };
+
+    "955 a dependency's build program writes its outputs in the home, and a second project takes them"_test[s::gcc] = [] {
+        // Design 2026-11-20 §5.2. A package whose sources are named (a git commit) runs its build
+        // program with OUT_DIR in the home, keyed by the program's contract: a second project
+        // replays the program's directives (A), states the same include directory, and is served
+        // the package from the cache instead of compiling it (B).
+        const auto tmp = s::case_dir();
+        s::project lib{tmp / "genlib", {{"mcpp.toml", "[package]\nname    = \"genlib\"\nversion = \"0.1.0\"\n[targets.genlib]\nkind = \"lib\"\n"},
+                                        {"build.mcpp", R"cpp(import std;
+int main() {
+    const std::filesystem::path out = std::getenv("MCPP_OUT_DIR");
+    std::filesystem::create_directories(out / "gen");
+    std::ofstream(out / "gen" / "answer.h") << "#define GEN_ANSWER 42\n";
+    std::println("mcpp:include-dir={}", (out / "gen").string());
+    return 0;
+}
+)cpp"},
+                                        {"src/genlib.cppm", "module;\n#include \"answer.h\"\nexport module genlib;\nexport int answer() { return GEN_ANSWER; }\n"}}};
+        git(lib.dir(), {"init", "--quiet"});
+        git(lib.dir(), {"add", "-A"});
+        git(lib.dir(), {"commit", "--quiet", "-m", "init"});
+        const auto rev = git(lib.dir(), {"rev-parse", "HEAD"});
+        auto app = [&](std::string_view name) {
+            return s::project{tmp / name, {{"mcpp.toml", std::format("[package]\nname    = \"{}\"\nversion = \"0.1.0\"\n[dependencies]\ngenlib = {{ git = \"file://{}\", rev = \"{}\" }}\n", name, lib.dir().generic_string(), rev)},
+                                           {"src/main.cpp", "import genlib;\nint main() { return answer() == 42 ? 0 : 1; }\n"}}};
+        };
+        auto one = app("one");
+        auto a = one.mcpp({"build"});
+        expect(fatal(e2e::succeeded(a))) << s::text(a);
+        auto two = app("two");
+        auto b = two.mcpp({"build", "--verbose"});
+        expect(fatal(e2e::succeeded(b))) << s::text(b);
+        expect(s::has_line(s::text(b), R"(build\.mcpp .*genlib +cached)")) << "A: the second project ran the program again\n" << s::text(b);
+        expect(s::has_line(s::text(b), R"(Cached genlib v0\.1\.0 )")) << "B: the second project compiled the package\n" << s::text(b);
+        expect(e2e::succeeded(two.mcpp({"run"}))) << "B: the program the cached package was linked into";
     };
 
     "943 a transitive git branch is locked"_test[s::gcc] = [] {

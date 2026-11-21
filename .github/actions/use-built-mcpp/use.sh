@@ -1,17 +1,37 @@
 #!/usr/bin/env bash
 # The body of the use-built-mcpp action; see action.yml for what it provides.
 #
-# Usage: use.sh <host> <mirror>
+# Usage: use.sh <host> <mirror> [host|release]
 set -euo pipefail
 
 host="$1"
 mirror="$2"
+form="${3:-host}"
 
 dir="$RUNNER_TEMP/mcpp-built"
 case "$host" in
     windows-*) exe=mcpp.exe; dir="$(cygpath -u "$dir")" ;;
     *)         exe=mcpp ;;
 esac
+
+# The release form: the program of the host's versioned archive, as install.sh
+# unpacks it, placed where the built binary would be.
+if [ "$form" = release ]; then
+    rel="$RUNNER_TEMP/mcpp-release"
+    [ "${host#windows-}" != "$host" ] && rel="$(cygpath -u "$rel")"
+    archive=$(find "$rel" -maxdepth 1 -type f \( -name 'mcpp-*-*.tar.gz' -o -name 'mcpp-*-*.zip' \) \
+                | grep -E '/mcpp-[0-9][^/]*-[a-z]' | head -1 || true)
+    [ -n "$archive" ] || { echo "::error::the release archive of $host is not in the artifact"; ls -la "$rel" || true; exit 1; }
+    unpacked="$RUNNER_TEMP/mcpp-release-root"
+    mkdir -p "$unpacked" "$dir"
+    case "$archive" in
+        *.zip) (cd "$unpacked" && unzip -q "$archive") ;;
+        *)     tar -xzf "$archive" -C "$unpacked" ;;
+    esac
+    wrapper="$(basename "$archive")"; wrapper="${wrapper%.tar.gz}"; wrapper="${wrapper%.zip}"
+    cp "$unpacked/$wrapper/bin/$exe" "$dir/$exe"
+    echo "the program under test is the release form: $(basename "$archive")"
+fi
 bin="$dir/$exe"
 if [ ! -f "$bin" ]; then
     echo "::error::the artifact mcpp-built-$host holds no $exe"
@@ -73,6 +93,14 @@ if [ -n "${XLINGS_BIN:-}" ]; then
     "$XLINGS_BIN" config --mirror "$mirror" 2>/dev/null || true
 fi
 MCPP_VENDORED_XLINGS="${XLINGS_BIN:-}" "$bin" self config --mirror "$mirror"
+
+# THE RECIPES OF THE CURRENT INDEX. A restored sandbox keeps the index it was
+# saved with, and the tests' homes read this home's index and name this home an
+# upstream (tests/support, tests/e2e/_inherit_toolchain.sh). A recipe older than
+# xim-pkgindex c0023dd wrote its `config()` hook through an upstream's link
+# entry: measured, gcc's specs and binutils' ld wrapper of this home named a
+# case's deleted home after one case, and every later link through them failed.
+MCPP_VENDORED_XLINGS="${XLINGS_BIN:-}" "$bin" index update
 
 # THE TOOLCHAIN THE BUILD USED IS INSTALLED, AS IT WAS WHEN EVERY JOB BUILT.
 # A job that built mcpp itself installed this toolchain as a side effect, and

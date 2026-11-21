@@ -31,7 +31,7 @@ std::optional<fs::path> program(const s::project& p, std::string_view name) {
     return std::nullopt;
 }
 
-E2E scanner{"scanner", [] {
+E2E scanner{"scanner", s::home_fixture, [] {
     "113 scanner mcpp dir prune"_test[s::gcc] = [] {
         // `.mcpp` is pruned from a glob walk: a file reachable only through its index link is not
         // compiled; a file whose name has no narrow spelling does not abort the build.
@@ -113,6 +113,14 @@ defines = ["COND_WIN"]
         expect(fatal(e2e::succeeded(r))) << "conditional [build].defines did not reach the TU\n" << s::text(r);
         r = root.mcpp_in("app", {"build"});
         expect(fatal(e2e::succeeded(r))) << "a dependency's [build].defines did not reach its own TUs\n" << s::text(r);
+        // MCPP_VERIFY_MODGRAPH=1 audits every unit's planned imports against its scan, not only
+        // those an override states: a unit that imports nothing is held to that (docs/04 §2.8).
+        fs::remove_all(root.at("cond/target"));
+        r = root.mcpp_in("cond", {"build"}, {.env = {{"MCPP_VERIFY_MODGRAPH", "1"}}});
+        expect(fatal(e2e::succeeded(r))) << "a unit whose plan its scan confirms failed the audit\n" << s::text(r);
+        const auto graphs = s::find_files(root.at("cond/target"), R"(build\.ninja)");
+        expect(fatal(!graphs.empty() && e2e::contains(s::read_file(graphs.front()), "--expect-none")))
+            << "the unit that imports nothing was not audited";
         r = root.mcpp_in("unknown", {"build"});
         expect(fatal(e2e::succeeded(r))) << "an unknown [build] key must warn, not fail the build\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "defnes"))) << "unknown [build] key 'defnes' was dropped in silence\n" << s::text(r);

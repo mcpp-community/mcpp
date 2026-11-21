@@ -73,7 +73,7 @@ std::string archived(const fs::path& archive, std::string_view member) {
     return s::read_file(into / member);
 }
 
-E2E inheritance{"inheritance", [] {
+E2E inheritance{"inheritance", s::home_fixture, [] {
     "321 workspace inheritance"_test[s::gcc] = [] {
         // [workspace.package] and [workspace.build] (#527), asserted on the compile command: a
         // member that declares nothing inherits the standard and the flags; a member that pins
@@ -642,6 +642,32 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << "C: clean --stale failed: " << s::text(r);
         expect(stamps().size() == 1u) << "C: the instance the last plan did not use was kept, or the used one removed: " << s::text(r);
         expect(fatal(e2e::succeeded(ws.mcpp({"test", "-p", "app"})))) << "C: the build after the sweep failed";
+    };
+
+    "986 a package keeps its instance when a command adds units"_test[s::gcc][s::elf] = [] {
+        // mcpp#986. `mcpp test` keeps a unit that an inactive feature gates and `mcpp build` drops
+        // it; the features and flags are the same. The instance is a function of the package's
+        // configuration, not of its units, so the test after a build compiles only what it adds:
+        // the gated unit and the test, not `a.cppm` again in a second instance directory.
+        const auto tmp = s::case_dir();
+        s::project ws(tmp / "ws", {
+            {"mcpp.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/a.cppm\", \"src/b.cppm\"]\n\n"
+                          "[features]\nb = { sources = [\"src/b.cppm\"] }\n\n[targets.lib]\nkind = \"lib\"\n\n[workspace]\nmembers = [\"app\"]\n"},
+            {"src/a.cppm", "export module lib986.a;\nexport int a() { return 1; }\n"},
+            {"src/b.cppm", "export module lib986.b;\nexport int b() { return 2; }\n"},
+            {"tests/t.cpp", "import lib986.a;\nint main() { return a() == 1 ? 0 : 1; }\n"},
+            {"app/mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"..\" }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+            {"app/src/main.cpp", "import lib986.a;\nint main() { return a() == 1 ? 0 : 1; }\n"},
+        });
+        expect(fatal(e2e::succeeded(ws.mcpp({"build"})))) << "the build failed";
+        const auto objects = s::find_files(ws.at("target"), R"(a\.m\.o)");
+        expect(fatal(objects.size() == 1u)) << "the build does not have one object of a.cppm: " << objects.size();
+        const auto stamp = fs::last_write_time(objects.front());
+        auto r = ws.mcpp({"test", "--verbose"});
+        expect(fatal(e2e::succeeded(r))) << "the test failed: " << s::text(r);
+        expect(s::find_files(ws.at("target"), R"(a\.m\.o)").size() == 1u) << "a.cppm has a second instance under the test: " << s::text(r);
+        expect(fs::last_write_time(objects.front()) == stamp) << "a.cppm was compiled again under the test: " << s::text(r);
+        expect(s::find_files(ws.at("target"), R"(b\.m\.o)").size() == 1u) << "the gated unit the test keeps was not compiled: " << s::text(r);
     };
 
     "954 the workspace's abi table is the root's statement"_test[s::gcc][s::elf] = [] {

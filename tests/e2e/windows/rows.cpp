@@ -31,7 +31,7 @@ void carries_versioninfo(const s::project& p, std::string_view triple, std::stri
     expect(fatal(e2e::succeeded(r) && e2e::contains(s::text(r), "VERSIONINFO"))) << "the program carries no VERSIONINFO: " << s::text(r);
 }
 
-E2E rows{"rows", [] {
+E2E rows{"rows", s::home_fixture, [] {
     "1058 a gnu abi windows row compiles its resources"_test[s::mingw_cross][s::llvm] = [] {
         // llvm paired with MinGW-w64 finds the payload's windres (or llvm-rc beside clang) and the
         // payload's "winres.h"; the cross gcc of the `mingw` provider reads "winres.h" from its own

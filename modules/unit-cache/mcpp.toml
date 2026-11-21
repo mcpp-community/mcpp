@@ -1,0 +1,21 @@
+# mcpp.unit-cache -- a compile's outputs addressed by what it read (design 2026-11-20 §5.3).
+#
+# The compiler executor asks it before it starts a compiler: a key of the command, the compiler
+# and the source's content names the manifests earlier compiles of that key recorded, each the
+# files the compile read and their contents; a manifest whose files all still hold those contents
+# names the outputs, which are placed and the compiler is not started. After a compile it records
+# the manifest from the compiler's depfile and keeps the outputs. It knows nothing of ninja, the
+# plan or the executor's slots: the executor hands it the command and the paths.
+
+[package]
+name        = "unit-cache"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "A compile's outputs addressed by the command and the contents of the files it read"
+license     = "Apache-2.0"
+
+[dependencies]
+mcpp.toolchain-model = { path = "../toolchain-model" }
+
+[dev-dependencies]
+mcpplibs.mtest = "0.11.2"

@@ -467,6 +467,23 @@ struct Toolchain {
     // workspace (`[workspace.toolchain]`, or the root position) names the
     // workspace root's mcpp.toml.
     std::map<std::string, std::filesystem::path> fileByPlatform;
+    // A managed toolchain's companions stated beside it (`default = { package =
+    // "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`), by the
+    // same key. Empty: the versions its payload declares. A vector of a named
+    // struct rather than a nested map, for the GCC 16 hazard recorded at
+    // `workspaceByPlatform` (the nested map truncated this module's BMI again).
+    struct Companion {
+        std::string name;      // `binutils`
+        std::string package;   // `xim:binutils@2.47`
+    };
+    std::map<std::string, std::vector<Companion>> companionsByPlatform;
+
+    const std::vector<Companion>* companions_for(std::string_view platform) const {
+        std::string key(platform);
+        if (!byPlatform.contains(key)) key = "default";
+        auto it = companionsByPlatform.find(key);
+        return it == companionsByPlatform.end() ? nullptr : &it->second;
+    }
 
     // The table behind the entry `for_platform` answers with, by the same key.
     const LocalToolchain* local_for(std::string_view platform) const {
@@ -1029,6 +1046,12 @@ struct BuildConfig : BuildInputs {
     // compiler doing the build, and resolving it at parse time would freeze one
     // machine's answer into a manifest that travels.
     std::string bmiSchedule;
+    // `[build] memory_threshold` -- the memory the system must have available
+    // before a compiler starts ("2GiB", "512MiB", or bytes; design 2026-11-20
+    // §5.5, mcpp#802). Below it the compiler waits for one already running to
+    // end; none is ended. Text, resolved with MCPP_MEMORY_THRESHOLD, the
+    // machine's config.toml and the engine's default (1 GiB) where it is used.
+    std::string memoryThreshold;
     // `[build] private_fragment` -- how a private module fragment is built
     // (SPEC-019): "unit" (the default: the fragment is a unit of its own, so an
     // edit of it reaches no importer) or "as-written". Text, validated where it
@@ -1254,6 +1277,17 @@ struct BuildConfig : BuildInputs {
     // set true to deliberately link against host libraries.
     // MCPP_ALLOW_HOST_LIBS=1 is the per-invocation equivalent.
     bool                                allowHostLibs = false;
+    // `[build] allow_host_tools` (design 2026-11-21, offline and toolchain
+    // defaults §3.3): the bootstrap tools taken from the machine's PATH instead
+    // of the home's store, `ninja` and `patchelf`. `allowHostToolsStated`
+    // tells a stated empty list, which takes none, from no statement, which
+    // leaves the machine's.
+    std::vector<std::string>            allowHostTools;
+    bool                                allowHostToolsStated = false;
+    // `[build] offline` (design 2026-11-21 §3.2): the network is not used;
+    // a payload comes from the home, the download cache or an archive
+    // directory. Absent: the machine's, else online.
+    std::optional<bool>                 offline;
     // macOS minimum supported OS version for produced binaries
     // (LC_BUILD_VERSION minos), e.g. "14.0". Mirrors the ecosystem
     // conventions around deployment targets (the MACOSX_DEPLOYMENT_TARGET
@@ -1288,6 +1322,10 @@ struct BuildConfig : BuildInputs {
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
     bool                                debugLines = false; // -g1: the line tables alone
+    // The debug information of the dependencies from the store and git, as
+    // the profile's `dependency_debug` resolves it (design 2026-11-20 §5.15):
+    // "true", "false" or "lines"; empty when it is the graph's own.
+    std::string                         dependencyDebug;
     bool                                lto      = false; // -flto, /GL + /LTCG on cl.exe
     // LTO was requested and some objects of the plan are compiled without it:
     // those that feed a PE shared library whose exports are discovered, or a
@@ -1658,6 +1696,11 @@ struct XlingsConfig {
     // `[xlings.overrides]`, keyed by package identity (`<ns>:<name>`, the
     // namespace defaulted to `xim`). Read only from the ROOT of a build.
     std::map<std::string, XlingsOverride> overrides;
+    // `[xlings] archives` (design 2026-11-21 §3.2): directories of archives,
+    // as written (relative to the manifest's directory); empty and not
+    // stated: the machine's. Read only from the ROOT of a build.
+    std::vector<std::string>           archives;
+    bool                               archivesStated = false;
 
     ToolWhen when_of(std::string_view address) const {
         auto it = depWhen.find(std::string(address));
@@ -2317,6 +2360,12 @@ struct Profile {
     // about the member that caused it.
     std::string dependencyLinkage;
     bool        dependencyLinkageDeclared = false;
+    // `dependency_debug` (design 2026-11-20 §5.15): the debug information of
+    // the dependencies from the store and git, `true`, `false` or `"lines"`,
+    // as written ("true"/"false" for a boolean). Not written: "lines" for
+    // `dev` and `debug`, else the profile's `debug`.
+    std::string dependencyDebug;
+    bool        dependencyDebugDeclared = false;
     // Passthrough escape hatch (fixed keys, open values — I6 completeness):
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;
@@ -2601,6 +2650,9 @@ struct Manifest {
     //  see the member there.)
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
+    // `[features.<f>] description` (mcpp#992): one line for a reader of the
+    // package's features; absent for a feature written in the short form.
+    std::map<std::string, std::string>              featureDescriptions;
 
     // `[features].<f>.device_extensions` — the device source extensions this feature's
     // rule compiles (mcpp 2026.9.7.1+).
@@ -2847,7 +2899,21 @@ bool provides_cxx_layer(const Manifest& manifest);
 std::optional<CppStandardConfig> cxx_layer_implementation_standard(
     const Manifest& manifest);
 
-
+// THE FEATURES A PACKAGE DECLARES, AS A READER SEES THEM (mcpp#992): one entry
+// per feature, by name, from whichever source the manifest came from (the
+// package's `mcpp.toml`, a descriptor's inline table). `isDefault`: on without
+// being named, through the `default` set and what it implies; `implies`: this
+// package's features it turns on; `enables`: `<dependency>/<feature>` it
+// requests. `default` itself is not an entry. Every machine output of a
+// package's features is rendered from this.
+struct FeatureInfo {
+    std::string              name;
+    bool                     isDefault = false;
+    std::vector<std::string> implies;
+    std::vector<std::string> enables;
+    std::string              description;
+};
+std::vector<FeatureInfo> feature_catalog(const Manifest& manifest);
 
 } // namespace mcpp::manifest
 
@@ -3121,5 +3187,36 @@ std::optional<CppStandardConfig> cxx_layer_implementation_standard(
 
 
 
+
+} // namespace mcpp::manifest
+
+namespace mcpp::manifest {
+
+std::vector<FeatureInfo> feature_catalog(const Manifest& manifest) {
+    // The default set's closure under `implies`: what a consumer that names
+    // nothing receives.
+    std::set<std::string> on;
+    std::vector<std::string> pending;
+    if (auto it = manifest.featuresMap.find("default"); it != manifest.featuresMap.end())
+        pending = it->second;
+    while (!pending.empty()) {
+        auto f = std::move(pending.back());
+        pending.pop_back();
+        if (!on.insert(f).second) continue;
+        if (auto it = manifest.featuresMap.find(f); it != manifest.featuresMap.end())
+            pending.insert(pending.end(), it->second.begin(), it->second.end());
+    }
+    std::vector<FeatureInfo> out;
+    for (auto const& [name, implied] : manifest.featuresMap) {
+        if (name == "default") continue;
+        FeatureInfo info{.name = name, .isDefault = on.contains(name), .implies = implied};
+        if (auto it = manifest.featureForwards.find(name); it != manifest.featureForwards.end())
+            for (auto const& fwd : it->second) info.enables.push_back(fwd.first + "/" + fwd.second);
+        if (auto it = manifest.featureDescriptions.find(name); it != manifest.featureDescriptions.end())
+            info.description = it->second;
+        out.push_back(std::move(info));
+    }
+    return out;
+}
 
 } // namespace mcpp::manifest

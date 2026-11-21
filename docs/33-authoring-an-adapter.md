@@ -138,6 +138,28 @@ A test that reads this record should treat a `reason` as "not measured" rather
 than as a clean result -- "did not apply" and "was never run" are the pair this
 record exists to keep apart.
 
+### A required library is reached from the object that loads it (2026.11.21.1+)
+
+A soname a package requires at run time (`runtime.dlopen_libs`, or a
+`requirements` entry of kind `soname`) is looked up from the package's own
+shared objects, the ones in its `link_library_dirs` and `runtime_search_dirs`,
+since one of them calls `dlopen`; from the executable when the closure holds
+none of them. An object with `DT_RUNPATH` searches its own `DT_RUNPATH` and the
+loader's directories, so a library only the executable's run path names is not
+found. Such a requirement is reported after each build, and by `mcpp self
+doctor`, which asks the same function:
+
+```
+degraded: compat.slint@1.19.0 requires libX11.so.6 at run time and loads it with dlopen from
+.../libslint_cpp.so, which searches .../xim-x-slint/1.19.0/lib, ...: the package that provides
+it must be a run-time dependency of the payload that declares this object, so that its
+DT_RUNPATH names it
+```
+
+The remedy is the payload's recipe, which lists the providing package as a
+run-time dependency. mcpp does not rewrite the payload and does not set
+`LD_LIBRARY_PATH`, which every child of the program inherits.
+
 ## Current limitations
 
 - **Linux only, by construction.** macOS's dyld and the Windows PE loader have

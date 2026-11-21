@@ -74,9 +74,17 @@ its `diagnostics` state why; `mcpp.build-database` is such a kind (§8).
   "message": "unknown key 'standrad'",
   "path": "mcpp.toml",                       // omitted when there is none
   "range": { "start": {"line": 3, "column": 1},
-             "end":   {"line": 3, "column": 9} }   // omitted when there is none
+             "end":   {"line": 3, "column": 9} },  // omitted when there is none
+  "shown": false                             // omitted when the terminal showed it
 }
 ```
+
+`shown` is `false` for a diagnostic the terminal did not show: a notice said
+once per project that this project was already told of, and a note under
+`--quiet` (2026.11.21.1+). The envelope carries every diagnostic whether or not
+the terminal showed it; a reader is not subject to the terminal's policy. A
+command that plans in a directory of its own (`mcpp emit build-database`) reads
+what the project was told and records nothing: the project's tree is unchanged.
 
 Positions are 1-based. `column` counts UTF-8 **bytes**, so it indexes the same
 file mcpp read.
@@ -254,6 +262,11 @@ envelope says when either has changed since.
 | `test-frameworks` | 2026.11.10.1 | `mcpp test --guide` names each framework's `capabilities` and `session` (SPEC-017 B6) | an IDE choosing between a session and processes |
 | `test-checks` | 2026.11.10.1 | with `test-protocol`: a failure's `source` and `fatal`, and a case's `checks` (`held`, `failed`), as the program reported them (SPEC-017 O3) | an IDE's list of checks |
 | `test-output` | 2026.11.10.1 | with `test-case-stream`: a case's own output, `output`: the program's `output` events, or all the output of a program that ran that case alone, in its program's `cases` and, from events, in its `end` record (SPEC-017 O8) | an IDE's output of one case |
+| `test-steps` | 2026.11.21.1 | with `test-protocol`: a case's `steps` and the surface items it used (`exercised`), its `cpu_ms` and `limit_ms`, and the run's `builds.ndjson` (SPEC-017 P5.6, B4) | a run's report |
+| `test-budget` | 2026.11.21.1 | `mcpp test` states one budget of slots (`MTEST_BUDGET`) its programs' compilers take, and uses a budget its environment states (SPEC-017 O11) | `mtest run`, a runner that runs `mcpp test` |
+| `test-jitter` | 2026.11.21.1 | the jitter a run states (`MTEST_JITTER`, `MTEST_JITTER_SEED`) reaches its programs and its record (SPEC-017 O12) | the jitter workflow |
+| `test-fixtures` | 2026.11.21.1 | run fixtures are served for the programs whose cases use them (`MTEST_SERVE`, `MTEST_FIXTURE_<NAME>`), and a run's `fixtures.ndjson` states them (SPEC-017 O6) | a framework's shared fixtures |
+| `package-features` | 2026.11.21.1 | a package's features in `mcpp search --format json` (`features`) and `mcpp why features --format json` (§13, `mcpp.why.features`) | an IDE's completion and diagnostics of `features = [...]` |
 
 ### How a tool runs mcpp for a project
 
@@ -506,20 +519,22 @@ the execution host (2026.10.24.1+), on every build:
 `form` is `default` for the ecosystem's own base, and then the other fields
 describe what the engine resolved by default.
 
-### `mcpp.why.build-programs` and `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
+### `mcpp.why.build-programs`, `mcpp.why.compat` and `mcpp.why.features` *(mcpp 2026.10.11.1+)*
 
 ```
 mcpp why build-programs --format json
 mcpp why compat --format json
+mcpp why features --format json      # 2026.11.21.1+
 ```
 
-Both prepare the build as `mcpp why` does and report what it recorded; `data`
+Each prepares the build as `mcpp why` does and reports what it recorded; `data`
 carries `status` (`ok` or `refused`) and:
 
 | kind | field | content |
 |---|---|---|
 | `mcpp.why.build-programs` | `graphs[]` | one entry per build programs' graph: `workspace` (its directory) and `programs[]`, each `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | one entry per use of a deprecated reading: `{id, where, detail, warned, since, floor, canonical, docs}`; `warned` is false in a manifest the build does not edit |
+| `mcpp.why.features` | `packages[]` | one entry per package of the resolved graph, the root first: `package` (as in `resolution.json`), `root`, `manifest_dir` and `features`: `list` (the features the package declares, each as in `mcpp.search`) and `active` (those the build activates) |
 
 ### `mcpp.why.target`, `mcpp.why.flags` and `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
 
@@ -654,9 +669,13 @@ a program classifying the outcome reads `reason`:
 | `accel-backend-undeclared` | a `[build] sources` entry names a backend its own package does not list in `[package] accelerators` |
 | `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
+| `build-program-unpublished-input` | `mcpp publish`: the package's build program reads a file its archive does not carry -- one outside the package's directory, or one HEAD does not track (2026.11.21.1+) |
+| `companion-too-old` | a companion stated beside the toolchain (`companions = { binutils = … }`) is older than the one the toolchain's payload declares (SPEC-006 §2.9) |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
-| `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index *(2026.9.16.1+)* |
+| `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index; from 2026.11.21.1, with no archive directory named *(2026.9.16.1+)* |
+| `artifact-unavailable-offline` | the run is offline, archive directories are named, and neither they nor the download cache hold an archive the plan needs; the message carries the provider's list *(2026.11.21.1+)* |
+| `bundle-older-than-lock` | `mcpp fetch --from`: the bundle lacks a version `mcpp.lock` records *(2026.11.21.1+)* |
 | `package-cycle` | the dependency graph contains a cycle of packages; the message names its edges *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | a program or test that states a self-contained C++ runtime loads a C++ shared library of the build that couples to a shared one *(2026.9.16.1+)* |
 | `static-package-in-two-images` | a static package several images of the build reach, on a target where an image cannot use another image's copy *(2026.9.16.1+)* |
@@ -739,9 +758,10 @@ planning failure does not cost its siblings'. Outside a project, or when
 every selected member fails to plan, the envelope omits `data` and exits 1,
 with one diagnostic per failed member: `MCPP_BUILD_DATABASE_NO_PROJECT`
 outside a project; `MCPP_OFFLINE_DOWNLOAD_REQUIRED` when an offline plan
-(`--offline`, `MCPP_OFFLINE`, `MCPP_NO_AUTO_INSTALL`) needs something that has
-to be downloaded (a toolchain, a package, a git revision or the package
-index; the message names the first one); or `MCPP_BUILD_DATABASE_PLAN_FAILED`
+(`--offline`, `MCPP_OFFLINE`, `[build] offline`, `MCPP_NO_AUTO_INSTALL`) needs
+something that has to be downloaded (a toolchain, a package, a git revision or
+the package index; the message names the first one), whether no archive
+directory was named or none held it; or `MCPP_BUILD_DATABASE_PLAN_FAILED`
 when planning fails for any other reason. The offline code is not a defect
 of the project: one run without `--offline` removes it. Each member's
 diagnostic carries `path`, that member's `mcpp.toml` relative to the
@@ -778,6 +798,9 @@ fails there still fails the build.
 | `MCPP_BUILD_DATABASE_PAYLOAD_DEFERRED` | note | a build program asked for a payload declared `provision = "on-request"`; planning installs nothing, names the program and the packages, and describes the plan without them (2026.10.1.3+) |
 | `MCPP_BUILD_DATABASE_PROGRAM_FAILED` | error | a build program failed; its package is described without its directives |
 | `MCPP_INDEX_REQUIRES_NEWER_MCPP` | note | an index refreshed by this run requires a newer mcpp; the previous copy was kept or restored, or none is usable (2026.9.28.1+; the same notice a terminal run prints as its closing `tip:` line) |
+| `MCPP_BUILD_PROGRAM_INCLUDES_HEADER` | note | a build program of the project includes a standard, system or package header; the recommended form imports it (docs/30, "Headers or modules"); said once per project (2026.11.21.1+) |
+| `MCPP_BUILD_PROGRAM_READS_OUTSIDE` | warning | a build program's compile read a file outside its package, the store and its `[build-dependencies]`; said once per package and file (2026.11.21.1+) |
+| `MCPP_BUILD_PROGRAM_DEPRECATED` | warning | a build program received an answer under a deprecated reading (`ambiguous-contract-name`, docs/51) (2026.11.21.1+) |
 
 `--protocol-version` declares `init-mcpp-home`, `read-project`, `network`,
 `write-global-cache` and `exec-build-script` for the command, and never
@@ -970,6 +993,36 @@ the files under `lib/`.
 or `null`, `guide` or `null`, `repo`), `commands` (`list`, `one`, `records`,
 `debug`), `docs`, and `suggest` (the dev-dependency line and repository of mtest)
 when the package has no framework.
+
+### `mcpp emit surface` and the records an invocation appends *(mcpp 2026.11.21.1+)*
+
+`mcpp emit surface [-o FILE]` writes mcpp's surface, one item per line, `<kind> <name>`, in
+the order `command`, `flag`, `key`, `reason`, each sorted by name:
+
+```
+command emit surface
+flag build --target
+flag --quiet
+key build.cflags
+key toolchain
+reason unknown-target
+```
+
+The commands and flags are those of the definition the command line is parsed with (a global
+flag is named without a command); the keys are the manifest's key registry (a whole table by
+its name); the reasons are the tokens of the refusals' table (`mcpp.why.toolchain`, above). `--help` and `--version`, which the parser
+adds, are not items.
+
+Two variables name a file an invocation appends to; each process of the invocation appends,
+so a build's own sub-builds and the compilers it starts through mcpp add to the same file:
+
+| variable | each line |
+|---|---|
+| `MCPP_SURFACE_RECORD` | an item of the surface the process used, once per process: the command and flags it was given, the registry keys its manifests state, the reasons it recorded |
+| `MCPP_BUILD_RECORD` | an edge a build ran (`build`, `output`, `package`, `program`, `started_ms`, `ms`, and for a compile `cpu_ms`, `peak_bytes` and `served`; `staged` for a copy of a unit of a package the cache served), or a package the cache served (`build`, `package`, `cached`, `units`): SPEC-017 B4's `builds.ndjson` |
+
+A test kit turns the first into a case's `exercise` events (SPEC-017 P5.6), and the surface's
+ledger compares the two.
 
 ## 9. The build stream and the result record *(mcpp 2026.10.26.1+)*
 
@@ -1178,6 +1231,32 @@ mcpp search [keyword] --format json
 `packages`: one record per package, with `id` (`namespace:name`), `namespace`,
 `name`, `index`, `description`, `licenses`, `repo` and `versions` (newest
 first). Each index is read once; the command needs no project.
+
+A package of an mcpp index carries `features` (2026.11.21.1+): the answer for
+the newest version (the first of `versions`), read from what the home holds; the query installs
+nothing. An entry the provider serves as its own payload, not an mcpp package,
+carries none.
+
+```json
+"features": {
+  "version": "0.0.5",
+  "state": "declared",
+  "from": "payload",
+  "list": [ { "name": "gui", "default": true, "implies": ["render"],
+              "enables": ["imgui/docking"], "description": "..." } ]
+}
+```
+
+| `state` | meaning | `list` |
+|---|---|---|
+| `declared` | read from the index (a descriptor that carries its manifest inline, `from: index`) or from the manifest of the installed payload (`from: payload`) | the features, sorted by name; `[]` when the package declares none |
+| `not-installed` | the manifest is inside a payload the home does not hold | `null` |
+| `unreadable` | the payload is installed and its manifest cannot be read; `error` says why | `null` |
+
+`[]` states that the package declares no feature; `null` states that the answer
+is not known here. Each feature has `name`, `default` (in the default set, its
+`implies` closure included), `implies` (features of the package), `enables`
+(`<dependency>/<feature>`) and, when written, `description`.
 
 ### `mcpp.index` — the registries and the project's indexes
 

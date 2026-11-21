@@ -9,6 +9,19 @@ import mcpp.build.prepare;
 
 using namespace mcpplibs::mtest;
 
+// The first runs of the hosts the table names, asked as each host asks for its own
+// (`pins::kFirstRun*` are this host's).
+namespace hosts {
+namespace pins = mcpp::toolchain::triple::pins;
+constexpr std::string_view kMac          = pins::first_run("macos", "aarch64");
+constexpr std::string_view kWinMsvc      = pins::first_run("windows", "x86_64", "msvc");
+constexpr std::string_view kWinGnu       = pins::first_run("windows", "x86_64", "no-msvc");
+constexpr std::string_view kWinGnuTarget = pins::first_run_target("windows", "x86_64", "no-msvc");
+constexpr std::string_view kLinuxX86_64  = pins::first_run("linux", "x86_64");
+constexpr std::string_view kLinuxAarch64 = pins::first_run("linux", "aarch64");
+constexpr std::string_view kLinuxOther   = pins::first_run("linux", "riscv64");
+}  // namespace hosts
+
 // ── has_usable_msvc() ───────────────────────────────────────────────────────
 //
 // The predicate that decides whether the MSVC ABI is a viable default on this
@@ -41,13 +54,32 @@ UTest has_usable_msvc_agrees_with_its_parts{"WindowsDefaults/HasUsableMsvcAgrees
 
 UTest first_run_pins_parse{"WindowsDefaults/FirstRunPinsParse", [] {
     namespace pins = mcpp::toolchain::triple::pins;
-    for (auto spec : { pins::kFirstRunMac, pins::kFirstRunWinMsvc,
-                       pins::kFirstRunWinGnu, pins::kFirstRunLinuxX86_64,
-                       pins::kFirstRunLinuxAarch64, pins::kFirstRunLinuxOther }) {
+    for (auto spec : { hosts::kMac, hosts::kWinMsvc,
+                       hosts::kWinGnu, hosts::kLinuxX86_64,
+                       hosts::kLinuxAarch64, hosts::kLinuxOther }) {
         auto parsed = mcpp::toolchain::parse_toolchain_spec(std::string(spec));
         expect(fatal(parsed.has_value())) << spec;
         expect(!(parsed->version.empty())) << spec;
     }
+}};
+
+// THE DEFAULTS ARE DATA (design 2026-11-21 §3.7): every host the engine names
+// has a toolchain, the bootstrap tools have a version on every host, and an
+// mcpp revision of ninja names the upstream version it corrects.
+UTest defaults_answer_every_host{"WindowsDefaults/DefaultsAnswerEveryHost", [] {
+    namespace pins = mcpp::toolchain::triple::pins;
+    for (auto spec : { hosts::kMac, hosts::kWinMsvc, hosts::kWinGnu,
+                       hosts::kLinuxX86_64, hosts::kLinuxAarch64, hosts::kLinuxOther })
+        expect(spec.contains('@')) << "a host without a toolchain default: " << spec;
+    expect(eq(hosts::kWinGnuTarget, std::string_view("x86_64-windows-gnu")));
+    expect(!pins::tool_version("ninja").empty());
+    expect(!pins::tool_version("patchelf").empty());
+    expect(eq(pins::install_words("llvm@23.1.3"), std::string("llvm 23.1.3")));
+    // This host's answer is its row's.
+    expect(eq(pins::host_default_toolchain(false), pins::kFirstRunNoMsvc));
+    expect(eq(pins::host_default_toolchain(true), pins::kFirstRunMsvc));
+    expect(pins::host_default_toolchain(false).contains('@'));
+    expect(pins::host_default_toolchain(true).contains('@'));
 }};
 
 // The GNU fallback must land on a target mcpp is willing to build for, and
@@ -55,12 +87,12 @@ UTest first_run_pins_parse{"WindowsDefaults/FirstRunPinsParse", [] {
 // the same decision is derived in two places and they will drift.
 UTest gnu_fallback_target_is_verified_and_pin_agrees{"WindowsDefaults/GnuFallbackTargetIsVerifiedAndPinAgrees", [] {
     namespace triple = mcpp::toolchain::triple;
-    auto t = triple::parse(std::string(triple::pins::kFirstRunWinGnuTarget));
+    auto t = triple::parse(std::string(hosts::kWinGnuTarget));
     expect(fatal(t.has_value()));
     const auto* known = triple::find_known_target(*t);
-    expect(fatal(ne(known, nullptr))) << triple::pins::kFirstRunWinGnuTarget;
+    expect(fatal(ne(known, nullptr))) << hosts::kWinGnuTarget;
     expect(eq(known->tier, "verified"));
-    expect(eq(known->pin, triple::pins::kFirstRunWinGnu));
+    expect(eq(known->pin, hosts::kWinGnu));
 }};
 
 // ── Intent classification ───────────────────────────────────────────────────
@@ -109,7 +141,7 @@ UTest only_mcpps_own_answers_may_be_persisted{"WindowsDefaults/OnlyMcppsOwnAnswe
 // whole point is to leave the ABI that needs Visual Studio behind.
 UTest gnu_fallback_target_is_windows_gnu{"WindowsDefaults/GnuFallbackTargetIsWindowsGnu", [] {
     namespace triple = mcpp::toolchain::triple;
-    auto t = triple::parse(std::string(triple::pins::kFirstRunWinGnuTarget));
+    auto t = triple::parse(std::string(hosts::kWinGnuTarget));
     expect(fatal(t.has_value()));
     expect(eq(t->os, "windows"));
     expect(eq(t->env, "gnu"));
@@ -118,14 +150,14 @@ UTest gnu_fallback_target_is_windows_gnu{"WindowsDefaults/GnuFallbackTargetIsWin
 
 UTest native_arm64_uses_llvm_and_other_defaults_remain_stable{"LinuxDefaults/NativeArm64UsesLlvmAndOtherDefaultsRemainStable", [] {
     namespace pins = mcpp::toolchain::triple::pins;
-    expect(eq(pins::linux_default_toolchain("aarch64"), "llvm@23.1.3"));
-    expect(eq(pins::linux_default_toolchain("x86_64"), "gcc@16.1.0"));
-    expect(eq(pins::linux_default_toolchain("riscv64"), "gcc@15.1.0-musl"));
+    expect(eq(hosts::kLinuxAarch64, "llvm@23.1.3"));
+    expect(eq(hosts::kLinuxX86_64, "gcc@16.2.0"));
+    expect(eq(hosts::kLinuxOther, "gcc@16.2.0-musl"));
     auto target = mcpp::toolchain::triple::parse("aarch64-linux-gnu");
     expect(fatal(bool(target)));
     auto row = mcpp::toolchain::triple::find_known_target(*target);
     expect(fatal(bool(row)));
-    expect(eq(row->pin, pins::kFirstRunLinuxAarch64));
+    expect(eq(row->pin, hosts::kLinuxAarch64));
     expect(!target->pin_is_capability());
 }};
 

@@ -13,7 +13,7 @@ namespace {
 
 const s::options at_root{.env = {{"MCPP_COMPILE_COMMANDS", "compile_commands.json"}}};
 
-E2E root{"root", [] {
+E2E root{"root", s::home_fixture, [] {
     "47 cdb prebuilt module path abs"_test = [] {
         // Every -fprebuilt-module-path= of the database is absolute, unquoted, free of ninja
         // escapes, and names a pcm.cache or gcm.cache directory.
@@ -147,12 +147,14 @@ E2E root{"root", [] {
 }};
 
 
-// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
-// other test beside it. Each states that a build is replayed, and a build is planned again when
-// the runtime environment description changed: another program installing into the shared home
-// beside it rewrote that description (measured on Linux CI, 2026-11-14).
-E2E root_machine{"root-machine", resource{"machine"}, [] {
+// The cases whose assertion holds only while nothing else writes their home (design 2026-11-20
+// §5.10): each states that a build is replayed, and a build is planned again when the runtime
+// environment description changed -- another program installing into the shared home beside it
+// rewrote that description (measured on Linux CI, 2026-11-14). Each runs mcpp in a home of its own
+// whose payloads are the user's, as upstreams (`own_home`), instead of holding the machine.
+E2E root_own_home{"root-own-home", s::home_fixture, [] {
     "781 deleted root cdb is restored"_test = [] {
+        s::own_home();
         // A root database removed by hand is restored by the next build, without a full plan,
         // equal to the configuration's own; a second removal likewise.
         auto p = s::project::scaffold("app");

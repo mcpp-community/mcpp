@@ -21,10 +21,13 @@ import mcpp.effects;
 import mcpp.runtime.launch_env;
 import mcpp.run;
 import mcpp.pm.mangle;        // imported_module_names -- what build.mcpp asks for
+import mcpp.pm.compat.registry;   // a deprecated reading a typed reader applied
 import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
 import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.build.cmdlimits;
+import mcpp.build.unit_cache;       // Stamp: how a recorded file is compared
+import nlohmann.json;                // programs.json, the record of a group's programs
 import mcpp.build.directives;        // the directive definition table (own module: see its header)
 import mcpp.build.progress;          // the program's line (build progress design 2026-09-29)
 import mcpp.build.refusal;           // the machine-readable identity of a refusal
@@ -39,6 +42,7 @@ import mcpp.toolchain.triple;        // host_triple (MCPP_HOST contract value)
 import mcpp.ui;
 import mcpp.version;         // MCPP_VERSION — the hint names the engine the reader is on
 import mcpp.invocation;
+import mcpplibs.os;                  // from_utf8: a recorded path back to a path
 
 namespace {
 // #734 E11: a build program's structured diagnostics, in the engine's own form.
@@ -80,6 +84,36 @@ void report_undeclared_tools(std::string_view packageName,
                         "`[features.<name>] tools = [\"{}\"]`", pkg, tool, tool));
     }
 }
+// Design 2026-11-21 §3.7: a deprecated reading a typed reader applied
+// (`<id>\t<question>\t<spellings>`), warned by the registry's row on every run
+// that applies it, a replay included: the answer is one of several, and the
+// reading ends at the row's floor.
+void report_deprecated_readings(std::string_view packageName,
+                                const mcpp::build::directives::Directives& d) {
+    namespace dirs = mcpp::build::directives;
+    namespace compat = mcpp::pm::compat;
+    std::set<std::string> said;
+    for (auto const& raw : d.at(dirs::Slot::DeprecatedReadings)) {
+        if (!said.insert(raw).second) continue;
+        const auto t1 = raw.find('\t');
+        const auto t2 = t1 == std::string::npos ? t1 : raw.find('\t', t1 + 1);
+        const auto id = raw.substr(0, t1);
+        const auto question = t1 == std::string::npos ? std::string{} : raw.substr(t1 + 1, t2 - t1 - 1);
+        const auto which = t2 == std::string::npos ? std::string{} : raw.substr(t2 + 1);
+        const auto* row = compat::find_deprecation(id);
+        if (!row) continue;   // a reading this engine never deprecated: nothing to say about it
+        // What to write, as every deprecation's warning says it ("Write ... instead").
+        const auto instead = which.empty()
+            ? std::string("another name for one of the packages (the two differ only in characters "
+                          "a contract variable cannot hold)")
+            : std::format("one of {}", which);
+        compat::record_use(id, std::format("{}'s build.mcpp", packageName), question, true, instead);
+        mcpp::diag::warning(row->domain, std::format(
+            "{}: build.mcpp asks {}, which several dependencies answer, and received the first; "
+            "the reading is {}. Write {} instead.", packageName, question,
+            compat::deprecation_clause(*row), instead));
+    }
+}
 } // namespace
 
 export namespace mcpp::build {
@@ -99,6 +133,20 @@ inline constexpr std::string_view kBuildInformationKeys[] = {
     "MCPP_ABI_TOOL_RC", "MCPP_ABI_TOOL_AS", "MCPP_ABI_TOOL_MT",
     "MCPP_TOOL_ENV", "MCPP_TOOLSET_IDENTITY", "MCPP_MSVC_INSTANCE_DIR",
     "MCPP_NINJA", "MCPP_CXX_RUNTIME", "MCPP_MSVC_CRT_LINKAGE",
+};
+
+// ONE ANSWER OF A CHANNEL OF THE CONTRACT (design 2026-11-21, build programs'
+// inputs §3.7): the variable a typed reader reads, its value, the spelling the
+// reader asks by, the package or payload the answer is, and the variable the
+// reader reads when the first one has several owners. Spellings map to
+// variables lossily (`foo-bar`, `foo_bar` and `foo.bar` are one variable), so a
+// name is judged by its variable, the unit the contract publishes.
+struct ContractAnswer {
+    std::string var;
+    std::string value;
+    std::string spelling;
+    std::string owner;
+    std::string ambiguous;
 };
 
 struct BuildProgramEnv {
@@ -358,7 +406,7 @@ struct BuildProgramEnv {
     // helpers, so a build.mcpp asks `xpkg_dir("xim", "picolibc-riscv")`
     // instead of reconstructing `<home>/data/xpkgs/<ns>-x-<name>/<version>`
     // — the same reason depDirs exists for mcpp dependencies.
-    std::vector<std::pair<std::string, std::string>> xpkgDirs;
+    std::vector<ContractAnswer> xpkgDirs;
     // THE PHASE THIS RUN BELONGS TO (mcpp#755). Empty for every ordinary run,
     // and then `MCPP_PHASE` is not set, so the contract of a program that
     // never asks is unchanged. "toolchain" for the root program's toolchain
@@ -378,7 +426,7 @@ struct BuildProgramEnv {
     // this is purely the delivery channel. Rides the same contract env, hence
     // the same re-run key: a rebuilt tool re-runs the program that uses it,
     // with no `rerun-if-changed` needed from the author.
-    std::vector<std::pair<std::string, std::string>> toolPaths;
+    std::vector<ContractAnswer> toolPaths;
     // THE `bin` OF THIS PROJECT'S OWN SubOS, AT THE FRONT OF THE CHILD'S
     // `PATH`. Empty for a project that has not declared one, and an empty
     // value means the child's `PATH` is left exactly as mcpp received it.
@@ -482,9 +530,9 @@ std::string response_file_body(std::span<const std::string> args, bool gnuQuotin
     return body;
 }
 
-inline std::string xpkg_env_var(std::string_view ns, std::string_view name,
-                                std::string_view suffix = "DIR") {
-    std::string out = "MCPP_XPKG_";
+// The key a payload is published under: `<NS>_<NAME>`, or `<NAME>` bare.
+inline std::string xpkg_env_key(std::string_view ns, std::string_view name) {
+    std::string out;
     auto put = [&](std::string_view s) {
         for (char c : s)
             out += (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
@@ -492,9 +540,17 @@ inline std::string xpkg_env_var(std::string_view ns, std::string_view name,
     };
     if (!ns.empty()) { put(ns); out += '_'; }
     put(name);
-    out += '_';
-    out += suffix;
     return out;
+}
+
+inline std::string xpkg_env_var(std::string_view ns, std::string_view name,
+                                std::string_view suffix = "DIR") {
+    return std::format("MCPP_XPKG_{}_{}", xpkg_env_key(ns, name), suffix);
+}
+
+// What a reader of `xpkg_*` reads when several payloads answer the key (§3.7).
+inline std::string xpkg_ambiguous_var(std::string_view ns, std::string_view name) {
+    return "MCPP_XPKG_AMBIGUOUS_" + xpkg_env_key(ns, name);
 }
 
 // THE CONTENT OF A RESPONSE FILE CARRYING `args`, one argument per line.
@@ -552,6 +608,18 @@ install_hook_env(const BuildProgramEnv& env);
 // `compile()`. Written by the build programs' graph (mcpp#797).
 std::string synthesised_rule_program(const std::vector<std::string>& modules);
 
+// THE OUTPUTS OF A PACKAGE WHOSE SOURCES ARE NAMED, IN THE HOME (design
+// 2026-11-20 §5.2). A program's OUT_DIR reaches its package's cache key through
+// the include directories it states; under each project's `target/` it gave
+// every project its own key for openkal-musl and openkal-windows, and the
+// runtime above them was compiled again in each (478 s of a 7 s step, §3.1).
+// `<program_out_root()>/<package>@<version>/<digest>/` holds `out/` (OUT_DIR)
+// and `run/` (the program's run record), the digest being the contract's with
+// OUT_DIR aside: one contract, one directory, so a second project replays the
+// directives the first recorded and nothing writes the files another reads.
+std::filesystem::path program_out_root();
+std::string program_contract_digest(const std::filesystem::path& root, const BuildProgramEnv& env);
+
 // Runs the build program of the package at `root` -- `env.programBinary`, as
 // the build programs' graph compiled it -- or replays its cached directives
 // when nothing it depends on changed, and applies them to `m`.
@@ -602,6 +670,18 @@ struct DeclaredProgramInputs {
 };
 std::vector<DeclaredProgramInputs>
 declared_program_inputs(const std::filesystem::path& workRoot);
+
+// The records a build of `projectRoot` relies on, below its
+// `target/.build-mcpp`: each build program's run cache (`build.mcpp.cache`)
+// and each group's record of its programs (`programs.json`), sorted. One walk
+// for every reader; a recorded build is replayed only while each is there
+// (design 2026-11-21, build programs' inputs §3.2).
+std::vector<std::filesystem::path> program_records(const std::filesystem::path& projectRoot);
+
+// THE VARIABLES ONE CHANNEL OF THE CONTRACT PUBLISHES, appended to `e` (design
+// 2026-11-21, build programs' inputs §3.7). See the definition.
+void publish_by_variable(std::vector<std::pair<std::string, std::string>>& e,
+                         const std::vector<ContractAnswer>& answers);
 
 } // namespace mcpp::build
 
@@ -673,11 +753,10 @@ std::string sanitize_feature_env(std::string f) {
 }
 
 // The injected contract values, as (NAME, value) pairs for the child process.
-// `warn` is false in the concurrent compile phase (#748, B2): the values are
-// computed again at the program's turn, which states each warning once.
+// Nothing here is said: a name several dependencies answer is wrong only when
+// a program asks for it, and the reader refuses or warns then (§3.7).
 std::vector<std::pair<std::string, std::string>>
-contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv& env,
-             bool warn = true) {
+contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv& env) {
     std::vector<std::pair<std::string, std::string>> e;
     auto hostT = mcpp::toolchain::triple::host_triple().str();
     // The toolchain and target names an install hook also receives, from the
@@ -783,53 +862,34 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     }
     e.emplace_back("MCPP_FEATURES", csv);
     // mcpp#241: per-dependency payload dir, under MCPP_DEP_<SANITIZED_NAME>_DIR
-    // (same sanitizer as MCPP_FEATURE_ — predictable from the manifest, not
-    // store internals). Two distinct dep names can sanitize to the same var
-    // (e.g. `foo.bar` vs `foo-bar`, or a bare `zlib` vs another dep's short
-    // `zlib`); guard so a silent last-wins can't hand one dep another's dir —
-    // keep the first and warn on a conflicting value.
-    std::map<std::string, std::string> depVarValue;
-    for (auto const& [name, dir] : env.depDirs) {
-        auto var = "MCPP_DEP_" + sanitize_feature_env(name) + "_DIR";
-        auto [it, inserted] = depVarValue.try_emplace(var, dir.string());
-        if (inserted) {
-            e.emplace_back(var, dir.string());
-        } else if (it->second != dir.string()) {
-            if (warn) mcpp::ui::warning(std::format(
-                "build.mcpp: dependency name collides on {} (kept '{}', ignored "
-                "'{}') — rename one dependency to disambiguate", var,
-                it->second, dir.string()));
+    // (same sanitizer as MCPP_FEATURE_ -- predictable from the manifest, not
+    // store internals), and #642 E2 the form it takes, under _LINKAGE. Judged
+    // by variable (§3.7): a dependency is its directory, so the form follows
+    // the directory's owner.
+    {
+        std::map<std::string, std::string> dirOf;   // spelling -> directory
+        std::vector<ContractAnswer> answers;
+        for (auto const& [name, dir] : env.depDirs) {
+            const auto key = sanitize_feature_env(name);
+            dirOf.emplace(name, dir.string());
+            answers.push_back({"MCPP_DEP_" + key + "_DIR", dir.string(), name, dir.string(),
+                               "MCPP_DEP_AMBIGUOUS_" + key});
         }
-    }
-    for (auto const& [name, which] : env.depAmbiguous)
-        e.emplace_back("MCPP_DEP_AMBIGUOUS_" + sanitize_feature_env(name), which);
-    // #642 E2: the form each dependency takes, beside its directory and under
-    // the same sanitised name. Its own collision map, because the variable
-    // names differ from the `_DIR` ones; the rule is the same: keep the first,
-    // warn on a conflicting second.
-    std::map<std::string, std::string> linkageVarValue;
-    for (auto const& [name, form] : env.depLinkages) {
-        auto var = "MCPP_DEP_" + sanitize_feature_env(name) + "_LINKAGE";
-        auto [it, inserted] = linkageVarValue.try_emplace(var, form);
-        if (inserted) {
-            e.emplace_back(var, form);
-        } else if (it->second != form) {
-            if (warn) mcpp::ui::warning(std::format(
-                "build.mcpp: dependency name collides on {} (kept '{}', ignored "
-                "'{}') — rename one dependency to disambiguate", var,
-                it->second, form));
+        for (auto const& [name, form] : env.depLinkages) {
+            const auto key = sanitize_feature_env(name);
+            answers.push_back({"MCPP_DEP_" + key + "_LINKAGE", form, name, dirOf[name],
+                               "MCPP_DEP_AMBIGUOUS_" + key});
         }
+        // #852: a spelling two visible dependencies share is no package's; the
+        // engine knows it before any variable, and names the qualified names.
+        for (auto const& [name, which] : env.depAmbiguous)
+            e.emplace_back("MCPP_DEP_AMBIGUOUS_" + sanitize_feature_env(name), which);
+        publish_by_variable(e, answers);
     }
-    // The xlings side of the same question. Each declared entry is emitted
-    // under BOTH its namespaced and its bare spelling, because a manifest may
-    // write either and the build.mcpp asking should not have to know which
-    // one the author chose. Namespaced entries are emitted first, so a bare
-    // name that two namespaces claim resolves to the first DECLARED one rather
-    // than to whichever was seen last.
-    for (auto const& [var, dir] : env.xpkgDirs) {
-        auto [it, inserted] = depVarValue.try_emplace(var, dir);
-        if (inserted) e.emplace_back(var, dir);
-    }
+    // The xlings side of the same question: each declared entry under its
+    // namespaced and its bare spelling, so a build.mcpp need not know which one
+    // the author chose; a bare name two namespaces declare is judged as above.
+    publish_by_variable(e, env.xpkgDirs);
     if (!env.phase.empty()) e.emplace_back("MCPP_PHASE", env.phase);
     // #355: MCPP_DEP_<PKG>_BIN_<TOOL> — absolute path to a host tool the
     // consumer declared via `tools = [...]`. A PATH rather than a directory:
@@ -854,16 +914,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         e.emplace_back("PATH", path);
     }
 
-    for (auto const& [var, path] : env.toolPaths) {
-        auto [it, inserted] = depVarValue.try_emplace(var, path);
-        if (inserted) {
-            e.emplace_back(var, path);
-        } else if (it->second != path) {
-            if (warn) mcpp::ui::warning(std::format(
-                "build.mcpp: tool name collides on {} (kept '{}', ignored '{}')",
-                var, it->second, path));
-        }
-    }
+    publish_by_variable(e, env.toolPaths);
     return e;
 }
 
@@ -924,6 +975,11 @@ std::string output_dir_name(const fs::path& root, const fs::path& bdir) {
     return name;
 }
 
+std::string input_line(const mcpp::build::unit_cache::Stamp& st, std::string_view path) {
+    return std::format("{} {} {} {}", st.digest.empty() ? std::string("-") : st.digest, st.size,
+                       st.mtime, path);
+}
+
 void write_cache(const fs::path& bdir, const fs::path& root,
                  const std::string& programHash,
                  const std::string& compilerHash, const std::string& ctxHash,
@@ -941,8 +997,13 @@ void write_cache(const fs::path& bdir, const fs::path& root,
     // reader that is not prepare_build — the fast-path glob check — can
     // evaluate a DEPENDENCY's cache against the dependency's own tree.
     os << "root " << root.string() << '\n';
-    for (auto const& f : d.at(Slot::RerunFiles))
-        os << "in " << mcpp::toolchain::hash_file(abs_against_root(root, f)) << ' ' << f << '\n';
+    // `in <digest> <size> <time> <path>`: compared by size and time, then by
+    // content (mcpp.build.unit_cache, Stamp).
+    for (auto const& f : d.at(Slot::RerunFiles)) {
+        const auto st = mcpp::build::unit_cache::stamp_of(abs_against_root(root, f))
+                            .value_or(mcpp::build::unit_cache::Stamp{});
+        os << "in " << input_line(st, f) << '\n';
+    }
     for (auto const& e : d.at(Slot::RerunEnv))
         os << "env " << mcpp::toolchain::hash_string(env_value(e)) << ' ' << e << '\n';
     // #359: a glob input's fingerprint is the SET of matching paths. Same
@@ -956,13 +1017,22 @@ void write_cache(const fs::path& bdir, const fs::path& root,
     dirs::serialize(os, d);
 }
 
+// A declared file of the record, as `in` states it.
+struct RecordedInput {
+    mcpp::build::unit_cache::Stamp stamp;
+    std::string                    path;
+};
+
 struct CacheRecord {
     int         epoch = 0;   // 0 = pre-epoch entry (written before this guard existed)
     std::string programHash;
     std::string compilerHash;
     std::string ctxHash;   // contract env (target/profile/features/out-dir)
     std::string rootPath;  // what relative entries are resolved against
-    std::vector<std::pair<std::string, std::string>> inputs;  // (hash, path)
+    std::vector<RecordedInput> inputs;
+    // A declared file whose time moved over the same content: the record is
+    // written again with its stamp now, so the next comparison reads no content.
+    bool restamped = false;
     std::vector<std::pair<std::string, std::string>> envs;    // (hash, name)
     std::vector<std::pair<std::string, std::string>> globs;   // (hash, pattern)
     Directives directives;
@@ -972,6 +1042,45 @@ struct CacheRecord {
     bool unknownRecord = false;
     bool loaded = false;
 };
+
+// An `in` line's value. One a reader cannot take apart is no input, and the
+// record then lacks it: it was written by another engine, whose records the
+// program identity already tells apart.
+std::optional<RecordedInput> parse_input(std::string_view rest) {
+    RecordedInput in;
+    auto word = [&](std::string_view& from) {
+        const auto sp = from.find(' ');
+        auto w = from.substr(0, sp);
+        from = sp == std::string_view::npos ? std::string_view{} : from.substr(sp + 1);
+        return w;
+    };
+    const auto digest = word(rest), size = word(rest), mtime = word(rest);
+    if (rest.empty()
+        || std::from_chars(size.data(), size.data() + size.size(), in.stamp.size).ec != std::errc{}
+        || std::from_chars(mtime.data(), mtime.data() + mtime.size(), in.stamp.mtime).ec != std::errc{})
+        return std::nullopt;
+    if (digest != "-") in.stamp.digest = std::string(digest);
+    in.path = std::string(rest);
+    return in;
+}
+
+// Writes the record's `in` lines again with the stamps it holds now.
+void restamp_cache(const fs::path& bdir, const CacheRecord& c) {
+    std::ifstream is(cache_path(bdir));
+    std::string text, line;
+    std::size_t next = 0;
+    while (std::getline(is, line)) {
+        if (line.starts_with("in ") && next < c.inputs.size())
+            line = "in " + input_line(c.inputs[next].stamp, c.inputs[next].path), ++next;
+        text += line + '\n';
+    }
+    is.close();
+    if (next != c.inputs.size()) return;   // not the record that was read
+    const auto tmp = cache_path(bdir) + ".restamp";
+    { std::ofstream os(tmp, std::ios::trunc); if (!os) return; os << text; }
+    std::error_code ec;
+    fs::rename(tmp, cache_path(bdir), ec);
+}
 
 CacheRecord read_cache(const fs::path& bdir) {
     CacheRecord r;
@@ -993,12 +1102,14 @@ CacheRecord read_cache(const fs::path& bdir) {
         else if (tag == "compiler") r.compilerHash = rest;
         else if (tag == "ctx") r.ctxHash = rest;
         else if (tag == "root") r.rootPath = rest;
-        else if (tag == "in" || tag == "env" || tag == "glob") {
+        else if (tag == "in") {
+            if (auto in = parse_input(rest)) r.inputs.push_back(std::move(*in));
+        }
+        else if (tag == "env" || tag == "glob") {
             auto sp2 = rest.find(' ');
             if (sp2 == std::string::npos) continue;
             std::string h = rest.substr(0, sp2), name = rest.substr(sp2 + 1);
-            (tag == "in" ? r.inputs : tag == "env" ? r.envs : r.globs)
-                .emplace_back(h, name);
+            (tag == "env" ? r.envs : r.globs).emplace_back(h, name);
         } else if (tag == "d") {
             auto sp2 = rest.find(' ');
             if (sp2 == std::string::npos) continue;
@@ -1020,7 +1131,7 @@ std::optional<std::string> first_vanished(const std::vector<std::string>& values
 }
 
 // Why the cached run is not valid, for the log; empty when it is.
-std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
+std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, CacheRecord& c,
                                const std::string& programHash, const std::string& compilerHash,
                                const std::string& ctxHash, const fs::path& outDir = {}) {
     if (!c.loaded) return "no record";
@@ -1029,8 +1140,12 @@ std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const
     if (c.programHash != programHash) return "program identity " + c.programHash + " -> " + programHash;
     if (c.compilerHash != compilerHash) return "record shape";
     if (c.ctxHash != ctxHash) return "environment contract";   // pre-G3 caches rerun once
-    for (auto const& [h, path] : c.inputs)
-        if (mcpp::toolchain::hash_file(abs_against_root(root, path)) != h) return "input " + path;
+    for (auto& in : c.inputs) {
+        std::optional<mcpp::build::unit_cache::Stamp> now;
+        if (!mcpp::build::unit_cache::unchanged(abs_against_root(root, in.path), in.stamp, &now))
+            return "input " + in.path;
+        if (now) { in.stamp = std::move(*now); c.restamped = true; }
+    }
     for (auto const& [h, name] : c.envs)
         if (mcpp::toolchain::hash_string(env_value(name)) != h) return "environment variable " + name;
     // #359: the path SET behind each declared glob. A file appearing or
@@ -1083,7 +1198,7 @@ std::string cache_stale_reason(const fs::path& root, const fs::path& bdir, const
 }
 
 // Decide whether the cached run is still valid (so we can skip recompiling/running).
-bool cache_fresh(const fs::path& root, const fs::path& bdir, const CacheRecord& c,
+bool cache_fresh(const fs::path& root, const fs::path& bdir, CacheRecord& c,
                  const std::string& programHash, const std::string& compilerHash,
                  const std::string& ctxHash) {
     return cache_stale_reason(root, bdir, c, programHash, compilerHash, ctxHash).empty();
@@ -1243,6 +1358,7 @@ std::expected<void, std::string> run_build_program_impl(
                                                         keys.empty() ? "" : ": ", keys));
     }
     if (stale.empty()) {
+        if (cache.restamped) restamp_cache(bdir, cache);
         if (auto terr = dirs::target_directive_error(m, cache.directives); !terr.empty())
             return std::unexpected(terr);
         // #622 A4. Checked on the cache-hit path too, so a `deploy` a fresh
@@ -1260,9 +1376,10 @@ std::expected<void, std::string> run_build_program_impl(
         // what they must not drift on is WHETHER they emit, and e2e 139
         // asserts the second build, not the first.
         for (auto const& a : dirs::advisories(m.package.name, cache.directives))
-            mcpp::ui::warning(a);
+            mcpp::diag::warning("build-program", a);
         report_stated_diagnostics(m.package.name, cache.directives);
         report_undeclared_tools(m.package.name, cache.directives);
+        report_deprecated_readings(m.package.name, cache.directives);
         mcpp::build::progress::program_finished(
             who, env.requested, mcpp::build::progress::ProgramOutcome::Cached, {}, {});
         return {};
@@ -1417,14 +1534,14 @@ std::expected<void, std::string> run_build_program_impl(
                 "dependency may only watch files inside its own tree",
                 m.package.name, g));
         if (auto why = dirs::glob_unwatchable(root, g, output_dir_name(root, bdir)))
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build-program", std::format(
                 "build.mcpp of '{}': rerun_if_changed_glob(\"{}\") can never re-run it: {}. "
                 "To watch one file's contents, use rerun_if_changed",
                 m.package.name, g, *why));
     }
     if (d.protocol == 0) {
         for (auto const& k : d.unknownKeys)
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build-program", std::format(
                 "build.mcpp: ignoring unknown directive 'mcpp:{}'", k));
     }
     // THE TOOLCHAIN PHASE STATES THE TOOLCHAIN AND NOTHING ELSE (mcpp#755).
@@ -1545,9 +1662,10 @@ std::expected<void, std::string> run_build_program_impl(
     programReport.report();
     // The second of the two sites. See the note on the cache-hit path above.
     for (auto const& a : dirs::advisories(m.package.name, d))
-        mcpp::ui::warning(a);
+        mcpp::diag::warning("build-program", a);
     report_stated_diagnostics(m.package.name, d);
     report_undeclared_tools(m.package.name, d);
+    report_deprecated_readings(m.package.name, d);
     // A run kept although it asked for a payload (`PrepareIntent::Describe`) is never
     // cached: replaying it would keep the build from ever asking again.
     if (cacheThisRun) {
@@ -1561,6 +1679,15 @@ std::string synthesised_rule_program(const std::vector<std::string>& modules) {
     return synthesised_rule_program_impl(modules);
 }
 
+fs::path program_out_root() { return mcpp::home::cache_root() / "out"; }
+
+std::string program_contract_digest(const fs::path& root, const BuildProgramEnv& env) {
+    auto e = contract_env(root, "<out>", env);
+    e.emplace_back("(program)", env.programIdentity);
+    e.emplace_back("(graph document)", env.graphDigest);
+    return contract_hash(e).substr(0, 16);
+}
+
 std::expected<void, std::string> run_build_program(
     mcpp::manifest::Manifest& m,
     const fs::path& root,
@@ -1571,26 +1698,39 @@ std::expected<void, std::string> run_build_program(
     return run_build_program_impl(m, root, tc, env);
 }
 
-std::vector<DeclaredProgramInputs>
-declared_program_inputs(const fs::path& workRoot) {
-    std::vector<DeclaredProgramInputs> out;
+std::vector<fs::path> program_records(const fs::path& projectRoot) {
+    std::vector<fs::path> out;
     std::error_code ec;
-    const fs::path base = workRoot / "target" / ".build-mcpp";
+    const fs::path base = projectRoot / "target" / ".build-mcpp";
     if (!fs::exists(base, ec)) return out;
-    // The walk program_inputs_stale makes, bounded the same way.
-    fs::recursive_directory_iterator it(
-        base, fs::directory_options::skip_permission_denied, ec);
+    // Depth-bounded: the root's cache sits at depth 0, a dependency's at
+    // `deps/<pkg>/` and a group's record at `host/<group>/` (depth 2). Bounding
+    // it keeps this off the generated-output tree under `out/` and a group's
+    // sub-build, which can hold thousands of files and never hold a record.
+    fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied, ec);
     if (ec) return out;
     for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
         if (it.depth() >= 3) { it.disable_recursion_pending(); continue; }
-        if (it->path().filename() != "build.mcpp.cache") continue;
-        auto rec = read_cache(it->path().parent_path());
+        const auto name = it->path().filename();
+        if (name == "build.mcpp.cache" || (name == "programs.json" && it.depth() == 2))
+            out.push_back(it->path());
+    }
+    std::ranges::sort(out);
+    return out;
+}
+
+std::vector<DeclaredProgramInputs>
+declared_program_inputs(const fs::path& workRoot) {
+    std::vector<DeclaredProgramInputs> out;
+    for (auto const& record : program_records(workRoot)) {
+        if (record.filename() != "build.mcpp.cache") continue;
+        auto rec = read_cache(record.parent_path());
         if (!rec.loaded || rec.rootPath.empty()) continue;
         DeclaredProgramInputs d;
         d.root = fs::path{rec.rootPath};
-        for (auto const& [h, rel] : rec.inputs)
-            d.files.emplace_back(abs_against_root(d.root, rel));
+        for (auto const& in : rec.inputs)
+            d.files.emplace_back(abs_against_root(d.root, in.path));
         for (auto const& [h, pattern] : rec.globs) d.globs.push_back(pattern);
         for (auto const& [h, name] : rec.envs) d.envs.push_back(name);
         out.push_back(std::move(d));
@@ -1601,38 +1741,111 @@ declared_program_inputs(const fs::path& workRoot) {
     return out;
 }
 
-bool program_inputs_stale(const fs::path& projectRoot) {
-    std::error_code ec;
-    const fs::path base = projectRoot / "target" / ".build-mcpp";
-    if (!fs::exists(base, ec)) return false;
+// Whether the file of one entry of a row's `reads` has another size or time
+// than the entry states, or the entry cannot be read.
+bool read_moved(const nlohmann::json& r) {
+    if (!r.is_object() || !r.contains("path") || !r["path"].is_string()) return true;
+    const mcpp::build::unit_cache::Stamp was{r.value("size", std::uintmax_t{0}),
+                                             r.value("mtime", std::int64_t{0}), {}};
+    const auto path = r["path"].template get<std::string>();
+    return !mcpp::build::unit_cache::same_by_stat(mcpplibs::os::fs::from_utf8(path), was);
+}
 
-    // Depth-bounded: the root's cache sits at depth 0 and a dependency's at
-    // `deps/<pkg>/` (depth 2). Bounding it keeps this off the generated-output
-    // tree under `out/`, which can hold thousands of files and never holds a
-    // cache.
-    fs::recursive_directory_iterator it(
-        base, fs::directory_options::skip_permission_denied, ec);
-    if (ec) return false;
-    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        if (it.depth() >= 3) { it.disable_recursion_pending(); continue; }
-        if (it->path().filename() != "build.mcpp.cache") continue;
-        auto rec = read_cache(it->path().parent_path());
+// Whether a file a program's compile read has another size or time than the
+// group's record states, or the record cannot be read.
+bool program_reads_moved(const fs::path& record) {
+    std::ifstream in(record, std::ios::binary);
+    const auto doc = nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/false);
+    if (!doc.is_object()) return false;   // no record: no program the fast path could replay
+    for (auto row = doc.begin(); row != doc.end(); ++row) {
+        // A row without `reads` was written by an earlier engine: its program
+        // is compiled again, which prepare decides.
+        if (!row->is_object() || !row->contains("reads")) return true;
+        const auto& reads = (*row)["reads"];
+        if (!reads.is_array()) return true;
+        for (auto const& r : reads)
+            if (read_moved(r)) return true;
+    }
+    return false;
+}
+
+bool program_inputs_stale(const fs::path& projectRoot) {
+    for (auto const& record : program_records(projectRoot)) {
+        // What a group's programs' compiles read: a time that moved sends the
+        // build to prepare, which reads the content.
+        if (record.filename() == "programs.json") {
+            if (program_reads_moved(record)) return true;
+            continue;
+        }
+        auto rec = read_cache(record.parent_path());
         if (!rec.loaded || rec.rootPath.empty()) continue;
         fs::path recRoot{rec.rootPath};
-        auto outName = output_dir_name(recRoot, it->path().parent_path());
+        auto outName = output_dir_name(recRoot, record.parent_path());
         for (auto const& [h, pattern] : rec.globs)
             if (dirs::glob_fingerprint(recRoot, pattern, outName) != h) return true;
-        // The same comparison `cache_fresh` makes when prepare_build runs. It
-        // is repeated here rather than shared because the fast path has no
-        // manifest, no toolchain and no context hash -- only the recorded
-        // entries and the tree they were measured against.
-        for (auto const& [h, rel] : rec.inputs)
-            if (mcpp::toolchain::hash_file(abs_against_root(recRoot, rel)) != h) return true;
+        // The comparison `cache_fresh` makes when prepare_build runs, by the
+        // same rule, without the refresh: the fast path has no manifest, no
+        // toolchain and no context hash -- only the recorded entries and the
+        // tree they were measured against.
+        for (auto const& in : rec.inputs)
+            if (!mcpp::build::unit_cache::unchanged(abs_against_root(recRoot, in.path), in.stamp))
+                return true;
         for (auto const& [h, name] : rec.envs)
             if (mcpp::toolchain::hash_string(env_value(name)) != h) return true;
     }
     return false;
 }
+
+// THE VARIABLES ONE CHANNEL OF THE CONTRACT PUBLISHES (design 2026-11-21, build
+// programs' inputs §3.7). A variable one owner answers is published with its
+// value. One several owners answer is no spelling's: its `ambiguous` variable
+// is published with the spellings that do name one owner (a spelling whose own
+// variable has one), comma-separated, and empty when none does -- the names then
+// differ only in characters a variable cannot hold. Each variable once, by
+// construction: the child would otherwise take whichever came last.
+//
+// COMPAT(ambiguous-contract-name): until the row's floor, an ambiguous variable
+// that answered before this rule -- by the first value it was given -- still
+// does, and the typed reader that sees both warns (`mcpp:deprecated=`). A
+// spelling two owners share answered nothing before (#862) and is not in
+// `answers` (BuildProgramEnv::depAmbiguous).
+void publish_by_variable(std::vector<std::pair<std::string, std::string>>& e,
+                         const std::vector<ContractAnswer>& answers) {
+    std::vector<std::string> order;
+    std::map<std::string, std::vector<const ContractAnswer*>> byVar;
+    for (auto const& a : answers) {
+        auto& at = byVar[a.var];
+        if (at.empty()) order.push_back(a.var);
+        at.push_back(&a);
+    }
+    auto owners = [&](const std::string& var) {
+        std::set<std::string> out;
+        for (auto const* a : byVar[var]) out.insert(a->owner);
+        return out;
+    };
+    std::vector<std::string> ambiguousOrder;
+    std::map<std::string, std::vector<std::string>> usable;   // ambiguous variable -> spellings
+    for (auto const& var : order) {
+        e.emplace_back(var, byVar[var].front()->value);
+        const auto who = owners(var);
+        if (who.size() < 2) continue;
+        const auto& amb = byVar[var].front()->ambiguous;
+        auto [it, fresh] = usable.try_emplace(amb);
+        if (fresh) ambiguousOrder.push_back(amb);
+        for (auto const& a : answers)
+            if (who.contains(a.owner) && owners(a.var).size() == 1
+                && std::ranges::find(it->second, a.spelling) == it->second.end())
+                it->second.push_back(a.spelling);
+    }
+    for (auto const& amb : ambiguousOrder) {
+        std::string which;
+        for (auto const& sp : usable[amb]) which += (which.empty() ? "" : ",") + sp;
+        if (auto it = std::ranges::find(e, amb, &std::pair<std::string, std::string>::first); it != e.end())
+            it->second += (it->second.empty() || which.empty() ? "" : ",") + which;
+        else
+            e.emplace_back(amb, std::move(which));
+    }
+}
+
 
 } // namespace mcpp::build

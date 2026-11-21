@@ -41,10 +41,13 @@ import mcpp.build.refusal;
 import mcpp.build.provisions;
 import mcpp.build.source_digest;
 import mcpp.build.tool_store;
+import mcpp.build.unit_cache;   // Stamp
+import mcpp.build.unit_reads;
 import nlohmann.json;
 import mcpp.manifest;
 import mcpp.config;   // resolve_project_index_path
 import mcpp.modgraph.scanner;
+import mcpplibs.os;            // fs::from_utf8: a recorded path back to a path
 import mcpplibs.os.platform;
 import mcpp.home;
 import mcpp.home.files;
@@ -524,6 +527,57 @@ struct Program {
     std::map<std::string, std::string> pins;
 };
 
+// A file a program's compile read, as the group's record keeps it (`reads`).
+struct ProgramRead {
+    fs::path                          path;
+    mcpp::build::unit_cache::Stamp    stamp;
+};
+
+nlohmann::json reads_json(const std::vector<ProgramRead>& reads) {
+    auto out = nlohmann::json::array();
+    for (auto const& r : reads)
+        out.push_back({{"path", path_text(r.path)}, {"size", r.stamp.size},
+                       {"mtime", r.stamp.mtime}, {"digest", r.stamp.digest}});
+    return out;
+}
+
+// The reads a row records; nullopt when a row of an earlier engine has none
+// or one entry cannot be read, which makes the program stale.
+std::optional<std::vector<ProgramRead>> reads_of_row(const nlohmann::json& row) {
+    auto it = row.find("reads");
+    if (it == row.end() || !it->is_array()) return std::nullopt;
+    std::vector<ProgramRead> out;
+    for (auto const& e : *it) {
+        if (!e.is_object() || !e.contains("path") || !e["path"].is_string()
+            || !e.contains("digest") || !e["digest"].is_string())
+            return std::nullopt;
+        out.push_back({mcpplibs::os::fs::from_utf8(e["path"].get<std::string>()),
+                       {e.value("size", std::uintmax_t{0}), e.value("mtime", std::int64_t{0}),
+                        e["digest"].get<std::string>()}});
+    }
+    return out;
+}
+
+// The identity the run cache is keyed on: the prediction, and each file the
+// compile read with its content. A program that read none keeps the prediction.
+std::string observed_identity(const std::string& predicted, const std::vector<ProgramRead>& reads) {
+    if (reads.empty()) return predicted;
+    std::string text = predicted + "\n";
+    for (auto const& r : reads) text += std::format("read {} {}\n", path_text(r.path), r.stamp.digest);
+    return mcpp::toolchain::hash_string(text);
+}
+
+// Whether every read still holds what the row recorded; a read whose time
+// moved over the same content is refreshed in place.
+bool reads_unchanged(std::vector<ProgramRead>& reads, bool& refreshed) {
+    for (auto& r : reads) {
+        std::optional<mcpp::build::unit_cache::Stamp> now;
+        if (!mcpp::build::unit_cache::unchanged(r.path, r.stamp, &now)) return false;
+        if (now) { r.stamp = std::move(*now); refreshed = true; }
+    }
+    return true;
+}
+
 // The record of the programs a group directory holds.
 nlohmann::json read_record(const fs::path& file) {
     std::ifstream in(file);
@@ -589,6 +643,13 @@ std::filesystem::path build_program_dir(const PrepareState& state, std::size_t i
 }
 
 namespace {
+
+// The file a program is compiled from: its package's, or the synthesised one,
+// written where it has always been, beside the package's program cache: the
+// file a project copies to its root to take it over.
+fs::path program_main(const PrepareState& state, const Program& p) {
+    return p.source.file.empty() ? build_program_dir(state, p.index) / "build.mcpp" : p.source.file;
+}
 
 void write_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& programs,
                  const std::string& standard, const fs::path& enginePackage,
@@ -675,11 +736,8 @@ void write_group(PrepareState& state, const fs::path& dir, const std::vector<Pro
 
     for (auto const& p : programs) {
         const auto memberDir = dir / p.member;
-        fs::path main = p.source.file;
-        if (main.empty()) {
-            // Where it has always been written, beside the package's program
-            // cache: the file a project copies to its root to take it over.
-            main = build_program_dir(state, p.index) / "build.mcpp";
+        const fs::path main = program_main(state, p);
+        if (p.source.file.empty()) {
             std::error_code ec;
             fs::create_directories(main.parent_path(), ec);
             write_if_changed(main, p.source.synthesised);
@@ -784,8 +842,16 @@ std::string program_scope_of(const PrepareState& state, std::size_t i) {
     return {};
 }
 
+// A program the sub-build linked, and the files its own unit's compile read
+// outside the sub-build's directory (unit_reads: the deps log and the scan's
+// depfile, as for any unit).
+struct BuiltProgram {
+    fs::path              binary;
+    std::vector<fs::path> reads;
+};
+
 // Build the group's programs `goals`: one sub-build, one ninja.
-std::expected<std::map<std::string, fs::path>, std::string>
+std::expected<std::map<std::string, BuiltProgram>, std::string>
 build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>& all,
             const std::vector<const Program*>& goals, const HostToolchain& tc,
             const std::map<std::string, std::string>& pins) {
@@ -860,7 +926,7 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
                                            ctx.error(), reproduce()));
     timer.mark("planned");
     describe(*ctx);
-    if (goals.empty()) return std::map<std::string, fs::path>{};
+    if (goals.empty()) return std::map<std::string, BuiltProgram>{};
 
     // THE RUNNER, under a host platform: the platform's, with its program
     // as that build located it (§6.1). A platform with none cannot run what
@@ -880,13 +946,13 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         state.hostPlatform.tools = ctx->plan.platform.tools;
         state.hostPlatform.fields.runner = pr;
     }
-    std::map<std::string, fs::path> binaries;
+    std::map<std::string, BuiltProgram> binaries;
     std::vector<std::string> ninjaGoals;
     for (auto const& lu : ctx->plan.linkUnits) {
         if (lu.kind != mcpp::build::LinkUnit::Binary || lu.targetName != "build-program") continue;
         for (auto const* g : goals)
             if (lu.memberOf == g->member) {
-                binaries[g->member] = ctx->plan.outputDir / lu.output;
+                binaries[g->member].binary = ctx->plan.outputDir / lu.output;
                 ninjaGoals.push_back(lu.output.generic_string());
             }
     }
@@ -922,6 +988,19 @@ build_group(PrepareState& state, const fs::path& dir, const std::vector<Program>
         const auto msg  = br ? std::format("exit {}", br->exitCode) : br.error().message;
         return std::unexpected(std::format("build.mcpp of {} failed to compile ({}){}\n{}",
                                            who, msg, reproduce(), diag));
+    }
+    // A program's member has one unit of its own, the program; what the
+    // sub-build wrote itself is its output, not an input.
+    const auto deps = mcpp::build::unit_reads::ninja_deps(ctx->plan.outputDir / ".ninja_deps");
+    for (auto const* g : goals) {
+        const auto main = program_main(state, *g).lexically_normal();
+        auto cu = std::ranges::find_if(ctx->plan.compileUnits, [&](const CompileUnit& u) {
+            return u.source.lexically_normal() == main;
+        });
+        if (cu == ctx->plan.compileUnits.end()) continue;
+        auto& reads = binaries[g->member].reads;
+        for (auto const& f : mcpp::build::unit_reads::reads_of(ctx->plan.outputDir, cu->object, cu->source, deps).value_or({}))
+            if (f != main && !path_is_under_any(f, {dir, ctx->plan.outputDir})) reads.push_back(f);
     }
     return binaries;
 }
@@ -1062,6 +1141,82 @@ std::expected<void, std::string> refuse_plugin_units_in_target(PrepareState& sta
     return {};
 }
 
+namespace {
+
+// Of the files a program's compile read, those no package identity covers. A
+// file of the home (the store: the toolchain, an index package, a git
+// checkout, the engine's interface) or of a library of the program's closure
+// is named by that package's identity already.
+std::vector<fs::path> uncovered_reads(PrepareState& state, std::size_t i,
+                                      const std::vector<fs::path>& reads) {
+    std::vector<fs::path> roots = state.storeRoots;
+    roots.push_back(mcpp::home::root());
+    for (auto d : closure_of(state, program_libraries(state, i))) roots.push_back(state.packages[d].root);
+    std::vector<fs::path> out;
+    for (auto const& f : reads)
+        if (!path_is_under_any(f, roots)) out.push_back(f);
+    return out;
+}
+
+// What a program's compile read outside its package (§3.4): the build reads
+// a file of this machine, and the package's archive does not carry it.
+void notice_outside_reads(PrepareState& state, std::size_t i, const std::vector<fs::path>& reads) {
+    std::vector<std::string> outside;
+    for (auto const& f : reads)
+        if (!path_is_under_any(f, {state.packages[i].root})) outside.push_back(path_text(f));
+    if (outside.empty()) return;
+    const auto who = qualified(manifest_of(state, i));
+    mcpp::diag::notice(
+        mcpp::diag::Severity::Warning, "build-program/reads-outside", who, outside,
+        [&](std::string_view files) {
+            return std::format("build.mcpp of `{}` reads files outside its package: {}; the build "
+                               "depends on this machine, and the package's archive does not carry them",
+                               who, files);
+        },
+        state.editablePackage(i)
+            ? "move them into the package, or into a path package listed in [build-dependencies] "
+              "(docs/30, \"Headers or modules\")"
+            : "report it to the package's maintainers");
+}
+
+// The headers the programs of the project include (§3.3), by usage: one note
+// for each usage, naming the packages that have it.
+struct HeaderUsage {
+    std::vector<std::string> system, local;   // the packages
+};
+
+void collect_header_usage(PrepareState& state, std::size_t i, const ProgramSource& src,
+                          HeaderUsage& usage) {
+    if (!state.editablePackage(i) || src.file.empty()) return;
+    std::ifstream in(src.file, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(in), {}};
+    bool system = false, local = false;
+    for (auto const& h : mcpp::pm::included_headers(text)) (h.front() == '<' ? system : local) = true;
+    const auto who = qualified(manifest_of(state, i));
+    if (system) usage.system.push_back(who);
+    if (local) usage.local.push_back(who);
+}
+
+void notice_header_usage(const HeaderUsage& usage) {
+    constexpr std::string_view kDocs = "docs/30, \"Headers or modules\"";
+    mcpp::diag::notice(
+        mcpp::diag::Severity::Note, "build-program/includes-header", "system", usage.system,
+        [](std::string_view who) {
+            return std::format("build.mcpp of {} includes standard or system headers; this works, "
+                               "and the recommended form imports them", who);
+        },
+        std::format("`import std;` ({})", kDocs));
+    mcpp::diag::notice(
+        mcpp::diag::Severity::Note, "build-program/includes-header", "package", usage.local,
+        [](std::string_view who) {
+            return std::format("build.mcpp of {} includes headers of a package; this works, and the "
+                               "recommended form imports them", who);
+        },
+        std::format("a module of a path package listed in [build-dependencies] ({})", kDocs));
+}
+
+}  // namespace
+
 std::expected<void, std::string>
 ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packages) {
     std::vector<std::size_t> wanted;
@@ -1130,12 +1285,28 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         }
 
         auto record = read_record(dir / "programs.json");
+        bool recordChanged = false;
         std::vector<const Program*> stale;
+        // What the project is told of its programs (§3.3, §3.4), judged on every
+        // plan: a `once` notice says nothing again, and `--verbose` shows it.
+        HeaderUsage headers;
+        for (auto const& p : programs) collect_header_usage(state, p.index, p.source, headers);
         for (auto const& p : programs) {
             auto it = record.find(p.member);
-            const bool current = it != record.end() && it->is_object()
+            bool current = it != record.end() && it->is_object()
                 && it->value("identity", std::string{}) == p.identity
                 && fs::exists(it->value("binary", std::string{}), ec);
+            // AND WHAT ITS COMPILE READ (§3.2): a header the program includes
+            // is no package's, so the prediction above cannot name it.
+            auto reads = current ? reads_of_row(*it) : std::nullopt;
+            if (current) {
+                bool refreshed = false;
+                current = reads && reads_unchanged(*reads, refreshed);
+                if (current && refreshed) {
+                    (*it)["reads"] = reads_json(*reads);
+                    recordChanged = true;
+                }
+            }
             if (current) {
                 place_program_copy(state, p.index, fs::path(it->value("binary", std::string{})));
                 std::vector<std::string> runner;
@@ -1148,20 +1319,28 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
                     auto const& cmd = state.hostPlatform.fields.runner.cmd;
                     if (!cmd.empty()) state.hostPlatform.tools[cmd.front()] = runner.front();
                 }
+                std::vector<fs::path> paths;
+                for (auto const& r : *reads) paths.push_back(r.path);
+                notice_outside_reads(state, p.index, paths);
                 state.buildProgramBinaries[p.index] = {fs::path(it->value("binary", std::string{})),
-                                                       p.identity, {}, std::move(runner)};
+                                                       observed_identity(p.identity, *reads), {},
+                                                       std::move(runner), std::move(paths)};
                 mcpp::log::verbose("build-program", std::format(
                     "{}: identity {} current", qualified(manifest_of(state, p.index)), p.identity));
                 continue;
             }
             mcpp::log::verbose("build-program", std::format(
-                "{}: identity {} -> {}, compiled", qualified(manifest_of(state, p.index)),
+                "{}: identity {} -> {}{}, compiled", qualified(manifest_of(state, p.index)),
                 it != record.end() && it->is_object() ? it->value("identity", std::string("none"))
                                                       : std::string("none"),
-                p.identity));
+                p.identity,
+                it != record.end() && it->is_object() && it->value("identity", std::string{}) == p.identity
+                    ? " (a file its compile read changed)" : ""));
             stale.push_back(&p);
         }
+        if (recordChanged && stale.empty()) write_if_changed(dir / "programs.json", record.dump(2) + "\n");
         if (stale.empty()) {
+            notice_header_usage(headers);
             // Described, not built: `mcpp emit build-database` lists the graph
             // of programs that are current too.
             if (state.overrides.describes()) {
@@ -1188,12 +1367,23 @@ ensure_build_programs(PrepareState& state, const std::vector<std::size_t>& packa
         if (!built) return std::unexpected(built.error());
         const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - began);
+        notice_header_usage(headers);
         for (auto const* p : stale) {
-            const auto bin = built->at(p->member);
-            state.buildProgramBinaries[p->index] = {bin, p->identity, took, state.hostPlatformRunner};
+            const auto& made = built->at(p->member);
+            const auto bin = made.binary;
+            // A file gone since the compile keeps an empty stamp: the next
+            // build finds it changed and compiles again.
+            std::vector<ProgramRead> reads;
+            const auto uncovered = uncovered_reads(state, p->index, made.reads);
+            for (auto const& f : uncovered)
+                reads.push_back({f, mcpp::build::unit_cache::stamp_of(f).value_or(mcpp::build::unit_cache::Stamp{})});
+            notice_outside_reads(state, p->index, uncovered);
+            state.buildProgramBinaries[p->index] = {bin, observed_identity(p->identity, reads), took,
+                                                    state.hostPlatformRunner, uncovered};
             place_program_copy(state, p->index, bin);
             nlohmann::json row;
             row["identity"] = p->identity;
+            row["reads"]    = reads_json(reads);
             row["binary"]   = path_text(bin);
             if (!state.hostPlatformRunner.empty()) row["runner"] = state.hostPlatformRunner;
             row["package"]  = qualified(manifest_of(state, p->index));

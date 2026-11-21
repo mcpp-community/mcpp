@@ -34,6 +34,7 @@ import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.config;
 import mcpp.home.files;   // the home's install turn
 import mcpp.fetcher;
+import mcpp.pm.package_fetcher;   // the offline refusals every install path says alike
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
 import mcpp.pm.index_spec;
@@ -45,6 +46,7 @@ import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.descriptor;
+import mcpp.pm.package_manifest;   // a version's manifest, read as the queries read it
 import mcpp.pm.lock_io;
 import mcpp.pm.patch;
 import mcpp.ui;
@@ -427,7 +429,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                         .shortName = exact.shortName,
                     };
                     if (state.selectorMigrationWarnings.insert(depName).second) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "dependency selector '{}' now means exact package "
                             "'{}', but mcpp.lock records '{}'; keeping the "
                             "locked identity for this migration release. "
@@ -450,7 +452,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                             *old, *oldLua,
                             /*allowLegacyBareDefault=*/false)
                         && state.selectorMigrationWarnings.insert(depName).second) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "dependency selector '{}' now resolves exactly to "
                             "'{}'; an older mcpp would select the existing "
                             "package '{}'. Write '{}' to keep the old identity "
@@ -499,7 +501,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                     mcpp::pm::policy_for(**cfgR), env,
                     mcpp::pm::format_package_selector(candidates.front()));
                 if (auto r = mcpp::pm::apply(decision, env); !r) {   // says a declined one under -v
-                    mcpp::ui::warning(r.error());
+                    mcpp::diag::warning("build", r.error());
                     break;
                 }
                 if (!decision.shouldRefresh) break;
@@ -596,7 +598,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                     candidates.assign(1, selected);
 
                     if (state.selectorMigrationWarnings.insert(depName).second) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "dependency '{}' resolved to '{}' through the "
                             "deprecated bare-name search; namespace omission "
                             "means `{}` only. Write the exact package:"
@@ -696,8 +698,9 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                 if (mcpp::effects::offline_mode() && !servedByProjectIndex) {
                     if (auto cfgO = state.get_cfg(true);
                         cfgO && !mcpp::provider::open(mcpp::config::make_xlings_env(**cfgO))->default_index_status(0).present) {
-                        hint += "\n  offline: the package index has never been fetched; "
-                                "run `mcpp index update` without --offline";
+                        hint += std::format("\n  offline: the package index has never been fetched; "
+                                            "{} and run `mcpp index update`, or bring one with `mcpp fetch --from <dir>`",
+                                            mcpp::effects::offline_remedy());
                         refusal::record(refusal::Code::OfflineDownloadRequired);
                     }
                 }
@@ -863,7 +866,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
         if (ctx.installed && ctx.luaContent) {
             if (auto violation = mcpp::manifest::
                     xpkg_name_form_violation_from_lua(*ctx.luaContent)) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "dependency '{}': {}\n"
                     "       resolving from the already-installed copy; a clean "
                     "environment (CI) will fail here",
@@ -872,7 +875,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
         }
 
         std::optional<mcpp::home::Turn> turn;
-        if (!ctx.installed && !mcpp::effects::offline_mode()) {
+        if (!ctx.installed && mcpp::effects::install_sources() != mcpp::effects::InstallSources::None) {
             bool waited = false;
             const auto provider = mcpp::provider::open(ctx.useProjectEnv
                 ? mcpp::config::make_project_xlings_env(**cfg, state.projectIndexRoot())
@@ -974,14 +977,9 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             // package rather than surfacing a socket error from three layers
             // down. (The toolchain payload path has its own gate; this is the
             // dependency path, which does not go through resolve_xpkg_path.)
-            if (mcpp::effects::offline_mode()) {
-                refusal::record(refusal::Code::OfflineDownloadRequired);
-                return std::unexpected(std::format(
-                    "offline mode: dependency '{}' v{} is not installed and "
-                    "cannot be downloaded\n"
-                    "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
-                    displayName, version));
-            }
+            if (mcpp::effects::install_sources() == mcpp::effects::InstallSources::None)
+                return std::unexpected(mcpp::pm::offline_without_sources(
+                    std::format("dependency '{}' v{}", displayName, version)));
             mcpp::ui::info("Downloading", std::format("{} v{}", displayName, version));
 
             // #238: retain whatever error/warn text the child DID emit so we
@@ -1091,7 +1089,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                 auto decision = mcpp::pm::decide_for_miss(
                     mcpp::pm::policy_for(**cfg), env, target, mcpp::pm::RefreshReason::InstallMiss);
                 if (auto applied = mcpp::pm::apply(decision, env); !applied) {
-                    mcpp::ui::warning(applied.error());
+                    mcpp::diag::warning("build", applied.error());
                     refreshNote = std::format("refreshing it failed: {}", applied.error());
                 } else if (decision.shouldRefresh) {
                     r = install_one(target);
@@ -1137,6 +1135,10 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
             }
             if (!r) return std::unexpected(std::format(
                 "fetch '{}@{}': {}", depName, version, r.error().message));
+            if (r->exitCode != 0 && mcpp::effects::offline_mode())
+                return std::unexpected(mcpp::pm::offline_unavailable(
+                    std::format("dependency '{}' v{}", displayName, version),
+                    r->error ? r->error->message : capturedChildError));
             if (r->exitCode != 0) {
                 // #238: the opaque `fetch failed (exit 1)` hid the actionable
                 // context mcpp actually has. Reconstruct it: the target, the
@@ -1229,64 +1231,20 @@ step4a_load_version_dep_read_manifest(PrepareState& state, LoadVersionDepCtx& ct
         }
         if (!ctx.luaContent) return std::unexpected(with_index_cause(std::format(
             "dependency '{}': index entry not found in local clone", depName)));
-        // 0.0.6+: read explicit namespace from xpkg lua if present.
-        auto luaNs = mcpp::manifest::extract_xpkg_namespace(*ctx.luaContent);
-
-        std::optional<mcpp::manifest::Manifest> manifest;
-        std::filesystem::path effRoot = verRoot;
-        auto loadFrom = [&](const std::filesystem::path& mcppToml)
-            -> std::expected<void, std::string>
-        {
-            // A manifest that is a member of a workspace inside the archive
-            // receives that workspace's inheritance, as it does from a git
-            // clone of the same commit (#690).
-            auto repoWorkspace = workspace_listing(mcppToml.parent_path(), verRoot);
-            auto dm = mcpp::manifest::load(
-                mcppToml, {.insideWorkspace = repoWorkspace.has_value()});
-            if (!dm) return std::unexpected(std::format(
-                "dependency '{}' (at '{}'): {}",
-                depName, mcppToml.string(), dm.error().format()));
-            if (repoWorkspace) {
-                if (auto bad = inherit_as_workspace_member(
-                        *dm, repoWorkspace->first, repoWorkspace->second,
-                        mcppToml.parent_path()))
-                    return std::unexpected(std::format(
-                        "dependency '{}': {}", depName, *bad));
-            }
-            if (auto bad = mcpp::project::unresolved_workspace_dependency_error(
-                    *dm, mcppToml.parent_path()))
-                return std::unexpected(std::format("dependency '{}': {}", depName, *bad));
-            manifest = std::move(*dm);
-            effRoot  = mcppToml.parent_path();
-            return {};
-        };
-        // The descriptor's two forms are decided in one place (SPEC-001 §3.5):
-        // a manifest inside the payload, or the table itself.
-        auto stated = mcpp::pm::descriptor_manifest(
+        // A dependency this run used, under the address its provider installs
+        // it by (`mcpp fetch --to`).
+        mcpp::effects::note_package_used(std::format("{}@{}",
+            mcpp::manifest::xpkg_wire_address(*ctx.luaContent, ctx.ns, shortName).target, version));
+        // The descriptor's two forms, and a member's inheritance from a
+        // workspace inside the archive (#690), are read in one place
+        // (SPEC-001 §3.5): the queries of a package's features read the same.
+        auto loaded = mcpp::pm::installed_manifest(
             *ctx.luaContent, verRoot, shortName, version, *state.targetPlatform);
-        if (!stated) return std::unexpected(std::format(
-            "dependency '{}': {}", depName, stated.error()));
-        if (stated->form == mcpp::pm::DescriptorManifest::Form::Inline) {
-            warn_unknown_xpkg_keys(*stated->manifest, depName);
-            manifest = std::move(*stated->manifest);
-            // effRoot stays as verRoot
-        } else if (auto r = loadFrom(stated->manifestPath); !r) {
-            return std::unexpected(r.error());
-        }
-        // Propagate lua-level namespace into the loaded manifest when
-        // the manifest itself doesn't carry one (Form A descriptors
-        // whose upstream mcpp.toml predates the namespace field).
-        // Guard: if the manifest's name already starts with luaNs+"."
-        // (e.g. name="mcpplibs.tinyhttps" with luaNs="mcpplibs"),
-        // the namespace is already embedded in the name — don't inject
-        // it again or the scanner will produce a double-prefixed
-        // qualified name like "mcpplibs.mcpplibs.tinyhttps".
-        if (manifest->package.namespace_.empty() && !luaNs.empty()) {
-            auto prefix = luaNs + ".";
-            if (!manifest->package.name.starts_with(prefix)) {
-                manifest->package.namespace_ = luaNs;
-            }
-        }
+        if (!loaded) return std::unexpected(
+            loaded.error().format(std::format("dependency '{}'", depName)));
+        if (loaded->inlineForm) warn_unknown_xpkg_keys(loaded->manifest, depName);
+        std::optional<mcpp::manifest::Manifest> manifest = std::move(loaded->manifest);
+        std::filesystem::path effRoot = loaded->root;
 
         if (auto r = materialize_generated_files(effRoot, *manifest); !r) {
             return std::unexpected(std::format(
@@ -1408,7 +1366,7 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state) {
         if (auto r = mcpp::pm::patch::materialize(*ctx.installed, patches, digest, variant,
                                                   patchAt == "." ? std::filesystem::path{} : patchAt, &notes); !r)
             return std::unexpected(std::format("dependency '{}': {}", depName, r.error()));
-        for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", depName, n));
+        for (auto const& n : notes) mcpp::diag::note("build", std::format("dependency '{}': {}", depName, n));
         ctx.installed = variant;
         return step4a_load_version_dep_read_manifest(state, ctx);
     };

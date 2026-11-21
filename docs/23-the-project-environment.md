@@ -465,6 +465,20 @@ statement, where they come from is the project's.
 A build reports every override it used, and `--managed-only` refuses a build
 that uses any: see [20 — Toolchain Management](20-toolchains.md).
 
+### `archives` — directories of archives (2026.11.21.1+)
+
+```toml
+[xlings]
+archives = ["vendor/archives"]     # relative to mcpp.toml
+```
+
+The archive directories of this project's builds, asked by sha256 before the
+network and in its place offline. Read from the root of a build; `MCPP_ARCHIVES`
+takes precedence, and `config.toml`'s `[xlings] archives` applies when the
+project states none. A directory inside the project, such as one committed with
+it, holds on every machine; one outside it is a note once (25 — Home, Indices
+and Store, "Archive directories").
+
 ### A rule package brings its own environment (2026.9.6.6+)
 
 The table above is what a project writes when it has an opinion. Most projects

@@ -100,6 +100,12 @@ std::string make_release_tarball(const std::filesystem::path& root,
                                  const std::filesystem::path& output,
                                  const std::vector<ArchiveOverlay>& overlays);
 
+// The files the archive of `root` carries, relative to `root` in forward
+// slashes: HEAD's tree below the directory, as `git archive HEAD` run there
+// takes it. The overlays of the overload above replace files and add none a
+// build reads.
+std::expected<std::set<std::string>, std::string> archived_files(const std::filesystem::path& root);
+
 // Convenience: build a real ReleaseInfo for v0.0.3-style local publish
 // where all three platforms point at the same source tarball. Caller has
 // already produced the tarball + sha256 by other means.
@@ -401,6 +407,17 @@ std::string sha256_of_file(const std::filesystem::path& file) {
     auto sp = r.output.find(' ');
     if (sp == std::string::npos || sp != 64) return {};
     return r.output.substr(0, 64);
+}
+
+std::expected<std::set<std::string>, std::string> archived_files(const std::filesystem::path& root) {
+    auto r = mcpp::run::capture_stdout({ "git", "-C", root.string(), "ls-tree", "-r", "-z",
+                                         "--name-only", "HEAD" });
+    if (r.exit_code != 0)
+        return std::unexpected(std::format("git ls-tree HEAD failed (rc={})", r.exit_code));
+    std::set<std::string> out;
+    for (auto part : std::views::split(std::string_view(r.output), '\0'))
+        if (std::string_view name(part.begin(), part.end()); !name.empty()) out.emplace(name);
+    return out;
 }
 
 std::string make_release_tarball(const std::filesystem::path& root,

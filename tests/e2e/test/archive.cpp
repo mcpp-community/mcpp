@@ -18,7 +18,7 @@ std::string trim(std::string v) {
 // Every line of a file that is a JSON object.
 std::vector<nlohmann::json> records(const fs::path& file) { return s::json_lines(s::read_file(file)); }
 
-E2E archive{"archive", [] {
+E2E archive{"archive", s::home_fixture, [] {
     "745 no run builds the tests and says so"_test[s::gcc] = [] {
         // `--no-run` builds the tests and reports that, distinguishably from a run that could not
         // run them. The runner is a name that is not a program: tests built, nothing run, on every

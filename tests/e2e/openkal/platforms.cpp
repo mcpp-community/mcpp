@@ -52,7 +52,7 @@ std::string tail_bytes(const fs::path& f, std::size_t n) {
     return b.size() <= n ? b : b.substr(b.size() - n);
 }
 
-E2E platforms{"platforms", [] {
+E2E platforms{"platforms", s::home_fixture, [] {
     "952 a platform package states a class of targets"_test[s::unix_shell][s::python3] = [] {
         // A local platform for this machine's triples: A its flag, program name, seal step and
         // runner reach the program; B the report names it and its source; C an override under
@@ -844,6 +844,50 @@ main = "src/main.c"
         expect(fatal(e2e::contains(s::text(r), "lists no platform for it, and was not refreshed (offline mode)"))) << "D: the refusal does not say the index was not refreshed: " << s::text(r);
         r = app.mcpp({"build", "--target", "i686-linux-musl"}, offline);
         expect(fatal(e2e::contains(s::text(r), "registered but not yet supported (planned)"))) << "D: without the column the planned row was built: " << s::text(r);
+    };
+
+    "1135 a platform's statement this build cannot honour is refused naming it"_test[s::gcc][s::elf] = [] {
+        // A platform of the host's own row, used through `[target.<triple>] platform`: A its link
+        // driver ld.lld, which the gcc toolchain does not carry; B a seal tool neither the graph
+        // builds nor this machine has, and the project's `[target.<sel>.tools]` naming one, after
+        // which the build seals with it; C a plugin stating a directive of a package's build
+        // (`mcpp:cfg=`) in its platform phase. Each refusal names the platform and the remedy.
+        const auto t = s::case_dir();
+        const auto triple = std::format("{}-linux-gnu", host_arch);
+        const auto platform = [&](std::string_view name, std::string_view rest) {
+            s::project(t / name, {{"mcpp.toml", std::format("[package]\nname = \"{}-platform\"\nversion = \"0.1.0\"\n\n"
+                                                             "[platform]\ntargets = [\"{}\"]\n{}", name, triple, rest)}});
+        };
+        const auto app = [&](std::string_view name, std::string_view extra = {}) {
+            return s::project(t / "app", {{"mcpp.toml", std::format("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n"
+                                                                    "[target.{}]\nplatform = {{ path = \"../{}\" }}\n{}", triple, name, extra)},
+                                          {"src/main.cpp", "int main() { return 0; }\n"}});
+        };
+
+        // A
+        platform("lld", "\n[platform.link]\ndriver = \"lld\"\n");
+        auto r = app("lld").mcpp({"build"});
+        expect(fatal(failed(r))) << "A: a platform linking with ld.lld built with a toolchain that has none\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "links " + triple + " with ld.lld itself (platform)"))) << "A: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "the toolchain has no ld.lld"))) << "A: " << s::text(r);
+
+        // B
+        platform("absent", "\n[platform.link]\nseal = [[\"mcpp-e2e-absent-sealer\", \"{}\"]]\n");
+        r = app("absent").mcpp({"build"});
+        expect(fatal(failed(r))) << "B: a seal tool nothing provides was not refused\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "with `mcpp-e2e-absent-sealer`, and it is neither built by the graph nor found on this machine")))
+            << "B: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "[target.'cfg(platform = \"absent\")'.tools]"))) << "B: the refusal does not show the table to write\n" << s::text(r);
+        r = app("absent", "\n[target.'cfg(platform = \"absent\")'.tools]\nmcpp-e2e-absent-sealer = { program = \"true\" }\n").mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "B: the tool the project names did not serve the platform\n" << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(tools +mcpp-e2e-absent-sealer \(true \(program\), mcpp\.toml:[0-9]+\))"))) << "B: the report does not name the tool and its statement\n" << s::text(r);
+
+        // C
+        platform("phase", "plugin  = \"build.mcpp\"\n");
+        s::project(t / "phase", {{"build.mcpp", "import mcpp;\nint main() { mcpp::define(\"FROM_PLATFORM\"); return 0; }\n"}});
+        r = app("phase").mcpp({"build"});
+        expect(fatal(failed(r))) << "C: a package directive in a platform phase was taken\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "build.mcpp stated `mcpp:cfg=` in its platform phase"))) << "C: " << s::text(r);
     };
 }};
 

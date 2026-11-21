@@ -463,11 +463,11 @@ jobs:
           # a claim nobody checked; a host that is scanned and never shipped is
           # coverage spent on a machine no user has.
           #
-          # Derived from release.yml's asset names rather than restated here, so
+          # Derived from release-build.yml's asset names rather than restated here, so
           # adding a fifth host to the release fails this step until the matrix
           # covers it.
           ship=$(grep -oE 'mcpp-\$\{?[A-Za-z_{}. ]*\}?-(linux|macosx|windows)-(x86_64|aarch64|arm64)' \
-                   .github/workflows/release.yml \
+                   .github/workflows/release-build.yml \
                  | sed -E 's/.*-(linux|macosx|windows)-/\1-/' \
                  | sed 's/^macosx-/macos-/' | sort -u)
           scanned=$(awk -F'\t' 'NF>=11 {print $2}' tests/matrix/expected.tsv | sort -u)

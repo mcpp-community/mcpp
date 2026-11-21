@@ -56,7 +56,7 @@ fs::path compiler_of(const fs::path& db) {
     return path;
 }
 
-E2E exports{"exports", [] {
+E2E exports{"exports", s::home_fixture, [] {
     "881 pe auto exports accept llvm bitcode"_test[s::msvc][s::python3] = [] {
         const auto o = registry_home();
         const auto tmp = s::case_dir();

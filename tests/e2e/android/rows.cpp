@@ -85,7 +85,7 @@ bool lines_contain(const std::string& text, std::string_view line) {
 
 std::string first_line(const std::string& text) { return text.substr(0, text.find('\n')); }
 
-E2E rows{"rows", [] {
+E2E rows{"rows", s::home_fixture, [] {
     "641 the android rows are wired and the simulator is a row"_test[s::gcc] = [] {
         // The vocabulary half, which a runner without the NDK can assert; nothing installs a
         // payload. 1 both Android rows name android-ndk; 2 they are not refused as planned; 3 the

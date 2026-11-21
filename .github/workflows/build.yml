@@ -69,6 +69,23 @@ jobs:
         with:
           image: ${{ inputs.runs-on }}
 
+      # THE UNITS MAIN'S BUILDS COMPILED (design 2026-11-20 §5.3, CI5): a compile whose command,
+      # compiler and the contents of the files it read are those of a compile main kept is placed
+      # from the home's unit cache. Restored on every run; saved by this job on a push to main
+      # alone (R3), with the entries no build of this job used removed first, so the cache holds
+      # what main's build reads. A bootstrap mcpp without the unit cache leaves it as it was.
+      - name: Restore main's unit cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.mcpp/build-cache/v1/unit
+          key: mcpp-units-${{ inputs.host }}-${{ github.sha }}
+          restore-keys: |
+            mcpp-units-${{ inputs.host }}-
+
+      - name: The start of this job's use of the units
+        shell: bash
+        run: touch "$RUNNER_TEMP/units.mark"
+
       - name: Build mcpp from source (self-host)
         shell: bash
         run: |
@@ -178,6 +195,27 @@ jobs:
         with:
           path: ~/.xlings
           key: ${{ steps.boot.outputs.xlings-key }}
+
+      - name: Keep the units this job used
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$HOME/.mcpp/build-cache/v1/unit"
+          [ -d "$root" ] || { echo "no unit cache: this build's mcpp keeps none"; exit 0; }
+          kept=0 dropped=0
+          # An entry is <shard>/<key>/<manifest>; a use stamps its manifest.tsv.
+          while IFS= read -r entry; do
+            if [ "$entry/manifest.tsv" -nt "$RUNNER_TEMP/units.mark" ]; then kept=$((kept + 1)); else rm -rf "$entry"; dropped=$((dropped + 1)); fi
+          done < <(find "$root" -mindepth 3 -maxdepth 3 -type d)
+          echo "units: $kept used by this job and kept, $dropped unused and removed"
+
+      - name: Save main's unit cache
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.mcpp/build-cache/v1/unit
+          key: mcpp-units-${{ inputs.host }}-${{ github.sha }}
 
       # macOS keeps no sandbox cache: setup-macos-llvm builds the sandbox from
       # the freshly resolved LLVM on every run, which is what the macOS jobs

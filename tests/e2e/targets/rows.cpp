@@ -56,7 +56,7 @@ int main() {
 }
 )";
 
-E2E rows{"rows", [] {
+E2E rows{"rows", s::home_fixture, [] {
     "91 target bare alias"_test = [] {
         // `[target.linux.build]` is `[target.'cfg(linux)'.build]`: exactly one OS alias applies
         // (the host's), and each bare alias agrees with its cfg() form on whichever host runs.

@@ -112,6 +112,61 @@ and source attempt. Provider preparation and process timeouts are reported
 separately. Mirror selection
 uses `mcpp self config --mirror auto`, `CN` or `GLOBAL`.
 
+### Host inputs (2026.11.21.1+)
+
+A build takes its toolchain, its base and its bootstrap tools from the store,
+and the machine only where a statement says so:
+
+| Input | Enabled by |
+|---|---|
+| the machine's toolchain | `[toolchain] default = { path = … }`, `msvc@system` |
+| the machine's C library | `sysroot = "glibc@system"` |
+| the machine's libraries | `[build] allow_host_libs = true`, `MCPP_ALLOW_HOST_LIBS` |
+| a dependency's tool | `[xlings.overrides]`, `MCPP_XLINGS_OVERRIDE_<NS>_<NAME>` |
+| a bootstrap tool | `[build] allow_host_tools = ["ninja", "patchelf"]` |
+
+`allow_host_tools` is read from `MCPP_ALLOW_HOST_TOOLS` (a comma list, `none`
+for none), else the project's `[build]`, else `config.toml`'s `[build]`. A tool
+it names is taken from `PATH` when it is there, and from the store otherwise.
+patchelf is run by mcpp only when it packs; a build does not require it.
+
+Each input is a note once per project, and again when its path or version
+changes:
+
+```
+note: ninja (bootstrap) is this machine's (1.11.1 /usr/bin/ninja), not the store's
+  help: another machine may build differently; docs/25, "Host inputs"
+```
+
+When `mcpp.toml` states the input, the note adds that the statement holds only
+on machines like this one, and that a machine's input belongs in `config.toml`.
+
+### Archive directories (2026.11.21.1+)
+
+An archive directory holds the archives payloads are installed from, found by
+their sha256 whatever their file name: a directory `mcpp fetch --to` wrote, a
+mirror on a shared volume.
+
+```toml
+# ~/.mcpp/config.toml
+[xlings]
+archives = ["/srv/mcpp-archives"]
+```
+
+The list is read from `MCPP_ARCHIVES` (separated as `PATH` is), else the
+project's `[xlings] archives` (relative to `mcpp.toml`), else `config.toml`'s
+(relative to it), and is passed to xlings, which asks its download cache, then
+these directories, then the network. Offline (`--offline`, `[build] offline`),
+the network is not asked: a payload the home lacks is installed from the cache
+or a directory, and one no source holds is refused
+(`artifact-unavailable-offline`, 05 — Dependencies, "Offline builds and mcpp
+fetch"). A directory outside the project named in `mcpp.toml` is a note once:
+another machine lacks it, and a machine's directory belongs in `config.toml`.
+
+An upstream (§3) and an archive directory are sources of different things, and
+both hold: an upstream's installed payloads are published by link; an archive
+is verified and installed.
+
 ### Retention of build outputs (2026.10.31.3+)
 
 The build cache under `build-cache/v1/` is shared by every project of the home;
@@ -119,7 +174,7 @@ a project's `target/` is its own. Each has a retention, in config.toml:
 
 | key | default | removed |
 |---|---|---|
-| `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools) no build used for that many days |
+| `[cache] unused_days` | 30 | after a build, at most once a day: cache entries (packages, `std` modules, host tools, units, build programs' outputs) no build used for that many days |
 | `[build] keep_days` | 3 | after `mcpp build` or `mcpp test`, at most once a day per project: build directories no configuration used for that many days |
 | `[build] target_budget` | none | after every `mcpp build` or `mcpp test` whose `target/` holds more than this size (`"20GiB"`, `"512MiB"`): every build directory no configuration records as current, whatever its age (2026.11.8.1+) |
 

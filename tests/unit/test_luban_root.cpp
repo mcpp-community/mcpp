@@ -66,3 +66,20 @@ UTest its_store_is_the_home_its_root_record_names{"LubanRoot/ItsStoreIsTheHomeIt
     t.write("etc/xlings/usr", "/somewhere/else/usr\n");
     expect(mcpp::provider::layout().system_home(t.dir).empty()) << "a record of another shape";
 }};
+
+UTest a_baked_home_environment_is_this_homes{"BakedSysroot/AHomeEnvironmentIsThisHomes", [] {
+    // A payload's compiler names the environment of the home it was built in (`--with-sysroot`);
+    // installed elsewhere, that directory is this home's environment, reached through the link
+    // to the active one (`subos/current`) or by its name (`subos/default`).
+    Tree t;
+    const auto home = t.dir / "home";
+    t.write("home/data/xpkgs/xim-x-gcc/16.2.0/bin/g++", "");
+    t.write("home/subos/default/usr/include/stdio.h", "");
+    const auto gxx = home / "data/xpkgs/xim-x-gcc/16.2.0/bin/g++";
+    for (std::string_view baked : {"/w/xh/subos/current", "/build/.xlings/subos/default"}) {
+        const auto remapped = mcpp::fallback::remap_xlings_baked_sysroot(baked, gxx);
+        expect(fatal(remapped.has_value())) << baked;
+        expect(eq(remapped->lexically_normal(), (home / "subos/default").lexically_normal())) << baked;
+    }
+    expect(!mcpp::fallback::remap_xlings_baked_sysroot("/opt/vendor/sysroot", gxx)) << "a sysroot of no home is not remapped";
+}};

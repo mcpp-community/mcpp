@@ -2,3 +2,5 @@
 tests/fixtures/openkal-hosted-threads/src/main.cpp.in text eol=lf
 # The rows' snapshot is compared line by line with what the engine answers, in its own bytes.
 tests/fixtures/target-rows.snapshot text eol=lf
+# The golden outputs are compared whole with what mcpp writes, in its own bytes (tests/e2e/cli/golden.cpp).
+tests/e2e/golden/* text eol=lf

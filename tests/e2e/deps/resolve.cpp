@@ -57,7 +57,7 @@ std::string local_package(std::string_view ns, std::string_view name, std::strin
 )lua", ns, name, description, archive, source, target);
 }
 
-E2E resolve{"resolve", [] {
+E2E resolve{"resolve", s::home_fixture, [] {
     "32 semver merge"_test[s::fresh_sandbox] = [] {
         // Two consumers of one package with overlapping constraints (exact and range) merge to
         // one satisfying version instead of erroring out.

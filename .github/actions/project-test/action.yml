@@ -1,0 +1,128 @@
+name: mcpp project test
+description: >
+  The tests of a project built with mcpp, as a downstream repository's CI runs them (design
+  2026-11-20 §7.4): the mcpp the project pins, its home restored by the project's identity (read
+  only on a pull request, saved by a push to the default branch), `mcpp test`, the run's store
+  kept as an artifact, and a summary of the run: its result, its slowest cases and the slowest
+  edges of its builds (SPEC-017 B4).
+
+  Use: `- uses: mcpp-community/mcpp/.github/actions/project-test@main` after `actions/checkout`.
+
+inputs:
+  mcpp:
+    description: >
+      the mcpp version to install; empty for the one the project's .xlings.json names, else the
+      newest release
+    required: false
+    default: ''
+  args:
+    description: the arguments of `mcpp test`, as words (`-p member --profile release`)
+    required: false
+    default: ''
+  home-key:
+    description: >
+      what identifies the project's home beside the system and the mcpp version (its manifests and
+      lock, by default)
+    required: false
+    default: ''
+  name:
+    description: the name of the store's artifact
+    required: false
+    default: mcpp-test-store
+
+runs:
+  using: composite
+  steps:
+    - name: The mcpp the project pins
+      id: version
+      shell: bash
+      env:
+        WANTED: ${{ inputs.mcpp }}
+      run: |
+        set -euo pipefail
+        v="$WANTED"
+        if [ -z "$v" ] && [ -f .xlings.json ]; then
+          v=$(sed -n 's/.*"mcpp": *"\([^"]*\)".*/\1/p' .xlings.json | head -1)
+        fi
+        echo "version=${v:-latest}" >> "$GITHUB_OUTPUT"
+        echo "mcpp ${v:-latest}"
+
+    # The home is the tests' run fixture (design 2026-11-20 §5.10): restored by its identity, the
+    # system, the mcpp version and the project's manifests. A pull request reads it and adds
+    # nothing; a push to the default branch saves what its run filled.
+    - name: Restore the project's home
+      id: home
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.mcpp
+        key: mcpp-project-home-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}-${{ inputs.home-key || hashFiles('**/mcpp.toml', '**/mcpp.lock', '.xlings.json') }}
+        restore-keys: |
+          mcpp-project-home-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}-
+
+    - name: Install mcpp
+      shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        XLINGS_NON_INTERACTIVE: '1'
+      run: |
+        set -euo pipefail
+        if ! command -v xlings > /dev/null 2>&1; then
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh | bash
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+        fi
+        spec=mcpp; [ "$VERSION" = latest ] || spec="mcpp@$VERSION"
+        for attempt in 1 2 3; do
+          xlings update > /dev/null 2>&1 || true
+          if xlings install "$spec" -y -g; then break; fi
+          [ "$attempt" = 3 ] && { echo "::error::$spec could not be installed"; exit 1; }
+          sleep 30
+        done
+        mcpp --version
+
+    - name: mcpp test
+      shell: bash
+      env:
+        ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086 -- the arguments are words
+        mcpp test $ARGS
+
+    - name: Save the project's home
+      if: ${{ always() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.home.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.mcpp
+        key: mcpp-project-home-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}-${{ inputs.home-key || hashFiles('**/mcpp.toml', '**/mcpp.lock', '.xlings.json') }}
+
+    - name: Keep the run's store
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.name }}
+        path: target/mtest
+        if-no-files-found: ignore
+        include-hidden-files: true
+        retention-days: 14
+
+    - name: The run in the summary
+      if: always()
+      shell: bash
+      run: |
+        set -uo pipefail
+        run=$(ls -t target/mtest/runs 2>/dev/null | head -1)
+        [ -n "$run" ] || { echo "no run was kept" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+        d="target/mtest/runs/$run"
+        {
+          echo "## mcpp test"
+          jq -r '"\(.status // "?"): \(.counts // {} | to_entries | map("\(.value) \(.key)") | join(", ")) in \((.ms // 0) / 1000 | floor) s on \(.machine // "?")"' "$d/run.json" 2>/dev/null
+          echo
+          echo "| slowest case | ms |"; echo "|---|---|"
+          jq -rs 'sort_by(-(.ms // 0)) | .[:10][] | "| \(.program)/\(.id) | \(.ms // 0 | floor) |"' "$d/cases.ndjson" 2>/dev/null
+          if [ -s "$d/builds.ndjson" ]; then
+            echo
+            echo "| slowest edge | package | ms |"; echo "|---|---|---|"
+            jq -rs 'map(select(.output)) | sort_by(-(.ms // 0)) | .[:10][] | "| \(.output) | \(.package) | \(.ms // 0 | floor) |"' "$d/builds.ndjson"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"

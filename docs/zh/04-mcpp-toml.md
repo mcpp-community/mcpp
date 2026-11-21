@@ -998,7 +998,9 @@ compile_commands = "compile_commands.json"   # 相对工程根目录的路径
 | 键 | 章节 |
 |---|---|
 | `allow_host_libs` | [20 —— 工具链](20-toolchains.md)、[22 —— 目标侧](22-target-side.md) |
+| `allow_host_tools` | [25 —— home、索引与 store](25-home-indices-and-store.md) |
 | `ios_deployment_target` | [20 —— 工具链](20-toolchains.md) |
+| `offline` | [05 —— 依赖](05-dependencies.md)，「离线构建与 mcpp fetch」 |
 | `platform-dependencies` | [22 —— 目标侧](22-target-side.md) |
 | `std-module`、`std-compat-module` | [22 —— 目标侧](22-target-side.md) |
 
@@ -1100,6 +1102,19 @@ CI 上都跑通过。
 边，因为它以 `O_TRUNC` 把 BMI 写到最终路径，读者可能会看到一个写了
 一半的文件。MSVC 被留在一边不动——`/ifcOnly` 的开销与 `.ifc` 的
 原子性都未经测量，两者任何一个猜错都是无声的。
+
+### 可用内存（`memory_threshold`）*（2026.11.21.1+）*
+
+```toml
+[build]
+memory_threshold = "2GiB"   # 大小（"512MiB"、"1.5GB"）或字节数；"0" 不等待
+```
+
+编译执行器取得槽位之后、启动编译器之前读取系统的可用内存：低于该值时等待已运行的编译器结束，不结束它们。
+引擎的取值为 1 GiB，因为一次模块接口的编译峰值为 0.5–1.0 GB（见上）。取值依次来自 `MCPP_MEMORY_THRESHOLD`、本键、
+`~/.mcpp/config.toml` 的 `[build] memory_threshold` 与引擎；不是大小的值被报告，由下一层取值。低于该值满一分钟时，执行器在
+标准错误上说明并启动编译器：本机没有编译器占用的内存永远等不到（[SPEC-004 §9](../specs/manifest-semantics.md)
+第 19 项）。
 
 ### 模块接口扩展名（`module_extensions`）
 
@@ -1612,6 +1627,7 @@ ndebug     = true         # 整个图的每个单元 -DNDEBUG(release/dist 默�
 trim_paths = true         # 按单元的 -ffile-prefix-map(release/dist 默认开)
 bmi_cutoff = "exact"      # "ignore-locations"(默认):只有行映射变化的 GCC BMI 被保留
 split_debuginfo = "off"   # "unpacked":调试信息留在对象旁(dev/debug 默认)
+dependency_debug = "lines" # 来自存储与 git 的依赖:true | false | "lines"(dev/debug 的默认)
 # passthrough escape hatch (fixed keys, open values):
 cflags   = ["-fno-plt"]
 cxxflags = ["-fno-plt"]
@@ -1640,6 +1656,12 @@ ldflags  = []
 - 内置 profile：`release`（-O2）/ `dev`、`debug`（-O0 -g）/ `dist`
   （-O3 + strip；**默认不启用 LTO**）。`[profile.<内置名>]` 可以整体
   覆盖一个内置定义。
+- **`dependency_debug`（2026.11.21.1+）** 陈述来自包存储与 git 的依赖的调试信息：`true`（与 profile 的 `debug` 相同）、
+  `false`（不带）、`"lines"`（只带行表：GCC 的 `-g1`、Clang 的 `-gline-tables-only`，由工具链行给出）。省略时，`dev`
+  与 `debug` 在其 `debug` 打开时取 `"lines"`，其余 profile 取其 `debug`。工作空间的成员与路径依赖保持 profile 的
+  `debug`。经由依赖的回溯仍给出文件与行号；在只依赖 mtest 的工程上实测，测试程序由 43.7 MB 降为 8.3 MB，构建由
+  15.9 s 降为 7.2 s。标志进入依赖的配置，因此每种取值在缓存中各有条目（[SPEC-004 §9](../specs/manifest-semantics.md)
+  第 20 项）。
 - **`bmi_cutoff`(2026.11.17.2+)** 规定导入者何时跟随模块的接口
   ([SPEC-018](../specs/module-rebuilds.md))。所导入的 BMI 变化时,导入者重新编译。GCC 下,在
   其后没有已记录实体的位置插入一行,只改变 BMI 的行映射;默认值 `"ignore-locations"` 保留

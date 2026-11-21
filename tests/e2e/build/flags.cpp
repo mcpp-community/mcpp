@@ -69,10 +69,13 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
     return std::nullopt;
 }
 
-E2E flags{"flags", [] {
+E2E flags{"flags", s::home_fixture, [] {
     "50 package owned build flags"_test[s::gcc] = [] {
         // A dependency's own cflags and cxxflags compile its C and C++ sources; the consumer
-        // declares neither, and the graph carries both.
+        // declares neither, and the graph carries both. The case's own cache: a path dependency is
+        // named by its content (SPEC-001 §10.4), and an entry another run filled is staged into
+        // the build, not compiled in its graph.
+        s::own_home(s::home::inherited);
         const auto tmp = s::case_dir();
         s::project{tmp / "depC", {{"src/dep_core.c", R"cpp(#ifndef DEP_C_BUILD
 #error "missing dependency-owned C flag"
@@ -779,6 +782,39 @@ int helper(void) { return FLAVOUR * 10; }
         }
         expect(fatal(!stanza.empty())) << "no shared entry object in build.ninja";
         expect(s::lacks(stanza, "FLAVOUR")) << "the shared entry object carries a program's define\n" << stanza;
+    };
+    "927 the dependencies from the store compile with the line tables under dev"_test[s::gcc] = [] {
+        // Design 2026-11-20 §5.15, SPEC-004 §9 item 18. Under `dev`, a package from the index
+        // (mcpplibs.mtest, the scaffold's dev-dependency) compiles with `-g1` after the graph's
+        // `-g`, and the project's own units keep `-g` alone (A); `dependency_debug = true` gives the
+        // dependencies the graph's level, and they are another instance (B).
+        auto p = s::project::scaffold("depdebug");
+        auto test_graph = [&] {
+            for (const auto& f : s::find_files(p.at("target"), R"(test\.ninja)"))
+                if (f.generic_string().find("/.build-mcpp/") == std::string::npos) return s::read_file(f);
+            return std::string{};
+        };
+        auto mtest_flags = [](const std::string& graph) {
+            std::string lines;
+            std::istringstream in(graph);
+            bool inMtest = false;
+            for (std::string line; std::getline(in, line);) {
+                if (line.starts_with("build ")) inMtest = line.contains("obj/mcpplibs_mtest/");
+                if (inMtest && line.contains("unit_cxxflags")) lines += line + "\n";
+            }
+            return lines;
+        };
+        auto a = p.mcpp({"test", "--no-run"});
+        expect(fatal(e2e::succeeded(a))) << s::text(a);
+        const auto lines = mtest_flags(test_graph());
+        expect(fatal(!lines.empty())) << "A: no unit of mcpplibs.mtest in test.ninja";
+        expect(e2e::contains(lines, " -g1")) << "A: the dependency's units have no line tables flag\n" << lines;
+        p.write("mcpp.toml", p.read("mcpp.toml") + "\n[profile.dev]\ndependency_debug = true\n");
+        auto b = p.mcpp({"test", "--no-run"});
+        expect(fatal(e2e::succeeded(b))) << s::text(b);
+        const auto full = mtest_flags(test_graph());
+        expect(fatal(!full.empty()));
+        expect(s::lacks(full, " -g1")) << "B: dependency_debug = true kept the line tables flag\n" << full;
     };
 }};
 

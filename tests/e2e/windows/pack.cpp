@@ -56,7 +56,7 @@ names = zipfile.ZipFile(sys.argv[1]).namelist()
 assert not any(n.lower().endswith('.dll') for n in names), f"--mode system bundled a DLL: {names}"
 )py";
 
-E2E pack{"pack", [] {
+E2E pack{"pack", s::home_fixture, [] {
     "240 pack pe zip cross"_test[s::mingw_cross][s::python3] = [] {
         // A x86_64-windows-gnu program packs as a zip: one wrapper directory, the program with its
         // executable bit, the DLL its import table and `force_bundle` name flat beside it, and no

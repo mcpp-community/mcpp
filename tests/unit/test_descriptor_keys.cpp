@@ -77,3 +77,41 @@ UTest the_segment_table_follows_the_same_order{"DescriptorKeys/TheSegmentTableFo
     if (auto&& failed = expect(fatal(bool(ok))); !failed) failed << ok.error().format();
     expect(ne(std::ranges::find(ok->buildConfig.cxxflags, "-pthread"), ok->buildConfig.cxxflags.end()));
 }};
+
+// THE PACKAGES A PAYLOAD RUNS WITH (design 2026-11-21, offline and toolchain defaults §3.5): the
+// `runtime` list of a split `deps` table, else the flat list; a commented-out entry, a `build`
+// list and a version's own table are not read.
+UTest a_payloads_runtime_deps_are_its_declared_companions{"DescriptorKeys/RuntimeDepsAreTheDeclaredCompanions", [] {
+    constexpr std::string_view split = R"(
+package = {
+    name = "gcc",
+    xpm = {
+        linux = {
+            deps = {
+                build = { "xim:patchelf@0.18.0" },
+                runtime = {
+                "xim:glibc@>=2.39", "xim:binutils@2.42.1",
+                -- "xim:binutils@2.40",
+                "xim:linux-headers@5.11.1",
+                },
+            },
+            ["16.1.0"] = { url = "https://example.com/gcc.tar.gz", sha256 = "ab" },
+        },
+        windows = { deps = { "xim:mingw-runtime@1" }, ["16.1.0"] = { url = "x" } },
+    },
+}
+)";
+    constexpr std::string_view flat = R"(
+package = {
+    name = "llvm",
+    xpm = { linux = { deps = { "xim:glibc@>=2.39", "xim:linux-headers@5.11.1" }, ["23.1.3"] = {} } },
+}
+)";
+    expect(eq(mcpp::manifest::xpkg_runtime_deps(split, TargetPlatform::for_os("linux")),
+              (std::vector<std::string>{"xim:glibc@>=2.39", "xim:binutils@2.42.1", "xim:linux-headers@5.11.1"})));
+    expect(eq(mcpp::manifest::xpkg_runtime_deps(split, TargetPlatform::for_os("windows")),
+              (std::vector<std::string>{"xim:mingw-runtime@1"})));
+    expect(eq(mcpp::manifest::xpkg_runtime_deps(flat, TargetPlatform::for_os("linux")),
+              (std::vector<std::string>{"xim:glibc@>=2.39", "xim:linux-headers@5.11.1"})));
+    expect(mcpp::manifest::xpkg_runtime_deps(flat, TargetPlatform::for_os("macosx")).empty());
+}};

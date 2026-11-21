@@ -486,8 +486,10 @@ inline bool uses_layer(const std::string& predicate) {
                                [](auto const& k) { return is_cfg_late_layer_key(k); });
 }
 
-// The systems the rows name (built-in and defined), and the family word.
-inline std::vector<std::string> system_barewords() {
+// The systems the rows name (built-in and defined), and the family word. Not inline: GCC 16.1
+// emitted the std::set<std::string> members it instantiates in no object once no other module of
+// the binary instantiated them, and an importer then failed to link.
+std::vector<std::string> system_barewords() {
     std::set<std::string> systems;
     for (auto const* r : mcpp::toolchain::target::rows())
         if (!r->os.empty()) systems.emplace(r->os);
@@ -607,6 +609,7 @@ std::string canonical_configuration_flags(const mcpp::manifest::Manifest& root,
     if (root.buildConfig.ndebug)    s += " ndebug=1";
     if (root.buildConfig.trimPaths) s += " trim_paths=1";
     if (root.buildConfig.splitDebuginfo) s += " split_debuginfo=1";
+    if (!root.buildConfig.dependencyDebug.empty()) s += " dependency_debug=" + root.buildConfig.dependencyDebug;
     if (!root.buildConfig.dependencyLinkage.empty()) {
         s += " deplinkage=";
         s += root.buildConfig.dependencyLinkage;

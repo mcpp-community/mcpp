@@ -70,7 +70,7 @@ std::string uname_m() {
     return s::on_macos() ? "arm64" : "aarch64";
 }
 
-E2E requests{"requests", [] {
+E2E requests{"requests", s::home_fixture, [] {
     "282 target is a request"_test[s::gcc] = [] {
         // A triple that declines to name a C library is no contradiction of the graph's; one
         // that names another is reported, with what resolved and a spelling to use instead.

@@ -66,7 +66,7 @@ s::project extfix(const fs::path& dir, std::string_view extra) {
                             {"src/d.ixx", "export module extfix.d;\nimport std;\nexport auto d() -> void { std::println(\"from .ixx\"); }\n"}});
 }
 
-E2E extensions{"extensions", [] {
+E2E extensions{"extensions", s::home_fixture, [] {
     "217 module extensions"_test[s::gcc] = [] {
         // Undeclared, .ccm/.cxxm/.ixx are not compiled and the default glob is unchanged;
         // declared, they join the glob, take the module rule and their own object names, and
@@ -191,11 +191,13 @@ module_extensions = [".ixx"]
 
 }  // namespace
 
-// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
-// other test beside it. 218 asserts a replay: an install into the shared home by a program beside
-// it changes the runtime's description, and the build then plans again (design 2026-11-14 §5.2 E).
-E2E extensions_machine{"extensions-machine", resource{"machine"}, [] {
+// 218 asserts a replay: an install into the shared home by a program beside it changes the
+// runtime's description, and the build then plans again (design 2026-11-14 §5.2 E). It runs mcpp
+// in a home of its own whose payloads are the user's, as upstreams (`own_home`, design 2026-11-20
+// §5.10), instead of holding the machine.
+E2E extensions_own_home{"extensions-own-home", s::home_fixture, [] {
     "218 module extensions graph shape"_test[s::gcc] = [] {
+        s::own_home();
         // A no-change build replays; a new import in a .ixx plans again and the edge is real;
         // module_extensions changes the graph in the same directory; a dead entry is reported; a
         // reserved extension is refused naming the key.

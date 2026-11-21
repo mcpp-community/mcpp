@@ -55,7 +55,7 @@ std::string list_of(const fs::path& rec) {
 
 bool received(const fs::path& rec) { return fs::exists(rec) && s::no_line(s::read_file(rec), "^UNSET$"); }
 
-E2E contract{"contract", [] {
+E2E contract{"contract", s::home_fixture, [] {
     "672 a runner receives the files the artifact carries"_test[s::unix_shell] = [] {
         // A runner receives MCPP_RUNTIME_FILES, a list of `<destination>\t<absolute source>`
         // naming the deployed files and the dependency's shared library, for `run` and for each
@@ -265,12 +265,13 @@ int main() {{
     };
 }};
 
-// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
-// other test beside it.
-E2E contract_machine{"contract-machine", resource{"machine"}, [] {
+// The cases that run mcpp in a home of their own whose payloads are the user's, as upstreams
+// (`own_home`, design 2026-11-20 §5.10), instead of holding the machine.
+E2E contract_own_home{"contract-own-home", s::home_fixture, [] {
     // It asserts a replay: an install into the shared home by a program beside it changes the
     // runtime's description, and the full path then plans again (design 2026-11-14 §5.2 E).
     "1024 a launch description takes the fast path"_test[s::python3] = [] {
+        s::own_home();
         // A: `run --print-launch` of an unchanged project takes the fast path where `run` does,
         // and describes what the full path does (plus the program's arguments). B: after a
         // change, the description is the same. C: a launch record carrying a foreign field is not
@@ -348,6 +349,7 @@ E2E contract_machine{"contract-machine", resource{"machine"}, [] {
     };
 
     "1104 a run's files are in its working directory"_test[s::unix_shell] = [] {
+        s::own_home();
         // Design 2026-11-16 §5: `--file FROM[=TO]` copies FROM into a directory of the build tree,
         // where the program runs; the directory is removed after it; without --file the program
         // runs where mcpp was started. Through a runner, the files are listed in
@@ -388,6 +390,7 @@ E2E contract_machine{"contract-machine", resource{"machine"}, [] {
     };
 
     "927 the runner contract"_test[s::gcc][s::unix_shell] = [] {
+        s::own_home();
         // run_under composes in front of the artifact with the contract variables and a closure
         // manifest, returns the program's status and states where it was declared; the
         // environment's `..._RUN_UNDER=none` and --no-runner drop it; config.toml's run_under is
@@ -440,7 +443,8 @@ exec "$@"
         expect(fatal(e2e::exited(r, 7) && !fs::exists(record))) << "--no-runner did not drop run_under";
 
         manifest("");
-        const auto config = s::shared_home() / "config.toml";
+        // The case's own home (own_home): the machine's configuration is not the case's to edit.
+        const auto config = s::case_home(s::home::inherited) / "config.toml";
         const auto saved = s::read_file(config);
         {
             std::ofstream out(config, std::ios::app);

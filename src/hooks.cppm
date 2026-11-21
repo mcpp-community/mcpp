@@ -22,6 +22,7 @@ import std;
 import mcpp.manifest;
 import mcpp.run;
 import mcpp.ui;
+import mcpp.diag;
 
 export namespace mcpp::hooks {
 
@@ -146,7 +147,7 @@ bool report_hook_failure_flag(bool sideEffect, const std::string& message) {
         mcpp::ui::error(message);
         return false;
     }
-    mcpp::ui::warning(message);
+    mcpp::diag::warning("hooks", message);
     return true;
 }
 

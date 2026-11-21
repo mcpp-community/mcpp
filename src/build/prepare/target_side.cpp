@@ -17,6 +17,7 @@ import mcpp.toolchain.platform;
 import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
+import mcpp.pm.package_manifest;   // the features of a graph entry (mcpp#992)
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
 import mcpp.graph;
@@ -155,7 +156,7 @@ step9_gather_target_side_candidates(PrepareState& state) {
                 // error it replaced would be a worse diagnostic wearing a
                 // milder severity.
                 auto why = tsd::parse_capability(cap);
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "package '{}': {}\n"
                     "       Ignored, and this build proceeds without that layer. "
                     "A newer mcpp may resolve it.",
@@ -1270,7 +1271,7 @@ step9_pin_and_linkage_diagnostics(PrepareState& state) {
         // release fixes — see `TargetSide::system_from_graph`'s own note.
         if (state.resolvedTargetSide.cAbi.fromGraph()
             && state.m->buildConfig.linkage == "dynamic")
-            mcpp::ui::warning(
+            mcpp::diag::warning("build", 
                 "`linkage = \"dynamic\"` has no effect when the "
                 "target's system comes from the dependency graph: those "
                 "packages are compiled into this build as objects, and there "
@@ -1819,6 +1820,17 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
         // resolution.json only: the graph document a build program reads is
         // part of its re-run key, and must not change with when it is asked.
         if (!forBuildProgram) {
+            // The features the package declares and those this build activates
+            // (mcpp#992), in the shape `mcpp search` states a version's: what
+            // `mcpp why features` reads. Not in the build program's document,
+            // whose re-run key a description would change.
+            {
+                nlohmann::json active = nlohmann::json::array();
+                if (i < state.activeFeaturesByPackage.size())
+                    for (auto const& f : state.activeFeaturesByPackage[i]) active.push_back(f);
+                entry["features"] = std::move(active);
+                entry["feature_list"] = mcpp::pm::feature_list_json(mcpp::manifest::feature_catalog(pm));
+            }
             // The package's root as the build reads it (its patches applied):
             // the tree a patch of it is written from (docs/05).
             std::error_code ec;
@@ -1828,9 +1840,12 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
             // A member's program keeps its cache in the project (step 9).
             const bool member = state.m->package.virtualRoot && i != 0
                              && state.isWorkspaceMemberPackage(i);
-            entry["outDir"] = state.programOutDir(member ? *state.root : state.workRoot, pm,
-                                                  i < state.activeFeaturesByPackage.size()
-                                                      ? state.activeFeaturesByPackage[i] : none)
+            const auto home = state.programOutDirs.find(i);
+            entry["outDir"] = (home != state.programOutDirs.end()
+                                   ? home->second
+                                   : state.programOutDir(member ? *state.root : state.workRoot, pm,
+                                                         i < state.activeFeaturesByPackage.size()
+                                                             ? state.activeFeaturesByPackage[i] : none))
                                   .generic_string();
             return entry;
         }
@@ -2015,7 +2030,7 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
                 for (auto const& w : watched) {
                     for (auto const& [pkgName, dir] : prepareDirs) {
                         if (!isUnder(w, dir)) continue;
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "{}'s build.mcpp re-runs on '{}', which is inside "
                             "'{}', the directory package '{}' declared with a "
                             "`prepare` action's output_dir. That directory is "

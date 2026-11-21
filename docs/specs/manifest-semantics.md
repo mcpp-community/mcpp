@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.24 |
-| **最后修改** | 2026-11-20 |
+| **版本** | 1.27 |
+| **最后修改** | 2026-11-21 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`<br>`.agents/docs/2026-09-25-issue-690-workspace-build-inheritance-consistency.md`<br>`.agents/docs/2026-09-27-eight-reports-by-home-and-one-optimisation-plan.md`<br>`.agents/docs/2026-10-05-std-module-pair-msvc-lto-and-export-discovery-design.md`<br>`.agents/docs/2026-10-06-windows-x86-arch-vocabulary-and-rc-follow-ups-design.md`<br>`.agents/docs/2026-10-10-one-source-one-meaning-design.md`<br>`.agents/docs/2026-10-11-build-dependencies-one-pipeline-design.md`<br>`.agents/docs/2026-10-23-target-base-and-execution-host-design.md`<br>`.agents/docs/2026-10-26-control-contract-runtime-and-ide-ecosystem-design.md`(§24) |
@@ -677,17 +677,54 @@ mcpp 2026.9.26.2,#703)。**
 16. **虚拟根旁的 `build.mcpp`。** 不带 `[package]` 的工作空间根旁的 `build.mcpp` 不属于任何包,
     不运行;实现**必须**给出警告,`--strict` 下**必须**拒绝。
 17. **包实例的目录。** 一个配置的构建目录中,根以外的每个包按实例存放:对象在
-    `obj/<包>/<摘要>/`,BMI 在 BMI 目录的 `<包>/<摘要>/`。摘要**必须**覆盖决定该包编译命令的因素
-    (它的 include 目录与编译参数,含其 feature 的宏)以及它所导入模块的各包的摘要,**禁止**含版本
-    与编译器的构建号。因此不同命令或选择对同一个包请求的不同 feature 各自占有一个实例,交替执行
-    时不重新编译。实现以 `instances.tsv` 记录每个实例最近被构建使用的时间;`mcpp clean --stale`
-    删除窗口内未被使用的实例,写出该配置构建图的规划所用的实例**必须**保留。
+    `obj/<包>/<摘要>/`,BMI 在 BMI 目录的 `<包>/<摘要>/`。摘要**必须**是包的配置的函数:声明的
+    标志与宏、展开后的包含目录、按 glob 的规则(以规则本身,而不以它匹配到的单元)、生效的特性、
+    语言标准,以及它所导入模块的各包的摘要;单元的集合与单元的输出路径**禁止**进入,版本与编译器
+    的构建号**禁止**进入。实例目录的摘要与缓存键的配置部分由同一个函数产生(2026.11.21.1,mcpp#986)。
+    因此不同命令或选择对同一个包请求的不同 feature 各自占有一个实例,交替执行时不重新编译;特性
+    相同时 `mcpp build` 与 `mcpp test` 共用一个实例。实现以 `instances.tsv` 记录每个实例最近被
+    构建使用的时间;`mcpp clean --stale` 删除窗口内未被使用的实例,写出该配置构建图的规划所用的
+    实例**必须**保留。
+18. **键中的路径按角色出现。** 缓存键中的路径**必须**以其角色写出:`<store>`(每一个存储根)、
+    `<pkg>`(包的根)、`<out>`(构建程序的输出目录);绝对路径**禁止**进入键。来源被命名的包
+    (索引的版本、git 的提交、路径依赖的内容摘要)的构建程序,其输出目录**必须**位于
+    `<home>/build-cache/v1/out/<包>@<版本>/<键>/out`,键为该包不含输出目录一项的配置键;同一
+    身份的输出由所有工程共用,运行时持有该目录的文件锁。构建程序收到 `MCPP_OUT_DIR` 并可以把它
+    写进生成的文件,因此位置是内容的一部分,由身份决定。打包的一遍(`mcpp pack` 的 `--pkg-format`)中运行的
+    构建程序**不**在其中:它写出的是打包请求与成员的暂存树的函数,二者不在键中,其输出目录在工程中。
+19. **`[build] memory_threshold`。** 编译执行器启动编译器之前读取系统的可用内存:低于该值时等待
+    已运行的编译器结束,不结束它们;低于该值满一分钟时说明并启动编译器。值为大小(`"2GiB"`、`"512MiB"`、`"1.5GB"`)或字节数,`0`
+    不等待。取值按 §2 的四层:`MCPP_MEMORY_THRESHOLD`、清单的 `[build] memory_threshold`、机器的
+    `config.toml` 的 `[build] memory_threshold`、引擎的 1 GiB。它是配置键(作用域 C),不进入包的
+    配置。无法读出的值被报告,并取下一层。
+20. **依赖的调试信息。** `[profile.<名>] dependency_debug` 陈述来自存储与 git 的依赖的调试信息:
+    `true`(与 profile 的 `debug` 相同)、`false`(不带调试信息)、`"lines"`(只带行表:GCC 与
+    Clang 的 `-g1`/`-gline-tables-only` 一类,由工具链行给出)。省略时,`dev` 与 `debug` 在
+    `debug` 打开时取 `"lines"`,其余 profile 取 `debug` 的值。它只作用于这两类依赖,工作空间的
+    成员与路径依赖保持 profile 的 `debug`。选出的标志进入依赖的配置,因此依赖在缓存中另有条目。
+    其他取值被拒绝。
+21. **`[build] allow_host_tools`。** 构建取自机器 `PATH` 而不取自 home 的 store 的引导工具,`"ninja"` 与
+    `"patchelf"`;其他名字被拒绝。取值按 §2 的四层:`MCPP_ALLOW_HOST_TOOLS`(逗号分隔,`none` 为不取)、清单的
+    `[build] allow_host_tools`、机器的 `config.toml` 的同名键、引擎的空列表。它是配置键(作用域 C)。
+    被开启的工具在 `PATH` 中找到时使用,并作为宿主输入在一个工程中提示一次(键含路径与版本);找不到时取 store 的。
+    patchelf 只在 mcpp 打包时由 mcpp 运行,构建不要求它存在。
+22. **`[build] offline`。** 为真时构建不使用网络:载荷取自 home、下载缓存与第 23 条的归档目录。取值按 §2 的
+    四层:`--offline` 与 `MCPP_OFFLINE`(`0` 为关闭)、清单的 `[build] offline`、机器的 `config.toml` 的同名键、
+    引擎的假。它是配置键(作用域 C),在 `mcpp.toml` 与 `config.toml` 中同名同义;一次规划的值在开始时陈述为
+    `MCPP_OFFLINE`,该规划及其启动的程序读同一个值。与第 21 条相同,值不同的成员按第 10 条分到不同的图;工作空间
+    的各图依次规划,每张图陈述其根的值,根未写时取机器的值,不沿用前一张图的。离线而所需载荷不在 home 时:没有归档目录则不询问任何来源
+    (`offline-download-required`),有则询问下载缓存与这些目录(`artifact-unavailable-offline`)。
+23. **`[xlings] archives`。** 归档目录的列表,按 sha256 在网络之前询问,离线时代替网络。取值按 §2 的四层:
+    `MCPP_ARCHIVES`(分隔方式与 `PATH` 相同)、清单的 `[xlings] archives`(相对于清单所在目录)、机器的
+    `config.toml` 的同名键(相对于该文件)、引擎的空列表;只读构建的根。清单写明的工程之外的目录是机器的事实,
+    在一个工程中提示一次(`machine-path-in-manifest`)。
 
 **状态:已实现(第 1 至 7 条 mcpp 2026.9.25.1;第 8 至 10 条 mcpp 2026.9.27.1,mcpp#713、
 #714、#710;第 10 条的 `dialect_cxxflags` 为 mcpp 2026.9.28.1,#717;第 1 条的根包、第 10 条的
 `[profile.<name>]` 与第 11 条为 mcpp 2026.10.5.2,#771;第 7、8、10 条的工作空间层与第 12、13 条为
 mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 mcpp 2026.10.11.1,#797;
-第 17 条为 mcpp 2026.11.19.1,#953)。**
+第 17 条为 mcpp 2026.11.19.1,#953,其摘要为配置的函数与第 18 至 23 条为 2026.11.21.1,mcpp#986、
+#802、#927、#988、#990)。**
 
 ## 10. 依赖的程序
 
@@ -870,6 +907,20 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 
 **状态:已实现**(mcpp 2026.11.17.1)。
 
+## 16. 特性的描述与读取
+
+1. 表形式的特性可以写 `description = "<一行>"`,与 `[package] description` 同名同义;描述符内联表的 `features.<f>`
+   同样接受。值**必须**是字符串,否则清单在加载时被拒绝。数组简写没有描述。
+2. 描述**禁止**改变构建:它不进入任何单元的标志、缓存的身份或构建程序读取的图文档。
+3. 一个包的特性只由一个目录项给出(`mcpp::manifest::feature_catalog`):每个特性一项,带名字、是否在缺省集合中
+   (含其 `implies` 的闭包)、`implies`、`enables`(`<依赖>/<特性>`)与描述,按名字排序;`default` 本身不是一项。
+   机器输出(docs/50 §13)的 `mcpp search` 与 `mcpp why features` 都由它写出。
+4. 对索引包某个版本的回答有三种状态:`declared`(取自内联表,或已安装载荷中的清单)、`not-installed`(清单在
+   home 未持有的载荷中)、`unreadable`(载荷在而清单读不出)。后两者**禁止**以空列表回答:空列表只表示声明了零个
+   特性。查询**禁止**安装(SPEC-010 §5)。
+
+**状态:已实现**(mcpp 2026.11.21.1,mcpp#992)。
+
 ## 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -899,3 +950,6 @@ mcpp 2026.10.10.1,#785、#786;第 14 至 16 条与第 13 条的依赖位置为 m
 | 1.22 | 2026-11-19 | mcpp 2026.11.19.1(mcpp#931):新增 §8.1 链接的输入:链接词点名的文件(选项的值、`,` 分隔的段、MSVC `/` 选项的值、动作声明的输出)与链接器自己的报告;§10.2 特性的 `tools` 到达链接本包库的每个构建程序(mcpp#955);§9 新增第 17 条包实例的目录(mcpp#953)。 |
 | 1.24 | 2026-11-20 | mcpp 2026.11.20.1(mcpp#981):§14 新增第 6 至 8 条:`main = false` 陈述映像没有程序起点,由行回答其成立(共享对象形态,或行数据的 `link-without-main`);与描述起点的键并存的拒绝;行表的替换;`mcpp run` 的拒绝与结果记录。 |
 | 1.23 | 2026-11-20 | mcpp 2026.11.19.1(mcpp#972,设计 2026-11-19 §21 A1、A2、A4):§12 第 3 条改为一个程序一个版本,解析的范围是程序,构建程序保持或先取已取得的版本,目标(含平台的补全)先于构建程序、构建程序按其持有关系依次解析,被取代的版本撤回其请求与构建程序,冲突的消息写出程序;第 6 条构建程序图按版本划分,开发依赖的程序不改变构建的程序所在的图。 |
+| 1.25 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#990):§9 第 21 条 `[build] allow_host_tools`。 |
+| 1.26 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#990,设计 2026-11-21 离线与缺省 §3.2):§9 第 22 条 `[build] offline` 与第 23 条 `[xlings] archives`,两者按 §2 的四层取值,一次运行陈述为一个变量。 |
+| 1.27 | 2026-11-21 | mcpp 2026.11.21.1(mcpp#992):新增 §16,特性的 `description`、一个目录项与查询回答的三种状态。 |

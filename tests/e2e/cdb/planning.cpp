@@ -17,7 +17,7 @@ std::vector<std::string> set_names(const nlohmann::json& envelope) {
     return out;
 }
 
-E2E planning{"planning", [] {
+E2E planning{"planning", s::home_fixture, [] {
     "787 emit plans every member on its own"_test[s::python3] = [] {
         // A member whose plan fails leaves the others described (exit 1, one diagnostic naming
         // its manifest, both members watched); the bare document likewise, the reason on standard
@@ -113,7 +113,7 @@ int main() {
         const auto tmp = s::case_dir();
         s::project exits1(tmp / "exits1", {{"mcpp.toml", "[package]\nname    = \"exits1\"\nversion = \"0.1.0\"\n"},
                                            {"src/main.cpp", "int main() { return 0; }\n"},
-                                           {"build.mcpp", "#include <cstdio>\nint main() { std::printf(\"mcpp:cxxflag=-DSHOULD_NOT_APPEAR\\n\"); return 1; }\n"}});
+                                           {"build.mcpp", "import std;\nint main() { std::printf(\"mcpp:cxxflag=-DSHOULD_NOT_APPEAR\\n\"); return 1; }\n"}});
         auto r = exits1.mcpp({"emit", "build-database", "--format", "json"});
         expect(fatal(e2e::exited(r, 1))) << "A: exit status " << r.status << ", expected 1: " << r.err;
         auto e = s::json(r.out);

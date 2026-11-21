@@ -74,6 +74,14 @@ struct CompileUnit {
     // the one kind of unit `trim_paths` leaves its paths, since a test finds
     // its fixtures through `__FILE__` and runs where it was built.
     bool                            testUnit = false;
+    // A target's entry `main`, synthesized for the image that links it (a test
+    // program's `mtest/main`). It provides no module, so it compiles where the
+    // image is built, beside the package's other units: the global cache
+    // serves and fills those and passes this one by, and the instance digest
+    // does not count it, as it does not count the root's units (design
+    // 2026-11-20 §5.4: an entry without a cache address took the whole of
+    // mcpplibs.mtest out of the cache in every project).
+    bool                            entryUnit = false;
     // The key of this unit's module map in `BuildPlan::moduleScopes`: the BMI
     // of every module the unit imports, directly or through another module,
     // and of the module it provides. Empty when every such BMI lies at its
@@ -276,11 +284,23 @@ struct RuntimeCapabilityProvider {
     mcpp::manifest::PackageId         provider;
 };
 
+// A library a package requires at run time and loads with `dlopen`, and the
+// directories of that package's own shared objects, from which the loader
+// looks it up (design 2026-11-21, offline and toolchain defaults §3.10). A
+// named struct, not a pair, for the module hazard `RuntimeCapabilityProvider`
+// records.
+struct DlopenRequirement {
+    std::string                        soname;
+    std::string                        requester;    // the package, canonical
+    std::vector<std::filesystem::path> originDirs;
+};
+
 struct ResolvedRuntimeContract {
     std::vector<mcpp::manifest::RuntimeRequirement> requirements;
     std::vector<mcpp::manifest::RuntimeArtifact>    artifacts;
     mcpp::manifest::LinkIntent                      linkIntent;
     std::vector<RuntimeCapabilityProvider>           providers;
+    std::vector<DlopenRequirement>                   dlopen;
     // A deploy glob that matched no file, or a `name` whose `from` did not
     // match exactly one: each a sentence naming the package and the entry.
     std::vector<std::string>                         errors;
@@ -577,6 +597,14 @@ struct BuildPlan {
     // frontier starves — see the hazard note in schedule/detach_codegen.
     int                             scheduleNinjaJobs = 0;
     int                             scheduleCompilerCap = 0;
+    // The memory a compiler may start below (design 2026-11-20 §5.5), in bytes:
+    // the compiler executor waits below it (MCPP_MEMORY_THRESHOLD in its env).
+    std::uint64_t                   memoryThreshold = 0;
+    // The unit cache (design 2026-11-20 §5.3): its directory, empty when the
+    // build uses no global cache, and the roots whose files never change in
+    // place, which the compiler executor reads a path of as its identity.
+    std::filesystem::path              unitCacheDir;
+    std::vector<std::filesystem::path> immutableRoots;
     // One immutable snapshot selected before workspace member substitution.
     // Build/run/test and cache fast paths consume this value; none may re-read
     // xlings active/current state.
@@ -745,7 +773,7 @@ struct BuildPlan {
     // Aggregated host-runtime requirements from dependency packages'
     // [runtime] metadata. Capability/provider-driven — no platform special-casing
     // in mcpp: providers (e.g. compat.glx-runtime) declare these per platform.
-    std::vector<std::string>           runtimeDlopenLibs;   // union of deps' dlopen sonames
+    std::vector<DlopenRequirement>     runtimeDlopenLibs;   // deps' required dlopen sonames, by requester
     std::vector<std::string>           runtimeCapabilities; // union of host capabilities
     // (capability, provider package). A named aggregate instead of std::pair:
     // musl-gcc 15.1 modules failed to emit vector<pair<string,string>>'s
@@ -778,7 +806,7 @@ struct BuildPlan {
         std::vector<mcpp::manifest::RuntimeArtifact>    runtimeArtifacts;
         mcpp::manifest::LinkIntent       linkIntent;
         std::vector<DeployFile>          runtimeDeployFiles;
-        std::vector<std::string>         runtimeDlopenLibs;
+        std::vector<DlopenRequirement>   runtimeDlopenLibs;
         std::vector<std::string>         runtimeCapabilities;
         std::vector<RuntimeCapabilityProvider> runtimeProviders;
         // The graph-built shared libraries the member's units load, placed
@@ -1509,6 +1537,20 @@ ResolvedRuntimeContract resolve_runtime_contract(
                      out.linkIntent.transitiveNeededDirs);
         append_paths(runtime.linkIntent.runtimeSearchDirs,
                      out.linkIntent.runtimeSearchDirs);
+        // The package's required `dlopen` sonames, with the directories its own
+        // shared objects are linked from and found in.
+        {
+            std::vector<std::filesystem::path> dirs;
+            append_paths(runtime.linkIntent.linkLibraryDirs, dirs);
+            append_paths(runtime.linkIntent.runtimeSearchDirs, dirs);
+            for (auto const& r : out.requirements) {
+                if (r.kind != "soname" || !r.required || r.phase != "run" || !(r.requester == id)) continue;
+                const bool listed = std::ranges::any_of(out.dlopen, [&](auto const& d) {
+                    return d.soname == r.value && d.requester == id.canonical();
+                });
+                if (!listed) out.dlopen.push_back({ r.value, id.canonical(), dirs });
+            }
+        }
         // A `deploy_files` entry is the string form of a `deploy` entry: a glob
         // is expanded by the same rule; a literal path keeps its own list.
         std::vector<mcpp::manifest::DeployEntry> entries;
@@ -2308,6 +2350,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         out.runtimeArtifacts = std::move(runtimeContract.artifacts);
         out.linkIntent = std::move(runtimeContract.linkIntent);
         out.runtimeProviders = std::move(runtimeContract.providers);
+        out.runtimeDlopenLibs = std::move(runtimeContract.dlopen);
 
         for (auto const& dir : out.linkIntent.runtimeSearchDirs) {
             append_unique_path(out.runtimeLibraryDirs, dir);
@@ -2318,9 +2361,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // resolution.json, but they cannot become hard ABI/doctor inputs.
             if (!requirement.required) continue;
             if (requirement.kind == "soname") {
-                if (std::ranges::find(out.runtimeDlopenLibs, requirement.value)
-                    == out.runtimeDlopenLibs.end())
-                    out.runtimeDlopenLibs.push_back(requirement.value);
+                // Taken with the dirs the contract states for its requester below.
             } else if (requirement.kind == "capability") {
                 if (std::ranges::find(out.runtimeCapabilities, requirement.value)
                     == out.runtimeCapabilities.end())
@@ -3505,6 +3546,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                                               : scanned.declaration;
             cu.object = object_for(entry, owner, std::filesystem::relative(entry, pkgRoot),
                                    pkgIdx).object;
+            cu.entryUnit = true;
             plan.compileUnits.push_back(cu);
             object = cu.object;
         }
@@ -4719,13 +4761,17 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // include directories and flags, its features' defines among them -- and
     // the digests of the packages whose modules it imports, whose BMI paths
     // its command names. It holds no version and no compiler build, so an
-    // upgrade keeps the paths. The root's units keep their place: one plan
-    // has one root, and its command line is the configuration's.
+    // upgrade keeps the paths. It holds no unit either (mcpp#986): `mcpp test`
+    // keeps a package's units that an inactive feature gates and `mcpp build`
+    // drops them, and a digest of the unit set gave the two plans two
+    // instances of one configuration, so every unit compiled again in the
+    // second. The root's units keep their place: one plan has one root, and
+    // its command line is the configuration's.
     const auto rootPackageName = manifest.package.virtualRoot
         ? std::string{} : qualified_package_name(manifest);
     std::map<std::string, std::string> instanceDirs;   // package -> `<slug>/<digest>`
     {
-        std::map<std::string, std::string> own;                    // package -> its units' flags
+        std::map<std::string, std::set<std::string>> own;          // package -> its configurations
         std::map<std::string, std::set<std::string>> importsOf;    // package -> providers
         // A directory is spelled relative to the store or the project that
         // holds it: the digest names a directory a cached BMI records, so it
@@ -4756,8 +4802,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             return out;
         };
         for (auto const& cu : plan.compileUnits) {
-            if (cu.packageName.empty() || cu.packageName == rootPackageName || cu.testUnit) continue;
-            own[cu.packageName] += cu.object.generic_string() + "\n" + flags_text(cu);
+            if (cu.packageName.empty() || cu.packageName == rootPackageName || cu.testUnit || cu.entryUnit) continue;
+            own[cu.packageName].insert(flags_text(cu));
             importsOf[cu.packageName].merge(providers_of(cu));
         }
         std::map<std::string, std::string> digest;
@@ -4765,7 +4811,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         std::function<std::string(const std::string&)> digest_of = [&](const std::string& pkg) {
             if (auto it = digest.find(pkg); it != digest.end()) return it->second;
             if (!own.contains(pkg) || !visiting.insert(pkg).second) return std::string{};
-            std::string text = own[pkg];
+            std::string text;
+            for (auto const& configuration : own[pkg]) text += configuration + "\x1e";
             for (auto const& dep : importsOf[pkg]) text += "D" + dep + "=" + digest_of(dep) + "\n";
             visiting.erase(pkg);
             return digest[pkg] = mcpp::toolchain::hash_string(text).substr(0, 8);

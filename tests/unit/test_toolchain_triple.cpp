@@ -117,7 +117,7 @@ UTest known_target_table_exposes_tier_and_pins{"Triple/KnownTargetTableExposesTi
     auto* winfo = find_known_target(*w);
     expect(fatal(ne(winfo, nullptr)));
     expect(eq(winfo->canonical, "x86_64-windows-gnu"));
-    expect(eq(winfo->pin, "gcc@16.1.0"));
+    expect(eq(winfo->pin, "gcc@16.2.0"));
     expect(bool(winfo->defaultStatic));
 }};
 

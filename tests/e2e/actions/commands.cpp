@@ -26,7 +26,7 @@ long long mtime(const fs::path& p) {
 
 std::string mcpp_host() { return fs::absolute(s::mcpp_path()).generic_string(); }
 
-E2E commands{"commands", [] {
+E2E commands{"commands", s::home_fixture, [] {
     "631 action depfile tracks a runtime discovered include"_test[s::gcc] = [] {
         // `mcpp::action`'s `depfile`: a file the command discovers by running, named only in the
         // depfile it writes, reruns the action when touched; nothing else does.

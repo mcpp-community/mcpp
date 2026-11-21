@@ -89,7 +89,7 @@ std::optional<fs::path> artifact(const s::project& p) {
 
 const s::options plain{.env = {{"NO_COLOR", "1"}}};
 
-E2E bases{"bases", [] {
+E2E bases{"bases", s::home_fixture, [] {
     "925 a stated sysroot is the c library"_test[s::gcc][s::elf][s::unix_shell][s::python3] = [] {
         // S2: a sysroot named by a relative path is the base the artifact is built against and
         // runs on (PT_INTERP and RUNPATH the sysroot's, not the SubOS farm), in a directory of
@@ -210,8 +210,13 @@ E2E bases{"bases", [] {
         expect(fatal(e2e::contains(out, "runtime requires glibc >= ") && e2e::contains(out, "this sysroot provides glibc 2.20"))) << "S3: a base older than the compiler's runtime was not refused naming both versions: " << out;
         expect(fatal(s::no_line(out, "error:.*std\\.cc"))) << "S3: the refusal arrived as a std module error: " << out;
 
-        // S1: [toolchain.linux] { path, sysroot }, the `default = ` line removed
-        manifest("", std::format("[toolchain.linux]\npath    = \"{}\"\nsysroot = \"{}\"", s::payload_root("xim-x-gcc", s::gcc_version()).string(), sr.string()), false);
+        // S1: [toolchain.linux] { path, sysroot }, the `default = ` line removed. A GCC named by
+        // path finds its own assembler (mcpp#755); the store's gcc is not self-contained -- its
+        // binutils is a payload of its own, and gcc 16.2.0 revision 1 emits what binutils 2.42
+        // cannot assemble -- so the project states the assembler, as for any such tree.
+        const auto as = s::payload_root("xim-x-binutils", s::family_version("xim-x-binutils", "MCPP_E2E_BINUTILS_VERSION", "2.47")) / "bin/as";
+        manifest("", std::format("[toolchain.linux]\npath    = \"{}\"\nsysroot = \"{}\"\ntools   = {{ as = \"{}\" }}",
+                                 s::payload_root("xim-x-gcc", s::gcc_version()).string(), sr.string(), as.string()), false);
         r = app.mcpp({"run"}, plain);
         out = s::text(r);
         expect(fatal(e2e::succeeded(r))) << "S1: [toolchain] { path, sysroot } failed: " << out;

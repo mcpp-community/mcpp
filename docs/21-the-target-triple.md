@@ -291,6 +291,20 @@ aarch64-macos      →  aarch64-unknown-macos
 A three-field spelling is a four-field one with a field elided, and which field
 was elided follows from what parses.
 
+The vendor field is any word (2026.11.21.1+), as GNU `config.sub` reads it: the
+field after the architecture, when a system field follows, names whoever built
+the compiler. A distribution's compiler reports its own (`x86_64-redhat-linux`,
+`x86_64-suse-linux`), and that is `x86_64-linux-gnu`. The fields after it are
+read strictly. A compiler named by path whose target mcpp cannot read is
+reported as a degradation (`toolchain/triple`): the settings that follow the
+target are not applied to that build.
+
+A compiler's version is the one its driver states for machines: GCC's
+`-dumpfullversion` (GCC 7 and later, else `-dumpversion`) and clang's
+`-dumpversion`. The `--version` banner names the family; a distribution's banner
+ends in its own release number (`(Red Hat 16.2.1-3)`), which is not the
+compiler's version.
+
 ### GCC and clang do not select targets the same way
 
 | | GCC | clang |

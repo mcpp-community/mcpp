@@ -310,11 +310,16 @@ constexpr std::size_t kMainConsumer = static_cast<std::size_t>(-1);
 // cache keys on -- and how long the compile took when this build made it.
 struct BuildProgramBinary {
     std::filesystem::path     path;
+    // What its compile read: the prediction and the files observed (design
+    // 2026-11-21, build programs' inputs §3.2). The run cache is keyed on it.
     std::string               identity;
     std::chrono::milliseconds compile{0};
     // The argv that runs it, `{}` the program, when the host graph has a
     // platform (an ok image run by okrun, SPEC-013 §6); empty: run directly.
     std::vector<std::string>  runner;
+    // The files its compile read that no package identity covers: below its
+    // own package, or outside every package and the store.
+    std::vector<std::filesystem::path> reads;
 };
 
 // PrepareState carries prepare_build's working state across the phases it
@@ -322,8 +327,8 @@ struct BuildProgramBinary {
 // phase is an ordinary function taking `PrepareState&`; the state itself is
 // constructed once, in driver.cpp's prepare_build(), and lives for the
 // whole call — including across a phase that stores a closure for a LATER
-// phase to call (resolve_target_toolchain, defined in toolchain.cpp's P2 and
-// called from its own P5): such a closure captures `state` itself rather
+// phase to call (resolve_target_toolchain, defined in toolchain_resolver.cpp's P2 and
+// called from P5): such a closure captures `state` itself rather
 // than individual locals, so it stays valid no matter which phase's stack
 // frame created it.
 //
@@ -635,6 +640,10 @@ struct PrepareState {
     // end compares, so a lock another run wrote meanwhile is not overwritten.
     std::filesystem::path lockReadPath;
     std::optional<std::string> lockReadText;   // nullopt: there was no file
+    // The version the toolchain the project states resolved to, for the lock to
+    // record (SPEC-006 §2.7); none when the project states none, or when
+    // `--locked` keeps the lock as it is.
+    std::optional<mcpp::pm::LockedToolchain> toolchainLocked;
     CacheMode cacheMode{};
 
     // ── P1: toolchain spec resolution, target axis, L1 cfg merge ────────────
@@ -810,6 +819,9 @@ struct PrepareState {
     std::function<std::filesystem::path(const std::filesystem::path&,
                                         const mcpp::manifest::Manifest&,
                                         const std::vector<std::string>&)> programOutDir;
+    // The OUT_DIR of each package whose program ran in the home (design
+    // 2026-11-20 §5.2), by its index: what the graph document states for it.
+    std::map<std::size_t, std::filesystem::path> programOutDirs;
     // What this configuration uses outside its own directory, written into it
     // as `uses.list` so that `mcpp clean --stale` keeps these and collects the
     // rest (mcpp#874): the `.build-mcpp/out/<hash>` of each program it ran and
@@ -986,8 +998,7 @@ struct PrepareState {
     // slot) and whether its default set is seeded: the union of its edges, as
     // its feature-deps and forwards were walked (mcpp#897).
     std::map<std::size_t, std::pair<std::vector<std::string>, bool>> depFeatureRequests;
-    std::map<std::size_t, std::vector<std::pair<std::string, std::string>>>
-        toolEnvByConsumer;
+    std::map<std::size_t, std::vector<mcpp::build::ContractAnswer>> toolEnvByConsumer;
     // The programs the graph built for this machine at the ROOT's request
     // (`tools = [...]`), by program name. A runner's program and an ok image's
     // `okld` are looked up here first.
@@ -1100,7 +1111,7 @@ struct PrepareState {
 };
 
 // Phase declarations. Defined across manifest.cpp, toolchain.cpp,
-// xlings.cpp, graph_load.cpp, graph.cpp, features.cpp, target_side.cpp,
+// toolchain_resolver.cpp, xlings.cpp, graph_load.cpp, graph.cpp, features.cpp, target_side.cpp,
 // scan.cpp and plan.cpp; called in order from driver.cpp's
 // prepare_build(). Ordinary (non-static) module-linkage declarations --
 // static would give each definition internal linkage, invisible outside
@@ -1217,15 +1228,6 @@ void replace_dependencies(
     const std::map<std::string, mcpp::manifest::DependencySpec>& from);
 std::vector<std::pair<std::string, std::string>>& pending_flag_words_notes();
 void report_flag_words_changes(const mcpp::manifest::Manifest& m);
-std::optional<std::string>
-inherit_as_workspace_member(mcpp::manifest::Manifest& member,
-                            const mcpp::manifest::Manifest& workspace,
-                            const std::filesystem::path& workspaceRoot,
-                            const std::filesystem::path& memberDir,
-                            bool reportPosition = true);
-std::optional<std::pair<mcpp::manifest::Manifest, std::filesystem::path>>
-workspace_listing(const std::filesystem::path& memberDir,
-                  const std::filesystem::path& bound);
 bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx);
 // The `requires` of the layer-predicated tables `ctx` matches

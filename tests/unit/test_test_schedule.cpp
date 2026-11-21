@@ -83,6 +83,23 @@ UTest a_shard_reads_no_run_of_its_own_group{"TestSchedule/AShardReadsNoRunOfItsO
     expect(eq(ts::estimate(ts::read_history(s.dir, 30, std::string("8")), "p", {}), 900.0));
 }};
 
+UTest a_run_reads_the_runs_of_its_machine_class{"TestSchedule/ARunReadsTheRunsOfItsMachineClass", [] {
+    // SPEC-017 P12.4: the runs on the same class of machine when the store has
+    // one, else all of them.
+    Store s;
+    s.run("old", "2026-11-01T00:00:00Z", R"({"name":"p","status":"pass","ms":100})" "\n", "");
+    fs::create_directories(s.dir / "runs" / "new");
+    std::ofstream(s.dir / "runs" / "new" / "programs.ndjson") << R"({"name":"p","status":"pass","ms":160})" "\n";
+    std::ofstream(s.dir / "index.ndjson", std::ios::app)
+        << R"({"id":"new","started":"2026-11-02T00:00:00Z","machine":"Intel Xeon 6975P"})" "\n";
+    expect(eq(ts::estimate(ts::read_history(s.dir), "p", {}), 160.0));
+    expect(eq(ts::estimate(ts::read_history(s.dir, 30, std::nullopt, std::string("Intel Xeon 6975P")), "p", {}),
+              160.0));
+    expect(eq(ts::estimate(ts::read_history(s.dir, 30, std::nullopt, std::string("")), "p", {}), 100.0));
+    expect(eq(ts::estimate(ts::read_history(s.dir, 30, std::nullopt, std::string("AMD EPYC 7763")), "p", {}),
+              160.0));
+}};
+
 UTest the_shards_cover_every_test_once{"TestSchedule/TheShardsCoverEveryTestOnce", [] {
     const std::vector<double> est{50, 400, 10, 400, 90, 5, 300};
     const std::vector<std::string> names{"a", "b", "c", "d", "e", "f", "g"};

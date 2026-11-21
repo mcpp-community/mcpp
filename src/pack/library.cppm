@@ -45,6 +45,7 @@ import mcpplibs.os.platform;
 import mcpp.build.command_line;
 import mcpp.run;
 import mcpp.ui;
+import mcpp.diag;
 
 export namespace mcpp::pack {
 
@@ -360,13 +361,13 @@ run_library_pack(const LibraryPackPlan& plan)
                 // the ELF leg beside it is clean.
                 std::string what;
                 for (auto const& p : r->paths) { if (!what.empty()) what += ", "; what += p; }
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("pack", std::format(
                     "{} carries LC_RPATH entries that mcpp does not yet rewrite: {}\n"
                     "  If any of them names a directory on THIS machine, the package is "
                     "not relocatable. Remove it with `install_name_tool -delete_rpath "
                     "<path> <file>` before publishing.", name, what));
             } else if (r->outcome == O::Unanalysed) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("pack", std::format(
                     "{} could not be checked for build-machine loader paths: {}",
                     name, r->note));
             }

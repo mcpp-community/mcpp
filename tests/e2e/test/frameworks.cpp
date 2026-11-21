@@ -10,7 +10,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-E2E frameworks{"frameworks", [] {
+E2E frameworks{"frameworks", s::home_fixture, [] {
     "1052 a framework that uses the package under test is built against it"_test[s::gcc] = [] {
         // mtest uses mcpplibs.os, which is tested with mtest: the package being built stands for
         // itself in its own graph, whatever version the framework's edge asked for.

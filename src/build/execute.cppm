@@ -16,6 +16,7 @@ import mcpp.pack.compress;         // the test archive's tar (SPEC-015 §4)
 import mcpp.pack.distribution;     // its writer and reader
 import mcpp.build.test_targets;
 import mcpp.build.test_protocol;   // the runner's side of the test protocol (docs/08 "Cases")
+import mcpp.build.test_fixture;    // the run fixtures it serves (SPEC-017 P11)
 import mcpp.build.test_impact;     // the tests a change affects (docs/08)
 import mcpp.build.test_schedule;   // the order, division and shards of a run (docs/08)
 import mcpp.diag;
@@ -38,6 +39,9 @@ import mcpp.buildopt.keep;
 import mcpp.build.dirlock;     // the build directory's lock (mcpp#839)
 import mcpp.build.graph_engine; // the engine a graph names (2026-11-12 §17)
 import mcpplibs.os.process;      // the identity of this invocation (its protocol directory)
+import mcpplibs.os.fs;           // the budget's slot locks (SPEC-017 O11)
+import mcpplibs.os.machine;      // the machine a run records (SPEC-017 P12.4)
+import mcpp.build.record;        // the run's builds (SPEC-017 B4 `builds.ndjson`)
 import mcpp.build.result;      // the result record and the event stream (design 2026-10-26 §5)
 import mcpp.wire;              // the mcpp.launch envelope
 import mcpp.build.cxx_runtime; // the island, verified after the link (design 2026-10-26 §6.3)
@@ -625,6 +629,14 @@ export struct BuildCacheEntry {
     // must decline once rather than read as "none".
     std::string rootCompileDb;
     bool        rootCompileDbRecorded = false;
+    // THE RECORDS OF THE BUILD PROGRAMS THE GRAPH WAS PLANNED WITH (design
+    // 2026-11-21, build programs' inputs §3.2): a program's run cache and a
+    // group's record of what its compiles read. The fast path compares what
+    // they state; one that is gone states nothing, and its program would never
+    // be asked again. Measured: after `rm -rf target/.build-mcpp`, a header the
+    // program includes was edited and the build replayed the old directives.
+    std::vector<std::string> programRecords;
+    bool                     programRecordsRecorded = false;
 };
 
 // One list of extensions as a line of the record carries it: joined by a unit
@@ -851,6 +863,16 @@ export std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path
                 e.engine = EngineIdentity{line.substr(7, tab - 7), line.substr(tab + 1)};
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Count-prefixed, as `xlingsPayloads=` is: absent means the entry
+        // predates the field and the fast paths decline it once.
+        if (haveNextLine && line.starts_with("programRecords=")) {
+            std::size_t n = 0;
+            try { n = std::stoul(line.substr(15)); } catch (...) { n = 0; }
+            for (std::size_t i = 0; i < n && std::getline(f, line); ++i)
+                e.programRecords.push_back(line);
+            e.programRecordsRecorded = e.programRecords.size() == n;
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -950,6 +972,12 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     // happen in this process, after the graph was emitted.
     newEntry.engine = running_engine();
     newEntry.lockDigest = lock_digest(projectRoot);
+    // A path that holds a line break cannot be a line of the record, and is
+    // left out: its program is then asked by the walk alone.
+    for (auto const& r : mcpp::build::program_records(projectRoot))
+        if (auto text = mcpplibs::os::fs::utf8(r); text.find_first_of("\r\n") == std::string::npos)
+            newEntry.programRecords.push_back(std::move(text));
+    newEntry.programRecordsRecorded = true;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -1029,6 +1057,10 @@ void write_build_cache_entries(const std::filesystem::path& path,
         if (!e.lockDigest.empty()) f << "lock=" << e.lockDigest << '\n';
         if (e.engine)
             f << "engine=" << e.engine->version << '\t' << e.engine->exe << '\n';
+        if (e.programRecordsRecorded) {
+            f << "programRecords=" << e.programRecords.size() << '\n';
+            for (auto& r : e.programRecords) f << r << '\n';
+        }
     }
 }
 
@@ -2163,7 +2195,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         if (std::ifstream in(ctx.outputDir / ".mcpp-written"); in) in >> lastWritten;
         const std::uintmax_t threshold = std::max<std::uintmax_t>(2ull << 30, lastWritten + lastWritten / 4);
         if (!sec && freeBefore < threshold)
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "{} free where this build writes ({}), and its last build took {}. `mcpp clean "
                 "--stale` removes the build directories no configuration uses, and `mcpp cache gc "
                 "--older-than 30d` the cache entries none has used",
@@ -2274,7 +2306,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                         }
                     // The size of the directory left beside it (mcpp#927, 2026-11-12
                     // §18 P6): what the reader decides about, with the command.
-                    mcpp::ui::warning(std::format(
+                    mcpp::diag::warning("build", std::format(
                         "the configuration changed{}: {} is built in full beside {} ({}); "
                         "`mcpp clean --stale` drops it once no build uses it",
                         what.empty() ? std::string{} : " (" + what + ")",
@@ -2542,6 +2574,7 @@ export bool dep_sources_newer_than(const std::vector<DepSourceRoot>& depSourceRo
     return false;
 }
 
+
 // mcpp#225: run ninja quietly against an already-verified-fresh build.ninja.
 // Shared by try_fast_build (which just reports "Finished" on success) and
 // try_fast_run (which goes on to locate + exec a binary). Returns nullopt
@@ -2617,8 +2650,16 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (!opened) { mcpp::ui::error(opened.error()); return 1; }
         compilerRun.emplace(std::move(*opened));
         compilerRun->environment(childEnv);
+        childEnv.emplace_back("MCPP_MEMORY_THRESHOLD",
+                              std::to_string(mcpp::build::read_memory_threshold_sidecar(outputDir)));
+        for (auto& kv : mcpp::build::read_unit_cache_sidecar(outputDir)) childEnv.push_back(std::move(kv));
     }
 
+    // The build's record, as the full path keeps it (design 2026-11-20 §5.6).
+    const auto logMark = mcpp::build::progress::mark_log(outputDir);
+    const auto usageFile = outputDir / mcpp::build::record::kUsageFile;
+    std::ofstream(usageFile, std::ios::binary | std::ios::trunc);
+    childEnv.emplace_back(std::string(mcpp::build::record::kUsageEnv), mcpplibs::os::fs::utf8(usageFile));
     const auto compilerStopped=[&] {return compilerRun&&compilerRun->failed();};
     auto t0 = std::chrono::steady_clock::now();
     // capture_exec merges stderr into the captured output (replacing `2>&1`),
@@ -2664,8 +2705,10 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         reported = run.reported;
         // A stale graph is not this build's outcome: the full path plans
         // again and builds, and reports the packages then.
-        if (status == 0 || reported || !is_stale_ninja_failure(out))
+        if (status == 0 || reported || !is_stale_ninja_failure(out)) {
+            mcpp::build::progress::keep_ran(outputDir, logMark, usageFile, &report);
             report.finish(status == 0);
+        }
     } else {
         // Nobody reads this ninja's progress: it reports no action start
         // (build progress design 2026-09-29, §6.4).
@@ -2675,6 +2718,7 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
         if (r.exit_code == 0) r = mcpp::run::execute(argv,{.env=childEnv,.should_stop=compilerStopped});
         out = std::move(r.output);
         status = r.exit_code;
+        if (status == 0 || !is_stale_ninja_failure(out)) mcpp::build::progress::keep_ran(outputDir, logMark, usageFile, nullptr);
     }
     const auto bmiRun = mcpp::buildopt::keep::run_end(outputDir);
     for (auto const& line : mcpp::buildopt::keep::summary(bmiRun))
@@ -2918,10 +2962,10 @@ void restore_root_compile_commands(const std::filesystem::path& projectRoot,
     auto result = mcpp::build::publish_root_compile_commands(
         configPath, rootPath, targetRoot, mcpp::home::root());
     if (!result) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "compile_commands.json was not updated: {}", result.error().message));
     } else if (result->foreignEntries > 0) {
-        mcpp::ui::warning(mcpp::build::foreign_entries_warning(result->foreignEntries));
+        mcpp::diag::warning("build", mcpp::build::foreign_entries_warning(result->foreignEntries));
     }
 }
 
@@ -2948,10 +2992,10 @@ export void publish_workspace_compile_commands(
         databases, (wsRoot / rootCompileDb).lexically_normal(),
         outputDirs.front().parent_path().parent_path(), mcpp::home::root());
     if (!result) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "compile_commands.json was not updated: {}", result.error().message));
     } else if (result->foreignEntries > 0) {
-        mcpp::ui::warning(mcpp::build::foreign_entries_warning(result->foreignEntries));
+        mcpp::diag::warning("build", mcpp::build::foreign_entries_warning(result->foreignEntries));
     }
 }
 
@@ -3111,6 +3155,11 @@ admit_recorded_build(const BuildCacheEntry& e, const ReplayAsk& ask) {
         return std::unexpected("the recorded build predates the lock it was planned under");
     if (e.lockDigest != lock_digest(ask.manifest.parent_path()))
         return std::unexpected("mcpp.lock is not the one the recorded build was planned under");
+    if (!e.programRecordsRecorded)
+        return std::unexpected("the recorded build predates the list of its build programs' records");
+    for (auto const& r : e.programRecords)
+        if (!std::filesystem::exists(mcpplibs::os::fs::from_utf8(r), ec))
+            return std::unexpected("a record of the build programs the graph was planned with is gone");
 
     // mcpp#225: bounded + vcs/build-dir-excluded walk (see sources_newer_than)
     // instead of a hand-rolled recursive_directory_iterator over src/.
@@ -3402,7 +3451,7 @@ void run_separator() {
 // them.
 void yield_terminal() {
     mcpp::build::progress::close();
-    mcpp::ui::print_closing_notices();
+    mcpp::diag::print_closing();
 }
 
 // mcpp#225 (E2): `mcpp run`'s fast path. Mirrors try_fast_build's
@@ -4031,7 +4080,7 @@ std::optional<ChosenLeg> choose_run_leg(std::span<const mcpp::toolchain::target_
             passed.push_back(std::format("{}: {}", leg->triple, why->substr(0, why->find('\n'))));
             continue;
         }
-        for (auto const& p : passed) mcpp::ui::note(std::format("not run here -- {}", p));
+        for (auto const& p : passed) mcpp::diag::note("build", std::format("not run here -- {}", p));
         mcpp::ui::info("Leg", std::format("{} (of {} targets)", leg->triple, legs.size()));
         return ChosenLeg{leg->triple, std::move(*ctx)};
     }
@@ -4600,6 +4649,14 @@ struct TestResult {
     int                                 worker = -1;
     std::vector<std::string>            select;
     bool                                alone = false;   // it held the machine (P7.1)
+    // The limit its process ran within (0: none), and each listed case's own
+    // (seconds): a case's `limit_ms` in the store (B4).
+    double                              limitSecs = 0;
+    std::map<std::string, double>       caseSecs;
+    // The run fixtures it used (P11.2), and whether one it uses was not ready: the machine's
+    // failure, `infra` in the store (P11.4).
+    std::vector<std::string>            fixtures;
+    bool                                infra = false;
     // The program and the files it is compiled from, for a test built and not
     // run (`--no-run`): what a runner that selects by change reads (docs/50).
     std::string                         program;
@@ -4611,11 +4668,33 @@ struct TestResult {
     std::optional<mcpp::build::result::Launch> launch;
 };
 
+// THE MACHINE'S CLASS (SPEC-017 P12.4): its processor's model, else its
+// architecture and logical processors. A runner on a hosted pool lands on
+// processors 1.6 times apart in speed (design 2026-11-20 §3.1); estimates
+// compared within a class tell that from a regression.
+static std::string machine_class() {
+    if (auto model = mcpplibs::os::machine::processor_model(); model && !model->empty()) return *model;
+    return std::format("{}/{}", mcpplibs::os::machine::arch(), mcpplibs::os::machine::processors().logical);
+}
+
+// The limit a case ran within, in seconds (0: none): what it or the listed
+// case it is under states, else its process's when the process ran it alone.
+static double case_limit(const TestResult& t, std::string_view id) {
+    for (std::string_view at = id;;) {
+        if (auto it = t.caseSecs.find(std::string(at)); it != t.caseSecs.end()) return it->second;
+        const auto slash = at.rfind('/');
+        if (slash == std::string_view::npos) break;
+        at = at.substr(0, slash);
+    }
+    return t.report.cases.size() == 1 ? t.limitSecs : 0;
+}
+
 // THE RUN IN THE MTEST STORE (mtest spec P12; design 2026-11-09 §17.3): the
 // run's record, a line per process of a program and a line per case, so that
 // `mtest report|analyze|graph --store <dir>` read `mcpp test`'s runs as the
 // engine's own. Written whole into `runs/<id>/` and then appended to the index.
 void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestResult>& results,
+                       const std::vector<mcpp::build::test_fixture::Run>& fixtures,
                        std::chrono::system_clock::time_point started, long long ms, int jobs,
                        std::string_view selection, std::string_view shard = {}) {
     namespace fs = std::filesystem;
@@ -4636,7 +4715,7 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
             case TestResult::St::Pass:        return "pass";
             case TestResult::St::RunFail:     return "fail";
             case TestResult::St::CompileFail: return "build-fail";
-            case TestResult::St::NotRun:      return "not-run";
+            case TestResult::St::NotRun:      return t.infra ? "infra" : "not-run";
             case TestResult::St::Built:       return "built";
         }
         return "fail";
@@ -4646,12 +4725,20 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
     {
         std::ofstream programs(runDir / "programs.ndjson", std::ios::binary);
         std::ofstream cases(runDir / "cases.ndjson", std::ios::binary);
+        // B4 `fixtures.ndjson`: a fixture's preparation is its own, not its first user's.
+        if (!fixtures.empty()) {
+            std::ofstream rows(runDir / "fixtures.ndjson", std::ios::binary);
+            for (auto const& f : fixtures)
+                rows << json{{"name", f.name}, {"program", f.program}, {"started_ms", std::llround(f.startedMs)},
+                             {"ready_ms", std::llround(f.readyMs)}, {"ended_ms", std::llround(f.endedMs)},
+                             {"status", f.status}}.dump() << "\n";
+        }
         for (auto const& t : results) {
             failed |= t.status == TestResult::St::RunFail || t.status == TestResult::St::CompileFail;
             json p{{"name", t.name}, {"argv", json::array({t.program.empty() ? t.name : t.program})},
                    {"status", status_of(t)}, {"exit", t.exitCode}, {"ms", t.durationMs},
                    {"started_ms", t.startedMs}, {"worker", t.worker}, {"select", t.select},
-                   {"resources", t.alone ? json::array({"machine"}) : json::array()}, {"fixtures", json::array()}};
+                   {"resources", t.alone ? json::array({"machine"}) : json::array()}, {"fixtures", t.fixtures}};
             if (t.buildMs > 0) p["build_ms"] = t.buildMs;
             // The program a part is of: what `--failed` builds again.
             if (!t.partOf.empty()) p["part_of"] = t.partOf;
@@ -4662,6 +4749,14 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 auto u = mcpp::build::test_protocol::usage_json(t.report.usage);
                 u["source"] = "program";
                 p["usage"] = std::move(u);
+            }
+            // What it did outside every case (P5.6 within a scope).
+            if (!t.report.steps.empty()) p["steps"] = mcpp::build::test_protocol::steps_json(t.report.steps);
+            if (!t.report.exercised.empty()) p["exercised"] = t.report.exercised;
+            if (!t.report.metrics.empty()) {
+                json ms = json::array();
+                for (auto const& m : t.report.metrics) ms.push_back(mcpp::build::test_protocol::metric_json(m));
+                p["metrics"] = std::move(ms);
             }
             programs << mcpp::wire::text(p) << "\n";
             if (t.report.cases.empty()) {
@@ -4697,6 +4792,11 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 }
                 if (!c.bounds.empty()) line["bounds"] = mcpp::build::test_protocol::bounds_json(c.bounds);
                 if (c.checks) line["checks"] = {{"held", c.checks->held}, {"failed", c.checks->failed}};
+                // P5.6 and the case's processor time and limit (SPEC-017 B4, 2.5).
+                if (c.cpuMs) line["cpu_ms"] = *c.cpuMs;
+                if (!c.steps.empty()) line["steps"] = mcpp::build::test_protocol::steps_json(c.steps);
+                if (!c.exercised.empty()) line["exercised"] = c.exercised;
+                if (const auto limit = case_limit(t, c.id); limit > 0) line["limit_ms"] = limit * 1000;
                 cases << mcpp::wire::text(line) << "\n";
             }
         }
@@ -4704,12 +4804,25 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
     json run{{"schema", "mtest.run/1"}, {"id", id}, {"started", iso(started)}, {"finished", iso(finished)},
              {"status", failed ? "fail" : "pass"},
              {"system", std::string(mcpplibs::os::name(mcpplibs::os::PLATFORM))},
-             {"arch", std::string(mcpplibs::os::name(mcpplibs::os::ARCH))}, {"machine", ""},
+             {"arch", std::string(mcpplibs::os::name(mcpplibs::os::ARCH))}, {"machine", machine_class()},
+             {"processors", mcpplibs::os::machine::processors().logical},
+             {"memory", mcpplibs::os::machine::memory().value_or(0)}, {"budget", jobs},
              {"commit", mcpp::invocation::get("GITHUB_SHA").value_or("")},
              {"set", "mcpp test"}, {"selection", std::string(selection)},
-             {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", "off"},
+             {"group", mcpp::invocation::get("GITHUB_RUN_ID").value_or("")}, {"monitor", mcpp::build::test_protocol::monitor_level()},
              {"ms", ms}, {"jobs", jobs}, {"counts", counts}};
     if (!shard.empty()) run["shard"] = std::string(shard);
+    // THE BUILDS OF THE RUN (SPEC-017 B4, design 2026-11-20 §5.6): every edge
+    // this command ran, with its package, time, processor time and memory,
+    // and a line per package the cache served.
+    {
+        std::string builds;
+        for (const auto& b : mcpp::build::record::kept()) builds += mcpp::build::record::to_ndjson(b);
+        if (!builds.empty()) std::ofstream(runDir / "builds.ndjson", std::ios::binary) << builds;
+    }
+    if (const auto jitter = mcpp::invocation::get("MTEST_JITTER"); jitter && !jitter->empty())
+        run["jitter"] = {{"max_ms", std::atoi(jitter->c_str())},
+                         {"seed", std::strtoull(mcpp::invocation::get("MTEST_JITTER_SEED").value_or("0").c_str(), nullptr, 10)}};
     { std::ofstream(runDir / "run.json", std::ios::binary) << mcpp::wire::text(run, 2) << "\n"; }
     std::ofstream(dir / "index.ndjson", std::ios::binary | std::ios::app) << mcpp::wire::text(run) << "\n";
 }
@@ -5009,7 +5122,33 @@ struct TestRunnable {
     // `--timeout`, so that a test that states its length is not ended at the
     // limit the rest are held to (P-limit, docs/08).
     double declaredSecs = 0;
+    // The time each listed case states it may run, by its identifier: the
+    // limit a case is held to in the store (B4 `limit_ms`), for the report's
+    // margin (design 2026-11-20 §5.8).
+    std::map<std::string, double> caseSecs;
+    // P11: the run fixtures each listed case uses, and those the program serves.
+    std::map<std::string, std::vector<std::string>> caseUses;
+    std::vector<std::string> serves;
 };
+
+// The run fixtures the cases a program selects use (P11.2): a listed case is selected by a line
+// naming it or a case under it, plain or `?`; a `!` line selects nothing.
+static std::vector<std::string> fixtures_used(const TestRunnable& r) {
+    std::vector<std::string> lines;
+    if (r.select) {
+        std::ifstream in(*r.select);
+        for (std::string line; std::getline(in, line);)
+            if (!line.empty() && !line.starts_with('!')) lines.push_back(line.starts_with('?') ? line.substr(1) : line);
+    }
+    std::set<std::string> out;
+    for (auto const& [id, uses] : r.caseUses) {
+        const bool selected = !r.select || std::ranges::any_of(lines, [&](std::string_view l) {
+            return l == id || (l.size() > id.size() && l.starts_with(id) && l[id.size()] == '/');
+        });
+        if (selected) out.insert(uses.begin(), uses.end());
+    }
+    return {out.begin(), out.end()};
+}
 
 // THE PROTOCOL A TEST PROGRAM IMPLEMENTS (P2.3): what its entry states, else
 // the marker its file carries. A test that keeps what it reaches may have lost
@@ -5486,7 +5625,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         ? mcpp::build::test_schedule::History{}
         : mcpp::build::test_schedule::read_history(
               storeDir, 30, testOpts.shard ? std::optional(mcpp::invocation::get("GITHUB_RUN_ID").value_or(""))
-                                           : std::nullopt);
+                                           : std::nullopt,
+              testOpts.shard ? std::nullopt : std::optional(machine_class()));
 
     using Runnable = TestRunnable;
     std::vector<Runnable> runnable;
@@ -5524,8 +5664,16 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     const bool exclusiveDevice = (ctx->manifest.buildConfig.runExclusive
                                   || ctx->plan.platform.fields.runner.exclusive)
                               && !runnerChoice.tmpl.empty();
+    std::vector<mcpp::build::test_fixture::Run> fixtureRuns;
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
+        // THE RUN FIXTURES (SPEC-017 P11, design 2026-11-20 §5.10): the program that serves each,
+        // taken before the shard keeps its own, since a shard's users need not include it.
+        namespace tf = mcpp::build::test_fixture;
+        std::map<std::string, tf::Provider> providers;
+        for (auto const& r : list)
+            for (auto const& f : r.serves)
+                providers.try_emplace(f, tf::Provider{r.partOf.empty() ? r.name : r.partOf, r.argv, r.env, r.cwd});
         // Each test's measured duration: of the cases it selects, or of the
         // program whole.
         namespace ts = mcpp::build::test_schedule;
@@ -5560,6 +5708,18 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         }
         // The longest first, so that the longest work does not start last.
         std::ranges::stable_sort(list, std::greater{}, &Runnable::estimateMs);
+        // Each fixture starts before its first user and ends after its last; a run whose cases
+        // use none starts nothing.
+        std::vector<std::vector<std::string>> usesOf(list.size());
+        std::map<std::string, int> users;
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            usesOf[i] = fixtures_used(list[i]);
+            for (auto const& f : usesOf[i]) ++users[f];
+        }
+        std::optional<tf::Server> fixtures;
+        if (!users.empty())
+            fixtures.emplace(std::move(providers), std::move(users), tLoop,
+                             std::chrono::seconds(testOpts.timeoutSecs > 0 ? testOpts.timeoutSecs : 3600));
         const bool capture = json || list.size() > 1;
         // The limit of one test's process: `--timeout`, or what its cases
         // state when that is longer; `--timeout 0` disables both.
@@ -5600,15 +5760,87 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         std::atomic<std::size_t> next{0};
         std::mutex reportMutex;
 
+        // ONE BUDGET FOR THE MACHINE (SPEC-017 O11, design 2026-11-20 §5.5): a
+        // directory of a slot file per job of the run; each worker holds one
+        // while it runs tests and states it to them (MTEST_BUDGET,
+        // MTEST_BUDGET_HELD), so a build a test starts runs its first compiler
+        // on that slot and takes the others from the slots no worker holds.
+        // Four shards' tests each building in parallel queued 7 to 9 processes
+        // on 4 processors, and a step took 2.3 times its time alone (§3.1).
+        // Inside another runner's budget (a test that runs `mcpp test`) that
+        // one is used: the first worker has the slot held for this process.
+        const auto outerBudget = mcpp::invocation::get("MTEST_BUDGET");
+        const bool nestedBudget = outerBudget && !outerBudget->empty();
+        const auto outerHeld = mcpp::invocation::get("MTEST_BUDGET_HELD").value_or("");
+        std::filesystem::path budgetDir;
+        if (nestedBudget) {
+            budgetDir = mcpp::home::from_utf8(*outerBudget);
+        } else {
+            std::error_code ec;
+            budgetDir = std::filesystem::temp_directory_path(ec)
+                / std::format("mcpp-budget-{}-{}", mcpplibs::os::process::self() ? mcpplibs::os::process::self()->id : 0,
+                              std::chrono::steady_clock::now().time_since_epoch().count());
+            std::filesystem::create_directories(budgetDir, ec);
+            for (int i = 0; i < std::max(1, runJobsHere); ++i)
+                std::ofstream(budgetDir / std::format("slot-{}", i), std::ios::binary);
+        }
+        struct OwnedBudget {
+            std::filesystem::path dir;
+            ~OwnedBudget() { std::error_code ec; if (!dir.empty()) std::filesystem::remove_all(dir, ec); }
+        } ownedBudget{nestedBudget ? std::filesystem::path{} : budgetDir};
+        // `forTest`: the worker has a test to run and waits until a slot is free.
+        auto take_slot = [&](int workerId, bool forTest = false) -> std::pair<std::string, std::optional<mcpplibs::os::fs::lock>> {
+            if (nestedBudget && workerId == 0 && !outerHeld.empty()) return {outerHeld, std::nullopt};
+            std::vector<std::filesystem::path> slots;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(budgetDir, ec))
+                if (e.path().filename().string().starts_with("slot-") && mcpp::home::spelling(e.path()) != outerHeld)
+                    slots.push_back(e.path());
+            std::ranges::sort(slots);
+            for (;;) {
+                for (const auto& f : slots)
+                    if (auto l = mcpplibs::os::fs::lock::acquire(f, mcpplibs::os::fs::lock::kind::exclusive, false))
+                        return {mcpp::home::spelling(f), std::move(*l)};
+                if (slots.empty()) return {{}, std::nullopt};
+                // A worker that waits for a slot while the others have taken every test has none
+                // to run. Inside another runner's budget every other slot can stay held until
+                // this run ends: the first worker ran the whole list on the held slot, and the
+                // others waited for a slot forever (measured: a `mcpp test` inside a case of a
+                // four-worker shard ran out its 600 s).
+                if (!forTest && next.load() >= list.size()) return {{}, std::nullopt};
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        };
+
         auto worker = [&](int workerId) {
+            auto taken = take_slot(workerId);
+            std::string slotFile = std::move(taken.first);
+            std::optional<mcpplibs::os::fs::lock> slotLock = std::move(taken.second);
+            // A WORKER THAT WAITS AT THE GATE HOLDS NO SLOT (P7.1 with O11): the test that holds
+            // the machine has the budget's slots, its worker's and those of the workers that wait
+            // for it. Measured: with each worker keeping its slot while it waited, the build of a
+            // test that holds the machine ran on the one slot its worker held, one compiler at a
+            // time (cases 234 and 860 on four processors). In a budget of its own the run has a
+            // slot per worker, so one given back is found again; inside another runner's budget a
+            // slot given back may stay another's until that run ends, and the worker keeps it.
+            const auto pass_gate = [&](auto& gate) {
+                if (nestedBudget) { gate.lock(); return; }
+                if (gate.try_lock()) return;
+                slotLock.reset();
+                slotFile.clear();
+                gate.lock();
+                auto again = take_slot(workerId, /*forTest=*/true);
+                slotFile = std::move(again.first);
+                slotLock = std::move(again.second);
+            };
             for (;;) {
                 std::size_t i = next.fetch_add(1);
                 if (i >= list.size()) return;
                 auto& r = list[i];
                 std::unique_lock<std::shared_mutex> holdsMachine(machineGate, std::defer_lock);
                 std::shared_lock<std::shared_mutex> besideOthers(machineGate, std::defer_lock);
-                if (r.alone) holdsMachine.lock();
-                else besideOthers.lock();
+                if (r.alone) pass_gate(holdsMachine);
+                else pass_gate(besideOthers);
                 // The schedule, recorded with the result (the mtest store).
                 const auto stamp_schedule = [&, startedAt = std::chrono::steady_clock::now()] {
                     auto& t = results.back();
@@ -5617,6 +5849,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     t.partOf = r.partOf;
                     t.divides = r.divides;
                     t.alone = r.alone;
+                    t.limitSecs = limit_of(r);
+                    t.caseSecs = r.caseSecs;
                     if (r.select) {
                         std::ifstream in(*r.select);
                         for (std::string line; std::getline(in, line);)
@@ -5659,6 +5893,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // it, stated for this run, and no other program (P1.2, P2.2).
                 mcpp::run::Options runOpts;
                 runOpts.env = r.env;
+                if (!slotFile.empty()) {
+                    runOpts.env.emplace_back("MTEST_BUDGET", mcpp::home::spelling(budgetDir));
+                    runOpts.env.emplace_back("MTEST_BUDGET_HELD", slotFile);
+                }
                 runOpts.cwd = r.cwd.string();
                 runOpts.input = mcpp::run::Input::inherit;
                 runOpts.streams = capture ? mcpp::run::Streams::merged : mcpp::run::Streams::inherit;
@@ -5668,6 +5906,29 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     state_protocol(r, "run", runOpts);
                 } else {
                     for (auto v : mcpp::build::test_protocol::kVariables) runOpts.unset.emplace_back(v);
+                }
+                // A fixture that is not ready is the machine's failure: the program does not run
+                // and its record says `infra` (P11.4).
+                std::string notReady;
+                for (auto const& f : usesOf[i]) {
+                    auto endpoint = fixtures->acquire(f);
+                    if (!endpoint) { notReady = endpoint.error(); break; }
+                    runOpts.env.emplace_back(tf::variable(f), *endpoint);
+                }
+                const auto release_fixtures = [&] {
+                    for (auto const& f : usesOf[i]) fixtures->release(f);
+                };
+                if (!notReady.empty()) {
+                    release_fixtures();
+                    std::scoped_lock lock(reportMutex);
+                    if (!json) mcpp::ui::plain(std::format("{} ... not run ({})", r.name, notReady));
+                    results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, 0, false, notReady, r.buildMs});
+                    results.back().infra = true;
+                    results.back().fixtures = usesOf[i];
+                    stamp_schedule();
+                    std::fflush(libc::stdout());
+                    emit_json(results.back());
+                    continue;
                 }
                 if (!capture) mcpp::ui::status("Running", std::format("bin/{}", r.name));
                 // THE CASES AS THEY HAPPEN (feature `test-case-stream`): the
@@ -5713,6 +5974,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                         });
                     auto rr = mcpp::run::execute(r.argv, runOpts);
                     if (watcher.joinable()) { watcher.request_stop(); watcher.join(); }
+                    release_fixtures();
                     exitCode = rr.exit_code;
                     timedOut = rr.timed_out;
                     spawnErr = rr.spawn_error;
@@ -5773,7 +6035,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                         reason = spawn_failed_message(r.argv.front(), spawnErr, spawnDetail);
                     if (!hostCannotRun.exchange(true)) {
                         hostCannotRunReason = reason;
-                        if (!json) mcpp::ui::warning(reason);
+                        if (!json) mcpp::diag::warning("build", reason);
                     }
                     if (!json) mcpp::ui::plain(std::format("{} ... not run", r.name));
                     results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, ms, false,
@@ -5802,6 +6064,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 }
                 results.back().protocol = spoken;
                 results.back().report = std::move(report);
+                results.back().fixtures = usesOf[i];
                 stamp_schedule();
                 results.back().guide = r.guide;
                 // The captured output belongs directly under its own line, or
@@ -5823,6 +6086,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             for (int w = 0; w < workers; ++w) pool.emplace_back(worker, w);
             for (auto& t : pool) t.join();
         }
+        if (fixtures) std::ranges::move(fixtures->finish(), std::back_inserter(fixtureRuns));
         // WALL time of the phase, not the sum of the per-test durations: with
         // N running at once that sum exceeds the elapsed time and the summary
         // would report a run phase longer than the whole command.
@@ -6240,12 +6504,38 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 continue;
             }
             std::string lines;
-            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases)) {
+            // The cases a run of the store measured under this program: what a glob under a
+            // listed case names (P4.3).
+            std::map<std::string, double> selectedSecs;   // listed case -> its declared time
+            std::vector<std::string> declared;
+            {
+                const auto prefix = mcpp::build::test_schedule::case_key(r.name, "");
+                for (auto it = history.cases.lower_bound(prefix);
+                     it != history.cases.end() && it->first.starts_with(prefix); ++it)
+                    declared.push_back(it->first.substr(prefix.size()));
+            }
+            for (const auto& id : mcpp::build::test_protocol::selection(report.listed, testOpts.cases,
+                                                                         declared, report.selectsWithin)) {
                 lines += id + "\n";
                 // A selected case that holds the machine (P7.1) runs the program alone.
                 for (const auto& c : report.listed)
                     if (c.id == id && std::ranges::find(c.resources, "machine") != c.resources.end()) r.alone = true;
+                // THE TIME LIMIT IS THE ONE ITS SCOPE STATES (SPEC-017 O5, design 2026-11-20 §5.8): a
+                // case selected under a listed case runs within that case's `timeout`, as the whole
+                // case does; `--case 'sets/*'` ran within the run's 300 s (mcpp#976).
+                const std::string_view bare = id.starts_with('?') ? std::string_view(id).substr(1) : std::string_view(id);
+                for (const auto& c : report.listed)
+                    if (c.timeout > 0 && (bare == c.id || (bare.size() > c.id.size() && bare.starts_with(c.id)
+                                                           && bare[c.id.size()] == '/')))
+                        selectedSecs.emplace(c.id, c.timeout);
             }
+            for (const auto& [_, secs] : selectedSecs) r.declaredSecs += secs;
+            selectedSecs.clear();
+            for (const auto& c : report.listed) {
+                if (c.timeout > 0) r.caseSecs[c.id] = c.timeout;
+                if (!c.uses.empty()) r.caseUses[c.id] = c.uses;
+            }
+            r.serves = report.fixtures;
             if (lines.empty()) { ++notSelected; continue; }
             r.select = r.protocolDir / "select.txt";
             std::ofstream(*r.select, std::ios::binary) << lines;
@@ -6263,7 +6553,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // person (measured on 2026.10.28.1). `mcpp run` prints the same text.
         if (!json && !invocationNotRunReason.empty() && !runnable.empty()
             && !std::exchange(tb.invocationReasonPrinted, true))
-            mcpp::ui::warning(invocationNotRunReason);
+            mcpp::diag::warning("build", invocationNotRunReason);
         // A PROGRAM OF SEVERAL FILES RUNS AS SEVERAL PROCESSES (design
         // 2026-11-09 §17.3): one per file of its cases, each selecting them
         // (P4), scheduled across the workers as the programs are -- the
@@ -6335,6 +6625,11 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     continue;
                 }
                 const auto& report = *listings[at];
+                for (const auto& c : report.listed) {
+                    if (c.timeout > 0) r.caseSecs[c.id] = c.timeout;
+                    if (!c.uses.empty()) r.caseUses[c.id] = c.uses;
+                }
+                r.serves = report.fixtures;
                 // THE MACHINE, HELD ALONE (P7.1). A case that holds `machine`
                 // states a property that holds only while nothing beside it
                 // changes the machine (the shared home, its caches, the default
@@ -6467,7 +6762,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
     // program, and not a listing.
     if (const auto& st = ctx->manifest.testStore; st != "none" && !testOpts.listCases
         && std::ranges::any_of(results, [](const TestResult& r) { return r.status != TestResult::St::Built; }))
-        write_mtest_store(storeDir, results,
+        write_mtest_store(storeDir, results, fixtureRuns,
                           testStartedWall,
                           std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - tLoop).count(),
@@ -6794,7 +7089,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
                                                 : tb.invocationNotRunReason;
             reasons.push_back(std::format("{}: {}", leg.triple, why.substr(0, why.find('\n'))));
             (tb.builtNotRunHere ? notReached : notRun) += static_cast<int>(leg.tests.size());
-            if (!json) mcpp::ui::note(std::format("the tests of {} are not run here: {}", leg.triple, why));
+            if (!json) mcpp::diag::note("build", std::format("the tests of {} are not run here: {}", leg.triple, why));
             continue;
         }
         std::vector<std::pair<std::string, std::string>> legEnv;
@@ -6819,7 +7114,13 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
         // workers, the store (SPEC-015 §4; docs/08).
         std::vector<TestRunnable> runs;
         for (auto const& t : leg.tests) {
-            if (!selected_by(testOpts.filters, t.name)) continue;
+            // As a build's run selects: the program, or a part of it (`e2e/openkal/trees`), whose
+            // parts the run divides and selects after listing; an archive does not carry the
+            // files a part is named by (design 2026-11-20 §5.14).
+            const bool names_part = std::ranges::any_of(testOpts.filters, [&](const std::string& f) {
+                return f.starts_with(t.name + "/");
+            });
+            if (!names_part && !selected_by(testOpts.filters, t.name)) continue;
             TestRunnable r;
             r.name = t.name;
             r.program = (opened->root / t.program).lexically_normal();
@@ -6877,6 +7178,9 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
                      "\"not_reached\":{}}}}}", passed, failed, notRun, notReached);
         std::fflush(libc::stdout());
     }
+    // `--cases` lists the archive's cases and runs none: a listing is its answer (design 2026-11-20
+    // §5.14; through 2026.11.20.1 it ended "no test ran").
+    if (testOpts.listCases) return notRun ? 2 : 0;
     if (passed + failed == 0) {
         std::string why;
         for (auto const& r : reasons) why += "\n    " + r;
@@ -7537,7 +7841,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
         legs.push_back(std::move(leg));
     }
     for (auto const& why : leftOut)
-        mcpp::ui::note(std::format("left out of the target set, its platform does not serve it -- {}", why));
+        mcpp::diag::note("build", std::format("left out of the target set, its platform does not serve it -- {}", why));
     if (legs.empty()) {
         mcpp::ui::error("no member of the target set is served by its platform");
         return 2;
@@ -8287,7 +8591,7 @@ void keep_target_budget(const std::filesystem::path& root) {
     std::string largest;
     for (std::size_t i = 0; i < dirs.size() && i < 3; ++i)
         largest += std::format("{}{} ({})", i ? ", " : "", dirs[i].second, mcpp::bmi_cache::human_bytes(dirs[i].first));
-    mcpp::ui::warning(std::format(
+    mcpp::diag::warning("build", std::format(
         "target/ holds {}, over [build] target_budget = {}, in configurations still in use: {}",
         mcpp::bmi_cache::human_bytes(now), mcpp::bmi_cache::human_bytes(*budget), largest));
 }

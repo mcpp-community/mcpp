@@ -14,6 +14,7 @@ import mcpp.project;
 import mcpp.publish.normalize;
 import mcpp.publish.xpkg_emit;
 import mcpp.ui;
+import mcpp.diag;
 
 namespace libc = mcpplibs::mwrap::libc::macros;
 
@@ -68,7 +69,7 @@ export int emit_xpkg_to(std::string version, const std::filesystem::path& output
     // so, loudly, at the moment of generation.
     if (!namespaceOverride.empty()) m->package.namespace_ = namespaceOverride;
     if (m->package.namespace_.empty()) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("publish", std::format(
             "emitted descriptor declares no `namespace`. If you file this into a "
             "namespaced index, do NOT hand-add `namespace = \"<org>\"` — that "
             "makes `name` a split form the index can never resolve (mcpp#278). "

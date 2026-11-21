@@ -1,0 +1,150 @@
+{
+  "commands": {
+    "build": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "write-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "cache list": {
+      "effects": []
+    },
+    "emit build-database": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "index list": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project"
+      ]
+    },
+    "pack": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "write-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "pack --list-formats": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "run --print-launch": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "write-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "search": {
+      "effects": [
+        "init-mcpp-home",
+        "network"
+      ]
+    },
+    "self env": {
+      "effects": []
+    },
+    "test --print-launch": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "write-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "toolchain list": {
+      "effects": []
+    },
+    "why sources": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "why toolchain": {
+      "effects": [
+        "init-mcpp-home",
+        "read-project",
+        "network",
+        "write-global-cache",
+        "exec-build-script"
+      ]
+    },
+    "xpkg parse": {
+      "effects": []
+    }
+  },
+  "envelope": {
+    "max": 1,
+    "min": 1
+  },
+  "features": [
+    "target-sets",
+    "pkg-format-list",
+    "test-launch",
+    "launch-stream",
+    "test-protocol",
+    "test-parts",
+    "test-case-stream",
+    "test-metrics",
+    "test-launch-records",
+    "test-frameworks",
+    "test-checks",
+    "test-output",
+    "test-steps",
+    "test-budget",
+    "test-jitter",
+    "test-fixtures",
+    "package-features"
+  ],
+  "kind": "mcpp.protocol",
+  "kinds": {
+    "mcpp.build": 1,
+    "mcpp.build-database": 1,
+    "mcpp.cache": 1,
+    "mcpp.env": 1,
+    "mcpp.index": 1,
+    "mcpp.launch": 1,
+    "mcpp.pack": 1,
+    "mcpp.pack.formats": 1,
+    "mcpp.search": 1,
+    "mcpp.toolchain.list": 1,
+    "mcpp.why.build-programs": 1,
+    "mcpp.why.compat": 1,
+    "mcpp.why.features": 1,
+    "mcpp.why.sources": 1,
+    "mcpp.why.toolchain": 1,
+    "mcpp.xpkg": 1
+  },
+  "mcpp": {
+    "version": "<version>"
+  },
+  "schemaVersion": 1
+}

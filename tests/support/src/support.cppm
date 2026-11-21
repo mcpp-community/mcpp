@@ -57,6 +57,9 @@ using mcpplibs::mtest::platform;
 const only elf{platform::linux};                         // a host whose programs are ELF
 const only unix_shell{platform::linux, platform::macos};  // a POSIX shell and its tools
 const only fresh_sandbox{platform::linux, platform::macos};
+// The shared home, served once per run before its first user (SPEC-017 P11): each group of cases
+// states it, and the time that fills the home is the fixture's, not its first case's.
+const mcpplibs::mtest::uses home_fixture{"home"};
 const only symlink{platform::linux, platform::macos};
 const only macos{platform::macos};
 const only windows{platform::windows};
@@ -99,9 +102,14 @@ std::optional<std::string> newest_payload(std::string_view package, std::string_
 // `override` when set, else the newest numeric version installed, else `fallback`.
 std::string family_version(std::string_view package, std::string_view override, std::string_view fallback);
 inline std::string llvm_version() { return family_version("xim-x-llvm", "MCPP_E2E_LLVM_VERSION", "23.1.3"); }
-inline std::string gcc_version() { return family_version("xim-x-gcc", "MCPP_E2E_GCC_VERSION", "16.1.0"); }
-inline std::string musl_gcc_version() { return family_version("xim-x-musl-gcc", "MCPP_E2E_MUSL_GCC_VERSION", "15.1.0"); }
-inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cross-gcc", "MCPP_E2E_MINGW_CROSS_VERSION", "16.1.0"); }
+inline std::string gcc_version() { return family_version("xim-x-gcc", "MCPP_E2E_GCC_VERSION", "16.2.0"); }
+// `mcpp toolchain install`'s words for the host's default toolchain: GCC on Linux, LLVM on macOS
+// and Windows, as mcpp's own [toolchain] rows state them.
+inline std::vector<std::string> default_toolchain() {
+    return on_linux() ? std::vector<std::string>{"gcc", gcc_version()} : std::vector<std::string>{"llvm", llvm_version()};
+}
+inline std::string musl_gcc_version() { return family_version("xim-x-musl-gcc", "MCPP_E2E_MUSL_GCC_VERSION", "16.1.0"); }
+inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cross-gcc", "MCPP_E2E_MINGW_CROSS_VERSION", "16.2.0"); }
 // The directory of that payload's version.
 fs::path payload_root(std::string_view package, std::string_view version);
 
@@ -135,9 +143,10 @@ std::string mcpp_path();
 
 // shared: the machine's home. fresh: an empty home of the case. linked: a home of the case whose
 // `registry` is a link to the shared home's (its toolchains, not its build cache or state).
-// inherited: tests/e2e/_inherit_toolchain.sh's home, a home of the case holding links to each
-// payload of the user's homes, their indices, `subos` and `bin`, and a copy of `config.toml`.
-// payloads: inherited without config.toml and subos (MCPP_INHERIT_CONFIG=0 MCPP_INHERIT_SUBOS=0).
+// inherited: tests/e2e/_inherit_toolchain.sh's home, a home of the case whose `[xlings] upstream`
+// names the user's homes, with links to their indices and `bin` and a copy of `config.toml`; it
+// installs what it needs from the upstreams by link, into its own subos, and writes nothing there.
+// payloads: inherited without the copy of config.toml (MCPP_INHERIT_CONFIG=0).
 // registry: a home of the case whose `[xlings] home` is the shared home's registry (its toolchains,
 // indices and sandbox) and whose config.toml is its own. A case that sets the default toolchain
 // (`mcpp toolchain default`) runs here: the cases that read the machine's default run beside it
@@ -156,8 +165,21 @@ fs::path case_home(home kind = home::fresh);
 // that exported MCPP_HOME again did); removed with the case's other homes. mcpp runs in it with
 // `options::env` setting MCPP_HOME.
 fs::path another_home(home kind = home::fresh);
+// THE CASE RUNS MCPP IN A HOME OF ITS OWN instead of the shared one (design 2026-11-20 §5.10): each
+// later `mcpp` of the case that names no home uses `case_home(kind)`. A case whose assertion holds
+// only while nothing else writes its home -- a replayed build, which plans again when an install
+// beside it rewrote the runtime environment's description -- states this instead of holding the
+// machine; `inherited` reads the user's payloads as upstreams.
+void own_home(home kind = home::inherited);
 // The shared home: `MCPP_HOME`, else `~/.mcpp`.
 fs::path shared_home();
+
+// The command that runs `program` with `args` through `wine` and returns when every process wine
+// started has ended (`wineserver -w`), with the program's status. Wine starts its services with
+// the program's streams; they outlive the program by seconds, and the case's end check fails a
+// run whose output a process still holds (mtest 0.11.0, design 2026-11-20 §5.18).
+std::vector<std::string> through_wine(const fs::path& wine, const fs::path& program,
+                                      const std::vector<std::string>& args = {});
 
 struct options {
     home where = home::shared;
@@ -165,6 +187,9 @@ struct options {
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     std::string input;
     std::chrono::milliseconds timeout{std::chrono::minutes{10}};
+    // A program and its arguments mcpp runs under (`unshare -rn`, a network namespace of its own),
+    // so that a command run so is the case's like any other: its use of the surface is recorded.
+    std::vector<std::string> wrap;
 };
 
 // mcpp with `args`, in `cwd`.

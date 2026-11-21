@@ -42,7 +42,7 @@ std::string renamed_asio(std::string_view ns, std::string_view name) {
     return out;
 }
 
-E2E names{"names", [] {
+E2E names{"names", s::home_fixture, [] {
     "161 xpkg name form"_test = [] {
         // SPEC-001 §3.2: `package.name` is a single atomic segment; the hierarchy belongs in
         // `package.namespace` (the legacy fully qualified `compat.zlib` keeps working). A dotted

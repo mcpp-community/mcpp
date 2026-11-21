@@ -124,8 +124,8 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (topic == "sources" || topic == "tool" || topic == "payload")
             return mcpp::doctor::why_sources_json(topic, parsed.positional(1),
                                                   parsed.option_or_empty("features").value());
-        if (topic == "build-programs" || topic == "compat")
-            return mcpp::doctor::why_build_programs_or_compat_json(
+        if (topic == "build-programs" || topic == "compat" || topic == "features")
+            return mcpp::doctor::why_records_json(
                 topic, parsed.option_or_empty("features").value());
         if (topic == "target" || topic == "flags" || topic == "platform")
             return mcpp::doctor::why_target_or_flags_json(
@@ -135,7 +135,7 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
             std::println(libc::stderr(),
                 "error: --format json is defined for `mcpp why toolchain`, "
                 "`mcpp why target`, `mcpp why flags`, `mcpp why sources|tool|payload`, "
-                "`mcpp why build-programs` and `mcpp why compat`; '{}' has no machine-readable "
+                "`mcpp why build-programs`, `mcpp why compat` and `mcpp why features`; '{}' has no machine-readable "
                 "shape yet", topic);
             return 2;
         }

@@ -89,10 +89,23 @@ struct LockedTarget {
     std::string provider;
 };
 
+// THE VERSION A TOOLCHAIN THE PROJECT STATES RESOLVED TO (SPEC-006 §2.7):
+// `[toolchain."<request>"]`, the request as the payload it asks for
+// (`xim:gcc@16`). A partial version answers the newest release the index
+// has, which moves as the index does; the record keeps the project's builds on
+// one until `mcpp update`. A full version is its own record, and a toolchain
+// the project does not state follows the machine's and the engine's default:
+// neither is recorded. Absent in a lock written before the table.
+struct LockedToolchain {
+    std::string request;
+    std::string version;
+};
+
 struct Lockfile {
     int                                 schemaVersion = 2;
     std::vector<LockedIndex>            indices;
     std::vector<LockedTarget>           targets;
+    std::vector<LockedToolchain>        toolchains;
     std::vector<LockedPackage>          packages;
 };
 
@@ -172,6 +185,16 @@ std::expected<Lockfile, LockError> load(const std::filesystem::path& path) {
         }
     }
 
+    if (auto* tcs = doc->get_table("toolchain")) {
+        for (auto& [k, v] : *tcs) {
+            if (!v.is_table()) continue;
+            auto& tt = v.as_table();
+            LockedToolchain lt{ k, {} };
+            if (auto it = tt.find("version"); it != tt.end() && it->second.is_string()) lt.version = it->second.as_string();
+            if (!lt.version.empty()) lock.toolchains.push_back(std::move(lt));
+        }
+    }
+
     // [[package]] arrays are not in our minimal parser. We use [package.<name>] instead.
     // Or just iterate the root looking for top-level "package" table that contains a list.
     // For simplicity in M2: accept either format with top-level array of tables described
@@ -243,6 +266,11 @@ std::string serialize(const Lockfile& lock) {
         out += std::format("\n[target.{}]\n", t::escape_string(tg.request));
         out += std::format("identity = {}\n", t::escape_string(tg.identity));
         if (!tg.provider.empty()) out += std::format("provider = {}\n", t::escape_string(tg.provider));
+    }
+
+    for (auto& tc : lock.toolchains) {
+        out += std::format("\n[toolchain.{}]\n", t::escape_string(tc.request));
+        out += std::format("version = {}\n", t::escape_string(tc.version));
     }
 
     // Blank line before packages if we had indices or just after version.

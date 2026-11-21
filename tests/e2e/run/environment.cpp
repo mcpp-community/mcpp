@@ -59,7 +59,7 @@ int main() {{
 )", base, base + 1, base + 2);
 }
 
-E2E environment{"environment", [] {
+E2E environment{"environment", s::home_fixture, [] {
     "62 runtime library dirs"_test[s::gcc][s::unix_shell] = [] {
         // [runtime] library_dirs is a run path of the program (-Wl,-rpath), not a link search
         // directory (-L), and a library dlopen()ed from it is found by `run` and `test`.

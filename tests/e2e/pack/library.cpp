@@ -67,7 +67,7 @@ bool has_symtab(const fs::path& f) {
     return false;
 }
 
-E2E library{"library", [] {
+E2E library{"library", s::home_fixture, [] {
     "242 pack library interface and headers"_test = [] {
         // A library package carries its module interface and its headers; a consumer by
         // header, by module and by both at once builds and runs against it. --compress zstd

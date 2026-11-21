@@ -41,7 +41,7 @@ std::string runner(std::initializer_list<std::string_view> check, std::string_vi
     return out;
 }
 
-E2E hosttools{"hosttools", [] {
+E2E hosttools{"hosttools", s::home_fixture, [] {
     "187 dep host tool"_test[s::gcc] = [] {
         // #355: the tool is built for the host into the store, found by mcpp::dep_bin(), and what
         // it generates is linked; a tool behind required_features is built with them active; a
@@ -358,8 +358,8 @@ int main() {
         std::ranges::sort(objs);
         expect(eq(objs, std::vector<std::string>{"embed_greeting.o", "main.o"})) << "a rule package reached the link, or the denominator is wrong";
         // The generated source is a graph node: an edited input runs its edge again.
-        std::this_thread::sleep_for(std::chrono::seconds(1));
         app.write("assets/greeting.txt", "a different embedded asset\n");
+        s::touch(app.at("assets/greeting.txt"));
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "rebuild failed";
         expect(eq(s::last_line(app.mcpp({"run"}).out), std::string("a different embedded asset")))
             << "editing the asset did not re-run the embed action";
@@ -515,7 +515,10 @@ int main() {
         // grow with the distance between the packages (A); such a tool builds and runs through
         // `tools = [...]` (B), also with the file nested deep, which on Windows passes 260
         // characters in the tool store's scratch (C: asserted wherever the runner enables long
-        // paths; the readings say which case this runner is).
+        // paths; the readings say which case this runner is). The case's own home: a tool is
+        // named by its package's sources (SPEC-001 §10.4), and a home that built this one serves
+        // it without building it.
+        s::own_home(s::home::inherited);
         const auto root = s::case_dir();
         auto write_dep = [&](const fs::path& dir, std::string_view inner) {
             s::project d{dir, {{"mcpp.toml", "[package]\nname    = \"dep\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n[targets.dep]\nkind = \"lib\"\n"},
@@ -1119,12 +1122,14 @@ int main() {
     };
 }};
 
-// The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
-// other test beside it. 831 states that the fast path replays the build, and the fast path declines
-// when the runtime environment's description changed: another program installing into the shared
-// home beside it rewrote that description (measured on Linux CI, 2026-11-14).
-E2E hosttools_machine{"hosttools-machine", resource{"machine"}, [] {
+// 831 states that the fast path replays the build, and the fast path declines when the runtime
+// environment's description changed: another program installing into the shared home beside it
+// rewrote that description (measured on Linux CI, 2026-11-14). It runs mcpp in a home of its own
+// whose payloads are the user's, as upstreams (`own_home`, design 2026-11-20 §5.10), instead of
+// holding the machine.
+E2E hosttools_own_home{"hosttools-own-home", s::home_fixture, [] {
     "831 a path dependency host module outside src"_test[s::unix_shell] = [] {
+        s::own_home();
         // #734: a path dependency's host module is compiled into the consumer's build program,
         // which no edge of build.ninja names, so the fast path sees an edit to it itself (it swept
         // only src/). S1 an edit to rules/hm.cppm re-runs the program; S2 a newer file of a
@@ -1141,16 +1146,15 @@ E2E hosttools_machine{"hosttools-machine", resource{"machine"}, [] {
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "the first build failed";
         expect(fatal(e2e::succeeded(app.mcpp({"build", "-v"})))) << "the second build failed";
         // S1.
-        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
         plug.write("rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 2; }\n");
+        s::touch(plug.at("rules/hm.cppm"));
         auto s1 = app.mcpp({"build"});
         expect(s1.started && s1.status != 0) << "S1: the build after an edit to rules/hm.cppm succeeded without re-running the build program";
         expect(e2e::contains(s::text(s1), "host module value 2")) << "S1: the build program did not read the edited host module";
         // S2.
         plug.write("rules/hm.cppm", "export module probe.hm831;\nexport inline int value() { return 1; }\n");
         expect(fatal(e2e::succeeded(app.mcpp({"build"})))) << "S2: the build after restoring the host module failed";
-        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-        fs::last_write_time(plug.at("tests/fixture/src/main.cpp"), fs::file_time_type::clock::now());
+        s::touch(plug.at("tests/fixture/src/main.cpp"));
         auto s2 = app.mcpp({"build", "-v"});
         expect(fatal(e2e::succeeded(s2))) << "S2: the build failed";
         expect(s::lacks(s::text(s2), "declined")) << "S2: the fast path declined after a file of a package nested in the dependency changed";

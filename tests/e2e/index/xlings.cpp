@@ -16,7 +16,7 @@ const s::options no_auto{.env = {{"MCPP_NO_AUTO_INSTALL", "1"}}};
 
 bool failed(const e2e::outcome& r) { return r.started && r.status != 0; }
 
-E2E xlings{"xlings", [] {
+E2E xlings{"xlings", s::home_fixture, [] {
     "327 declared xlings deps report their own failure"_test[s::unix_shell] = [] {
         // An unprovisionable [xlings] dependency: MCPP_NO_AUTO_INSTALL refuses naming the knob
         // and the package (announcing no provisioning); MCPP_OFFLINE refuses naming the offline
@@ -223,7 +223,7 @@ hardware = {}
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E xlings_machine{"xlings-machine", resource{"machine"}, [] {
+E2E xlings_machine{"xlings-machine", s::home_fixture, resource{"machine"}, [] {
     "614 feature xlings reaches xpkg dir"_test[s::gcc][s::unix_shell] = [] {
         // A [feature-xlings.<f>] tool's MCPP_XPKG_<NS>_<NAME>_DIR is its payload with the feature
         // on and empty with it off.

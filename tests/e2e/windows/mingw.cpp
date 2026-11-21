@@ -40,7 +40,11 @@ void self_contained(const std::string& imports, std::string_view what) {
         expect(fatal(!s::contains_nocase(imports, dll))) << what << " imports a toolchain DLL (" << dll << "): " << imports;
 }
 
-E2E mingw{"mingw", [] {
+// The time the suite states is the runner's limit for a case selected in it (SPEC-017 O5). Case
+// 182 installs the GNU row's toolchain in a home of its own (an archive of 276 MB): 54 s on a
+// runner whose caches were warm, beyond five minutes on one whose caches were cold (CI, 2026-11-20
+// and 2026-11-21).
+E2E mingw{"mingw", s::home_fixture, timeout{std::chrono::minutes{15}}, [] {
     "97 mingw toolchain"_test[s::windows] = [] {
         // `toolchain install mingw 16.1.0` installs the payload; `toolchain default mingw@16.1.0`
         // persists gcc@16.1.0 and x86_64-windows-gnu, both starred by `list`; a project with a named

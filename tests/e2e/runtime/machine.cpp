@@ -24,7 +24,7 @@ std::vector<std::string> split(std::string_view text, char sep) {
     return out;
 }
 
-E2E machine{"machine", resource{"machine"}, [] {
+E2E machine{"machine", s::home_fixture, resource{"machine"}, [] {
     "219 runtime search farm is last"_test[s::gcc][s::elf][s::python3] = [] {
         const auto tmp = s::case_dir();
         // A dependency that ships a shared library, so that the program carries `$ORIGIN`.

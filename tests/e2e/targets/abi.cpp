@@ -40,7 +40,7 @@ std::string emscripten_abi_table(std::string_view member) {
     return std::format("[target.'cfg(os = \"emscripten\")'.abi]\n{} = true\n", member);
 }
 
-E2E abi{"abi", [] {
+E2E abi{"abi", s::home_fixture, [] {
     "647 abi threads is one switch for the graph"_test[s::elf] = [] {
         // `[target.<selector>.abi] threads = true` in the root is one switch: -pthread reaches a
         // dependency's compile command and the fingerprint moves; a table scoped to another

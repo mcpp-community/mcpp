@@ -201,6 +201,7 @@ std::filesystem::path binutils_prefix_dir(const Toolchain& tc) {
         if (auto* ld = tc.tool_override("ld")) return ld->parent_path();
         return {};
     }
+    if (!tc.binutilsDir.empty()) return tc.binutilsDir;
     if (auto bin = find_binutils_bin(tc.binaryPath)) return *bin;
     return {};
 }

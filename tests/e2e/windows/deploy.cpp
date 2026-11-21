@@ -104,7 +104,7 @@ int main() {{
     expect(fatal(s::lines_with(s::text(r), placed).empty())) << "6: a build in which the placement edge did not run stated its difference again: " << s::text(r);
 }
 
-E2E deploy{"deploy", [] {
+E2E deploy{"deploy", s::home_fixture, [] {
     "811 place dlls never overwrites a declared deploy"_test[s::windows] = [] {
         declared_deploy_outranks({});
     };

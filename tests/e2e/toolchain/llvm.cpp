@@ -67,7 +67,7 @@ s::project llvm_project(std::string_view name, s::files sources, std::string_vie
     return p;
 }
 
-E2E llvm{"llvm", [] {
+E2E llvm{"llvm", s::home_fixture, [] {
     "36 llvm toolchain"_test = [] {
         // A non-module C/C++ package built with the LLVM payload: the list names it, the build
         // finishes, and the program runs.

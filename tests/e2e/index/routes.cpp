@@ -39,7 +39,7 @@ std::string lib_package(std::string_view ns_line, std::string_view name, std::st
 )", ns_line, name, description, source, target);
 }
 
-E2E routes{"routes", [] {
+E2E routes{"routes", s::home_fixture, [] {
     "120 ws root indices"_test[s::gcc][s::fresh_sandbox] = [] {
         // [indices] and [workspace.dependencies] at a workspace root reach a member by their
         // position, with a warning naming [workspace.indices]; a member's own relative path is

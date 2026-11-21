@@ -26,6 +26,7 @@ import mcpp.home;
 import nlohmann.json;
 import mcpp.libs.toml;
 import mcpp.ui;
+import mcpp.diag;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;
 
@@ -353,10 +354,69 @@ std::vector<Entry> walk_variant_entries() {
     return out;
 }
 
+// THE OUTPUTS OF BUILD PROGRAMS IN THE HOME (design 2026-11-20 §5.2): one per
+// package, version and contract under `build-cache/v1/out`, each last used when
+// a build last ran or replayed the program (its `.mcpp-used` is touched then).
+// A directory a build still names is made again by the program's next run.
+std::vector<Entry> walk_program_out_entries() {
+    std::vector<Entry> out;
+    std::error_code ec;
+    const auto root = mcpp::home::cache_root() / "out";
+    if (!std::filesystem::exists(root, ec)) return out;
+    for (auto& pkg : std::filesystem::directory_iterator(root, ec)) {
+        if (!pkg.is_directory()) continue;
+        for (auto& v : std::filesystem::directory_iterator(pkg.path(), ec)) {
+            if (!v.is_directory()) continue;
+            Entry e;
+            e.dir   = v.path();
+            e.kind  = "program-out";
+            e.key   = v.path().filename().string();
+            e.label = std::format("{} (build program's output, {})", pkg.path().filename().string(), e.key);
+            std::error_code fe;
+            e.accessed = std::filesystem::is_regular_file(e.dir / ".mcpp-used", fe)
+                ? dir_mtime_seconds(e.dir / ".mcpp-used") : dir_mtime_seconds(e.dir);
+            measure(e);
+            out.push_back(std::move(e));
+        }
+    }
+    return out;
+}
+
+// THE UNITS (design 2026-11-20 §5.3): one per compile key and manifest under
+// `build-cache/v1/unit/<k>/<key>/<manifest>`, last used when a build last
+// placed it (its `manifest.tsv` is touched then).
+std::vector<Entry> walk_unit_entries() {
+    std::vector<Entry> out;
+    std::error_code ec;
+    const auto root = mcpp::home::cache_root() / "unit";
+    if (!std::filesystem::exists(root, ec)) return out;
+    // One walk, its third level the entries: `<shard>/<key>/<manifest>`.
+    std::filesystem::recursive_directory_iterator it(root, ec), end;
+    for (; it != end; it.increment(ec)) {
+        if (ec) break;
+        if (it.depth() < 2 || !it->is_directory()) continue;
+        it.disable_recursion_pending();
+        Entry e;
+        e.dir   = it->path();
+        e.kind  = "unit";
+        e.key   = e.dir.parent_path().filename().string() + "/" + e.dir.filename().string();
+        e.label = std::format("unit {}", e.key);
+        std::error_code fe;
+        e.complete = std::filesystem::is_regular_file(e.dir / "manifest.tsv", fe);
+        if (!e.complete) e.problem = "no manifest.tsv (an interrupted publication)";
+        e.accessed = dir_mtime_seconds(e.complete ? e.dir / "manifest.tsv" : e.dir);
+        measure(e);
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
 std::vector<Entry> walk_collectable() {
     auto out = walk_pkg_entries();
     for (auto& e : walk_tool_entries()) out.push_back(std::move(e));
     for (auto& e : walk_variant_entries()) out.push_back(std::move(e));
+    for (auto& e : walk_program_out_entries()) out.push_back(std::move(e));
+    for (auto& e : walk_unit_entries()) out.push_back(std::move(e));
     return out;
 }
 
@@ -584,7 +644,7 @@ void reclaim_runner_cache() {
     o.args = {"cache", "gc"};
     auto r = proc::run(std::move(o));
     if (!r || !r->status.success()) {
-        mcpp::ui::warning(std::format("`{} cache gc` did not reclaim the runner's cache{}",
+        mcpp::diag::warning("cache", std::format("`{} cache gc` did not reclaim the runner's cache{}",
                                       mcpplibs::os::fs::generic_utf8(okrun), r ? ": " + r->err : std::string()));
         return;
     }
@@ -666,7 +726,7 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
         // Say it rather than silently under-delivering: a size target that
         // cannot be met without evicting std BMIs is a real outcome, and a
         // caller that thinks the budget held would be misled.
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("cache", std::format(
             "still {} over the {} budget: package and tool entries are exhausted. "
             "std BMIs are excluded from gc; use `mcpp cache clean --std`",
             human_bytes(live - *maxSize), human_bytes(*maxSize)));

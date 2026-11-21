@@ -16,8 +16,16 @@ using env_list = std::vector<std::pair<std::string, std::optional<std::string>>>
 // The home of the case over the machine's payloads (_inherit_toolchain.sh), with `more` set.
 s::options inherited(env_list more = {}) { return {.where = s::home::inherited, .env = std::move(more)}; }
 
-// `[xlings] binary` and `home` in the home's config.toml, as the scripts wrote it.
+// `[xlings] binary` and `home` in the home's config.toml, as the scripts wrote it. The default
+// toolchain is the one the home already has (a first build persisted it), else the gcc this machine
+// holds: the fake xlings installs nothing but the package a case asks for.
 void fake_xlings_config(const fs::path& home, const fs::path& binary, const fs::path& xlings_home) {
+    std::string toolchain = std::format("gcc@{}", s::gcc_version());
+    if (fs::exists(home / "config.toml")) {
+        const auto text = s::read_file(home / "config.toml");
+        std::smatch m;
+        if (std::regex_search(text, m, std::regex{R"re(\[toolchain\][^\[]*\ndefault *= *"([^"]+)")re"})) toolchain = m[1].str();
+    }
     s::project(home, {{"config.toml", std::format(R"([xlings]
 binary = "{}"
 home = "{}"
@@ -35,8 +43,8 @@ search_ttl_seconds = 3600
 default_jobs = 0
 
 [toolchain]
-default = "gcc@16.1.0"
-)", binary.generic_string(), xlings_home.generic_string())}});
+default = "{}"
+)", binary.generic_string(), xlings_home.generic_string(), toolchain)}});
 }
 
 constexpr std::string_view handshake = R"HS([[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; })HS";
@@ -72,15 +80,17 @@ std::string c_lib_segment(std::string_view source, std::string_view target) {
     }},)", source, target);
 }
 
-E2E local{"local", [] {
+E2E local{"local", s::home_fixture, [] {
     "52 local path namespaced index"_test[s::gcc][s::fresh_sandbox] = [] {
         // A local path index finds pkgs/c/compat.cfg.lua; the project builds and runs. A clean
         // project installs it through the NDJSON interface with the qualified name
         // compat:compat.cfg@1.0.0, refreshing no builtin index and writing no xim index.
         const auto tmp = s::case_dir();
         const auto home = s::case_home(s::home::inherited);
-        const auto seed = home / "registry/subos/default/.xlings.json";
-        expect(fatal(fs::is_regular_file(seed))) << "inherited toolchain has no default SubOS runtime contract";
+        // A real runtime contract for the fake xlings to report: the user's, which the case's home
+        // names as an upstream; the case's own subos holds one only after an install.
+        const auto seed = s::shared_home() / "registry/subos/default/.xlings.json";
+        expect(fatal(fs::is_regular_file(seed))) << "the shared home has no default SubOS runtime contract";
         s::project index(tmp / "local-index", {{"pkgs/c/compat.cfg.lua", lua_package("compat.cfg", "1.0.0", "Namespaced local path index package", c_lib_segment("src/*.c", "cfg"))}});
         const auto indices = std::format("[indices]\ncompat = {{ path = \"{}\" }}\n\n[dependencies.compat]\ncfg = \"1.0.0\"\n", index.dir().generic_string());
         s::project app(tmp / "project/app", {
@@ -280,6 +290,10 @@ if [[ "${1:-}" == "install" ]]; then
 fi
 exit 0
 )SH");
+        // The sandbox's tools before the fake xlings stands in: the case's home installs them from
+        // its upstreams on its first build, which the fake cannot do.
+        auto primer = s::project::scaffold("primer");
+        expect(fatal(e2e::succeeded(primer.mcpp({"build"}, inherited())))) << "the case's home did not bootstrap";
         fake_xlings_config(home, tmp / "fake-bin/xlings", home / "registry");
         const std::string payload = ".mcpp/.xlings/data/xpkgs/compat-x-compat.stale/1.0.0";
         s::project app(tmp / "project/app", {

@@ -102,6 +102,14 @@ inline constexpr Deprecation kDeprecations[] = {
         "manifest/deprecated", "docs/05-dependencies.md",
     },
     {
+        "ambiguous-contract-name", "2026.11.21.1", "2027.2",
+        "a build program's question (`dep_dir`, `dep_linkage`, `dep_bin`, `xpkg_dir`) by a name "
+        "whose contract variable several dependencies or payloads answer, answered by the first",
+        "the exact spelling: a qualified name, or `xpkg_dir(\"<ns>\", \"<name>\")`; where no "
+        "spelling tells them apart, one of the packages renamed",
+        "build-program/deprecated", "docs/30-build-mcpp.md",
+    },
+    {
         "no-universal-flag", "2026.10.30.1", kRemovalFloor,
         "`mcpp pack --no-universal`, which a pack of one target no longer needs (refused with a "
         "target set)",

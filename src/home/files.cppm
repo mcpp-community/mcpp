@@ -8,6 +8,13 @@ import std;
 
 export namespace mcpp::home {
 
+// A POINT WHERE AN ORDER BETWEEN PROCESSES IS NOT FIXED (SPEC-017 O12): under a test runner's
+// jitter (MTEST_JITTER milliseconds, MTEST_JITTER_SEED) the process waits here a random time up
+// to the stated bound, the same for the same seed; elsewhere nothing happens. mcpp waits at the
+// acquisition of a lock and at the publication of a compiler's outputs, the two places its
+// concurrent runs meet (design 2026-11-20 §5.19).
+void contention_point();
+
 // ── FileLock ──────────────────────────────────────────────────────────────
 //
 // RAII exclusive non-blocking file lock.

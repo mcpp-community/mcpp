@@ -25,7 +25,7 @@ nlohmann::json mcpplibs_entry(const fs::path& xj) {
     fail("no mcpplibs entry in " + xj.string());
 }
 
-E2E config{"config", [] {
+E2E config{"config", s::home_fixture, [] {
     "10 env command"_test = [] {
         // `self env` does not initialise a cold home; `self init --offline` lays it out (bin,
         // registry, build-cache/v1, cache, config.toml, a seeded .xlings.json with mcpplibs and

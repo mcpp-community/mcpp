@@ -43,7 +43,7 @@ std::size_t exported_lines(const fs::path& def) {
     return n;
 }
 
-E2E libraries{"libraries", [] {
+E2E libraries{"libraries", s::home_fixture, [] {
     "255 pack library msvc archiver"_test[s::msvc] = [] {
         // The packer drops the published interface's objects from the archive; lib.exe takes
         // `/REMOVE:` once per member and the archive last, and a wrong spelling makes the pack refuse,

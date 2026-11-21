@@ -561,7 +561,7 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
     if (who.size() > 1) {
         std::string names;
         for (auto const& w : who) names += (names.empty() ? "" : ", ") + w;
-        mcpp::ui::warning(std::format("the package index lists {} for {}; {} is taken. The index's own check "
+        mcpp::diag::warning("build", std::format("the package index lists {} for {}; {} is taken. The index's own check "
                                       "allows one platform for a row", names, triple, who.front()));
     }
     return who.front() + "@*";
@@ -1197,7 +1197,7 @@ void step4b_read_platform_group(PrepareState& state, const std::string& resolved
     if (!newer) return;
     if (auto tip = mcpp::platform::newer_release_tip(sel.origin, state.platformPackageShortName, used,
                                                      *newer, mcpp::MCPP_VERSION))
-        mcpp::ui::add_failure_notice("platform-newer", *tip);
+        mcpp::diag::on_failure("platform/newer", *tip);
 }
 
 // A SERIES TAKES ITS NEWEST RELEASE THIS ENGINE READS AND THIS BUILD CAN USE
@@ -1616,7 +1616,7 @@ std::expected<void, std::string> step13_finish_platform(PrepareState& state, Bui
     // the compiler gives them to no program, and says so rather than dropping
     // them (`[platform.build] ldflags` reach the compiler's link).
     if (P.active && P.fields.link.flags.set && P.fields.link.driver.value != "lld")
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "the platform {} states `[platform.link] flags` ({}), and it links through the "
             "compiler: those words are given to ld.lld only, so this link uses none of them.\n"
             "       Words for the compiler's link belong in `[platform.build] ldflags`.",

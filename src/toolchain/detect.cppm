@@ -37,6 +37,23 @@ std::optional<std::filesystem::path> find_std_module_source(
     return mcpp::toolchain::gcc::find_std_module_source(cxx_binary, version);
 }
 
+// A version as a driver dumps it: dot-separated numbers.
+bool is_dumped_version(std::string_view v) {
+    if (v.empty() || !std::isdigit(static_cast<unsigned char>(v.front()))
+        || !std::isdigit(static_cast<unsigned char>(v.back())))
+        return false;
+    return std::ranges::all_of(v, [](char c) { return c == '.' || std::isdigit(static_cast<unsigned char>(c)); });
+}
+
+std::optional<std::string> dumped_version(const Toolchain& tc, const auto& env) {
+    std::vector<std::string_view> flags{"-dumpversion"};
+    if (tc.compiler == CompilerId::GCC) flags.insert(flags.begin(), "-dumpfullversion");
+    for (auto flag : flags)
+        if (auto r = run_capture({tc.binaryPath.string(), std::string(flag)}, env))
+            if (auto v = trim_line(*r); is_dumped_version(v)) return v;
+    return std::nullopt;
+}
+
 std::expected<Toolchain, DetectError>
 detect(const std::filesystem::path& explicit_compiler,
        std::string_view runtimeBinding,
@@ -95,6 +112,13 @@ detect(const std::filesystem::path& explicit_compiler,
         return std::unexpected(DetectError{
             std::format("unrecognized compiler output:\n{}", vstr)});
     }
+    // THE VERSION IS THE DRIVER'S STATEMENT FOR MACHINES (mcpp#989): GCC's
+    // `-dumpfullversion` (GCC 7+), else `-dumpversion`; clang's
+    // `-dumpversion`. The banner names the family and is the fingerprint's,
+    // not the version's: a distribution's ends in its own release, and
+    // Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` was read as `3`.
+    // The banner's reading stays for a driver that answers neither.
+    if (auto dumped = dumped_version(tc, env)) tc.version = *dumped;
 
     if (auto triple = probe_target_triple(tc.binaryPath, env)) {
         tc.targetTriple = *triple;

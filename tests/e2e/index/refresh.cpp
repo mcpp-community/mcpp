@@ -57,7 +57,7 @@ bool has_word(const nlohmann::json& list, std::string_view word) {
     return false;
 }
 
-E2E refresh{"refresh", [] {
+E2E refresh{"refresh", s::home_fixture, [] {
     "173 index refresh policy"_test[s::gcc][s::fresh_sandbox] = [] {
         // A 30-day-old marker refreshes nothing when the index answers (an exact version and a
         // constraint); offline, a miss says so and names the revision and `mcpp index update`;

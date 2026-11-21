@@ -233,7 +233,7 @@ std::vector<std::string> prepare_actions_alive(const fs::path& dir) {
     return alive;
 }
 
-E2E terminal{"terminal", [] {
+E2E terminal{"terminal", s::home_fixture, [] {
     "843 a terminal names the action that runs"_test[s::python3][s::unix_shell] = [] {
         // T1 the status row names a running prepare action, its package and clock; T2 the
         // package once, a blank line before Finished; T3 no status row after Finished; T4 the

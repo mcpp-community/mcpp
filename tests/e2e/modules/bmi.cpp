@@ -100,7 +100,7 @@ std::string lua_xpm(std::string_view name) {
     return out;
 }
 
-E2E bmi{"bmi", [] {
+E2E bmi{"bmi", s::home_fixture, [] {
     "19 bmi cache reuse"_test = [] {
         // A path dependency outside the project, direct or transitive, is kept in the build
         // cache under the digest of its tree (mcpp#974): a clean build takes it from there, an
@@ -396,7 +396,7 @@ int main() {
 
 // The cases that hold the machine (P7.1): a suite of their own, which the runner runs with no
 // other test beside it.
-E2E bmi_machine{"bmi-machine", resource{"machine"}, [] {
+E2E bmi_machine{"bmi-machine", s::home_fixture, resource{"machine"}, [] {
     "170 bmi staging no cascade"_test = [] {
         // The std BMI is staged from the home's cache; a re-staged, unchanged BMI does not
         // recompile its importer, and a settled staging edge stays clean.
@@ -502,10 +502,14 @@ bmi_schedule = "on"
         std::ofstream(pub / "publish.sh", std::ios::binary) << "rm published.gcm\nsleep 0.2\nprintf 'new BMI' > next.gcm\nmv next.gcm published.gcm\nsleep 0.05\nprintf object > unit.o\n";
         const auto bash = s::env("BASH").value_or(s::on_path("bash").value_or("bash").string());
         std::ofstream(pub / "command.txt", std::ios::binary) << std::format("\"{}\" publish.sh\n", bash);
-        (void)s::mcpp({"bmi-compile", "--bmi", "published.gcm", "--slot", "unit", "--self", s::mcpp_path(), "--command-file", "command.txt"}, pub);
+        // Given a semaphore and a cap, as a driver other than the graph's states them, the
+        // compile takes its permit there.
+        (void)s::mcpp({"bmi-compile", "--bmi", "published.gcm", "--slot", "unit", "--self", s::mcpp_path(),
+                       "--sem", "permits", "--cap", "1", "--command-file", "command.txt"}, pub);
         const bool published = fs::is_regular_file(pub / "published.gcm");
         (void)s::mcpp({"bmi-await", "--slot", "unit", "--object", "unit.o"}, pub);
         expect(fatal(published)) << "phase 1 released an importer while the BMI was absent";
+        expect(fatal(fs::exists(pub / "permits/slot-0.lock"))) << "the compile given a semaphore took no permit in it";
         expect(fatal(s::read_file(pub / "published.gcm") == "new BMI")) << "phase 1 did not wait for the new BMI";
         std::ofstream(pub / "command.txt", std::ios::binary) << std::format("\"{}\" -c \"rm published.gcm\"\n", bash);
         r = s::mcpp({"bmi-compile", "--bmi", "published.gcm", "--slot", "unit", "--self", s::mcpp_path(), "--command-file", "command.txt"}, pub);

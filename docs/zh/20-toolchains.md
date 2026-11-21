@@ -24,13 +24,13 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 首次运行 `mcpp build` 且尚未配置工具链时，mcpp 会为当前宿主安装并持久化一对
 默认值。这个选择是按宿主区分的：
 
-- Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.1.0`，X11、OpenGL 与系统库
+- Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.2.0`，X11、OpenGL 与系统库
   因此可以直接使用。
 - Linux aarch64 使用面向原生 glibc ABI 的 `llvm@23.1.3`（2026.10.8.1+）。
-- 其他 Linux 架构使用 `gcc@15.1.0-musl`，这是一套自包含的全静态工具链。
+- 其他 Linux 架构使用 `gcc@16.2.0-musl`，这是一套自包含的全静态工具链。
 - macOS 使用 `llvm@23.1.3`。
 - Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@23.1.3`；没有可用
-  MSVC 时使用 `gcc@16.1.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
+  MSVC 时使用 `gcc@16.2.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
   静态链接），说明 MSVC ABI 缺的是哪一半（Visual Studio 的 C++ 工具或 Windows SDK）
   以及查找过的位置，并把这一对记为本机默认值。两半都齐备之后，
   `mcpp toolchain default llvm@23.1.3` 把本机切换到 MSVC ABI。
@@ -72,20 +72,20 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 ## 手动安装
 
 ```bash
-mcpp toolchain install gcc 16.1.0           # host target (GNU libc on Linux)
+mcpp toolchain install gcc 16.2.0           # host target (GNU libc on Linux)
 mcpp toolchain install llvm 23.1.3          # LLVM/Clang, default on macOS and Windows with usable MSVC
 mcpp toolchain install gcc 16 --target x86_64-linux-musl    # musl target payload
 mcpp toolchain install --target x86_64-windows-gnu          # family omitted → the
-                                            # target's convention pin (gcc@16.1.0)
+                                            # target's convention pin (gcc@16.2.0)
 ```
 
 显式安装主要用于 CI 缓存预热与离线准备——`mcpp build --target <triple>` 会
 自动安装该 target 所需的一切。
 
-版本号支持部分匹配：
+版本号支持部分匹配，解析方式见[解析与锁](#解析与锁202611211)：
 
 ```bash
-mcpp toolchain install gcc 15               # installs the highest 15.x.y version (15.1.0)
+mcpp toolchain install gcc 15               # the newest 15.x.y release of the index
 mcpp toolchain install gcc@16               # the @ form works too
 ```
 
@@ -141,17 +141,68 @@ GCC 14 之前的版本既没有 `-fmodules`，也没有 P1689 扫描（实测 DJ
 把不声明、不导入任何模块的 C++ 单元作为不带模块选项的翻译单元构建，C 单元与其他编译器相同。声明模块、属于模块单元或导入
 模块（含 `import std;`）的单元在规划时被拒绝，并指出文件及其所需。
 
+## 解析与锁（2026.11.21.1+）
+
+一个由包提供的工具链请求只有一个回答，`mcpp toolchain install`、`mcpp toolchain default` 与构建取同一个：
+
+| 请求 | 回答 |
+|---|---|
+| 完整版本（`gcc@16.1.0`） | 该版本 |
+| 部分版本（`gcc@16`、`gcc@16.2`） | 本地索引中以它为前缀的最新正式发布；未安装时由构建安装 |
+| 预发布（`xim:gcc@17.0.0-20261108`） | 只由完整的键选中，部分版本从不选中它 |
+| 任一请求，而索引中没有该包 | 已安装的最新匹配，并报告为 degraded：更新的发布未被考虑 |
+
+写在 `mcpp.toml` 中的部分版本（`[toolchain]`、`[workspace.toolchain]`、`[target.<triple>] toolchain`）记入 `mcpp.lock`，
+之后的构建取记录的版本：
+
+```toml
+[toolchain."xim:gcc@16"]
+version = "16.2.0"
+```
+
+- 完整版本即其自身的记录，不写入；由 `--toolchain`、机器的缺省或 mcpp 选择的工具链也不写入。
+- `mcpp update` 删除全部记录；`mcpp update gcc`（或 `mcpp update xim:gcc@16`）删除该工具链的记录。下一次构建重新解析。
+- `--locked` 与 `--frozen` 之下锁保持原样。升级前写出的锁没有该请求的记录：构建解析它，以 note 说明，不拒绝。
+
+没有写明工具链的工程取机器的缺省（`mcpp toolchain default`）或 mcpp 自身的缺省。该缺省给出的工具链与工程上一次构建所用的不同时，
+构建说明一次：
+
+```
+note: the default toolchain (`mcpp toolchain default`) is now gcc@16.2.0; this project last built with gcc@16.1.0
+  help: to keep a version, state it in mcpp.toml: [toolchain] default = "gcc@16.1.0"
+```
+
+工程上一次所用的工具链按目标记在 `target/.mcpp-notices` 中；工程的第一次构建与 `mcpp clean` 之后的第一次构建没有可比的值。
+以 `--toolchain` 进行的构建既不参与比较，也不被记住。
+
+## 配套载荷（2026.11.21.1+）
+
+一个由包提供的工具链的配套载荷——GCC 用以汇编与链接的 binutils、glibc 基础层的 Linux 内核头文件、GCC 的运行库——取工具链载荷为本宿主声明的
+运行依赖的版本。store 中有多个版本时取声明的版本；没有声明时取最新版本。声明的版本不在 store 中时报告为 degraded；`mcpp toolchain install`
+重新安装它。
+
+工程可以在 GCC 旁写明 binutils：
+
+```toml
+[toolchain]
+default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }
+```
+
+构建安装该包，输出 `Companion binutils 2.47 (<dir>)`，并把它的目录交给编译器驱动。低于 GCC 载荷所声明版本的 binutils 被拒绝
+（`companion-too-old`）：GCC 在构建时按所用的 binutils 选定汇编器的能力。`companions` 只有 binutils 一项；内核头文件随工具链载荷的声明，
+因为缺省的基础层是 home 中各工程共用的 sysroot。
+
 ## 切换默认工具链
 
 默认值是一*对*——toolchain 轴 + target 轴（省略 target 即宿主）：
 
 ```bash
 mcpp toolchain default gcc@16.1.0
-mcpp toolchain default gcc 15               # partial version → highest installed match
+mcpp toolchain default gcc 15               # partial version → the newest 15.x.y release, which must be installed
 mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "default to fully-static musl"
 ```
 
-这一对默认值持久化为 `~/.mcpp/config.toml` 中的
+部分版本按构建的方式解析，写入的是完整版本。这一对默认值持久化为 `~/.mcpp/config.toml` 中的
 `[toolchain] default = "gcc@16.1.0"` 加上
 `default_target = "x86_64-linux-musl"`。（存量配置里 `default =
 "gcc@15.1.0-musl"` 这类合并拼写原样可用，不受影响。）

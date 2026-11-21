@@ -25,6 +25,7 @@ import mcpp.pm.index_refresh;     // shared refresh policy (with mcpp.build.prep
 import mcpp.pm.resolver;          // is_version_constraint
 import mcpp.project;              // shared find_manifest_root
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.provider;
 import mcpp.provider.select;               // index freshness
 import mcpplibs.cmdline;
@@ -64,7 +65,7 @@ inline void warn_unpublished_version(std::string_view lua,
         if (!avail.empty()) avail += ", ";
         avail += v;
     }
-    mcpp::ui::warning(std::format(
+    mcpp::diag::warning("pm", std::format(
         "'{}' has no version {} published for this platform — available: {}",
         display, version, avail));
 }
@@ -145,7 +146,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::string& shortName = coordinate.shortName;
 
     if (legacyColon) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("pm", std::format(
             "package selector '{}' is deprecated; use `mcpp add {}@{}`",
             rawNameSpec, canonicalSelector, version));
     }
@@ -192,7 +193,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto oldFound = mcpp::pm::lookup_descriptor(
                 route, oldSelector.candidates);
             if (oldFound.hit) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("pm", std::format(
                     "package selector '{}' now resolves exactly to '{}'; an "
                     "older mcpp would select the existing package '{}'. Use "
                     "'{}' to keep the old identity or keep '{}' for the new "
@@ -229,7 +230,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto d = mcpp::pm::decide_for_miss(
                 mcpp::pm::policy_for(*cfg), xlEnv, canonicalSelector);
             if (auto r = mcpp::pm::apply(d, xlEnv); !r)
-                mcpp::ui::warning(r.error());
+                mcpp::diag::warning("pm", r.error());
             if (d.shouldRefresh)
                 found = mcpp::pm::lookup_descriptor(route, selector.candidates);
             if (!found.error.empty()) {
@@ -263,7 +264,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 // user typed (an upstream package that declares no namespace at
                 // all). Nothing is being migrated there, so say nothing.
                 if (canonicalSelector != previous) {
-                    mcpp::ui::warning(std::format(
+                    mcpp::diag::warning("pm", std::format(
                         "'{}' matched no package; namespace omission means `{}` "
                         "only. '{}' does exist, so it is being written instead "
                         "— the deprecated bare-name search is removed in {}.",
@@ -302,7 +303,7 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
             return 2;
         }
         if (!found.hit) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pm", std::format(
                 "'{}' could not be verified — no readable index covers that "
                 "namespace yet; adding it unchecked", canonicalSelector));
         } else {
@@ -414,7 +415,7 @@ inline int cmd_remove(const mcpplibs::cmdline::ParsedArgs& parsed) {
     const std::string singleTableKey = isDefaultNs
         ? shortName : canonicalSelector;
     if (legacyColon) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("pm", std::format(
             "package selector '{}' is deprecated; use `mcpp remove {}`",
             name, canonicalSelector));
     }
@@ -585,6 +586,9 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
             mcpp::pm::IndexRoute route{ &indices, *root, &*cfg };
             for (auto& [_, spec] : m->dependencies)
                 if (mcpp::pm::routes_to_builtin(route, spec)) { registryInvolved = true; break; }
+            // A stated toolchain is an index's answer too (SPEC-006 §2.7):
+            // the update re-resolves it against the refreshed index.
+            if (!m->toolchain.byPlatform.empty()) registryInvolved = true;
         }
         if (registryInvolved) {
             auto xlEnv = mcpp::config::make_xlings_env(*cfg);
@@ -594,7 +598,7 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
             }
         }
     } else {
-        mcpp::ui::warning(cfg.error().message);
+        mcpp::diag::warning("pm", cfg.error().message);
     }
 
     auto lockPath = *root / "mcpp.lock";
@@ -605,6 +609,14 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (lock) {
                 std::erase_if(lock->packages,
                     [&](const auto& p) { return p.name == *only; });
+                // A toolchain by its request (`xim:gcc@16`) or its package
+                // (`gcc`): the next build resolves it again.
+                std::erase_if(lock->toolchains, [&](const auto& t) {
+                    std::string_view r = t.request;
+                    if (r == *only) return true;
+                    if (r.starts_with("xim:")) r.remove_prefix(4);
+                    return r.starts_with(*only + "@");
+                });
                 if (auto written = mcpp::lockfile::write(*lock, lockPath); !written) {
                     mcpp::ui::error(written.error().message);
                     return 1;

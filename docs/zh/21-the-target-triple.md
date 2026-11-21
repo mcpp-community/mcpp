@@ -259,6 +259,15 @@ aarch64-macos      →  aarch64-unknown-macos
 三段式的拼法是四段式省掉一段之后的样子，省掉的是哪一段，由「能不能
 解析」决定。
 
+vendor 段可以是任何词（2026.11.21.1+），与 GNU `config.sub` 的读法相同：架构之后、系统段之前的段
+写出编译器的构建者。发行版的编译器报告它自己的名字（`x86_64-redhat-linux`、`x86_64-suse-linux`），
+即 `x86_64-linux-gnu`。其后的各段按词表严格读取。以路径指定的编译器报告了 mcpp 无法读取的目标时，
+以降级报告（`toolchain/triple`）：依目标而定的设置不作用于这次构建。
+
+编译器的版本取驱动为机器给出的版本：GCC 的 `-dumpfullversion`（GCC 7 起，否则 `-dumpversion`），
+clang 的 `-dumpversion`。`--version` 的横幅用于判定家族；发行版的横幅以它自己的发行号结尾
+（`(Red Hat 16.2.1-3)`），那不是编译器的版本。
+
 ### GCC 与 clang 选目标的方式并不相同
 
 | | GCC | clang |

@@ -102,7 +102,7 @@ constexpr std::string_view caught_main = "import std;\nint main(int argc, char**
 
 // The openkal set built for every architecture: about 20 minutes beside three other programs on a
 // Linux runner, measured 2026-11-14; stated, so the run's limit is not raised for every test.
-E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
+E2E trees{"trees", s::home_fixture, timeout{std::chrono::minutes{40}}, [] {
     "955 the openkal set is one tree of every architecture"_test[s::llvm][s::python3][s::unix_shell] = [] {
         // A `pack --target openkal` writes <name>-<version>-openkal/ with both images, the
         // launchers and metadata naming legs, runner and entries; B the launcher runs this
@@ -116,8 +116,9 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         const std::string t = std::string(host_arch) + "-openkal";
         s::project app({{"mcpp.toml", "[package]\nname    = \"uni\"\nversion = \"0.1.0\"\n"},
                         {"src/main.cpp", "import std;\nint main(int argc, char** argv) {\n    try { throw std::runtime_error(\"universal\"); }\n    catch (const std::exception& e) { std::println(\"{} {} args\", e.what(), argc); }\n    return 0;\n}\n"}});
-        // A
-        auto r = app.mcpp({"pack", "--target", "openkal", "--pkg-format", "dir"});
+        // A. The first pack builds the openkal set for both architectures: beyond ten minutes on a
+        // four-processor Linux runner whose other tests share the run's budget (CI, 2026-11-21).
+        auto r = app.mcpp({"pack", "--target", "openkal", "--pkg-format", "dir"}, {.timeout = std::chrono::minutes{30}});
         expect(fatal(e2e::succeeded(r))) << "A: pack: " << s::text(r);
         const auto p = app.at("target/dist/uni-0.1.0-openkal");
         for (std::string_view f : {"lib/x86_64/uni.oke", "lib/aarch64/uni.oke", "bin/uni", "bin/uni.exe", "mcpp-package.json"})
@@ -627,7 +628,7 @@ E2E trees{"trees", timeout{std::chrono::minutes{40}}, [] {
         expect(fatal(e2e::contains(s::text(r), "is a polyglot file"))) << "G: emit xpkg does not name the polyglot file: " << s::text(r);
         // H
         if (const auto wine = s::on_path("wine"); wine && os == "linux") {
-            auto w = e2e::run({.argv = {wine->string(), f.string(), "onwine"}, .env = {{"WINEDEBUG", "-all"}, {"XDG_CACHE_HOME", std::nullopt}}, .timeout = std::chrono::seconds{300}});
+            auto w = e2e::run({.argv = s::through_wine(*wine, f, {"onwine"}), .env = {{"WINEDEBUG", "-all"}, {"XDG_CACHE_HOME", std::nullopt}}, .timeout = std::chrono::seconds{300}});
             expect(fatal(e2e::succeeded(w))) << "H: wine: " << s::text(w);
             expect(fatal(e2e::contains(s::text(w), "first [onwine]"))) << "H: the Windows program's output: " << s::text(w);
         }

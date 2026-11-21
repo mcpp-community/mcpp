@@ -63,8 +63,7 @@ UTest rejects_ambiguous_empty_or_unsafe_components{"TemplateSpec/RejectsAmbiguou
     const std::vector<std::string> invalid{
         "", "@1.0.0", ":starter", ".imgui@1.0", "ocornut..imgui",
         "ocornut.imgui@", "ocornut.imgui:bad:extra",
-        "ocornut.imgui@1.0@2.0", "ocornut.imgui@^1.0",
-        "ocornut.imgui@*", "ocornut.imgui:bad.name",
+        "ocornut.imgui@1.0@2.0", "ocornut.imgui:bad.name",
         "ocornut.imgui:bad/name", "ocornut.imgui@1.0 bad",
         std::string("ocornut.imgui:\x1f", 16),
     };
@@ -72,6 +71,19 @@ UTest rejects_ambiguous_empty_or_unsafe_components{"TemplateSpec/RejectsAmbiguou
         auto parsed = mcpp::scaffold::parse_template_spec(input);
         expect(!parsed.has_value()) << input;
         if (!parsed) expect(!(parsed.error().message.empty())) << input;
+    }
+}};
+
+UTest the_command_lines_at_takes_a_prefix_a_key_or_a_requirement{"TemplateSpec/AtTakesAPrefixAKeyOrARequirement", [] {
+    // Design 2026-11-21 §3.9: `@1.19.0` a written prefix, `@=1.19.0.1` one key, `@^1.19` a
+    // requirement; what each selects is the resolver's (tests/e2e).
+    for (auto [input, version] : {std::pair{"mcpplibs.mwrap.slint@1.19.0", "1.19.0"},
+                                  std::pair{"mcpplibs.mwrap.slint@=1.19.0.1", "=1.19.0.1"},
+                                  std::pair{"ocornut.imgui@^1.0:starter", "^1.0"},
+                                  std::pair{"ocornut.imgui@*", "*"}}) {
+        auto parsed = mcpp::scaffold::parse_template_spec(input);
+        expect(fatal(parsed.has_value())) << input;
+        expect(eq(parsed->version.value_or(""), std::string(version))) << input;
     }
 }};
 
