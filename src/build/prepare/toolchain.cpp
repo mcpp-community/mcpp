@@ -2214,6 +2214,15 @@ step2_detect_toolchain(PrepareState& state) {
           state.explicit_compiler, state.runtimePayload, state.runtimeBindingSnapshot.contractHash);
       if (!detected) return std::unexpected(detected.error().message);
       state.tc = std::move(*detected);
+      // A target mcpp does not read is not continued with silently (mcpp#989):
+      // every setting that follows the target is read from it.
+      if (!state.tc->targetTriple.empty() && !mcpp::toolchain::triple::parse(state.tc->targetTriple))
+          mcpp::diag::degraded("toolchain/triple", std::format(
+              "{} reports the target '{}', which mcpp does not read", state.tc->binaryPath.string(),
+              state.tc->targetTriple),
+              "the settings that follow the target -- its row, its sysroot, its C library and its "
+              "loader -- are not applied to this build",
+              "name the target: --target <triple>, or [toolchain] in mcpp.toml");
 
       // Something about the resolution the user has to be told, but which is
       // not a failure. Today's only producer is the Windows SDK axis: a managed

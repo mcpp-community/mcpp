@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.11 |
-| **最后修改** | 2026-11-20 |
+| **版本** | 1.12 |
+| **最后修改** | 2026-11-21 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
@@ -266,11 +266,13 @@ error: dependency 'asio': no package found
 | 输入 | 规范结果 |
 |---|---|
 | `pkg` | `(mcpplibs, pkg)` + latest stable + default/单模板 |
-| `pkg@1.2.0` | `(mcpplibs, pkg)` + `1.2.0` + default/单模板 |
+| `pkg@1.2.0` | `(mcpplibs, pkg)` + 以 `1.2.0` 为前缀的最高键 + default/单模板 |
+| `pkg@=1.2.0.1` | `(mcpplibs, pkg)` + 键 `1.2.0.1` + default/单模板 |
+| `pkg@^1.2` | `(mcpplibs, pkg)` + 满足要求 `^1.2` 的最高键 + default/单模板 |
 | `acme.widget` | `(acme, widget)` + latest stable + default/单模板 |
 | `acme.widget@1.2.0:docking` | `(acme, widget)` + `1.2.0` + `docking` |
 
-完整文法为 **`[namespace.]name[@version][:tname]`**。namespace、version、tname
+完整文法为 **`[namespace.]name[@version][:tname]`**,`@version` 按 §4.5 读取。namespace、version、tname
 分别可省略；namespace 的省略语义与依赖完全一致，只表示默认 `mcpplibs`。模板默认
 规则按以下顺序且必须唯一:
 
@@ -282,6 +284,22 @@ error: dependency 'asio': no package found
 scaffold 必须先解析完整 PackageId/version/template，再以 sibling 临时目录事务生成；
 失败不得留下目标目录。旧 `pkg:` 的“列举模板”含义仅保留一个 release train 的迁移
 warning，规范列举命令是 `mcpp new --list-templates pkg`。
+
+### 4.5 命令行中 `@` 的读法
+
+命令行中的 `<包>@<版本>`(`--template`、`--list-templates`、工具链的指定与 xlings 的引用)是寻址文法,
+清单中的版本字符串是要求文法(§4),二者各有一种读法:
+
+| 写法 | 读法 | 例 |
+|---|---|---|
+| `<包>@<版本>` | 按书写的精度的前缀:写出的各段相等,更细的段任意,取其中最高的键 | `@1.19.0` 选 `1.19.0.2`;`@16` 选 16.x 中最高者 |
+| `<包>@=<版本>` | 一个键的精确匹配 | `@=1.19.0.1` |
+| `<包>@<运算符><版本>`(`^`、`~`、`>=`、`*` 等) | 要求文法,与清单相同 | `@^1.19` |
+| 不是版本的名字(`latest`) | 指名该键 | `@latest` |
+
+精确匹配落空而存在更细的键时,错误**必须**写出这些键与两种写法(`1.19.0 is published as 1.19.0.2,
+1.19.0.1: @1.19.0 selects 1.19.0.2, @=1.19.0.1 pins one`)。第四段在索引中有两种含义:上游本身的四段版本,
+与包装层的修订;前缀的读法对二者都成立。(**已实现**,mcpp 2026.11.21.1)
 
 ---
 
@@ -347,7 +365,7 @@ cancellation = { path = "modules/cancellation" }`)。告警在解析完成之后
 - 一个都不写时,引用为远端的**缺省分支**:名字取自远端的通告(`git ls-remote --symref <url> HEAD`),
   远端不通告时依次尝试 `main`、`master`,报告写出所用分支;引擎**禁止**写死分支名。缺省分支按 `branch`
   处理:锁记录解析得到的提交,离线时由锁回答。
-- 命令行与环境变量中引用的字符串形式为 `[<ns>.]<name>@<约束>`、`path:<dir>`(或路径)、
+- 命令行与环境变量中引用的字符串形式为 `[<ns>.]<name>@<版本>`(按 §4.5 读取)、`path:<dir>`(或路径)、
   `git+<url>[#tag=<t>|rev=<r>|branch=<b>]`、`builtin:<name>`(只用于提供者,SPEC-016 §3)。只以 URL 指名的
   仓库,其包名取 URL 的最后一段(去掉 `.git`),取得后的清单名按 §5.4 核对。
 - 清单中写出的引用记入锁;只在命令行或环境变量中出现的引用不改写锁。
@@ -597,6 +615,7 @@ mcpp 侧的使用:
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.12 | 2026-11-21 | 新增 §4.5:命令行中 `@` 的读法——写出的前缀、`@=` 的精确键、带运算符的要求;§4.4 的模板表与 §5.5 的命令行引用按它陈述(mcpp 2026.11.21.1) |
 | 1.11 | 2026-11-20 | §10.4 新增第 6 条:条目只含包自己的单元,嵌套于依赖树中的包(如成员的构建程序导入仓库自身包的 workspace)的单元属于该包,在原处构建(mcpp 2026.11.20.1,mcpp#979) |
 | 1.10 | 2026-11-19 | 新增 §10.4:源码的名字——索引包的版本、git 依赖的提交、path 依赖的内容摘要;全局依赖缓存、宿主工具的缓存与构建程序的身份共用;工程自己的树在原处构建(mcpp 2026.11.19.1,mcpp#974) |
 | 1.9 | 2026-11-19 | 新增 §3.5:描述符 `mcpp` 字段的两种形式、一个读取函数、发布写出指针形式(mcpp 2026.11.19.1,mcpp#960) |

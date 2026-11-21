@@ -95,6 +95,16 @@
 
 ### Fixed
 
+- **A compiler's version is what its driver states for machines** (mcpp#989): GCC's
+  `-dumpfullversion` (else `-dumpversion`) and clang's `-dumpversion`, not the last number of the
+  banner, which read Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` as `3`. A triple's
+  vendor field is any word, as GNU config.sub reads it (`x86_64-redhat-linux` is
+  `x86_64-linux-gnu`); a toolchain whose target mcpp cannot read is reported as a degradation
+  instead of applying none of the target's settings in silence.
+- **The command line's `@` selects by the written prefix** (SPEC-001 §4.5): `--template
+  mcpplibs.mwrap.slint@1.19.0` selects the newest key 1.19.0.x (it refused, as no key is
+  `1.19.0`); `@=<key>` selects one key, `@^1.19` is a requirement, and an exact miss names the
+  finer keys.
 - **An edit of a header a build program includes compiles and runs the program again** (mcpp#991).
   The program's identity was predicted at three places -- the fast path, the group record and the
   home run cache -- and a header is no package's, so the old program ran with the old directives,

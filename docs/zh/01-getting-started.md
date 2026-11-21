@@ -146,6 +146,10 @@ mcpp new --list-templates ocornut.imgui@1.92.8
 那个唯一的模板。存在多个模板却没有默认值是一个错误，会指向
 `--list-templates`。没有另一套 `--variant` 词汇。
 
+命令行中的 `@version` 按书写读取（2026.11.21.1+）：`@1.19.0` 选择以它为前缀的最高
+已发布键，例如打包修订 `1.19.0.2`；`@=1.19.0.1` 只选择这个键；`@^1.19` 是要求，与
+`mcpp.toml` 中的读法相同。清单中的版本字符串保持清单的读法（docs/05）。
+
 包模板可以使用传统头文件库的模块化封装。模块名与 C++ API namespace 相互独立：
 import 封装模块不会重命名上游类型和函数。选择模板时使用该包已发布的身份与版本。
 [封装规范](https://github.com/mcpplibs/mcpp-index/blob/main/docs/mwrap.md)

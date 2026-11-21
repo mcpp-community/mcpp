@@ -129,6 +129,17 @@ self = {{ features = ["alpha", "beta"] }}
         write(index / "d/dupe-default.lua", descriptor("mcpplibs", "dupe-default", "1.0.0"));
         seed_template("mcpplibs-x-dupe-default", "dupe-default", "1.0.0", "one", true, "dupe-one");
         seed_template("mcpplibs-x-dupe-default", "dupe-default", "1.0.0", "two", true, "dupe-two");
+        // Published only as packaging revisions of one upstream version (design 2026-11-21 §3.9).
+        {
+            std::string rows;
+            for (auto v : {"1.19.0.2", "1.19.0.1"})
+                rows += std::format("[\"{}\"] = {{ url = \"https://example.invalid/seg.tar.gz\", sha256 = \"seg-{}\" }}, ", v, v);
+            write(index / "s/seg4.lua", std::format("package = {{\n    spec = \"1\", namespace = \"mcpplibs\", name = \"seg4\",\n"
+                "    type = \"package\",\n    xpm = {{ linux = {{ {0} }}, macosx = {{ {0} }}, windows = {{ {0} }} }},\n"
+                "    mcpp = \"*/mcpp.toml\",\n}}\n", rows));
+            seed_template("mcpplibs-x-seg4", "seg4", "1.19.0.2", "one", true, "seg4-r2");
+            seed_template("mcpplibs-x-seg4", "seg4", "1.19.0.1", "one", true, "seg4-r1");
+        }
         write(index / "n/no-templates.lua", descriptor("mcpplibs", "no-templates", "1.0.0"));
         write(xpkgs / "mcpplibs-x-no-templates/1.0.0/no-templates-1.0.0/mcpp.toml", "[package]\nname = \"no-templates\"\nversion = \"1.0.0\"\n");
 
@@ -249,6 +260,17 @@ self = {{ features = ["alpha", "beta"] }}
         expect(fatal(failed(r))) << "unpublished exact template version must fail\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "matches none of"))) << "missing version inventory diagnostic\n" << s::text(r);
         expect(fatal(!fs::exists(work / "app-missing-ver"))) << "missing version created target";
+        // The command line's `@` (design 2026-11-21 §3.9): a written prefix selects the highest key
+        // it is a prefix of, `@=` one key, and an exact miss names the finer keys.
+        r = run({"new", "app-seg-prefix", "--template", "seg4@1.19.0"}, o);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(in("app-seg-prefix/mcpp.toml"), "fixture-marker=seg4-r2")) << in("app-seg-prefix/mcpp.toml");
+        r = run({"new", "app-seg-exact", "--template", "seg4@=1.19.0.1"}, o);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(in("app-seg-exact/mcpp.toml"), "fixture-marker=seg4-r1")) << in("app-seg-exact/mcpp.toml");
+        r = run({"new", "app-seg-miss", "--template", "seg4@=1.19.0"}, o);
+        expect(fatal(failed(r))) << "an exact key that is not published was taken";
+        expect(e2e::contains(s::text(r), "1.19.0 is published as 1.19.0.2, 1.19.0.1: @1.19.0 selects 1.19.0.2, @=1.19.0.1 pins one")) << s::text(r);
         r = run({"new", "app-alias", "--template", "tpl-demo@latest"}, o);
         expect(fatal(failed(r))) << "moving version alias must not become a resolved template pin\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "version alias"))) << "wrong alias diagnostic\n" << s::text(r);

@@ -1152,6 +1152,13 @@ std::optional<Triple> parse(std::string_view s) {
         if (sawOs && t.env.empty() && mcpp::toolchain::target::defines_env(t.os, k)) {
             t.env = std::string(k); t.envExplicit = true; continue;
         }
+        // THE VENDOR IS ANY WORD (mcpp#989), as GNU config.sub reads it: the
+        // segment after the architecture, when a system segment follows, names
+        // whoever built the compiler and nothing about the target. A
+        // distribution's own compiler states it (`x86_64-redhat-linux`,
+        // `x86_64-suse-linux`), and that is `x86_64-linux-gnu`. The segments
+        // after it stay strict.
+        if (i == 1 && !sawOs && tok.size() > 2) continue;
         // Unrecognized segment (wasi, …): not in mcpp's target language —
         // treat as unparseable rather than guessing.
         return std::nullopt;

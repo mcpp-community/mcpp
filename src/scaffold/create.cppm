@@ -87,12 +87,13 @@ fetch_template_package(const mcpp::scaffold::TemplateSpec& spec) {
 
     const std::string& ns = coordinate.namespace_;
     const std::string& shortName = coordinate.shortName;
-    const auto constraint = spec.version
-        ? std::format("={}", *spec.version)
-        : std::string{"*"};
-    auto resolved = mcpp::pm::resolve_semver(
-        ns, shortName, constraint, registryOnly,
-        mcpp::toolchain::platform::HostPlatform::current());
+    // The command line's `@` (design 2026-11-21 §3.9): a written prefix, `=` one key, or an
+    // operator's requirement.
+    auto resolved = spec.version
+        ? mcpp::pm::resolve_cli_selection(ns, shortName, *spec.version, registryOnly,
+                                          mcpp::toolchain::platform::HostPlatform::current())
+        : mcpp::pm::resolve_semver(ns, shortName, "*", registryOnly,
+                                   mcpp::toolchain::platform::HostPlatform::current());
     if (!resolved) return std::unexpected(resolved.error());
     std::string version = std::move(*resolved);
 

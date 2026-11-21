@@ -82,15 +82,19 @@ parse_template_spec(std::string_view spelling) {
                 "invalid template spec '{}': version after '@' is empty",
                 spelling)});
         }
+        // The command line's `@` (design 2026-11-21 §3.9): a written prefix,
+        // `=<key>`, or a requirement with an operator.
         for (unsigned char ch : exact) {
-            const bool exactChar = (ch >= 'a' && ch <= 'z')
+            const bool versionChar = (ch >= 'a' && ch <= 'z')
                 || (ch >= 'A' && ch <= 'Z')
                 || (ch >= '0' && ch <= '9')
-                || ch == '.' || ch == '-' || ch == '_' || ch == '+';
-            if (!exactChar) {
+                || ch == '.' || ch == '-' || ch == '_' || ch == '+'
+                || ch == '=' || ch == '^' || ch == '~' || ch == '<' || ch == '>' || ch == '*'
+                || ch == ',';
+            if (!versionChar) {
                 return std::unexpected(TemplateSpecError{std::format(
-                    "invalid template spec '{}': version '{}' must be an "
-                    "exact version key, not a range or unsafe value",
+                    "invalid template spec '{}': version '{}' holds a character no version "
+                    "or requirement has",
                     spelling, exact)});
             }
         }

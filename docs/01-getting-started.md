@@ -152,6 +152,12 @@ automatically uses the package's only template when none is explicitly marked.
 Multiple templates without one default are an error that points to
 `--list-templates`. There is no separate `--variant` vocabulary.
 
+The `@version` of the command line is read as written (2026.11.21.1+): `@1.19.0`
+selects the highest published key that starts with it, such as a packaging
+revision `1.19.0.2`; `@=1.19.0.1` selects that key alone; `@^1.19` is a
+requirement, read as in `mcpp.toml`. A manifest's version string keeps the
+manifest's reading (docs/05).
+
 A package template can use a module wrapper for a traditional header library.
 The module name and the C++ API namespace are independent: importing a wrapper
 does not rename the upstream types or functions. Use the package's published
