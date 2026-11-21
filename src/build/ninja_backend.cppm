@@ -2271,10 +2271,12 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     const bool gnuDepfile = dial.inputsRecord == std::string_view("make");
     const bool needsGnuModuleFilter =
         gnuDepfile && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC;
+    // A C++ compile's depfile names the BMIs it read too, where the compiler needs to be told
+    // (BmiTraits::moduleFileDepsFlag): ninja and the unit cache then read the imports from it.
     const std::string mmd_flag =
-        gnuDepfile ? (needsGnuModuleFilter ? "-MMD -MF $out.d.raw "
-                                           : "-MMD -MF $out.d ")
-                   : "";
+        gnuDepfile ? (needsGnuModuleFilter ? std::string("-MMD -MF $out.d.raw ")
+                                           : std::format("-MMD -MF $out.d{} ", traits.moduleFileDepsFlag))
+                   : std::string{};
     const std::string mmd_filter =
         (needsGnuModuleFilter && !mcpplibs::os::is_windows)
         ? " && awk 'NR==1{print;next} /^[^ ]/{exit} {print}' "

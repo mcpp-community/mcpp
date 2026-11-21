@@ -959,14 +959,22 @@ void record_unit(const CompileRequest& req, const CompileRequest& actual, const 
     uc::Unit u{uc::split_command(req.command), std::filesystem::current_path(), req.object, req.bmi};
     const auto shape = uc::shape_of(u.argv);
     if (!shape) return;
-    std::vector<std::filesystem::path> reads;
-    for (const auto& p : uc::depfile_prerequisites(read(req.depFrom))) reads.emplace_back(p);
+    // THE FILES READ, WHERE THEY ARE KNOWN BEFORE THE COMPILER RUNS: the scan's depfile
+    // (`<unit>.ddi.dep`) and the BMIs its record imports. A unit whose depfile is the compile's own
+    // (Clang's `-MMD -MF <out>.d`, which ninja takes into its log and removes) leaves them unset,
+    // and keeping it reads the depfile this compile writes. Read here, that depfile did not exist
+    // yet: the entry named no file read, and an edit of a header the module's purview includes
+    // was placed from it unchanged (measured: case 118 printed 41 after the edit to 42).
     if (auto ddi = req.depFrom; ddi.extension() == ".dep") {
+        const auto text = read(req.depFrom);
+        if (text.empty()) return;
+        std::vector<std::filesystem::path> reads;
+        for (const auto& p : uc::depfile_prerequisites(text)) reads.emplace_back(p);
         ddi.replace_extension();
         const auto mapper = shape->mapper.empty() ? std::string{} : read(shape->mapper);
         for (auto& b : uc::imported_bmis(read(ddi), mapper, u.cwd)) reads.push_back(std::move(b));
+        u.reads = std::move(reads);
     }
-    u.reads = std::move(reads);
     const auto words = uc::split_command(actual.command);
     for (std::size_t i = 0; i + 1 < words.size(); ++i)
         if (words[i] == "-o") u.placeObject = words[i + 1];

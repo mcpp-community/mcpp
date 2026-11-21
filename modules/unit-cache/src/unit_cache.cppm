@@ -505,6 +505,9 @@ void Cache::keep(const Unit& u) {
         if (text.empty()) return forget(u);
         read = depfile_prerequisites(text);
     }
+    // A compile reads its source at least: a unit that names no file read states nothing a hit
+    // could be checked against.
+    if (read.empty()) return forget(u);
     const auto object = u.object.is_absolute() ? u.object : u.cwd / u.object;
     const auto bmi = u.bmi.empty() ? fs::path{} : (u.bmi.is_absolute() ? u.bmi : u.cwd / u.bmi);
     // A BMI the unit provides: where it is published, else where the compiler wrote it (phase 1
