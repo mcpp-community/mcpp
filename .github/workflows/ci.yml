@@ -577,13 +577,17 @@ jobs:
             --sections summary,failures,slowest,builds,steps,margin,budget,ledgers,flaky,path
       # THE GATE OVER THE RUN'S GROUP (design 2026-11-20 §5.16, §5.17): no case over the budget
       # without a waiver, every item of the surface used by a passing case or waived, and no waiver
-      # that excuses nothing.
+      # that excuses nothing. The run's set is the gate's: the surface is a ledger of every case, and
+      # `pr` runs the jobs and cases a change affects, so its gate judges the budget and notes that
+      # it did not judge the ledger (mtest 0.11.3); a `full` run judges both.
       - name: The gate over the run's group
         shell: bash
+        env:
+          SET: ${{ needs.changes.outputs.set }}
         run: |
           set -euo pipefail
           cd tests/e2e
-          "$MTEST" gate
+          "$MTEST" gate --set "$SET"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

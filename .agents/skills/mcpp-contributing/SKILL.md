@@ -214,6 +214,10 @@ gh run view <run-id> --log-failed  # 查看失败日志
 直接显示在 PR 的检查中。不要另外以 `gh workflow run ci.yml --ref <分支>` 启动一次运行，也不要取消 PR 的运行：
 分支上的运行不出现在 PR 的检查中，两次运行还会同时占用 runner。
 
+面的账本（`mcpp emit surface` 的每一项由通过的用例用到或豁免）是全部用例的性质，只由 `full` 的门禁判定；`pr` 的门禁
+判定失败与预算，并注明没有判定账本（mtest 0.11.3）。新增命令、选项、清单键或原因标记的 PR 以 `ci:full` 确认它有
+通过的用例。
+
 ```bash
 gh pr edit <pr-number> --add-label ci:full   # 先打标签
 git push                                     # 再推送：这次运行跑 full
