@@ -114,6 +114,13 @@
   cache names its reason.
 - **A case's time is the one its scopes state**: a case selected with `--case` runs within the
   `timeout` its listed case states, not the run's.
+- **The defaults are the newest releases** (mcpp#988; docs/51): a first run installs gcc 16.2.0 on
+  Linux x86_64 and on Windows without MSVC (the MinGW row), musl gcc 16.2.0 on the other Linux
+  architectures, and the bootstrap tools ninja 1.13.2-mcpp.1 and patchelf 0.19.3; gcc 16.2.0
+  revision 1 brings binutils 2.47 and linux-headers 6.18.64. llvm stays 23.1.3, since
+  llvm-project's 23.1.6 publishes no macOS binary, and the musl rows stay 16.1.0, the only version
+  of their cross payloads. A project that built with the earlier default is told once.
+  `check_defaults.sh` compares a default with the newest release on every platform it serves.
 - mcpplibs.mtest 0.11.2 and mcpplibs.os 0.4.7 throughout, the new project's skeleton and the CI
   engine included: a case run as a scope names no case in its events.
 - xlings 2026.11.21.1 is the pinned provider: archives by content, `xlings download --to` and

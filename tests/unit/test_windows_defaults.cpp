@@ -151,8 +151,8 @@ UTest gnu_fallback_target_is_windows_gnu{"WindowsDefaults/GnuFallbackTargetIsWin
 UTest native_arm64_uses_llvm_and_other_defaults_remain_stable{"LinuxDefaults/NativeArm64UsesLlvmAndOtherDefaultsRemainStable", [] {
     namespace pins = mcpp::toolchain::triple::pins;
     expect(eq(hosts::kLinuxAarch64, "llvm@23.1.3"));
-    expect(eq(hosts::kLinuxX86_64, "gcc@16.1.0"));
-    expect(eq(hosts::kLinuxOther, "gcc@15.1.0-musl"));
+    expect(eq(hosts::kLinuxX86_64, "gcc@16.2.0"));
+    expect(eq(hosts::kLinuxOther, "gcc@16.2.0-musl"));
     auto target = mcpp::toolchain::triple::parse("aarch64-linux-gnu");
     expect(fatal(bool(target)));
     auto row = mcpp::toolchain::triple::find_known_target(*target);

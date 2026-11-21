@@ -107,11 +107,14 @@ mcpp emit sbom -o sbom.json
 最新的正式发布，经 mcpp 的 CI 与 canary 验证。更新的版本与实验版本由用户陈述
 （`[toolchain]`、xlings 的包）；mcpp 不以它们为缺省。缺省是内置表
 （`modules/toolchain-model/data/builtin.toml`）的 `[[default]]` 条目，发版时逐条与索引
-比对（`.github/tools/check_defaults.sh`）。工具链的配套载荷（binutils、Linux 头文件）
+比对（`.github/tools/check_defaults.sh`）。一个包的缺省取其所服务的每个宿主都已发布的最新正式发布：
+llvm-project 的 23.1.6 没有发布 macOS 的二进制，而 llvm 的缺省包括 macOS，所以保持 23.1.3。内置表的
+一行取它所服务的每个宿主都能安装的最新正式发布：musl 的行的交叉载荷（自 x86_64 的交叉，与 Windows
+上的 Canadian cross）只发布了 16.1.0，所以保持 16.1.0。工具链的配套载荷（binutils、Linux 头文件）
 取其载荷声明的版本（20 —— 工具链，「配套载荷」）。
 
 xim-pkgindex 中一个包的版本是其上游的版本；同一上游版本的重新打包是同一个键的
-`revision`，mcpp 对某个上游正式发布的修正写作 `<上游>-mcpp.<n>`（`ninja@1.12.1-mcpp.1`）。
+`revision`，mcpp 对某个上游正式发布的修正写作 `<上游>-mcpp.<n>`（`ninja@1.13.2-mcpp.1`）。
 已发布的键不改名：`binutils@2.42.1` 指 binutils 2.42。
 
 缺省改变时，以先前缺省构建过的工程各提示一次（20 —— 工具链，「解析与锁」）；陈述了

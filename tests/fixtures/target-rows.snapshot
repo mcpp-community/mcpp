@@ -75,7 +75,7 @@ row aarch64-linux-musl
   descriptor-keys linux
   sysroot 
 row x86_64-windows-gnu
-  table tier=verified note=PE pin=gcc@16.1.0 sysroot= static=1 platform=
+  table tier=verified note=PE pin=gcc@16.2.0 sysroot= static=1 platform=
   str x86_64-windows-gnu
   llvm x86_64-w64-windows-gnu
   llvm@15.0 x86_64-w64-windows-gnu

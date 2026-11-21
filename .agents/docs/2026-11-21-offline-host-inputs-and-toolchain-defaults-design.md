@@ -210,6 +210,19 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
 | patchelf | 0.18.0 | 0.19.3 | x86_64、aarch64 |
 | ninja | 1.12.1-mcpp.1 | 1.13.2 | 1.13.2 含 ninja#2662 的修正时取上游，否则为 1.13.2 的 mcpp 修订 |
 
+**实施中修订（2026-11-21）。** 一个包的缺省取它所服务的每个宿主都已发布的最新正式发布，内置表的一行取它所服务的每个宿主
+都能安装的最新正式发布（`check_defaults.sh` 按平台比较）。实测：
+- llvm-project 的 llvmorg-23.1.6 没有发布 macOS 的二进制，xim-pkgindex 的 llvm 23.1.6 只有 Linux x86_64、Linux aarch64 与
+  Windows x86_64；llvm 的缺省包括 macOS，服务所有宿主的行（bare-metal、openkal、mingw-llvm）也命名 llvm，因此 llvm 的缺省与
+  各行保持 23.1.3，一台机器上只有一个 llvm。
+- musl 的行同时服务自 x86_64 的交叉（`xim:aarch64-linux-musl-gcc`）与 Windows 上的 Canadian cross
+  （`xim:x86_64-linux-musl-gcc`），二者只发布了 16.1.0，因此该行保持 16.1.0；没有 glibc gcc 的 Linux 宿主的首次缺省取原生的
+  musl-gcc 16.2.0。
+- ninja 1.13.2 不含 ninja#2662 的修正（v1.13.2 的 `Plan::EdgeFinished` 与 `Plan::NodeFinished` 仍按迭代器遍历，ninja#2840
+  未合入），缺省为 `ninja@1.13.2-mcpp.1`。
+- 切换的缺省：gcc 16.2.0（Linux x86_64、没有 MSVC 的 Windows、MinGW 的行）、musl gcc 16.2.0（其余的 Linux 架构）、
+  ninja 1.13.2-mcpp.1、patchelf 0.19.3；gcc 的配套载荷 binutils 2.47 与 linux-headers 6.18.64 由 gcc 的载荷声明。
+
 ### 3.9 命令行中 `@` 的文法
 
 `@<版本>` 是寻址文法，清单中的版本字符串是要求文法，二者各有一种读法：

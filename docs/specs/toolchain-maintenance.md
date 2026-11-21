@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-009 |
 | 标题 | 工具链的支持与维护:版本线、默认值、来源、移动与退役 |
-| 状态 | 草案 v0.6 |
-| 最后修改 | 2026-10-09 |
+| 状态 | 草案 v0.7 |
+| 最后修改 | 2026-11-21 |
 | 对应实现 | 逐条标注;本版只有规范,多数条款未实现 |
 | 相关设计文档 | `.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`(第 IV 部分) |
 | 相关 issue | mcpp#669(macOS 27 的链接)、mcpp#685、mcpp#687、mcpp#755、mcpp#784 |
@@ -101,10 +101,12 @@
 在一台宿主上,同一个族的各行**应当**解析到同一个发布。一行**可以**落后,但**必须**在线表中写明理由,
 且理由**必须**在下一次移动时重新评估。
 
-当前:llvm 族成立(2026.10 的 LLVM 23.1.3 线移动:Linux aarch64、macOS 与带 MSVC 的 Windows 宿主默认与 LLVM 目标行同为 `llvm@23.1.3`)。
-gcc 族:Linux x86_64 宿主默认 `gcc@16.1.0`(平台设计:面向原生 glibc ABI,非落后,无退出条件),除 aarch64 外的其他 Linux 宿主默认
-`gcc@15.1.0-musl`(无受管 glibc gcc 载荷时的唯一自包含选择)。两处理由记录在引擎的单一钉点(`modules/toolchain-model/src/triple.cppm`
-的 `pins` 注释);线表尚未落地,理由还没有线表条目这一形态。
+当前(2026.11.21.1):llvm 族成立:Linux aarch64、macOS 与带 MSVC 的 Windows 宿主默认与 LLVM 目标行同为 `llvm@23.1.3`;
+llvm-project 的 23.1.6 没有发布 macOS 的二进制,而缺省与服务所有宿主的行包括 macOS,因此全族保持 23.1.3。gcc 族:Linux x86_64 宿主
+与没有 MSVC 的 Windows 宿主默认 `gcc@16.2.0`,MinGW 的行同为 16.2.0;除 aarch64 外的其他 Linux 宿主默认 `gcc@16.2.0-musl`(无受管
+glibc gcc 载荷时的唯一自包含选择)。musl 的行落后,为 `gcc@16.1.0`:它服务的自 x86_64 的交叉载荷与 Windows 上的 Canadian cross 只发布了
+16.1.0。缺省是内置表的 `[[default]]` 数据,`.github/tools/check_defaults.sh` 按平台比较每个缺省与索引的最新正式发布;线表尚未落地,
+行的理由记录在内置表的注释中。
 
 Linux aarch64 宿主默认自 2026.10.8.1 起采用 `llvm@23.1.3`,目标为
 `aarch64-linux-gnu`。显式工具链声明和已持久化的默认值保持原有优先级。
@@ -407,3 +409,4 @@ mcpp 自己的清单**必须**使用其构建所在的每一行的 Default 发�
 | v0.4 | 2026-10-07 | LLVM 线移动到 23.1.3:§4.1 的 llvm 族一致成立、gcc 族两处理由入档;§6.2 的 macOS 第三项验收恢复;§8.3 的 `xcode-27` 腿离开已知红;§12 的自举清单无偏离;§3.3 的 expected.tsv 行数订正。 |
 | v0.5 | 2026-10-08 | Linux aarch64 原生默认采用 LLVM 23.1.3 与 GNU ABI;保留显式声明、既有默认值及 musl 发布路径;原生载荷采用正向准入检查。 |
 | v0.6 | 2026-10-09 | 新增 §6.4:上游声明某 ABI 上不支持的能力,引擎遵循并在失败后说明(clang 23 在 32 位 MSVC ABI 上的协程)。`aarch64-linux-gnu` 在发布后的冷启动消费之前保持 `preview`。 |
+| v0.7 | 2026-11-21 | §4.1 的「当前」:gcc 族移动到 16.2.0(Linux x86_64、没有 MSVC 的 Windows、MinGW 的行、其他 Linux 宿主的 musl 默认);musl 的行因交叉载荷只有 16.1.0 而落后;llvm 族因 23.1.6 没有 macOS 二进制保持 23.1.3。 |

@@ -732,13 +732,16 @@ std::string highest_pin(std::string_view spelling) {
         .value_or("");
 }
 
+// The newest version the rows pin for `payload`: rows of one family may pin two releases when
+// one serves a host whose payload has only the older (the musl rows' cross payloads, docs/51).
 std::string pinned_row_version(std::string_view payload) {
+    std::vector<std::string> versions;
     for (auto const& row : triple::known_targets()) {
         std::string_view pin = row.pin;
         if (pin.starts_with(std::string(payload) + "@"))
-            return std::string(pin.substr(payload.size() + 1));
+            versions.emplace_back(pin.substr(payload.size() + 1));
     }
-    return "";
+    return mcpp::toolchain::resolve_version_match("", versions).value_or("");
 }
 } // namespace
 

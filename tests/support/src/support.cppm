@@ -102,14 +102,14 @@ std::optional<std::string> newest_payload(std::string_view package, std::string_
 // `override` when set, else the newest numeric version installed, else `fallback`.
 std::string family_version(std::string_view package, std::string_view override, std::string_view fallback);
 inline std::string llvm_version() { return family_version("xim-x-llvm", "MCPP_E2E_LLVM_VERSION", "23.1.3"); }
-inline std::string gcc_version() { return family_version("xim-x-gcc", "MCPP_E2E_GCC_VERSION", "16.1.0"); }
+inline std::string gcc_version() { return family_version("xim-x-gcc", "MCPP_E2E_GCC_VERSION", "16.2.0"); }
 // `mcpp toolchain install`'s words for the host's default toolchain: GCC on Linux, LLVM on macOS
 // and Windows, as mcpp's own [toolchain] rows state them.
 inline std::vector<std::string> default_toolchain() {
     return on_linux() ? std::vector<std::string>{"gcc", gcc_version()} : std::vector<std::string>{"llvm", llvm_version()};
 }
-inline std::string musl_gcc_version() { return family_version("xim-x-musl-gcc", "MCPP_E2E_MUSL_GCC_VERSION", "15.1.0"); }
-inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cross-gcc", "MCPP_E2E_MINGW_CROSS_VERSION", "16.1.0"); }
+inline std::string musl_gcc_version() { return family_version("xim-x-musl-gcc", "MCPP_E2E_MUSL_GCC_VERSION", "16.1.0"); }
+inline std::string mingw_cross_version() { return family_version("xim-x-mingw-cross-gcc", "MCPP_E2E_MINGW_CROSS_VERSION", "16.2.0"); }
 // The directory of that payload's version.
 fs::path payload_root(std::string_view package, std::string_view version);
 

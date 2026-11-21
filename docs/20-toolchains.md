@@ -22,14 +22,14 @@ On the first `mcpp build` with no toolchain configured, mcpp
 installs and persists a default pair for the current host. The choice is
 host-aware:
 
-- Linux x86_64 uses `gcc@16.1.0` for the native glibc ABI, so X11, OpenGL, and
+- Linux x86_64 uses `gcc@16.2.0` for the native glibc ABI, so X11, OpenGL, and
   system libraries work out of the box.
 - Linux aarch64 uses `llvm@23.1.3` for the native glibc ABI (2026.10.8.1+).
-- Other Linux architectures use `gcc@15.1.0-musl`, a self-contained static
+- Other Linux architectures use `gcc@16.2.0-musl`, a self-contained static
   toolchain.
 - macOS uses `llvm@23.1.3`.
 - Windows with a usable MSVC installation uses `llvm@23.1.3` for the MSVC ABI.
-  Without usable MSVC, it uses `gcc@16.1.0` with target
+  Without usable MSVC, it uses `gcc@16.2.0` with target
   `x86_64-windows-gnu` (MinGW-w64, static by default), says which half of the
   MSVC ABI is missing — Visual Studio's C++ tools or the Windows SDK — and where
   it looked, and records the pair as the machine's default. Once both halves

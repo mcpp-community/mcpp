@@ -24,13 +24,13 @@ mcpp 把所有工具链装进同一个沙盒目录（`~/.mcpp/registry/data/xpkg
 首次运行 `mcpp build` 且尚未配置工具链时，mcpp 会为当前宿主安装并持久化一对
 默认值。这个选择是按宿主区分的：
 
-- Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.1.0`，X11、OpenGL 与系统库
+- Linux x86_64 使用面向原生 glibc ABI 的 `gcc@16.2.0`，X11、OpenGL 与系统库
   因此可以直接使用。
 - Linux aarch64 使用面向原生 glibc ABI 的 `llvm@23.1.3`（2026.10.8.1+）。
-- 其他 Linux 架构使用 `gcc@15.1.0-musl`，这是一套自包含的全静态工具链。
+- 其他 Linux 架构使用 `gcc@16.2.0-musl`，这是一套自包含的全静态工具链。
 - macOS 使用 `llvm@23.1.3`。
 - Windows 上存在可用 MSVC 时使用面向 MSVC ABI 的 `llvm@23.1.3`；没有可用
-  MSVC 时使用 `gcc@16.1.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
+  MSVC 时使用 `gcc@16.2.0`，target 为 `x86_64-windows-gnu`（MinGW-w64，默认
   静态链接），说明 MSVC ABI 缺的是哪一半（Visual Studio 的 C++ 工具或 Windows SDK）
   以及查找过的位置，并把这一对记为本机默认值。两半都齐备之后，
   `mcpp toolchain default llvm@23.1.3` 把本机切换到 MSVC ABI。

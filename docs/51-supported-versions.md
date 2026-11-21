@@ -125,13 +125,18 @@ verified by mcpp's CI and canaries. A newer or an experimental version is
 stated by the user (`[toolchain]`, an xlings package); mcpp does not default to
 one. The defaults are the `[[default]]` entries of the built-in table
 (`modules/toolchain-model/data/builtin.toml`), and a release lists each against
-the index (`.github/tools/check_defaults.sh`). A toolchain's companions
+the index (`.github/tools/check_defaults.sh`). A package's defaults name
+the newest release published for every host they serve: llvm-project's 23.1.6
+release publishes no macOS binary, and the llvm defaults include macOS, so they
+stay 23.1.3. A row of the built-in table names the newest release every host it
+serves can install: the musl rows, whose cross payloads (from x86_64, and the
+Canadian cross on Windows) are published for 16.1.0 only, stay 16.1.0. A toolchain's companions
 (binutils, Linux headers) are the versions its payload declares (20 —
 Toolchains, "Companions").
 
 A package's version in xim-pkgindex is its upstream's; a repackaging of one
 upstream version is a `revision` of the same key, and an mcpp correction of an
-upstream release is `<upstream>-mcpp.<n>` (`ninja@1.12.1-mcpp.1`). A published
+upstream release is `<upstream>-mcpp.<n>` (`ninja@1.13.2-mcpp.1`). A published
 key is not renamed: `binutils@2.42.1` names binutils 2.42.
 
 A default that moves is said once per project that built with the earlier one
