@@ -111,7 +111,8 @@
 
 - **A package's instance is a function of its configuration, not of its units** (mcpp#986): a
   test build after `mcpp build` no longer compiles the package again, and each refusal of the
-  cache names its reason.
+  cache names its reason. The cache's key carries the instance, so a dependency an earlier
+  release cached is compiled once more after the upgrade and served from then on.
 - **A case's time is the one its scopes state**: a case selected with `--case` runs within the
   `timeout` its listed case states, not the run's.
 - **The defaults are the newest releases** (mcpp#988; docs/51): a first run installs gcc 16.2.0 on
