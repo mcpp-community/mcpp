@@ -119,6 +119,22 @@ on this artifact's search path:
 读这条记录的测试应当把 `reason` 当作「没有测到」处理，而不是「测过、结果干净」
 —— 「不适用」与「从未跑过」正是这条记录存在的意义所要分开的那两件事。
 
+### 必需的库从发起加载的对象出发判定（2026.11.21.1 起）
+
+一个包在运行期所需的 soname（`runtime.dlopen_libs`，或 `requirements` 中 kind 为 `soname` 的条目）从该包自己的共享对象出发查找，
+即其 `link_library_dirs` 与 `runtime_search_dirs` 中的对象，因为是其中之一调用 `dlopen`；闭包中没有这样的对象时从可执行文件出发。
+带 `DT_RUNPATH` 的对象只搜索它自己的 `DT_RUNPATH` 与加载器的目录，因此只有可执行文件的运行路径指名的库找不到。这样的要求在每次构建之后
+报告，`mcpp self doctor` 调用同一个函数，给出同一结论：
+
+```
+degraded: compat.slint@1.19.0 requires libX11.so.6 at run time and loads it with dlopen from
+.../libslint_cpp.so, which searches .../xim-x-slint/1.19.0/lib, ...: the package that provides
+it must be a run-time dependency of the payload that declares this object, so that its
+DT_RUNPATH names it
+```
+
+办法在载荷的 recipe：把提供该库的包列为运行依赖。mcpp 不改写载荷，也不设置 `LD_LIBRARY_PATH`，它会被程序的每个子进程继承。
+
 ## 当前边界
 
 - **按构造只适用于 Linux。** macOS 的 dyld 与 Windows 的 PE 加载器没有对应的这一

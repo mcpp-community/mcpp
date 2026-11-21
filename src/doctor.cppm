@@ -661,10 +661,9 @@ export int doctor_report() {
             ok("(run inside a package to check its runtime capabilities)");
         } else if (!pctx) {
             ok("(not checked: the toolchain above is not ready)");
-        } else if (pctx->plan.runtimeCapabilities.empty()) {
-            ok("no host runtime capabilities required");
         } else {
             auto& plan = pctx->plan;
+            if (plan.runtimeCapabilities.empty()) ok("no host runtime capabilities required");
             for (auto& cap : plan.runtimeCapabilities) {
                 std::string provider;
                 for (auto& [c, p] : plan.runtimeProviders)
@@ -672,20 +671,25 @@ export int doctor_report() {
                 ok(std::format("{}: required (provider {})",
                                cap, provider.empty() ? "?" : provider));
             }
-            auto resolves = [&](std::string_view soname) {
-                for (auto& dir : plan.runtimeLibraryDirs) {
-                    std::error_code ec;
-                    if (!std::filesystem::exists(dir, ec)) continue;
-                    for (auto& e : std::filesystem::directory_iterator(dir, ec)) {
-                        auto fn = e.path().filename().string();
-                        if (fn == soname || fn.rfind(soname, 0) == 0) return true;
-                    }
-                }
-                return false;
-            };
-            for (auto& lib : plan.runtimeDlopenLibs) {
-                if (resolves(lib)) ok(std::format("dlopen {}: resolvable on RUNPATH", lib));
-                else warn(std::format("dlopen {}: not found on resolved runtime dirs", lib));
+            // From the object that loads each library, as the post-link
+            // validation judges it (one function): a directory on the union
+            // of the plan's search paths is not one the loading object sees.
+            // The program the last build linked: this check plans in a
+            // scratch directory and links nothing.
+            std::optional<std::filesystem::path> program;
+            if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path()))
+                if (auto stored = mcpp::build::runtime_validation::latest_stored_verdict(*root / "target"))
+                    program = stored->artifact;
+            std::error_code pec;
+            if (!plan.runtimeDlopenLibs.empty() && program && std::filesystem::is_regular_file(*program, pec)) {
+                const auto misses = mcpp::build::runtime_validation::dlopen_unreachable(plan, *program);
+                for (auto const& m : misses) warn(std::format("dlopen-unreachable: {}", m));
+                if (misses.empty())
+                    ok(std::format("dlopen: {} required libraries reachable from {}",
+                                   plan.runtimeDlopenLibs.size(), program->filename().string()));
+            } else if (!plan.runtimeDlopenLibs.empty()) {
+                ok(std::format("(build the package to check its {} dlopen requirements per object)",
+                               plan.runtimeDlopenLibs.size()));
             }
         }
     }

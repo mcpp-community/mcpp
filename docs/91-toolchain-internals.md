@@ -230,6 +230,15 @@ different built-in defaults, so including `/usr/lib` there models the wrong
 loader — and since a developer machine usually has its own `libGL.so.1`, doing
 so reported "resolved" for binaries that exited 127.
 
+**The closure is read per object (2026.11.21.1+).** The executable carries the
+closure as `DT_RPATH`, which glibc also searches for the objects it loads, but
+an object that carries `DT_RUNPATH` searches only `LD_LIBRARY_PATH`, its own
+`DT_RUNPATH` and the loader's directories: no `DT_RPATH`, the executable's
+included. A payload xlings installs writes `DT_RUNPATH` from its recipe's
+run-time dependencies, so the farm and the other entries are not on the path
+of a library it loads. The model applies that rule to each object of the
+closure, for `DT_NEEDED` and for `dlopen` alike.
+
 The closure is recorded in `resolution.json` under `runtime.search.closure` and
 printed by `mcpp why runtime`. A `DT_NEEDED` that nothing on a hermetic
 artifact's path can satisfy is a **proven** failure (`unresolvable`), not an

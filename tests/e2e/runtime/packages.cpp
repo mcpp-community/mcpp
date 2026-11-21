@@ -3,7 +3,8 @@
 // package's default link form; a static package under a shared library; what a library exports;
 // the search paths a link carries; a library placed beside each program of a workspace; and the
 // closure each shared library and shipped program links with (formerly tests/e2e/55, 56, 57, 64,
-// 306, 621, 670, 685, 692, 702, 835, 838, 884).
+// 306, 621, 670, 685, 692, 702, 835, 838, 884); a dlopen requirement is judged from the object
+// that loads it (993).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -596,6 +597,52 @@ int main() {
         expect(fatal(fs::is_regular_file(own->parent_path() / "helper.copy"))) << "A4: ${mcpp.bin_dir} is not the helper's product directory: " << s::text(r);
     };
 
+    "993 a dlopen requirement is judged from the object that loads it"_test[s::elf] = [] {
+        // A library a package requires and loads with dlopen is looked up from that package's own
+        // shared object (design 2026-11-21, offline and toolchain defaults §3.10): an object with
+        // DT_RUNPATH does not see the executable's DT_RPATH, so a library only the executable's
+        // run path names is reported unreachable (dlopen-unreachable); the same object with
+        // DT_RPATH inherits the executable's and reaches it.
+        const auto tmp = s::case_dir();
+        const auto host_cc = s::host_cc();
+        if (!host_cc) skip("no host C compiler links a shared object");
+        auto shared = [&](const fs::path& dir, std::string_view source, std::vector<std::string> args) {
+            fs::create_directories(dir / "lib");
+            s::project(dir, {{"c/src.c", std::string(source)}});
+            args.insert(args.begin(), {"-shared", "-fPIC", "c/src.c"});
+            auto r = s::run(*host_cc, args, dir);
+            expect(fatal(e2e::succeeded(r))) << "the C compiler did not link: " << s::text(r);
+        };
+        auto package = [](std::string_view name, std::string_view runtime) {
+            return std::format("[package]\nname = \"{0}\"\nversion = \"0.1.0\"\n\n[runtime]\n{1}\n\n[targets.{0}]\nkind = \"lib\"\n", name, runtime);
+        };
+        shared(tmp / "pb", "int pb_fn(void) { return 2; }\n", {"-Wl,-soname,libpb.so.1", "-o", "lib/libpb.so.1"});
+        s::project(tmp / "pb", {{"mcpp.toml", package("pb", "runtime_search_dirs = [\"lib\"]")},
+                                {"src/pb.cppm", "export module t993_pb;\nexport int pb_anchor() { return 0; }\n"}});
+        const std::string paRuntime = "libraries = [\"pa\"]\nlink_library_dirs = [\"lib\"]\nruntime_search_dirs = [\"lib\"]\n"
+                                      "requirements = [{ kind = \"soname\", value = \"libpb.so.1\", phase = \"run\", required = true }]";
+        auto link_pa = [&](std::string_view tags) {
+            shared(tmp / "pa", "int pa_fn(void) { return 1; }\n",
+                   {"-Wl,-soname,libpa.so", std::format("-Wl,{},-rpath,/t993-nowhere", tags), "-o", "lib/libpa.so"});
+        };
+        link_pa("--enable-new-dtags");
+        s::project(tmp / "pa", {{"mcpp.toml", package("pa", paRuntime)},
+                                {"src/pa.cppm", "export module t993_pa;\nexport int pa_anchor() { return 0; }\n"}});
+        s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\npa = { path = \"../pa\" }\npb = { path = \"../pb\" }\n\n[targets.app]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n"},
+                                     {"src/main.cpp", "extern \"C\" int pa_fn(void);\nint main() { return pa_fn() == 1 ? 0 : 1; }\n"}});
+        auto r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build failed: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "requires libpb.so.1 at run time and loads it with dlopen from")
+                     && e2e::contains(s::text(r), "libpa.so"))) << "a library the loading object cannot see was not reported: " << s::text(r);
+        const auto doctor = app.mcpp({"self", "doctor"});
+        expect(fatal(e2e::contains(s::text(doctor), "dlopen-unreachable: ") && e2e::contains(s::text(doctor), "requires libpb.so.1")))
+            << "self doctor and the post-link validation disagree: " << s::text(doctor);
+        link_pa("--disable-new-dtags");
+        app.write("src/main.cpp", app.read("src/main.cpp") + "\n");
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "loads it with dlopen from"))) << "an object with DT_RPATH inherits the executable's and reaches it: " << s::text(r);
+    };
     "884 a shared library links with its own closure"_test[s::elf] = [] {
         // A shared library that is not the root's links with the graph's flags and those of the
         // packages its owner reaches, and no other package's; a search path only the root names

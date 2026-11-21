@@ -284,11 +284,23 @@ struct RuntimeCapabilityProvider {
     mcpp::manifest::PackageId         provider;
 };
 
+// A library a package requires at run time and loads with `dlopen`, and the
+// directories of that package's own shared objects, from which the loader
+// looks it up (design 2026-11-21, offline and toolchain defaults §3.10). A
+// named struct, not a pair, for the module hazard `RuntimeCapabilityProvider`
+// records.
+struct DlopenRequirement {
+    std::string                        soname;
+    std::string                        requester;    // the package, canonical
+    std::vector<std::filesystem::path> originDirs;
+};
+
 struct ResolvedRuntimeContract {
     std::vector<mcpp::manifest::RuntimeRequirement> requirements;
     std::vector<mcpp::manifest::RuntimeArtifact>    artifacts;
     mcpp::manifest::LinkIntent                      linkIntent;
     std::vector<RuntimeCapabilityProvider>           providers;
+    std::vector<DlopenRequirement>                   dlopen;
     // A deploy glob that matched no file, or a `name` whose `from` did not
     // match exactly one: each a sentence naming the package and the entry.
     std::vector<std::string>                         errors;
@@ -761,7 +773,7 @@ struct BuildPlan {
     // Aggregated host-runtime requirements from dependency packages'
     // [runtime] metadata. Capability/provider-driven — no platform special-casing
     // in mcpp: providers (e.g. compat.glx-runtime) declare these per platform.
-    std::vector<std::string>           runtimeDlopenLibs;   // union of deps' dlopen sonames
+    std::vector<DlopenRequirement>     runtimeDlopenLibs;   // deps' required dlopen sonames, by requester
     std::vector<std::string>           runtimeCapabilities; // union of host capabilities
     // (capability, provider package). A named aggregate instead of std::pair:
     // musl-gcc 15.1 modules failed to emit vector<pair<string,string>>'s
@@ -794,7 +806,7 @@ struct BuildPlan {
         std::vector<mcpp::manifest::RuntimeArtifact>    runtimeArtifacts;
         mcpp::manifest::LinkIntent       linkIntent;
         std::vector<DeployFile>          runtimeDeployFiles;
-        std::vector<std::string>         runtimeDlopenLibs;
+        std::vector<DlopenRequirement>   runtimeDlopenLibs;
         std::vector<std::string>         runtimeCapabilities;
         std::vector<RuntimeCapabilityProvider> runtimeProviders;
         // The graph-built shared libraries the member's units load, placed
@@ -1525,6 +1537,20 @@ ResolvedRuntimeContract resolve_runtime_contract(
                      out.linkIntent.transitiveNeededDirs);
         append_paths(runtime.linkIntent.runtimeSearchDirs,
                      out.linkIntent.runtimeSearchDirs);
+        // The package's required `dlopen` sonames, with the directories its own
+        // shared objects are linked from and found in.
+        {
+            std::vector<std::filesystem::path> dirs;
+            append_paths(runtime.linkIntent.linkLibraryDirs, dirs);
+            append_paths(runtime.linkIntent.runtimeSearchDirs, dirs);
+            for (auto const& r : out.requirements) {
+                if (r.kind != "soname" || !r.required || r.phase != "run" || !(r.requester == id)) continue;
+                const bool listed = std::ranges::any_of(out.dlopen, [&](auto const& d) {
+                    return d.soname == r.value && d.requester == id.canonical();
+                });
+                if (!listed) out.dlopen.push_back({ r.value, id.canonical(), dirs });
+            }
+        }
         // A `deploy_files` entry is the string form of a `deploy` entry: a glob
         // is expanded by the same rule; a literal path keeps its own list.
         std::vector<mcpp::manifest::DeployEntry> entries;
@@ -2324,6 +2350,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         out.runtimeArtifacts = std::move(runtimeContract.artifacts);
         out.linkIntent = std::move(runtimeContract.linkIntent);
         out.runtimeProviders = std::move(runtimeContract.providers);
+        out.runtimeDlopenLibs = std::move(runtimeContract.dlopen);
 
         for (auto const& dir : out.linkIntent.runtimeSearchDirs) {
             append_unique_path(out.runtimeLibraryDirs, dir);
@@ -2334,9 +2361,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             // resolution.json, but they cannot become hard ABI/doctor inputs.
             if (!requirement.required) continue;
             if (requirement.kind == "soname") {
-                if (std::ranges::find(out.runtimeDlopenLibs, requirement.value)
-                    == out.runtimeDlopenLibs.end())
-                    out.runtimeDlopenLibs.push_back(requirement.value);
+                // Taken with the dirs the contract states for its requester below.
             } else if (requirement.kind == "capability") {
                 if (std::ranges::find(out.runtimeCapabilities, requirement.value)
                     == out.runtimeCapabilities.end())

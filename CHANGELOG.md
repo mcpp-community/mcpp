@@ -109,6 +109,14 @@
   `mcpp update`; under `--locked` a lock without the record is kept as it is and the build says so.
   A project that states no toolchain is told once when the default it follows answers another
   toolchain than the one it last built with.
+- **A required `dlopen` library is judged from the object that loads it** (design 2026-11-21
+  §3.10, docs/33, docs/91). The post-link validation and `mcpp self doctor` looked for it on the
+  union of the plan's search paths, the executable's `DT_RPATH`; an object with `DT_RUNPATH`, as
+  every payload xlings installs carries, searches no `DT_RPATH`, so xim:slint's `libslint_cpp.so`
+  could not load X11, Wayland or GL in any program mcpp built while both checks passed. Each
+  required soname is now looked up from the requiring package's own shared objects by glibc's
+  rule, through one function both checks call, and one that cannot be reached is reported
+  (`runtime/dlopen-unreachable`). The `DT_NEEDED` walk applies the same rule to the farm.
 - **A toolchain's companions are the versions its payload declares** (mcpp#990, SPEC-006 §2.9).
   binutils, the kernel headers and GCC's runtime were the first version a directory walk of the
   store returned: with binutils 2.42 and 2.42.1 installed, GCC 16.1.0 built with 2.42, which its

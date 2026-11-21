@@ -766,7 +766,12 @@ void step13_resolution_json(PrepareState& state, BuildContext& ctx) {
             {"crt_set", std::move(crtSet)},
             {"placement_notes", roleFlags.runtimeNotes},
             {"library_dirs", dirs},
-            {"dlopen_libs", ctx.plan.runtimeDlopenLibs},
+            {"dlopen_libs", [&] {
+                std::vector<std::string> sonames;
+                for (auto const& d : ctx.plan.runtimeDlopenLibs)
+                    if (std::ranges::find(sonames, d.soname) == sonames.end()) sonames.push_back(d.soname);
+                return sonames;
+            }()},
             {"capabilities", legacyCaps},
             {"binding", binding},
             {"requirements", requirements},
