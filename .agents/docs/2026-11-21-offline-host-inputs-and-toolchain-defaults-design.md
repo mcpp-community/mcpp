@@ -5,7 +5,7 @@ status: active
 
 # 离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）
 
-**日期：** 2026-11-21 · **版本：** v1（待负责人确认第 9 节） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支，
+**日期：** 2026-11-21 · **版本：** v2（负责人 2026-11-21 确认第 9 节，取各项的推荐；增加 3.9 命令行中 `@` 的文法与 mcpp-index 中 `compat.slint` 的声明） · **基线：** mcpp 2026.11.20.1（`722ec1b6`）与 #984 的分支，
 xlings 2026.11.17.2，xim-pkgindex `c0023dd` · **规范：** SPEC-004 §2（四层取值）、SPEC-006（工具链管理）、SPEC-002（目标侧五层）、
 SPEC-013（平台与层）、home 的初始化（`docs/specs/home-initialization.md`） · **所属：**
 [生态的测试与 CI 方案](2026-11-20-test-architecture-upgrade-design.md) 第 15 节；与
@@ -170,6 +170,23 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
 | patchelf | 0.18.0 | 0.19.3 | x86_64、aarch64 |
 | ninja | 1.12.1-mcpp.1 | 1.13.2 | 1.13.2 含 ninja#2662 的修正时取上游，否则为 1.13.2 的 mcpp 修订 |
 
+### 3.9 命令行中 `@` 的文法
+
+`@<版本>` 是寻址文法，清单中的版本字符串是要求文法，二者各有一种读法：
+
+| 写法 | 读法 | 例 |
+|---|---|---|
+| `<包>@<版本>`（命令行、`--template`、`--list-templates`、工具链、xlings 的引用） | 按书写的精度的前缀：写出的各段相等，更细的段任意，取其中最高者 | `@1.19.0` 选 1.19.0.2；`@16` 选 16.x 的最新 |
+| `<包>@=<版本>` | 一个键的精确匹配 | `@=1.19.0.1` |
+| `<包>@<运算符><版本>`（`^`、`~`、`>=` 等） | 要求文法，与清单相同 | `@^1.19` |
+| 清单的 `"<版本>"` | 要求文法：不带运算符为 caret；等于一个已发布的键时指名该键（现状不变） | `"1.19.0"` |
+
+- 这与 xlings 的 `@`、mcpp 已有的工具链部分版本、Spack 的 `@` 一致；`cargo install --version` 的精确读法在四段的键之下得不到写出的版本，不采用。
+- 精确匹配落空而存在更细的键时，错误写出它们与两种写法：`1.19.0 is published as 1.19.0.2, 1.19.0.1: @1.19.0 selects 1.19.0.2, @=1.19.0.1 pins one`。
+- 第四段在索引中有两种含义：上游本身的四段版本（Vulkan SDK 的 `1.4.321.0`），与包装层的修订（mwrap 的 `1.19.0.2`）。前缀的读法对二者都成立；
+  mcpp-index 的贡献说明陈述这两种用法，修订只递增、不复用。
+- SPEC-001 §4.4 的模板表与第 350 行的命令行引用改为本节的表述。
+
 ### 3.8 提示与拒绝
 
 | 情形 | 级别、策略 | 代码或原因标记 |
@@ -193,9 +210,9 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
 |---|---|---|
 | xlings | 3.1：来源列表、目录来源的 sha256 索引、`archives` 配置、`download --to --with-index`、`install --from`、离线时一次列出缺少的归档；文档；发版 | — |
 | xlings-res（载荷的构建） | 3.7 表中待构建的载荷 | — |
-| xim-pkgindex | 3.7 的版本：binutils 2.47、linux-headers、patchelf 0.19.3、gcc 16.2.0 的重建修订与各家族的 16.2.0、llvm 23.1.6、ninja；gcc 的依赖改到这些版本；包版本号的规则写入其贡献说明 | xlings-res；xlings 的新版（recipe 若使用新的字段） |
+| xim-pkgindex | 3.7 的版本：binutils 2.47、linux-headers、patchelf 0.19.3、gcc 16.2.0 的重建修订与各家族的 16.2.0、llvm 23.1.6、ninja；gcc 的依赖改到这些版本；包版本号的规则写入其贡献说明；`xim:slint` 声明提供上述 `dlopen` 库的包 | xlings-res；xlings 的新版（recipe 若使用新的字段） |
 | mcpp（#984） | 3.2 至 3.6、3.8；`builtin.toml` 的缺省（3.7）；mcpp 所捆绑与所固定的 xlings 版本 | xlings 的发版；xim-pkgindex 合入并发布 |
-| mcpp-index | 无改动 | — |
+| mcpp-index | mtest 0.11.2 的条目；`compat.slint` 声明它以 `dlopen` 加载的库（X11、xcb、Xcursor、Xrandr、Xi、xkbcommon、Wayland、EGL 与 GL 的 soname）与运行的能力，与 `compat.glfw` 相同的形式；贡献说明陈述第四段的两种用法（3.9） | — |
 
 xlings 与 xlings-res 的工作可以并行；xim-pkgindex 在载荷发布之后合入；mcpp 的缺省在 xim-pkgindex 发布之后切换，其余各项与它们并行实施。
 
@@ -228,6 +245,7 @@ xlings 与 xlings-res 的工作可以并行；xim-pkgindex 在载荷发布之后
 | C2 | binutils 与 kernel-abi 的覆盖生效；过旧的 binutils 被拒绝 | mcpp e2e |
 | V1 | `-dumpfullversion` 的版本；Fedora 横幅的回归；vendor 段为任意词的三元组 | mcpp 单元测试（`modules/toolchain-model/tests`） |
 | D1 | 缺省取自 `builtin.toml`；发版规程的核对脚本列出落后于上游的缺省 | mcpp 单元测试与工具的测试 |
+| A1 | `@1.19.0` 选 1.19.0.2，`@=1.19.0.1` 选 1.19.0.1，`@16` 选 16.x 的最新；精确落空时的错误写出更细的键 | mcpp 单元测试与 e2e（`mcpp new --template`） |
 | P1 | 新的代码与原因标记由面的账本覆盖（测试方案 5.16） | 面的账本 |
 
 ## 7. 未采纳
@@ -255,7 +273,7 @@ xlings 与 xlings-res 的工作可以并行；xim-pkgindex 在载荷发布之后
 - **测试覆盖。** 第 6 节在 xlings 与 mcpp 两侧覆盖每一项机制，离线的断言在无网络的命名空间中成立；面的账本覆盖新的代码。
 - **代价。** 3.7 的刷新需要构建多个工具链载荷（gcc 的三个家族、llvm 的四个宿主），是本方案中耗时最长的部分。
 
-## 9. 待确认
+## 9. 已确认（负责人 2026-11-21，取各项的推荐）
 
 9.1 **范围。** xlings 的 PR 与发版、xlings-res 的载荷、xim-pkgindex 的 PR 与 mcpp 的改动都属于本轮（第 4 节）。
 
