@@ -511,7 +511,10 @@ int main(int argc, char** argv) {
 )cpp"},
                                      {"tests/smoke.cpp", "import std;\nint main() { return std::format(\"{}-{}\", 1, 2) == \"1-2\" ? 0 : 1; }\n"}});
         const std::string ht = std::string(host_arch) + "-openkal";
-        auto r = app.mcpp({"run", "--target", ht, "--", "one", "two words"}, {.env = {{"MCPP_E2E_1033", "here"}}});
+        // The first run builds the platform's runtime (1,636 edges): beyond ten minutes on a
+        // four-processor Windows runner whose other tests share the run's budget (CI, 2026-11-21).
+        auto r = app.mcpp({"run", "--target", ht, "--", "one", "two words"},
+                          {.env = {{"MCPP_E2E_1033", "here"}}, .timeout = std::chrono::minutes{30}});
         expect(fatal(e2e::succeeded(r))) << "A: mcpp run --target " << ht << ": " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "args=[one][two words] env=here sum=55"))) << "A: the image's output: " << s::text(r);
         r = app.mcpp({"test", "--target", ht});

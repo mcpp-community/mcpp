@@ -163,10 +163,10 @@ main = "src/main.cpp"
         expect(fatal(e2e::succeeded(r))) << "the first build failed\n" << b1;
         for (std::string_view line : {"core v0.1.0 (core)", "cli v0.1.0 (cli)", "util v0.2.0 (../util)"})
             expect(fatal(count_exact(b1, std::format("   Compiling {}", line)) == 1u)) << "R1: '" << line << "' is not named exactly once\n" << b1;
+        // In no particular order: a package is named when ninja reports its first step, which
+        // ninja through a pipe does when the step ends (design 2026-09-29 §3), and the scans of
+        // independent packages end in any order -- under the run's budget, as their slots come.
         const auto l1 = lines_of(b1);
-        const auto core_at = first_line(l1, "Compiling core v0\\.1\\.0");
-        const auto cli_at = first_line(l1, "Compiling cli v0\\.1\\.0");
-        expect(fatal(core_at && cli_at && *core_at < *cli_at)) << "R1: cli is named before core, which it imports\n" << b1;
         expect(fatal(s::no_line(b1, R"(Compiling [0-9]+ dependenc|done [0-9]|mcpplibs\.util)"))) << "R1: a fold, an outcome or a namespace nobody wrote";
         const auto fin = first_line(l1, "^ +Finished ");
         expect(fatal(fin && *fin > 0 && l1[*fin - 1].empty())) << "R1: no blank line precedes Finished\n" << b1;

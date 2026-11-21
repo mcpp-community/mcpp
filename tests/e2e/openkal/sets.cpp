@@ -73,8 +73,9 @@ std::vector<std::string> strings(const nlohmann::json& a) {
 constexpr std::string_view smoke_test = "import std;\nint main() { std::vector<int> v{2, 1}; std::ranges::sort(v); return v.front() == 1 ? 0 : 1; }\n";
 
 // Every member of a target set built: about 17 minutes on a Linux runner beside three other
-// programs, measured 2026-11-14.
-E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{30}}, [] {
+// programs, measured 2026-11-14; over 30 under the machine's budget (SPEC-017 O11), whose slots
+// its builds share with the shard's other tests (CI, 2026-11-21).
+E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{45}}, [] {
     "963 a target set builds every member and runs where it is reached"_test[s::llvm][s::python3] = [] {
         // `--target openkal`: A builds both legs under target/<triple>/ with one Finished; B the
         // JSON envelope is the first leg's record with both legs, each artifact event naming its
