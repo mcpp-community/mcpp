@@ -338,6 +338,13 @@ xpm = { linux = { ["1.0.0"] = { url = "https://example.invalid/w.tar.gz", sha256
             const std::string line(part.begin(), part.end());
             if (!line.empty()) expect(surface.contains(line)) << "a recorded item is not on the surface: " << line;
         }
+        // The flags read before the parser sees the command line are recorded too: `--no-color` is
+        // taken out of it, `--protocol-version` answers before it.
+        const auto early = s::case_dir() / "early-record.txt";
+        expect(fatal(e2e::succeeded(p.mcpp({"--no-color", "--protocol-version"}, {.env = {{"MCPP_SURFACE_RECORD", early.string()}}}))));
+        const auto flags = s::read_file(early);
+        for (auto item : {"flag --no-color", "flag --protocol-version"})
+            expect(flags.contains(std::string(item) + "\n")) << "the record lacks " << item << "\n" << flags;
     };
 }};
 

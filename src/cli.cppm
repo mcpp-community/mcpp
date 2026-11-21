@@ -1959,6 +1959,7 @@ int run(int argc, char** argv) {
         };
     };
 
+    mcpp::cli::record_global_flags(app, argc, argv);
     // `--protocol-version` is answered before anything else parses, and
     // before any command can decide it needs a project. A client asks this
     // first, in a directory that may not be one.

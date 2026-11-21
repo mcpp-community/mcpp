@@ -29,6 +29,11 @@ int cmd_emit_surface(const mcpplibs::cmdline::App& app, const mcpplibs::cmdline:
 // The command and the flags `parsed` names, recorded as used (MCPP_SURFACE_RECORD).
 void record_invocation(const mcpplibs::cmdline::App& app, const mcpplibs::cmdline::ParsedArgs& parsed);
 
+// The root's flags `argv` names (`--name`, `--name=value`), recorded as used. They are read
+// before the parser sees the command line -- `--no-color`, `--frozen` and `--system` are taken
+// out of it, `--protocol-version` answers before it -- so the parsed record never holds them.
+void record_global_flags(const mcpplibs::cmdline::App& app, int argc, char** argv);
+
 }  // namespace mcpp::cli
 
 namespace mcpp::cli {
@@ -133,6 +138,19 @@ void record_invocation(const cl::App& app, const cl::ParsedArgs& parsed) {
             if (path != nullptr && !parser_added(*path, name))
                 sf::exercised(sf::kFlag, sf::flag_name(*path, name));
         }
+    }
+}
+
+void record_global_flags(const cl::App& app, int argc, char** argv) {
+    if (std::getenv(std::string(sf::kRecordEnv).c_str()) == nullptr) return;
+    const Node root = cl::snapshot(app);
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view a = argv[i];
+        if (a == "--") break;
+        if (!a.starts_with("--")) continue;
+        const auto eq = a.find('=');
+        const auto name = a.substr(2, eq == std::string_view::npos ? std::string_view::npos : eq - 2);
+        if (declares(root, name) && !parser_added("", name)) sf::exercised(sf::kFlag, sf::flag_name("", name));
     }
 }
 
