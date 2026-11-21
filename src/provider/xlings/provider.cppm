@@ -57,7 +57,12 @@ public:
     std::filesystem::path home_of_store(const std::filesystem::path& store) const override {
         return store.parent_path().parent_path();
     }
-    bool is_default_environment(std::string_view dir) const override { return dir.ends_with("subos/default"); }
+    // A home's environment as a payload's build bakes it into its compiler: `subos/default`, or
+    // `subos/current`, the link a home keeps to its active environment (gcc 16.2.0 revision 1
+    // was built in `/w/xh/subos/current`). Either names the building home's, not this one's.
+    bool is_default_environment(std::string_view dir) const override {
+        return dir.ends_with("subos/default") || dir.ends_with("subos/current");
+    }
     bool is_store(const std::filesystem::path& dir) const override {
         return dir.filename() == "xpkgs" && dir.parent_path().filename() == "data";
     }
