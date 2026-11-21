@@ -400,9 +400,10 @@ jobs:
       name: linux
       runs-on: ubuntu-24.04
       archived: ${{ needs.unit-linux-archive.outputs.archived }}
-      # The shards the archive stage planned from main's measured work (four
-      # without a history): the measured run of 2026-11-13 reached 65 of its
-      # programs, 3970 s of work, in the 45 minutes of one job of four workers.
+      # The shards the archive stage planned from main's last run, its shards and
+      # the longest of them (four without a history): the measured run of
+      # 2026-11-13 reached 65 of its programs, 3970 s of work, in the 45 minutes
+      # of one job of four workers.
       shards: ${{ needs.unit-linux-archive.outputs.shards || '[1,2,3,4]' }}
       form: ${{ needs.release-form.result == 'success' && 'release' || 'host' }}
       # The toolchains whose capabilities the cases probe: build-linux's `prewarm`.
