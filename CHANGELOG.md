@@ -140,6 +140,10 @@
   assembler: the store is judged by path, not by where the link leads.
 - **`mcpp test --failed` reads the newest run** when two runs started in the same second: the
   later line of the store's index is the newer run.
+- **What a scope's body does is the program's** (SPEC-017 P5.6, mtest 0.11.2): a `step`,
+  `exercise` or `metric` event that names no case is kept in the program's record (`steps`,
+  `exercised`, `metrics`) instead of making a case that never ended, which failed a Windows
+  program whose suite probed Visual Studio before its cases.
 - **A compiler's version is what its driver states for machines** (mcpp#989): GCC's
   `-dumpfullversion` (else `-dumpversion`) and clang's `-dumpversion`, not the last number of the
   banner, which read Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` as `3`. A triple's

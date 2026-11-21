@@ -4750,6 +4750,14 @@ void write_mtest_store(const std::filesystem::path& dir, const std::vector<TestR
                 u["source"] = "program";
                 p["usage"] = std::move(u);
             }
+            // What it did outside every case (P5.6 within a scope).
+            if (!t.report.steps.empty()) p["steps"] = mcpp::build::test_protocol::steps_json(t.report.steps);
+            if (!t.report.exercised.empty()) p["exercised"] = t.report.exercised;
+            if (!t.report.metrics.empty()) {
+                json ms = json::array();
+                for (auto const& m : t.report.metrics) ms.push_back(mcpp::build::test_protocol::metric_json(m));
+                p["metrics"] = std::move(ms);
+            }
             programs << mcpp::wire::text(p) << "\n";
             if (t.report.cases.empty()) {
                 ++counts[status_of(t)];

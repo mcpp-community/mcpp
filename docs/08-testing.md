@@ -147,8 +147,9 @@ object whole.
 
 A run is kept in the form of the mtest store (2026.11.9.1+): `target/mtest/`
 holds `runs/<id>/run.json`, a line per process in `programs.ndjson` (its
-status, duration, start, worker and selected cases, and the program's `usage` when it reported
-one) and a line per case in `cases.ndjson` (its kind, tags, start after the run began, failures
+status, duration, start, worker and selected cases, the program's `usage` when it reported
+one, and the steps, used items and metrics it wrote outside every case, as a suite's body does,
+2026.11.21.1+) and a line per case in `cases.ndjson` (its kind, tags, start after the run began, failures
 with their expected and actual values, metrics and bounds, 2026.11.10.1+), and `index.ndjson`
 lists the runs. A `Bench` case's measurements are therefore in the store, and `mtest analyze
 trend` shows them beside their bounds over the runs `mcpp test` kept. `mtest store import --from

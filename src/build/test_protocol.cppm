@@ -156,6 +156,13 @@ struct Report {
     std::vector<CaseResult>    cases;          // in the order they began
     std::vector<std::string>   missing;        // P4.1
     Usage                      usage;          // the `usage` event (P10.2)
+    // P5.6 within a scope (mtest 0.11.2): what the program did outside every
+    // case -- a scope's body, which runs because it declares a selected case
+    // and is not itself reported -- written as events that name no case. They
+    // are the program's: a case made of them would be one that never ended.
+    std::vector<Step>          steps;
+    std::vector<std::string>   exercised;
+    std::vector<Metric>        metrics;
     // A case that began and did not end failed, with the program's exit
     // status as its reason (P5.4).
     bool failed() const;
@@ -365,7 +372,7 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
         if (auto s = e.find("samples"); s != e.end() && s->is_array())
             for (const auto& x : *s)
                 if (x.is_number()) m.samples.push_back(x.get<double>());
-        r.cases[case_of(r, open, id)].metrics.push_back(std::move(m));
+        (id.empty() ? r.metrics : r.cases[case_of(r, open, id)].metrics).push_back(std::move(m));
     } else if (kind == "usage") {
         r.usage.set = true;
         if (auto v = e.find("user_ms"); v != e.end() && v->is_number()) r.usage.userMs = v->get<double>();
@@ -404,12 +411,12 @@ take(Report& r, std::map<std::string, std::size_t>& open, const nlohmann::json& 
         if (auto v = e.find("cpu_ms"); v != e.end() && v->is_number()) st.cpuMs = v->get<double>();
         if (auto v = e.find("status"); v != e.end() && v->is_number_integer()) st.status = v->get<int>();
         st.build = text(e, "build");
-        r.cases[case_of(r, open, id)].steps.push_back(std::move(st));
+        (id.empty() ? r.steps : r.cases[case_of(r, open, id)].steps).push_back(std::move(st));
     } else if (kind == "exercise") {
-        auto& c = r.cases[case_of(r, open, id)];
+        auto& into = id.empty() ? r.exercised : r.cases[case_of(r, open, id)].exercised;
         for (auto& item : strings(e, "items"))
-            if (auto at = std::ranges::lower_bound(c.exercised, item); at == c.exercised.end() || *at != item)
-                c.exercised.insert(at, std::move(item));
+            if (auto at = std::ranges::lower_bound(into, item); at == into.end() || *at != item)
+                into.insert(at, std::move(item));
     } else if (kind == "missing") {
         r.missing.push_back(id);
     } else if (kind == "done") {

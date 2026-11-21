@@ -138,7 +138,7 @@
 | `missing` | `id` | P4.1 |
 | `done` | `status`、`counts`（状态到数目的对象） | 末个 |
 
-- **P5.6 步骤与用到的面（mtest >= 0.11.0；mcpp >= 2026.11.21.1）。** 一个用例由若干步骤组成时（端到端用例运行的每条命令），程序**可以**为每个步骤写一个 `step` 事件；运行器把它们按到达顺序归入用例。`exercise` 列出用例用到的产品面的项；运行器把一个用例的各次 `exercise` 合并为一个集合。二者都不影响用例的结论。以作用域运行的用例（P3.4：它声明选中的用例而自身不被报告）的 `step`、`exercise`、`artifact`、`metric` 与 `fixture` 事件**必须**不指名用例（mtest >= 0.11.2），因为运行器没有见到该用例开始，会把它记为没有结束的用例。
+- **P5.6 步骤与用到的面（mtest >= 0.11.0；mcpp >= 2026.11.21.1）。** 一个用例由若干步骤组成时（端到端用例运行的每条命令），程序**可以**为每个步骤写一个 `step` 事件；运行器把它们按到达顺序归入用例。`exercise` 列出用例用到的产品面的项；运行器把一个用例的各次 `exercise` 合并为一个集合。二者都不影响用例的结论。以作用域运行的用例（P3.4：它声明选中的用例而自身不被报告）的 `step`、`exercise`、`artifact`、`metric` 与 `fixture` 事件**必须**不指名用例（mtest >= 0.11.2），因为运行器没有见到该用例开始，会把它记为没有结束的用例。运行器把不指名用例的 `step`、`exercise` 与 `metric` 事件归于程序，写入程序记录的 `steps`、`exercised` 与 `metrics`，不由它们构成用例（mcpp >= 2026.11.21.1）。
 - **mcpp 的面（mcpp >= 2026.11.21.1）。** `mcpp emit surface` 每行写出一项 `<种类> <名字>`：命令（`command emit surface`）、选项（`flag build --target`，全局选项为 `flag --quiet`）取自命令行的定义，键（`key build.cflags`，整张表为 `key toolchain`）取自清单的键登记表，原因（`reason unknown-target`）取自拒绝的原因标记；解析器自己加入的 `--help` 与 `--version` 不是项。环境变量 `MCPP_SURFACE_RECORD` 指明一个文件时，mcpp 的每个进程把它用到的项追加到该文件，每项每进程一次：所给的命令与选项、它读取的清单所陈述的登记表中的键、它记录的原因。测试 kit 把该文件转为用例的 `exercise` 事件。
 - **P5.3** 用例的 `status` 为以下之一：`pass`、`fail`、`skip`（带 `reason`）、`xfail`（如预期地失败）、`xpass`（预期失败却通过；运行失败）、`invalid`（无法判定的测量；P6.3）。
 - **P5.4** 运行器**必须**忽略未知字段与未知事件种类。运行器**必须**接受没有 `done` 的报告（程序崩溃）：有 `begin` 而无 `end` 的用例失败，以程序的退出状态为原因。
@@ -173,7 +173,7 @@
 |---|---|
 | `index.ndjson` | 每次运行一行：去掉程序与用例的运行记录 |
 | `runs/<id>/run.json` | 运行记录：`schema`（`mtest.run/1`）、`id`、`started`、`finished`、`status`、`system`、`arch`、`machine`、`commit`、`set`、`selection`、`group`、`monitor`、`ms`、`jobs`、`counts`；`processors`、`memory`、`budget`、`jitter`（2026.11.21.1） |
-| `runs/<id>/programs.ndjson` | 每个程序进程一行：`name`、`argv`、`status`、`exit`、`ms`、`started_ms`、`worker`、`select`、`resources`、`fixtures`，运行器构建它时的 `build_started_ms` 与 `build_ms`，`usage`（带 `source`：`program` 或 `engine`） |
+| `runs/<id>/programs.ndjson` | 每个程序进程一行：`name`、`argv`、`status`、`exit`、`ms`、`started_ms`、`worker`、`select`、`resources`、`fixtures`，运行器构建它时的 `build_started_ms` 与 `build_ms`，`usage`（带 `source`：`program` 或 `engine`），程序在用例之外的 `steps`、`exercised` 与 `metrics`（P5.6） |
 | `runs/<id>/cases.ndjson` | 每个用例一行：`program`、`id`、`kind`、`status`、`ms`、`started_ms`、`reason`、`failures`、`metrics`、`bounds`、`tags`、`clauses`；`cpu_ms`、`steps`（`step` 事件的字段，`id` 除外）、`exercised`、`limit_ms`（用例所受的时限，O5；未知时省略）（2026.11.21.1） |
 | `runs/<id>/builds.ndjson` | 运行器为这次运行所做的构建（2026.11.21.1）：每条运行过的边一行，`build`（构建记录的标识）、`output`、`package`、`program`（该边所服务的测试程序，可为空）、`started_ms`、`ms`、`cpu_ms`、`peak_bytes`，单元缓存放置的边另有 `served`（`true`，没有编译器运行），为缓存提供的包复制单元的边另有 `staged`（`true`，同样没有编译器运行）；由缓存提供的包一行，`build`、`package`、`cached`（`true`）、`units` |
 | `runs/<id>/fixtures.ndjson` | 每个运行夹具一行：`name`、`program`、`started_ms`、`ready_ms`、`ended_ms`、`status` |

@@ -106,7 +106,7 @@ note，说明有多少文件仍各自是一个程序；它不形成任何组时�
 `[test] link = "objects"` 保留每个目标文件的全部内容。
 
 一次运行以 mtest 存储的形式保存（2026.11.9.1+）：`target/mtest/` 中有 `runs/<id>/run.json`，
-`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例，程序报告时还有 `usage`），`cases.ndjson`
+`programs.ndjson` 每个进程一行（状态、用时、开始时刻、工作线程与所选用例，程序报告时还有 `usage`，以及程序在用例之外（如套件的主体中）写出的步骤、用到的项与度量，2026.11.21.1+），`cases.ndjson`
 每个用例一行（其 kind、tags、相对运行开始的开始时刻、带期望值与实际值的失败、指标与界限，2026.11.10.1+），
 `index.ndjson` 列出各次运行。`Bench` 用例的测量因此留在存储中，`mtest analyze trend` 把它们与其界限一起按
 `mcpp test` 保存的各次运行展示。`mtest store import --from target/mtest` 把它们取入 mtest 的存储，
