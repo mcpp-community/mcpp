@@ -1141,6 +1141,7 @@ export std::string root_position_key(
     field("bmi_schedule", b.bmiSchedule);
     field("private_fragment", b.privateFragment);
     field("jobs", b.jobs);
+    field("memory_threshold", b.memoryThreshold);
     field("cache", b.cacheMode);
     field("allow_host_libs", b.allowHostLibs ? "1" : "0");
     field("platform_dependencies", b.platformDependencies);
