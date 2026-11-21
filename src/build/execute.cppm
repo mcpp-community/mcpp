@@ -5788,7 +5788,8 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
             std::filesystem::path dir;
             ~OwnedBudget() { std::error_code ec; if (!dir.empty()) std::filesystem::remove_all(dir, ec); }
         } ownedBudget{nestedBudget ? std::filesystem::path{} : budgetDir};
-        auto take_slot = [&](int workerId) -> std::pair<std::string, std::optional<mcpplibs::os::fs::lock>> {
+        // `forTest`: the worker has a test to run and waits until a slot is free.
+        auto take_slot = [&](int workerId, bool forTest = false) -> std::pair<std::string, std::optional<mcpplibs::os::fs::lock>> {
             if (nestedBudget && workerId == 0 && !outerHeld.empty()) return {outerHeld, std::nullopt};
             std::vector<std::filesystem::path> slots;
             std::error_code ec;
@@ -5806,21 +5807,40 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 // this run ends: the first worker ran the whole list on the held slot, and the
                 // others waited for a slot forever (measured: a `mcpp test` inside a case of a
                 // four-worker shard ran out its 600 s).
-                if (next.load() >= list.size()) return {{}, std::nullopt};
+                if (!forTest && next.load() >= list.size()) return {{}, std::nullopt};
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         };
 
         auto worker = [&](int workerId) {
-            auto [slotFile, slotLock] = take_slot(workerId);
+            auto taken = take_slot(workerId);
+            std::string slotFile = std::move(taken.first);
+            std::optional<mcpplibs::os::fs::lock> slotLock = std::move(taken.second);
+            // A WORKER THAT WAITS AT THE GATE HOLDS NO SLOT (P7.1 with O11): the test that holds
+            // the machine has the budget's slots, its worker's and those of the workers that wait
+            // for it. Measured: with each worker keeping its slot while it waited, the build of a
+            // test that holds the machine ran on the one slot its worker held, one compiler at a
+            // time (cases 234 and 860 on four processors). In a budget of its own the run has a
+            // slot per worker, so one given back is found again; inside another runner's budget a
+            // slot given back may stay another's until that run ends, and the worker keeps it.
+            const auto pass_gate = [&](auto& gate) {
+                if (nestedBudget) { gate.lock(); return; }
+                if (gate.try_lock()) return;
+                slotLock.reset();
+                slotFile.clear();
+                gate.lock();
+                auto again = take_slot(workerId, /*forTest=*/true);
+                slotFile = std::move(again.first);
+                slotLock = std::move(again.second);
+            };
             for (;;) {
                 std::size_t i = next.fetch_add(1);
                 if (i >= list.size()) return;
                 auto& r = list[i];
                 std::unique_lock<std::shared_mutex> holdsMachine(machineGate, std::defer_lock);
                 std::shared_lock<std::shared_mutex> besideOthers(machineGate, std::defer_lock);
-                if (r.alone) holdsMachine.lock();
-                else besideOthers.lock();
+                if (r.alone) pass_gate(holdsMachine);
+                else pass_gate(besideOthers);
                 // The schedule, recorded with the result (the mtest store).
                 const auto stamp_schedule = [&, startedAt = std::chrono::steady_clock::now()] {
                     auto& t = results.back();

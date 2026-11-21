@@ -78,7 +78,8 @@ UTest defaults_answer_every_host{"WindowsDefaults/DefaultsAnswerEveryHost", [] {
     // This host's answer is its row's.
     expect(eq(pins::host_default_toolchain(false), pins::kFirstRunNoMsvc));
     expect(eq(pins::host_default_toolchain(true), pins::kFirstRunMsvc));
-    expect(pins::kFirstRun.contains('@'));
+    expect(pins::host_default_toolchain(false).contains('@'));
+    expect(pins::host_default_toolchain(true).contains('@'));
 }};
 
 // The GNU fallback must land on a target mcpp is willing to build for, and

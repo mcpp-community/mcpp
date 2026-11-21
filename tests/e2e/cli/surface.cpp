@@ -30,9 +30,13 @@ E2E surface{"surface", s::home_fixture, [] {
         expect(s::has_line(run({"index", "list"}), R"(^  acme1125 +https://example\.invalid/acme-index\.git)")) << "an added registry is not listed";
         expect(e2e::contains(run({"index", "remove", "acme1125"}), "Removed registry `acme1125`"));
         expect(s::lacks(run({"index", "list"}), "acme1125")) << "a removed registry is still listed";
-        // The home installs from its upstreams by link: nothing here is a copy to replace.
-        expect(e2e::contains(run({"self", "store", "dedupe"}), "no payload here is also in an upstream"));
-        expect(e2e::succeeded(s::mcpp({"self", "store", "dedupe", "--apply"}, dir)));
+        // A payload this home holds that an upstream also has is listed, and --apply replaces it
+        // with a link; then nothing is left to replace. A home that installed every payload by
+        // link answers so at once (a host whose provider copies one answers it after --apply).
+        const auto listed = run({"self", "store", "dedupe"});
+        expect(e2e::contains(listed, "no payload here is also in an upstream") || e2e::contains(listed, "could be links to an upstream's")) << listed;
+        (void)run({"self", "store", "dedupe", "--apply"});
+        expect(e2e::contains(run({"self", "store", "dedupe"}), "no payload here is also in an upstream")) << "--apply left a payload that an upstream has";
         expect(e2e::contains(run({"cache", "clean", "--deps"}), "Cleaned package entries"));
         expect(e2e::contains(run({"cache", "clean", "--tools"}), "Cleaned host tool entries"));
         expect(e2e::contains(run({"self", "config", "--cache-unused-days", "30"}), "cache.unused_days = 30 days"));

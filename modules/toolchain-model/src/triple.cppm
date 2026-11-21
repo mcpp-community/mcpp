@@ -772,8 +772,6 @@ namespace pins {
     // is conditioned on a usable MSVC, and a row that states no condition
     // answers either. A host with no row of its own takes its family's
     // (`linux-*`).
-    inline constexpr std::string_view kFirstRun =
-        first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch);
     inline constexpr std::string_view kFirstRunMsvc =
         first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "msvc");
     inline constexpr std::string_view kFirstRunNoMsvc =

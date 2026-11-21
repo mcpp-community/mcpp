@@ -520,25 +520,16 @@ step2_offline_refusal(PrepareState& state) {
                 pins::install_words(pins::kFirstRunNoMsvc), pins::kFirstRunNoMsvcTarget,
                 pins::kFirstRunNoMsvc,  pins::kFirstRunNoMsvcTarget, release));
         }
-        if constexpr (mcpplibs::os::is_macos || mcpplibs::os::is_windows) {
-            refusal::record(refusal::Code::OfflineDownloadRequired);
-            return std::unexpected(std::format(
-                "no toolchain configured.\n"
-                "       run one of:\n"
-                "         mcpp toolchain install {}\n"
-                "         mcpp toolchain default {}\n"
-                "       {}",
-                pins::install_words(pins::kFirstRunMsvc), pins::kFirstRunMsvc, release));
-        } else {
-            refusal::record(refusal::Code::OfflineDownloadRequired);
-            return std::unexpected(std::format(
-                "no toolchain configured.\n"
-                "       run one of:\n"
-                "         mcpp toolchain install {}\n"
-                "         mcpp toolchain default {}\n"
-                "       {}",
-                pins::install_words(pins::kFirstRun), pins::kFirstRun, release));
-        }
+        // The toolchain the first run would install: this host's row (pins::host_default_toolchain).
+        const auto use = state.native_first_run_spec();
+        refusal::record(refusal::Code::OfflineDownloadRequired);
+        return std::unexpected(std::format(
+            "no toolchain configured.\n"
+            "       run one of:\n"
+            "         mcpp toolchain install {}\n"
+            "         mcpp toolchain default {}\n"
+            "       {}",
+            pins::install_words(use), use, release));
 }
 
 static std::expected<void, std::string>

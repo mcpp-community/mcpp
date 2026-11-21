@@ -146,6 +146,9 @@
   `exercise` or `metric` event that names no case is kept in the program's record (`steps`,
   `exercised`, `metrics`) instead of making a case that never ended, which failed a Windows
   program whose suite probed Visual Studio before its cases.
+- **A test that holds the machine has the budget's slots** (SPEC-017 O11 item 5): a worker of
+  `mcpp test` that waits for the machine gives its slot back, so the build of a `machine` test
+  runs its compilers in parallel instead of on the one slot its worker held.
 - **A compiler's version is what its driver states for machines** (mcpp#989): GCC's
   `-dumpfullversion` (else `-dumpversion`) and clang's `-dumpversion`, not the last number of the
   banner, which read Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` as `3`. A triple's
