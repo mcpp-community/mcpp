@@ -16,6 +16,7 @@ import mcpp.project;
 import mcpp.pm.descriptor;
 import mcpp.toolchain.platform;
 import nlohmann.json;
+import mcpplibs.os.fs;
 
 export namespace mcpp::pm {
 
@@ -48,13 +49,15 @@ struct InstalledManifest {
     bool                     inlineForm = false;
 };
 // What could not be read, without the package's name: the caller says whose
-// descriptor it is. `at` is the manifest that failed to load, when one did.
+// descriptor it is. `at` is the manifest that failed to load, when one did; a
+// path found in the store, so it is written as UTF-8 and never narrowed through
+// the code page (`path::string()` throws there for a name it cannot spell).
 struct ManifestError {
     std::filesystem::path at;
     std::string           message;
     std::string format(std::string_view subject) const {
         return at.empty() ? std::format("{}: {}", subject, message)
-                          : std::format("{} (at '{}'): {}", subject, at.string(), message);
+                          : std::format("{} (at '{}'): {}", subject, mcpplibs::os::fs::utf8(at), message);
     }
 };
 std::expected<InstalledManifest, ManifestError>

@@ -165,9 +165,9 @@ std::expected<Manifest, std::string> read_manifest(const fs::path& dir) {
     std::error_code ec;
     if (!fs::is_regular_file(file, ec))
         return std::unexpected(std::format("{} holds no bundle.toml; it is not a directory `mcpp fetch --to` wrote",
-                                           dir.string()));
+                                           mcpp::home::spelling(dir)));
     auto doc = toml::parse_file(file);
-    if (!doc) return std::unexpected(std::format("{}: {}", file.string(), doc.error().message));
+    if (!doc) return std::unexpected(std::format("{}: {}", mcpp::home::spelling(file), doc.error().message));
     Manifest m;
     m.dir = dir;
     m.format = doc->get_int("mcpp.format").value_or(0);
@@ -242,7 +242,7 @@ write(const fs::path& dirIn, const mcpp::config::GlobalConfig& cfg,
     std::error_code ec;
     const auto dir = fs::absolute(dirIn, ec).lexically_normal();
     fs::create_directories(dir, ec);
-    if (ec) return std::unexpected(std::format("cannot create {}: {}", dir.string(), ec.message()));
+    if (ec) return std::unexpected(std::format("cannot create {}: {}", mcpp::home::spelling(dir), ec.message()));
 
     // The payloads, and the build tool the build ran with unless the machine's
     // is taken: it is installed beside the payloads, not resolved by them.
@@ -253,19 +253,19 @@ write(const fs::path& dirIn, const mcpp::config::GlobalConfig& cfg,
     refs.erase(std::ranges::unique(refs).begin(), refs.end());
     const auto provider = mcpp::provider::open(location_for(cfg, projectRoot));
     if (int rc = provider->download_to(refs, dir); rc != 0)
-        return std::unexpected(std::format("writing the archives to {} failed (provider exit {})", dir.string(), rc));
+        return std::unexpected(std::format("writing the archives to {} failed (provider exit {})", mcpp::home::spelling(dir), rc));
 
     // Each clone at the commit the build used, as one file.
     std::vector<GitEntry> git;
     for (auto const& g : mcpp::effects::git_used()) {
-        const auto commit = git_out({"git", "-C", g.clone.string(), "rev-parse", "HEAD"});
+        const auto commit = git_out({"git", "-C", mcpp::home::spelling(g.clone), "rev-parse", "HEAD"});
         if (commit.empty())
-            return std::unexpected(std::format("{} is not a git clone mcpp can read", g.clone.string()));
-        const auto name = g.clone.filename().string();
+            return std::unexpected(std::format("{} is not a git clone mcpp can read", mcpp::home::spelling(g.clone)));
+        const auto name = mcpp::home::spelling(g.clone.filename());
         const auto rel = std::format("git/{}.bundle", name);
         fs::create_directories(dir / "git", ec);
-        auto r = mcpp::run::execute({"git", "-C", g.clone.string(), "bundle", "create", "--quiet",
-                                     (dir / rel).string(), "HEAD"});
+        auto r = mcpp::run::execute({"git", "-C", mcpp::home::spelling(g.clone), "bundle", "create", "--quiet",
+                                     mcpp::home::spelling(dir / rel), "HEAD"});
         if (r.exit_code != 0)
             return std::unexpected(std::format("`git bundle create` of {} failed:\n{}", g.url, r.output));
         git.push_back({g.url, commit, name, rel});
@@ -285,7 +285,7 @@ write(const fs::path& dirIn, const mcpp::config::GlobalConfig& cfg,
                            toml::escape_string(g.url), toml::escape_string(g.commit),
                            toml::escape_string(g.clone), toml::escape_string(g.file));
     if (!mcpp::home::write_replacing(file, without_own_tables(text) + own))
-        return std::unexpected(std::format("cannot write {}", file.string()));
+        return std::unexpected(std::format("cannot write {}", mcpp::home::spelling(file)));
     return Written{refs.size(), git.size(), size_of(dir)};
 }
 
@@ -297,18 +297,18 @@ open(const fs::path& dirIn, const fs::path& projectRoot, std::span<const std::st
     if (!m) return std::unexpected(m.error());
     if (m->format == 0)
         return std::unexpected(std::format("{}/bundle.toml has no [mcpp] table; `mcpp fetch --to` writes one",
-                                           dir.string()));
+                                           mcpp::home::spelling(dir)));
     if (m->format > kFormat)
         return std::unexpected(std::format("{} was written by a newer mcpp (bundle format {}, this one reads {})\n"
-                                           "  help: `mcpp self update`", dir.string(), m->format, kFormat));
+                                           "  help: `mcpp self update`", mcpp::home::spelling(dir), m->format, kFormat));
     for (auto const& ix : m->indices)
         if (!inside(dir, ix.path))
             return std::unexpected(std::format("{}/bundle.toml: index `{}` names {}, outside the bundle",
-                                               dir.string(), ix.name, ix.path));
+                                               mcpp::home::spelling(dir), ix.name, ix.path));
     for (auto const& g : m->git)
         if (!inside(dir, g.file) || g.clone.empty() || g.clone.find_first_of("/\\") != std::string::npos)
             return std::unexpected(std::format("{}/bundle.toml: the [[git]] entry for {} is malformed",
-                                               dir.string(), g.url));
+                                               mcpp::home::spelling(dir), g.url));
 
     // What the bundle was not written for is said, and the rest goes on: a
     // payload that only another host or target needs is not one this
@@ -316,12 +316,12 @@ open(const fs::path& dirIn, const fs::path& projectRoot, std::span<const std::st
     if (m->host != this_host())
         mcpp::diag::notice(mcpp::diag::Severity::Warning, "bundle-lacks-target", std::format("host\x1f{}", m->host),
             std::format("{} was written on {}, and this machine is {}: its archives may not hold this host's payloads",
-                        dir.string(), m->host, this_host()),
+                        mcpp::home::spelling(dir), m->host, this_host()),
             "write the bundle on a machine of this host");
     for (auto const& t : targets)
         if (!t.empty() && std::ranges::find(m->targets, t) == m->targets.end())
             mcpp::diag::notice(mcpp::diag::Severity::Warning, "bundle-lacks-target", std::format("target\x1f{}", t),
-                std::format("{} was written for {}, not for {}", dir.string(),
+                std::format("{} was written for {}, not for {}", mcpp::home::spelling(dir),
                             m->targets.empty() ? std::string("the host target") : quoted_list(m->targets), t),
                 std::format("write it with `mcpp fetch --to <dir> --target {}`", t));
 
@@ -332,7 +332,7 @@ open(const fs::path& dirIn, const fs::path& projectRoot, std::span<const std::st
         return std::unexpected(std::format(
             "{} does not carry what mcpp.lock records:{}\n"
             "  help: write the bundle again from this lock (`mcpp fetch --to <dir>` on a machine with a network)",
-            dir.string(), list));
+            mcpp::home::spelling(dir), list));
     }
     return static_cast<Bundle>(*m);
 }
@@ -357,7 +357,7 @@ install(const Bundle& b, const mcpp::config::GlobalConfig& cfg, const fs::path& 
             if (mcpp::effects::offline_mode())
                 mcpp::build::refusal::record(mcpp::build::refusal::Code::ArtifactUnavailableOffline);
             return std::unexpected(std::format("installing from {} failed (provider exit {}); "
-                                               "the provider's report is above", b.dir.string(), rc));
+                                               "the provider's report is above", mcpp::home::spelling(b.dir), rc));
         }
     }
     out.packages = b.packages.size();
@@ -370,9 +370,9 @@ install(const Bundle& b, const mcpp::config::GlobalConfig& cfg, const fs::path& 
         if (fs::exists(dest / ".git", ec)) continue;
         fs::remove_all(dest, ec);
         fs::create_directories(dest.parent_path(), ec);
-        auto cl = mcpp::run::execute({"git", "clone", "--quiet", file.string(), dest.string()});
-        if (cl.exit_code == 0) cl = mcpp::run::execute({"git", "-C", dest.string(), "checkout", "--quiet", g.commit});
-        if (cl.exit_code == 0) cl = mcpp::run::execute({"git", "-C", dest.string(), "remote", "set-url", "origin", g.url});
+        auto cl = mcpp::run::execute({"git", "clone", "--quiet", mcpp::home::spelling(file), mcpp::home::spelling(dest)});
+        if (cl.exit_code == 0) cl = mcpp::run::execute({"git", "-C", mcpp::home::spelling(dest), "checkout", "--quiet", g.commit});
+        if (cl.exit_code == 0) cl = mcpp::run::execute({"git", "-C", mcpp::home::spelling(dest), "remote", "set-url", "origin", g.url});
         if (cl.exit_code != 0) {
             fs::remove_all(dest, ec);
             return std::unexpected(std::format("importing the clone of {} failed:\n{}", g.url, cl.output));
