@@ -82,7 +82,9 @@ its `diagnostics` state why; `mcpp.build-database` is such a kind (§8).
 `shown` is `false` for a diagnostic the terminal did not show: a notice said
 once per project that this project was already told of, and a note under
 `--quiet` (2026.11.21.1+). The envelope carries every diagnostic whether or not
-the terminal showed it; a reader is not subject to the terminal's policy.
+the terminal showed it; a reader is not subject to the terminal's policy. A
+command that plans in a directory of its own (`mcpp emit build-database`) reads
+what the project was told and records nothing: the project's tree is unchanged.
 
 Positions are 1-based. `column` counts UTF-8 **bytes**, so it indexes the same
 file mcpp read.

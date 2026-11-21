@@ -85,7 +85,7 @@ UTest a_once_notice_is_said_once_per_project{"DiagNotices/OnceIsSaidOncePerProje
     mcpp::ui::disable_color();
     auto run = [&] {
         dg::reset();
-        dg::set_project_target(target);
+        dg::set_project_target(target, true);
         return stderr_of([] {
             dg::notice(dg::Severity::Note, "build-program/includes-header", "ninja", "ninja is taken from the host");
         });
@@ -106,12 +106,12 @@ UTest a_note_hidden_by_quiet_is_not_marked_as_told{"DiagNotices/QuietNoteIsNotMa
     const auto target = scratch_target("quiet");
     mcpp::ui::disable_color();
     dg::reset();
-    dg::set_project_target(target);
+    dg::set_project_target(target, true);
     mcpp::ui::set_quiet(true);
     (void)stderr_of([] { dg::notice(dg::Severity::Note, "build-program/includes-header", "cmake", "cmake from the host"); });
     mcpp::ui::set_quiet(false);
     dg::reset();
-    dg::set_project_target(target);
+    dg::set_project_target(target, true);
     expect(stderr_of([] {
         dg::notice(dg::Severity::Note, "build-program/includes-header", "cmake", "cmake from the host");
     }).contains("cmake from the host"));
@@ -124,7 +124,7 @@ UTest a_domain_without_a_policy_is_said_every_run{"DiagNotices/AlwaysIsSaidEvery
     mcpp::ui::disable_color();
     for (int i = 0; i < 2; ++i) {
         dg::reset();
-        dg::set_project_target(target);
+        dg::set_project_target(target, true);
         expect(stderr_of([] {
             dg::notice(dg::Severity::Warning, "build/depfile", "a.cpp", "no depfile");
         }).contains("no depfile"));
@@ -138,7 +138,7 @@ UTest a_notice_of_several_subjects_names_the_new_ones{"DiagNotices/SeveralSubjec
     mcpp::ui::disable_color();
     auto run = [&](std::vector<std::string> files) {
         dg::reset();
-        dg::set_project_target(target);
+        dg::set_project_target(target, true);
         return stderr_of([&] {
             dg::notice(dg::Severity::Warning, "build-program/reads-outside", "pkg", files,
                        [](std::string_view phrase) { return std::format("reads {}", phrase); });
@@ -149,6 +149,28 @@ UTest a_notice_of_several_subjects_names_the_new_ones{"DiagNotices/SeveralSubjec
     const auto third = run({"/x/a.hpp", "/x/c.hpp"});
     expect(third.contains("reads /x/c.hpp")) << third;
     expect(!third.contains("a.hpp")) << "only the subject not told of";
+    dg::reset();
+    std::filesystem::remove_all(target.parent_path());
+}};
+
+UTest a_plan_of_its_own_reads_the_record_and_writes_none{"DiagNotices/PlanOfItsOwnWritesNoRecord", [] {
+    // The build database, doctor and publish's plan write nothing of the project: they consult
+    // what it was told, say the rest, and leave target/ as it was.
+    const auto target = scratch_target("readonly");
+    mcpp::ui::disable_color();
+    auto run = [&](bool writes) {
+        dg::reset();
+        dg::set_project_target(target, writes);
+        return stderr_of([] {
+            dg::notice(dg::Severity::Note, "build-program/includes-header", "pkg", "pkg includes a header");
+            dg::remember_project_fact("toolchain:native", "gcc@1");
+        });
+    };
+    expect(run(false).contains("pkg includes a header"));
+    expect(!std::filesystem::exists(target / mcpp::notice::kRecordFile)) << "a plan of its own wrote the record";
+    expect(run(true).contains("pkg includes a header")) << "a plan of its own recorded its notice as told";
+    expect(run(false).empty()) << "a plan of its own did not read what the project was told";
+    expect(dg::project_fact("toolchain:native") == std::optional<std::string>("gcc@1"));
     dg::reset();
     std::filesystem::remove_all(target.parent_path());
 }};

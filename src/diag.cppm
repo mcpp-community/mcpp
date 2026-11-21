@@ -84,8 +84,11 @@ void report(Severity severity, std::string_view domain, std::string_view what,
 
 // The `target/` directory of the project whose record `once` notices consult (mcpp.notice). The
 // first project of a process is kept: a sub-build of the same command does not replace it. Unset
-// (a command outside a project), a `once` notice is said as an `always` one is.
-void set_project_target(const std::filesystem::path& targetDir);
+// (a command outside a project), a `once` notice is said as an `always` one is. `writes`: the
+// command may write the project. A command that plans in a directory of its own (the build
+// database, doctor, publish's plan) reads the record and leaves it unchanged; what it says is
+// kept for the rest of the process only.
+void set_project_target(const std::filesystem::path& targetDir, bool writes);
 
 // A notice about `subject`, said by the policy of its domain: a domain with no row in
 // mcpp.notice is said every time; a `once` domain once per project and subject, and again after
@@ -155,6 +158,7 @@ std::vector<Record> g_closing;  // closing notices, in the order they were repor
 std::vector<Record> g_failure;  // closing notices of a failed run only
 std::optional<mcpp::notice::Record> g_project;  // the project's record of notices, once loaded
 std::filesystem::path g_projectTarget;
+bool g_projectWrites = false;  // the record may be saved (set_project_target)
 std::mutex g_projectLock;
 
 // Identity for deduplication: the whole payload. Two sites reporting the
@@ -182,7 +186,7 @@ std::vector<std::string> untold(std::string_view domain, std::string_view scope,
     std::erase_if(out, [&](const std::string& s) { return g_project->shown(key(s)); });
     if (mark && !out.empty()) {
         for (auto const& s : out) g_project->mark(key(s));
-        (void)g_project->save();
+        if (g_projectWrites) (void)g_project->save();
     }
     return out;
 }
@@ -282,9 +286,11 @@ void print_closing(bool failed) {
     for (auto const& n : notices) mcpp::ui::tip(n.what);
 }
 
-void set_project_target(const std::filesystem::path& targetDir) {
+void set_project_target(const std::filesystem::path& targetDir, bool writes) {
     std::lock_guard lock(g_projectLock);
-    if (g_projectTarget.empty()) g_projectTarget = targetDir;
+    if (!g_projectTarget.empty()) return;
+    g_projectTarget = targetDir;
+    g_projectWrites = writes;
 }
 
 void notice(Severity severity, std::string_view domain, std::string_view subject,
@@ -322,7 +328,7 @@ void remember_project_fact(std::string_view name, std::string_view value) {
         g_project = mcpp::notice::Record::load(g_projectTarget / mcpp::notice::kRecordFile);
     if (g_project->fact(name) == std::optional<std::string>(std::string(value))) return;
     g_project->set_fact(std::string(name), std::string(value));
-    (void)g_project->save();
+    if (g_projectWrites) (void)g_project->save();
 }
 
 std::vector<Record> take() {
@@ -357,6 +363,7 @@ void reset() {
     std::lock_guard lock(g_projectLock);
     g_project.reset();
     g_projectTarget.clear();
+    g_projectWrites = false;
 }
 
 } // namespace mcpp::diag

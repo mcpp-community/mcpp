@@ -63,7 +63,9 @@
   (mcpp.notice) is said once per project and subject, recorded in `target/.mcpp-notices`, and said
   again after `mcpp clean`. `--verbose` shows a suppressed one marked `(noted before)`; `--quiet`
   hides notes. The build database's diagnostics carry every notice, with `shown: false` for one the
-  terminal did not show (docs/50). `.github/tools/check_diag_sink.sh` keeps notices in the sink.
+  terminal did not show (docs/50); a command that plans in a directory of its own (`mcpp emit
+  build-database`, doctor, publish's plan) reads the record and does not write it.
+  `.github/tools/check_diag_sink.sh` keeps notices in the sink.
 - **A build program's headers are told once**: a program of the project that includes a standard,
   system or package header receives one note per form, with the form that imports it
   (`MCPP_BUILD_PROGRAM_INCLUDES_HEADER`, docs/30 "Headers or modules"); a file its compile reads

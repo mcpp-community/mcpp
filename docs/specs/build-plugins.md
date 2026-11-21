@@ -377,6 +377,7 @@
   引擎给出一条 `note`(`MCPP_BUILD_PROGRAM_INCLUDES_HEADER`),写出推荐的写法(`import std;`;
   `[build-dependencies]` 中 path 包的模块);每种写法一条,列出使用它的各包。这条提示一个工程只说一次,
   记在 `target/.mcpp-notices`,`mcpp clean` 删除 `target/` 后重新说;它不改变构建的结果,不进入任何键。
+  在自己的目录中规划的命令(`mcpp emit build-database`、doctor、`mcpp publish` 的规划)读取该记录而不写入。
   写法从程序的文本读出。(**已实现**,mcpp 2026.11.21.1)
 - **R10.9** 程序的编译读取限于它的包、它的 `[build-dependencies]` 与 store。之外的文件由构建警告
   (`MCPP_BUILD_PROGRAM_READS_OUTSIDE`),按包与文件一个工程只说一次;`mcpp publish` 规划该包,拒绝包目录

@@ -631,9 +631,12 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     state.workRoot =
         state.overrides.work_dir.empty() ? *state.root : state.overrides.work_dir;
     // The project whose record `once` notices consult: the project's own `target/`, whatever
-    // directory this plan writes into (the build database plans in one of its own). A nested
-    // prepare -- the build programs' sub-build, a tool's provisioning -- is not a project.
-    if (state.overrides.tool_depth == 0) mcpp::diag::set_project_target(*state.root / "target");
+    // directory this plan writes into. A plan in a directory of its own (the build database,
+    // doctor, publish's plan) writes nothing of the project, so it reads the record and does
+    // not save it. A nested prepare -- the build programs' sub-build, a tool's provisioning --
+    // is not a project.
+    if (state.overrides.tool_depth == 0)
+        mcpp::diag::set_project_target(*state.root / "target", state.overrides.work_dir.empty());
     {
         std::error_code wdEc;
         std::filesystem::create_directories(state.workRoot, wdEc);
