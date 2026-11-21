@@ -84,9 +84,8 @@ E2E bundle{"bundle", s::home_fixture, [] {
         const s::options there{.env = {{"MCPP_HOME", home.string()}, {"MCPP_VENDORED_XLINGS", xlings.string()},
                                        {"MCPP_OFFLINE", std::nullopt}, {"MCPP_ARCHIVES", std::nullopt}}};
         auto without_network = [&](std::vector<std::string> args, s::options o) {
-            auto c = s::mcpp_command(std::move(args), q.dir(), o);
-            if (unshare) c.argv.insert(c.argv.begin(), {unshare->string(), "-rn"});
-            return s::as_text(e2e::run(c));
+            if (unshare) o.wrap = {unshare->string(), "-rn"};
+            return q.mcpp(std::move(args), o);
         };
         r = without_network({"fetch", "--from", dir.string(), "--offline"}, there);
         expect(fatal(e2e::succeeded(r))) << "mcpp fetch --from failed without a network\n" << s::text(r);
@@ -114,6 +113,12 @@ E2E bundle{"bundle", s::home_fixture, [] {
         expect(fatal(failed(r))) << "[build] offline = true reached for the network\n" << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "`offline = false` in mcpp.toml [build]"))) << "the refusal does not name the manifest's key\n" << s::text(r);
         q.write("mcpp.toml", manifest);
+
+        // A target the bundle was not written for is said.
+        r = without_network({"fetch", "--from", dir.string(), "--offline", "--target", "aarch64-linux-musl"}, there);
+        expect(fatal(r.started)) << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "was written for the host target, not for aarch64-linux-musl")))
+            << "a target the bundle lacks was not said\n" << s::text(r);
 
         // A lock the bundle is older than: refused before anything is installed.
         auto lock = q.read("mcpp.lock");

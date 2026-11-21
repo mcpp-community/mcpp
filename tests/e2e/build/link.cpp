@@ -585,6 +585,21 @@ platform = { path = "../plat" }
         expect(fatal(e2e::succeeded(r))) << "the lld build failed\n" << s::text(r);
         expect(s::lacks(s::text(r), "platform.link] flags")) << "an lld link was warned\n" << s::text(r);
     };
+
+    "1140 a link removes the companions of its artifact an earlier link left"_test[s::unix_shell] = [] {
+        // A row's companions (`.wasm` beside an emscripten `.js`, design 2026-11-15 N33) are
+        // written by some links and not by others: the link edge (`link-output --companions`)
+        // removes them before the linker runs, so none outlives the link that wrote it.
+        const auto d = s::case_dir();
+        std::ofstream(d / "app.js") << "old";
+        std::ofstream(d / "app.wasm") << "stale";
+        std::ofstream(d / "app.data") << "kept";
+        auto r = s::mcpp({"link-output", "--output", "app.js", "--companions", ".wasm", "--", "sh", "-c", "printf new > app.js"}, d);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(fatal(!fs::exists(d / "app.wasm"))) << "the companion an earlier link left survived the link";
+        expect(fatal(fs::exists(d / "app.data"))) << "a file the row does not name as a companion was removed";
+        expect(fatal(s::read_file(d / "app.js") == "new")) << "the linker did not run";
+    };
 }};
 
 }  // namespace

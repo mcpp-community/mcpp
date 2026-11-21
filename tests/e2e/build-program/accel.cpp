@@ -203,6 +203,31 @@ int main() {{
         expect(s::lacks(s::text(again), "the configuration changed")) << "equivalent sets changed the fingerprint";
         expect(e2e::succeeded(p.mcpp({"run", "--accel", "sycl+{sm_89,sm_90},newmodel2+{opaque}"}, home))) << "the canonical variant did not run";
     };
+
+    "1134 a test run and a build database are planned for the accelerator named"_test[s::gcc] = [] {
+        // `--accel` selects the device variant for `mcpp test` and `mcpp emit build-database` as
+        // for `mcpp build`: the variant's `cfg(accelerator)` layer reaches the test's compile and
+        // the database's arguments, and without the flag it does not.
+        s::project p{{"mcpp.toml", "[package]\nname = \"accel-plan\"\nversion = \"0.1.0\"\n\n"
+                                   "[target.'cfg(accelerator = \"sycl\")'.build]\ndefines = [\"ACCEL_SYCL\"]\n"},
+                     {"src/main.cpp", "int main() { return 0; }\n"},
+                     {"tests/device.cpp", "#ifdef ACCEL_SYCL\nint main() { return 0; }\n#else\nint main() { return 1; }\n#endif\n"}};
+        const std::string request = "sycl+{sm_90}";
+        auto r = p.mcpp({"test"});
+        expect(fatal(r.started && r.status != 0)) << "the CPU variant's test saw the device layer\n" << s::text(r);
+        r = p.mcpp({"test", "--accel", request});
+        expect(fatal(e2e::succeeded(r))) << "the device variant's test did not see its layer\n" << s::text(r);
+        expect(e2e::contains(s::text(r), "device ... ok")) << s::text(r);
+        const auto database = [&](std::vector<std::string> extra) {
+            std::vector<std::string> args{"emit", "build-database", "--format", "json"};
+            args.insert(args.end(), extra.begin(), extra.end());
+            auto d = p.mcpp(args);
+            expect(fatal(e2e::succeeded(d))) << s::text(d);
+            return d.out;
+        };
+        expect(e2e::contains(database({"--accel", request}), "-DACCEL_SYCL")) << "the database of the device variant lacks its layer";
+        expect(s::lacks(database({}), "-DACCEL_SYCL")) << "the database of the CPU variant carries the device layer";
+    };
 }};
 
 }  // namespace

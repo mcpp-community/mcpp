@@ -502,10 +502,14 @@ bmi_schedule = "on"
         std::ofstream(pub / "publish.sh", std::ios::binary) << "rm published.gcm\nsleep 0.2\nprintf 'new BMI' > next.gcm\nmv next.gcm published.gcm\nsleep 0.05\nprintf object > unit.o\n";
         const auto bash = s::env("BASH").value_or(s::on_path("bash").value_or("bash").string());
         std::ofstream(pub / "command.txt", std::ios::binary) << std::format("\"{}\" publish.sh\n", bash);
-        (void)s::mcpp({"bmi-compile", "--bmi", "published.gcm", "--slot", "unit", "--self", s::mcpp_path(), "--command-file", "command.txt"}, pub);
+        // Given a semaphore and a cap, as a driver other than the graph's states them, the
+        // compile takes its permit there.
+        (void)s::mcpp({"bmi-compile", "--bmi", "published.gcm", "--slot", "unit", "--self", s::mcpp_path(),
+                       "--sem", "permits", "--cap", "1", "--command-file", "command.txt"}, pub);
         const bool published = fs::is_regular_file(pub / "published.gcm");
         (void)s::mcpp({"bmi-await", "--slot", "unit", "--object", "unit.o"}, pub);
         expect(fatal(published)) << "phase 1 released an importer while the BMI was absent";
+        expect(fatal(fs::exists(pub / "permits/slot-0.lock"))) << "the compile given a semaphore took no permit in it";
         expect(fatal(s::read_file(pub / "published.gcm") == "new BMI")) << "phase 1 did not wait for the new BMI";
         std::ofstream(pub / "command.txt", std::ios::binary) << std::format("\"{}\" -c \"rm published.gcm\"\n", bash);
         r = s::mcpp({"bmi-compile", "--bmi", "published.gcm", "--slot", "unit", "--self", s::mcpp_path(), "--command-file", "command.txt"}, pub);

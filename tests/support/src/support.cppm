@@ -187,6 +187,9 @@ struct options {
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     std::string input;
     std::chrono::milliseconds timeout{std::chrono::minutes{10}};
+    // A program and its arguments mcpp runs under (`unshare -rn`, a network namespace of its own),
+    // so that a command run so is the case's like any other: its use of the surface is recorded.
+    std::vector<std::string> wrap;
 };
 
 // mcpp with `args`, in `cwd`.

@@ -382,6 +382,55 @@ int main() {
         const auto again = s::text(app.mcpp({"build"}));
         expect(fatal(s::lacks(again, "require one another in a circle"))) << "a one-way requirement was refused: " << again;
     };
+
+    "1136 a build that refuses platform dependencies names the one its graph brings"_test[s::gcc] = [] {
+        // `[build] platform-dependencies = "refuse"`: a path dependency that provides
+        // `platform-sdk` is refused by name; without it the build proceeds.
+        const auto tmp = s::case_dir();
+        s::project sdk(tmp / "sdk", {{"mcpp.toml", "[package]\nname = \"sdk\"\nversion = \"0.1.0\"\nprovides = [\"platform-sdk\"]\n\n[targets.sdk]\nkind = \"lib\"\n"},
+                                     {"src/sdk.cppm", "export module sdk;\nexport int sdk_v() { return 1; }\n"}});
+        const std::string manifest = "[package]\nname = \"closure\"\nversion = \"0.1.0\"\n\n[build]\nplatform-dependencies = \"refuse\"\n";
+        s::project app(tmp / "app", {{"mcpp.toml", manifest + "\n[dependencies]\nsdk = { path = \"../sdk\" }\n"},
+                                     {"src/main.cpp", "int main() { return 0; }\n"}});
+        auto r = app.mcpp({"build"});
+        expect(fatal(!r)) << "a platform dependency was taken under refuse\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "the dependency graph brings a platform dependency: sdk@0.1.0"))) << s::text(r);
+        app.write("mcpp.toml", manifest);
+        r = app.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "a graph with no platform dependency was refused\n" << s::text(r);
+    };
+
+    "1137 a c library's declaration is checked against what the compiler measures"_test[s::gcc][s::elf] = [] {
+        // A C library from the graph declares its [c-abi]; the build measures the compiler's
+        // predefined macros for the declaration's tokens and compares. The measure is cached in
+        // the home by the compiler's identity; a cached measure that differs -- as a compiler
+        // whose `long` is four bytes would answer -- is refused, naming the quantity, both values
+        // and the target, before anything compiles.
+        s::own_home();
+        const auto tmp = s::case_dir();
+        s::project(tmp / "libc", {{"mcpp.toml", "[package]\nname = \"fakelibc\"\nversion = \"0.1.0\"\nprovides = [\"mcpp:c-abi=fakelibc\"]\n\n"
+                                                "[targets.fakelibc]\nkind = \"lib\"\nsources = [\"src/*.c\"]\n\n"
+                                                "[c-abi]\npresents   = \"posix\"\ndata-model = \"arch-default\"\nwchar      = 32\n"},
+                                  {"src/lib.c", "int fakelibc_marker(void) { return 0; }\n"}});
+        s::project app(tmp / "app", {{"mcpp.toml", "[package]\nname = \"cenv\"\nversion = \"0.1.0\"\n\n[dependencies]\nfakelibc = { path = \"../libc\" }\n\n"
+                                                   "[build]\nallow_host_libs = true\n\n[targets.cenv]\nkind = \"lib\"\n"},
+                                     {"src/lib.cpp", "int cenv_v() { return 0; }\n"}});
+        auto r = app.mcpp({"emit", "build-database", "--format", "json"});
+        expect(fatal(e2e::succeeded(r))) << "the declaration the compiler agrees with was refused\n" << s::text(r);
+        const auto measures = s::find_files(s::case_home() / "build-cache/v1/cenv-probe", R"(.*\.dm)");
+        expect(fatal(measures.size() == 1u)) << "the measure is not cached once in the home: " << measures.size();
+        auto text = s::read_file(measures.front());
+        const std::string eight = "#define __SIZEOF_LONG__ 8";
+        const auto at = text.find(eight);
+        expect(fatal(at != std::string::npos)) << "the measure holds no eight-byte long\n" << text;
+        text.replace(at, eight.size(), "#define __SIZEOF_LONG__ 4");
+        std::ofstream(measures.front(), std::ios::binary) << text;
+        r = app.mcpp({"build"});
+        expect(fatal(!r)) << "a declaration the measure contradicts was taken\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "the C library's [c-abi] declaration does not match what the compiler actually produced")))
+            << s::text(r);
+        expect(fatal(s::has_line(s::text(r), R"(sizeof\(long\) +declared 8 +measured 4)"))) << "the refusal does not name the quantity and both values\n" << s::text(r);
+    };
 }};
 
 }  // namespace

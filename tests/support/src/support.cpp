@@ -288,10 +288,14 @@ namespace {
 // THE SURFACE A COMMAND USED (design 2026-11-20 §5.16, SPEC-017 P5.6). mcpp appends the items it
 // used -- the command and flags it was given, the manifest keys it read, the reasons it recorded --
 // to the file MCPP_SURFACE_RECORD names; the case states them as its `exercise`, which the ledger
-// of the surface reads. Placed first, so that a case that names its own record keeps it.
+// of the surface reads. Every command the kit composes has a record, placed first, so that a case
+// that names its own record keeps it: `mcpp()` states its command's when it ends, and the case's
+// end states the rest -- the commands a case ran as a session, under another program, or by its
+// own means from `mcpp_command`.
+constexpr std::string_view kRecordPrefix = ".surface-";
 fs::path surface_record() {
     static std::atomic<unsigned> n{0};
-    return case_dir() / std::format(".surface-{}", n++);
+    return case_dir() / std::format("{}{}", kRecordPrefix, n++);
 }
 void report_surface(const fs::path& record) {
     std::error_code ec;
@@ -304,6 +308,13 @@ void report_surface(const fs::path& record) {
     }
     fs::remove(record, ec);
     if (!items.empty()) mcpplibs::mtest::exercise({items.begin(), items.end()});
+}
+void report_remaining_surface() {
+    std::error_code ec;
+    std::vector<fs::path> records;
+    for (const auto& e : fs::directory_iterator(case_dir(), ec))
+        if (e.path().filename().string().starts_with(kRecordPrefix)) records.push_back(e.path());
+    for (const auto& r : records) report_surface(r);
 }
 }  // namespace
 
@@ -348,8 +359,7 @@ void declare_diagnostics() {
 e2e::outcome mcpp(std::vector<std::string> args, const fs::path& cwd, const options& o) {
     auto c = mcpp_command(std::move(args), cwd, o);
     declare_diagnostics();
-    const auto record = surface_record();
-    c.env.insert(c.env.begin(), {"MCPP_SURFACE_RECORD", record.string()});
+    const fs::path record = *c.env.front().second;
     auto r = as_text(e2e::run(std::move(c)));
     report_surface(record);
     return r;
@@ -359,9 +369,12 @@ std::optional<home> own_home_of_case();  // below, with the case's directories
 
 e2e::command mcpp_command(std::vector<std::string> args, const fs::path& cwd, const options& o) {
     e2e::command c;
+    c.argv = o.wrap;
     c.argv.push_back(mcpp_path());
     for (auto& a : args) c.argv.push_back(std::move(a));
     c.cwd = cwd;
+    c.env.emplace_back("MCPP_SURFACE_RECORD", surface_record().string());
+    mcpplibs::mtest::at_case_end("mcpp.test.support.surface", report_remaining_surface);
     const auto where = o.where == home::shared ? own_home_of_case().value_or(home::shared) : o.where;
     if (where != home::shared) {
         c.env.emplace_back("MCPP_HOME", case_home(where).string());

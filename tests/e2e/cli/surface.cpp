@@ -178,6 +178,9 @@ archives = ["{}"]
         auto r = ws.mcpp({"fetch", "--workspace", "--exclude", "b"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(s::lacks(s::text(r), "member 'b'")) << "an excluded member was fetched for\n" << s::text(r);
+        r = ws.mcpp({"fetch", "--package", "a"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(e2e::contains(s::text(r), "member 'a'") && s::lacks(s::text(r), "member 'b'")) << "--package a fetched for another member\n" << s::text(r);
         r = ws.mcpp({"publish", "--workspace", "--exclude", "b", "--dry-run"});
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(e2e::contains(r.out, "name = \"a\"") && s::lacks(r.out, "name = \"b\"")) << "the excluded member was published\n" << r.out;

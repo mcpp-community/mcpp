@@ -105,9 +105,9 @@ E2E homes{"homes", s::home_fixture, [] {
         const auto run = [&](std::vector<std::string> args, std::optional<int> expected = std::nullopt, bool offline = true) {
             auto e = env;
             if (!offline) e.emplace_back("MCPP_OFFLINE", std::nullopt);
-            args.insert(args.begin(), s::mcpp_path());
-            auto p = e2e::run({.argv = args, .cwd = root, .env = e, .timeout = std::chrono::seconds{15}});
-            if (expected) expect(fatal(p.started && p.status == *expected)) << args[1] << " " << (args.size() > 2 ? args[2] : "") << ": exit " << p.status << ", expected " << *expected << "\n" << p.out << p.err;
+            const auto what = args[0] + (args.size() > 1 ? " " + args[1] : "");
+            auto p = s::mcpp(std::move(args), root, {.env = std::move(e), .timeout = std::chrono::seconds{15}});
+            if (expected) expect(fatal(p.started && p.status == *expected)) << what << ": exit " << p.status << ", expected " << *expected << "\n" << p.out << p.err;
             return p;
         };
         const auto home_of = [&] { return s::json(run({"self", "env", "--format", "json"}, 0).out)["data"]; };
