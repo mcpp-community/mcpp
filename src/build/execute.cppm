@@ -5760,6 +5760,12 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                     if (auto l = mcpplibs::os::fs::lock::acquire(f, mcpplibs::os::fs::lock::kind::exclusive, false))
                         return {mcpp::home::spelling(f), std::move(*l)};
                 if (slots.empty()) return {{}, std::nullopt};
+                // A worker that waits for a slot while the others have taken every test has none
+                // to run. Inside another runner's budget every other slot can stay held until
+                // this run ends: the first worker ran the whole list on the held slot, and the
+                // others waited for a slot forever (measured: a `mcpp test` inside a case of a
+                // four-worker shard ran out its 600 s).
+                if (next.load() >= list.size()) return {{}, std::nullopt};
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         };
