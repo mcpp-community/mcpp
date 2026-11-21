@@ -116,8 +116,9 @@ E2E trees{"trees", s::home_fixture, timeout{std::chrono::minutes{40}}, [] {
         const std::string t = std::string(host_arch) + "-openkal";
         s::project app({{"mcpp.toml", "[package]\nname    = \"uni\"\nversion = \"0.1.0\"\n"},
                         {"src/main.cpp", "import std;\nint main(int argc, char** argv) {\n    try { throw std::runtime_error(\"universal\"); }\n    catch (const std::exception& e) { std::println(\"{} {} args\", e.what(), argc); }\n    return 0;\n}\n"}});
-        // A
-        auto r = app.mcpp({"pack", "--target", "openkal", "--pkg-format", "dir"});
+        // A. The first pack builds the openkal set for both architectures: beyond ten minutes on a
+        // four-processor Linux runner whose other tests share the run's budget (CI, 2026-11-21).
+        auto r = app.mcpp({"pack", "--target", "openkal", "--pkg-format", "dir"}, {.timeout = std::chrono::minutes{30}});
         expect(fatal(e2e::succeeded(r))) << "A: pack: " << s::text(r);
         const auto p = app.at("target/dist/uni-0.1.0-openkal");
         for (std::string_view f : {"lib/x86_64/uni.oke", "lib/aarch64/uni.oke", "bin/uni", "bin/uni.exe", "mcpp-package.json"})

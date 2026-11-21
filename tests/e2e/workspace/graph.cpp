@@ -405,8 +405,16 @@ export int consumer_flag_v() {
         auto clean = [&] {
             for (std::string d : {"target", "pa/target", "pb/target", "pc/target"}) fs::remove_all(ws.at(d));
         };
+        // What A measures is the programs' compiles alone. The first build of the case's home
+        // also compiles the engine's module (`import mcpp`) into the home's cache, and under
+        // clang its code generation may continue after its interface is published, holding a
+        // slot of the budget: on three processors the three compiles then did not all overlap
+        // (macOS, CI 2026-11-21). A later build stages the module from the cache.
         auto r = ws.mcpp({"build", "--workspace", "-j", "4"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build at -j 4: " << s::text(r);
+        clean();
+        r = ws.mcpp({"build", "--workspace", "-j", "4"}, inherited);
+        expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build again at -j 4: " << s::text(r);
         long latest_start = 0, earliest_end = std::numeric_limits<long>::max();
         for (std::string m : {"pa", "pb", "pc"}) {
             const auto sp = span(m);
@@ -414,7 +422,13 @@ export int consumer_flag_v() {
             latest_start = std::max(latest_start, sp->first);
             earliest_end = std::min(earliest_end, sp->second);
         }
-        expect(fatal(latest_start < earliest_end)) << "A: the compiles did not overlap at -j 4 (latest start " << latest_start << ", earliest end " << earliest_end << ")";
+        const auto graph_rows = [&] {
+            std::string text;
+            for (const auto& log : s::find_files(ws.at("target/.build-mcpp/host"), R"(\.ninja_log)"))
+                for (const auto& row : ninja_rows(log)) text += std::format("\n  {} {} {}", row[0], row[1], row[3]);
+            return text;
+        };
+        expect(fatal(latest_start < earliest_end)) << "A: the compiles did not overlap at -j 4 (latest start " << latest_start << ", earliest end " << earliest_end << "); the graph's steps:" << graph_rows();
         const auto order = ran(s::text(r), "p[abc]");
         expect(fatal(order.size() == 3u)) << "A: expected three programs to run, got " << order.size() << ": " << s::text(r);
         clean();

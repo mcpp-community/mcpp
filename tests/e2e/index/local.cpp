@@ -16,8 +16,16 @@ using env_list = std::vector<std::pair<std::string, std::optional<std::string>>>
 // The home of the case over the machine's payloads (_inherit_toolchain.sh), with `more` set.
 s::options inherited(env_list more = {}) { return {.where = s::home::inherited, .env = std::move(more)}; }
 
-// `[xlings] binary` and `home` in the home's config.toml, as the scripts wrote it.
+// `[xlings] binary` and `home` in the home's config.toml, as the scripts wrote it. The default
+// toolchain is the one the home already has (a first build persisted it), else the gcc this machine
+// holds: the fake xlings installs nothing but the package a case asks for.
 void fake_xlings_config(const fs::path& home, const fs::path& binary, const fs::path& xlings_home) {
+    std::string toolchain = std::format("gcc@{}", s::gcc_version());
+    if (fs::exists(home / "config.toml")) {
+        const auto text = s::read_file(home / "config.toml");
+        std::smatch m;
+        if (std::regex_search(text, m, std::regex{R"re(\[toolchain\][^\[]*\ndefault *= *"([^"]+)")re"})) toolchain = m[1].str();
+    }
     s::project(home, {{"config.toml", std::format(R"([xlings]
 binary = "{}"
 home = "{}"
@@ -35,8 +43,8 @@ search_ttl_seconds = 3600
 default_jobs = 0
 
 [toolchain]
-default = "gcc@16.1.0"
-)", binary.generic_string(), xlings_home.generic_string())}});
+default = "{}"
+)", binary.generic_string(), xlings_home.generic_string(), toolchain)}});
 }
 
 constexpr std::string_view handshake = R"HS([[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; })HS";
