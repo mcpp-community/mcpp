@@ -337,6 +337,9 @@ void merge_layer_root_position(mcpp::manifest::Manifest& member,
             if (auto it = layer.toolchain.lineByPlatform.find(platform);
                 it != layer.toolchain.lineByPlatform.end())
                 tc.lineByPlatform[platform] = it->second;
+            if (auto it = layer.toolchain.companionsByPlatform.find(platform);
+                it != layer.toolchain.companionsByPlatform.end())
+                tc.companionsByPlatform[platform] = it->second;
             tc.fileByPlatform[platform] = wsManifest;
         }
     }

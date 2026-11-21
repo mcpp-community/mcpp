@@ -640,6 +640,10 @@ struct PrepareState {
     // end compares, so a lock another run wrote meanwhile is not overwritten.
     std::filesystem::path lockReadPath;
     std::optional<std::string> lockReadText;   // nullopt: there was no file
+    // The version the toolchain the project states resolved to, for the lock to
+    // record (SPEC-006 §2.7); none when the project states none, or when
+    // `--locked` keeps the lock as it is.
+    std::optional<mcpp::pm::LockedToolchain> toolchainLocked;
     CacheMode cacheMode{};
 
     // ── P1: toolchain spec resolution, target axis, L1 cfg merge ────────────

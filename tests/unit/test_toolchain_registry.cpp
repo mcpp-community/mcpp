@@ -760,3 +760,22 @@ UTest no_llvm_pin_comes_from_another_payload{"RequiredFamilyPins/NoLlvmPinComesF
         expect(ne(v, pinned_row_version("emsdk")));
     }
 }};
+
+// THE ONE RESOLUTION OF A TOOLCHAIN REQUEST (SPEC-006 §2.6): a partial version is the newest
+// release of the index it is a prefix of, whatever is installed; a prerelease only by its full
+// key; the installed versions answer only when the index has none.
+UTest a_partial_request_is_the_indexs_newest_release{"ToolchainResolution/PartialIsIndexNewest", [] {
+    const std::vector<std::string> indexed{"15.1.0", "16.1.0", "16.2.0", "17.0.0-20261108"};
+    const std::vector<std::string> installed{"16.1.0"};
+    expect(eq(resolve_toolchain_version("16", indexed, installed).value_or(""), std::string("16.2.0")))
+        << "the installed 16.1.0 answered a request the index answers with 16.2.0";
+    expect(eq(resolve_toolchain_version("16.1", indexed, installed).value_or(""), std::string("16.1.0")));
+    expect(eq(resolve_toolchain_version("16.2.0", indexed, installed).value_or(""), std::string("16.2.0")));
+    expect(eq(resolve_toolchain_version("17", indexed, installed).value_or("none"), std::string("none")))
+        << "a prerelease answered a partial request";
+    expect(eq(resolve_toolchain_version("17.0.0-20261108", indexed, installed).value_or(""),
+              std::string("17.0.0-20261108")));
+    expect(eq(resolve_toolchain_version("16", {}, installed).value_or(""), std::string("16.1.0")))
+        << "with no index, the newest installed answers";
+    expect(!resolve_toolchain_version("14", indexed, installed).has_value());
+}};

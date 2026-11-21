@@ -149,6 +149,63 @@ list_available_xpkg_versions(const mcpp::config::GlobalConfig& cfg,
     return {};
 }
 
+// THE ONE RESOLUTION OF A TOOLCHAIN REQUEST (mcpp#988; design 2026-11-21,
+// offline and toolchain defaults §3.4). `mcpp toolchain install`, `mcpp
+// toolchain default` and a build all ask it, and it gives one answer: a
+// partial version (`gcc@16`, `gcc@16.2`) is the newest RELEASE of the local
+// index that it is a prefix of, installed when it is not; a prerelease
+// (`17.0.0-20261108`) is selected only by its full key. They answered three
+// ways before -- the index's newest, the newest installed, and whatever the
+// payload manager kept active -- so `gcc@16` built with one version and was
+// installed as another. With no readable index (offline, or never synced) the
+// newest installed version answers, and the build says it did less.
+//
+// `installed` is the versions this home holds. Returns the version, or none
+// when neither the index nor the home has a match.
+export
+std::optional<std::string>
+resolve_toolchain_version(std::string_view requested,
+                          const std::vector<std::string>& indexed,
+                          const std::vector<std::string>& installed,
+                          std::string_view what = {})
+{
+    auto is_prerelease = [](std::string_view v) { return v.find('-') != std::string_view::npos; };
+    auto candidates = [&](const std::vector<std::string>& from) {
+        std::vector<std::string> out;
+        for (auto const& v : from)
+            if (v == requested || !is_prerelease(v)) out.push_back(v);
+        return out;
+    };
+    if (std::ranges::find(indexed, requested) != indexed.end()
+        || std::ranges::find(installed, requested) != installed.end())
+        return std::string(requested);
+    if (!indexed.empty()) return resolve_version_match(requested, candidates(indexed));
+    auto picked = resolve_version_match(requested, candidates(installed));
+    if (picked && !what.empty() && *picked != requested)
+        mcpp::diag::degraded("toolchain/resolution", std::format(
+            "{} was resolved among the installed versions to {}: the local index has no entry for it",
+            what, *picked),
+            "a newer release in the index, if there is one, is not considered",
+            "run `mcpp index update` with network, or state the full version");
+    return picked;
+}
+
+// The same, for a spec: its version resolved against this home's index and store.
+export
+mcpp::toolchain::ToolchainSpec
+resolve_toolchain_spec(const mcpp::config::GlobalConfig& cfg, const mcpp::toolchain::ToolchainSpec& spec)
+{
+    auto pkg = mcpp::toolchain::to_xim_package(spec);
+    if (pkg.ximName.empty()) return spec;
+    const auto store = mcpp::provider::open(mcpp::config::make_xlings_env(cfg))->store();
+    if (auto picked = resolve_toolchain_version(pkg.ximVersion,
+                                                list_available_xpkg_versions(cfg, pkg.ximName),
+                                                list_installed_versions(store, pkg.ximName),
+                                                spec.spec_str()))
+        return mcpp::toolchain::with_resolved_xim_version(spec, *picked);
+    return spec;
+}
+
 // ─── M4 #3: mcpp remove / mcpp update ───────────────────────────────────
 // `cmd_remove` and `cmd_update` have moved to `mcpp.pm.commands` (PR-R5).
 
@@ -1023,16 +1080,10 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
-        // Partial-version resolution: `gcc 15` → highest available 15.x.y in
-        // the synced index. Empty version → latest of any major.
-        if (auto picked = resolve_version_match(
-                pkg.ximVersion, list_available_xpkg_versions(cfg, pkg.ximName))) {
-            if (*picked != pkg.ximVersion) {
-                mcpp::ui::info("Resolved",
-                    std::format("{} → {}@{}", spec->spec_str(),
-                                mcpp::toolchain::family_name(spec->family), *picked));
-            }
-            spec = mcpp::toolchain::with_resolved_xim_version(*spec, *picked);
+        // The one resolution of a request (resolve_toolchain_spec).
+        if (auto resolved = resolve_toolchain_spec(cfg, *spec); resolved.version != spec->version) {
+            mcpp::ui::info("Resolved", std::format("{} → {}", spec->spec_str(), resolved.spec_str()));
+            spec = resolved;
             pkg = mcpp::toolchain::to_xim_package(*spec);
         }
 
@@ -1237,12 +1288,10 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
 
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
-        // Partial-version resolution against installed payloads.
-        if (auto picked = resolve_version_match(
-                pkg.ximVersion, list_installed_versions(pkgsDir, pkg.ximName))) {
-            spec = mcpp::toolchain::with_resolved_xim_version(*spec, *picked);
-            pkg = mcpp::toolchain::to_xim_package(*spec);
-        }
+        // The one resolution of a request (resolve_toolchain_spec): the same
+        // version `mcpp toolchain install` and a build select.
+        spec = resolve_toolchain_spec(cfg, *spec);
+        pkg = mcpp::toolchain::to_xim_package(*spec);
 
         auto installDir = mcpp::provider::open(xlEnv)->pinned(pkg.ximName, pkg.ximVersion);
         // A RESOLVABLE COMPILER, not a directory that exists. A removal that

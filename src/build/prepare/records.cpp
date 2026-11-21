@@ -118,6 +118,18 @@ static std::optional<mcpp::lockfile::LockedTarget> lock_targets(const PrepareSta
     return priorTarget;
 }
 
+// THE VERSION THE STATED TOOLCHAIN RESOLVED TO (SPEC-006 §2.7), into `lock`,
+// and the other requests' as the lock had them: another configuration's
+// toolchain, and one a build under `--locked` resolved without recording.
+static void lock_toolchains(const PrepareState& state, mcpp::lockfile::Lockfile& lock) {
+    auto const& now = state.toolchainLocked;
+    if (auto prior = mcpp::lockfile::load(state.workRoot / "mcpp.lock"))
+        for (auto const& t : prior->toolchains)
+            if (!now || t.request != now->request) lock.toolchains.push_back(t);
+    if (now) lock.toolchains.push_back(*now);
+    std::ranges::sort(lock.toolchains, {}, &mcpp::lockfile::LockedToolchain::request);
+}
+
 // The drift line of a request the lock gave another identity, if it did.
 static std::optional<std::string> target_drift(const PrepareState& state,
                                                const std::optional<mcpp::lockfile::LockedTarget>& prior) {
@@ -477,7 +489,8 @@ std::expected<void, std::string> step13_lockfile(PrepareState& state, BuildConte
         // One order whichever configuration wrote the file last: by identity.
         std::ranges::stable_sort(lock.packages, {}, [](auto const& p) { return lock_identity(p); });
         const auto priorTarget = lock_targets(state, lock);
-        if (!lock.packages.empty() || !lock.indices.empty()) {
+        lock_toolchains(state, lock);
+        if (!lock.packages.empty() || !lock.indices.empty() || !lock.toolchains.empty()) {
             auto lockPath = state.workRoot / "mcpp.lock";
             // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
             //

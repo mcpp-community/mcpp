@@ -665,6 +665,7 @@ a program classifying the outcome reads `reason`:
 | `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
 | `build-program-unpublished-input` | `mcpp publish`: the package's build program reads a file its archive does not carry -- one outside the package's directory, or one HEAD does not track (2026.11.21.1+) |
+| `companion-too-old` | a companion stated beside the toolchain (`companions = { binutils = … }`) is older than the one the toolchain's payload declares (SPEC-006 §2.9) |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
 | `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index *(2026.9.16.1+)* |

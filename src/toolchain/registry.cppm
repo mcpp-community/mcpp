@@ -1275,6 +1275,7 @@ std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) 
     }
 
     if (!is_musl_target(tc)) {
+        if (!tc.binutilsDir.empty()) return tc.binutilsDir / std::string(name);
         if (auto binutilsBin = mcpp::toolchain::gcc::find_binutils_bin(tc.binaryPath))
             return *binutilsBin / std::string(name);
     }

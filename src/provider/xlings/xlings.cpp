@@ -19,6 +19,9 @@ import mcpp.ui;                 // closing notices of the refresh guard
 import mcpp.diag;
 import mcpp.home;
 import mcpp.xpkg_version;
+import mcpp.version_req;
+import mcpp.manifest.xpkg;      // the runtime deps a payload's descriptor declares
+import mcpp.toolchain.platform; // ...for this host
 import nlohmann.json;
 import mcpplibs.os.fs;
 
@@ -597,30 +600,31 @@ subos_dir_of(const std::filesystem::path& compilerBin) {
     return home / "subos" / "default";
 }
 
+namespace {
+std::optional<std::filesystem::path>
+companion_dir(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+              std::string_view packageName, std::string_view requiredRelPath, bool anyPrefix);
+std::optional<std::string>
+declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+                     std::string_view packageName);
+} // namespace
+
 std::optional<std::filesystem::path>
 find_sibling_tool(const std::filesystem::path& compilerBin,
                   std::string_view tool) {
     auto xpkgs = xpkgs_from_compiler(compilerBin);
     if (!xpkgs) return std::nullopt;
 
-    auto root = *xpkgs / std::format("xim-x-{}", tool);
-    std::error_code ec;
-    if (!std::filesystem::exists(root, ec)) return std::nullopt;
+    return companion_dir(*xpkgs, compilerBin, tool, {}, /*anyPrefix=*/false);
+}
 
-    // The first version dir readdir yields. ORDER IS UNDEFINED -- this does
-    // NOT return the highest, and the comment that said so was wrong for as
-    // long as it stood. With two versions installed the answer varies by
-    // filesystem, so a caller that needs a SPECIFIC version must name it;
-    // see probe.cppm, where the version comes from the resolved runtime
-    // binding rather than from this scan.
-    //
-    // A test asserting the old "highest" claim was attempted and removed: it
-    // passed or failed by directory order, which makes both outcomes
-    // uninformative.
-    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        if (v.is_directory(ec)) return v.path();
-    }
-    return std::nullopt;
+std::optional<std::string>
+declared_dependency(const std::filesystem::path& compilerBin, std::string_view packageName) {
+    auto xpkgs = xpkgs_from_compiler(compilerBin);
+    if (!xpkgs) return std::nullopt;
+    auto r = declared_requirement(*xpkgs, compilerBin, packageName);
+    if (r && r->empty()) return std::nullopt;
+    return r;
 }
 
 std::optional<std::filesystem::path> active_home_xpkgs() {
@@ -669,25 +673,108 @@ bool payload_dir_qualifies(const std::filesystem::path& versionDir,
     return true;
 }
 
-// Scan an xpkgs root across index prefixes (xim-x-, scode-x-, compat-x-, …)
-// for the first qualifying version dir of `packageName`.
-std::optional<std::filesystem::path>
-find_package_in_xpkgs(const std::filesystem::path& xpkgs,
-                      std::string_view packageName,
-                      std::string_view requiredRelPath) {
+// The qualifying version directories of `packageName` in `xpkgs`: under
+// `xim-x-` alone, or under every index prefix (`xim-x-`, `scode-x-`, …).
+std::vector<std::filesystem::path>
+payload_versions(const std::filesystem::path& xpkgs, std::string_view packageName,
+                 std::string_view requiredRelPath, bool anyPrefix) {
+    std::vector<std::filesystem::path> out;
     std::error_code ec;
-    std::string suffix = std::format("-x-{}", packageName);
+    const std::string suffix = std::format("-x-{}", packageName);
     for (auto& entry : std::filesystem::directory_iterator(xpkgs, ec)) {
-        if (!entry.is_directory(ec)) continue;
-        auto name = entry.path().filename().string();
-        if (!name.ends_with(suffix)) continue;
-        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec)) {
-            if (!v.is_directory(ec)) continue;
-            if (payload_dir_qualifies(v.path(), requiredRelPath))
-                return v.path();
+        const auto name = entry.path().filename().string();
+        if (!entry.is_directory(ec) || !name.ends_with(suffix)) continue;
+        if (!anyPrefix && name != "xim" + suffix) continue;
+        for (auto& v : std::filesystem::directory_iterator(entry.path(), ec))
+            if (v.is_directory(ec) && payload_dir_qualifies(v.path(), requiredRelPath))
+                out.push_back(v.path());
+    }
+    return out;
+}
+
+// What the payload `compilerBin` belongs to declares for `packageName` on this
+// host: the requirement of its descriptor's runtime dependency
+// (`xim:binutils@2.42.1` gives `2.42.1`), none when it declares none.
+std::optional<std::string>
+declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+                     std::string_view packageName) {
+    if (compilerBin.empty()) return std::nullopt;
+    const auto rel = compilerBin.lexically_relative(xpkgs);
+    if (rel.empty() || *rel.begin() == "..") return std::nullopt;
+    const auto dirName = rel.begin()->string();
+    const auto dash = dirName.find("-x-");
+    if (dash == std::string::npos) return std::nullopt;
+    const auto owner = dirName.substr(dash + 3);
+    for (const auto& file : descriptor_candidates(xpkgs.parent_path(), owner)) {
+        std::ifstream in(file);
+        if (!in) continue;
+        const std::string body((std::istreambuf_iterator<char>(in)), {});
+        for (const auto& dep : mcpp::manifest::xpkg_runtime_deps(
+                 body, mcpp::toolchain::platform::HostPlatform::current())) {
+            std::string_view d = dep;
+            if (auto colon = d.find(':'); colon != std::string_view::npos) d.remove_prefix(colon + 1);
+            const auto at = d.find('@');
+            if (d.substr(0, at) != packageName) continue;
+            return at == std::string_view::npos ? std::string{} : std::string(d.substr(at + 1));
         }
+        return std::nullopt;
     }
     return std::nullopt;
+}
+
+// THE ONE CHOICE AMONG A STORE'S VERSIONS OF A COMPANION (design 2026-11-21,
+// offline and toolchain defaults §3.5). The version the compiler's payload
+// declares: its exact key, or the newest that satisfies a requirement
+// (`>=2.39`). Without a declaration (no compiler, or a payload that names no
+// such dependency), the newest. Every picker of this file took the first
+// directory the walk returned: with binutils 2.42 and 2.42.1 in one store the
+// build took 2.42, which GCC's recipe does not declare and whose `ld` does not
+// see the subos's libraries, or 2.42.1, by the filesystem's order. A declared
+// version the store does not hold is reported: the build would otherwise take
+// another and say nothing.
+std::optional<std::filesystem::path>
+companion_dir(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+              std::string_view packageName, std::string_view requiredRelPath, bool anyPrefix) {
+    namespace vr = mcpp::version_req;
+    const auto dirs = payload_versions(xpkgs, packageName, requiredRelPath, anyPrefix);
+    const auto declared = declared_requirement(xpkgs, compilerBin, packageName);
+    std::optional<vr::Requirement> req;
+    if (declared && !declared->empty()) {
+        for (const auto& d : dirs)
+            if (d.filename() == *declared) return d;
+        if (vr::is_constraint(*declared))
+            if (auto r = vr::parse_req(*declared)) req = *r;
+        if (!req) {
+            mcpp::diag::degraded("toolchain/companion", std::format(
+                "the toolchain at {} declares {}@{}, which this store does not hold",
+                compilerBin.string(), packageName, *declared),
+                std::format("{} is not used: the build may assemble, link or include with another or with none",
+                            packageName),
+                "install the toolchain again (`mcpp toolchain install`), which installs what it declares");
+            return std::nullopt;
+        }
+    }
+    std::optional<std::filesystem::path> best;
+    std::optional<vr::Version> bestVersion;
+    for (const auto& d : dirs) {
+        auto v = vr::parse_version(d.filename().string());
+        if (!v || (req && !vr::matches(*req, *v))) continue;
+        if (!bestVersion || *bestVersion < *v) { best = d; bestVersion = *v; }
+    }
+    if (req && !best) {
+        mcpp::diag::degraded("toolchain/companion", std::format(
+            "the toolchain at {} declares {}@{}, and no version this store holds satisfies it",
+            compilerBin.string(), packageName, *declared),
+            std::format("{} is not used: the build may assemble, link or include with another or with none",
+                        packageName),
+            "install the toolchain again (`mcpp toolchain install`), which installs what it declares");
+        return std::nullopt;
+    }
+    if (best) return best;
+    // No key parses as a version: the newest by name, still not the walk's order.
+    for (const auto& d : dirs)
+        if (!best || best->filename() < d.filename()) best = d;
+    return best;
 }
 
 } // namespace
@@ -696,7 +783,7 @@ std::optional<std::filesystem::path>
 find_home_tool(std::string_view tool, std::string_view requiredRelPath) {
     auto xpkgs = active_home_xpkgs();
     if (!xpkgs) return std::nullopt;
-    return find_package_in_xpkgs(*xpkgs, tool, requiredRelPath);
+    return companion_dir(*xpkgs, {}, tool, requiredRelPath, /*anyPrefix=*/true);
 }
 
 std::optional<std::filesystem::path>
@@ -706,16 +793,9 @@ find_sibling_binary(const std::filesystem::path& compilerBin,
     auto xpkgs = xpkgs_from_compiler(compilerBin);
     if (!xpkgs) return std::nullopt;
 
-    auto root = *xpkgs / std::format("xim-x-{}", tool);
-    std::error_code ec;
-    if (!std::filesystem::exists(root, ec)) return std::nullopt;
-
-    for (auto& v : std::filesystem::directory_iterator(root, ec)) {
-        auto candidate = v.path() / std::string(binaryRelPath);
-        if (std::filesystem::exists(candidate, ec))
-            return candidate;
-    }
-    return std::nullopt;
+    auto dir = companion_dir(*xpkgs, compilerBin, tool, binaryRelPath, /*anyPrefix=*/false);
+    if (!dir) return std::nullopt;
+    return *dir / std::string(binaryRelPath);
 }
 
 std::optional<std::filesystem::path>
@@ -726,7 +806,7 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     if (!xpkgs) return std::nullopt;
 
     // Search across index prefixes: xim-x-, scode-x-, compat-x-, etc.
-    if (auto found = find_package_in_xpkgs(*xpkgs, packageName, requiredRelPath))
+    if (auto found = companion_dir(*xpkgs, compilerBin, packageName, requiredRelPath, /*anyPrefix=*/true))
         return found;
 
     // THE `~/.xlings` FALLBACK IS GONE, AND ITS REMOVAL IS THE POINT.
@@ -756,6 +836,22 @@ find_sibling_package(const std::filesystem::path& compilerBin,
 
 std::filesystem::path index_data(const Env& env) {
     return env.home / "data";
+}
+
+std::vector<std::filesystem::path>
+descriptor_candidates(const std::filesystem::path& data, std::string_view name) {
+    std::vector<std::filesystem::path> out;
+    if (name.empty()) return out;
+    const std::string subdir(1, name[0]), fname = std::string(name) + ".lua";
+    out.push_back(data / "xim-pkgindex" / "pkgs" / subdir / fname);
+    std::error_code ec;
+    std::vector<std::filesystem::path> repos;
+    for (auto it = std::filesystem::directory_iterator(data / "xim-index-repos", ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec))
+        if (it->is_directory(ec)) repos.push_back(it->path());
+    std::ranges::sort(repos);
+    for (const auto& r : repos) out.push_back(r / "pkgs" / subdir / fname);
+    return out;
 }
 
 namespace {

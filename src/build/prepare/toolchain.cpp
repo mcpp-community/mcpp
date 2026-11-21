@@ -61,6 +61,7 @@ import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.ui;
 import mcpp.invocation;
+import mcpp.version_req;
 
 namespace mcpp::build {
 
@@ -1710,6 +1711,69 @@ step2_use_system_msvc(PrepareState& state) {
         return {};
 }
 
+// A TOOLCHAIN NOBODY STATED FOR THIS BUILD MOVED (SPEC-006 §2.8): the
+// machine's default or mcpp's answers another version than the one this
+// project last built with. Said once per change, with the statement that keeps
+// the old one; the first build of a project, and the first after `mcpp clean`,
+// has nothing to compare with and says nothing.
+static void notice_default_toolchain_change(PrepareState& state, const mcpp::toolchain::ToolchainSpec& spec) {
+    const std::string fact = std::format("toolchain:{}",
+        state.overrides.target_triple.empty() ? std::string("native") : state.overrides.target_triple);
+    const std::string now = spec.spec_str();
+    const auto before = mcpp::diag::project_fact(fact);
+    mcpp::diag::remember_project_fact(fact, now);
+    if (!before || *before == now) return;
+    const std::string statement = state.overrides.target_triple.empty()
+        ? std::format("[toolchain] default = \"{}\"", *before)
+        : std::format("[target.{}] toolchain = \"{}\"", state.overrides.target_triple, *before);
+    mcpp::diag::notice(mcpp::diag::Severity::Note, "toolchain/default-changed",
+        std::format("{} -> {}", *before, now),
+        std::format("{} is now {}; this project last built with {}", state.tcSpecSource(), now, *before),
+        std::format("to keep a version, state it in mcpp.toml: {}", statement));
+}
+
+// THE ONE RESOLUTION OF THE REQUEST, AND THE LOCK OF ONE THE PROJECT STATES
+// (SPEC-006 §2.6, §2.7; mcpp#988). The version is what `mcpp toolchain install` and
+// `mcpp toolchain default` answer for the same request
+// (resolve_toolchain_spec). A partial version the project's mcpp.toml states
+// is recorded in mcpp.lock and read back from it, so `gcc@16` stays on one
+// release until `mcpp update`; a full version is its own record and writes
+// none, so a project that states one gains no lock. One that `--toolchain` or a
+// consumer chose for this build is resolved and neither recorded nor compared;
+// the machine's and mcpp's defaults are followed, and their change is said
+// once. Under `--locked` the lock is kept as it is: a lock written before the
+// record has none, and the build resolves and says so rather than refusing,
+// so an upgrade does not fail a CI that asserts its lock.
+static void step2_resolve_request_version(PrepareState& state, const mcpp::config::GlobalConfig& cfg,
+                                          mcpp::toolchain::ToolchainSpec& spec) {
+    const auto pkg = mcpp::toolchain::to_xim_package(spec);
+    if (pkg.ximName.empty()) return;
+    const std::string request = std::format("xim:{}@{}", pkg.ximName, pkg.ximVersion);
+    const bool chosenForThisBuild = state.overrides.tool_depth != 0 || state.tcFromCommandLine
+                                    || state.tcFromConsumer;
+    const bool stated = !chosenForThisBuild
+        && (state.tcOrigin == TcOrigin::ManifestToolchain || state.tcOrigin == TcOrigin::TargetSection);
+    const bool defaulted = !chosenForThisBuild
+        && (state.tcOrigin == TcOrigin::GlobalDefault || state.tcOrigin == TcOrigin::TargetPin
+            || state.tcOrigin == TcOrigin::FirstRun);
+    std::optional<mcpp::pm::LockedToolchain> recorded;
+    if (stated && !state.lockReadPath.empty())
+        if (auto lock = mcpp::pm::load(state.lockReadPath))
+            for (auto const& t : lock->toolchains)
+                if (t.request == request) recorded = t;
+    spec = recorded ? mcpp::toolchain::with_resolved_xim_version(spec, recorded->version)
+                    : mcpp::toolchain::resolve_toolchain_spec(cfg, spec);
+    const std::string version = mcpp::toolchain::to_xim_package(spec).ximVersion;
+    if (defaulted) notice_default_toolchain_change(state, spec);
+    if (!stated || version == pkg.ximVersion) return;
+    if (!recorded && mcpp::invocation::get("MCPP_LOCKED").value_or("") == "1")
+        mcpp::diag::note("toolchain/lock", std::format(
+            "mcpp.lock has no record of the toolchain {}; it resolved to {}, and --locked keeps "
+            "the lock as it is (a build without --locked records it)", request, version));
+    else
+        state.toolchainLocked = mcpp::pm::LockedToolchain{ request, version };
+}
+
 static std::expected<void, std::string>
 step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
         auto spec = ctx.parsedSpec;
@@ -1727,6 +1791,9 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
             if (auto t = mcpp::toolchain::triple::parse(state.overrides.target_triple))
                 spec->target = *t;
         }
+        auto cfg = state.get_cfg(true);
+        if (!cfg) return std::unexpected(cfg.error());
+        step2_resolve_request_version(state, **cfg, *spec);
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
         // AND INSTALLED ANYWAY WHEN THE USER DECLARED IT, SKIPPED ONLY WHEN
@@ -1766,8 +1833,6 @@ step2_resolve_explicit_spec(PrepareState& state, ToolchainResolveCtx& ctx) {
             !state.unservedTargetDiagnosis.empty() && !spec->target.empty()
             && !tc_origin_is_user_explicit(state.tcOrigin);
 
-        auto cfg = state.get_cfg(true);
-        if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         mcpp::ui::info("Resolving", "toolchain");
@@ -2421,6 +2486,60 @@ step2_musl_default_static_linkage(PrepareState& state) {
     }
 }
 
+// THE BINUTILS THE PROJECT STATES BESIDE ITS GCC (SPEC-006 §2.9):
+// `default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`
+// replaces the binutils the payload declares. Binutils is the driver's
+// assembler and linker, and GCC probed the assembler's features when it was
+// built: one older than the one the payload declares may not assemble what
+// that GCC emits, so it is refused. Only a statement of the project's
+// mcpp.toml has companions; `--toolchain` names a spec without them.
+static std::expected<void, std::string> step2_stated_companions(PrepareState& state) {
+    if (state.tcOrigin != TcOrigin::ManifestToolchain || state.tcFromCommandLine || state.tcFromConsumer
+        || state.overrides.tool_depth != 0 || !state.tc)
+        return {};
+    const auto* stated = state.m->toolchain.companions_for(kCurrentPlatform);
+    if (!stated) return {};
+    for (auto const& [name, ref] : *stated) {
+        if (state.tc->compiler != mcpp::toolchain::CompilerId::GCC)
+            return std::unexpected(std::format(
+                "[toolchain].{}: companions.{} = \"{}\" is stated for {}, which is not a GCC; "
+                "binutils is GCC's assembler and linker", kCurrentPlatform, name, ref, state.tc->label()));
+        auto cfg = state.get_cfg(true);
+        if (!cfg) return std::unexpected(cfg.error());
+        mcpp::fetcher::Fetcher fetcher(**cfg);
+        mcpp::fetcher::InstallProgressHandler progress;
+        const std::string target = ref.find(':') == std::string::npos ? "xim:" + ref : ref;
+        auto payload = fetcher.resolve_xpkg_path(target, mcpp::fetcher::PayloadIntent::Use, &progress);
+        if (!payload)
+            return std::unexpected(std::format("[toolchain].{}: companions.{} = \"{}\": {}",
+                                               kCurrentPlatform, name, ref, payload.error().message));
+        const auto bin = payload->root / "bin";
+        std::error_code ec;
+        if (!std::filesystem::exists(bin / "as", ec))
+            return std::unexpected(std::format(
+                "[toolchain].{}: companions.{} = \"{}\" has no assembler at {}",
+                kCurrentPlatform, name, ref, (bin / "as").string()));
+        const std::string version = payload->root.filename().string();
+        const auto declared = mcpp::provider::declared_dependency(state.tc->binaryPath, name);
+        if (declared && declared->find_first_of("0123456789") != std::string::npos) {
+            namespace vr = mcpp::version_req;
+            auto have = vr::parse_version(version);
+            auto floor = vr::parse_version(std::string_view(*declared).substr(declared->find_first_of("0123456789")));
+            if (have && floor && *have < *floor) {
+                refusal::record(refusal::Code::CompanionTooOld);
+                return std::unexpected(std::format(
+                    "[toolchain].{}: companions.{} = \"{}\" is older than the {} {}'s payload declares ({}): "
+                    "GCC chose its assembler features by that binutils when it was built\n"
+                    "       help: state binutils {} or newer, or remove `companions` to use the declared one",
+                    kCurrentPlatform, name, ref, name, state.tc->label(), *declared, *declared));
+            }
+        }
+        state.tc->binutilsDir = bin;
+        mcpp::ui::info("Companion", std::format("{} {} ({})", name, version, bin.string()));
+    }
+    return {};
+}
+
 std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& state) {
     state.resolve_target_toolchain = [&]() -> std::expected<void, std::string> {
       ToolchainResolveCtx ctx;
@@ -2491,6 +2610,7 @@ std::expected<void, std::string> phase2_define_toolchain_resolver(PrepareState& 
       if (auto r = step2_detect_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_apply_local_toolchain(state); !r) return std::unexpected(r.error());
       if (auto r = step2_retarget_for_retargetable_driver(state); !r) return std::unexpected(r.error());
+      if (auto r = step2_stated_companions(state); !r) return std::unexpected(r.error());
       if (auto r = step2_paired_system(state); !r) return std::unexpected(r.error());
       if (auto r = step2_bind_msvc_toolset(state); !r) return std::unexpected(r.error());
       if (auto r = step2_resolve_base(state); !r) return std::unexpected(r.error());

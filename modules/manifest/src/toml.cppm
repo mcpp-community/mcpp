@@ -472,6 +472,43 @@ read_local_toolchain(const mcpp::libs::toml::Value& val) {
     return lt;
 }
 
+// The companions a toolchain may state: the binutils GCC assembles and links
+// with. The kernel headers belong to the target's `kernel-abi` layer, not to
+// the toolchain.
+inline constexpr std::string_view kToolchainCompanions[] = { "binutils" };
+
+// One `[toolchain]` entry naming a managed toolchain by table:
+// `{ package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`.
+inline std::expected<std::pair<std::string, std::vector<Toolchain::Companion>>, std::string>
+read_package_toolchain(const mcpp::libs::toml::Value& val) {
+    std::pair<std::string, std::vector<Toolchain::Companion>> out;
+    for (auto const& [k, v] : val.as_table()) {
+        if (k == "package") {
+            if (!v.is_string() || v.as_string().empty())
+                return std::unexpected(std::string("`package` must be a managed spec such as \"gcc@16.2.0\""));
+            out.first = v.as_string();
+        } else if (k == "companions") {
+            if (!v.is_table())
+                return std::unexpected(std::string(
+                    "`companions` must be a table, e.g. `companions = { binutils = \"xim:binutils@2.47\" }`"));
+            for (auto const& [name, ref] : v.as_table()) {
+                if (std::ranges::find(kToolchainCompanions, std::string_view(name)) == std::end(kToolchainCompanions))
+                    return std::unexpected(std::format(
+                        "companions.{} is not a companion of a toolchain; the companion is binutils "
+                        "(kernel headers are the target's: [target.<triple>] layers = {{ kernel-abi = … }})", name));
+                if (!ref.is_string() || ref.as_string().find('@') == std::string::npos)
+                    return std::unexpected(std::format(
+                        "companions.{} must be a package with its version, e.g. \"xim:{}@<version>\"", name, name));
+                out.second.push_back({ name, ref.as_string() });
+            }
+        } else {
+            return std::unexpected(std::format(
+                "unknown key '{}'; a table naming a managed toolchain has `package` and `companions`", k));
+        }
+    }
+    return out;
+}
+
 // An entry's value, split into the part that names a version and the tier that
 // part belongs to.
 //
@@ -3105,6 +3142,19 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         "[toolchain].bootstrap must be a managed spec like \"llvm@22.1.8\""));
                 m.toolchain.bootstrap     = val.as_string();
                 m.toolchain.bootstrapLine = static_cast<int>(val.position.line);
+                continue;
+            }
+            // `{ package = "<spec>", companions = { … } }`: a managed spec
+            // and the companions that replace the ones its payload declares
+            // (SPEC-006 §2.9).
+            if (val.is_table() && val.as_table().contains("package")) {
+                auto stated = read_package_toolchain(val);
+                if (!stated) return std::unexpected(error(origin,
+                    std::format("[toolchain].{}: {}", platform, stated.error())));
+                m.toolchain.byPlatform[platform] = stated->first;
+                m.toolchain.lineByPlatform[platform] = static_cast<int>(val.position.line);
+                if (!stated->second.empty())
+                    m.toolchain.companionsByPlatform[platform] = std::move(stated->second);
                 continue;
             }
             if (val.is_table()) {

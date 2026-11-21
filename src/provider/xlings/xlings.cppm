@@ -343,6 +343,11 @@ namespace paths {
                          std::string_view packageName,
                          std::string_view requiredRelPath = {});
 
+    // The requirement on `packageName` the payload `compilerBin` belongs to
+    // declares as a runtime dependency on this host (`2.42.1`, `>=2.39`).
+    std::optional<std::string>
+    declared_dependency(const std::filesystem::path& compilerBin, std::string_view packageName);
+
     // xpkgs root of the ACTIVE mcpp home ($MCPP_HOME or ~/.mcpp). Payload
     // discovery consults this in addition to compiler siblings: an
     // inherited/symlinked compiler resolves into its owner home, while the
@@ -358,6 +363,11 @@ namespace paths {
 
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
+
+    // Where the descriptor of `name` may be under an index data root: the
+    // primary index first, then each sub-index by name.
+    std::vector<std::filesystem::path>
+    descriptor_candidates(const std::filesystem::path& data, std::string_view name);
 
     // ── Where each index is, and where its payloads go (design 2026-10-16
     // §5): an `index_repos` entry may name its own data directory and store

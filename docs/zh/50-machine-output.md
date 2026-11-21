@@ -592,6 +592,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `device-source-unconsumed` | 一个设备类源文件没有到达任何 action，因此没有任何东西编译它 |
 | `host-module-missing` | `build.mcpp` 导入的模块，没有任何依赖以 host module 的形式提供 |
 | `build-program-unpublished-input` | `mcpp publish`：包的构建程序读到了包的归档不含的文件——包目录之外的文件，或 HEAD 未跟踪的文件（2026.11.21.1+） |
+| `companion-too-old` | 工具链旁写明的配套载荷（`companions = { binutils = … }`）低于工具链载荷声明的版本（SPEC-006 §2.9） |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的两个版本上 |
 | `shared-library-cxx-runtime` | 图所在的构建中，C++ 运行时是一个包，而某个依赖的 C++ 共享库没有声明私有副本 |
 | `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引 *(2026.9.16.1+)* |

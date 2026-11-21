@@ -101,6 +101,21 @@
   vendor field is any word, as GNU config.sub reads it (`x86_64-redhat-linux` is
   `x86_64-linux-gnu`); a toolchain whose target mcpp cannot read is reported as a degradation
   instead of applying none of the target's settings in silence.
+- **A toolchain request has one answer** (mcpp#988, SPEC-006 §2.6 to §2.8, docs/20). A partial
+  version (`gcc@16`) is the newest release of the local index whose version it is a prefix of, in
+  `mcpp toolchain install`, `mcpp toolchain default` and a build alike; `toolchain default` took the
+  newest installed version and a build the one the payload manager kept active. A partial version
+  `mcpp.toml` states is recorded in `mcpp.lock` (`[toolchain."xim:gcc@16"]`) and read back until
+  `mcpp update`; under `--locked` a lock without the record is kept as it is and the build says so.
+  A project that states no toolchain is told once when the default it follows answers another
+  toolchain than the one it last built with.
+- **A toolchain's companions are the versions its payload declares** (mcpp#990, SPEC-006 §2.9).
+  binutils, the kernel headers and GCC's runtime were the first version a directory walk of the
+  store returned: with binutils 2.42 and 2.42.1 installed, GCC 16.1.0 built with 2.42, which its
+  recipe does not declare. The version is now the one the payload's descriptor declares, else the
+  newest, and a declared one the store lacks is reported. `default = { package = "gcc@…",
+  companions = { binutils = "xim:binutils@…" } }` states another binutils; an older one than the
+  declared is refused (`companion-too-old`).
 - **The command line's `@` selects by the written prefix** (SPEC-001 §4.5): `--template
   mcpplibs.mwrap.slint@1.19.0` selects the newest key 1.19.0.x (it refused, as no key is
   `1.19.0`); `@=<key>` selects one key, `@^1.19` is a requirement, and an exact miss names the

@@ -213,6 +213,10 @@ enum class Code {
     // track -- so the consumer's copy of `build.mcpp` cannot be compiled
     // (design 2026-11-21, build programs' inputs §3.4).
     BuildProgramUnpublishedInput,
+    // A companion the project states beside its toolchain (`companions =
+    // { binutils = … }`) is older than the one the toolchain's payload
+    // declares (SPEC-006 §2.9).
+    CompanionTooOld,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -277,6 +281,7 @@ constexpr std::string_view name(Code c) {
                                          return "platform-phase-directive";
         case Code::BuildProgramUnpublishedInput:
                                          return "build-program-unpublished-input";
+        case Code::CompanionTooOld:      return "companion-too-old";
         case Code::Other:                return "other";
     }
     return "other";

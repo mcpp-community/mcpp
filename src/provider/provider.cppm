@@ -309,6 +309,10 @@ public:
     // `binaryRel` inside a version of the provider-index tool `name` beside `path`.
     virtual std::filesystem::path beside_binary(const std::filesystem::path& path, std::string_view name,
                                                 std::string_view binaryRel) const = 0;
+    // The version of `name` the payload a toolchain at `path` belongs to
+    // declares as a runtime dependency (`2.42.1`, `>=2.39`); empty when it
+    // declares none.
+    virtual std::string declared_dependency(const std::filesystem::path& path, std::string_view name) const = 0;
     // The runtime environment a toolchain at `compiler` belongs to.
     virtual std::filesystem::path environment_of(const std::filesystem::path& compiler) const = 0;
     // The packaging revision recorded in a payload; -1: no record.

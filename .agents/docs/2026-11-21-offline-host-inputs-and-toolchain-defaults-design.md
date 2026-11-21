@@ -131,16 +131,20 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
 - **一个解析函数。** 工具链的请求只有一个解析：部分版本（`gcc@16`、`gcc@16.2`）取**本地索引**中满足它的最新正式发布，
   需要时安装；预发布（`17.0.0-<日期>`）只由完整的版本选中（现状不变）。离线且本地索引不可用时取已安装的最新，并以 `degraded` 说明。
   `toolchain install`、`toolchain default` 与构建调用同一个函数。
-- **写明的请求进入锁。** 工程写明的工具链请求（含部分版本）解析后写入 `mcpp.lock`：请求、解析出的版本与修订、配套载荷的版本
-  （3.5）、宿主输入的身份（3.3）。之后的构建按锁取，`mcpp update` 重新解析。
+- **写明的部分版本进入锁。** 工程写明的部分版本解析后写入 `mcpp.lock` 的 `[toolchain."<请求>"]`，请求写作它所要求的包
+  （`xim:gcc@16`，同一请求在不同目标上对应不同的包），值为解析出的版本。之后的构建按锁取，`mcpp update` 删除记录、重新解析。
+  完整版本即其自身的记录，不写入：一个写明完整版本而没有依赖的工程因此不因升级而多出 `mcpp.lock`。`--toolchain` 与依赖方为宿主
+  工具选择的工具链属于这一次构建，不写入、不比较。
   旧的锁没有工具链的条目：普通的构建写入一次；`--frozen` 与 `--locked` 之下不写锁，按请求解析并以 `note` 说明锁缺少这一条目，
-  不拒绝，使已有的 CI 不因升级而失败。
-- **没有写明的跟随引擎的缺省。** 工程没有写工具链时，取引擎的缺省（四层中的引擎层），不写入锁。缺省因 mcpp 的升级而改变时，
+  不拒绝，使已有的 CI 不因升级而失败。配套载荷（3.5）与宿主输入（3.3）的身份不进入这一条目：前者由工具链载荷的版本与其安装记录
+  决定，后者进入缓存键并按 3.3 提示。
+- **没有写明的跟随缺省。** 工程没有写工具链时，取机器的缺省（`config.toml`，首次运行时由引擎的缺省写入）或目标行的缺省，
+  不写入锁。它所给出的工具链与工程上一次所用的不同时（机器的缺省被改变、引擎的缺省随 mcpp 的升级而改变、目标行的缺省改变），
   一个工程提示一次：
 
   ```
-  note: mcpp 2026.11.21.1 builds with gcc 16.2.0 by default (this project last built with 16.1.0);
-        to keep a version, state it: [toolchain] default = "gcc@16.1.0"
+  note: the default toolchain (`mcpp toolchain default`) is now gcc@16.2.0; this project last built with gcc@16.1.0
+    help: to keep a version, state it in mcpp.toml: [toolchain] default = "gcc@16.1.0"
   ```
 
   「上次所用的缺省」由提示机制记住（子方案一 3.6 的 `target/.mcpp-notices` 增加记住的事实）；新工程与 `mcpp clean` 之后没有可比的值，不提示。
@@ -151,9 +155,11 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
   不取目录的顺序。找不到声明的版本时是错误，指名缺少的包与版本。
 - **binutils 属于工具链。** 它是编译器驱动的汇编器与链接器，GCC 在构建时按它探测汇编器的能力。覆盖写在工具链的陈述中
   （9.4 的表形式，`companions = { binutils = "xim:binutils@<版本>" }`）；版本低于 GCC 载荷构建时所用的 binutils 时拒绝并说明原因。
-- **linux-headers 属于目标的 kernel-abi 层。** 覆盖用已有的层词汇：`[target.x86_64-linux-gnu] layers = { kernel-abi = "xim:linux-headers@<版本>" }`。
-  头文件决定编译时可见的接口，运行时的最低内核由 C 库决定，docs/22 写明二者的区别。
-- 两种覆盖都是索引中的包，版本固定、密闭，因此不属于宿主输入，不提示。
+- **linux-headers 不在工程中覆盖（实施中修订）。** 原定以 `layers = { kernel-abi = … }` 覆盖。实施中核对：缺省的 glibc 基础层是 home 的
+  subos sysroot，内核头文件以符号链接放入其中，为该 home 的全部工程共用；按工程覆盖需要按工程的 sysroot，而 `layers` 的值是图中的包，
+  不是索引的载荷。因此头文件的版本随工具链载荷的声明，经工具链包的修订改变（第 4 节 xim-pkgindex 一行）；陈述了目标基础层
+  （`sysroot = …`）的工程取该基础层的头文件。
+- binutils 的覆盖是索引中的包，版本固定、密闭，因此不属于宿主输入，不提示。
 
 ### 3.6 编译器的识别
 
@@ -235,7 +241,7 @@ note: ninja is this machine's (/usr/bin/ninja 1.12.1), not the store's; another 
 | 未开启离线而网络不可用，使用了本地的来源 | 沿用现有的「刷新失败、使用本地」的警告，写明来源 | — |
 | 宿主输入的开启（3.3） | `note`，`once` | `host-input` |
 | 宿主输入的身份相对锁改变 | `note`，`once`（新的身份即新的键） | `host-input-changed` |
-| 引擎的缺省工具链改变（3.4） | `note`，`once` | `default-toolchain-changed` |
+| 工程所跟随的缺省工具链改变（3.4） | `note`，`once` | `toolchain/default-changed` |
 | 机器的路径写在 `mcpp.toml` 中（`archives`、宿主输入） | `note`，`once` | `machine-path-in-manifest` |
 | 离线且本地索引不可用，部分版本取已安装的最新 | `degraded`，`always` | — |
 | 本地工具链的三元组无法解析 | `degraded`，`always` | — |

@@ -23,6 +23,7 @@ struct Kind {
 inline constexpr Kind kKinds[] = {
     {"build-program/includes-header", Policy::Once, "docs/30-build-mcpp.md, \"Headers or modules\""},
     {"build-program/reads-outside",   Policy::Once, "docs/30-build-mcpp.md, \"Headers or modules\""},
+    {"toolchain/default-changed",     Policy::Once, "docs/20-toolchains.md, \"Resolution and the lock\""},
 };
 
 // The row of `domain`, or none.

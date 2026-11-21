@@ -288,6 +288,10 @@ struct Toolchain {
     std::vector<ToolOverride> toolOverrides;
     // The driver-and-tool prefix of a cross toolchain (`aarch64-none-linux-gnu-`).
     std::string                         toolPrefix;
+    // The `bin` directory of the binutils the project states beside a managed
+    // GCC (`companions = { binutils = … }`, SPEC-006 §2.9); empty: the
+    // binutils its payload declares.
+    std::filesystem::path               binutilsDir;
 
     const std::filesystem::path* tool_override(std::string_view role) const {
         for (auto const& [r, p] : toolOverrides) if (r == role) return &p;

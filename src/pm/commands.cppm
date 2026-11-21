@@ -586,6 +586,9 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
             mcpp::pm::IndexRoute route{ &indices, *root, &*cfg };
             for (auto& [_, spec] : m->dependencies)
                 if (mcpp::pm::routes_to_builtin(route, spec)) { registryInvolved = true; break; }
+            // A stated toolchain is an index's answer too (SPEC-006 §2.7):
+            // the update re-resolves it against the refreshed index.
+            if (!m->toolchain.byPlatform.empty()) registryInvolved = true;
         }
         if (registryInvolved) {
             auto xlEnv = mcpp::config::make_xlings_env(*cfg);
@@ -606,6 +609,14 @@ inline int cmd_update(const mcpplibs::cmdline::ParsedArgs& parsed) {
             if (lock) {
                 std::erase_if(lock->packages,
                     [&](const auto& p) { return p.name == *only; });
+                // A toolchain by its request (`xim:gcc@16`) or its package
+                // (`gcc`): the next build resolves it again.
+                std::erase_if(lock->toolchains, [&](const auto& t) {
+                    std::string_view r = t.request;
+                    if (r == *only) return true;
+                    if (r.starts_with("xim:")) r.remove_prefix(4);
+                    return r.starts_with(*only + "@");
+                });
                 if (auto written = mcpp::lockfile::write(*lock, lockPath); !written) {
                     mcpp::ui::error(written.error().message);
                     return 1;

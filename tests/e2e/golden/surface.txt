@@ -390,6 +390,7 @@ reason build-program-unpublished-input
 reason c-env-unrealisable
 reason c-env-verification-mismatch
 reason capability-pin
+reason companion-too-old
 reason compiler-requirement-conflict
 reason convention-unreplaced
 reason crt-declared-under-host-coupled
@@ -430,3 +431,4 @@ reason unknown-target
 reason version-floor-unmet
 notice build-program/includes-header
 notice build-program/reads-outside
+notice toolchain/default-changed

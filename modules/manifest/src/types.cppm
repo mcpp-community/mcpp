@@ -467,6 +467,23 @@ struct Toolchain {
     // workspace (`[workspace.toolchain]`, or the root position) names the
     // workspace root's mcpp.toml.
     std::map<std::string, std::filesystem::path> fileByPlatform;
+    // A managed toolchain's companions stated beside it (`default = { package =
+    // "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`), by the
+    // same key. Empty: the versions its payload declares. A vector of a named
+    // struct rather than a nested map, for the GCC 16 hazard recorded at
+    // `workspaceByPlatform` (the nested map truncated this module's BMI again).
+    struct Companion {
+        std::string name;      // `binutils`
+        std::string package;   // `xim:binutils@2.47`
+    };
+    std::map<std::string, std::vector<Companion>> companionsByPlatform;
+
+    const std::vector<Companion>* companions_for(std::string_view platform) const {
+        std::string key(platform);
+        if (!byPlatform.contains(key)) key = "default";
+        auto it = companionsByPlatform.find(key);
+        return it == companionsByPlatform.end() ? nullptr : &it->second;
+    }
 
     // The table behind the entry `for_platform` answers with, by the same key.
     const LocalToolchain* local_for(std::string_view platform) const {
