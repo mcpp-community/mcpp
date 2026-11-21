@@ -266,20 +266,24 @@ if [ "$VARIANT" = modules ]; then
   # package instance's directory, mcpp#953); a previous release from the last
   # move on spells as this one, and its entry is served at once.
   spelled_since=2026.11.19.1
+  # The directory a served BMI is staged into: `<namespace>.<name>/` before
+  # 2026.11.21.1, `<namespace>_<name>/<instance>/` from it (mcpp#986). Either
+  # is the dependency's; the staging, not the directory's name, is asserted.
+  STAGED_OPENKAL='STAGE gcm\.cache/mcpplibs[._]openkal/'
   old_version=$("$OLD" --version | grep -Eo '[0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
   same_spelling=$(printf '%s\n%s\n' "$old_version" "$spelled_since" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -1)
   modules_project m-new1
   run new-modules1 "$W/m-new1" "$NEW" build -v || fail "the module project does not build over the previous release's cache"
   if [ "$same_spelling" = "$spelled_since" ]; then
-    grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+    grep -qE "$STAGED_OPENKAL" "$W/new-modules1.log" \
       || fail "a dependency BMI of the same spelling ($old_version) was not served from the cache"
   else
-    grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules1.log" \
+    grep -qE "$STAGED_OPENKAL" "$W/new-modules1.log" \
       && fail "a dependency BMI of the previous spelling ($old_version) was taken from the cache"
   fi
   modules_project m-new2
   run new-modules2 "$W/m-new2" "$NEW" build -v || fail "the second module project failed"
-  grep -q "STAGE gcm.cache/mcpplibs.openkal/" "$W/new-modules2.log" \
+  grep -qE "$STAGED_OPENKAL" "$W/new-modules2.log" \
     || fail "the rebuilt dependency was not served from the cache"
 fi
 if [ "$VARIANT" = programs ]; then
