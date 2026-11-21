@@ -2050,9 +2050,15 @@ static std::expected<void, std::string> step6_dependency_build_programs(PrepareS
             // its contract, so every project that builds it in one
             // configuration states the same include directories and shares
             // its cache entry. Held while the program runs: a second project
-            // waits, then replays the directives the first recorded.
+            // waits, then replays the directives the first recorded. A program
+            // run in a packing pass is not: what it writes is a function of the
+            // pack's request and the member's staged tree, which its contract
+            // does not hold, and two
+            // projects packing through one provider read each other's archive
+            // (measured: e2e 868 found its provider's package in the home).
             std::optional<mcpp::home::FileLock> outLock;
-            if (program && sources_named(state, i) && !state.overrides.describes()) {
+            if (program && sources_named(state, i) && !state.overrides.describes() && bpEnv.packFormat.empty()
+                && bpEnv.packStageDir.empty()) {
                 auto label = std::format("{}@{}", pkg.manifest.package.name, pkg.manifest.package.version);
                 for (auto& c : label)
                     if (c == '/' || c == '\\' || c == ':') c = '_';

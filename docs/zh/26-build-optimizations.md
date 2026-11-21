@@ -87,7 +87,8 @@ note  hub.cppm is the whole of module hub, which 46 units import: its function b
   288 次编译全部被放置。cl.exe 的编译不进入缓存。
 - **构建程序的输出。** 来源被命名的包——索引的版本、git 的提交、路径依赖的内容摘要——其构建程序在
   `build-cache/v1/out/<包>@<版本>/<键>/out`（`MCPP_OUT_DIR`）中运行，键为不含该目录的配置：第二个工程取用这些输出，
-  不再运行（[SPEC-004 §9](../specs/manifest-semantics.md) 第 18 项）。
+  不再运行（[SPEC-004 §9](../specs/manifest-semantics.md) 第 18 项）。`mcpp pack --pkg-format` 运行的构建程序在工程中运行：
+  它写出的内容取决于打包请求与成员的暂存树。
 
 在 `[cache] unused_days` 之内没有构建使用过的条目与其他条目一样被移除。
 

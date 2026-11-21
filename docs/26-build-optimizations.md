@@ -105,7 +105,9 @@ is the home's (the default):
   git commit, a path dependency's content digest -- runs its build program into
   `build-cache/v1/out/<package>@<version>/<key>/out` (`MCPP_OUT_DIR`), the key being its
   configuration without that directory: a second project takes the outputs, and runs nothing
-  ([SPEC-004 §9](specs/manifest-semantics.md) item 18).
+  ([SPEC-004 §9](specs/manifest-semantics.md) item 18). A program run by `mcpp pack
+  --pkg-format` runs in the project: what it writes depends on the pack's request and the
+  member's staged tree.
 
 Entries no build used within `[cache] unused_days` are removed as other entries are.
 
