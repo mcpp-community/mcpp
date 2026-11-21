@@ -33,6 +33,8 @@
 export module mcpp.diag;
 
 import std;
+import mcpp.log;
+import mcpp.notice;
 import mcpp.ui;
 
 export namespace mcpp::diag {
@@ -45,6 +47,11 @@ struct Record {
     std::string what;     // what happened
     std::string impact;   // consequence for the user (required for Degraded)
     std::string hint;     // optional: what to do about it
+    // The object of a notice whose domain has a policy (mcpp.notice): a package, a file, a tool.
+    std::string subject;
+    // Whether the terminal was shown it: false for a `once` notice the project was already shown
+    // and for a note under --quiet. The record is kept either way, for the machine envelope.
+    bool        shown = true;
 
     // Rendered form, without the "warning: " / "error: " prefix.
     std::string format() const;
@@ -71,6 +78,22 @@ void note(std::string_view domain, std::string_view what);
 // treat a plugin's diagnostic as they treat the engine's.
 void report(Severity severity, std::string_view domain, std::string_view what,
             std::string_view impact, std::string_view hint);
+
+// The `target/` directory of the project whose record `once` notices consult (mcpp.notice). The
+// first project of a process is kept: a sub-build of the same command does not replace it. Unset
+// (a command outside a project), a `once` notice is said as an `always` one is.
+void set_project_target(const std::filesystem::path& targetDir);
+
+// A notice about `subject`, said by the policy of its domain: a domain with no row in
+// mcpp.notice is said every time; a `once` domain once per project and subject, and again after
+// `mcpp clean`. Under --verbose one already said is printed again, marked `(noted before)`.
+void notice(Severity severity, std::string_view domain, std::string_view subject,
+            std::string_view what, std::string_view hint = {});
+
+// A fact the project's notices compare against (the default toolchain it last built with), and
+// the value to keep for the next run. Without a project there is no fact to read or keep.
+std::optional<std::string> project_fact(std::string_view name);
+void remember_project_fact(std::string_view name, std::string_view value);
 
 // The records of this run, cleared: what a command that writes an envelope
 // reports for one member before planning the next. What was printed stays
@@ -100,6 +123,9 @@ std::vector<Record> g_records;
 // workspace build flushes once per member, and the terminal owes the reader
 // one statement per fact, not one per member (WS3).
 std::set<std::string> g_printed;
+std::optional<mcpp::notice::Record> g_project;  // the project's record of notices, once loaded
+std::filesystem::path g_projectTarget;
+std::mutex g_projectLock;
 
 // Identity for deduplication: the whole payload. Two sites reporting the
 // same degradation for the same reason are one record; the same domain with
@@ -114,13 +140,35 @@ std::string dedup_key(const Record& r) {
 // warnings with `ui::status` progress lines, and deferring them would both
 // reorder that stream and lose everything reported before an early return.
 // Deduplication happens here, so a repeated report renders once.
+// Whether a `once` notice about `r.subject` was said to this project before; marks it said
+// otherwise. False without a project: there is nothing to have been told.
+bool said_before(const Record& r) {
+    if (r.subject.empty() || mcpp::notice::policy_of(r.domain) != mcpp::notice::Policy::Once)
+        return false;
+    std::lock_guard lock(g_projectLock);
+    if (g_projectTarget.empty()) return false;
+    if (!g_project)
+        g_project = mcpp::notice::Record::load(g_projectTarget / mcpp::notice::kRecordFile);
+    const auto k = mcpp::notice::key(r.domain, r.subject);
+    if (g_project->shown(k)) return true;
+    g_project->mark(k);
+    (void)g_project->save();
+    return false;
+}
+
 void push(Record r) {
     auto key = dedup_key(r);
     for (auto const& existing : g_records)
         if (dedup_key(existing) == key) return;
     if (g_printed.insert(key).second) {
-        if (r.severity == Severity::Note) mcpp::ui::note(r.format());
-        else                              mcpp::ui::warning(r.format());
+        const bool before = said_before(r);
+        r.shown = !before && !(r.severity == Severity::Note && mcpp::ui::is_quiet());
+        if (before && mcpp::log::is_verbose()) {
+            mcpp::ui::note(r.format() + " (noted before)");
+        } else if (r.shown) {
+            if (r.severity == Severity::Note) mcpp::ui::note(r.format());
+            else                              mcpp::ui::warning(r.format());
+        }
     }
     g_records.push_back(std::move(r));
 }
@@ -160,6 +208,36 @@ void note(std::string_view domain, std::string_view what) {
                 std::string{}, std::string{}});
 }
 
+void set_project_target(const std::filesystem::path& targetDir) {
+    std::lock_guard lock(g_projectLock);
+    if (g_projectTarget.empty()) g_projectTarget = targetDir;
+}
+
+void notice(Severity severity, std::string_view domain, std::string_view subject,
+            std::string_view what, std::string_view hint) {
+    Record r{severity, std::string(domain), std::string(what), std::string{}, std::string(hint)};
+    r.subject = std::string(subject);
+    push(std::move(r));
+}
+
+std::optional<std::string> project_fact(std::string_view name) {
+    std::lock_guard lock(g_projectLock);
+    if (g_projectTarget.empty()) return std::nullopt;
+    if (!g_project)
+        g_project = mcpp::notice::Record::load(g_projectTarget / mcpp::notice::kRecordFile);
+    return g_project->fact(name);
+}
+
+void remember_project_fact(std::string_view name, std::string_view value) {
+    std::lock_guard lock(g_projectLock);
+    if (g_projectTarget.empty()) return;
+    if (!g_project)
+        g_project = mcpp::notice::Record::load(g_projectTarget / mcpp::notice::kRecordFile);
+    if (g_project->fact(name) == std::optional<std::string>(std::string(value))) return;
+    g_project->set_fact(std::string(name), std::string(value));
+    (void)g_project->save();
+}
+
 std::vector<Record> take() {
     auto out = std::move(g_records);
     g_records.clear();
@@ -184,6 +262,12 @@ std::size_t count(Severity severity) {
 
 std::vector<Record> records() { return g_records; }
 
-void reset() { g_records.clear(); g_printed.clear(); }
+void reset() {
+    g_records.clear();
+    g_printed.clear();
+    std::lock_guard lock(g_projectLock);
+    g_project.reset();
+    g_projectTarget.clear();
+}
 
 } // namespace mcpp::diag

@@ -630,6 +630,9 @@ std::expected<void, std::string> phase0_manifest_and_workspace(PrepareState& sta
     // instead (BuildOverrides::work_dir).
     state.workRoot =
         state.overrides.work_dir.empty() ? *state.root : state.overrides.work_dir;
+    // The project whose record `once` notices consult; a tool-provisioning pass, which writes into
+    // the tool store, is not a project.
+    if (state.overrides.work_dir.empty()) mcpp::diag::set_project_target(state.workRoot / "target");
     {
         std::error_code wdEc;
         std::filesystem::create_directories(state.workRoot, wdEc);

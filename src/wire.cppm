@@ -167,6 +167,9 @@ struct Diagnostic {
     std::string message;
     std::string path;                    // optional
     std::optional<Range> range;          // optional
+    // false: the terminal was not shown it (a `once` notice already said to this project, a note
+    // under --quiet). Written only when false, so an envelope that has none is unchanged.
+    bool        shown = true;
 };
 
 // ── The envelope ───────────────────────────────────────────────────────────
@@ -245,6 +248,7 @@ inline nlohmann::json to_json(const Diagnostic& in) {
         {"message",  d.message},
     };
     if (!d.path.empty()) j["path"] = d.path;
+    if (!d.shown) j["shown"] = false;
     if (d.range) {
         j["range"] = {
             {"start", {{"line", d.range->start.line}, {"column", d.range->start.column}}},

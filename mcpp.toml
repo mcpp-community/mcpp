@@ -156,6 +156,7 @@ mcpp.buildmcpp       = { path = "modules/buildmcpp" }
 mcpp.build-record    = { path = "modules/build-record" }
 mcpp.unit-cache      = { path = "modules/unit-cache" }
 mcpp.surface         = { path = "modules/surface" }
+mcpp.notice          = { path = "modules/notice" }
 
 [target.linux.build]
 sources = ["!src/native/windows/**"]
@@ -182,6 +183,7 @@ members = [
     "modules/build-record",
     "modules/unit-cache",
     "modules/surface",
+    "modules/notice",
 ]
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.

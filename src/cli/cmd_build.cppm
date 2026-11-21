@@ -853,6 +853,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
                                    r.severity == mcpp::diag::Severity::Note
                                        ? Severity::Note : Severity::Warning,
                                    r.format(), memberPath});
+            diagnostics.back().shown = r.shown;
         }
     };
     {
