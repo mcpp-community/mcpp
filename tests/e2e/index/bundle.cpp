@@ -1,9 +1,13 @@
 // A project's inputs carried to a machine without a network (design 2026-11-21, offline and
 // toolchain defaults §3.2, F1 and F2): `mcpp fetch --to` writes what the build used -- the
 // toolchain's closure, an index package, a git dependency and a build program's git dependency --
-// into a directory; on a fresh home in a network namespace of its own, `mcpp fetch --from` takes
-// it in, and the build and the program run with no network. What the offline run lacks is
-// refused by its cause, and a bundle older than the lock is refused before anything is installed.
+// into a directory; on a fresh home, offline, `mcpp fetch --from` takes it in, and the build and
+// the program run. Where the machine gives a process a network namespace of its own
+// (`unshare -rn`), the offline runs are in one, so no download can succeed whatever the engine
+// decides; where it does not (Ubuntu 24.04 restricts unprivileged namespaces), the engine's
+// offline mode is the fence, and ci-offline.yml builds the repository in a namespace. What the
+// offline run lacks is refused by its cause, and a bundle older than the lock is refused before
+// anything is installed.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -34,10 +38,9 @@ void library_repository(const fs::path& git, const fs::path& dir, std::string_vi
 E2E bundle{"bundle", s::home_fixture, [] {
     "990 a project's inputs are carried to a machine without a network"_test[s::gcc] = [] {
         const auto git = s::on_path("git");
-        const auto unshare = s::on_path("unshare");
+        auto unshare = s::on_path("unshare");
         if (!git) skip("990 -- no git on PATH");
-        if (!unshare || !e2e::succeeded(s::run(*unshare, {"-rn", "true"})))
-            skip("990 -- no network namespace of its own on this machine (unshare -rn)");
+        if (unshare && !e2e::succeeded(s::run(*unshare, {"-rn", "true"}))) unshare.reset();
         const auto xlings = s::shared_home() / "registry" / "bin" / "xlings";
         if (!e2e::contains(s::run(xlings, {"download", "--help"}).out + s::run(xlings, {"download", "--help"}).err, "--to"))
             skip("990 -- the shared home's xlings writes no bundle (xlings 2026.11.21.1 does)");
@@ -70,8 +73,8 @@ E2E bundle{"bundle", s::home_fixture, [] {
         fs::rename(tmp / "gd", tmp / "gd.gone");
         fs::rename(tmp / "gb", tmp / "gb.gone");
 
-        // A fresh home, its xlings the shared home's (as a release ships one), in a network
-        // namespace of its own: nothing can be fetched.
+        // A fresh home, its xlings the shared home's (as a release ships one), offline and, where
+        // the machine allows it, in a network namespace of its own.
         const auto home = s::another_home(s::home::fresh);
         s::project q(tmp / "q", {});
         q.write("mcpp.toml", manifest);
@@ -82,7 +85,7 @@ E2E bundle{"bundle", s::home_fixture, [] {
                                        {"MCPP_OFFLINE", std::nullopt}, {"MCPP_ARCHIVES", std::nullopt}}};
         auto without_network = [&](std::vector<std::string> args, s::options o) {
             auto c = s::mcpp_command(std::move(args), q.dir(), o);
-            c.argv.insert(c.argv.begin(), {unshare->string(), "-rn"});
+            if (unshare) c.argv.insert(c.argv.begin(), {unshare->string(), "-rn"});
             return s::as_text(e2e::run(c));
         };
         r = without_network({"fetch", "--from", dir.string(), "--offline"}, there);
