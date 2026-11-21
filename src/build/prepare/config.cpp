@@ -656,64 +656,6 @@ unfolded_defines_error(const mcpp::manifest::Manifest& m) {
         d.size(), d.size() == 1 ? "y" : "ies", d.front());
 }
 
-// WHAT A MEMBER RECEIVES FROM ITS WORKSPACE WHEN IT IS REACHED AS A DEPENDENCY.
-//
-// Three parts of the inheritance matter to a dependency: `[workspace.package]`
-// (a member may omit `version`), `x.workspace = true` dependency entries
-// (without the merge the entry reaches resolution with neither version nor
-// path), `[workspace.build]`, `[workspace.xlings]` and the rows of
-// `[workspace.target.<sel>]`. They are applied at the dependency's LOAD
-// site, before the conditional merge and the `defines` fold, which is the
-// order the root follows; `makePackageRoot` only captures the result (#690).
-// `[workspace.toolchain]`, the scalar rows of `[workspace.target.<triple>]`,
-// `[workspace.indices]` and `[workspace.profile.*]` describe the build, which
-// the root decides for the whole graph; they are not applied to a dependency.
-//
-// One function for every way a member is reached: a sibling `path`
-// dependency, a member of a git-hosted workspace, and a member inside an
-// index package's archive. The same commit then compiles the same way in its
-// own checkout and in every consumer's graph.
-//
-// `reportPosition` is false for a member of the workspace the build itself is
-// rooted in: the root received the same position-read entries and was told
-// about them, so telling the dependency too reports a use that changes
-// nothing (mcpp#797, R5). `[xlings.overrides]` never travels here: it belongs
-// to the root of a build (R4).
-std::optional<std::string>
-inherit_as_workspace_member(mcpp::manifest::Manifest& member,
-                            const mcpp::manifest::Manifest& workspace,
-                            const std::filesystem::path& workspaceRoot,
-                            const std::filesystem::path& memberDir,
-                            bool reportPosition) {
-    mcpp::project::inherit_workspace_package(member, workspace);
-    mcpp::project::merge_workspace_deps(member, workspace, workspaceRoot);
-    mcpp::project::inherit_workspace_build(member, workspace, workspaceRoot);
-    mcpp::project::inherit_workspace_xlings(member, workspace, reportPosition);
-    mcpp::project::inherit_workspace_layer_rows(member, workspace, workspaceRoot);
-    return mcpp::project::workspace_inheritance_error(member, memberDir);
-}
-
-// The workspace whose `members` list `memberDir`, searched upward from its
-// parent and never above `bound` (an index package's install root: the
-// archive is the only tree the package's author wrote).
-std::optional<std::pair<mcpp::manifest::Manifest, std::filesystem::path>>
-workspace_listing(const std::filesystem::path& memberDir,
-                  const std::filesystem::path& bound) {
-    auto inside = [&](const std::filesystem::path& p) {
-        auto rel = p.lexically_normal().lexically_relative(bound.lexically_normal());
-        return !rel.empty() && *rel.begin() != "..";
-    };
-    for (auto p = memberDir.parent_path(); inside(p); p = p.parent_path()) {
-        if (std::filesystem::exists(p / "mcpp.toml")) {
-            if (auto ws = mcpp::manifest::load(p / "mcpp.toml");
-                ws && ws->workspace.present
-                && mcpp::project::is_workspace_member(*ws, p, memberDir))
-                return std::pair{std::move(*ws), p};
-        }
-        if (p == p.parent_path()) break;
-    }
-    return std::nullopt;
-}
 
 // ── The SECOND conditional pass: predicates that name a target-side layer ────
 //

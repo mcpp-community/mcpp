@@ -767,14 +767,21 @@ namespace pins {
                                                             "toolchain", os, arch, when);
         return d ? d->target : std::string_view{};
     }
-    inline constexpr std::string_view kFirstRunMac          = first_run("macos", "aarch64");
-    inline constexpr std::string_view kFirstRunWinMsvc      = first_run("windows", "x86_64", "msvc");
-    inline constexpr std::string_view kFirstRunWinGnu       = first_run("windows", "x86_64", "no-msvc");
-    inline constexpr std::string_view kFirstRunWinGnuTarget = first_run_target("windows", "x86_64", "no-msvc");
-    inline constexpr std::string_view kFirstRunLinuxX86_64  = first_run("linux", "x86_64");
-    inline constexpr std::string_view kFirstRunLinuxAarch64 = first_run("linux", "aarch64");
-    // A Linux host with no entry of its own (riscv64, loongarch64, ...).
-    inline constexpr std::string_view kFirstRunLinuxOther   = first_run("linux", "other");
+    // THIS HOST'S FIRST RUN, named by the host's own tokens and not by a word
+    // of the engine (AGENTS.md §2): `when` is `msvc` or `no-msvc` where a row
+    // is conditioned on a usable MSVC, and a row that states no condition
+    // answers either. A host with no row of its own takes its family's
+    // (`linux-*`).
+    inline constexpr std::string_view kFirstRun =
+        first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch);
+    inline constexpr std::string_view kFirstRunMsvc =
+        first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "msvc");
+    inline constexpr std::string_view kFirstRunNoMsvc =
+        first_run(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "no-msvc");
+    // The target the first run without MSVC builds for, where its row states
+    // one (the MinGW row: `x86_64-windows-gnu`); empty elsewhere.
+    inline constexpr std::string_view kFirstRunNoMsvcTarget =
+        first_run_target(mcpp::toolchain::platform::name, mcpp::toolchain::platform::host_arch, "no-msvc");
 
     // `mcpp toolchain install`'s words for a default: `llvm@23.1.3` is
     // `llvm 23.1.3`.
@@ -799,20 +806,8 @@ namespace pins {
     // report on each host's CI row. `msvcUsable` is the one input a constant
     // cannot know -- whether a usable MSVC (STL and SDK, from Visual Studio or
     // a managed toolset) is on this machine, which decides the Windows row.
-    inline std::string_view linux_default_toolchain(std::string_view arch) {
-        auto const* d = mcpp::toolchain::target::default_of(mcpp::toolchain::builtin::kDefaults, "toolchain",
-                                                            "linux", arch);
-        return d ? d->use : kFirstRunLinuxOther;
-    }
-
     inline std::string_view host_default_toolchain(bool msvcUsable) {
-        if constexpr (mcpplibs::os::is_macos) {
-            return kFirstRunMac;
-        } else if constexpr (mcpplibs::os::is_windows) {
-            return msvcUsable ? kFirstRunWinMsvc : kFirstRunWinGnu;
-        } else {
-            return linux_default_toolchain(mcpp::toolchain::platform::host_arch);
-        }
+        return msvcUsable ? kFirstRunMsvc : kFirstRunNoMsvc;
     }
 } // namespace pins
 

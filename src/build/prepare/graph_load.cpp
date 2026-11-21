@@ -46,6 +46,7 @@ import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.descriptor;
+import mcpp.pm.package_manifest;   // a version's manifest, read as the queries read it
 import mcpp.pm.lock_io;
 import mcpp.pm.patch;
 import mcpp.ui;
@@ -1234,64 +1235,16 @@ step4a_load_version_dep_read_manifest(PrepareState& state, LoadVersionDepCtx& ct
         // it by (`mcpp fetch --to`).
         mcpp::effects::note_package_used(std::format("{}@{}",
             mcpp::manifest::xpkg_wire_address(*ctx.luaContent, ctx.ns, shortName).target, version));
-        // 0.0.6+: read explicit namespace from xpkg lua if present.
-        auto luaNs = mcpp::manifest::extract_xpkg_namespace(*ctx.luaContent);
-
-        std::optional<mcpp::manifest::Manifest> manifest;
-        std::filesystem::path effRoot = verRoot;
-        auto loadFrom = [&](const std::filesystem::path& mcppToml)
-            -> std::expected<void, std::string>
-        {
-            // A manifest that is a member of a workspace inside the archive
-            // receives that workspace's inheritance, as it does from a git
-            // clone of the same commit (#690).
-            auto repoWorkspace = workspace_listing(mcppToml.parent_path(), verRoot);
-            auto dm = mcpp::manifest::load(
-                mcppToml, {.insideWorkspace = repoWorkspace.has_value()});
-            if (!dm) return std::unexpected(std::format(
-                "dependency '{}' (at '{}'): {}",
-                depName, mcppToml.string(), dm.error().format()));
-            if (repoWorkspace) {
-                if (auto bad = inherit_as_workspace_member(
-                        *dm, repoWorkspace->first, repoWorkspace->second,
-                        mcppToml.parent_path()))
-                    return std::unexpected(std::format(
-                        "dependency '{}': {}", depName, *bad));
-            }
-            if (auto bad = mcpp::project::unresolved_workspace_dependency_error(
-                    *dm, mcppToml.parent_path()))
-                return std::unexpected(std::format("dependency '{}': {}", depName, *bad));
-            manifest = std::move(*dm);
-            effRoot  = mcppToml.parent_path();
-            return {};
-        };
-        // The descriptor's two forms are decided in one place (SPEC-001 §3.5):
-        // a manifest inside the payload, or the table itself.
-        auto stated = mcpp::pm::descriptor_manifest(
+        // The descriptor's two forms, and a member's inheritance from a
+        // workspace inside the archive (#690), are read in one place
+        // (SPEC-001 §3.5): the queries of a package's features read the same.
+        auto loaded = mcpp::pm::installed_manifest(
             *ctx.luaContent, verRoot, shortName, version, *state.targetPlatform);
-        if (!stated) return std::unexpected(std::format(
-            "dependency '{}': {}", depName, stated.error()));
-        if (stated->form == mcpp::pm::DescriptorManifest::Form::Inline) {
-            warn_unknown_xpkg_keys(*stated->manifest, depName);
-            manifest = std::move(*stated->manifest);
-            // effRoot stays as verRoot
-        } else if (auto r = loadFrom(stated->manifestPath); !r) {
-            return std::unexpected(r.error());
-        }
-        // Propagate lua-level namespace into the loaded manifest when
-        // the manifest itself doesn't carry one (Form A descriptors
-        // whose upstream mcpp.toml predates the namespace field).
-        // Guard: if the manifest's name already starts with luaNs+"."
-        // (e.g. name="mcpplibs.tinyhttps" with luaNs="mcpplibs"),
-        // the namespace is already embedded in the name — don't inject
-        // it again or the scanner will produce a double-prefixed
-        // qualified name like "mcpplibs.mcpplibs.tinyhttps".
-        if (manifest->package.namespace_.empty() && !luaNs.empty()) {
-            auto prefix = luaNs + ".";
-            if (!manifest->package.name.starts_with(prefix)) {
-                manifest->package.namespace_ = luaNs;
-            }
-        }
+        if (!loaded) return std::unexpected(
+            loaded.error().format(std::format("dependency '{}'", depName)));
+        if (loaded->inlineForm) warn_unknown_xpkg_keys(loaded->manifest, depName);
+        std::optional<mcpp::manifest::Manifest> manifest = std::move(loaded->manifest);
+        std::filesystem::path effRoot = loaded->root;
 
         if (auto r = materialize_generated_files(effRoot, *manifest); !r) {
             return std::unexpected(std::format(

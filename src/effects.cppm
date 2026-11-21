@@ -32,15 +32,20 @@ bool host_tool_allowed(std::string_view tool);
 // for the run and for the programs it starts, so each is stated once, as its
 // variable (MCPP_OFFLINE, MCPP_ALLOW_HOST_TOOLS, MCPP_ARCHIVES): the variable
 // as the caller gave it (the override tier), else the project's statement,
-// else the machine's. `state_key` writes a tier's statement unless a higher
-// tier made one; `key_origin` names the tier that answered, so a message says
-// where the value is changed. Every reader reads the variable alone.
+// else the machine's. `state_key` records a tier's statement, replacing that
+// tier's earlier one, and the variable holds the highest tier's; `withdraw_key`
+// removes a tier's statement. A workspace run plans its configuration groups
+// one after another in one process, each with its own root, so each plan
+// states or withdraws the project's tier and no plan reads another's.
+// `key_origin` names the tier that answered, so a message says where the value
+// is changed. Every reader reads the variable alone.
 enum class Tier { None, Machine, Project, Override };
 struct KeyOrigin {
     Tier        tier = Tier::None;
     std::string where;   // "mcpp.toml [build] offline", "MCPP_OFFLINE", ...
 };
 void state_key(std::string_view var, Tier tier, std::string value, std::string where);
+void withdraw_key(std::string_view var, Tier tier);
 KeyOrigin key_origin(std::string_view var);
 
 // How this run came to be offline, as the way back: "run without --offline

@@ -2650,6 +2650,9 @@ struct Manifest {
     //  see the member there.)
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
+    // `[features.<f>] description` (mcpp#992): one line for a reader of the
+    // package's features; absent for a feature written in the short form.
+    std::map<std::string, std::string>              featureDescriptions;
 
     // `[features].<f>.device_extensions` — the device source extensions this feature's
     // rule compiles (mcpp 2026.9.7.1+).
@@ -2896,7 +2899,21 @@ bool provides_cxx_layer(const Manifest& manifest);
 std::optional<CppStandardConfig> cxx_layer_implementation_standard(
     const Manifest& manifest);
 
-
+// THE FEATURES A PACKAGE DECLARES, AS A READER SEES THEM (mcpp#992): one entry
+// per feature, by name, from whichever source the manifest came from (the
+// package's `mcpp.toml`, a descriptor's inline table). `isDefault`: on without
+// being named, through the `default` set and what it implies; `implies`: this
+// package's features it turns on; `enables`: `<dependency>/<feature>` it
+// requests. `default` itself is not an entry. Every machine output of a
+// package's features is rendered from this.
+struct FeatureInfo {
+    std::string              name;
+    bool                     isDefault = false;
+    std::vector<std::string> implies;
+    std::vector<std::string> enables;
+    std::string              description;
+};
+std::vector<FeatureInfo> feature_catalog(const Manifest& manifest);
 
 } // namespace mcpp::manifest
 
@@ -3170,5 +3187,36 @@ std::optional<CppStandardConfig> cxx_layer_implementation_standard(
 
 
 
+
+} // namespace mcpp::manifest
+
+namespace mcpp::manifest {
+
+std::vector<FeatureInfo> feature_catalog(const Manifest& manifest) {
+    // The default set's closure under `implies`: what a consumer that names
+    // nothing receives.
+    std::set<std::string> on;
+    std::vector<std::string> pending;
+    if (auto it = manifest.featuresMap.find("default"); it != manifest.featuresMap.end())
+        pending = it->second;
+    while (!pending.empty()) {
+        auto f = std::move(pending.back());
+        pending.pop_back();
+        if (!on.insert(f).second) continue;
+        if (auto it = manifest.featuresMap.find(f); it != manifest.featuresMap.end())
+            pending.insert(pending.end(), it->second.begin(), it->second.end());
+    }
+    std::vector<FeatureInfo> out;
+    for (auto const& [name, implied] : manifest.featuresMap) {
+        if (name == "default") continue;
+        FeatureInfo info{.name = name, .isDefault = on.contains(name), .implies = implied};
+        if (auto it = manifest.featureForwards.find(name); it != manifest.featureForwards.end())
+            for (auto const& fwd : it->second) info.enables.push_back(fwd.first + "/" + fwd.second);
+        if (auto it = manifest.featureDescriptions.find(name); it != manifest.featureDescriptions.end())
+            info.description = it->second;
+        out.push_back(std::move(info));
+    }
+    return out;
+}
 
 } // namespace mcpp::manifest

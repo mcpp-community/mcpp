@@ -1009,7 +1009,7 @@ int run(int argc, char** argv) {
             .action(cmd_clean))
         .subcommand(cl::App("why")
             .description("Explain how the target / toolchain / runtime / deps / runners / sources / flags were resolved")
-            .arg(cl::Arg("topic").help("target | toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat | flags | platform (default: all but flags and platform)"))
+            .arg(cl::Arg("topic").help("target | toolchain | sysroot | runtime | deps | runners | sources | tool | payload | build-programs | compat | flags | platform | features (default: all but flags, platform and features)"))
             .arg(cl::Arg("subject").help("for `tool` and `payload`: the name to look up; for `flags`: the unit, by the end of its path"))
             // `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build

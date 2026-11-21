@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-370 records.
+371 records.
 
 ## By subject
 
@@ -92,6 +92,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### ecosystem
 
+- [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active
 - [离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）](2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md) — active
 - [生态规则收敛方案：2026.11.18.1 之后十个 issue 的五类成因、七项决定与实施范围](2026-11-19-ecosystem-rule-convergence-design.md) — landed
 - [生态架构优化方案：四个平面的收敛、已合入项的纠正与新系统的准入（mcpp × openkal × xlings）](2026-11-12-ecosystem-architecture-optimization-design.md) — active
@@ -212,6 +213,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active
 - [离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）](2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md) — active
 - [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active
 - [生态的测试与 CI 方案：mtest 的框架与运行控制、mcpp 自身的测试系统、CI 的形态（mcpp#986、#976、#927、#802）](2026-11-20-test-architecture-upgrade-design.md) — active

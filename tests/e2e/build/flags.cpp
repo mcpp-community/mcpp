@@ -72,7 +72,10 @@ std::optional<fs::path> path_ending(const fs::path& root, std::string_view tail)
 E2E flags{"flags", s::home_fixture, [] {
     "50 package owned build flags"_test[s::gcc] = [] {
         // A dependency's own cflags and cxxflags compile its C and C++ sources; the consumer
-        // declares neither, and the graph carries both.
+        // declares neither, and the graph carries both. The case's own cache: a path dependency is
+        // named by its content (SPEC-001 §10.4), and an entry another run filled is staged into
+        // the build, not compiled in its graph.
+        s::own_home(s::home::inherited);
         const auto tmp = s::case_dir();
         s::project{tmp / "depC", {{"src/dep_core.c", R"cpp(#ifndef DEP_C_BUILD
 #error "missing dependency-owned C flag"

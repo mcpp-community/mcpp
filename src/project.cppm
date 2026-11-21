@@ -1171,6 +1171,10 @@ export std::string root_position_key(
     field("memory_threshold", b.memoryThreshold);
     field("cache", b.cacheMode);
     field("allow_host_libs", b.allowHostLibs ? "1" : "0");
+    // The keys of the whole run (SPEC-004 §9 items 21, 22): a plan states its
+    // root's, so members that differ in one are not one plan.
+    field("offline", b.offline ? (*b.offline ? "1" : "0") : "-");
+    list("allow_host_tools", b.allowHostToolsStated ? b.allowHostTools : std::vector<std::string>{"-"});
     field("platform_dependencies", b.platformDependencies);
     field("default_profile", b.defaultProfile);
     list("runner", b.runner);

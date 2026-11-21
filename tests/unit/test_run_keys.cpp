@@ -61,3 +61,24 @@ UTest offline_installs_only_from_named_archive_directories{"RunKeys/InstallSourc
     expect(fx::install_sources() == fx::InstallSources::Local);
     expect(eq(fx::archive_dirs().size(), std::size_t{1}));
 }};
+
+UTest each_plan_states_or_withdraws_the_projects_tier{"RunKeys/EachPlanStatesItsProjectTier", [] {
+    // A workspace run plans its groups one after another: the second root's statement replaces
+    // the first's, and a root that states nothing leaves the machine's value, or none.
+    Clean clean;
+    fx::state_key("MCPP_OFFLINE", fx::Tier::Machine, "0", "config.toml [build] offline");
+    fx::state_key("MCPP_OFFLINE", fx::Tier::Project, "1", "mcpp.toml [build] offline");
+    expect(fx::offline_mode());
+    fx::state_key("MCPP_OFFLINE", fx::Tier::Project, "0", "mcpp.toml [build] offline");
+    expect(!fx::offline_mode()) << "a later plan's statement did not replace the earlier plan's";
+    fx::state_key("MCPP_OFFLINE", fx::Tier::Project, "1", "mcpp.toml [build] offline");
+    fx::withdraw_key("MCPP_OFFLINE", fx::Tier::Project);
+    expect(eq(mcpp::invocation::get("MCPP_OFFLINE").value_or("<unset>"), std::string("0")));
+    expect(fx::key_origin("MCPP_OFFLINE").tier == fx::Tier::Machine);
+    fx::withdraw_key("MCPP_OFFLINE", fx::Tier::Machine);
+    expect(!mcpp::invocation::get("MCPP_OFFLINE").has_value()) << "no statement left, and the variable stayed";
+    // The caller's variable is never withdrawn.
+    mcpp::invocation::set("MCPP_OFFLINE", "1");
+    fx::withdraw_key("MCPP_OFFLINE", fx::Tier::Project);
+    expect(eq(mcpp::invocation::get("MCPP_OFFLINE").value_or(""), std::string("1")));
+}};

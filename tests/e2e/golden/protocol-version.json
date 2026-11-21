@@ -121,7 +121,8 @@
     "test-steps",
     "test-budget",
     "test-jitter",
-    "test-fixtures"
+    "test-fixtures",
+    "package-features"
   ],
   "kind": "mcpp.protocol",
   "kinds": {
@@ -137,6 +138,7 @@
     "mcpp.toolchain.list": 1,
     "mcpp.why.build-programs": 1,
     "mcpp.why.compat": 1,
+    "mcpp.why.features": 1,
     "mcpp.why.sources": 1,
     "mcpp.why.toolchain": 1,
     "mcpp.xpkg": 1

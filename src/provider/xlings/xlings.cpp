@@ -2083,15 +2083,13 @@ std::optional<std::filesystem::path> find_usable_nasm(const Env& env) {
 // sandbox's. Asked by the caller so that a host tool reaching a build is
 // NAMED there; a host tool that reaches a build silently is the defect, not
 // the host tool.
+//
+// Judged LEXICALLY, as the build cache judges a store: a payload installed by
+// link from an upstream home is this home's, and resolving the link names the
+// upstream's directory, which read as the host's.
 bool nasm_is_from_host(const Env& env, const std::filesystem::path& bin) {
-    auto root = paths::xim_tool_root(env, "nasm");
-    std::error_code ec;
-    auto canonRoot = std::filesystem::weakly_canonical(root, ec);
-    auto canonBin  = std::filesystem::weakly_canonical(bin, ec);
-    if (canonRoot.empty() || canonBin.empty()) return true;
-    auto r = canonRoot.string();
-    auto b = canonBin.string();
-    return b.rfind(r, 0) != 0;
+    const auto rel = bin.lexically_normal().lexically_relative(paths::xim_tool_root(env, "nasm").lexically_normal());
+    return rel.empty() || *rel.begin() == "..";
 }
 
 // ─── Index freshness ────────────────────────────────────────────────

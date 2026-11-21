@@ -5,12 +5,12 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.12 |
+| **版本** | 1.13 |
 | **最后修改** | 2026-11-21 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
-| **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[mcpp#960](https://github.com/mcpp-community/mcpp/issues/960) —— 发布写出的描述符形式(§3.5)<br>[mcpp#979](https://github.com/mcpp-community/mcpp/issues/979) —— 条目只含包自己的单元(§10.4 第 6 条)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
+| **相关 issue** | [mcpp#278](https://github.com/mcpp-community/mcpp/issues/278)<br>[mcpp#960](https://github.com/mcpp-community/mcpp/issues/960) —— 发布写出的描述符形式(§3.5)<br>[mcpp#979](https://github.com/mcpp-community/mcpp/issues/979) —— 条目只含包自己的单元(§10.4 第 6 条)<br>[mcpp#992](https://github.com/mcpp-community/mcpp/issues/992) —— 已安装版本的清单一个读取函数(§3.5)<br>[xlings#381](https://github.com/openxlings/xlings/issues/381) —— 索引键缺命名空间维度(§3.3) |
 
 ## 规范用语
 
@@ -160,6 +160,9 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 - 读取方**必须**经同一个函数(`mcpp::pm::descriptor_manifest`)取得清单与包根。构建的布局核对、安装前的子依赖、
   读清单、补丁根,`mcpp new --template` 与 `mcpp xpkg parse` 都经由它;包根之下的 `templates/` 是模板的位置,
   一个包因缺少该目录被拒绝,不因其描述符的形式被拒绝。
+- 已安装版本的清单**必须**经同一个函数(`mcpp::pm::installed_manifest`)读取:指针形式的清单若是归档中某个
+  workspace 的成员,接受该 workspace 的继承,与同一提交的 git 克隆相同(#690);清单未写命名空间时取描述符的命名空间。
+  构建的依赖图与包特性的查询(SPEC-004 §16)都经由它,二者对同一个版本不会读出不同的清单(mcpp 2026.11.21.1,mcpp#992)。
 - `mcpp publish` 与 `mcpp emit xpkg` **必须**写出读取方读取的形式。发布的归档是包的源码树,顶层目录内有清单,
   因此写出 `mcpp = "*/mcpp.toml"`;模块、依赖与运行期要求只由清单陈述,不写入描述符。
 
@@ -604,8 +607,12 @@ mcpp 侧的使用:
 6. 一个包的条目只含该包自己的编译单元:源文件位于该包根目录之下、且不在本次构建中嵌套于其下的另一个包的根目录
    之下的单元,与键所列的源文件是同一个归属。依赖的树可以包含构建它的工程(成员的构建程序导入仓库自身包的
    workspace):成员的单元属于成员,在原处构建,**禁止**进入依赖的条目。
+7. 一个条目记录它编译时所读的模块接口:它导入其接口的每个上游条目的键,与该条目接口内容的摘要(`bmi_digest`)。
+   条目**只**在它导入的每个接口都由缓存提供、且摘要与记录相同时提供;一个上游在本次构建中编译(条目缺失,如被
+   `mcpp cache gc` 移除)时,依赖它的包随之编译,构建之后按新的接口重新写入条目;上游不进入缓存时它也不进入。
+   编译器按内容记录所导入的接口(GCC 的 CRC),同一份源码在另一路径编译出的接口是另一份内容。
 
-**已实现**(第 1 至 5 条 mcpp 2026.11.19.1,第 6 条 mcpp 2026.11.20.1)。此前全局依赖缓存只收索引包,宿主工具的
+**已实现**(第 1 至 5 条 mcpp 2026.11.19.1,第 6 条 mcpp 2026.11.20.1,第 7 条 mcpp 2026.11.21.1)。此前全局依赖缓存只收索引包,宿主工具的
 缓存以修改时间命名 `path` 包的树。2026.11.19.1 的条目收入根目录之下的每个单元,两个成员的 `src/main.cpp` 落在同一个
 地址 `obj/src/main.o`,自干净的 target 目录构建时一个成员链接了另一个成员的目标文件(mcpp#979)。
 
@@ -615,6 +622,7 @@ mcpp 侧的使用:
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.13 | 2026-11-21 | §3.5 新增已安装版本的清单经 `installed_manifest` 读取,构建与包特性的查询共用(mcpp#992);§10.4 新增第 7 条:条目只按它编译时所读的接口提供(mcpp 2026.11.21.1) |
 | 1.12 | 2026-11-21 | 新增 §4.5:命令行中 `@` 的读法——写出的前缀、`@=` 的精确键、带运算符的要求;§4.4 的模板表与 §5.5 的命令行引用按它陈述(mcpp 2026.11.21.1) |
 | 1.11 | 2026-11-20 | §10.4 新增第 6 条:条目只含包自己的单元,嵌套于依赖树中的包(如成员的构建程序导入仓库自身包的 workspace)的单元属于该包,在原处构建(mcpp 2026.11.20.1,mcpp#979) |
 | 1.10 | 2026-11-19 | 新增 §10.4:源码的名字——索引包的版本、git 依赖的提交、path 依赖的内容摘要;全局依赖缓存、宿主工具的缓存与构建程序的身份共用;工程自己的树在原处构建(mcpp 2026.11.19.1,mcpp#974) |

@@ -18,6 +18,7 @@ import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.effects;
 import mcpp.manifest;
+import mcpp.pm.package_manifest;   // a workspace member's inheritance
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
 import mcpp.modgraph.graph;
@@ -1726,8 +1727,8 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
             auto inheritAsMember = [&](const mcpp::manifest::Manifest& ws,
                                        const std::filesystem::path& wsRoot,
                                        bool reportPosition) {
-                return inherit_as_workspace_member(*dep_manifest, ws, wsRoot, dep_root,
-                                                   reportPosition);
+                return mcpp::pm::inherit_as_workspace_member(*dep_manifest, ws, wsRoot,
+                                                             dep_root, reportPosition);
             };
             // A rooted workspace's own package, the member "." of a workspace
             // plan (§15), is the workspace's manifest: it reads its own

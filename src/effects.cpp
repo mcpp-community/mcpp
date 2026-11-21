@@ -75,27 +75,45 @@ bool writes_global_cache() {
 }
 
 namespace {
-struct Statement { Tier tier; std::string value; std::string where; };
+struct Statement { std::string value; std::string where; };
 std::mutex g_keysMutex;
-std::map<std::string, Statement, std::less<>> g_keys;
+// Each variable's statements by tier; the variable holds the highest's.
+std::map<std::string, std::map<Tier, Statement>, std::less<>> g_keys;
+
+// The caller holds g_keysMutex. A statement holds while the variable keeps
+// its value: one the caller set, or a nested run's, is the caller's.
+KeyOrigin origin_locked(std::string_view var) {
+    const auto v = mcpp::invocation::get(var);
+    if (!v) return {};
+    if (auto it = g_keys.find(var); it != g_keys.end() && !it->second.empty()
+                                    && it->second.rbegin()->second.value == *v)
+        return {it->second.rbegin()->first, it->second.rbegin()->second.where};
+    return {Tier::Override, std::string(var)};
 }
 
+void apply_locked(std::string_view var) {
+    auto it = g_keys.find(var);
+    if (it == g_keys.end() || it->second.empty()) mcpp::invocation::unset(std::string(var));
+    else mcpp::invocation::set(std::string(var), it->second.rbegin()->second.value);
+}
+}  // namespace
+
 void state_key(std::string_view var, Tier tier, std::string value, std::string where) {
-    if (tier <= key_origin(var).tier) return;
     std::lock_guard lock(g_keysMutex);
-    mcpp::invocation::set(std::string(var), value);
-    g_keys.insert_or_assign(std::string(var), Statement{tier, std::move(value), std::move(where)});
+    if (origin_locked(var).tier == Tier::Override) return;
+    g_keys[std::string(var)].insert_or_assign(tier, Statement{std::move(value), std::move(where)});
+    apply_locked(var);
+}
+
+void withdraw_key(std::string_view var, Tier tier) {
+    std::lock_guard lock(g_keysMutex);
+    if (origin_locked(var).tier == Tier::Override) return;
+    if (auto it = g_keys.find(var); it != g_keys.end() && it->second.erase(tier)) apply_locked(var);
 }
 
 KeyOrigin key_origin(std::string_view var) {
-    const auto v = mcpp::invocation::get(var);
-    if (!v) return {};
     std::lock_guard lock(g_keysMutex);
-    // A statement holds while the variable keeps its value: one the caller
-    // set again, or a nested run's, is the caller's.
-    if (auto it = g_keys.find(var); it != g_keys.end() && it->second.value == *v)
-        return {it->second.tier, it->second.where};
-    return {Tier::Override, std::string(var)};
+    return origin_locked(var);
 }
 
 std::string offline_remedy() {

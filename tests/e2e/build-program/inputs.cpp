@@ -31,8 +31,6 @@ std::string ran(const s::project& p) {
     return s::last_line(r.out);
 }
 
-// The edit lands in a later second than the record's, as a person's edit does.
-void later() { std::this_thread::sleep_for(std::chrono::milliseconds(1100)); }
 
 // The git repository `dir`, committed with what it holds.
 void commit_all(const fs::path& dir) {
@@ -57,17 +55,17 @@ E2E inputs{"inputs", s::home_fixture, [] {
                       {"support/emit.hpp", emit_header("one")},
                       {"build.mcpp", "#include \"support/emit.hpp\"\nimport std;\nint main() { emit(); }\n"}}};
         expect(eq(ran(p), std::string("one"))) << "T1: the first run";
-        later();
         p.write("support/emit.hpp", emit_header("two"));
+        s::touch(p.at("support/emit.hpp"));   // a later edit, as a person's is
         expect(eq(ran(p), std::string("two"))) << "T1/T3: the header edit was not an input";
         fs::remove_all(p.at("target/.build-mcpp"));
         expect(eq(ran(p), std::string("two"))) << "T1: after target/.build-mcpp was deleted";
-        later();
         p.write("support/emit.hpp", emit_header("three"));
+        s::touch(p.at("support/emit.hpp"));   // a later edit, as a person's is
         expect(eq(ran(p), std::string("three"))) << "T1: the edit after the record was made again";
         // T2.
-        later();
         p.write("src/main.cpp", kMain + "// an edit the program does not read\n");
+        s::touch(p.at("src/main.cpp"));   // a later edit, as a person's is
         auto b = p.mcpp({"build", "-v"}, inherited);
         expect(fatal(e2e::succeeded(b))) << s::text(b);
         expect(s::has_line(s::text(b), "build\\.mcpp repro +cached")) << "T2: the program compiled or ran";
@@ -77,12 +75,12 @@ E2E inputs{"inputs", s::home_fixture, [] {
         auto doc = s::json_file(records.front());
         for (auto row = doc.begin(); row != doc.end(); ++row) row->erase("reads");
         std::ofstream(records.front(), std::ios::trunc) << doc.dump(2);
-        later();
         p.write("src/main.cpp", kMain);   // a plan, not the fast path
+        s::touch(p.at("src/main.cpp"));   // a later edit, as a person's is
         auto again = p.mcpp({"build", "-v"}, inherited);
         expect(s::has_line(s::text(again), "identity .* compiled")) << "T6: the record without reads was current";
-        later();
         p.write("src/main.cpp", kMain + "\n");
+        s::touch(p.at("src/main.cpp"));   // a later edit, as a person's is
         auto then = p.mcpp({"build", "-v"}, inherited);
         expect(s::has_line(s::text(then), "identity .* current")) << "T6: compiled twice";
     };
@@ -103,8 +101,8 @@ E2E inputs{"inputs", s::home_fixture, [] {
         auto second = ws.mcpp({"build", "--workspace"}, inherited);
         expect(s::lacks(second.err, note)) << "said again";
         // A no-op build plans nothing and says nothing (docs/30); a source edit plans again.
-        later();
         ws.write("a/src/main.cpp", kMain + "\n");
+        s::touch(ws.at("a/src/main.cpp"));   // a later edit, as a person's is
         auto verbose = ws.mcpp({"build", "--workspace", "-v"}, inherited);
         expect(s::has_line(verbose.err, "includes standard or system headers.*\\(noted before\\)")) << verbose.err;
         expect(e2e::succeeded(ws.mcpp({"clean"}, inherited)));
@@ -124,12 +122,12 @@ E2E inputs{"inputs", s::home_fixture, [] {
         auto first = p.mcpp({"build"}, inherited);
         expect(fatal(e2e::succeeded(first))) << s::text(first);
         expect(s::has_line(first.err, warning)) << first.err;
-        later();
         shared.write("emit.hpp", emit_header("outside2"));
+        s::touch(shared.at("emit.hpp"));   // a later edit, as a person's is
         auto second = p.mcpp({"build"}, inherited);
         expect(s::lacks(second.err, warning)) << "warned twice";
-        later();
         shared.write("emit.hpp", emit_header("outside3"));
+        s::touch(shared.at("emit.hpp"));   // a later edit, as a person's is
         auto db = p.mcpp({"emit", "build-database", "--format", "json"}, inherited);
         expect(fatal(e2e::succeeded(db))) << s::text(db);
         bool kept = false;
@@ -171,8 +169,8 @@ E2E inputs{"inputs", s::home_fixture, [] {
         expect(s::lacks(b.err, "collides on")) << "the build warned of a name nobody asked for";
         expect(s::has_line(b.err, "asks dep_dir\\(\"foo_bar\"\\), which several dependencies answer.*Write one of x\\.foo-bar,y\\.foo_bar instead")) << b.err;
         expect(s::has_line(ran(app), "foo-bar$")) << "the first answer, as before the rule";
-        later();
         app.write("src/main.cpp", kMain + "\n");   // a replay of the program, not a no-op build
+        s::touch(app.at("src/main.cpp"));   // a later edit, as a person's is
         auto replay = app.mcpp({"build"}, inherited);
         expect(s::has_line(replay.err, "asks dep_dir\\(\"foo_bar\"\\)")) << "a replay did not warn";
         auto why = app.mcpp({"why", "compat"}, inherited);

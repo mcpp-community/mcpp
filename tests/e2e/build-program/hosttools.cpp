@@ -515,7 +515,10 @@ int main() {
         // grow with the distance between the packages (A); such a tool builds and runs through
         // `tools = [...]` (B), also with the file nested deep, which on Windows passes 260
         // characters in the tool store's scratch (C: asserted wherever the runner enables long
-        // paths; the readings say which case this runner is).
+        // paths; the readings say which case this runner is). The case's own home: a tool is
+        // named by its package's sources (SPEC-001 §10.4), and a home that built this one serves
+        // it without building it.
+        s::own_home(s::home::inherited);
         const auto root = s::case_dir();
         auto write_dep = [&](const fs::path& dir, std::string_view inner) {
             s::project d{dir, {{"mcpp.toml", "[package]\nname    = \"dep\"\nversion = \"0.1.0\"\n\n[build]\nsources = [\"src/*.cpp\"]\n\n[targets.dep]\nkind = \"lib\"\n"},

@@ -94,7 +94,7 @@ simd       = { sources = ["src/simd/**"], flags = [
 ```
 
 - **The table form accepts exactly** `implies`, `forward`, `defines`, `sources`,
-  `flags`, `requires`, `provides`, `tools`. Anything else is reported as a schema warning
+  `flags`, `requires`, `provides`, `tools`, `description`. Anything else is reported as a schema warning
   and ignored (mcpp 2026.9.1.1+); `deps` is reported separately as reserved and
   points at `[feature-deps.<name>]`. Before that release `[features]` was
   the one structured section with no schema check at all, so a misplaced
@@ -125,6 +125,36 @@ simd       = { sources = ["src/simd/**"], flags = [
   receives them as if its dependency edge had written `tools = [...]`
   ([05, build-time dependencies](05-dependencies.md)); a name that is not a
   `bin` target of the package is refused at load.
+- `description` (mcpp 2026.11.21.1+) is one line for a reader of the package's
+  features, as `[package] description` is for the package. It changes nothing
+  in a build; an index descriptor's `features.<f>` accepts it too. The array
+  shorthand has none.
+
+### Reading a package's features (mcpp 2026.11.21.1+)
+
+A package's features are machine-readable in two places
+([50 — Machine Output](50-machine-output.md)):
+
+- `mcpp search --format json` states, for each package, the features of its
+  newest version (the first of `versions`): their names, which are in the default set, what
+  each implies and enables, and the description. A descriptor that carries its
+  manifest inline answers from the index. A descriptor whose manifest is inside
+  the payload answers from the installed payload; when the payload is not
+  installed, the answer says so and has no list. The query installs nothing.
+- `mcpp why features` lists every package of the project's resolved graph with
+  the features it declares and those the build activates:
+
+```
+$ mcpp why features
+features:
+  mcpplibs.app@0.1.0  (root)
+    (declares none)
+  mcpplibs.widget@0.1.0
+    extra                active           implies simd
+      Extra helpers
+    fast                 default, active  implies simd
+    simd                 default, active
+```
 
 
 ### A feature that is a build rule (mcpp 2026.9.7.1+)

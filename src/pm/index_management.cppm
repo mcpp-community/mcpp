@@ -13,6 +13,8 @@ import mcpp.manifest;
 import mcpp.effects;
 import mcpp.project;
 import mcpp.pm.index_route;
+import mcpp.pm.package_manifest;    // a package's features (mcpp#992)
+import mcpp.toolchain.platform;
 import mcpp.ui;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -67,20 +69,32 @@ export int search_packages(const std::string& keyword, bool allVersions, bool js
         }
         nlohmann::json packages = nlohmann::json::array();
         const auto described = f.describe_hits(*hits);
+        const auto host = mcpp::toolchain::platform::HostPlatform::current();
         for (std::size_t i = 0; i < hits->size(); ++i) {
             const auto& h = (*hits)[i];
             const auto colon = h.name.find(':');
-            const auto& catalog = described[i].catalog;
-            packages.push_back({
+            const auto ns = colon == std::string::npos ? std::string{} : h.name.substr(0, colon);
+            const auto name = colon == std::string::npos ? h.name : h.name.substr(colon + 1);
+            const auto& d = described[i];
+            nlohmann::json e{
                 {"id", h.name},
-                {"namespace", colon == std::string::npos ? std::string{} : h.name.substr(0, colon)},
-                {"name", colon == std::string::npos ? h.name : h.name.substr(colon + 1)},
+                {"namespace", ns},
+                {"name", name},
                 {"description", h.description},
-                {"versions", described[i].versions},
-                {"licenses", catalog.licenses},
-                {"repo", catalog.repo},
+                {"versions", d.versions},
+                {"licenses", d.catalog.licenses},
+                {"repo", d.catalog.repo},
                 {"index", h.source},
-            });
+            };
+            // The features of the newest version, read from what this
+            // home holds and never by installing (mcpp#992, SPEC-010 §5).
+            if (d.mcppPackage && !d.versions.empty()) {
+                const auto& newest = d.versions.front();
+                const auto dir = f.install_path(ns, name, newest).value_or(std::filesystem::path{});
+                e["features"] = mcpp::pm::feature_answer_json(
+                    mcpp::pm::package_features(d.descriptor, dir, name, newest, host));
+            }
+            packages.push_back(std::move(e));
         }
         env.data = {{"keyword", keyword}, {"packages", std::move(packages)}};
         mcpp::wire::emit(env);

@@ -138,6 +138,11 @@ public:
     struct HitDescription {
         std::vector<std::string>          versions;
         mcpp::manifest::XpkgCatalogFields catalog;
+        std::string                       descriptor;    // its text; empty when none was found
+        // An mcpp package: a descriptor that states an `mcpp` field, or one
+        // outside the provider's official index, whose entries without the
+        // field are the provider's own payloads (mcpp#992).
+        bool                              mcppPackage = false;
     };
     std::vector<HitDescription> describe_hits(std::span<const SearchHit> hits) const;
 
@@ -935,7 +940,8 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
     // wherever it sits (the flat `mwrap/` layout included). Identity is read
     // from the descriptor's text; a descriptor that declares no namespace is
     // keyed by its name alone.
-    std::map<std::string, std::string> byIdentity;
+    struct Found { std::string lua; bool official = false; };
+    std::map<std::string, Found> byIdentity;
     const auto field = [](std::string_view lua, std::string_view key) -> std::string {
         std::size_t pos = 0;
         while ((pos = lua.find(key, pos)) != std::string_view::npos) {
@@ -955,9 +961,12 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
         }
         return {};
     };
-    for (auto const& root : mcpp::provider::open(location_of(cfg_))->index_roots()) {
+    const auto provider = mcpp::provider::open(location_of(cfg_));
+    const auto official = provider->official_index_status(0).dir.lexically_normal();
+    for (auto const& root : provider->index_roots()) {
         std::error_code ec;
         const auto pkgs = root / "pkgs";
+        const bool isOfficial = root.lexically_normal() == official;
         if (!std::filesystem::is_directory(pkgs, ec)) continue;
         for (auto it = std::filesystem::recursive_directory_iterator(pkgs, ec);
              !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
@@ -966,7 +975,7 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
             std::string lua{std::istreambuf_iterator<char>(is), {}};
             const auto name = field(lua, "name");
             if (name.empty()) continue;
-            byIdentity.try_emplace(field(lua, "namespace") + ":" + name, std::move(lua));
+            byIdentity.try_emplace(field(lua, "namespace") + ":" + name, Found{std::move(lua), isOfficial});
         }
     }
     std::vector<HitDescription> out(hits.size());
@@ -977,8 +986,12 @@ Fetcher::describe_hits(std::span<const SearchHit> hits) const {
             if (colon != std::string::npos) it = byIdentity.find(":" + hits[i].name.substr(colon + 1));
         }
         if (it == byIdentity.end()) continue;
-        out[i].versions = mcpp::manifest::all_xpkg_versions_desc(it->second);
-        out[i].catalog = mcpp::manifest::xpkg_catalog_fields(it->second);
+        const auto& lua = it->second.lua;
+        out[i].versions = mcpp::manifest::all_xpkg_versions_desc(lua);
+        out[i].catalog = mcpp::manifest::xpkg_catalog_fields(lua);
+        out[i].mcppPackage = !it->second.official
+            || mcpp::manifest::extract_mcpp_field(lua).kind != mcpp::manifest::McppField::Absent;
+        out[i].descriptor = lua;
     }
     return out;
 }

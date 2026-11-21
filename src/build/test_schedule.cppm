@@ -127,9 +127,13 @@ std::string text(const json& j, const char* key) {
 }
 
 // The runs of the index, newest first; a run listed twice (a store imported
-// into another) is one run.
+// into another) is one run. `started` is stated to the second, and two runs of
+// one second are ordered as the index appended them: the later line is the
+// newer run (a `--failed` right after a failing run read the passing run before
+// it, cli::surface/1126).
 std::vector<json> runs_newest_first(const std::filesystem::path& store) {
     auto runs = read_lines(store / "index.ndjson");
+    std::ranges::reverse(runs);
     std::ranges::stable_sort(runs, std::greater{}, [](const json& r) { return text(r, "started"); });
     std::set<std::string> seen;
     std::vector<json> out;

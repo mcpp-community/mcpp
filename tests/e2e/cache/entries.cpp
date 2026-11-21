@@ -426,6 +426,40 @@ E2E entries{"entries", s::home_fixture, [] {
         expect(fatal(std::ranges::count_if(keyed, [](const fs::path& p) { return fs::is_directory(p); }) == 2)) << "B: ex.lib has not one entry per interface it imported\n" << s::text(r);
     };
 
+    "1133 an entry is served only against the interfaces it was compiled with"_test[s::gcc] = [] {
+        // SPEC-001 §10.4 item 7: a path dependency `upper` imports `lower`; once `lower`'s entry is
+        // gone (as `mcpp cache gc` removes the least used) and the same trees are built at another
+        // path, `lower` is compiled again and `upper`, whose entry holds a BMI compiled against the
+        // first `lower`, is compiled with it rather than served ("module 'lower' CRC mismatch").
+        s::own_home(s::home::inherited);
+        const auto pkg = s::case_home(s::home::inherited) / "build-cache/v1/pkg";
+        const auto trees = [](const fs::path& at) {
+            s::project(at / "lower", {{"mcpp.toml", "[package]\nname = \"lower\"\nversion = \"0.1.0\"\n\n[targets.lower]\nkind = \"lib\"\n"},
+                                     {"src/lower.cppm", "export module lower;\nexport int lower_v() { return 4; }\n"}});
+            s::project(at / "upper", {{"mcpp.toml", "[package]\nname = \"upper\"\nversion = \"0.1.0\"\n\n[targets.upper]\nkind = \"lib\"\n\n[dependencies]\nlower = { path = \"../lower\" }\n"},
+                                    {"src/upper.cppm", "export module upper;\nimport lower;\nexport int upper_v() { return 2 * lower_v(); }\n"}});
+            return s::project(at / "app", {{"mcpp.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nupper = { path = \"../upper\" }\n"},
+                                           {"src/main.cpp", "import upper;\nint main() { return upper_v() == 8 ? 0 : 1; }\n"}});
+        };
+        auto first = trees(s::case_dir() / "first");
+        auto r = first.mcpp({"run"});
+        expect(fatal(e2e::succeeded(r))) << "the first tree\n" << s::text(r);
+        const auto lowerEntries = s::glob(pkg, "*/*lower@0.1.0+path.*");
+        expect(fatal(!lowerEntries.empty() && !s::glob(pkg, "*/*upper@0.1.0+path.*").empty())) << "the path dependencies were not cached\n" << s::text(r);
+        for (auto const& e : lowerEntries) fs::remove_all(e);
+
+        auto second = trees(s::case_dir() / "second");
+        r = second.mcpp({"run", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "the same trees at another path after lower's entry was removed\n" << s::text(r);
+        expect(s::lacks(s::text(r), "CRC mismatch")) << s::text(r);
+        expect(s::has_line(s::text(r), R"(cache: \S*upper 0\.1\.0 not served \[upstream-filled\])")) << "upper was not compiled with the lower it imports\n" << s::text(r);
+
+        auto third = trees(s::case_dir() / "third");
+        r = third.mcpp({"run", "-v"});
+        expect(fatal(e2e::succeeded(r))) << "a third tree over both entries\n" << s::text(r);
+        expect(s::no_line(s::text(r), R"(cache: \S*(upper|lower) 0\.1\.0 not served)")) << "an entry filled against its interfaces was not served\n" << s::text(r);
+    };
+
     "1029 an unused std module is collected by age"_test = [] {
         // mcpp#874: `cache prune --older-than` and `cache gc --older-than` collect a std module
         // unused for 3 days and keep one used now; `cache gc --max-size 0` keeps std modules.

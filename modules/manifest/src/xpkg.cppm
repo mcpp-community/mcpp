@@ -2017,6 +2017,14 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');
+                    } else if (sub == "description") {
+                        // mcpp#992: one line for a reader of the features, a
+                        // string as in `mcpp.toml` (SPEC-004 §16).
+                        if (cur.peek() != '"' && cur.peek() != '\'')
+                            return std::unexpected(ManifestError{
+                                std::format("features.{}.description must be a string", fname),
+                                m.sourcePath, 0, 0});
+                        m.featureDescriptions[fname] = cur.read_string();
                     } else if (sub == "requires_abi" && cur.peek() == '{') {
                         // `requires_abi = { threads = true }` -- see
                         // Manifest::featureRequiresAbiThreads. An older mcpp

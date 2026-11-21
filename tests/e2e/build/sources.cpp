@@ -242,8 +242,15 @@ include_dirs = ["inc"]
 )cpp"}}};
         r = w.mcpp({"build"}, warm);
         if (e2e::succeeded(r)) {
-            expect(fatal(!s::find_files(home / "registry/data/xpkgs/xim-x-nasm", "nasm.*").empty()))
-                << "build succeeded but nasm never landed in the sandbox (#232 gate not exercised):\n" << s::text(r);
+            // In the case's store, installed there or linked from an upstream home: a link is not
+            // followed by a walk, so each version directory is asked for the program.
+            std::error_code ec;
+            bool landed = false;
+            for (auto const& v : fs::directory_iterator(home / "registry/data/xpkgs/xim-x-nasm", ec))
+                landed = landed || fs::exists(v.path() / "nasm") || fs::exists(v.path() / "nasm.exe");
+            expect(fatal(landed)) << "build succeeded but nasm never landed in the sandbox (#232 gate not exercised):\n" << s::text(r);
+            expect(s::lacks(s::text(r), "the assembler for this build is the host's"))
+                << "the store's nasm, linked from an upstream home, was named the host's:\n" << s::text(r);
             auto run = w.mcpp({"run"}, warm);
             expect(s::last_line(run.out) == "asm mul2 = 25") << "cold-provisioned build produced wrong output: " << s::last_line(run.out);
         } else {

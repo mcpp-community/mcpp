@@ -87,13 +87,23 @@
   targets is warned (`bundle-lacks-target`).
 - **`[build] offline`** in `mcpp.toml` and `config.toml` (SPEC-004 §9 item 22), below `--offline`
   and `MCPP_OFFLINE` (`0` turns it off for a run). A refusal of an offline run names the tier
-  that made it offline.
+  that made it offline. Workspace members that state different values of it, or of
+  `[build] allow_host_tools`, are planned apart, each plan with its root's value.
 - **`[xlings] archives`** in `config.toml` and `mcpp.toml`, and `MCPP_ARCHIVES` (SPEC-004 §9
   item 23, docs/25 "Archive directories"): directories of archives taken by sha256 before the
   network, and in its place offline, where a payload the home lacks is installed from the
   download cache or a directory; one none holds is refused (`artifact-unavailable-offline`).
   A directory outside the project named in `mcpp.toml` is a note once
   (`machine-path-in-manifest`).
+- **A package's features are machine-readable** (mcpp#992, SPEC-004 §16, docs/06 "Reading a
+  package's features"). `mcpp search --format json` states, for each package of an mcpp index,
+  the features of its newest version (`features`: `version`, `state`, `from`, `list`),
+  read from the index or the installed payload; a payload that is not installed is
+  `not-installed` with a `null` list, and the query installs nothing. `mcpp why features
+  [--format json]` (`mcpp.why.features`) lists each package of the resolved graph with the
+  features it declares and those the build activates, which `resolution.json` records
+  (`features`, `feature_list`). `--protocol-version` lists `package-features`. A table-form
+  feature, and a descriptor's `features.<f>`, accept `description`.
 
 ### Changed
 
@@ -102,7 +112,8 @@
   cache names its reason.
 - **A case's time is the one its scopes state**: a case selected with `--case` runs within the
   `timeout` its listed case states, not the run's.
-- mcpplibs.mtest 0.11.1 and mcpplibs.os 0.4.7 throughout, the new project's skeleton included.
+- mcpplibs.mtest 0.11.2 and mcpplibs.os 0.4.7 throughout, the new project's skeleton and the CI
+  engine included: a case run as a scope names no case in its events.
 - xlings 2026.11.21.1 is the pinned provider: archives by content, `xlings download --to` and
   `xlings install --from`.
 - **CI verifies a tree once** (design 2026-11-20 §5.22). A pull request's push runs the `pr` tier;
@@ -119,6 +130,16 @@
 
 ### Fixed
 
+- **A cached dependency is served only against the module interfaces it was compiled with**
+  (SPEC-001 §10.4 item 7). An entry records the digest of each upstream interface it imported;
+  when an upstream is compiled again (its entry removed by `mcpp cache gc`, then built at
+  another path), its dependents are compiled with it and their entries written again, instead of
+  being served and failing with `module '<name>' CRC mismatch`. Entries an earlier mcpp wrote
+  for packages that import another package's module are filled again once.
+- The store's nasm, installed by link from an upstream home, is no longer reported as the host's
+  assembler: the store is judged by path, not by where the link leads.
+- **`mcpp test --failed` reads the newest run** when two runs started in the same second: the
+  later line of the store's index is the newer run.
 - **A compiler's version is what its driver states for machines** (mcpp#989): GCC's
   `-dumpfullversion` (else `-dumpversion`) and clang's `-dumpversion`, not the last number of the
   banner, which read Fedora's `g++ (GCC) 16.2.1 20261029 (Red Hat 16.2.1-3)` as `3`. A triple's

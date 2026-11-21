@@ -15,8 +15,9 @@
 //   driver.cpp         prepare_build: construct PrepareState, run the phases
 //                      in order, return what the last one builds.
 //   manifest.cpp       P0 -- the manifest and its workspace.
-//   toolchain.cpp      P1, P2 -- the toolchain specification and target axis;
-//                      the toolchain resolver's definition.
+//   toolchain.cpp      P1 -- the toolchain specification and target axis, and
+//                      the run-wide keys a plan's root states.
+//   toolchain_resolver.cpp  P2 -- the toolchain resolver's definition.
 //   xlings.cpp         P3 -- xlings payloads before the graph.
 //   graph_load.cpp     P4a -- loading one git, path or version dependency.
 //   graph.cpp          P4b -- the worklist, the graph, the cycle check.
@@ -672,6 +673,10 @@ export struct BuildContext {
         // its key holds (mcpp#974): read again before the entry is written.
         std::filesystem::path           treeRoot, treeRows;
         std::string                     treeDigest;
+        // The entries of the module interfaces it imports, read after they
+        // are filled: `key.imports` records each one's digest (SPEC-001 §10.4
+        // item 7).
+        std::vector<mcpp::bmi_cache::CacheKey> interfaces;
     };
     std::vector<CacheTask>          depsToPopulate;
 

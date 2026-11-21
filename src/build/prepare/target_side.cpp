@@ -17,6 +17,7 @@ import mcpp.toolchain.platform;
 import nlohmann.json;
 import mcpp.log;
 import mcpp.manifest;
+import mcpp.pm.package_manifest;   // the features of a graph entry (mcpp#992)
 import mcpp.source_kind;
 import mcpp.modgraph.glob;
 import mcpp.graph;
@@ -1819,6 +1820,17 @@ static void step9_define_graph_package_entry_closure(PrepareState& state) {
         // resolution.json only: the graph document a build program reads is
         // part of its re-run key, and must not change with when it is asked.
         if (!forBuildProgram) {
+            // The features the package declares and those this build activates
+            // (mcpp#992), in the shape `mcpp search` states a version's: what
+            // `mcpp why features` reads. Not in the build program's document,
+            // whose re-run key a description would change.
+            {
+                nlohmann::json active = nlohmann::json::array();
+                if (i < state.activeFeaturesByPackage.size())
+                    for (auto const& f : state.activeFeaturesByPackage[i]) active.push_back(f);
+                entry["features"] = std::move(active);
+                entry["feature_list"] = mcpp::pm::feature_list_json(mcpp::manifest::feature_catalog(pm));
+            }
             // The package's root as the build reads it (its patches applied):
             // the tree a patch of it is written from (docs/05).
             std::error_code ec;

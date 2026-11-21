@@ -226,6 +226,7 @@ effects 采用具名的方式而不是一个 `destructive: true|false`，因为�
 | `test-budget` | 2026.11.21.1 | `mcpp test` 陈述一份槽位的预算（`MTEST_BUDGET`），其程序的编译器从中取槽位；环境陈述了预算时使用那一份（SPEC-017 O11） | `mtest run`，运行 `mcpp test` 的运行器 |
 | `test-jitter` | 2026.11.21.1 | 运行陈述的抖动（`MTEST_JITTER`、`MTEST_JITTER_SEED`）到达其程序与记录（SPEC-017 O12） | 抖动的工作流 |
 | `test-fixtures` | 2026.11.21.1 | 为用例使用运行夹具的程序服务夹具（`MTEST_SERVE`、`MTEST_FIXTURE_<NAME>`），运行的 `fixtures.ndjson` 写出它们（SPEC-017 O6） | 框架共享的夹具 |
+| `package-features` | 2026.11.21.1 | 包的 feature 出现在 `mcpp search --format json`（`features`）与 `mcpp why features --format json`（§13、`mcpp.why.features`）中 | IDE 对 `features = [...]` 的补全与诊断 |
 
 ### 工具为项目运行 mcpp 的方式
 
@@ -452,19 +453,21 @@ mcpp why sources|tool <name>|payload <ns:name> --format json
 
 生态缺省基座的 `form` 为 `default`,其余字段描述引擎缺省解析出的结果。
 
-### `mcpp.why.build-programs` 与 `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
+### `mcpp.why.build-programs`、`mcpp.why.compat` 与 `mcpp.why.features` *(mcpp 2026.10.11.1+)*
 
 ```
 mcpp why build-programs --format json
 mcpp why compat --format json
+mcpp why features --format json      # 2026.11.21.1+
 ```
 
-两者都像 `mcpp why` 一样准备构建并报告它记录的内容；`data` 带 `status`（`ok` 或 `refused`），以及：
+三者都像 `mcpp why` 一样准备构建并报告它记录的内容；`data` 带 `status`（`ok` 或 `refused`），以及：
 
 | kind | 字段 | 内容 |
 |---|---|---|
 | `mcpp.why.build-programs` | `graphs[]` | 每张构建程序图一项：`workspace`（其目录）与 `programs[]`，每个程序为 `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | 每次使用弃用读法一项：`{id, where, detail, warned, since, floor, canonical, docs}`；在构建不编辑的清单中 `warned` 为 false |
+| `mcpp.why.features` | `packages[]` | 解析出的依赖图中每个包一项，根在最前：`package`（与 `resolution.json` 相同）、`root`、`manifest_dir` 与 `features`：`list`（包声明的 feature，每项与 `mcpp.search` 相同）与 `active`（本次构建激活的 feature） |
 
 ### `mcpp.why.target`、`mcpp.why.flags` 与 `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
 
@@ -1077,6 +1080,29 @@ mcpp search [keyword] --format json
 `data` 为 `keyword`（未给出时为 `""`，此时列出全部包）与 `packages`：每个包一条
 记录，含 `id`（`namespace:name`）、`namespace`、`name`、`index`、`description`、
 `licenses`、`repo` 与 `versions`（最新在前）。每个索引只读一次；命令不需要工程。
+
+mcpp 索引中的包带 `features`（2026.11.21.1+）：最新版本（`versions` 的第一项）的回答，取自 home 中已有的内容；
+查询不安装任何东西。提供方作为自身载荷提供、不是 mcpp 包的条目不带该字段。
+
+```json
+"features": {
+  "version": "0.0.5",
+  "state": "declared",
+  "from": "payload",
+  "list": [ { "name": "gui", "default": true, "implies": ["render"],
+              "enables": ["imgui/docking"], "description": "..." } ]
+}
+```
+
+| `state` | 含义 | `list` |
+|---|---|---|
+| `declared` | 取自索引（清单内联在描述符中，`from: index`）或已安装载荷中的清单（`from: payload`） | feature 的列表，按名字排序；包未声明 feature 时为 `[]` |
+| `not-installed` | 清单在 home 未持有的载荷中 | `null` |
+| `unreadable` | 载荷已安装而其清单读不出；`error` 说明原因 | `null` |
+
+`[]` 表示包声明了零个 feature；`null` 表示此处不知道回答。每个 feature 带 `name`、`default`
+（在缺省集合中，含其 `implies` 闭包）、`implies`（本包的 feature）、`enables`
+（`<依赖>/<feature>`），写了时还有 `description`。
 
 ### `mcpp.index` —— 注册表与工程的索引
 

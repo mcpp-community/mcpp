@@ -1522,6 +1522,25 @@ nlohmann::json compat_uses_json() {
     return uses;
 }
 
+// Each package of the resolved graph, the features its manifest declares and
+// those the build activates (mcpp#992), read from the record the preparation
+// wrote: what is stated is what a tool reading `resolution.json` sees.
+nlohmann::json graph_features_json(const std::filesystem::path& recordPath) {
+    nlohmann::json packages = nlohmann::json::array();
+    std::ifstream in(recordPath);
+    const auto doc = in ? nlohmann::json::parse(in, nullptr, false) : nlohmann::json{};
+    if (!doc.is_object() || !doc.contains("graph") || !doc["graph"].is_object()) return packages;
+    for (auto const& e : doc["graph"].value("packages", nlohmann::json::array()))
+        packages.push_back({
+            {"package", e.value("package", nlohmann::json::object())},
+            {"root", e.value("root", false)},
+            {"manifest_dir", e.value("manifest_dir", std::string{})},
+            {"features", {{"list", e.value("feature_list", nlohmann::json::array())},
+                          {"active", e.value("features", nlohmann::json::array())}}},
+        });
+    return packages;
+}
+
 // The selection of a request (SPEC-016 §4) as the machine output states it.
 nlohmann::json target_selection_json(const mcpp::build::BuildContext& ctx) {
     auto const& s = ctx.targetSelection;
@@ -1600,7 +1619,9 @@ export int why_target_or_flags_json(std::string_view topic, std::string_view tar
     return ctx ? 0 : 2;
 }
 
-export int why_build_programs_or_compat_json(std::string_view topic, const std::string& features) {
+// `mcpp why build-programs|compat|features --format json`: a record the
+// preparation wrote, read back.
+export int why_records_json(std::string_view topic, const std::string& features) {
     const bool wasQuiet = mcpp::ui::is_quiet();
     mcpp::ui::set_quiet(true);
     struct QuietGuard {
@@ -1618,9 +1639,12 @@ export int why_build_programs_or_compat_json(std::string_view topic, const std::
         diags.push_back({.code = "prepare.failed", .severity = mcpp::wire::Severity::Error,
                          .message = ctx.error()});
     if (topic == "compat") data["uses"] = compat_uses_json();
+    else if (topic == "features")
+        data["packages"] = ctx ? graph_features_json(ctx->plan.outputDir / "resolution.json")
+                               : nlohmann::json::array();
     else data["graphs"] = ctx ? build_programs_json(ctx->projectRoot) : nlohmann::json::array();
     mcpp::wire::emit({
-        .kind        = topic == "compat" ? "mcpp.why.compat" : "mcpp.why.build-programs",
+        .kind        = std::format("mcpp.why.{}", topic),
         .effects     = { mcpp::wire::Effect::ReadProject },
         .data        = data,
         .diagnostics = diags,
@@ -1633,12 +1657,12 @@ export int why_report(const std::string& topic, const std::string& features,
     const bool all = topic.empty() || topic == "all";
     static constexpr std::string_view kTopics[] = {
         "all", "target", "toolchain", "sysroot", "runtime", "deps", "runners", "sources", "tool",
-        "payload", "build-programs", "compat", "flags", "platform",
+        "payload", "build-programs", "compat", "flags", "platform", "features",
     };
     if (!topic.empty() && std::ranges::find(kTopics, std::string_view(topic)) == std::end(kTopics)) {
         std::println(libc::stderr(), "error: '{}' is not a topic of `mcpp why`; the topics are "
                      "target, toolchain, sysroot, runtime, deps, runners, sources, tool <name>, "
-                     "payload <ns:name>, build-programs, compat, flags [<unit>] and platform", topic);
+                     "payload <ns:name>, build-programs, compat, flags [<unit>], platform and features", topic);
         return 2;
     }
 
@@ -1695,6 +1719,38 @@ export int why_report(const std::string& topic, const std::string& features,
             std::println("  serves  {:<28} {:<20} priority {}", s.identity, s.provider, s.priority);
         for (auto const& w : mp::check_statement(*at.statement, name).warnings)
             std::println("  warning: {}", w);
+        return 0;
+    }
+    // THE FEATURES OF EACH PACKAGE OF THE GRAPH (mcpp#992): those it declares,
+    // which are its defaults, and which this build activates.
+    if (topic == "features") {
+        std::println("features:");
+        for (auto const& p : graph_features_json(ctx->plan.outputDir / "resolution.json")) {
+            std::println("  {}{}", p["package"].value("canonical", std::string("?")),
+                         p.value("root", false) ? "  (root)" : "");
+            auto const& f = p["features"];
+            if (f["list"].empty()) std::println("    (declares none)");
+            for (auto const& e : f["list"]) {
+                const auto name = e.value("name", std::string{});
+                std::string marks;
+                if (e.value("default", false)) marks += "default";
+                if (std::ranges::find(f["active"], nlohmann::json(name)) != f["active"].end())
+                    marks += marks.empty() ? "active" : ", active";
+                auto joined = [&](std::string_view key) {
+                    std::string out;
+                    for (auto const& x : e.value(std::string(key), nlohmann::json::array()))
+                        out += (out.empty() ? std::string(key) + " " : ", ") + x.get<std::string>();
+                    return out;
+                };
+                auto edges = joined("implies");
+                if (auto en = joined("enables"); !en.empty()) edges += (edges.empty() ? "" : "; ") + en;
+                auto line = std::format("    {:<20} {:<16} {}", name, marks, edges);
+                while (line.ends_with(' ')) line.pop_back();
+                std::println("{}", line);
+                if (auto d = e.value("description", std::string{}); !d.empty())
+                    std::println("      {}", d);
+            }
+        }
         return 0;
     }
     // EVERY WORD OF A UNIT'S COMMAND LINE AND WHO GAVE IT (mcpp#911 G2).

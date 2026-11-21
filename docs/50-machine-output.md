@@ -264,6 +264,7 @@ envelope says when either has changed since.
 | `test-budget` | 2026.11.21.1 | `mcpp test` states one budget of slots (`MTEST_BUDGET`) its programs' compilers take, and uses a budget its environment states (SPEC-017 O11) | `mtest run`, a runner that runs `mcpp test` |
 | `test-jitter` | 2026.11.21.1 | the jitter a run states (`MTEST_JITTER`, `MTEST_JITTER_SEED`) reaches its programs and its record (SPEC-017 O12) | the jitter workflow |
 | `test-fixtures` | 2026.11.21.1 | run fixtures are served for the programs whose cases use them (`MTEST_SERVE`, `MTEST_FIXTURE_<NAME>`), and a run's `fixtures.ndjson` states them (SPEC-017 O6) | a framework's shared fixtures |
+| `package-features` | 2026.11.21.1 | a package's features in `mcpp search --format json` (`features`) and `mcpp why features --format json` (§13, `mcpp.why.features`) | an IDE's completion and diagnostics of `features = [...]` |
 
 ### How a tool runs mcpp for a project
 
@@ -516,20 +517,22 @@ the execution host (2026.10.24.1+), on every build:
 `form` is `default` for the ecosystem's own base, and then the other fields
 describe what the engine resolved by default.
 
-### `mcpp.why.build-programs` and `mcpp.why.compat` *(mcpp 2026.10.11.1+)*
+### `mcpp.why.build-programs`, `mcpp.why.compat` and `mcpp.why.features` *(mcpp 2026.10.11.1+)*
 
 ```
 mcpp why build-programs --format json
 mcpp why compat --format json
+mcpp why features --format json      # 2026.11.21.1+
 ```
 
-Both prepare the build as `mcpp why` does and report what it recorded; `data`
+Each prepares the build as `mcpp why` does and reports what it recorded; `data`
 carries `status` (`ok` or `refused`) and:
 
 | kind | field | content |
 |---|---|---|
 | `mcpp.why.build-programs` | `graphs[]` | one entry per build programs' graph: `workspace` (its directory) and `programs[]`, each `{member, package, source, libraries[], identity, binary}` |
 | `mcpp.why.compat` | `uses[]` | one entry per use of a deprecated reading: `{id, where, detail, warned, since, floor, canonical, docs}`; `warned` is false in a manifest the build does not edit |
+| `mcpp.why.features` | `packages[]` | one entry per package of the resolved graph, the root first: `package` (as in `resolution.json`), `root`, `manifest_dir` and `features`: `list` (the features the package declares, each as in `mcpp.search`) and `active` (those the build activates) |
 
 ### `mcpp.why.target`, `mcpp.why.flags` and `mcpp.why.platform` *(mcpp 2026.11.9.1+)*
 
@@ -1226,6 +1229,32 @@ mcpp search [keyword] --format json
 `packages`: one record per package, with `id` (`namespace:name`), `namespace`,
 `name`, `index`, `description`, `licenses`, `repo` and `versions` (newest
 first). Each index is read once; the command needs no project.
+
+A package of an mcpp index carries `features` (2026.11.21.1+): the answer for
+the newest version (the first of `versions`), read from what the home holds; the query installs
+nothing. An entry the provider serves as its own payload, not an mcpp package,
+carries none.
+
+```json
+"features": {
+  "version": "0.0.5",
+  "state": "declared",
+  "from": "payload",
+  "list": [ { "name": "gui", "default": true, "implies": ["render"],
+              "enables": ["imgui/docking"], "description": "..." } ]
+}
+```
+
+| `state` | meaning | `list` |
+|---|---|---|
+| `declared` | read from the index (a descriptor that carries its manifest inline, `from: index`) or from the manifest of the installed payload (`from: payload`) | the features, sorted by name; `[]` when the package declares none |
+| `not-installed` | the manifest is inside a payload the home does not hold | `null` |
+| `unreadable` | the payload is installed and its manifest cannot be read; `error` says why | `null` |
+
+`[]` states that the package declares no feature; `null` states that the answer
+is not known here. Each feature has `name`, `default` (in the default set, its
+`implies` closure included), `implies` (features of the package), `enables`
+(`<dependency>/<feature>`) and, when written, `description`.
 
 ### `mcpp.index` — the registries and the project's indexes
 

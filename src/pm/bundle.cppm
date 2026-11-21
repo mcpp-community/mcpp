@@ -103,11 +103,14 @@ namespace fs = std::filesystem;
 namespace toml = mcpp::libs::toml;
 
 // The provider's view for a project: its own when the project names indices
-// of its own (a materialised `.mcpp/.xlings.json`), else the home's.
+// of its own (the provider has written its configuration there), else the
+// home's. The provider names its configuration file; the layout is its own.
 mcpp::provider::Location location_for(const mcpp::config::GlobalConfig& cfg, const fs::path& projectRoot) {
-    std::error_code ec;
-    if (!projectRoot.empty() && fs::is_regular_file(projectRoot / ".mcpp" / ".xlings.json", ec))
-        return mcpp::config::make_project_xlings_env(cfg, projectRoot);
+    if (!projectRoot.empty()) {
+        auto project = mcpp::config::make_project_xlings_env(cfg, projectRoot);
+        std::error_code ec;
+        if (fs::is_regular_file(mcpp::provider::open(project)->config_file(), ec)) return project;
+    }
     return mcpp::config::make_xlings_env(cfg);
 }
 

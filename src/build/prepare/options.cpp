@@ -63,7 +63,7 @@ std::string msvc_unavailable_guidance(const mcpp::toolchain::Toolchain& tc) {
         "         - `mcpp toolchain install msvc`: a managed MSVC with its own SDK;\n"
         "         - or choose MinGW-w64 yourself: `--toolchain {}` (or [toolchain] in\n"
         "           mcpp.toml) with `--target {}`.",
-        what, pins::kFirstRunWinGnu, pins::kFirstRunWinGnuTarget);
+        what, pins::kFirstRunNoMsvc, pins::kFirstRunNoMsvcTarget);
 }
 
 std::optional<CacheMode> parse_cache_mode(std::string_view v) {

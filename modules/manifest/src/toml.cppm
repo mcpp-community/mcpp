@@ -1475,6 +1475,12 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                 read_str_array(ft, "requires", reqs);
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
+                if (auto dit = ft.find("description"); dit != ft.end()) {
+                    if (!dit->second.is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "features.{}.description must be a string", fname)));
+                    m.featureDescriptions[fname] = dit->second.as_string();
+                }
                 // `requires_abi = { threads = true, exceptions = true }`:
                 // this feature needs the artefact's ABI switch(es) on. See
                 // Manifest::featureRequiresAbiThreads /
@@ -1602,6 +1608,8 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                     "device_extensions", "rule_module",
                     // mcpp#709: the host tools a feature makes available.
                     "tools",
+                    // mcpp#992: one line for a reader of the package's features.
+                    "description",
                 };
                 for (auto& [fkey, fignored] : fval.as_table()) {
                     (void)fignored;

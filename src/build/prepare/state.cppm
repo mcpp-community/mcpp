@@ -327,8 +327,8 @@ struct BuildProgramBinary {
 // phase is an ordinary function taking `PrepareState&`; the state itself is
 // constructed once, in driver.cpp's prepare_build(), and lives for the
 // whole call — including across a phase that stores a closure for a LATER
-// phase to call (resolve_target_toolchain, defined in toolchain.cpp's P2 and
-// called from its own P5): such a closure captures `state` itself rather
+// phase to call (resolve_target_toolchain, defined in toolchain_resolver.cpp's P2 and
+// called from P5): such a closure captures `state` itself rather
 // than individual locals, so it stays valid no matter which phase's stack
 // frame created it.
 //
@@ -1111,7 +1111,7 @@ struct PrepareState {
 };
 
 // Phase declarations. Defined across manifest.cpp, toolchain.cpp,
-// xlings.cpp, graph_load.cpp, graph.cpp, features.cpp, target_side.cpp,
+// toolchain_resolver.cpp, xlings.cpp, graph_load.cpp, graph.cpp, features.cpp, target_side.cpp,
 // scan.cpp and plan.cpp; called in order from driver.cpp's
 // prepare_build(). Ordinary (non-static) module-linkage declarations --
 // static would give each definition internal linkage, invisible outside
@@ -1228,15 +1228,6 @@ void replace_dependencies(
     const std::map<std::string, mcpp::manifest::DependencySpec>& from);
 std::vector<std::pair<std::string, std::string>>& pending_flag_words_notes();
 void report_flag_words_changes(const mcpp::manifest::Manifest& m);
-std::optional<std::string>
-inherit_as_workspace_member(mcpp::manifest::Manifest& member,
-                            const mcpp::manifest::Manifest& workspace,
-                            const std::filesystem::path& workspaceRoot,
-                            const std::filesystem::path& memberDir,
-                            bool reportPosition = true);
-std::optional<std::pair<mcpp::manifest::Manifest, std::filesystem::path>>
-workspace_listing(const std::filesystem::path& memberDir,
-                  const std::filesystem::path& bound);
 bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx);
 // The `requires` of the layer-predicated tables `ctx` matches
