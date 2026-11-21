@@ -206,6 +206,9 @@ jobs:
       - name: Check modules/ wiring
         run: bash .github/tools/check_modules_wiring.sh
 
+      - name: Check that every warning and note goes through mcpp.diag
+        run: bash .github/tools/check_diag_sink.sh
+
       - name: Check that the engine's sources name no more systems than the baseline
         run: python3 .github/tools/check_system_names.py
 

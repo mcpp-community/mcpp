@@ -713,8 +713,8 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     // The run's closing notices belong in the envelope as `note` diagnostics;
     // taken here, they are not printed again as `tip:` lines at exit.
     auto take_closing_notes = [&] {
-        for (auto& n : mcpp::ui::take_closing_notices())
-            diagnostics.push_back({std::move(n.code), Severity::Note, std::move(n.message)});
+        for (auto& n : mcpp::diag::take_closing())
+            diagnostics.push_back({n.code(), Severity::Note, std::move(n.what)});
     };
     auto publish = [&](const std::string& text) -> int {
         if (!outputPath) { std::print("{}", text); return 0; }
@@ -845,11 +845,7 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
     // is its code: `build/msvc-crt-word` is `MCPP_BUILD_MSVC_CRT_WORD`.
     auto take_member_diagnostics = [&](const std::string& memberPath) {
         for (auto& r : mcpp::diag::take()) {
-            std::string code = "MCPP_";
-            for (char c : r.domain)
-                code += (c == '/' || c == '-') ? '_'
-                      : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            diagnostics.push_back({std::move(code),
+            diagnostics.push_back({r.code(),
                                    r.severity == mcpp::diag::Severity::Note
                                        ? Severity::Note : Severity::Warning,
                                    r.format(), memberPath});
@@ -1149,7 +1145,7 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto f = parsed.value("pkg-format")) format = *f;
     else if (auto f = parsed.value("format")) {
         // The earlier spelling (`mcpp pack --pkg-format`'s note says why).
-        mcpp::ui::warning("`mcpp run --format` is the earlier spelling of --pkg-format");
+        mcpp::diag::warning("build", "`mcpp run --format` is the earlier spelling of --pkg-format");
         format = *f;
     }
     // One format runs: a list is `mcpp pack`'s (design 2026-10-29 §4.6).
@@ -2229,7 +2225,7 @@ void env_print(const mcpp::build::BuildContext& ctx, bool host) {
     const std::string triple = host ? ctx.hostTriple : ctx.tc.targetTriple;
     const std::string compiler = host ? ctx.hostCompiler : ctx.tc.binaryPath.generic_string();
     const std::string compilerOrigin = host ? ctx.hostCompilerOrigin : ctx.compilerChoice.origin;
-    for (auto const& n : ctx.planNotes) mcpp::ui::warning(n.message);
+    for (auto const& n : ctx.planNotes) mcpp::diag::warning("build", n.message);
     std::println("{:<10} {}", host ? "host" : "target", triple);
     std::println("{:<10} {} ({})", "compiler", compiler, compilerOrigin);
     std::println("{:<10} {}{}", "platform", P.display(),

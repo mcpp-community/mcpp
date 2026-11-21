@@ -55,6 +55,8 @@ struct Record {
 
     // Rendered form, without the "warning: " / "error: " prefix.
     std::string format() const;
+    // The machine code of its domain: `build/msvc-crt-word` is `MCPP_BUILD_MSVC_CRT_WORD`.
+    std::string code() const;
 };
 
 // The engine did less than asked because a precondition was not met.
@@ -95,6 +97,21 @@ void notice(Severity severity, std::string_view domain, std::string_view subject
 std::optional<std::string> project_fact(std::string_view name);
 void remember_project_fact(std::string_view name, std::string_view value);
 
+// A notice about the run as a whole rather than the step that noticed it (a refreshed index that
+// requires a newer mcpp): said once, after the command's own output, as a `tip:` line, so it is
+// the last thing a reader sees and never interleaves with progress. It never changes the exit
+// status.
+void closing(std::string_view domain, std::string_view what);
+// A closing notice that belongs to a failed run only: advice that would be noise after a success
+// (a newer platform release in the index).
+void on_failure(std::string_view domain, std::string_view what);
+// The run's closing notices, taken: a command that writes a machine-readable envelope reports
+// them as notes, and they are not said again at exit.
+std::vector<Record> take_closing();
+// Says the closing notices, and the failure ones when `failed`, then clears both. Nothing under
+// --quiet.
+void print_closing(bool failed = false);
+
 // The records of this run, cleared: what a command that writes an envelope
 // reports for one member before planning the next. What was printed stays
 // printed -- the once-per-process rule is about the terminal.
@@ -123,6 +140,8 @@ std::vector<Record> g_records;
 // workspace build flushes once per member, and the terminal owes the reader
 // one statement per fact, not one per member (WS3).
 std::set<std::string> g_printed;
+std::vector<Record> g_closing;  // closing notices, in the order they were reported
+std::vector<Record> g_failure;  // closing notices of a failed run only
 std::optional<mcpp::notice::Record> g_project;  // the project's record of notices, once loaded
 std::filesystem::path g_projectTarget;
 std::mutex g_projectLock;
@@ -161,8 +180,10 @@ void push(Record r) {
     for (auto const& existing : g_records)
         if (dedup_key(existing) == key) return;
     if (g_printed.insert(key).second) {
-        const bool before = said_before(r);
-        r.shown = !before && !(r.severity == Severity::Note && mcpp::ui::is_quiet());
+        // A note --quiet hides is not marked: the project has not been told it.
+        const bool quietNote = r.severity == Severity::Note && mcpp::ui::is_quiet();
+        const bool before = !quietNote && said_before(r);
+        r.shown = !before && !quietNote;
         if (before && mcpp::log::is_verbose()) {
             mcpp::ui::note(r.format() + " (noted before)");
         } else if (r.shown) {
@@ -206,6 +227,34 @@ void report(Severity severity, std::string_view domain, std::string_view what,
 void note(std::string_view domain, std::string_view what) {
     push(Record{Severity::Note, std::string(domain), std::string(what),
                 std::string{}, std::string{}});
+}
+
+std::string Record::code() const {
+    std::string out = "MCPP_";
+    for (char c : domain)
+        out += (c == '/' || c == '-') ? '_' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return out;
+}
+
+namespace {
+void add_closing(std::vector<Record>& to, std::string_view domain, std::string_view what) {
+    for (auto const& r : to)
+        if (r.what == what) return;
+    to.push_back(Record{Severity::Note, std::string(domain), std::string(what), {}, {}});
+}
+}  // namespace
+
+void closing(std::string_view domain, std::string_view what) { add_closing(g_closing, domain, what); }
+void on_failure(std::string_view domain, std::string_view what) { add_closing(g_failure, domain, what); }
+
+std::vector<Record> take_closing() { return std::exchange(g_closing, {}); }
+
+void print_closing(bool failed) {
+    auto notices = take_closing();
+    auto onFailure = std::exchange(g_failure, {});
+    if (failed) notices.insert(notices.end(), onFailure.begin(), onFailure.end());
+    if (mcpp::ui::is_quiet()) return;
+    for (auto const& n : notices) mcpp::ui::tip(n.what);
 }
 
 void set_project_target(const std::filesystem::path& targetDir) {
@@ -265,6 +314,8 @@ std::vector<Record> records() { return g_records; }
 void reset() {
     g_records.clear();
     g_printed.clear();
+    g_closing.clear();
+    g_failure.clear();
     std::lock_guard lock(g_projectLock);
     g_project.reset();
     g_projectTarget.clear();

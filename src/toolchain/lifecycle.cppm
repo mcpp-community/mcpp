@@ -20,6 +20,7 @@ import mcpp.toolchain.target_rows;
 import mcpp.toolchain.target_schema;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.wire;
 import nlohmann.json;
 import mcpp.log;
@@ -390,7 +391,7 @@ void msvc_warn_if_sdk_missing(const mcpp::toolchain::msvc::MsvcInstallation& ins
         if (!choice.note.empty()) mcpp::ui::info("note", choice.note);
         return;
     }
-    mcpp::ui::warning(
+    mcpp::diag::warning("toolchain", 
         "the toolset installed, but no Windows SDK was found next to it.\n"
         "         cl.exe cannot compile anything without the ucrt/um headers.\n"
         "         The toolset declares `xim:windows-sdk` as a dependency, so this\n"
@@ -486,7 +487,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 // simply absent from `toolchain list` -- the reading the
                 // descriptor was added to prevent, in the one command a user
                 // runs to find out what is installed.
-                if (!bin) { mcpp::ui::warning(bin.error()); continue; }
+                if (!bin) { mcpp::diag::warning("toolchain", bin.error()); continue; }
                 if (bin->empty()) continue;
                 payloads.push_back({ *id, s.version, *bin, {entry.ns, entry.name, entry.version} });
             }
@@ -1364,7 +1365,7 @@ export int toolchain_remove(const mcpp::config::GlobalConfig& cfg,
             def && def->family == parsedSpec->family
                 && def->version == parsedSpec->version
                 && def->target == parsedSpec->target) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("toolchain", std::format(
                 "default toolchain '{}' was just removed; consider `mcpp toolchain default <other>`",
                 spec));
         }

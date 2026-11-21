@@ -21,6 +21,7 @@ import mcpp.project;          // resolve_member_dir, for `pack -p` (#734 E3)
 import mcpp.manifest;
 import mcpp.publish.pipeline;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.wire;
 import mcpp.home;                 // --list-formats plans outside the project
 import mcpp.pack.stage_tree;       // the built-in formats
@@ -115,7 +116,7 @@ static int refuse_shared_exact_pins() {
         ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false, /*includeDevDeps=*/false, {}, ov);
     }
     if (!ctx) {
-        mcpp::ui::note(std::format("the library's pins of shared packages were not checked: its graph could not "
+        mcpp::diag::note("publish", std::format("the library's pins of shared packages were not checked: its graph could not "
                                    "be planned here ({})", ctx.error().substr(0, ctx.error().find('\n'))));
         return 0;
     }
@@ -316,10 +317,10 @@ std::optional<std::string> pack_format_option(const mcpplibs::cmdline::ParsedArg
     static bool warned = false;
     if (old && !std::exchange(warned, true)) {
         if (pkg && *pkg != *old) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("publish", std::format(
                 "--format '{}' and --pkg-format '{}' disagree; --pkg-format is used", *old, *pkg));
         } else if (!pkg) {
-            mcpp::ui::warning("`mcpp pack --format` is the earlier spelling of --pkg-format, "
+            mcpp::diag::warning("publish", "`mcpp pack --format` is the earlier spelling of --pkg-format, "
                               "the package format; --format names an output encoding elsewhere");
         }
     }
@@ -970,7 +971,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                             "--no-universal out");
             return 2;
         }
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("publish", std::format(
             "--no-universal is what a pack of one target does ({}); an image of a platform with a "
             "runner is packed as its tree (bin/<name>, bin/<name>.exe, lib/<arch>/), and one program "
             "carrying the image is --pkg-format single-file",
@@ -984,7 +985,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
                             "targets are its legs.\n  use: [pack] targets = [\"openkal\"]");
             return 2;
         }
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("publish", std::format(
             "[pack] universal = false is what a pack of one target does; it is ignored ({})",
             mcpp::pm::compat::deprecation_clause(*mcpp::pm::compat::find_deprecation("pack-universal"))));
     }
@@ -1046,7 +1047,7 @@ int cmd_pack_body(const mcpplibs::cmdline::ParsedArgs& parsed,
             return 2;
         }
         if (modeFromUser) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("publish", std::format(
                 "--mode is an application-bundle depth and does not apply to the "
                 "library target '{}' yet; ignoring it", route->targetName));
         }

@@ -404,7 +404,7 @@ step3_define_host_tc_closures_and_refresh_index(PrepareState& state) {
                     // instead would turn a transient network blip into a hard
                     // stop for a build that needed no network at all.
                     if (auto r = mcpp::pm::apply(decision, xlEnv); !r)
-                        mcpp::ui::warning(r.error());
+                        mcpp::diag::warning("build", r.error());
                     return true;
                 }
                 return false;

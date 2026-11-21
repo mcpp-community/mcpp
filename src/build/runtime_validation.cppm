@@ -28,6 +28,7 @@ import mcpp.runtime.search;
 import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.toolchain.triple;
 import mcpp.invocation;
 
@@ -744,7 +745,7 @@ ValidationReport validate_changed_artifacts(
     const bool bindingUnevaluated =
         !plan.runtimeBinding.loader.has_value() && plan.runtimeBinding.libraryDirs.empty();
     if (bindingUnevaluated && !before.empty()) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("runtime", std::format(
             "runtime binding {} has no loader path or library directory yet, so "
             "rule B cannot decide for this build's artifacts. This is expected on "
             "the first build in a fresh MCPP_HOME; a second build resolves it.",

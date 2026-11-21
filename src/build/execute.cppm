@@ -2167,7 +2167,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         if (std::ifstream in(ctx.outputDir / ".mcpp-written"); in) in >> lastWritten;
         const std::uintmax_t threshold = std::max<std::uintmax_t>(2ull << 30, lastWritten + lastWritten / 4);
         if (!sec && freeBefore < threshold)
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "{} free where this build writes ({}), and its last build took {}. `mcpp clean "
                 "--stale` removes the build directories no configuration uses, and `mcpp cache gc "
                 "--older-than 30d` the cache entries none has used",
@@ -2278,7 +2278,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                         }
                     // The size of the directory left beside it (mcpp#927, 2026-11-12
                     // §18 P6): what the reader decides about, with the command.
-                    mcpp::ui::warning(std::format(
+                    mcpp::diag::warning("build", std::format(
                         "the configuration changed{}: {} is built in full beside {} ({}); "
                         "`mcpp clean --stale` drops it once no build uses it",
                         what.empty() ? std::string{} : " (" + what + ")",
@@ -2934,10 +2934,10 @@ void restore_root_compile_commands(const std::filesystem::path& projectRoot,
     auto result = mcpp::build::publish_root_compile_commands(
         configPath, rootPath, targetRoot, mcpp::home::root());
     if (!result) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "compile_commands.json was not updated: {}", result.error().message));
     } else if (result->foreignEntries > 0) {
-        mcpp::ui::warning(mcpp::build::foreign_entries_warning(result->foreignEntries));
+        mcpp::diag::warning("build", mcpp::build::foreign_entries_warning(result->foreignEntries));
     }
 }
 
@@ -2964,10 +2964,10 @@ export void publish_workspace_compile_commands(
         databases, (wsRoot / rootCompileDb).lexically_normal(),
         outputDirs.front().parent_path().parent_path(), mcpp::home::root());
     if (!result) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "compile_commands.json was not updated: {}", result.error().message));
     } else if (result->foreignEntries > 0) {
-        mcpp::ui::warning(mcpp::build::foreign_entries_warning(result->foreignEntries));
+        mcpp::diag::warning("build", mcpp::build::foreign_entries_warning(result->foreignEntries));
     }
 }
 
@@ -3418,7 +3418,7 @@ void run_separator() {
 // them.
 void yield_terminal() {
     mcpp::build::progress::close();
-    mcpp::ui::print_closing_notices();
+    mcpp::diag::print_closing();
 }
 
 // mcpp#225 (E2): `mcpp run`'s fast path. Mirrors try_fast_build's
@@ -4047,7 +4047,7 @@ std::optional<ChosenLeg> choose_run_leg(std::span<const mcpp::toolchain::target_
             passed.push_back(std::format("{}: {}", leg->triple, why->substr(0, why->find('\n'))));
             continue;
         }
-        for (auto const& p : passed) mcpp::ui::note(std::format("not run here -- {}", p));
+        for (auto const& p : passed) mcpp::diag::note("build", std::format("not run here -- {}", p));
         mcpp::ui::info("Leg", std::format("{} (of {} targets)", leg->triple, legs.size()));
         return ChosenLeg{leg->triple, std::move(*ctx)};
     }
@@ -5974,7 +5974,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                         reason = spawn_failed_message(r.argv.front(), spawnErr, spawnDetail);
                     if (!hostCannotRun.exchange(true)) {
                         hostCannotRunReason = reason;
-                        if (!json) mcpp::ui::warning(reason);
+                        if (!json) mcpp::diag::warning("build", reason);
                     }
                     if (!json) mcpp::ui::plain(std::format("{} ... not run", r.name));
                     results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, ms, false,
@@ -6492,7 +6492,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
         // person (measured on 2026.10.28.1). `mcpp run` prints the same text.
         if (!json && !invocationNotRunReason.empty() && !runnable.empty()
             && !std::exchange(tb.invocationReasonPrinted, true))
-            mcpp::ui::warning(invocationNotRunReason);
+            mcpp::diag::warning("build", invocationNotRunReason);
         // A PROGRAM OF SEVERAL FILES RUNS AS SEVERAL PROCESSES (design
         // 2026-11-09 §17.3): one per file of its cases, each selecting them
         // (P4), scheduled across the workers as the programs are -- the
@@ -7028,7 +7028,7 @@ export int run_test_archive(std::span<const std::string> passthrough, BuildOverr
                                                 : tb.invocationNotRunReason;
             reasons.push_back(std::format("{}: {}", leg.triple, why.substr(0, why.find('\n'))));
             (tb.builtNotRunHere ? notReached : notRun) += static_cast<int>(leg.tests.size());
-            if (!json) mcpp::ui::note(std::format("the tests of {} are not run here: {}", leg.triple, why));
+            if (!json) mcpp::diag::note("build", std::format("the tests of {} are not run here: {}", leg.triple, why));
             continue;
         }
         std::vector<std::pair<std::string, std::string>> legEnv;
@@ -7780,7 +7780,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
         legs.push_back(std::move(leg));
     }
     for (auto const& why : leftOut)
-        mcpp::ui::note(std::format("left out of the target set, its platform does not serve it -- {}", why));
+        mcpp::diag::note("build", std::format("left out of the target set, its platform does not serve it -- {}", why));
     if (legs.empty()) {
         mcpp::ui::error("no member of the target set is served by its platform");
         return 2;
@@ -8530,7 +8530,7 @@ void keep_target_budget(const std::filesystem::path& root) {
     std::string largest;
     for (std::size_t i = 0; i < dirs.size() && i < 3; ++i)
         largest += std::format("{}{} ({})", i ? ", " : "", dirs[i].second, mcpp::bmi_cache::human_bytes(dirs[i].first));
-    mcpp::ui::warning(std::format(
+    mcpp::diag::warning("build", std::format(
         "target/ holds {}, over [build] target_budget = {}, in configurations still in use: {}",
         mcpp::bmi_cache::human_bytes(now), mcpp::bmi_cache::human_bytes(*budget), largest));
 }

@@ -427,7 +427,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                         .shortName = exact.shortName,
                     };
                     if (state.selectorMigrationWarnings.insert(depName).second) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "dependency selector '{}' now means exact package "
                             "'{}', but mcpp.lock records '{}'; keeping the "
                             "locked identity for this migration release. "
@@ -450,7 +450,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                             *old, *oldLua,
                             /*allowLegacyBareDefault=*/false)
                         && state.selectorMigrationWarnings.insert(depName).second) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "dependency selector '{}' now resolves exactly to "
                             "'{}'; an older mcpp would select the existing "
                             "package '{}'. Write '{}' to keep the old identity "
@@ -499,7 +499,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                     mcpp::pm::policy_for(**cfgR), env,
                     mcpp::pm::format_package_selector(candidates.front()));
                 if (auto r = mcpp::pm::apply(decision, env); !r) {   // says a declined one under -v
-                    mcpp::ui::warning(r.error());
+                    mcpp::diag::warning("build", r.error());
                     break;
                 }
                 if (!decision.shouldRefresh) break;
@@ -596,7 +596,7 @@ static void step4a_define_candidate_selection_closures(PrepareState& state) {
                     candidates.assign(1, selected);
 
                     if (state.selectorMigrationWarnings.insert(depName).second) {
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "dependency '{}' resolved to '{}' through the "
                             "deprecated bare-name search; namespace omission "
                             "means `{}` only. Write the exact package:"
@@ -863,7 +863,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
         if (ctx.installed && ctx.luaContent) {
             if (auto violation = mcpp::manifest::
                     xpkg_name_form_violation_from_lua(*ctx.luaContent)) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "dependency '{}': {}\n"
                     "       resolving from the already-installed copy; a clean "
                     "environment (CI) will fail here",
@@ -1091,7 +1091,7 @@ step4a_load_version_dep_fetch(PrepareState& state, LoadVersionDepCtx& ctx) {
                 auto decision = mcpp::pm::decide_for_miss(
                     mcpp::pm::policy_for(**cfg), env, target, mcpp::pm::RefreshReason::InstallMiss);
                 if (auto applied = mcpp::pm::apply(decision, env); !applied) {
-                    mcpp::ui::warning(applied.error());
+                    mcpp::diag::warning("build", applied.error());
                     refreshNote = std::format("refreshing it failed: {}", applied.error());
                 } else if (decision.shouldRefresh) {
                     r = install_one(target);
@@ -1408,7 +1408,7 @@ std::expected<void, std::string> phase4a_graph_load(PrepareState& state) {
         if (auto r = mcpp::pm::patch::materialize(*ctx.installed, patches, digest, variant,
                                                   patchAt == "." ? std::filesystem::path{} : patchAt, &notes); !r)
             return std::unexpected(std::format("dependency '{}': {}", depName, r.error()));
-        for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", depName, n));
+        for (auto const& n : notes) mcpp::diag::note("build", std::format("dependency '{}': {}", depName, n));
         ctx.installed = variant;
         return step4a_load_version_dep_read_manifest(state, ctx);
     };

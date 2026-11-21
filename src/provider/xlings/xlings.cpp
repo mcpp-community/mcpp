@@ -16,6 +16,7 @@ import mcpp.runtime.launch_env;
 import mcpp.home.files;
 import mcpp.log;
 import mcpp.ui;                 // closing notices of the refresh guard
+import mcpp.diag;
 import mcpp.home;
 import mcpp.xpkg_version;
 import nlohmann.json;
@@ -2092,11 +2093,11 @@ int update_index_unguarded(const Env& env, bool quiet) {
             it == staged.requiredMcpp.end() ? std::string_view{} : std::string_view{it->second});
     };
     for (auto& dir : staged.kept)
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
+        mcpp::diag::closing("index/requires-newer-mcpp", std::format(
             "the refreshed package index `{}` requires a newer mcpp; this run "
             "used the previous index. {}", dir.filename().string(), advice(dir)));
     for (auto& dir : staged.unusable)
-        mcpp::ui::add_closing_notice("MCPP_INDEX_REQUIRES_NEWER_MCPP", std::format(
+        mcpp::diag::closing("index/requires-newer-mcpp", std::format(
             "the package index `{}` requires a newer mcpp and no earlier copy is "
             "usable; packages it serves cannot be resolved. {}", dir.filename().string(), advice(dir)));
 

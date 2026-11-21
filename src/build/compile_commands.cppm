@@ -49,6 +49,7 @@ import mcpp.manifest.flag_words;
 import mcpp.toolchain.model;
 import mcpp.toolchain.dialect;
 import mcpp.ui;                 // the one-time note about a root database no longer asked for
+import mcpp.diag;
 
 export namespace mcpp::build {
 
@@ -843,7 +844,7 @@ void note_unrequested_root_compile_commands(const std::filesystem::path& project
         if (spelling(head).find(spelling((projectRoot / "target").generic_string())) == std::string::npos)
             return;
     }
-    mcpp::ui::note("compile_commands.json at the project root is no longer updated: the "
+    mcpp::diag::note("build", "compile_commands.json at the project root is no longer updated: the "
                    "database is in target/<triple>/<fingerprint>/. To keep a copy here, "
                    "add `compile_commands = \"compile_commands.json\"` under [build] in mcpp.toml");
     std::filesystem::create_directories(mark.parent_path(), ec);

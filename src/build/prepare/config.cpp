@@ -62,7 +62,7 @@ void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
     // vocabulary grow.
     for (auto const& cap : dm.unknownCapabilities) {
         auto why = mcpp::targetside::parse_capability(cap);
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "dependency '{}': {}\n"
             "       Ignored, and this build proceeds without that layer. "
             "A newer mcpp may resolve it.",
@@ -73,11 +73,11 @@ void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
     for (auto const& key : dm.xpkgUnknownKeys) {
         auto suggestion = mcpp::manifest::closest_known_xpkg_key(key);
         if (suggestion.empty())
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "dependency '{}': unknown mcpp-segment key '{}' in its xpkg "
                 "descriptor — ignored (schema mismatch or typo)", depLabel, key));
         else
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "dependency '{}': unknown mcpp-segment key '{}' in its xpkg "
                 "descriptor — ignored; did you mean '{}'?", depLabel, key, suggestion));
     }

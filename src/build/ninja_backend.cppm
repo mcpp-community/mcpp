@@ -5037,13 +5037,13 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                     ? plan.projectRoot / "compile_commands.json"
                     : plan.compileDbPath});
         }
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "compile_commands.json was not updated: {}", cdb.error().message));
     } else if (cdb->foreignEntries > 0) {
         // §3.2 item 3: the root file is replaced whole, never merged; when it
         // held another writer's entries, say so once rather than silently
         // discard them.
-        mcpp::ui::warning(mcpp::build::foreign_entries_warning(cdb->foreignEntries));
+        mcpp::diag::warning("build", mcpp::build::foreign_entries_warning(cdb->foreignEntries));
     }
 
     // A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID
@@ -5105,7 +5105,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         }
         if (plan.cStandardsNotApplied.size() > shown)
             list += std::format(" and {} more", plan.cStandardsNotApplied.size() - shown);
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "c_standard: cl.exe compiles C in its default mode and does not apply "
             "the C standard {} package{} declare{}: {}",
             plan.cStandardsNotApplied.size(),
@@ -5524,7 +5524,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                     runtimeFailure += "\n" + explanation;
                 }
             } else if (checked.verdict.status == Status::Inconclusive) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "runtime closure validation is inconclusive for {}{}{}",
                     checked.artifact.string(), explanation.empty() ? "" : ":\n",
                     explanation));
@@ -5551,7 +5551,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             if (!gaps.empty()) {
                 std::string detail;
                 for (auto const& gap : gaps) detail += "\n    " + gap;
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "{} of {} librar{} a dependency published for dlopen cannot "
                     "be loaded on this artifact's search path:{}\n"
                     // The plural agrees with the DENOMINATOR, which is what the
@@ -5587,7 +5587,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                  plan, runtimeBefore)) {
             if (finding.status != mcpp::build::loader::TagFinding::Status::Violation)
                 continue;
-            mcpp::ui::warning(finding.explain());
+            mcpp::diag::warning("build", finding.explain());
         }
         stage("loader-tags");
         // Issue #519 — one library, one provider. Reported through `diag`

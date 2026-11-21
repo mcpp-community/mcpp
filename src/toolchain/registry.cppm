@@ -17,6 +17,7 @@
 export module mcpp.toolchain.registry;
 
 import std;
+import mcpp.diag;
 import nlohmann.json;
 import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
@@ -74,8 +75,8 @@ struct ToolchainSpec {
     std::string     version;      // numeric (possibly partial), or "system"
     triple::Triple  target;       // empty = host
     // One-line canonical hint when the input used a legacy spelling
-    // (compat.cppm); empty otherwise. Printed at most once per process by
-    // print_compat_hint().
+    // (compat.cppm); empty otherwise. Said by print_compat_hint() as a note
+    // through mcpp.diag, once per process per text.
     std::string     compatHint;
 
     bool is_host_target() const { return target.empty(); }
@@ -715,7 +716,7 @@ resolve_managed_msvc(const mcpp::provider::Location& env,
 
 void print_compat_hint(const ToolchainSpec& spec) {
     if (spec.compatHint.empty()) return;
-    compat::print_hint_once(spec.compatHint);
+    if (!spec.compatHint.empty()) mcpp::diag::note("toolchain/spec-alias", spec.compatHint);
 }
 
 

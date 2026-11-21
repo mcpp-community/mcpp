@@ -10,6 +10,7 @@ import mcpp.build.refusal;
 import mcpp.manifest;
 import mcpp.toolchain.triple;
 import mcpp.ui;
+import mcpp.diag;
 
 namespace mcpp::build::legs {
 
@@ -31,7 +32,7 @@ std::expected<Plan, std::string> plan(std::vector<Spec> specs, bool printFingerp
         out.legs.push_back({triple, s.fromSet, std::move(*ctx)});
     }
     for (auto const& why : out.leftOut)
-        mcpp::ui::note(std::format("left out of the target set, its platform does not serve it -- {}",
+        mcpp::diag::note("build", std::format("left out of the target set, its platform does not serve it -- {}",
                                    why));
     if (out.legs.empty() && !out.leftOut.empty())
         return std::unexpected("no member of the target set is served by its platform");

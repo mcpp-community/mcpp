@@ -26,6 +26,7 @@ import mcpp.home;
 import nlohmann.json;
 import mcpp.libs.toml;
 import mcpp.ui;
+import mcpp.diag;
 import mcpplibs.os.fs;
 import mcpplibs.os.process;
 
@@ -643,7 +644,7 @@ void reclaim_runner_cache() {
     o.args = {"cache", "gc"};
     auto r = proc::run(std::move(o));
     if (!r || !r->status.success()) {
-        mcpp::ui::warning(std::format("`{} cache gc` did not reclaim the runner's cache{}",
+        mcpp::diag::warning("cache", std::format("`{} cache gc` did not reclaim the runner's cache{}",
                                       mcpplibs::os::fs::generic_utf8(okrun), r ? ": " + r->err : std::string()));
         return;
     }
@@ -725,7 +726,7 @@ export int cache_gc(const std::string& maxSizeArg, const std::string& olderThanA
         // Say it rather than silently under-delivering: a size target that
         // cannot be met without evicting std BMIs is a real outcome, and a
         // caller that thinks the budget held would be misled.
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("cache", std::format(
             "still {} over the {} budget: package and tool entries are exhausted. "
             "std BMIs are excluded from gc; use `mcpp cache clean --std`",
             human_bytes(live - *maxSize), human_bytes(*maxSize)));

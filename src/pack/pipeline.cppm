@@ -29,6 +29,7 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.log;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.toolchain.platform;   // host_arch: the static row
@@ -591,12 +592,12 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
     if (mainBinary.empty())
         return Refusal{1, about(run, m, "no binary target to pack")};
     if (programs.size() > 1 && !opts.allPrograms && !wantFrom.empty())
-        mcpp::ui::note(std::format("packing {}, the program {} states for its format", want, wantFrom));
+        mcpp::diag::note("pack", std::format("packing {}, the program {} states for its format", want, wantFrom));
     if (programs.size() > 1 && !opts.allPrograms && want.empty()) {
         std::string others;
         for (auto const* lu : programs)
             if (lu != chosenLu) others += (others.empty() ? "" : ", ") + lu->targetName;
-        mcpp::ui::note(std::format(
+        mcpp::diag::note("pack", std::format(
             "packing {}, {}; its other programs are not packed ({}): `mcpp pack <program>` names "
             "another, `mcpp pack --all-programs` ships them beside it", chosenLu->targetName,
             named ? "the program named after the package" : "the first by name, as none is named after the package",
@@ -729,7 +730,7 @@ std::optional<Refusal> member_plan(PackRun& run, GroupJob& g, MemberJob& m) {
         static bool saidUniversal = false;
         if (loaded && P.active && P.fields.universal.set && !std::exchange(saidUniversal, true)) {
             mcpp::pm::compat::record_use("platform-universal", P.package, "[platform] universal", true);
-            mcpp::ui::note(std::format(
+            mcpp::diag::note("pack", std::format(
                 "{} states `universal`, which no longer decides what a pack holds: the legs are the "
                 "targets the command names ({}); `--target {}` packs every architecture",
                 P.display(), mcpp::pm::compat::deprecation_clause(
@@ -966,7 +967,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
         const bool singleFile = loaded && run.opts.format == mcpp::pack::Format::SingleFile;
         if (!(tree && selfContained) && !singleFile) {
             if (run.opts.systemsFromManifest) {
-                mcpp::ui::note(std::format(
+                mcpp::diag::note("pack", std::format(
                     "[pack] systems names the runners a self-contained tree carries, or the systems "
                     "single files of an image are made for; this pack is neither (--mode {}), so it "
                     "is left aside", mcpp::pack::mode_cli_name(run.opts.mode)));
@@ -1117,7 +1118,7 @@ std::optional<Refusal> check_format(PackRun& run, GroupJob& g) {
     // likely to run.
     for (auto const& f : ctx.plan.providedPackFormats)
         if (mcpp::pack::is_builtin_pack_format(f))
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pack", std::format(
                 "a package in this graph declares `mcpp:pack-format={}`, which "
                 "is one of the archive shapes `mcpp pack` owns; `--pkg-format {}` "
                 "will always select the built-in and never that package", f, f));
@@ -1216,7 +1217,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
         if (opts.format != mcpp::pack::Format::Dispatched)
             return Refusal{1, about(run, m, r.error().message)};
         m.stageFailure = r.error().message;
-        mcpp::ui::warning(about(run, m, std::format(
+        mcpp::diag::warning("pack", about(run, m, std::format(
             "no staged tree for --pkg-format {}: {}\n"
             "  A format that consumes ${{mcpp.stage_dir}} cannot be produced "
             "here; one that names a\n"
@@ -1226,7 +1227,7 @@ std::optional<Refusal> stage_member(PackRun& run, GroupJob& g, MemberJob& m) {
         // The tree exists; only its dependency closure does not. Distinct
         // warning text -- "staged" is true here, unlike the branch above.
         m.closure = mcpp::pack::ClosureStatus{false, r->reason, r->needs};
-        mcpp::ui::warning(about(run, m, std::format(
+        mcpp::diag::warning("pack", about(run, m, std::format(
             "staged without its dependency closure: {}\n"
             "  A format that consumes ${{mcpp.stage_dir}} sees the program and its "
             "declared\n"
@@ -1910,7 +1911,7 @@ PackOutcome run_pack(PackRun run) {
         if (m->result.rc != 0) continue;
         if (auto runs = runs_on_text(m->result); !runs.empty()) mcpp::ui::info("Runs on", about(run, *m, runs));
         for (auto const& n : m->result.notCovered) mcpp::ui::info("Not covered", about(run, *m, n));
-        if (!m->result.hint.empty()) mcpp::ui::note(about(run, *m, m->result.hint));
+        if (!m->result.hint.empty()) mcpp::diag::note("pack", about(run, *m, m->result.hint));
     }
 
     // ─── What was packed ─────────────────────────────────────────────

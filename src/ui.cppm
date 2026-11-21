@@ -97,24 +97,9 @@ void note(std::string_view message);
 // diagnostics or advice that already carries its own line ends.
 void block(std::string_view text);
 
-// Closing notices: advisories that concern the run as a whole rather than the
-// step that noticed them, such as a refreshed package index that requires a
-// newer mcpp. They are printed once, after the command's own output, as `tip:`
-// lines on stderr, so that they are the last thing a reader sees and never
-// interleave with a build's progress. A command that writes a machine-readable
-// envelope takes them first and reports them as `note` diagnostics instead.
-// A notice never changes the exit status.
-struct ClosingNotice {
-    std::string code;      // a stable code for machine output
-    std::string message;   // one line; no trailing newline
-};
-void add_closing_notice(std::string code, std::string message);
-// A notice that belongs to a failed run only: advice that would be noise after
-// a success (design 2026-11-07 §4.10, a newer platform release in the index).
-void add_failure_notice(std::string code, std::string message);
-std::vector<ClosingNotice> take_closing_notices();
-// `failed`: the run is failing, and its failure notices are printed as well.
-void print_closing_notices(bool failed = false);
+// A `tip:` line on stderr: the rendering of mcpp.diag's closing notices, which own their order,
+// their deduplication and when they are said.
+void tip(std::string_view message);
 
 // Multi-line Rust-style diagnostic (M4 #8.1).
 // Renders as:
@@ -863,46 +848,11 @@ void block(std::string_view text) {
     emit(term::Stream::Err, s);
 }
 
-namespace {
-std::vector<ClosingNotice>& closing_notices() {
-    static std::vector<ClosingNotice> notices;
-    return notices;
-}
-std::vector<ClosingNotice>& failure_notices() {
-    static std::vector<ClosingNotice> notices;
-    return notices;
-}
-} // namespace
-
-void add_failure_notice(std::string code, std::string message) {
-    auto& all = failure_notices();
-    for (auto const& n : all)
-        if (n.message == message) return;
-    all.push_back({std::move(code), std::move(message)});
-}
-
-void add_closing_notice(std::string code, std::string message) {
-    auto& all = closing_notices();
-    for (auto const& n : all)
-        if (n.message == message) return;
-    all.push_back({std::move(code), std::move(message)});
-}
-
-std::vector<ClosingNotice> take_closing_notices() {
-    return std::exchange(closing_notices(), {});
-}
-
-void print_closing_notices(bool failed) {
-    auto notices = take_closing_notices();
-    auto onFailure = std::exchange(failure_notices(), {});
-    if (failed) notices.insert(notices.end(), onFailure.begin(), onFailure.end());
-    if (g_quiet) return;
+void tip(std::string_view message) {
     init();
-    for (auto const& n : notices) {
-        emit(term::Stream::Err, colored(term::Stream::Err)
-            ? std::format("{}{}tip:{} {}\n", kBold, kCyan, kReset, n.message)
-            : std::format("tip: {}\n", n.message));
-    }
+    emit(term::Stream::Err, colored(term::Stream::Err)
+        ? std::format("{}{}tip:{} {}\n", kBold, kCyan, kReset, message)
+        : std::format("tip: {}\n", message));
 }
 
 void plain(std::string_view message) {

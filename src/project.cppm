@@ -965,7 +965,7 @@ resolve_member_dir(const mcpp::manifest::Manifest& rootManifest,
         const auto& picked = members[byName.front()];
         if (!byPath.empty() && byPath.front() != byName.front()) {
             const auto& other = members[byPath.front()];
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("manifest", std::format(
                 "-p '{}' is the package name of member '{}' ({}) and also the "
                 "directory of member '{}' ({}); the package is selected. Write "
                 "'{}' to select the other member.",
@@ -981,7 +981,7 @@ resolve_member_dir(const mcpp::manifest::Manifest& rootManifest,
             for (std::size_t k = 1; k < byPath.size(); ++k)
                 others += std::format("{}'{}'", others.empty() ? "" : ", ",
                                       members[byPath[k]].memberPath);
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("manifest", std::format(
                 "-p '{}' matches more than one member's directory; '{}' is "
                 "selected (the first listed in [workspace] members). Also "
                 "matched: {}.",

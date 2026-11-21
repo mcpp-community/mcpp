@@ -19,6 +19,7 @@ import mcpp.pm.index_contract;   // index.toml floor check (E0006)
 import mcpp.pm.refresh_policy;   // decide_for_miss / apply (#648 A5)
 import mcpp.build.refusal;       // offline-download-required (#648 A1)
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.pm.index_spec;
 import mcpp.provider;
 import mcpp.provider.select;
@@ -1325,7 +1326,7 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             mcpp::pm::policy_for(cfg_), location_of(cfg_),
             std::format("xim:{}", parsed.packageName));
         if (auto r = mcpp::pm::apply(decision, location_of(cfg_)); !r)
-            mcpp::ui::warning(r.error());
+            mcpp::diag::warning("pm", r.error());
     }
 
     // Satisfied: what the intent asks of the payload now there.

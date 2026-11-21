@@ -760,18 +760,15 @@ parse_target_defaults(const mcpp::libs::toml::Document& doc,
                       std::vector<mcpp::manifest::platform::Override>* platforms,
                       mcpp::manifest::platform::Override* host) {
     namespace mp = mcpp::manifest::platform;
-    // What the reader warns of (an unknown key, SPEC-013 §18.1), said once
-    // per process for each file: the configuration is read by every prepare.
+    // What the reader warns of (an unknown key, SPEC-013 §18.1), said when the reader is done, on
+    // every path out of this function. The configuration is read by every prepare; mcpp.diag says
+    // a text once per process.
     struct Said {
         const std::filesystem::path& file;
         std::vector<std::string> warnings;
         ~Said() {
-            static std::mutex m;
-            static std::set<std::string> said;
-            std::lock_guard lock(m);
             for (auto const& w : warnings)
-                if (said.insert(file.string() + '\n' + w).second)
-                    std::println(libc::stderr(), "warning: {}: {}", file.string(), w);
+                mcpp::diag::warning("config", std::format("{}: {}", file.string(), w));
         }
     } said{ file, {} };
     const mp::Reader reader{file, mp::Tier::Config, &said.warnings};
@@ -1273,8 +1270,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     if (cfg.xlingsBinaryMode != "bundled") {
         if (auto why = mcpp::provider::unmet(mcpp::provider::describe(cfg.xlingsBinary)); !why.empty()) {
             if (!quiet)
-                std::println(libc::stderr(), "note: the configured xlings {} {}; using the one mcpp ships",
-                             cfg.xlingsBinary.string(), why);
+                mcpp::diag::note("config", std::format("the configured xlings {} {}; using the one mcpp ships",
+                                                       cfg.xlingsBinary.string(), why));
             cfg.xlingsBinary = bundledBinary;
             auto xbin = mcpp::fallback::acquire_xlings_binary(
                 cfg.xlingsBinary, quiet, kXlingsPinnedVersion,
@@ -1395,8 +1392,8 @@ bool ensure_project_index_dir(
             repo.artifact = spec.artifact;
             repo.source   = spec.source;
         } else if (!spec.artifact.empty()) {
-            std::println(libc::stderr(), "warning: [indices].{}: artifact source ignored "
-                                 "(rev/tag/branch/path pins force git)", name);
+            mcpp::diag::warning("config", std::format("[indices].{}: artifact source ignored "
+                                                      "(rev/tag/branch/path pins force git)", name));
         }
         customRepos.push_back(std::move(repo));
     }

@@ -42,6 +42,7 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpplibs.os.fs;
@@ -211,7 +212,7 @@ export int env_report() {
 export int doctor_report() {
     int warns = 0, errors = 0;
     auto ok    = [](std::string_view m) { mcpp::ui::status("ok", m); };
-    auto warn = [&](std::string_view m) { mcpp::ui::warning(m); ++warns; };
+    auto warn = [&](std::string_view m) { mcpp::diag::warning("doctor", m); ++warns; };
     auto err   = [&](std::string_view m) { mcpp::ui::error(m);   ++errors; };
 
     auto cfg = mcpp::config::load_or_init(true, {}, {}, mcpp::config::Initialization::ReadOnly);
@@ -2024,7 +2025,7 @@ export int self_init(bool force, std::string_view target = {}) {
         const auto selected = mcpp::home::selection();
         if (selected.redirected) {
             mcpp::ui::status("Home", mcpp::home::spelling(selected.effective));
-            mcpp::ui::warning("--force rebuilds this home's registry and caches; its locator and previous home data are retained");
+            mcpp::diag::warning("doctor", "--force rebuilds this home's registry and caches; its locator and previous home data are retained");
         }
         // --force: delete registry (sandbox) + caches and re-bootstrap.
         // Preserves: bin/mcpp (self-contained mode), config.toml, log/.

@@ -19,6 +19,7 @@ import mcpp.manifest;
 import mcpp.pm.descriptor;
 import mcpp.toolchain.platform;
 import mcpp.ui;
+import mcpp.diag;
 import mcpp.wire;
 import nlohmann.json;
 
@@ -239,7 +240,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 auto msg = std::format(
                     "{} [{}]: unknown mcpp-segment key '{}' — silently "
                     "ignored at build time by this mcpp version", file, plat, k);
-                if (allowUnknown) std::println(libc::stderr(), "warning: {}", msg);
+                if (allowUnknown) mcpp::diag::warning("xpkg", msg);
                 else              { mcpp::ui::error(msg); allRc = 1; }
             }
             std::println("parse OK [{}]  sources {}  includes {}  generated {}",
@@ -266,7 +267,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto msg = std::format(
                 "{}: unknown mcpp-segment key '{}' — silently ignored at "
                 "build time by this mcpp version", file, k);
-            if (allowUnknown) std::println(libc::stderr(), "warning: {}", msg);
+            if (allowUnknown) mcpp::diag::warning("xpkg", msg);
             else              mcpp::ui::error(msg);
         }
         if (!allowUnknown) rc = 1;

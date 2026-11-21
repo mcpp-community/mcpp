@@ -1073,7 +1073,7 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
     }
     ctx.plan.memoryThreshold = mcpp::build::schedule::resolve_memory_threshold(
         ctx.manifest, machineMemoryThreshold, [](std::string_view bad) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "ignoring invalid memory threshold '{}' (expected a size such as \"2GiB\" or bytes); "
                 "the next of the environment, the manifest, the machine and the engine's 1 GiB holds", bad));
         });
@@ -1091,11 +1091,11 @@ static void step13_graph_and_schedule(PrepareState& state, BuildContext& ctx) {
             // value, only one of them says anything, so a typo produces exactly
             // one warning rather than two identical ones.
             mcpp::build::schedule::requested_switch(*state.m, [](std::string_view bad) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "ignoring invalid bmi_schedule '{}' (expected \"auto\", \"on\" or \"off\")", bad));
             }),
             mcpp::build::schedule::resolve_jobs(*state.m, [](std::string_view bad) {
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));
             }, globalDefaultJobs),
             // What this machine would pick if asked. Impure, so it is resolved

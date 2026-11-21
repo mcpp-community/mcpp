@@ -807,7 +807,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         if (inserted) {
             e.emplace_back(var, dir.string());
         } else if (it->second != dir.string()) {
-            if (warn) mcpp::ui::warning(std::format(
+            if (warn) mcpp::diag::warning("build-program", std::format(
                 "build.mcpp: dependency name collides on {} (kept '{}', ignored "
                 "'{}') — rename one dependency to disambiguate", var,
                 it->second, dir.string()));
@@ -826,7 +826,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         if (inserted) {
             e.emplace_back(var, form);
         } else if (it->second != form) {
-            if (warn) mcpp::ui::warning(std::format(
+            if (warn) mcpp::diag::warning("build-program", std::format(
                 "build.mcpp: dependency name collides on {} (kept '{}', ignored "
                 "'{}') — rename one dependency to disambiguate", var,
                 it->second, form));
@@ -871,7 +871,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         if (inserted) {
             e.emplace_back(var, path);
         } else if (it->second != path) {
-            if (warn) mcpp::ui::warning(std::format(
+            if (warn) mcpp::diag::warning("build-program", std::format(
                 "build.mcpp: tool name collides on {} (kept '{}', ignored '{}')",
                 var, it->second, path));
         }
@@ -1272,7 +1272,7 @@ std::expected<void, std::string> run_build_program_impl(
         // what they must not drift on is WHETHER they emit, and e2e 139
         // asserts the second build, not the first.
         for (auto const& a : dirs::advisories(m.package.name, cache.directives))
-            mcpp::ui::warning(a);
+            mcpp::diag::warning("build-program", a);
         report_stated_diagnostics(m.package.name, cache.directives);
         report_undeclared_tools(m.package.name, cache.directives);
         mcpp::build::progress::program_finished(
@@ -1429,14 +1429,14 @@ std::expected<void, std::string> run_build_program_impl(
                 "dependency may only watch files inside its own tree",
                 m.package.name, g));
         if (auto why = dirs::glob_unwatchable(root, g, output_dir_name(root, bdir)))
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build-program", std::format(
                 "build.mcpp of '{}': rerun_if_changed_glob(\"{}\") can never re-run it: {}. "
                 "To watch one file's contents, use rerun_if_changed",
                 m.package.name, g, *why));
     }
     if (d.protocol == 0) {
         for (auto const& k : d.unknownKeys)
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build-program", std::format(
                 "build.mcpp: ignoring unknown directive 'mcpp:{}'", k));
     }
     // THE TOOLCHAIN PHASE STATES THE TOOLCHAIN AND NOTHING ELSE (mcpp#755).
@@ -1557,7 +1557,7 @@ std::expected<void, std::string> run_build_program_impl(
     programReport.report();
     // The second of the two sites. See the note on the cache-hit path above.
     for (auto const& a : dirs::advisories(m.package.name, d))
-        mcpp::ui::warning(a);
+        mcpp::diag::warning("build-program", a);
     report_stated_diagnostics(m.package.name, d);
     report_undeclared_tools(m.package.name, d);
     // A run kept although it asked for a payload (`PrepareIntent::Describe`) is never

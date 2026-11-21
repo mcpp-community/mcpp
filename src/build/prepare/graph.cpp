@@ -1672,7 +1672,7 @@ step4b_acquire_dependency_source(PrepareState& state, WorklistItemCtx& ctx) {
                 if (auto r = mcpp::pm::patch::materialize(member ? gitMemberCloneRoot : dep_root, spec.patches,
                                                           spec.patchesDigest, tree, patchRoot, &notes); !r)
                     return std::unexpected(std::format("dependency '{}': {}", name, r.error()));
-                for (auto const& n : notes) mcpp::ui::note(std::format("dependency '{}': {}", name, n));
+                for (auto const& n : notes) mcpp::diag::note("build", std::format("dependency '{}': {}", name, n));
                 dep_root = member ? tree / gitMember : tree;
             }
         }

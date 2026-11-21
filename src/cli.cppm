@@ -2026,14 +2026,14 @@ int run(int argc, char** argv) {
     mcpp::cli::record_invocation(app, *parsed);
     const int action_rc = app.run(*parsed);
     // The run's closing notices come last, after everything the command
-    // printed, whatever its exit status (see mcpp::ui::add_closing_notice).
-    mcpp::ui::print_closing_notices(action_rc != 0);
+    // printed, whatever its exit status (see mcpp::diag::closing).
+    mcpp::diag::print_closing(action_rc != 0);
     // A run that stopped before an effect its caller denied exits 5
     // (SPEC-003, design 2026-10-26 D23): the caller's constraint, not a
     // failure of the project, and a script tells the two apart by the status.
     if (action_rc != 0)
         if (auto refused = mcpp::effects::effect_refused()) {
-            mcpp::ui::note(std::format("stopped before a denied effect ({}); exit status 5", *refused));
+            mcpp::diag::note("cli", std::format("stopped before a denied effect ({}); exit status 5", *refused));
             return 5;
         }
     return action_rc;

@@ -374,7 +374,7 @@ export int build_and_pack_library(const std::string& targetName,
         // the source looks unusual: `import :detail;` reads like any other
         // import. So say it, with the file named.
         for (auto const& p : here.publishedImplementationPartitions) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pack", std::format(
                 "{} is an implementation partition, and the published interface "
                 "reaches it — so its SOURCE is being published.\n"
                 "  A consumer compiling the interface cannot produce a BMI "
@@ -392,7 +392,7 @@ export int build_and_pack_library(const std::string& targetName,
         // rather than guessing — the guess used to be "interface", which is the
         // one that says nothing.
         for (auto const& p : here.publishedUndeterminedPartitions) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pack", std::format(
                 "{} provides a module PARTITION and mcpp cannot tell which kind: "
                 "the unit is declared in `[scan_overrides]`, which has nowhere to "
                 "say whether the declaration carries `export`, or a P1689 scanner "
@@ -525,7 +525,7 @@ export int build_and_pack_library(const std::string& targetName,
 
         for (auto const& os : packedOs) {
             if (std::ranges::find(declaredPlatforms, os) != declaredPlatforms.end()) continue;
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pack", std::format(
                 "this package ships a {} binary, and `[package] platforms` does "
                 "not list {} (it lists: {}).\n"
                 "  Add it if the support is real; drop the leg if it is not. As "
@@ -553,7 +553,7 @@ export int build_and_pack_library(const std::string& targetName,
         for (auto const& want : declaredPlatforms) {
             if (packedOs.contains(want)) continue;
             if (!servable_here(want)) continue;   // not this host's job to fix
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("pack", std::format(
                 "`[package] platforms` claims {}, and this host can build for it, "
                 "but no {} leg was packed.\n"
                 "  Consumers on {} will resolve this package and find no artifact "

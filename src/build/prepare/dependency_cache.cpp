@@ -476,7 +476,7 @@ static void serve_or_fill(PrepareState& state, BuildContext& ctx, std::size_t i,
     // cache silently never hits", and a cache that lies about its own
     // effectiveness went unnoticed for three months once already.
     if (!probe.layoutMismatch.empty()) {
-        mcpp::ui::warning(std::format(
+        mcpp::diag::warning("build", std::format(
             "build cache entry for {}@{} [{}] does not contain the "
             "artifacts this build needs ({} of {} missing, e.g. `{}`); "
             "treating it as a miss. Run `mcpp cache verify` for details.",
@@ -581,7 +581,7 @@ void populate_dependency_cache(BuildContext& ctx) {
         auto pr = mcpp::bmi_cache::populate_from(task.key, ctx.outputDir, task.artifacts);
         if (pr && !task.treeRoot.empty()) replace_tree_siblings(task.key, task.treeRoot);
         if (!pr) {
-            mcpp::ui::warning(std::format(
+            mcpp::diag::warning("build", std::format(
                 "bmi cache populate failed for {}@{}: {}",
                 task.key.packageName, task.key.version, pr.error()));
         }

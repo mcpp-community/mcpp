@@ -155,7 +155,7 @@ step9_gather_target_side_candidates(PrepareState& state) {
                 // error it replaced would be a worse diagnostic wearing a
                 // milder severity.
                 auto why = tsd::parse_capability(cap);
-                mcpp::ui::warning(std::format(
+                mcpp::diag::warning("build", std::format(
                     "package '{}': {}\n"
                     "       Ignored, and this build proceeds without that layer. "
                     "A newer mcpp may resolve it.",
@@ -1270,7 +1270,7 @@ step9_pin_and_linkage_diagnostics(PrepareState& state) {
         // release fixes — see `TargetSide::system_from_graph`'s own note.
         if (state.resolvedTargetSide.cAbi.fromGraph()
             && state.m->buildConfig.linkage == "dynamic")
-            mcpp::ui::warning(
+            mcpp::diag::warning("build", 
                 "`linkage = \"dynamic\"` has no effect when the "
                 "target's system comes from the dependency graph: those "
                 "packages are compiled into this build as objects, and there "
@@ -2018,7 +2018,7 @@ static std::expected<void, std::string> step9_rerun_input_prepare_dir(PrepareSta
                 for (auto const& w : watched) {
                     for (auto const& [pkgName, dir] : prepareDirs) {
                         if (!isUnder(w, dir)) continue;
-                        mcpp::ui::warning(std::format(
+                        mcpp::diag::warning("build", std::format(
                             "{}'s build.mcpp re-runs on '{}', which is inside "
                             "'{}', the directory package '{}' declared with a "
                             "`prepare` action's output_dir. That directory is "
