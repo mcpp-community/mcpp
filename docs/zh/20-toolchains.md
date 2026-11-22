@@ -178,7 +178,9 @@ note: the default toolchain (`mcpp toolchain default`) is now gcc@16.2.0; this p
 ## 配套载荷（2026.11.21.1+）
 
 一个由包提供的工具链的配套载荷——GCC 用以汇编与链接的 binutils、glibc 基础层的 Linux 内核头文件、GCC 的运行库——取工具链载荷为本宿主声明的
-运行依赖的版本。store 中有多个版本时取声明的版本；没有声明时取最新版本。声明的版本不在 store 中时报告为 degraded；`mcpp toolchain install`
+运行依赖的版本：载荷安装时的声明（安装器把它保存在载荷旁），不取索引当前的描述文件（*@NEXT@ 起*）。索引更新改变了声明时，改变的是下一次
+安装所取的版本，不是已安装的工具链所用的版本；此前 xim 的配方改到 store 中没有的版本后，已安装的 GCC 失去 binutils。store 中有多个版本时
+取声明的版本；没有声明时取最新版本。声明的版本不在 store 中时报告为 degraded；`mcpp toolchain install`
 重新安装它。
 
 工程可以在 GCC 旁写明 binutils：

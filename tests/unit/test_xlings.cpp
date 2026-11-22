@@ -429,6 +429,23 @@ package = {{
     descriptor("xim:binutils@2.39");
     expect(!xp::find_sibling_binary(gccBin, "binutils", "bin/as").has_value())
         << "a declared version the store does not hold was replaced by another";
+    // The descriptor the payload was installed with decides, not the index's: the index moved
+    // gcc's binutils to a version this store does not hold (2.48 here, 2.47 on 2026-11-21), and
+    // the payload still runs with the 2.42.1 it was installed beside.
+    descriptor("xim:binutils@2.48");
+    touch(xpkgs / "xim-x-gcc" / "16.1.0" / ".xpkg.lua", R"(
+package = {
+    name = "gcc",
+    xpm = {
+        linux = { deps = { runtime = { "xim:glibc@>=2.39", "xim:binutils@2.42.1" } }, ["16.1.0"] = {} },
+        macosx = { deps = { "xim:binutils@2.42.1" }, ["16.1.0"] = {} },
+        windows = { deps = { "xim:binutils@2.42.1" }, ["16.1.0"] = {} },
+    },
+}
+)");
+    expect(eq(xp::find_sibling_binary(gccBin, "binutils", "bin/as").value_or(""),
+              xpkgs / "xim-x-binutils" / "2.42.1" / "bin" / "as")) << "the index's newer declaration replaced the installed one";
+    expect(eq(xp::declared_dependency(gccBin, "binutils").value_or(""), std::string("2.42.1")));
     std::filesystem::remove_all(tmp);
 }};
 

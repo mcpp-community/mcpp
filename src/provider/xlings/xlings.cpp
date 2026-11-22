@@ -703,6 +703,15 @@ payload_versions(const std::filesystem::path& xpkgs, std::string_view packageNam
 // What the payload `compilerBin` belongs to declares for `packageName` on this
 // host: the requirement of its descriptor's runtime dependency
 // (`xim:binutils@2.42.1` gives `2.42.1`), none when it declares none.
+//
+// THE DESCRIPTOR IT WAS INSTALLED WITH, before the index's. The installer keeps
+// it beside the payload (`<version>/.xpkg.lua`), and the companions it resolved
+// are the ones that declaration names. The index's descriptor is the one the
+// NEXT install reads: on 2026-11-21 xim's gcc recipe moved its binutils from
+// 2.42.1 to 2.47, and a gcc@16.1.0 installed before then, with binutils 2.42.1
+// beside it, was given no binutils at all after `mcpp index update` -- the
+// build stopped at "cannot execute 'as'" (mcpp 2026.11.21.1, a home restored
+// from a cache).
 std::optional<std::string>
 declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
                      std::string_view packageName) {
@@ -713,7 +722,10 @@ declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::
     const auto dash = dirName.find("-x-");
     if (dash == std::string::npos) return std::nullopt;
     const auto owner = dirName.substr(dash + 3);
-    for (const auto& file : descriptor_candidates(xpkgs.parent_path(), owner)) {
+    auto candidates = descriptor_candidates(xpkgs.parent_path(), owner);
+    if (auto version = std::next(rel.begin()); version != rel.end())
+        candidates.insert(candidates.begin(), xpkgs / *rel.begin() / *version / ".xpkg.lua");
+    for (const auto& file : candidates) {
         std::ifstream in(file);
         if (!in) continue;
         const std::string body((std::istreambuf_iterator<char>(in)), {});

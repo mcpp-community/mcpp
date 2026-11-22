@@ -114,6 +114,9 @@
 - 工具链所用的配套载荷(GCC 的 binutils、glibc 基础层的 Linux 内核头文件、GCC 的运行库)**必须**取工具链载荷的描述文件为本宿主声明的
   运行依赖:声明为一个键时取该键,声明为要求(`>=2.39`)时取 store 中满足它的最新版本。没有声明时取 store 中的最新版本。
   **禁止**按目录遍历的次序选择。声明的版本不在 store 中时以 `degraded` 报告,不以另一个版本代替。
+- 所读的描述文件**必须**是载荷安装时的描述文件(安装器保存在载荷旁的 `.xpkg.lua`),没有时才读索引中的描述文件。**已实现**
+  (mcpp >= @NEXT@;2026.11.21.1 读索引的描述文件,xim 的 gcc 配方把 binutils 由 2.42.1 改为 2.47 之后,已安装的 gcc@16.1.0 在
+  `mcpp index update` 之后得不到 binutils,构建停在 "cannot execute 'as'")。
 - 工程可以在工具链的陈述旁写明 binutils:`default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`,
   `[toolchain]` 的各平台键与 `[workspace.toolchain]` 同样可写。`companions` 只有 `binutils` 一项;只用于 GCC。
 - 写明的 binutils 低于工具链载荷声明的版本时**必须**拒绝,原因标记 `companion-too-old`:GCC 在构建时按所用的 binutils 选定汇编器的能力。
