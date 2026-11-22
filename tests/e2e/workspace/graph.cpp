@@ -411,15 +411,26 @@ export int consumer_flag_v() {
             for (std::string m : {"pa", "pb", "pc"})
                 expect(fatal(span(m).has_value())) << part << ": the build programs' .ninja_log does not record the compile of " << m;
         };
-        // The steps of each member's build program -- its scan, compile and link (`obj/<m>-...`,
-        // `bin/<m>-...`) -- and the most members with a step under way at one instant.
+        // The steps of each member's build program -- its scan, compile, resource and link
+        // (`obj/<m>-...`, `res/<m>-...`, `bin/<m>-...`) -- and the most members with a step under
+        // way at one instant. A step is an edge: the log's rows of one command share its hash and
+        // times (an edge writes several files), and an edge is a member's when every file it
+        // writes is that member's. The edge that deploys the C++ runtime's DLLs beside each
+        // member's program on Windows writes into all three, and is no member's step.
         const auto steps = [&](std::string_view part) {
-            std::vector<std::pair<std::string, std::pair<long, long>>> out;
             const auto logs = s::find_files(ws.at("target/.build-mcpp/host"), R"(\.ninja_log)");
             expect(fatal(!logs.empty())) << part << ": the build programs' graph left no .ninja_log";
-            const std::regex re{R"(^(obj|bin)/(p[abc])-[0-9a-f]+/)"};
-            for (const auto& row : ninja_rows(logs.front()))
-                if (std::smatch m; std::regex_search(row[3], m, re)) out.push_back({m[2].str(), {std::stol(row[0]), std::stol(row[1])}});
+            const std::regex re{R"(^(obj|res|bin)/(p[abc])-[0-9a-f]+/)"};
+            std::map<std::string, std::pair<std::set<std::string>, std::pair<long, long>>> edges;
+            for (const auto& row : ninja_rows(logs.front())) {
+                auto& edge = edges[(row.size() > 4 ? row[4] : row[3]) + "@" + row[0] + "-" + row[1]];
+                edge.second = {std::stol(row[0]), std::stol(row[1])};
+                std::smatch m;
+                edge.first.insert(std::regex_search(row[3], m, re) ? m[2].str() : std::string{"-"});
+            }
+            std::vector<std::pair<std::string, std::pair<long, long>>> out;
+            for (const auto& [_, edge] : edges)
+                if (edge.first.size() == 1 && *edge.first.begin() != "-") out.push_back({*edge.first.begin(), edge.second});
             return out;
         };
         const auto members_at_once = [](const std::vector<std::pair<std::string, std::pair<long, long>>>& all) {
