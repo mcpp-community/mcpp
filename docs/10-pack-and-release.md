@@ -726,6 +726,13 @@ not work: an ELF program's closure is resolved by the target's own dynamic
 linker, which a Windows host has no way to run. A Mach-O program's closure is
 read from the file, so a macOS program packs from any host.
 
+A program whose format is none of the three (a DJGPP program is COFF under a
+go32 stub) has a closure only when it is linked statically: then it has none,
+and the default mode packs it. The row's linkage is the one its provider
+states, a provider of a platform package included (`linkage = "static"` in
+`[[platform.provider]]`). A dynamic program of such a format is refused, and
+the refusal names the format.
+
 ### macOS (Mach-O): the dylibs beside the program
 
 ```

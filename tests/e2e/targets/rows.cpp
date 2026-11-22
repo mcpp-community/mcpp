@@ -125,10 +125,10 @@ int main() { return 0; }
         expect(fatal(e2e::contains(s::text(r), "did you mean 'x86_64-linux-musl'"))) << "FAIL: missing did-you-mean suggestion: " << s::text(r);
         // 2. A planned row is refused, not built for the host; a toolchain named for the build
         //    opts it in (2026.11.13.1), whatever the toolchain then makes of the row.
-        r = p.mcpp({"build", "--target", "riscv64-linux-musl"});
+        r = p.mcpp({"build", "--target", "i686-linux-gnu"});
         expect(fatal(!r)) << "FAIL: planned-tier target built: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "not yet supported"))) << "FAIL: missing planned-tier error: " << s::text(r);
-        r = p.mcpp({"build", "--target", "riscv64-linux-musl", "--toolchain", "gcc@16.1.0"});
+        r = p.mcpp({"build", "--target", "i686-linux-gnu", "--toolchain", "gcc@16.1.0"});
         expect(fatal(s::lacks(s::text(r), "not yet supported"))) << "FAIL: --toolchain did not opt a planned row in";
         // 3. A custom triple with an explicit [target.X] section proceeds.
         p.write("mcpp.toml", original + "\n[target.myboard-custom-elf]\ntoolchain = \"gcc@16.1.0\"\n");

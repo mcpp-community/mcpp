@@ -717,14 +717,7 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // of its default provider: the toolchain it pins, the C library it brings,
     // the linkage and the platform package that implements it.
     if (ctx.known && ctx.sel.provider && ctx.sel.provider != ctx.known->provider) {
-        auto view = *ctx.known;
-        auto const* p = ctx.sel.provider;
-        view.provider = p;
-        view.pin = p->toolchain;
-        view.sysroot = p->sysroot == "toolchain" ? std::string_view{} : p->sysroot;
-        view.defaultStatic = p->linkage == "static";
-        view.platform = p->platform;
-        state.selectedTarget = view;
+        state.selectedTarget = triple::view_of(*ctx.known->row, ctx.sel.provider);
         ctx.known = &*state.selectedTarget;
     }
 
@@ -1285,7 +1278,13 @@ step1_target_row_pin_and_capability_check(PrepareState& state, TargetOverrideCtx
                 ctx.known->pin.empty() ? std::string_view("llvm") : ctx.known->pin));
         }
     }
-    if (ctx.known && ctx.known->defaultStatic && state.m->buildConfig.linkage.empty())
+    // The provider that serves the build states the default linkage, for a
+    // built-in row and for a row a platform package defines alike: the latter
+    // is not in the built-in table, and reading the table alone left a static
+    // platform's programs (DJGPP's) shared in every later step that asks.
+    const bool defaultStatic = ctx.known ? ctx.known->defaultStatic
+        : ctx.sel.row && mcpp::toolchain::triple::view_of(*ctx.sel.row, ctx.sel.provider).defaultStatic;
+    if (defaultStatic && state.m->buildConfig.linkage.empty())
         state.m->buildConfig.linkage = "static";
     return {};
 }

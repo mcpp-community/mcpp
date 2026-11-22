@@ -67,6 +67,24 @@
   under `--strict`. They now complete the graph and reach the link on every row (docs/35);
   `link.flags` that reaches no program says so, and `carrier`, a form of a platform's image, is a
   warning there (`platform/carrier`).
+- A row a platform package defines takes the linkage its provider states. `i586-dos-djgpp`
+  (djgpp-platform, `linkage = "static"`) is linked statically, and `mcpp pack` in its default mode
+  packs its programs: a static program whose format is neither ELF, PE nor Mach-O has no runtime
+  closure, so none is asked for. A dynamic program of such a format is still refused, naming the
+  format (mcpp#1007).
+- The provider of a platform named by a path (`platform = { path = "<dir>" }`) is selected. Its
+  package reference `path:<dir>` was read as a payload without a version, so the selection left
+  it out, and what only the provider states, such as its `linkage`, did not apply (mcpp#1007).
+- The runtime-closure check expands `$ORIGIN` at the directory a library was opened in, as the
+  loader does, not at the target of the link it was reached through. A program whose libraries are
+  links in a farm, each finding its dependencies beside it (compat.curand under LLVM), was refused
+  with `libgcc_s.so.1 not found` and ran when started.
+- On a macOS host, the link of a target other than the host's names the target, as its compile
+  does. `x86_64-macos` on Apple silicon linked its x86_64 objects for arm64 and found no `main`;
+  a C program now links and runs under Rosetta. The row stays `planned`: the LLVM payload's
+  libc++ is arm64 only.
+- `mcpp pack --all-programs` on `wasm32-emscripten` packs each program's module beside its
+  launcher. Before, only the program named after the package had its `.wasm` (mcpp#1007).
 
 ## [2026.11.22.1] - 2026-11-22
 

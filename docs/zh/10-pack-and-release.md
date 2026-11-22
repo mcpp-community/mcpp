@@ -628,6 +628,10 @@ mcpp pack --target x86_64-windows-gnu     # from a Linux host
 目标自己的动态链接器解析，而 Windows 宿主没有办法运行它。Mach-O 程序的闭包是
 从文件里读出来的，因此一个 macOS 程序可以在任何宿主上打包。
 
+格式不属于这三种的程序（DJGPP 程序是 go32 引导段之后的 COFF），只有静态链接时才有确定的闭包：
+它为空，缺省模式直接打包。行的链接方式取其提供者的陈述，平台包的提供者同样适用
+（`[[platform.provider]]` 中的 `linkage = "static"`）。这类格式的动态程序被拒绝，拒绝写出其格式。
+
 ### macOS（Mach-O）：dylib 与程序放在同一目录
 
 ```

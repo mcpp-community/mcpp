@@ -61,6 +61,13 @@ struct ElfRuntimeFacts {
     // arrival in a closure walk: what the loader adds to its own search when
     // it carries no DT_RUNPATH. Empty for the walk's artifact.
     std::vector<std::string> inheritedRpaths;
+    // The directory `$ORIGIN` names in this object's search paths: that of the
+    // path the loader opened it by, which glibc does not resolve through a
+    // link. Empty for the walk's artifact, whose own directory it is. Measured
+    // with a farm of links (compat.curand): `libcurand.so.10`, reached as a
+    // link in the farm, found its `libgcc_s.so.1` in the farm by `$ORIGIN`,
+    // while a model that expanded `$ORIGIN` at the link's target refused it.
+    std::filesystem::path origin;
 
     // "Is this an executable" is PT_INTERP, not ET_EXEC: a PIE executable is
     // ET_DYN and therefore indistinguishable from a shared library by type
@@ -493,9 +500,9 @@ std::string canonical_text(const std::filesystem::path& path) {
     return comparable_path(path).generic_string();
 }
 
-std::string expand_origin(std::string value,
-                          const std::filesystem::path& object) {
-    const auto origin = object.parent_path().generic_string();
+std::string expand_origin(std::string value, const ElfRuntimeFacts& object) {
+    const auto origin = (object.origin.empty() ? object.artifact.parent_path() : object.origin)
+                            .generic_string();
     for (auto token : {std::string_view("${ORIGIN}"), std::string_view("$ORIGIN")}) {
         for (auto pos = value.find(token); pos != std::string::npos;
              pos = value.find(token, pos + origin.size()))
@@ -544,7 +551,7 @@ std::vector<std::filesystem::path> search_dirs_of(
     std::span<const std::string> inheritedRpaths) {
     std::vector<std::filesystem::path> dirs;
     for (auto const& raw : requester.runpaths)
-        append_unique_path(dirs, expand_origin(raw, requester.artifact));
+        append_unique_path(dirs, expand_origin(raw, requester));
     // DT_RPATH IS INHERITED DOWN THE DEPENDENCY CHAIN; DT_RUNPATH IS NOT.
     //
     // The loader searches the DT_RPATH of every object on the chain that
@@ -564,7 +571,7 @@ std::vector<std::filesystem::path> search_dirs_of(
     if (requester.searchPathTag != SearchPathTag::Runpath
         && requester.searchPathTag != SearchPathTag::Both)
         for (auto const& raw : inheritedRpaths)
-            append_unique_path(dirs, expand_origin(raw, requester.artifact));
+            append_unique_path(dirs, expand_origin(raw, requester));
     const bool honoursRpath = requester.searchPathTag != SearchPathTag::Runpath
                               && requester.searchPathTag != SearchPathTag::Both;
     if (honoursRpath)
@@ -607,7 +614,7 @@ std::optional<std::filesystem::path> resolve_needed(
         auto candidate = named.is_absolute()
             ? named : requester.artifact.parent_path() / named;
         if (std::filesystem::is_regular_file(candidate, ec))
-            return comparable_path(candidate);
+            return candidate.lexically_normal();
         return std::nullopt;
     }
 
@@ -616,7 +623,7 @@ std::optional<std::filesystem::path> resolve_needed(
         auto candidate = dir / named;
         ec.clear();
         if (std::filesystem::is_regular_file(candidate, ec))
-            return comparable_path(candidate);
+            return candidate.lexically_normal();
     }
     return std::nullopt;
 }
@@ -1313,19 +1320,24 @@ RuntimeResolution resolve_runtime_closure(
                 if (std::ranges::find(childRpaths, raw) == childRpaths.end())
                     childRpaths.push_back(raw);
         for (auto const& soname : requester.needed) {
+            // The object is identified by the file it is (`path`), and
+            // searches from the directory it was opened in (`opened`).
             std::optional<std::filesystem::path> path;
+            std::filesystem::path opened;
             if (auto loaded = loadedBySoname.find(soname);
                 loaded != loadedBySoname.end()) {
                 path = loaded->second;
             } else {
-                path = detail::resolve_needed(
+                auto found = detail::resolve_needed(
                     soname, requester, binding, additionalSearchDirs,
                     pending.inheritedRpaths);
-                if (!path) {
+                if (!found) {
                     resolution.unresolved.push_back(soname);
                     resolution.unresolvedSonames.push_back(soname);
                     continue;
                 }
+                opened = *found;
+                path = detail::comparable_path(*found);
                 loadedBySoname.emplace(soname, *path);
             }
             if (soname == "libc.so.6") {
@@ -1356,6 +1368,7 @@ RuntimeResolution resolve_runtime_closure(
                 loadedBySoname.emplace(parsed->soname, *path);
             }
             parsed->inheritedRpaths = childRpaths;
+            if (!opened.empty()) parsed->origin = opened.parent_path();
             queue.push_back({*parsed, childRpaths});
             resolution.objects.push_back(std::move(*parsed));
         }

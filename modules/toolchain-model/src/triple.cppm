@@ -610,10 +610,15 @@ constexpr const mcpp::toolchain::target::Provider* default_provider_of(std::stri
     return best;
 }
 
-constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
+// A row seen through the provider that serves it: the toolchain it pins, the
+// C library it brings, its linkage and the platform package that implements it.
+// One function for the built-in table, a provider other than the default, and a
+// row a platform package defines, so the three cannot disagree on a field.
+constexpr TargetInfo view_of(const mcpp::toolchain::target::Row& r,
+                             const mcpp::toolchain::target::Provider* p) {
     TargetInfo t{ r.triple, r.tier, r.note, {}, {}, false };
     t.row = &r;
-    t.provider = default_provider_of(r.triple);
+    t.provider = p;
     if (t.provider) {
         t.pin = t.provider->toolchain;
         t.sysroot = t.provider->sysroot == "toolchain" ? std::string_view{} : t.provider->sysroot;
@@ -621,6 +626,10 @@ constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
         t.platform = t.provider->platform;
     }
     return t;
+}
+
+constexpr TargetInfo info_of(const mcpp::toolchain::target::Row& r) {
+    return view_of(r, default_provider_of(r.triple));
 }
 
 inline constexpr auto kKnownTargets = [] {

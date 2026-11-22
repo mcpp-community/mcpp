@@ -478,6 +478,16 @@ inline std::expected<PackageRef, std::string> parse_ref_text(std::string_view te
         }
         return r;
     }
+    // A DIRECTORY (`path:<dir>`): the text a provider of a path platform names
+    // its package by, read back where the selection filters providers by the
+    // chosen platform. Read as a payload without its version before, the text
+    // matched no platform, and the provider of every path platform was left
+    // out: a row it defines took none of its keys (mcpp#1007, `linkage`).
+    if (text.starts_with("path:")) {
+        if (text.size() == 5) return std::unexpected(std::format("'{}' names no directory after `path:`", text));
+        r.spec.path = std::string(text.substr(5));
+        return r;
+    }
     const auto at = text.rfind('@');
     // AN ECOSYSTEM PAYLOAD (`xim:linux-headers@6.18.64`): named by its index
     // and always with its version, the rule `companions` states.

@@ -308,6 +308,9 @@ struct Plan {
     // `shared`, or `declared` (each library as it declares itself). Set by the
     // caller from the build.
     std::string                          linkageName = "declared";
+    // The build linked the program static (the row's or the project's
+    // `linkage`): it names no loader and no library, whatever its format.
+    bool                                 programStatic = false;
     // The other legs of a tree or a single file (SPEC-014 §3), set by the caller
     // after `make_plan` as `extraSharedLegs` is.
     std::vector<LoadedLeg>               loadedLegs;
@@ -2347,16 +2350,23 @@ run_wasm(const Plan& plan)
     const auto builtDir = plan.builtBinary.parent_path();
     // The module beside the launcher is the row's companion (N33): absent when
     // the link embedded it (`-sSINGLE_FILE=1`), and removed before every link,
-    // so a module present here is this launcher's.
-    auto family = mcpp::pack::emscripten_stem_family(builtDir, plan.binaryName);
-    for (auto const& name : family.siblings) {
-        std::error_code fec;
-        std::filesystem::copy_file(builtDir / name,
-            plan.stagingRoot / "bin" / name,
-            std::filesystem::copy_options::overwrite_existing, fec);
-        if (fec) return std::unexpected(Error{std::format(
-            "failed to copy {} -> {}: {}", (builtDir / name).string(),
-            (plan.stagingRoot / "bin" / name).string(), fec.message())});
+    // so a module present here is this launcher's. EVERY PROGRAM OF THE
+    // PACKAGE HAS ITS OWN (mcpp#1007): under `--all-programs` the others were
+    // staged as files beside the chosen one, launcher alone, and `cmd.exe.js`
+    // travelled without `cmd.exe.wasm`.
+    std::vector<std::string> launchers{ plan.binaryName };
+    for (auto const& other : plan.opts.otherPrograms) launchers.push_back(other);
+    for (auto const& launcher : launchers) {
+        auto family = mcpp::pack::emscripten_stem_family(builtDir, launcher);
+        for (auto const& name : family.siblings) {
+            std::error_code fec;
+            std::filesystem::copy_file(builtDir / name,
+                plan.stagingRoot / "bin" / name,
+                std::filesystem::copy_options::overwrite_existing, fec);
+            if (fec) return std::unexpected(Error{std::format(
+                "failed to copy {} -> {}: {}", (builtDir / name).string(),
+                (plan.stagingRoot / "bin" / name).string(), fec.message())});
+        }
     }
 
     if (auto r = stage_runtime_files(plan, stagedJs.parent_path()); !r) return r;
@@ -3285,7 +3295,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
                     "       This target links it dynamically whatever the linkage asked; pack it with "
                     "a mode that states its closure (--mode vendored).",
                     plan.binaryName, !f->interp.empty() ? "a loader" : "shared libraries")});
-        if (plan.opts.mode != Mode::Static) {
+        // A STATIC PROGRAM OF A FORMAT WITH NO DYNAMIC LINKER HAS NO CLOSURE
+        // (mcpp#1007): a DJGPP program, COFF under a go32 stub, is linked whole
+        // by the row's statement (`linkage = "static"`), and there is no loader
+        // to ask. The default mode packs it as it packs a static ELF, whose
+        // closure the file says is empty; a format mcpp reads is still asked.
+        const bool closureByBuild = plan.programStatic
+            && mcpp::pack::binfmt::identify(plan.builtBinary).format == mcpp::pack::binfmt::Format::Unknown;
+        if (plan.opts.mode != Mode::Static && !closureByBuild) {
             // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
             // `$ORIGIN`.
             //

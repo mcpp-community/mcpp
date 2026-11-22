@@ -2425,11 +2425,13 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
         // graph-supplied-target replacement below, which assembles its own
         // `--target=` and `--no-default-config`, and appending them twice
         // would make the outcome depend on the driver's flag ordering.
-        std::string apple_cross_ld;
-        if (appleCross) {
-            apple_cross_ld = crossTarget;
-            if (isClangWithCfg) apple_cross_ld += " --no-default-config";
-        }
+        //
+        // The target is named whenever the compile named it, not only for an
+        // Apple cross SDK: `x86_64-macos` on an Apple-silicon host compiles
+        // x86_64 objects, and a link told nothing ran for arm64 and found no
+        // `main` among them (measured on macos-15-arm64).
+        std::string apple_cross_ld = crossTarget;
+        if (appleCross && isClangWithCfg) apple_cross_ld += " --no-default-config";
         platformAnchor = macos_sdk + version_min;
         f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
                            b_flag, apple_cross_ld, macos_sdk, version_min,

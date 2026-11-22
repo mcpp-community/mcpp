@@ -412,6 +412,37 @@ UTest a_dependency_with_its_own_runpath_does_not_inherit_one{"ElfRuntime/ADepend
     expect(eq(resolution.unresolvedSonames.front(), "libdeep.so"));
 }};
 
+// A LIBRARY REACHED THROUGH A LINK SEARCHES FROM THE LINK'S DIRECTORY. A farm
+// of links (compat.curand) holds `libvendor.so.10` -> the payload's file, whose
+// DT_RUNPATH is `$ORIGIN`, beside `libdep.so.1`; the payload's own directory
+// holds no `libdep.so.1`. glibc expands `$ORIGIN` at the directory it opened the
+// link in and finds `libdep.so.1` in the farm (measured with LD_DEBUG=libs).
+UTest origin_is_the_directory_a_link_was_opened_in{"ElfRuntime/OriginIsTheDirectoryALinkWasOpenedIn", [] {
+    if constexpr (!mcpplibs::os::is_linux)
+        skip("ELF/glibc runtime physics only apply on Linux");
+    Tmp t;
+    auto payload = t.path / "store";
+    auto glibc = payload / "2.44" / "lib64";
+    auto vendor = t.path / "vendor" / "lib";
+    auto farm = t.path / "farm" / "lib";
+    auto runtime = t.path / "runtime" / "lib64";
+    for (auto const& d : {glibc, vendor, farm, runtime}) std::filesystem::create_directories(d);
+
+    write_elf_fixture(glibc / "libc.so.6", { .needed = {}, .runpath = glibc.string() });
+    write_elf_fixture(runtime / "libdep.so.1", { .needed = {}, .noSearchPath = true });
+    write_elf_fixture(vendor / "libvendor.so.10.3", { .needed = {"libdep.so.1"}, .runpath = "$ORIGIN" });
+    std::filesystem::create_symlink(vendor / "libvendor.so.10.3", farm / "libvendor.so.10");
+    std::filesystem::create_symlink(runtime / "libdep.so.1", farm / "libdep.so.1");
+    auto app = write_elf_fixture(t.path / "app", {
+        .needed = {"libvendor.so.10", "libc.so.6"},
+        .runpath = farm.string() + ":" + glibc.string(),
+        .rpathOnly = true,
+    });
+
+    auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
+    expect(resolution.unresolvedSonames.empty()) << "libdep.so.1 was searched for beside the link's target";
+}};
+
 UTest rule_b_rejects_interpreter_and_libc_from_different_payloads{"RuntimePhysics/RuleBRejectsInterpreterAndLibcFromDifferentPayloads", [] {
     if constexpr (!mcpplibs::os::is_linux)
         skip("ELF/glibc runtime physics only apply on Linux");

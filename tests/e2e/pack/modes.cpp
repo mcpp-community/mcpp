@@ -1,7 +1,8 @@
 // Programs packed: the three modes and their closures, build-machine paths, host
 // capabilities a self-contained bundle refuses, runtime files, `kind = "app"`, files staged
 // before the closure, the closure an ELF host pack states, several programs and a dotted
-// name, an artifact for another system (formerly tests/e2e/30, 215, 216, 649, 652, 662, 669,
+// name, an artifact for another system, a static platform's programs in a format the pack does
+// not read (formerly tests/e2e/30, 215, 216, 649, 652, 662, 669,
 // 1043, 1061).
 import std;
 import mcpplibs.mtest;
@@ -724,6 +725,76 @@ void _start(void) { (void)away_value(); for (;;) {} }
         s::tar_extract(static_tar, tmp, {static_exe});
         const auto h = s::read_header(tmp / static_exe);
         expect(h.needed.empty() && !h.elf_interpreter) << "--mode static packed a dynamic program";
+    };
+    "1156 a static platform's programs pack in a format the pack does not read"_test[s::elf] = [] {
+        // mcpp#1007: a row a platform package defines, whose provider states `linkage = "static"`,
+        // links its programs statically, and the pack ships every program of a format it does not
+        // read (a raw image here, as DJGPP's COFF) without a runtime closure. With the provider's
+        // linkage unstated the same program is dynamic, and the pack refuses and names the format.
+        const auto tmp = s::case_dir();
+        const auto LLVM_VERSION = s::llvm_version();
+        const auto platform = [&](std::string_view linkage) {
+            return std::format(R"cpp([package]
+name    = "raw-platform"
+version = "0.1.0"
+
+[platform]
+toolchain = "llvm@{0}"
+
+[[platform.define]]
+triple        = "x86_64-rawos"
+clang-triple  = "x86_64-unknown-linux-gnu"
+object-format = "elf"
+family        = "unix"
+execution     = "rawos"
+
+[[platform.provider]]
+serves = ["x86_64-rawos"]
+{1}
+[platform.build]
+cflags  = ["-ffreestanding", "-fno-stack-protector"]
+ldflags = ["-nostdlib", "-fuse-ld=lld", "-Wl,--oformat=binary"]
+
+[platform.link]
+driver = "compiler"
+
+[platform.layers]
+"kernel-abi"       = false
+"c-abi"            = false
+"c++-abi"          = false
+"compiler-runtime" = false
+)cpp", LLVM_VERSION, linkage);
+        };
+        s::project plat{tmp / "plat", {{"mcpp.toml", platform("linkage = \"static\"\n")}}};
+        s::project app{tmp / "app", {{"mcpp.toml", R"cpp([package]
+name    = "raw"
+version = "0.1.0"
+
+[targets.one]
+kind = "bin"
+main = "src/main.c"
+
+[targets.two]
+kind = "bin"
+main = "src/main.c"
+
+[target.x86_64-rawos]
+platform = { path = "../plat" }
+)cpp"}, {"src/main.c", "void _start(void) { for (;;) {} }\n"}}};
+        auto r = app.mcpp({"pack", "--target", "x86_64-rawos", "--all-programs"});
+        expect(fatal(e2e::succeeded(r))) << "the static platform's programs did not pack\n" << s::text(r);
+        const auto listing = s::tar_list(app.at("target/dist/raw-0.1.0-x86_64-rawos.tar.gz"));
+        auto listed = [&](std::string_view tail) { return std::ranges::any_of(listing, [&](const std::string& l) { return l.ends_with(tail); }); };
+        expect(fatal(listed("/bin/one") && listed("/bin/two"))) << "--all-programs did not ship both programs";
+        std::optional<fs::path> exe;
+        for (const auto& f : s::find_files(app.at("target/x86_64-rawos"), "one"))
+            if (!exe && f.generic_string().ends_with("/bin/one")) exe = f;
+        expect(fatal(exe && s::read_file(*exe).substr(0, 4) != "\x7f" "ELF")) << "the program is ELF, so this test tests nothing";
+        plat.write("mcpp.toml", platform(""));
+        app.remove("target");
+        r = app.mcpp({"pack", "--target", "x86_64-rawos", "--all-programs"});
+        expect(fatal(!r)) << "a dynamic program of an unread format was packed without its closure\n" << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "neither ELF, PE nor Mach-O"))) << "the refusal does not name the format\n" << s::text(r);
     };
 }};
 
