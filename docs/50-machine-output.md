@@ -593,7 +593,7 @@ It resolves and reports; it does not build. `data` is:
 | `compiler` | `{family, version, driver, chosenBy}` — the driver that would run, and why |
 | `triple` | `{requested, toolchain, llvm}` |
 | `cLibrary` | `{mode, path, origin, suppliesTarget}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
-| `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset}` |
+| `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset, version, interfaces}`; `version` is the kernel-abi layer's measured version where the system publishes its kernel headers as a package (empty otherwise), `interfaces` the layer's interfaces (`null`: unstated, every one) *(@RELEASE@+)* |
 
 **`compiler.chosenBy` answers "why this one".** `{origin, requiredBy,
 replaced}` — `origin` is the same phrase the build's status line uses
@@ -657,7 +657,7 @@ a program classifying the outcome reads `reason`:
 | `payload-request` | a build program asked for a payload no manifest of this build declares `provision = "on-request"`, or asked again in three consecutive runs *(2026.10.1.3+)* |
 | `lto-export-discovery` | a PE shared library whose exports are discovered would be compiled by cl.exe into `/GL` objects, which hold no symbol table: `windows_auto_export = true` stated under `lto = true`, or `/GL` written into the flags of a package it links *(2026.10.5.2+)* |
 | `local-toolchain` | a toolchain named by path, or stated by a build program's toolchain phase, cannot be used: no driver, a contradicting family, a missing tool, or `spec` stated with a key only a toolchain named by path has *(2026.10.1.3+)* |
-| `target-base` | the target base (`sysroot`) cannot serve this build: a spelling the row does not take, a path that does not exist, a directory that supplies no C library, a C library older than the compiler's runtime requires, a native base without its loader, or a second C library supplier in the graph *(2026.10.24.1+)* |
+| `target-base` | the target base (`sysroot`) cannot serve this build: a spelling the row does not take, a path that does not exist, a directory that supplies no C library, a C library older than the compiler's runtime requires, a native base without its loader, or a second C library supplier in the graph *(2026.10.24.1+)*; the kernel headers: a prebuilt `layers` form on a row or layer that takes none, a payload without the target architecture's headers, no headers to answer the default, or a measurement that contradicts the statement *(@RELEASE@+)* |
 | `convention-unreplaced` | the convention was overridden and nothing replaced it |
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |
@@ -753,6 +753,9 @@ action, so such a file does not exist yet in the directory the document names.
 Each entry gives the path a `mcpp build` of the same selection writes
 (`build-path`) and the step that writes it, so that an editor can say "generated,
 build once" instead of reporting a missing header.
+Since @RELEASE@ an entry of `kind` `source` also carries `origin` when its
+action states one with `.origin(...)` ([30](30-build-mcpp.md)): the authored
+file the generated unit is a transformed copy of (S1 0.4.0 section 7.2).
 
 `emit` plans every selected member on its own (#699 item 1): one member's
 planning failure does not cost its siblings'. Outside a project, or when

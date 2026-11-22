@@ -82,8 +82,16 @@ struct ToolchainLinkModel {
     // LLVM 23.1.3 Part 3 §2.5).
     std::filesystem::path headerSysroot;
 
-    // Compile-side C library / kernel headers (payload dirs, or the
-    // linux-headers supplement for a sysroot that lacks them).
+    // THE KERNEL HEADERS (design 2026-11-22 §3.5): the kernel-abi layer's
+    // prebuilt supplier, or the toolchain's declaration over a base without
+    // its own. `-isystem` on every driver and in every mode, ahead of the
+    // base's directories: clang and gcc search `-isystem` before the
+    // sysroot's system directories and continue past it file by file, so a
+    // header the supplier lacks (`<scsi/sg.h>`, glibc's) is the base's. No
+    // C++ header wraps these, so `-idirafter`'s reason below does not apply.
+    std::vector<std::filesystem::path> kernelIncludes;
+
+    // Compile-side C library headers (payload dirs).
     std::vector<std::filesystem::path> systemIncludes;
 
     // DEBIAN MULTIARCH, FOR A DRIVER THAT DOES NOT KNOW IT (design 2026-10-23
@@ -116,6 +124,8 @@ struct ToolchainLinkModel {
     // Compile-side flags as argv tokens. Each entry is ONE argv word.
     std::vector<std::string> compile_tokens(const PathEscape& esc) const {
         std::vector<std::string> out;
+        for (auto& inc : kernelIncludes)
+            out.push_back("-isystem" + esc(inc));
         // A managed libc supplies the complete system header surface. Keep
         // Clang's resource headers while refusing an ambient /usr/include
         // fallback, including when the driver cfg is explicitly bypassed.
@@ -130,8 +140,8 @@ struct ToolchainLinkModel {
         // PayloadFirst headers: clang takes -isystem; GCC needs -idirafter so
         // libstdc++'s #include_next wrappers (which only search *after* the
         // current dir, and GCC's built-ins are last) can still reach libc.
-        // A Sysroot-mode supplement (kernel headers missing from the sysroot)
-        // is -isystem for both: the libc headers come from the sysroot there.
+        // In Sysroot mode these are -isystem for both: the libc headers come
+        // from the sysroot there.
         const char* incFlag = (mode == CLibMode::Sysroot || clangDriver)
                             ? "-isystem" : "-idirafter";
         for (auto& inc : systemIncludes)
@@ -480,6 +490,10 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
 
 ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     ToolchainLinkModel lm;
+    // The kernel headers ahead of the base: one wiring for every mode below, a
+    // toolchain's own sysroot included (a native musl toolchain's headers are
+    // replaced the same way), and nothing where none were decided.
+    lm.kernelIncludes = tc.base.kernel.dirs;
     lm.clangDriver  = is_clang(tc);
     lm.clangWithCfg = resolve_clang_driver(tc).hasCfg;
 
@@ -556,8 +570,6 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
         lm.systemIncludes.push_back(pp.glibcInclude);
         if (!lm.clangDriver && !pp.glibcInclude.empty())
             lm.headerSysroot = pp.glibcInclude.parent_path();
-        if (!pp.linuxInclude.empty())
-            lm.systemIncludes.push_back(pp.linuxInclude);
         // Resolved for both drivers now that both emit it.
         lm.loader = resolve_loader(pp.glibcLib, tc.targetTriple);
     };
@@ -592,7 +604,6 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
                 lm.multiarchLibDirs.push_back(root / "lib" / tc.base.multiarchTuple);
             }
             add_compiler_runtime_dir();
-            for (auto const& inc : tc.base.addedIncludes) lm.systemIncludes.push_back(inc);
             return;
         }
         // Name the interpreter even here: see link_tokens. The payload is the
@@ -620,13 +631,6 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
             lm.libDirs.push_back(tc.base.payload->glibcLib);
         }
         add_compiler_runtime_dir();
-        // Supplement kernel headers when the sysroot lacks them (glibc's
-        // local_lim.h needs <linux/limits.h>). Self-contained musl sysroots
-        // ship their own; a cross target must not see host-arch headers.
-        if (!is_musl_target(tc) && tc.base.payload
-            && !tc.base.payload->linuxInclude.empty()
-            && !std::filesystem::exists(root / "usr" / "include" / "linux" / "limits.h"))
-            lm.systemIncludes.push_back(tc.base.payload->linuxInclude);
     };
 
     // A target that parses and is not Mach-O; a target that says nothing is the

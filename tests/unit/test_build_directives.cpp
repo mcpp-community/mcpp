@@ -788,6 +788,33 @@ UTest decode_action_defaults_depfile_to_empty_when_absent{"BuildDirectives/Decod
     expect(eq(a->depfile, ""));
 }};
 
+// THE AUTHORED SOURCE OF A GENERATED UNIT (mcpp#1004): `origin` round-trips,
+// is one of the inputs, and belongs to a `source` action; anything else is
+// refused by name, never dropped.
+UTest decode_action_round_trips_origin{"BuildDirectives/DecodeActionRoundTripsOrigin", [] {
+    auto d = parse(
+        "mcpp:action={\"id\":\"hcg\",\"role\":\"source\",\"description\":\"\",\"blocking\":false,"
+        "\"origin\":\"/p/src/app.cppm\",\"inputs\":[\"/p/src/app.cppm\",\"/t/hcg\"],"
+        "\"outputs\":[\"out/hcg/app.cppm\"],\"command\":[\"/t/hcg\"],\"provides\":[\"app\"],"
+        "\"imports\":[],\"targets\":[]}\n");
+    expect(fatal(eq(d.at(dirs::Slot::Actions).size(), 1u)));
+    auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
+    expect(fatal(a.has_value()));
+    expect(eq(a->origin, "/p/src/app.cppm"));
+    expect(eq(dirs::action_error(d), ""));
+}};
+
+UTest an_origin_outside_the_inputs_is_refused{"BuildDirectives/AnOriginOutsideTheInputsIsRefused", [] {
+    auto d = parse(
+        "mcpp:action={\"id\":\"hcg\",\"role\":\"source\",\"description\":\"\",\"blocking\":false,"
+        "\"origin\":\"/p/src/other.cppm\",\"inputs\":[\"/p/src/app.cppm\"],"
+        "\"outputs\":[\"out/hcg/app.cppm\"],\"command\":[\"/t/hcg\"],\"provides\":[],"
+        "\"imports\":[],\"targets\":[]}\n");
+    expect(fatal(eq(d.at(dirs::Slot::Actions).size(), 1u)));
+    expect(!dirs::decode_action(d.at(dirs::Slot::Actions).front()).has_value());
+    expect(dirs::action_error(d).contains("is not one of its inputs"));
+}};
+
 // The overflow marker. Until 2026.9.13.1 `mcpp::action` held its lists in
 // fixed arrays and set the marker when a declaration did not fit; the lists
 // now grow, and the marker means the build program could not allocate. The

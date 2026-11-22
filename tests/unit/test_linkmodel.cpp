@@ -105,7 +105,6 @@ struct FakeClangWithPayload {
         t.base.payload = tc::PayloadPaths{
             .glibcInclude = glibc / "include",
             .glibcLib = glibcLib,
-            .linuxInclude = {},
         };
     }
 };
@@ -153,7 +152,6 @@ UTest gcc_sysroot_wins_over_payload{"LinkModel/GccSysrootWinsOverPayload", [] {
     t.base.payload = tc::PayloadPaths{
         .glibcInclude = dir.path / "glibc" / "include",
         .glibcLib = dir.path / "glibc" / "lib64",
-        .linuxInclude = dir.path / "linux" / "include",
     };
     auto lm = tc::resolve_link_model(t);
     expect(eq(lm.mode, tc::CLibMode::Sysroot));
@@ -162,27 +160,42 @@ UTest gcc_sysroot_wins_over_payload{"LinkModel/GccSysrootWinsOverPayload", [] {
     // --sysroot already replaces the recorded sysroot.
     expect(eq(lm.compile_flags(ident).find("-isysroot"), std::string::npos));
     expect(ne(lm.link_flags(ident).find("--sysroot="), std::string::npos));
-    // Kernel headers exist in the sysroot → no supplement.
+    // No kernel headers decided: nothing ahead of the base.
     expect(lm.systemIncludes.empty());
+    expect(lm.kernelIncludes.empty());
 }};
 
-UTest gcc_sysroot_supplements_missing_kernel_headers{"LinkModel/GccSysrootSupplementsMissingKernelHeaders", [] {
+// THE KERNEL HEADERS ARE ONE WIRING (design 2026-11-22 §3.5): the decided
+// directories, `-isystem`, first, for gcc and clang and in every mode -- the
+// sysroot of a view, a payload layout, a toolchain's own sysroot. The model
+// asks no file of the base: the decision was made once, before it.
+UTest kernel_headers_lead_every_mode{"LinkModel/KernelHeadersLeadEveryMode", [] {
     Tmp dir;
-    auto sysroot = dir.path / "sysroot";
-    touch(sysroot / "usr" / "include" / "stdlib.h");  // no linux/limits.h
-    tc::Toolchain t;
-    t.compiler = tc::CompilerId::GCC;
-    t.targetTriple = "x86_64-linux-gnu";
-    t.base.root = sysroot;
-    t.base.payload = tc::PayloadPaths{
-        .glibcInclude = dir.path / "glibc" / "include",
-        .glibcLib = dir.path / "glibc" / "lib64",
-        .linuxInclude = dir.path / "linux" / "include",
+    const auto arch = dir.path / "lh" / "arch" / "aarch64" / "include";
+    const auto common = dir.path / "lh" / "include";
+    auto first_tokens = [&](tc::Toolchain t) {
+        t.base.kernel.dirs = {arch, common};
+        t.base.kernel.version = "6.18.64";
+        auto tokens = tc::resolve_link_model(t).compile_tokens(ident);
+        expect(fatal(tokens.size() >= 2u));
+        expect(eq(tokens[0], "-isystem" + arch.string()));
+        expect(eq(tokens[1], "-isystem" + common.string()));
     };
-    auto lm = tc::resolve_link_model(t);
-    expect(fatal(eq(lm.systemIncludes.size(), 1u)));
-    // Sysroot-mode supplement renders as -isystem even for GCC.
-    expect(ne(lm.compile_flags(ident).find("-isystem"), std::string::npos));
+    tc::Toolchain sysrootGcc;
+    sysrootGcc.compiler = tc::CompilerId::GCC;
+    sysrootGcc.targetTriple = "x86_64-linux-gnu";
+    sysrootGcc.base.root = dir.path / "sysroot";
+    first_tokens(sysrootGcc);
+    tc::Toolchain payloadGcc;
+    payloadGcc.compiler = tc::CompilerId::GCC;
+    payloadGcc.targetTriple = "x86_64-linux-gnu";
+    payloadGcc.base.payload = tc::PayloadPaths{ .glibcInclude = dir.path / "glibc" / "include",
+                                                .glibcLib = dir.path / "glibc" / "lib64" };
+    first_tokens(payloadGcc);   // -isystem, not the payload's -idirafter
+    tc::Toolchain ownMusl;
+    ownMusl.compiler = tc::CompilerId::GCC;
+    ownMusl.targetTriple = "x86_64-linux-musl";
+    first_tokens(ownMusl);
 }};
 
 UTest gcc_payload_emits_idirafter_and_its_own_addressing{"LinkModel/GccPayloadEmitsIdirafterAndItsOwnAddressing", [] {
@@ -195,7 +208,6 @@ UTest gcc_payload_emits_idirafter_and_its_own_addressing{"LinkModel/GccPayloadEm
     t.base.payload = tc::PayloadPaths{
         .glibcInclude = dir.path / "glibc" / "include",
         .glibcLib = glibcLib,
-        .linuxInclude = {},
     };
     auto lm = tc::resolve_link_model(t);
     expect(eq(lm.mode, tc::CLibMode::PayloadFirst));

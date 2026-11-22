@@ -260,7 +260,16 @@ std::string kernel_abi_interfaces_for(const PrepareState& state, std::size_t i) 
         }
         return joined;
     }
-    return {};
+    // No package supplies the layer to the target: the system does, and its
+    // row states the interfaces (design 2026-11-22 §3.17).
+    auto const& l = state.resolvedTargetSide.kernelAbi;
+    if (!target || !state.targetSideResolved || l.fromGraph() || !l.interfacesStated) return {};
+    std::string joined;
+    for (auto const& name : l.interfaces) {
+        if (!joined.empty()) joined += ';';
+        joined += name;
+    }
+    return joined;
 }
 
 PackageInstances package_instances(const PrepareState& state) {

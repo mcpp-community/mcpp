@@ -524,7 +524,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `compiler` | `{family, version, driver, chosenBy}` —— 真正会运行的驱动器，以及选中它的原因 |
 | `triple` | `{requested, toolchain, llvm}` |
 | `cLibrary` | `{mode, path, origin, suppliesTarget}` —— `mode` 取 `sysroot` / `payload-first` / `none`，`origin` 取 `payload` / `subos` / `host` / `none` |
-| `layers[]` | 目标侧的五个层：`{layer, interface, impl, origin, subset}` |
+| `layers[]` | 目标侧的五个层：`{layer, interface, impl, origin, subset, version, interfaces}`；`version` 为系统把内核头文件作为包发布时 kernel-abi 层测得的版本（其他情形为空），`interfaces` 为该层的接口（`null`：未陈述，即全部）*(@RELEASE@+)* |
 
 **`compiler.chosenBy` 回答「为什么是它」。** `{origin, requiredBy,
 replaced}` —— `origin` 与构建的状态行使用的是同一句话
@@ -583,7 +583,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `payload-request` | 构建程序请求了本次构建中没有任何清单声明 `provision = "on-request"` 的载荷，或连续三次运行都在请求 *(2026.10.1.3+)* |
 | `lto-export-discovery` | 导出需要被发现的 PE 共享库会被 cl.exe 编译成没有符号表的 `/GL` 对象：在 `lto = true` 下陈述了 `windows_auto_export = true`，或在它所链接的包的 flag 中写了 `/GL` *(2026.10.5.2+)* |
 | `local-toolchain` | 由路径命名的工具链，或构建程序工具链阶段陈述的工具链无法使用：没有驱动、族与驱动矛盾、缺少某个工具，或 `spec` 与只属于路径工具链的键一同陈述 *(2026.10.1.3+)* |
-| `target-base` | 目标基座(`sysroot`)无法服务本次构建:该行不接受的写法、不存在的路径、不供给 C 库的目录、低于编译器运行库要求的 C 库、缺少 loader 的本机基座,或依赖图中的第二个 C 库供给者 *(2026.10.24.1+)* |
+| `target-base` | 目标基座(`sysroot`)无法服务本次构建:该行不接受的写法、不存在的路径、不供给 C 库的目录、低于编译器运行库要求的 C 库、缺少 loader 的本机基座,或依赖图中的第二个 C 库供给者 *(2026.10.24.1+)*；内核头文件：不接受预制形式的行或层上写了 `layers` 的预制形式、载荷不带目标架构的头文件、缺省没有回答者、测量与陈述不符 *(@RELEASE@+)* |
 | `convention-unreplaced` | 约定被推翻了，而没有任何东西接替它 |
 | `os-mismatch` | 请求的三元组与解析出的三元组命名不同的系统 |
 | `layer-requirement` | 某个包要求的层，解析结果没有提供 |
@@ -672,6 +672,8 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 （S1 0.3.0 §7.2）。命令不运行任何 action，所以这样的文件在文档所指的目录中尚不存在。
 每一项给出同一组选择下 `mcpp build` 写入的路径（`build-path`）以及写出它的步骤，
 编辑器因此可以说明“这是生成的文件，构建一次即可”，而不是报告缺少头文件。
+自 @RELEASE@ 起，`kind` 为 `source` 的一项在其 action 以 `.origin(...)` 陈述时另有
+`origin`（[30](30-build-mcpp.md)）：生成的单元作为其变换副本的那个编写的文件（S1 0.4.0 §7.2）。
 
 `emit` 独立规划每一个被选中的成员（#699 第 1 项）：一个成员的规划失败不会
 连累它的兄弟成员。不在项目中，或者被选中的成员全部规划失败时，信封省略

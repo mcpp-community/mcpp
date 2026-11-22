@@ -22,7 +22,12 @@ import mcpplibs.os.platform;
 import mcpp.toolchain.platform;
 import mcpp.run;
 import mcpp.provider;
+import mcpp.provider.select;
+import mcpp.targetside;
+import mcpp.platform;
 import mcpp.runtime.binding;
+import mcpp.toolchain.detect;
+import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.base;
 import mcpp.toolchain.base_probe;
 import mcpp.toolchain.triple;
@@ -508,7 +513,6 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
         return std::unexpected(std::format("[target.{}].sysroot = \"{}\": {}", tt->str(), stmt->text,
                                            basePackage.error()));
     }
-    const auto ecosystemLinux = tc.base.payload ? tc.base.payload->linuxInclude : fs::path{};
     const bool native = tt->os == "linux" && tt->arch == mcpp::toolchain::platform::host_arch
                         && mcpplibs::os::is_linux;
     const bool staticLink = state.m->buildConfig.linkage == "static";
@@ -526,7 +530,7 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
     if (!*basePackage && tb::is_payload_layout(dir)) {
         // The ecosystem's own layout: a glibc package (`xim:glibc@2.39`). It
         // is linked as the default base is, from its own directories.
-        tc.base.payload = tb::payload_layout_paths(dir, ecosystemLinux);
+        tc.base.payload = tb::payload_layout_paths(dir);
         tc.base.root.clear();
         auto v = driver_base(tc);
         v.push_back("-isystem" + tc.base.payload->glibcInclude.string());
@@ -574,11 +578,6 @@ std::expected<void, std::string> step2_resolve_base(PrepareState& state) {
                 !std.empty() && fs::exists(std, ec))
                 tc.base.loader = std;
         }
-        // Kernel headers are additive (§2.4): the engine supplies the
-        // ecosystem's for a native base that lacks them.
-        if (native && !ecosystemLinux.empty()
-            && !fs::exists(dir / "usr" / "include" / "linux" / "limits.h", ec))
-            tc.base.addedIncludes.push_back(ecosystemLinux);
     }
 
     // THE LOADER AN ARTIFACT NAMES IS A PATH ON THE MACHINE THAT RUNS IT
@@ -726,6 +725,249 @@ std::expected<void, std::string> step2_resolve_run_under(PrepareState& state) {
             return {};
         }
     }
+    return {};
+}
+
+// ── The kernel headers (design 2026-11-22 §3.1-§3.6) ─────────────────────────
+//
+// ON A SYSTEM THAT PUBLISHES ITS KERNEL HEADERS APART FROM ITS C LIBRARY (the
+// system row's `kernel-abi` data; Linux), the headers a build compiles against
+// are decided here, once, after the target side: the statement
+// (`[target.<selector>.layers] kernel-abi`, a payload or a directory), else
+// the first answerer of two -- the base's own headers, then the headers the
+// toolchain's payload declares. The shared view of a home is not an answerer:
+// its links are the home's history, and two toolchains of one home declare
+// different versions. The decision is wired by the link model ahead of the
+// base and measured by preprocessing, as the C library is (SPEC-006 §3.9.3).
+
+namespace {
+
+namespace mp = mcpp::manifest::platform;
+namespace target = mcpp::toolchain::target;
+
+// A payload's header directories for one architecture: that architecture's
+// first, when the payload carries it, then the common ones. A payload without
+// per-architecture directories carries its host's (the layout published
+// before), so it serves only a build for this machine's architecture.
+std::vector<fs::path> payload_header_dirs(const fs::path& root, const target::System::KernelAbi& k,
+                                          std::string_view arch, std::string* why) {
+    std::error_code ec;
+    std::vector<fs::path> dirs;
+    const auto common = k.include.empty() ? root : root / std::string(k.include);
+    if (!k.archInclude.empty()) {
+        std::string rel(k.archInclude);
+        rel.replace(rel.find("{arch}"), 6, arch);
+        if (fs::is_directory(root / rel, ec)) dirs.push_back(root / rel);
+        else if (fs::is_directory(root / "arch", ec)) {
+            if (why) *why = std::format("it carries no headers of {} ({} is absent)", arch, (root / rel).string());
+            return {};
+        }
+    }
+    if (dirs.empty() && arch != mcpp::toolchain::platform::host_arch) {
+        if (why) *why = std::format("its layout carries the headers of {} only, the machine it was "
+                                    "installed on", mcpp::toolchain::platform::host_arch);
+        return {};
+    }
+    dirs.push_back(common);
+    return dirs;
+}
+
+// The headers in effect, measured: the driver preprocesses a unit that
+// includes the system's header, with the base's search path as the build
+// renders it and `dirs` ahead of it. nullopt: the header is not found there.
+std::optional<tb::KernelVersion> measure_kernel_headers(const PrepareState& state,
+                                                        const mcpp::toolchain::Toolchain& tc,
+                                                        const target::System::KernelAbi& k,
+                                                        const std::vector<fs::path>& dirs) {
+    auto probeTc = tc;
+    probeTc.base.kernel = {};
+    probeTc.base.kernel.dirs = dirs;
+    const mcpp::toolchain::PathEscape plain = [](const fs::path& p) { return p.string(); };
+    auto v = driver_base(tc);
+    for (auto const& t : mcpp::toolchain::resolve_link_model(probeTc).compile_tokens(plain)) v.push_back(t);
+    // The unit is named by its content and kept in the temporary directory:
+    // it is the same for every build, and a probe writes nothing into a
+    // project's tree.
+    const auto text = std::format("#if __has_include(<{0}>)\n#include <{0}>\n#endif\n", k.header);
+    std::error_code ec;
+    const auto unit = fs::temp_directory_path(ec)
+        / std::format("mcpp-kernel-probe-{:016x}.c", std::hash<std::string>{}(text));
+    if (!fs::is_regular_file(unit, ec)) {
+        const auto partial = fs::path(unit).concat(std::format(".{:08x}", std::random_device{}()));
+        { std::ofstream os(partial); os << text; }
+        fs::rename(partial, unit, ec);
+    }
+    v.insert(v.end(), {"-E", "-dM", "-x", "c", unit.string()});
+    auto r = mcpp::run::capture_stdout(v);
+    if (r.exit_code != 0) return std::nullopt;
+    return tb::kernel_version(tb::parse_defines(r.output), k.version, k.packed, k.bits);
+}
+
+std::string layer_origin(const mp::LayerEntry& e) { return mcpp::platform::origin_text(e.origin); }
+
+} // namespace
+
+std::expected<void, std::string> step9_kernel_headers(PrepareState& state) {
+    if (!state.tc || !state.targetSideResolved) return {};
+    auto& tc = *state.tc;
+    tc.base.kernel = {};
+    auto tt = mcpp::toolchain::triple::parse(tc.targetTriple);
+    if (!tt) return {};
+    auto const& fields = state.platform.fields;
+    const auto* sys = target::find_system(tt->os);
+    const bool data = sys && sys->kernelAbi.stated();
+
+    // A PREBUILT FORM IS ACCEPTED WHERE THE SYSTEM SAYS HOW TO MEASURE IT
+    // (§3.1): the kernel-abi layer of such a system; no other layer, and no
+    // layer of a system whose kernel interface is one SDK or base with its C
+    // library. The engine asks the data, never a layer's or a system's name.
+    const mp::LayerEntry* stated = nullptr;
+    for (auto const& [layer, e] : fields.layers) {
+        if (!prebuilt_layer(e)) continue;
+        if (layer == "kernel-abi" && data) { stated = &e; continue; }
+        refusal::record(refusal::Code::TargetBase);
+        return std::unexpected(std::format(
+            "{}: [target.<selector>.layers] {} = \"{}\" names a prebuilt supplier, and on {} {}.\n"
+            "       What a prebuilt directory supplies there is stated with the base: "
+            "[target.{}] sysroot = \"<package>@<version>\" or {{ path = \"<dir>\" }}; a layer of the "
+            "graph is a package (\"<name>@<version>\").",
+            layer_origin(e), layer, mp::display(e.ref), tt->str(),
+            layer == "kernel-abi"
+                ? std::format("the kernel interface of {} is part of its base, not a package of its own", tt->os)
+                : std::format("only the kernel-abi layer of a system that publishes its kernel headers "
+                              "apart from its C library takes one, not {}", layer),
+            tt->str()));
+    }
+    if (!data) return {};
+    // `kernel-abi = false`: the statement says the build has no such layer (a
+    // freestanding arrangement), so there are no headers to decide or measure.
+    if (auto it = fields.layers.find("kernel-abi"); it != fields.layers.end() && it->second.ref.off)
+        return {};
+
+    auto& ts = state.resolvedTargetSide;
+    // ONE SUPPLIER PER LAYER (rule one): a package of the graph supplies the
+    // layer (an openkal implementation), so a prebuilt one is a second.
+    if (stated && ts.kernelAbi.fromGraph()) {
+        refusal::record(refusal::Code::ExclusiveCapability);
+        mcpp::targetside::Conflict c;
+        c.layer = mcpp::targetside::CapLayer::KernelAbi;
+        c.first = std::format("{} ({})", mp::display(stated->ref), layer_origin(*stated));
+        c.firstVia = "stated as the layer";
+        c.second = ts.kernelAbi.impl;
+        return std::unexpected(mcpp::targetside::format_conflict(c));
+    }
+    // A C library of the graph is its own world: the base and its headers are
+    // not this build's (openkal over a C library it carries). A kernel
+    // interface of the graph over a prebuilt C library (an openkal
+    // implementation on `*-linux-gnu`) leaves the base's C library in place,
+    // and that library includes the kernel's headers: they are decided as the
+    // base's component, and the layer stays the package's.
+    const bool layerIsGraphs = ts.kernelAbi.fromGraph();
+    if (!ts.cAbi.prebuilt()) {
+        if (!stated) return {};
+        refusal::record(refusal::Code::LayerRequirement);
+        return std::unexpected(std::format(
+            "{}: layers.kernel-abi = \"{}\" states the kernel headers beneath a prebuilt C library, "
+            "and the C library of {} is the graph's ({}).\n"
+            "       Its kernel interface is the one that package requires; remove the statement.",
+            layer_origin(*stated), mp::display(stated->ref), tt->str(), ts.cAbi.impl));
+    }
+
+    auto const& k = sys->kernelAbi;
+    tb::KernelHeaders kh;
+    std::optional<tb::KernelVersion> measured;
+    if (stated) {
+        std::string why;
+        if (!stated->ref.payload.empty()) {
+            auto root = package_dir(state, stated->ref.payload, true);
+            if (!root) return std::unexpected(std::format("{}: layers.kernel-abi = \"{}\": {}",
+                                                          layer_origin(*stated), stated->ref.payload, root.error()));
+            kh.dirs = payload_header_dirs(*root, k, tt->arch, &why);
+            kh.supplier = stated->ref.payload;
+        } else {
+            kh.dirs = {fs::path(stated->ref.spec.path)};
+            kh.supplier = std::format("path {}", stated->ref.spec.path);
+        }
+        kh.source = layer_origin(*stated);
+        if (kh.dirs.empty()) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format(
+                "{}: layers.kernel-abi = \"{}\" cannot serve {}: {}.\n"
+                "       State a version published with the headers of {}, or the directory of "
+                "that architecture's headers: kernel-abi = {{ path = \"<dir>\" }}",
+                kh.source, kh.supplier, tt->str(), why, tt->arch));
+        }
+        measured = measure_kernel_headers(state, tc, k, kh.dirs);
+        const auto at = stated->ref.payload.rfind('@');
+        if (!measured || (at != std::string::npos
+                          && !tb::kernel_version_matches(*measured, stated->ref.payload.substr(at + 1)))) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format(
+                "{}: layers.kernel-abi = \"{}\": the headers measured there are {}.\n"
+                "       The statement names what is compiled against, and the measurement must agree.",
+                kh.source, kh.supplier,
+                measured ? std::format("{} {}", tt->os, measured->text())
+                         : std::format("absent (no <{}>)", k.header)));
+        }
+    } else {
+        // 1. The base's own: a stated base, a toolchain's own sysroot, the
+        //    host's root -- not the shared view, and not a payload layout,
+        //    which carries the C library alone (the link model's PayloadFirst).
+        const bool payloadLayout = mcpp::toolchain::resolve_link_model(tc).mode
+                                   == mcpp::toolchain::CLibMode::PayloadFirst;
+        if (!mcpp::toolchain::base_is_ecosystem_view(tc) && !payloadLayout) {
+            measured = measure_kernel_headers(state, tc, k, {});
+            if (measured) kh.supplier = tc.base.stated() ? "the base (sysroot)" : "the toolchain's sysroot";
+        }
+        // 2. The toolchain's declaration: the headers its payload was built
+        //    with, by the reading `companions` uses (SPEC-006 §2.9). A
+        //    payload that declares none is not answered by whatever version
+        //    the store happens to hold. A compiler outside any store declares
+        //    nothing; the home's newest headers answer for it, and the report
+        //    says so.
+        if (!measured && !k.package.empty()) {
+            const auto marker = (fs::path(std::string(k.include)) / std::string(k.header)).generic_string();
+            std::optional<fs::path> root;
+            if (mcpp::provider::store_of(tc.binaryPath)) {
+                if (mcpp::provider::declared_dependency(tc.binaryPath, k.package)) {
+                    root = mcpp::provider::beside(tc.binaryPath, k.package, marker);
+                    kh.source = "the toolchain's declaration";
+                }
+            } else {
+                root = mcpp::provider::in_home_store(k.package, marker);
+                kh.source = "the home's newest; the compiler is in no store";
+            }
+            std::string why;
+            if (root) kh.dirs = payload_header_dirs(*root, k, tt->arch, &why);
+            if (!kh.dirs.empty()) {
+                measured = measure_kernel_headers(state, tc, k, kh.dirs);
+                kh.supplier = std::format("{}@{}", k.package, root->filename().string());
+            }
+        }
+        if (!measured) {
+            refusal::record(refusal::Code::TargetBase);
+            return std::unexpected(std::format(
+                "{} has no kernel headers to compile against: the base carries none, and the toolchain "
+                "{} declares none that serve {}.\n"
+                "       State them for the target:\n"
+                "\n"
+                "           [target.{}.layers]\n"
+                "           kernel-abi = \"xim:{}@<version>\"      # or {{ path = \"<dir>\" }}\n"
+                "\n"
+                "       or name a base that carries them ([target.{}] sysroot).",
+                tt->str(), tc.label(), tt->arch, tt->str(), k.package.empty() ? "<package>" : std::string(k.package),
+                tt->str()));
+        }
+    }
+    kh.version = measured->text();
+    // A statement is a prebuilt supplier the build names; a default is the
+    // payload's, as the other layers the toolchain answers are.
+    if (!layerIsGraphs) {
+        ts.kernelAbi.version = kh.version;
+        if (stated) ts.kernelAbi.origin = mcpp::targetside::Origin::Xpkg;
+        ts.kernelAbi.impl = kh.source.empty() ? kh.supplier : std::format("{}, {}", kh.supplier, kh.source);
+    }
+    tc.base.kernel = std::move(kh);
     return {};
 }
 

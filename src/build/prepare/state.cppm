@@ -1262,6 +1262,10 @@ base_statement(PrepareState& state, const mcpp::toolchain::triple::Triple& t);
 const std::string* base_statement_text(PrepareState& state,
                                        const mcpp::toolchain::triple::Triple& t);
 std::expected<void, std::string> step2_resolve_base(PrepareState& state);
+// The kernel headers a build compiles against, on a system that publishes them
+// apart from its C library (design 2026-11-22 §3.3): decided after the target
+// side, into `tc->base.kernel` and the kernel-abi layer's report.
+std::expected<void, std::string> step9_kernel_headers(PrepareState& state);
 // The directory a package statement names (`xim:<name>@<version>`): where its
 // payload stands, installed first when `install` and it does not stand.
 std::expected<std::filesystem::path, std::string>
@@ -1471,6 +1475,9 @@ bool refused_without_platform(const PrepareState& state, std::string_view reques
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);
+// Whether a layer entry names a prebuilt supplier (a payload, or a directory
+// that is no package) rather than a package of the graph.
+bool prebuilt_layer(const mcpp::manifest::platform::LayerEntry& e);
 // The capabilities packages require and nothing provides: each takes the
 // default its package states for the target (mcpp#911 G7). True when one was
 // added to the walk.

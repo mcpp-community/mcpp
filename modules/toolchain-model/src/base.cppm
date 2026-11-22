@@ -339,6 +339,81 @@ inline std::map<std::string, std::string, std::less<>> parse_defines(std::string
     return m;
 }
 
+// THE KERNEL HEADERS' VERSION (design 2026-11-22 §3.4), read from the defines
+// a probe unit that includes the system's header printed. The parts' macros
+// answer when every one is defined (Linux from 5.15: LINUX_VERSION_MAJOR, …);
+// otherwise the packed macro is decoded by the widths the system states
+// (LINUX_VERSION_CODE, 16.8.8 bits). A part at its width's maximum is
+// saturated: the packing cannot say more (linux 4.19.256 packs as 4.19.255),
+// so a comparison skips it. The widths are data; this decodes only.
+struct KernelVersion {
+    std::vector<unsigned> parts;
+    std::vector<bool>     saturated;   // per part
+    std::string text() const {
+        std::string s;
+        for (std::size_t i = 0; i < parts.size(); ++i) s += std::format("{}{}", i ? "." : "", parts[i]);
+        return s;
+    }
+};
+
+inline std::optional<unsigned> decimal_value(std::string_view v) {
+    while (!v.empty() && (v.front() == '(' || v.front() == ' ')) v.remove_prefix(1);
+    while (!v.empty() && (v.back() == ')' || v.back() == ' ' || v.back() == 'U' || v.back() == 'L'))
+        v.remove_suffix(1);
+    if (v.empty()) return std::nullopt;
+    unsigned out = 0;
+    auto [p, ec] = std::from_chars(v.data(), v.data() + v.size(), out);
+    if (ec != std::errc{} || p != v.data() + v.size()) return std::nullopt;
+    return out;
+}
+
+inline std::optional<KernelVersion>
+kernel_version(const std::map<std::string, std::string, std::less<>>& defines,
+               std::span<const std::string_view> partMacros, std::string_view packedMacro,
+               std::span<const int> bits) {
+    KernelVersion kv;
+    for (auto name : partMacros) {
+        auto it = defines.find(name);
+        auto v = it == defines.end() ? std::nullopt : decimal_value(it->second);
+        if (!v) { kv.parts.clear(); break; }
+        kv.parts.push_back(*v);
+    }
+    if (!partMacros.empty() && kv.parts.size() == partMacros.size()) {
+        kv.saturated.assign(kv.parts.size(), false);
+        return kv;
+    }
+    kv.parts.clear();
+    if (packedMacro.empty() || bits.empty()) return std::nullopt;
+    auto it = defines.find(packedMacro);
+    auto code = it == defines.end() ? std::nullopt : decimal_value(it->second);
+    if (!code) return std::nullopt;
+    int shift = 0;
+    for (auto b : bits) shift += b;
+    for (auto b : bits) {
+        shift -= b;
+        const unsigned max = b >= 32 ? 0xffffffffu : ((1u << b) - 1u);
+        const unsigned part = static_cast<unsigned>((static_cast<unsigned long long>(*code) >> shift) & max);
+        kv.parts.push_back(part);
+        kv.saturated.push_back(part == max);
+    }
+    return kv;
+}
+
+// Whether a measured version is the stated one, to the measurement's
+// precision: each part the measurement holds and did not saturate is equal.
+inline bool kernel_version_matches(const KernelVersion& measured, std::string_view stated) {
+    std::size_t i = 0;
+    while (!stated.empty() && i < measured.parts.size()) {
+        const auto dot = stated.find('.');
+        const auto part = decimal_value(stated.substr(0, dot));
+        if (!part) return false;
+        if (!measured.saturated[i] && *part != measured.parts[i]) return false;
+        stated = dot == std::string_view::npos ? std::string_view{} : stated.substr(dot + 1);
+        ++i;
+    }
+    return i > 0;
+}
+
 // THE DEBIAN MULTIARCH TUPLE, from Debian's MultiarchTuples table. This is the
 // one piece of layout knowledge the engine carries (D10): it is specified, and
 // a gcc built without multiarch support cannot find `crt1.o` in a Debian or
@@ -418,7 +493,21 @@ struct AppleSdk {
 struct PayloadPaths {
     std::filesystem::path glibcInclude;     // glibc headers (features.h, bits/)
     std::filesystem::path glibcLib;          // glibc runtime (libc.so, crt*.o, ld-linux)
-    std::filesystem::path linuxInclude;      // linux kernel headers (linux/, asm/)
+};
+
+// THE KERNEL HEADERS OF A SYSTEM THAT PUBLISHES THEM APART FROM ITS C LIBRARY
+// (design 2026-11-22 §3.3-§3.5; SPEC-002 §3.3): the prebuilt supplier of the
+// kernel-abi layer on a Linux row, or the headers of the base when the base
+// carries its own. Decided once, after the target side, by one function;
+// `dirs` are wired with -isystem ahead of the base, so every unit, the std
+// module and glibc's own <linux/...> includes read them.
+struct KernelHeaders {
+    // Searched first to last ahead of the base; empty: the base's own.
+    std::vector<std::filesystem::path> dirs;
+    std::string version;    // measured: "6.18.64"
+    std::string supplier;   // "xim:linux-headers@6.18.64", "path <dir>", "the base", …
+    std::string source;     // the tier or the default that decided it
+    bool decided() const { return !version.empty(); }
 };
 
 // THE ONE ANSWER. Every reader of "which sysroot" reads a field of this — the
@@ -456,8 +545,9 @@ struct Resolution {
     // for a binding (which names `loader`) and for a static link.
     std::string            interpreter;
     std::vector<std::filesystem::path> runtimeDirs;
-    // Kernel headers the base lacks, supplied by the engine (§2.4, additive).
-    std::vector<std::filesystem::path> addedIncludes;
+    // The kernel headers in effect, on a system that publishes them as a
+    // package (`KernelHeaders`).
+    KernelHeaders          kernel;
     // Content identity: enters the runtime contract and so the fingerprint.
     // Empty for the ecosystem default, whose identity is the contract itself.
     std::string            identity;

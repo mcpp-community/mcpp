@@ -736,6 +736,33 @@ static const mcpp::modgraph::PackageRoot* kernel_abi_provider(const PrepareState
     return nullptr;
 }
 
+// THE KERNEL-ABI LAYER'S INTERFACES (design 2026-11-22 §3.17): its package's
+// `[kernel-abi] provides-interfaces`, or, where the layer is the system itself,
+// the system's statement (`[[platform.system]] interfaces`). One list answers
+// `cfg(interface = …)`, the report and `mcpp why toolchain`. A package that
+// states none, and a system that states none, provide every interface.
+static void step9_kernel_abi_interfaces(PrepareState& state) {
+    auto& l = state.resolvedTargetSide.kernelAbi;
+    if (auto const* pkg = kernel_abi_provider(state)) {
+        l.interfaces = pkg->manifest.kernelAbiProvidesInterfaces;
+        l.interfacesStated = true;
+        return;
+    }
+    if (l.absent() || l.fromGraph() || !state.tc) return;
+    auto tt = mcpp::toolchain::triple::parse(state.tc->targetTriple);
+    if (!tt) return;
+    // The row's statement, then its system's.
+    if (auto const* row = mcpp::toolchain::target::find_row(tt->str()); row && row->interfacesStated) {
+        l.interfaces.assign(row->interfaces.begin(), row->interfaces.end());
+        l.interfacesStated = true;
+        return;
+    }
+    auto const* sys = mcpp::toolchain::target::find_system(tt->os);
+    if (!sys || !sys->interfacesStated) return;
+    l.interfaces.assign(sys->interfaces.begin(), sys->interfaces.end());
+    l.interfacesStated = true;
+}
+
 static std::expected<void, std::string>
 step9_target_side_include_broadcast(PrepareState& state, TargetSideGather& gather) {
     namespace tsd = mcpp::targetside;
@@ -1521,10 +1548,8 @@ static std::expected<void, std::string> step9_layer_conditional_config(PrepareSt
         layerCtx.kernelAbi       = state.resolvedTargetSide.kernelAbi.interfaceName;
         layerCtx.cAbi            = state.resolvedTargetSide.cAbi.interfaceName;
         layerCtx.cxxAbi          = state.resolvedTargetSide.cxx.interfaceName;
-        if (auto const* pkg = kernel_abi_provider(state)) {
-            layerCtx.interfaces       = pkg->manifest.kernelAbiProvidesInterfaces;
-            layerCtx.interfacesStated = true;
-        }
+        layerCtx.interfaces       = state.resolvedTargetSide.kernelAbi.interfaces;
+        layerCtx.interfacesStated = state.resolvedTargetSide.kernelAbi.interfacesStated;
         // A REQUIREMENT A LAYER DECIDES IS CHECKED NOW, WHEN THE LAYERS ARE
         // KNOWN. `[target.'cfg(all(windows, compiler = "llvm"))'] requires =
         // ["mcpp:compiler-runtime=compiler-rt"]` states what one compiler needs
@@ -2117,6 +2142,8 @@ std::expected<void, std::string> phase9_target_side(PrepareState& state) {
     if (!gather) return std::unexpected(gather.error());
     if (auto r = step9_resolve_and_realise_cabi(state, *gather); !r)
         return std::unexpected(r.error());
+    if (auto r = step9_kernel_headers(state); !r) return std::unexpected(r.error());
+    step9_kernel_abi_interfaces(state);
     if (auto r = step9_target_side_include_broadcast(state, *gather); !r)
         return std::unexpected(r.error());
     if (auto r = step9_kernel_abi_interfaces_and_requirements(state, *gather); !r)

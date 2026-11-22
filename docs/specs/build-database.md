@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-005 |
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
-| 状态 | 评审中 v1.9 |
-| 版本 | 1.9 |
-| 最后修改 | 2026-10-21 |
-| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1;v1.9 明确的 R6.1a 为 mcpp >= 2026.10.21.1 |
+| 状态 | 评审中 v1.10 |
+| 版本 | 1.10 |
+| 最后修改 | 2026-11-23 |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1;v1.9 明确的 R6.1a 为 mcpp >= 2026.10.21.1;v1.10 的 R3.9、R3.12a 为 mcpp >= @RELEASE@ |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
 | 相关 issue | #636, #648, #655, #699, #702, #707, #732, #797 |
 | 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.3.0(§7.2 的 `generated`,Sunrisepeak/mcpp-language-server#28;此前为 0.2.0)与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
@@ -148,6 +148,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   | `module M:P;` | `module-partition-implementation` |
   | `module M;` | `module-implementation` |
   | `scan_overrides` 声明的单元;P1689 扫描中无法区分实现单元与导入者的单元 | `unknown` |
+  | 构建程序的 action 生成、并以 `provides` 声明模块主名(不含 `:`)的单元 | `module-interface`(只有接口单元提供主名;mcpp >= @RELEASE@) |
 
   **已实现**
 - **R3.9a** 没有被 `sources` glob 匹配的目标入口源文件(发现的测试、glob 之外的
@@ -182,6 +183,12 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   的文档,因为 JSON Compilation Database 的读者拒绝未知的键。命令不运行任何 action
   (R2.5);由消费方决定是否在其用户同意时运行 `generator`。**已实现**
   (mcpp >= 2026.9.28.1,mcpp#724)
+- **R3.12a** `kind` 为 `source` 的一项另有 `origin`,当且仅当生成它的 action 以 `mcpp::action::origin` 陈述了它:
+  该文件是其变换副本的那个编写的源文件(人为改变该单元而编辑的文件),是 action 的 `inputs` 之一。引擎**禁止**由
+  `inputs` 推断它。`origin` 不在 `inputs` 中、或陈述在 `role` 不是 `source` 的 action 上时,构建程序的指令被拒绝。
+  同一模块由生成的单元与其 `origin` 一同提供时(工程把编写的文件也列在 `sources` 中),扫描器的重复提供者错误写明
+  二者的这一关系。不写 `line-mapping`:生成文件中的 `#line` 指令本身是事实,由消费方读取。S1 0.4.0 §7.2 的增量
+  字段。**已实现**(mcpp >= @RELEASE@,mcpp#1004)
 
 ### 3.6 构建程序
 
@@ -265,3 +272,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 | 1.7 | 2026-09-30 | 新增 R3.8a:同一配置中两个包提供同一个模块名时,两个单元都列出它,可能导入它的单元的 `arguments` 带有构建所用的绑定(#732)。 |
 | 1.8 | 2026-10-11 | 新增 R3.13:构建程序、构建程序实例的库与引擎接口以 `<包>:build`、`<包>:host`、`mcpp:core`、`mcpp:std:host` 集合描述,`ide.configuration` 为 `build-program`,只进入 S1 文档(#797)。 |
 | 1.9 | 2026-10-21 | R6.1a 明确合成 host 清单与锁文件不作为 watch 或 fingerprint 输入，保留可编辑依赖输入(#807)。 |
+| 1.10 | 2026-11-23 | 新增 R3.12a:生成的单元以 action 陈述的 `origin` 指名其编写的源文件(S1 0.4.0);R3.9 以 `provides` 声明模块主名的生成单元为 `module-interface`(mcpp#1004)。 |

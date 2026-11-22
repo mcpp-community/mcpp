@@ -643,7 +643,7 @@ std::string pe_link_flag(const BuildPlan& plan, bool sep,
 // The platform links with `ld.lld` itself (`[platform.link] driver = "lld"`):
 // a flag is the linker's own spelling, not the driver's `-Wl,` form.
 bool links_with_lld(const BuildPlan& plan) {
-    return plan.platform.active && plan.platform.fields.link.driver.value == "lld";
+    return plan.platform.fields.link.driver.value == "lld";
 }
 
 std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
@@ -933,8 +933,7 @@ std::string action_phony_name(std::string_view pkg) {
 // same edge: the guard once took the seal edge for the link and refused every ok
 // image whose graph declares a `prepare` action.
 std::filesystem::path link_edge_output(const BuildPlan& plan, const LinkUnit& lu) {
-    if (!plan.platform.active || plan.platform.fields.link.seal.empty()
-        || lu.kind == LinkUnit::StaticLibrary)
+    if (plan.platform.fields.link.seal.empty() || lu.kind == LinkUnit::StaticLibrary)
         return lu.output;
     auto unsealed = std::filesystem::path("obj/platform") / lu.output.relative_path();
     unsealed += ".unsealed";
@@ -1865,8 +1864,8 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
     // seal steps run on the linked file, written beneath `obj/platform/`, and
     // only a file every step accepted is published under the artifact's name.
     auto const& pf = plan.platform;
-    const bool platformLld  = pf.active && pf.fields.link.driver.value == "lld";
-    const bool platformSeal = pf.active && !pf.fields.link.seal.empty();
+    const bool platformLld  = pf.fields.link.driver.value == "lld";
+    const bool platformSeal = !pf.fields.link.seal.empty();
     // A program a platform names, as the platform resolved it, or its name for
     // PATH at build time.
     auto platform_program = [&](const std::string& name) {
@@ -1874,7 +1873,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         return it == pf.tools.end() ? name : it->second;
     };
     std::vector<std::filesystem::path> platformInputs;
-    if (pf.active && !pf.fields.link.inputs.empty()) {
+    if (!pf.fields.link.inputs.empty()) {
         const auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
         const bool clangDriver = plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang;
         append("rule platform_capture\n");
@@ -3797,7 +3796,7 @@ std::string emit_ninja_string(const BuildPlan& plan, std::string* placements,
         // this plan links; with seal steps, the artifact is written beneath
         // obj/ and published by its own edge (above). Not beside the name:
         // what bin/ holds is what was published, and an unsealed file is not.
-        const bool platformUnit = pf.active && lu.kind != LinkUnit::StaticLibrary;
+        const bool platformUnit = lu.kind != LinkUnit::StaticLibrary;
         if (platformUnit)
             for (auto const& in : platformInputs) add_in(in);
         const bool sealUnit = platformSeal && lu.kind != LinkUnit::StaticLibrary;
@@ -5062,8 +5061,8 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // A platform that links with ld.lld itself and names its shared
     // artifacts is the exception (an ok image's `.okso`, placed by the loader
     // through DT_NEEDED or by `dlopen`): it has the rule.
-    const bool platformShared = plan.platform.active
-        && plan.platform.fields.link.driver.value == "lld" && plan.platform.fields.link.shared.set;
+    const bool platformShared = plan.platform.fields.link.driver.value == "lld"
+        && plan.platform.fields.link.shared.set;
     if (!flags.ldDriver.empty() && !platformShared) {
         for (auto const& lu : plan.linkUnits) {
             if (lu.kind != LinkUnit::SharedLibrary) continue;

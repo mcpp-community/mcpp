@@ -4,6 +4,49 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [@RELEASE@] - @DATE@
+
+### Added
+
+- On a Linux row, `[target.<selector>.layers] kernel-abi` states the kernel headers:
+  `"xim:linux-headers@<version>"` (an ecosystem payload, always with its version) or
+  `{ path = "<dir>" }` (a header directory without `mcpp.toml`). The statement holds with or
+  without a platform. Its directories reach every unit and the std module with `-isystem`, ahead
+  of the base. The headers in effect are measured by preprocessing `<linux/version.h>`, and the
+  report, `mcpp why toolchain` and `layers[].version` give the version. A stated version the
+  measurement contradicts is refused (`target-base`). So is a prebuilt form on any other layer,
+  on a row whose system publishes its kernel interface with its C library (macOS, Windows,
+  FreeBSD), and a second supplier on an openkal row. Which systems take the form, and how the
+  version is read, are the system row's data (`kernel-abi`), not the engine's (docs/22)
+  (mcpp#988).
+- A system row and a target row state the interfaces of their kernel-abi layer (`interfaces`):
+  every openkal interface on Linux, macOS, FreeBSD and Windows, fewer on the iOS rows (no program
+  start) and on `wasm32-emscripten`. `cfg(interface = "...")` reads the provider's list, else the
+  row's, else the system's, so it holds on a row without openkal as well. The same list is in
+  `layers[].interfaces` and `MCPP_KERNEL_ABI_INTERFACES` (mcpp#1005).
+- `mcpp::action::origin(path)` names the authored file a generated unit is a transformed copy
+  of, one of the action's inputs, on a `source` action. The build database gives it as
+  `ide.generated[].origin`. A generated unit that declares a module's primary name is a
+  `module-interface`. When the authored file is also among the sources, the duplicate-provider
+  error names the relation (S1 0.4.0, mcpp#1004).
+
+### Changed
+
+- Without a statement, the kernel headers are the base's own (a stated sysroot, a toolchain's own
+  sysroot such as `musl-gcc`'s, the host's root), else the version the toolchain's payload
+  declares. A build under gcc 16.2.0 now compiles against linux-headers 6.18.64, the version it
+  was built with, instead of the 5.11.1 the home's shared view linked to. The shared view is no
+  longer read for kernel headers, and mcpp no longer writes kernel headers into it; with neither
+  answer the build is refused before it compiles and names the statement to write.
+
+### Fixed
+
+- `layers`, `tools` and `link` in a `[target.<selector>]` table of the project or of
+  `config.toml` were accepted and had no effect on a row without a platform, with no report even
+  under `--strict`. They now complete the graph and reach the link on every row (docs/35);
+  `link.flags` that reaches no program says so, and `carrier`, a form of a platform's image, is a
+  warning there (`platform/carrier`).
+
 ## [2026.11.22.1] - 2026-11-22
 
 ### Added

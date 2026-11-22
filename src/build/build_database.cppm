@@ -545,12 +545,17 @@ Rendered render(std::span<const Member> members,
                         const bool isUnit = std::ranges::any_of(set.units, [&](auto const& u) {
                             return u.value("source", "") == path;
                         });
-                        set.generated.push_back(nlohmann::json{
+                        nlohmann::json entry{
                             {"path",       path},
                             {"build-path", build_path(p)},
                             {"kind",       isUnit ? "source" : "header"},
                             {"generator",  generator},
-                        });
+                        };
+                        // mcpp#1004: the authored source of a generated unit,
+                        // as its action stated it; never inferred.
+                        if (isUnit && !a.origin.empty())
+                            entry["origin"] = native_string(std::filesystem::path(a.origin).lexically_normal());
+                        set.generated.push_back(std::move(entry));
                     }
                 }
             }

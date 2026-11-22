@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.13 |
-| 最后修改 | 2026-11-22 |
+| 状态 | 草案 v0.14 |
+| 最后修改 | 2026-11-23 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
 | 相关设计文档 | `.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`、`.agents/docs/2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md` |
 | 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755、mcpp#832、mcpp#988 |
@@ -122,7 +122,9 @@
 - 工程可以在工具链的陈述旁写明 binutils:`default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`,
   `[toolchain]` 的各平台键与 `[workspace.toolchain]` 同样可写。`companions` 只有 `binutils` 一项;只用于 GCC。
 - 写明的 binutils 低于工具链载荷声明的版本时**必须**拒绝,原因标记 `companion-too-old`:GCC 在构建时按所用的 binutils 选定汇编器的能力。
-- 内核头文件不在工具链的陈述中覆盖:缺省的基础层是 home 中各工程共用的 sysroot,头文件的版本随工具链载荷的声明(其修订)改变。
+- 内核头文件不在工具链的陈述中覆盖,它们是目标的 `kernel-abi` 层(`[target.<selector>.layers] kernel-abi`,SPEC-002 §3.9)。
+  基座不带内核头文件(共享视图、载荷布局的 glibc)时,缺省取工具链载荷声明的版本,读法同上;载荷没有声明时不取 store 中的
+  最新版本,而是拒绝并给出陈述的写法。引擎**禁止**向共享视图写入内核头文件(mcpp >= @RELEASE@)。
 
 ---
 
@@ -450,6 +452,7 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | v0.10 | 2026-10-23 | 随 mcpp 2026.10.24.1:§1 定义目标基座与执行宿主;新增 §3.9 目标基座(一次解析、四档写法与优先级、测量与声明、不写入、运行时语义)、§3.10 自备输入、§3.11 核心知识判据;§2.2.1 工具链阶段可陈述 `spec` 与 `sysroot`,`spec` 与路径专属键同时出现时拒绝;§3.1 补全读者名单;§3.3 增加主体 `sysroot` 与 `run_under`;§3.5 clang 行接受 `{ path }`;§4.3 要求被陈述的 gnu-sysroot 基座把 `--sysroot` 交给链接器;新增附录 A。 |
 | v0.11 | 2026-11-10 | 随 mcpp 2026.11.10.1:§3.9.2 引擎默认档为所选提供者的 `sysroot` 列,为包时按工程陈述的规则解析;附录 A 的 `*-windows-gnu` 接受基座包与 `{ path }`,新增 `*-freebsd` 行(基座包见 SPEC-002 §2.5)。 |
 | v0.13 | 2026-11-22 | 随 mcpp 2026.11.22.1:§2.9 配套载荷的声明依次取自载荷安装时的描述文件与索引的描述文件,取 store 持有的第一个。 |
+| v0.14 | 2026-11-23 | 随 mcpp @RELEASE@(设计 2026-11-22 内核接口与派生状态 §3.3):§2.9 内核头文件是目标的 `kernel-abi` 层;基座不带时缺省取工具链载荷的声明,没有声明时拒绝;引擎不向共享视图写入内核头文件。 |
 | v0.9 | 2026-10-17 | 随 mcpp 2026.10.17.1:新增 §4.7,已安装的修订在构建中继续使用,`floor` 决定是否必须替换,`toolchain install` 取当前修订;§6.4 doctor 只读,报告构建实际使用的工具链与包 home 的一致性。 |
 
 ---

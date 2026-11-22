@@ -119,6 +119,9 @@ struct Language {
 struct ScanOverride {
     std::vector<std::string> provides;   // module logical names the file exports
     std::vector<std::string> imports;    // module logical names the file imports
+    // An action's generated unit: the authored source it is a transformed
+    // copy of (mcpp#1004); empty otherwise.
+    std::string              origin;
 };
 
 struct Modules {
@@ -836,6 +839,10 @@ struct BuildAction {
     // once `prepare_actions` has run; a relative spelling names a directory
     // of the declaring package (SPEC-007 R2.2).
     std::string                        cwd;
+    // The authored source the outputs are a transformed copy of (mcpp#1004),
+    // one of `inputs`; Source role only. Empty: unstated, and nothing is
+    // inferred from the inputs.
+    std::string                        origin;
 };
 
 // `[resources]` — metadata and assets compiled INTO the produced artifact

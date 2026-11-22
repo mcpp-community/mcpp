@@ -109,6 +109,12 @@ a package of the graph already provides is left to that package and reported
 `graph`. The package of the C++ run-time also provides the compiler run-time, so
 `"c++-abi" = false` takes effect only with `compiler-runtime = false` beside it.
 
+The tables apply on a row without a platform too (mcpp @RELEASE@): such a row
+has an empty platform statement, and `layers`, `tools` and `link` written for
+it complete the graph and reach the link as they would over a platform. Before,
+they were accepted and had no effect. `carrier` is a form of a platform's image,
+so on such a row it is reported as a warning (`platform/carrier`) and not used.
+
 ## Selecting a platform, or none
 
 The first of these that answers selects the target's platform:

@@ -2723,8 +2723,7 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
             // (mcpp#911 G4): the compiler driver then links, adding the start
             // files and libraries it knows for the target, where the row alone
             // would call ld.lld with its emulation.
-            const bool platformCompilerDriver = plan.platform.active
-                && plan.platform.fields.link.driver.set
+            const bool platformCompilerDriver = plan.platform.fields.link.driver.set
                 && plan.platform.fields.link.driver.value == "compiler";
             if (!spec->lldEmulation.empty() && !platformCompilerDriver) {
                 f.ldDriver = in.lld;
@@ -2790,7 +2789,8 @@ CompileFlags compute_flags_impl(const BuildPlan& plan, bool packageLinkFlags) {
     // freestanding block gives: the artifact has no loader path, no crt files
     // and no system library of the toolchain's, and what it holds is the
     // graph's, reached through the graph's own `-L`/`-l`.
-    if (auto const& p = plan.platform; p.active) {
+    {
+        auto const& p = plan.platform;
         // Each element one word, quoted for the shell and `$` doubled for
         // ninja, as every other word of a command is.
         auto words = [](const std::vector<std::string>& v) {

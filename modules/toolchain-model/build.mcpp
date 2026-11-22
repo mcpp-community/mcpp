@@ -18,7 +18,7 @@ constexpr std::string_view kRowKeys[] = {
     "triple", "tier", "note", "standard", "exact", "march", "mabi", "code-model", "multilib", "flags",
     "link-emulation", "clang-triple", "gcc-triple", "family", "object-format", "data-model", "exe-suffix",
     "shared-suffix", "loader", "execution", "companions", "exceptions", "exe-suffix-fixed",
-    "link-without-main",
+    "link-without-main", "interfaces",
 };
 constexpr std::string_view kProviderKeys[] = {
     "name", "serves", "priority", "hosts", "probe", "toolchain", "pairs", "sysroot", "linkage",
@@ -27,7 +27,10 @@ constexpr std::string_view kProviderKeys[] = {
 constexpr std::string_view kRunnerKeys[] = { "cmd", "host", "hosts", "requires", "enabled", "exclusive" };
 constexpr std::string_view kSystemKeys[] = {
     "name", "uname", "resources", "command-scripts", "object-format", "exe-suffix", "shared-suffix",
+    "kernel-abi", "interfaces",
 };
+constexpr std::string_view kKernelAbiKeys[] = { "header", "version", "packed", "include", "arch-include", "package" };
+constexpr std::string_view kPackedKeys[] = { "macro", "bits" };
 constexpr std::string_view kObjectFormats[] = { "elf", "mach-o", "pe", "wasm", "coff" };
 constexpr std::string_view kExecutesKeys[] = { "host", "arches" };
 constexpr std::string_view kPayloadKeys[] = {
@@ -89,6 +92,14 @@ struct Arrays {
         decls += "};\n";
         return "d::" + name;
     }
+    std::string add_ints(const std::vector<int>& v) {
+        if (v.empty()) return "{}";
+        auto name = std::format("a{}", n++);
+        decls += std::format("inline constexpr int {}[] = {{", name);
+        for (std::size_t i = 0; i < v.size(); ++i) decls += std::format("{}{}", i ? ", " : "", v[i]);
+        decls += "};\n";
+        return "d::" + name;
+    }
 };
 
 std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
@@ -136,7 +147,7 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         ".codeModel = {}, .multilib = {}, .flags = {}, .linkEmulation = {}, .clangTriple = {}, "
         ".gccTriple = {}, .objectFormat = {}, .family = {}, .dataModel = {}, .exeSuffix = {}, .sharedSuffix = {}, "
         ".loader = {}, .execution = {}, .companions = {}, .linkWithoutMain = {}, .exceptions = {}, "
-        ".exeSuffixFixed = {} }},\n",
+        ".exeSuffixFixed = {}, .interfaces = {}, .interfacesStated = {} }},\n",
         lit(triple), lit(seg[0]), lit(seg[1]), lit(seg.size() == 3 ? seg[2] : std::string{}), lit(tier),
         lit(text(t, "note", where)), standard ? "true" : "false", exact ? "true" : "false",
         lit(text(t, "march", where)), lit(text(t, "mabi", where)),
@@ -147,7 +158,8 @@ std::string row_entry(const toml::Table& t, Arrays& arrays, std::set<std::string
         lit(text(t, "shared-suffix", where)), lit(text(t, "loader", where)),
         lit(text(t, "execution", where)), arrays.add(words(t, "companions", where)),
         arrays.add(words(t, "link-without-main", where)),
-        lit(text(t, "exceptions", where)), suffixFixed ? "true" : "false");
+        lit(text(t, "exceptions", where)), suffixFixed ? "true" : "false",
+        arrays.add(words(t, "interfaces", where)), t.find("interfaces") != t.end() ? "true" : "false");
 }
 
 std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<std::string>& rows) {
@@ -216,6 +228,50 @@ std::string provider_entry(const toml::Table& t, Arrays& arrays, const std::set<
         runnerEnabled, runnerExclusive);
 }
 
+// A system's `kernel-abi` table (design 2026-11-22 §3.4): how a probe measures
+// the kernel headers in effect, and a payload's layout. The version is read
+// from the parts' macros, else decoded from the packed macro by its widths.
+std::string kernel_abi_entry(const toml::Table& sys, Arrays& arrays, std::string_view systemWhere) {
+    auto it = sys.find("kernel-abi");
+    if (it == sys.end()) return "{}";
+    const auto where = std::format("{}.kernel-abi", systemWhere);
+    if (!it->second.is_table()) throw Failure{std::format("{}: not a table", where)};
+    auto const& t = it->second.as_table();
+    known_keys(t, kKernelAbiKeys, where);
+    const auto header = text(t, "header", where);
+    if (header.empty()) throw Failure{std::format("{}: `header` names the header a probe includes", where)};
+    const auto version = words(t, "version", where);
+    std::string packedMacro;
+    std::vector<int> bits;
+    if (auto p = t.find("packed"); p != t.end()) {
+        const auto pwhere = std::format("{}.packed", where);
+        if (!p->second.is_table()) throw Failure{std::format("{}: not a table", pwhere)};
+        known_keys(p->second.as_table(), kPackedKeys, pwhere);
+        packedMacro = text(p->second.as_table(), "macro", pwhere);
+        if (auto b = p->second.as_table().find("bits"); b != p->second.as_table().end()) {
+            if (!b->second.is_array()) throw Failure{std::format("{}: `bits` is not an array", pwhere)};
+            for (auto const& v : b->second.as_array()) {
+                if (!v.is_int() || v.as_int() <= 0 || v.as_int() > 32)
+                    throw Failure{std::format("{}: `bits` holds widths from 1 to 32", pwhere)};
+                bits.push_back(static_cast<int>(v.as_int()));
+            }
+        }
+        if (packedMacro.empty() || bits.empty())
+            throw Failure{std::format("{}: `macro` and `bits` are stated together", pwhere)};
+    }
+    if (version.empty() && packedMacro.empty())
+        throw Failure{std::format("{}: `version` or `packed` says how the version is read", where)};
+    if (!version.empty() && !bits.empty() && version.size() != bits.size())
+        throw Failure{std::format("{}: `version` and `packed.bits` name the same parts", where)};
+    const auto archInclude = text(t, "arch-include", where);
+    if (!archInclude.empty() && archInclude.find("{arch}") == std::string::npos)
+        throw Failure{std::format("{}: `arch-include` names the architecture as {{arch}}", where)};
+    return std::format("{{ .header = {}, .version = {}, .packed = {}, .bits = {}, .include = {}, .archInclude = {}, "
+                       ".package = {} }}",
+                       lit(header), arrays.add(version), lit(packedMacro), arrays.add_ints(bits),
+                       lit(text(t, "include", where)), lit(archInclude), lit(text(t, "package", where)));
+}
+
 std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {
     known_keys(t, kSystemKeys, "[[platform.system]]");
     const auto name = text(t, "name", "[[platform.system]]");
@@ -230,11 +286,15 @@ std::string system_entry(const toml::Table& t, Arrays& arrays, std::set<std::str
     const auto format = text(t, "object-format", where);
     if (!format.empty() && !std::ranges::contains(kObjectFormats, std::string_view(format)))
         throw Failure{std::format("{}: `object-format` is elf, mach-o, pe, wasm or coff", where)};
+    const auto kabi = kernel_abi_entry(t, arrays, where);
+    const bool interfacesStated = t.find("interfaces") != t.end();
     return std::format("    {{ .name = {}, .uname = {}, .resources = {}, .commandScripts = {}, .objectFormat = {}, "
-                       ".exeSuffix = {}, .sharedSuffix = {} }},\n",
+                       ".exeSuffix = {}, .sharedSuffix = {}, .kernelAbi = {}, .interfaces = {}, "
+                       ".interfacesStated = {} }},\n",
                        lit(name), lit(text(t, "uname", where)), resources,
                        arrays.add(words(t, "command-scripts", where)), lit(format),
-                       lit(text(t, "exe-suffix", where)), lit(text(t, "shared-suffix", where)));
+                       lit(text(t, "exe-suffix", where)), lit(text(t, "shared-suffix", where)), kabi,
+                       arrays.add(words(t, "interfaces", where)), interfacesStated);
 }
 
 std::string executes_entry(const toml::Table& t, Arrays& arrays, std::set<std::string>& seen) {

@@ -105,6 +105,28 @@
 #                   precedes it, and ELF is what neither states
 #   exe-suffix      the suffix of the system's programs
 #   shared-suffix   the suffix of its shared libraries
+#   kernel-abi      the system's kernel headers are a package apart from its C
+#                   library: how a probe measures them and how a payload lays
+#                   them out. Its rows accept a prebuilt `kernel-abi` statement
+#                   (`[target.<selector>.layers] kernel-abi`); a system without
+#                   the table has its kernel interface in one SDK or base with
+#                   its C library, and refuses one.
+#     header        the header the probe includes
+#     version       the macros of the version's parts, most significant first
+#     packed        { macro, bits }: the packed version and its parts' widths,
+#                   read when the macros above are absent; a part at its
+#                   width's maximum is saturated and not compared
+#     include       a payload's headers common to every architecture
+#     arch-include  a payload's headers of one architecture, `{arch}` the
+#                   target's, searched first; a payload without them serves
+#                   its host's architecture only
+#     package       the ecosystem package of the headers, which a toolchain's
+#                   payload declares (the headers its runtime was built with)
+#   interfaces      the interfaces the system provides, in openkal's names: the
+#                   answer of `cfg(interface = "<name>")` where the kernel-abi
+#                   layer is the system itself; unstated, every interface. A row
+#                   states its own where its C library or its system narrows
+#                   them for it, read first
 #
 # A row's `object-format`, `exe-suffix` and `shared-suffix` are read row first,
 # then system, then the convention of the object format (elf: none, `.so`;
@@ -464,12 +486,26 @@ triple   = "aarch64-ios"
 object-format = "mach-o"
 tier     = "preview"
 standard = true
+# An application of iOS starts no program and maps no code it writes (the
+# system's sandbox): the system's interfaces without openkal.process and
+# openkal.exec.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.task", "openkal.terminal", "openkal.net",
+              "openkal.datagram", "openkal.space", "openkal.timeout", "openkal.map", "openkal.region",
+              "openkal.prof", "openkal.debug"]
 
 [[platform.define]]
 triple   = "aarch64-ios-sim"
 object-format = "mach-o"
 tier     = "verified"
 standard = true
+# An application of iOS starts no program and maps no code it writes (the
+# system's sandbox): the system's interfaces without openkal.process and
+# openkal.exec.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.task", "openkal.terminal", "openkal.net",
+              "openkal.datagram", "openkal.space", "openkal.timeout", "openkal.map", "openkal.region",
+              "openkal.prof", "openkal.debug"]
 
 [[platform.define]]
 triple   = "x86_64-ios-sim"
@@ -480,6 +516,14 @@ standard = true
 # A new arch, a new os and a new object format; `em++` links `import std` with
 # the standard library surface the toolchain ships. One module plus its
 # JavaScript, no shared objects.
+# An application of iOS starts no program and maps no code it writes (the
+# system's sandbox): the system's interfaces without openkal.process and
+# openkal.exec.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.task", "openkal.terminal", "openkal.net",
+              "openkal.datagram", "openkal.space", "openkal.timeout", "openkal.map", "openkal.region",
+              "openkal.prof", "openkal.debug"]
+
 [[platform.define]]
 triple   = "wasm32-emscripten"
 tier     = "verified"
@@ -505,6 +549,11 @@ exe-suffix-fixed = true
 
 # OK IMAGES (openkal SPEC clause 12): one artifact per architecture, run by
 # `okrun` on Linux, macOS and Windows of that architecture.
+# Emscripten's C library serves files from its own file systems and starts no
+# program.
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs"]
+
 [[platform.define]]
 triple   = "x86_64-openkal"
 exe-suffix    = ".oke"
@@ -731,17 +780,35 @@ system-headers = "xim:mingw-w64-sysroot@20261104-2"
 # ── Systems ──────────────────────────────────────────────────────────────────
 
 [[platform.system]]
-name  = "linux"
-uname = "Linux"
+name       = "linux"
+uname      = "Linux"
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
+kernel-abi.header       = "linux/version.h"
+kernel-abi.version      = ["LINUX_VERSION_MAJOR", "LINUX_VERSION_PATCHLEVEL", "LINUX_VERSION_SUBLEVEL"]
+kernel-abi.packed       = { macro = "LINUX_VERSION_CODE", bits = [16, 8, 8] }
+kernel-abi.include      = "include"
+kernel-abi.arch-include = "arch/{arch}/include"
+kernel-abi.package      = "linux-headers"
 
 [[platform.system]]
 name          = "macos"
 uname         = "Darwin"
 object-format = "mach-o"
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
 
 [[platform.system]]
 name  = "freebsd"
 uname = "FreeBSD"
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
 
 # A Windows program is not selected by `uname`: it leads the file.
 [[platform.system]]
@@ -749,6 +816,11 @@ name            = "windows"
 object-format   = "pe"
 resources       = true
 command-scripts = [".bat", ".cmd"]
+interfaces = ["openkal.abort", "openkal.stream", "openkal.memory", "openkal.env", "openkal.time",
+              "openkal.random", "openkal.fs", "openkal.process", "openkal.task", "openkal.exec",
+              "openkal.terminal", "openkal.net", "openkal.datagram", "openkal.space", "openkal.timeout",
+              "openkal.map", "openkal.region", "openkal.prof", "openkal.debug"]
+
 
 # ── Execution relations ──────────────────────────────────────────────────────
 #

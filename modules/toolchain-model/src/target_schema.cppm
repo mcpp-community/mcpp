@@ -70,6 +70,12 @@ struct Row {
     // its module. A name template (`artifact_name("exe", "{name}")`) decides what
     // precedes it; the suffix ends the name, once.
     bool             exeSuffixFixed = false;
+    // THE INTERFACES THE ROW PROVIDES where its kernel-abi layer is the system
+    // itself (design 2026-11-22 §3.17), when its C library or its system
+    // narrows them for this row (an iOS application starts no program).
+    // Read before the system's `interfaces`; unstated: the system's.
+    std::span<const std::string_view> interfaces;
+    bool             interfacesStated = false;
     bool             defined = false; // stated by a platform package
 };
 
@@ -175,6 +181,37 @@ struct System {
     std::string_view objectFormat;    // elf | mach-o | pe | wasm | coff; empty: unstated
     std::string_view exeSuffix;
     std::string_view sharedSuffix;
+    // THE KERNEL INTERFACE AS A PACKAGE OF ITS OWN (design 2026-11-22 §3.4,
+    // §3.9). A system whose kernel headers are published apart from its C
+    // library (Linux) states how they are measured and laid out; a system
+    // whose kernel interface belongs to one SDK or base with its C library
+    // states nothing, and its rows accept no prebuilt `kernel-abi` statement.
+    struct KernelAbi {
+        // The header a probe unit includes (`__has_include`) to measure the
+        // headers in effect; empty: the system has no such package.
+        std::string_view header;
+        // The macros of the version's parts, most significant first; read
+        // when every one is defined.
+        std::span<const std::string_view> version;
+        // The macro of the packed version and its parts' widths in bits,
+        // most significant first: read when the macros above are absent.
+        std::string_view packed;
+        std::span<const int> bits;
+        // A payload's layout, relative to its root: the headers common to
+        // every architecture, and one architecture's (`{arch}` the target
+        // architecture), searched first when present.
+        std::string_view include;
+        std::string_view archInclude;
+        // The ecosystem package of the headers, which a toolchain's payload
+        // declares as the headers its own runtime was built against.
+        std::string_view package;
+        bool stated() const { return !header.empty(); }
+    } kernelAbi;
+    // THE INTERFACES THE SYSTEM PROVIDES (design 2026-11-22 §3.17): the
+    // answer of `cfg(interface = "<name>")` on rows whose kernel-abi layer is
+    // the system itself, in openkal's vocabulary. Unstated: every interface.
+    std::span<const std::string_view> interfaces;
+    bool interfacesStated = false;
 };
 
 // AN ARCHITECTURE A MACHINE EXECUTES BESIDES ITS OWN (design 2026-11-15 N23):

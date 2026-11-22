@@ -727,6 +727,28 @@ a.env("GEN_MODE", "release")
 命令行，值改变时该 action 重新运行。两者都未声明的 action，其命令行与 protocol 12 逐字节
 相同。
 
+#### 生成单元的编写文件：`.origin()`(@RELEASE@+)
+
+写出某个人工编辑文件之变换副本的 action（改写了 import 的源文件、加了前置内容的模块单元），以
+`.origin(...)` 指名该文件。该文件是 action 的输入之一，action 的角色为 `source`：
+
+```cpp
+const std::string in = std::string(mcpp::manifest_dir()) + "/templates/core.cppm";
+a.role = mcpp::roles::source;
+a.arg("rewrite").arg(in.c_str()).arg(out.c_str())
+ .input(in.c_str())
+ .origin(in.c_str())
+ .output(out.c_str())
+ .provides("app.core")
+ .submit();
+```
+
+构建数据库以 `ide.generated[].origin` 陈述这一关系（[50](50-machine-output.md)），编辑器据此把
+编写的文件显示为该单元的源。引擎不由输入推断这一关系。不在输入中的 `origin`，或陈述在其他角色
+action 上的 `origin`，在构建程序运行时被拒绝。在 `.provides(...)` 中声明某模块主名的单元是该模块
+的接口单元。编写的文件同时列在 `sources` 中时，二者都提供该模块，拒绝第二个提供者的错误写明这一
+关系。
+
 #### action 中的依赖程序：`${mcpp.artifact:}`(2026.9.27.1+)
 
 带 `artifacts = ["<bin>"]` 的依赖边为消费方的目标构建该程序（[05](05-dependencies.md)）。

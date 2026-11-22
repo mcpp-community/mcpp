@@ -418,6 +418,57 @@ int main() {
         expect(fatal(e2e::succeeded(r))) << "the compile database failed: " << r.err;
         expect(fatal(s::lacks(r.out, R"("generated")"))) << "C: compile_commands.json carries a generated field";
     };
+    "1152 a generated unit names the authored file it copies"_test[s::unix_shell][s::python3] = [] {
+        // mcpp#1004: A: the generated unit's entry gives `origin`, the authored file its action
+        // states, and the unit that declares the module's primary name is its interface; B: the
+        // authored file listed among the sources as well is refused, and the error names the
+        // relation.
+        const auto rule = R"(import std;
+import mcpp;
+int main() {
+    const std::string in  = std::string(mcpp::manifest_dir()) + "/templates/core.cppm";
+    const std::string out = std::string(mcpp::out_dir()) + "/core.cppm";
+    mcpp::action a;
+    a.id   = "copy:core";
+    a.role = mcpp::roles::source;
+    a.arg("cp").arg(in.c_str()).arg(out.c_str())
+     .input(in.c_str())
+     .origin(in.c_str())
+     .output(out.c_str())
+     .provides("app.core")
+     .submit();
+}
+)";
+        const auto manifest = [](std::string_view sources) {
+            return std::format("[package]\nname    = \"origin\"\nversion = \"0.1.0\"\n{}\n"
+                               "[targets.origin]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", sources);
+        };
+        s::project p({{"mcpp.toml", manifest("")},
+                      {"templates/core.cppm", "export module app.core;\nexport int answer() { return 42; }\n"},
+                      {"src/main.cpp", "import app.core;\nint main() { return answer() == 42 ? 0 : 1; }\n"},
+                      {"build.mcpp", rule}});
+        auto r = p.mcpp({"emit", "build-database", "--format", "json"}, at_root);
+        expect(fatal(e2e::succeeded(r))) << "the plan failed: " << r.err;
+        const auto set = s::json(r.out)["data"]["database"]["sets"][0];
+        nlohmann::json unit;
+        for (const auto& g : set["ide"].value("generated", nlohmann::json::array()))
+            if (g["kind"] == "source") unit = g;
+        expect(fatal(!unit.is_null())) << "A: no generated source entry: " << set.dump();
+        expect(fatal(unit.contains("origin") && slash(unit["origin"].get<std::string>()).ends_with("templates/core.cppm")))
+            << "A: " << unit.dump();
+        std::string role;
+        for (const auto& u : set["translation-units"])
+            if (basename(u["source"]) == "core.cppm") role = u["ide"]["role"];
+        expect(fatal(eq(role, std::string("module-interface")))) << "A: the generated unit's role";
+        r = p.mcpp({"build"});
+        expect(fatal(e2e::succeeded(r))) << "the build failed: " << s::text(r);
+
+        p.write("mcpp.toml", manifest("\n[modules]\nsources = [\"src/**/*.cpp\", \"templates/*.cppm\"]\n"));
+        r = p.mcpp({"build"});
+        expect(fatal(!e2e::succeeded(r))) << "B: the second provider was accepted";
+        expect(fatal(e2e::contains(s::text(r), "generated copy of the other"))) << "B: " << s::text(r);
+    };
+
     "817 emit writes no xlings json under private work dir"_test[s::unix_shell][s::python3] = [] {
         // A project declaring [xlings] deps: emit leaves the project tree as it was, writes no
         // <root>/.mcpp/.xlings.json, states no write-project effect, and writes the declaration

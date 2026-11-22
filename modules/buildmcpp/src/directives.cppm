@@ -1371,7 +1371,13 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
             if (auto eq = e.find('='); eq == std::string::npos || eq == 0)
                 return std::nullopt;
         a.cwd         = j.value("cwd", std::string{});
+        a.origin      = j.value("origin", std::string{});
         if (a.command.empty() || a.outputs.empty()) return std::nullopt;
+        // mcpp#1004: the origin is one of the inputs, of a source action.
+        if (!a.origin.empty()
+            && (a.role != mcpp::manifest::BuildAction::Role::Source
+                || std::ranges::find(a.inputs, a.origin) == a.inputs.end()))
+            return std::nullopt;
         // Prepare only: `output_dir` is the whole point of the role (R3.2,
         // R3.3) -- a `prepare` action with none declared would have a stamp
         // and nothing else, indistinguishable from a `check` that merely
@@ -1663,6 +1669,23 @@ std::string action_error(const Directives& d) {
                             "for the action's command; the name may not be empty.\n"
                             "       payload: {}", v, payload);
                 }
+            if (auto it = j.find("origin"); it != j.end() && it->is_string()) {
+                const auto origin = it->get<std::string>();
+                const bool source = j.value("role", std::string("source")) == "source";
+                bool input = false;
+                if (auto in = j.find("inputs"); in != j.end() && in->is_array())
+                    for (auto const& v : *in) input = input || (v.is_string() && v.get<std::string>() == origin);
+                if (!source || !input)
+                    return std::format(
+                        "build.mcpp declared an action whose origin \"{}\" {}.\n"
+                        "       mcpp::action::origin(path) names the authored source a `source` "
+                        "action's output is a\n"
+                        "       transformed copy of, and that file is one of the action's "
+                        "inputs (`input(path)`).\n"
+                        "       payload: {}", origin,
+                        source ? "is not one of its inputs" : "is stated on an action whose role is not source",
+                        payload);
+            }
         } catch (...) {}
         // A malformed action is a hard error, never a skip: an action that
         // silently does not exist produces a build missing generated sources,

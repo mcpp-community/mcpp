@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-372 records.
+373 records.
 
 ## By subject
 
@@ -60,6 +60,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### design
 
+- [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active
 - [程序起点模型：启动者、两层入口与 `main` 的三种陈述（mcpp#845、mcpp#981）](2026-11-20-program-start-model.md) — landed
 - [升级的连续性：打包修订不在使用路径上替换载荷、替换失败不拆掉可用状态、home 中的悬空记录自愈、真实的升级 lane](2026-10-17-upgrade-continuity-design.md) — active
 - [一处来源，一种含义：工作空间的传递语义、生成输出、模块角色与首次运行（#786、#785、#778、#790）](2026-10-10-one-source-one-meaning-design.md) — landed
@@ -215,6 +216,7 @@ Records that declare one. Everything else is listed by date below.
 ### 2026-11
 
 - [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
+- [生态级方案：内核接口的供给与能力，派生状态的核对，存储的引用](2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md) — active
 - [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active
 - [离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）](2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md) — active
 - [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active
