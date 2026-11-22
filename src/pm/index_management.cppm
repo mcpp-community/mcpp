@@ -276,6 +276,10 @@ export int index_update(const std::string& filterName) {
         if (auto effective = mcpp::project::load_effective_manifest(*root))
             m = std::move(effective->manifest);
         if (m && !m->indices.empty()) {
+            if (auto twice = mcpp::config::index_location_named_twice(*root, m->indices); !twice.empty()) {
+                mcpp::ui::error(twice);
+                return 1;
+            }
             // filterName: optional single-index filter (parameter).
             for (auto& [idxName, spec] : m->indices) {
                 if (!filterName.empty() && idxName != filterName) continue;

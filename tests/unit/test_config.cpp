@@ -55,6 +55,26 @@ UTest resolve_project_index_path_uses_project_root_for_relative_local_index{"Con
     expect(eq(mcpp::config::resolve_project_index_path(project, spec), (project / "mcpp").lexically_normal()));
 }};
 
+UTest one_location_is_one_index{"Config/OneLocationIsOneIndex", [] {
+    // Two entries naming one directory, by any spelling of it, or one repository at one pin,
+    // are refused, naming both; another pin or another directory is not (design 2026-11-22 §6.2).
+    const auto project = std::filesystem::path{"/tmp/mcpp-project/member"};
+    const auto local = [](std::string name, std::filesystem::path p) {
+        mcpp::pm::IndexSpec s; s.name = name; s.path = std::move(p); return std::pair{name, s};
+    };
+    const auto git = [](std::string name, std::string url, std::string tag) {
+        mcpp::pm::IndexSpec s; s.name = name; s.url = std::move(url); s.tag = std::move(tag); return std::pair{name, s};
+    };
+    using Map = std::map<std::string, mcpp::pm::IndexSpec>;
+    const auto twice = [&](const Map& m) { return mcpp::config::index_location_named_twice(project, m); };
+    const auto refusal = twice(Map{local("compat", "/tmp/mcpp-project"), local("mcpplibs", "..")});
+    expect(refusal.contains("`compat` and `mcpplibs` name one index")) << refusal;
+    expect(refusal.contains("[index-location-named-twice]")) << refusal;
+    expect(!twice(Map{git("a", "https://example.invalid/i.git", "v1"), git("b", "https://example.invalid/i.git", "v1")}).empty());
+    expect(twice(Map{git("a", "https://example.invalid/i.git", "v1"), git("b", "https://example.invalid/i.git", "v2")}).empty());
+    expect(twice(Map{local("a", "../one"), local("b", "../two")}).empty());
+}};
+
 UTest project_index_json_escapes_local_index_path{"Config/ProjectIndexJsonEscapesLocalIndexPath", [] {
     auto project = make_tempdir("mcpp-config-json-escape");
     auto index = project / "local" / "index";

@@ -261,6 +261,54 @@ resolve_project_index_path(const std::filesystem::path& projectDir,
     return source.lexically_normal();
 }
 
+// ONE LOCATION IS ONE INDEX (design 2026-11-22 §6.2). Two entries of the
+// effective `[indices]` -- one manifest's, or a member's beside its
+// workspace's -- that name one directory, or one repository at one pin,
+// register its packages twice, and each package of it is then two candidates
+// of one qualified name: the install stopped at the provider with
+// "package '<ns>:<name>@<v>' is ambiguous", naming neither entry. Measured on
+// mcpp-index, whose members name the checkout as `mcpplibs` beside the
+// workspace's `compat`. Empty when every location has one name; otherwise the
+// refusal, naming both entries, the location and the remedy.
+std::string index_location_named_twice(const std::filesystem::path& projectDir,
+                                       const std::map<std::string, mcpp::pm::IndexSpec>& indices)
+{
+    std::map<std::filesystem::path, std::string> dirs;
+    std::map<std::string, std::string> repos;
+    for (auto const& [name, spec] : indices) {
+        if (spec.is_builtin()) continue;
+        std::string first, where;
+        if (spec.is_local()) {
+            const auto written = resolve_project_index_path(projectDir, spec);
+            std::error_code ec;
+            auto dir = std::filesystem::weakly_canonical(written, ec);
+            if (ec) dir = written;
+            // `<dir>/..` normalises to `<parent>/`, and a directory not yet
+            // present keeps that spelling through weakly_canonical.
+            if (!dir.has_filename() && dir.has_relative_path()) dir = dir.parent_path();
+            auto [it, fresh] = dirs.try_emplace(dir, name);
+            if (fresh) continue;
+            const auto text = dir.generic_u8string();
+            first = it->second;
+            where = std::format("the directory {}", std::string(text.begin(), text.end()));
+        } else {
+            const auto pin = !spec.rev.empty() ? "rev " + spec.rev : !spec.tag.empty() ? "tag " + spec.tag
+                           : !spec.branch.empty() ? "branch " + spec.branch : std::string("its default branch");
+            auto [it, fresh] = repos.try_emplace(spec.url + "\n" + pin, name);
+            if (fresh) continue;
+            first = it->second;
+            where = std::format("the repository {} at {}", spec.url, pin);
+        }
+        return std::format(
+            "[indices] `{}` and `{}` name one index, {}: each of its packages would be two candidates of "
+            "one name, and installing one is refused as ambiguous [index-location-named-twice]\n"
+            "       Keep one name for the location: drop one entry, or, when one of them is a "
+            "[workspace.indices] entry, state the index in the members that use it instead.",
+            first, name, where);
+    }
+    return {};
+}
+
 bool project_index_data_initialized(const std::filesystem::path& projectDir)
 {
     for (auto const& data : project_xlings_data_roots(projectDir))

@@ -227,6 +227,11 @@ enum class Code {
     // mcpp.lock: the lock records versions its index snapshots and archives
     // do not hold.
     BundleOlderThanLock,
+    // Two entries of the effective `[indices]` name one location (a directory,
+    // or a repository at one pin), so each of its packages would be two
+    // candidates of one name. Distinct from a dependency the index lacks: here
+    // the index has it twice (design 2026-11-22 §6.2).
+    IndexLocationNamedTwice,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -295,6 +300,8 @@ constexpr std::string_view name(Code c) {
         case Code::ArtifactUnavailableOffline:
                                          return "artifact-unavailable-offline";
         case Code::BundleOlderThanLock:  return "bundle-older-than-lock";
+        case Code::IndexLocationNamedTwice:
+                                         return "index-location-named-twice";
         case Code::Other:                return "other";
     }
     return "other";

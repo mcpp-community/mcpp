@@ -568,6 +568,10 @@ std::expected<void, std::string> phase3_xlings_before_graph(PrepareState& state)
                 ? state.workRoot : state.runtimeSelection.ownerRoot;
             const auto indices = state.overrides.project_index_root.empty()
                 ? state.m->indices : decltype(state.m->indices){};
+            if (auto twice = mcpp::config::index_location_named_twice(state.workRoot, indices); !twice.empty()) {
+                refusal::record(refusal::Code::IndexLocationNamedTwice);
+                return std::unexpected(twice);
+            }
             if (runtimeRoot == state.workRoot) {
                 mcpp::config::ensure_project_index_dir(
                     **cfg2, state.workRoot, indices, penv);
