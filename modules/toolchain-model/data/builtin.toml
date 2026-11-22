@@ -173,6 +173,16 @@ tier     = "verified"
 note     = "PE"
 standard = true
 
+# The 32-bit x86 Microsoft ABI. The msvc probe answers it as it answers x86_64
+# (`Host*/x86`), and Windows CI builds and runs it (e2e 892, 1144). clang 23 does
+# not predefine `__cpp_impl_coroutine` here, so C++23 `import std` stops at
+# `<generator>` under llvm and mcpp says why (mcpp.toolchain.msvc_coroutines).
+[[platform.define]]
+triple   = "i686-windows-msvc"
+tier     = "preview"
+note     = "PE"
+standard = true
+
 # ── Apple, Linux continued ───────────────────────────────────────────────────
 
 [[platform.define]]
@@ -602,7 +612,7 @@ runner    = { cmd = ["wine", "{}"], host = "same-arch", hosts = ["linux-x86_64"]
 
 [[platform.provider]]
 name     = "msvc"
-serves   = ["x86_64-windows-msvc"]
+serves   = ["x86_64-windows-msvc", "i686-windows-msvc"]
 priority = 100
 hosts    = ["windows-*"]
 probe    = "msvc"
@@ -750,10 +760,15 @@ command-scripts = [".bat", ".cmd"]
 #
 # Only a relation a CI has measured is stated. An x86_64 Linux kernel runs i386
 # programs (IA-32 emulation), which the i686 rows' CI runs on GitHub's x86_64
-# Linux machines (openkal-platform 0.28.0; mcpp e2e `i686`). Windows' WOW64 is
-# not stated until a CI measures an i686 runner there.
+# Linux machines (openkal-platform 0.28.0; mcpp e2e `i686`). x86_64 Windows runs
+# them by WOW64, which e2e 892 and 1144 run on GitHub's x86_64 Windows machines
+# (`mcpp run --target i686-windows-msvc` prints the 4-byte pointer it measures).
 [[platform.executes]]
 host   = "linux-x86_64"
+arches = ["i686"]
+
+[[platform.executes]]
+host   = "windows-x86_64"
 arches = ["i686"]
 
 # ── Toolchain payloads ───────────────────────────────────────────────────────

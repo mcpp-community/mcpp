@@ -393,6 +393,7 @@ mcpp 的身份模型有两条正交的轴：**工具链**是 `family@version`（
 | `aarch64-linux-musl`  | gcc 16，全静态；从 x86_64 交叉编译（qemu）或原生构建 | verified |
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64；Windows 上原生构建，Linux 上交叉编译（wine）（*无 Visual Studio 时的 Windows 默认*） | verified |
 | `x86_64-windows-msvc` | `msvc@system`（探测 VS/BuildTools）或 llvm ¹（*有 Visual Studio 时的 Windows 默认*） | verified |
+| `i686-windows-msvc` | `msvc@system` 或 llvm ¹；32 位 x86，在 x86_64 Windows 上由 WOW64 运行 | preview |
 | `x86_64-windows-musl` | llvm 23；带 musl C 库的 PE，gcc 无法产出；系统部分由依赖图提供 | preview |
 | `aarch64-macos`       | llvm（*macOS 默认*） | verified |
 | `aarch64-macos-musl` · `x86_64-macos-musl` | llvm 23；带 musl C 库的 Mach-O，系统部分由依赖图提供，任意宿主可构建（*非 macOS 宿主上的 `aarch64-macos`*） | preview |

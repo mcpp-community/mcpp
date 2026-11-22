@@ -444,6 +444,7 @@ list` reports for this machine):
 | `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu) or native | verified |
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine) *(Windows default without Visual Studio)* | verified |
 | `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | verified |
+| `i686-windows-msvc` | `msvc@system` or llvm ¹ — 32-bit x86, run by WOW64 on x86_64 Windows | preview |
 | `x86_64-windows-musl` | llvm 23 — a PE with a musl C library, which no gcc emits; the system comes from the dependency graph | preview |
 | `aarch64-macos`       | llvm *(macOS default)* | verified |
 | `aarch64-macos-musl` · `x86_64-macos-musl` | llvm 23 — a Mach-O with a musl C library from the dependency graph, built on any host *(what `aarch64-macos` is off macOS)* | preview |

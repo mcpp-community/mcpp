@@ -1461,8 +1461,9 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 
 写在 `cxxflags` 中时，std 模块的预编译看不到它。
 
-`i686-windows-msvc` 不是目标表中的一行；为它构建的项目需要声明
-`[target.i686-windows-msvc]`，与其他自定义三元组相同。
+`i686-windows-msvc` 是目标表中的一个 `preview` 行（*@NEXT@ 起，mcpp#996*），与
+`x86_64-windows-msvc` 一样由 msvc 提供者供给；x86_64 Windows 运行它的程序（WOW64）。为它
+构建不需要 `[target.i686-windows-msvc]` 段。此前它是自定义三元组，需要声明该段。
 
 ## 已知工具链限制：非 ASCII 路径下的 GCC 模块（gcc 16）
 

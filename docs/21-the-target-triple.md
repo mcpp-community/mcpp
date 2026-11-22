@@ -106,7 +106,7 @@ what every `else` branch in the tree assumes. So the format is now one answer:
 |---|---|
 | `x86_64-linux-gnu`, `aarch64-linux-android`, `riscv64-none-elf`, `x86_64-openkal` | ELF |
 | `aarch64-macos`, `aarch64-ios` | Mach-O |
-| `x86_64-windows-gnu`, `x86_64-windows-msvc` | PE |
+| `x86_64-windows-gnu`, `x86_64-windows-msvc`, `i686-windows-msvc` | PE |
 | `wasm32-emscripten` | wasm |
 
 It is **not** the same question as "is there an operating system to link
@@ -551,6 +551,7 @@ provider's runner ([41](41-devices.md)).
 | `aarch64-windows-gnu` | preview | `llvm@23.1.3` | base | base | base | base |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | graph | graph | graph | payload |
 | `x86_64-windows-msvc` | verified | — | — | — | — | system |
+| `i686-windows-msvc` | preview | — | — | — | — | system |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
 | `aarch64-macos-musl` | preview | `llvm@23.1.3` | graph | graph | graph | graph |
@@ -599,6 +600,7 @@ vocabulary, nothing wired yet.
 | `*-freebsd` | every host, through a platform | the rows are built-in; a platform names each identity's FreeBSD base package (`xim:x86_64-freebsd-sysroot`, `xim:aarch64-freebsd-sysroot`) and is selected with `[target.<row>] platform`, or by any selector the row meets (`[target.freebsd]`, `cfg(os = "freebsd")`); another platform package's provider does not compete with the chosen platform |
 | `*-freebsd-musl` | every host, through the graph | openkal-platform's hosted part (0.28.0): openkal-musl over openkal-freebsd standalone, one static program; a request of `<arch>-freebsd` with no platform selected for it takes this identity (2026.11.10.2+), as `aarch64-macos` takes the musl identity on a host that is not a Mac |
 | `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
+| `i686-windows-msvc` | Windows | the same; x86_64 Windows runs the programs (WOW64), and under clang 23 its `import std` builds at C++20 only ([20](20-toolchains.md)) |
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
 | `*-none-elf` | every host | clang and lld are cross-compilers by construction |

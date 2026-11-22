@@ -1648,8 +1648,10 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 
 In `cxxflags` the std module's precompile does not see it.
 
-`i686-windows-msvc` is not a row of the target table; a project that builds
-for it declares `[target.i686-windows-msvc]`, as for any custom triple.
+`i686-windows-msvc` is a `preview` row of the target table *(@NEXT@+,
+mcpp#996)*, served by the msvc provider as `x86_64-windows-msvc` is; x86_64
+Windows runs its programs (WOW64). A project needs no `[target.i686-windows-msvc]`
+section to build it. Before, it was a custom triple that required the section.
 
 ## Known Toolchain Limitation: GCC Modules Under a Non-ASCII Path (gcc 16)
 
