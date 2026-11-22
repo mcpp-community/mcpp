@@ -782,9 +782,9 @@ std::optional<tb::KernelVersion> measure_kernel_headers(const PrepareState& stat
     auto probeTc = tc;
     probeTc.base.kernel = {};
     probeTc.base.kernel.dirs = dirs;
-    const mcpp::toolchain::PathEscape plain = [](const fs::path& p) { return p.string(); };
     auto v = driver_base(tc);
-    for (auto const& t : mcpp::toolchain::resolve_link_model(probeTc).compile_tokens(plain)) v.push_back(t);
+    for (auto const& t : mcpp::toolchain::resolve_link_model(probeTc).compile_tokens(mcpp::toolchain::no_escape))
+        v.push_back(t);
     // The unit is named by its content and kept in the temporary directory:
     // it is the same for every build, and a probe writes nothing into a
     // project's tree.
@@ -797,7 +797,7 @@ std::optional<tb::KernelVersion> measure_kernel_headers(const PrepareState& stat
         { std::ofstream os(partial); os << text; }
         fs::rename(partial, unit, ec);
     }
-    v.insert(v.end(), {"-E", "-dM", "-x", "c", unit.string()});
+    v.insert(v.end(), {"-E", "-dM", "-x", "c", mcpp::toolchain::no_escape(unit)});
     auto r = mcpp::run::capture_stdout(v);
     if (r.exit_code != 0) return std::nullopt;
     return tb::kernel_version(tb::parse_defines(r.output), k.version, k.packed, k.bits);

@@ -1672,9 +1672,10 @@ std::string action_error(const Directives& d) {
             if (auto it = j.find("origin"); it != j.end() && it->is_string()) {
                 const auto origin = it->get<std::string>();
                 const bool source = j.value("role", std::string("source")) == "source";
-                bool input = false;
-                if (auto in = j.find("inputs"); in != j.end() && in->is_array())
-                    for (auto const& v : *in) input = input || (v.is_string() && v.get<std::string>() == origin);
+                const auto in = j.find("inputs");
+                const bool input = in != j.end() && in->is_array() && std::ranges::any_of(*in, [&](auto const& v) {
+                    return v.is_string() && v.template get<std::string>() == origin;
+                });
                 if (!source || !input)
                     return std::format(
                         "build.mcpp declared an action whose origin \"{}\" {}.\n"

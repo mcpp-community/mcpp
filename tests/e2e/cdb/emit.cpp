@@ -480,7 +480,7 @@ int main() {
         expect(fatal(e2e::succeeded(s::mcpp(install_default(), s::case_dir(), {.where = s::home::inherited}))))
             << "the case's home did not install its toolchain";
         s::write_executable(out / "bin/xlings", R"(#!/usr/bin/env bash
-[[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries"]}'; exit 0; }
+[[ "${1:-}" == "interface" && "${2:-}" == "--version" ]] && { echo '{"protocol_version":"1.13","version":"9999.1.1.1","capabilities":["install_packages"],"home_layouts":[2],"features":["index_dir","index_store","upstreams","payload_status","sync_index","payload_currency","binding_state","network_diagnostics","download_socket_budgets","read_only_queries","store_roots"]}'; exit 0; }
 echo "$*" >> "${STUB_LOG:?}"
 exit 0
 )");

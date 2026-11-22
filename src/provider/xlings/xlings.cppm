@@ -204,7 +204,14 @@ namespace pinned {
     // --with-index` writes a bundle and `xlings install --from <dir>` installs
     // from one. `mcpp fetch` and `[build] offline` stand on these (design
     // 2026-11-21, offline and toolchain defaults §3.1, §3.2).
-    inline constexpr std::string_view kXlingsVersion   = "2026.11.21.1";
+    //
+    // Eighteenth, at 2026.11.23.1 (openxlings/xlings#712, protocol 1.19). The
+    // store's collection keeps what a root under `data/roots/<owner>/` holds
+    // (feature `store_roots`): `mcpp cache gc` asks for a collection after the
+    // builds have registered their payloads as roots, and an earlier xlings
+    // reads none and removes them. Measured on one home before roots: `xlings
+    // self clean --dry-run` listed 154 payloads (16 GB) projects use.
+    inline constexpr std::string_view kXlingsVersion   = "2026.11.23.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

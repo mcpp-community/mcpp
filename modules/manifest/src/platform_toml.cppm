@@ -534,6 +534,26 @@ Reader::tools(const toml::Value& v, std::string_view where,
     return {};
 }
 
+// `kernel-abi.packed = { macro, bits }`: the macro that packs the version and
+// the widths of its fields, stated together.
+std::expected<void, std::string> read_packed(const mcpp::libs::toml::Value& v, const std::string& key,
+                                            SystemSpec::KernelAbi& k) {
+    if (!v.is_table()) return std::unexpected(std::format("{} must be {{ macro, bits }}", key));
+    for (auto const& [pk, pv] : v.as_table()) {
+        if (pk == "macro" && pv.is_string()) { k.packed = pv.as_string(); continue; }
+        if (pk != "bits" || !pv.is_array())
+            return std::unexpected(std::format("{}: {{ macro = \"<name>\", bits = [<width>, ...] }}", key));
+        for (auto const& b : pv.as_array()) {
+            if (!b.is_int() || b.as_int() <= 0 || b.as_int() > 32)
+                return std::unexpected(std::format("{}.bits holds widths from 1 to 32", key));
+            k.bits.push_back(static_cast<int>(b.as_int()));
+        }
+    }
+    if (k.packed.empty() || k.bits.empty())
+        return std::unexpected(std::format("{}: `macro` and `bits` are stated together", key));
+    return {};
+}
+
 std::expected<SystemSpec::KernelAbi, std::string>
 Reader::system_kernel_abi(const toml::Value& v, std::string_view where) const {
     if (!v.is_table()) return std::unexpected(std::format("{} must be a table", where));
@@ -548,21 +568,7 @@ Reader::system_kernel_abi(const toml::Value& v, std::string_view where) const {
             if (!w) return std::unexpected(w.error());
             k.version = std::move(*w);
         } else if (kk == "packed") {
-            if (!kv.is_table()) return std::unexpected(std::format("{} must be {{ macro, bits }}", key));
-            for (auto const& [pk, pv] : kv.as_table()) {
-                if (pk == "macro" && pv.is_string()) { k.packed = pv.as_string(); continue; }
-                if (pk == "bits" && pv.is_array()) {
-                    for (auto const& b : pv.as_array()) {
-                        if (!b.is_int() || b.as_int() <= 0 || b.as_int() > 32)
-                            return std::unexpected(std::format("{}.bits holds widths from 1 to 32", key));
-                        k.bits.push_back(static_cast<int>(b.as_int()));
-                    }
-                    continue;
-                }
-                return std::unexpected(std::format("{}: {{ macro = \"<name>\", bits = [<width>, ...] }}", key));
-            }
-            if (k.packed.empty() || k.bits.empty())
-                return std::unexpected(std::format("{}: `macro` and `bits` are stated together", key));
+            if (auto r = read_packed(kv, key, k); !r) return std::unexpected(r.error());
         } else {
             if (!kv.is_string() || kv.as_string().empty())
                 return std::unexpected(std::format("{} must be a non-empty string", key));

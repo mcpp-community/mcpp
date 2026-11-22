@@ -398,7 +398,7 @@ std::string unmet(const mcpp::provider::ProviderInfo& info) {
         return std::format("is {}, older than {}", info.version, pinned::kXlingsVersion);
     for (auto feature : {"index_dir", "index_store", "upstreams", "payload_status", "sync_index",
                          "payload_currency", "binding_state", "network_diagnostics",
-                         "download_socket_budgets", "read_only_queries"})
+                         "download_socket_budgets", "read_only_queries", "store_roots"})
         if (std::ranges::find(info.features, feature) == info.features.end())
             return std::format("does not offer `{}`", feature);
     if (std::ranges::find(info.capabilities, "install_packages") == info.capabilities.end())

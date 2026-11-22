@@ -114,6 +114,39 @@ void report_once(std::string_view why) {
 
 std::int64_t seconds_of(std::uint64_t ns) { return static_cast<std::int64_t>(ns / 1'000'000'000ull); }
 
+// A path as UTF-8 text, for a name shown or written to `roots.list`: never
+// narrowed through the code page (a store name is one component the walk read).
+std::string utf8_of(const fs::path& p) {
+    const auto u8 = p.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+}
+fs::path path_of(std::string_view utf8) {
+    return fs::path(std::u8string(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size()));
+}
+
+// The payload `<store>/<storeName>/<version>` as its two components, or
+// nothing when `payload` is not a directory two levels below the store.
+std::optional<std::pair<fs::path, fs::path>> components_of(const fs::path& store, const fs::path& payload) {
+    const auto rel = payload.lexically_normal().lexically_relative(store.lexically_normal());
+    if (std::distance(rel.begin(), rel.end()) != 2 || *rel.begin() == "..") return std::nullopt;
+    return std::pair{ *rel.begin(), *std::next(rel.begin()) };
+}
+
+// The root of one payload, `<dir>/<storeName>@<version>`, made at `at`: a link
+// relative to the owner's directory, as the specification recommends, which
+// survives a move of the home.
+auto link_root(const fs::path& store, const fs::path& dir, const fs::path& storeName, const fs::path& version,
+               const fs::path& at) {
+    return mcpplibs::os::fs::create_link(store.lexically_relative(dir) / storeName / version, at, true);
+}
+
+fs::path root_name(const fs::path& storeName, const fs::path& version) {
+    auto name = storeName;
+    name += "@";
+    name += version;
+    return name;
+}
+
 } // namespace
 
 std::vector<std::string> named_in(std::string_view text) {
@@ -122,7 +155,11 @@ std::vector<std::string> named_in(std::string_view text) {
     if (!s) return out;
     const auto plain = unescape_ninja(text);
     std::set<std::string> seen;
-    for (const auto& prefix : {s->generic_string() + "/", s->string() + std::string(1, fs::path::preferred_separator)}) {
+    // The graph's text is UTF-8 (2026.11.19.1); the store is named in it with
+    // either separator.
+    const auto native = s->u8string();
+    const std::string nativeText(reinterpret_cast<const char*>(native.data()), native.size());
+    for (const auto& prefix : {utf8_of(*s) + "/", nativeText + std::string(1, static_cast<char>(fs::path::preferred_separator))}) {
         for (auto at = plain.find(prefix); at != std::string::npos; at = plain.find(prefix, at + prefix.size())) {
             auto p = payload_at(plain, at + prefix.size());
             if (!p.empty() && seen.insert(p).second) out.push_back(std::move(p));
@@ -138,16 +175,15 @@ void use(const std::vector<std::string>& payloads) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     for (const auto& p : payloads) {
-        const auto slash = p.find('/');
-        if (slash == std::string::npos || !fs::is_directory(*s / p, ec)) continue;
-        const auto name = p.substr(0, slash) + "@" + p.substr(slash + 1);
-        // Relative to the owner's directory, as the specification recommends:
-        // it survives a move of the home. Made under a temporary name and
-        // renamed over the root, so that the root is never absent and its own
-        // time is now.
-        const auto target = s->lexically_relative(dir) / p.substr(0, slash) / p.substr(slash + 1);
-        const auto staged = dir / std::format(".{}.{:08x}", name, std::random_device{}());
-        if (auto made = mcpplibs::os::fs::create_link(target, staged, true); !made) {
+        const auto parts = components_of(*s, *s / path_of(p));
+        if (!parts || !fs::is_directory(*s / path_of(p), ec)) continue;
+        const auto name = root_name(parts->first, parts->second);
+        // Made under a temporary name and renamed over the root, so that the
+        // root is never absent and its own time is now.
+        auto staged = dir / ".";
+        staged += name;
+        staged += std::format(".{:08x}", std::random_device{}());
+        if (auto made = link_root(*s, dir, parts->first, parts->second, staged); !made) {
             report_once(made.error().message());
             return;
         }
@@ -163,11 +199,8 @@ void use_dirs(const std::vector<fs::path>& payloadDirs) {
     const auto s = store();
     if (!s) return;
     std::vector<std::string> payloads;
-    for (const auto& d : payloadDirs) {
-        const auto rel = d.lexically_normal().lexically_relative(s->lexically_normal());
-        if (std::distance(rel.begin(), rel.end()) != 2 || rel.begin()->string() == "..") continue;
-        payloads.push_back(rel.begin()->string() + "/" + std::next(rel.begin())->string());
-    }
+    for (const auto& d : payloadDirs)
+        if (auto parts = components_of(*s, d)) payloads.push_back(utf8_of(parts->first / parts->second));
     use(payloads);
 }
 
@@ -177,7 +210,7 @@ void hold(const fs::path& outputDir, std::optional<std::string_view> graphText) 
     if (graphText) {
         payloads = named_in(*graphText);
         std::string text;
-        for (const auto& p : payloads) text += p + "\n";
+        for (const auto& p : payloads) text += p + "\n";   // UTF-8, as the graph's text
         std::error_code ec;
         fs::create_directories(outputDir, ec);
         std::ofstream(list, std::ios::binary | std::ios::trunc) << text;
@@ -202,11 +235,10 @@ bool seed() {
     fs::create_directories(staged, ec);
     if (ec) { report_once(ec.message()); return false; }
     for (const auto& e : mcpp::provider::layout().entries(*s)) {
-        const auto rel = e.dir.lexically_relative(*s);
-        if (rel.empty() || rel.begin() == rel.end() || std::distance(rel.begin(), rel.end()) != 2) continue;
-        const auto storeName = rel.begin()->string(), version = std::next(rel.begin())->string();
-        const auto target = s->lexically_relative(dir) / storeName / version;
-        if (auto made = mcpplibs::os::fs::create_link(target, staged / (storeName + "@" + version), true); !made) {
+        const auto parts = components_of(*s, e.dir);
+        if (!parts) continue;
+        if (auto made = link_root(*s, dir, parts->first, parts->second,
+                                  staged / root_name(parts->first, parts->second)); !made) {
             fs::remove_all(staged, ec);
             report_once(made.error().message());
             return false;
@@ -225,7 +257,7 @@ std::vector<Root> expire(std::int64_t olderThan, bool dryRun) {
         std::chrono::system_clock::now().time_since_epoch()).count();
     std::error_code ec;
     for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator{}; it.increment(ec)) {
-        const auto name = it->path().filename().string();
+        const auto name = utf8_of(it->path().filename());
         // A root is a link (a junction on a Windows volume without symbolic
         // links); a file or a directory here is not one.
         if (name.starts_with(".") || !mcpplibs::os::fs::read_link(it->path())) continue;
