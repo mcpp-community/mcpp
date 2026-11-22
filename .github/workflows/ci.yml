@@ -400,9 +400,10 @@ jobs:
       name: linux
       runs-on: ubuntu-24.04
       archived: ${{ needs.unit-linux-archive.outputs.archived }}
-      # The shards the archive stage planned from main's measured work (four
-      # without a history): the measured run of 2026-11-13 reached 65 of its
-      # programs, 3970 s of work, in the 45 minutes of one job of four workers.
+      # The shards the archive stage planned from main's last run, its shards and
+      # the longest of them (four without a history): the measured run of
+      # 2026-11-13 reached 65 of its programs, 3970 s of work, in the 45 minutes
+      # of one job of four workers.
       shards: ${{ needs.unit-linux-archive.outputs.shards || '[1,2,3,4]' }}
       form: ${{ needs.release-form.result == 'success' && 'release' || 'host' }}
       # The toolchains whose capabilities the cases probe: build-linux's `prewarm`.
@@ -577,13 +578,17 @@ jobs:
             --sections summary,failures,slowest,builds,steps,margin,budget,ledgers,flaky,path
       # THE GATE OVER THE RUN'S GROUP (design 2026-11-20 §5.16, §5.17): no case over the budget
       # without a waiver, every item of the surface used by a passing case or waived, and no waiver
-      # that excuses nothing.
+      # that excuses nothing. The run's set is the gate's: the surface is a ledger of every case, and
+      # `pr` runs the jobs and cases a change affects, so its gate judges the budget and notes that
+      # it did not judge the ledger (mtest 0.11.3); a `full` run judges both.
       - name: The gate over the run's group
         shell: bash
+        env:
+          SET: ${{ needs.changes.outputs.set }}
         run: |
           set -euo pipefail
           cd tests/e2e
-          "$MTEST" gate
+          "$MTEST" gate --set "$SET"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

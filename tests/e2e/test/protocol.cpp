@@ -1,5 +1,6 @@
 // Test programs that speak mtest's test protocol: their cases, live case records, the spec's
-// launch, capabilities, checks and output (formerly tests/e2e/1035, 1065 and 1070).
+// launch, capabilities, checks and output (formerly tests/e2e/1035, 1065 and 1070); run fixtures;
+// the time the kit gives a command within its case.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -451,6 +452,23 @@ int main() {{
             for (const auto& p : s::json_lines(s::read_file(f)))
                 infra = infra || (p.value("status", "") == "infra" && p["fixtures"] == json::parse(R"(["home"])"));
         expect(infra) << "no program's record says infra";
+    };
+
+    "1141 a command of the kit has the time its case has left"_test[timeout{std::chrono::minutes{45}}] = [] {
+        // Design 2026-11-20 §5.8 (K1): a command that states no time takes what its case has left
+        // of the time its scopes state, not ten minutes below it; a command that states one keeps
+        // it. The case states 45 minutes, so a command composed at its start has more than 44.
+        const auto cwd = s::case_dir();
+        const auto left = s::mcpp_command({"--version"}, cwd).timeout;
+        expect(fatal(left > std::chrono::minutes{44} && left <= std::chrono::minutes{45})) << "the command's time is " << left.count() << " ms";
+        expect(fatal(s::mcpp_command({"--version"}, cwd, {.timeout = std::chrono::seconds{60}}).timeout == std::chrono::seconds{60}));
+        expect(fatal(e2e::succeeded(s::mcpp({"--version"}, cwd))));
+    };
+
+    "1142 a command of the kit takes ten minutes where no scope states a time"_test = [] {
+        // Where neither the case nor a scope around it states a time, the runner's limit would end
+        // the program without the case's report of a hung command: ten minutes bound it.
+        expect(fatal(s::mcpp_command({"--version"}, s::case_dir()).timeout == std::chrono::minutes{10}));
     };
 }};
 

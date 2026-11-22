@@ -85,7 +85,7 @@ on:
         description: the number of tests the archive holds
         value: ${{ jobs.archive.outputs.archived }}
       shards:
-        description: the run stage's shards, from the measured work of main's last run
+        description: the run stage's shards, from the shards of main's last run and the longest of them
         value: ${{ jobs.archive.outputs.shards }}
 
 env:
@@ -198,27 +198,46 @@ jobs:
           fi
           python3 .github/tools/test_history.py take "$RUNNER_TEMP/unit/history" "$d" "$d"/*/
 
-      # THE SHARDS FROM THE PLAN (design 2026-11-20 §5.17, CI4): the measured work of main's last
-      # run, its shards' programs' durations summed (the history holds that run's shards alone,
-      # test_history.py), over what one shard does in 30 minutes with its four workers; at least
-      # one, at most eight. With no history, four, as before.
+      # THE SHARDS FROM THE PLAN (design 2026-11-20 §5.17, CI4): main's last run took N shards and
+      # the longest of them W, so the run is N × W of shard time; this one takes as many shards as
+      # that is in 30 minutes each, at least one, at most eight. N and W are read from the stores
+      # the shard jobs kept (`mtest-unit-<name>-<shard>-a<attempt>`, each holding that shard's
+      # runs, test_history.py): the store's import (test-report) keeps a run in the form of
+      # mtest's records, which state no shard, and the subsystems' store beside them is another
+      # job's. A shard's time is that of its longest programs and of those that
+      # run beside one another, not its programs' durations over four workers: the openkal
+      # programs build in parallel within the machine's one budget, and in fewer shards they run
+      # beside one another and each takes longer. A run of three shards (1236, 834 and 1438 s)
+      # gave two by its durations summed, and the two took 2544 and 2432 s, `trees` 1369 s in the
+      # first run and past the 40 minutes it states in the second (CI, 2026-11-21). With no
+      # history of shards, four.
       - name: The run stage's shards
         id: shards
         shell: bash
+        env:
+          KEY: ${{ inputs.name }}
         run: |
           set -uo pipefail
-          work=$(find "$RUNNER_TEMP/unit/history" -name programs.ndjson -print0 2>/dev/null \
-                   | xargs -0 -r cat | jq -s 'map(.ms // 0) | add // 0')
-          if [ -z "$work" ] || [ "${work%.*}" = 0 ]; then
-            echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"; echo "no measured work: four shards"; exit 0
+          # A re-run's store (`-a2`) holds the attempt before it and its `--failed` run: the
+          # shards are counted by number, and the longest run is the whole shard's.
+          was=0; longest=0
+          for s in "$RUNNER_TEMP"/unit-stores/mtest-unit-"$KEY"-*-a*/; do
+            [[ "$(basename "$s")" =~ ^mtest-unit-"$KEY"-([0-9]+)-a[0-9]+$ ]] || continue
+            [ -f "$s/index.ndjson" ] || continue
+            [ "${BASH_REMATCH[1]}" -le "$was" ] || was=${BASH_REMATCH[1]}
+            ms=$(jq -s 'map(.ms // 0) | max // 0 | floor' "$s/index.ndjson" 2>/dev/null || echo 0)
+            [ "${ms:-0}" -le "$longest" ] || longest=$ms
+          done
+          if [ "$was" -le 0 ] || [ "$longest" -le 0 ]; then
+            echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"; echo "no measured shards: four shards"; exit 0
           fi
-          per=$((30 * 60 * 1000 * 4))
-          n=$(( (${work%.*} + per - 1) / per ))
+          per=$((30 * 60 * 1000))
+          n=$(( (was * longest + per - 1) / per ))
           [ "$n" -ge 1 ] || n=1
           [ "$n" -le 8 ] || n=8
           list=$(seq -s, 1 "$n")
           echo "shards=[$list]" >> "$GITHUB_OUTPUT"
-          echo "measured work ${work%.*} ms: $n shard(s)"
+          echo "main's last run: $was shard(s), the longest $((longest / 1000)) s: $n shard(s)"
 
       - name: Upload the tests and their history
         if: steps.archive.outputs.archived != '0'
