@@ -4,6 +4,17 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
+## [Unreleased]
+
+### Fixed
+
+- A process that finds another refreshing the package index waits for it when an index the
+  home reads has no packages yet, and judges that as a reader does (`<index>/pkgs`): the
+  provider's own index (`xim`) is one of them, and a directory the other process has made and
+  not yet filled is absent. Before, only the declared directories were judged, by existence,
+  so a reader beside a first fetch skipped the refresh and reported no local package index
+  (mcpp#927, design 2026-11-12 §18 P3).
+
 ## [2026.11.21.1] - 2026-11-21
 
 ### Added

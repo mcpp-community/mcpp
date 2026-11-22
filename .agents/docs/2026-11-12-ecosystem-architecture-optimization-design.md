@@ -1148,13 +1148,20 @@ warning: the configuration changed (debug 1 → lines): 7a72… is built in full
 |---|---|---|
 | P1 | `programs = "package"`：一个包一个程序，以第一个 glob 的固定目录命名，定义 `main` 的文件至多一个；按文件运行的各部分以文件在程序目录（其文件的公共目录）之下的路径命名，不同子目录中的同名文件因此不冲突（目录模式下即文件名，与此前相同）；`"directory"` 留下固定目录中的文件时给出 note，不形成任何组时为 `degraded`（`--strict` 拒绝） | mcpp `test_targets.cppm`；e2e 的 C++ 用例 |
 | P2 的汇总 | `finished in X (plan · programs · build · run)`：plan 为总时长减去其余各段，programs 不足 5 ms 时不列 | mcpp `execute.cppm`；`tests/e2e/test/streams.cpp` |
-| P3 | 拿不到刷新锁、且所声明的索引目录有缺失的进程，等待刷新锁（显示 `Waiting`）后再读；索引完整时仍跳过刷新、立即读取 | mcpp `xlings.cpp` |
+| P3 | 拿不到刷新锁、且 home 读取的索引有缺失的进程，等待刷新锁（显示 `Waiting`）后再读；索引完整时仍跳过刷新、立即读取 | mcpp `xlings.cpp`；`tests/unit/test_xlings.cpp`（`XlingsIndexLock`，2026-11-22 补） |
 | P4 | 文档：`docs/08-testing.md` 的"测试构建的体积"一节（中英） | — |
 | P6 | 警告给出旧目录的大小与回收命令 | mcpp `execute.cppm` |
 
 **P3 的范围比 18.2 小。** 18.2 的方案是读取持共享锁、刷新在暂存目录中进行后交换。#927 报告的现象只在"索引目录不存在"时出现：
 索引存在时，刷新以交换替换整棵树，读取者读到的是交换前或交换后的一棵完整的树。因此实施只关闭这一个窗口，读路径不加锁。
 不支持原子交换的文件系统上，"移开、改名"之间的窗口与目录不存在是同一情形，读取者同样等待。
+
+**P3 的缺失判断（2026-11-22 补）。** 初版只判断 home 声明的索引，且以目录是否存在为准；读取者报告没有本地索引的依据
+却是 `<index>/pkgs`（`index_status_for`）。两者不一致留下两个窗口：provider 自己的索引（`xim`）第一次取回时不在判断之内，
+另一进程已建立而未写入的声明目录被判为存在。缺失的判断改为与读取者同一个函数（`index_present`），范围为 provider 自己的
+索引与声明的索引（`every_index_present`）；索引状态、刷新标记与新鲜度的判断也改用它。单元测试在本进程中持有索引锁（flock
+与 LockFileEx 锁的是打开的文件，同一进程的第二个持有者同样被拒绝），断言三种情形：索引完整时立即返回；声明的索引没有包、
+或 provider 自己的索引缺失时等待，锁释放后返回。
 
 **P2 的另两项不在本版。** `-p` 的预构建取快速路径、同一次调用内复用解析：二者改变 `prepare_build` 的入口契约（解析结果的生命周期
 与键），在本轮之外；当前代价是 `-p` 多一次完整规划。
