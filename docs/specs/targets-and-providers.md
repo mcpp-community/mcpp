@@ -4,10 +4,10 @@
 |---|---|
 | 规范编号 | SPEC-016 |
 | 标题 | 目标与提供者：行、提供者、选择、平台定义的行、报告与锁 |
-| 状态 | 评审中 v1.7 |
-| 版本 | 1.7 |
-| 最后修改 | 2026-11-20 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1 |
+| 状态 | 评审中 v1.8 |
+| 版本 | 1.8 |
+| 最后修改 | 2026-11-22 |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1；v1.8 条款 mcpp >= 2026.11.22.1 |
 | 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
@@ -126,7 +126,7 @@
 - `host = "same-arch"` 的 runner 在执行该架构的机器上即可运行：引擎为产物的架构构建平台的 runner（载体不携带映像的
   形式），在本机启动（`mcpp run`、`mcpp test`）。
 - 启动器在包中没有本机架构时，按表取本机执行的架构（POSIX 与 Windows 启动器同一数据）。
-- 内置数据：`linux-x86_64` 执行 `i686`。
+- 内置数据：`linux-x86_64` 执行 `i686`；`windows-x86_64` 执行 `i686`（WOW64，v1.8，e2e 892 与 1144 实测）。
 - 载体所在的行若为 planned，而构建它的平台以工具链列出该行，则该行可构建（与工程自身的构建同一规则）。
 
 ## 3. 提供者
@@ -269,3 +269,4 @@
 | 1.3 | 2026-11-16 | mcpp 2026.11.16.1（设计 2026-11-15 G7、N16、N23、N26、N33、R1、R2、X1）：执行关系表（§2.4）；系统表的 `resources` 与 `command-scripts`（§2.3）；提供者运行器的 `host`、`enabled` 与 `exclusive`（§6）；Android 行的运行器（G7）；行的 `exceptions`（工程未陈述时的异常模型）；行的 `companions`；平台以工具链列出的 planned 行可作载体的行 |
 | 1.6 | 2026-11-19 | mcpp 2026.11.19.1（mcpp#957）：§6 执行可达性的谓词之前没有按系统的分支；Apple 的行由同一个谓词判定；系统名检查的词表含三元组的系统谓词 |
 | 1.7 | 2026-11-20 | mcpp 2026.11.20.1（mcpp#981）：行的 `link-without-main`，没有程序起点的可执行映像的链接词；内置 `wasm32-emscripten` 行为 `--no-entry` |
+| 1.8 | 2026-11-22 | mcpp 2026.11.22.1（设计 2026-11-22 §4）：`i686-windows-msvc` 为 preview 行；执行关系表中 `windows-x86_64` 执行 `i686`（§2.4）。 |
