@@ -31,7 +31,9 @@ void needs_image_row() {
 // The system's word of a POSIX launcher (`case "$(uname -s)"`), or "".
 std::string posix_system() { return s::on_linux() ? "linux" : s::on_macos() ? "macos" : ""; }
 
-std::uint32_t machine_of(std::string_view arch) { return arch == "x86_64" ? s::elf_machine::x86_64 : s::elf_machine::aarch64; }
+std::uint32_t machine_of(std::string_view arch) {
+    return arch == "x86_64" ? s::elf_machine::x86_64 : arch == "riscv64" ? s::elf_machine::riscv : s::elf_machine::aarch64;
+}
 
 // `env -i HOME="$HOME" PATH=/usr/bin:/bin <program> <args>`: the program with nothing installed.
 e2e::outcome run_bare(const fs::path& program, std::vector<std::string> args) {
@@ -297,7 +299,7 @@ E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{45}}, [] {
     };
 
     "984 a set of programs is a package per leg"_test[s::gcc][s::python3] = [] {
-        // `--target linux-musl`: A a package per leg named by its triple below the `-o`
+        // `--target linux-musl` (x86_64, aarch64, riscv64): A a package per leg named by its triple below the `-o`
         // directory, each holding the program of its architecture; B `-o` naming one file is
         // refused before a build; C the JSON envelope lists both packages and legs.
         if (!s::on_linux()) skip("the linux-musl rows are built on Linux");
@@ -307,7 +309,7 @@ E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{45}}, [] {
         if (!e2e::succeeded(r) && s::has_line(s::text(r), "cannot be built on this host|install_packages failed|not found in the synced index"))
             skip("a linux-musl row cannot be built here");
         expect(fatal(e2e::succeeded(r))) << "A: pack --target linux-musl: " << s::text(r);
-        for (std::string_view arch : {"x86_64", "aarch64"}) {
+        for (std::string_view arch : {"x86_64", "aarch64", "riscv64"}) {
             const auto f = app.at(std::format("out/per-0.1.0-{}-linux-musl-static.tar.gz", arch));
             expect(fatal(fs::is_regular_file(f))) << "A: no " << f << ": " << s::text(r);
             std::string member;
@@ -330,8 +332,8 @@ E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{45}}, [] {
         const auto d = s::json(r.out)["data"];
         auto legs = strings(d["legs"]);
         std::ranges::sort(legs);
-        expect(fatal(legs == std::vector<std::string>{"aarch64-linux-musl", "x86_64-linux-musl"})) << "C: " << d["legs"].dump();
-        expect(fatal(d["artifacts"].size() == 2u)) << "C: " << d["artifacts"].dump();
+        expect(fatal(legs == std::vector<std::string>{"aarch64-linux-musl", "riscv64-linux-musl", "x86_64-linux-musl"})) << "C: " << d["legs"].dump();
+        expect(fatal(d["artifacts"].size() == 3u)) << "C: " << d["artifacts"].dump();
     };
 
     "985 a format list writes each container of one tree"_test[s::llvm][s::python3][s::unix_shell] = [] {

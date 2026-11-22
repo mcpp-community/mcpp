@@ -24,6 +24,10 @@
   start) and on `wasm32-emscripten`. `cfg(interface = "...")` reads the provider's list, else the
   row's, else the system's, so it holds on a row without openkal as well. The same list is in
   `layers[].interfaces` and `MCPP_KERNEL_ABI_INTERFACES` (mcpp#1005).
+- `riscv64-linux-musl` is a `preview` row: the musl cross payload `gcc@16.1.0` builds it on a
+  Linux x86_64 machine, and `mcpp run` starts its static programs under qemu-user
+  (`xim:qemu-user-riscv64@7.2.0`, installed on the first run). The `linux-musl` target set now
+  includes it (mcpp#1005).
 - `mcpp::action::origin(path)` names the authored file a generated unit is a transformed copy
   of, one of the action's inputs, on a `source` action. The build database gives it as
   `ide.generated[].origin`. A generated unit that declares a module's primary name is a

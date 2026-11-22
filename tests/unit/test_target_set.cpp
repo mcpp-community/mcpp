@@ -61,8 +61,8 @@ UTest openkal_names_both_architectures{"TargetSet/OpenkalNamesBothArchitectures"
 UTest linux_musl_leaves_planned_rows_out{"TargetSet/LinuxMuslLeavesPlannedRowsOut", [] {
     auto e = ts::expand_set("linux-musl", column_platform);
     if (auto&& failed = expect(fatal(e.has_value())); !failed) failed << e.error();
-    expect(eq(e->members, (std::vector<std::string>{"x86_64-linux-musl", "aarch64-linux-musl"})));
-    for (auto& m : e->members) expect(ne(m, "riscv64-linux-musl"));
+    expect(eq(e->members, (std::vector<std::string>{"x86_64-linux-musl", "aarch64-linux-musl", "riscv64-linux-musl"})));
+    for (auto& m : e->members) expect(ne(m, "i686-linux-musl"));
 }};
 
 UTest linux_fills_gnu_and_leaves_android_out{"TargetSet/LinuxFillsGnuAndLeavesAndroidOut", [] {

@@ -208,7 +208,7 @@ row aarch64-macos-musl
   descriptor-keys macosx
   sysroot 
 row riscv64-linux-musl
-  table tier=planned note= pin= sysroot= static=1 platform=
+  table tier=preview note= pin=gcc@16.1.0 sysroot= static=1 platform=
   str riscv64-linux-musl
   llvm riscv64-unknown-linux-musl
   llvm@15.0 riscv64-unknown-linux-musl
@@ -885,9 +885,9 @@ request aarch64-linux
   on windows-x86_64 -> aarch64-linux-musl openkal fallback=1 | aarch64-linux-gnu/glibc/100/x aarch64-linux-musl/musl-gcc/100/x aarch64-linux-musl/openkal/50 aarch64-linux-gnu/glibc-sysroot/40/x
 request riscv64-linux
   parsed riscv64-linux-gnu envExplicit=0
-  on linux-x86_64 -> riscv64-linux-musl musl-gcc fallback=0 | riscv64-linux-musl/musl-gcc/100/x riscv64-linux-musl/openkal/50/x
-  on macos-aarch64 -> riscv64-linux-musl musl-gcc fallback=0 | riscv64-linux-musl/musl-gcc/100/x riscv64-linux-musl/openkal/50/x
-  on windows-x86_64 -> riscv64-linux-musl musl-gcc fallback=0 | riscv64-linux-musl/musl-gcc/100/x riscv64-linux-musl/openkal/50/x
+  on linux-x86_64 -> riscv64-linux-musl musl-gcc fallback=0 | riscv64-linux-musl/musl-gcc/100 riscv64-linux-musl/openkal/50
+  on macos-aarch64 -> riscv64-linux-musl openkal fallback=1 | riscv64-linux-musl/musl-gcc/100/x riscv64-linux-musl/openkal/50
+  on windows-x86_64 -> riscv64-linux-musl openkal fallback=1 | riscv64-linux-musl/musl-gcc/100/x riscv64-linux-musl/openkal/50
 request x86_64-windows
   parsed x86_64-windows-gnu envExplicit=0
   on linux-x86_64 -> x86_64-windows-musl openkal fallback=1 | x86_64-windows-msvc/msvc/100/x x86_64-windows-musl/openkal/50 x86_64-windows-gnu/mingw/10 x86_64-windows-gnu/mingw-llvm/5
@@ -986,7 +986,7 @@ did-you-mean aarch64-macso aarch64-macos
 did-you-mean riscv64-none-eld riscv64-none-elf
 did-you-mean thumbv7m-none -
 set linux -> x86_64-linux-gnu aarch64-linux-gnu | 
-set linux-musl -> x86_64-linux-musl aarch64-linux-musl | 
+set linux-musl -> x86_64-linux-musl aarch64-linux-musl riscv64-linux-musl | 
 set windows -> x86_64-windows-gnu aarch64-windows-gnu | 
 set windows-msvc -> x86_64-windows-msvc i686-windows-msvc | 
 set macos -> aarch64-macos | 

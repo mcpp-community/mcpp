@@ -188,7 +188,7 @@ mcpp 构建的全部行。环境按上一节补全（`linux` 即 `linux-gnu`，`
 | 集合 | 成员（2026.10.30.1，openkal-platform 0.18.0） |
 |---|---|
 | `openkal` | `x86_64-openkal`、`aarch64-openkal` |
-| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl` |
+| `linux-musl` | `x86_64-linux-musl`、`aarch64-linux-musl`、`riscv64-linux-musl` |
 | `linux` | `x86_64-linux-gnu`、`aarch64-linux-gnu` |
 
 全部成员必须选到同一个平台；成员选到不同平台时命令被拒绝，消息写出每个成员
@@ -495,7 +495,7 @@ docs/22。
 | `aarch64-linux-gnu` | preview | `llvm@23.1.3` | 基座包 | 载荷 | — | — |
 | `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
 | `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
-| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `riscv64-linux-musl` | preview | `gcc@16.1.0` | payload | — | — | — |
 | `i686-linux-musl`、`i686-linux-gnu` | planned | — | planned | planned | planned | planned |
 | `x86_64-windows-gnu` | verified | `gcc@16.1.0` | 载荷 | 载荷 | 基座 | 载荷 |
 | `aarch64-windows-gnu` | preview | `llvm@23.1.3` | 基座 | 基座 | 基座 | 基座 |

@@ -219,10 +219,12 @@ triple   = "aarch64-macos-musl"
 tier     = "preview"
 standard = false
 
+# Served by the musl cross payload from x86_64 and run there under qemu-user
+# (design 2026-11-22 §3.19): measured building, linking statically and running.
 [[platform.define]]
 triple   = "riscv64-linux-musl"
 loader   = "/lib/ld-musl-riscv64.so.1"
-tier     = "planned"
+tier     = "preview"
 standard = true
 
 # 32-BIT ROWS (E11): registered intent, refused until served. No payload of the
@@ -622,11 +624,13 @@ toolchain = "gcc@16.1.0"
 linkage   = "static"
 
 [[platform.provider]]
-name     = "musl-gcc"
-serves   = ["riscv64-linux-musl"]
-priority = 100
-hosts    = ["linux-{arch}", "linux-x86_64"]
-linkage  = "static"
+name      = "musl-gcc"
+serves    = ["riscv64-linux-musl"]
+priority  = 100
+hosts     = ["linux-{arch}", "linux-x86_64"]
+toolchain = "gcc@16.1.0"
+linkage   = "static"
+runner    = { cmd = ["qemu-riscv64-static", "{}"], hosts = ["linux-x86_64"], requires = ["xim:qemu-user-riscv64@7.2.0"] }
 
 # MinGW-w64: gcc, or clang with the payload as its sysroot (SPEC-016 §6).
 # On an x86_64 Linux machine a Windows program runs through Wine (design
