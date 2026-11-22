@@ -44,41 +44,71 @@ UTest output_producer{"RunExec/OutputProducer", [] {
     std::_Exit(7);
 }};
 
+// THE BOUNDS ARE THOSE OF THE PROPERTY, NOT OF THE PRODUCER'S START. The handler
+// sleeps longer than the idle bound while the producer writes its 48 lines
+// (1.44 s), so the lines are queued when it returns, and the idle bound is
+// renewed by them or the run is ended. Through 2026.11.21.1 the idle bound was
+// 500 ms and the handler slept 750 ms: the producer is this program started
+// again, and on a loaded macOS runner it wrote no line inside those bounds
+// (exit 137, timed out, 0 lines, an empty error output; the loop reads both
+// streams before it classifies silence, so 0 lines is the producer's time).
+constexpr auto kProducerIdle = std::chrono::milliseconds(2000);
+constexpr auto kHandlerSleep = kProducerIdle + std::chrono::milliseconds(250);
+constexpr auto kProducerTotal = std::chrono::seconds(10);
+
+// What a failure says: when the ready line arrived, and how much was read.
+static std::string producer_timing(std::chrono::steady_clock::time_point start,
+                                   std::optional<std::chrono::steady_clock::time_point> ready, std::size_t lines) {
+    const auto ms = [&](auto t) { return std::chrono::duration_cast<std::chrono::milliseconds>(t - start).count(); };
+    return std::format("ready line after {}, {} line(s) read",
+                       ready ? std::format("{} ms", ms(*ready)) : std::string("none"), lines);
+}
+
 UTest queued_output_renews_idle_after_a_line_handler{"RunExec/QueuedOutputRenewsIdleAfterALineHandler", [] {
     std::vector<long long> ticks;
+    const auto start = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> ready;
     const auto result = process::execute({mcpp::invocation::self_exe_path().string(),
         "RunExec/OutputProducer"}, {
         .env = {{"MTEST_PROTOCOL", ""}, {"MCPP_TEST_OUTPUT_PRODUCER", "1"}, {"MCPP_TEST_OUTPUT_STREAM", "stdout"}, {"MCPP_TEST_OUTPUT_TICKS", "48"}},
         .streams = process::Streams::merged,
-        .total = std::chrono::seconds(3), .idle = std::chrono::milliseconds(500),
+        .total = kProducerTotal, .idle = kProducerIdle,
         .on_line = [&](std::string_view line) {
-            if (line == "mcpp-stderr-ready")
-                std::this_thread::sleep_for(std::chrono::milliseconds(750));
+            if (line == "mcpp-stderr-ready") {
+                ready = std::chrono::steady_clock::now();
+                std::this_thread::sleep_for(kHandlerSleep);
+            }
             long long tick;
             if (std::from_chars(line.data(), line.data() + line.size(), tick).ec == std::errc{})
                 ticks.push_back(tick);
         }});
-    expect(eq(result.exit_code, 7));
-    expect(!result.timed_out);
-    expect(eq(ticks.size(), 48u));
+    const auto timing = producer_timing(start, ready, ticks.size());
+    expect(eq(result.exit_code, 7)) << timing;
+    expect(!result.timed_out) << timing;
+    expect(eq(ticks.size(), 48u)) << timing;
 }};
 
 UTest queued_error_output_renews_idle_after_a_line_handler{"RunExec/QueuedErrorOutputRenewsIdleAfterALineHandler", [] {
+    const auto start = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> ready;
     const auto result = process::execute({mcpp::invocation::self_exe_path().string(),
         "RunExec/OutputProducer"}, {
         .env = {{"MTEST_PROTOCOL", ""}, {"MCPP_TEST_OUTPUT_PRODUCER", "1"}, {"MCPP_TEST_OUTPUT_TICKS", "48"}},
         .streams = process::Streams::output_error_kept,
-        .total = std::chrono::seconds(3), .idle = std::chrono::milliseconds(500),
-        .on_line = [](std::string_view line) {
-            if (line == "mcpp-stderr-ready")
-                std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        .total = kProducerTotal, .idle = kProducerIdle,
+        .on_line = [&](std::string_view line) {
+            if (line == "mcpp-stderr-ready") {
+                ready = std::chrono::steady_clock::now();
+                std::this_thread::sleep_for(kHandlerSleep);
+            }
         }});
-    expect(eq(result.exit_code, 7)) << result.error_output;
-    expect(!result.timed_out);
     std::istringstream input(result.error_output);
-    int ticks = 0;
+    std::size_t ticks = 0;
     for (long long tick; input >> tick;) ++ticks;
-    expect(eq(ticks, 48));
+    const auto timing = producer_timing(start, ready, ticks);
+    expect(eq(result.exit_code, 7)) << timing << "; " << result.error_output;
+    expect(!result.timed_out) << timing;
+    expect(eq(ticks, 48u)) << timing;
 }};
 
 UTest stream_completion_and_child_wait_keep_their_bounds{"RunExec/StreamCompletionAndChildWaitKeepTheirBounds", [] {
