@@ -446,6 +446,17 @@ package = {
     expect(eq(xp::find_sibling_binary(gccBin, "binutils", "bin/as").value_or(""),
               xpkgs / "xim-x-binutils" / "2.42.1" / "bin" / "as")) << "the index's newer declaration replaced the installed one";
     expect(eq(xp::declared_dependency(gccBin, "binutils").value_or(""), std::string("2.42.1")));
+    // A home that links the payload from an upstream holds the companions the index names, beside
+    // the upstream's descriptor: the index's declaration is the one this store followed.
+    std::filesystem::remove_all(xpkgs / "xim-x-binutils" / "2.42.1");
+    touch(xpkgs / "xim-x-binutils" / "2.48" / "bin" / "as");
+    expect(eq(xp::find_sibling_binary(gccBin, "binutils", "bin/as").value_or(""),
+              xpkgs / "xim-x-binutils" / "2.48" / "bin" / "as")) << "the index's declaration the store holds was not taken";
+    expect(eq(xp::declared_dependency(gccBin, "binutils").value_or(""), std::string("2.42.1")))
+        << "the payload's own declaration is its installed descriptor's";
+    std::filesystem::remove_all(xpkgs / "xim-x-binutils" / "2.48");
+    expect(!xp::find_sibling_binary(gccBin, "binutils", "bin/as").has_value())
+        << "declarations the store holds none of were replaced by another version";
     std::filesystem::remove_all(tmp);
 }};
 

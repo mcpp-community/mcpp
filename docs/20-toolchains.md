@@ -213,14 +213,18 @@ compared nor remembered.
 
 A managed toolchain's companions -- the binutils GCC assembles and links with,
 the Linux kernel headers of the glibc base, GCC's runtime libraries -- are the
-versions its payload declares as runtime dependencies for this host: the
-declaration it was installed with, which the installer keeps beside the payload,
-not the index's current descriptor *(@NEXT@+)*. An index update that moves the
-declaration changes what the next install takes, not what an installed
-toolchain runs with; before, an installed GCC lost its binutils when xim's
-recipe moved to a version the store did not hold. A store that holds several
-versions answers with the declared one; without a declaration, with the newest. A declared version the store does not hold is
-reported as a degradation; `mcpp toolchain install` installs it again.
+versions its payload declares as runtime dependencies for this host. Two
+descriptors declare them, read in order: the one the payload was installed with,
+which the installer keeps beside it, then the index's current one; the first
+declaration the store holds decides *(@NEXT@+)*. An index update that moves the
+declaration does not take the companions from an installed toolchain; before,
+an installed GCC lost its binutils when xim's recipe moved to a version the
+store did not hold. A home that links the payload from an `[xlings] upstream`
+holds the companions the index names, beside the upstream's descriptor, and
+takes those. A store that holds several versions answers with the declared one;
+without a declaration, with the newest. Declarations the store holds none of
+are reported as a degradation; `mcpp toolchain install` installs what they
+name.
 
 A project may state the binutils beside a GCC:
 
