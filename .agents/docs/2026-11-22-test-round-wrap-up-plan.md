@@ -5,7 +5,7 @@ status: active
 
 # 测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证
 
-**日期：** 2026-11-22 · **版本：** v2（2026-11-22 评审确定第 4 节的登记、第 6.2 节的结构与拒绝、第 7 节的封装修订随本轮发布、第 10 节 GLOBAL 的源集合） · **基线：** mcpp main `b9b63865`（2026.11.21.1 之后，含 #998、#999、#1000）、
+**日期：** 2026-11-22 · **版本：** v2（2026-11-22 评审确定第 4 节的登记、第 6.2 节的结构与拒绝、第 7 节的封装修订随本轮发布、第 10 节 GLOBAL 的源集合，后者在实施中按第 10 节所述修正） · **基线：** mcpp main `b9b63865`（2026.11.21.1 之后，含 #998、#999、#1000）、
 mcpp-index 拉取请求 #873（`8676bc2`）、xim-pkgindex `6c55431` · **规范：** SPEC-013 §14 第 6 条（平台列的未命中）、
 SPEC-004 §9 第 12 条（工作区的镜像表）、SPEC-016 §2（目标行）、docs/51（弃用表） · **所属：**
 [生态的测试与 CI 方案](2026-11-20-test-architecture-upgrade-design.md) 的收尾。
@@ -181,19 +181,23 @@ SPEC-013 §14 第 6 条写明两类不被拒绝的请求与 `none`，并标注�
 ## 9. 版本与 pin
 
 - mcpp 发布一个版本（下称 R，版本号按发布当日），包含：CHANGELOG `[Unreleased]` 中 #999 的两条 Fixed；第 3、4、5 节；
-  第 6.2 节的拒绝；脚手架的 `kMtestRelease` 改为 0.11.3，docs/05（中英）的示例同步；`.xlings.json` 改为 2026.11.21.1
-  （已发布、已镜像、已进入索引，满足发布流程对引导版本的要求，因而不需要发布后的另一个拉取请求）。
-- R 发布之后：合入 xim-pkgindex 的 bot 拉取请求；mtest 的 `.github/versions.env` 的 `MCPP_VERSION` 改为 R；mcpp-index
+  第 6.2 节的拒绝；脚手架的 `kMtestRelease` 改为 0.11.3，docs/05（中英）的示例同步。`.xlings.json` 保持 2026.11.13.1：
+  以 2026.11.21.1 引导时，hermetic 作业在缓存恢复的 home 中得不到 binutils（第 13 节），该缺陷由 R 修正，因此引导版本在 R
+  发布、镜像并进入索引之后按发布流程移到 R。
+- R 发布之后：合入 xim-pkgindex 的 bot 拉取请求；mcpp 的 `.xlings.json` 移到 R（发布流程的引导版本收尾）；mtest 的 `.github/versions.env` 的 `MCPP_VERSION` 改为 R；mcpp-index
   #873 的四处 pin 改为 R。
 
 ## 10. xlings
 
 - **`test_root_mount`。** 在 mount namespace 的属主不可得的主机上（`ioctl(NS_GET_USERNS)` 返回 EPERM，如嵌套的用户命名
-  空间），normalize 进入"derive captured mount namespace owner"的分支而失败；CI 的主机上通过。决定：用例先检查这一前提，
-  前提不成立时以原因跳过；产品在该分支的拒绝写出原因与修正。
+  空间），normalize 进入"derive captured mount namespace owner"的分支而失败；CI 的主机上通过。决定：testkit 增加能力
+  `mntns-owner`（探测 `NS_GET_USERNS`），该用例以它为前提，前提不成立时以原因跳过；Linux 单元测试的线声明它，在那里缺失
+  即失败；产品在 EPERM 时的拒绝写出原因。
 - **镜像。** GitHub runner 上 `mirror = GLOBAL` 时，xlings 的下载仍以 `ghfast.top` 为第一个源（mcpp 显示的是 xlings
-  事件中的 `sourceHost`）。决定：GLOBAL 的源集合不含 CN 代理；测试覆盖两种 mirror 的源集合；xlings 的文档写明各
-  mirror 的源。
+  事件中的 `sourceHost`）。实施中读到的事实：`mirror` 未设时即为 GLOBAL，它选择 xlings 自己资源的区域（github 或
+  gitcode）；配方的 GitHub 地址另有第三方代理回退，由 `mirror_fallback`（`auto` 缺省、`off`、`force`）控制，`auto` 下
+  写明 sha256 的候选按连接延迟排序（xlings 设计 2026-06-04）。评审时确定的"GLOBAL 的源集合不含 CN 代理"会使未作配置的
+  中国大陆用户失去代理回退，因而改为：语义不变，xlings 的文档（中英）写明代理回退及其控制。
 
 ## 11. 仓库、拉取请求与顺序
 
@@ -228,3 +232,23 @@ mcpp、xlings、xim-pkgindex 的 CUDA 修正与 13 个封装修订之间没有�
 - 干净环境：以 xlings 安装 R；以自定义三元组的段构建两次、间隔超过去抖时长，第二次不刷新索引；`i686-windows-msvc` 不写
   段时在 Windows 上构建并运行（CI 的 e2e）。
 - R 发布后，mcpp#996 以说明关闭。
+
+## 13. 实施中发现
+
+- **配套载荷读了索引的描述文件。** 引导版本移到 2026.11.21.1 后，hermetic e2e 作业以缓存恢复的 home 构建，gcc@16.1.0 得不到
+  binutils，构建停在 "cannot execute 'as'"。xim 的 gcc 配方于 2026-11-21 把 binutils 由 2.42.1 改为 2.47；2026.11.21.1 按
+  索引当前的描述文件取配套载荷的版本，store 中只有该载荷安装时的 2.42.1。设计 2026-11-21 §3.5 规定版本取自"载荷的安装记录"，
+  实现读的是索引。修正：先读载荷旁的 `.xpkg.lua`（安装时的描述文件），没有时才读索引；单元测试覆盖索引声明了 store 中没有的
+  版本而安装时的声明在 store 中的情形。这是 2026.11.21.1 对已有 home 的升级缺陷，随本轮发布修正。
+- **Windows 上 archive 与 libarchive-bundle 在启动时崩溃。** 退出状态 133 即 128 加 NTSTATUS 的低 7 位 5（访问违例）。
+  libarchive-bundle 于 2026-11-07 在 mcpp 2026.11.3.1 下于 Windows 通过；本轮以临时的探测拉取请求在 windows-2022 上以
+  2026.11.3.1、2026.11.13.1、2026.11.20.1、2026.11.21.1 各运行一次，并在 cdb 下取得栈，以区分引擎的回归与载荷的变化
+  （同一 llvm@23.1.3 的载荷大小已由 213.9 MB 变为 311.9 MB）。
+- **sdl2 与 taskflow-module 是包的问题。** clang 23 把 `_m_prefetch` 作为内建函数，SDL 2.32.10 的 `SDL_endian.h` 在 MSVC
+  ABI 的 clang 下定义它；上游 SDL2 分支已以 `!_SDL_HAS_BUILTIN(_m_prefetch)` 保护，尚无发布，compat.sdl2 在 install() 中移植
+  这一行（修订 1）。taskflow 4.1.0 的 `tfprof.hpp` 以 `static inline` 定义两个命名空间作用域的函数，两个模块分区的全局模块片段
+  各包含一次，MSVC ABI 下修饰名相同；taskflow.taskflow 在 install() 中改为 `inline`（修订 1）。二者自 mcpp-index 的 Windows
+  腿于 2026-10-25 改用 llvm@23.1.3 起未在全量运行中被执行过（此前的每周运行在 Windows 的准备阶段即失败）。
+- **CUDA 组件声明 GCC 运行库。** libcurand、libcudart、libnvrtc-builtins、libnvtx3interop、libcufft、libcusparse、libcusolver、
+  libcublas 的 DT_NEEDED 含 `libgcc_s.so.1`（部分含 `libstdc++.so.6`），xim-pkgindex 的配方声明 `xim:gcc-runtime` 并把各版本
+  记为修订 1；libnvjitlink 两者都不需要。

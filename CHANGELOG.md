@@ -39,6 +39,12 @@
   and installing any package of it stopped at the provider as ambiguous, naming neither entry.
   The build and `mcpp index update` refuse it now, naming both entries, the location and the
   remedy (`index-location-named-twice`, SPEC-004 §9).
+- An installed GCC's companions (binutils, the Linux headers) were read from the index's current
+  descriptor of the toolchain, not from the descriptor the payload was installed with. When xim's
+  gcc recipe moved binutils from 2.42.1 to 2.47, a gcc@16.1.0 installed beside binutils 2.42.1 was
+  given no binutils after `mcpp index update`, and its builds stopped at "cannot execute 'as'". The
+  installed descriptor decides now; an index update changes what the next install takes (SPEC
+  toolchain-management §2.9, design 2026-11-21 §3.5).
 - `mcpp test` counts a suite run as a case by its cases on the program's line as the summary
   does: an mtest program of one suite and seven cases read `8 cases` on its line and
   `7 passed` in the summary.
