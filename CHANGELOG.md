@@ -39,8 +39,19 @@
   `module-interface`. When the authored file is also among the sources, the duplicate-provider
   error names the relation (S1 0.4.0, mcpp#1004).
 
+- A build holds each payload of mcpp's package store that its graph names as a root of the
+  store (`registry/data/roots/mcpp/<store-name>@<version>`, xlings' store-roots specification),
+  renewed by every build of that graph; `mcpp toolchain install` holds the toolchain it installs,
+  and a home from before has a root made for every payload it holds, once. `mcpp cache gc
+  --dry-run` says what would be collected and removes nothing.
+
 ### Changed
 
+- `mcpp cache gc` collects the package store after the cache: the provider removes the payloads
+  nothing references (`xlings self clean`), and with `--older-than` the roots no build used for
+  that long are released first. Before, payloads were never collected, and `xlings self clean`
+  in mcpp's registry listed the bases, libraries and platform packages projects use (154 payloads,
+  16 GB, on one home) as unreferenced.
 - Without a statement, the kernel headers are the base's own (a stated sysroot, a toolchain's own
   sysroot such as `musl-gcc`'s, the host's root), else the version the toolchain's payload
   declares. A build under gcc 16.2.0 now compiles against linux-headers 6.18.64, the version it

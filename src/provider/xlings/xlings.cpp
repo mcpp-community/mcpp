@@ -1806,6 +1806,16 @@ int install_from(const Env& env, const std::filesystem::path& dir, std::span<con
     return run_shown(invocation(env, std::move(args)));
 }
 
+int collect_store(const Env& env, bool dryRun) {
+    // A collection removes payloads an install of another process may be
+    // about to name: it holds the turn every writer of the home's state holds.
+    std::optional<mcpp::home::Turn> turn;
+    if (!dryRun) hold_state_turn(turn, env, "collecting the store");
+    std::vector<std::string> args{"self", "clean"};
+    if (dryRun) args.push_back("--dry-run");
+    return run_shown(invocation(env, std::move(args)));
+}
+
 std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot) {
     namespace fs = std::filesystem;
     fs::path dir;

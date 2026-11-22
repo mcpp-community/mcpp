@@ -947,7 +947,7 @@ std::expected<void, std::string> step9_kernel_headers(PrepareState& state) {
         if (!measured) {
             refusal::record(refusal::Code::TargetBase);
             return std::unexpected(std::format(
-                "{} has no kernel headers to compile against: the base carries none, and the toolchain "
+                "[target.{}] has no kernel headers to compile against: the base carries none, and the toolchain "
                 "{} declares none that serve {}.\n"
                 "       State them for the target:\n"
                 "\n"

@@ -331,6 +331,9 @@ public:
     virtual std::filesystem::path store_of_home(const std::filesystem::path& home) const = 0;
     // The home a store belongs to.
     virtual std::filesystem::path home_of_store(const std::filesystem::path& store) const = 0;
+    // The directory in which `owner` keeps its roots of `store`: the links that
+    // state which payloads it uses, which the provider's collection keeps.
+    virtual std::filesystem::path roots_of(const std::filesystem::path& store, std::string_view owner) const = 0;
     // Whether `dir` is a home's default runtime environment.
     virtual bool is_default_environment(std::string_view dir) const = 0;
     // Whether `dir` is a store (a payload's path is <store>/...).
@@ -473,6 +476,10 @@ public:
     // the packages resolving with its snapshots. The provider's exit status.
     virtual int download_to(std::span<const std::string> refs, const std::filesystem::path& dir) const = 0;
     virtual int install_from(const std::filesystem::path& dir, std::span<const std::string> refs) const = 0;
+    // The provider's collection of its store: every payload nothing references
+    // -- its environments, their links, the dependency closure, the owners'
+    // roots -- is removed, or with `dryRun` listed. The provider's exit status.
+    virtual int collect_store(bool dryRun) const = 0;
     // A bundle's snapshot of index `name` made this home's index: placed where
     // the home has none, or holds a snapshot or an artifact's tree; a git
     // work tree or any other directory is the home's own and is kept.

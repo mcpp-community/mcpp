@@ -626,6 +626,10 @@ int install_direct(const Env& env, std::string_view target, bool quiet = false);
 // <dir> <refs>` (xlings 2026.11.21.1), their lines shown as install_direct's.
 int download_to(const Env& env, std::span<const std::string> refs, const std::filesystem::path& dir);
 int install_from(const Env& env, const std::filesystem::path& dir, std::span<const std::string> refs);
+// `xlings self clean [--dry-run]` in the home: the store's collection, which
+// keeps what the home's environments, their dependency closure and the owners'
+// roots reference (xlings' store-roots specification).
+int collect_store(const Env& env, bool dryRun);
 std::string adopt_index_snapshot(const Env& env, std::string_view name, const std::filesystem::path& snapshot);
 // The marker of an index tree a bundle placed, which a later bundle may
 // replace. A refresh replaces it as it replaces any copy: an index mcpp owns

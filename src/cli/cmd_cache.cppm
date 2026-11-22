@@ -7,6 +7,8 @@ import std;
 import mcpplibs.mwrap.libc;
 import mcpplibs.cmdline;
 import mcpp.bmi_cache.maintenance;
+import mcpp.config;
+import mcpp.provider.roots;
 import mcpp.ui;
 import mcpp.wire;
 import nlohmann.json;
@@ -53,10 +55,36 @@ export int cmd_cache_prune(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return mcpp::bmi_cache::cache_prune(parsed.option_or_empty("older-than").value());
 }
 
+// THE CACHE, THEN THE STORE (design 2026-11-22 §3.11). The store's payloads
+// are collected by the provider, whose one implementation keeps what anything
+// references; mcpp's part is its roots: with `--older-than`, the roots of
+// payloads no build used for that long are removed first.
 export int cmd_cache_gc(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    return mcpp::bmi_cache::cache_gc(
-        parsed.option_or_empty("max-size").value(),
-        parsed.option_or_empty("older-than").value());
+    const bool dryRun = parsed.is_flag_set("dry-run");
+    const auto olderThan = parsed.option_or_empty("older-than").value();
+    if (int rc = mcpp::bmi_cache::cache_gc(parsed.option_or_empty("max-size").value(), olderThan, dryRun); rc != 0)
+        return rc;
+    if (!olderThan.empty()) {
+        const auto secs = mcpp::bmi_cache::parse_duration(olderThan).value_or(0);
+        for (const auto& r : mcpp::provider::roots::expire(secs, dryRun))
+            mcpp::ui::status(dryRun ? "Would release" : "Released",
+                             std::format("the store's root {} (last used {})", r.name,
+                                         mcpp::bmi_cache::age_text(r.lastUse)));
+    }
+    // Read only: a home whose provider was never set up has no store to
+    // collect, and collecting is no reason to set one up.
+    auto cfg = mcpp::config::load_or_init(/*quiet=*/true, {}, {}, mcpp::config::Initialization::ReadOnly);
+    if (!cfg) {
+        mcpp::ui::error(cfg.error().message);
+        return 1;
+    }
+    // A home's roots before its first collection: without them, the provider
+    // would remove every payload a build of this home uses.
+    if (!mcpp::provider::roots::seed()) {
+        mcpp::ui::error("the store is not collected: its roots could not be registered (see the warning above)");
+        return 1;
+    }
+    return mcpp::config::collect_store(*cfg, dryRun);
 }
 
 export int cmd_cache_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {

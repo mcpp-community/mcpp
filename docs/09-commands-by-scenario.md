@@ -111,6 +111,24 @@ warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc
 --older-than` collect `std` module entries by age as well; `gc --max-size`
 budgets packages and host tools, not `std` modules (2026.11.8.1+).
 
+**The store's payloads (@RELEASE@+).** A build holds each payload of mcpp's
+package store that its graph names -- the toolchain, its base and companions,
+the packages and tools it wires -- as a **root**: a link
+`registry/data/roots/mcpp/<store-name>@<version>` to the payload, renewed by
+every build of that graph, so that its time is the payload's last use. `mcpp
+toolchain install` holds the toolchain it installs. A home from before has a
+root made for every payload it holds, once. After the cache, `mcpp cache gc`
+asks the package provider to collect the store (`xlings self clean`): a payload
+nothing references -- no environment, no link of one, no dependency of a kept
+payload, no root -- is removed. With `--older-than`, the roots no build used
+for that long are released first. `--dry-run` says what would be collected and
+removes nothing.
+
+```bash
+mcpp cache gc --older-than 60d --dry-run   # what would go, cache and store
+mcpp cache gc --older-than 60d
+```
+
 ## The versions a package publishes
 
 `mcpp search` matches a substring and appends what each hit publishes, merged

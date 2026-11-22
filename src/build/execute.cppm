@@ -57,6 +57,7 @@ import mcpp.toolchain.stdmod;
 import mcpp.version;               // MCPP_VERSION — the engine a build record names
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.provider.roots;
 import mcpp.runtime.binding;
 import mcpp.log;
 import mcpplibs.os.platform;
@@ -2589,6 +2590,9 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
                                   const std::string& runtimeEnvKey,
                                   const std::string& runtimeEnvValue,
                                   std::chrono::milliseconds* elapsedOut = nullptr) {
+    // A build that reuses its graph renews the roots the graph's plan
+    // recorded: their time is the payloads' last use (design 2026-11-22 §3.11).
+    mcpp::provider::roots::hold(outputDir);
     // Read as it runs, into this directory's report, unless nothing is to be
     // shown (build progress design 2026-09-29, §6.1).
     const bool reporting = !mcpp::ui::is_quiet();

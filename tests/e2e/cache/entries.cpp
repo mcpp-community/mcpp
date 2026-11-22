@@ -1,6 +1,7 @@
 // The global build cache: an entry shared across projects and keyed by what it was compiled
 // against, the cache modes and the maintenance commands, an entry's layout, a hit's std BMI, and
-// the age of a std module (formerly tests/e2e/172, 174, 184, 212, 959, 1029).
+// the age of a std module, and the store's roots a build holds (formerly tests/e2e/172, 174, 184,
+// 212, 959, 1029; 1154).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -488,5 +489,41 @@ E2E entries{"entries", s::home_fixture, [] {
         const auto r = s::mcpp({"cache", "gc", "--max-size", "0"}, nowhere, home);
         expect(fatal(e2e::succeeded(r))) << s::text(r);
         expect(fatal(fs::exists(std_dir / "old"))) << "a size budget evicted a std module\n" << s::text(r);
+    };
+
+    "1154 a build holds its payloads as the store's roots"_test[s::unix_shell][s::fresh_sandbox] = [] {
+        // Design 2026-11-22 §3.11: A a build records the store's payloads its graph names
+        // (`roots.list`) and holds each as a root, a link to the payload; B the store's collection
+        // does not list them; C a root no build used for the period is released first, and a dry
+        // run removes nothing.
+        const s::options home{.where = s::home::inherited};
+        const auto mcpp_home = s::case_home(s::home::inherited);
+        s::project p({{"mcpp.toml", "[package]\nname    = \"held\"\nversion = \"0.1.0\"\n"},
+                      {"src/main.cpp", "import std;\nint main() { std::println(\"held\"); }\n"}});
+        auto r = p.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        const auto lists = s::find_files(p.at("target"), R"(roots\.list)");
+        expect(fatal(lists.size() == 1u)) << "A: no roots.list beside the graph";
+        const auto roots = mcpp_home / "registry/data/roots/mcpp";
+        std::vector<std::string> held;
+        std::istringstream lines(s::read_file(lists.front()));
+        for (std::string line; std::getline(lines, line);) if (!line.empty()) held.push_back(line);
+        expect(fatal(std::ranges::any_of(held, [](const std::string& h) { return h.starts_with("xim-x-gcc/") || h.starts_with("xim-x-llvm/"); })))
+            << "A: the toolchain's payload is not among the held: " << s::read_file(lists.front());
+        for (const auto& h : held) {
+            const auto name = h.substr(0, h.find('/')) + "@" + h.substr(h.find('/') + 1);
+            expect(fatal(fs::is_symlink(roots / name) && fs::is_directory(roots / name))) << "A: no root " << name << " that reaches its payload";
+        }
+        r = p.mcpp({"cache", "gc", "--older-than", "3650d", "--dry-run"}, home);
+        expect(fatal(e2e::succeeded(r))) << "B: " << s::text(r);
+        for (const auto& h : held)
+            expect(fatal(s::lacks(s::text(r), "would remove xpkgs/" + h + " "))) << "B: the collection lists a held payload " << h << "\n" << s::text(r);
+        const auto first = held.front();
+        const auto aged = roots / (first.substr(0, first.find('/')) + "@" + first.substr(first.find('/') + 1));
+        expect(fatal(e2e::succeeded(e2e::run({.argv = {"touch", "-h", "-t", "200001010000", aged.string()}})))) << "C: the root could not be aged";
+        r = p.mcpp({"cache", "gc", "--older-than", "30d", "--dry-run"}, home);
+        expect(fatal(e2e::succeeded(r))) << "C: " << s::text(r);
+        expect(fatal(e2e::contains(s::text(r), "Would release the store's root " + aged.filename().string()))) << "C: " << s::text(r);
+        expect(fatal(fs::is_symlink(aged))) << "C: a dry run released the root";
     };
 }};

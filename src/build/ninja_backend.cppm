@@ -46,6 +46,7 @@ import mcpp.toolchain.fingerprint;   // hash_string: a platform seal's digest
 import mcpp.toolchain.msvc_coroutines;
 import mcpp.provider;
 import mcpp.provider.select;
+import mcpp.provider.roots;
 import mcpp.buildopt.keep;
 import mcpp.buildopt.advice;
 import mcpp.modgraph.graph;
@@ -5019,6 +5020,9 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
         if (existed && !tec && std::filesystem::last_write_time(ninja_path, tec) == before && !tec)
             std::filesystem::last_write_time(ninja_path, std::filesystem::file_time_type::clock::now(), tec);
     }
+    // The payloads this graph names are held as the store's roots, so that the
+    // provider's collection keeps them (design 2026-11-22 §3.11).
+    if (!opts.dryRun) mcpp::provider::roots::hold(plan.outputDir, manifest);
     stage("write-ninja");
 
     // compile_commands.json — via the dedicated module.
