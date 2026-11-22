@@ -632,3 +632,16 @@ graph LR
    实现），头文件仍按基座的组成部分决定并接线，层的身份不变。
 7. **探针（§3.4）。** 探针单元按内容命名，写在临时目录中，不写入工程的 `target/`。
 
+8. **插件与版本组（§3.18，K1）。** 测定的前提不再成立：工程以 `[build-dependencies.mcpp] plugins = "0.26.0"` 构建
+   `x86_64-openkal`（openkal-platform 0.31.2 的构建程序钉 0.26.1）时，两个版本各属一个构建程序的解析，锁中为
+   `mcpp.plugins` 0.26.0 与 `mcpp.plugins+b<摘要>` 0.26.1（`programs = ["build:mcpplibs.openkal-platform@0.31.2"]`，
+   SPEC-013 §15.1，mcpp 2026.11.19.1 起）。平台的修订发布与工程指名的插件版本互不约束；把插件加入版本组反而会约束工程
+   自己的请求（版本组参与解析，§7.5）。K1 因此不改动 openkal-platform，K4 不依赖它。
+9. **索引中的行（§3.19）。** `riscv64-linux-musl`：x86_64 上的 musl 交叉载荷构建、静态链接，并在 qemu-user 下运行；该载荷的
+   sysroot 不带内核头文件（`aarch64-linux-musl-gcc` 带 4.19.88），由其描述文件声明 `linux-headers` 6.18.64，修订 1 带
+   riscv64 的头文件。行升为 `preview`，运行器为 `xim:qemu-user-riscv64`。`i686-linux-gnu` 与 `wasm32-wasi` 在索引中没有
+   基座载荷与编译器运行时，保持 `planned` 与未登记。iOS 模拟器的两行以 `simctl-run` 为运行器，`enabled = false`。
+   `x86_64-macos` 在 Apple silicon 的运行器上经 Rosetta 测定（探针工作流），其层级按测定结果确定。
+10. **存储的根（§3.11，M7）。** 根的最后使用时间是链接自身的时间；读取它需要不跟随链接的状态查询，由 mcpplibs.os 0.4.8 的
+    `fs::stamp_of(node, false)` 给出。根的登记点是构建图写出之处（图文本中指名的存储路径）与复用图的构建（图旁的
+    `roots.list`），以及 `mcpp toolchain install`；`mcpp cache gc` 在回收之前先为没有根的 home 登记根，登记失败时不回收。

@@ -737,7 +737,7 @@ writes nothing into the project. `data` is:
 
 | field | |
 |---|---|
-| `spec` | `{"name": "s1", "version": "0.3.0"}` (0.2.0 before 2026.9.28.1), or `{"name": "compile-commands"}` with `--spec compile-commands` |
+| `spec` | `{"name": "s1", "version": "0.4.0"}` (0.3.0 before @RELEASE@, 0.2.0 before 2026.9.28.1), or `{"name": "compile-commands"}` with `--spec compile-commands` |
 | `database` | the document of that specification: an S1 build database, or the entries `mcpp build --configure-only` writes to `compile_commands.json` |
 | `watch` | the inputs whose change can change the document: paths and glob patterns relative to the workspace root, or absolute paths |
 | `inputs-fingerprint` | `fnv1a:<16 hex digits>`, a digest of those inputs, the mcpp version and the selectors |

@@ -41,7 +41,7 @@ import mcpp.toolchain.stdmod;
 export namespace mcpp::build::database {
 
 // 0.3.0: a set carries `generated` (S1 section 7.2, mcpp#724).
-inline constexpr std::string_view kProfileVersion = "0.3.0";
+inline constexpr std::string_view kProfileVersion = "0.4.0";
 inline constexpr std::string_view kStdSetName      = "mcpp:std";
 
 // One planned member of the document.

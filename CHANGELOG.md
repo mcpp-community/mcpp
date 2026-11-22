@@ -37,7 +37,8 @@
   of, one of the action's inputs, on a `source` action. The build database gives it as
   `ide.generated[].origin`. A generated unit that declares a module's primary name is a
   `module-interface`. When the authored file is also among the sources, the duplicate-provider
-  error names the relation (S1 0.4.0, mcpp#1004).
+  error names the relation (mcpp#1004). `emit build-database` states S1 profile 0.4.0, the version
+  that defines the field (Sunrisepeak/mcpp-language-server#98).
 
 - A build holds each payload of mcpp's package store that its graph names as a root of the
   store (`registry/data/roots/mcpp/<store-name>@<version>`, xlings' store-roots specification),

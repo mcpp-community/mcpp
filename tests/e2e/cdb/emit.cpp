@@ -76,8 +76,8 @@ E2E emit{"emit", s::home_fixture, [] {
         const auto effects = e["effects"].get<std::vector<std::string>>();
         expect(fatal(std::ranges::find(effects, "write-project") == effects.end() && std::ranges::find(effects, "read-project") != effects.end())) << "A: effects " << e["effects"].dump();
         const auto& d = e["data"];
-        expect(fatal(d["spec"] == nlohmann::json{{"name", "s1"}, {"version", "0.3.0"}})) << "A: spec " << d["spec"].dump();
-        expect(fatal(d["database"]["ide"]["profile-version"] == "0.3.0")) << "A: profile-version";
+        expect(fatal(d["spec"] == nlohmann::json{{"name", "s1"}, {"version", "0.4.0"}})) << "A: spec " << d["spec"].dump();
+        expect(fatal(d["database"]["ide"]["profile-version"] == "0.4.0")) << "A: profile-version";
         expect(fatal(d["inputs-fingerprint"].get<std::string>().starts_with("fnv1a:"))) << "A: fingerprint " << d["inputs-fingerprint"].dump();
         const auto proto = s::json(hello.mcpp({"--protocol-version"}).out);
         expect(fatal(proto["kinds"]["mcpp.build-database"] == 1)) << "A: the protocol document";

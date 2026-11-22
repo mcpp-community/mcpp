@@ -7,10 +7,10 @@
 | 状态 | 评审中 v1.10 |
 | 版本 | 1.10 |
 | 最后修改 | 2026-11-23 |
-| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1;v1.9 明确的 R6.1a 为 mcpp >= 2026.10.21.1;v1.10 的 R3.9、R3.12a 为 mcpp >= @RELEASE@ |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1;v1.9 明确的 R6.1a 为 mcpp >= 2026.10.21.1;v1.10 的 R3.9、R3.12a 与 R5.1 的 S1 0.4.0 为 mcpp >= @RELEASE@ |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
 | 相关 issue | #636, #648, #655, #699, #702, #707, #732, #797 |
-| 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.3.0(§7.2 的 `generated`,Sunrisepeak/mcpp-language-server#28;此前为 0.2.0)与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
+| 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.4.0(§7.2 的 `origin`,Sunrisepeak/mcpp-language-server#98;0.3.0 的 §7.2 `generated`,Sunrisepeak/mcpp-language-server#28;此前为 0.2.0)与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
 
 ## 0. 适用范围
 
@@ -214,7 +214,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 ## 5. 信封
 
 - **R5.1** `kind` 为 `mcpp.build-database`,`kindVersion` 为 1。`data` 含 `spec`
-  (`{"name": "s1", "version": "0.3.0"}` 或 `{"name": "compile-commands"}`)、
+  (`{"name": "s1", "version": "0.4.0"}`,@RELEASE@ 之前为 0.3.0;或 `{"name": "compile-commands"}`)、
   `database`、`watch` 与 `inputs-fingerprint`。**已实现**
 - **R5.2** 一个成员规划失败只影响它自己,不影响其余成员的集合(#699 第 1 项)。命令
   按配置规划被选中的成员;一个配置的规划失败时,该配置的成员逐个规划,因此失败仍归于
@@ -272,4 +272,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 | 1.7 | 2026-09-30 | 新增 R3.8a:同一配置中两个包提供同一个模块名时,两个单元都列出它,可能导入它的单元的 `arguments` 带有构建所用的绑定(#732)。 |
 | 1.8 | 2026-10-11 | 新增 R3.13:构建程序、构建程序实例的库与引擎接口以 `<包>:build`、`<包>:host`、`mcpp:core`、`mcpp:std:host` 集合描述,`ide.configuration` 为 `build-program`,只进入 S1 文档(#797)。 |
 | 1.9 | 2026-10-21 | R6.1a 明确合成 host 清单与锁文件不作为 watch 或 fingerprint 输入，保留可编辑依赖输入(#807)。 |
-| 1.10 | 2026-11-23 | 新增 R3.12a:生成的单元以 action 陈述的 `origin` 指名其编写的源文件(S1 0.4.0);R3.9 以 `provides` 声明模块主名的生成单元为 `module-interface`(mcpp#1004)。 |
+| 1.10 | 2026-11-23 | 新增 R3.12a:生成的单元以 action 陈述的 `origin` 指名其编写的源文件(S1 0.4.0);R3.9 以 `provides` 声明模块主名的生成单元为 `module-interface`(mcpp#1004)。R5.1:S1 版本为 0.4.0(Sunrisepeak/mcpp-language-server#98)。 |
