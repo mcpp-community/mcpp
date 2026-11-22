@@ -96,7 +96,7 @@ LLVM 词表里「非 MSVC 那套 ABI」的标签，继承自 MinGW，而 clang �
 |---|---|
 | `x86_64-linux-gnu`、`aarch64-linux-android`、`riscv64-none-elf`、`x86_64-openkal` | ELF |
 | `aarch64-macos`、`aarch64-ios` | Mach-O |
-| `x86_64-windows-gnu`、`x86_64-windows-msvc` | PE |
+| `x86_64-windows-gnu`、`x86_64-windows-msvc`、`i686-windows-msvc` | PE |
 | `wasm32-emscripten` | wasm |
 
 它与「有没有一个操作系统可供链接」**不是**同一个问题。一个裸机 RISC-V
@@ -501,6 +501,7 @@ docs/22。
 | `aarch64-windows-gnu` | preview | `llvm@23.1.3` | 基座 | 基座 | 基座 | 基座 |
 | `x86_64-windows-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 载荷 |
 | `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
+| `i686-windows-msvc` | preview | — | — | — | — | 系统 |
 | `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
 | `aarch64-macos-musl` | preview | `llvm@23.1.3` | 图 | 图 | 图 | 图 |
@@ -547,6 +548,7 @@ system · `系统` 在机器上被找到，不是 mcpp 安装的 · `SDK` 平台
 | `*-freebsd` | 每一台宿主，经平台 | 行是内置的；平台为每个身份指名 FreeBSD 基座包（`xim:x86_64-freebsd-sysroot`、`xim:aarch64-freebsd-sysroot`），以 `[target.<行>] platform` 或该行满足的任一选择器（`[target.freebsd]`、`cfg(os = "freebsd")`）选择；其他平台包的提供者不与所选平台竞争 |
 | `*-freebsd-musl` | 每一台宿主，经依赖图 | openkal-platform 的 hosted 部分（0.28.0）：openkal-freebsd 的 standalone 形态之上的 openkal-musl，一个静态程序；未为 `<arch>-freebsd` 选平台时，该请求取这一身份（2026.11.10.2+），正如非 Mac 宿主上的 `aarch64-macos` 取 musl 身份 |
 | `x86_64-windows-msvc` | Windows | MSVC 是在机器上被找到的 |
+| `i686-windows-msvc` | Windows | 同上；x86_64 Windows 运行其程序（WOW64），clang 23 下 `import std` 只能以 C++20 构建（[20](20-toolchains.md)） |
 | `x86_64-windows-musl` | payload 只在 Windows 上；图则任意宿主 | 没有 gcc 能发出 PE + musl，且 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器自己的 |
 | `*-none-elf` | 每一台宿主 | clang 与 lld 按构造就是交叉编译器 |

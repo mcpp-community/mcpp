@@ -701,24 +701,35 @@ payload_versions(const std::filesystem::path& xpkgs, std::string_view packageNam
 }
 
 // What the payload `compilerBin` belongs to declares for `packageName` on this
-// host: the requirement of its descriptor's runtime dependency
-// (`xim:binutils@2.42.1` gives `2.42.1`), none when it declares none.
-std::optional<std::string>
-declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
-                     std::string_view packageName) {
-    if (compilerBin.empty()) return std::nullopt;
+// host, one entry per descriptor that names the package: the requirement of its
+// runtime dependency (`xim:binutils@2.42.1` gives `2.42.1`, an unversioned one
+// gives ""). First the descriptor the payload was installed with
+// (`<version>/.xpkg.lua`), then the index's.
+//
+// TWO RECORDS, AND EITHER CAN BE THE ONE THIS STORE FOLLOWED. A home that
+// installed the payload installed the companions its own descriptor named; the
+// index's is the one the NEXT install reads. On 2026-11-21 xim's gcc recipe
+// moved its binutils from 2.42.1 to 2.47: a gcc@16.1.0 installed before then,
+// with binutils 2.42.1 beside it, was given no binutils after `mcpp index
+// update` (mcpp 2026.11.21.1, "cannot execute 'as'", a home restored from a
+// cache). A home whose `[xlings] upstream` holds the payload links it, with the
+// upstream's descriptor in it, and installs its companions by the index: there
+// the store holds 2.47 and not the 2.42.1 the linked descriptor names.
+std::vector<std::string>
+declared_requirements(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+                      std::string_view packageName) {
+    std::vector<std::string> out;
+    if (compilerBin.empty()) return out;
     const auto rel = compilerBin.lexically_relative(xpkgs);
-    if (rel.empty() || *rel.begin() == "..") return std::nullopt;
+    if (rel.empty() || *rel.begin() == "..") return out;
     const auto dirName = rel.begin()->string();
     const auto dash = dirName.find("-x-");
-    if (dash == std::string::npos) return std::nullopt;
+    if (dash == std::string::npos) return out;
     const auto owner = dirName.substr(dash + 3);
-    for (const auto& file : descriptor_candidates(xpkgs.parent_path(), owner)) {
-        std::ifstream in(file);
-        if (!in) continue;
-        const std::string body((std::istreambuf_iterator<char>(in)), {});
-        for (const auto& dep : mcpp::manifest::xpkg_runtime_deps(
-                 body, mcpp::toolchain::platform::HostPlatform::current())) {
+    const auto host = mcpp::toolchain::platform::HostPlatform::current();
+    // The requirement one descriptor states; nullopt when it states none.
+    auto requirement = [&](const std::string& body) -> std::optional<std::string> {
+        for (const auto& dep : mcpp::manifest::xpkg_runtime_deps(body, host)) {
             std::string_view d = dep;
             if (auto colon = d.find(':'); colon != std::string_view::npos) d.remove_prefix(colon + 1);
             const auto at = d.find('@');
@@ -726,60 +737,82 @@ declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::
             return at == std::string_view::npos ? std::string{} : std::string(d.substr(at + 1));
         }
         return std::nullopt;
-    }
-    return std::nullopt;
+    };
+    auto read = [](const std::filesystem::path& file) -> std::optional<std::string> {
+        std::ifstream in(file);
+        if (!in) return std::nullopt;
+        return std::string((std::istreambuf_iterator<char>(in)), {});
+    };
+    auto add = [&](std::optional<std::string> r) {
+        if (r && std::ranges::find(out, *r) == out.end()) out.push_back(std::move(*r));
+    };
+    if (auto version = std::next(rel.begin()); version != rel.end())
+        if (auto body = read(xpkgs / *rel.begin() / *version / ".xpkg.lua")) add(requirement(*body));
+    for (const auto& file : descriptor_candidates(xpkgs.parent_path(), owner))
+        if (auto body = read(file)) { add(requirement(*body)); break; }
+    return out;
+}
+
+// The payload's own declaration: the first of `declared_requirements`.
+std::optional<std::string>
+declared_requirement(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
+                     std::string_view packageName) {
+    auto all = declared_requirements(xpkgs, compilerBin, packageName);
+    if (all.empty()) return std::nullopt;
+    return all.front();
 }
 
 // THE ONE CHOICE AMONG A STORE'S VERSIONS OF A COMPANION (design 2026-11-21,
-// offline and toolchain defaults §3.5). The version the compiler's payload
-// declares: its exact key, or the newest that satisfies a requirement
-// (`>=2.39`). Without a declaration (no compiler, or a payload that names no
-// such dependency), the newest. Every picker of this file took the first
-// directory the walk returned: with binutils 2.42 and 2.42.1 in one store the
-// build took 2.42, which GCC's recipe does not declare and whose `ld` does not
-// see the subos's libraries, or 2.42.1, by the filesystem's order. A declared
-// version the store does not hold is reported: the build would otherwise take
-// another and say nothing.
+// offline and toolchain defaults §3.5). The first declaration of the compiler's
+// payload the store holds (`declared_requirements`): its exact key, or the
+// newest that satisfies a requirement (`>=2.39`). Without a declaration (no
+// compiler, or a payload that names no such dependency), the newest. Every
+// picker of this file took the first directory the walk returned: with binutils
+// 2.42 and 2.42.1 in one store the build took 2.42, which GCC's recipe does not
+// declare and whose `ld` does not see the subos's libraries, or 2.42.1, by the
+// filesystem's order. Declarations the store holds none of are reported: the
+// build would otherwise take another and say nothing.
 std::optional<std::filesystem::path>
 companion_dir(const std::filesystem::path& xpkgs, const std::filesystem::path& compilerBin,
               std::string_view packageName, std::string_view requiredRelPath, bool anyPrefix) {
     namespace vr = mcpp::version_req;
     const auto dirs = payload_versions(xpkgs, packageName, requiredRelPath, anyPrefix);
-    const auto declared = declared_requirement(xpkgs, compilerBin, packageName);
-    std::optional<vr::Requirement> req;
-    if (declared && !declared->empty()) {
-        for (const auto& d : dirs)
-            if (d.filename() == *declared) return d;
-        if (vr::is_constraint(*declared))
-            if (auto r = vr::parse_req(*declared)) req = *r;
-        if (!req) {
-            mcpp::diag::degraded("toolchain/companion", std::format(
-                "the toolchain at {} declares {}@{}, which this store does not hold",
-                compilerBin.string(), packageName, *declared),
-                std::format("{} is not used: the build may assemble, link or include with another or with none",
-                            packageName),
-                "install the toolchain again (`mcpp toolchain install`), which installs what it declares");
-            return std::nullopt;
+    // The newest of `dirs` a requirement admits (every one when there is none).
+    auto newest = [&](const std::optional<vr::Requirement>& req) -> std::optional<std::filesystem::path> {
+        std::optional<std::filesystem::path> best;
+        std::optional<vr::Version> bestVersion;
+        for (const auto& d : dirs) {
+            auto v = vr::parse_version(d.filename().string());
+            if (!v || (req && !vr::matches(*req, *v))) continue;
+            if (!bestVersion || *bestVersion < *v) { best = d; bestVersion = *v; }
         }
+        return best;
+    };
+    const auto declared = declared_requirements(xpkgs, compilerBin, packageName);
+    std::vector<std::string> versioned;
+    for (const auto& declaration : declared) {
+        if (declaration.empty()) break;  // an unversioned declaration admits the newest, below
+        versioned.push_back(declaration);
+        for (const auto& d : dirs)
+            if (d.filename() == declaration) return d;
+        if (!vr::is_constraint(declaration)) continue;
+        if (auto r = vr::parse_req(declaration))
+            if (auto hit = newest(*r)) return hit;
     }
-    std::optional<std::filesystem::path> best;
-    std::optional<vr::Version> bestVersion;
-    for (const auto& d : dirs) {
-        auto v = vr::parse_version(d.filename().string());
-        if (!v || (req && !vr::matches(*req, *v))) continue;
-        if (!bestVersion || *bestVersion < *v) { best = d; bestVersion = *v; }
-    }
-    if (req && !best) {
+    if (versioned.size() == declared.size() && !versioned.empty()) {
+        std::string named;
+        for (const auto& v : versioned) named += std::format("{}{}@{}", named.empty() ? "" : " or ", packageName, v);
         mcpp::diag::degraded("toolchain/companion", std::format(
-            "the toolchain at {} declares {}@{}, and no version this store holds satisfies it",
-            compilerBin.string(), packageName, *declared),
+            "the toolchain at {} declares {}, and this store holds no version that satisfies it",
+            compilerBin.string(), named),
             std::format("{} is not used: the build may assemble, link or include with another or with none",
                         packageName),
             "install the toolchain again (`mcpp toolchain install`), which installs what it declares");
         return std::nullopt;
     }
-    if (best) return best;
+    if (auto best = newest(std::nullopt)) return best;
     // No key parses as a version: the newest by name, still not the walk's order.
+    std::optional<std::filesystem::path> best;
     for (const auto& d : dirs)
         if (!best || best->filename() < d.filename()) best = d;
     return best;

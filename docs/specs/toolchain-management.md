@@ -4,8 +4,8 @@
 |---|---|
 | 规范编号 | SPEC-006 |
 | 标题 | 工具链管理:身份、来源、选择与载荷契约 |
-| 状态 | 草案 v0.12 |
-| 最后修改 | 2026-11-21 |
+| 状态 | 草案 v0.13 |
+| 最后修改 | 2026-11-22 |
 | 对应实现 | 逐条标注;标为「已实现」的条款对应 mcpp >= 2026.9.24.1。标为「未实现」的条款计划与下一批 LLVM 工具链一同落地,届时按实测修订本规范 |
 | 相关设计文档 | `.agents/docs/2026-10-23-target-base-and-execution-host-design.md`、`.agents/docs/2026-09-24-toolchain-selection-and-payload-trust-design.md`、`.agents/docs/2026-09-24-685-687-msvc-stl-and-toolchain-payloads.md`、`.agents/docs/2026-09-28-ecosystem-design-and-optimisation-plan.md`、`.agents/docs/2026-10-02-pr-ci-acceleration-and-the-toolchain-specification-design.md`、`.agents/docs/2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md` |
 | 相关 issue | mcpp#685、mcpp#687、mcpp#718、mcpp#755、mcpp#832、mcpp#988 |
@@ -113,7 +113,12 @@
 
 - 工具链所用的配套载荷(GCC 的 binutils、glibc 基础层的 Linux 内核头文件、GCC 的运行库)**必须**取工具链载荷的描述文件为本宿主声明的
   运行依赖:声明为一个键时取该键,声明为要求(`>=2.39`)时取 store 中满足它的最新版本。没有声明时取 store 中的最新版本。
-  **禁止**按目录遍历的次序选择。声明的版本不在 store 中时以 `degraded` 报告,不以另一个版本代替。
+  **禁止**按目录遍历的次序选择。声明的版本都不在 store 中时以 `degraded` 报告,不以另一个版本代替。
+- 声明**必须**依次取自两个描述文件:载荷安装时的描述文件(安装器保存在载荷旁的 `.xpkg.lua`),然后是索引中的描述文件;取 store
+  持有的第一个声明。从 `[xlings] upstream` 链接载荷的 home 按索引安装配套载荷,载荷旁是上游的描述文件,因此两者都需要读。一个声明也
+  不满足时以 `degraded` 报告,两个声明都写出。工具链载荷自身的声明(`companion-too-old` 的比较)是第一个。**已实现**
+  (mcpp >= 2026.11.22.1;2026.11.21.1 读索引的描述文件,xim 的 gcc 配方把 binutils 由 2.42.1 改为 2.47 之后,已安装的 gcc@16.1.0 在
+  `mcpp index update` 之后得不到 binutils,构建停在 "cannot execute 'as'")。
 - 工程可以在工具链的陈述旁写明 binutils:`default = { package = "gcc@16.2.0", companions = { binutils = "xim:binutils@2.47" } }`,
   `[toolchain]` 的各平台键与 `[workspace.toolchain]` 同样可写。`companions` 只有 `binutils` 一项;只用于 GCC。
 - 写明的 binutils 低于工具链载荷声明的版本时**必须**拒绝,原因标记 `companion-too-old`:GCC 在构建时按所用的 binutils 选定汇编器的能力。
@@ -444,6 +449,7 @@ doctor 如实报告这一点。它同时报告 mcpp 的包 home 中指向不存�
 | v0.8 | 2026-10-16 | 随 mcpp 2026.10.16.1:§4.3 改为「安装后不改写」,载荷只由提供者写入;工具链运行在提供者按 home 的运行库钉版本绑定的运行库上。 |
 | v0.10 | 2026-10-23 | 随 mcpp 2026.10.24.1:§1 定义目标基座与执行宿主;新增 §3.9 目标基座(一次解析、四档写法与优先级、测量与声明、不写入、运行时语义)、§3.10 自备输入、§3.11 核心知识判据;§2.2.1 工具链阶段可陈述 `spec` 与 `sysroot`,`spec` 与路径专属键同时出现时拒绝;§3.1 补全读者名单;§3.3 增加主体 `sysroot` 与 `run_under`;§3.5 clang 行接受 `{ path }`;§4.3 要求被陈述的 gnu-sysroot 基座把 `--sysroot` 交给链接器;新增附录 A。 |
 | v0.11 | 2026-11-10 | 随 mcpp 2026.11.10.1:§3.9.2 引擎默认档为所选提供者的 `sysroot` 列,为包时按工程陈述的规则解析;附录 A 的 `*-windows-gnu` 接受基座包与 `{ path }`,新增 `*-freebsd` 行(基座包见 SPEC-002 §2.5)。 |
+| v0.13 | 2026-11-22 | 随 mcpp 2026.11.22.1:§2.9 配套载荷的声明依次取自载荷安装时的描述文件与索引的描述文件,取 store 持有的第一个。 |
 | v0.9 | 2026-10-17 | 随 mcpp 2026.10.17.1:新增 §4.7,已安装的修订在构建中继续使用,`floor` 决定是否必须替换,`toolchain install` 取当前修订;§6.4 doctor 只读,报告构建实际使用的工具链与包 home 的一致性。 |
 
 ---

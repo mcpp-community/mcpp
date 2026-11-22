@@ -221,6 +221,10 @@ package = {
 见 [05](05-dependencies.md))刷新一次索引,再读平台列。随后的拒绝写出索引是否已刷新及未刷新的原因。此前,在本地
 副本取得之后才列入的行被拒绝为未知目标,直到 `mcpp index update`。
 
+没有平台也能构建的请求不被拒绝,它的平台列未命中不刷新索引 *(2026.11.22.1 起,mcpp#996)*:`[target.<triple>]` 段定义的
+自定义三元组,命名了工具链(`[target.<row>] toolchain`、`--toolchain`)的 `planned` 行,以及表以 `platform = "none"`
+回答的请求;后者与 `--platform none` 一样结束查询。前两者仍读平台列。此前,这样的构建每隔超过去抖时长就刷新一次索引。
+
 ## 编写平台包
 
 平台包是带 `[platform]` 段的包。openkal-platform 的节选:

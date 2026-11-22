@@ -1456,6 +1456,18 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
 // What a refusal of `triple` adds about the index after a miss of its column:
 // whether the index was refreshed, and why not. Empty when nothing missed.
 std::string index_platform_miss_note(std::string_view triple);
+// A TOOLCHAIN NAMED FOR THE BUILD: by the request's `[target.<row>]` section
+// (`section`, or null), by `--toolchain` (MCPP_TOOLCHAIN), or by the consumer
+// of a sub-build. A `planned` row with one is not refused.
+inline bool toolchain_named(const PrepareState& state, const mcpp::manifest::TargetEntry* section) {
+    return (section && !section->toolchain.empty()) || state.tcFromCommandLine || state.tcFromConsumer;
+}
+// WHETHER THE REQUEST IS REFUSED WITHOUT A PLATFORM (SPEC-013 §14 item 6): a row
+// the engine does not know, that no `[target.<triple>]` section and no platform
+// defines; or a `planned` row no toolchain is named for. Only a miss of the
+// index's platform column for such a request refreshes the index (mcpp#996).
+// It reads what the refusal gates read (`find_request_entry`, `toolchain_named`).
+bool refused_without_platform(const PrepareState& state, std::string_view request);
 
 void step4b_seed_platform(PrepareState& state);
 std::expected<bool, std::string> step4b_apply_platform(PrepareState& state);

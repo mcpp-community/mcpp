@@ -4,7 +4,21 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [Unreleased]
+## [2026.11.22.1] - 2026-11-22
+
+### Added
+
+- `i686-windows-msvc`, the 32-bit x86 Microsoft ABI, is a `preview` row of the target table,
+  served by the msvc provider as `x86_64-windows-msvc` is; x86_64 Windows runs its programs
+  (WOW64). A project needs no `[target.i686-windows-msvc]` section to build it, and no platform is
+  looked up for it. `--target i686-windows` and `x86-windows-msvc` select it; before, they
+  selected no row. Under clang 23 its `import std` builds at C++20 only (docs/20) (mcpp#996).
+
+### Changed
+
+- The framework mcpp scaffolds tests with and suggests where a package has none is mtest 0.11.3
+  (`mtest gate` judges a ledger only for a set that runs every case; the library is
+  source-compatible with 0.11.2).
 
 ### Fixed
 
@@ -14,6 +28,26 @@
   not yet filled is absent. Before, only the declared directories were judged, by existence,
   so a reader beside a first fetch skipped the refresh and reported no local package index
   (mcpp#927, design 2026-11-12 §18 P3).
+- A request built without a platform refreshed the package index on every build more than the
+  debounce apart: a miss of the index's platform column refreshed for every row the engine does
+  not know and every `planned` one, and a custom triple a `[target.<triple>]` section defines, or
+  a `planned` row built with a named toolchain, is not refused for want of a platform (12 to 19 s
+  a build for `i686-windows-msvc` with a section). Only a request refused without a platform
+  refreshes now, judged by the facts the refusal reads; `platform = "none"` in a table ends the
+  lookup as `--platform none` does (SPEC-013 §14, mcpp#996).
+- Two entries of a project's effective `[indices]` that name one location -- a member's beside
+  its workspace's `[workspace.indices]`, or two in one manifest -- registered the location twice,
+  and installing any package of it stopped at the provider as ambiguous, naming neither entry.
+  The build and `mcpp index update` refuse it now, naming both entries, the location and the
+  remedy (`index-location-named-twice`, SPEC-004 §9).
+- An installed GCC's companions (binutils, the Linux headers) were read from the index's current
+  descriptor of the toolchain, not from the descriptor the payload was installed with. When xim's
+  gcc recipe moved binutils from 2.42.1 to 2.47, a gcc@16.1.0 installed beside binutils 2.42.1 was
+  given no binutils after `mcpp index update`, and its builds stopped at "cannot execute 'as'". The
+  installed descriptor is read first now, then the index's, and the first declaration the store
+  holds decides: a home that links the payload from an `[xlings] upstream` holds the companions
+  the index names, beside the upstream's descriptor (SPEC toolchain-management §2.9, design
+  2026-11-21 §3.5).
 - `mcpp test` counts a suite run as a case by its cases on the program's line as the summary
   does: an mtest program of one suite and seven cases read `8 cases` on its line and
   `7 passed` in the summary.

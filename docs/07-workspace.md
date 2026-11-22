@@ -239,6 +239,15 @@ and a member reached as a dependency does not (mcpp 2026.10.11.1+; before that
 release a member reached as a dependency received it and was refused for
 stating an override).
 
+`[workspace.indices]` merges with a member's `[indices]` by name, the member's
+entry of a name first. When two entries of the result name one location (one
+directory, or one repository at one pin), the build and `mcpp index update`
+refuse it with `index-location-named-twice`: the location would be registered
+twice, and each of its packages would be two candidates of one name. The remedy keeps one name: drop one entry, or, when one
+of them is a workspace entry, state the index in the members that use it
+instead *(2026.11.22.1+; before, the install failed as ambiguous and named neither
+entry)*.
+
 A conditional row counts as it evaluates for the target being built: a
 `dialect_cxxflags` or `.abi` row for another target does not separate a member
 from the others (§5.4), and one that holds is applied when the member is built

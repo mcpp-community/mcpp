@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-371 records.
+372 records.
 
 ## By subject
 
@@ -135,6 +135,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### plan
 
+- [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
 - [Eight reports after 2026.9.27.1: implementation plan](2026-09-27-eight-reports-implementation-plan.md) — active
 - [#690: implementation plan](2026-09-25-issue-690-implementation-plan.md) — landed
 - [工具链选择与载荷可信度：实施计划](2026-09-24-toolchain-selection-implementation-plan.md) — landed
@@ -213,6 +214,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-11
 
+- [测试与 CI 一轮的收尾：平台列未命中的刷新条件（mcpp#996）、`i686-windows-msvc` 行、工作区索引与引号键的迁移、索引的全量验证](2026-11-22-test-round-wrap-up-plan.md) — active
 - [包的特性作为机器可读的回答：一个目录项，两种来源，三种状态（mcpp#992）](2026-11-21-package-features-query-design.md) — active
 - [离线、宿主输入与工具链的缺省：按内容取归档的来源、项目的取齐、宿主输入的声明、工具链的解析与锁、缺省版本的规则（mcpp#988、#989、#990）](2026-11-21-offline-host-inputs-and-toolchain-defaults-design.md) — active
 - [构建程序的输入由观测给出：编译读到的文件、三道闸门的同一份记录、头文件的用法提示、提示的统一机制、契约中名字的歧义（mcpp#991、#852）](2026-11-21-build-program-observed-inputs-design.md) — active

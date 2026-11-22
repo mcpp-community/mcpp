@@ -554,6 +554,19 @@ find_target_entry(const mcpp::manifest::Manifest& m,
     return nullptr;
 }
 
+// The section a `--target` request matches: the key written as the request,
+// else the section of the row the request parses to (`parsed`, which the
+// selection may have completed). One lookup for the refusal of an unknown or
+// `planned` row and for the refresh of the platform column (mcpp#996), so
+// the two cannot disagree about whether a section answers the request.
+inline const mcpp::manifest::TargetEntry*
+find_request_entry(const mcpp::manifest::Manifest& m, std::string_view request,
+                   const std::optional<mcpp::toolchain::triple::Triple>& parsed) {
+    if (auto it = m.targetOverrides.find(std::string(request)); it != m.targetOverrides.end())
+        return &it->second;
+    return parsed ? find_target_entry(m, *parsed) : nullptr;
+}
+
 std::filesystem::path target_dir(const mcpp::toolchain::Toolchain& tc,
                                  const mcpp::toolchain::Fingerprint& fp,
                                  const std::filesystem::path& root)

@@ -213,10 +213,18 @@ compared nor remembered.
 
 A managed toolchain's companions -- the binutils GCC assembles and links with,
 the Linux kernel headers of the glibc base, GCC's runtime libraries -- are the
-versions its payload declares as runtime dependencies for this host. A store
-that holds several versions answers with the declared one; without a
-declaration, with the newest. A declared version the store does not hold is
-reported as a degradation; `mcpp toolchain install` installs it again.
+versions its payload declares as runtime dependencies for this host. Two
+descriptors declare them, read in order: the one the payload was installed with,
+which the installer keeps beside it, then the index's current one; the first
+declaration the store holds decides *(2026.11.22.1+)*. An index update that moves the
+declaration does not take the companions from an installed toolchain; before,
+an installed GCC lost its binutils when xim's recipe moved to a version the
+store did not hold. A home that links the payload from an `[xlings] upstream`
+holds the companions the index names, beside the upstream's descriptor, and
+takes those. A store that holds several versions answers with the declared one;
+without a declaration, with the newest. Declarations the store holds none of
+are reported as a degradation; `mcpp toolchain install` installs what they
+name.
 
 A project may state the binutils beside a GCC:
 
@@ -1648,8 +1656,10 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 
 In `cxxflags` the std module's precompile does not see it.
 
-`i686-windows-msvc` is not a row of the target table; a project that builds
-for it declares `[target.i686-windows-msvc]`, as for any custom triple.
+`i686-windows-msvc` is a `preview` row of the target table *(2026.11.22.1+,
+mcpp#996)*, served by the msvc provider as `x86_64-windows-msvc` is; x86_64
+Windows runs its programs (WOW64). A project needs no `[target.i686-windows-msvc]`
+section to build it. Before, it was a custom triple that required the section.
 
 ## Known Toolchain Limitation: GCC Modules Under a Non-ASCII Path (gcc 16)
 

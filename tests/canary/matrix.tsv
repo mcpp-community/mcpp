@@ -99,6 +99,11 @@ c	x86_64-windows-msvc	windows-x86_64	static	n/a	a POSIX program; the Windows C l
 c	x86_64-windows-msvc	windows-x86_64	run	n/a	a POSIX program; the Windows C library presents no sigsetjmp
 c	x86_64-windows-msvc	windows-x86_64	test	n/a	a POSIX program; the Windows C library presents no sigsetjmp
 c	x86_64-windows-msvc	windows-x86_64	pack	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	i686-windows-msvc	windows-x86_64	build	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	i686-windows-msvc	windows-x86_64	static	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	i686-windows-msvc	windows-x86_64	run	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	i686-windows-msvc	windows-x86_64	test	n/a	a POSIX program; the Windows C library presents no sigsetjmp
+c	i686-windows-msvc	windows-x86_64	pack	n/a	a POSIX program; the Windows C library presents no sigsetjmp
 c	x86_64-windows-gnu	windows-x86_64	build	n/a	a POSIX program; the Windows C library presents no sigsetjmp
 c	x86_64-windows-gnu	windows-x86_64	static	n/a	a POSIX program; the Windows C library presents no sigsetjmp
 c	x86_64-windows-gnu	windows-x86_64	run	n/a	a POSIX program; the Windows C library presents no sigsetjmp
@@ -134,6 +139,11 @@ cxx	x86_64-windows-msvc	windows-x86_64	static	ok
 cxx	x86_64-windows-msvc	windows-x86_64	run	ok	
 cxx	x86_64-windows-msvc	windows-x86_64	test	ok	
 cxx	x86_64-windows-msvc	windows-x86_64	pack	ok	
+cxx	i686-windows-msvc	windows-x86_64	build	fails	clang 23 predefines no __cpp_impl_coroutine for i686-pc-windows-msvc, and the MSVC STL's std module at C++23 includes <generator>; the precompile stops (mcpp explains it)
+cxx	i686-windows-msvc	windows-x86_64	static	fails	clang 23 predefines no __cpp_impl_coroutine for i686-pc-windows-msvc, and the MSVC STL's std module at C++23 includes <generator>; the precompile stops (mcpp explains it)
+cxx	i686-windows-msvc	windows-x86_64	run	fails	clang 23 predefines no __cpp_impl_coroutine for i686-pc-windows-msvc, and the MSVC STL's std module at C++23 includes <generator>; the precompile stops (mcpp explains it)
+cxx	i686-windows-msvc	windows-x86_64	test	fails	clang 23 predefines no __cpp_impl_coroutine for i686-pc-windows-msvc, and the MSVC STL's std module at C++23 includes <generator>; the precompile stops (mcpp explains it)
+cxx	i686-windows-msvc	windows-x86_64	pack	fails	clang 23 predefines no __cpp_impl_coroutine for i686-pc-windows-msvc, and the MSVC STL's std module at C++23 includes <generator>; the precompile stops (mcpp explains it)
 cxx	x86_64-windows-gnu	windows-x86_64	build	ok	
 cxx	x86_64-windows-gnu	windows-x86_64	static	ok	
 cxx	x86_64-windows-gnu	windows-x86_64	run	ok	
