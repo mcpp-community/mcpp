@@ -238,12 +238,21 @@ mcpp、xlings、xim-pkgindex 的 CUDA 修正与 13 个封装修订之间没有�
 - **配套载荷读了索引的描述文件。** 引导版本移到 2026.11.21.1 后，hermetic e2e 作业以缓存恢复的 home 构建，gcc@16.1.0 得不到
   binutils，构建停在 "cannot execute 'as'"。xim 的 gcc 配方于 2026-11-21 把 binutils 由 2.42.1 改为 2.47；2026.11.21.1 按
   索引当前的描述文件取配套载荷的版本，store 中只有该载荷安装时的 2.42.1。设计 2026-11-21 §3.5 规定版本取自"载荷的安装记录"，
-  实现读的是索引。修正：先读载荷旁的 `.xpkg.lua`（安装时的描述文件），没有时才读索引；单元测试覆盖索引声明了 store 中没有的
-  版本而安装时的声明在 store 中的情形。这是 2026.11.21.1 对已有 home 的升级缺陷，随本轮发布修正。
-- **Windows 上 archive 与 libarchive-bundle 在启动时崩溃。** 退出状态 133 即 128 加 NTSTATUS 的低 7 位 5（访问违例）。
-  libarchive-bundle 于 2026-11-07 在 mcpp 2026.11.3.1 下于 Windows 通过；本轮以临时的探测拉取请求在 windows-2022 上以
-  2026.11.3.1、2026.11.13.1、2026.11.20.1、2026.11.21.1 各运行一次，并在 cdb 下取得栈，以区分引擎的回归与载荷的变化
-  （同一 llvm@23.1.3 的载荷大小已由 213.9 MB 变为 311.9 MB）。
+  实现读的是索引。只读安装时的描述文件也不对：以 `[xlings] upstream` 链接载荷的 home（e2e 的 inherited home）中，载荷目录是
+  上游的链接，旁边是上游的描述文件（2.42.1），配套载荷却按索引安装（store 中只有 2.47）。修正：两份声明依次读取，安装时的
+  描述文件在前、索引的在后，取 store 持有的第一个；`companion-too-old` 比较的仍是载荷自身的声明（第一个）。单元测试覆盖两种
+  home；e2e 的 inherited home 中不再报告降级。这是 2026.11.21.1 对已有 home 的升级缺陷，随本轮发布修正。
+- **Windows 上 archive 与 libarchive-bundle 在启动时崩溃，根因是 lld-link 与包的静态宏。** 退出状态 133 即访问违例；cdb 显示
+  调用跳到映像首字节。逐版本探测：2026.11.8.1 通过，2026.11.9.1 起失败；2026.11.9.1 起测试单元按函数分节、测试以回收无引用节的
+  方式链接。`lzma.h` 与 `archive.h` 在未定义 `LZMA_API_STATIC`、`LIBARCHIVE_STATIC` 时声明 dllimport，compat.xz 与
+  compat.libarchive 是静态库，宏只在包自己的单元中（或根本没有）；消费者经 lld-link 为本地定义造的 `__imp_` 槽调用，回收时
+  槽后的函数被丢弃。最小复现测得：MSVC 的 link.exe 在 `/OPT:REF` 下保留该函数（退出 42），lld-link 20.1.8 访问违例，
+  `/OPT:NOREF` 时退出 42；本地 lld 20.1.7、22.1.8、23.1.3 的槽均为映像基址。lld 的缺陷记为 mcpp#1002（upstream-bug）。
+  修正在包：静态库为每个包含其头文件的单元陈述静态 API 宏，即由 `default` 蕴含的 `staticlib` feature（feature 的 `defines`
+  经包含目录的边到达消费者，compat.curl 与 compat.c-ares 已如此）。同类的 compat.fribidi（宏只在 Windows 的私有 cflags）、
+  compat.libcoro（私有 `defines`）一并改正；compat.cpptrace、compat.libassert、compat.yaml-cpp 原以 `#include_next` 垫片传递
+  宏，改为同一 feature 并删去垫片（垫片不能用于 cl.exe）。索引的模式文档原称 feature 的 `defines` 只作用于包自身，与引擎不符，
+  已改正。探测中以 compat.xz 的修正复测，libarchive-bundle 通过，archive 仍崩溃，其余部分由 `LIBARCHIVE_STATIC` 解释。
 - **sdl2 与 taskflow-module 是包的问题。** clang 23 把 `_m_prefetch` 作为内建函数，SDL 2.32.10 的 `SDL_endian.h` 在 MSVC
   ABI 的 clang 下定义它；上游 SDL2 分支已以 `!_SDL_HAS_BUILTIN(_m_prefetch)` 保护，尚无发布，compat.sdl2 在 install() 中移植
   这一行（修订 1）。taskflow 4.1.0 的 `tfprof.hpp` 以 `static inline` 定义两个命名空间作用域的函数，两个模块分区的全局模块片段
@@ -252,3 +261,13 @@ mcpp、xlings、xim-pkgindex 的 CUDA 修正与 13 个封装修订之间没有�
 - **CUDA 组件声明 GCC 运行库。** libcurand、libcudart、libnvrtc-builtins、libnvtx3interop、libcufft、libcusparse、libcusolver、
   libcublas 的 DT_NEEDED 含 `libgcc_s.so.1`（部分含 `libstdc++.so.6`），xim-pkgindex 的配方声明 `xim:gcc-runtime` 并把各版本
   记为修订 1；libnvjitlink 两者都不需要。
+- **两个 e2e 夹具以两个索引名指向一个目录。** names/162 与 lock/203 的夹具如此书写，`index-location-named-twice` 拒绝后失败；
+  改为每个索引名一个目录，断言不变。拒绝只在登记索引的命令（构建、`mcpp index update`）中发生，只读索引文件的 `mcpp add`
+  不登记，SPEC-004 §9 第 12 条写明这一点。
+- **封装修订的镜像。** 13 个封装修订发布于 GitHub；原有 GitCode 镜像的 7 个包（imgui、libarchive、miniaudio、xxhash、xz、
+  zlib、zstd）在 `mcpp-res/mwrap-<名>` 发布同一字节，逐个以重新下载的 sha256 核对；其余 6 个包沿用只有 GitHub 的写法。
+- **写引号键的模板不止 13 个。** §7.1 的清单来自引号键的放行所报告的成员，放行被删去后安装模板检查逐个核对，另有 15 个封装包
+  最新版本的模板写 `"{{self.name}}"`：accesskit、box2d、concurrentqueue、dr_libs、freetype、godot_cpp、harfbuzz、libc、libvpx、
+  libwebp、llamacpp、md4c、mimalloc、opus、sheenbidi（以各包最新标签的 `templates/**/mcpp.toml.in` 测得；ffmpeg、onnxruntime、
+  opencv 5.0.0.1 写 `{{template.package.selector}}`，不加引号）。它们同样各发布一个封装修订，#873 一并加入。
+
