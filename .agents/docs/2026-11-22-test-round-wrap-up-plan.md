@@ -252,7 +252,8 @@ mcpp、xlings、xim-pkgindex 的 CUDA 修正与 13 个封装修订之间没有�
   经包含目录的边到达消费者，compat.curl 与 compat.c-ares 已如此）。同类的 compat.fribidi（宏只在 Windows 的私有 cflags）、
   compat.libcoro（私有 `defines`）一并改正；compat.cpptrace、compat.libassert、compat.yaml-cpp 原以 `#include_next` 垫片传递
   宏，改为同一 feature 并删去垫片（垫片不能用于 cl.exe）。索引的模式文档原称 feature 的 `defines` 只作用于包自身，与引擎不符，
-  已改正。探测中以 compat.xz 的修正复测，libarchive-bundle 通过，archive 仍崩溃，其余部分由 `LIBARCHIVE_STATIC` 解释。
+  已改正。探测中先以 compat.xz 的修正复测，libarchive-bundle 通过而 archive 仍崩溃；再加上 compat.libarchive 的 `LIBARCHIVE_STATIC`，
+  两个成员在 windows-2022 上都通过（mcpp 2026.11.21.1）。
 - **sdl2 与 taskflow-module 是包的问题。** clang 23 把 `_m_prefetch` 作为内建函数，SDL 2.32.10 的 `SDL_endian.h` 在 MSVC
   ABI 的 clang 下定义它；上游 SDL2 分支已以 `!_SDL_HAS_BUILTIN(_m_prefetch)` 保护，尚无发布，compat.sdl2 在 install() 中移植
   这一行（修订 1）。taskflow 4.1.0 的 `tfprof.hpp` 以 `static inline` 定义两个命名空间作用域的函数，两个模块分区的全局模块片段
@@ -270,4 +271,13 @@ mcpp、xlings、xim-pkgindex 的 CUDA 修正与 13 个封装修订之间没有�
   最新版本的模板写 `"{{self.name}}"`：accesskit、box2d、concurrentqueue、dr_libs、freetype、godot_cpp、harfbuzz、libc、libvpx、
   libwebp、llamacpp、md4c、mimalloc、opus、sheenbidi（以各包最新标签的 `templates/**/mcpp.toml.in` 测得；ffmpeg、onnxruntime、
   opencv 5.0.0.1 写 `{{template.package.selector}}`，不加引号）。它们同样各发布一个封装修订，#873 一并加入。
-
+- **llama.cpp-m 的修订为 b10069.2。** `mwrap-b10069.1` 打了标签而未发布：发布门禁的 `release.yml` 写 `ubuntu-latest`，该映像已换为
+  ubuntu-26.04（clang 22.1.2），API 快照（clang 的 AST）按另一种读法比对而失败；`ci.yml` 在 ubuntu-24.04 上对同一提交通过。修正为
+  门禁固定 ubuntu-24.04，并以 b10069.2 发布（标签不移动）。b10069.2 的门禁随后以未带令牌的 GitHub API 调用遇到按地址的限额
+  （403），`release.yml` 改为向该步骤传入作业的令牌（与 `ci.yml` 相同）。
+- **CUDA 组件的修订在全新的 home 中测得。** xim-pkgindex#1247 合入并发布后，`xlings install libcurand` 同时安装 `gcc-runtime`，
+  `libgcc_s.so.1` 与 `libstdc++.so.6` 出现在 home 的 ABI 目录；库自身的 RUNPATH 仍为 `$ORIGIN`。xim-pkgindex 的守卫在该修订上以
+  `unhashable type: 'dict'` 中止：更新器把按架构的 `sha256` 表当作一个摘要，xpkgindex-update#13 按 `url` 表的读法读其值。
+- **Windows 单元测试按执行关系表判定 i686。** 新增的 `windows-x86_64` 执行 `i686`（WOW64）使
+  `PlatformRun/TheRunnerReachesTheArtifactsArchitecture` 在 Windows 上得到 `TargetArchitecture`；测试按表陈述的两种系统判定，
+  SPEC-016 §2.4 写明这一行。
