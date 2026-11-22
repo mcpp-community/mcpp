@@ -28,6 +28,11 @@
   Linux x86_64 machine, and `mcpp run` starts its static programs under qemu-user
   (`xim:qemu-user-riscv64@7.2.0`, installed on the first run). The `linux-musl` target set now
   includes it (mcpp#1005).
+- The iOS simulator rows (`aarch64-ios-sim`, `x86_64-ios-sim`) state their runner: `simctl-run`
+  (`xim:apple-simulator-tools@0.3.0`) chooses a device, boots it and returns the program's
+  status. It boots a simulator device, so it is enabled on request (`[target.aarch64-ios-sim]
+  runner = true`, or `MCPP_TARGET_<TRIPLE>_RUNNER_ENABLED=true`); a project's own `runner` stands
+  over it as before. `aarch64-ios` has no runner (mcpp#1005).
 - `mcpp::action::origin(path)` names the authored file a generated unit is a transformed copy
   of, one of the action's inputs, on a `source` action. The build database gives it as
   `ide.generated[].origin`. A generated unit that declares a module's primary name is a

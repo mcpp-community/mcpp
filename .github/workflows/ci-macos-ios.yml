@@ -367,6 +367,34 @@ jobs:
           fi
           echo "ok: mcpp run --target aarch64-ios-sim printed 1-2-3 and exited 0"
 
+      # THE ROW'S OWN RUNNER (design 2026-11-22 §3.19): the same program with
+      # the project's runner and workspace removed. The provider states
+      # `simctl-run` with `enabled = false`, so the run is refused until it is
+      # enabled; enabled for one invocation, its `requires` are installed and
+      # the simulator runs the program.
+      - name: "aarch64-ios-sim: the provider's runner, refused until enabled, then runs"
+        run: |
+          set -uo pipefail
+          rm -rf /tmp/iosrow && cp -R /tmp/iostest /tmp/iosrow && rm -rf /tmp/iosrow/target
+          cd /tmp/iosrow
+          python3 - <<'PY'
+          import re
+          s = open("mcpp.toml").read()
+          s = re.sub(r'\[target\.aarch64-ios-sim\]\nrunner = \["simctl-run"\]\n', '', s)
+          s = re.sub(r'\[target\.aarch64-ios-sim\.xlings\.workspace\]\n"xim:apple-simulator-tools" = ""\n', '', s)
+          open("mcpp.toml", "w").write(s)
+          PY
+          if grep -q simctl-run mcpp.toml; then echo "FAIL: the fixture still states a runner"; exit 1; fi
+          out=$("$MCPP_FRESH" run --target aarch64-ios-sim 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -8
+          [ "$rc" -eq 2 ] || { echo "FAIL: a run before consent exited $rc, not 2"; exit 1; }
+          grep -q 'runner-not-enabled' <<<"$out" || { echo "FAIL: the refusal carries no [runner-not-enabled]"; exit 1; }
+          out=$(MCPP_TARGET_AARCH64_IOS_SIM_RUNNER_ENABLED=true "$MCPP_FRESH" run --target aarch64-ios-sim 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -12
+          [ "$rc" -eq 0 ] || { echo "FAIL: the enabled run exited $rc"; exit 1; }
+          grep -qx '1-2-3' <<<"$out" || { echo "FAIL: the program's output line '1-2-3' is absent"; exit 1; }
+          echo "ok: the row's runner is refused until enabled, and enabled it runs the program in the simulator"
+
       # THE THIRD ROW, BUILT HERE AND RUN ELSEWHERE (design 2026-10-23 §2.6,
       # S15). A simulator runs the host's architecture and this runner is
       # Apple silicon, so this job proves the artefact and the SDK's slice; the
