@@ -280,6 +280,14 @@ again. A refusal that follows says whether the index was refreshed, and why not.
 Before, a row listed after the local copy was taken was refused as an unknown
 target until `mcpp index update`.
 
+A request that is built without a platform is not refused, so a miss of the
+column for it does not refresh the index *(@NEXT@+, mcpp#996)*: a custom triple
+a `[target.<triple>]` section defines, a `planned` row built with a named
+toolchain (`[target.<row>] toolchain`, `--toolchain`), and a request a table
+answers with `platform = "none"`, which ends the lookup as `--platform none`
+does. The column is still read for the first two. Before, each such build more
+than the debounce apart refreshed the index.
+
 ## Writing a platform package
 
 A platform package is a package with a `[platform]` section. openkal-platform,

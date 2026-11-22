@@ -708,18 +708,9 @@ step1_resolve_target_triple_request(PrepareState& state, TargetOverrideCtx& ctx)
     // [target.X] lookup is spelling-independent: a section keyed
     // `x86_64-w64-mingw32` matches `--target x86_64-windows-gnu` and
     // vice versa. Unparseable keys/inputs compare exactly (escape hatch).
-    auto it = state.m->targetOverrides.find(state.overrides.target_triple);
-    if (it == state.m->targetOverrides.end() && ctx.parsed) {
-        for (auto o = state.m->targetOverrides.begin();
-             o != state.m->targetOverrides.end(); ++o) {
-            if (auto k = triple::parse(o->first);
-                k && k->str() == ctx.parsed->str()) { it = o; break; }
-        }
-    }
-    ctx.hasExplicitSection   = it != state.m->targetOverrides.end();
-    ctx.sectionEntry         = ctx.hasExplicitSection ? &it->second : nullptr;
-    ctx.hasToolchainOverride = ctx.hasExplicitSection
-                             && !it->second.toolchain.empty();
+    ctx.sectionEntry         = find_request_entry(*state.m, state.overrides.target_triple, ctx.parsed);
+    ctx.hasExplicitSection   = ctx.sectionEntry != nullptr;
+    ctx.hasToolchainOverride = ctx.hasExplicitSection && !ctx.sectionEntry->toolchain.empty();
 
     ctx.known = ctx.parsed ? triple::find_known_target(*ctx.parsed) : nullptr;
     // The row with the facts of the provider that serves it here, rather than
@@ -817,7 +808,7 @@ step1_validate_target_tier(PrepareState& state, TargetOverrideCtx& ctx) {
     // sub-build given its consumer's. Before 2026.11.13.1 only the section did,
     // and a platform's conformance run that names its toolchain on the command
     // line was refused.
-    const bool toolchainNamed = ctx.hasToolchainOverride || state.tcFromCommandLine || state.tcFromConsumer;
+    const bool toolchainNamed = toolchain_named(state, ctx.sectionEntry);
     // AND SO IS ONE A PLATFORM CHOSEN FOR THE REQUEST NAMES FOR THE ROW
     // (2026.11.14.1). A platform that lists the row among its targets with its
     // toolchain serves it; the row's `planned` says only that the engine's own

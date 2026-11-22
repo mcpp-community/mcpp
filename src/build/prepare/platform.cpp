@@ -292,6 +292,7 @@ void define_early_platform(PrepareState& state) {
     // The explicit choice for this request, by the words that need no parse: the
     // flag, the environment and the tables whose selector is the request itself.
     std::optional<mp::PackageRef> chosen;
+    bool noneChosen = false;
     std::string chosenText = !state.overrides.platform_choice.empty() ? state.overrides.platform_choice
                            : mcpp::invocation::get("MCPP_PLATFORM").value_or("");
     if (chosenText.empty() && !raw.empty()) {
@@ -328,10 +329,13 @@ void define_early_platform(PrepareState& state) {
             const mp::Override* most = nullptr;
             for (auto const* o : mcpp::platform::matching(*tables, words))
                 if (o->platformSet) most = o;
-            if (most) {
-                if (!most->platformNone) chosen = most->platform;
-                break;
-            }
+            if (!most) continue;
+            // `platform = "none"` in a table is a choice as `--platform none`
+            // is: no platform, so the index's column is not asked (mcpp#996).
+            // Before, only the flag's `none` ended the lookup.
+            if (most->platformNone) noneChosen = true;
+            else chosen = most->platform;
+            break;
         }
     }
     fs::path root = state.overrides.platform_root;
@@ -347,13 +351,13 @@ void define_early_platform(PrepareState& state) {
     // §6.2).
     // A request that parses but names a row nothing defines (`x86_64-toyos`)
     // is answered so only by the column.
-    if (raw.empty()) return;
+    if (raw.empty() || noneChosen) return;
     if (const auto parsed = mcpp::toolchain::triple::parse(raw);
         parsed && (chosen || !chosenText.empty() || parsed->defined()
                    || mcpp::toolchain::triple::find_known_target(*parsed)))
         return;
     if (!chosen && chosenText.empty())
-        if (auto column = index_platform_for(state, raw, true); !column.empty())
+        if (auto column = index_platform_for(state, raw, refused_without_platform(state, raw)); !column.empty())
             if (auto ref = mp::parse_ref_text(column)) chosen = *ref;
     if (!chosen) return;
     std::vector<std::string> seg;
@@ -521,7 +525,8 @@ std::string index_platform_for(const PrepareState& state, std::string_view tripl
     // taken was refused as unknown until `mcpp index update`. Decided once per
     // row per process; what was decided is what the refusal says. A caller for
     // which a miss is not a refusal (a row the table holds and serves without a
-    // platform) asks without it.
+    // platform) asks without it; `refused_without_platform` is that question,
+    // asked of the facts the refusal gates read.
     if (it == claims->end() || it->second.empty()) {
         if (!refreshOnMiss) return {};
         {
@@ -572,12 +577,18 @@ std::string platform_short_name(std::string_view ref) {
     return r ? known_short_name(*r) : std::string{};
 }
 
-// A row the built-in table holds as `planned`: nothing of the engine serves it,
-// so a miss of the index's column for it ends in a refusal, and refreshes
-// (mcpp#967).
-static bool planned_row(const mcpp::toolchain::triple::Triple& t) {
-    const auto* known = mcpp::toolchain::triple::find_known_target(t);
-    return known && known->tier == "planned";
+// A miss of the index's column refreshes the index only for a request the
+// build refuses without a platform (mcpp#967). Through 2026.11.21.1 every row the
+// engine does not know refreshed, and every `planned` row: a custom triple a
+// `[target.<triple>]` section defines, and a `planned` row built with a named
+// toolchain, are built without one, so each such build more than the debounce
+// apart synced the index again (mcpp#996, 12 to 19 s a build).
+bool refused_without_platform(const PrepareState& state, std::string_view request) {
+    const auto parsed = mcpp::toolchain::triple::parse(request);
+    const auto* section = find_request_entry(*state.m, request, parsed);
+    const auto* known = parsed ? mcpp::toolchain::triple::find_known_target(*parsed) : nullptr;
+    if (!known) return !section && !(parsed && parsed->defined());
+    return known->tier == "planned" && !toolchain_named(state, section);
 }
 
 // WHETHER THE BUILT-IN TABLE ANSWERS THE PLATFORM COLUMN FOR A ROW (design
@@ -627,7 +638,7 @@ std::string named_provider(const PrepareState& state, const mcpp::toolchain::tri
         // a choice of the project would. A row nothing defines is answered by
         // `define_early_platform`.
             if (!mcpp::toolchain::triple::find_known_target(t) || table_answers(state, t)) return {};
-        const auto column = index_platform_for(state, t.str(), planned_row(t));
+        const auto column = index_platform_for(state, t.str(), refused_without_platform(state, t.str()));
         if (column.empty()) return {};
         const auto ref = mp::parse_ref_text(column);
         if (!ref) return {};
@@ -703,7 +714,7 @@ std::expected<void, std::string> step1_select_platform(PrepareState& state) {
     {
         const bool tableAnswers = table_answers(state, t);
         if (!tableAnswers)
-            if (auto indexed = index_platform_for(state, t.str(), planned_row(t)); !indexed.empty()) {
+            if (auto indexed = index_platform_for(state, t.str(), refused_without_platform(state, t.str())); !indexed.empty()) {
                 column = std::move(indexed);
                 fromIndex = true;
             }
