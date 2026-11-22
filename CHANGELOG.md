@@ -14,6 +14,9 @@
   not yet filled is absent. Before, only the declared directories were judged, by existence,
   so a reader beside a first fetch skipped the refresh and reported no local package index
   (mcpp#927, design 2026-11-12 §18 P3).
+- `mcpp test` counts a suite run as a case by its cases on the program's line as the summary
+  does: an mtest program of one suite and seven cases read `8 cases` on its line and
+  `7 passed` in the summary.
 
 ## [2026.11.21.1] - 2026-11-21
 
