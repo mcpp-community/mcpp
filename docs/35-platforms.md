@@ -281,7 +281,7 @@ Before, a row listed after the local copy was taken was refused as an unknown
 target until `mcpp index update`.
 
 A request that is built without a platform is not refused, so a miss of the
-column for it does not refresh the index *(@NEXT@+, mcpp#996)*: a custom triple
+column for it does not refresh the index *(2026.11.22.1+, mcpp#996)*: a custom triple
 a `[target.<triple>]` section defines, a `planned` row built with a named
 toolchain (`[target.<row>] toolchain`, `--toolchain`), and a request a table
 answers with `platform = "none"`, which ends the lookup as `--platform none`

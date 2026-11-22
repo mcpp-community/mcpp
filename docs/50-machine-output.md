@@ -676,7 +676,7 @@ a program classifying the outcome reads `reason`:
 | `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index; from 2026.11.21.1, with no archive directory named *(2026.9.16.1+)* |
 | `artifact-unavailable-offline` | the run is offline, archive directories are named, and neither they nor the download cache hold an archive the plan needs; the message carries the provider's list *(2026.11.21.1+)* |
 | `bundle-older-than-lock` | `mcpp fetch --from`: the bundle lacks a version `mcpp.lock` records *(2026.11.21.1+)* |
-| `index-location-named-twice` | two entries of the effective `[indices]` (a manifest's, or a member's beside its workspace's) name one directory, or one repository at one pin; the message names both and the location *(@NEXT@+)* |
+| `index-location-named-twice` | two entries of the effective `[indices]` (a manifest's, or a member's beside its workspace's) name one directory, or one repository at one pin; the message names both and the location *(2026.11.22.1+)* |
 | `package-cycle` | the dependency graph contains a cycle of packages; the message names its edges *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | a program or test that states a self-contained C++ runtime loads a C++ shared library of the build that couples to a shared one *(2026.9.16.1+)* |
 | `static-package-in-two-images` | a static package several images of the build reach, on a target where an image cannot use another image's copy *(2026.9.16.1+)* |

@@ -179,7 +179,7 @@ note: the default toolchain (`mcpp toolchain default`) is now gcc@16.2.0; this p
 
 一个由包提供的工具链的配套载荷——GCC 用以汇编与链接的 binutils、glibc 基础层的 Linux 内核头文件、GCC 的运行库——取工具链载荷为本宿主声明的
 运行依赖的版本。两个描述文件给出声明，依次读取：载荷安装时的描述文件（安装器把它保存在载荷旁），然后是索引当前的描述文件；store 持有的
-第一个声明决定（*@NEXT@ 起*）。索引更新改变了声明时，已安装的工具链不因此失去配套载荷；此前 xim 的配方改到 store 中没有的版本后，已安装的
+第一个声明决定（*2026.11.22.1 起*）。索引更新改变了声明时，已安装的工具链不因此失去配套载荷；此前 xim 的配方改到 store 中没有的版本后，已安装的
 GCC 失去 binutils。从 `[xlings] upstream` 链接载荷的 home 持有索引所声明的配套载荷，载荷旁是上游的描述文件，取前者。store 中有多个版本时
 取声明的版本；没有声明时取最新版本。store 一个声明也不满足时报告为 degraded；`mcpp toolchain install` 安装声明的版本。
 
@@ -1463,7 +1463,7 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 
 写在 `cxxflags` 中时，std 模块的预编译看不到它。
 
-`i686-windows-msvc` 是目标表中的一个 `preview` 行（*@NEXT@ 起，mcpp#996*），与
+`i686-windows-msvc` 是目标表中的一个 `preview` 行（*2026.11.22.1 起，mcpp#996*），与
 `x86_64-windows-msvc` 一样由 msvc 提供者供给；x86_64 Windows 运行它的程序（WOW64）。为它
 构建不需要 `[target.i686-windows-msvc]` 段。此前它是自定义三元组，需要声明该段。
 

@@ -602,7 +602,7 @@ replaced}` —— `origin` 与构建的状态行使用的是同一句话
 | `offline-download-required` | 本次运行离线，而规划需要下载某样东西：工具链、包、git 修订，或包索引；2026.11.21.1 起，限于未写明归档目录时 *(2026.9.16.1+)* |
 | `artifact-unavailable-offline` | 本次运行离线且写明了归档目录，而这些目录与下载缓存都没有规划所需的归档；消息附提供者列出的缺少项 *(2026.11.21.1+)* |
 | `bundle-older-than-lock` | `mcpp fetch --from`：bundle 缺少 `mcpp.lock` 所记的版本 *(2026.11.21.1+)* |
-| `index-location-named-twice` | 生效的 `[indices]`（一份清单的，或成员的与其工作区的）中两项指向同一目录，或同一仓库的同一 pin；消息写出两项与该位置 *(@NEXT@+)* |
+| `index-location-named-twice` | 生效的 `[indices]`（一份清单的，或成员的与其工作区的）中两项指向同一目录，或同一仓库的同一 pin；消息写出两项与该位置 *(2026.11.22.1+)* |
 | `package-cycle` | 依赖图中存在一个包的环；消息列出环上的边 *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | 一个声明了自含 C++ 运行时的程序或测试，加载了本次构建中耦合到共享运行时的 C++ 共享库 *(2026.9.16.1+)* |
 | `static-package-in-two-images` | 一个静态包被本次构建的多个映像到达，而在该目标上一个映像不能使用另一个映像里的副本 *(2026.9.16.1+)* |

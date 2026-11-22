@@ -216,7 +216,7 @@ the Linux kernel headers of the glibc base, GCC's runtime libraries -- are the
 versions its payload declares as runtime dependencies for this host. Two
 descriptors declare them, read in order: the one the payload was installed with,
 which the installer keeps beside it, then the index's current one; the first
-declaration the store holds decides *(@NEXT@+)*. An index update that moves the
+declaration the store holds decides *(2026.11.22.1+)*. An index update that moves the
 declaration does not take the companions from an installed toolchain; before,
 an installed GCC lost its binutils when xim's recipe moved to a version the
 store did not hold. A home that links the payload from an `[xlings] upstream`
@@ -1656,7 +1656,7 @@ dialect_cxxflags = ["-D__cpp_impl_coroutine=201902L"]
 
 In `cxxflags` the std module's precompile does not see it.
 
-`i686-windows-msvc` is a `preview` row of the target table *(@NEXT@+,
+`i686-windows-msvc` is a `preview` row of the target table *(2026.11.22.1+,
 mcpp#996)*, served by the msvc provider as `x86_64-windows-msvc` is; x86_64
 Windows runs its programs (WOW64). A project needs no `[target.i686-windows-msvc]`
 section to build it. Before, it was a custom triple that required the section.

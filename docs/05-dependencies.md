@@ -483,7 +483,7 @@ refreshing it reads the local index at once, unless an index the home reads (the
 provider's own, `xim`, or one the home declares) has no packages yet; it then
 waits for that refresh and reads what it fetched, instead of reporting no local
 package index *(2026.11.13.1+; the provider's own index and a directory not yet
-filled, @NEXT@+, mcpp#927)*.
+filled, 2026.11.22.1+, mcpp#927)*.
 
 Run any command with `-v` to see the decision for each dependency and why.
 
