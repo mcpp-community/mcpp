@@ -4,6 +4,8 @@ import mcpplibs.mtest;
 import mcpplibs.os.platform;
 import mcpp.provider.xlings;
 import mcpp.invocation;
+import mcpp.effects;
+import mcpp.home.files;
 
 using namespace mcpplibs::mtest;
 
@@ -838,4 +840,72 @@ UTest a_projects_install_takes_the_homes_turn{"XlingsState/AProjectsInstallTakes
               std::filesystem::weakly_canonical(home / "subos")));
     std::filesystem::remove_all(home);
     std::filesystem::remove_all(project);
+}};
+
+// ─── A refresh beside another process (mcpp#927, design 2026-11-12 §18 P3) ───
+//
+// The test holds the index lock as another process would. A second holder in this process is
+// refused as one in another would be (flock and LockFileEx lock an open file, not a process), so
+// the refresh below never reaches a sync: it skips, or it waits for this lock.
+namespace {
+
+// A home whose provider's index (xim) and one declared index (`mcpplibs`) are laid out as a reader
+// finds them: `<index>/pkgs`.
+std::filesystem::path home_with_indices() {
+    auto home = make_tempdir("mcpp-xlings-index-lock");
+    std::ofstream(home / ".xlings.json")
+        << R"({"index_repos": [{"name": "mcpplibs", "url": "https://example.invalid/index.git"}]})";
+    std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs");
+    std::filesystem::create_directories(home / "data" / "mcpplibs" / "pkgs");
+    return home;
+}
+
+// Whether a refresh started while this process holds the home's index lock waited for it: it had
+// not returned after a second and a half. `fill` then completes the home, as the other process's
+// fetch would, and the lock is released; the refresh returns 0 either way.
+bool refresh_waited_beside_another(const std::filesystem::path& home, const std::function<void()>& fill) {
+    std::future<int> refresh;  // declared first, so that it ends after the lock is released
+    auto held = mcpp::home::FileLock::try_acquire(home / "data");
+    expect(fatal(held.has_value())) << "the index lock could not be taken";
+    expect(fatal(!mcpp::home::FileLock::try_acquire(home / "data").has_value()))
+        << "a second holder in this process was not refused: the refresh would run a sync";
+    const mcpp::provider::xlings::Env env{.home = home};
+    refresh = std::async(std::launch::async, [env] { return mcpp::provider::xlings::update_index(env, true); });
+    const bool waited = refresh.wait_for(std::chrono::milliseconds{1500}) == std::future_status::timeout;
+    fill();
+    held.reset();
+    expect(fatal(refresh.wait_for(std::chrono::seconds{30}) == std::future_status::ready))
+        << "the refresh did not return once the lock was released";
+    expect(eq(refresh.get(), 0));
+    return waited;
+}
+
+}  // namespace
+
+UTest skips_beside_another_when_every_index_is_present{"XlingsIndexLock/SkipsBesideAnotherWhenEveryIndexIsPresent", [] {
+    if (mcpp::effects::offline_mode()) skip("offline: a refresh returns before the lock");
+    auto home = home_with_indices();
+    expect(!refresh_waited_beside_another(home, [] {})) << "a refresh waited although every index was in place";
+    std::filesystem::remove_all(home);
+}};
+
+// The window #927 reported: a declared index's directory made by the other process's fetch and not
+// yet filled is absent to a reader, so it is absent to the refresh that would skip.
+UTest waits_beside_another_for_an_index_not_yet_filled{"XlingsIndexLock/WaitsBesideAnotherForAnIndexNotYetFilled", [] {
+    if (mcpp::effects::offline_mode()) skip("offline: a refresh returns before the lock");
+    auto home = home_with_indices();
+    std::filesystem::remove_all(home / "data" / "mcpplibs" / "pkgs");
+    expect(refresh_waited_beside_another(home, [&] { std::filesystem::create_directories(home / "data" / "mcpplibs" / "pkgs"); }))
+        << "a refresh skipped beside another while a declared index had no packages";
+    std::filesystem::remove_all(home);
+}};
+
+// The provider's own index is read as a declared one is: a first fetch of it is waited for too.
+UTest waits_beside_another_for_the_providers_own_index{"XlingsIndexLock/WaitsBesideAnotherForTheProvidersOwnIndex", [] {
+    if (mcpp::effects::offline_mode()) skip("offline: a refresh returns before the lock");
+    auto home = home_with_indices();
+    std::filesystem::remove_all(home / "data" / "xim-pkgindex");
+    expect(refresh_waited_beside_another(home, [&] { std::filesystem::create_directories(home / "data" / "xim-pkgindex" / "pkgs"); }))
+        << "a refresh skipped beside another while the provider's own index was absent";
+    std::filesystem::remove_all(home);
 }};

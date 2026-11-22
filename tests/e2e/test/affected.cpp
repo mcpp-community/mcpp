@@ -134,7 +134,8 @@ UTest g{"g", [] {
         expect(s::has_line(s::text(f1), R"(test_smoke \.\.\. ok \(.*1 case\))")) << "a declared case is not selected alone";
         auto f2 = grp.mcpp({"test", "--case", "g/t*"});
         expect(e2e::succeeded(f2));
-        expect(s::has_line(s::text(f2), R"(test_smoke \.\.\. ok \(.*3 cases\))")) << "a pattern below the listed case does not run it whole";
+        // Run whole: both of its cases (the suite is told by them, as the summary counts it).
+        expect(s::has_line(s::text(f2), R"(test_smoke \.\.\. ok \(.*2 cases\))")) << "a pattern below the listed case does not run it whole";
     };
 
     "1120 a header affects the tests built from the units that read it"_test[s::gcc] = [] {

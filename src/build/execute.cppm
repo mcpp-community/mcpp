@@ -5486,6 +5486,16 @@ static void test_resolve_runner(TestBuild& tb, const TestOptions& testOpts, bool
     }
 }
 
+// A CASE THAT DECLARES CASES (a suite run as a case) is told by them: neither a
+// program's line nor the run's summary counts it beside them, so that the two
+// counts of one run agree (an mtest program of one suite and seven cases read
+// `8 cases` on its line and `7 passed` in the summary).
+bool declares_cases(const mcpp::build::test_protocol::Report& rep, const std::string& id) {
+    return std::ranges::any_of(rep.cases, [&](const auto& c) {
+        return c.id.size() > id.size() && c.id.starts_with(id) && c.id[id.size()] == '/';
+    });
+}
+
 // A failed test whose file imports a module no package of this build provides:
 // the compiler says only that the module was not built. A test's framework is a
 // `[dev-dependencies]` entry (docs/08), which a manifest written over the
@@ -6007,8 +6017,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                         report = {};
                         spoken = 0;
                     } else {
-                        casesNote = std::format(", {} case{}", report.cases.size(),
-                                                report.cases.size() == 1 ? "" : "s");
+                        const auto told = std::ranges::count_if(report.cases, [&](const auto& c) {
+                            return !declares_cases(report, c.id);
+                        });
+                        casesNote = std::format(", {} case{}", told, told == 1 ? "" : "s");
                         if (exitCode == 0 && !timedOut && report.failed()) exitCode = 1;
                     }
                 }
@@ -6858,15 +6870,10 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
 
     // THE CASES, BESIDE THE PROGRAMS THE COUNT ABOVE IS OF. A case that
     // declared cases (a suite run as a case) is told by them, not counted.
-    auto declares = [](const mcpp::build::test_protocol::Report& rep, const std::string& id) {
-        return std::ranges::any_of(rep.cases, [&](const auto& c) {
-            return c.id.size() > id.size() && c.id.starts_with(id) && c.id[id.size()] == '/';
-        });
-    };
     int casesPassed = 0, casesFailed = 0, casesSkipped = 0;
     for (auto& r : results)
         for (const auto& c : r.report.cases) {
-            if (declares(r.report, c.id)) continue;
+            if (declares_cases(r.report, c.id)) continue;
             if (c.status == "pass" || c.status == "xfail") ++casesPassed;
             else if (c.status == "fail" || c.status == "xpass") ++casesFailed;
             else if (c.status == "skip") ++casesSkipped;
@@ -6905,7 +6912,7 @@ static int test_run_member(TestBuild& tb, const TestOptions& testOpts,
                 continue;
             std::println("    {}", r.name);
             for (const auto& c : r.report.cases) {
-                if ((c.status != "fail" && c.status != "xpass") || declares(r.report, c.id)) continue;
+                if ((c.status != "fail" && c.status != "xpass") || declares_cases(r.report, c.id)) continue;
                 if (c.failures.empty())
                     std::println("        {}  {}", c.id, c.status == "xpass" ? "passed, expected to fail"
                                  : c.reason.empty() ? std::string("failed") : c.reason);

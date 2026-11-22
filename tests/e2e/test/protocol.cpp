@@ -1,6 +1,6 @@
 // Test programs that speak mtest's test protocol: their cases, live case records, the spec's
 // launch, capabilities, checks and output (formerly tests/e2e/1035, 1065 and 1070); run fixtures;
-// the time the kit gives a command within its case.
+// the time the kit gives a command within its case; a suite counted by its cases.
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -469,6 +469,27 @@ int main() {{
         // Where neither the case nor a scope around it states a time, the runner's limit would end
         // the program without the case's report of a hung command: ten minutes bound it.
         expect(fatal(s::mcpp_command({"--version"}, s::case_dir()).timeout == std::chrono::minutes{10}));
+    };
+
+    "1143 a suite is told by its cases on the program's line and in the summary"_test = [] {
+        // An mtest program of one suite of two cases and one case alone reports four cases, the
+        // suite among them; the suite is told by its cases, so the program's line and the run's
+        // summary both count three (an mtest program of one suite and seven cases read `8 cases`
+        // on its line and `7 passed` in the summary, 2026.11.21.1).
+        auto p = s::project::scaffold("suites");
+        for (const auto& f : s::glob(p.at("tests"), "*.cpp")) fs::remove(f);
+        p.write("tests/cases.cpp", R"(import mcpplibs.mtest;
+using namespace mcpplibs::mtest;
+UTest suite{"suite", [] {
+    "first"_test = [] { expect(eq(1, 1)); };
+    "second"_test = [] { expect(eq(2, 2)); };
+}};
+UTest alone{"alone", [] { expect(eq(3, 3)); }};
+)");
+        auto r = p.mcpp({"test"});
+        expect(fatal(e2e::succeeded(r))) << s::text(r);
+        expect(s::has_line(s::text(r), R"(cases \.\.\. ok \([0-9.]+s, 3 cases\))")) << "the program's line counts the suite: " << s::text(r);
+        expect(e2e::contains(s::text(r), "cases: 3 passed, 0 failed, 0 skipped")) << s::text(r);
     };
 }};
 

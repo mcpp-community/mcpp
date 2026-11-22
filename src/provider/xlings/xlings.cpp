@@ -77,6 +77,15 @@ std::filesystem::path index_pkgs_dir(const std::filesystem::path& indexDir) {
     return indexDir / "pkgs";
 }
 
+// AN INDEX IS PRESENT WHEN ITS PACKAGES ARE. A reader that finds none reports no local package
+// index (`index_status_for`), and a refresh beside another process waits for it
+// (`every_index_present`): one judgement, so that a directory another process has made and not
+// yet filled is absent to both (mcpp#927).
+bool index_present(const std::filesystem::path& indexDir) {
+    std::error_code ec;
+    return std::filesystem::exists(index_pkgs_dir(indexDir), ec) && !ec;
+}
+
 std::filesystem::path index_refresh_marker(const std::filesystem::path& indexDir) {
     return indexDir / ".mcpp-index-updated";
 }
@@ -119,7 +128,7 @@ bool official_index_cache_matches_package_file(const Env& env,
 }
 
 void mark_index_refreshed(const std::filesystem::path& indexDir) {
-    if (!std::filesystem::exists(index_pkgs_dir(indexDir))) return;
+    if (!index_present(indexDir)) return;
     std::error_code ec;
     std::filesystem::create_directories(indexDir, ec);
     auto marker = index_refresh_marker(indexDir);
@@ -145,7 +154,7 @@ void mark_known_indexes_refreshed(const Env& env) {
 
 bool is_index_dir_fresh(const std::filesystem::path& indexDir, std::int64_t ttlSeconds) {
     std::error_code ec;
-    if (!std::filesystem::exists(index_pkgs_dir(indexDir))) return false;
+    if (!index_present(indexDir)) return false;
 
     auto marker = index_refresh_marker(indexDir);
     if (!std::filesystem::exists(marker)) return false;
@@ -197,11 +206,9 @@ std::optional<std::string> read_index_revision(const std::filesystem::path& inde
 
 IndexStatus index_status_for(const std::filesystem::path& indexDir,
                              std::int64_t ttlSeconds) {
-    std::error_code ec;
-    bool present = std::filesystem::exists(index_pkgs_dir(indexDir), ec) && !ec;
     return IndexStatus{
         .dir        = indexDir,
-        .present    = present,
+        .present    = index_present(indexDir),
         .fresh      = is_index_dir_fresh(indexDir, ttlSeconds),
         .ageSeconds = index_age_seconds(indexDir),
         .rev        = read_index_revision(indexDir),
@@ -2198,6 +2205,13 @@ int update_index(const Env& env, bool quiet) {
 }
 
 namespace {
+// Every index a reader of this home reads, as it judges one: the provider's own and each declared.
+bool every_index_present(const Env& env) {
+    return index_present(official_index_dir(env))
+        && std::ranges::all_of(paths::declared_indices(env),
+                               [](const auto& d) { return index_present(d.dir); });
+}
+
 int update_index_unguarded(const Env& env, bool quiet) {
     // Offline is absolute: no caller gets to reach the network by going around
     // the decision layer. Reported as success so a build that can still resolve
@@ -2226,11 +2240,12 @@ int update_index_unguarded(const Env& env, bool quiet) {
         // was still fetching, or exchanging on a volume without an atomic
         // exchange, and reported "no local package index" for a home that had
         // one a moment later. Such a reader waits for the refresh it skipped;
-        // one with an index skips as before.
-        bool absent = false;
-        for (const auto& d : paths::declared_indices(env))
-            if (!std::filesystem::exists(d.dir, lockEc)) absent = true;
-        if (!absent) {
+        // one with every index skips as before. Every index is the provider's
+        // own (xim) and each the home declares, judged as a reader judges one
+        // (`index_present`): the declared directories alone, by existence,
+        // let a reader skip beside a first fetch of xim, and beside a declared
+        // directory made and not yet filled.
+        if (every_index_present(env)) {
             mcpp::log::verbose("index",
                 "another process is refreshing the index — skipping this one");
             return 0;
