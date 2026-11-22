@@ -381,10 +381,10 @@ export int consumer_flag_v() {
 
     // Holds the machine: compiles at the same time need the budget's slots (SPEC-017 O11).
     "860 a workspaces programs compile at the same time"_test[resource{"machine"}] = [] {
-        // A: at -j 4 the members' build programs compile at the same time -- more than one is under
-        // way at once -- and three run. B: at -j 1 they compile one after another and run in the
-        // same order. C: when two do not compile, the failure reported is that of the first to
-        // run, at either -j.
+        // A: at -j 4 the members' build programs are built at the same time -- steps of more than
+        // one member under way at once -- each is compiled, and three run. B: at -j 1 they are
+        // built one after another and run in the same order. C: when two do not compile, the
+        // failure reported is that of the first to run, at either -j.
         s::project ws(s::case_dir() / "ws", {{"mcpp.toml", "[workspace]\nmembers = [\"pa\", \"pb\", \"pc\"]\n"}});
         for (std::string m : {"pa", "pb", "pc"}) {
             ws.write(m + "/mcpp.toml", std::format("[package]\nname    = \"{0}\"\nversion = \"0.1.0\"\n\n[targets.{0}]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n", m));
@@ -406,20 +406,41 @@ export int consumer_flag_v() {
         auto clean = [&] {
             for (std::string d : {"target", "pa/target", "pb/target", "pc/target"}) fs::remove_all(ws.at(d));
         };
-        // The members' compiles, and the most of them under way at one instant.
-        const auto compiles = [&](std::string_view part) {
-            std::vector<std::pair<long, long>> out;
-            for (std::string m : {"pa", "pb", "pc"}) {
-                const auto sp = span(m);
-                expect(fatal(sp.has_value())) << part << ": the build programs' .ninja_log does not record the compile of " << m;
-                out.push_back(*sp);
+        // Each member's build program was compiled.
+        const auto compiled = [&](std::string_view part) {
+            for (std::string m : {"pa", "pb", "pc"})
+                expect(fatal(span(m).has_value())) << part << ": the build programs' .ninja_log does not record the compile of " << m;
+        };
+        // The steps of each member's build program -- its scan, compile, resource and link
+        // (`obj/<m>-...`, `res/<m>-...`, `bin/<m>-...`) -- and the most members with a step under
+        // way at one instant. A step is an edge: the log's rows of one command share its hash and
+        // times (an edge writes several files), and an edge is a member's when every file it
+        // writes is that member's. The edge that deploys the C++ runtime's DLLs beside each
+        // member's program on Windows writes into all three, and is no member's step.
+        const auto steps = [&](std::string_view part) {
+            const auto logs = s::find_files(ws.at("target/.build-mcpp/host"), R"(\.ninja_log)");
+            expect(fatal(!logs.empty())) << part << ": the build programs' graph left no .ninja_log";
+            const std::regex re{R"(^(obj|res|bin)/(p[abc])-[0-9a-f]+/)"};
+            std::map<std::string, std::pair<std::set<std::string>, std::pair<long, long>>> edges;
+            for (const auto& row : ninja_rows(logs.front())) {
+                auto& edge = edges[(row.size() > 4 ? row[4] : row[3]) + "@" + row[0] + "-" + row[1]];
+                edge.second = {std::stol(row[0]), std::stol(row[1])};
+                std::smatch m;
+                edge.first.insert(std::regex_search(row[3], m, re) ? m[2].str() : std::string{"-"});
             }
+            std::vector<std::pair<std::string, std::pair<long, long>>> out;
+            for (const auto& [_, edge] : edges)
+                if (edge.first.size() == 1 && *edge.first.begin() != "-") out.push_back({*edge.first.begin(), edge.second});
             return out;
         };
-        const auto most_at_once = [](const std::vector<std::pair<long, long>>& spans) {
+        const auto members_at_once = [](const std::vector<std::pair<std::string, std::pair<long, long>>>& all) {
             std::size_t most = 0;
-            for (const auto& [at, _] : spans)
-                most = std::max<std::size_t>(most, std::ranges::count_if(spans, [&](const auto& o) { return o.first <= at && at < o.second; }));
+            for (const auto& [_, at] : all) {
+                std::set<std::string> busy;
+                for (const auto& [m, sp] : all)
+                    if (sp.first <= at.first && at.first < sp.second) busy.insert(m);
+                most = std::max(most, busy.size());
+            }
             return most;
         };
         const auto graph_rows = [&] {
@@ -428,19 +449,23 @@ export int consumer_flag_v() {
                 for (const auto& row : ninja_rows(log)) text += std::format("\n  {} {} {}", row[0], row[1], row[3]);
             return text;
         };
-        // Not all three at one instant: each compile waits for its own unit's scan, and on three
-        // processors the scans of the same file ended 1.9, 3.5 and 7.7 s into the graph, so the
-        // first compile had ended before the third began while two were under way together
-        // (macOS, CI 2026-11-21).
+        // THE MEMBERS' STEPS, NOT THEIR COMPILES. Each compile waits for its own unit's scan, and
+        // on a three-processor macOS runner the scans of the same file took 0.19, 1.65 and 2.75 s,
+        // so the compiles (0.7 to 0.9 s each) were under way one at a time; the scans of all three
+        // members began within 35 ms of the graph's start and ran together (CI, 2026-11-22). That
+        // the members' programs are built in one graph is the steps under way together; when they
+        // compile follows from the scans' times.
         auto r = ws.mcpp({"build", "--workspace", "-j", "4"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "A: the workspace did not build at -j 4: " << s::text(r);
-        expect(fatal(most_at_once(compiles("A")) >= 2u)) << "A: no two compiles were under way at once at -j 4; the graph's steps:" << graph_rows();
+        compiled("A");
+        expect(fatal(members_at_once(steps("A")) >= 2u)) << "A: no two members' build programs were under way at once at -j 4; the graph's steps:" << graph_rows();
         const auto order = ran(s::text(r), "p[abc]");
         expect(fatal(order.size() == 3u)) << "A: expected three programs to run, got " << order.size() << ": " << s::text(r);
         clean();
         r = ws.mcpp({"build", "--workspace", "-j", "1"}, inherited);
         expect(fatal(e2e::succeeded(r))) << "B: the workspace did not build at -j 1: " << s::text(r);
-        expect(fatal(most_at_once(compiles("B")) == 1u)) << "B: two compiles overlapped at -j 1; the graph's steps:" << graph_rows();
+        compiled("B");
+        expect(fatal(members_at_once(steps("B")) == 1u)) << "B: two members' build programs overlapped at -j 1; the graph's steps:" << graph_rows();
         expect(fatal(ran(s::text(r), "p[abc]") == order)) << "B: the programs ran in another order at -j 1 than at -j 4";
         const auto first = order[0], second = order[1];
         ws.write(first + "/build.mcpp", "#include <regex>\n#include <map>\n#error T860-failure-in-" + first + "\nint main() { return 0; }\n");
