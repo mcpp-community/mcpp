@@ -583,7 +583,7 @@ step9_resolve_and_realise_cabi(PrepareState& state, TargetSideGather& gather) {
                     auto spec = mcpp::freestanding::resolve(*tt);
                     if (spec) {
                         freestandingFlags.push_back(
-                            "--target=" + std::string(spec->triple));
+                            "--target=" + std::string(spec->target));
                         for (auto const& f : mcpp::freestanding::compile_flags(*spec))
                             freestandingFlags.push_back(f);
                     }

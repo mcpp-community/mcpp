@@ -46,7 +46,7 @@ export namespace mcpp::freestanding {
 inline std::string compile_prefix(const Spec& s, bool targetCxxRuntime = false,
                                   bool hostedC = false) {
     std::string out;
-    out += " --target=" + std::string(s.triple);
+    out += " --target=" + std::string(s.target);
     for (auto const& f : compile_flags(s, targetCxxRuntime, hostedC)) { out += ' '; out += f; }
     return out;
 }
@@ -81,7 +81,7 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
                                   const std::filesystem::path&)>& esc)
 {
     std::string out;
-    out += " --target=" + std::string(s.triple);
+    out += " --target=" + std::string(s.target);
     // The default `targetCxxRuntime` is deliberate here and not an omission of
     // the kind fixed in cache_key.cppm: what this list contributes to a LINK
     // line is the machine description (`-march`, `-mabi`, `-mcmodel`), and the

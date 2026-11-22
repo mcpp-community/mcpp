@@ -45,7 +45,7 @@
 - `exact = true` 的行只由写出其全部段的请求得到（Android 的行）。
 - `march`、`mabi`、`code-model`、`flags`、`link-emulation` 是行的机器描述，引擎原样使用，**不可**被替换；机器不同的目标以
   另一行表达（§5）。
-- `clang-triple` 是交给 clang 的目标拼写，未写时由段推出；它只改变编译器所见的三元组，不改变身份（v1.1）。
+- `clang-triple` 是交给 clang 的目标拼写，未写时由段推出；它只改变编译器所见的三元组，不改变身份（v1.1）。裸机行同样以它为每个编译单元与 C 环境验证探测的 `--target`；平台定义的裸机行未写 `march` 与 `link-emulation` 时，处理器取编译器的缺省，目标照样给出（v1.9）。
 - `loader` 是该行的动态程序所写的程序解释器：运行它的机器上的路径（`/lib/ld-linux-aarch64.so.1`）。内置行与平台定义的行
   同一读法；引擎不另持有按架构的加载器表（v1.2）。
 - `execution` 是产物运行的系统，未写时为 os 段。内核相同而系统不同的行**必须**写出它（Android 的行为 `android`）（v1.2）。
@@ -279,4 +279,4 @@
 | 1.6 | 2026-11-19 | mcpp 2026.11.19.1（mcpp#957）：§6 执行可达性的谓词之前没有按系统的分支；Apple 的行由同一个谓词判定；系统名检查的词表含三元组的系统谓词 |
 | 1.7 | 2026-11-20 | mcpp 2026.11.20.1（mcpp#981）：行的 `link-without-main`，没有程序起点的可执行映像的链接词；内置 `wasm32-emscripten` 行为 `--no-entry` |
 | 1.8 | 2026-11-22 | mcpp 2026.11.22.1（设计 2026-11-22 §4）：`i686-windows-msvc` 为 preview 行；执行关系表中 `windows-x86_64` 执行 `i686`（§2.4）。 |
-| 1.9 | 2026-11-23 | mcpp @RELEASE@（设计 2026-11-22 §3.4、§3.17）：系统表的 `kernel-abi`（测量、载荷布局、包）与 `interfaces`；`MCPP_KERNEL_ABI_INTERFACES` 在系统供给该层时取系统表的 `interfaces` |
+| 1.9 | 2026-11-23 | mcpp @RELEASE@（设计 2026-11-22 §3.4、§3.17）：系统表的 `kernel-abi`（测量、载荷布局、包）与 `interfaces`；`MCPP_KERNEL_ABI_INTERFACES` 在系统供给该层时取系统表的 `interfaces`；裸机行的 `--target` 取 `clang-triple`，平台定义的裸机行不写机器描述时也给出目标（mcpp#1006）；平台定义的行取其提供者的 `linkage` |

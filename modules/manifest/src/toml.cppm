@@ -4672,10 +4672,13 @@ std::expected<Manifest, ManifestError> parse_document(const t::Document& documen
                         toml_header_key(triple), key, tables));
                     continue;
                 }
-                const std::span<const std::string_view> known = value.is_array()
-                    ? std::span<const std::string_view>(kKnownTargetArrays)
-                    : std::span<const std::string_view>(kKnownTargetScalars);
-                if (std::ranges::find(known, key) != known.end()) continue;
+                // A known key's type is its parse site's to check (above): the
+                // sweep asks the name. Asking by the value's type reported
+                // `runner = true`, a form the parser reads (2026.11.17.1), as an
+                // unsupported key, because a boolean is not an array.
+                if (std::ranges::find(kKnownTargetScalars, key) != std::end(kKnownTargetScalars)
+                    || std::ranges::find(kKnownTargetArrays, key) != std::end(kKnownTargetArrays))
+                    continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
                     "cxx_runtime, linkage, min_api_level, platform, run_under, runner, sysroot, "

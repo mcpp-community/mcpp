@@ -79,6 +79,12 @@
 - The provider of a platform named by a path (`platform = { path = "<dir>" }`) is selected. Its
   package reference `path:<dir>` was read as a payload without a version, so the selection left
   it out, and what only the provider states, such as its `linkage`, did not apply (mcpp#1007).
+- A bare-metal row a platform defines is compiled, and its C library verified, for its
+  `clang-triple` (else the row), also when the row states no `march` or `link-emulation`. Before,
+  such a row (openkal-musl's `riscv64-none-musl`) had no target selection, and the verification
+  probe refused it.
+- `[target.<triple>] runner = true` and `runner = false` are read without the warning
+  "unsupported key 'runner'": the key check asked the value's type, and a boolean is not an array.
 - The runtime-closure check expands `$ORIGIN` at the directory a library was opened in, as the
   loader does, not at the target of the link it was reached through. A program whose libraries are
   links in a farm, each finding its dependencies beside it (compat.curand under LLVM), was refused
