@@ -415,6 +415,7 @@ reason exclusive-capability
 reason host-cannot-serve
 reason host-module-missing
 reason host-tool-toolchain
+reason index-location-named-twice
 reason interface-not-provided
 reason layer-cycle
 reason layer-ordering

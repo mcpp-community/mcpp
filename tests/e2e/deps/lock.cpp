@@ -168,15 +168,16 @@ E2E lock{"lock", s::home_fixture, [] {
         auto descriptor = [](std::string_view ns, std::string_view desc) {
             return std::format("package = {{\n    spec = \"1\",\n    namespace = \"{0}\",\n    name = \"lua\",\n    description = \"{1}\",\n    licenses = {{\"MIT\"}},\n    type = \"package\",\n    xpm = {{ linux = {{ [\"1.0.0\"] = {{\n        url = \"https://example.invalid/{0}-lua.tar.gz\",\n        sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\",\n    }} }} }},\n    mcpp = {{\n        language = \"c++23\",\n        import_std = false,\n        sources = {{ \"src/lua.cppm\" }},\n        targets = {{ [\"lua\"] = {{ kind = \"lib\" }} }},\n        deps = {{}},\n    }},\n}}\n", ns, desc);
         };
-        s::project index{tmp / "index", {{"pkgs/c/capi.lua.lua", descriptor("capi", "new exact identity")},
-                                         {"pkgs/m/mcpplibs.capi.lua.lua", descriptor("mcpplibs.capi", "old prefixed identity")}}};
+        // One directory per index name: a location under two names is refused (SPEC-004 §9).
+        s::project defaults{tmp / "index-default", {{"pkgs/m/mcpplibs.capi.lua.lua", descriptor("mcpplibs.capi", "old prefixed identity")}}};
+        s::project capi{tmp / "index-capi", {{"pkgs/c/capi.lua.lua", descriptor("capi", "new exact identity")}}};
         s::project app{tmp / "app", {{".mcpp/.xlings/data/xpkgs/mcpplibs.capi-x-lua/1.0.0/src/lua.cppm", "export module selected.lua;\nexport int selected_value() { return 41; }\n"},
                                      {".mcpp/.xlings/data/xpkgs/capi-x-lua/1.0.0/src/lua.cppm", "export module selected.lua;\nexport int selected_value() { return 42; }\n"},
                                      {".mcpp/.xlings/data/xpkgs/mcpplibs.capi-x-lua/1.0.0/.mcpp_ok", "ok\n"},
                                      {".mcpp/.xlings/data/xpkgs/capi-x-lua/1.0.0/.mcpp_ok", "ok\n"},
                                      {"src/main.cpp", "import selected.lua;\nint main() { return selected_value() == 41 ? 0 : 1; }\n"},
                                      {"mcpp.lock", "# Existing pre-exact-selector resolution anchor.\nversion = 2\n\n[package.\"capi.lua\"]\nnamespace = \"mcpplibs.capi\"\nversion = \"1.0.0\"\nsource = \"index+mcpplibs.capi@1.0.0\"\nhash = \"fnv1a:migration-fixture\"\n"}}};
-        app.write("mcpp.toml", std::format("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[indices]\ndefault = {{ path = \"{0}\" }}\ncapi = {{ path = \"{0}\" }}\n\n[dependencies]\ncapi.lua = \"1.0.0\"\n", index.dir().generic_string()));
+        app.write("mcpp.toml", std::format("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[indices]\ndefault = {{ path = \"{0}\" }}\ncapi = {{ path = \"{1}\" }}\n\n[dependencies]\ncapi.lua = \"1.0.0\"\n", defaults.dir().generic_string(), capi.dir().generic_string()));
         auto b = app.mcpp({"build"}, inherited);
         expect(fatal(e2e::succeeded(b))) << "build failed";
         expect(e2e::contains(s::text(b), "keeping the locked identity")) << "expected selector migration warning";

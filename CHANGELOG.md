@@ -11,7 +11,8 @@
 - `i686-windows-msvc`, the 32-bit x86 Microsoft ABI, is a `preview` row of the target table,
   served by the msvc provider as `x86_64-windows-msvc` is; x86_64 Windows runs its programs
   (WOW64). A project needs no `[target.i686-windows-msvc]` section to build it, and no platform is
-  looked up for it. Under clang 23 its `import std` builds at C++20 only (docs/20) (mcpp#996).
+  looked up for it. `--target i686-windows` and `x86-windows-msvc` select it; before, they
+  selected no row. Under clang 23 its `import std` builds at C++20 only (docs/20) (mcpp#996).
 
 ### Changed
 
@@ -43,8 +44,10 @@
   descriptor of the toolchain, not from the descriptor the payload was installed with. When xim's
   gcc recipe moved binutils from 2.42.1 to 2.47, a gcc@16.1.0 installed beside binutils 2.42.1 was
   given no binutils after `mcpp index update`, and its builds stopped at "cannot execute 'as'". The
-  installed descriptor decides now; an index update changes what the next install takes (SPEC
-  toolchain-management §2.9, design 2026-11-21 §3.5).
+  installed descriptor is read first now, then the index's, and the first declaration the store
+  holds decides: a home that links the payload from an `[xlings] upstream` holds the companions
+  the index names, beside the upstream's descriptor (SPEC toolchain-management §2.9, design
+  2026-11-21 §3.5).
 - `mcpp test` counts a suite run as a case by its cases on the program's line as the summary
   does: an mtest program of one suite and seven cases read `8 cases` on its line and
   `7 passed` in the summary.

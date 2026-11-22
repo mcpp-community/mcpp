@@ -241,9 +241,9 @@ stating an override).
 
 `[workspace.indices]` merges with a member's `[indices]` by name, the member's
 entry of a name first. When two entries of the result name one location (one
-directory, or one repository at one pin), the build is refused with
-`index-location-named-twice`: each package of the location would be two
-candidates of one name. The remedy keeps one name: drop one entry, or, when one
+directory, or one repository at one pin), the build and `mcpp index update`
+refuse it with `index-location-named-twice`: the location would be registered
+twice, and each of its packages would be two candidates of one name. The remedy keeps one name: drop one entry, or, when one
 of them is a workspace entry, state the index in the members that use it
 instead *(@NEXT@+; before, the install failed as ambiguous and named neither
 entry)*.
