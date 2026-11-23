@@ -209,6 +209,22 @@ scan_cell() {
         return
     fi
 
+    # riscv64 的 Linux 行同理,理由同样是一条实测,属于这套依赖而不属于 mcpp。
+    #
+    # 实测 2026-11-23(linux-x86_64,llvm@23.1.3):目标侧解析给出 musl(graph),
+    # 构建进入 openkal-musl 0.3.5 在 Linux 上依赖的 openkal-linux 0.5.4,而它
+    # 只实现两种架构:
+    #
+    #   openkal-linux-0.5.4/src/sys.h:178:2: error: "openkal-linux supports x86_64 and aarch64"
+    #
+    # 当前的 0.27.0 实现 x86_64、aarch64 与 i386,仍不含 riscv64。这一行由 musl
+    # 交叉载荷服务(payload 模式实测 `ok / none`);openkal 这一族没有 riscv64 的
+    # Linux 实现,图供给不了它。判据是那条诊断与 openkal-linux 的架构集合。
+    if [ "$MODE" = graph ] && printf '%s' "$t" | grep -qE -- '^riscv64-linux-'; then
+        echo "scan: 略过 graph × $t —— openkal-linux 没有 riscv64 的实现(0.5.4 为 x86_64/aarch64,0.27.0 加 i386),见 scan.sh 注释" >&2
+        return
+    fi
+
     # The compiler is the project's default, for the query and the build alike. A toolchain named
     # for the build (`--toolchain`) opts a planned row in (2026.11.13.1), so a query that named it
     # would answer a question the build below does not ask.

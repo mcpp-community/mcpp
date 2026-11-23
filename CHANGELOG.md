@@ -68,6 +68,8 @@
   was built with, instead of the 5.11.1 the home's shared view linked to. The shared view is no
   longer read for kernel headers, and mcpp no longer writes kernel headers into it; with neither
   answer the build is refused before it compiles and names the statement to write.
+  A Linux compile names the headers it was decided to use, so a dependency's module interface
+  cached by an earlier version is compiled once more, then served from the cache.
 
 ### Fixed
 

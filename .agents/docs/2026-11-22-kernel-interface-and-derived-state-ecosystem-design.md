@@ -662,7 +662,7 @@ graph LR
    自己的请求（版本组参与解析，§7.5）。K1 因此不改动 openkal-platform，K4 不依赖它。
 9. **索引中的行（§3.19）。** `riscv64-linux-musl`：x86_64 上的 musl 交叉载荷构建、静态链接，并在 qemu-user 下运行；该载荷的
    sysroot 不带内核头文件（`aarch64-linux-musl-gcc` 带 4.19.88），由其描述文件声明 `linux-headers` 6.18.64，修订 1 带
-   riscv64 的头文件。行升为 `preview`，运行器为 `xim:qemu-user-riscv64`。`i686-linux-gnu` 与 `wasm32-wasi` 在索引中没有
+   riscv64 的头文件。行升为 `preview`，运行器为 `xim:qemu-user-riscv64`。支持矩阵的测定：载荷模式下 linux-x86_64 × gcc 为 `ok`，其余宿主与编译器各以其拒绝理由给出；图模式（openkal-musl 0.3.5 与 openkal-llvm-runtime 0.1.3）不服务该行，openkal-linux 0.5.4 只实现 x86_64 与 aarch64（0.27.0 加 i386），构建在其 `sys.h` 的架构断言处失败，矩阵的图模式因此略过 `riscv64-linux-*`，理由写在 `tests/matrix/scan.sh`。`i686-linux-gnu` 与 `wasm32-wasi` 在索引中没有
    基座载荷与编译器运行时，保持 `planned` 与未登记。iOS 模拟器的两行以 `simctl-run` 为运行器，`enabled = false`。
    `x86_64-macos` 在 Apple silicon 的运行器上经 Rosetta 测定（探针工作流）：链接原先不带 `--target`，按 arm64 链接 x86_64
    的目标文件而找不到 `main`；链接改为凡编译指名目标即指名之后，C 程序链接为 x86_64 并在 Rosetta 下运行。C++ 程序仍不能

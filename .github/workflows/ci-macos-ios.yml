@@ -384,7 +384,7 @@ jobs:
           s = re.sub(r'\[target\.aarch64-ios-sim\.xlings\.workspace\]\n"xim:apple-simulator-tools" = ""\n', '', s)
           open("mcpp.toml", "w").write(s)
           PY
-          if grep -q simctl-run mcpp.toml; then echo "FAIL: the fixture still states a runner"; exit 1; fi
+          if grep -qE '^[^#]*(simctl-run|apple-simulator-tools)' mcpp.toml; then echo "FAIL: the fixture still states a runner"; exit 1; fi
           out=$("$MCPP_FRESH" run --target aarch64-ios-sim 2>&1) && rc=0 || rc=$?
           printf '%s\n' "$out" | tail -8
           [ "$rc" -eq 2 ] || { echo "FAIL: a run before consent exited $rc, not 2"; exit 1; }

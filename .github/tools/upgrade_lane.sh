@@ -263,10 +263,12 @@ if [ "$VARIANT" = modules ]; then
   # A BMI of another spelling is not read: the dependency is rebuilt once (its
   # cache key carries the spelling), then served from the cache. The spelling
   # moved in 2026.10.26.2 (the module map's `$root`), in 2026.11.19.1 (a
-  # package instance's directory, mcpp#953) and in 2026.11.21.1 (an instance
-  # is its configuration's, mcpp#986); a previous release from the last move
-  # on spells as this one, and its entry is served at once.
-  spelled_since=2026.11.21.1
+  # package instance's directory, mcpp#953), in 2026.11.21.1 (an instance
+  # is its configuration's, mcpp#986) and in 2026.11.23.1 (a Linux compile
+  # names the kernel headers it was decided to use, design 2026-11-22 §3.1); a
+  # previous release from the last move on spells as this one, and its entry
+  # is served at once.
+  spelled_since=2026.11.23.1
   # The directory a served BMI is staged into: `<namespace>.<name>/` before
   # 2026.11.21.1, `<namespace>_<name>/<instance>/` from it (mcpp#986). Either
   # is the dependency's; the staging, not the directory's name, is asserted.
