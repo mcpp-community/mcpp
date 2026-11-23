@@ -48,6 +48,9 @@
 
 ### Changed
 
+- openkal-platform 0.32.0 is the default platform of the openkal rows: a program of the firmware
+  and of DOS starts programs (`openkal.process`), an image on i686 starts an image
+  (mcpplibs/openkal-image#46), and `riscv64-none-musl` runs over openkal-opensbi.
 - xlings 2026.11.23.1 is the pinned provider, and the handshake requires its `store_roots`
   feature (protocol 1.19): its collection keeps what a root holds, and its configuration of a
   package that states `host_facts` runs again when those host files change (openxlings/xlings#712,
