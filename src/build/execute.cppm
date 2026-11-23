@@ -7909,7 +7909,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
 
     // ── run, one leg after another ──
     int rc = 0;
-    int passed = 0, failed = 0, notRun = 0, builtNotRun = 0;
+    int passed = 0, failed = 0, notRun = 0, builtNotRun = 0, unbuilt = 0;
     std::vector<std::string> reasons;
     auto worse = [&](int r) {
         // 1 (a test failed) outranks 2 (an answer not established), which
@@ -7924,6 +7924,7 @@ export int run_test_legs(std::span<const std::string> passthrough,
         else mcpp::ui::info("Testing", std::format("on {}", l.triple));
         if (l.programsFailed) {
             mcpp::ui::error(std::format("the {} leg: the package's programs did not build", l.triple));
+            ++unbuilt;
             worse(1);
             continue;
         }
@@ -7931,8 +7932,13 @@ export int run_test_legs(std::span<const std::string> passthrough,
             if (json)
                 std::println("{{\"error\":\"package\",\"compile_output\":\"{}\"}}",
                              test_json_escape(l.packageError->diagnosticOutput));
-            if (!l.packageError->reported) mcpp::ui::error(l.packageError->message);
+            // A build error reported as it happened is named again here, where the
+            // leg's section would otherwise be empty.
+            if (!l.packageError->reported)
+                mcpp::ui::error(std::format("the {} leg: {}", l.triple, l.packageError->message));
+            else mcpp::ui::error(std::format("the {} leg did not build (reported above)", l.triple));
             mcpp::ui::block(l.packageError->diagnosticOutput);
+            ++unbuilt;
             worse(1);
             continue;
         }
@@ -7962,8 +7968,8 @@ export int run_test_legs(std::span<const std::string> passthrough,
     const bool noneRan = !testOpts.noRun && passed + failed == 0 && rc != 1;
     if (json) {
         std::println("{{\"legs_summary\":{{\"legs\":{},\"passed\":{},\"failed\":{},"
-                     "\"not_run\":{},\"built\":{},\"none_ran\":{}}}}}",
-                     legs.size(), passed, failed, notRun, builtNotRun, noneRan ? "true" : "false");
+                     "\"not_run\":{},\"built\":{},\"unbuilt\":{},\"none_ran\":{}}}}}",
+                     legs.size(), passed, failed, notRun, builtNotRun, unbuilt, noneRan ? "true" : "false");
         std::fflush(libc::stdout());
     }
     if (noneRan) {
@@ -7974,8 +7980,10 @@ export int run_test_legs(std::span<const std::string> passthrough,
         return 1;
     }
     if (!json)
-        mcpp::ui::result("legs result", std::format("{} legs; {} passed; {} failed{}{}",
+        mcpp::ui::result("legs result", std::format("{} legs; {} passed; {} failed{}{}{}",
             legs.size(), passed, failed,
+            unbuilt ? std::format("; {} {} did not build", unbuilt, unbuilt == 1 ? "leg" : "legs")
+                    : std::string{},
             builtNotRun ? std::format("; {} built, not run", builtNotRun) : std::string{},
             notRun ? std::format("; {} not run", notRun) : std::string{}));
     if (rc != 0 || testOpts.archive.empty()) return rc;

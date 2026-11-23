@@ -84,7 +84,8 @@ E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{45}}, [] {
         // leg; C run runs this machine's leg and says which, and --print-launch describes the
         // selected leg; D test runs this machine's leg and reports the other built, not run; E
         // legs that ran no test fail; F self env reports both legs; G refusals: `none`,
-        // `linux-msvc`, a set in [build] target.
+        // `linux-msvc`, a set in [build] target; H a leg whose build fails is named in its
+        // section and counted in the summary.
         needs_image_row();
         const std::string ht = std::string(host_arch) + "-openkal", ot = std::string(other_arch) + "-openkal";
         const auto tmp = s::case_dir();
@@ -156,6 +157,16 @@ E2E sets{"sets", s::home_fixture, timeout{std::chrono::minutes{45}}, [] {
         s::project bt(tmp / "bt", {{"mcpp.toml", "[package]\nname = \"bt\"\nversion = \"0.1.0\"\n[build]\ntarget = \"openkal\"\n"}, {"src/main.cpp", "int main() {}\n"}});
         r = bt.mcpp({"build"});
         expect(fatal(failed(r) && e2e::contains(s::text(r), "names a target set"))) << "G: a set in [build] target is not refused: " << s::text(r);
+        // H
+        s::project half(tmp / "half", {{"mcpp.toml", "[package]\nname    = \"half\"\nversion = \"0.1.0\"\n"},
+                                       {"src/half.cppm", std::format("module;\n#if defined(__{}__)\n#error \"this leg does not build\"\n#endif\n"
+                                                                     "export module half;\nexport int half(int x) {{ return x / 2; }}\n", other_arch)},
+                                       {"tests/smoke.cpp", "import half;\nint main() { return half(4) == 2 ? 0 : 1; }\n"}});
+        r = half.mcpp({"test", "--target", "openkal"});
+        out = s::text(r);
+        expect(fatal(r.started && r.status == 1)) << "H: a test whose other leg did not build exited " << r.status << ": " << out;
+        expect(fatal(e2e::contains(out, "the " + ot + " leg"))) << "H: the leg's section does not name it: " << out;
+        expect(fatal(e2e::contains(out, "1 leg did not build"))) << "H: the summary does not count it: " << out;
     };
 
     "964 tests built once run from an archive"_test[s::llvm][s::python3] = [] {
