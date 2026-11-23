@@ -16,6 +16,7 @@ import std;
 import mcpp.provider;
 import mcpp.provider.select;
 import mcpp.diag;
+import mcpplibs.os.error;
 import mcpplibs.os.fs;
 
 export namespace mcpp::provider::roots {
@@ -178,8 +179,11 @@ void use(const std::vector<std::string>& payloads) {
         const auto parts = components_of(*s, *s / path_of(p));
         if (!parts || !fs::is_directory(*s / path_of(p), ec)) continue;
         const auto name = root_name(parts->first, parts->second);
-        // Made under a temporary name and renamed over the root, so that the
-        // root is never absent and its own time is now.
+        // Made under a temporary name and exchanged with the root, so that its
+        // own time is now. A rename over a directory's link is refused on
+        // Windows (measured: `permission denied` on every build after the
+        // first), so a present root is exchanged, atomically where the volume
+        // can; the previous root is then removed.
         auto staged = dir / ".";
         staged += name;
         staged += std::format(".{:08x}", std::random_device{}());
@@ -187,9 +191,15 @@ void use(const std::vector<std::string>& payloads) {
             report_once(made.error().message());
             return;
         }
-        if (auto moved = mcpplibs::os::fs::rename(staged, dir / name, true); !moved) {
-            fs::remove(staged, ec);
-            report_once(moved.error().message());
+        const auto root = dir / name;
+        const bool present = fs::symlink_status(root, ec).type() != fs::file_type::not_found;
+        auto placed = present ? mcpplibs::os::fs::exchange(staged, root) : mcpplibs::os::fs::place(staged, root);
+        // Another build placed it in between.
+        if (!placed && !present && placed.error().code == mcpplibs::os::errc::exists)
+            placed = mcpplibs::os::fs::exchange(staged, root);
+        fs::remove(staged, ec);
+        if (!placed) {
+            report_once(placed.error().message());
             return;
         }
     }

@@ -1,7 +1,7 @@
 // The global build cache: an entry shared across projects and keyed by what it was compiled
 // against, the cache modes and the maintenance commands, an entry's layout, a hit's std BMI, and
 // the age of a std module, and the store's roots a build holds (formerly tests/e2e/172, 174, 184,
-// 212, 959, 1029; 1154).
+// 212, 959, 1029; 1154, 1158).
 import std;
 import mcpplibs.mtest;
 import mcpp.test.support;
@@ -525,5 +525,26 @@ E2E entries{"entries", s::home_fixture, [] {
         expect(fatal(e2e::succeeded(r))) << "C: " << s::text(r);
         expect(fatal(e2e::contains(s::text(r), "Would release the store's root " + aged.filename().string()))) << "C: " << s::text(r);
         expect(fatal(fs::is_symlink(aged))) << "C: a dry run released the root";
+        // D: the next build renews the root it holds, so it is no longer unused.
+        r = p.mcpp({"build"}, home);
+        expect(fatal(e2e::succeeded(r))) << "D: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "were not registered"))) << "D: " << s::text(r);
+        r = p.mcpp({"cache", "gc", "--older-than", "30d", "--dry-run"}, home);
+        expect(fatal(e2e::succeeded(r))) << "D: " << s::text(r);
+        expect(fatal(s::lacks(s::text(r), "Would release the store's root " + aged.filename().string()))) << "D: " << s::text(r);
+    };
+
+    "1158 every build registers its roots, a present root too"_test[s::fresh_sandbox] = [] {
+        // Design 2026-11-22 §3.11: a root already present is replaced by the next build's on every
+        // system; a rename over a directory's link is refused on Windows, so it is exchanged.
+        const s::options home{.where = s::home::inherited};
+        s::project p({{"mcpp.toml", "[package]\nname    = \"held\"\nversion = \"0.1.0\"\n"},
+                      {"src/main.cpp", "import std;\nint main() { std::println(\"held\"); }\n"}});
+        for (int build = 1; build <= 2; ++build) {
+            if (build == 2) p.write("src/main.cpp", "import std;\nint main() { std::println(\"held again\"); }\n");
+            auto r = p.mcpp({"build"}, home);
+            expect(fatal(e2e::succeeded(r))) << "build " << build << ": " << s::text(r);
+            expect(fatal(s::lacks(s::text(r), "were not registered"))) << "build " << build << ": " << s::text(r);
+        }
     };
 }};
