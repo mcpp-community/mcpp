@@ -111,7 +111,7 @@ warning states both (2026.11.8.1+). `mcpp cache prune` and `mcpp cache gc
 --older-than` collect `std` module entries by age as well; `gc --max-size`
 budgets packages and host tools, not `std` modules (2026.11.8.1+).
 
-**The store's payloads (@RELEASE@+).** A build holds each payload of mcpp's
+**The store's payloads (2026.11.23.1+).** A build holds each payload of mcpp's
 package store that its graph names -- the toolchain, its base and companions,
 the packages and tools it wires -- as a **root**: a link
 `registry/data/roots/mcpp/<store-name>@<version>` to the payload, renewed by

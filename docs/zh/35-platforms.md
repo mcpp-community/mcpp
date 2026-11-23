@@ -93,7 +93,7 @@ runner = ["my-okrun", "{}"]
 同样的表也可以写在 `~/.mcpp/config.toml` 中,对一台机器生效。图中已有包提供的层交给该包,报告为 `graph`。
 C++ 运行时的包同时提供编译器运行时,因此 `"c++-abi" = false` 只有与 `compiler-runtime = false` 同时写出才生效。
 
-这些表在没有平台的行上同样生效(mcpp @RELEASE@):这样的行有一份空的平台陈述,为它写的 `layers`、`tools` 与 `link`
+这些表在没有平台的行上同样生效(mcpp 2026.11.23.1):这样的行有一份空的平台陈述,为它写的 `layers`、`tools` 与 `link`
 像在平台之上一样补全依赖图、到达链接。此前它们被接受而不起作用。`carrier` 是平台映像的形式,在这样的行上以警告报告
 (`platform/carrier`)而不使用。
 

@@ -727,7 +727,7 @@ a.env("GEN_MODE", "release")
 命令行，值改变时该 action 重新运行。两者都未声明的 action，其命令行与 protocol 12 逐字节
 相同。
 
-#### 生成单元的编写文件：`.origin()`(@RELEASE@+)
+#### 生成单元的编写文件：`.origin()`(2026.11.23.1+)
 
 写出某个人工编辑文件之变换副本的 action（改写了 import 的源文件、加了前置内容的模块单元），以
 `.origin(...)` 指名该文件。该文件是 action 的输入之一，action 的角色为 `source`：

@@ -4,7 +4,7 @@
 > Each `## [<version>]` section is that release's notes. Entries are written in English
 > from 2026.9.28.3 on; earlier entries remain as written.
 
-## [@RELEASE@] - @DATE@
+## [2026.11.23.1] - 2026-11-23
 
 ### Added
 
@@ -55,6 +55,8 @@
   feature (protocol 1.19): its collection keeps what a root holds, and its configuration of a
   package that states `host_facts` runs again when those host files change (openxlings/xlings#712,
   #727). An earlier provider is refused at the handshake, as before for one below the floor.
+  mcpp builds on mcpplibs.os 0.4.8, which reads a link's own time, and so do the launchers a
+  pack builds.
 - `mcpp cache gc` collects the package store after the cache: the provider removes the payloads
   nothing references (`xlings self clean`), and with `--older-than` the roots no build used for
   that long are released first. Before, payloads were never collected, and `xlings self clean`

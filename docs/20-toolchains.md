@@ -240,7 +240,7 @@ features by that binutils when it was built. `companions` names binutils only;
 the kernel headers are the target's `kernel-abi` layer, stated with
 `[target.<selector>.layers] kernel-abi` ([22 — The Target
 Side](22-target-side.md)); without a statement, over a base that carries none,
-they follow the toolchain payload's declaration (mcpp @RELEASE@+).
+they follow the toolchain payload's declaration (mcpp 2026.11.23.1+).
 
 ## Switching the Default Toolchain
 

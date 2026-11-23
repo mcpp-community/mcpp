@@ -568,7 +568,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 A target row also carries `platform` (2026.10.27.1+): the platform package the
-target table selects for it (`mcpplibs.openkal-platform@0.32.0` from @RELEASE@, `@0.31.2` from 2026.11.20.1, `@0.31.0` in 2026.11.19.1, `@0.29.2` in 2026.11.18.1, `@0.29.1` from 2026.11.17.2, `@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
+target table selects for it (`mcpplibs.openkal-platform@0.32.0` from 2026.11.23.1, `@0.31.2` from 2026.11.20.1, `@0.31.0` in 2026.11.19.1, `@0.29.2` in 2026.11.18.1, `@0.29.1` from 2026.11.17.2, `@0.28.0` from 2026.11.15.1, `@0.27.1` from 2026.11.12.1, `@0.26.0` in 2026.11.10.2, `@0.25.0` in 2026.11.10.1, `@0.24.4` from 2026.11.8.1, `@0.24.3` in 2026.11.7.2; the series `^0.24` in 2026.11.7.1), or `null`.
 
 **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
@@ -593,7 +593,7 @@ It resolves and reports; it does not build. `data` is:
 | `compiler` | `{family, version, driver, chosenBy}` — the driver that would run, and why |
 | `triple` | `{requested, toolchain, llvm}` |
 | `cLibrary` | `{mode, path, origin, suppliesTarget}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
-| `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset, version, interfaces}`; `version` is the kernel-abi layer's measured version where the system publishes its kernel headers as a package (empty otherwise), `interfaces` the layer's interfaces (`null`: unstated, every one) *(@RELEASE@+)* |
+| `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset, version, interfaces}`; `version` is the kernel-abi layer's measured version where the system publishes its kernel headers as a package (empty otherwise), `interfaces` the layer's interfaces (`null`: unstated, every one) *(2026.11.23.1+)* |
 
 **`compiler.chosenBy` answers "why this one".** `{origin, requiredBy,
 replaced}` — `origin` is the same phrase the build's status line uses
@@ -657,7 +657,7 @@ a program classifying the outcome reads `reason`:
 | `payload-request` | a build program asked for a payload no manifest of this build declares `provision = "on-request"`, or asked again in three consecutive runs *(2026.10.1.3+)* |
 | `lto-export-discovery` | a PE shared library whose exports are discovered would be compiled by cl.exe into `/GL` objects, which hold no symbol table: `windows_auto_export = true` stated under `lto = true`, or `/GL` written into the flags of a package it links *(2026.10.5.2+)* |
 | `local-toolchain` | a toolchain named by path, or stated by a build program's toolchain phase, cannot be used: no driver, a contradicting family, a missing tool, or `spec` stated with a key only a toolchain named by path has *(2026.10.1.3+)* |
-| `target-base` | the target base (`sysroot`) cannot serve this build: a spelling the row does not take, a path that does not exist, a directory that supplies no C library, a C library older than the compiler's runtime requires, a native base without its loader, or a second C library supplier in the graph *(2026.10.24.1+)*; the kernel headers: a prebuilt `layers` form on a row or layer that takes none, a payload without the target architecture's headers, no headers to answer the default, or a measurement that contradicts the statement *(@RELEASE@+)* |
+| `target-base` | the target base (`sysroot`) cannot serve this build: a spelling the row does not take, a path that does not exist, a directory that supplies no C library, a C library older than the compiler's runtime requires, a native base without its loader, or a second C library supplier in the graph *(2026.10.24.1+)*; the kernel headers: a prebuilt `layers` form on a row or layer that takes none, a payload without the target architecture's headers, no headers to answer the default, or a measurement that contradicts the statement *(2026.11.23.1+)* |
 | `convention-unreplaced` | the convention was overridden and nothing replaced it |
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |
@@ -737,7 +737,7 @@ writes nothing into the project. `data` is:
 
 | field | |
 |---|---|
-| `spec` | `{"name": "s1", "version": "0.4.0"}` (0.3.0 before @RELEASE@, 0.2.0 before 2026.9.28.1), or `{"name": "compile-commands"}` with `--spec compile-commands` |
+| `spec` | `{"name": "s1", "version": "0.4.0"}` (0.3.0 before 2026.11.23.1, 0.2.0 before 2026.9.28.1), or `{"name": "compile-commands"}` with `--spec compile-commands` |
 | `database` | the document of that specification: an S1 build database, or the entries `mcpp build --configure-only` writes to `compile_commands.json` |
 | `watch` | the inputs whose change can change the document: paths and glob patterns relative to the workspace root, or absolute paths |
 | `inputs-fingerprint` | `fnv1a:<16 hex digits>`, a digest of those inputs, the mcpp version and the selectors |
@@ -753,7 +753,7 @@ action, so such a file does not exist yet in the directory the document names.
 Each entry gives the path a `mcpp build` of the same selection writes
 (`build-path`) and the step that writes it, so that an editor can say "generated,
 build once" instead of reporting a missing header.
-Since @RELEASE@ an entry of `kind` `source` also carries `origin` when its
+Since 2026.11.23.1 an entry of `kind` `source` also carries `origin` when its
 action states one with `.origin(...)` ([30](30-build-mcpp.md)): the authored
 file the generated unit is a transformed copy of (S1 0.4.0 section 7.2).
 

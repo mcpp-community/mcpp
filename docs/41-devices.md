@@ -166,7 +166,7 @@ runner: the emulator package serves no aarch64 machine.
 MCPP_TARGET_X86_64_LINUX_ANDROID_RUNNER_ENABLED=true mcpp run --target x86_64-linux-android
 ```
 
-**An iOS simulator program runs in the simulator (@RELEASE@+).** On a Mac, once
+**An iOS simulator program runs in the simulator (2026.11.23.1+).** On a Mac, once
 enabled, `aarch64-ios-sim` and `x86_64-ios-sim` run through `simctl-run`
 (`xim:apple-simulator-tools`): it chooses an available device, boots it when
 none is booted, spawns the program and returns its status. A simulator runs the

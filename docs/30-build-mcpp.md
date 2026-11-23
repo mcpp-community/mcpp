@@ -871,7 +871,7 @@ relative path among them is relative to `cwd`. A variable's value is part of
 the edge's command line, and changing it re-runs the action. An action that
 declares neither keeps the protocol 12 command line byte for byte.
 
-#### The authored file of a generated unit: `.origin()` (@RELEASE@+)
+#### The authored file of a generated unit: `.origin()` (2026.11.23.1+)
 
 An action that writes a transformed copy of a file a person edits (a source
 with its imports rewritten, a module unit with a prologue added) names that

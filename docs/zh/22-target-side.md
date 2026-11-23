@@ -1013,7 +1013,7 @@ arch/env 条件与组合子用 `cfg(...)`。2026.11.10.2 之前的 mcpp 仅将 `
   `accelerator = "none"` 是一种写法，用来说明「本次构建没有命名任何后端」，
   而不必枚举它不是的那些后端。`interface`（mcpp 2026.11.13.1）是 kernel-abi 层的第二个回答：
   该层的提供者在 `[kernel-abi] provides-interfaces` 里陈述的接口，该层是系统自身时为
-  系统行的 `interfaces`（mcpp @RELEASE@），与 `accelerator` 一样按成员判定。未陈述列表的
+  系统行的 `interfaces`（mcpp 2026.11.23.1），与 `accelerator` 一样按成员判定。未陈述列表的
   提供者或系统提供全部接口；没有该层的图不提供任何接口。`aarch64-ios` 上
   `openkal.process` 的回答为假：iOS 的应用不启动程序。包据此按其下实现提供的接口选择源文件，而不命名任何实现：
   `[target.'cfg(not(interface = "openkal.fs"))'.build] sources = [...]`。裸词 `linux` / `macos` / `windows` / `unix`
@@ -1149,7 +1149,7 @@ Windows 行（[21](21-the-target-triple.md)）。索引中还有 `xim:aarch64-li
 （见 [22 —— 目标侧](22-target-side.md)）。这一段在 2026.9.1.1 之前写的是
 「解析到的是哪份 C 库」，那是两者里错的那一个。
 
-### `layers.kernel-abi` —— 内核头文件（mcpp @RELEASE@+）
+### `layers.kernel-abi` —— 内核头文件（mcpp 2026.11.23.1+）
 
 Linux 的内核头文件与 C 库分开发布，因此在 Linux 的行上它们是 `kernel-abi` 层的预制供给者，可以陈述：
 
@@ -1178,7 +1178,7 @@ kernel-abi = "xim:linux-headers@6.18.64"     # 生态的载荷，总是带版本
 
 这两种形式在不适用处被拒绝（`target-base`）：macOS、Windows 与 FreeBSD 的内核接口属于基座（`sysroot`），其他层也不接受
 预制形式。openkal 的行上该层是 openkal 的实现，第二个供给者按规则一被拒绝。使用这两种形式的清单写出
-`[package] mcpp = ">=@RELEASE@"`；较旧的 mcpp 在没有平台的行上忽略该键。
+`[package] mcpp = ">=2026.11.23.1"`；较旧的 mcpp 在没有平台的行上忽略该键。
 
 ### `abi` —— 整个产物共享的开关（mcpp 2026.9.12.2+）
 

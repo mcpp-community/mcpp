@@ -7,7 +7,7 @@
 | 状态 | 评审中 v1.9 |
 | 版本 | 1.9 |
 | 最后修改 | 2026-11-23 |
-| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1；v1.8 条款 mcpp >= 2026.11.22.1；v1.9 条款 mcpp >= @RELEASE@ |
+| 对应实现 | mcpp >= 2026.11.9.1；v1.1 条款 mcpp >= 2026.11.10.1；v1.2 条款 mcpp >= 2026.11.12.1；v1.3 条款 mcpp >= 2026.11.16.1；v1.4 条款 mcpp >= 2026.11.17.1；v1.5 条款 mcpp >= 2026.11.18.1；v1.7 条款 mcpp >= 2026.11.20.1；v1.8 条款 mcpp >= 2026.11.22.1；v1.9 条款 mcpp >= 2026.11.23.1 |
 | 相关设计文档 | `.agents/docs/2026-11-15-ecosystem-gap-supplement-design.md`、`.agents/docs/2026-11-09-target-model-design.md`、`.agents/docs/2026-11-10-cross-platform-ecosystem-design.md`、`.agents/docs/2026-11-12-ecosystem-architecture-optimization-design.md`、`.agents/docs/2026-11-22-kernel-interface-and-derived-state-ecosystem-design.md` |
 | 相关 issue | mcpp#911、mcpp#913 |
 | 相关规范 | [SPEC-001](package-identity.md)（引用文法）、[SPEC-002](target-side.md)（层与能力）、[SPEC-013](platforms.md)（平台的语句）、[SPEC-014](packaging.md)（打包）、[SPEC-015](target-sets.md)（目标集合） |
@@ -279,4 +279,4 @@
 | 1.6 | 2026-11-19 | mcpp 2026.11.19.1（mcpp#957）：§6 执行可达性的谓词之前没有按系统的分支；Apple 的行由同一个谓词判定；系统名检查的词表含三元组的系统谓词 |
 | 1.7 | 2026-11-20 | mcpp 2026.11.20.1（mcpp#981）：行的 `link-without-main`，没有程序起点的可执行映像的链接词；内置 `wasm32-emscripten` 行为 `--no-entry` |
 | 1.8 | 2026-11-22 | mcpp 2026.11.22.1（设计 2026-11-22 §4）：`i686-windows-msvc` 为 preview 行；执行关系表中 `windows-x86_64` 执行 `i686`（§2.4）。 |
-| 1.9 | 2026-11-23 | mcpp @RELEASE@（设计 2026-11-22 §3.4、§3.17）：系统表的 `kernel-abi`（测量、载荷布局、包）与 `interfaces`；`MCPP_KERNEL_ABI_INTERFACES` 在系统供给该层时取系统表的 `interfaces`；裸机行的 `--target` 取 `clang-triple`，平台定义的裸机行不写机器描述时也给出目标（mcpp#1006）；平台定义的行取其提供者的 `linkage` |
+| 1.9 | 2026-11-23 | mcpp 2026.11.23.1（设计 2026-11-22 §3.4、§3.17）：系统表的 `kernel-abi`（测量、载荷布局、包）与 `interfaces`；`MCPP_KERNEL_ABI_INTERFACES` 在系统供给该层时取系统表的 `interfaces`；裸机行的 `--target` 取 `clang-triple`，平台定义的裸机行不写机器描述时也给出目标（mcpp#1006）；平台定义的行取其提供者的 `linkage` |

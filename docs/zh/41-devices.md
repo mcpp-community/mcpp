@@ -131,7 +131,7 @@ runner 是什么（`cmd`、`requires`、`host`）由其数据陈述：提供者�
 MCPP_TARGET_X86_64_LINUX_ANDROID_RUNNER_ENABLED=true mcpp run --target x86_64-linux-android
 ```
 
-**iOS 模拟器的程序在模拟器中运行（@RELEASE@+）。** 在 Mac 上启用后，`aarch64-ios-sim` 与 `x86_64-ios-sim` 经
+**iOS 模拟器的程序在模拟器中运行（2026.11.23.1+）。** 在 Mac 上启用后，`aarch64-ios-sim` 与 `x86_64-ios-sim` 经
 `simctl-run`（`xim:apple-simulator-tools`）运行：它选择一个可用的设备，没有已启动的设备时启动它，在其中启动程序并返回其
 状态。模拟器运行本机的架构（`same-arch`）。`aarch64-ios` 没有 runner：程序只有经开发者签名才能在设备上运行。
 

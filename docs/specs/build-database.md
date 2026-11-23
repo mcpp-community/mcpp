@@ -7,7 +7,7 @@
 | 状态 | 评审中 v1.10 |
 | 版本 | 1.10 |
 | 最后修改 | 2026-11-23 |
-| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1;v1.9 明确的 R6.1a 为 mcpp >= 2026.10.21.1;v1.10 的 R3.9、R3.12a 与 R5.1 的 S1 0.4.0 为 mcpp >= @RELEASE@ |
+| 对应实现 | mcpp >= 2026.9.15.1;v1.3 修改的 R2.5、R3.7、R3.8、R4.1、R5.2 为 mcpp >= 2026.9.26.2;v1.4 修改的 R2.5 为 mcpp >= 2026.9.27.1;v1.5 修改的 R3.7、R3.12、R5.1、R5.2 为 mcpp >= 2026.9.28.1;v1.6 修改的 R2.1、R3.3、R3.4、R3.5、R4.1、R5.2 为 mcpp >= 2026.9.29.5;v1.7 新增的 R3.8a 为 mcpp >= 2026.9.30.2;v1.8 新增的 R3.13 为 mcpp >= 2026.10.11.1;v1.9 明确的 R6.1a 为 mcpp >= 2026.10.21.1;v1.10 的 R3.9、R3.12a 与 R5.1 的 S1 0.4.0 为 mcpp >= 2026.11.23.1 |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md`<br>`.agents/docs/2026-09-26-compile-database-and-issue-699-design.md` |
 | 相关 issue | #636, #648, #655, #699, #702, #707, #732, #797 |
 | 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.4.0(§7.2 的 `origin`,Sunrisepeak/mcpp-language-server#98;0.3.0 的 §7.2 `generated`,Sunrisepeak/mcpp-language-server#28;此前为 0.2.0)与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);S2 0.3.0 §3.4 的部分回答(S2-3.4-12、S2-3.4-13,Sunrisepeak/mcpp-language-server#25);JSON Compilation Database |
@@ -148,7 +148,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   | `module M:P;` | `module-partition-implementation` |
   | `module M;` | `module-implementation` |
   | `scan_overrides` 声明的单元;P1689 扫描中无法区分实现单元与导入者的单元 | `unknown` |
-  | 构建程序的 action 生成、并以 `provides` 声明模块主名(不含 `:`)的单元 | `module-interface`(只有接口单元提供主名;mcpp >= @RELEASE@) |
+  | 构建程序的 action 生成、并以 `provides` 声明模块主名(不含 `:`)的单元 | `module-interface`(只有接口单元提供主名;mcpp >= 2026.11.23.1) |
 
   **已实现**
 - **R3.9a** 没有被 `sources` glob 匹配的目标入口源文件(发现的测试、glob 之外的
@@ -188,7 +188,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   `inputs` 推断它。`origin` 不在 `inputs` 中、或陈述在 `role` 不是 `source` 的 action 上时,构建程序的指令被拒绝。
   同一模块由生成的单元与其 `origin` 一同提供时(工程把编写的文件也列在 `sources` 中),扫描器的重复提供者错误写明
   二者的这一关系。不写 `line-mapping`:生成文件中的 `#line` 指令本身是事实,由消费方读取。S1 0.4.0 §7.2 的增量
-  字段。**已实现**(mcpp >= @RELEASE@,mcpp#1004)
+  字段。**已实现**(mcpp >= 2026.11.23.1,mcpp#1004)
 
 ### 3.6 构建程序
 
@@ -214,7 +214,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 ## 5. 信封
 
 - **R5.1** `kind` 为 `mcpp.build-database`,`kindVersion` 为 1。`data` 含 `spec`
-  (`{"name": "s1", "version": "0.4.0"}`,@RELEASE@ 之前为 0.3.0;或 `{"name": "compile-commands"}`)、
+  (`{"name": "s1", "version": "0.4.0"}`,2026.11.23.1 之前为 0.3.0;或 `{"name": "compile-commands"}`)、
   `database`、`watch` 与 `inputs-fingerprint`。**已实现**
 - **R5.2** 一个成员规划失败只影响它自己,不影响其余成员的集合(#699 第 1 项)。命令
   按配置规划被选中的成员;一个配置的规划失败时,该配置的成员逐个规划,因此失败仍归于

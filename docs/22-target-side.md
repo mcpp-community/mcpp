@@ -1208,7 +1208,7 @@ conditions and combinators. mcpp before 2026.11.10.2 reads only `linux`, `macos`
   without enumerating the ones it is not. `interface` (mcpp 2026.11.13.1) is the kernel-abi
   layer's second answer: an interface its provider states in `[kernel-abi]
   provides-interfaces`, or, where the layer is the system itself, the system
-  row's `interfaces` (mcpp @RELEASE@), compared by membership as `accelerator`
+  row's `interfaces` (mcpp 2026.11.23.1), compared by membership as `accelerator`
   is. A provider or a system that states no list provides every interface; a
   graph without the layer provides none. On `aarch64-ios` the answer for
   `openkal.process` is false: an application of iOS starts no program. A package selects its sources by what the implementation
@@ -1380,7 +1380,7 @@ this returns. To branch on the resolved layer, use a layer predicate:
 Side](22-target-side.md)). This paragraph said "which C library was resolved"
 until 2026.9.1.1, which was the wrong one of the two.
 
-### `layers.kernel-abi` — the kernel headers (mcpp @RELEASE@+)
+### `layers.kernel-abi` — the kernel headers (mcpp 2026.11.23.1+)
 
 Linux publishes its kernel headers apart from its C library, so on a Linux row
 they are a prebuilt supplier of the `kernel-abi` layer and can be stated:
@@ -1424,7 +1424,7 @@ The forms are refused where they do not apply (`target-base`): on macOS,
 Windows and FreeBSD the kernel interface is part of the base (`sysroot`), and no
 other layer takes a prebuilt form. On an openkal row the layer is the openkal
 implementation: a second supplier is refused by rule one. A manifest that uses
-the forms states `[package] mcpp = ">=@RELEASE@"`; an older mcpp ignores the
+the forms states `[package] mcpp = ">=2026.11.23.1"`; an older mcpp ignores the
 key on a row without a platform.
 
 ### `abi` — a switch the whole artefact shares (mcpp 2026.9.12.2+)
