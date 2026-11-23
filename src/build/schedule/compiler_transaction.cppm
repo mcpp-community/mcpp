@@ -378,15 +378,28 @@ std::string_view describe(Controller c) {
     return c==Controller::running ? "running" : c==Controller::ended ? "ended" : "unknown";
 }
 
-std::expected<std::string,std::string> receive(os::ipc::connection& connection,std::chrono::milliseconds bound) {
-    const auto limit=std::chrono::steady_clock::now()+bound;
+// One frame of the registration channel. A bounded read (the owner reading a
+// request) ends at its bound; an unbounded one (a controller awaiting its
+// answer) waits while the peer holds the connection, which only a live owner
+// does, and ends when the peer closes it.
+std::expected<std::string,std::string> receive(os::ipc::connection& connection,
+                                               std::optional<std::chrono::milliseconds> bound) {
+    const auto limit=std::chrono::steady_clock::now()+bound.value_or(std::chrono::milliseconds(0));
     auto exact=[&](std::size_t n)->std::expected<std::string,std::string> {
         std::string bytes;
         while(bytes.size()<n) {
-            const auto left=std::chrono::duration_cast<std::chrono::milliseconds>(limit-std::chrono::steady_clock::now());
-            if(left.count()<=0)return std::unexpected("compiler registration acknowledgement timed out");
+            auto left=std::chrono::milliseconds(1000);
+            if(bound) {
+                left=std::chrono::duration_cast<std::chrono::milliseconds>(limit-std::chrono::steady_clock::now());
+                if(left.count()<=0)return std::unexpected("compiler registration acknowledgement timed out");
+            }
             auto got=connection.read_for(left,n-bytes.size());
-            if(!got||!*got||(**got).empty())return std::unexpected("compiler registration channel closed or timed out");
+            if(!got)return std::unexpected("compiler registration channel failed: "+got.error().message());
+            if(!*got) {
+                if(bound)return std::unexpected("compiler registration acknowledgement timed out");
+                continue;   // the owner holds the connection and has not answered yet
+            }
+            if((**got).empty())return std::unexpected("compiler registration channel closed");
             bytes+=**got;
         }
         return bytes;
@@ -411,20 +424,26 @@ std::expected<void,std::string> Attempt::register_unit(os::process::owned_unit& 
     auto transport=read(generation/"transport","mcpp-unit-transport-v1");
     if(!transport||!*transport||(**transport).size()!=2)return std::unexpected("missing compiler-run registration channel");
     // THE OWNER ANSWERS ONE REGISTRATION AT A TIME, between its audits of the
-    // units it holds, so under load an answer can take longer than one wait for
-    // it (macOS CI: "compiler registration channel closed or timed out" on a scan
-    // of a two-configuration workspace). A registration the owner accepted the
-    // connection of and did not answer is sent again within the startup grace;
-    // the owner admits a unit under its attempt's name, so a late first answer
-    // and a second registration admit the same unit once. An owner that accepts
-    // no connection has ended (a build killed with its controllers still
-    // starting), and the controller ends at once, as the next build waits for
+    // units it holds, so under load an answer takes as long as the requests
+    // before it. The answer is awaited on the connection that carries the
+    // request for as long as the owner holds that connection: a live owner
+    // answers every request it reads, and a connection it has not yet accepted
+    // waits in its queue. A controller that gave up after a fixed wait and sent
+    // the request again added a duplicate to that queue with every retry, and a
+    // registration failed while its owner was alive and working through them
+    // (macOS CI on a two-configuration workspace; Windows CI, the target
+    // matrix's x86_64-macos cell: "compiler registration channel closed or
+    // timed out" after the startup grace). A closed connection is sent again
+    // within the startup grace: the owner closes one whose request it could not
+    // read within its own bound, and admits a unit under its attempt's name, so
+    // a repeated request admits it once. An owner that has ended accepts no
+    // connection, and the controller ends at once, as the next build waits for
     // it. A refusal is final.
     const auto deadline=std::chrono::steady_clock::now()+kStartupGrace;
     for(;;) {
         auto connection=os::ipc::connection::connect(named((**transport)[0]),(**transport)[1]);
         if(!connection||!send(*connection,spelling(directory)))return std::unexpected("cannot register the compiler unit");
-        auto ack=receive(*connection,std::chrono::seconds(2));
+        auto ack=receive(*connection,std::nullopt);
         if(ack&&*ack=="ACK")return {};
         // THE OWNER SAYS WHY (§10.3 F): `REFUSED <condition>`. A record it
         // could not yet read is retried within the startup grace, as an

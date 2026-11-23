@@ -7,6 +7,7 @@ import mcpp.invocation;
 import mcpp.runtime.elf;
 import mcpplibs.os.platform;
 import mcpplibs.os.fs;
+import mcpplibs.os.ipc;
 
 using namespace mcpplibs::mtest;
 
@@ -438,4 +439,51 @@ UTest an_unobservable_unit_is_settled_when_the_caller_holds_the_locks{"CompilerT
     auto settled=tx::recover(a,nullptr,&met,true);
     expect(fatal(bool(settled)));expect(*settled);expect(eq(met.unobservable, 1u));
     expect(eq(Transaction::contents(t.bmi), "verified old BMI"));
+}};
+
+// A REGISTRATION IS ANSWERED ON THE CONNECTION THAT CARRIES IT. The owner answers
+// one registration at a time, so an answer can take longer than any fixed wait;
+// the controller awaits it there for as long as the owner holds the connection,
+// and sends nothing again (Windows CI: a controller that resent its request after
+// two seconds of silence queued duplicates and failed while its owner lived).
+UTest a_late_answer_is_received_on_the_one_connection{"CompilerTransaction/ALateAnswerIsReceivedOnTheOneConnection", [] {
+    Transaction t;
+    auto listener=mcpplibs::os::ipc::listener::listen(t.root,"late");
+    expect(fatal(bool(listener)));
+    std::atomic<int> accepted{0};
+    std::jthread owner([&] {
+        auto c=listener->accept();
+        if(!c)return;
+        ++accepted;
+        auto request=tx::receive(*c,std::chrono::milliseconds(2000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));   // past the old two-second wait
+        if(request&&*request=="register")tx::send(*c,"ACK");
+    });
+    auto c=mcpplibs::os::ipc::connection::connect(t.root,"late");
+    expect(fatal(bool(c)));
+    expect(fatal(tx::send(*c,"register")));
+    auto answer=tx::receive(*c,std::nullopt);
+    if (auto&& failed = expect(fatal(bool(answer))); !failed) failed <<answer.error();
+    expect(eq(*answer, "ACK"));
+    owner.join();
+    expect(eq(accepted.load(), 1));
+}};
+// An owner that closes the connection unanswered is told apart from one that has
+// not answered yet: the wait ends, and the controller decides whether to send again.
+UTest a_closed_channel_ends_the_wait{"CompilerTransaction/AClosedChannelEndsTheWait", [] {
+    Transaction t;
+    auto listener=mcpplibs::os::ipc::listener::listen(t.root,"closed");
+    expect(fatal(bool(listener)));
+    std::jthread owner([&] {
+        auto c=listener->accept();
+        if(!c)return;
+        (void)tx::receive(*c,std::chrono::milliseconds(2000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    });   // the connection closes as the owner's handle goes
+    auto c=mcpplibs::os::ipc::connection::connect(t.root,"closed");
+    expect(fatal(bool(c)));
+    expect(fatal(tx::send(*c,"register")));
+    auto answer=tx::receive(*c,std::nullopt);
+    expect(!answer);
+    owner.join();
 }};
