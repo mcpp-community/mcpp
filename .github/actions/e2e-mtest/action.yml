@@ -75,7 +75,7 @@ runs:
         echo "run=$RUN" >> "$GITHUB_OUTPUT"
         if [ "$RUN" = none ]; then echo "no successful run of main: the suite is divided by count"; exit 0; fi
         rm -rf "$RUNNER_TEMP/e2e-stores"
-        bash .github/tools/run_artifacts.sh "$RUN" "e2e-store-$HOST-" "$RUNNER_TEMP/e2e-stores"
+        bash .github/tools/run_artifacts.sh "$RUN" "e2e-store-$HOST-*" "$RUNNER_TEMP/e2e-stores"
         if [ ! -d "$RUNNER_TEMP/e2e-stores" ]; then
           echo "main's run $RUN kept no store for $HOST: the suite is divided by count"; exit 0
         fi
