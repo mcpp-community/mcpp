@@ -130,6 +130,15 @@ UTest unobservable_admitted_unit_retains_its_reservation_and_every_output{"Compi
     auto available=tx::reservation_available(t.reservation);expect(fatal(bool(available)));expect(!(*available));
     expect(eq(Transaction::contents(t.object), "still writable"));expect(fs::exists(t.reservation));
 }};
+UTest a_unit_without_preparation_is_the_remainder_of_a_retired_generation{"CompilerTransaction/AUnitWithoutPreparationIsTheRemainderOfARetiredGeneration", [] {
+    // A removal cut short after recovery left `unit` without `prepared`: the
+    // next recovery removes it rather than refusing every later build.
+    Transaction t;auto a=t.prepare();t.admitted(a);
+    fs::remove(a.directory/"prepared");
+    auto recovered=tx::recover_generation(t.generation);
+    expect(fatal(bool(recovered))) << (recovered ? std::string() : recovered.error());
+    expect(!fs::exists(a.directory));
+}};
 UTest malformed_certificate_never_releases_capacity{"CompilerTransaction/MalformedCertificateNeverReleasesCapacity", [] {
     Transaction t;auto a=t.prepare();t.admitted(a);
     expect(fatal(bool(tx::publish(a.directory/"retired","mcpp-retired-v1",{"not-a-status","missing","missing"}))));

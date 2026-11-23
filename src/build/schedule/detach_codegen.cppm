@@ -344,6 +344,33 @@ bool drain_actors(const std::filesystem::path& generation) {
     return false;
 }
 
+// A GENERATION IS RETIRED BY A RENAME, THEN REMOVED. Its removal is not
+// atomic, and a build ended by a signal can end inside it: the signal's thread
+// ends the process while the build's thread retires the generation. A removal
+// cut short left an attempt whose `unit` outlived its `prepared` record, which
+// recovery refuses ("compiler unit without prepared transaction", e2e 936 H),
+// and every later build of the configuration with it. Renamed out of the
+// `run-` names first, the generation is no longer one recovery reads; what a
+// cut removal leaves is swept by the next build.
+std::expected<void, std::string> retire_generation(const std::filesystem::path& generation) {
+    auto retired = generation.parent_path() / "retired-";
+    retired += generation.filename();
+    std::error_code ec;
+    std::filesystem::rename(generation, retired, ec);
+    if (ec) return std::unexpected(std::format("cannot retire {}: {}", mcpp::home::spelling(generation), ec.message()));
+    std::filesystem::remove_all(retired, ec);
+    return {};
+}
+
+// What a removal cut short left: no build reads it, so a removal that fails
+// again (a file still held on Windows) is retried by the next build.
+void sweep_retired(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+        if (entry.path().filename().native().starts_with(std::filesystem::path("retired-").native()))
+            std::filesystem::remove_all(entry.path(), ec);
+}
+
 void withdraw_outputs(const std::filesystem::path& slot,
                       const std::filesystem::path& object = {}) {
     std::error_code ec;
@@ -768,9 +795,7 @@ struct RunScope::State {
         }
         auto recovered = transactions::recover_generation(generation,witnesses ? &witnesses->observers() : nullptr);
         if (!recovered) { failure=recovered.error(); return std::unexpected(failure); }
-        std::error_code ec;
-        std::filesystem::remove_all(generation, ec);
-        if(ec) {failure="cannot retire completed compiler runtime state";return std::unexpected(failure);}
+        if(auto retired=retire_generation(generation);!retired) {failure=retired.error();return std::unexpected(failure);}
         if(witnesses&&witnesses->failed()) {
             failure="a compiler controller ended before completion; incomplete outputs were recovered";
             return std::unexpected(failure);
@@ -831,10 +856,9 @@ std::expected<void, std::string> retire_compiler_runs(const std::filesystem::pat
                 "an mcpp is building {}: the helpers of {} hold its locks; it was not cleaned",
                 mcpp::home::spelling(outputDir), mcpp::home::spelling(entry.path())));
         }
-        std::filesystem::remove_all(entry.path(), ec);
-        if (ec) return std::unexpected(std::format("cannot retire {}: {}",
-            mcpp::home::spelling(entry.path()), ec.message()));
+        if (auto retired = retire_generation(entry.path()); !retired) return std::unexpected(retired.error());
     }
+    sweep_retired(located->root);
     return {};
 }
 
@@ -882,9 +906,9 @@ std::expected<RunScope, std::string> RunScope::begin(const std::filesystem::path
                 recovered->unobservable, recovered->unobservable==1?"":"s", mcpp::home::spelling(entry.path())),
                 "a compiler that outlived its controller in that process space is not found; a late "
                 "write is caught by the next build, which compiles that unit again");
-        std::filesystem::remove_all(entry.path(), ec);
-        if (ec) return std::unexpected("cannot retire previous compiler-run state");
+        if (auto retired = retire_generation(entry.path()); !retired) return std::unexpected(retired.error());
     }
+    sweep_retired(state->root);
     // Old owners, actors and units are quiet before cached output recovery;
     // no Ninja reader from this generation has started yet.
     // What the recovered attempts wrote below themselves goes with them

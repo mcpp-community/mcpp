@@ -707,8 +707,16 @@ std::expected<Recovery,std::string> recover_generation(const fs::path& generatio
             if(!prepared)return std::unexpected(prepared.error());
             if(!*prepared) {
                 // Preparation's atomic record precedes every modification.
-                // An empty, unreferenced staging directory has no outputs.
-                if(fs::exists(entry.path()/"unit",ec)||fs::exists(entry.path()/"admitted",ec))return std::unexpected("compiler unit without prepared transaction");
+                // An empty, unreferenced staging directory has no outputs. An
+                // attempt with a unit and no preparation is therefore what a
+                // removal cut short left of a generation recovered before it
+                // (a build ended by a signal while it retired one, up to
+                // 2026.11.22.1): nothing of it is pending, and it goes. It was
+                // refused, and every later build of the configuration with it.
+                if(fs::exists(entry.path()/"unit",ec)||fs::exists(entry.path()/"admitted",ec)) {
+                    fs::remove_all(entry.path(),ec);
+                    if(ec)return std::unexpected("cannot remove the remainder of a retired compiler transaction");
+                }
                 continue;
             }
             auto attempt=Attempt::load(entry.path());if(!attempt)return std::unexpected(attempt.error());

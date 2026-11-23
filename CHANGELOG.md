@@ -100,6 +100,11 @@
   libc++ is arm64 only.
 - `mcpp pack --all-programs` on `wasm32-emscripten` packs each program's module beside its
   launcher. Before, only the program named after the package had its `.wasm` (mcpp#1007).
+- A build ended by a signal while it removed its compiler-run state no longer leaves the
+  configuration unbuildable. The removal could be cut short and leave a compiler unit without its
+  prepared transaction, which every later build refused ("compiler unit without prepared
+  transaction") until `mcpp clean`. The state is now renamed out of use before it is removed, and
+  such a remainder from an earlier version is removed by the next build.
 
 ## [2026.11.22.1] - 2026-11-22
 
