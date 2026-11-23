@@ -36,7 +36,7 @@ std::optional<fs::path> newest_version_dir(std::string_view package) {
     return best;
 }
 
-// tests/e2e/_sysroot_fixture.sh's make_glibc_sysroot: a glibc sysroot in crosstool-ng's layout
+// A glibc sysroot in crosstool-ng's layout
 // (usr/include, usr/lib64, lib64 -> usr/lib64) assembled from the home's glibc and linux-headers
 // payloads, the linker scripts' absolute paths made sysroot-relative. The glibc version
 // ("2.44"), or nothing when no payload is installed.
@@ -49,7 +49,10 @@ std::optional<std::string> make_glibc_sysroot(const fs::path& dest) {
     fs::create_directory_symlink("usr/lib64", dest / "lib64");
     constexpr auto copy = fs::copy_options::recursive | fs::copy_options::copy_symlinks | fs::copy_options::overwrite_existing;
     fs::copy(*g / "include", dest / "usr/include", copy);
-    fs::copy(*h / "include", dest / "usr/include", copy);
+    // The headers' payload links `include/asm` (and the headers only some
+    // architectures install) into `arch/<arch>/include` (xim-pkgindex#1251):
+    // copied as links they would dangle in the sysroot, so their content is.
+    fs::copy(*h / "include", dest / "usr/include", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
     // `find <g>/lib/ -maxdepth 1 \( -type f -o -type l \) -exec cp -a {} usr/lib64/ \;`
     for (const auto& e : fs::directory_iterator(*g / "lib")) {
         if (e.is_symlink()) fs::copy_symlink(e.path(), dest / "usr/lib64" / e.path().filename());

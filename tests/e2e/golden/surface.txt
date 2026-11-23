@@ -119,6 +119,7 @@ flag cache clean --deps
 flag cache clean --legacy
 flag cache clean --std
 flag cache clean --tools
+flag cache gc --dry-run
 flag cache gc --max-size
 flag cache gc --older-than
 flag cache list --format
