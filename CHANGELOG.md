@@ -51,8 +51,9 @@
 - openkal-platform 0.32.1 is the default platform of the openkal rows: a program of the firmware
   and of DOS starts programs (`openkal.process`), an image on i686 starts an image
   (mcpplibs/openkal-image#46), `riscv64-none-musl` runs over openkal-opensbi, and
-  `riscv64-linux-musl` is served by the platform's hosted arrangement over openkal-linux 0.27.1's
-  riscv64 layer, run under qemu-user.
+  `riscv64-linux-musl` is served by the platform's hosted arrangement over openkal-linux 0.27.2's
+  riscv64 layer and openkal-musl 0.30.3, run under qemu-user, where the specification's
+  conformance suite holds in every observation it makes.
 - xlings 2026.11.23.1 is the pinned provider, and the handshake requires its `store_roots`
   feature (protocol 1.19): its collection keeps what a root holds, and its configuration of a
   package that states `host_facts` runs again when those host files change (openxlings/xlings#712,

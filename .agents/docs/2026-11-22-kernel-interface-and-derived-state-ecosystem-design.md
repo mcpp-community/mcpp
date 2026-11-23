@@ -706,7 +706,25 @@ graph LR
 
     `tools/arch-check.sh`（原 `word32-check.sh`）以同一程序 `tests/arch/runs.cpp` 在 x86_64 上运行 i386、在 qemu-user 下运行
     riscv64：越过 4 GiB 的文件、节点的种类与大小、目录的建立、打开与列举、改名、带线程存储的任务、时钟、处理器时间、
-    含上层帧的采样、发布的指令，两种体系结构全部成立。平台的 CI 在 qemu-user 下测得规范的一致性测试套件链接失败（`undefined symbol: __riscv_flush_icache`）：riscv64 Linux 上编译器把 `__builtin___clear_cache` 降为对它的调用，由 C 库定义，而 openkal-musl 因 vDSO 的依赖排除了 musl 自己的定义。openkal-musl 0.30.2 补上它：openkal 之上指令只从 openkal.exec 发布的内存执行，维护在发布时由实现执行，该调用回答成功。openkal-platform 0.32.1 以 openkal-linux 0.27.1 与 openkal-musl 0.30.2 修订版本组，把
+    含上层帧的采样、发布的指令，两种体系结构全部成立。平台的 CI 在 qemu-user 下测得规范的一致性测试套件链接失败（`undefined symbol: __riscv_flush_icache`）：riscv64 Linux 上编译器把 `__builtin___clear_cache` 降为对它的调用，由 C 库定义，而 openkal-musl 因 vDSO 的依赖排除了 musl 自己的定义。openkal-musl 0.30.2 补上它：openkal 之上指令只从 openkal.exec 发布的内存执行，维护在发布时由实现执行，该调用回答成功。
+
+    链接通过后，一致性测试套件在 qemu-user 8.2.2 下测得三处，均在成员中按根因修复：
+    - **处理函数记录的长度（openkal-linux 0.27.2）。** 内核的 riscv64 记录为 24 字节（handler、flags、mask）；qemu 的
+      通用 `TARGET_SA_RESTORER` 使其按带 restorer 的 32 字节布局，返回旧动作时写 32 字节、新动作的掩码从第四个字读取。
+      24 字节的记录之后 8 字节被覆盖：启动映像重置各信号动作的循环每次查询后回到第一个信号，启动永不结束。记录增加第四个字，
+      与 musl 给同一记录的长度相同；实现安装的动作都不陈述掩码，内核与翻译器读到同一个空掩码。`tests/arch/runs.cpp`
+      检查查询动作后记录之后的字保持不变（未修复时在 qemu 下失败）。
+    - **已结束程序的记录（openkal-linux 0.27.2）。** 未回收的已结束程序的用量是 `waitid` 的第五个参数；qemu 8.2 不传递它，
+      留下的零被读成没有处理器时间、峰值为零。记录的峰值预置为内核不会写出的值，未写出的记录由此可辨：程序尚未回收，
+      处理器时间经程序的时钟、缺页数经 `/proc/<pid>/stat` 读取（与运行中的程序同一途径，缺页的读取收敛为一个函数）；
+      峰值只在记录中，报告为不可得而非零。
+    - **`__tls_get_addr`（openkal-musl 0.30.3）。** musl 的实现从自身描述符前的向量作答，而本移植把程序的线程存储交给内核层，
+      向量为空，答案只剩偏移。x86_64、i386 与 aarch64 的静态链接把一般动态访问改写为局部执行，riscv64 的链接保留调用，
+      套件的第一次这类访问因而失效。静态程序只有一个模块，其块始于线程指针（variant I，无控制块），地址为
+      `tp + offset + DTP_OFFSET`；`DTP_OFFSET`（riscv64 为 0x800）写入本移植替换的 `pthread_arch.h`，与 musl 自己的
+      体系结构头文件一致。其他体系结构上没有访问到达该函数，到达者经 `kal_abort` 拒绝。
+
+    三处修复后套件在 riscv64 下 411 条成立、0 条不成立。openkal-platform 0.32.1 以 openkal-linux 0.27.2 与 openkal-musl 0.30.3 修订版本组，把
     `riscv64-linux-musl` 加入宿主安排，并以提供者条目陈述 Linux x86_64 上的运行器 `qemu-riscv64-static`
     （`xim:qemu-user-riscv64`，与内置的交叉载荷行相同，无需开启）；平台的 CI 在 qemu-user 下运行宿主程序与规范的一致性测试
     套件。mcpp 的缺省平台随之为 0.32.1，矩阵按测得的单元更新。图模式钉的旧依赖（openkal-linux 0.5.x）不含 riscv64，
