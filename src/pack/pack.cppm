@@ -1116,6 +1116,12 @@ ldd_parse(const std::filesystem::path& binary,
 // the program is. An object with neither a loader nor a needed library has no
 // closure. Names are merged by soname, the program's first.
 //
+// THE PROGRAM IS TRACED ALONE FIRST. A preloaded object satisfies every later
+// request for its soname, so a deployed library the program also links would
+// be resolved as the preloaded path and leave the program's own resolution of
+// that name -- the file `lib/` must carry -- out of the trace (measured with
+// glibc 2.39).
+//
 // `LD_PRELOAD` separates its entries by `:` and white space and has no escape,
 // so an object whose path below the program's directory holds one cannot be
 // named to the loader; it is reported, not dropped.
@@ -1145,9 +1151,14 @@ trace_closure(const std::filesystem::path& program,
             if (notFound.insert(n).second) merged.notFound.push_back(std::move(n));
         for (auto& n : c.notLoaded) merged.notLoaded.push_back(std::move(n));
     };
-    auto first = ldd_parse(program, preload);
+    auto first = ldd_parse(program);
     if (!first) return std::unexpected(first.error());
     merge(std::move(*first));
+    if (!preload.empty()) {
+        auto loaded = ldd_parse(program, preload);
+        if (!loaded) return std::unexpected(loaded.error());
+        merge(std::move(*loaded));
+    }
     for (auto const& rel : programs) {
         auto other = ldd_parse(dir / rel);
         if (!other) return std::unexpected(std::format("{}: {}", rel.generic_string(), other.error()));

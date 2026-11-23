@@ -801,7 +801,8 @@ platform = { path = "../plat" }
         // loads at run time is a root of the closure as the program is. Its library, which the
         // program does not link, is bundled under lib/; the plugin's search path in the tree is
         // the bundle's lib/ relative to where it is staged, not the build machine's directory;
-        // and the packed program loads the plugin with that directory gone.
+        // and the packed program loads the plugin with that directory gone. A deployed library the
+        // program also links stays the program's member of lib/.
         const auto tmp = s::case_dir();
         const auto cc = s::host_cc();
         expect(fatal(cc.has_value())) << "no host C compiler links a shared object";
@@ -822,14 +823,20 @@ main = "src/main.c"
 [toolchain]
 linux = "gcc@16.1.0"
 
+[build]
+ldflags = ["-L@VENDOR@", "-lown", "-Wl,-rpath,$ORIGIN"]
+
 [runtime]
+deploy_files = ["vendor/libown.so"]
 deploy = [ { from = "vendor/libplug.so", to = "plugins" } ]
 )cpp"}, {"src/main.c", R"cpp(#define _DEFAULT_SOURCE
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+int own_value(void);
 int main(void) {
+    if (own_value() != 5) return 3;
     char self[4096];
     ssize_t n = readlink("/proc/self/exe", self, sizeof self - 32);
     if (n <= 0) return 2;
@@ -847,6 +854,13 @@ int main(void) {
                                    ext.at("plug.c").string(), "-L" + ext.at("lib").string(), "-ldep",
                                    "-Wl,--enable-new-dtags,-rpath," + ext.at("lib").string()}});
         expect(fatal(e2e::succeeded(built))) << "the host C compiler failed\n" << s::text(built);
+        app.write("vendor/own.c", "int own_value(void) { return 5; }\n");
+        auto toml = app.read("mcpp.toml");
+        toml.replace(toml.find("@VENDOR@"), 8, app.at("vendor").generic_string());
+        app.write("mcpp.toml", toml);
+        built = e2e::run({.argv = {cc->string(), "-shared", "-fPIC", "-Wl,-soname,libown.so", "-o",
+                                   app.at("vendor/libown.so").string(), app.at("vendor/own.c").string()}});
+        expect(fatal(e2e::succeeded(built))) << "the host C compiler failed\n" << s::text(built);
         auto r = app.mcpp({"pack", "--pkg-format", "dir"});
         expect(fatal(e2e::succeeded(r))) << "mcpp pack failed\n" << s::text(r);
         const auto tree = dist_dir(app, "app-0.1.0-");
@@ -855,6 +869,7 @@ int main(void) {
         expect(fatal(fs::is_regular_file(*tree / "bin/plugins/libplug.so"))) << "the plugin is not deployed in the tree";
         expect(fatal(fs::is_regular_file(*tree / "lib/libdep.so"))) << "the plugin's library is not bundled\n" << s::read_file(manifest);
         expect(fatal(has_exact_line(manifest, "needs\tlibdep.so\tlib/libdep.so"))) << "the manifest does not state libdep.so at lib/libdep.so\n" << s::read_file(manifest);
+        expect(fatal(has_exact_line(manifest, "needs\tlibown.so\tlib/libown.so"))) << "the deployed library the program links left lib/\n" << s::read_file(manifest);
         const auto plug = s::read_header(*tree / "bin/plugins/libplug.so");
         expect(fatal(plug.runpath == "$ORIGIN/../../lib")) << "the plugin's search path in the tree is '" << plug.runpath << "'";
         fs::rename(ext.at("lib"), ext.at("lib.away"));
