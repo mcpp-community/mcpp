@@ -103,6 +103,13 @@
   does. `x86_64-macos` on Apple silicon linked its x86_64 objects for arm64 and found no `main`;
   a C program now links and runs under Rosetta. The row stays `planned`: the LLVM payload's
   libc++ is arm64 only.
+- `mcpp pack` carries the libraries of what the build deploys beside the program. An object of the
+  program's format and machine that `[runtime] deploy` or `mcpp::deploy` places (a plugin loaded
+  at run time, a helper program, another program under `--all-programs`) is a root of the runtime
+  closure as the program is, on ELF, PE, Mach-O and Android. A Qt platform plugin's
+  `libQt6XcbQpa.so.6`, which the program does not link, was left out of the package. On ELF a
+  deployed shared object is preloaded into the program's loader trace and its search path in the
+  tree becomes the bundle's `lib/` (docs/10, mcpp#1011).
 - `mcpp pack --all-programs` on `wasm32-emscripten` packs each program's module beside its
   launcher. Before, only the program named after the package had its `.wasm` (mcpp#1007).
 - A build ended by a signal while it removed its compiler-run state no longer leaves the
