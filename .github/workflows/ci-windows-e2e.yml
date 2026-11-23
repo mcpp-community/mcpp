@@ -29,6 +29,14 @@ on:
         description: whether the set gives this host any case
         type: boolean
         default: true
+      history:
+        description: the run whose stores the plan divided by (`none` for none); empty to resolve it
+        type: string
+        default: ''
+      coverage:
+        description: the run whose coverage map the plan read (`none` for none); empty to resolve it
+        type: string
+        default: ''
 
 jobs:
   e2e:
@@ -119,6 +127,8 @@ jobs:
       - uses: ./.github/actions/e2e-mtest
         with:
           host: windows
+          history: ${{ inputs.history }}
+          coverage: ${{ inputs.coverage }}
 
       - name: E2E suite
         shell: bash

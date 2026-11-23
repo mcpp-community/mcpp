@@ -33,6 +33,14 @@ on:
         description: whether the set gives this host any case
         type: boolean
         default: true
+      history:
+        description: the run whose stores the plan divided by (`none` for none); empty to resolve it
+        type: string
+        default: ''
+      coverage:
+        description: the run whose coverage map the plan read (`none` for none); empty to resolve it
+        type: string
+        default: ''
 
 jobs:
   e2e:
@@ -74,6 +82,8 @@ jobs:
       - uses: ./.github/actions/e2e-mtest
         with:
           host: ${{ matrix.image == 'macos-15' && 'macos' || matrix.image }}
+          history: ${{ inputs.history }}
+          coverage: ${{ inputs.coverage }}
 
       - name: E2E suite
         # Twice a shard's budget of about nine minutes (R4); the per-test 600 s
